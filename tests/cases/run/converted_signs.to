@@ -1,0 +1,48 @@
+// A comparison with zero of a `Float` converted from an `Int` is the same
+// comparison of the `Int`, whatever its sign: below zero, at it and above,
+// the least and the greatest `Int` too, and against `-0.0`. A test the facts
+// decide, as `math.sqrt`'s of a negative value where the value counts from
+// zero, gives what it did, and one they do not decide still holds when it
+// does.
+
+import std.console
+import std.math
+
+fn signs(value: Int): String {
+    let x = Float(value)
+    "{x < 0.0} {x <= 0.0} {x > 0.0} {x >= 0.0} {x == 0.0} {x != 0.0} {0.0 < x} {-0.0 == x}"
+}
+
+fn roots(count: Int): Float {
+    var total = 0.0
+    for i in 0..count {
+        total += math.sqrt(Float(i)).unwrapOr(0.0)
+    }
+    total
+}
+
+fn negatives(from: Int, count: Int): Int {
+    var found = 0
+    for i in from..from + count {
+        if math.sqrt(Float(i)).isErr() {
+            found += 1
+        }
+    }
+    found
+}
+
+fn main() {
+    for value in [-3, 0, 5, -9223372036854775807 - 1, 9223372036854775807] {
+        console.println(signs(value))
+    }
+    console.println("{roots(10)}")
+    console.println("{negatives(-3, 6)} {negatives(0, 6)}")
+}
+
+// expect-stdout: true true false false false true false false
+// expect-stdout: false true false true true false false true
+// expect-stdout: false false true true false true true false
+// expect-stdout: true true false false false true false false
+// expect-stdout: false false true true false true true false
+// expect-stdout: 19.30600052603572
+// expect-stdout: 3 0

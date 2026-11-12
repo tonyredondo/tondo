@@ -6051,3 +6051,17 @@ what it was given, reads such a capture from a local assigned the constant, unle
 lends it or passes it to a call. A closure made inside another learns its captures once the outer
 one's are known, a round later. The closure row lost its two checks, and Cranelift folds the four
 additions of a turn the unrolled loop makes: 5.8k instructions a run became 2.6k.
+
+## A test the facts decide is a jump
+
+`math.sqrt(Float(i))` tests whether its value is negative before it takes the root, and in a loop
+where `i` counts from zero that test never held, yet it was made each turn: `prove` knew `i` was not
+negative, but not that a `Float` made of it had its sign, nor did it change a test it decided. Since
+2026-11-12 `elide` makes a comparison with zero of a `Float` converted from an `Int`, or of a copy of
+one, the same comparison of the `Int`, which the conversion keeps the sign of and makes no NaN of,
+when the `Float` is written once, right after the `Int` in the same block or of a parameter, and
+nothing lends either; and `prove` follows an `Int` tested against a constant when it is a copy of
+one it follows or of a counter, and makes a test its facts decide a jump, which a dump notes.
+Following every `Int` tested against a constant made a large build 3.4 % dearer; a counter's copies,
+0.6 %. The sqrt row does 27 % fewer instructions: four turns of its loop are four conversions, roots
+and additions.

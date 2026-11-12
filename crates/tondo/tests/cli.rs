@@ -854,6 +854,35 @@ fn the_mir_of_a_function_and_what_the_passes_decided() {
     assert!(!quiet.contains("== measured"), "{quiet}");
 }
 
+/// A test the facts decide is a jump: `math.sqrt`'s test of a negative
+/// value, of a `Float` converted from an `Int` that counts from zero, which
+/// `elide` makes a test of the `Int`; one of a value that may be negative
+/// stays.
+#[test]
+fn a_test_the_facts_decide_is_a_jump() {
+    let source: &[u8] = b"import std.console\nimport std.math\n\nfn roots(count: Int): Float {\n    \
+        var total = 0.0\n    for i in 0..count {\n        total += math.sqrt(Float(i)).unwrapOr(0.0)\n    }\n    \
+        total\n}\n\nfn any(from: Int): Float {\n    math.sqrt(Float(from)).unwrapOr(-1.0)\n}\n\n\
+        fn main() {\n    console.println(\"{roots(10)} {any(-4)} {any(4)}\")\n}\n";
+    let dir = project_at("decided-tests", &[("main.to", source)]);
+    let dumped = |asked: &str| {
+        let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(["build", "main.to", "--output", "main"])
+            .env("TONDO_DUMP_MIR", asked)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
+        String::from_utf8_lossy(&ran.stderr).into_owned()
+    };
+    let roots = dumped("roots@prove");
+    assert!(roots.contains("test always goes to"), "{roots}");
+    let any = dumped("any@prove");
+    assert!(any.contains("< 0") && !any.contains("test always goes to"), "{any}");
+    let ran = Command::new(dir.join("main")).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&ran.stdout), "19.30600052603572 -1.0 2.0\n");
+}
+
 /// `TONDO_LAYOUT_SEED` lays a build's functions out in another order, the
 /// same for the same seed: the program does what it did, its panics name
 /// the same frames, and only where its code lies changes.

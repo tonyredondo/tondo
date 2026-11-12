@@ -81,6 +81,7 @@ fn relevant(body: &mut Body, types: &Types) -> Option<Vec<bool>> {
         .map(|&ty| matches!(types.kind(types.repr(ty)), TyKind::Array(_) | TyKind::Deque(_)))
         .collect();
     let mut relevant = vec![false; body.locals.len()];
+    let mut tested = vec![false; body.locals.len()];
     let mut any = false;
     let local = |operand: &Operand| match operand {
         Operand::Copy(Place { local, path }) if path.is_empty() => Some(local.0 as usize),
@@ -98,6 +99,20 @@ fn relevant(body: &mut Body, types: &Types) -> Option<Vec<bool>> {
                     any = true;
                 }
             });
+            // An `Int` tested against a constant, which the facts may decide
+            // when it is a copy of one they follow.
+            if let Statement::Assign(_, rvalue, _) = statement
+                && let Rvalue::Binary(BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne, a, b) =
+                    &**rvalue
+                && let Some(local) = match (a, b) {
+                    (_, Operand::Const(Const::Int(..))) => local(a),
+                    (Operand::Const(Const::Int(..)), _) => local(b),
+                    _ => None,
+                }
+                && ints[local]
+            {
+                tested[local] = true;
+            }
             if let Statement::Assign(place, rvalue, _) = statement
                 && place.path.is_empty()
                 && ints[place.local.0 as usize]
@@ -110,6 +125,19 @@ fn relevant(body: &mut Body, types: &Types) -> Option<Vec<bool>> {
                     }
                 }
             }
+        }
+    }
+    // The counters: locals that step by a constant, as a loop's.
+    let mut counters = vec![false; body.locals.len()];
+    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+        if let Statement::Assign(place, rvalue, _) = statement
+            && place.path.is_empty()
+            && ints[place.local.0 as usize]
+            && let Rvalue::Increment(o) | Rvalue::Binary(BinOp::Add | BinOp::Sub, o, Operand::Const(_)) = &**rvalue
+            && local(o) == Some(place.local.0 as usize)
+        {
+            counters[place.local.0 as usize] = true;
+            any |= tested.iter().any(|&t| t);
         }
     }
     if !any {
@@ -134,6 +162,16 @@ fn relevant(body: &mut Body, types: &Types) -> Option<Vec<bool>> {
                     }
                 }
                 Rvalue::Use(o) | Rvalue::Increment(o) | Rvalue::Length(o) if target => local(o).into_iter().collect(),
+                // A tested copy of a local followed or of a counter, or of
+                // one more or less.
+                Rvalue::Use(o)
+                | Rvalue::Increment(o)
+                | Rvalue::Binary(BinOp::Add | BinOp::Sub, o, Operand::Const(_))
+                    if tested[place.local.0 as usize]
+                        && local(o).is_some_and(|source| relevant[source] || counters[source]) =>
+                {
+                    [Some(place.local.0 as usize), local(o)].into_iter().flatten().collect()
+                }
                 Rvalue::Binary(_, a, b) | Rvalue::Exact(_, a, b) if target => {
                     [a, b].into_iter().filter_map(local).filter(|&l| ints[l]).collect()
                 }
@@ -764,6 +802,15 @@ impl Prover<'_> {
                 let mut no = facts;
                 let yes_holds = assume(&mut yes, op, a, b);
                 let no_holds = assume(&mut no, negated(op), a, b);
+                // A test the facts decide is a jump: the way it never takes
+                // goes, and what only that way reached.
+                if rewrite && yes_holds != no_holds {
+                    let (taken, never) = if yes_holds { (then, otherwise) } else { (otherwise, then) };
+                    self.body.blocks[block].terminator = Terminator::Goto(BlockId(taken as u32));
+                    crate::mir_text::note(self.body, "prove", || {
+                        format!("b{block}'s test always goes to b{taken}: no way to b{never}")
+                    });
+                }
                 vec![(then, yes_holds.then_some(yes)), (otherwise, no_holds.then_some(no))]
             }
             _ => Vec::new(),
