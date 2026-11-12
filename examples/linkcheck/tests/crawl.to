@@ -167,14 +167,14 @@ test anAddressThatDoesNotAnswerInTimeIsUnreachable {
     app.get(
         "/slow",
         (_) {
-            time.sleep(time.milliseconds(400))
+            time.sleep(time.seconds(5))
             http.Reply.html("at last")
         },
     )
     let server = app.start()?
     defer server.stop()
 
-    let report = crawl.crawl("{server.url()}/", crawl.Options { timeout: time.milliseconds(100) })?
+    let report = crawl.crawl("{server.url()}/", crawl.Options { timeout: time.milliseconds(500) })?
     assert(report.broken().map((link) { "{link.outcome}" }) == ["no answer in time"])
 }
 
