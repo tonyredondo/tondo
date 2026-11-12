@@ -70,6 +70,7 @@ fn main(): !http.HttpError {
     // come from the parameters; the result becomes the reply.
     app.get("/users/:id", (id: Int) { find(id) })                    // User? → 404 without one
     app.get("/search", (q: String, page: Int?) { "{q} {page}" })     // ?q=...&page=...
+    app.get("/tasks", (done: Bool?, above: Float?) { "{done} {above}" })   // ?done=true&above=1.5
     app.post("/users", (input: NewUser) { User { id: 1, name: input.name } })
 
     // A handler can also take the request and build the reply.

@@ -824,6 +824,47 @@ fn main(): !(http.HttpError | fs.FsError) {
     assert!(success, "{stderr}");
 }
 
+/// A typed handler reads a `Bool` or a `Float` from the query, as an
+/// `Int`: `true` or `false`, and a number, or a `400` that says why.
+#[test]
+fn typed_handlers_read_bools_and_floats() {
+    let program = r##"import std.console
+import std.http
+
+fn main(): !http.HttpError {
+    var app = http.App()
+    app.get("/tasks", (done: Bool?, above: Float, all: Bool, ratio: Float?) { "{done} {above} {all} {ratio}" })
+    app.openApi(title: "Tasks", version: "1.0")
+    let server = app.start()?
+    let client = http.Client(baseUrl: server.url())
+    console.println(client.get("/tasks", query: ["done": "true", "above": "1.5", "all": "false"])?.text()?)
+    console.println(client.get("/tasks", query: ["above": "2", "all": "true", "ratio": "0.25"])?.text()?)
+    for query in [["done": "yes", "above": "1", "all": "true"], ["all": "true"], ["above": "x", "all": "true"]] {
+        match client.get("/tasks", query: query) {
+            ok(reply) => console.println("{reply.status()}")
+            err(http.HttpError.Status(reply)) => console.println("{reply.status()} {reply.text()?}")
+            err(error) => console.println("{error}")
+        }
+    }
+    let api = client.get("/openapi.json")?.text()?
+    console.println("{api.contains("\"name\":\"done\",\"in\":\"query\",\"required\":false,\"schema\":{{\"type\":\"boolean\"}}")}")
+    console.println("{api.contains("\"name\":\"above\",\"in\":\"query\",\"required\":true,\"schema\":{{\"type\":\"number\"}}")}")
+    server.stop()
+}
+"##;
+    let (stdout, stderr, success) = run("http-typed-scalars", program, &[]);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines[..2], ["some(true) 1.5 false none", "none 2.0 true some(0.25)"], "{stdout}{stderr}");
+    assert!(
+        lines[2].starts_with("400 ") && lines[2].contains("`done` must be `true` or `false`, not `yes`"),
+        "{stdout}"
+    );
+    assert!(lines[3].starts_with("400 ") && lines[3].contains("`above` is missing"), "{stdout}");
+    assert!(lines[4].starts_with("400 ") && lines[4].contains("`above` must be a number, not `x`"), "{stdout}");
+    assert_eq!(lines[5..], ["true", "true"], "{stdout}");
+    assert!(success, "{stderr}");
+}
+
 #[test]
 fn typed_handlers_and_openapi() {
     let program = r##"import std.console

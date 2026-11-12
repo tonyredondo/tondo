@@ -252,8 +252,14 @@ impl Checker<'_> {
                         TyKind::Option(inner) => Some(inner),
                         _ => None,
                     };
-                    let scalar = |this: &Self, ty: Ty| {
-                        ty == Ty::STRING || matches!(this.types.kind(ty), TyKind::Int(IntTy::I64))
+                    // What a query parameter is read as: its text, or the
+                    // reader of its type.
+                    let scalar = |this: &Self, ty: Ty| match ty {
+                        Ty::STRING => Some(""),
+                        Ty::BOOL => Some("Bool"),
+                        Ty::F64 => Some("Float"),
+                        _ if matches!(this.types.kind(ty), TyKind::Int(IntTy::I64)) => Some("Int"),
+                        _ => None,
                     };
                     let read = if ty == request {
                         request_value()
@@ -274,18 +280,18 @@ impl Checker<'_> {
                                 continue;
                             }
                         }
-                    } else if scalar(self, ty) || optional.is_some_and(|inner| scalar(self, inner)) {
+                    } else if let Some(of) = scalar(self, ty).or_else(|| optional.and_then(|inner| scalar(self, inner)))
+                    {
                         let inner = optional.unwrap_or(ty);
                         let schema = self.schema(inner, &mut doc.schemas);
                         doc.parameter(n, "query", optional.is_none(), schema);
                         fails |= optional.is_none() || inner != Ty::STRING;
-                        let reader = match (optional.is_some(), inner == Ty::STRING) {
-                            (true, true) => "query",
-                            (true, false) => "intQuery",
-                            (false, true) => "requiredQuery",
-                            (false, false) => "requiredIntQuery",
+                        let reader = match (optional.is_some(), of) {
+                            (true, "") => "query".to_string(),
+                            (true, of) => format!("{}Query", of.to_lowercase()),
+                            (false, of) => format!("required{of}Query"),
                         };
-                        let call = s.method(request_value(), reader, vec![s.string(n)]);
+                        let call = s.method(request_value(), &reader, vec![s.string(n)]);
                         if reader == "query" { call } else { s.try_(call) }
                     } else {
                         if matches!(verb.as_str(), "GET" | "DELETE") {

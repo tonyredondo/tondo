@@ -1334,11 +1334,13 @@ pub fn Reply.text(text: String, status: Int = 200): Reply
 pub fn Reply.withBody(self, bytes: Array[Byte]): Reply
 pub fn Reply.withStatus(self, status: Int): Reply
 pub fn Request.body(self): io.Reader
+pub fn Request.boolQuery(self, name: String): Bool? ! Problem
 pub fn Request.bytes(self): Array[Byte] ! Problem
 pub fn Request.clientCertificate(self): crypto.Certificate?
 pub fn Request.clientIp(self): String
 pub fn Request.cookie(self, name: String): String?
 pub fn Request.cookies(self): Map[String, String]
+pub fn Request.floatQuery(self, name: String): Float? ! Problem
 pub fn Request.form(self): Map[String, String] ! Problem
 pub fn Request.formAs[T: serialization.Decode](self): T ! Problem
 pub fn Request.header(self, name: String): String?
@@ -1357,6 +1359,8 @@ pub fn Request.queryAs[T: serialization.Decode](self): T ! Problem
 pub fn Request.queryValues(self, name: String): Array[String]
 pub fn Request.rawQuery(self): String
 pub fn Request.remoteAddress(self): String
+pub fn Request.requiredBoolQuery(self, name: String): Bool ! Problem
+pub fn Request.requiredFloatQuery(self, name: String): Float ! Problem
 pub fn Request.requiredIntQuery(self, name: String): Int ! Problem
 pub fn Request.requiredQuery(self, name: String): String ! Problem
 pub fn Request.route(self): String?

@@ -654,6 +654,47 @@ pub fn Request.intQuery(self, name: String): Int? ! Problem {
     }
 }
 
+/// A query parameter that must be there and be `true` or `false`.
+pub fn Request.requiredBoolQuery(self, name: String): Bool ! Problem {
+    match self.boolQuery(name)? {
+        some(value) => value
+        none => fail Problem.badRequest("the query parameter `{name}` is missing")
+    }
+}
+
+/// A query parameter that must be `true` or `false` when it is there.
+pub fn Request.boolQuery(self, name: String): Bool? ! Problem {
+    match self.query(name) {
+        none => none
+        some("true") => some(true)
+        some("false") => some(false)
+        some(text) => fail Problem.badRequest(
+            "the query parameter `{name}` must be `true` or `false`, not `{text}`",
+        )
+    }
+}
+
+/// A query parameter that must be there and be a number.
+pub fn Request.requiredFloatQuery(self, name: String): Float ! Problem {
+    match self.floatQuery(name)? {
+        some(value) => value
+        none => fail Problem.badRequest("the query parameter `{name}` is missing")
+    }
+}
+
+/// A query parameter that must be a number when it is there.
+pub fn Request.floatQuery(self, name: String): Float? ! Problem {
+    match self.query(name) {
+        none => none
+        some(text) => match Float.parse(text) {
+            ok(value) => some(value)
+            err(_) => fail Problem.badRequest(
+                "the query parameter `{name}` must be a number, not `{text}`",
+            )
+        }
+    }
+}
+
 /// The first value of a header, by its name in any case.
 pub fn Request.header(self, name: String): String? {
     self.headerValues(name).first()

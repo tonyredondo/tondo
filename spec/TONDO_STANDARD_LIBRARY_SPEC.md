@@ -4939,6 +4939,8 @@ pub fn Request.intParam(self, name: String): Int ! Problem
 pub fn Request.query(self, name: String): String?
 pub fn Request.queryValues(self, name: String): Array[String]
 pub fn Request.intQuery(self, name: String): Int? ! Problem
+pub fn Request.floatQuery(self, name: String): Float? ! Problem
+pub fn Request.boolQuery(self, name: String): Bool? ! Problem      // true o false
 pub fn Request.queryAs[T: serialization.Decode](self): T ! Problem
 pub fn Request.header(self, name: String): String?
 pub fn Request.headerValues(self, name: String): Array[String]
@@ -5240,8 +5242,9 @@ app.openApi(title: "Users", version: "1.0")                        // GET /opena
 
 - Un parámetro de tipo `http.Request` es la petición. Uno que se llama como un
   segmento `:nombre` de la ruta es ese parámetro, `String` o `Int`. Uno
-  `String` o `Int`, u opcional de ellos, es un parámetro de query: sin `?` es
-  obligatorio. Cualquier otro tipo es el cuerpo JSON (`std.json`), uno por
+  `String`, `Int`, `Float` o `Bool`, u opcional de ellos, es un parámetro de
+  query: sin `?` es obligatorio; un `Bool` se escribe `true` o `false`, y otro
+  texto, como un número que no lo es, es un `400` que dice cuál y por qué. Cualquier otro tipo es el cuerpo JSON (`std.json`), uno por
   handler y nunca en `GET` ni en `DELETE`; un parámetro que no encaja es un
   error de compilación que dice de dónde se puede leer.
 - El resultado se convierte: una `Reply` se envía tal cual; un `String`, como
