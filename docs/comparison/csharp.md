@@ -554,12 +554,13 @@ using System.Diagnostics;
 
 var clock = Stopwatch.StartNew();
 // Each call starts at once and gives a Task; WhenAll waits for the three.
-var results = await Task.WhenAll(Fetch("users", 30), Fetch("orders", 50), Fetch("prices", 10));
+var results = await Task.WhenAll(Fetch("users", 300), Fetch("orders", 500), Fetch("prices", 100));
 foreach (var result in results)
 {
     Console.WriteLine(result);
 }
-Console.WriteLine($"all three in under 100 ms: {clock.ElapsedMilliseconds < 100}");
+// One after another they would take 900 ms.
+Console.WriteLine($"all three in under 800 ms: {clock.ElapsedMilliseconds < 800}");
 
 // Stands for a request that takes a while. It waits, so it is `async`,
 // returns a Task, and so does everything that calls it.
@@ -587,21 +588,22 @@ fn fetch(name: String, delay: Int): String {
 fn main() {
     let started = time.now()
     var group = Group[String]()
-    group.add(spawn fetch("users", 30))
-    group.add(spawn fetch("orders", 50))
-    group.add(spawn fetch("prices", 10))
+    group.add(spawn fetch("users", 300))
+    group.add(spawn fetch("orders", 500))
+    group.add(spawn fetch("prices", 100))
     for result in group.wait() {            // in the order they were added
         console.println(result)
     }
-    console.println("all three in under 100 ms: {started.elapsed().milliseconds() < 100}")
+    // One after another they would take 900 ms.
+    console.println("all three in under 800 ms: {started.elapsed().milliseconds() < 800}")
 }
 ```
 
 ```text output
-users in 30 ms
-orders in 50 ms
-prices in 10 ms
-all three in under 100 ms: true
+users in 300 ms
+orders in 500 ms
+prices in 100 ms
+all three in under 800 ms: true
 ```
 
 - `fetch` is an ordinary function that returns a `String`. There is no
@@ -624,16 +626,16 @@ Cancelling in C# is a `CancellationToken`, a parameter of every method
 between where it is made and where it matters:
 
 ```csharp
-foreach (var delay in new[] { 10, 500 })
+foreach (var delay in new[] { 10, 5000 })
 {
-    using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+    using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
     try
     {
         Console.WriteLine(await Fetch(delay, deadline.Token));
     }
     catch (OperationCanceledException)
     {
-        Console.WriteLine("gave up after 100 ms");
+        Console.WriteLine("gave up after 250 ms");
     }
 }
 
@@ -659,11 +661,11 @@ fn fetch(delay: Int): String {
 }
 
 fn main() {
-    for delay in [10, 500] {
+    for delay in [10, 5000] {
         // The deadline holds for all the block calls, and for the tasks it starts.
-        match within time.milliseconds(100) { fetch(delay) } {
+        match within time.milliseconds(250) { fetch(delay) } {
             ok(answer) => console.println(answer)
-            err(_) => console.println("gave up after 100 ms")
+            err(_) => console.println("gave up after 250 ms")
         }
     }
 }
@@ -671,7 +673,7 @@ fn main() {
 
 ```text output
 answered in 10 ms
-gave up after 100 ms
+gave up after 250 ms
 ```
 
 - No function takes a token, and none can forget to pass it on. Every wait
@@ -728,12 +730,13 @@ fn main() {
         group.add(spawn work(hits, if n % 2 == 0 { "/home" } else { "/about" }))
     }
     _ = group.wait()
-    console.println("{hits.get()}")
+    let counts = hits.get()
+    console.println("{counts.get("/home").unwrapOr(0)} {counts.get("/about").unwrapOr(0)}")
 }
 ```
 
 ```text output
-[/home: 2500, /about: 2500]
+2500 2500
 ```
 
 - The map cannot be reached without the lock, since the lock is where it

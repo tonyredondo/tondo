@@ -592,7 +592,7 @@ fn fetch(name: &str, delay: u64) -> String {
 
 fn main() {
     let started = Instant::now();
-    let jobs = [("users", 30), ("orders", 50), ("prices", 10)];
+    let jobs = [("users", 300), ("orders", 500), ("prices", 100)];
     // A scope does not end before the threads it started: they may borrow from it.
     let results: Vec<String> = thread::scope(|scope| {
         let handles: Vec<_> = jobs.iter().map(|&(name, delay)| scope.spawn(move || fetch(name, delay))).collect();
@@ -601,7 +601,8 @@ fn main() {
     for result in results {
         println!("{result}");
     }
-    println!("all three in under 100 ms: {}", started.elapsed() < Duration::from_millis(100));
+    // One after another they would take 900 ms.
+    println!("all three in under 800 ms: {}", started.elapsed() < Duration::from_millis(800));
 }
 ```
 
@@ -623,21 +624,22 @@ fn fetch(name: String, delay: Int): String {
 fn main() {
     let started = time.now()
     var group = Group[String]()
-    group.add(spawn fetch("users", 30))
-    group.add(spawn fetch("orders", 50))
-    group.add(spawn fetch("prices", 10))
+    group.add(spawn fetch("users", 300))
+    group.add(spawn fetch("orders", 500))
+    group.add(spawn fetch("prices", 100))
     for result in group.wait() {            // in the order they were added
         console.println(result)
     }
-    console.println("all three in under 100 ms: {started.elapsed().milliseconds() < 100}")
+    // One after another they would take 900 ms.
+    console.println("all three in under 800 ms: {started.elapsed().milliseconds() < 800}")
 }
 ```
 
 ```text output
-users in 30 ms
-orders in 50 ms
-prices in 10 ms
-all three in under 100 ms: true
+users in 300 ms
+orders in 500 ms
+prices in 100 ms
+all three in under 800 ms: true
 ```
 
 - `spawn f()` gives a `Join[T]`, and `wait()` its result. An error or a
@@ -666,11 +668,11 @@ async fn fetch(delay: u64) -> String {
 
 #[tokio::main]
 async fn main() {
-    for delay in [10, 500] {
+    for delay in [10, 5000] {
         // Dropping the future is what cancels it.
-        match timeout(Duration::from_millis(100), fetch(delay)).await {
+        match timeout(Duration::from_millis(250), fetch(delay)).await {
             Ok(answer) => println!("{answer}"),
-            Err(_) => println!("gave up after 100 ms"),
+            Err(_) => println!("gave up after 250 ms"),
         }
     }
 }
@@ -689,11 +691,11 @@ fn fetch(delay: Int): String {
 }
 
 fn main() {
-    for delay in [10, 500] {
+    for delay in [10, 5000] {
         // The deadline holds for all the block calls, and for the tasks it starts.
-        match within time.milliseconds(100) { fetch(delay) } {
+        match within time.milliseconds(250) { fetch(delay) } {
             ok(answer) => console.println(answer)
-            err(_) => console.println("gave up after 100 ms")
+            err(_) => console.println("gave up after 250 ms")
         }
     }
 }
@@ -701,7 +703,7 @@ fn main() {
 
 ```text output
 answered in 10 ms
-gave up after 100 ms
+gave up after 250 ms
 ```
 
 - There is no `async`, no `.await`, no `Future`, no `Pin` and no runtime to
@@ -766,12 +768,13 @@ fn main() {
         group.add(spawn work(hits, if n % 2 == 0 { "/home" } else { "/about" }))
     }
     _ = group.wait()
-    console.println("{hits.get()}")
+    let counts = hits.get()
+    console.println("{counts.get("/home").unwrapOr(0)} {counts.get("/about").unwrapOr(0)}")
 }
 ```
 
 ```text output
-[/about: 2500, /home: 2500]
+2500 2500
 ```
 
 - There is no guard to hold too long or to carry across a wait, no
