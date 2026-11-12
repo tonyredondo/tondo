@@ -22,7 +22,8 @@ fn told(socket: http.WebSocket): rooms.Event ! (http.HttpError | json.JsonError 
 }
 
 test twoPeopleTalk {
-    let server = web.routes().start()?
+    let chat = web.Chat()?
+    let server = chat.routes().start()?
     defer server.stop()
     let ada = enter(server, "tea", "ada")?
     assert(told(ada)? == rooms.Event { kind: rooms.Kind.Welcome, room: "tea", people: ["ada"] })
@@ -56,7 +57,8 @@ test twoPeopleTalk {
 }
 
 test roomsAreApart {
-    let server = web.routes().start()?
+    let chat = web.Chat()?
+    let server = chat.routes().start()?
     defer server.stop()
     let ada = enter(server, "tea", "ada")?
     let zoe = enter(server, "coffee", "zoe")?
@@ -70,7 +72,8 @@ test roomsAreApart {
 }
 
 test aNewcomerHearsWhatWasSaid {
-    let server = web.routes().start()?
+    let chat = web.Chat()?
+    let server = chat.routes().start()?
     defer server.stop()
     let ada = enter(server, "tea", "ada")?
     _ = told(ada)?
@@ -84,7 +87,8 @@ test aNewcomerHearsWhatWasSaid {
 }
 
 test aNameWithSpacesAndAccents {
-    let server = web.routes().start()?
+    let chat = web.Chat()?
+    let server = chat.routes().start()?
     defer server.stop()
     let guest = enter(server, "caf%C3%A9", "Mar%C3%ADa%20Jos%C3%A9")?
     assert(
@@ -94,7 +98,8 @@ test aNameWithSpacesAndAccents {
 }
 
 test thePageComesFromTheExecutable {
-    let server = web.routes().start()?
+    let chat = web.Chat()?
+    let server = chat.routes().start()?
     defer server.stop()
     let page = http.get("{server.url()}/")?
     assert(page.header("Content-Type").unwrapOr("").startsWith("text/html"))

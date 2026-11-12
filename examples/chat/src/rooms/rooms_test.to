@@ -1,9 +1,44 @@
+import std.executor
 import std.json
+import std.sync
 
-/// What a connection is told, a few words for each line it takes.
-fn heard(rooms: var Rooms, id: Int): Array[String] ! json.JsonError {
+/// Someone in a test: the mailbox of a connection, and the lines it took.
+type Guest = {
+    mailbox: executor.Actor[String, Never]
+    seen: sync.Mutex[Array[String]]
+}
+
+/// A guest whose mailbox holds `capacity` lines. While `gate` is closed,
+/// they take one line and read no further, as a browser on a bad network.
+fn guestBehind(gate: sync.Mutex[Bool], capacity: Int = 16): Guest ! executor.ExecutorError {
+    let nothing: Array[String] = []
+    let seen = sync.Mutex(nothing)
+    let mailbox =
+        executor.actor(
+            0,
+            capacity,
+            (_: var Int, text: String) {
+                seen.update((lines) { lines.push(text) })
+                gate.updateWhen((open) { open }, (_) {})
+            },
+        )?
+    Guest { mailbox, seen }
+}
+
+/// A guest who reads everything at once.
+fn guest(capacity: Int = 16): Guest ! executor.ExecutorError {
+    guestBehind(sync.Mutex(true), capacity)
+}
+
+/// Waits until a guest took so many lines.
+fn waitFor(who: ref Guest, lines: Int) {
+    who.seen.updateWhen((taken) { taken.length() >= lines }, (_) {})
+}
+
+/// What a guest was told, a few words for each line.
+fn heard(who: ref Guest): Array[String] ! json.JsonError {
     var words: Array[String] = []
-    for text in rooms.take(id) {
+    for text in who.seen.get() {
         let event = json.decode[Event](text)?
         words.push(
             match event.kind {
@@ -19,15 +54,22 @@ fn heard(rooms: var Rooms, id: Int): Array[String] ! json.JsonError {
 }
 
 test aRoomHearsWhoComesSpeaksAndGoes {
-    var rooms = Rooms {}
-    rooms.enter(1, "tea", "ada")
-    rooms.enter(2, "tea", "leo")
-    rooms.say(1, "  hello  ")
-    rooms.say(2, "hi")
-    rooms.leave(2)
+    let counts = sync.Map[String, Int]()
+    let hub = start(counts)?
+    let ada = guest()?
+    let leo = guest()?
+    let to = hub.reference()
+    to.send(Told.Enter(1, "tea", "ada", ada.mailbox.reference()))?
+    to.send(Told.Enter(2, "tea", "leo", leo.mailbox.reference()))?
+    to.send(Told.Say(1, "  hello  "))?
+    to.send(Told.Say(2, "hi"))?
+    to.send(Told.Leave(2))?
+    hub.stop()?  // after everything it was told
+    ada.mailbox.stop()?
+    leo.mailbox.stop()?
 
     assert(
-        heard(var rooms, 1)? ==
+        heard(ref ada)? ==
             [
                 "welcome to tea with [ada]",
                 "leo joined: [ada, leo]",
@@ -36,84 +78,106 @@ test aRoomHearsWhoComesSpeaksAndGoes {
                 "leo left: [ada]",
             ],
     )
-    assert(rooms.counts() == ["tea": 1])
-    assert(heard(var rooms, 1)? == [])  // taken is taken
+    assert(heard(ref leo)? == ["welcome to tea with [ada, leo]", "ada: hello", "leo: hi"])
+    assert(counts.snapshot() == ["tea": 1])
 }
 
 test roomsDoNotHearEachOther {
-    var rooms = Rooms {}
-    rooms.enter(1, "tea", "ada")
-    rooms.enter(2, "coffee", "zoe")
-    rooms.say(1, "anyone for tea?")
+    let counts = sync.Map[String, Int]()
+    let hub = start(counts)?
+    let ada = guest()?
+    let zoe = guest()?
+    let to = hub.reference()
+    to.send(Told.Enter(1, "tea", "ada", ada.mailbox.reference()))?
+    to.send(Told.Enter(2, "coffee", "zoe", zoe.mailbox.reference()))?
+    to.send(Told.Say(1, "anyone for tea?"))?
+    hub.stop()?
+    ada.mailbox.stop()?
+    zoe.mailbox.stop()?
 
-    assert(heard(var rooms, 1)? == ["welcome to tea with [ada]", "ada: anyone for tea?"])
-    assert(heard(var rooms, 2)? == ["welcome to coffee with [zoe]"])
-    assert(rooms.counts() == ["tea": 1, "coffee": 1])
+    assert(heard(ref ada)? == ["welcome to tea with [ada]", "ada: anyone for tea?"])
+    assert(heard(ref zoe)? == ["welcome to coffee with [zoe]"])
+    assert(counts.snapshot() == ["tea": 1, "coffee": 1])
 }
 
 test aNewcomerHearsWhatWasSaid {
-    var rooms = Rooms {}
-    rooms.enter(1, "tea", "ada")
+    let hub = start(sync.Map[String, Int]())?
+    let ada = guest()?
+    let leo = guest(capacity: 64)?
+    let to = hub.reference()
+    to.send(Told.Enter(1, "tea", "ada", ada.mailbox.reference()))?
     for n in 1..=25 {
-        rooms.say(1, "message {n}")
+        to.send(Told.Say(1, "message {n}"))?
     }
-    rooms.enter(2, "tea", "leo")
+    to.send(Told.Enter(2, "tea", "leo", leo.mailbox.reference()))?
+    hub.stop()?
+    ada.mailbox.stop()?
+    leo.mailbox.stop()?
 
-    let lines = heard(var rooms, 2)?
+    let lines = heard(ref leo)?
     assert(lines.length() == 1 + Kept)
-    assert(lines[0] == "welcome to tea with [ada, leo]")
     assert(lines[1] == "ada: message 6" and lines[-1] == "ada: message 25")
 }
 
 test anEmptyRoomForgets {
-    var rooms = Rooms {}
-    rooms.enter(1, "tea", "ada")
-    rooms.say(1, "a secret")
-    rooms.leave(1)
-    rooms.enter(2, "tea", "leo")
+    let counts = sync.Map[String, Int]()
+    let hub = start(counts)?
+    let ada = guest()?
+    let leo = guest()?
+    let to = hub.reference()
+    to.send(Told.Enter(1, "tea", "ada", ada.mailbox.reference()))?
+    to.send(Told.Say(1, "a secret"))?
+    to.send(Told.Leave(1))?
+    to.send(Told.Enter(2, "tea", "leo", leo.mailbox.reference()))?
+    hub.stop()?
+    ada.mailbox.stop()?
+    leo.mailbox.stop()?
 
-    assert(heard(var rooms, 2)? == ["welcome to tea with [leo]"])
-    assert(heard(var rooms, 1)? == [])  // who left has nothing waiting
+    assert(heard(ref leo)? == ["welcome to tea with [leo]"])
+    assert(counts.snapshot() == ["tea": 1])
 }
 
 test namesAndMessagesAreCut {
-    var rooms = Rooms {}
-    rooms.enter(1, "tea", "  {"a".repeat(40)}  ")
-    rooms.say(1, "é".repeat(600))
-    rooms.say(1, "   ")
+    let hub = start(sync.Map[String, Int]())?
+    let ada = guest()?
+    let to = hub.reference()
+    to.send(Told.Enter(1, "tea", "  {"a".repeat(40)}  ", ada.mailbox.reference()))?
+    to.send(Told.Say(1, "é".repeat(600)))?
+    to.send(Told.Say(1, "   "))?
+    hub.stop()?
+    ada.mailbox.stop()?
 
-    let short = "a".repeat(24)
-    assert(heard(var rooms, 1)? == ["welcome to tea with [{short}]", "{short}: {"é".repeat(500)}"])
+    assert(
+        heard(ref ada)? ==
+            ["welcome to tea with [{"a".repeat(24)}]", "{"a".repeat(24)}: {"é".repeat(500)}"],
+    )
 }
 
-test aSlowReaderLosesLinesAndIsToldHowMany {
-    var rooms = Rooms {}
-    rooms.enter(1, "tea", "ada")
-    rooms.enter(2, "tea", "leo")
-    _ = rooms.take(2)  // leo reads the welcome, and then nothing
-    for n in 1..=Waiting + 3 {
-        rooms.say(1, "message {n}")
-        _ = rooms.take(1)  // ada keeps up
+test aSlowReaderMissesLinesAndIsToldHowMany {
+    let hub = start(sync.Map[String, Int]())?
+    let gate = sync.Mutex(false)
+    let ada = guest()?
+    let leo = guestBehind(gate, capacity: 2)?
+    let to = hub.reference()
+    to.send(Told.Enter(1, "tea", "ada", ada.mailbox.reference()))?
+    to.send(Told.Enter(2, "tea", "leo", leo.mailbox.reference()))?
+    waitFor(ref leo, 1)  // leo took the welcome, and reads no further
+
+    for text in ["one", "two", "three", "four"] {
+        to.send(Told.Say(1, text))?
     }
+    waitFor(ref ada, 6)  // the hub sent all four: two did not fit leo's mailbox
 
-    let lines = heard(var rooms, 2)?
-    assert(lines.length() == Waiting + 1)
-    assert(lines[0] == "ada: message 1" and lines[-2] == "ada: message {Waiting}")
-    assert(lines[-1] == "missed 3")
+    gate.set(true)  // leo's network is back
+    waitFor(ref leo, 3)
+    to.send(Told.Say(1, "five"))?
+    hub.stop()?
+    ada.mailbox.stop()?
+    leo.mailbox.stop()?
 
-    rooms.say(1, "still here?")
-    assert(heard(var rooms, 2)? == ["ada: still here?"])
-}
-
-test onlyWhoHasLinesIsWoken {
-    var rooms = Rooms {}
-    rooms.enter(1, "tea", "ada")
-    rooms.enter(2, "coffee", "zoe")
-    _ = rooms.take(1)
-    _ = rooms.take(2)
-    rooms.say(2, "espresso")
-
-    assert(not rooms.hasLinesFor(1))
-    assert(rooms.hasLinesFor(2))
-    assert(not rooms.hasLinesFor(99))
+    assert(
+        heard(ref leo)? ==
+            ["welcome to tea with [ada, leo]", "ada: one", "ada: two", "missed 2", "ada: five"],
+    )
+    assert(heard(ref ada)?.length() == 7)  // ada was never held up
 }
