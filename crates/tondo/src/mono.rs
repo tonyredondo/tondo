@@ -10,7 +10,7 @@ use crate::hir::{
     Program, Segment, Stmt, TraitId, TraitInfo,
 };
 use crate::source::Span;
-use crate::types::{CursorKind, SOME, Ty, TyKind, Types};
+use crate::types::{AdtKind, CursorKind, Payload, SOME, Ty, TyKind, Types};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Instantiation depth beyond which a generic function is considered to
@@ -51,6 +51,7 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         queue: VecDeque::new(),
         out: Vec::new(),
         display: HashMap::new(),
+        shown_parts: HashSet::new(),
         runaway: None,
         conversions: Vec::new(),
         unions: HashMap::new(),
@@ -229,6 +230,9 @@ struct Mono<'a> {
     instances: HashMap<(FnId, Vec<Ty>), FnId>,
     /// The user `Display.display` of types displayed inside collections.
     display: HashMap<Ty, FnId>,
+    /// The records and enums that show their parts, whose parts' `Display`
+    /// is collected.
+    shown_parts: HashSet<Ty>,
     queue: VecDeque<(FnId, Vec<Ty>, FnId)>,
     out: Vec<Option<Function>>,
     runaway: Option<String>,
@@ -933,14 +937,29 @@ impl Mono<'_> {
             }
             TyKind::Map(key, value) | TyKind::Result(key, value) => vec![key, value],
             TyKind::Union(members) => members,
-            TyKind::Adt(_) => {
-                if !self.display.contains_key(&ty)
-                    && let Resolved::Fn(id, types) = self.resolve(DISPLAY, 0, &[ty])
-                {
-                    let instance = self.instance(id, types);
-                    self.display.insert(ty, instance);
+            TyKind::Adt(id) => {
+                if self.display.contains_key(&ty) || self.shown_parts.contains(&ty) {
+                    return;
                 }
-                return;
+                if let Resolved::Fn(function, types) = self.resolve(DISPLAY, 0, &[ty]) {
+                    let instance = self.instance(function, types);
+                    self.display.insert(ty, instance);
+                    return;
+                }
+                // A record or an enum without an `impl Display`, which
+                // shows its parts with theirs (language 9.4).
+                self.shown_parts.insert(ty);
+                match &self.types.adt(id).kind {
+                    AdtKind::Record(fields) => fields.iter().filter(|f| !f.secret).map(|f| f.ty).collect(),
+                    AdtKind::Enum(variants) => variants
+                        .iter()
+                        .flat_map(|v| match &v.payload {
+                            Payload::Record(fields) => fields.iter().filter(|f| !f.secret).map(|f| f.ty).collect(),
+                            payload => payload.types(),
+                        })
+                        .collect(),
+                    AdtKind::Newtype(_) => return,
+                }
             }
             _ => return,
         };

@@ -3,14 +3,14 @@
 // needs its types from somewhere.
 
 import std.console
+import std.http
 import std.sync
-import std.xml
 
 fn main() {
-    let node = xml.Node.Text("a")
-    console.println("{node}")
+    let client = http.Client()
+    console.println("{client}")
     let counts = sync.Map()
 }
 
-// expect-error: E1105 `xml.Node` does not implement `Display`: another module declares it, so write what to show of it, its fields or a `match` on it
+// expect-error: E1105 `http.Client` does not implement `Display`: another module declares it, so write what to show of it, its fields or a `match` on it
 // expect-error: E1101 `sync.Map` needs the types it holds: `sync.Map[String, Int]()`, or give the binding its type

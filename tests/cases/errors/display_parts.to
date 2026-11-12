@@ -1,0 +1,37 @@
+// A record or an enum without the `Display` of one of its parts has none,
+// and the error names that part and says what to write.
+
+import std.console
+import std.http
+
+type Job = {
+    name: String
+    run: fn()
+}
+
+enum Task {
+    Now(fn())
+    Later
+}
+
+type Box[T] = {
+    value: T
+}
+
+fn boxed[T](box: Box[T]): String {
+    "{box}"
+}
+
+fn main() {
+    let job = Job { name: "a", run: () {} }
+    console.println("{job}")
+    console.println("{Task.Later}")
+    console.println([job].join(", "))
+    console.println("{http.Client()}")
+}
+
+// expect-error: E1105 `Box[T]` does not implement `Display`: its field `value`, of type `T`, has none: declare `T: Display`
+// expect-error: E1105 `Job` does not implement `Display`: its field `run`, of type `fn()`, has none; write what to show, as `impl Display for Job { fn display(self): String { ... } }`
+// expect-error: E1105 `Task` does not implement `Display`: the data of `Now`, of type `fn()`, has none; write what to show, as `impl Display for Task { fn display(self): String { ... } }`
+// expect-error: E1105 `Job` does not implement `Display`, which `Array.join` requires of `T`: its field `run`, of type `fn()`, has none
+// expect-error: E1105 `http.Client` does not implement `Display`: another module declares it, so write what to show of it, its fields or a `match` on it

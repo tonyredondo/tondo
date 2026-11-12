@@ -120,6 +120,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     }
 
     pub(super) fn assign(&mut self, place: &Place, rvalue: &Rvalue, span: Span) {
+        self.e.statement = Some(span);
         let ty = self.place_ty(place);
         let class = self.e.cg.class(ty);
         if class == Class::Zero {

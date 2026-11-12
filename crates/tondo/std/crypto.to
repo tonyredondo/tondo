@@ -169,6 +169,7 @@ pub enum Cipher {
 /// let opened = key.open(sealed, context: "user 7".bytes())?
 /// console.println(String.fromBytes(opened)?)
 /// ```
+@secret
 pub type SecretKey = {
     priv cipher: Cipher
     priv key: Array[Byte]
@@ -281,6 +282,7 @@ pub enum KeyKind {
 /// console.println("{key.publicKey().verify("message".bytes(), signature)}")
 /// console.print(key.pem())
 /// ```
+@secret
 pub type PrivateKey = {
     priv signs: KeyKind
     priv pkcs8: Array[Byte]

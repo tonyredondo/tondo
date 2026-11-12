@@ -1,5 +1,5 @@
-// `expect` on an error says the message and the error, and a panic inside
-// the standard library points at the program's call.
+// `expect` on an error says the message and the error, with its `Display`,
+// and a panic inside the standard library points at the program's call.
 enum LoadError {
     Missing(String)
     Broken
@@ -14,6 +14,6 @@ fn main() {
 }
 
 // expect-panic: P0008
-// expect-stderr: panic[P0008]: explicit-panic: loading the app: LoadError.Missing
+// expect-stderr: panic[P0008]: explicit-panic: loading the app: Missing(app.toml)
 // expect-stderr:  --> panic_expect_error.to:13:9
 // expect-stderr:   main                           panic_expect_error.to:13:9

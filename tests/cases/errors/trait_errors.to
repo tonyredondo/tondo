@@ -45,7 +45,6 @@ fn main() {
     let user = User { name: "a" }
     let text = user.summarize()
     let other = render(42)
-    let shown = "{Item { id: 1 }}"
 }
 
 // expect-error: E1114 `summarize` does not match `Summary`: the result must be `String`
@@ -57,5 +56,4 @@ fn main() {
 // expect-error: E1115 this bound is repeated
 // expect-error: E1004 `summarize` comes from more than one bound
 // expect-error: E1105 `Int` does not implement `Summary`, which `render` requires of `T`
-// expect-error: E1105 `Item` does not implement `Display`: add `impl Display for Item
 // expect-warning: W1003 the parameter `value` is never used: write `_` instead, or `_value` to hold its value until the function ends

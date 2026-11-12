@@ -392,10 +392,17 @@ pub struct AdtDef {
     pub instance: Option<(TemplateId, Vec<Ty>)>,
     /// `@secret`: the tools show `<secret>` for its values.
     pub secret: bool,
+    /// The module that declares it, which sees its `priv` fields; none for
+    /// what the compiler makes.
+    pub module: Option<ModuleId>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TemplateId(pub u32);
+
+/// A module that declares types, as `Types::module` numbers it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ModuleId(pub u32);
 
 /// A generic record, enum or newtype. Each instantiation, such as
 /// `Pair[Int, String]`, is an ordinary nominal type whose definition is the
@@ -407,6 +414,8 @@ pub struct Template {
     pub kind: Option<AdtKind>,
     /// `@secret`, for all its instances.
     pub secret: bool,
+    /// The module that declares it, for all its instances.
+    pub module: Option<ModuleId>,
 }
 
 /// The body and signature of a closure expression (11.8). Its type is an
@@ -525,6 +534,8 @@ pub struct Types {
     pub shown: HashMap<Ty, Shown>,
     /// The `extern type`s, laid out as C lays out their structs.
     pub foreign: HashMap<AdtId, CLayout>,
+    /// The paths of the modules that declare types, as `std.json`.
+    modules: Vec<String>,
 }
 
 /// How an `extern type` is laid out: C's rules, without padding when
@@ -597,6 +608,7 @@ impl Default for Types {
             can_cycle: RwLock::default(),
             shown: HashMap::new(),
             foreign: HashMap::new(),
+            modules: Vec::new(),
         };
         for kind in [TyKind::Error, TyKind::Unit, TyKind::Never, TyKind::Bool, TyKind::String] {
             types.intern(kind);
@@ -691,7 +703,7 @@ impl Types {
     /// Declares a nominal type; its definition is filled in by `define_adt`.
     pub fn declare_adt(&mut self, name: String) -> (AdtId, Ty) {
         let id = AdtId(self.adts.len() as u32);
-        self.adts.push(AdtDef { name, kind: AdtKind::Record(Vec::new()), instance: None, secret: false });
+        self.adts.push(AdtDef { name, kind: AdtKind::Record(Vec::new()), instance: None, secret: false, module: None });
         (id, self.intern(TyKind::Adt(id)))
     }
 
@@ -703,6 +715,29 @@ impl Types {
     /// Marks a generic type `@secret`.
     pub fn hide_template(&mut self, id: TemplateId) {
         self.templates[id.0 as usize].secret = true;
+    }
+
+    /// The number of the module at `path`, as `std.json`.
+    pub fn module(&mut self, path: &str) -> ModuleId {
+        let index = self.modules.iter().position(|m| m == path).unwrap_or_else(|| {
+            self.modules.push(path.to_string());
+            self.modules.len() - 1
+        });
+        ModuleId(index as u32)
+    }
+
+    /// The number of the module at `path`, when it declares types.
+    pub fn declaring(&self, path: &str) -> Option<ModuleId> {
+        self.modules.iter().position(|m| m == path).map(|index| ModuleId(index as u32))
+    }
+
+    /// Says which module declares a type, and a generic type's instances.
+    pub fn place_adt(&mut self, id: AdtId, module: ModuleId) {
+        self.adts[id.0 as usize].module = Some(module);
+    }
+
+    pub fn place_template(&mut self, id: TemplateId, module: ModuleId) {
+        self.templates[id.0 as usize].module = Some(module);
     }
 
     /// Whether the tools hide the values of a type: it is `@secret`, or a
@@ -765,7 +800,7 @@ impl Types {
     }
 
     pub fn declare_template(&mut self, name: String, params: Vec<Ty>) -> TemplateId {
-        self.templates.push(Template { name, params, kind: None, secret: false });
+        self.templates.push(Template { name, params, kind: None, secret: false, module: None });
         TemplateId(self.templates.len() as u32 - 1)
     }
 
@@ -1012,6 +1047,7 @@ impl Types {
         let (id, ty) = self.declare_adt(name);
         self.adts[id.0 as usize].instance = Some((template, args.clone()));
         self.adts[id.0 as usize].secret = self.templates[template.0 as usize].secret;
+        self.adts[id.0 as usize].module = self.templates[template.0 as usize].module;
         self.instances.insert((template, args), ty);
         if self.templates[template.0 as usize].kind.is_some() {
             self.define_instance(id);

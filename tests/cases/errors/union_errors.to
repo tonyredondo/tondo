@@ -1,6 +1,7 @@
 type A = { x: Int }
 type B = { y: Int }
 type C = { z: Int }
+type Job = { run: fn() }
 
 fn c(): Int ! C {
     fail C { z: 1 }
@@ -26,7 +27,7 @@ fn h(value: Int | String): String {
 
 fn main() {
     let pair: (Int, Int) | String = "x"
-    let w: Int | A = 1
+    let w: Int | Job = 1
     let text = "{w}"
 }
 
@@ -35,5 +36,5 @@ fn main() {
 // expect-error: E1202 `String` alone would bind any value
 // expect-error: E1202 `Bool` is not a member of `Int | String`
 // expect-error: E1102 a tuple cannot be a union member: wrap it in a newtype
-// expect-error: E1105 `A` does not; `match` on its members
+// expect-error: E1105 `Job` does not; `match` on its members
 // expect-warning: W1004 `String` should be `string`: functions, fields, bindings and modules are `camelCase`, with acronyms written as words

@@ -112,7 +112,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let slot = self.e.fb.create_sized_stack_slot(data);
                 let builder = self.e.fb.ins().stack_addr(POINTER, slot, 0);
                 let size = self.e.element_size(element);
-                let display = self.e.glue_address(Glue::Display, element);
+                let display = self.e.glue_address(self.e.display_glue(element), element);
                 self.e.call_rt(Rt::SbJoin, &[builder, array, size, display, separator]);
                 Val::Scalar(self.e.call_rt(Rt::SbFinish, &[builder]).unwrap())
             }

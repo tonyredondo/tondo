@@ -595,6 +595,13 @@ impl<'a> Checker<'a> {
     /// so declarations may refer to each other in any order (7.11).
     /// The name a type shows: its own for an intrinsic type the prelude
     /// declares, such as `Range`.
+    /// The module `module` is, as the types and the code generator number
+    /// it from its path.
+    pub(super) fn declaring_module(&mut self, module: u32) -> crate::types::ModuleId {
+        let path = self.module_paths.get(module as usize).map(|path| path.join(".")).unwrap_or_default();
+        self.types.module(&path)
+    }
+
     pub(super) fn shown_type_name(&self, name: &str, module: u32) -> String {
         match name.strip_prefix("prelude.") {
             Some(bare) if PRELUDE_TYPES.contains(&bare) && Some(module) == self.prelude => bare.to_string(),
@@ -694,6 +701,8 @@ impl<'a> Checker<'a> {
                 if secret_type(item) {
                     self.types.hide_template(template);
                 }
+                let declaring = self.declaring_module(module);
+                self.types.place_template(template, declaring);
                 self.declare_type_name(name, TypeName::Template(template));
                 templates.push((item, name, template, generics, params));
                 continue;
@@ -717,6 +726,8 @@ impl<'a> Checker<'a> {
             if secret_type(item) {
                 self.types.hide_adt(id);
             }
+            let declaring = self.declaring_module(module);
+            self.types.place_adt(id, declaring);
             if let ast::Item::Type(decl) = item
                 && decl.context
             {

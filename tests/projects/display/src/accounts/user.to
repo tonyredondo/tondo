@@ -1,0 +1,21 @@
+import std.console
+
+pub type User = {
+    name: String
+    age: Int
+    priv password: String
+    @secret
+    token: String
+}
+
+pub fn User(name: String): User {
+    User { name, age: 36, password: "hunter2", token: "t0k" }
+}
+
+/// Inside its module, a record shows its `priv` fields, alone and in a
+/// collection; `join`, which another module writes, shows them as `…`.
+pub fn showInside(user: User) {
+    console.println("{user}")
+    console.println("{[user]}")
+    console.println([user].join(", "))
+}

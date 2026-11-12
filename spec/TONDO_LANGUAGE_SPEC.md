@@ -2031,8 +2031,9 @@ que dice qué usar en su lugar. No cambia lo que hace el programa. Sin texto es 
 
 `@secret`, en un campo de un record, de una variante o de un contexto, o antes
 de un `type`, oculta sus valores a las herramientas: el depurador, los volcados y
-las grabaciones al mostrarlos escriben `<secret>` (7.4 del toolchain). No cambia
-nada del programa: `Display`, los formatos y `==` ven el valor. En un tipo va con
+las grabaciones al mostrarlos escriben `<secret>` (7.4 del toolchain), y también
+el `Display` que el compilador da a un record o a un enum (19.6). No cambia nada
+más del programa: un `impl Display` escrito, los formatos y `==` ven el valor. En un tipo va con
 el valor a donde vaya, también en un newtype de él; en un campo vale solo en ese
 campo, y una variable a la que se copie muestra su valor. Con argumento es
 `E1102`; un campo que lleva `@log` o `@label` y es `@secret`, o cuyo tipo lo es,
@@ -7872,10 +7873,10 @@ trait Display {
 `Display` es un trait estático predeclarado, no una capacidad estructural cerrada:
 los módulos pueden implementarlo explícitamente para sus tipos respetando las
 reglas ordinarias de coherencia. “Intrínseco” significa aquí que la interpolación
-lo consulta por contrato del lenguaje, no que el compilador invente
-implementaciones para tipos de usuario.
+lo consulta por contrato del lenguaje; el compilador da el de los tipos de
+usuario que siguen, y uno escrito en su módulo gana.
 
-La resolución es estática. No crea un trait object ni realiza reflection. Los escalares, strings, colecciones intrínsecas, `T?` y `T ! E` implementan `Display` cuando sus componentes también lo implementan. Una unión lo implementa cuando todos sus miembros lo implementan, y se muestra como el miembro que contiene: `"{value}"` con un `Int | String` que tiene `12` da `12`. Un enum cuyas variantes no llevan nada implementa `Display` sin escribirlo, salvo que su módulo lo implemente: se muestra como el nombre de su variante, `"{level}"` con `Level.High` da `High`; el compilador escribe esa implementación en el módulo del enum, también para los de la librería estándar. Records, newtypes y enums con variantes que llevan datos deben implementarlo explícitamente si quieren interpolarse como un valor completo.
+La resolución es estática. No crea un trait object ni realiza reflection. Los escalares, strings, colecciones intrínsecas, `T?` y `T ! E` implementan `Display` cuando sus componentes también lo implementan. Una unión lo implementa cuando todos sus miembros lo implementan, y se muestra como el miembro que contiene: `"{value}"` con un `Int | String` que tiene `12` da `12`. Un enum cuyas variantes no llevan nada implementa `Display` sin escribirlo, salvo que su módulo lo implemente: se muestra como el nombre de su variante, `"{level}"` con `Level.High` da `High`; el compilador escribe esa implementación en el módulo del enum, también para los de la librería estándar. Un record y un enum con datos que no lo implementan lo tienen cuando cada una de sus partes lo tiene, y se muestran con ellas: un record es su nombre, sin módulo ni argumentos de tipo, y sus campos en el orden en que se declaran, cada uno con su `Display`, como una colección muestra sus elementos: `User { name: Ada, age: 36 }`; uno sin campos, `Empty {}`. Una variante es su nombre y sus datos, como tupla o como record: `Card(4242)`, `Transfer { iban: ES00, reference: rent }`, `Cash`. Un texto no lleva comillas, como en `[a b, c]`. Un campo `priv` se muestra cuando el código que pide el texto es del módulo del tipo, y como `…` cuando es de otro: una interpolación escrita en el módulo lo muestra, también dentro de una colección, y una función de otro módulo que recibe un `T: Display`, como `join` o una que registra, escribe `…`. Lo `@secret` (9.2), un campo o el tipo entero, se muestra como `<secret>`. Una parte sin `Display`, como una función o un canal, deja el tipo sin él, y `E1105` nombra esa parte. Un newtype lo implementa explícitamente. El ancho y la alineación de `"{user:<30}"` se aplican al texto entero.
 
 La interpolación invoca `Display.display` mediante su receptor `self`: observa la expresión durante la llamada y no mueve un valor afín. Si la expresión es un temporal, ese temporal permanece vivo hasta terminar su conversión.
 

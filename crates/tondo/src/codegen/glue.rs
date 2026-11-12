@@ -14,6 +14,9 @@ pub(super) enum Glue {
     Equal,
     /// Appends the `Display` text of a value to a string builder.
     Display,
+    /// The same, from the code of a module, which sees the `priv` fields
+    /// of its types.
+    DisplayFrom(ModuleId),
     /// Hashes a `Key` value.
     Hash,
     /// Runs a member of the test tree, a `fn()` value, and reports the
@@ -118,9 +121,16 @@ pub(super) fn define_glue(
             e.refcount(result, value, true);
             e.fb.ins().return_(&[]);
         }
-        (Glue::Display, _) => {
-            let value = e.value_at(params[1], ty);
-            e.append_display(params[0], ty, value);
+        (Glue::Display | Glue::DisplayFrom(_), _) => {
+            if let Glue::DisplayFrom(module) = kind {
+                e.site = Some(module);
+            }
+            if e.shows_parts(ty) {
+                e.append_parts(params[0], ty, params[1]);
+            } else {
+                let value = e.value_at(params[1], ty);
+                e.append_display(params[0], ty, value);
+            }
             e.fb.ins().return_(&[]);
         }
         (Glue::Secret, _) => {
@@ -474,7 +484,11 @@ impl Codegen<'_> {
             return id;
         }
         let signature = self.glue_signature(kind);
-        let name = format!("tondo_glue_{kind:?}_{}", self.glue.len()).to_lowercase();
+        let kind_name = match kind {
+            Glue::DisplayFrom(_) => "DisplayFrom".to_string(),
+            _ => format!("{kind:?}"),
+        };
+        let name = format!("tondo_glue_{kind_name}_{}", self.glue.len()).to_lowercase();
         let id = self.module.declare_function(&name, Linkage::Local, &signature).expect("glue declaration");
         self.glue.insert((kind, ty), id);
         self.pending_glue.push((kind, ty, id));

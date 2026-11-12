@@ -2811,6 +2811,11 @@ impl<'a> Checker<'a> {
                         self.display(ty)
                     ),
                     None if reflect => REFLECT_WHY.into(),
+                    None if missing == "`Display`"
+                        && let Some(reason) = self.undisplayed_part(actual) =>
+                    {
+                        format!(": {reason}")
+                    }
                     None if automatic => {
                         "; the compiler implements it for records, enums and newtypes whose parts all implement it"
                             .into()

@@ -1,0 +1,99 @@
+// A record and an enum without an `impl Display` show their parts, each
+// with its own `Display`: a type's own `impl` wins, a generic type shows
+// its arguments' values, a type that holds itself shows each level, and a
+// format's width applies to the whole text. The `Display` of a part the
+// standard library declares is compiled for it.
+
+import std.console
+import std.fs
+
+type Point = {
+    x: Int
+    y: Int
+}
+
+type Empty = {}
+
+enum Payment {
+    Card(Int)
+    Transfer { iban: String, reference: String }
+    Cash
+}
+
+type Pair[A, B] = {
+    first: A
+    second: B
+}
+
+type Node = {
+    value: Int
+    next: Node?
+}
+
+enum Tree {
+    Leaf(Int)
+    Branch(Tree, Tree)
+}
+
+type Celsius = {
+    degrees: Float
+}
+
+impl Display for Celsius {
+    fn display(self): String {
+        "{self.degrees} °C"
+    }
+}
+
+type Reading = {
+    place: String
+    temperature: Celsius
+    previous: Celsius ! String
+}
+
+type Entry = {
+    name: String
+    kind: fs.FileKind
+}
+
+@secret
+type Key = {
+    bytes: Array[Byte]
+}
+
+fn shown[T: Display](value: T): String {
+    "{value}"
+}
+
+fn main() {
+    console.println("{Point { x: 1, y: 2 }} {Empty {}}")
+    console.println(
+        "{Payment.Card(4242)} {Payment.Transfer { iban: "ES00", reference: "rent" }} {Payment.Cash}",
+    )
+    console.println("{Pair { first: "a", second: [1, 2] }}")
+    console.println("{Node { value: 1, next: Node { value: 2, next: none } }}")
+    console.println("{Tree.Branch(Tree.Leaf(1), Tree.Branch(Tree.Leaf(2), Tree.Leaf(3)))}")
+    let reading = Reading {
+        place: "roof"
+        temperature: Celsius { degrees: 21.5 }
+        previous: err("lost")
+    }
+    console.println("{reading}")
+    console.println("{["a": Point { x: 0, y: 0 }]} {some(Payment.Cash)}")
+    console.println("{Key { bytes: [1, 2] }} {shown(Pair { first: 1.5, second: true })}")
+    console.println("[{Point { x: 1, y: 2 }:>24}] [{Point { x: 1, y: 2 }:<22}]")
+    console.println([Point { x: 1, y: 1 }, Point { x: 2, y: 2 }].join(" & "))
+    console.println("{Entry { name: "notes", kind: fs.FileKind.Directory }}")
+}
+
+// expect-stdout: Point { x: 1, y: 2 } Empty {}
+// expect-stdout: Card(4242) Transfer { iban: ES00, reference: rent } Cash
+// expect-stdout: Pair { first: a, second: [1, 2] }
+// expect-stdout: Node { value: 1, next: some(Node { value: 2, next: none }) }
+// expect-stdout: Branch(Leaf(1), Branch(Leaf(2), Leaf(3)))
+// expect-stdout: Reading { place: roof, temperature: 21.5 °C, previous: err(lost) }
+// expect-stdout: [a: Point { x: 0, y: 0 }] some(Cash)
+// expect-stdout: <secret> Pair { first: 1.5, second: true }
+// expect-stdout: [    Point { x: 1, y: 2 }] [Point { x: 1, y: 2 }  ]
+// expect-stdout: Point { x: 1, y: 1 } & Point { x: 2, y: 2 }
+// expect-stdout: Entry { name: notes, kind: Directory }

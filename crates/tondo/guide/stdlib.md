@@ -504,7 +504,8 @@ fn main(): !crypto.CryptoError {
 ```
 
 - Nothing asks for a nonce, an IV or a mode: `seal` makes its nonce and
-  `open` finds any change. Keys have no `Display`, so none reaches a log.
+  `open` finds any change. A `SecretKey` and a `PrivateKey` are `@secret`:
+  a log, a dump and the debugger show `<secret>`.
 - `verifyPassword` also reads the bcrypt, PBKDF2 and Argon2 hashes other
   programs stored. `==` on bytes and digests takes the same time wherever
   they differ: comparing an HMAC with `==` is safe.
@@ -801,8 +802,9 @@ of it (`W1016`), and `tondo test` warns of what it sees happen, in the test that
 it: read and write in one `update`, or with `compareExchange`.
 
 `@secret` on a field, or before a `type`, makes the tools show `<secret>` for
-its values: dumps, the debugger and its parts. The program itself is not
-touched: `Display`, JSON and `==` see the value. On a type it goes with the
+its values: dumps, the debugger and its parts, and the `Display` the
+compiler gives a record or an enum. The rest of the program sees the value:
+an `impl Display` written for it, JSON and `==`. On a type it goes with the
 value; on a field it holds there only, so a binding it was copied to shows it:
 for a password or a token, prefer `@secret type Token = String`. A recording
 still keeps the bytes the program read. `TONDO_DUMP_VALUES=off` in the program's

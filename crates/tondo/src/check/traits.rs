@@ -870,7 +870,77 @@ impl<'a> Checker<'a> {
                 self.bound_holds(*g, actual, &map, depth + 1).is_none()
             });
         }
+        // A record or an enum without an `impl Display` shows itself when
+        // each of its parts does (9.4); a part that holds it again shows as
+        // it does.
+        if trait_id == DISPLAY
+            && let Some(parts) = self.displayed_parts(ty)
+        {
+            if !self.showing.insert(ty) {
+                return true;
+            }
+            let shown = parts.into_iter().all(|(_, part, _)| self.satisfies_depth(part, DISPLAY, &[], depth + 1));
+            self.showing.remove(&ty);
+            return shown;
+        }
         false
+    }
+
+    /// What a record or an enum declared in a module shows of itself when
+    /// it has no `impl Display` (9.4): each field but a `@secret` one, and
+    /// the data of each variant, with how to name it and whether it is
+    /// `priv`; `None` for another type, and for an iterator, which
+    /// `collect()` shows.
+    pub(super) fn displayed_parts(&mut self, ty: Ty) -> Option<Vec<(String, Ty, bool)>> {
+        let TyKind::Adt(id) = *self.types.kind(ty) else { return None };
+        let adt = self.types.adt(id);
+        adt.module?;
+        if adt.secret {
+            return Some(Vec::new());
+        }
+        let parts = match &adt.kind {
+            AdtKind::Record(fields) => fields
+                .iter()
+                .filter(|f| !f.secret)
+                .map(|f| (format!("its field `{}`", f.name), f.ty, f.private))
+                .collect(),
+            AdtKind::Enum(variants) => variants
+                .iter()
+                .flat_map(|v| match &v.payload {
+                    Payload::Unit => Vec::new(),
+                    Payload::Tuple(items) => {
+                        items.iter().map(|&item| (format!("the data of `{}`", v.name), item, false)).collect()
+                    }
+                    Payload::Record(fields) => fields
+                        .iter()
+                        .filter(|f| !f.secret)
+                        .map(|f| (format!("the field `{}` of `{}`", f.name, v.name), f.ty, f.private))
+                        .collect(),
+                })
+                .collect(),
+            AdtKind::Newtype(_) => return None,
+        };
+        if self.iterator_element(ty).is_some() {
+            return None;
+        }
+        Some(parts)
+    }
+
+    /// The first part of a record or an enum that has no `Display`, which
+    /// is why it has none: as `its field `run`, of type `fn()``, and how to
+    /// give it one when the part is a type parameter; `None` when it is a
+    /// `priv` field of another module's type, which is no business here.
+    pub(super) fn undisplayed_part(&mut self, ty: Ty) -> Option<String> {
+        let parts = self.displayed_parts(ty)?;
+        let (name, part, private) = parts.into_iter().find(|&(_, part, _)| !self.satisfies(part, DISPLAY, &[]))?;
+        if private && self.owner(ty).is_none_or(|o| o.module != self.module) {
+            return None;
+        }
+        let shown = self.types.display(part);
+        Some(match self.types.kind(part) {
+            TyKind::Param(_) => format!("{name}, of type `{shown}`, has none: declare `{shown}: Display`"),
+            _ => format!("{name}, of type `{shown}`, has none"),
+        })
     }
 
     /// The `impl`s of a trait that may be for `ty`, in the order they were

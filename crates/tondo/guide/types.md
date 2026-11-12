@@ -113,10 +113,15 @@ fn main() {
 }
 ```
 
-An enum whose variants hold nothing shows its variant's name, with no
-`impl Display` to write: `"{level}"` with `Level.High` is `High`, and so
-for the library's, as `"{fs.FileKind.File}"`. Its own `impl Display`, in
-its module, wins.
+A record and an enum show themselves, with no `impl Display` to write,
+when each of their parts does: `"{user}"` is `User { name: Ada, age: 36 }`,
+`"{payment}"` is `Card(4242)`, `Transfer { iban: ES00, reference: rent }` or
+`Cash`, and `"{level}"` with `Level.High` is `High`, as for the library's.
+A `priv` field shows in its module's code and is `…` in another's, also in
+a function of another module that takes a `T: Display`, as `join`; a
+`@secret` one is `<secret>`. A type with a part that has no `Display`, as a
+`fn()`, has none. Its own `impl Display`, in its module, wins: write one
+for a text meant for people.
 
 ## Optional values, results and unions
 

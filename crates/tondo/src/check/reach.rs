@@ -16,6 +16,8 @@ pub(super) struct Reach {
     /// The methods reached, by trait, method and the head of the receiver
     /// (none for any), with how many implementations there were then.
     methods: HashMap<(TraitId, u32, Option<Head>), usize>,
+    /// The records and enums whose parts' `Display` was reached.
+    shown_parts: HashSet<Ty>,
 }
 
 impl Reach {
@@ -28,6 +30,7 @@ impl Reach {
             next: 0,
             closures: 0,
             methods: HashMap::new(),
+            shown_parts: HashSet::new(),
         }
     }
 
@@ -144,8 +147,21 @@ impl<'a> Checker<'a> {
                 self.reach_display(key, reach);
                 self.reach_display(value, reach);
             }
-            TyKind::Union(members) => members.into_iter().for_each(|member| self.reach_display(member, reach)),
-            TyKind::Adt(_) | TyKind::Param(_) | TyKind::Opaque(..) => self.reach_method(DISPLAY, 0, ty, reach),
+            TyKind::Union(members) | TyKind::Tuple(members) => {
+                members.into_iter().for_each(|member| self.reach_display(member, reach))
+            }
+            TyKind::Adt(_) => {
+                self.reach_method(DISPLAY, 0, ty, reach);
+                // A record or an enum that shows its parts shows them with
+                // theirs (language 19.6).
+                if self.impl_candidates(DISPLAY, ty).is_empty()
+                    && reach.shown_parts.insert(ty)
+                    && let Some(parts) = self.displayed_parts(ty)
+                {
+                    parts.into_iter().for_each(|(_, part, _)| self.reach_display(part, reach));
+                }
+            }
+            TyKind::Param(_) | TyKind::Opaque(..) => self.reach_method(DISPLAY, 0, ty, reach),
             _ => {}
         }
     }

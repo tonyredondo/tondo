@@ -954,6 +954,18 @@ impl<'a> Checker<'a> {
                             self.diags.fix("show `collect()`", false, vec![(end, ".collect()".into())]);
                             out.push(hir::Segment::Value(value));
                             continue;
+                        } else if let Some(reason) = self.undisplayed_part(value.ty) {
+                            // A record or an enum without the `Display` of
+                            // a part: what it is, and how to show it.
+                            message.push_str(&format!(": {reason}"));
+                            if !reason.ends_with(": Display`")
+                                && self.owner(value.ty).is_some_and(|o| o.module == self.module)
+                            {
+                                let name = self.types.display(value.ty);
+                                message.push_str(&format!(
+                                    "; write what to show, as `impl Display for {name} {{ fn display(self): String {{ ... }} }}`"
+                                ));
+                            }
                         } else if matches!(self.types.kind(value.ty), TyKind::Adt(_))
                             && self.owner(value.ty).is_some_and(|o| o.module == self.module)
                         {

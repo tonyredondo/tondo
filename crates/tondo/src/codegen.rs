@@ -25,7 +25,7 @@ use crate::mir::{
 };
 use crate::numbers::NumOp;
 use crate::source::{SourceMap, Span};
-use crate::types::{AdtKind, ERR, FloatTy, Handle, IntTy, Mode, OK, SOME, Shown, Ty, TyKind, Types};
+use crate::types::{AdtKind, ERR, FloatTy, Handle, IntTy, Mode, ModuleId, OK, Payload, SOME, Shown, Ty, TyKind, Types};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
     self, AbiParam, ArgumentPurpose, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, TrapCode, UserFuncName,
@@ -1145,7 +1145,10 @@ impl<'t> Shapes<'t> {
         if matches!(kind, Glue::RetainCold | Glue::ReleaseCold) {
             signature.call_conv = cranelift_codegen::isa::CallConv::PreserveAll;
         }
-        if matches!(kind, Glue::Display | Glue::Visit | Glue::Show | Glue::ShowRaw | Glue::Secret) {
+        if matches!(
+            kind,
+            Glue::Display | Glue::DisplayFrom(_) | Glue::Visit | Glue::Show | Glue::ShowRaw | Glue::Secret
+        ) {
             signature.params.push(AbiParam::new(POINTER));
         }
         if kind == Glue::Equal {
@@ -1775,11 +1778,17 @@ struct Emit<'a, G: ?Sized> {
     /// The data the function has declared, each once, so that Cranelift
     /// takes the uses of one for the same address.
     data: HashMap<DataId, ir::GlobalValue>,
+    /// The module of the code whose text is being made, which sees the
+    /// `priv` fields of its types (language 9.4): a glue's, or that of the
+    /// file of the statement being made, asked only of a value that has
+    /// such fields.
+    site: Option<ModuleId>,
+    statement: Option<Span>,
 }
 
 impl<'a, G: ?Sized> Emit<'a, G> {
     fn new(cg: &'a mut G, fb: FunctionBuilder<'a>) -> Self {
-        Emit { cg, fb, data: HashMap::new() }
+        Emit { cg, fb, data: HashMap::new(), site: None, statement: None }
     }
 }
 
@@ -1910,7 +1919,184 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
     }
 
     /// Appends the `Display` text of `value` to `builder`.
+    /// Whether a value of `ty` shows its parts: a record or an enum with
+    /// data, declared in a module, without an `impl Display` (language 9.4).
+    fn shows_parts(&self, ty: Ty) -> bool {
+        let types = self.cg.types();
+        if self.cg.display().contains_key(&ty) || types.shown.contains_key(&ty) {
+            return false;
+        }
+        let TyKind::Adt(id) = *types.kind(types.repr(ty)) else { return false };
+        let adt = types.adt(id);
+        adt.module.is_some()
+            && match &adt.kind {
+                AdtKind::Record(_) => true,
+                AdtKind::Enum(variants) => adt.secret || variants.iter().any(|v| !matches!(v.payload, Payload::Unit)),
+                AdtKind::Newtype(_) => false,
+            }
+    }
+
+    /// The glue that shows a value of `ty` from the code of `self.site`:
+    /// one that shows the `priv` fields of that module's types, when the
+    /// value holds one (language 9.4).
+    fn display_glue(&self, ty: Ty) -> Glue {
+        let site = self.site.or_else(|| {
+            let span = self.statement.filter(|&span| span != Span::default())?;
+            self.cg.types().declaring(&self.cg.sources().file_of(span.start).module)
+        });
+        match site {
+            Some(module) if self.holds_private(ty, module, &mut HashSet::new()) => Glue::DisplayFrom(module),
+            _ => Glue::Display,
+        }
+    }
+
+    /// Whether a value of `ty` shows a `priv` field of a type `module`
+    /// declares.
+    fn holds_private(&self, ty: Ty, module: ModuleId, seen: &mut HashSet<Ty>) -> bool {
+        let types = self.cg.types();
+        if !seen.insert(ty) || self.cg.display().contains_key(&ty) {
+            return false;
+        }
+        let parts = match types.kind(types.repr(ty)) {
+            TyKind::Adt(id) => {
+                let adt = types.adt(*id);
+                if adt.secret {
+                    return false;
+                }
+                let fields: Vec<&crate::types::Field> = match &adt.kind {
+                    AdtKind::Record(fields) => fields.iter().collect(),
+                    AdtKind::Enum(variants) => variants
+                        .iter()
+                        .flat_map(|v| match &v.payload {
+                            Payload::Record(fields) => fields.iter().collect(),
+                            _ => Vec::new(),
+                        })
+                        .collect(),
+                    AdtKind::Newtype(_) => return false,
+                };
+                if adt.module == Some(module) && fields.iter().any(|f| f.private && !f.secret) {
+                    return true;
+                }
+                match &adt.kind {
+                    AdtKind::Record(fields) => fields.iter().filter(|f| !f.secret).map(|f| f.ty).collect(),
+                    AdtKind::Enum(variants) => variants.iter().flat_map(|v| v.payload.types()).collect(),
+                    AdtKind::Newtype(_) => Vec::new(),
+                }
+            }
+            TyKind::Array(part) | TyKind::Deque(part) | TyKind::Set(part) | TyKind::Option(part) => vec![*part],
+            TyKind::Map(key, value) | TyKind::Result(key, value) => vec![*key, *value],
+            TyKind::Tuple(items) | TyKind::Union(items) => items.clone(),
+            _ => Vec::new(),
+        };
+        parts.into_iter().any(|part| self.holds_private(part, module, seen))
+    }
+
+    /// Appends a record or an enum with data as its parts show, each with
+    /// its own `Display`: `User { name: Ada, age: 36 }`, `Card(4242)`,
+    /// `Cash`; a `priv` field as `…` where another module shows it, and
+    /// what is `@secret` as `<secret>` (language 9.4).
+    fn append_parts(&mut self, builder: ir::Value, ty: Ty, address: ir::Value) {
+        let types = self.cg.types();
+        let TyKind::Adt(id) = *types.kind(types.repr(ty)) else { unreachable!("parts of a record or an enum") };
+        let adt = types.adt(id);
+        let text = |e: &mut Self, text: &str| {
+            let text = e.string_ptr(text);
+            e.call_rt(Rt::SbStr, &[builder, text]);
+        };
+        if adt.secret {
+            text(self, SECRET);
+            return;
+        }
+        // Its name, without its module or its type arguments.
+        let name = match &adt.instance {
+            Some((template, _)) => &types.template(*template).name,
+            None => &adt.name,
+        };
+        let name = name.rsplit('.').next().unwrap_or(name);
+        let inside = self.site.is_some() && self.site == adt.module;
+        let part = |e: &mut Self, field: Option<&crate::types::Field>, projection: Proj| {
+            match field {
+                Some(field) if field.secret => return text(e, SECRET),
+                Some(field) if field.private && !inside => return text(e, "…"),
+                _ => {}
+            }
+            let slot = e.cg.slot(ty, projection);
+            let at = e.component_address(address, &slot);
+            let glue = e.display_glue(slot.ty);
+            e.call_glue(glue, slot.ty, &[builder, at]);
+        };
+        // `{ a: x, b: y }`, or `{}` without fields.
+        let record = |e: &mut Self, fields: &[crate::types::Field], projection: &dyn Fn(u32) -> Proj| {
+            if fields.is_empty() {
+                return text(e, " {}");
+            }
+            for (index, field) in fields.iter().enumerate() {
+                text(e, &format!("{}{}: ", if index == 0 { " { " } else { ", " }, field.name));
+                part(e, Some(field), projection(index as u32));
+            }
+            text(e, " }");
+        };
+        match &adt.kind {
+            AdtKind::Record(fields) => {
+                text(self, name);
+                record(self, fields, &Proj::Field);
+            }
+            AdtKind::Enum(variants) => {
+                let tag = self.tag(ty, Val::Memory(address));
+                let done = self.fb.create_block();
+                for (index, variant) in variants.iter().enumerate() {
+                    let (this, next) = (self.fb.create_block(), self.fb.create_block());
+                    let is_this = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, index as i64);
+                    self.fb.ins().brif(is_this, this, &[], next, &[]);
+                    self.fb.switch_to_block(this);
+                    text(self, &variant.name);
+                    let projection = |at: u32| Proj::Variant(index as u32, at);
+                    match &variant.payload {
+                        Payload::Unit => {}
+                        Payload::Tuple(items) => {
+                            for at in 0..items.len() as u32 {
+                                text(self, if at == 0 { "(" } else { ", " });
+                                part(self, None, projection(at));
+                            }
+                            text(self, ")");
+                        }
+                        Payload::Record(fields) => record(self, fields, &projection),
+                    }
+                    self.fb.ins().jump(done, &[]);
+                    self.fb.switch_to_block(next);
+                }
+                self.fb.ins().jump(done, &[]);
+                self.fb.switch_to_block(done);
+            }
+            AdtKind::Newtype(_) => unreachable!("a newtype does not show its parts"),
+        }
+    }
+
     fn append_display(&mut self, builder: ir::Value, ty: Ty, value: Val) {
+        if self.shows_parts(ty) {
+            // Through its glue, which a part that holds the type again
+            // calls in turn.
+            let address = match value {
+                Val::Memory(address) => address,
+                Val::Scalar(scalar) => {
+                    let size = self.cg.layout(ty).size.max(1);
+                    let data = StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3);
+                    let slot = self.fb.create_sized_stack_slot(data);
+                    let address = self.fb.ins().stack_addr(POINTER, slot, 0);
+                    self.fb.ins().store(flags(), scalar, address, 0);
+                    address
+                }
+                // Nothing is read from it, but it is an address.
+                Val::Zero => {
+                    let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3);
+                    let slot = self.fb.create_sized_stack_slot(data);
+                    self.fb.ins().stack_addr(POINTER, slot, 0)
+                }
+            };
+            let glue = self.display_glue(ty);
+            self.call_glue(glue, ty, &[builder, address]);
+            return;
+        }
         if let Some(&id) = self.cg.display().get(&ty) {
             // A user type: its `Display.display` returns an owned string.
             let args: Vec<ir::Value> = match value {
@@ -2137,16 +2323,16 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
             }
             TyKind::Array(element) | TyKind::Deque(element) => {
                 let size = self.element_size(element);
-                let display = self.glue_address(Glue::Display, element);
+                let display = self.glue_address(self.display_glue(element), element);
                 self.call_rt(Rt::SbArray, &[builder, value, size, display]);
             }
             TyKind::Map(key, entry) => {
-                let key = self.glue_address(Glue::Display, key);
-                let entry = self.glue_address(Glue::Display, entry);
+                let key = self.glue_address(self.display_glue(key), key);
+                let entry = self.glue_address(self.display_glue(entry), entry);
                 self.call_rt(Rt::SbMap, &[builder, value, key, entry]);
             }
             TyKind::Set(element) => {
-                let element = self.glue_address(Glue::Display, element);
+                let element = self.glue_address(self.display_glue(element), element);
                 let none = self.fb.ins().iconst(POINTER, 0);
                 self.call_rt(Rt::SbMap, &[builder, value, element, none]);
             }
@@ -2456,9 +2642,9 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
             let call = call_body(self.cg, &mut self.fb, id, &args);
             return self.fb.inst_results(call)[0];
         }
-        // A standard error, a duration or a date: the text interpolation
-        // gives it.
-        if display && self.cg.types().shown.contains_key(&ty) {
+        // A standard error, a duration or a date, or a record or an enum
+        // that shows its parts: the text interpolation gives it.
+        if display && (self.cg.types().shown.contains_key(&ty) || self.shows_parts(ty)) {
             let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3);
             let slot = self.fb.create_sized_stack_slot(data);
             let builder = self.fb.ins().stack_addr(POINTER, slot, 0);

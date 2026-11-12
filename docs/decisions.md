@@ -6253,3 +6253,17 @@ give a `Float`, `NaN` or an infinity outside their domain, and each has a checke
 rather than an option, as the integers' `checkedAdd` give, so that the code written for the old
 functions only changes their name and keeps its meaning. `MathError` stays for them and for the
 parsing of `BigInt` and `Decimal`.
+
+## A record and an enum show themselves
+
+`"{user}"` needed an `impl Display` for every record and every enum with data, and most of those
+written only listed the fields. A record and an enum without one now show their parts, each with its
+own `Display`, as a collection shows its elements: `User { name: Ada, age: 36 }`, `Card(4242)`,
+`Cash`. The compiler writes the text from the type's layout, as the debugger does, rather than an
+`impl` in Tondo, so a type that holds itself and a generic one need nothing more, and a part without
+`Display` leaves the type without one, with an error that names the part. A `priv` field shows in
+its module's code and is `…` in another's, decided by the module of the code that asks for the text,
+also for a collection's elements and after inlining: an interpolation in the module shows it, and
+`join` or a function that logs, of another module, does not. `@secret` is `<secret>` there too, as
+the tools show it, so the standard library's private keys are `@secret` now: they had no `Display`,
+which kept them out of logs. A type's own `impl Display` wins.

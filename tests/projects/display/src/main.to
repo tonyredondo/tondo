@@ -1,0 +1,32 @@
+// A record without an `impl Display` shows its fields: a `priv` one as `…`
+// outside its module and as it is inside, and a `@secret` one as `<secret>`
+// everywhere.
+
+import display.accounts
+import std.console
+
+type Team = {
+    lead: accounts.User
+    size: Int
+}
+
+fn shown[T: Display](value: T): String {
+    "{value}"
+}
+
+fn main() {
+    let user = accounts.User("Ada")
+    console.println("{user}")
+    console.println("{[user]}")
+    console.println("{Team { lead: user, size: 3 }}")
+    console.println(shown(user))
+    accounts.showInside(user)
+}
+
+// expect-stdout: User { name: Ada, age: 36, password: …, token: <secret> }
+// expect-stdout: [User { name: Ada, age: 36, password: …, token: <secret> }]
+// expect-stdout: Team { lead: User { name: Ada, age: 36, password: …, token: <secret> }, size: 3 }
+// expect-stdout: User { name: Ada, age: 36, password: …, token: <secret> }
+// expect-stdout: User { name: Ada, age: 36, password: hunter2, token: <secret> }
+// expect-stdout: [User { name: Ada, age: 36, password: hunter2, token: <secret> }]
+// expect-stdout: User { name: Ada, age: 36, password: …, token: <secret> }

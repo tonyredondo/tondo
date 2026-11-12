@@ -98,6 +98,7 @@ fn check_with<'a>(
         impls: Vec::new(),
         impl_heads: HashMap::new(),
         heads_indexed: 0,
+        showing: HashSet::new(),
         errors_counted: std::cell::Cell::new((0, 0)),
         bounds: HashMap::new(),
         call_bounds: HashMap::new(),
@@ -986,6 +987,9 @@ struct Checker<'a> {
     /// trait looks only at those that may match; and how many are there.
     impl_heads: HashMap<(TraitId, Option<Head>), Vec<usize>>,
     heads_indexed: usize,
+    /// The records and enums whose parts are being asked for `Display`,
+    /// which a part that holds one of them again takes for granted.
+    showing: HashSet<Ty>,
     /// How many diagnostics were counted for `error_count`, and how many of
     /// them are errors: the list only grows while a program is checked, the
     /// standard library's warnings with it, so each is counted once.
