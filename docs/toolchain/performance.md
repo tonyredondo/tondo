@@ -107,9 +107,9 @@ a: 499.0
 
 ```text
 $ tondo optimizations stats.to
-stats.to:9:9: `reading` keeps a count of its own: it is kept, as pushed, returned, captured or held (in main, mean)
-stats.to:9:20: `readings` runs one turn at a time: each turn counts a value or measures a text, which costs more than the test saved (in main, mean)
-stats.to:12:13: `count += 1` keeps its overflow check, in a loop (in main, mean)
+stats.to:9:9: `reading` is lent, with no count of its own: its array holds it (in main, mean)
+stats.to:9:20: `readings` runs four turns at a time (in main, mean)
+stats.to:12:13: `count += 1` cannot overflow: no check, in one copy of the code; another keeps the check (in main, mean)
 stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is copied (in main)
 stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in label)
 stats.to:19:17: `value` stays a call of `formats.formatFloat`: its body costs 80, more than the 30 inlining takes (in main)
@@ -129,23 +129,63 @@ from the bottom:
   kept says what its body costs against the limit.
 - **Arithmetic.** `n % 2` became a mask, since `n` is known not to be
   negative.
-- **Loops.** The loop that fills the array runs four turns at a time, and
-  the array is given room for all thousand elements before it starts, so
+- **Loops.** Both loops run four turns at a time, and the array is given
+  room for all thousand elements before the loop that fills it starts, so
   `push` never grows it.
 - **The heap.** The label is a string that is returned, so it is made on
   the heap. A string, a closure or a record that does not outlive its
   function stays in the function's frame, and the line says which of the
   two happened and what decided it.
-- **Checks.** `count += 1` keeps its overflow check, because nothing
-  bounds `count`. A check the compiler can prove away is dropped, and it
-  says so.
-- **Counts.** Each `reading` is a record with a string in it, so taking it
-  out of the array counts a reference to that string. That is the line a
-  profile of `mean` would point at, and the compiler has just said why.
+- **Checks.** The compiler proved that `count += 1` cannot overflow in one
+  copy of the loop, which has no check; the copy it could not prove it for
+  keeps it. A check that stays says so too.
+- **Counts.** Each `reading` is a record with a string in it. The loop
+  only reads it, so it is lent from the array, with no reference counted
+  for the turn.
 
-That last remark is the useful one here: it is the work this loop does
-beyond comparing and adding, said in the program's own terms before
-anything is measured.
+The same view says why not. This function keeps what it reads:
+
+```tondo
+import std.console
+
+type Reading = { sensor: String, value: Float }
+
+/// The readings of one sensor.
+fn of(readings: Array[Reading], sensor: String): Array[Reading] {
+    var found: Array[Reading] = []
+    for reading in readings {
+        if reading.sensor == sensor {
+            found.push(reading)
+        }
+    }
+    found
+}
+
+fn main() {
+    var readings: Array[Reading] = []
+    for n in 0..1000 {
+        readings.push(Reading { sensor: if n % 2 == 0 { "a" } else { "b" }, value: Float(n) })
+    }
+    console.println("{of(readings, "a").length()}")
+}
+```
+
+```text output
+500
+```
+
+```text
+$ tondo optimizations kept.to --function of
+kept.to:8:9: `reading` keeps a count of its own: it is kept, as pushed, returned, captured or held (in of)
+kept.to:8:20: `readings` runs one turn at a time: each turn counts a value or measures a text, which costs more than the test saved (in of)
+kept.to:10:13: `found.push(reading)` grows as it is pushed to: the loop pushes to it in some turns only (in of)
+```
+
+Each remark names what the code does that the optimization could not get
+past: the element is kept, so it is counted; counting makes a turn too
+heavy to run four at a time; and the array cannot be given its room
+beforehand, since only some turns push. None of it is wrong here, and the
+view is how one knows that the cost is the program's and not an accident.
 
 | | |
 | --- | --- |
@@ -172,37 +212,37 @@ line beside it:
 
 ```text
 $ tondo asm stats.to mean
-mean (433 bytes)
+mean (1192 bytes, 12 of them constants)
       0  push rbp
       1  mov rbp, rsp
       4  sub rsp, 0x90
       ...
 stats.to:9  for reading in readings {
-        ; `reading` keeps a count of its own: it is kept, as pushed, returned, captured or held
-        ; `readings` runs one turn at a time: each turn counts a value or measures a text, which costs more than the test saved
-     2c  nop dword [rax + rax * 1]
-     31  mov rbx, qword [rdi + 0x8]
-     35  xor r12, r12
-      ...
-     7e  mov rcx, qword [r15 + rax * 1 + 0x20]
-     83  mov qword [rsp], rcx
-     87  mov rax, qword [r15 + rax * 1 + 0x28]
-     8c  mov qword [rsp + 0x8], rax
-     91  mov rdi, qword [rsp]
-     95  mov rax, qword [rip]  ; tondo_rt_str_retain
-     9c  call rax
+        ; `reading` is lent, with no count of its own: its array holds it
+        ; `readings` runs four turns at a time
+     85  mov rdx, qword [r12 + rcx * 1 + 0x20]
+     8a  mov qword [rsp], rdx
+     8e  mov rcx, qword [r12 + rcx * 1 + 0x28]
+     93  mov qword [rsp + 0x8], rcx
 stats.to:10  if reading.sensor == sensor {
-     9e  mov rdi, qword [rsp]
-     a2  mov rax, qword [rip]  ; tondo_rt_str_eq
-     a9  mov rsi, qword [rsp + 0x30]
-     ae  call rax
-     b0  test al, al
+     98  mov rdi, qword [rsp]
+     9c  mov rcx, qword [rip]  ; tondo_rt_str_eq
+     a3  mov rsi, qword [rsp + 0x30]
+     a8  call rcx
+     aa  test al, al
+     ac  jz $+0x19
+     b2  movdqu xmm0, xmmword [rsp + 0x40]
+stats.to:11  total += reading.value
+     b8  vaddsd xmm0, xmm0, qword [r14 + 0x8]
+     be  movdqu xmmword [rsp + 0x40], xmm0
 ```
 
-The count the remark spoke of is there, as the call to
-`tondo_rt_str_retain` under line 9. Nobody has to read assembly to use
-Tondo, but when a question comes down to it, the answer is one command
-away and is laid out by the source.
+What the remarks said is there to see. Under line 9 the element is read
+where it lies in the array, with no call to count it. Line 10 is the one
+call of the loop, the comparison of two strings, and line 11 is a single
+addition. Nobody has to read assembly to use Tondo, but when a question
+comes down to it, the answer is one command away and is laid out by the
+source.
 
 | | |
 | --- | --- |
