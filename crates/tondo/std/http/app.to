@@ -620,8 +620,15 @@ pub fn App.client(self): Client {
         ok(_) => {}
         err(error) => panic("`App.client` could not serve the app: {error}")
     }
-    spawn detached serve(listening, self.pipeline())
+    spawn detached serveClient(listening, self.pipeline())
     Client(baseUrl: "http://app", socket: socket)
+}
+
+/// Serves the requests of `App.client`: the client's own server, which a
+/// test that uses it leaves running without fault.
+fn serveClient(server: httpNative.Native, handler: fn(Request): Reply ! Problem) {
+    httpNative.serviceTask()
+    serve(server, handler)
 }
 
 /// The handler a server runs: the routes, inside the middleware.

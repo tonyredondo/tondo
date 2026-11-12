@@ -6086,3 +6086,12 @@ finds. A case of another kind, or none with a value, leaves the rest to the way 
 every channel locked, and so does a tool that watches or anything that asks for attention, where
 the order of what tasks do must be the one the tools see. The program of the `select` row took 44
 ms where it took 53, under load.
+
+## The server of `App.client` is no task a test left
+
+`App.client()` serves the app in the process, on a socket of its own, in a task it starts and nobody
+ends: a `Client` has nothing to close. Its documentation and the guide of `std.http` say a test
+makes its requests with it, and every such test failed, "the test left 1 task running". A task may
+now be marked as the standard library's own, and the tasks it starts with it, as the server of
+`App.client` and the connections it serves are: the runner neither waits for them nor counts them
+as left by the test. A program's own tasks are never so.

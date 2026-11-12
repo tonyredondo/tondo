@@ -120,7 +120,24 @@ pub(crate) fn live_tasks() -> usize {
 
 /// The tasks alive now.
 pub(crate) fn alive() -> std::collections::HashSet<usize> {
-    tasks().iter().copied().collect()
+    tasks().iter().copied().filter(|&task| !serves(task)).collect()
+}
+
+/// Whether a task serves the standard library itself, which a test leaves
+/// running without fault.
+fn serves(task: usize) -> bool {
+    // While the set is locked no task in it is freed.
+    unsafe { (*(task as *mut Task)).service }
+}
+
+/// The running task serves the standard library itself, as the server of
+/// `App.client` does, and so do the tasks it starts: a test that ends
+/// while they run left none of its own.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_task_service() {
+    if let Some(task) = unsafe { current().as_mut() } {
+        task.service = true;
+    }
 }
 
 /// The tasks alive now that were not in `before`: where each waits, or
@@ -128,7 +145,7 @@ pub(crate) fn alive() -> std::collections::HashSet<usize> {
 pub(crate) fn leaked(before: &std::collections::HashSet<usize>) -> Vec<String> {
     // While the set is locked no task in it is freed.
     let alive = tasks();
-    let mut found: Vec<usize> = alive.iter().copied().filter(|t| !before.contains(t)).collect();
+    let mut found: Vec<usize> = alive.iter().copied().filter(|&t| !before.contains(&t) && !serves(t)).collect();
     found.sort_unstable();
     found
         .into_iter()

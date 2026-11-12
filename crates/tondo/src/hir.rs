@@ -1582,6 +1582,7 @@ pub const NATIVES: &[Native] = {
         codec("labelsRestore", &[Int], Unit, "tondo_rt_labels_restore"),
         http("client", &[Int, Int, String, String, Bool, String, String, Int], Object, "tondo_rt_http_client"),
         http("listenUnix", &[String, Int, Int, Int, Int, Int], Object, "tondo_rt_http_listen_unix"),
+        http("serviceTask", &[], Unit, "tondo_rt_task_service"),
         http("mediaType", &[String], String, "tondo_rt_http_media_type"),
         http("bodyEmpty", &[], Object, "tondo_rt_http_body_empty"),
         http("bodyBytes", &[Bytes, String], Object, "tondo_rt_http_body_bytes"),

@@ -235,6 +235,10 @@ pub(crate) struct Task {
     /// A panic that held it goes up to the frame that calls the function
     /// again.
     pub(crate) retrying: bool,
+    /// It serves the standard library itself, as `App.client`'s server, or
+    /// a task that does started it: a test that ends while it runs leaves
+    /// no task of its own (`tondo_rt_task_service`).
+    pub(crate) service: bool,
     /// Where its live frames were last, while panics wait for a fix: each
     /// frame with its site and the addresses of its bindings.
     probes: Vec<Probe>,
@@ -682,6 +686,7 @@ fn new_task(
         blocked_since: AtomicU64::new(0),
         flight: 0,
         retrying: false,
+        service: !current().is_null() && unsafe { (*current()).service },
         probes: Vec::new(),
         finished: false,
         main: join.is_null(),

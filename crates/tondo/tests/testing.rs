@@ -693,6 +693,22 @@ fn a_test_calls_the_private_operations_of_its_file() {
     assert!(stdout.contains("2 passed"), "{stdout}");
 }
 
+/// A test asks an app through `App.client()`, as the guide of `std.http`
+/// says, and leaves no task of its own: the client's server is the
+/// standard library's, as the connections it serves are.
+#[test]
+fn a_test_asks_an_app_through_its_client() {
+    let tests = "import std.http\n\nfn routes(): http.App {\n    var app = http.App()\n    \
+        app.get(\"/hello/:name\", (name: String) { \"hello, {name}\" })\n    app\n}\n\n\
+        test greets {\n    let client = routes().client()\n    \
+        assert(client.get(\"/hello/ada\")?.text()? == \"hello, ada\")\n    \
+        assert(client.get(\"/hello/leo\")?.text()? == \"hello, leo\")\n}\n";
+    let dir = project("app-client", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(stdout.contains("1 passed"), "{stdout}");
+}
+
 fn project(name: &str, tests: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
     let _ = std::fs::remove_dir_all(&dir);
