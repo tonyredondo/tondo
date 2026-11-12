@@ -1,0 +1,35 @@
+// A copy of a parameter given to a `var` parameter, as an actor gives its
+// state to its handler, keeps a reference of its own: the handler writes it
+// while a loop holds it, which copies it, and what the actor's task keeps
+// stays as it was and is released once.
+
+import std.console
+import std.executor
+
+type State = {
+    table: Map[Int, Int] = [:]
+}
+
+fn touch(state: var State, key: Int) {
+    state.table[key] = key * 2
+}
+
+fn handle(state: var State, key: Int) {
+    state.table[key] = key
+    // The loop holds the table while `touch` writes it.
+    for (k, _) in state.table {
+        touch(var state, k)
+    }
+}
+
+fn main(): !executor.ExecutorError {
+    let actor = executor.actor(State {}, 16, (state: var State, key: Int) { handle(var state, key) })?
+    let to = actor.reference()
+    for key in 0..20 {
+        _ = to.send(key)
+    }
+    actor.stop()?
+    console.println("the actor handled them")
+}
+
+// expect-stdout: the actor handled them

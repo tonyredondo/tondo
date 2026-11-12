@@ -12,7 +12,10 @@
 //! What it copies must change nowhere in the function: neither written,
 //! released, cleared, moved nor lent, nor a loan of the caller's place. The
 //! copy must take its value once, retained at once, and be read nowhere
-//! else.
+//! else. A call whose parameter is `var` or `mut` takes a loan it may write
+//! through, which changes what it is given, as an actor's handler changes
+//! the copy of its state: that copy needs its reference, or the write would
+//! change, or copy and free, what the caller keeps.
 //!
 //! Such a copy then lives unchanged for the whole call too, and so does an
 //! element of an array that does, which nothing releases while the array
@@ -26,10 +29,14 @@
 //! loop, and used there alone, lives while that copy holds it, so it needs
 //! no reference of its own either.
 
+use crate::ast::Mode;
 use crate::mir::*;
+use crate::types::{TyKind, Types};
 
-pub fn lends(bodies: &mut [Body]) {
-    crate::parallel::each_mut(bodies, lends_in);
+pub fn lends(bodies: &mut [Body], types: &Types) {
+    // Which parameters of each function are loans it may write through.
+    let loans: Vec<Vec<bool>> = bodies.iter().map(|body| body.loans.clone()).collect();
+    crate::parallel::each_mut(bodies, |body| lends_in(body, types, &loans));
 }
 
 /// How the function uses each local.
@@ -48,23 +55,33 @@ struct Uses {
     passed: bool,
 }
 
-fn lends_in(body: &mut Body) {
+fn lends_in(body: &mut Body, types: &Types, loans: &[Vec<bool>]) {
     if !body.blocks.iter().flat_map(|block| &block.stmts).any(|s| matches!(s, Statement::Retain(_))) {
         return;
     }
     let mut uses = vec![Uses::default(); body.locals.len()];
-    let lend = |operands: &[Operand], flags: Option<&[bool]>, uses: &mut Vec<Uses>| {
+    let lend = |operands: &[Operand], flags: Option<&[bool]>, written: &dyn Fn(usize) -> bool, uses: &mut Vec<Uses>| {
         for (index, operand) in operands.iter().enumerate() {
             let mut read = Vec::new();
             operand_uses(operand, &mut read);
             // A whole local without a flag to retain it is lent; a part of
-            // one, or one retained as it moves in, is taken.
+            // one, or one retained as it moves in, is taken; and one lent
+            // to a `var` or `mut` parameter may be written.
             let whole = matches!(operand, Operand::Copy(place) if place.path.is_empty());
             let flagged = flags.is_some_and(|flags| flags.get(index).copied().unwrap_or(true));
             for local in read {
                 uses[local.0 as usize].kept |= !whole || flagged;
                 uses[local.0 as usize].passed = true;
+                uses[local.0 as usize].changed |= written(index);
             }
+        }
+    };
+    // The modes of a `fn` value's parameters, from its type.
+    let modes = |function: &Operand| -> Option<Vec<Mode>> {
+        let Operand::Copy(place) = function else { return None };
+        match types.kind(types.repr(body.place_ty(types, place))) {
+            TyKind::Fn(_, _, _, modes, _) => Some(modes.clone()),
+            _ => None,
         }
     };
     for block in &body.blocks {
@@ -126,13 +143,23 @@ fn lends_in(body: &mut Body) {
                         // arguments, and a lock borrows what it locks; what the
                         // runtime does with others, as a channel's send, may
                         // take them.
-                        Rvalue::Call(crate::hir::Callee::Fn(_), operands) => lend(operands, None, &mut uses),
+                        Rvalue::Call(crate::hir::Callee::Fn(callee), operands) => {
+                            let loaned = loans.get(callee.0 as usize);
+                            let written = |index: usize| loaned.is_none_or(|l| l.get(index).copied().unwrap_or(false));
+                            lend(operands, None, &written, &mut uses)
+                        }
                         Rvalue::CallIndirect(function, operands) => {
-                            lend(std::slice::from_ref(function), Some(&[true]), &mut uses);
-                            lend(operands, None, &mut uses);
+                            lend(std::slice::from_ref(function), Some(&[true]), &|_| false, &mut uses);
+                            let modes = modes(function);
+                            let written = |index: usize| {
+                                modes.as_ref().is_none_or(|modes| {
+                                    modes.get(index).is_some_and(|mode| matches!(mode, Mode::Mut | Mode::Var))
+                                })
+                            };
+                            lend(operands, None, &written, &mut uses);
                         }
                         Rvalue::TaskOp(crate::hir::TaskOp::Lock(_), operands, flags, _) => {
-                            lend(operands, Some(flags), &mut uses)
+                            lend(operands, Some(flags), &|_| false, &mut uses)
                         }
                         _ => {
                             let (mut read, mut defined) = (Vec::new(), Vec::new());

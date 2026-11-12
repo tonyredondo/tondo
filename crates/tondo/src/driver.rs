@@ -1274,7 +1274,7 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, types: &crate::types::Types, sou
     after("elide", bodies, types, sources);
     crate::thread::thread(bodies, types);
     after("thread", bodies, types, sources);
-    crate::lends::lends(bodies);
+    crate::lends::lends(bodies, types);
     after("lends", bodies, types, sources);
     crate::moves::moves(bodies, types, sources);
     after("moves", bodies, types, sources);
