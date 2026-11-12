@@ -131,7 +131,16 @@ fn find(body: &Body, types: &Types, done: &[usize], kept: &mut Vec<(usize, Strin
         if !inside[entry] || predecessors[head].iter().filter(|&&p| inside[p]).count() != 1 {
             continue;
         }
-        let loop_blocks: Vec<usize> = (0..blocks.len()).filter(|&b| inside[b] && b != step).collect();
+        // Of those, the ones a turn runs, from the entry: a block nothing
+        // reaches, as what lowering leaves after a `panic`, is none of them.
+        let mut reached = vec![false; blocks.len()];
+        let mut pending = vec![entry];
+        while let Some(block) = pending.pop() {
+            if inside[block] && !std::mem::replace(&mut reached[block], true) {
+                pending.extend(successors(&blocks[block].terminator));
+            }
+        }
+        let loop_blocks: Vec<usize> = (0..blocks.len()).filter(|&b| reached[b] && b != step).collect();
         // Short, without a loop of its own, and its first statement takes
         // the counter, as `for i in a..b` does, or the element at it, as
         // `for item in items` does.
