@@ -1,0 +1,47 @@
+name: Diag
+
+on:
+  push:
+    branches: ['diag-*']
+
+jobs:
+  observe:
+    name: observe (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, target: aarch64-macos }
+          - { os: macos-15-intel, target: x86_64-macos }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-${{ matrix.target }}
+          save-if: false
+      - uses: ./.github/actions/runtime
+        with:
+          label: ${{ matrix.os }}-${{ matrix.target }}
+      - run: cargo test -p tondo --test observe --no-run
+      - name: The signal test, with a watchdog
+        shell: bash {0}
+        run: |
+          cargo test -p tondo --test observe a_debugger_ended_by_a_signal_ends_its_program -- --nocapture > test.log 2>&1 &
+          pid=$!
+          for i in $(seq 300); do
+            kill -0 $pid 2>/dev/null || break
+            sleep 1
+          done
+          if kill -0 $pid 2>/dev/null; then
+            echo "HUNG after 300 s"
+            ps -A -o pid,ppid,pgid,stat,etime,command | grep -E 'tondo|endless|observe' | grep -v grep
+            for p in $(pgrep -f 'endless|tondo debug|tondo dap|observe-'); do
+              echo "=== sample $p"; sample $p 3 2>&1 | head -80
+            done
+            pkill -KILL -f 'observe-' ; pkill -KILL -f endless
+          fi
+          wait $pid; echo "exit $?"
+          cat test.log

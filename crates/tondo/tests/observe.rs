@@ -4579,6 +4579,7 @@ fn a_debugger_ended_by_a_signal_ends_its_program() {
         .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     // By its bare name, which is in this directory and not on PATH.
+    eprintln!("DIAG built");
     for signal in [libc::SIGTERM, libc::SIGHUP] {
         let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
             .args(["debug", "endless"])
@@ -4590,11 +4591,14 @@ fn a_debugger_ended_by_a_signal_ends_its_program() {
             .unwrap();
         let started = within(10, || !children(debugger.id()).is_empty());
         let program = *children(debugger.id()).first().filter(|_| started).expect("the program did not start");
+        eprintln!("DIAG debugger started program {program}, signal {signal}");
         unsafe { libc::kill(debugger.id() as i32, signal) };
         let status = debugger.wait().unwrap();
+        eprintln!("DIAG debugger ended: {status}");
         assert_eq!(std::os::unix::process::ExitStatusExt::signal(&status), Some(signal), "{status}");
         assert!(soon(|| ended(program)), "the program runs on after signal {signal}");
     }
+    eprintln!("DIAG the adapter");
     // The editor's adapter, with what it launched.
     let mut adapter = Adapter::start();
     adapter.ask("initialize", json!({ "adapterID": "tondo" }));
@@ -4603,7 +4607,9 @@ fn a_debugger_ended_by_a_signal_ends_its_program() {
     let started = within(10, || !children(adapter.child.id()).is_empty());
     let program = *children(adapter.child.id()).first().filter(|_| started).expect("the adapter's program");
     unsafe { libc::kill(adapter.child.id() as i32, libc::SIGTERM) };
+    eprintln!("DIAG waiting for the adapter");
     adapter.child.wait().unwrap();
+    eprintln!("DIAG adapter ended");
     assert!(soon(|| ended(program)), "the adapter's program runs on");
     // A program it attached to, stopped at a breakpoint, goes on.
     let printed = dir.join("printed");
@@ -4620,7 +4626,9 @@ fn a_debugger_ended_by_a_signal_ends_its_program() {
     let source = dir.join("endless.to");
     adapter.ask("setBreakpoints", json!({ "source": { "path": source }, "breakpoints": [{ "line": 9 }] }));
     adapter.ask("configurationDone", json!({}));
+    eprintln!("DIAG attached, waiting to stop");
     let stop = adapter.until("stopped");
+    eprintln!("DIAG stopped: {stop}");
     assert_eq!(stop["reason"], "breakpoint", "{stop}");
     // A line written before the stop may reach the file after it, on a
     // machine with little CPU: what counts is that no more come.
