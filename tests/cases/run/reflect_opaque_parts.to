@@ -9,11 +9,18 @@ import std.fs
 import std.json
 import std.math
 import std.reflect
+import std.regex
 
 pub type Notes = {
     files: fs.FileSystem
     dir: String
     pick: fn(Int): Int
+}
+
+/// A part carried as it is whose initial value may fail: reflection never
+/// builds it, so never runs that.
+context Patterns = {
+    word: regex.Regex = regex.Regex.compile(r"\w+")?
 }
 
 /// Errors of modules whose other types reflection knows by name.
@@ -35,7 +42,7 @@ pub fn Notes.count(self, extra: Int): Int ! NoteError {
     self.pick(extra)
 }
 
-fn main(): !reflect.ReflectError {
+fn main(): !(reflect.ReflectError | regex.RegexError) {
     let notes = Notes { files: fs.memory(), dir: "notes", pick: (n) { n + 1 } }
     let value = reflect.valueOf(notes)
     console.println("{value}")
@@ -56,6 +63,7 @@ fn main(): !reflect.ReflectError {
     let failed = reflect.valueOf(NoteError.Files(fs.FsError.NotFound))
     console.println("{failed} {failed.variant()}")
     console.println("{reflect.valueOf(Failed.Math(math.MathError.Domain))}")
+    console.println("{Patterns.word.isMatch("notes")?}")
 }
 
 // expect-stdout: Notes { files: <fs.FileSystem>, dir: "notes", pick: <fn(Int): Int> }
@@ -67,3 +75,4 @@ fn main(): !reflect.ReflectError {
 // expect-stdout: built
 // expect-stdout: Files(not found) some(Files)
 // expect-stdout: Math(the value is outside the operation's domain)
+// expect-stdout: true

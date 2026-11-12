@@ -765,10 +765,10 @@ impl Generator<'_> {
         format!("fail {r}.ReflectError.opaque({}, {}, {})", literal(owner), literal(part), literal(&self.text(ty)))
     }
 
-    /// The first visible field reflection cannot build the value without:
-    /// carried as it is, with no default, and not optional.
+    /// The first visible field carried as it is, which keeps reflection from
+    /// building the value from another.
     fn unbuilt<'f>(&self, fields: &'f [ast::FieldDecl]) -> Option<&'f ast::FieldDecl> {
-        fields.iter().find(|f| !f.private && (self.opaque)(&f.ty) && f.default.is_none() && !optional(&f.ty))
+        fields.iter().find(|f| !f.private && (self.opaque)(&f.ty))
     }
 
     /// The notes of the annotations of formats among some, as an array:
@@ -1410,13 +1410,6 @@ impl Generator<'_> {
         let mut out = String::new();
         for field in fields.iter().filter(|f| !f.private) {
             let name = &field.name.name;
-            // A part reflection carries as it is takes its default, or none.
-            if (self.opaque)(&field.ty) {
-                let value =
-                    field.default.as_ref().map_or("none".to_string(), |d| self.sources.slice(d.span).to_string());
-                out.push_str(&format!("{indent}{name}: {value}\n"));
-                continue;
-            }
             if let Some(default) = &field.default {
                 let default = self.sources.slice(default.span);
                 out.push_str(&format!(
