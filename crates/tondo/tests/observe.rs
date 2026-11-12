@@ -4512,16 +4512,18 @@ fn a_line_stops_once_however_many_blocks_it_takes() {
     assert_eq!(text.matches("stopped at once.to:10").count(), 1, "{text}");
 }
 
-/// The processes that run `executable`, from /proc; a zombie, which no
-/// one has reaped, as in a container whose first process does not, ran.
-fn running(executable: &Path) -> Vec<i32> {
+/// The processes of these process groups, from /proc, as each says it in
+/// its `stat`, which emulation keeps as it is; a zombie, which no one has
+/// reaped, as in a container whose first process does not, ran.
+fn in_groups(groups: &[i32]) -> Vec<i32> {
     let entries = std::fs::read_dir("/proc").into_iter().flatten().flatten();
     entries
         .filter_map(|entry| entry.file_name().to_str()?.parse::<i32>().ok())
-        .filter(|pid| std::fs::read_link(format!("/proc/{pid}/exe")).is_ok_and(|exe| exe == executable))
         .filter(|pid| {
             let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
-            stat.rsplit_once(") ").is_some_and(|(_, rest)| !rest.starts_with('Z'))
+            // After the name: the state, the parent and the group.
+            let fields: Vec<&str> = stat.rsplit_once(") ").map_or(Vec::new(), |(_, rest)| rest.split(' ').collect());
+            fields.len() > 2 && fields[0] != "Z" && fields[2].parse().is_ok_and(|group: i32| groups.contains(&group))
         })
         .collect()
 }
@@ -4709,7 +4711,6 @@ fn a_replay_ended_by_a_signal_ends_its_copies() {
         .filter_map(|line| line.split_once(' ')?.1.parse().ok())
         .filter(|&pid| pid != 0)
         .collect();
-    let executable = dir.join("crash/program");
     let mut debugger = Command::new(tondo)
         .args(["debug", "--replay", "crash"])
         .current_dir(&dir)
@@ -4719,14 +4720,16 @@ fn a_replay_ended_by_a_signal_ends_its_copies() {
         .spawn()
         .unwrap();
     std::io::Write::write_all(debugger.stdin.as_mut().unwrap(), b"continue\nback\n").unwrap();
-    let copies = || running(&executable).into_iter().filter(|pid| !held.contains(pid)).collect::<Vec<i32>>();
+    // A held copy is a group of its own, and the copies a replay makes of it
+    // are in it.
+    let copies = || in_groups(&held).into_iter().filter(|pid| !held.contains(pid)).collect::<Vec<i32>>();
     assert!(soon(|| copies().len() >= 2), "the replay made no copies: {:?}", copies());
     unsafe { libc::kill(debugger.id() as i32, libc::SIGTERM) };
     debugger.wait().unwrap();
     // A copy the program made as the debugger ended, which it never heard
     // of, ends once it sees the debugger gone, in at most ten seconds.
     assert!(within(20, || copies().is_empty()), "the replay's copies run on: {:?}", copies());
-    assert!(held.iter().all(|&pid| running(&executable).contains(&pid)), "a held copy went");
+    assert!(held.iter().all(|&pid| in_groups(&held).contains(&pid)), "a held copy went");
     for pid in held {
         unsafe { libc::kill(pid, libc::SIGKILL) };
     }
