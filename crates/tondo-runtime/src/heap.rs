@@ -266,8 +266,9 @@ pub(crate) fn alive() -> (Vec<(usize, Vec<usize>)>, u64) {
 /// each one from them.
 static OBJECTS_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 const SHARDS: usize = 16;
-static OBJECTS: [std::sync::Mutex<std::collections::BTreeMap<usize, (usize, usize)>>; SHARDS] =
-    [const { std::sync::Mutex::new(std::collections::BTreeMap::new()) }; SHARDS];
+/// The objects of a shard, by address: their size and where they were made.
+type Shard = std::collections::BTreeMap<usize, (usize, usize)>;
+static OBJECTS: [std::sync::Mutex<Shard>; SHARDS] = [const { std::sync::Mutex::new(Shard::new()) }; SHARDS];
 
 thread_local! {
     /// Inside the registry, whose own allocations do not count.
@@ -297,8 +298,20 @@ pub(crate) fn track_objects() {
     OBJECTS_ON.store(true, Ordering::Relaxed);
 }
 
-fn shard(address: usize) -> std::sync::MutexGuard<'static, std::collections::BTreeMap<usize, (usize, usize)>> {
+fn shard(address: usize) -> std::sync::MutexGuard<'static, Shard> {
     OBJECTS[(address >> 4) % SHARDS].lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The shards of the objects, held across a fork so that the copy has them
+/// free (`tasks::fork_copy`); none when another thread keeps one longer than
+/// a fork waits. In an array, as an allocation while a shard is held could
+/// want to track itself in it.
+pub(crate) fn objects_held() -> Option<[std::sync::MutexGuard<'static, Shard>; SHARDS]> {
+    let mut held: [Option<std::sync::MutexGuard<'static, Shard>>; SHARDS] = [const { None }; SHARDS];
+    for (slot, shard) in held.iter_mut().zip(&OBJECTS) {
+        *slot = Some(super::tasks::soon(shard)?);
+    }
+    Some(held.map(|guard| guard.expect("every shard is held")))
 }
 
 pub(crate) fn track(address: usize, size: usize) {

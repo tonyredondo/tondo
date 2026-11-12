@@ -150,7 +150,7 @@ pub(crate) fn stop_world(timeout: Duration) -> bool {
 
 /// A lock if it comes soon: another thread may be in what it guards, and
 /// a fork does not wait for long.
-pub(super) fn soon<T>(lock: &'static Mutex<T>) -> Option<MutexGuard<'static, T>> {
+pub(crate) fn soon<T>(lock: &'static Mutex<T>) -> Option<MutexGuard<'static, T>> {
     for _ in 0..50 {
         match lock.try_lock() {
             Ok(held) => return Some(held),
@@ -163,18 +163,19 @@ pub(super) fn soon<T>(lock: &'static Mutex<T>) -> Option<MutexGuard<'static, T>>
 
 /// Forks a copy of the process that goes on running, on this thread alone.
 /// What another thread is in the middle of stays so in the copy, with no
-/// one to end it: the scheduler's locks are held across the fork, so that the
-/// copy has them free, and a stop of the world ends there. When another
-/// thread keeps one of them longer than a fork waits, as on a machine too
-/// busy to run it, there is no copy, which would wait for it forever.
+/// one to end it: the scheduler's locks, and those of the objects a tool
+/// may follow, are held across the fork, so that the copy has them free,
+/// and a stop of the world ends there. When another thread keeps one of
+/// them longer than a fork waits, as on a machine too busy to run it, there
+/// is no copy, which would wait for it forever.
 pub(crate) fn fork_copy() -> std::io::Result<i32> {
-    let (Some(queue), Some(in_tondo), Some(wanted)) = (soon(&QUEUE), soon(&IN_TONDO), soon(crate::cycles::wanted()))
-    else {
+    let held = (soon(&QUEUE), soon(&IN_TONDO), soon(crate::cycles::wanted()), crate::heap::objects_held());
+    let (Some(queue), Some(in_tondo), Some(wanted), Some(objects)) = held else {
         let why = "another thread holds the scheduler, which a copy could never have: try again";
         return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, why));
     };
     let pid = unsafe { libc::fork() };
-    drop((queue, in_tondo, wanted));
+    drop((queue, in_tondo, wanted, objects));
     if pid < 0 {
         return Err(std::io::Error::last_os_error());
     }
@@ -216,6 +217,25 @@ mod tests {
             held.send(()).unwrap();
             std::thread::sleep(Duration::from_millis(300));
             drop(queue);
+        });
+        taken.recv().unwrap();
+        let forked = super::fork_copy();
+        if let Ok(0) = forked {
+            unsafe { libc::_exit(0) };
+        }
+        assert!(forked.as_ref().is_err_and(|e| e.kind() == std::io::ErrorKind::WouldBlock), "{forked:?}");
+        holder.join().unwrap();
+    }
+
+    /// The same while another thread keeps the objects a tool follows.
+    #[test]
+    fn a_fork_makes_no_copy_while_the_objects_are_held() {
+        let (held, taken) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let objects = crate::heap::objects_held().expect("the objects' shards");
+            held.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(1500));
+            drop(objects);
         });
         taken.recv().unwrap();
         let forked = super::fork_copy();
