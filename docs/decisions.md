@@ -6095,3 +6095,13 @@ makes its requests with it, and every such test failed, "the test left 1 task ru
 now be marked as the standard library's own, and the tasks it starts with it, as the server of
 `App.client` and the connections it serves are: the runner neither waits for them nor counts them
 as left by the test. A program's own tasks are never so.
+
+## The array of `split` lives with its pieces
+
+`split` made its pieces in one block, the text but its separators, and the array of them apart:
+two allocations where Go makes one, the slice, whose strings point into the text. The block now
+holds the array too, before its pieces. The array's count of references has a bit that says so:
+it is never the only owner of its storage, so a change copies it first, as one of a shared array,
+and its last reference gives back the one the block holds for it, which goes with the last of
+them. A program that reads what `split` gives, as most do, makes one allocation; one that changes
+it copies it first, which a push did before too, as the array is made at its length.

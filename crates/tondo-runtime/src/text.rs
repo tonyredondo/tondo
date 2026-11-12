@@ -36,9 +36,9 @@ pub unsafe extern "C" fn tondo_rt_text_split(s: *const Str, separator: *const St
         [byte] => memchr::memchr_iter(*byte, s).count(),
         _ => finder.find_iter(s).count(),
     };
-    let array = tondo_rt_array_new(8, count + 1);
-    // The pieces in one block, which holds the text but its separators.
-    let mut pieces = Pieces::new(count + 1, s.len() - count * separator.len());
+    // The pieces in one block, which holds the text but its separators,
+    // and the array of them.
+    let (mut pieces, array) = Pieces::with_array(count + 1, s.len() - count * separator.len());
     let (mut index, mut start) = (0, 0);
     let mut piece = |end: usize| {
         unsafe { *(element(array, 8, index) as *mut *mut Str) = pieces.push(&s[start..end]) };

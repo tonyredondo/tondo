@@ -89,6 +89,9 @@ struct Block {
     used: usize,
     /// Whether a piece is long enough for its positions to be kept.
     long: bool,
+    /// Where the pieces start: after the header, or after the array of
+    /// them the block holds too (`Pieces::with_array`).
+    first: u32,
 }
 
 const BLOCK: usize = std::mem::size_of::<Block>();
@@ -105,19 +108,41 @@ pub(crate) struct Pieces {
     used: usize,
     count: usize,
     long: bool,
+    /// Whether the block holds the array of its pieces.
+    array: bool,
 }
 
 impl Pieces {
     /// Room for `count` pieces of `bytes` bytes in all.
     pub(crate) fn new(count: usize, bytes: usize) -> Pieces {
-        let size = BLOCK + count * piece_room(0) + bytes.next_multiple_of(8) + count * 8;
+        Pieces::after(0, count, bytes)
+    }
+
+    /// Room for `count` pieces of `bytes` bytes in all, after `before`
+    /// bytes of the block's header.
+    fn after(before: usize, count: usize, bytes: usize) -> Pieces {
+        let first = BLOCK + before;
+        let size = first + count * piece_room(0) + bytes.next_multiple_of(8) + count * 8;
         let layout = Layout::from_size_align(size, std::mem::align_of::<Block>()).expect("pieces too large");
         let block = unsafe { alloc(layout) } as *mut Block;
         if block.is_null() {
             handle_alloc_error(layout);
         }
-        unsafe { block.write(Block { count: AtomicUsize::new(0), size, used: BLOCK, long: false }) };
-        Pieces { block, used: BLOCK, count: 0, long: false }
+        let first = u32::try_from(first).expect("pieces too large");
+        unsafe { block.write(Block { count: AtomicUsize::new(0), size, used: first as usize, long: false, first }) };
+        Pieces { block, used: first as usize, count: 0, long: false, array: false }
+    }
+
+    /// Room for `count` pieces of `bytes` bytes in all, and before them an
+    /// `Array[String]` of `count` elements, which the caller writes: one
+    /// allocation for the array and its pieces, as `split` makes. The array
+    /// is never the only owner of its storage, so a change copies it first,
+    /// and while it lives the block does.
+    pub(crate) fn with_array(count: usize, bytes: usize) -> (Pieces, *mut ArrayHeader) {
+        let mut pieces = Pieces::after(ARRAY_HEADER + count * 8, count, bytes);
+        pieces.array = true;
+        let array = unsafe { in_block((pieces.block as *mut u8).add(BLOCK), count) };
+        (pieces, array)
     }
 
     /// The next piece, with one reference; the empty string kept for good
@@ -139,15 +164,17 @@ impl Pieces {
         }
     }
 
-    /// Done: the block holds its pieces, or goes when none needs it.
+    /// Done: the block holds its pieces and its array, or goes when none
+    /// needs it.
     pub(crate) fn finish(self) {
         unsafe {
-            if self.count == 0 {
+            let held = self.count + usize::from(self.array);
+            if held == 0 {
                 dealloc(self.block as *mut u8, block_layout(self.block));
                 return;
             }
             let block = &mut *self.block;
-            (*block.count.get_mut(), block.used, block.long) = (self.count, self.used, self.long);
+            (*block.count.get_mut(), block.used, block.long) = (held, self.used, self.long);
             LIVE_OBJECTS.made();
         }
     }
@@ -177,9 +204,11 @@ impl OpenPieces {
         if block.is_null() {
             handle_alloc_error(layout);
         }
-        unsafe { block.write(Block { count: AtomicUsize::new(UNMADE), size, used: BLOCK, long: false }) };
+        let block_value =
+            Block { count: AtomicUsize::new(UNMADE), size, used: BLOCK, long: false, first: BLOCK as u32 };
+        unsafe { block.write(block_value) };
         LIVE_OBJECTS.made();
-        OpenPieces { pieces: Pieces { block, used: BLOCK, count: 0, long: false } }
+        OpenPieces { pieces: Pieces { block, used: BLOCK, count: 0, long: false, array: false } }
     }
 
     /// The room a block needs for a piece of `len` bytes.
@@ -201,7 +230,7 @@ impl OpenPieces {
 
 impl Drop for OpenPieces {
     fn drop(&mut self) {
-        let Pieces { block, used, count, long } = self.pieces;
+        let Pieces { block, used, count, long, .. } = self.pieces;
         unsafe {
             // Before the references go back, as the piece released last
             // reads them to free the block.
@@ -240,7 +269,7 @@ unsafe fn release_pieces(block: *mut Block, count: usize) {
         fence(Ordering::Acquire);
         LIVE_OBJECTS.gone();
         // The long pieces' positions go first, as a string's do.
-        let mut at = if (*block).long { BLOCK } else { (*block).used };
+        let mut at = if (*block).long { (*block).first as usize } else { (*block).used };
         while at < (*block).used {
             let piece = (block as *const u8).add(at) as *const Str;
             if (*piece).len >= POSITIONED_FROM {
@@ -254,6 +283,37 @@ unsafe fn release_pieces(block: *mut Block, count: usize) {
 
 unsafe fn release_piece(s: *const Str, rc: usize) {
     unsafe { release_pieces(block_of(s, rc), 1) }
+}
+
+/// Releases an array a block of strings holds, which no value holds any
+/// more (`Pieces::with_array`), and its elements: the references of the
+/// block's own pieces and the one it holds for the array go back in one
+/// operation.
+pub(crate) unsafe fn release_in_block(a: *mut ArrayHeader, size: usize, release: Option<Glue>) {
+    unsafe {
+        let block = (a as *mut u8).sub(BLOCK) as *mut Block;
+        match release {
+            Some(release) if std::ptr::fn_addr_eq(release, tondo_rt_str_release_at as Glue) => {
+                let mut releasing = Releasing::default();
+                for index in 0..(*a).len {
+                    releasing.release(*(element(a, size, index) as *mut *mut Str));
+                }
+                // Last, as the array is in the block.
+                match &mut releasing.block {
+                    Some((held, run)) if *held == block => *run += 1,
+                    _ => {
+                        releasing.finish();
+                        releasing.block = Some((block, 1));
+                    }
+                }
+                releasing.finish();
+            }
+            _ => {
+                release_elements(a, size, release);
+                release_pieces(block, 1);
+            }
+        }
+    }
 }
 
 /// `release` of the string at an address, the glue of `String` elements,

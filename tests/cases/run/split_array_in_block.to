@@ -1,0 +1,57 @@
+// The array `split` gives lives in one allocation with its pieces. It is
+// never the only owner of that storage: a change copies it first, the
+// copy and the pieces outlive it, and it outlives the pieces it let go.
+
+import std.console
+
+fn firstOf(text: String): String {
+    // The array goes when the function returns; the piece stays.
+    text.split(",")[0]
+}
+
+fn main() {
+    var parts = "b,a,c".split(",")
+    let kept = parts
+    parts[0] = "z"
+    parts.sort()
+    console.println("{parts} {kept}")
+
+    var grown = "x,y".split(",")
+    grown.push("w")
+    console.println("{grown} {grown.length()}")
+
+    let first = firstOf("one,two,three")
+    console.println(first)
+
+    var pieces = "p,q,,r".split(",")
+    let last = pieces[3]
+    pieces = []
+    console.println("{last} {pieces.length()}")
+
+    let empty = ",,".split(",")
+    console.println("{empty.length()} [{empty.join("|")}]")
+
+    var total = 0
+    for round in 0..1000 {
+        let row = "{round},{round + 1},{round + 2}".split(",")
+        total += row[2].length()
+    }
+    console.println("{total}")
+
+    // A long piece keeps where its characters are, which its block
+    // forgets when it goes, after the array.
+    for _ in 0..3 {
+        let long = "{"x".repeat(70)}é,b".split(",")
+        console.println("{long[0][70]} {long[1]}")
+    }
+}
+
+// expect-stdout: [a, c, z] [b, a, c]
+// expect-stdout: [x, y, w] 3
+// expect-stdout: one
+// expect-stdout: r 0
+// expect-stdout: 3 [||]
+// expect-stdout: 2896
+// expect-stdout: é b
+// expect-stdout: é b
+// expect-stdout: é b
