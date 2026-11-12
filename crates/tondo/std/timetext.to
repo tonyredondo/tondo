@@ -612,7 +612,10 @@ pub fn duration(text: String): Int? {
             return none
         }
         at += size
-        let part = whole.checkedMul(Int128(unit))?.checkedAdd(Int128(fraction) * Int128(unit) / Int128(scale))?
+        let part =
+            whole
+                .checkedMul(Int128(unit))?
+                .checkedAdd(Int128(fraction) * Int128(unit) / Int128(scale))?
         total = total.checkedAdd(part)?
     }
     Int(if negative { -total } else { total }).ok()
