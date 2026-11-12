@@ -14,7 +14,7 @@ warning and passes its own tests on each change to the compiler.
 | [`linkcheck`](linkcheck) | a concurrent link checker | channels, a group of workers, a rate limit, a deadline around everything, tests against real servers |
 | [`chat`](chat) | rooms over WebSockets | state as a value behind one lock, waiting for a condition, bounded memory for slow readers, the page inside the executable |
 | [`warehouse`](warehouse) | a gRPC service and its client | a `.proto` as a module, the four kinds of call, interceptors, deadlines, health and reflection |
-| [`textkit`](textkit) | a library for C | `pub extern fn`, C's conventions for buffers and callbacks, the header the build writes, a C program that links it |
+| [`textkit`](textkit) | a library for C | `pub extern fn`, a struct by value, C's conventions for buffers and callbacks, the header the build writes, a C program that links it |
 | [`notes`](notes) | an MCP server | tools from the methods of a type, schemas from records, validated arguments, resources and prompts |
 | [`scripts`](scripts) | nine programs of one file | scripts with no `main`: files, JSON, CSV, processes, hashing in tasks, dates, a web server |
 
