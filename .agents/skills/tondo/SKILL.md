@@ -77,8 +77,9 @@ with statements cannot be imported.
   or `{name:<12}`; `{{` is a literal brace. `+` does not join strings.
 - Methods are declared outside the type: `fn User.greet(self): String`.
   `mut self` changes fields, `var self` can replace the value.
-- A trait method on a concrete value is called through the trait:
-  `Display.display(user)`; inside generic code, `value.display()`.
+- A trait's method is called with a dot, as any other: `user.display()`.
+  When two traits of a value give the same name, the call names one:
+  `Display.display(user)`.
 - `match`, `test`, `derive`, `with`, `as` and `select` are keywords, and
   `recover` before `{` and `context` before a declaration's name. There is no `if let`, no `|` in patterns and no
   `null`.
