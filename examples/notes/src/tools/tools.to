@@ -12,13 +12,9 @@ import std.validate
 /// search and read back. A note has a name, as `green-tea`, and is read at
 /// `notes://green-tea`.
 pub type Notes = {
-    /// The directory of the notes.
-    directory: String
-}
-
-/// The files of the notes. It is not `pub`, so it is no tool.
-fn Notes.files(self): fs.FileSystem {
-    fs.disk(self.directory)
+    /// Where the notes are: a directory of the disk, or files in memory in
+    /// a test.
+    files: fs.FileSystem
 }
 
 pub type WriteInput = {
@@ -34,10 +30,7 @@ pub type WriteInput = {
 
 /// Writes a note, replacing the one of that name.
 pub fn Notes.write(self, input: WriteInput): String ! library.NoteError {
-    library.save(
-        self.files(),
-        library.Note { name: input.name, tags: input.tags, text: input.text },
-    )?
+    library.save(self.files, library.Note { name: input.name, tags: input.tags, text: input.text })?
     "wrote notes://{input.name}"
 }
 
@@ -53,7 +46,7 @@ pub type SearchInput = {
 /// Finds the notes that say the most about some words, each with the line
 /// where it first says one.
 pub fn Notes.search(self, input: SearchInput): Array[library.Match] ! library.NoteError {
-    library.search(self.files(), input.query, limit: input.limit)
+    library.search(self.files, input.query, limit: input.limit)
 }
 
 /// A note in a list of them.
@@ -67,7 +60,7 @@ pub type Listed = {
 /// Lists the notes: all of them, or those with a tag.
 pub fn Notes.list(self, tag: String?): Array[Listed] ! library.NoteError {
     var listed: Array[Listed] = []
-    for note in library.all(self.files())? {
+    for note in library.all(self.files)? {
         if tag.isNone() or note.tags.contains(tag.unwrapOr("")) {
             listed.push(
                 Listed {
@@ -83,14 +76,14 @@ pub fn Notes.list(self, tag: String?): Array[Listed] ! library.NoteError {
 
 /// Deletes a note.
 pub fn Notes.remove(self, name: String): String ! library.NoteError {
-    library.remove(self.files(), name)?
+    library.remove(self.files, name)?
     "removed {name}"
 }
 
 /// A note, as the Markdown it was written in.
 @mcp.Resource(uri: r"notes://{name}", mime: "text/markdown")
 pub fn Notes.note(self, name: String): String ! library.NoteError {
-    library.load(self.files(), name)?.text
+    library.load(self.files, name)?.text
 }
 
 /// Asks for a note to be reviewed.

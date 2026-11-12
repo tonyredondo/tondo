@@ -4,11 +4,11 @@ import std.http
 import std.json
 import std.mcp
 
-/// The notes of a new directory, served on a free port. `mcp.handler`
-/// answers the same protocol that `mcp.serve` speaks over standard input.
-fn open(directory: String): http.Server ! http.HttpError {
+/// Notes kept in memory, served on a free port. `mcp.handler` answers the
+/// same protocol that `mcp.serve` speaks over standard input.
+fn open(files: fs.FileSystem): http.Server ! http.HttpError {
     var app = http.App()
-    app.post("/mcp", mcp.handler(tools.Notes { directory }, name: "notes"))
+    app.post("/mcp", mcp.handler(tools.Notes { files }, name: "notes"))
     app.start()?
 }
 
@@ -43,11 +43,8 @@ fn call(
 }
 
 test saysWhatItOffers {
-    let directory = fs.createTemporaryDirectory(pattern: "notes-")?
-    defer {
-        _ = fs.remove(directory, recursive: true)
-    }
-    let server = open(directory)?
+    let files = fs.memory()
+    let server = open(files)?
     defer server.stop()
 
     let listed = ask(server, "tools/list")?
@@ -80,20 +77,14 @@ test saysWhatItOffers {
 }
 
 test writesSearchesReadsAndRemoves {
-    let directory = fs.createTemporaryDirectory(pattern: "notes-")?
-    defer {
-        _ = fs.remove(directory, recursive: true)
-    }
-    let server = open(directory)?
+    let files = fs.memory()
+    let server = open(files)?
     defer server.stop()
 
     let note =
         r"""{"name":"green-tea","text":"Buy sencha.\nBrew it at 70 degrees.","tags":["tea"]}"""
     assert(call(server, "write", note)? == ("wrote notes://green-tea", false))
-    assert(
-        fs.readText("{directory}/green-tea.md")? ==
-            "tags: tea\n\nBuy sencha.\nBrew it at 70 degrees.\n",
-    )
+    assert(files.readText("green-tea.md")? == "tags: tea\n\nBuy sencha.\nBrew it at 70 degrees.\n")
 
     let (found, failed) = call(server, "search", r"""{"query":"sencha"}""")?
     assert(not failed and found == r"""[{"name":"green-tea","score":1,"line":"Buy sencha."}]""")
@@ -113,22 +104,16 @@ test writesSearchesReadsAndRemoves {
 }
 
 test aFailureIsTheToolsErrorInWords {
-    let directory = fs.createTemporaryDirectory(pattern: "notes-")?
-    defer {
-        _ = fs.remove(directory, recursive: true)
-    }
-    let server = open(directory)?
+    let files = fs.memory()
+    let server = open(files)?
     defer server.stop()
 
     assert(call(server, "remove", r"""{"name":"coffee"}""")? == ("there is no note `coffee`", true))
 }
 
 test argumentsThatBreakTheirRulesNeverReachTheTool {
-    let directory = fs.createTemporaryDirectory(pattern: "notes-")?
-    defer {
-        _ = fs.remove(directory, recursive: true)
-    }
-    let server = open(directory)?
+    let files = fs.memory()
+    let server = open(files)?
     defer server.stop()
 
     let outside = call(server, "write", r"""{"name":"../etc/passwd","text":"x"}""")?
@@ -140,5 +125,5 @@ test argumentsThatBreakTheirRulesNeverReachTheTool {
     assert(
         greedy == ("the arguments of `search` break their rules: limit: must be at most 20", true),
     )
-    assert(fs.list(directory)?.isEmpty())
+    assert(files.list()?.isEmpty())
 }

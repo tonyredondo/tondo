@@ -20,7 +20,7 @@ fn run(options: Serve): !(fs.FsError | mcp.McpError | http.HttpError) {
     if not fs.exists(options.directory) {
         fs.createDirectory(options.directory)?
     }
-    let server = tools.Notes { directory: options.directory }
+    let server = tools.Notes { files: fs.disk(options.directory) }
     match options.http {
         some(port) => {
             var app = http.App()

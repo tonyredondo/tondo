@@ -14,7 +14,7 @@ pub enum NoteError {
     /// A name that is not lower-case letters, digits and `-`.
     BadName(String)
     /// The files could not be read or written: why.
-    Files(String)
+    Files(fs.FsError)
 }
 
 impl Display for NoteError {
@@ -26,11 +26,6 @@ impl Display for NoteError {
             NoteError.Files(error) => "the notes cannot be reached: {error}"
         }
     }
-}
-
-/// What the file system said, as a `NoteError`.
-fn unreachable(error: fs.FsError): NoteError {
-    NoteError.Files("{error}")
 }
 
 /// A name is what a file can be called anywhere, and nothing that could
@@ -72,7 +67,7 @@ fn parsed(name: String, content: String): Note {
 /// Writes a note, replacing the one of that name.
 pub fn save(files: fs.FileSystem, note: Note): !NoteError {
     let name = checked(note.name)?
-    files.writeText("{name}.md", written(note)).mapErr(unreachable)?
+    files.writeText("{name}.md", written(note)).mapErr((error) { NoteError.Files(error) })?
 }
 
 /// The note of a name.
@@ -81,13 +76,13 @@ pub fn load(files: fs.FileSystem, name: String): Note ! NoteError {
     if not files.exists(file) {
         fail NoteError.NotFound(name)
     }
-    parsed(name, files.readText(file).mapErr(unreachable)?)
+    parsed(name, files.readText(file).mapErr((error) { NoteError.Files(error) })?)
 }
 
 /// Every note, by name.
 pub fn all(files: fs.FileSystem): Array[Note] ! NoteError {
     var notes: Array[Note] = []
-    for file in files.glob("*.md").mapErr(unreachable)?.sorted() {
+    for file in files.glob("*.md").mapErr((error) { NoteError.Files(error) })?.sorted() {
         notes.push(load(files, file.removeSuffix(".md"))?)
     }
     notes
@@ -99,7 +94,7 @@ pub fn remove(files: fs.FileSystem, name: String): !NoteError {
     if not files.exists(file) {
         fail NoteError.NotFound(name)
     }
-    files.remove(file).mapErr(unreachable)?
+    files.remove(file).mapErr((error) { NoteError.Files(error) })?
 }
 
 /// A note that says something of what was looked for.
