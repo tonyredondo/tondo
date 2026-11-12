@@ -1,0 +1,30 @@
+// A function that does not fail, named where one that may is expected,
+// becomes a closure that calls it (12.1), which takes each parameter as
+// the function does: what a `var` parameter is lent, it lends on.
+
+import std.console
+import std.executor
+
+fn plain(total: var Int, line: String) {
+    total += 1
+    console.println("{total}: {line}")
+}
+
+fn twice(change: fn(var Int, String): !String): Int ! String {
+    var count = 0
+    change(var count, "a")?
+    change(var count, "b")?
+    count
+}
+
+fn main(): !executor.ExecutorError {
+    let actor = executor.actor[Int, String, Never](10, 4, plain)?
+    _ = actor.reference().send("x")
+    actor.stop()?
+    console.println("{twice(plain)}")
+}
+
+// expect-stdout: 11: x
+// expect-stdout: 1: a
+// expect-stdout: 2: b
+// expect-stdout: ok(2)

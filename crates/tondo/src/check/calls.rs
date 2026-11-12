@@ -2700,12 +2700,15 @@ impl<'a> Checker<'a> {
             let call = ast::Expr {
                 kind: ast::ExprKind::Call {
                     callee: Box::new(arg.value.clone()),
+                    // Each taken as the function takes it: a `var` or `mut`
+                    // parameter lends what the closure was lent.
                     args: names
                         .iter()
-                        .map(|name| ast::Arg {
+                        .enumerate()
+                        .map(|(at, name)| ast::Arg {
                             name: None,
                             value: ast::Expr { kind: ast::ExprKind::Path(vec![name.clone()]), span },
-                            mode: ast::Mode::Value,
+                            mode: signature.modes.get(at).copied().unwrap_or(ast::Mode::Value),
                             spread: false,
                             span,
                         })
@@ -2715,7 +2718,13 @@ impl<'a> Checker<'a> {
             };
             let params = names
                 .into_iter()
-                .map(|name| ast::ClosureParam { name, ty: None, mode: ast::Mode::Value, variadic: false })
+                .enumerate()
+                .map(|(at, name)| ast::ClosureParam {
+                    name,
+                    ty: None,
+                    mode: signature.modes.get(at).copied().unwrap_or(ast::Mode::Value),
+                    variadic: false,
+                })
                 .collect();
             let body = ast::Block { stmts: Vec::new(), tail: Some(Box::new(call)), span };
             let closure = ast::Closure { is_unsafe: false, params, result: None, body };
