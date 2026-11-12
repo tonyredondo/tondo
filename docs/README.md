@@ -8,7 +8,7 @@ Where everything about Tondo is written, and which to read for what.
 | --- | --- |
 | [A tour of the language](tour.md) | The language by example, from a script to tasks and C |
 | [The toolchain](toolchain.md) | What `tondo` does besides compiling, with its commands and what they print |
-| [Tondo next to Go, Rust and C#](comparison.md) | What it shares with each and where it differs |
+| [Tondo next to other languages](comparison.md) | What it shares with Go, Rust and C# and where it differs, and a page of programs for each of eight languages |
 | [The README](../README.md) | What Tondo is, how to install it and where it stands |
 
 ## The guide
