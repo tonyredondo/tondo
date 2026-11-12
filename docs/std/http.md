@@ -1,14 +1,176 @@
 # std.http
 
-an HTTP client and server for HTTP/1.1 and HTTP/2 over TLS, with bodies that stream both ways, multipart forms, Server-Sent Events and WebSockets, on the runtime's transport.
+An HTTP server and an HTTP client, for HTTP/1.1 and HTTP/2 over TLS, with
+bodies that stream both ways, forms and uploads, Server-Sent Events and
+WebSockets. A service needs nothing else for the web: routing, JSON in and
+out, validation, errors as RFC 9457 problems, OpenAPI, static files,
+cookies and CORS are here. A server answers each request in a task of its
+own, on every core, and the handlers are ordinary functions that wait.
+
+- [A server and a client](#a-server-and-a-client)
+- [Typed handlers, bodies and problems](#typed-handlers-bodies-and-problems)
+- [Around every request](#around-every-request)
+- [What to reach for](#what-to-reach-for)
+
+## A server and a client
 
 ```tondo
+import std.console
 import std.http
 
-var app = http.App()
-app.get("/hello/:name", (request) { http.Reply.text("Hello, {request.param("name")}!") })
-app.listen(port: 8080)?
+type Greeting = { message: String, length: Int }
+
+fn main(): !http.HttpError {
+    var app = http.App()
+    app.get("/hello/:name", (request) {
+        let name = request.param("name")
+        http.Reply.json(Greeting { message: "Hello, {name}!", length: name.length() })
+    })
+    let server = app.start()?                   // on a free port; `listen(port: 8080)` serves until stopped
+    defer server.stop()
+
+    let greeting: Greeting = http.get("{server.url()}/hello/Ada")?.json()?
+    console.println("{greeting.message} ({greeting.length})")
+    match http.get("{server.url()}/nothing") {
+        err(http.HttpError.Status(response)) => console.println("{response.status()}")
+        _ => console.println("unexpected")
+    }
+}
 ```
+
+```text output
+Hello, Ada! (3)
+404
+```
+
+- A route is a method, a path with `:parameters`, and a handler that takes
+  the [`Request`](#request) and gives a [`Reply`](#reply), or fails with a
+  [`Problem`](#problem).
+- The client fails with [`HttpError.Status`](#httperror) for a status of 400
+  or more, so a reply that is read is one that succeeded.
+- `app.start()` serves in the background and gives a [`Server`](#server) to
+  stop, which is how tests use it; `app.listen()` serves until the process
+  is asked to end, and then drains the requests in flight.
+
+## Typed handlers, bodies and problems
+
+A handler can take its parameters as arguments. They are read from the
+path and the query by their names, a value that does not fit is a 400, and
+what the handler returns is written as JSON: `none` is a 404.
+
+```tondo
+import std.console
+import std.http
+import std.validate
+
+type Task = { id: Int, title: String }
+
+type NewTask = {
+    @validate.Length(min: 1, max: 80)
+    title: String
+}
+
+fn find(id: Int): Task? {
+    if id == 1 { some(Task { id, title: "write the manual" }) } else { none }
+}
+
+fn main(): !http.HttpError {
+    var app = http.App()
+    app.get("/tasks/:id", (id: Int) { find(id) })
+    app.post("/tasks", (request) {
+        let input = request.json[NewTask]()?    // checked against the type and its rules
+        http.Reply.json(Task { id: 2, title: input.title }, status: 201)
+    })
+    let server = app.start()?
+    defer server.stop()
+    let client = http.Client(baseUrl: server.url())
+
+    console.println(client.get("/tasks/1")?.text()?)
+    console.println("{client.post("/tasks", body: http.Body.json(NewTask { title: "test it" }))?.status()}")
+    for request in ["/tasks/7", "/tasks/seven"] {
+        match client.get(request) {
+            err(http.HttpError.Status(response)) => console.println("{response.status()}")
+            _ => console.println("unexpected")
+        }
+    }
+    match client.post("/tasks", body: http.Body.json(NewTask { title: "" })) {
+        err(http.HttpError.Status(response)) => console.println("{response.status()} {response.text()?}")
+        _ => console.println("unexpected")
+    }
+}
+```
+
+```text output
+{"id":1,"title":"write the manual"}
+201
+404
+400
+422 {"status":422,"detail":"the value breaks the rules of its type: title: must have at least 1 character","errors":[{"path":"title","message":"must have at least 1 character"}]}
+```
+
+A handler fails with `fail http.Problem.notFound("no such task")`, or with
+`?` on anything that is a `Problem`. A status of 500 or more keeps its
+message for the log and answers `internal server error`.
+
+## Around every request
+
+Middleware is a function that takes the request and the rest of the chain.
+It is where logging, authentication and metrics go, once:
+
+```tondo
+import std.console
+import std.http
+
+fn main(): !http.HttpError {
+    var app = http.App()
+    app.use((request, next) {
+        if request.header("Authorization") != some("Bearer secret") {
+            fail http.Problem.unauthorized("a key is needed")
+        }
+        next(request)?.header("X-Served-By", "tondo")
+    })
+    app.get("/", (_) { http.Reply.text("hello") })
+    let server = app.start()?
+    defer server.stop()
+
+    let answer = http.get(server.url(), headers: ["Authorization": "Bearer secret"])?
+    console.println("{answer.text()?} {answer.header("X-Served-By")}")
+    match http.get(server.url()) {
+        err(http.HttpError.Status(response)) => console.println("{response.status()}")
+        _ => console.println("unexpected")
+    }
+}
+```
+
+```text output
+hello some(tondo)
+401
+```
+
+A `context` set in a middleware with `with` holds for the handler and for
+every function and task under it, which is how a request's id reaches each
+line of its log ([Contexts](../language/14-contexts.md)).
+
+## What to reach for
+
+| To | Use |
+| --- | --- |
+| Answer JSON, text, HTML, bytes or a file | [`Reply.json`](#replyjson), [`Reply.text`](#replytext), [`Reply.html`](#replyhtml), [`Reply.bytes`](#replybytes), [`Reply.file`](#replyfile) |
+| Stream an answer, or send events | [`Reply.stream`](#replystream), [`Reply.events`](#replyevents) |
+| Read what was sent | [`Request.json`](#requestjson), [`Request.form`](#requestform), [`Request.uploads`](#requestuploads), [`Request.queryAs`](#requestqueryas) |
+| Serve a directory, or files kept in the executable | [`App.files`](#appfiles) |
+| Talk over a WebSocket | [`App.websocket`](#appwebsocket), [`WebSocket.connect`](#websocketconnect) |
+| Describe the API | [`App.openApi`](#appopenapi) |
+| Let a page of another origin call it | [`App.cors`](#appcors) |
+| Serve gRPC beside the routes | [`App.grpc`](#appgrpc), with [`std.grpc`](grpc.md) |
+| Call another service | [`get`](#get), [`post`](#post), or a [`Client`](#client) with a base URL, headers and a timeout |
+| Send a form, a file or a stream | [`Body.form`](#bodyform), [`Body.multipart`](#bodymultipart), [`Body.stream`](#bodystream) |
+| Read an answer as it arrives | [`Response.lines`](#responselines), [`Response.events`](#responseevents), [`Response.body`](#responsebody) |
+| Wrap every request a client makes | [`Client.use`](#clientuse) |
+
+The [`todo-api`](../../examples/todo-api) example is a whole service, the
+[`chat`](../../examples/chat) one uses WebSockets, and
+[`linkcheck`](../../examples/linkcheck) the client.
 
 <!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
 

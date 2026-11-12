@@ -1,25 +1,120 @@
 # std.sync
 
-state shared between tasks. Every value is a handle: copies share the state. A contended wait stops the task, not the thread.
+What tasks share. Tondo's values are copied, so a task cannot change
+another's data by accident, and a plain `var` cannot be given to two tasks
+to change: that does not compile. State that really is shared is put in
+one of the types of this module, each of which is a handle that its copies
+share, and each of which makes its rule impossible to forget, since the
+value is inside it.
+
+- [A value behind a lock](#a-value-behind-a-lock)
+- [Waiting for a condition](#waiting-for-a-condition)
+- [Which to use](#which-to-use)
+
+## A value behind a lock
 
 ```tondo
 import std.console
 import std.sync
 
-fn record(hits: sync.Mutex[Int], counter: sync.Atomic[Int]) {
-    hits.update((n) { n += 1 })
-    _ = counter.add(1)
+type Account = { balance: Int, moves: Int }
+
+fn deposit(account: sync.Mutex[Account], amount: Int) {
+    // The function has the value to itself while it runs.
+    account.update((now) {
+        now.balance += amount
+        now.moves += 1
+    })
 }
 
-let hits = sync.Mutex(0)
-let counter = sync.Atomic(0)
-var group = Group[Unit]()
-for _ in 0..4 {
-    group.add(spawn record(hits, counter))
+fn main() {
+    let account = sync.Mutex(Account { balance: 0, moves: 0 })
+    let visits = sync.Atomic(0)
+    var group = Group[Unit]()
+    for amount in 1..=100 {
+        group.add(spawn deposit(account, amount))
+        _ = visits.add(1)
+    }
+    _ = group.wait()
+    let end = account.get()
+    console.println("{end.balance} in {end.moves} moves, {visits.load()} visits")
+
+    // Reading and then writing is two steps, and another task can come between them.
+    let withdrawn = account.update((now) {
+        if now.balance >= 5000 {
+            now.balance -= 5000
+            true
+        } else {
+            false
+        }
+    })
+    console.println("{withdrawn} {account.get().balance}")
 }
-group.wait()
-console.println("{hits.get()} {counter.load()}")
 ```
+
+```text output
+5050 in 100 moves, 100 visits
+true 50
+```
+
+- [`Mutex.update`](#mutexupdate) is the way in. There is no `lock` without
+  its `unlock`, no way to read the value without the lock, and a panic or a
+  cancellation inside lets the lock go.
+- `update` gives back what its function gives, so a check and the change
+  it allows are one step, as the withdrawal above.
+- [`Atomic`](#atomic) is for one number or flag that many tasks touch:
+  `add`, `load`, `store`, and `compareExchange` for the rest.
+- `tondo test` runs a test that starts tasks in the orders that could
+  change its result, so the lost update of a `get` followed by a `set`
+  fails in a plain run ([Testing](../toolchain/testing.md#tests-that-start-tasks)).
+
+## Waiting for a condition
+
+[`Mutex.updateWhen`](#mutexupdatewhen) waits until a condition holds for
+the value and then changes it, as one step. It is what a condition
+variable is for, without the loop around it:
+
+```tondo
+import std.console
+import std.sync
+
+/// Takes the next job, waiting while there is none.
+fn take(jobs: sync.Mutex[Array[String]]): String {
+    jobs.updateWhen((waiting) { not waiting.isEmpty() }, (waiting) { waiting.removeAt(0).unwrapOr("") })
+}
+
+fn main() {
+    let empty: Array[String] = []
+    let jobs = sync.Mutex(empty)
+    let worker = spawn take(jobs)               // waits: there is nothing yet
+    jobs.update((waiting) { waiting.push("resize the images") })
+    console.println(worker.wait())
+}
+```
+
+```text output
+resize the images
+```
+
+## Which to use
+
+| For | Use |
+| --- | --- |
+| A value that several tasks change | [`Mutex`](#mutex) |
+| One that is mostly read | [`RwLock`](#rwlock) |
+| A counter or a flag | [`Atomic`](#atomic) |
+| Something made once, by whoever asks first | [`Once`](#once) |
+| At most so many at a time | [`Semaphore`](#semaphore) |
+| At most so many a second | [`RateLimiter`](#ratelimiter) |
+| Tasks that start together | [`Barrier`](#barrier) |
+| A map, a set or a queue that many tasks use | [`Map`](#map), [`Set`](#set), [`Queue`](#queue), [`Stack`](#stack), [`Array`](#array), which need no lock around them |
+| Doing something again until it works | [`retry`](#retry) |
+
+Passing values between tasks is a channel, in the language, and often the
+better design: [Tasks](../language/13-tasks.md) has both, and when to
+choose which. The [`chat`](../../examples/chat) and
+[`warehouse`](../../examples/warehouse) examples keep their state in a
+`Mutex`, and [`linkcheck`](../../examples/linkcheck) shares a rate limiter.
 
 <!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
 

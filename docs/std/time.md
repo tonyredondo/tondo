@@ -1,15 +1,124 @@
 # std.time
 
-durations, the monotonic clock, waits, dates and time zones.
+Durations, the clock, dates and time zones. The three questions a program
+asks of time are kept apart, each with its own type: how long something
+took is an [`Instant`](#instant) and a [`Duration`](#duration), what the
+date is in UTC is a [`DateTime`](#datetime), and what a clock on a wall
+somewhere shows is a [`ZonedDateTime`](#zoneddatetime). Sleeping, and the
+deadline a `within` block set, are here too.
+
+- [How long](#how-long)
+- [Dates](#dates)
+- [Time zones](#time-zones)
+- [What to reach for](#what-to-reach-for)
+
+## How long
 
 ```tondo
 import std.console
 import std.time
 
-let started = time.now()
-time.sleep(time.milliseconds(10))
-console.println("took {started.elapsed()}, now {time.utcNow()}")
+fn main(): !time.TimeError {
+    let started = time.now()                    // a clock that only goes forward
+    time.sleep(time.milliseconds(20))
+    let took = started.elapsed()
+    console.println("{took.milliseconds() >= 20} {took.isLessThan(time.seconds(5))}")
+
+    let timeout = time.minutes(1).multiply(3)
+    console.println("{timeout.seconds()} s, {time.parseDuration("1m30s")?.seconds()} s, {time.hours(36)}")
+}
 ```
+
+```text output
+true true
+180 s, 90 s, 36h0m0s
+```
+
+A `Duration` is made by naming its unit, `time.seconds(30)`, so there is no
+bare number of milliseconds to pass by mistake where seconds were meant.
+`time.now()` is for measuring: it does not jump when the system's clock is
+set.
+
+## Dates
+
+```tondo
+import std.console
+import std.time
+
+fn main(): !time.TimeError {
+    let release = time.parseDateTime("2026-11-12T09:30:00Z")?
+    console.println("{release.year}-{release.month}-{release.day}, a {release.weekday()}, day {release.dayOfYear()}")
+
+    let due = release.addMonths(1).addDays(3)
+    console.println(due.format("%A %d %B %Y, %H:%M"))
+    console.println(due.format("%A %d %B %Y", locale: "es"))
+    console.println("{due.since(release).hours() / 24} days later")
+
+    // The end of a month does not overflow into the next.
+    let january = time.DateTime { year: 2027, month: 1, day: 31, hour: 0, minute: 0, second: 0, nanosecond: 0 }
+    console.println(january.addMonths(1).format("%Y-%m-%d"))
+}
+```
+
+```text output
+2026-11-12, a Thursday, day 316
+Tuesday 15 December 2026, 09:30
+martes 15 diciembre 2026
+33 days later
+2027-02-28
+```
+
+A `DateTime` is a moment in UTC, with its parts as fields. `format` takes a
+pattern of `strftime` and writes the names of days and months in a
+language; `parseDateTime` reads RFC 3339.
+
+## Time zones
+
+```tondo
+import std.console
+import std.time
+
+fn main(): !time.TimeError {
+    let meeting = time.parseDateTime("2026-03-28T17:00:00Z")?
+    for place in ["Europe/Madrid", "America/New_York", "Asia/Tokyo"] {
+        let local = meeting.inZone(time.zone(place)?)
+        console.println("{place}: {local.format("%a %H:%M %Z")}")
+    }
+    // A day later is the same hour on the wall, across a change of clocks.
+    let madrid = meeting.inZone(time.zone("Europe/Madrid")?)
+    console.println(madrid.addDays(1).format("%a %H:%M %Z"))
+}
+```
+
+```text output
+Europe/Madrid: Sat 18:00 CET
+America/New_York: Sat 13:00 EDT
+Asia/Tokyo: Sun 02:00 JST
+Sun 18:00 CEST
+```
+
+Zones come from the system's tz database, and those it lacks from the
+copy every program carries, so a zone is found on a machine with no zone
+files too. `TONDO_ZONES=builtin` in the environment uses that copy always.
+
+## What to reach for
+
+| To | Use |
+| --- | --- |
+| Say how long | [`milliseconds`](#milliseconds), [`seconds`](#seconds), [`minutes`](#minutes), [`hours`](#hours), [`parseDuration`](#parseduration) |
+| Measure how long something took | [`now`](#now), [`Instant.elapsed`](#instantelapsed), [`Instant.since`](#instantsince) |
+| Wait | [`sleep`](#sleep) |
+| Know how long the work has left | [`deadline`](#deadline), [`remaining`](#remaining) |
+| Have the date and the time | [`utcNow`](#utcnow), [`localNow`](#localnow) |
+| Read and write dates | [`parseDateTime`](#parsedatetime), [`DateTime.format`](#datetimeformat), [`parseZoned`](#parsezoned) |
+| Add to a date | [`DateTime.addDays`](#datetimeadddays), [`DateTime.addMonths`](#datetimeaddmonths), [`DateTime.add`](#datetimeadd) |
+| Show a moment somewhere | [`zone`](#zone), [`DateTime.inZone`](#datetimeinzone), [`localZone`](#localzone) |
+| Keep a moment as a number | [`unixTime`](#unixtime), [`DateTime.sinceEpoch`](#datetimesinceepoch), [`utc`](#utc) |
+
+A deadline for a block of code is `within`, in the language
+([Contexts and deadlines](../language/14-contexts.md)), and a clock that a
+test moves by hand is `testing.withVirtualTime`
+([`std.testing`](testing.md)).
 
 <!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
 

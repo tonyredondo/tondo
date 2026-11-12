@@ -1,18 +1,116 @@
 # std.fs
 
-the filesystem. Operations wait without blocking a worker.
+Files and directories: reading and writing them whole or a piece at a
+time, listing and walking trees, patterns, metadata, links, locks and
+watching for changes. Every function that can fail returns a result with an
+[`FsError`](#fserror) that says which way, so a missing file is a case to
+match and not an exception to remember.
+
+A tree of files is also a value. A [`FileSystem`](#filesystem) is a
+directory of the disk, files in memory, the files kept inside the
+executable or the content of an archive, all used through the same
+functions, which lets code that works on files be tested without touching
+the disk.
+
+- [Reading and writing](#reading-and-writing)
+- [A file system as a value](#a-file-system-as-a-value)
+- [What to reach for](#what-to-reach-for)
+
+## Reading and writing
 
 ```tondo
 import std.console
 import std.fs
 
-fs.writeText("notes.txt", "first line\n")?
-fs.appendText("notes.txt", "second line\n")?
-for line in fs.readText("notes.txt")?.lines() {
-    console.println(line)
+fn main(): !fs.FsError {
+    let directory = fs.createTemporaryDirectory(pattern: "notes-")?
+    defer { _ = fs.remove(directory, recursive: true) }
+
+    fs.writeText("{directory}/today.md", "# Today\n\n- write\n- test\n")?
+    fs.appendText("{directory}/today.md", "- ship\n")?
+    fs.createDirectory("{directory}/archive")?
+    fs.copy("{directory}/today.md", "{directory}/archive/yesterday.md")?
+
+    let text = fs.readText("{directory}/today.md")?
+    console.println("{text.lines().length()} lines, {fs.metadata("{directory}/today.md")?.size} bytes")
+    console.println("{fs.list(directory)?.sorted()}")
+    console.println("{fs.glob("{directory}/**/*.md")?.length()} Markdown files")
+
+    match fs.readText("{directory}/tomorrow.md") {
+        ok(_) => console.println("there is a tomorrow")
+        err(fs.FsError.NotFound) => console.println("no tomorrow yet")
+        err(error) => fail error
+    }
 }
-fs.remove("notes.txt")?
 ```
+
+```text output
+5 lines, 31 bytes
+[archive, today.md]
+2 Markdown files
+no tomorrow yet
+```
+
+- `readText` and `writeText` take a whole file. [`open`](#open) gives a
+  [`File`](#file) to read a line at a time or to write as the data comes,
+  and the file closes when its block ends.
+- `writeText` writes through a temporary file and a rename, so a reader
+  sees the old content or the new, never half of it.
+- Paths are strings. [`std.path`](path.md) joins and splits them.
+
+## A file system as a value
+
+The same functions exist on a [`FileSystem`](#filesystem), with paths
+relative to its top. A function that takes one works on the disk in the
+program and in memory in its tests:
+
+```tondo
+import std.console
+import std.fs
+
+/// The titles of the Markdown files of a tree: the first line of each.
+fn titles(files: fs.FileSystem): Array[String] ! fs.FsError {
+    var found: Array[String] = []
+    for file in files.glob("**/*.md")? {
+        found.push(files.readText(file)?.lines().first().unwrapOr("").removePrefix("# "))
+    }
+    found
+}
+
+fn main(): !fs.FsError {
+    let files = fs.memory()
+    files.createDirectory("guide")?
+    files.writeText("index.md", "# Welcome\n")?
+    files.writeText("guide/install.md", "# Installing\n\nOne command.\n")?
+    console.println("{titles(files)?}")
+    console.println("{titles(files.sub("guide"))?}")
+}
+```
+
+```text output
+[Installing, Welcome]
+[Installing]
+```
+
+`fs.disk("site")` is a directory of the disk, `embed.files("public")` the
+files the compiler put inside the executable ([`std.embed`](embed.md)), and
+`files.sub("guide")` a view of one directory that cannot name anything
+outside it. The [`sitegen`](../../examples/sitegen) example is built on
+this.
+
+## What to reach for
+
+| To | Use |
+| --- | --- |
+| Read or write a whole file | [`readText`](#readtext), [`readBytes`](#readbytes), [`writeText`](#writetext), [`writeBytes`](#writebytes), [`appendText`](#appendtext) |
+| Read or write a piece at a time | [`open`](#open), [`File.readLine`](#filereadline), [`File.write`](#filewrite) |
+| Know whether something is there, and what it is | [`exists`](#exists), [`metadata`](#metadata) |
+| List a directory, or a whole tree | [`list`](#list), [`walk`](#walk), [`glob`](#glob) |
+| Make, move, copy and remove | [`createDirectory`](#createdirectory), [`rename`](#rename), [`copy`](#copy), [`remove`](#remove) |
+| Work somewhere that goes away | [`createTemporaryDirectory`](#createtemporarydirectory), [`createTemporaryFile`](#createtemporaryfile) |
+| Run something when files change | [`watch`](#watch) |
+| Keep two programs off the same file | [`File.lock`](#filelock), [`File.tryLock`](#filetrylock) |
+| Pass a tree of files around | [`disk`](#disk), [`memory`](#memory), [`overlay`](#overlay), [`FileSystem.sub`](#filesystemsub) |
 
 <!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
 

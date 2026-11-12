@@ -1,24 +1,169 @@
 # std.cli
 
-the command line read into the program's types, as a record of options and arguments or an enum of subcommands, with the help their documentation gives; and what a program writes to a terminal: styles, tables, progress and questions.
+A command line read into the program's types, and what a program writes to
+a terminal. A record is a command: its fields are the options and
+arguments, their types say what is accepted, their documentation is the
+help. An enum is subcommands. There is no builder to call and no strings to
+keep in step with the code.
+
+- [A command from a type](#a-command-from-a-type)
+- [Subcommands](#subcommands)
+- [Writing to a terminal](#writing-to-a-terminal)
+- [What to reach for](#what-to-reach-for)
+
+## A command from a type
+
+```tondo
+import std.cli
+import std.console
+import std.time
+
+/// Copies files to a server.
+type Upload = {
+    /// The files to copy.
+    @cli.Argument
+    files: Array[String]
+    /// Where to copy them.
+    @cli.Option(short: "t", env: ["UPLOAD_TARGET"])
+    target: String = "staging"
+    /// How long to wait for the server.
+    timeout: time.Duration = time.seconds(30)
+    /// Says what it would do, and does nothing.
+    dryRun: Bool
+}
+
+fn main() {
+    for line in [["a.txt", "b.txt", "-t", "production", "--timeout", "2m"], ["--dry-run", "a.txt"], ["--port", "80"]] {
+        match cli.parseArgs[Upload](line) {
+            ok(upload) => console.println("{upload.files} to {upload.target}, {upload.timeout}, dry run: {upload.dryRun}")
+            err(error) => console.println("{error}".lines().first().unwrapOr(""))
+        }
+    }
+}
+```
+
+```text output
+[a.txt, b.txt] to production, 2m0s, dry run: false
+[a.txt] to staging, 30s, dry run: true
+error: unknown option `--port`; did you mean `--target`?
+```
+
+- A field is an option, `--kebab-case` from its name, or with
+  `@cli.Argument` a positional argument. `Bool` is a flag, `T?` is optional,
+  `Array[T]` repeats, an enum without data is a choice, and a
+  `time.Duration` is written `30s` or `1m30s`.
+- A field's default is the option's, and the help shows it. `env` names
+  variables of the environment to read before the default.
+- [`parse`](#parse) reads the program's own arguments, prints the help for
+  `-h`, and on a wrong line prints what is wrong and ends with status 2.
+  [`parseArgs`](#parseargs) gives the error instead, as above.
+
+## Subcommands
+
+An enum is a choice of commands, each variant with its own options, and a
+record can hold options that all of them share:
 
 ```tondo
 import std.cli
 import std.console
 
-/// Greets someone.
-type Greet = {
-    /// Who to greet.
-    name: String = "world"
-    /// How many times.
-    times: Int = 1
+/// Keeps notes.
+type Notes = {
+    /// The directory of the notes.
+    @cli.Option(short: "d")
+    directory: String = "notes"
+    @cli.Argument
+    command: Command
 }
 
-let options = cli.parse[Greet]()
-for _ in 0..options.times {
-    console.println("hello {options.name}")
+enum Command {
+    /// Adds a note.
+    Add {
+        @cli.Argument
+        text: String
+    }
+    /// Lists the notes, the newest first.
+    List {
+        @cli.Option(short: "n", default: "10")
+        limit: Int
+    }
+}
+
+fn main() {
+    for line in [["add", "buy tea"], ["list", "-n", "3", "-d", "work"]] {
+        match cli.parseArgs[Notes](line) {
+            ok(notes) => match notes.command {
+                Command.Add { text } => console.println("add `{text}` to {notes.directory}")
+                Command.List { limit } => console.println("list {limit} of {notes.directory}")
+            }
+            err(error) => console.println("{error}")
+        }
+    }
 }
 ```
+
+```text output
+add `buy tea` to notes
+list 3 of work
+```
+
+## Writing to a terminal
+
+```tondo
+import std.cli
+import std.console
+
+type Row = { service: String, requests: Int, errors: Int }
+
+fn main() {
+    let rows = [
+        Row { service: "api", requests: 18204, errors: 12 },
+        Row { service: "worker", requests: 932, errors: 0 },
+    ]
+    console.println(cli.table(rows))
+    console.println(cli.table(rows, columns: ["service", "errors"]))
+}
+```
+
+```text output
+┌─────────┬──────────┬────────┐
+│ service │ requests │ errors │
+├─────────┼──────────┼────────┤
+│ api     │    18204 │     12 │
+│ worker  │      932 │      0 │
+└─────────┴──────────┴────────┘
+
+┌─────────┬────────┐
+│ service │ errors │
+├─────────┼────────┤
+│ api     │     12 │
+│ worker  │      0 │
+└─────────┴────────┘
+```
+
+A table's columns are a record's fields, with numbers to the right.
+[`markup`](#markup) styles text, `cli.markup("[bold red]failed[/]")`, and
+writes plain text when the output is not a terminal.
+[`progress`](#progress) shows work as it advances, and [`ask`](#ask),
+[`confirm`](#confirm), [`choose`](#choose) and [`secret`](#secret) put a
+question to whoever is at the keyboard.
+
+## What to reach for
+
+| To | Use |
+| --- | --- |
+| Read the command line into a type | [`parse`](#parse), [`parseArgs`](#parseargs) |
+| Say how a field is written | [`Argument`](#argument), [`Option`](#option), [`Rest`](#rest) |
+| Print the help, or a shell's completions | [`help`](#help), [`completions`](#completions) |
+| Show rows | [`table`](#table) |
+| Style text | [`markup`](#markup) |
+| Show progress | [`progress`](#progress) |
+| Ask | [`ask`](#ask), [`confirm`](#confirm), [`choose`](#choose), [`secret`](#secret) |
+| Know the terminal | [`isTerminal`](#isterminal), [`width`](#width) |
+
+The [`logstat`](../../examples/logstat) and
+[`warehouse`](../../examples/warehouse) examples are command lines with
+subcommands.
 
 <!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
 
