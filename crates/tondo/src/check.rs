@@ -1494,9 +1494,9 @@ fn listed(items: &[String]) -> String {
 fn bound_idents<'p>(pattern: &'p ast::Pattern, names: &mut Vec<&'p ast::Ident>) {
     match &pattern.kind {
         ast::PatternKind::Binding(name) | ast::PatternKind::Loan(_, name) => names.push(name),
-        ast::PatternKind::Tuple(parts) | ast::PatternKind::Constructor { args: parts, .. } => {
-            parts.iter().for_each(|part| bound_idents(part, names))
-        }
+        ast::PatternKind::Tuple(parts)
+        | ast::PatternKind::Constructor { args: parts, .. }
+        | ast::PatternKind::Or(parts) => parts.iter().for_each(|part| bound_idents(part, names)),
         ast::PatternKind::Array { items, rest } => {
             items.iter().for_each(|item| bound_idents(item, names));
             if let Some(Some((_, name))) = rest {

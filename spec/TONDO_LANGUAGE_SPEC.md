@@ -5557,7 +5557,35 @@ El guard debe ser `Bool` y se evalúa después de que el patrón coincida. Una r
 
 Las ramas se prueban de arriba abajo. Una rama completamente cubierta por anteriores es error, no warning.
 
-Tondo 0.1 no tiene patrones alternativos. Se escriben ramas separadas para evitar bindings incompatibles dentro de un único patrón.
+Una rama puede reunir varios patrones separados por `|`, y se toma cuando
+coincide cualquiera de ellos, que se prueban en orden:
+
+~~~tondo
+enum Token {
+    Plus
+    Minus
+    Number(Int)
+}
+
+fn isOperator(token: Token): Bool {
+    match token {
+        Token.Plus | Token.Minus => true
+        Token.Number(_) => false
+    }
+}
+~~~
+
+- Ningún patrón de los que une `|` declara un binding; `_` sí puede aparecer,
+  también dentro: `Token.Number(_) | Token.Plus`. Uno que declara un binding es
+  `E1202`, que pide una rama propia para él.
+- `|` une patrones solo en la cabeza de una rama; dentro de otro patrón, como
+  `some(1 | 2)`, no existe. En un patrón, `|` no es el operador de enteros: un
+  patrón no contiene expresiones.
+- El guard de la rama vale para todos ellos.
+- Para la exhaustividad cuentan juntos, cada uno como un patrón de la rama; uno
+  que patrones anteriores ya cubren es `E1203`, como una rama.
+- El formateador deja la rama en una línea cuando cabe, y si no, parte después
+  de cada `|`.
 
 ### 14.6 Patrones irrefutables
 
@@ -10068,7 +10096,7 @@ match_expression
                 = "match", expression, "{",
                   { NL | match_arm }, "}" ;
 
-match_arm       = pattern, [ "if", expression ], "=>",
+match_arm       = pattern, { "|", pattern }, [ "if", expression ], "=>",
                   ( expression | block | arm_statement ),
                   match_arm_end ;
 

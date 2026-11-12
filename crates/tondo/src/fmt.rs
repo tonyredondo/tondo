@@ -1442,6 +1442,20 @@ impl Formatter<'_> {
     fn pattern(&mut self, pattern: &Pattern) -> Doc {
         match &pattern.kind {
             PatternKind::Wildcard => text("_"),
+            // One line when it fits, and a break after each `|` when not.
+            PatternKind::Or(alternatives) => {
+                let mut docs = Vec::new();
+                for (index, alternative) in alternatives.iter().enumerate() {
+                    let doc = self.pattern(alternative);
+                    if index == 0 {
+                        docs.push(doc);
+                    } else {
+                        docs.push(text(" |"));
+                        docs.push(indent(concat(vec![Doc::Softline, doc])));
+                    }
+                }
+                group(concat(docs))
+            }
             PatternKind::Binding(name) => text(name.name.clone()),
             PatternKind::Loan(mode, name) => text(format!("{} {}", mode.keyword(), name.name)),
             PatternKind::Literal(expr) => self.expr(expr),

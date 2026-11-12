@@ -113,8 +113,8 @@ fn main() {
 ```
 
 A match is exhaustive: a missing case is a compile error that names it. One
-arm per line; `_` matches anything. For several values write several arms
-(there is no `|` in patterns).
+arm per line; `_` matches anything. `1 | 2 =>` joins patterns that bind
+nothing in one arm.
 
 ## Closures and function values
 

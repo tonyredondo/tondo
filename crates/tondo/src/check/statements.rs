@@ -1369,7 +1369,7 @@ impl<'a> Checker<'a> {
             hir::PatKind::Variant(_, items) | hir::PatKind::Array { items, .. } => {
                 items.iter().for_each(|item| self.borrowed_bindings(cx, item, map, in_value))
             }
-            hir::PatKind::Wildcard | hir::PatKind::Literal(_) => {}
+            hir::PatKind::Wildcard | hir::PatKind::Literal(_) | hir::PatKind::Or(_) => {}
         }
     }
 
@@ -1386,7 +1386,7 @@ impl<'a> Checker<'a> {
                 }
             }
             hir::PatKind::Newtype(inner) => self.lends(inner, place, out),
-            hir::PatKind::Wildcard | hir::PatKind::Literal(_) => {}
+            hir::PatKind::Wildcard | hir::PatKind::Literal(_) | hir::PatKind::Or(_) => {}
             hir::PatKind::Variant(..) | hir::PatKind::Array { .. } => {
                 self.diags.unsupported(pattern.span, "borrowing parts of an enum or array element in a `for` header");
             }

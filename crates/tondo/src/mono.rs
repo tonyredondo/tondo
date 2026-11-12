@@ -953,7 +953,7 @@ impl Mono<'_> {
         pattern.ty = self.ty(pattern.ty, map);
         match &mut pattern.kind {
             PatKind::Wildcard | PatKind::Binding(_) | PatKind::Literal(_) => {}
-            PatKind::Fields(items) | PatKind::Variant(_, items) | PatKind::Array { items, .. } => {
+            PatKind::Fields(items) | PatKind::Variant(_, items) | PatKind::Array { items, .. } | PatKind::Or(items) => {
                 for item in items {
                     self.pattern(item, map);
                 }

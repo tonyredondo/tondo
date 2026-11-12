@@ -1079,6 +1079,7 @@ impl Linker<'_> {
 
     fn pattern(&mut self, pattern: &mut Pattern) {
         match &mut pattern.kind {
+            PatternKind::Or(alternatives) => alternatives.iter_mut().for_each(|p| self.pattern(p)),
             PatternKind::Constructor { path, args } => {
                 self.path(path, Position::Any);
                 args.iter_mut().for_each(|p| self.pattern(p));

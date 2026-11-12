@@ -1,0 +1,20 @@
+// An alternative of `|` that binds a name, and one an earlier pattern
+// covers, are errors.
+
+enum Shape {
+    Circle(Int)
+    Square(Int)
+    Dot
+}
+
+fn area(shape: Shape): Int {
+    match shape {
+        Shape.Circle(r) | Shape.Square(r) => r
+        Shape.Dot | Shape.Dot => 0
+    }
+}
+
+fn main() {}
+
+// expect-error: E1202 the patterns that `|` joins bind nothing, and this one binds `r`: write an arm of its own for it
+// expect-error: E1203 this pattern is covered by earlier ones

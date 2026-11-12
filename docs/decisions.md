@@ -6207,3 +6207,13 @@ the fallback calls nothing, as `??` evaluates it only when needed, and none is o
 chain of `?.`, where `??` would take the whole chain. The repository was rewritten by those fixes.
 `try {` is the diagnostic for other languages' `try` again. A template of a `Set` writes `??` as
 code does, and `unwrapOr` is gone there too.
+
+## Several patterns in one arm
+
+Arms that differ only in their pattern were written once each with the same body, about 110 pairs
+in the standard library. An arm is now one or more patterns joined by `|`, with one guard for all
+of them. They bind nothing, as a name two patterns bind could have a different type or be missing
+in one: an arm that binds is written for each pattern, and the error says so. They join only at
+the top of an arm, where they read as a list of cases. Exhaustiveness counts each as a pattern of
+its own, so one that earlier ones cover is reported. The lowering tests them in turn and jumps to
+the one body, which is not copied.

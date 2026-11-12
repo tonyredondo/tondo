@@ -74,13 +74,17 @@ fn main() {
 }
 ```
 
-No `|` in patterns: one arm per pattern, or `_` with a guard.
+Patterns joined by `|` bind nothing: an arm per pattern that binds.
 
-```tondo error E0004
-fn size(n: Int): String {
-    match n {
-        1 | 2 => "small"
-        _ => "big"
+```tondo error E1202
+enum Shape {
+    Circle(Int)
+    Square(Int)
+}
+
+fn size(shape: Shape): Int {
+    match shape {
+        Shape.Circle(r) | Shape.Square(r) => r
     }
 }
 

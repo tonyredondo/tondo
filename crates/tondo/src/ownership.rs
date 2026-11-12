@@ -289,7 +289,7 @@ impl Checker<'_> {
                 }
             }
             PatKind::Newtype(inner) => self.bind(inner, flow),
-            PatKind::Wildcard | PatKind::Literal(_) => {}
+            PatKind::Wildcard | PatKind::Literal(_) | PatKind::Or(_) => {}
         }
     }
 
@@ -302,7 +302,7 @@ impl Checker<'_> {
                 items.iter().any(|p| self.takes(p)) || matches!(rest, Some(Some(local)) if self.owns(*local))
             }
             PatKind::Newtype(inner) => self.takes(inner),
-            PatKind::Wildcard | PatKind::Literal(_) => false,
+            PatKind::Wildcard | PatKind::Literal(_) | PatKind::Or(_) => false,
         }
     }
 
@@ -316,7 +316,7 @@ impl Checker<'_> {
                     || matches!(rest, Some(Some(local)) if self.params[local.0 as usize].is_some())
             }
             PatKind::Newtype(inner) => self.borrows(inner),
-            PatKind::Wildcard | PatKind::Literal(_) => false,
+            PatKind::Wildcard | PatKind::Literal(_) | PatKind::Or(_) => false,
         }
     }
 

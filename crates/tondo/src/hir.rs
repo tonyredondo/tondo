@@ -870,6 +870,8 @@ pub struct Pattern {
 #[derive(Clone)]
 pub enum PatKind {
     Wildcard,
+    /// The alternatives of a `match` arm, which bind nothing.
+    Or(Vec<Pattern>),
     Binding(LocalId),
     Literal(Literal),
     /// Tuple elements or record fields, one pattern per component.

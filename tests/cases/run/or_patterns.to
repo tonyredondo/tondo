@@ -1,0 +1,47 @@
+// Several patterns in one arm, joined by `|`: the arm runs when any of them
+// matches, its guard holds for all of them, and they count together for
+// exhaustiveness. They bind nothing; `_` is allowed inside them.
+
+import std.console
+
+enum Token {
+    Plus
+    Minus
+    Star
+    Number(Int)
+    Name(String)
+}
+
+fn isOperator(token: Token): Bool {
+    match token {
+        Token.Plus | Token.Minus | Token.Star => true
+        Token.Number(_) | Token.Name(_) => false
+    }
+}
+
+fn describe(n: Int): String {
+    match n {
+        0 | 1 => "tiny"
+        2 | 3 | 5 | 7 if n > 2 => "odd prime"
+        2 => "two"
+        _ => "other"
+    }
+}
+
+fn kind(text: String?): String {
+    match text {
+        none | some("") => "empty"
+        some(_) => "text"
+    }
+}
+
+fn main() {
+    let tokens = [Token.Plus, Token.Number(3), Token.Star, Token.Name("x")]
+    console.println("{tokens.map(isOperator)}")
+    console.println("{[0, 1, 2, 3, 4, 7].map(describe)}")
+    console.println("{kind(none)} {kind("")} {kind("a")}")
+}
+
+// expect-stdout: [true, false, true, false]
+// expect-stdout: [tiny, tiny, two, odd prime, other, odd prime]
+// expect-stdout: empty empty text

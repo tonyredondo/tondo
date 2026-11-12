@@ -60,6 +60,7 @@ fn simplify(pattern: &Pattern) -> Pat {
         PatKind::Newtype(inner) => Pat::Ctor(Ctor::Single, vec![simplify(inner)]),
         PatKind::Array { items, rest: None } => Pat::Ctor(Ctor::Len(items.len()), items.iter().map(simplify).collect()),
         PatKind::Array { items, rest: Some(_) } => Pat::Slice(items.iter().map(simplify).collect()),
+        PatKind::Or(_) => unreachable!("each alternative of an arm is a row of its own"),
     }
 }
 

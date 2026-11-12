@@ -1552,10 +1552,18 @@ impl Parser<'_> {
     }
 
     fn match_arm(&mut self) -> PResult<MatchArm> {
-        let pattern = self.pattern()?;
-        if self.at(&Tok::Pipe) {
-            return self.error("a pattern has no `|`: write an arm for each pattern, or `_` with a guard".to_string());
-        }
+        let first = self.pattern()?;
+        // `A | B =>`: the alternatives of one arm.
+        let pattern = if self.at(&Tok::Pipe) {
+            let mut alternatives = vec![first];
+            while self.eat(&Tok::Pipe) {
+                alternatives.push(self.pattern()?);
+            }
+            let span = alternatives[0].span.to(alternatives[alternatives.len() - 1].span);
+            Pattern { kind: PatternKind::Or(alternatives), span }
+        } else {
+            first
+        };
         let guard = if self.eat_kw(Kw::If) { Some(self.expression()?) } else { None };
         self.expect(Tok::FatArrow)?;
         let body = self.arm_body()?;

@@ -235,6 +235,9 @@ pub struct Pattern {
 #[derive(Clone, Debug)]
 pub enum PatternKind {
     Wildcard,
+    /// `A | B`, at the top of a `match` arm: alternatives that bind nothing
+    /// (14.3).
+    Or(Vec<Pattern>),
     Binding(Ident),
     /// `ref name`, `mut name` or `var name`: a loan of the matched part
     /// instead of a copy (14.3).

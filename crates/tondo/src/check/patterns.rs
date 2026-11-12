@@ -116,11 +116,25 @@ impl<'a> Checker<'a> {
         for index in later {
             out[index].body = self.arm_body(cx, &arms[index].body, &mut result);
         }
-        let checked: Vec<(&hir::Pattern, bool)> = out.iter().map(|a| (&a.pattern, a.guard.is_some())).collect();
+        // Each alternative of an arm is a row of its own.
+        let checked: Vec<(&hir::Pattern, bool)> = out
+            .iter()
+            .flat_map(|a| match &a.pattern.kind {
+                hir::PatKind::Or(alternatives) => alternatives.iter().map(|p| (p, a.guard.is_some())).collect(),
+                _ => vec![(&a.pattern, a.guard.is_some())],
+            })
+            .collect();
         if scrutinee.ty != Ty::ERROR && !checked.iter().any(|(p, _)| p.ty == Ty::ERROR) {
             let report = crate::exhaust::check_match(&self.types, scrutinee.ty, &checked);
             for index in report.unreachable {
-                self.diags.error("E1203", out[index].pattern.span, "this arm is covered by earlier arms");
+                let pattern = checked[index].0;
+                let alone = out.iter().any(|a| std::ptr::eq(&a.pattern, pattern));
+                let message = if alone {
+                    "this arm is covered by earlier arms"
+                } else {
+                    "this pattern is covered by earlier ones"
+                };
+                self.diags.error("E1203", pattern.span, message);
             }
             if let Some(missing) = report.missing {
                 let message = format!("`match` is not exhaustive: `{missing}` is not covered");
@@ -304,6 +318,20 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The first name a pattern binds, if any.
+    fn first_binding(pattern: &hir::Pattern) -> Option<LocalId> {
+        match &pattern.kind {
+            hir::PatKind::Binding(local) => Some(*local),
+            hir::PatKind::Array { rest: Some(Some(local)), .. } => Some(*local),
+            hir::PatKind::Fields(items) | hir::PatKind::Variant(_, items) | hir::PatKind::Or(items) => {
+                items.iter().find_map(Self::first_binding)
+            }
+            hir::PatKind::Array { items, .. } => items.iter().find_map(Self::first_binding),
+            hir::PatKind::Newtype(inner) => Self::first_binding(inner),
+            hir::PatKind::Wildcard | hir::PatKind::Literal(_) => None,
+        }
+    }
+
     pub(super) fn checked_pattern(
         &mut self,
         cx: &mut FnCx,
@@ -321,6 +349,32 @@ impl<'a> Checker<'a> {
         let mismatch = |this: &Self, what: &str| format!("{what} cannot match a value of type {}", this.display(ty));
         let kind = match &p.kind {
             ast::PatternKind::Wildcard => hir::PatKind::Wildcard,
+            ast::PatternKind::Or(alternatives) => {
+                // Each in a scope of its own: a name two of them bind is
+                // reported as a binding, not as one shadowing the other.
+                let checked: Vec<hir::Pattern> = alternatives
+                    .iter()
+                    .map(|a| {
+                        cx.scopes.open();
+                        let checked = self.checked_pattern(cx, a, ty, context);
+                        cx.scopes.close();
+                        checked
+                    })
+                    .collect();
+                // What they bind, as wrong, so that the body's uses add no
+                // errors of their own.
+                alternatives.iter().for_each(|a| self.declare_failed(cx, a));
+                for alternative in &checked {
+                    if let Some(local) = Self::first_binding(alternative) {
+                        let name = cx.locals[local.0 as usize].name.clone();
+                        let message = format!(
+                            "the patterns that `|` joins bind nothing, and this one binds `{name}`: write an arm of its own for it"
+                        );
+                        self.diags.error("E1202", alternative.span, message);
+                    }
+                }
+                hir::PatKind::Or(checked)
+            }
             ast::PatternKind::Binding(name) => {
                 let message = match name.name.as_str() {
                     "None" => Some("`None` is not a Tondo pattern; write `none`".to_string()),

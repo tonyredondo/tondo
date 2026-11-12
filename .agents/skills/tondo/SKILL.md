@@ -84,8 +84,8 @@ with statements cannot be imported.
   When two traits of a value give the same name, the call names one:
   `Display.display(user)`.
 - `match`, `test`, `derive`, `with`, `as` and `select` are keywords, and
-  `recover` before `{` and `context` before a declaration's name. There is no `if let`, no `|` in patterns and no
-  `null`.
+  `recover` before `{` and `context` before a declaration's name. There is no `if let` and no
+  `null`; `A | B =>` joins patterns that bind nothing.
 - Collections are values: assigning copies (cheaply). `push` needs `var`.
 - `tondo fmt` decides the layout: write compactly and let it format.
 

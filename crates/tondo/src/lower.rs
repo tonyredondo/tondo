@@ -959,6 +959,20 @@ impl Builder<'_> {
     fn test_pattern(&mut self, pattern: &hir::Pattern, place: &Place, fail: BlockId) {
         match &pattern.kind {
             hir::PatKind::Wildcard | hir::PatKind::Binding(_) | hir::PatKind::Literal(hir::Literal::Unit) => {}
+            // Each alternative in turn: the first that matches goes on, and
+            // the last that does not fails.
+            hir::PatKind::Or(alternatives) => {
+                let matched = self.new_block();
+                for (index, alternative) in alternatives.iter().enumerate() {
+                    let next = if index + 1 == alternatives.len() { fail } else { self.new_block() };
+                    self.test_pattern(alternative, place, next);
+                    self.goto(matched);
+                    if next != fail {
+                        self.switch_to(next);
+                    }
+                }
+                self.switch_to(matched);
+            }
             hir::PatKind::Literal(literal) => {
                 let constant = match literal {
                     hir::Literal::Int(value) => Const::Int(*value, pattern.ty),
@@ -1019,7 +1033,7 @@ impl Builder<'_> {
     /// current scope then owns.
     fn bind_pattern(&mut self, pattern: &hir::Pattern, place: &Place) {
         match &pattern.kind {
-            hir::PatKind::Wildcard | hir::PatKind::Literal(_) => {}
+            hir::PatKind::Wildcard | hir::PatKind::Literal(_) | hir::PatKind::Or(_) => {}
             hir::PatKind::Binding(id) => {
                 let local = self.bind(*id);
                 let inside = |p: &Proj| matches!(p, Proj::Field(_) | Proj::Variant(..));
