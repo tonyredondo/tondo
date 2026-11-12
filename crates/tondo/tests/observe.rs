@@ -4620,7 +4620,11 @@ fn a_debugger_ended_by_a_signal_ends_its_program() {
     let source = dir.join("endless.to");
     adapter.ask("setBreakpoints", json!({ "source": { "path": source }, "breakpoints": [{ "line": 9 }] }));
     adapter.ask("configurationDone", json!({}));
-    adapter.until("stopped");
+    let stop = adapter.until("stopped");
+    assert_eq!(stop["reason"], "breakpoint", "{stop}");
+    // A line written before the stop may reach the file after it, on a
+    // machine with little CPU: what counts is that no more come.
+    std::thread::sleep(std::time::Duration::from_millis(300));
     let stopped = lines();
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert_eq!(lines(), stopped, "the program went on at its breakpoint");
