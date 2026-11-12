@@ -1,5 +1,6 @@
 //! The manual in `docs/`: the reference of the standard library is what
-//! `tondo api` gives, every example compiles, an example followed by a block
+//! `tondo api` gives, the reference of the commands is what `tondo help
+//! --all` prints, every example compiles, an example followed by a block
 //! of `text output` prints exactly that when it runs, and the tests of an
 //! example pass, or fail when it says `tondo test failing`, as one that shows
 //! what a failure looks like.
@@ -173,6 +174,32 @@ fn the_reference_of_the_standard_library_is_current() {
          `TONDO_UPDATE_DOCS=1 cargo test -p tondo --test docs`",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Where `docs/toolchain/commands.md` stops being written by hand: what
+/// follows it is what `tondo help --all` prints.
+const COMMANDS: &str = "<!-- From here on, this page is what `tondo help --all` prints";
+
+#[test]
+fn the_reference_of_the_commands_is_current() {
+    let path = root().join("docs/toolchain/commands.md");
+    let page = std::fs::read_to_string(&path).unwrap();
+    let help = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["help", "--all"]).output().unwrap();
+    assert!(help.status.success(), "{}", String::from_utf8_lossy(&help.stderr));
+    let (top, rest) =
+        page.split_once(COMMANDS).expect("docs/toolchain/commands.md has the line that starts its listing");
+    let marker = rest.lines().next().unwrap_or("");
+    let listing = String::from_utf8_lossy(&help.stdout);
+    let current = format!("{top}{COMMANDS}{marker}\n\n```text\n{}\n```\n", listing.trim_end());
+    if update() {
+        std::fs::write(&path, current).unwrap();
+        return;
+    }
+    assert!(
+        page == current,
+        "docs/toolchain/commands.md is not what `tondo help --all` prints: after a change to a command, write it \
+         again with `TONDO_UPDATE_DOCS=1 cargo test -p tondo --test docs`"
     );
 }
 
