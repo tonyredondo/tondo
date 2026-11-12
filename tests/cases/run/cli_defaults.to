@@ -1,6 +1,7 @@
 // A field's default is its option's when the command line leaves it out,
 // as the help shows, and reflection gives it; a field without one stays
-// required.
+// required. The help gives the first paragraph of an option's
+// documentation, its lines joined.
 import std.cli
 import std.console
 import std.reflect
@@ -12,7 +13,10 @@ enum Mode {
 
 /// Serves files.
 type Serve = {
-    /// The port to listen on.
+    /// The port to listen on, one of those
+    /// the system lets the program open.
+    ///
+    /// A detail the help leaves out.
     port: Int = 8080
     /// How fast.
     mode: Mode = Mode.Slow
@@ -47,7 +51,7 @@ fn main() {
 // expect-stdout: Usage: cli_defaults [options]
 // expect-stdout: 
 // expect-stdout: Options:
-// expect-stdout:       --port <port>     The port to listen on. [default: 8080]
+// expect-stdout:       --port <port>     The port to listen on, one of those the system lets the program open. [default: 8080]
 // expect-stdout:       --mode <mode>     How fast. [fast, slow] [default: slow]
 // expect-stdout:       --tags <tags>...  Extra tags. [default: web]
 // expect-stdout:       --name <name>     A name with no default.
