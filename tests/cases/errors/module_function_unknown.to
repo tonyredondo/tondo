@@ -1,0 +1,12 @@
+// A function a module of the standard library does not have is named as
+// such, with the one that is near it.
+
+import std.text
+
+fn main() {
+    let a = text.parseInt("1")
+    let b = text.normalise("x")
+}
+
+// expect-error: E1001 module `text` has no function `parseInt`
+// expect-error: E1001 module `text` has no function `normalise`; did you mean `normalize`?

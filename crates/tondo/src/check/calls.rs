@@ -2143,6 +2143,31 @@ impl<'a> Checker<'a> {
                 self.errors_counted.set((0, 0));
                 Self::error_expr(span)
             }
+            ([module, member], Some(ModuleName::Module(std))) => {
+                // The functions of the module, written in Tondo, to offer
+                // the one meant.
+                let (names, public) = (&self.names, &self.public_fns);
+                let functions: Vec<String> = Self::companions(std)
+                    .iter()
+                    .flat_map(|companion| {
+                        names.iter().filter_map(move |(name, found)| match found {
+                            ModuleName::Fn(id) if public.contains(id) => {
+                                name.strip_prefix(companion)?.strip_prefix('.').map(str::to_string)
+                            }
+                            _ => None,
+                        })
+                    })
+                    .collect();
+                let near = match (std_alias(module, member), closest(member, functions.iter().map(String::as_str))) {
+                    (alias, _) if !alias.is_empty() => alias,
+                    (_, Some(near)) => format!("; did you mean `{near}`?"),
+                    (alias, None) => alias,
+                };
+                let message = format!("module `{module}` has no function `{member}`{near}");
+                self.diags.error("E1001", segments[1].span, message);
+                self.offer_meant(segments[1].span);
+                Self::error_expr(span)
+            }
             _ => self.unsupported_expr(callee.span, "calling this expression"),
         }
     }
