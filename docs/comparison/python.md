@@ -395,8 +395,6 @@ cover them all:
 import std.console
 import std.math
 
-const Pi: Float = 3.141592653589793
-
 enum Shape {
     Circle(Float)
     Rectangle(Float, Float)
@@ -405,7 +403,7 @@ enum Shape {
 
 fn area(shape: Shape): Float {
     match shape {
-        Shape.Circle(radius) => Pi * radius * radius
+        Shape.Circle(radius) => math.Pi * radius * radius
         Shape.Rectangle(width, height) => width * height
         Shape.Triangle(a, b, c) => {
             let s = (a + b + c) / 2.0
