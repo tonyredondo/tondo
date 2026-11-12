@@ -212,6 +212,7 @@ impl Debuggee {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
             let _ = child.wait();
+            crate::debug::disown(-(child.id() as i32));
         }
         if let Some(replaying) = self.replaying.as_mut() {
             replaying.take_over(running);
@@ -324,6 +325,8 @@ pub(crate) fn test_frame(header: &str, stream: &mut impl BufRead, tested: Option
 
 /// Serves an editor until it disconnects.
 pub fn serve(builds: Builds) -> Result<(), String> {
+    // An editor that ends the adapter by a signal ends what it debugs too.
+    crate::debug::end_owned_on_signals();
     let editor = Editor { out: Arc::new(Mutex::new((std::io::stdout(), 0))) };
     // What the editor sends is read while a request runs, as a long search
     // of a replay: its `cancel` ends it.
@@ -486,6 +489,7 @@ pub fn serve(builds: Builds) -> Result<(), String> {
                 if let Some(child) = program.child.as_mut() {
                     let _ = child.kill();
                     let _ = child.wait();
+                    crate::debug::disown(-(child.id() as i32));
                 }
                 program.adopt();
                 if let Some(replaying) = program.replaying.as_mut() {
@@ -907,6 +911,7 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
             .process_group(0)
             .spawn()
             .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
+        crate::debug::own(-(child.id() as i32));
         (observe::started(&executable, child.id())?, Some(child), crate::debug::replayed_test(dir))
     } else if command == "launch" {
         let program = arguments["program"]
@@ -977,6 +982,7 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
             .process_group(0)
             .spawn()
             .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
+        crate::debug::own(-(child.id() as i32));
         (observe::started(&executable, child.id())?, Some(child), tested)
     } else {
         let name = match (&arguments["processId"], &arguments["program"]) {

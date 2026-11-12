@@ -7,7 +7,7 @@ use crate::observe::{self, Program};
 use serde_json::Value;
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -28,6 +28,49 @@ pub enum Debugged {
 }
 
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+/// The processes a debugger started or forked for itself, each a pid or a
+/// process group as its negative, which end with it when SIGTERM or SIGHUP
+/// end it, as a script, an editor or a closed terminal does, as `quit` ends
+/// them: in slots a signal's handler reads. Not a program it attached to,
+/// which goes on, nor a copy a recording holds.
+static OWNED: [AtomicI32; 64] = [const { AtomicI32::new(0) }; 64];
+
+/// The debugger ends `process`, a pid or `-group`, when it is ended.
+pub(crate) fn own(process: i32) {
+    for slot in &OWNED {
+        if slot.compare_exchange(0, process, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+            return;
+        }
+    }
+}
+
+/// `process` ended, and its pid may be another's.
+pub(crate) fn disown(process: i32) {
+    for slot in &OWNED {
+        let _ = slot.compare_exchange(process, 0, Ordering::SeqCst, Ordering::SeqCst);
+    }
+}
+
+extern "C" fn ending(signal: libc::c_int) {
+    for slot in &OWNED {
+        let process = slot.load(Ordering::SeqCst);
+        if process != 0 {
+            unsafe { libc::kill(process, libc::SIGKILL) };
+        }
+    }
+    unsafe {
+        libc::signal(signal, libc::SIG_DFL);
+        libc::raise(signal);
+    }
+}
+
+/// SIGTERM and SIGHUP end what the debugger owns, and then the debugger.
+pub(crate) fn end_owned_on_signals() {
+    for signal in [libc::SIGTERM, libc::SIGHUP] {
+        unsafe { libc::signal(signal, ending as *const () as libc::sighandler_t) };
+    }
+}
 
 extern "C" fn interrupted(_: i32) {
     INTERRUPTED.store(true, Ordering::SeqCst);
@@ -275,6 +318,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
     };
     // A recording of the end of a run starts at a copy of the program.
     let held = replay.as_deref().map(held_copy).transpose()?.flatten();
+    end_owned_on_signals();
     let mut copied = None;
     let (program, mut child) = match debugged {
         Debugged::Test(executable, node, environment, schedule) => {
@@ -293,6 +337,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 .process_group(0)
                 .spawn()
                 .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
+            own(-(child.id() as i32));
             tested(child.stdout.take(), child.stderr.take(), node);
             (observe::started(&executable, child.id())?, Some(child))
         }
@@ -308,6 +353,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 .process_group(0)
                 .spawn()
                 .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
+            own(-(child.id() as i32));
             (observe::started(&executable, child.id())?, Some(child))
         }
         Debugged::Replayed(dir) if held.is_some() => {
@@ -329,6 +375,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
                 .process_group(0)
                 .spawn()
                 .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
+            own(-(child.id() as i32));
             if let Some(node) = test {
                 tested(child.stdout.take(), child.stderr.take(), node);
             }
@@ -366,6 +413,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
         if let Some(mut child) = child {
             let _ = child.kill();
             let _ = child.wait();
+            disown(-(child.id() as i32));
         }
         if let Some(running) = replaying.and_then(|r| r.current) {
             running.end();
@@ -703,6 +751,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
         let _ = child.kill();
     }
     let status = child.wait().map_err(|e| e.to_string())?;
+    disown(-(child.id() as i32));
     Ok(status.code().unwrap_or(1))
 }
 
@@ -796,7 +845,8 @@ pub(crate) fn resumed(
     given(&stream, &format!("resume {shown} {}\n", std::process::id()), &fds).map_err(cannot)?;
     let mut line = String::new();
     std::io::BufReader::new(&stream).read_line(&mut line).map_err(|e| e.to_string())?;
-    let pid = line.trim().parse().map_err(|_| format!("the checkpoint {checkpoint} did not fork"))?;
+    let pid: u32 = line.trim().parse().map_err(|_| format!("the checkpoint {checkpoint} did not fork"))?;
+    own(pid as i32);
     Ok(Running::Forked(pid, output))
 }
 
@@ -898,6 +948,7 @@ impl Running {
         let mut search = SEARCH.lock().unwrap();
         search.0 = search.0.filter(|&pid| pid != self.pid());
         drop(search);
+        let pid = self.pid() as i32;
         match self {
             Running::Started(mut child) => {
                 let _ = child.kill();
@@ -910,6 +961,8 @@ impl Running {
                 let _ = std::fs::remove_file(observe::directory().join(format!("{pid}.checkpoint")));
             }
         }
+        disown(pid);
+        disown(-pid);
     }
 }
 
@@ -957,6 +1010,7 @@ impl Replaying {
                     .stderr(errors())
                     .process_group(0)
                     .spawn()
+                    .inspect(|child| own(-(child.id() as i32)))
                     .map_err(|e| format!("cannot start {}: {e}", executable.display()))?,
             ),
             Some((_, checkpoint)) => resumed(checkpoint, shown, self.piped || self.test.is_some(), report_file())?,
@@ -1061,6 +1115,7 @@ impl Replaying {
             Running::Forked(pid, None).end();
             return;
         }
+        own(pid as i32);
         self.checkpoints.push((tick, pid));
         self.checkpoints.sort_unstable();
         while self.checkpoints.len() > CHECKPOINTS {

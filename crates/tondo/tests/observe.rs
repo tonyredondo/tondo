@@ -4512,6 +4512,128 @@ fn a_line_stops_once_however_many_blocks_it_takes() {
     assert_eq!(text.matches("stopped at once.to:10").count(), 1, "{text}");
 }
 
+/// The processes that run `executable`, from /proc; a zombie, which no
+/// one has reaped, as in a container whose first process does not, ran.
+fn running(executable: &Path) -> Vec<i32> {
+    let entries = std::fs::read_dir("/proc").into_iter().flatten().flatten();
+    entries
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<i32>().ok())
+        .filter(|pid| std::fs::read_link(format!("/proc/{pid}/exe")).is_ok_and(|exe| exe == executable))
+        .filter(|pid| {
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+            stat.rsplit_once(") ").is_some_and(|(_, rest)| !rest.starts_with('Z'))
+        })
+        .collect()
+}
+
+/// Waits a few seconds for `gone` to hold.
+fn soon(gone: impl Fn() -> bool) -> bool {
+    within(5, gone)
+}
+
+/// Waits up to `seconds` for `gone` to hold.
+fn within(seconds: u64, gone: impl Fn() -> bool) -> bool {
+    (0..seconds * 40).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        gone()
+    })
+}
+
+const ENDLESS: &str = "import std.time\n\nfn main() {\n    let start = time.now()\n    for start.elapsed() < time.seconds(60) {\n        time.sleep(time.milliseconds(20))\n    }\n}\n";
+
+/// A debugger ended by SIGTERM or SIGHUP, as a script, an editor or a
+/// closed terminal ends it, ends the program it started, as `quit` does,
+/// which would otherwise run on alone in a group of its own.
+#[test]
+fn a_debugger_ended_by_a_signal_ends_its_program() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-ended");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("endless.to"), ENDLESS).unwrap();
+    let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "endless.to", "--debug", "--output", "endless"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let executable = dir.join("endless");
+    for signal in [libc::SIGTERM, libc::SIGHUP] {
+        let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(["debug", "endless"])
+            .current_dir(&dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        assert!(soon(|| !running(&executable).is_empty()), "the program did not start");
+        unsafe { libc::kill(debugger.id() as i32, signal) };
+        let status = debugger.wait().unwrap();
+        assert_eq!(std::os::unix::process::ExitStatusExt::signal(&status), Some(signal), "{status}");
+        assert!(soon(|| running(&executable).is_empty()), "the program runs on after signal {signal}");
+    }
+    // The editor's adapter too.
+    let mut adapter = Adapter::start();
+    adapter.ask("initialize", json!({ "adapterID": "tondo" }));
+    adapter.ask("launch", json!({ "program": "endless", "cwd": dir }));
+    adapter.ask("configurationDone", json!({}));
+    assert!(soon(|| !running(&executable).is_empty()), "the adapter's program did not start");
+    unsafe { libc::kill(adapter.child.id() as i32, libc::SIGTERM) };
+    adapter.child.wait().unwrap();
+    assert!(soon(|| running(&executable).is_empty()), "the adapter's program runs on");
+}
+
+/// A replay's debugger ended by a signal ends the copies it made, and
+/// leaves those the recording holds.
+#[test]
+fn a_replay_ended_by_a_signal_ends_its_copies() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-replay-ended");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.time\n\nfn main() {\n    let start = time.now()\n    var round = 0\n    for start.elapsed() < time.milliseconds(1000) {\n        round = round + 1\n        if round % 2000 == 0 {\n            time.sleep(time.milliseconds(1))\n        }\n    }\n    console.println(\"rounds {round}\")\n    panic(\"the end\")\n}\n";
+    std::fs::write(dir.join("crashes.to"), program).unwrap();
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    let args = ["run", "--record", "crash", "--last", "200ms", "--hold", "2m", "crashes.to"];
+    // On a busy machine a run may not get as far as dropping its start.
+    let kept = (0..5)
+        .map(|_| Command::new(tondo).args(args).current_dir(&dir).output().unwrap())
+        .find(|_| !dir.join("crash/calls").exists());
+    assert!(kept.is_some(), "a run that kept only its end");
+    let held: Vec<i32> = std::fs::read_to_string(dir.join("crash/held"))
+        .unwrap()
+        .lines()
+        .filter_map(|line| line.split_once(' ')?.1.parse().ok())
+        .filter(|&pid| pid != 0)
+        .collect();
+    let executable = dir.join("crash/program");
+    let mut debugger = Command::new(tondo)
+        .args(["debug", "--replay", "crash"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(debugger.stdin.as_mut().unwrap(), b"continue\nback\n").unwrap();
+    let copies = || running(&executable).into_iter().filter(|pid| !held.contains(pid)).collect::<Vec<i32>>();
+    assert!(soon(|| copies().len() >= 2), "the replay made no copies: {:?}", copies());
+    unsafe { libc::kill(debugger.id() as i32, libc::SIGTERM) };
+    debugger.wait().unwrap();
+    // A copy the program made as the debugger ended, which it never heard
+    // of, ends once it sees the debugger gone, in at most ten seconds.
+    assert!(within(20, || copies().is_empty()), "the replay's copies run on: {:?}", copies());
+    assert!(held.iter().all(|&pid| running(&executable).contains(&pid)), "a held copy went");
+    for pid in held {
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+}
+
 #[test]
 fn a_recording_keeps_the_end_of_a_run() {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {

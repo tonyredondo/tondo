@@ -1341,7 +1341,11 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   el `with` que se lo dio: el archivo, la línea y la función, o que lo heredó
   de la tarea que la lanzó.
 - `quit` termina el programa que arrancó; al acabar la entrada, el programa
-  sigue sin el depurador.
+  sigue sin el depurador. Un SIGTERM o un SIGHUP al depurador, como los manda
+  un script, un editor o una terminal que se cierra, terminan lo que arrancó,
+  el programa y las copias de una repetición, como `quit`, y luego al
+  depurador, y lo mismo `tondo dap` con lo que lanza; un programa al que se
+  adjuntó sigue.
 
 `tondo dap` habla el Debug Adapter Protocol por su entrada y su salida, para
 un editor: `launch` compila y arranca un programa como `tondo debug`, o lo
