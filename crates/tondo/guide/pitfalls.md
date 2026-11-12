@@ -184,18 +184,6 @@ fn main() {
 }
 ```
 
-`else` goes on the line of the `}` before it: `} else {`.
-
-```tondo error E0004
-fn main() {
-    let ready = true
-    if ready {
-    }
-    else {
-    }
-}
-```
-
 There is no C-style `for`: `for i in 0..count`, `for condition`, `for`.
 
 ```tondo error E0004

@@ -322,7 +322,11 @@ fn significant_newlines(mut raw: Vec<Token>, bracketed: Vec<usize>, end: u32) ->
             let context = next == Some(&Tok::Kw(Kw::With)) && raw.get(i + 2).is_some_and(|t| t.tok != Tok::LBrace);
             let field = matches!(next, Some(Tok::Kw(_))) && raw.get(i + 2).is_some_and(|t| t.tok == Tok::Colon);
             let continues = |t: &Tok| *t == Tok::Dot || (is_binary_continuation(t) && *t != Tok::Minus);
-            if next.is_some_and(continues) && !context && !field {
+            // `else {` and `else if` at the start of a line go on with the
+            // `if` before them; a `select`'s `else =>` is an arm of its own.
+            let otherwise = next == Some(&Tok::Kw(Kw::Else))
+                && raw.get(i + 2).is_some_and(|t| matches!(t.tok, Tok::LBrace | Tok::Kw(Kw::If)));
+            if (next.is_some_and(continues) && !context && !field) || otherwise {
                 continue;
             }
         }

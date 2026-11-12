@@ -450,13 +450,14 @@ Una nueva línea no produce `NL`:
   - `+`, `-`, `*`, `/`, `%`, `<<`, `>>`, `&`, `^`, `|`, `..`, `..=`.
   - `<`, `<=`, `>`, `>=`, `==`, `!=`, `in`, `and`, `or` o `with`.
   - Los prefijos incompletos `not`, `~`, `spawn`, `fail` o `defer`.
+- Cuando el siguiente token significativo es `else` seguido de `{` o de `if`: ninguna sentencia empieza por `else`, así que la línea continúa el `if` cuyo bloque se cerró justo antes. El brazo `else =>` de un `select` empieza una línea propia.
 - Cuando el siguiente token significativo es `.`, o uno de los operadores binarios de la lista anterior, desde `+` hasta `with`, salvo `-`. Un `with` solo continúa la línea anterior cuando le sigue `{`, la actualización de un record (9.3); seguido de un nombre empieza la sentencia que cambia un contexto (11.16). Un `-` al comienzo de una línea empieza un valor negativo, como el brazo `-1 =>` de un `match` tras otro; una resta que sigue en la línea siguiente termina la primera con `-`, y un negativo suelto que nada usa avisa (`W1014`).
 
 En cualquier otro caso produce exactamente un `NL` aunque existan varias nuevas líneas físicas consecutivas; el parser conserva aparte cuántas líneas y comentarios había para documentación y formato. Cuando se anidan delimitadores, manda el delimitador abierto más interior: entrar en `{}` restaura las nuevas líneas significativas aunque ese body esté dentro de `()` o `[]`, y entrar después en unos `()` o `[]` interiores vuelve a suprimirlas hasta su cierre. Una llave `{` nunca suprime por sí sola el `NL`, porque dentro de un body las nuevas líneas separan elementos. `return` tampoco lo suprime: `return` al final de una línea devuelve `Unit`, y para devolver una expresión esta comienza en esa misma línea.
 
 Estas reglas hacen válidas, entre otras, las continuaciones después de `=` y `=>` sin depender de que una implementación interprete qué parece “incompleto”. El formateador evita comenzar una continuación con operador salvo para el punto de una cadena de accesos.
 
-`else` se escribe en la misma línea lógica que la llave `}` de su rama anterior. Una nueva línea significativa antes de `else` termina el `if`; el formateador canónico siempre emite `} else {` o `} else if ... {`.
+Un `else` al comienzo de una línea sigue el `if` anterior, como en la misma línea que la llave `}` de su rama anterior; el formateador canónico siempre emite `} else {` o `} else if ... {`.
 
 ~~~tondo
 let total =
@@ -4791,6 +4792,20 @@ let label = if active {
 
 Cuando su valor se utiliza, `else` es obligatorio y todas las ramas deben producir tipos compatibles. Sin `else`, el tipo es `Unit`.
 
+`else` puede empezar la línea siguiente al cierre de la rama anterior (5.2); `tondo fmt` lo sube a `} else {`:
+
+~~~tondo
+let sign = if count > 0 {
+    "positive"
+}
+else if count < 0 {
+    "negative"
+}
+else {
+    "zero"
+}
+~~~
+
 ### 13.3 Un único bucle `for`
 
 Tondo no tiene `while`.
@@ -8230,7 +8245,8 @@ Estas reglas determinan dónde aparecen las primitivas anteriores:
   `"{" + indent(softline + expresión) + softline + "}"` y se emite
   `{ expresión }` cuando cabe. Las ramas de una cadena `if`/`else` forman un
   único grupo: caben todas en una línea o se parten todas.
-- `} else {` y `} else if ... {` forman una misma línea lógica.
+- `} else {` y `} else if ... {` forman una misma línea lógica: un `else` que
+  la fuente tenía al comienzo de una línea pasa a la línea de la `}` anterior.
 - Declaraciones de nivel superior se separan por exactamente una línea vacía.
   Dentro de un bloque hay un `hardline` entre unidades; si la fuente tenía una o
   más líneas vacías se conserva exactamente una, salvo al inicio o final.
@@ -8661,6 +8677,25 @@ Salida:
 ~~~text
 let double = (n: Int): Int { n * 2 }
 let larger = if a > b { a } else { b }
+~~~
+
+Entrada:
+
+~~~text
+let sign=if n>0{"positive"}
+// Below zero.
+else{"zero"}
+~~~
+
+Salida:
+
+~~~text
+let sign = if n > 0 {
+    "positive"
+} else {
+    // Below zero.
+    "zero"
+}
 ~~~
 
 La suite oficial de una implementación debe incluir estos pares, el caso vacío

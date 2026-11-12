@@ -1,0 +1,10 @@
+// An `else` at the start of a line goes on with the line before it, which
+// has to end with the block of an `if`.
+
+fn main() {
+    let total = 1
+    else {
+    }
+}
+
+// expect-error: E0004 `else` follows the block of an `if`: `if condition { ... } else { ... }`

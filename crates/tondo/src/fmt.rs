@@ -870,8 +870,12 @@ impl Formatter<'_> {
                 None => break,
             }
         }
-        let simple =
-            branches.last().is_some_and(|(c, _)| c.is_none()) && branches.iter().all(|(_, b)| self.is_simple(b));
+        // A comment between a branch and the `else` after it, as above an
+        // `else` that starts a line, goes into the next branch's block.
+        let between = self.comments.iter().any(|c| c.start >= expr.span.start && c.end <= expr.span.end);
+        let simple = !between
+            && branches.last().is_some_and(|(c, _)| c.is_none())
+            && branches.iter().all(|(_, b)| self.is_simple(b));
         let mut docs = Vec::new();
         for (index, (condition, block)) in branches.into_iter().enumerate() {
             if index > 0 {
@@ -1609,6 +1613,11 @@ mod tests {
             (
                 "let double=(n:Int):Int{n*2}\nlet larger=if a>b{a}else{b}\n",
                 "let double = (n: Int): Int { n * 2 }\nlet larger = if a > b { a } else { b }\n",
+            ),
+            // A comment above an `else` goes into the branch that follows.
+            (
+                "let sign=if n>0{\"positive\"}\n// Below zero.\nelse{\"zero\"}\n",
+                "let sign = if n > 0 {\n    \"positive\"\n} else {\n    // Below zero.\n    \"zero\"\n}\n",
             ),
             (
                 "@symbol( \"printf\" ) pub extern fn print(format:CString,...):CInt\n",

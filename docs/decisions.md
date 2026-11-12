@@ -6119,3 +6119,13 @@ reflection can build it, and a method is called by name only when it can build i
 Every error of the standard library has `Reflect`, shown as its message, as `sql.SqlError` had, and
 a test holds them to it. A `pub` method of a value `std.mcp` serves that reflection cannot call is
 the error E1912 where it is declared, instead of a tool that is not there.
+
+## `else` may start a line
+
+A new line before `else` ended the `if`, and the parser then found an `else` with nothing to
+follow: the error said to write `} else {`, and the guide warned of it. No statement starts with
+`else`, so a line that starts with `else {` or `else if` goes on with the `if` whose block closed
+just before, as a line that starts with a binary operator goes on with the one before. A
+`select`'s `else =>` still starts an arm of its own. `tondo fmt` writes `} else {`, and a comment
+that stood above the `else` goes into the branch it introduces, at its start, instead of after
+the whole `if`.

@@ -157,6 +157,9 @@ enum Defaults {
 /// `(`; elsewhere they are ordinary names (spec 5.5).
 pub const CONTEXTUAL_CONSTRUCTORS: [&str; 3] = ["ok", "err", "some"];
 
+/// What an `else` with no `if` before it says.
+const ELSE_WITHOUT_IF: &str = "`else` follows the block of an `if`: `if condition { ... } else { ... }`";
+
 /// The shared collections of `std.sync`, whose qualified names take a
 /// literal: `sync.Queue[a, b]` (5.11).
 const SYNC_COLLECTIONS: [&str; 5] = ["Array", "Map", "Set", "Stack", "Queue"];
@@ -361,6 +364,7 @@ impl Parser<'_> {
                 Ok(())
             }
             Tok::RBrace | Tok::Eof => Ok(()),
+            Tok::Kw(Kw::Else) => self.error(ELSE_WITHOUT_IF.to_string()),
             _ => self.expected("end of line"),
         }
     }
@@ -2340,7 +2344,7 @@ impl Parser<'_> {
                 return self.error(message.to_string());
             }
             Tok::Kw(Kw::Else) => {
-                return self.error("`else` goes on the line of the `}` before it: `} else {`".to_string());
+                return self.error(ELSE_WITHOUT_IF.to_string());
             }
             _ => return self.expected("expression"),
         };

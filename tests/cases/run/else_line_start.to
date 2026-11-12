@@ -1,0 +1,47 @@
+// An `else` at the start of a line goes on with the `if` whose block
+// closed just before, with a comment or an empty line between them; a
+// `select`'s `else =>` is still an arm of its own.
+
+import std.console
+
+fn sign(number: Int): String {
+    if number > 0 {
+        "positive"
+    }
+    // Below zero.
+    else if number < 0 {
+        "negative"
+    }
+
+    else {
+        "zero"
+    }
+}
+
+fn size(number: Int): String {
+    match number {
+        0 => "none"
+        _ => if number < 10 {
+            "small"
+        }
+        else {
+            "large"
+        }
+    }
+}
+
+fn main() {
+    let (_out, inbox) = channel[Int](1)
+    let waiting = select {
+        inbox.receive() => if true {
+            1
+        }
+        else {
+            2
+        }
+        else => 3
+    }
+    console.println("{sign(4)} {sign(-4)} {sign(0)} {size(0)} {size(3)} {size(30)} {waiting}")
+}
+
+// expect-stdout: positive negative zero none small large 3
