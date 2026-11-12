@@ -269,7 +269,7 @@ impl serialization.Source for Reader {
             14 => serialization.Event.DateTime(packnative.text(self.native))
             _ => fail self.error(serialization.ErrorKind.Syntax)
         }
-        some(event)
+        event
     }
 
     fn skip(self, first: serialization.Event): !MessagePackError {
@@ -297,7 +297,7 @@ impl serialization.Source for Reader {
         // another failure.
         let found = packnative.field(self.native, names, self.rejectUnknown)
         if found >= 0 {
-            return some(found)
+            return found
         }
         if found == -2 {
             return none

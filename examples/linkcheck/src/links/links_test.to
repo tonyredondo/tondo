@@ -13,11 +13,11 @@ test findsWhatAPageLinksTo {
 
 test resolvesALinkFromItsPage {
     let page = url.parse("https://example.com/blog/2026/post.html?draft=1")?
-    assert(target(page, "next.html") == some("https://example.com/blog/2026/next.html"))
-    assert(target(page, "../index.html") == some("https://example.com/blog/index.html"))
-    assert(target(page, "/about#team") == some("https://example.com/about"))
-    assert(target(page, "//cdn.example.com/a.js") == some("https://cdn.example.com/a.js"))
-    assert(target(page, "http://other.example/") == some("http://other.example/"))
+    assert(target(page, "next.html") == "https://example.com/blog/2026/next.html")
+    assert(target(page, "../index.html") == "https://example.com/blog/index.html")
+    assert(target(page, "/about#team") == "https://example.com/about")
+    assert(target(page, "//cdn.example.com/a.js") == "https://cdn.example.com/a.js")
+    assert(target(page, "http://other.example/") == "http://other.example/")
 }
 
 test leavesOutWhatIsNoAddressToAskFor {

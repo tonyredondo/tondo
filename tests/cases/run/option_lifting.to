@@ -1,0 +1,33 @@
+// A value that takes its type from the one expected is typed as the `T`
+// of an expected `T?`, and then becomes one: an empty collection, a
+// tuple, a number, `ok(...)` and `err(...)`.
+
+import std.console
+
+enum Problem {
+    Bad
+}
+
+fn first(values: Array[Int]?): Int {
+    match values {
+        some(present) => present.length()
+        none => -1
+    }
+}
+
+fn main() {
+    let names: Array[String]? = []
+    let ages: Map[String, Int]? = [:]
+    let point: (Float, Int)? = (1.5, 2)
+    let ratio: Float? = 0.5
+    let done: (Int ! Problem)? = ok(1)
+    let failed: (Int ! Problem)? = err(Problem.Bad)
+    console.println("{names} {ages} {point} {ratio} {first([])} {first(none)}")
+    match (done, failed) {
+        (some(ok(value)), some(err(Problem.Bad))) => console.println("ok {value}, failed")
+        _ => console.println("other")
+    }
+}
+
+// expect-stdout: some([]) some([:]) some((1.5, 2)) some(0.5) 0 -1
+// expect-stdout: ok 1, failed

@@ -217,6 +217,6 @@ test joinAsTlcDoes {
 test joinFindsALeak {
     match check(true) {
         ok(_) => panic("a leak went unseen")
-        err(broken) => assert(broken.property == some("NoLeak"), "{broken}")
+        err(broken) => assert(broken.property == "NoLeak", "{broken}")
     }
 }

@@ -47,7 +47,7 @@ type Wire = {
 
 let options = Options { name: "a" }
 console.println("{options.retries} {options.tags} {options.limit} {options.mode == Mode.Fast} {options.max} {options.scale}")
-let given = Options { name: "b", retries: 5, limit: some(2) }
+let given = Options { name: "b", retries: 5, limit: 2 }
 console.println("{given.retries} {given.limit}")
 let pair = Pair { first: 1 }
 let named: Pair[String] = Pair { first: "x" }

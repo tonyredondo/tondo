@@ -283,7 +283,7 @@ fn serve[S, M, E](
     // However it ends, its mailbox closes, so that senders learn it.
     defer close(mailbox)
     let result = handleAll(state, inbox, handle)
-    outcome.set(some(result))
+    outcome.set(result)
 }
 
 fn handleAll[S, M, E](state: S, inbox: Receiver[M], handle: fn(var S, M): !E): !E {

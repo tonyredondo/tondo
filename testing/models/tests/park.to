@@ -137,6 +137,6 @@ test parkAsTlcDoes {
 test parkFindsALostWake {
     match check(true) {
         ok(_) => panic("a lost wake went unseen")
-        err(broken) => assert(broken.property == some("NoLostWake"), "{broken}")
+        err(broken) => assert(broken.property == "NoLostWake", "{broken}")
     }
 }

@@ -13,7 +13,7 @@ fn main() {
     let n = len([1])
     let parsed = "1".toInt()
     let lower = "A".toLowerCase()
-    let some: Int? = some(1)
+    let some: Int? = 1
     let value = some.unwrap()
     let size = [1].length
     let empty: Map[String, Int] = {}

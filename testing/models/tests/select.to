@@ -182,6 +182,6 @@ test selectAsTlcDoes {
 test selectFindsTwoWinners {
     match check(false) {
         ok(_) => panic("two winners went unseen")
-        err(broken) => assert(broken.property == some("OneWins"))
+        err(broken) => assert(broken.property == "OneWins")
     }
 }

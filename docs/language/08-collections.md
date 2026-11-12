@@ -443,7 +443,7 @@ impl Iterator[Int] for Countdown {
             return none
         }
         self.remaining -= 1
-        some(self.remaining + 1)
+        self.remaining + 1
     }
 }
 
@@ -453,7 +453,7 @@ impl Iterator[Int] for Fibonacci {
     fn next(mut self): Int? {
         let value = self.current
         (self.current, self.following) = (self.following, self.current + self.following)
-        some(value)
+        value
     }
 }
 

@@ -58,5 +58,5 @@ test noIncrementIsLost {
         clients.add(spawn count(running, 10))
     }
     _ = clients.wait()?
-    assert(running.snapshot().values["hits"] == some("100"))
+    assert(running.snapshot().values["hits"] == "100")
 }

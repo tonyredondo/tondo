@@ -264,7 +264,7 @@ impl serialization.Source for Reader {
             14 => serialization.Event.DateTime(cbornative.text(self.native))
             _ => fail self.error(serialization.ErrorKind.Syntax)
         }
-        some(event)
+        event
     }
 
     fn skip(self, first: serialization.Event): !CborError {
@@ -292,7 +292,7 @@ impl serialization.Source for Reader {
         // another failure.
         let found = cbornative.field(self.native, names, self.rejectUnknown)
         if found >= 0 {
-            return some(found)
+            return found
         }
         if found == -2 {
             return none

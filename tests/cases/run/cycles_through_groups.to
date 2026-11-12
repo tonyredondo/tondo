@@ -17,7 +17,7 @@ fn circle(i: Int): Int {
     var group = Group[Ref[Crowd]]()
     group.add(spawn back(crowd))
     group.add(spawn back(crowd))
-    crowd.value.group.set(some(group))
+    crowd.value.group.set(group)
     i
 }
 

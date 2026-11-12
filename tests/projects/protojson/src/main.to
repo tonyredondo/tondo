@@ -28,29 +28,29 @@ fn main(): !protobuf.ProtobufError {
         text: "héllo\n"
         blob: [0, 255, 10, 62, 63]
         mood: every.Mood.Sad
-        inner: some(inner)
+        inner: inner
         inners: [inner, every.Inner {}]
         moods: [every.Mood.Happy, every.Mood.Sad]
         byName: ["k": inner]
         byNumber: [3: "three", -1: "minus"]
         byFlag: [true: 5, false: -6]
-        at: some(time.utc(time.seconds(1700000000) + time.nanoseconds(1500)))
-        took: some(time.seconds(-3) - time.milliseconds(500))
+        at: time.utc(time.seconds(1700000000) + time.nanoseconds(1500))
+        took: time.seconds(-3) - time.milliseconds(500)
         object: json.parse("{{\"a\": 1, \"b\": [true, null, \"x\"]}}").unwrapOr(json.Value.Null)
         value: json.parse("2.5").unwrapOr(json.Value.Null)
         list: json.parse("[1, \"two\"]").unwrapOr(json.Value.Null)
-        mask: some(protobuf.FieldMask { paths: ["display_name", "inner.big_numbers"] })
+        mask: protobuf.FieldMask { paths: ["display_name", "inner.big_numbers"] }
         anyMessage: some(protobuf.pack(inner))
-        anyDuration: some(protobuf.Any {
+        anyDuration: protobuf.Any {
             typeUrl: "type.googleapis.com/google.protobuf.Duration"
             value: [8, 3, 16, 128, 202, 181, 238, 1]
-        })
-        nothing: some(protobuf.Empty {})
-        wrappedBig: some(7)
-        wrappedText: some("")
-        wrappedFlag: some(false)
-        choice: some(every.EveryChoice.PickedInner(every.Inner { displayName: "chosen" }))
-        maybe: some(0)
+        }
+        nothing: protobuf.Empty {}
+        wrappedBig: 7
+        wrappedText: ""
+        wrappedFlag: false
+        choice: every.EveryChoice.PickedInner(every.Inner { displayName: "chosen" })
+        maybe: 0
         renamed: "r"
         notNumber: Float.nan
         infinite: -1.0 / 0.0

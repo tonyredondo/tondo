@@ -66,7 +66,7 @@ fn main(): !(http.HttpError | grpc.Status) {
 
     let asking = reflection.ServerReflectionClient.on(connection).serverReflectionInfo()
     let ask = (request: reflection.ServerReflectionRequestMessageRequest) {
-        reflection.ServerReflectionRequest { messageRequest: some(request) }
+        reflection.ServerReflectionRequest { messageRequest: request }
     }
     asking.send(ask(reflection.ServerReflectionRequestMessageRequest.ListServices("*")))?
     asking.send(

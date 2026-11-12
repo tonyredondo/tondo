@@ -9,7 +9,7 @@ type Blob = { data: Array[Int], next: sync.Mutex[Ref[Blob]?] }
 // A blob of 16 MB that refers to itself through a cell.
 fn waste() {
     let blob = Ref(Blob { data: [0].repeat(2_000_000), next: sync.Mutex(none) })
-    blob.value.next.set(some(blob))
+    blob.value.next.set(blob)
 }
 
 fn main() {

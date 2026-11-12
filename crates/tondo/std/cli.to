@@ -835,7 +835,7 @@ fn asTyped(value: __reflect.Value): String {
 
 /// A field's help: its documentation, its choices, default and variable.
 fn details(spec: Spec): String {
-    var written = summary(some(spec.docs))
+    var written = summary(spec.docs)
     let values = element(spec)
     if values.kind() == __reflect.TypeKind.Enum and choices(values) {
         written =
@@ -1017,7 +1017,7 @@ fn painting(): Bool {
         some(value) if value != "" and value != "0" => return true
         _ => {}
     }
-    isTerminal() and __env.get("NO_COLOR").isNone() and __env.get("TERM") != some("dumb")
+    isTerminal() and __env.get("NO_COLOR").isNone() and __env.get("TERM") != "dumb"
 }
 
 /// A text with styles, to print: `[bold red]error[/]` gives `error` in bold
@@ -1044,12 +1044,12 @@ pub fn markup(text: String): String {
     for at < chars.length() {
         let c = chars[at]
         let next = chars.get(at + 1)
-        if c == '[' and next == some('[') {
+        if c == '[' and next == '[' {
             written = "{written}["
             at += 2
             continue
         }
-        if c == ']' and next == some(']') {
+        if c == ']' and next == ']' {
             written = "{written}]"
             at += 2
             continue
@@ -1128,7 +1128,7 @@ fn codes(style: String): String? {
     if background {
         return none
     }
-    some("\u{1b}[{numbers.join(";")}m")
+    "\u{1b}[{numbers.join(";")}m"
 }
 
 /// The code of a color, of the text or of its `background`.
@@ -1137,11 +1137,11 @@ fn colorCode(word: String, background: Bool): String? {
     let names = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]
     for index in 0..names.length() {
         if names[index] == word {
-            return some("{base + index}")
+            return "{base + index}"
         }
     }
     if word == "gray" {
-        return some("{base + 60}")
+        return "{base + 60}"
     }
     if word.startsWith("#") and word.length() == 7 {
         let digits = word.removePrefix("#")
@@ -1149,7 +1149,7 @@ fn colorCode(word: String, background: Bool): String? {
             Int.parse(digits.slice(from, from + 2).unwrapOr(""), radix: 16).ok()
         }
         match (part(0), part(2), part(4)) {
-            (some(r), some(g), some(b)) => return some("{base + 8};2;{r};{g};{b}")
+            (some(r), some(g), some(b)) => return "{base + 8};2;{r};{g};{b}"
             _ => {}
         }
     }

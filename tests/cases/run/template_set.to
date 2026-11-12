@@ -45,7 +45,7 @@ fn main(): !template.TemplateError {
     let shop = Shop {
         title: "Tea & Co"
         items: [
-            Item { name: "Green", price: 3.5, stock: 0, tags: ["leaf"], note: some("fresh") },
+            Item { name: "Green", price: 3.5, stock: 0, tags: ["leaf"], note: "fresh" },
             Item { name: "Black", price: 4.25, stock: 12, tags: [], note: none },
             Item { name: "White", price: 9.0, stock: 3, tags: ["rare", "light"], note: none },
         ]

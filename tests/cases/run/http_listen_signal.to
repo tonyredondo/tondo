@@ -24,7 +24,7 @@ fn main(): !(http.HttpError | fs.FsError) {
         },
     )
     spawn detached ask(socket, began, release)
-    app.listen(socket: some(socket))?
+    app.listen(socket: socket)?
     console.println("not reached")
 }
 

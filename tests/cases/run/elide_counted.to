@@ -39,7 +39,7 @@ fn main() {
         }
     }
     console.println("{total}")
-    let kept = wrap(wrap(wrap(some("kept"))))
+    let kept = wrap(wrap(wrap("kept")))
     console.println("{kept.unwrapOr("")}")
     // The index panics between the value it reads and the copy.
     let words = ["alpha", "beta"]

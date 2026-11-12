@@ -244,7 +244,7 @@ fn Channel.intercepted(self, slot: grpcNative.Native, rpc: Call, opening: Openin
 /// The call through the interceptors from the one at `at` on.
 fn Channel.layered(self, at: Int, slot: grpcNative.Native, rpc: Call, opening: Opening): !Status {
     if at == self.layers.length() {
-        let ended = grpcNative.ended(self.open(rpc, opening, some(slot)))
+        let ended = grpcNative.ended(self.open(rpc, opening, slot))
         let code = Int.parse(ended[0]).unwrapOr(2)
         if code != 0 {
             fail statusOf(code, ended[1], ended.drop(2))
@@ -263,7 +263,7 @@ fn Outgoing.received[T: __protobuf.Message + __reflect.Reflect](self): T? ! Stat
         1 => match __protobuf.decode[T](grpcNative.message(self.native)) {
             ok(message) => {
                 watched(self.watchers, self.call, Direction.Received, message)
-                some(message)
+                message
             }
             err(error) => fail Status {
                 code: Code.Internal

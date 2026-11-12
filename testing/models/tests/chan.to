@@ -236,6 +236,6 @@ test chanAsTlcDoes {
 test chanFindsAWaitOnAClosedChannel {
     match check(false) {
         ok(_) => panic("a wait on a closed channel went unseen")
-        err(broken) => assert(broken.property == some("NoUselessWait"))
+        err(broken) => assert(broken.property == "NoUselessWait")
     }
 }

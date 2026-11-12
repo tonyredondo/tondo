@@ -358,8 +358,8 @@ fn largest[T: Ordered](items: Array[T]): T? {
     var best: T? = none
     for item in items {
         best = match best {
-            some(current) if current >= item => some(current)
-            _ => some(item)
+            some(current) if current >= item => current
+            _ => item
         }
     }
     best
@@ -562,7 +562,7 @@ fn greet(): String {
 }
 
 fn handle(id: String, user: String) {
-    with Request { id, user: some(user) }
+    with Request { id, user: user }
     console.println(greet())
 }
 

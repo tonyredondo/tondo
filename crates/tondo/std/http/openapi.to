@@ -10,7 +10,7 @@ pub fn App.openApi(
     title: String = "API",
     version: String = "1.0",
 ) {
-    self.docs = some((path, title, version))
+    self.docs = (path, title, version)
 }
 
 /// The OpenAPI 3.1 document of the described operations.

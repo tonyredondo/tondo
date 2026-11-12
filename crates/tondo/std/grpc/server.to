@@ -348,7 +348,7 @@ fn serve(
     let asked = request.method() == "GET"
     let wire = Wire.of(request.method(), contentType)
     let json = if asked {
-        request.query("encoding") == some("json")
+        request.query("encoding") == "json"
     } else {
         contentType.startsWith("application/json") or
             contentType.startsWith("application/connect+json")
@@ -403,7 +403,7 @@ fn serve(
     }
     let server = ServerCall { frames, output, ready, watchers, compressed, wire, json }
     let (done, outcome) = channel[Status](capacity: 1, discardWhenAbandoned: true)
-    with Incoming { call: incoming, headers: some(headers), trailers: some(trailers) }
+    with Incoming { call: incoming, headers: headers, trailers: trailers }
     spawn detached run(server, handler, layers, timeout, trailers, done)
     if wire == Wire.Connect {
         let body = reader.readBytes().unwrapOr([])
@@ -417,7 +417,7 @@ fn serve(
     var reply = __http.Reply.stream(
         reader,
         contentType: wire.contentType(json),
-        trailers: if wire == Wire.Grpc { some(trailers) } else { none },
+        trailers: if wire == Wire.Grpc { trailers } else { none },
     )
     for (name, value) in headers.all() {
         reply = reply.header(name, value)
@@ -563,7 +563,7 @@ pub fn ServerCall.receive[T: __protobuf.Message + __reflect.Reflect](self): T? !
         1 => match messageOf[T](grpcNative.frame(self.frames), self.json) {
             ok(message) => {
                 watched(self.watchers, Incoming.call, Direction.Received, message)
-                some(message)
+                message
             }
             err(error) => fail Status {
                 code: Code.InvalidArgument

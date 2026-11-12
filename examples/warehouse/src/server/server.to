@@ -25,7 +25,7 @@ pub fn app(stockroom: shelves.Shelves, key: String): http.App {
 fn guard(key: String, call: grpc.Call, next: fn(): !grpc.Status): !grpc.Status {
     let started = time.now()
     let changes = call.method.endsWith("/Reserve") or call.method.endsWith("/Restock")
-    let allowed = not changes or call.metadata.get("authorization") == some("Bearer {key}")
+    let allowed = not changes or call.metadata.get("authorization") == "Bearer {key}"
     let result: !grpc.Status = if allowed {
         next()
     } else {

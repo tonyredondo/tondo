@@ -9,11 +9,11 @@ fn main(): !process.ProcessError {
     let signals = process.signals(process.Signal.Hangup, process.Signal.User1)
     let me = env.processId()
     _ = process.shell("kill -HUP {me}").run()?
-    console.println("{signals.receive() == some(process.Signal.Hangup)}")
+    console.println("{signals.receive() == process.Signal.Hangup}")
     // Waiting for a signal that comes later is not a deadlock.
     let later = process.shell("sleep 0.2; kill -USR1 {me}").start()?
     later.detach()
-    console.println("{signals.receive() == some(process.Signal.User1)}")
+    console.println("{signals.receive() == process.Signal.User1}")
     let child = process.command("sleep", "30").start()?
     child.signal(process.Signal.Terminate)
     console.println("{child.wait()?.code}")

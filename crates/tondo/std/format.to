@@ -138,7 +138,7 @@ fn applyInteger[T: Integer](value: T, spec: String): String ! FormatError {
 /// `apply` of a float, which the compiler calls instead.
 fn applyFloat(value: Float, single: Bool, spec: String): String ! FormatError {
     let format = specOf(spec)?
-    let exponent = format.kind == some('e') or format.kind == some('E')
+    let exponent = format.kind == 'e' or format.kind == 'E'
     if format.alternate or (format.kind.isSome() and not exponent) {
         fail refused(spec, "a float", "`[[fill]align][+][0][width][.precision][e|E]`")
     }
@@ -147,7 +147,7 @@ fn applyFloat(value: Float, single: Bool, spec: String): String ! FormatError {
         single,
         format.precision,
         exponent,
-        format.kind == some('E'),
+        format.kind == 'E',
         format.plus,
         format.zero,
         format.width,
@@ -197,22 +197,22 @@ fn specOf(text: String): Spec ! FormatError {
         format.align = chars.get(0)
         at = 1
     }
-    if chars.get(at) == some('+') {
+    if chars.get(at) == '+' {
         format.plus = true
         at += 1
     }
-    if chars.get(at) == some('#') {
+    if chars.get(at) == '#' {
         format.alternate = true
         at += 1
     }
-    if chars.get(at) == some('0') {
+    if chars.get(at) == '0' {
         format.zero = true
         at += 1
     }
     let (width, afterWidth) = digitsAt(chars, at)
     format.width = width.unwrapOr(0)
     at = afterWidth
-    if chars.get(at) == some('.') {
+    if chars.get(at) == '.' {
         let (precision, afterPrecision) = digitsAt(chars, at + 1)
         match precision {
             some(digits) => format.precision = digits
@@ -222,7 +222,7 @@ fn specOf(text: String): Spec ! FormatError {
     }
     match chars.get(at) {
         some(kind) if kind in ['x', 'X', 'o', 'b', 'e', 'E'] => {
-            format.kind = some(kind)
+            format.kind = kind
             at += 1
         }
         _ => {}
@@ -241,7 +241,7 @@ fn digitsAt(chars: Array[Char], start: Int): (Int?, Int) {
         value = value * 10 + chars[at].code() - '0'.code()
         at += 1
     }
-    if at == start { (none, at) } else { (some(value), at) }
+    if at == start { (none, at) } else { (value, at) }
 }
 
 fn notFormat(text: String): FormatError {
@@ -279,7 +279,7 @@ pub fn percent[T: Number + Display](value: T, locale: String = "en", decimals: I
     let symbols = symbolsOf(locale)
     let hundredfold = __formats.shifted(__formats.digitsOf("{value}"), 2)
     written(
-        __formats.rounded(hundredfold, some(decimals)),
+        __formats.rounded(hundredfold, decimals),
         symbols,
         patternOf(symbols.percentPattern),
         "",
@@ -291,10 +291,7 @@ pub fn percent[T: Number + Display](value: T, locale: String = "en", decimals: I
 /// `format.currency(1234.5, "EUR", "es")` is `1234,50 €`.
 pub fn currency[T: Number + Display](amount: T, code: String, locale: String = "en"): String {
     let symbols = symbolsOf(locale)
-    let digits = __formats.rounded(
-        __formats.digitsOf("{amount}"),
-        some(textNative.currencyDigits(code)),
-    )
+    let digits = __formats.rounded(__formats.digitsOf("{amount}"), textNative.currencyDigits(code))
     written(
         digits,
         symbols,
@@ -388,12 +385,12 @@ fn holds(words: Array[String], size: Int): Bool {
     let operand = words.get(0).unwrapOr("")
     var value = if operand == "n" or operand == "i" { size } else { 0 }
     var at = 1
-    if words.get(1) == some("%") {
+    if words.get(1) == "%" {
         let modulus = Int.parse(words.get(2).unwrapOr("1")).unwrapOr(1)
         value = value % modulus
         at = 3
     }
-    let equal = words.get(at) == some("=")
+    let equal = words.get(at) == "="
     var inside = false
     for range in words.get(at + 1).unwrapOr("").split(",") {
         match range.splitOnce("..") {

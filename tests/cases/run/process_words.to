@@ -17,7 +17,7 @@ fn main() {
     let words = ["go", "test", "-run", "A B", "it's", "", "a.b/c=d"]
     let line = process.quoted(words)
     console.println(line)
-    console.println("{process.splitWords(line) == some(words)}")
+    console.println("{process.splitWords(line) == words}")
 }
 
 // expect-stdout: some([go, test, -run, A B])

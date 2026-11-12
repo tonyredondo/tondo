@@ -9,7 +9,7 @@ enum E {
 type T = { value: Int }
 
 fn main() {
-    let found: Int? = some(2)
+    let found: Int? = 2
     let t = T { value: found.unwrapOr(0) }
     let e = E.B
     let name = match e {

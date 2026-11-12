@@ -89,26 +89,23 @@ fn main(): !(http.HttpError | grpc.Status) {
     let hello =
         web.post(
             "{base}/SayHello",
-            body: some(http.Body.bytes(
-                framed(greeter.HelloRequest { name: "web" }),
-                contentType: binary,
-            )),
+            body: http.Body.bytes(framed(greeter.HelloRequest { name: "web" }), contentType: binary),
             headers: ["x-grpc-web": "1"],
         )?
     console.println("{hello.header("content-type").unwrapOr("-")} {shown(hello.bytes()?)}")
     let repeated =
         web.post(
             "{base}/Repeat",
-            body: some(http.Body.bytes(
+            body: http.Body.bytes(
                 framed(greeter.HelloRequest { name: "tick", times: 3 }),
                 contentType: binary,
-            )),
+            ),
         )?
     console.println(shown(repeated.bytes()?))
     let failed =
         web.post(
             "{base}/SayHello",
-            body: some(http.Body.bytes(framed(greeter.HelloRequest {}), contentType: binary)),
+            body: http.Body.bytes(framed(greeter.HelloRequest {}), contentType: binary),
         )?
     console.println("{failed.status()} {shown(failed.bytes()?)}")
     // As text, the request in two pieces, each padded as a client may send
@@ -116,10 +113,10 @@ fn main(): !(http.HttpError | grpc.Status) {
     let frame = framed(greeter.HelloRequest { name: "text", times: 2 })
     let pieces = "{encoding.base64Encode(frame.take(4))}{encoding.base64Encode(frame.drop(4))}"
     let text = "application/grpc-web-text+proto"
-    let typed = web.post("{base}/Repeat", body: some(http.Body.text(pieces, contentType: text)))?
+    let typed = web.post("{base}/Repeat", body: http.Body.text(pieces, contentType: text))?
     let answer = String.fromBytes(typed.bytes()?).unwrapOr("")
     console.println("{typed.header("content-type").unwrapOr("-")} {shown(unpadded(answer))}")
-    let wrong = web.post("{base}/SayHello", body: some(http.Body.text("AAA*", contentType: text)))?
+    let wrong = web.post("{base}/SayHello", body: http.Body.text("AAA*", contentType: text))?
     console.println(shown(unpadded(String.fromBytes(wrong.bytes()?).unwrapOr(""))))
     // The same routes still answer gRPC.
     let client = greeter.GreeterClient.on(grpc.connect("http://{server.address()}")?)

@@ -293,6 +293,12 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "unknown-model-step",
         "A `model.mark`, `model.weak` or `model.strong` names a step no model of the program has: the name was written wrong, or changed on one side only.",
     ),
+    (
+        "W1021",
+        "needless-some",
+        "`some(value)` where a `T?` is expected and the value is a `T`: the value alone becomes one by itself, as \
+         `limit: 3` for `limit: some(3)`. The fix writes it alone.",
+    ),
     ("P0001", "bounds", "An index or bound outside the range allowed."),
     ("P0002", "zero-slice-step", "A slice with a step of zero."),
     ("P0003", "integer-division-by-zero", "An integer division or remainder by zero."),

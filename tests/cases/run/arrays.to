@@ -18,9 +18,9 @@ fn main() {
     values.push(60)
     console.println("{values} {snapshot} {values.length()} {snapshot.length()}")
     console.println("{values[1:4]} {values[::-1]} {values[::2]} {values[-100:100]} {values[:-1:-1]}")
-    console.println("{values.get(2) == some(30)} {values.get(99) == none} {sum(values)} {30 in values} {31 in values}")
+    console.println("{values.get(2) == 30} {values.get(99) == none} {sum(values)} {30 in values} {31 in values}")
     let popped = values.pop()
-    console.println("{popped == some(60)} {values}")
+    console.println("{popped == 60} {values}")
     let words = ["a", "b"].concat(["c"]).repeat(2)
     console.println("{words} {words == ["a", "b", "c", "a", "b", "c"]}")
     var grid = [[1, 2], [3]]

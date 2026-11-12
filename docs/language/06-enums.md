@@ -129,7 +129,7 @@ import std.console
 fn firstNumber(words: Array[String]): Int? {
     for word in words {
         match Int.parse(word) {
-            ok(number) => return some(number)
+            ok(number) => return number
             err(_) => continue
         }
     }
@@ -229,7 +229,7 @@ fn summary(event: Event): String {
 
 fn main() {
     let madrid = Address { city: "Madrid", country: "ES" }
-    let ada = User { name: "Ada", address: some(madrid) }
+    let ada = User { name: "Ada", address: madrid }
     console.println(summary(Event.SignedUp(ada)))
     console.println(summary(Event.Moved { user: ada, to: madrid }))
     console.println(summary(Event.Left("Bo")))

@@ -169,7 +169,7 @@ pub fn Database.transaction[T: ~Copy](self, work: fn(Database): T ! SqlError): T
             }
         }
     }
-    let inner = self with { pinned: some((connection, depth + 1)) }
+    let inner = self with { pinned: (connection, depth + 1) }
     let point = "tondo_{depth}"
     let (begin, commit, rollback) = if depth == 0 {
         ("BEGIN", "COMMIT", "ROLLBACK")
@@ -453,7 +453,7 @@ impl __serialization.Source for Row {
                     let column = folded(key)
                     for (index, name) in wanted.iter().enumerate() {
                         if name == column {
-                            return some(index)
+                            return index
                         }
                     }
                     let first = self.value()?

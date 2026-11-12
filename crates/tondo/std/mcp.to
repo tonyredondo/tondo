@@ -148,7 +148,7 @@ fn answer(state: Served, line: String, out: __sync.Mutex[Output]) {
                 if output.failure.isNone() {
                     match output.writer.writeLine(text) {
                         ok(_) => {}
-                        err(problem) => output.failure = some("{problem}")
+                        err(problem) => output.failure = "{problem}"
                     }
                     _ = output.writer.flush()
                 }
@@ -216,7 +216,7 @@ fn failure(id: String, code: Int, message: String): String {
 fn reply(state: Served, line: String): String? {
     let message = match __json.parse(line) {
         ok(message) => message
-        err(problem) => return some(failure("null", -32700, "not JSON: {problem}"))
+        err(problem) => return failure("null", -32700, "not JSON: {problem}")
     }
     let id = match message.get("id") {
         some(id) => __json.encode(id)
@@ -234,18 +234,18 @@ fn reply(state: Served, line: String): String? {
         none => method == "server/discover"
         some(version) if version == Modern => true
         some(version) if version in legacy() => false
-        some(version) => return some(failure(
+        some(version) => return failure(
             id,
             -32022,
             "Unsupported protocol version {version}: this server speaks {Modern} and {legacy().join(", ")}",
-        ))
+        )
     }
     match handle(state, method, params) {
         ok(result) => {
             let decorated = if modern { completed(result, method) } else { result }
-            some("{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{decorated}}}")
+            "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{decorated}}}"
         }
-        err(problem) => some(failure(id, problem.code, problem.message))
+        err(problem) => failure(id, problem.code, problem.message)
     }
 }
 
@@ -458,10 +458,10 @@ fn outputOf(method: __reflect.MethodInfo): String? {
     match success.kind() {
         __reflect.TypeKind.Primitive(__reflect.PrimitiveKind.String) => none
         __reflect.TypeKind.Primitive(__reflect.PrimitiveKind.Unit) => none
-        __reflect.TypeKind.Record => some(schemaOf(success, 0))
-        __reflect.TypeKind.Applied(__reflect.AppliedKind.Map) => some(schemaOf(success, 0))
+        __reflect.TypeKind.Record => schemaOf(success, 0)
+        __reflect.TypeKind.Applied(__reflect.AppliedKind.Map) => schemaOf(success, 0)
         _ =>
-            some("{{\"type\":\"object\",\"properties\":{{\"result\":{schemaOf(success, 0)}}},\"required\":[\"result\"]}}")
+            "{{\"type\":\"object\",\"properties\":{{\"result\":{schemaOf(success, 0)}}},\"required\":[\"result\"]}}"
     }
 }
 
@@ -576,7 +576,7 @@ fn matched(template: String, uri: String): Map[String, String]? {
     var at = uri
     for not rest.isEmpty() {
         match rest.find("{{") {
-            none => return if at == rest { some(found) } else { none }
+            none => return if at == rest { found } else { none }
             some(open) => {
                 let literal = rest.slice(0, open).unwrapOr("")
                 if not at.startsWith(literal) {
@@ -599,7 +599,7 @@ fn matched(template: String, uri: String): Map[String, String]? {
             }
         }
     }
-    if at.isEmpty() { some(found) } else { none }
+    if at.isEmpty() { found } else { none }
 }
 
 fn read(state: Served, uri: String): String ! RpcFailure {

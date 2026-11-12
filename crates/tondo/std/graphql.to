@@ -169,10 +169,10 @@ fn described(
 /// The scalars of std types: their text.
 fn standardScalar(info: __reflect.TypeInfo): String? {
     match info.qualifiedName() {
-        "time.DateTime" => some("DateTime")
-        "math.Decimal" => some("Decimal")
-        "math.BigInt" => some("BigInt")
-        "uuid.Uuid" => some("ID")
+        "time.DateTime" => "DateTime"
+        "math.Decimal" => "Decimal"
+        "math.BigInt" => "BigInt"
+        "uuid.Uuid" => "ID"
         _ => none
     }
 }
@@ -633,7 +633,7 @@ fn parsed(source: String): Document ! Unreadable {
                         var default: __json.Value? = none
                         if reader.is("=") {
                             _ = reader.take()
-                            default = some(constant(reader.literal()?))
+                            default = constant(reader.literal()?)
                         }
                         variables.push((variable, written, default))
                     }
@@ -691,7 +691,7 @@ fn Reader.selections(self): Array[Selection] ! Unreadable {
                 var condition: String? = none
                 if self.is("name") {
                     _ = self.take()
-                    condition = some(self.name()?)
+                    condition = self.name()?
                 }
                 let directives = self.directives()?
                 found.push(Selection.Inline(condition, directives, self.selections()?))
@@ -703,7 +703,7 @@ fn Reader.selections(self): Array[Selection] ! Unreadable {
         var name = first.text
         if self.is(":") {
             _ = self.take()
-            label = some(name)
+            label = name
             name = self.name()?
         }
         let arguments = self.arguments()?
@@ -873,7 +873,7 @@ fn Schema.executed(
     }
     var given = variables
     for (name, written, default) in picked.variables {
-        if not given.contains(name) or given.get(name) == some(__json.Value.Null) {
+        if not given.contains(name) or given.get(name) == __json.Value.Null {
             match default {
                 some(value) => given[name] = value
                 none if written.endsWith("!") => return failedWith(
@@ -986,7 +986,7 @@ fn Run.selected(
         let value = self.resolved(node, typeName, field, at)?
         written.push("{__json.encode(key)}:{value}")
     }
-    some("{{{written.join(",")}}}")
+    "{{{written.join(",")}}}"
 }
 
 /// A field's value as JSON; none when it is null and cannot be.
@@ -1046,7 +1046,7 @@ fn Run.resolved(self, node: Node, typeName: String, field: Field, path: String):
                 self.called(value, member, field, path)
             } else {
                 match value.get(if member.source.isEmpty() { member.name } else { member.source }) {
-                    ok(found) => some(found)
+                    ok(found) => found
                     err(problem) => {
                         self.failed("{problem}", field, path)
                         none
@@ -1055,7 +1055,7 @@ fn Run.resolved(self, node: Node, typeName: String, field: Field, path: String):
             }
             match got {
                 some(found) => self.value(found, member.reference, field, path)
-                none => if member.reference.endsWith("!") { none } else { some("null") }
+                none => if member.reference.endsWith("!") { none } else { "null" }
             }
         }
     }
@@ -1105,13 +1105,13 @@ fn Run.called(
             __reflect.TypeKind.Applied(__reflect.AppliedKind.Result)
     if result {
         let inner = outcome.elements().first().unwrapOr(outcome)
-        if outcome.variant() == some("err") {
+        if outcome.variant() == "err" {
             self.failed("{inner}", field, path)
             return none
         }
-        return some(inner)
+        return inner
     }
-    some(outcome)
+    outcome
 }
 
 /// A value of a field's type as JSON; none when it is null and cannot be.
@@ -1126,7 +1126,7 @@ fn Run.value(self, value: __reflect.Value, reference: String, field: Field, path
     if value.typeName().endsWith("?") {
         return match value.elements().first() {
             some(held) => self.value(held, inner, field, path)
-            none => if required { none } else { some("null") }
+            none => if required { none } else { "null" }
         }
     }
     let written = if inner.startsWith("[") {
@@ -1135,7 +1135,7 @@ fn Run.value(self, value: __reflect.Value, reference: String, field: Field, path
         for (index, item) in value.elements().iter().enumerate() {
             match self.value(item, element, field, "{path},{index}") {
                 some(text) => items.push(text)
-                none => return if required { none } else { some("null") }
+                none => return if required { none } else { "null" }
             }
         }
         some("[{items.join(",")}]")
@@ -1153,16 +1153,16 @@ fn Run.value(self, value: __reflect.Value, reference: String, field: Field, path
                     self.selected(Node.Data(value), inner, field.selections, path)
                 }
             }
-            some(named) if named.kind == Kind.Enum => some(__shapes.jsonOf(value))
-            some(_) if inner == "JSON" => some(__shapes.jsonOf(value))
+            some(named) if named.kind == Kind.Enum => __shapes.jsonOf(value)
+            some(_) if inner == "JSON" => __shapes.jsonOf(value)
             some(_) => some(__json.encode("{value}"))
             none if inner == "ID" => some(__json.encode("{value}"))
-            none => some(__shapes.jsonOf(value))
+            none => __shapes.jsonOf(value)
         }
     }
     match written {
-        some(text) => some(text)
-        none => if required { none } else { some("null") }
+        some(text) => text
+        none => if required { none } else { "null" }
     }
 }
 
@@ -1171,7 +1171,7 @@ fn Run.completed(self, node: Node, typeName: String, field: Field, path: String)
     match node {
         Node.Meta(value) => {
             if value.isNull() {
-                return some("null")
+                return "null"
             }
             match value.asArray() {
                 some(items) => {
@@ -1183,7 +1183,7 @@ fn Run.completed(self, node: Node, typeName: String, field: Field, path: String)
                                 .unwrapOr("null"),
                         )
                     }
-                    some("[{written.join(",")}]")
+                    "[{written.join(",")}]"
                 }
                 none => match value.asObject() {
                     some(_) if not field.selections.isEmpty() => self.selected(
@@ -1196,7 +1196,7 @@ fn Run.completed(self, node: Node, typeName: String, field: Field, path: String)
                 }
             }
         }
-        Node.Data(_) => some("null")
+        Node.Data(_) => "null"
     }
 }
 

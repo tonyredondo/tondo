@@ -1,0 +1,26 @@
+// `some(value)` where an option is expected warns, as the value alone
+// becomes one; not in a pattern, where nothing gives the type, in a
+// union, or where the option holds an option.
+
+import std.console
+
+type Settings = {
+    limit: Int? = none
+}
+
+fn nested(): (Int?)? {
+    some(none)
+}
+
+fn main() {
+    let settings = Settings { limit: some(3) }
+    let free = some(4)
+    let either: Int? | String = some(5)
+    match settings.limit {
+        some(3) => console.println("three {free} {either} {nested()}")
+        _ => console.println("other")
+    }
+}
+
+// expect-stdout: three some(4) some(5) some(none)
+// expect-warning: W1021 `some` is not needed here: where `Int?` is expected, the value becomes one by itself; write it alone

@@ -26,7 +26,7 @@ fn main() {
         <p>No posts yet.</p>
         {{ end }}
         """)
-    let post = Post { title: "Tea & cake", views: 42, tags: ["a", "b"], draft: false, author: some("Ada") }
+    let post = Post { title: "Tea & cake", views: 42, tags: ["a", "b"], draft: false, author: "Ada" }
     console.print(page.render(Blog { name: "Notes", posts: [post] }))
 }
 ```

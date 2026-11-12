@@ -71,7 +71,7 @@ type NewTask = {
 }
 
 fn find(id: Int): Task? {
-    if id == 1 { some(Task { id, title: "write the manual" }) } else { none }
+    if id == 1 { Task { id, title: "write the manual" } } else { none }
 }
 
 fn main(): !http.HttpError {
@@ -124,7 +124,7 @@ import std.http
 fn main(): !http.HttpError {
     var app = http.App()
     app.use((request, next) {
-        if request.header("Authorization") != some("Bearer secret") {
+        if request.header("Authorization") != "Bearer secret" {
             fail http.Problem.unauthorized("a key is needed")
         }
         next(request)?.header("X-Served-By", "tondo")

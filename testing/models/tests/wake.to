@@ -94,7 +94,7 @@ fn told(pool: Pool, v: Int, seeker: Bool): Pool {
 fn found(pool: Pool, w: Int, task: Task, more: Bool): Pool {
     let it = worker(pool, w)
     let after = it with {
-        current: some(task)
+        current: task
         seeker: false
         phase: if more { Phase.WakeIdle } else { Phase.Run }
     }
@@ -296,7 +296,7 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                         some(before) => it.own.add(before)
                         none => it.own
                     }
-                    let woke = it with { next: some(task), own }
+                    let woke = it with { next: task, own }
                     next.push(
                         model.step(
                             "notify",

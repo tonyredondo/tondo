@@ -11,7 +11,7 @@ import std.yaml
 fn main(): !(yaml.YamlError | json.JsonError | toml.TomlError | cbor.CborError | messagepack.MessagePackError) {
     let ci = yaml.parse(".setup:\n  script: [a, b]\njobs:\n  - name: build\n    \"a.b\": 1\n")?
     console.println("{ci.find("[\".setup\"].script[1]")} {ci.find("jobs[0].name")} {ci.find("jobs[0][\"a.b\"]")}")
-    console.println("{ci.find("jobs[1]")} {ci.find("jobs..x")} {ci.find("jobs[x]")} {ci.find("") == some(ci)}")
+    console.println("{ci.find("jobs[1]")} {ci.find("jobs..x")} {ci.find("jobs[x]")} {ci.find("") == ci}")
     let data = json.parse("{{\"items\": [{{\"name\": \"x\"}}], \"say \\\"hi\\\"\": 2}}")?
     console.println("{data.find("items[0].name")} {data.find("[\"say \\\"hi\\\"\"]")}")
     console.println("{toml.parse("[server]\nports = [80, 443]\n")?.find("server.ports[1]")}")

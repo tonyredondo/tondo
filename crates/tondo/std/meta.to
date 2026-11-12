@@ -642,7 +642,7 @@ pub fn SourceBuilder.add(mut self, source: String): !Error {
     if source.byteLength() > self.limit {
         fail Error.OutputLimit
     }
-    self.written = some(source)
+    self.written = source
 }
 
 /// A problem with the declaration, which the compiler reports at the
@@ -841,13 +841,9 @@ fn declarationOf(target: __json.Value): Declaration {
     let wrapped: TypeRef? = if target["underlying"].isNull() {
         none
     } else {
-        some(typeRef(target["underlying"]))
+        typeRef(target["underlying"])
     }
-    let outcome: TypeRef? = if target["result"].isNull() {
-        none
-    } else {
-        some(typeRef(target["result"]))
-    }
+    let outcome: TypeRef? = if target["result"].isNull() { none } else { typeRef(target["result"]) }
     Declaration {
         declared: text(target["name"])
         path: text(target["module"])

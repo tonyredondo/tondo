@@ -209,8 +209,8 @@ fn goCounts(measured: Map[String, Measure]): Map[String, Measure] ! String {
         counted[key] = Measure {
             nanoseconds: measure.nanoseconds
             allocations: measure.allocations
-            instructions: if instructions > 0.0 { some(instructions) } else { none }
-            cycles: if cycles > 0.0 { some(cycles) } else { none }
+            instructions: if instructions > 0.0 { instructions } else { none }
+            cycles: if cycles > 0.0 { cycles } else { none }
         }
     }
     counted

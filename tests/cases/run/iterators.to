@@ -8,7 +8,7 @@ impl Iterator[Int] for Countdown {
             return none
         }
         self.from -= 1
-        some(self.from + 1)
+        self.from + 1
     }
 }
 
@@ -18,7 +18,7 @@ impl Iterator[(Int, String)] for Words {
     fn next(mut self): (Int, String)? {
         let word = self.text.get(self.index)?
         self.index += 1
-        some((self.index, word))
+        (self.index, word)
     }
 }
 
@@ -63,7 +63,7 @@ fn main() {
     let first = keys.next()
     let second = Iterator.next(mut keys)
     let third = keys.next()
-    console.println("{first == some("ana")} {second == some("leo")} {third == none}")
+    console.println("{first == "ana"} {second == "leo"} {third == none}")
     for (name, age) in ages.entries() {
         if age > 30 {
             console.println("{name} {age}")

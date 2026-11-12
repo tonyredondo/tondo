@@ -32,7 +32,7 @@ fn main() {
     let b = Set[2, 3, 4]
     console.println("{a.union(b)} {a.intersection(b)} {a.difference(b)} {Set[2].isSubset(a)} {a.isSubset(b)}")
     // Option and Result
-    let some3: Int? = some(3)
+    let some3: Int? = 3
     let nothing: Int? = none
     console.println("{some3.map((n) { n + 1 })} {nothing.map((n) { n + 1 })} {some3.andThen((n) { if n > 2 { some(n) } else { none } })} {nothing.unwrapOr(7)}")
     console.println("{nothing.orElse(some(1))} {some3.filter((n) { n > 5 })} {some3.isSome()} {nothing.isNone()} {some3.okOr("missing")} {nothing.okOr("missing")}")

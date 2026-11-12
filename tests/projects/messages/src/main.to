@@ -30,10 +30,10 @@ fn main(): !protobuf.ProtobufError {
         name: "Ada"
         id: 7
         status: user.Status.Active
-        contact: some(user.UserContact.Phone(user.Phone { number: "555", extension: -3 }))
-        page: some(common.Page { size: 10 })
+        contact: user.UserContact.Phone(user.Phone { number: "555", extension: -3 })
+        page: common.Page { size: 10 }
         addresses: [user.UserAddress { city: "Paris", kind: user.UserAddressKind.Home }]
-        mask: some(protobuf.FieldMask { paths: ["name"] })
+        mask: protobuf.FieldMask { paths: ["name"] }
     }
     // protoc reads these bytes as the same user.
     let written = protobuf.encode(ada)

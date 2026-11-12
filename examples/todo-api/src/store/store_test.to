@@ -17,24 +17,24 @@ test filtersByDone {
     let db = fresh()?
     let task = add(db, NewTask { title: "ship" })?
     _ = add(db, NewTask { title: "rest" })?
-    _ = change(db, task.id, TaskChange { done: some(true) })?
-    assert(list(db, done: some(true))?.map((item) { item.title }) == ["ship"])
-    assert(list(db, done: some(false))?.map((item) { item.title }) == ["rest"])
+    _ = change(db, task.id, TaskChange { done: true })?
+    assert(list(db, done: true)?.map((item) { item.title }) == ["ship"])
+    assert(list(db, done: false)?.map((item) { item.title }) == ["rest"])
 }
 
 test changesOnlyWhatIsNamed {
     let db = fresh()?
     let task = add(db, NewTask { title: "draft" })?
-    let renamed = change(db, task.id, TaskChange { title: some("final") })?
-    assert(renamed == some(Task { id: task.id, title: "final", done: false }))
-    let finished = change(db, task.id, TaskChange { done: some(true) })?
-    assert(finished == some(Task { id: task.id, title: "final", done: true }))
+    let renamed = change(db, task.id, TaskChange { title: "final" })?
+    assert(renamed == Task { id: task.id, title: "final", done: false })
+    let finished = change(db, task.id, TaskChange { done: true })?
+    assert(finished == Task { id: task.id, title: "final", done: true })
 }
 
 test aMissingTaskIsNone {
     let db = fresh()?
     assert(find(db, 99)? == none)
-    assert(change(db, 99, TaskChange { done: some(true) })? == none)
+    assert(change(db, 99, TaskChange { done: true })? == none)
     assert(remove(db, 99)? == false)
 }
 

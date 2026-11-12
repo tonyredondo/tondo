@@ -10,7 +10,7 @@ fn main() {
     let removed = values.removeAt(1)
     let fromEnd = values.removeAt(-2)
     let missing = values.removeAt(10)
-    console.println("{values} {removed == some(1)} {fromEnd == some(35)} {missing == none}")
+    console.println("{values} {removed == 1} {fromEnd == 35} {missing == none}")
     var names = ["ana", "leo"]
     let kept = names
     names.clear()
@@ -32,7 +32,7 @@ fn main() {
 
     var units = [(), ()]
     let unit = units.pop()
-    console.println("{units.length()} {unit == some(())}")
+    console.println("{units.length()} {unit == ()}")
 }
 
 // expect-stdout: [0, 1, 2, 3, 35, 4] [1, 2, 3]

@@ -395,11 +395,11 @@ pub trait Source {
         }
         for index in 0..names.length() {
             if names[index] == key {
-                return some(index)
+                return index
             }
         }
         self.unknownField(key, self.value()?)?
-        some(names.length())
+        names.length()
     }
 
     /// A member the type does not have: skipped, or an error when unknown
@@ -1250,8 +1250,8 @@ fn unionAttempt[S: Source](input: S, first: Event): Attempt ! Error {
 fn unionMember[T: Decode, S: Source](input: S, attempt: Attempt): (T?, Attempt) {
     let replay = Replay { input, events: attempt.events, at: serialcodec.counter() }
     match Decode.decode[T](replay, replay.events[replay.position()]) {
-        ok(value) => (some(value), attempt)
-        err(error) if error.kind != ErrorKind.Type => (none, attempt with { failure: some(error) })
+        ok(value) => (value, attempt)
+        err(error) if error.kind != ErrorKind.Type => (none, attempt with { failure: error })
         err(_) => (none, attempt)
     }
 }

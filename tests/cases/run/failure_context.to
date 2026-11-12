@@ -29,7 +29,7 @@ fn main() {
         err(failure) => {
             console.println("{failure}")
             console.println(
-                "{failure.find[fs.FsError]() == some(fs.FsError.NotFound)} {failure.find[json.JsonError]().isSome()}",
+                "{failure.find[fs.FsError]() == fs.FsError.NotFound} {failure.find[json.JsonError]().isSome()}",
             )
             console.println(failure.message)
         }
@@ -42,7 +42,7 @@ fn main() {
     let quiet: Int ! Quiet = err(Quiet.Gone)
     match quiet.context("waiting") {
         ok(_) => {}
-        err(failure) => console.println("{failure} {failure.find[Quiet]() == some(Quiet.Gone)}")
+        err(failure) => console.println("{failure} {failure.find[Quiet]() == Quiet.Gone}")
     }
     console.println("{Failure { message: "nothing to do" }}")
 }

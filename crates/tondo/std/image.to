@@ -54,13 +54,13 @@ impl Display for Format {
 pub fn Format.of(path: String): Format? {
     let lower = path.toLowerAscii()
     if lower.endsWith(".png") {
-        some(Format.Png)
+        Format.Png
     } else if lower.endsWith(".jpg") or lower.endsWith(".jpeg") {
-        some(Format.Jpeg)
+        Format.Jpeg
     } else if lower.endsWith(".gif") {
-        some(Format.Gif)
+        Format.Gif
     } else if lower.endsWith(".webp") {
-        some(Format.WebP)
+        Format.WebP
     } else {
         none
     }
@@ -222,9 +222,9 @@ fn made(native: imageNative.Native): Image {
     let size = imageNative.size(native)
     let source = match size[2] {
         0 => some(Format.Png)
-        1 => some(Format.Jpeg)
-        2 => some(Format.Gif)
-        3 => some(Format.WebP)
+        1 => Format.Jpeg
+        2 => Format.Gif
+        3 => Format.WebP
         _ => none
     }
     Image { native, columns: size[0], rows: size[1], source }
@@ -547,7 +547,7 @@ pub fn Image.colors(self, count: Int = 3): Array[Color] {
 /// outside the image.
 pub fn Image.pixel(self, x: Int, y: Int): Color? {
     let rgba = imageNative.pixel(self.native, x, y)
-    if rgba < 0 { none } else { some(colorOf(rgba)) }
+    if rgba < 0 { none } else { colorOf(rgba) }
 }
 
 /// The bytes of the image in a format; JPEG and WebP at a `quality` from 1

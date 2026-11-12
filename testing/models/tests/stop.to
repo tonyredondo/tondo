@@ -144,7 +144,7 @@ test aWaitingThreadGoesOnWhenEachResumeIsFair {
 test aWaitingThreadCanBePassedOverWhenAllResumesAreOne {
     match waits(model.strong("resumed")) {
         ok(_) => panic("a thread passed over went unseen")
-        err(broken) => assert(broken.property == some("a waiting thread goes on"), "{broken}")
+        err(broken) => assert(broken.property == "a waiting thread goes on", "{broken}")
     }
 }
 
@@ -152,7 +152,7 @@ test aWaitingThreadCanBePassedOverWithWeakFairness {
     match waits(model.weak("resumed 0")) {
         ok(_) => panic("a thread passed over went unseen")
         err(broken) => assert(
-            broken.property == some("a waiting thread goes on") and not broken.loop.isEmpty(),
+            broken.property == "a waiting thread goes on" and not broken.loop.isEmpty(),
         )
     }
 }
@@ -166,6 +166,6 @@ test stopAsTlcDoes {
 test stopFindsTwoStoppersInside {
     match check(false) {
         ok(_) => panic("two stoppers at once went unseen")
-        err(broken) => assert(broken.property == some("Alone"), "{broken}")
+        err(broken) => assert(broken.property == "Alone", "{broken}")
     }
 }

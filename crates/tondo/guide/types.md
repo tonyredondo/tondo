@@ -120,7 +120,8 @@ its module, wins.
 
 ## Optional values, results and unions
 
-- `T?` is `Option[T]`: `some(value)` or `none`.
+- `T?` is `Option[T]`: `some(value)` or `none`. Where a `T?` is expected, a
+  `T` becomes one by itself: `limit: 3`, `return user`; `some(...)` there warns.
 - `T ! E` is `Result[T, E]`: `ok(value)` or `err(error)`; `!E` alone has no
   success value. See `tondo guide errors`.
 - `A | B` is a union of types; `match` on the member's type with `Int(n)`.
@@ -205,8 +206,8 @@ fn largest[T: Ordered](items: Array[T]): T? {
     var best: T? = none
     for item in items {
         best = match best {
-            some(current) if current >= item => some(current)
-            _ => some(item)
+            some(current) if current >= item => current
+            _ => item
         }
     }
     best

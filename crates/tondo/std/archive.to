@@ -549,11 +549,11 @@ fn readTar(bytes: Array[Byte], format: Format): Archive ! ArchiveError {
         at += 512 + (size + 511) / 512 * 512
         // A header of the next entry's long name or of its PAX records.
         if kind == 0x4c {
-            longName = some(textOf(data, 0, data.length()))
+            longName = textOf(data, 0, data.length())
             continue
         }
         if kind == 0x4b {
-            longTarget = some(textOf(data, 0, data.length()))
+            longTarget = textOf(data, 0, data.length())
             continue
         }
         if kind == 0x78 {
@@ -578,10 +578,10 @@ fn readTar(bytes: Array[Byte], format: Format): Archive ! ArchiveError {
         }
         let entryKind = match kind {
             0x35 => some(EntryKind.Directory)
-            0x32 => some(EntryKind.Symlink)
-            0x30 => some(EntryKind.File)
-            0 => some(EntryKind.File)
-            0x37 => some(EntryKind.File)
+            0x32 => EntryKind.Symlink
+            0x30 => EntryKind.File
+            0 => EntryKind.File
+            0x37 => EntryKind.File
             _ => none
         }
         (longName, longTarget, extended) = (none, none, [:])
@@ -598,7 +598,7 @@ fn readTar(bytes: Array[Byte], format: Format): Archive ! ArchiveError {
                         size: size
                         modified: __time.utc(__time.seconds(seconds))
                         permissions: octal(header, 100, 8) & 0o7777
-                        target: if found == EntryKind.Symlink { some(target) } else { none }
+                        target: if found == EntryKind.Symlink { target } else { none }
                     },
                 )
                 contents.push(if found == EntryKind.File { data } else { [] })

@@ -185,7 +185,7 @@ fn Keeper.kept(self): (String, String, __time.Duration, __time.Duration)? {
     if key.isEmpty() or not self.domains.all((name) { first.names.any((held) { held == name }) }) {
         return none
     }
-    some((chain, key, first.validFrom.sinceEpoch(), first.validUntil.sinceEpoch()))
+    (chain, key, first.validFrom.sinceEpoch(), first.validUntil.sinceEpoch())
 }
 
 /// A file of the cache, which only its owner reads.
@@ -217,7 +217,7 @@ type Session = {
 
 /// The account of the kept key, made or found.
 fn Keeper.session(self): Session ! AcmeError {
-    let client = __http.Client(trust: self.trust, timeout: some(__time.seconds(30)))
+    let client = __http.Client(trust: self.trust, timeout: __time.seconds(30))
     let urls = answer(sent(client.get(self.directory)))?
     let path = "{self.folder}/account.key"
     let key = match __fs.readText(path) {
@@ -250,7 +250,7 @@ fn Keeper.session(self): Session ! AcmeError {
     let created =
         session.post(
             member(urls, "newAccount"),
-            some("{{\"termsOfServiceAgreed\":true,\"contact\":[{contact}]}}"),
+            "{{\"termsOfServiceAgreed\":true,\"contact\":[{contact}]}}",
         )?
     match created.header("Location") {
         some(url) => session.account.set(url)
@@ -284,7 +284,7 @@ fn Session.post(self, url: String, payload: String?): __http.Response ! AcmeErro
             "{{\"protected\":\"{protected}\",\"payload\":\"{content}\",\"signature\":\"{signature}\"}}"
         let body = __http.Body.text(jws, contentType: "application/jose+json")
         // An answer of 400 or more is read too: it says why.
-        let response = match self.client.post(url, body: some(body)) {
+        let response = match self.client.post(url, body: body) {
             ok(found) => found
             err(__http.HttpError.Status(found)) => found
             err(error) => fail AcmeError { message: "{error}" }
@@ -329,7 +329,7 @@ fn Keeper.obtained(self): (String, String) ! AcmeError {
     let created =
         session.post(
             member(session.urls, "newOrder"),
-            some("{{\"identifiers\":[{identifiers.join(",")}]}}"),
+            "{{\"identifiers\":[{identifiers.join(",")}]}}",
         )?
     let orderUrl = created.header("Location").unwrapOr("")
     let order = answer(ok(created))?
@@ -338,7 +338,7 @@ fn Keeper.obtained(self): (String, String) ! AcmeError {
     }
     let key = __crypto.PrivateKey.generate(__crypto.Curve.P256)
     let request = certificateRequest(key, self.domains)
-    _ = session.post(member(order, "finalize"), some("{{\"csr\":\"{base64url(request)}\"}}"))?
+    _ = session.post(member(order, "finalize"), "{{\"csr\":\"{base64url(request)}\"}}")?
     var issued = order
     for tries in 0..120 {
         issued = answer(ok(session.post(orderUrl, none)?))?
@@ -386,7 +386,7 @@ fn Keeper.authorized(self, session: Session, url: String): !AcmeError {
         err(error) => fail AcmeError { message: "the check of {name}: {error}" }
     }
     defer self.certificates.removeForProtocol(AlpnProtocol, name)
-    _ = session.post(member(challenge, "url"), some("{{}}"))?
+    _ = session.post(member(challenge, "url"), "{{}}")?
     for tries in 0..120 {
         let now = answer(ok(session.post(url, none)?))?
         let status = member(now, "status")

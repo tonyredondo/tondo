@@ -13,8 +13,8 @@ fn main() {
     ages["eva"] = 41
     ages["ana"] = 33
     let removed = ages.remove("leo")
-    console.println("{ages} {before} {removed == some(28)} {ages.remove("zoe") == none}")
-    console.println("{ages["ana"] == some(33)} {ages["nobody"] == none} {"eva" in ages} {"leo" in ages}")
+    console.println("{ages} {before} {removed == 28} {ages.remove("zoe") == none}")
+    console.println("{ages["ana"] == 33} {ages["nobody"] == none} {"eva" in ages} {"leo" in ages}")
     for (name, age) in ages {
         console.println("{name} -> {age}")
     }
@@ -34,10 +34,10 @@ fn main() {
     var grid: Map[(Int, Int), Color] = [:]
     grid[(0, 0)] = Color.Red
     grid[(1, 2)] = Color.Green
-    let cell = grid[(1, 2)] == some(Color.Green)
+    let cell = grid[(1, 2)] == Color.Green
     var places = Map[Pos, String]()
     _ = places.insert(Pos { x: 1, y: 2 }, "home")
-    let home = places.get(Pos { x: 1, y: 2 }) == some("home")
+    let home = places.get(Pos { x: 1, y: 2 }) == "home"
     var colors = Set[Color]()
     _ = colors.insert(Color.Red)
     console.println("{cell} {home} {Color.Red in colors} {Color.Green in colors}")

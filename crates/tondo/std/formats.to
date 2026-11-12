@@ -117,7 +117,7 @@ pub fn digitsOf(shown: String): Digits {
     let negative = shown.startsWith("-")
     var rest = shown.removePrefix("-")
     if rest == "inf" or rest == "NaN" {
-        return Digits { negative: negative, whole: "", fraction: "", special: some(rest) }
+        return Digits { negative: negative, whole: "", fraction: "", special: rest }
     }
     var exponent = 0
     match rest.splitOnce("e") {
@@ -221,7 +221,7 @@ pub fn formatNumeric(
     fill: Char,
     align: Char,
 ): String {
-    let parts = rounded(digitsOf(shown), if precision >= 0 { some(precision) } else { none })
+    let parts = rounded(digitsOf(shown), if precision >= 0 { precision } else { none })
     let whole = if parts.whole.isEmpty() { "0" } else { parts.whole }
     let digits = if parts.fraction.isEmpty() { whole } else { "{whole}.{parts.fraction}" }
     let negative = parts.negative and "{parts.whole}{parts.fraction}".chars().any((c) { c != '0' })

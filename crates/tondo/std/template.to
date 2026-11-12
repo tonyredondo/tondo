@@ -767,7 +767,7 @@ fn Run.node(mut self, scope: mut Scope, node: Node): Flow ! TemplateError {
                 }
                 none => scope.data
             }
-            self.template(included, found, scope.depth + 1, some(scope))?
+            self.template(included, found, scope.depth + 1, scope)?
         }
         Node.Break => return Flow.Break
         Node.Continue => return Flow.Continue
@@ -1364,7 +1364,7 @@ fn textMethod(value: String, name: String, args: Array[__reflect.Value]): __refl
         ("removeSuffix", 1) => __reflect.valueOf(value.removeSuffix(first))
         _ => return none
     }
-    some(result)
+    result
 }
 
 fn arrayMethod(
@@ -1394,7 +1394,7 @@ fn arrayMethod(
         }
         _ => return none
     }
-    some(result)
+    result
 }
 
 fn mapMethod(
@@ -1410,7 +1410,7 @@ fn mapMethod(
             var found: __reflect.Value? = none
             for (key, value) in entries {
                 if same(key, args[0]) {
-                    found = some(value)
+                    found = value
                 }
             }
             __reflect.valueOf(found)
@@ -1420,7 +1420,7 @@ fn mapMethod(
         ("entries", 0) => __reflect.valueOf(entries.map((entry) { [entry.0, entry.1] }))
         _ => return none
     }
-    some(result)
+    result
 }
 
 fn optionMethod(
@@ -1434,7 +1434,7 @@ fn optionMethod(
         ("unwrapOr", 1) => inner.unwrapOr(args[0])
         _ => return none
     }
-    some(result)
+    result
 }
 
 /// What a value writes, with its format, at its place.
@@ -1561,7 +1561,7 @@ fn parsedOf(value: __json.Value): Parsed {
         extends: value.field("extends").asText()
         computed: match value.field("computed").isNull() {
             true => none
-            false => some(codeOf(value.field("computed")))
+            false => codeOf(value.field("computed"))
         }
         nodes: nodesOf(value.field("nodes"))
         defines: value
@@ -1588,7 +1588,7 @@ fn nodesOf(value: __json.Value): Array[Node] {
 fn optionalNodes(value: __json.Value): Array[Node]? {
     match value.isNull() {
         true => none
-        false => some(nodesOf(value))
+        false => nodesOf(value)
     }
 }
 
@@ -1649,11 +1649,11 @@ fn nodeOf(value: __json.Value): Node {
             name: field("name").asText().unwrapOr("")
             computed: match field("name").asText() {
                 some(_) => none
-                none => some(codeOf(field("name")))
+                none => codeOf(field("name"))
             }
             data: match field("data").isNull() {
                 true => none
-                false => some(codeOf(field("data")))
+                false => codeOf(field("data"))
             }
             named: field("named")
                 .asArray()

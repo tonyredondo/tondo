@@ -301,7 +301,7 @@ pub fn String.splitOnce(self, separator: String): (String, String)? {
     let at = self.find(separator)?
     let before = self.slice(0, at).unwrapOr("")
     let after = self.slice(at + separator.length(), self.length()).unwrapOr("")
-    some((before, after))
+    (before, after)
 }
 
 /// Whether the texts are the same but for case, by Unicode's rules:
@@ -398,7 +398,7 @@ pub fn String.removeSuffix(self, suffix: String): String {
 /// The scalar index of the last `needle`.
 pub fn String.findLast(self, needle: String): Int? {
     let at = textNative.findLast(self, needle)
-    if at < 0 { none } else { some(at) }
+    if at < 0 { none } else { at }
 }
 
 /// How many times `needle` appears, without overlapping.
@@ -485,7 +485,7 @@ pub fn Char.code(self): Int {
 
 /// The scalar with this Unicode value, if it is one.
 pub fn Char.from(code: Int): Char? {
-    if textNative.charValid(code) { some(textNative.charFrom(code)) } else { none }
+    if textNative.charValid(code) { textNative.charFrom(code) } else { none }
 }
 
 // ---------------------------------------------------------------------------
@@ -552,7 +552,7 @@ pub fn Option[T].unwrapOr(self, fallback: T): T {
 /// This option if it has a value, or `other`.
 pub fn Option[T].orElse(self, other: T?): T? {
     match self {
-        some(value) => some(value)
+        some(value) => value
         none => other
     }
 }
@@ -560,7 +560,7 @@ pub fn Option[T].orElse(self, other: T?): T? {
 /// The value when it passes the test, or `none`.
 pub fn Option[T].filter(self, keep: fn(T): Bool): T? {
     match self {
-        some(value) if keep(value) => some(value)
+        some(value) if keep(value) => value
         _ => none
     }
 }
@@ -629,7 +629,7 @@ pub fn Result[T, E].unwrapOr(self, fallback: T): T {
 /// The value, or `none` when it holds an error.
 pub fn Result[T, E].ok(self): T? {
     match self {
-        ok(value) => some(value)
+        ok(value) => value
         err(_) => none
     }
 }
@@ -638,7 +638,7 @@ pub fn Result[T, E].ok(self): T? {
 pub fn Result[T, E].err(self): E? {
     match self {
         ok(_) => none
-        err(error) => some(error)
+        err(error) => error
     }
 }
 
@@ -866,7 +866,7 @@ pub fn Array[T].all(self, predicate: fn(T): Bool): Bool {
 pub fn Array[T].find(self, predicate: fn(T): Bool): T? {
     for item in self {
         if predicate(item) {
-            return some(item)
+            return item
         }
     }
     none
@@ -876,7 +876,7 @@ pub fn Array[T].find(self, predicate: fn(T): Bool): T? {
 pub fn Array[T].findIndex(self, predicate: fn(T): Bool): Int? {
     for index in 0..self.length() {
         if predicate(self[index]) {
-            return some(index)
+            return index
         }
     }
     none
@@ -908,8 +908,8 @@ pub fn Array[T: Ordered].min(self): T? {
     var found: T? = none
     for item in self {
         found = match found {
-            some(best) if best.compare(item) <= 0 => some(best)
-            _ => some(item)
+            some(best) if best.compare(item) <= 0 => best
+            _ => item
         }
     }
     found
@@ -921,8 +921,8 @@ pub fn Array[T: Ordered].max(self): T? {
     var found: T? = none
     for item in self {
         found = match found {
-            some(best) if best.compare(item) >= 0 => some(best)
-            _ => some(item)
+            some(best) if best.compare(item) >= 0 => best
+            _ => item
         }
     }
     found
@@ -1365,7 +1365,7 @@ pub trait Iterator[T] {
         let cursor = self
         for item in cursor {
             if predicate(item) {
-                return some(item)
+                return item
             }
         }
         none
@@ -1432,7 +1432,7 @@ impl[I: Iterator[T], T] Iterator[T] for FilterIterator[I, T] {
             match self.source.next() {
                 some(item) => {
                     if self.keep(item) {
-                        return some(item)
+                        return item
                     }
                 }
                 none => return none
@@ -1517,7 +1517,7 @@ impl[I: Iterator[T], T] Iterator[T] for TakeWhileIterator[I, T] {
             return none
         }
         match self.source.next() {
-            some(item) if self.predicate(item) => some(item)
+            some(item) if self.predicate(item) => item
             _ => {
                 self.done = true
                 none
@@ -1552,7 +1552,7 @@ impl[I: Iterator[T], T] Iterator[T] for SkipWhileIterator[I, T] {
                 some(item) => {
                     if not self.predicate(item) {
                         self.started = true
-                        return some(item)
+                        return item
                     }
                 }
                 none => return none
@@ -1582,7 +1582,7 @@ impl[I: Iterator[T], T] Iterator[(Int, T)] for EnumerateIterator[I, T] {
             some(item) => {
                 let position = self.index
                 self.index += 1
-                some((position, item))
+                (position, item)
             }
             none => none
         }
@@ -1612,7 +1612,7 @@ impl[I: Iterator[T], J: Iterator[U], T, U] Iterator[(T, U)] for ZipIterator[I, J
     fn next(mut self): (T, U)? {
         match self.first.next() {
             some(a) => match self.second.next() {
-                some(b) => some((a, b))
+                some(b) => (a, b)
                 none => none
             }
             none => none
@@ -1640,7 +1640,7 @@ impl[I: Iterator[T], J: Iterator[T], T] Iterator[T] for ChainIterator[I, J, T] {
     fn next(mut self): T? {
         if not self.inSecond {
             match self.first.next() {
-                some(item) => return some(item)
+                some(item) => return item
                 none => self.inSecond = true
             }
         }
@@ -1678,7 +1678,7 @@ impl[I: Iterator[T], T, U] Iterator[U] for FlatMapIterator[I, T, U] {
         }
         let item = self.current[self.position]
         self.position += 1
-        some(item)
+        item
     }
 }
 
@@ -1788,7 +1788,7 @@ impl[T: Discrete + Ordered] Iterator[T] for Range[T] {
         } else {
             self.lower = value.successor()
         }
-        some(value)
+        value
     }
 }
 
@@ -1867,7 +1867,7 @@ impl Iterator[Char] for CharIterator {
         } else {
             4
         }
-        some(c)
+        c
     }
 }
 
@@ -1896,7 +1896,7 @@ impl[T] Iterator[T] for ArrayIterator[T] {
     fn next(mut self): T? {
         let item = self.items.get(self.position)?
         self.position += 1
-        some(item)
+        item
     }
 }
 

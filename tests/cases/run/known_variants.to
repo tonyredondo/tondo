@@ -19,7 +19,7 @@ fn half(n: Int): Int ! String {
 fn found(points: Array[Point], x: Int): Point? {
     for point in points {
         if point.x == x {
-            return some(point)
+            return point
         }
     }
     none
@@ -30,7 +30,7 @@ fn Point.move(mut self) {
 }
 
 fn wrapped(point: Point): Point? {
-    some(point)
+    point
 }
 
 // A payload is read from where it came from only while that has not

@@ -45,7 +45,7 @@ test channelKeepsEveryValue {
 test rendezvousHandsOver {
     let (out, input) = channel[Int]()
     let job = spawn sends(out, 7)
-    assert(input.receive() == some(7))
+    assert(input.receive() == 7)
     job.wait()
 }
 
@@ -57,7 +57,7 @@ test closedChannelEnds {
     let (out, input) = channel[Int](2)
     let job = spawn closes(out)
     job.wait()
-    assert(input.receive() == some(1))
+    assert(input.receive() == 1)
     assert(input.receive() == none)
 }
 
@@ -127,7 +127,7 @@ test selectTakesOne {
         let value = fromLeft.receive() => value
         let value = fromRight.receive() => value
     }
-    assert(got == some(1) or got == some(2))
+    assert(got == 1 or got == 2)
     first.wait()
     second.wait()
 }
@@ -258,7 +258,7 @@ test cancelInALockLetsItGo {
     let cell = sync.Mutex(0)
     let (out, input) = channel[Int]()
     let job = spawn locks(cell, out)
-    assert(input.receive() == some(1))
+    assert(input.receive() == 1)
     job.cancel()
     cell.update((value) { assert(value >= 0) })
 }

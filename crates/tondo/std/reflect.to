@@ -287,7 +287,7 @@ pub fn opaqueOf[T](value: T): Value {
 fn carried[T](_box: reflectNative.Box, op: Op): Reply ! ReflectError {
     let name = reflectNative.typeName[T]()
     match op {
-        Op.Show(_) => Reply.Text(some("<{name}>"))
+        Op.Show(_) => Reply.Text("<{name}>")
         Op.Info => Reply.Info(opaqueInfo[T]())
         Op.Fields => Reply.Fields(none)
         Op.Elements => Reply.Values(none)
@@ -535,7 +535,7 @@ fn Value.sequence(self): Array[Value]? {
 /// value, or `none` when the value has no field of that name.
 pub fn Value.optional(self, name: String): Value? ! ReflectError {
     match self.run(Op.Get(name)) {
-        ok(Reply.One(value)) => some(value)
+        ok(Reply.One(value)) => value
         ok(_) => fail unexpected()
         err(error) if error.kind == ReflectErrorKind.NoField => none
         err(error) => fail error
@@ -852,7 +852,7 @@ impl[T: Reflect] Reflect for Array[T] {
         for item in self {
             values.push(valueOf(item))
         }
-        some(values)
+        values
     }
 
     fn reflectShow(self, _nested: Bool): String {
@@ -893,7 +893,7 @@ impl[T: Reflect] Reflect for T? {
             some(inner) => {
                 var changed = inner
                 changed.reflectSet(name, value)?
-                self = some(changed)
+                self = changed
             }
             none => fail noValue(nameOf(self), name)
         }
@@ -902,14 +902,14 @@ impl[T: Reflect] Reflect for T? {
     fn reflectElements(self): Array[Value]? {
         match self {
             some(inner) => some([valueOf(inner)])
-            none => some([])
+            none => []
         }
     }
 
     fn reflectVariant(self): String? {
         match self {
-            some(_) => some("some")
-            none => some("none")
+            some(_) => "some"
+            none => "none"
         }
     }
 
@@ -1025,7 +1025,7 @@ impl[K: Reflect + Key, V: Reflect] Reflect for Map[K, V] {
         for (key, item) in self {
             pairs.push((valueOf(key), valueOf(item)))
         }
-        some(pairs)
+        pairs
     }
 
     fn reflectShow(self, _nested: Bool): String {
@@ -1072,8 +1072,8 @@ impl[T: Reflect, E: Reflect] Reflect for T ! E {
 
     fn reflectVariant(self): String? {
         match self {
-            ok(_) => some("ok")
-            err(_) => some("err")
+            ok(_) => "ok"
+            err(_) => "err"
         }
     }
 
@@ -1112,7 +1112,7 @@ impl[T: Reflect] Reflect for Deque[T] {
         for item in self {
             values.push(valueOf(item))
         }
-        some(values)
+        values
     }
 
     fn reflectShow(self, _nested: Bool): String {
@@ -1146,7 +1146,7 @@ impl[T: Reflect + Key] Reflect for Set[T] {
         for item in self {
             values.push(valueOf(item))
         }
-        some(values)
+        values
     }
 
     fn reflectShow(self, _nested: Bool): String {
@@ -1676,7 +1676,7 @@ pub fn FieldInfo.annotated(self, annotations: Array[Value]): FieldInfo {
 /// The description with the field's `@name` (language 9.2), as the code
 /// the compiler writes for a type gives it.
 pub fn FieldInfo.externallyNamed(self, name: String): FieldInfo {
-    self with { external: some(name) }
+    self with { external: name }
 }
 
 /// The field's name outside the program, which formats write and read: its
@@ -1688,7 +1688,7 @@ pub fn FieldInfo.externalName(self): String {
 /// The description with the field's default (language 9.2), as the code
 /// the compiler writes for a type gives it.
 pub fn FieldInfo.defaulted(self, value: Value): FieldInfo {
-    self with { fallback: some(value) }
+    self with { fallback: value }
 }
 
 /// The field's default (language 9.2), the value a literal or a decoding
@@ -1779,7 +1779,7 @@ pub fn VariantInfo.of(
 /// The description with the variant's `@name` (language 9.4), as the code
 /// the compiler writes for a type gives it.
 pub fn VariantInfo.externallyNamed(self, name: String): VariantInfo {
-    self with { external: some(name) }
+    self with { external: name }
 }
 
 /// The variant's name outside the program, which formats write and read:

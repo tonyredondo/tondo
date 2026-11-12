@@ -151,6 +151,6 @@ test drainAsTlcDoes {
 test drainFindsAnUnansweredRequest {
     match check(false) {
         ok(_) => panic("an unanswered request went unseen")
-        err(broken) => assert(broken.property == some("Answered"))
+        err(broken) => assert(broken.property == "Answered")
     }
 }

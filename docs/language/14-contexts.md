@@ -84,7 +84,7 @@ fn audit(action: String): String {
 }
 
 fn handle(id: String, user: String): String {
-    with Request { id, user: some(user) }
+    with Request { id, user: user }
     audit("opened the page")
 }
 

@@ -33,7 +33,7 @@ type User = { name: String, email: String? }
 fn find(users: Array[User], name: String): User? {
     for user in users {
         if user.name == name {
-            return some(user)
+            return user
         }
     }
     none
@@ -359,7 +359,7 @@ fn main() {
         ok(config) => console.println("listening on {config.port}")
         err(failure) => {
             console.println("{failure}")
-            let missing = failure.find[fs.FsError]() == some(fs.FsError.NotFound)
+            let missing = failure.find[fs.FsError]() == fs.FsError.NotFound
             console.println("because the file is missing: {missing}")
         }
     }

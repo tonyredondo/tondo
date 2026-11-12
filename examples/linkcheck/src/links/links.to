@@ -36,8 +36,7 @@ pub fn target(page: url.Url, link: String): String? {
         return none
     }
     match page.resolve(address) {
-        ok(resolved) if resolved.scheme == "http" or resolved.scheme == "https" =>
-            some("{resolved}")
+        ok(resolved) if resolved.scheme == "http" or resolved.scheme == "https" => "{resolved}"
         _ => none
     }
 }

@@ -45,7 +45,7 @@ pub type User = {
 }
 
 fn find(id: Int): User? {
-    if id == 1 { some(User { id: id, name: "Ada" }) } else { none }
+    if id == 1 { User { id: id, name: "Ada" } } else { none }
 }
 
 fn main(): !http.HttpError {

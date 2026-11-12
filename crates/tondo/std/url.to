@@ -132,7 +132,7 @@ pub fn parse(text: String): Url ! UrlError {
                     some(colon) => {
                         parsed.user = decoded(info.slice(0, colon).unwrapOr(""), start)?
                         let password = info.slice(colon + 1, info.length()).unwrapOr("")
-                        parsed.password = some(decoded(password, start + colon + 1)?)
+                        parsed.password = decoded(password, start + colon + 1)?
                     }
                     none => parsed.user = decoded(info, start)?
                 }
@@ -155,7 +155,7 @@ pub fn parse(text: String): Url ! UrlError {
                 let digits = hostPort.slice(colon + 1, hostPort.length()).unwrapOr("")
                 if not digits.isEmpty() {
                     match Int.parse(digits) {
-                        ok(port) if port >= 0 and port <= 65535 => parsed.port = some(port)
+                        ok(port) if port >= 0 and port <= 65535 => parsed.port = port
                         _ => fail UrlError {
                             message: "`{digits}` is not a port, which is a number from 0 to 65535"
                             offset: hostStart + colon + 1

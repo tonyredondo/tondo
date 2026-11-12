@@ -382,9 +382,9 @@ fn wellKnownFromJson(
     if name.endsWith("Value") and
         name != "google.protobuf.Value" and
         name != "google.protobuf.ListValue" {
-        return some(pbNative.finish(out.native))
+        return pbNative.finish(out.native)
     }
-    some(fieldBytes(out)?)
+    fieldBytes(out)?
 }
 
 /// What reads a message's JSON.
@@ -658,7 +658,7 @@ pub fn JsonReader.bytes(self, value: __json.Value, path: String): Array[Byte] ! 
 pub fn JsonReader.enumValue[T: Enum](self, value: __json.Value, path: String): T? ! ProtobufError {
     match value {
         __json.Value.Text(name) => match Enum.fromProtobufValueName[T](name) {
-            some(found) => some(found)
+            some(found) => found
             none if self.ignoreUnknown => none
             none => fail jsonError(
                 serialization.ErrorKind.Unknown,

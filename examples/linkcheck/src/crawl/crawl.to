@@ -108,7 +108,7 @@ pub fn crawl(start: String, options: Options = Options {}): Report ! CrawlError 
     if home.scheme != "http" and home.scheme != "https" {
         fail CrawlError.NotTheWeb(start)
     }
-    let client = http.Client(timeout: some(options.timeout))
+    let client = http.Client(timeout: options.timeout)
     let pace = sync.RateLimiter(options.rate)
     let (jobs, queue) = channel[Job]()
     let (visits, inbox) = channel[Visit]()

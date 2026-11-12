@@ -2240,11 +2240,19 @@ fn findUser(users: Array[User], id: UserId): User? {
 }
 ~~~
 
-En una función cuyo resultado es `T?`:
+En una función cuyo resultado es `T?`, y en cualquier lugar donde se espera un
+`T?`:
 
-- Un valor `T` se eleva a `some(value)`.
+- Un valor `T` se eleva a `some(value)`. Un valor que toma su tipo del esperado
+  y nunca es una option —un número, un literal de colección o de tupla, `ok(...)`
+  o `err(...)`— se tipa con el `T`: `let names: Array[String]? = []`.
 - `none` representa ausencia.
 - Un valor ya tipado como `T?` se devuelve sin envolver otra vez.
+
+Por eso `some(value)` donde se espera un `T?`, con `T` que no es una option, sobra:
+avisa (`W1021`) con la corrección segura de escribir el valor solo,
+`limit: 3` en lugar de `limit: some(3)`. No avisa en un patrón, donde nada da el
+tipo, como `let x = some(1)`, ni como miembro de una unión.
 
 Las options anidadas no se aplanan:
 
@@ -8954,6 +8962,7 @@ oculten un diagnóstico independiente.
 | `W1018` | `unused-result` | Una llamada escrita como sentencia, o como valor de un bloque `Unit`, cuyo resultado nada usa y que no hace nada más: un `String` que hizo, un método del lenguaje que solo lee, o una función del programa que solo calcula. `_ = ...` lo descarta. |
 | `W1019` | `unused-allow` | Un comentario `// tondo: allow` que no silencia nada. |
 | `W1020` | `unknown-model-step` | Un `model.mark`, `model.weak` o `model.strong` con un nombre escrito que ningún `model.step` del programa da (biblioteca 14.43). |
+| `W1021` | `needless-some` | `some(value)` donde se espera un `T?` y `value` es un `T` que no es una option: el valor solo se eleva igual (9.7). |
 
 #### Pánicos del lenguaje
 
@@ -9282,6 +9291,7 @@ con condiciones cerradas:
 - `spawn` cuyo `Join` nadie consume dentro de un bucle (`W1013`).
 - Sentencia que es un valor negativo que nada usa (`W1014`).
 - Llamada cuyo resultado nada usa y sin otro efecto (`W1018`).
+- `some(value)` donde el valor solo se elevaría igual (`W1021`).
 
 Son errores obligatorios, entre otros:
 

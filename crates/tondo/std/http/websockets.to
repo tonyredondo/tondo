@@ -135,10 +135,10 @@ pub fn WebSocket.receive(self): Message? ! HttpError {
     failed(received)?
     let kind = httpNative.wsKind(received)
     if kind == 0 {
-        return some(Message.Text(httpNative.wsText(received)))
+        return Message.Text(httpNative.wsText(received))
     }
     if kind == 1 {
-        return some(Message.Binary(httpNative.wsData(received)))
+        return Message.Binary(httpNative.wsData(received))
     }
     none
 }
@@ -157,14 +157,14 @@ impl Iterator[Message ! HttpError] for WebSocket {
             return none
         }
         match self.receive() {
-            ok(some(message)) => some(ok(message))
+            ok(some(message)) => ok(message)
             ok(none) => {
                 self.closed = true
                 none
             }
             err(error) => {
                 self.closed = true
-                some(err(error))
+                err(error)
             }
         }
     }

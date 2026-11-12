@@ -6,7 +6,7 @@ impl[T] Iterator[(Int, T)] for IndexCursor[T] {
     fn next(mut self): (Int, T)? {
         let value = self.values.get(self.index)?
         self.index += 1
-        some((self.index - 1, value))
+        (self.index - 1, value)
     }
 }
 

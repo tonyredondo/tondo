@@ -204,6 +204,6 @@ test lockAsTlcDoes {
 test lockFindsAWriterWithAReader {
     match check(false) {
         ok(_) => panic("a writer with a reader went unseen")
-        err(broken) => assert(broken.property == some("Exclusion"))
+        err(broken) => assert(broken.property == "Exclusion")
     }
 }

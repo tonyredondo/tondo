@@ -839,7 +839,17 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
-        let expected = self.union_member(expected, constructor);
+        let member = self.union_member(expected, constructor);
+        // `some(value)` where an option of a type that is not one itself is
+        // expected, and not as a member of a union: the value alone
+        // becomes it (9.7).
+        let lifted = constructor == "some"
+            && member == expected
+            && expected.is_some_and(|t| {
+                matches!(self.types.kind(t), TyKind::Option(inner) if !matches!(self.types.kind(*inner), TyKind::Option(_)))
+            });
+        let written = value;
+        let expected = member;
         let expected_kind = expected.map(|t| self.types.kind(t).clone());
         let (variant, payload_ty, ty) = match (constructor, expected_kind) {
             ("some", Some(TyKind::Option(inner))) => (SOME, Some(inner), expected),
@@ -854,12 +864,69 @@ impl<'a> Checker<'a> {
             }
         };
         let value = self.expr(cx, value, payload_ty);
+        if lifted
+            && Some(value.ty) == payload_ty
+            && value.ty != Ty::ERROR
+            && value.ty != Ty::NEVER
+            && self.inferring == 0
+            && self.typed_alone(&value)
+        {
+            self.needless_some(written, value.ty, span);
+        }
         let value = match payload_ty {
             Some(payload) => self.coerce(value, payload),
             None => value,
         };
         let ty = ty.unwrap_or_else(|| self.types.intern(TyKind::Option(value.ty)));
         Self::mk(hir::ExprKind::Variant(variant, vec![(0, value)]), ty, span)
+    }
+
+    /// Whether a value is typed the same where its option is expected, so
+    /// that `some` around it can go: not what may take its type from the one
+    /// expected, as the result of a generic call, `json.decode(text)?` or
+    /// `value.to()?`, a branch, a block, a closure or a literal of a query.
+    fn typed_alone(&self, value: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &value.kind {
+            K::Int(_) | K::Float(_) | K::Char(_) | K::Bool(_) | K::Unit | K::Local(_) => true,
+            K::Str(_) | K::Interpolate(_) => value.ty == Ty::STRING,
+            K::Field(base, _) | K::Try(base) | K::Length(base) | K::Unary(_, base) | K::Retype(base) => {
+                self.typed_alone(base)
+            }
+            K::Convert(base) => self.typed_alone(base),
+            K::Binary(_, left, right) => self.typed_alone(left) && self.typed_alone(right),
+            K::Call(_, types, _) => types.is_empty(),
+            K::ArrayOp(..) | K::StrOp(..) | K::MapOp(..) => true,
+            K::Array(items) | K::Set(items) | K::Aggregate(items) => items.iter().all(|item| self.typed_alone(item)),
+            K::Map(pairs) => pairs.iter().all(|(key, item)| self.typed_alone(key) && self.typed_alone(item)),
+            K::Record(fields) | K::Variant(_, fields) => fields.iter().all(|(_, field)| self.typed_alone(field)),
+            _ => false,
+        }
+    }
+
+    /// W1021 for a `some(value)` that the value alone would be, with the
+    /// value written in its place: in parentheses when it is an operation
+    /// that is the operand of another, as `flag == some(a and b)`.
+    fn needless_some(&mut self, value: &ast::Expr, ty: Ty, span: Span) {
+        let option = self.types.intern(TyKind::Option(ty));
+        let message = format!(
+            "`some` is not needed here: where {} is expected, the value becomes one by itself; write it alone",
+            self.display(option)
+        );
+        self.diags.warning("W1021", span, message);
+        let source = self.sources.slice(value.span).to_string();
+        let file = self.sources.file_of(span.start);
+        let before = file.text[..(span.start - file.base) as usize].trim_end();
+        // After an operator, not after `=` or `=>`.
+        let symbol = ["==", "!=", "<=", ">="].iter().any(|op| before.ends_with(op))
+            || (before.ends_with(['<', '>', '+', '-', '*', '/', '%', '&', '|', '^', '?']) && !before.ends_with("=>"));
+        let word = |w: &str| {
+            before.strip_suffix(w).is_some_and(|rest| !rest.ends_with(|c: char| c.is_alphanumeric() || c == '_'))
+        };
+        let operand = symbol || ["and", "or", "not", "in"].into_iter().any(word);
+        let operation = matches!(value.kind, ast::ExprKind::Binary(..) | ast::ExprKind::Unary(..));
+        let replacement = if operand && operation { format!("({source})") } else { source };
+        self.diags.fix("remove `some`", true, vec![(span, replacement)]);
     }
 
     /// The type `none`, `some(...)`, `ok(...)` or `err(...)` builds: the

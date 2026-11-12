@@ -74,6 +74,7 @@ fn check_with<'a>(
     let mut checker = Checker {
         index,
         every_body,
+        inferring: 0,
         index_exprs: Vec::new(),
         cell_uses: Vec::new(),
         meta,
@@ -886,6 +887,10 @@ struct Checker<'a> {
     /// Whether every body is checked, the standard library's too, and not
     /// only those of it the program reaches (`reach.rs`).
     every_body: bool,
+    /// How many expressions being checked take their expected type from an
+    /// inference that their own type then feeds: a `some(...)` there is not
+    /// one W1021 can remove.
+    inferring: u32,
     /// For an editor: the type of each expression of the program's own files.
     index_exprs: Vec<(Span, Ty)>,
     /// The `meta` profile: no host capabilities (27.7).

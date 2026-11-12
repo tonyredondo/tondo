@@ -91,7 +91,7 @@ pub fn read(text: String, pattern: String?, locale: String): Array[Int]? {
         none => iso(text)?
     }
     if exists(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6]) {
-        some(fields)
+        fields
     } else {
         none
     }
@@ -112,23 +112,23 @@ fn iso(input: String): Array[Int]? {
         }
         value
     }
-    if chars.get(4) != some('-') or chars.get(7) != some('-') {
+    if chars.get(4) != '-' or chars.get(7) != '-' {
         return none
     }
     let (year, month, day) = (number(0, 4), number(5, 2), number(8, 2))
     var at = 10
     var (hour, minute, second, nanosecond, zoned, offset) = (0, 0, 0, 0, 0, 0)
     if at < chars.length() {
-        if not (chars[at] in "Tt ") or chars.get(at + 3) != some(':') {
+        if not (chars[at] in "Tt ") or chars.get(at + 3) != ':' {
             return none
         }
         hour = number(at + 1, 2)
         minute = number(at + 4, 2)
         at += 6
-        if chars.get(at) == some(':') {
+        if chars.get(at) == ':' {
             second = number(at + 1, 2)
             at += 3
-            if chars.get(at) == some('.') {
+            if chars.get(at) == '.' {
                 at += 1
                 var places = 0
                 for at < chars.length() and chars[at].isDigit() {
@@ -183,7 +183,7 @@ fn iso(input: String): Array[Int]? {
     if at != chars.length() {
         return none
     }
-    some([year, month, day, hour, minute, second, nanosecond, zoned, offset])
+    [year, month, day, hour, minute, second, nanosecond, zoned, offset]
 }
 
 /// The pieces of a pattern; `%F` and `%T` are what they stand for, and a
@@ -199,7 +199,7 @@ fn pieces(pattern: String): Array[Piece] {
             out.push(Piece { text: "{c}", directive: false, padded: true })
             continue
         }
-        let padded = chars.get(at) != some('-')
+        let padded = chars.get(at) != '-'
         if not padded {
             at += 1
         }
@@ -342,7 +342,7 @@ fn strptime(input: String, pattern: String, locale: String): Array[Int]? {
     for piece in pieces(pattern) {
         if not piece.directive {
             for c in piece.text.chars() {
-                if chars.get(at) != some(c) {
+                if chars.get(at) != c {
                     return none
                 }
                 at += 1
@@ -360,7 +360,7 @@ fn strptime(input: String, pattern: String, locale: String): Array[Int]? {
                 longest(input, ref names, mut at, 0, 36)? % 12 + 1
             "d" => day = digits(ref chars, mut at, 1, 2)?.0
             "e" => {
-                for chars.get(at) == some(' ') {
+                for chars.get(at) == ' ' {
                     at += 1
                 }
                 day = digits(ref chars, mut at, 1, 2)?.0
@@ -397,7 +397,7 @@ fn strptime(input: String, pattern: String, locale: String): Array[Int]? {
                     some(sign) if sign == '+' or sign == '-' => {
                         at += 1
                         let hours = digits(ref chars, mut at, 2, 2)?.0
-                        if chars.get(at) == some(':') {
+                        if chars.get(at) == ':' {
                             at += 1
                         }
                         let minutes = digits(ref chars, mut at, 2, 2)?.0
@@ -418,7 +418,7 @@ fn strptime(input: String, pattern: String, locale: String): Array[Int]? {
                 zoned = 1
             }
             _ => {
-                let negative = chars.get(at) == some('-')
+                let negative = chars.get(at) == '-'
                 if negative {
                     at += 1
                 }
@@ -475,7 +475,7 @@ fn strptime(input: String, pattern: String, locale: String): Array[Int]? {
         }
         let count = if sundays >= 0 { sundays } else { mondays }
         let into = if sundays >= 0 { (dayOfWeek + 1) % 7 } else { dayOfWeek }
-        some(start + (count - 1) * 7 + into)
+        start + (count - 1) * 7 + into
     } else {
         none
     }
@@ -502,7 +502,7 @@ fn strptime(input: String, pattern: String, locale: String): Array[Int]? {
     if year < 0 or month < 0 or day < 0 {
         return none
     }
-    some([year, month, day, hour, minute, second, nanosecond, zoned, offset])
+    [year, month, day, hour, minute, second, nanosecond, zoned, offset]
 }
 
 /// From `least` to `most` digits at `at`, and how many, which `at` moves
@@ -517,7 +517,7 @@ fn digits(chars: ref Array[Char], at: mut Int, least: Int, most: Int): (Int, Int
         return none
     }
     at += count
-    some((value, count))
+    (value, count)
 }
 
 /// The index of the longest of the names from `from` to `to` at `at`,
@@ -536,7 +536,7 @@ fn longest(input: String, names: ref Array[String], at: mut Int, from: Int, to: 
         return none
     }
     at += size
-    some(found)
+    found
 }
 
 /// The date and time in UTC of a time in seconds since 1970: `[year, month,
@@ -561,7 +561,7 @@ pub fn duration(text: String): Int? {
     let negative = text.startsWith("-")
     let rest = text.removePrefix("-").removePrefix("+")
     if rest == "0" {
-        return some(0)
+        return 0
     }
     let chars = rest.chars().collect()
     if chars.isEmpty() {
@@ -585,7 +585,7 @@ pub fn duration(text: String): Int? {
             seen += 1
             at += 1
         }
-        if chars.get(at) == some('.') {
+        if chars.get(at) == '.' {
             at += 1
             for at < chars.length() and chars[at].isDigit() {
                 if scale < 1000000000000000000 {

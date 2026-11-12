@@ -19,7 +19,7 @@ fn parse(text: String): Int ! String {
 }
 
 fn main() {
-    let ada = User { address: some(Address { city: some("Lima") }) }
+    let ada = User { address: Address { city: "Lima" } }
     let nobody = User { address: none }
     let first: String? = try { ada.address?.city? }
     let second: String? = try { nobody.address?.city? }

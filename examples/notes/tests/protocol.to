@@ -58,7 +58,7 @@ test saysWhatItOffers {
         listed
             .find("result.tools[0].inputSchema.properties.tags.description")
             .andThen((text) { text.asText() }) ==
-            some("Words to find it by."),
+            "Words to find it by.",
     )
     assert(
         "{listed.find("result.tools[0].inputSchema.required").unwrapOr(json.Value.Null)}" ==
@@ -68,12 +68,10 @@ test saysWhatItOffers {
     let templates = ask(server, "resources/templates/list")?
     assert(
         templates.find("result.resourceTemplates[0].uriTemplate").andThen((text) { text.asText() }) ==
-            some(r"notes://{name}"),
+            r"notes://{name}",
     )
     let prompts = ask(server, "prompts/list")?
-    assert(
-        prompts.find("result.prompts[0].name").andThen((text) { text.asText() }) == some("review"),
-    )
+    assert(prompts.find("result.prompts[0].name").andThen((text) { text.asText() }) == "review")
 }
 
 test writesSearchesReadsAndRemoves {
@@ -92,11 +90,11 @@ test writesSearchesReadsAndRemoves {
     let read = ask(server, "resources/read", r"""{"uri":"notes://green-tea"}""")?
     assert(
         read.find("result.contents[0].text").andThen((text) { text.asText() }) ==
-            some("Buy sencha.\nBrew it at 70 degrees."),
+            "Buy sencha.\nBrew it at 70 degrees.",
     )
     assert(
         read.find("result.contents[0].mimeType").andThen((text) { text.asText() }) ==
-            some("text/markdown"),
+            "text/markdown",
     )
 
     assert(call(server, "remove", r"""{"name":"green-tea"}""")? == ("removed green-tea", false))

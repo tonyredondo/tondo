@@ -12,7 +12,7 @@ import std.time as __time
 /// with `base64=1`.
 fn connectQuery(request: __http.Request): Array[Byte] ! __http.Problem {
     let message = request.query("message").unwrapOr("")
-    if request.query("base64") != some("1") {
+    if request.query("base64") != "1" {
         return message.bytes()
     }
     match __encoding.base64Decode(message, alphabet: __encoding.Base64Alphabet.Url) {
@@ -24,7 +24,7 @@ fn connectQuery(request: __http.Request): Array[Byte] ! __http.Problem {
 /// The time `Connect-Timeout-Ms` gives.
 fn connectTimeout(text: String?): __time.Duration? {
     let milliseconds = Int.parse(text?).ok()?
-    some(__time.milliseconds(milliseconds))
+    __time.milliseconds(milliseconds)
 }
 
 /// A unary call's reply: the method's message, or its failure as JSON with
@@ -41,7 +41,7 @@ fn connectReply(
     let failure = if status.code != Code.Ok {
         some(status)
     } else if length < 0 or body.length() != 5 + length {
-        some(Status { code: Code.Internal, message: "a unary call answers one message" })
+        Status { code: Code.Internal, message: "a unary call answers one message" }
     } else {
         none
     }
@@ -179,12 +179,12 @@ fn timeoutOf(text: String): __time.Duration? {
     }
     let amount = Int.parse(text.slice(0, text.length() - 1).unwrapOr("")).ok()?
     match text.slice(text.length() - 1, text.length()).unwrapOr("") {
-        "H" => some(__time.seconds(amount * 3600))
-        "M" => some(__time.seconds(amount * 60))
-        "S" => some(__time.seconds(amount))
-        "m" => some(__time.milliseconds(amount))
-        "u" => some(__time.microseconds(amount))
-        "n" => some(__time.nanoseconds(amount))
+        "H" => __time.seconds(amount * 3600)
+        "M" => __time.seconds(amount * 60)
+        "S" => __time.seconds(amount)
+        "m" => __time.milliseconds(amount)
+        "u" => __time.microseconds(amount)
+        "n" => __time.nanoseconds(amount)
         _ => none
     }
 }

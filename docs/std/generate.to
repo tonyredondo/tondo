@@ -199,7 +199,7 @@ fn sections(listing: Listing): Array[Section] {
     var byName: Map[String, Section] = [:]
     for declaration in listing.declarations {
         if isType(declaration) {
-            byName[declaration.name] = Section { name: declaration.name, own: some(declaration) }
+            byName[declaration.name] = Section { name: declaration.name, own: declaration }
         }
     }
     // A method names its type even when the listing does not declare it, as
@@ -350,7 +350,7 @@ fn generated(page: Page, listings: Array[Listing]): String {
             entry(member, "####", var out)
         }
     }
-    for out.last() == some("") {
+    for out.last() == "" {
         _ = out.pop()
     }
     "{out.join("\n")}\n"

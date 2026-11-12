@@ -152,9 +152,7 @@ fn main(): !(mcp.McpError | http.HttpError | net.NetError) {
     let call =
         r"""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add","arguments":{"a":40,"b":2}}}"""
     console.println(
-        client
-            .post("/mcp", body: some(http.Body.text(call, contentType: "application/json")))?
-            .text()?,
+        client.post("/mcp", body: http.Body.text(call, contentType: "application/json"))?.text()?,
     )
     server.stop()
 }

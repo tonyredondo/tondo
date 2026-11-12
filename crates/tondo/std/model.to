@@ -202,7 +202,7 @@ pub fn Queue[T].push(self, item: T): Queue[T] {
 /// What comes first, if anything does.
 pub fn Queue[T].first(self): T? {
     match self {
-        Queue.Item(item, _) => some(item)
+        Queue.Item(item, _) => item
         Queue.Empty => none
     }
 }
@@ -776,7 +776,7 @@ fn properties[S: reflect.Reflect + serialization.Decode](
                         what: "`{property.name}` is out of reach from here"
                         path: visits(graph, at)
                         loop: []
-                        property: some(property.name)
+                        property: property.name
                     }
                     none => {}
                 }
@@ -1134,7 +1134,7 @@ fn exploreOnDisk[S: reflect.Reflect + serialization.Encode + serialization.Decod
     var graph = Graph[S] {
         states: []
         count: 1
-        disk: some(Disk { directory, starts })
+        disk: Disk { directory, starts }
         edges: []
         reached: [Reached { from: -1, name: "" }]
         depth: 0
@@ -1155,7 +1155,7 @@ fn exploreOnDisk[S: reflect.Reflect + serialization.Encode + serialization.Decod
                             what: "`{property.name}` does not hold"
                             path: visits(graph, at)
                             loop: []
-                            property: some(property.name)
+                            property: property.name
                         }
                     }
                     _ => {}
@@ -1201,7 +1201,7 @@ fn exploreOnDisk[S: reflect.Reflect + serialization.Encode + serialization.Decod
             err(error) => fail failed("{error}")
         }
         starts.push(base + current.length())
-        graph.disk = some(Disk { directory, starts })
+        graph.disk = Disk { directory, starts }
         graph.depth = level + 1
         level += 1
     }
@@ -1329,7 +1329,7 @@ fn explored[S: reflect.Reflect + serialization.Encode + serialization.Decode](
                         what: "`{property.name}` does not hold"
                         path: visits(graph, at)
                         loop: []
-                        property: some(property.name)
+                        property: property.name
                     }
                 }
                 _ => {}
@@ -1408,7 +1408,7 @@ fn stranded(edges: Array[Array[Edge]], goals: Array[Bool]): Int? {
     }
     for at in 0..can.length() {
         if not can[at] {
-            return some(at)
+            return at
         }
     }
     none
@@ -1744,7 +1744,7 @@ fn later[S: reflect.Reflect + serialization.Decode](
                 what: "`{name}` does not hold"
                 path: path.reversed()
                 loop: loop.drop(1).map((stop) { visit(stop.0, stop.1) })
-                property: some(name)
+                property: name
             }
         }
         none => {}
@@ -1833,7 +1833,7 @@ fn fairLoop(
                     none => {}
                 }
             }
-            return some(loop)
+            return loop
         }
     }
 }
@@ -1973,7 +1973,7 @@ pub fn mark(name: String) {
 
 /// Runs `code` with what it marks seen, by it and the tasks it starts.
 fn marked(code: fn(), observe: fn(String)) {
-    with Marking { observe: some(observe) }
+    with Marking { observe: observe }
     code()
 }
 
@@ -2129,7 +2129,7 @@ fn watching[S: reflect.Reflect](
                         what: "`{property.name}` does not hold"
                         path: upTo(at)
                         loop: []
-                        property: some(property.name)
+                        property: property.name
                     }
                     none => {}
                 }
@@ -2140,7 +2140,7 @@ fn watching[S: reflect.Reflect](
                         what: "`{property.name}` never came"
                         path: upTo(trace.length() - 1)
                         loop: []
-                        property: some(property.name)
+                        property: property.name
                     }
                 }
             }
@@ -2150,7 +2150,7 @@ fn watching[S: reflect.Reflect](
                         what: "`{property.name}` does not hold of this run"
                         path: upTo(trace.length() - 1)
                         loop: []
-                        property: some(property.name)
+                        property: property.name
                     }
                 }
             }

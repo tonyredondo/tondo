@@ -25,7 +25,7 @@ fn counter(map: sync.Map[String, Int], count: Int) {
     for _ in 0..count {
         for {
             let seen = map.get("total")
-            match map.compareExchange("total", seen, some(orZero(seen) + 1)) {
+            match map.compareExchange("total", seen, orZero(seen) + 1) {
                 sync.CompareExchange.Exchanged(_) => break
                 sync.CompareExchange.Mismatch(_) => continue
             }

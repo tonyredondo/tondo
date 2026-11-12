@@ -52,7 +52,7 @@ fn State.change(var self, sku: String, delta: Int): stock.Item ! grpc.Status {
     }
     let changed = item with { available: item.available + delta }
     self.items[sku] = changed
-    self.changes.push(stock.Change { item: some(changed), delta })
+    self.changes.push(stock.Change { item: changed, delta })
     if self.changes.length() > Kept {
         _ = self.changes.removeAt(0)
     }
@@ -118,7 +118,7 @@ impl stock.StockService for Shelves {
         // first and where the changes go on from cannot disagree.
         let start = self.state.get()
         for item in start.items.values() {
-            let first = stock.Change { item: some(item), delta: 0 }
+            let first = stock.Change { item: item, delta: 0 }
             if wanted(request, first) {
                 out.send(first)
             }

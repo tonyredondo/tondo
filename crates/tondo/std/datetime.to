@@ -37,7 +37,7 @@ pub fn deadline(): __time.Instant? {
     if left < 0 {
         return none
     }
-    some(__time.now().add(__time.nanoseconds(left)))
+    __time.now().add(__time.nanoseconds(left))
 }
 
 /// What is left until that deadline, zero once it passed.
@@ -46,7 +46,7 @@ pub fn remaining(): __time.Duration? {
     if left < 0 {
         return none
     }
-    some(__time.nanoseconds(left))
+    __time.nanoseconds(left)
 }
 
 /// ISO 8601 in RFC 3339's form, `2026-10-22`, `2026-10-22T06:38:28Z` or

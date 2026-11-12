@@ -86,7 +86,7 @@ fn main() {
         console.println("Box.{field.name()}: {field.annotation[Check]().map((c) { c.required })}")
     }
     // An annotation is also an ordinary record.
-    let same = Check { min: some(2) } == Check { required: false, min: some(2), tags: [] }
+    let same = Check { min: 2 } == Check { required: false, min: 2, tags: [] }
     console.println("{same}")
 }
 

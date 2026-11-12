@@ -17,7 +17,7 @@ test addsATaskAndFindsIt {
     let created =
         client.post("/tasks", body: http.Body.json(store.NewTask { title: "write tests" }))?
     assert(created.status() == 201)
-    assert(created.header("location") == some("/tasks/1"))
+    assert(created.header("location") == "/tasks/1")
     let task: store.Task = created.json()?
     assert(task == store.Task { id: 1, title: "write tests", done: false })
 
@@ -84,5 +84,5 @@ test everyReplyCarriesItsRequestId {
     let server = serve()?
     defer server.stop()
     let client = http.Client(baseUrl: server.url(), headers: ["X-Request-Id": "abc-123"])
-    assert(client.get("/tasks")?.header("x-request-id") == some("abc-123"))
+    assert(client.get("/tasks")?.header("x-request-id") == "abc-123")
 }

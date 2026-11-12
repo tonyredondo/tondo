@@ -46,9 +46,7 @@ fn ring(i: Int): Ref[Node] {
 // A grove that a leaf deep in its tree refers to, and a closure in a tuple.
 fn grove(): Ref[Grove] {
     let made = Ref(Grove { tree: sync.Mutex(Tree.Leaf(none)), pairs: sync.Mutex([]) })
-    made.value.tree.set(
-        Tree.Branch(Tree.Leaf(none), Tree.Branch(Tree.Leaf(some(made)), Tree.Leaf(none))),
-    )
+    made.value.tree.set(Tree.Branch(Tree.Leaf(none), Tree.Branch(Tree.Leaf(made), Tree.Leaf(none))))
     made.value.pairs.update((pairs) { pairs.push((1, () { made })) })
     made
 }

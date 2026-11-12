@@ -14,7 +14,7 @@ type Door = {
 
 fn run[S, E, X](start: S, event: E, apply: fn(S, E): S ! X): S? {
     match apply(start, event) {
-        ok(state) => some(state)
+        ok(state) => state
         err(_) => none
     }
 }

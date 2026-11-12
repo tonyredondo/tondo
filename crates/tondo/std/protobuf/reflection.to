@@ -39,7 +39,7 @@ impl __reflect.Reflect for Empty {
     }
 
     fn reflectFields(self): Array[__reflect.Field]? {
-        some([])
+        []
     }
 }
 

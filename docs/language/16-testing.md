@@ -452,7 +452,7 @@ import std.http
 type User = { id: Int, name: String }
 
 fn find(id: Int): User? {
-    if id == 1 { some(User { id, name: "Ada" }) } else { none }
+    if id == 1 { User { id, name: "Ada" } } else { none }
 }
 
 fn routes(): http.App {

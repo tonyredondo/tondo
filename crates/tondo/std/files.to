@@ -456,7 +456,7 @@ pub fn FileSystem.sub(self, directory: String): FileSystem {
 /// paths to the system, as another program.
 pub fn FileSystem.directory(self): String? {
     match self.tree {
-        Tree.Disk(root) => some(root)
+        Tree.Disk(root) => root
         Tree.Under(inner, prefix) => inner[0].directory().map((root) { __path.join(root, prefix) })
         _ => none
     }

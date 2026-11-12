@@ -22,7 +22,7 @@ fn main(): !yaml.YamlError {
     // A tag on a map in a list goes and comes back.
     let point = yaml.Value.Tagged("!point", yaml.Value.Map(["x": yaml.Value.Int(1)]))
     let again = yaml.parse(yaml.encode(yaml.Value.Array([point])))?
-    console.println("{again.at(0) == some(point)}")
+    console.println("{again.at(0) == point}")
     // A document with tags keeps them, and a value set in place of a tagged
     // one replaces its tag, not its comment.
     var document = yaml.load("{text}list: # shared\n  - !point [1, 2]\n")?

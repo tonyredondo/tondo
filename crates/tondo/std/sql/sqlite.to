@@ -35,7 +35,7 @@ fn runSqlite(opened: sqlNative.Native, statement: Statement): Outcome ! SqlError
     let batch = statement.parameters.isEmpty() and statement.operation != Operation.Query
     let reply = sqlNative.run(opened, statement.text, encoded, batch)
     var at = 1
-    if reply.get(0) != some(Byte(0u8)) {
+    if reply.get(0) != Byte(0u8) {
         let kind = kindOf(Int(reply.get(1).unwrapOr(Byte(10u8))))
         at = 2
         let message = readValue(reply, var at)
@@ -73,7 +73,7 @@ fn runSqlite(opened: sqlNative.Native, statement: Statement): Outcome ! SqlError
         columns
         rows
         affected: if query { 0 } else { affected }
-        lastId: if query or lastId == 0 { none } else { some(lastId) }
+        lastId: if query or lastId == 0 { none } else { lastId }
     }
 }
 

@@ -227,10 +227,10 @@ impl Iterator[String ! HttpError] for Lines {
         }
         if not self.failure.isEmpty() {
             self.done = true
-            return some(err(HttpError.Body(self.failure)))
+            return err(HttpError.Body(self.failure))
         }
         match self.input.readLine() {
-            ok(some(line)) => some(ok(line))
+            ok(some(line)) => ok(line)
             ok(none) => {
                 self.done = true
                 none
@@ -243,8 +243,8 @@ impl Iterator[String ! HttpError] for Lines {
                     _ => "{error}"
                 }
                 match failed(self.response) {
-                    err(recorded) => some(err(recorded))
-                    ok(_) => some(err(HttpError.Body(why)))
+                    err(recorded) => err(recorded)
+                    ok(_) => err(HttpError.Body(why))
                 }
             }
         }
@@ -306,7 +306,7 @@ impl Iterator[Event ! HttpError] for Events {
         for {
             let line = match self.source.next() {
                 some(ok(line)) => line
-                some(err(error)) => return some(err(error))
+                some(err(error)) => return err(error)
                 none if started => return some(ok(Event { event: kind, data: data.join("\n"), id }))
                 none => return none
             }
@@ -327,7 +327,7 @@ impl Iterator[Event ! HttpError] for Events {
             } else if field == "data" {
                 data.push(value)
             } else if field == "id" {
-                id = some(value)
+                id = value
             }
             started = true
         }

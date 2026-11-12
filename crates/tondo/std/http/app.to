@@ -169,7 +169,7 @@ fn Cors.allowed(self, origin: String): String? {
     if self.origins.contains("*") {
         return some(if self.credentials { origin } else { "*" })
     }
-    if self.origins.contains(origin) { some(origin) } else { none }
+    if self.origins.contains(origin) { origin } else { none }
 }
 
 /// A preflight is answered here; another request is answered by the app,
@@ -530,7 +530,7 @@ fn encodingFor(accepted: String): String? {
         if known and
             weight > 0.0 and
             (weight > bestWeight or (weight == bestWeight and name == "zstd")) {
-            best = some(name)
+            best = name
             bestWeight = weight
         }
     }
@@ -695,7 +695,7 @@ fn choose(routes: Array[Route], request: Request): Request {
                     // A route of the request's own method goes before one of any.
                     let score = matched * 2 + (if exact { 1 } else { 0 })
                     if score > bestScore {
-                        best = some(route)
+                        best = route
                         bestScore = score
                         bestParams = params
                     }
@@ -774,7 +774,7 @@ fn matching(pattern: Array[String], path: Array[String]): (Map[String, String], 
         }
         index += 1
     }
-    some((params, score))
+    (params, score)
 }
 
 fn segments(path: String): Array[String] {

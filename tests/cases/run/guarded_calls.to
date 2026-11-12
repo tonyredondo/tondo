@@ -38,8 +38,8 @@ fn countdown(n: Int): Int? {
         return none
     }
     match countdown(n - 1) {
-        some(rest) => some(rest + n)
-        none => some(n)
+        some(rest) => rest + n
+        none => n
     }
 }
 

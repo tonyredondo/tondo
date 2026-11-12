@@ -124,7 +124,7 @@ impl Iterator[Array[String] ! CsvError] for Rows {
                 return self.stop(CsvError.Malformed(first + before.count("\n"), column))
             }
             if problem == -1 {
-                return some(ok(codecNative.csvFields(record, self.separator)))
+                return ok(codecNative.csvFields(record, self.separator))
             }
         }
     }
@@ -132,7 +132,7 @@ impl Iterator[Array[String] ! CsvError] for Rows {
 
 fn Rows.stop(mut self, error: CsvError): (Array[String] ! CsvError)? {
     self.done = true
-    some(err(error))
+    err(error)
 }
 
 /// The records of a CSV stream whose first record is the header, each as a
@@ -163,24 +163,24 @@ impl Iterator[Map[String, String] ! CsvError] for Records {
     fn next(mut self): (Map[String, String] ! CsvError)? {
         if self.header.isNone() {
             match self.source.next()? {
-                ok(names) => self.header = some(names)
-                err(error) => return some(err(error))
+                ok(names) => self.header = names
+                err(error) => return err(error)
             }
         }
         let names = self.header.unwrapOr([])
         let fields = match self.source.next()? {
             ok(fields) => fields
-            err(error) => return some(err(error))
+            err(error) => return err(error)
         }
         if fields.length() != names.length() {
             self.source.done = true
-            return some(err(CsvError.FieldCount(self.source.line, names.length(), fields.length())))
+            return err(CsvError.FieldCount(self.source.line, names.length(), fields.length()))
         }
         var record: Map[String, String] = [:]
         for (index, name) in names.enumerate() {
             record[name] = fields[index]
         }
-        some(ok(record))
+        ok(record)
     }
 }
 

@@ -29,7 +29,7 @@ fn find(names: (String, String, String), wanted: String): Int? {
     if names.1 == wanted {
         return 1
     }
-    if names.2 == wanted { some(2) } else { none }
+    if names.2 == wanted { 2 } else { none }
 }
 
 fn firstTwo(names: (String, String, String), a: String, b: String): (Int, Int)? {
@@ -62,7 +62,7 @@ fn main(): !io.IoError {
     console.println("{found} {missing}")
     let maybe: String? = "x"
     let nothing: String? = none
-    console.println("{maybe == some("x")} {nothing == none} {maybe == nothing}")
+    console.println("{maybe == "x"} {nothing == none} {maybe == nothing}")
     // Delivery errors surface only through `flush` (std.console).
     console.flush()?
 }

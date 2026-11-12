@@ -408,8 +408,8 @@ fn cityOf(user: User?): String {
 }
 
 fn main() {
-    let ada = User { name: "Ada", address: some(Address { city: some("London") }) }
-    console.println("{cityOf(some(ada))} {cityOf(none)}")
+    let ada = User { name: "Ada", address: Address { city: "London" } }
+    console.println("{cityOf(ada)} {cityOf(none)}")
 }
 ```
 

@@ -34,7 +34,7 @@ fn once(command: Array[String]) {
 once(command)
 // Changes that come together, as an editor saving several files, arrive as
 // one batch once they have been quiet for a moment.
-for changes in fs.watch([directory], settle: some(time.milliseconds(200)))? {
+for changes in fs.watch([directory], settle: time.milliseconds(200))? {
     console.println("--- {changes.length()} changed, first {changes[0].path}")
     once(command)
 }

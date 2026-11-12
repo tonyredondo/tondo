@@ -206,7 +206,7 @@ pub fn Reply.withStatus(self, status: Int): Reply {
 /// WebSocket, which are sent as they come.
 pub fn Reply.body(self): Array[Byte]? {
     match self.payload {
-        Payload.Data(bytes) => some(bytes)
+        Payload.Data(bytes) => bytes
         _ => none
     }
 }

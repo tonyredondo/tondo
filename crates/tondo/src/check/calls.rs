@@ -1632,7 +1632,10 @@ impl<'a> Checker<'a> {
                     if pass == 0 && expected.is_none() && self.needs_context(&arg.value) {
                         continue;
                     }
+                    let inferring = u32::from(inference.is_some());
+                    self.inferring += inferring;
                     let value = self.expr(cx, &arg.value, expected);
+                    self.inferring -= inferring;
                     if let Some(inference) = &mut inference {
                         self.unify(inference, payload, value.ty);
                     }
@@ -2418,6 +2421,8 @@ impl<'a> Checker<'a> {
                 }
                 let mode = mode_of(index);
                 let total = if arg.mode == ast::Mode::Value { self.total_as_fallible(cx, arg, ty) } else { None };
+                let inferring = u32::from(!signature.generics.is_empty());
+                self.inferring += inferring;
                 let value = if let Some(value) = total {
                     value
                 } else {
@@ -2429,6 +2434,7 @@ impl<'a> Checker<'a> {
                         parameter_of(index) < first + usize::from(signature.receiver.is_some()) && first == 0,
                     )
                 };
+                self.inferring -= inferring;
                 let value = if dynamic && value.ty != ty && !arg.spread { self.reflect_value(value) } else { value };
                 self.unify(&mut inference, ty, value.ty);
                 // A closure for a `fn(A): B` parameter fixes what `B` mentions.

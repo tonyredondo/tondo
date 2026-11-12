@@ -32,7 +32,7 @@ fn Wire.take(self, count: Int): Array[Byte] ! SqlError {
                 } else {
                     let piece = inbox.bytes.slice(inbox.at, inbox.at + count).unwrapOr([])
                     inbox.at += count
-                    some(piece)
+                    piece
                 }
             },
         )
@@ -159,7 +159,7 @@ fn settingsOf(url: String, port: Int): Settings ! SqlError {
 /// The database's name and host in a URL.
 fn placeOf(url: String): (String, String?) {
     match __url.parse(url) {
-        ok(parsed) => (parsed.path.removePrefix("/"), some(parsed.host))
+        ok(parsed) => (parsed.path.removePrefix("/"), parsed.host)
         err(_) => ("", none)
     }
 }

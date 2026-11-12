@@ -201,7 +201,7 @@ fn firstNegative(values: Array[Int]): Int? {
             continue            // on to the next element
         }
         if value < 0 {
-            return some(value)  // out of the function
+            return value  // out of the function
         }
     }
     none

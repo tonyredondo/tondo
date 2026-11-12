@@ -206,6 +206,17 @@ fn manages_projects() {
     assert_eq!(status, 0);
     let fixed = std::fs::read_to_string(dir.join("imports.to")).unwrap();
     assert!(fixed.starts_with("import std.console\nimport std.json\nimport std.time\n\nfn main"), "{fixed}");
+    // A `some` that is not needed goes; the value keeps its parentheses
+    // only as the operand of another operator.
+    let program = "fn total(): Int? {\n    some(1 + 2)\n}\n\nfn main() {\n    let flag: Bool? = some(true)\n    _ = flag == some(true and false)\n    _ = total()\n}\n";
+    std::fs::write(dir.join("needless.to"), program).unwrap();
+    let (_, status) = json(&dir, &["fix", "needless.to", "--json"]);
+    assert_eq!(status, 0);
+    let fixed = std::fs::read_to_string(dir.join("needless.to")).unwrap();
+    assert_eq!(
+        fixed,
+        "fn total(): Int? {\n    1 + 2\n}\n\nfn main() {\n    let flag: Bool? = true\n    _ = flag == (true and false)\n    _ = total()\n}\n"
+    );
 
     // What a code means, with the guide's examples of it.
     let (explained, _, status) = tondo(&dir, &["explain", "E1003"]);

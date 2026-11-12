@@ -87,7 +87,7 @@ fn main(): !(http.HttpError | grpc.Status) {
     let hello =
         web.post(
             "{base}/SayHello",
-            body: some(http.Body.bytes(request, contentType: "application/proto")),
+            body: http.Body.bytes(request, contentType: "application/proto"),
             headers: ["connect-protocol-version": "1"],
         )?
     let reply = protobuf.decode[greeter.HelloReply](hello.bytes()?).unwrapOr(greeter.HelloReply {})
@@ -97,25 +97,22 @@ fn main(): !(http.HttpError | grpc.Status) {
     let json =
         web.post(
             "{base}/SayHello",
-            body: some(http.Body.text(
+            body: http.Body.text(
                 "{{\"name\": \"json\", \"unknown\": 1}}",
                 contentType: "application/json",
-            )),
+            ),
         )?
     console.println("{json.header("content-type").unwrapOr("-")} {json.text()?}")
     let zipped =
         web.post(
             "{base}/SayHello",
-            body: some(http.Body.bytes(gzip.compress(request), contentType: "application/proto")),
+            body: http.Body.bytes(gzip.compress(request), contentType: "application/proto"),
             headers: ["content-encoding": "gzip"],
         )?
     console.println(
         protobuf.decode[greeter.HelloReply](zipped.bytes()?).unwrapOr(greeter.HelloReply {}).message,
     )
-    match web.post(
-        "{base}/SayHello",
-        body: some(http.Body.text("{{}}", contentType: "application/json")),
-    ) {
+    match web.post("{base}/SayHello", body: http.Body.text("{{}}", contentType: "application/json")) {
         ok(response) => console.println("{response.status()}")
         err(http.HttpError.Status(response)) => {
             console.println(
@@ -144,34 +141,33 @@ fn main(): !(http.HttpError | grpc.Status) {
     let ticks =
         web.post(
             "{base}/Repeat",
-            body: some(http.Body.bytes(
+            body: http.Body.bytes(
                 enveloped(0, protobuf.encode(greeter.HelloRequest { name: "tick", times: 2 })),
                 contentType: stream,
-            )),
+            ),
         )?
     console.println("{ticks.header("content-type").unwrapOr("-")} {shown(ticks.bytes()?)}")
     let failed =
         web.post(
             "{base}/Repeat",
-            body: some(http.Body.bytes(
+            body: http.Body.bytes(
                 enveloped(0, protobuf.encode(greeter.HelloRequest { name: "tock", times: 3 })),
                 contentType: stream,
-            )),
+            ),
         )?
     console.println("{failed.status()} {shown(failed.bytes()?)}")
     let names = enveloped(0, protobuf.encode(greeter.HelloRequest { name: "a" })).concat(
         enveloped(0, protobuf.encode(greeter.HelloRequest { name: "b" })),
     )
-    let collected =
-        web.post("{base}/Collect", body: some(http.Body.bytes(names, contentType: stream)))?
+    let collected = web.post("{base}/Collect", body: http.Body.bytes(names, contentType: stream))?
     console.println(shown(collected.bytes()?))
     let jsonStream =
         web.post(
             "{base}/Repeat",
-            body: some(http.Body.bytes(
+            body: http.Body.bytes(
                 enveloped(0, "{{\"name\":\"j\",\"times\":1}}".bytes()),
                 contentType: "application/connect+json",
-            )),
+            ),
         )?
     let body = jsonStream.bytes()?
     console.println(

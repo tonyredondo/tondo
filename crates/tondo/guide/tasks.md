@@ -173,7 +173,7 @@ fn greet(): String {
 }
 
 fn handle(id: String, user: String) {
-    with Request { id, user: some(user) }
+    with Request { id, user: user }
     console.println(greet())
 }
 

@@ -112,6 +112,6 @@ test liveAsTlcDoes {
 test liveFindsAPatchAfterTheBarrierLetGo {
     match check(false) {
         ok(_) => panic("a patch after the barrier let go went unseen")
-        err(broken) => assert(broken.property == some("Quiet"), "{broken}")
+        err(broken) => assert(broken.property == "Quiet", "{broken}")
     }
 }

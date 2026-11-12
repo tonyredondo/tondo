@@ -70,7 +70,7 @@ fn userDirectory(variable: String, linux: String, macos: String): String? {
         return homeDirectory().map((home) { "{home}/{macos}" })
     }
     match __env.get(variable) {
-        some(set) if set.startsWith("/") => some(set)
+        some(set) if set.startsWith("/") => set
         _ => homeDirectory().map((home) { "{home}/{linux}" })
     }
 }

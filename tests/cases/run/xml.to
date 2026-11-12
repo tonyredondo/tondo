@@ -53,7 +53,7 @@ fn main() {
         channel: Channel {
             title: "News & more"
             items: [
-                Item { title: "One", guid: some("a1"), views: 3, kind: Kind.News, featured: true },
+                Item { title: "One", guid: "a1", views: 3, kind: Kind.News, featured: true },
                 Item { title: "Two <b>", guid: none, views: 4, kind: Kind.Opinion, featured: false },
             ]
         }

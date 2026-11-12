@@ -83,7 +83,7 @@ fn main() {
         ok(config) => console.println("{config.port}")
         err(failure) => {
             console.println("{failure}")      // starting: reading /missing/app.json: not found
-            console.println("{failure.find[fs.FsError]() == some(fs.FsError.NotFound)}")
+            console.println("{failure.find[fs.FsError]() == fs.FsError.NotFound}")
         }
     }
 }
@@ -100,7 +100,7 @@ import std.console
 fn find(names: Array[String], wanted: String): Int? {
     for (index, name) in names.enumerate() {
         if name == wanted {
-            return some(index)
+            return index
         }
     }
     none

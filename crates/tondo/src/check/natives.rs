@@ -656,7 +656,10 @@ impl<'a> Checker<'a> {
             let ty = self.types.handle(handle, Ty::UNIT);
             return Self::mk(hir::ExprKind::TaskOp(op, vec![count]), ty, span);
         }
+        // The cell's type is the value's.
+        self.inferring += 1;
         let value = self.expr(cx, &arg.value, expected_state);
+        self.inferring -= 1;
         let ty = value.ty;
         let (handle, value) = match (name, self.types.kind(ty).clone()) {
             (_, TyKind::Error) => return Self::error_expr(span),

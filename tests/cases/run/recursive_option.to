@@ -5,7 +5,7 @@ type Chain = (Int, Chain?)
 fn build(n: Int): Chain {
     var chain = Chain((0, none))
     for i in 1..=n {
-        chain = Chain((i, some(chain)))
+        chain = Chain((i, chain))
     }
     chain
 }

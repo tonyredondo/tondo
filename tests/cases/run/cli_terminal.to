@@ -27,7 +27,7 @@ fn main() {
     env.remove("FORCE_COLOR")
     console.println("{cli.isTerminal()} {cli.width()}")
     let users = [
-        User { name: "Ada", age: 36, email: some("ada@example.com") },
+        User { name: "Ada", age: 36, email: "ada@example.com" },
         User { name: "Grace", age: 120, email: none },
     ]
     console.print(cli.table(users))

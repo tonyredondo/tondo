@@ -326,10 +326,10 @@ pub fn PrivateKey.fromPem(text: String): PrivateKey ! CryptoError {
         )?
     let pkcs8 = match label {
         "PRIVATE KEY" => der
-        "RSA PRIVATE KEY" => privateKeyInfo(algorithm(OidRsa, some(tlv(0x05, []))), der)
+        "RSA PRIVATE KEY" => privateKeyInfo(algorithm(OidRsa, tlv(0x05, [])), der)
         "EC PRIVATE KEY" => {
             let curve = ecCurve(der)?
-            privateKeyInfo(algorithm(OidEcPublicKey, some(tlv(0x06, oidBytes(curve)))), der)
+            privateKeyInfo(algorithm(OidEcPublicKey, tlv(0x06, oidBytes(curve))), der)
         }
         _ => fail failure(
             "the key is encrypted: decrypt it first, as `openssl pkcs8 -in key.pem -out plain.pem`",
@@ -384,15 +384,9 @@ pub fn PublicKey.fromPem(text: String): PublicKey ! CryptoError {
 pub fn PublicKey.pem(self): String {
     let (identifier, raw) = match self.signs {
         KeyKind.Ed25519 => (algorithm(OidEd25519, none), self.raw)
-        KeyKind.EcdsaP256 => (
-            algorithm(OidEcPublicKey, some(tlv(0x06, oidBytes(OidP256)))),
-            self.raw,
-        )
-        KeyKind.EcdsaP384 => (
-            algorithm(OidEcPublicKey, some(tlv(0x06, oidBytes(OidP384)))),
-            self.raw,
-        )
-        KeyKind.Rsa => (algorithm(OidRsa, some(tlv(0x05, []))), self.raw)
+        KeyKind.EcdsaP256 => (algorithm(OidEcPublicKey, tlv(0x06, oidBytes(OidP256))), self.raw)
+        KeyKind.EcdsaP384 => (algorithm(OidEcPublicKey, tlv(0x06, oidBytes(OidP384))), self.raw)
+        KeyKind.Rsa => (algorithm(OidRsa, tlv(0x05, [])), self.raw)
     }
     let bits = tlv(0x03, [Byte(UInt8.wrapping(0))].concat(raw))
     pemOf("PUBLIC KEY", tlv(0x30, identifier.concat(bits)))
@@ -697,7 +691,7 @@ fn pemBlocks(text: String): Array[(String, Array[Byte])] ! CryptoError {
     for line in text.lines() {
         let trimmed = line.trim()
         if trimmed.startsWith("-----BEGIN ") and trimmed.endsWith("-----") {
-            label = some(trimmed.removePrefix("-----BEGIN ").removeSuffix("-----"))
+            label = trimmed.removePrefix("-----BEGIN ").removeSuffix("-----")
             body = ""
         } else if trimmed.startsWith("-----END ") {
             match label {

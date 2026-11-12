@@ -32,7 +32,7 @@ fn work(n: Int) {
 
 fn main() {
     let written = io.Buffer()
-    with log.Context { logger: some(log.Logger(output: some(written.writer()), timestamps: false)) }
+    with log.Context { logger: log.Logger(output: written.writer(), timestamps: false) }
     var group = Group[Unit]()
     for n in 0..8 {
         group.add(spawn work(n))

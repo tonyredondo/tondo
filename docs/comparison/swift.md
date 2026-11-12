@@ -144,7 +144,7 @@ fn find(users: Array[User], name: String): User? {
 
 fn main() {
     let users = [
-        User { name: "ada", email: some("ada@example.com") },
+        User { name: "ada", email: "ada@example.com" },
         User { name: "alan", email: none },
     ]
     for name in ["ada", "alan", "grace"] {

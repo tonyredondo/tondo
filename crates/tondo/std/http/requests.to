@@ -573,7 +573,7 @@ impl __serialization.Source for Fields {
                     match wanted.findIndex((name) { name == given }) {
                         some(index) => {
                             self.current.set(key)
-                            return some(index)
+                            return index
                         }
                         none => {
                             let first = self.value()?
@@ -646,7 +646,7 @@ pub fn Request.intQuery(self, name: String): Int? ! Problem {
     match self.query(name) {
         none => none
         some(text) => match Int.parse(text) {
-            ok(value) => some(value)
+            ok(value) => value
             err(_) => fail Problem.badRequest(
                 "the query parameter `{name}` must be an integer, not `{text}`",
             )
@@ -666,8 +666,8 @@ pub fn Request.requiredBoolQuery(self, name: String): Bool ! Problem {
 pub fn Request.boolQuery(self, name: String): Bool? ! Problem {
     match self.query(name) {
         none => none
-        some("true") => some(true)
-        some("false") => some(false)
+        some("true") => true
+        some("false") => false
         some(text) => fail Problem.badRequest(
             "the query parameter `{name}` must be `true` or `false`, not `{text}`",
         )
@@ -687,7 +687,7 @@ pub fn Request.floatQuery(self, name: String): Float? ! Problem {
     match self.query(name) {
         none => none
         some(text) => match Float.parse(text) {
-            ok(value) => some(value)
+            ok(value) => value
             err(_) => fail Problem.badRequest(
                 "the query parameter `{name}` must be a number, not `{text}`",
             )
@@ -753,7 +753,7 @@ fn bodyProblem(request: httpNative.Native, what: String, failure: String): Probl
 /// body gives on, as `next(request.withBody(bytes))`, for the handler to
 /// read again.
 pub fn Request.withBody(self, body: Array[Byte]): Request {
-    self with { given: some(body) }
+    self with { given: body }
 }
 
 /// A body is read once, as it arrives: after that, a panic that says how to
@@ -1013,13 +1013,13 @@ impl Iterator[Upload ! Problem] for Uploads {
         let failure = httpNative.failure(self.form)
         if not failure.isEmpty() {
             self.done = true
-            return some(err(bodyProblem(self.request, "the body", failure)))
+            return err(bodyProblem(self.request, "the body", failure))
         }
         let part = httpNative.formNext(self.form)
         let problem = httpNative.failure(part)
         if not problem.isEmpty() {
             self.done = true
-            return some(err(bodyProblem(self.request, "the body", problem)))
+            return err(bodyProblem(self.request, "the body", problem))
         }
         let described = httpNative.uploadHead(part)
         if described.isEmpty() {

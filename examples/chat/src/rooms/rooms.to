@@ -111,7 +111,7 @@ fn handle(state: var State, told: Told) {
                 from: member.name
                 people: now
             }
-            broadcast(var state, member.room, line(joined), except: some(id))
+            broadcast(var state, member.room, line(joined), except: id)
         }
         Told.Say(id, text) => {
             let member = match state.members.get(id) {

@@ -21,7 +21,7 @@ fn load(cache: sync.Mutex[Map[String, WeakRef[Image]]], name: String): Ref[Image
 fn ring(): WeakRef[Node] {
     let a = Ref(Node { name: "a", next: sync.Mutex(none) })
     let b = Ref(Node { name: "b", next: sync.Mutex(some(a)) })
-    a.value.next.set(some(b))
+    a.value.next.set(b)
     WeakRef(a)
 }
 

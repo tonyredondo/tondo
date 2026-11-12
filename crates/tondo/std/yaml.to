@@ -355,7 +355,7 @@ impl serialization.Source for Reader {
             12 => serialization.Event.Key(yamlnative.text(self.native))
             _ => fail self.error(serialization.ErrorKind.Syntax)
         }
-        some(event)
+        event
     }
 
     fn skip(self, first: serialization.Event): !YamlError {
@@ -383,7 +383,7 @@ impl serialization.Source for Reader {
         // another failure.
         let found = yamlnative.field(self.native, names, self.rejectUnknown)
         if found >= 0 {
-            return some(found)
+            return found
         }
         if found == -2 {
             return none
@@ -396,7 +396,7 @@ impl serialization.Source for Reader {
 
     fn tag(self): String? {
         let tag = yamlnative.tag(self.native)
-        if tag.isEmpty() { none } else { some(tag) }
+        if tag.isEmpty() { none } else { tag }
     }
 }
 
@@ -740,8 +740,8 @@ pub fn Document.find(self, path: String): Node? {
         comment: self.commentOf(index)
         kind
         style
-        tag: if tag.isEmpty() { none } else { some(tag) }
-        anchor: if anchor.isEmpty() { none } else { some(anchor) }
+        tag: if tag.isEmpty() { none } else { tag }
+        anchor: if anchor.isEmpty() { none } else { anchor }
     })
 }
 
@@ -1170,7 +1170,7 @@ fn Document.commentOf(self, index: Int): String? {
     if after >= 0 {
         let line = self.source.slice(after, self.lineEnd(after)).unwrapOr("")
         match line.find("#") {
-            some(at) => return some(line.slice(at + 1, line.length()).unwrapOr("").trim())
+            some(at) => return line.slice(at + 1, line.length()).unwrapOr("").trim()
             none => {}
         }
     }

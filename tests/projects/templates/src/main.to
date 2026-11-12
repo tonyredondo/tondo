@@ -47,7 +47,7 @@ fn main(): !template.TemplateError {
             views: 42
             tags: ["a", "b"]
             draft: false
-            author: some("Ada")
+            author: "Ada"
         },
         Post { title: "Hidden", slug: "hidden", views: 1, tags: [], draft: true, author: none },
     ]

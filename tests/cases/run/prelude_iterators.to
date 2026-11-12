@@ -10,7 +10,7 @@ impl Iterator[Int] for Countdown {
             return none
         }
         self.from -= 1
-        some(self.from + 1)
+        self.from + 1
     }
 }
 

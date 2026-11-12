@@ -323,9 +323,33 @@ impl<'a> Checker<'a> {
     }
 
     pub(super) fn expr(&mut self, cx: &mut FnCx, e: &ast::Expr, expected: Option<Ty>) -> hir::Expr {
+        // A value that takes its type from the one expected, and is never an
+        // option itself, is typed as the `T` of an expected `T?` and then
+        // becomes one (9.7): `[]`, `3` as a `Float?`, `ok(value)`.
+        let expected = match expected.map(|t| self.types.kind(t)) {
+            Some(&TyKind::Option(inner)) if Self::typed_by_expected(e) => Some(inner),
+            _ => expected,
+        };
         let value = self.expr_kind(cx, e, expected);
         self.index_expr(e.span, value.ty);
         value
+    }
+
+    /// Whether an expression takes its type from the one expected and is
+    /// never an option: a number, a literal of a collection or a tuple, or
+    /// `ok(...)` and `err(...)`.
+    fn typed_by_expected(e: &ast::Expr) -> bool {
+        match &e.kind {
+            ast::ExprKind::Int { .. }
+            | ast::ExprKind::Float { .. }
+            | ast::ExprKind::BigInt(_)
+            | ast::ExprKind::Array(_)
+            | ast::ExprKind::Map(_)
+            | ast::ExprKind::Set(_)
+            | ast::ExprKind::Tuple(_) => true,
+            ast::ExprKind::Construct(constructor, _) => *constructor != "some",
+            _ => false,
+        }
     }
 
     /// For an editor: the type of an expression of the program's own files.
@@ -588,6 +612,8 @@ impl<'a> Checker<'a> {
                 (Some(i), None) => Some(fields[i].1),
                 (None, _) => None,
             };
+            let inferring = u32::from(inference.is_some());
+            self.inferring += inferring;
             let value = match &init.value {
                 Some(value) => self.expr(cx, value, expected),
                 None if allow_shorthand && crate::lexer::Kw::lookup(&init.name.name).is_none() => {
@@ -600,6 +626,7 @@ impl<'a> Checker<'a> {
                     Self::error_expr(init.name.span)
                 }
             };
+            self.inferring -= inferring;
             let Some(index) = index else {
                 let mut message = format!("{} has no field `{}`", self.display(record), init.name.name);
                 let names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();

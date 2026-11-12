@@ -17,7 +17,7 @@ fn main(): !process.ProcessError {
     console.println("{process.which("sh").isSome()} {process.which("no-such-program-here")}")
     let caught = process.signals(process.Signal.User1, process.Signal.Kill)
     process.signal(env.processId(), process.Signal.User1)?
-    console.println("{caught.receive() == some(process.Signal.User1)}")
+    console.println("{caught.receive() == process.Signal.User1}")
     match process.signal(999999999, process.Signal.Kill) {
         ok(_) => console.println("sent")
         err(failure) => console.println("{failure}")

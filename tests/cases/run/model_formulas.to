@@ -44,7 +44,7 @@ type Turns = {
 fn steps(turns: Turns): Array[model.Step[Turns]] {
     var next: Array[model.Step[Turns]] = []
     for task in [1, 2] {
-        let idle = turns.holder != some(task) and not turns.waiting.contains(task) and not turns.done.contains(task)
+        let idle = turns.holder != task and not turns.waiting.contains(task) and not turns.done.contains(task)
         if idle {
             next.push(model.Step { name: "ask {task}", state: turns with { waiting: turns.waiting.push(task) } })
         }
@@ -96,7 +96,7 @@ fn main() {
     say("turns", model.check(start, steps, holds: [both]))
     say("mirrored", model.check(start, steps, holds: [both], symmetry: some(mirror)))
     // 1 holds the lock until it is done with it, and then never again.
-    let holds = (turns: Turns) { turns.holder == some(1) }
+    let holds = (turns: Turns) { turns.holder == 1 }
     let finished = (turns: Turns) { turns.done.contains(1) }
     let once = model.state(holds).until(model.state(finished)).eventually()
     say("until", model.check(start, steps, holds: [model.temporal(once, name: "1 holds it until done")]))

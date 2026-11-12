@@ -141,7 +141,7 @@ fn Postgres.start(self, settings: Settings): !SqlError {
                         .concat(bigEndianBytes(first.length(), 4))
                         .concat(first)
                     self.wire.send(framed('p', sent))?
-                    scram = some(started)
+                    scram = started
                 }
                 11 => {
                     let started = match scram {
@@ -155,7 +155,7 @@ fn Postgres.start(self, settings: Settings): !SqlError {
                         .unwrapOr("")
                     let answered = started.answer(challenge, settings.password)?
                     self.wire.send(framed('p', answered.final.bytes()))?
-                    scram = some(answered)
+                    scram = answered
                 }
                 12 => {
                     let proof = String
@@ -243,7 +243,7 @@ fn Postgres.run(self, statement: Statement): Outcome ! SqlError {
         ok(outcome) => outcome
         // A table changed under a kept statement: prepared again, once,
         // outside a transaction, which the failure ended.
-        err(error) if kept.isSome() and error.code == some("0A000") and self.idle.get() => {
+        err(error) if kept.isSome() and error.code == "0A000" and self.idle.get() => {
             _ = self.prepared.remove(statement.text)
             self.wire.send(
                 framed('C', [Byte(UInt8.wrapping('S'.code()))].concat(cstring(prepared.name))).concat(
@@ -265,10 +265,10 @@ fn Postgres.settle(self): !SqlError {
         let (kind, body) = self.next()?
         match kind {
             'E' => if failure.isNone() {
-                failure = some(postgresError(body, connecting: false))
+                failure = postgresError(body, connecting: false)
             }
             'Z' => {
-                self.idle.set(body.get(0) == some(Byte(UInt8.wrapping('I'.code()))))
+                self.idle.set(body.get(0) == Byte(UInt8.wrapping('I'.code())))
                 match failure {
                     some(error) => fail error
                     none => return
@@ -288,10 +288,10 @@ fn Postgres.simple(self, text: String): Outcome ! SqlError {
         match kind {
             'C' => affected += affectedBy(cstringOf(body))
             'E' => if failure.isNone() {
-                failure = some(postgresError(body, connecting: false))
+                failure = postgresError(body, connecting: false)
             }
             'Z' => {
-                self.idle.set(body.get(0) == some(Byte(UInt8.wrapping('I'.code()))))
+                self.idle.set(body.get(0) == Byte(UInt8.wrapping('I'.code())))
                 match failure {
                     some(error) => fail error
                     none => return Outcome { columns: [], rows: [], affected, lastId: none }
@@ -338,10 +338,10 @@ fn Postgres.prepare(self, text: String): Prepared ! SqlError {
                 }
             }
             'E' => if failure.isNone() {
-                failure = some(postgresError(body, connecting: false))
+                failure = postgresError(body, connecting: false)
             }
             'Z' => {
-                self.idle.set(body.get(0) == some(Byte(UInt8.wrapping('I'.code()))))
+                self.idle.set(body.get(0) == Byte(UInt8.wrapping('I'.code())))
                 match failure {
                     some(error) => fail error
                     none => {}
@@ -413,10 +413,10 @@ fn Postgres.bound(self, prepared: Prepared, statement: Statement): Outcome ! Sql
             }
             'C' => affected = affectedBy(cstringOf(row))
             'E' => if failure.isNone() {
-                failure = some(postgresError(row, connecting: false))
+                failure = postgresError(row, connecting: false)
             }
             'Z' => {
-                self.idle.set(row.get(0) == some(Byte(UInt8.wrapping('I'.code()))))
+                self.idle.set(row.get(0) == Byte(UInt8.wrapping('I'.code())))
                 match failure {
                     some(error) => fail error
                     none => {}
@@ -439,8 +439,8 @@ fn Postgres.bound(self, prepared: Prepared, statement: Statement): Outcome ! Sql
 fn postgresParameter(value: Value): Array[Byte]? {
     match value {
         Value.Null => none
-        Value.Bytes(bytes) => some(bytes)
-        other => some(postgresText(other).bytes())
+        Value.Bytes(bytes) => bytes
+        other => postgresText(other).bytes()
     }
 }
 
@@ -506,23 +506,23 @@ fn binaryOid(oid: Int): Bool {
 /// The type of the elements of an array type whose values come in binary.
 fn elementOid(oid: Int): Int? {
     match oid {
-        1000 => some(16)
-        1001 => some(17)
-        1003 => some(19)
-        1005 => some(21)
-        1007 => some(23)
-        1009 => some(25)
-        1014 => some(1042)
-        1015 => some(1043)
-        1016 => some(20)
-        1021 => some(700)
-        1022 => some(701)
-        1028 => some(26)
-        1115 => some(1114)
-        1185 => some(1184)
-        199 => some(114)
-        2951 => some(2950)
-        3807 => some(3802)
+        1000 => 16
+        1001 => 17
+        1003 => 19
+        1005 => 21
+        1007 => 23
+        1009 => 25
+        1014 => 1042
+        1015 => 1043
+        1016 => 20
+        1021 => 700
+        1022 => 701
+        1028 => 26
+        1115 => 1114
+        1185 => 1184
+        199 => 114
+        2951 => 2950
+        3807 => 3802
         _ => none
     }
 }
@@ -534,7 +534,7 @@ const PostgresEpoch: Int = 946684800000000
 /// `binaryOid` names, as text for the others, and `NUMERIC` as digits.
 fn postgresValue(oid: Int, bytes: Array[Byte]): Value {
     match oid {
-        16 => Value.Bool(bytes.get(0) == some(Byte(1u8)))
+        16 => Value.Bool(bytes.get(0) == Byte(1u8))
         17 => Value.Bytes(bytes)
         20 => Value.Int(bigEndian(bytes, 0, 8))
         21 => Value.Int(bigEndian(bytes, 0, 2))
@@ -646,7 +646,7 @@ fn postgresError(body: Array[Byte], connecting: Bool): SqlError {
             some(detail) => "{said}: {detail}"
             none => said
         }
-        code: if state.isEmpty() { none } else { some(state) }
+        code: if state.isEmpty() { none } else { state }
         constraint: fields.get("n")
     }
 }

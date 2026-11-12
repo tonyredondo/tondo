@@ -6150,3 +6150,14 @@ program has to see; an option is dropped as any other value. What catches a `map
 alone is W1018, the warning for a call with no other effect, which now knows the methods of the
 language whatever they compile to: `get`, `length` and `contains` on a binding warned only in
 some of their forms.
+
+## A `some` that is not needed warns
+
+A value where a `T?` is expected becomes one by itself, so `limit: some(3)` and `limit: 3` are
+the same, and a program that writes both forms reads as if they differed. W1021 says that such a
+`some` can go, with a safe fix that writes the value alone, in parentheses only as the operand of
+another operator. It leaves alone a pattern, a `some` where nothing gives the type, a member of a
+union and an option that holds an option. Removing it showed that the values that take their type
+from the one expected did not see through a `T?`: `[]`, `[:]`, a tuple, a number of a type other
+than `Int`, `ok(...)` and `err(...)` where an option was expected needed `some` to compile. They
+are typed as the `T` now and then become the option, as 9.7 says a value does.

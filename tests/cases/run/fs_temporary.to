@@ -17,7 +17,7 @@ fn main(): !fs.FsError {
     console.println("{name(dir).startsWith("work-")}")
     let report = fs.createTemporaryFile(directory: dir, pattern: "report-*.json")?
     let file = name(report)
-    console.println("{path.parent(report) == some(dir)} {file.startsWith("report-")} {file.endsWith(".json")} {file.length() > 12}")
+    console.println("{path.parent(report) == dir} {file.startsWith("report-")} {file.endsWith(".json")} {file.length() > 12}")
     let other = fs.createTemporaryFile(directory: dir, pattern: "report-*.json")?
     console.println("{other != report} {fs.readText(report)?.isEmpty()}")
     let plain = fs.createTemporaryDirectory(directory: dir, pattern: "cache")?

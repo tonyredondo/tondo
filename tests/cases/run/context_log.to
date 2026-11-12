@@ -18,16 +18,16 @@ fn find(id: Int): Int {
 
 fn handle(id: String, user: String?) {
     with Request { id, user }
-    with log.Context { logger: some(log.current().withFields(["path": "/users/7"])) }
+    with log.Context { logger: log.current().withFields(["path": "/users/7"]) }
     console.println("{find(7)}")
     let empty: Array[Int] = []
     console.println("{empty[3]}")
 }
 
 fn main() {
-    with log.Context { logger: some(log.Logger(timestamps: false)) }
+    with log.Context { logger: log.Logger(timestamps: false) }
     log.info("starting")
-    handle("r-42", some("ada"))
+    handle("r-42", "ada")
 }
 
 // expect-stdout: 14

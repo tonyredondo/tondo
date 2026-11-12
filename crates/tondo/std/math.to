@@ -283,12 +283,12 @@ pub fn BigInt.toInt(self): Int? {
     }
     let absolute = self.limbs.get(0).unwrapOr(0) | (self.limbs.get(1).unwrapOr(0) << 32)
     if not self.negative {
-        return if absolute <= 9223372036854775807 { some(Int.wrapping(absolute)) } else { none }
+        return if absolute <= 9223372036854775807 { Int.wrapping(absolute) } else { none }
     }
     if absolute <= 9223372036854775807 {
-        some(0 - Int.wrapping(absolute))
+        0 - Int.wrapping(absolute)
     } else if absolute == 9223372036854775808 {
-        some(Int.min)
+        Int.min
     } else {
         none
     }

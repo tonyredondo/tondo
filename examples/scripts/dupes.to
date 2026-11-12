@@ -13,7 +13,7 @@ import std.hash
 /// The hash of a file's content, or `none` for one that cannot be read.
 fn fingerprint(file: String): (String, String)? {
     match fs.readBytes(file) {
-        ok(bytes) => some((hash.sha256(bytes).hex(), file))
+        ok(bytes) => (hash.sha256(bytes).hex(), file)
         err(_) => none
     }
 }

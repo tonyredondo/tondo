@@ -207,7 +207,7 @@ pub fn proxy(
         let body: Body? = if request.method() == "GET" or request.method() == "HEAD" {
             none
         } else {
-            some(Body.stream(request.body(), length: length, contentType: contentType))
+            Body.stream(request.body(), length: length, contentType: contentType)
         }
         let answered = sender.request(
             request.method(),
@@ -475,7 +475,7 @@ fn send(incoming: httpNative.Native, reply: Reply) {
             let accepted = httpNative.failure(socket.native).isEmpty()
             handoff.update(
                 (pending) {
-                    pending.socket = if accepted { some(socket) } else { none }
+                    pending.socket = if accepted { socket } else { none }
                     pending.given = true
                 },
             )

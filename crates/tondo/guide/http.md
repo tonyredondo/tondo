@@ -98,7 +98,7 @@ fn main(): !http.HttpError {
 }
 
 fn find(id: Int): User? {
-    if id == 1 { some(User { id, name: "Ada" }) } else { none }
+    if id == 1 { User { id, name: "Ada" } } else { none }
 }
 ```
 

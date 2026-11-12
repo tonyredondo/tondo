@@ -17,9 +17,9 @@ test readsAnEntry {
 
 test saysWhyALineIsNotAnEntry {
     assert("{parse("not an entry").err()}" == "some(it has 3 words, and an entry has 5)")
-    assert(parse("t GET / 999 1ms").err() == some(ParseError.Status("999")))
-    assert(parse("t GET / 200 fast").err() == some(ParseError.Took("fast")))
-    assert(parse("t GET / 200 12").err() == some(ParseError.Took("12")))
+    assert(parse("t GET / 999 1ms").err() == ParseError.Status("999"))
+    assert(parse("t GET / 200 fast").err() == ParseError.Took("fast"))
+    assert(parse("t GET / 200 12").err() == ParseError.Took("12"))
 }
 
 test routesLeaveOutNumbersAndQueries {

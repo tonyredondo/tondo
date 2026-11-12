@@ -428,14 +428,14 @@ impl[T: __protobuf.Message + __reflect.Reflect] Iterator[T ! Status] for Stream[
             Source.Client(outgoing) => outgoing.received[T]()
         }
         match outcome {
-            ok(some(message)) => some(ok(message))
+            ok(some(message)) => ok(message)
             ok(none) => {
                 self.ended = true
                 none
             }
             err(status) => {
                 self.ended = true
-                some(err(status))
+                err(status)
             }
         }
     }

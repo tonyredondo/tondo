@@ -241,8 +241,8 @@ fn largest[T: Ordered](items: Array[T]): T? {
     var best: T? = none
     for item in items {
         best = match best {
-            some(current) if current >= item => some(current)
-            _ => some(item)
+            some(current) if current >= item => current
+            _ => item
         }
     }
     best
@@ -499,7 +499,7 @@ impl[T] Iterator[(Int, T)] for Cursor[T] {
     fn next(mut self): (Int, T)? {
         let value = self.values.get(self.index)?
         self.index += 1
-        some((self.index - 1, value))
+        (self.index - 1, value)
     }
 }
 

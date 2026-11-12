@@ -40,7 +40,7 @@ fn main(): !(net.NetError | fs.FsError | http.HttpError) {
     }
 
     // Datagrams: a socket with a name receives; one without, only sends.
-    let inbox = net.bindUnix(some("{base}.dgram"))?
+    let inbox = net.bindUnix("{base}.dgram")?
     let sender = net.bindUnix()?
     sender.sendTo("ping".bytes(), net.unixAddress("{base}.dgram"))?
     let (data, from) = inbox.receive()?

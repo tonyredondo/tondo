@@ -26,22 +26,22 @@ pub fn length(
 ): __serialization.Violation? {
     let units = (bound: Int): String { if bound == 1 { unit } else { "{unit}s" } }
     if count < min {
-        return some(broken(path, "must have at least {min} {units(min)}"))
+        return broken(path, "must have at least {min} {units(min)}")
     }
     match max {
-        some(most) if count > most => some(broken(path, "must have at most {most} {units(most)}"))
+        some(most) if count > most => broken(path, "must have at most {most} {units(most)}")
         _ => none
     }
 }
 
 /// `@validate.Min`.
 pub fn atLeast[T: Ordered + Display](path: String, value: T, bound: T): __serialization.Violation? {
-    if value.compare(bound) < 0 { some(broken(path, "must be at least {bound}")) } else { none }
+    if value.compare(bound) < 0 { broken(path, "must be at least {bound}") } else { none }
 }
 
 /// `@validate.Max`.
 pub fn atMost[T: Ordered + Display](path: String, value: T, bound: T): __serialization.Violation? {
-    if value.compare(bound) > 0 { some(broken(path, "must be at most {bound}")) } else { none }
+    if value.compare(bound) > 0 { broken(path, "must be at most {bound}") } else { none }
 }
 
 /// `@validate.Matches`: all of the text matches the pattern.
@@ -49,7 +49,7 @@ pub fn matching(path: String, text: String, pattern: String): __serialization.Vi
     if regexNative.wholeMatch(pattern, text) == 1 {
         none
     } else {
-        some(broken(path, "must match `{pattern}`"))
+        broken(path, "must match `{pattern}`")
     }
 }
 
@@ -58,7 +58,7 @@ pub fn email(path: String, text: String): __serialization.Violation? {
     if regexNative.wholeMatch(EmailPattern, text) == 1 {
         none
     } else {
-        some(broken(path, "must be an email address"))
+        broken(path, "must be an email address")
     }
 }
 

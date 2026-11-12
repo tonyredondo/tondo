@@ -103,7 +103,7 @@ fn describe(n: Int?): String {
 }
 
 fn main() {
-    console.println("{area(Shape.Rect { width: 2.0, height: 3.0 })} {describe(some(12))}")
+    console.println("{area(Shape.Rect { width: 2.0, height: 3.0 })} {describe(12)}")
     let first = match [1, 2, 3] {
         [head, ..] => head
         [] => 0

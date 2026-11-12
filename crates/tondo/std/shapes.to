@@ -31,11 +31,11 @@ impl __reflect.Reflect for Shape {
         for (name, value) in self.members {
             fields.push(__reflect.Field { name, value })
         }
-        some(fields)
+        fields
     }
 
     fn reflectElements(self): Array[__reflect.Value]? {
-        some(self.items)
+        self.items
     }
 
     fn reflectEntries(self): Array[(__reflect.Value, __reflect.Value)]? {
@@ -43,7 +43,7 @@ impl __reflect.Reflect for Shape {
         for (name, value) in self.members {
             entries.push((__reflect.valueOf(name), value))
         }
-        some(entries)
+        entries
     }
 
     fn reflectVariant(self): String? {

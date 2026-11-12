@@ -29,7 +29,7 @@ pub fn clean(path: String): String {
 pub fn relative(from: String, to: String): String? {
     let (base, target) = (clean(from), clean(to))
     if base == target {
-        return some(".")
+        return "."
     }
     if base.startsWith("/") != target.startsWith("/") {
         return none
@@ -168,7 +168,7 @@ fn component(pattern: Array[Char], from: Int, name: Array[Char], at: Int): Bool 
 /// `none` without its `]`.
 fn set(pattern: Array[Char], from: Int, c: Char): (Bool, Int)? {
     var at = from + 1
-    let negated = pattern.get(at) == some('!') or pattern.get(at) == some('^')
+    let negated = pattern.get(at) == '!' or pattern.get(at) == '^'
     if negated {
         at += 1
     }
@@ -186,9 +186,7 @@ fn set(pattern: Array[Char], from: Int, c: Char): (Bool, Int)? {
         first = false
         at += 1
         var high = low
-        if pattern.get(at) == some('-') and
-            pattern.get(at + 1).isSome() and
-            pattern.get(at + 1) != some(']') {
+        if pattern.get(at) == '-' and pattern.get(at + 1).isSome() and pattern.get(at + 1) != ']' {
             high = pattern[at + 1]
             at += 2
             if high == '\\' {
@@ -200,5 +198,5 @@ fn set(pattern: Array[Char], from: Int, c: Char): (Bool, Int)? {
             found = true
         }
     }
-    some((c != '/' and found != negated, at + 1))
+    (c != '/' and found != negated, at + 1)
 }

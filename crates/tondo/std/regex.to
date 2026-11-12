@@ -463,11 +463,11 @@ fn Regex.findFrom(self, input: String, last: Int, found: Int): RegexMatch? ! Reg
         if span.start < 0 {
             captures.push(none)
         } else {
-            captures.push(some(RegexCapture { span, text: span.slice(input)? }))
+            captures.push(RegexCapture { span, text: span.slice(input)? })
         }
     }
     let whole = RegexSpan { start: spans[0], end: spans[1] }
-    some(RegexMatch { span: whole, text: whole.slice(input)?, captures, regex: self })
+    RegexMatch { span: whole, text: whole.slice(input)?, captures, regex: self }
 }
 
 /// The first match, or `none`.
@@ -577,7 +577,7 @@ impl Iterator[RegexMatch ! RegexError] for RegexFindIterator {
             ok(some(found)) => {
                 self.last = found.span.end
                 self.found += 1
-                some(ok(found))
+                ok(found)
             }
             ok(none) => {
                 self.done = true
@@ -585,7 +585,7 @@ impl Iterator[RegexMatch ! RegexError] for RegexFindIterator {
             }
             err(error) => {
                 self.done = true
-                some(err(error))
+                err(error)
             }
         }
     }

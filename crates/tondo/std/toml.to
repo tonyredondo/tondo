@@ -324,7 +324,7 @@ impl serialization.Source for Reader {
             12 => serialization.Event.Key(tomlnative.text(self.native))
             _ => fail self.error(serialization.ErrorKind.Syntax)
         }
-        some(event)
+        event
     }
 
     fn skip(self, first: serialization.Event): !TomlError {
@@ -352,7 +352,7 @@ impl serialization.Source for Reader {
         // another failure.
         let found = tomlnative.field(self.native, names, self.rejectUnknown)
         if found >= 0 {
-            return some(found)
+            return found
         }
         if found == -2 {
             return none

@@ -70,7 +70,7 @@ fn main() {
     console.println("modules {count(app, var seen)}, first import {app.value.imports[0].value.name}")
 
     let tail = Ref(Node { name: "c", next: none })
-    let list = Ref(Node { name: "a", next: some(Ref(Node { name: "b", next: some(tail) })) })
+    let list = Ref(Node { name: "a", next: some(Ref(Node { name: "b", next: tail })) })
     console.println("length {length(list)}")
 
     let shape = Ref(Shape.Circle(2.0))

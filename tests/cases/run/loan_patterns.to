@@ -78,7 +78,7 @@ fn main() {
         console.print("{n}{label} ")
     }
     console.println("")
-    let option: Int? = some(5)
+    let option: Int? = 5
     match option {
         some(ref n) => console.println("{n}")
         none => {}

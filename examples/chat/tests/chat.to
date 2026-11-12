@@ -8,7 +8,7 @@ import std.time
 fn enter(server: http.Server, room: String, name: String): http.WebSocket ! http.HttpError {
     http.WebSocket.connect(
         "ws://{server.address()}/ws/{room}?name={name}",
-        timeout: some(time.seconds(5)),
+        timeout: time.seconds(5),
     )
 }
 

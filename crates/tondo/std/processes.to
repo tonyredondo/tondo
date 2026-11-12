@@ -11,7 +11,7 @@ import std.reflect as __reflect
 /// may be run; `none` without one.
 pub fn which(name: String): String? {
     let found = processNative.which(name)
-    if found.isEmpty() { none } else { some(found) }
+    if found.isEmpty() { none } else { found }
 }
 
 /// Sends a signal to the process `pid`, one the program did not start:
@@ -50,7 +50,7 @@ pub fn splitWords(text: String): Array[String]? {
             escaped = false
             // A backslash and a newline join two lines.
             if character != '\n' {
-                if quote == some('"') and not "$`\"\\".contains("{character}") {
+                if quote == '"' and not "$`\"\\".contains("{character}") {
                     word.push("\\")
                 }
                 word.push("{character}")
@@ -83,7 +83,7 @@ pub fn splitWords(text: String): Array[String]? {
                         started = false
                     }
                 } else if character == '\'' or character == '"' {
-                    quote = some(character)
+                    quote = character
                     started = true
                 } else if character == '\\' {
                     escaped = true

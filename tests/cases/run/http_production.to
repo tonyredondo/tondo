@@ -70,7 +70,7 @@ fn main(): !http.HttpError {
     }
     for (path, size) in [("/small", 500), ("/small", 2000), ("/large", 2000), ("/large", 6000)] {
         console.println(
-            "{path} {size}: {shown(client.post(path, body: some(http.Body.text("x".repeat(size)))))}",
+            "{path} {size}: {shown(client.post(path, body: http.Body.text("x".repeat(size))))}",
         )
     }
     console.println(
@@ -84,7 +84,7 @@ fn main(): !http.HttpError {
     console.println(shown(client.get("/search?text=tea&page=0")))
     console.println(shown(client.get("/search?text=tea&page=two")))
     console.println(
-        shown(client.post("/search", body: some(http.Body.form(["text": "form", "page": "1"])))),
+        shown(client.post("/search", body: http.Body.form(["text": "form", "page": "1"]))),
     )
     let page = client.get("/page", headers: ["accept-encoding": "zstd"])?
     let plain = zstd.decompress(page.bytes()?).unwrapOr([])

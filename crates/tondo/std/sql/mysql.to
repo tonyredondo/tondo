@@ -83,7 +83,7 @@ fn connectMySql(url: String): Connection ! SqlError {
         okEnds: false
     }
     let greeting = first.packet()?
-    if greeting.get(0) == some(Byte(255u8)) {
+    if greeting.get(0) == Byte(255u8) {
         fail mysqlError(greeting, connecting: true)
     }
     // The greeting: its version, the connection's id, the first part of the
@@ -217,8 +217,8 @@ fn MySql.authenticate(
                 scramble = packet.slice(at, packet.length() - 1).unwrapOr([])
                 self.send(mysqlAnswer(current, password, scramble))?
             }
-            1 if packet.get(1) == some(Byte(3u8)) => {}
-            1 if packet.get(1) == some(Byte(4u8)) => {
+            1 if packet.get(1) == Byte(3u8) => {}
+            1 if packet.get(1) == Byte(4u8) => {
                 if secure {
                     self.send(cstring(password))?
                 } else {
@@ -321,7 +321,7 @@ fn MySql.run(self, statement: Statement): Outcome ! SqlError {
 fn MySql.prepare(self, text: String): Kept ! SqlError {
     self.command(22, text.bytes())?
     let answer = self.packet()?
-    if answer.get(0) == some(Byte(255u8)) {
+    if answer.get(0) == Byte(255u8) {
         fail mysqlError(answer, connecting: false)
     }
     let kept = Kept { id: unsigned(answer, 1, 4), parameters: unsigned(answer, 7, 2) }
@@ -369,7 +369,7 @@ fn MySql.execute(self, kept: Kept, statement: Statement): Outcome ! SqlError {
         body.extend(data)
     }
     self.command(23, body)?
-    let (first, outcome) = self.result(some(statement.operation))?
+    let (first, outcome) = self.result(statement.operation)?
     var more = first
     // The results after the first, as a procedure gives, are read and left.
     for more {
@@ -390,14 +390,14 @@ fn MySql.result(self, binary: Operation?): (Bool, Outcome) ! SqlError {
             let affected = lengthEncodedAt(first, var at)
             let lastId = lengthEncodedAt(first, var at)
             let status = unsigned(first, at, 2)
-            let reads = binary == some(Operation.Query)
+            let reads = binary == Operation.Query
             return (
                 status & MysqlMoreResults != 0,
                 Outcome {
                     columns: []
                     rows: []
                     affected: if reads { 0 } else { affected }
-                    lastId: if reads or lastId == 0 { none } else { some(lastId) }
+                    lastId: if reads or lastId == 0 { none } else { lastId }
                 },
             )
         }
@@ -416,7 +416,7 @@ fn MySql.result(self, binary: Operation?): (Bool, Outcome) ! SqlError {
     var rows: Array[Array[Value]] = []
     for {
         let packet = self.packet()?
-        if packet.get(0) == some(Byte(254u8)) and packet.length() < 0xffffff {
+        if packet.get(0) == Byte(254u8) and packet.length() < 0xffffff {
             // The end: an OK, or an EOF with the warnings before the status.
             var end = 1
             if self.okEnds {
@@ -436,7 +436,7 @@ fn MySql.result(self, binary: Operation?): (Bool, Outcome) ! SqlError {
                 },
             )
         }
-        if packet.get(0) == some(Byte(255u8)) {
+        if packet.get(0) == Byte(255u8) {
             fail mysqlError(packet, connecting: false)
         }
         if binary.isSome() {
@@ -584,11 +584,11 @@ fn mysqlParameter(value: Value): (Int, Array[Byte]?) ! SqlError {
     match value {
         Value.Null => (6, none)
         Value.Bool(flag) => (1, some([Byte(if flag { 1u8 } else { 0u8 })]))
-        Value.Int(number) => (8, some(littleEndianBytes(number, 8)))
-        Value.Float(number) => (5, some(littleEndianBytes(Int.wrapping(number.bits()), 8)))
-        Value.Number(digits) => (246, some(lengthEncodedBytes(digits.bytes())))
-        Value.Text(text) => (254, some(lengthEncodedBytes(text.bytes())))
-        Value.Bytes(bytes) => (252, some(lengthEncodedBytes(bytes)))
+        Value.Int(number) => (8, littleEndianBytes(number, 8))
+        Value.Float(number) => (5, littleEndianBytes(Int.wrapping(number.bits()), 8))
+        Value.Number(digits) => (246, lengthEncodedBytes(digits.bytes()))
+        Value.Text(text) => (254, lengthEncodedBytes(text.bytes()))
+        Value.Bytes(bytes) => (252, lengthEncodedBytes(bytes))
         Value.DateTime(moment) => {
             var out = [Byte(11u8)]
             out.extend(littleEndianBytes(moment.year, 2))
@@ -596,7 +596,7 @@ fn mysqlParameter(value: Value): (Int, Array[Byte]?) ! SqlError {
                 out.push(Byte(UInt8.wrapping(part)))
             }
             out.extend(littleEndianBytes(moment.nanosecond / 1000, 4))
-            (12, some(out))
+            (12, out)
         }
         Value.List(_) => fail SqlError.of(
             ErrorKind.Other,
@@ -609,7 +609,7 @@ fn mysqlParameter(value: Value): (Int, Array[Byte]?) ! SqlError {
 /// column its message names.
 fn mysqlError(packet: Array[Byte], connecting: Bool): SqlError {
     let number = unsigned(packet, 1, 2)
-    let start = if packet.get(3) == some(Byte(UInt8.wrapping('#'.code()))) { 9 } else { 3 }
+    let start = if packet.get(3) == Byte(UInt8.wrapping('#'.code())) { 9 } else { 3 }
     let said = String.fromBytes(packet.slice(start, packet.length()).unwrapOr([])).unwrapOr("")
     let quoted = (after: String, close: String): String? {
         match said.splitOnce(after) {
@@ -637,7 +637,7 @@ fn mysqlError(packet: Array[Byte], connecting: Bool): SqlError {
         )
         _ => (ErrorKind.Other, none)
     }
-    SqlError { kind, message: said, code: some("{number}"), constraint }
+    SqlError { kind, message: said, code: "{number}", constraint }
 }
 
 /// An integer of the protocol, in one byte below 251 or after a byte that
@@ -722,7 +722,7 @@ fn rsaSealed(pem: String, message: Array[Byte]): Array[Byte] ! SqlError {
     }
     // The modulus without the zero that keeps it positive.
     var size = modulusBytes.length()
-    if modulusBytes.get(0) == some(Byte(0u8)) {
+    if modulusBytes.get(0) == Byte(0u8) {
         size -= 1
     }
     let hashLength = 20
@@ -748,7 +748,7 @@ fn rsaSealed(pem: String, message: Array[Byte]): Array[Byte] ! SqlError {
 /// The unsigned number of big-endian bytes.
 fn bigIntOf(bytes: Array[Byte]): __math.BigInt? {
     match __math.BigInt.parse("0{__encoding.hexEncode(bytes)}", radix: 16) {
-        ok(number) => some(number)
+        ok(number) => number
         err(_) => none
     }
 }
@@ -767,7 +767,7 @@ fn generatedMask(seed: Array[Byte], length: Int): Array[Byte] {
 /// Enters a DER value of `tag` at `at`: moves past its tag and length and
 /// gives the length, or -1 for another tag.
 fn derEntered(der: Array[Byte], at: var Int, tag: Int): Int {
-    if der.get(at) != some(Byte(UInt8.wrapping(tag))) {
+    if der.get(at) != Byte(UInt8.wrapping(tag)) {
         return -1
     }
     let first = Int(der.get(at + 1).unwrapOr(Byte(0u8)))
