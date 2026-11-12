@@ -82,11 +82,18 @@ fn declare(ty: &CType, name: &str) -> String {
     }
 }
 
+/// The parameters of a published function: a `ffi.CString` is `const char *`,
+/// as the function reads the text and changes none of it.
 fn params(params: &[(String, CType)]) -> String {
     if params.is_empty() {
         return "void".into();
     }
-    params.iter().map(|(name, ty)| declare(ty, name)).collect::<Vec<_>>().join(", ")
+    let text = CType::Pointer(Box::new(CType::Named("char")));
+    let param = |(name, ty): &(String, CType)| match ty {
+        ty if *ty == text => format!("const char *{name}"),
+        ty => declare(ty, name),
+    };
+    params.iter().map(param).collect::<Vec<_>>().join(", ")
 }
 
 fn mentions(ty: &CType, c: &str) -> bool {

@@ -1564,7 +1564,8 @@ con cuerpo de su paquete (16.16 del lenguaje), y sin ninguna es `E1807`.
 
 El header declara, con su documentación `///`, las funciones publicadas y los
 `extern type` que alcanzan sus firmas: los alias de `std.ffi` con su nombre de
-C (`int`, `size_t`, `char*` para `ffi.CString`), los números de Tondo con los
+C (`int`, `size_t`, `char*` para `ffi.CString`, `const char*` en un parámetro,
+que la función solo lee), los números de Tondo con los
 de `stdint.h`, `Bool` como `bool`, un `Pointer[T]` como `T*`, un
 `extern fn(...)` como puntero a función y un `extern type` opaco como
 `typedef struct Nombre Nombre`. El build imprime cómo enlazar cada una, líneas

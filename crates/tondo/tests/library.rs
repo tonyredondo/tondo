@@ -108,7 +108,7 @@ fn a_c_program_calls_a_library() {
     let header = std::fs::read_to_string(dir.join("out/words.h")).unwrap();
     for declaration in [
         "typedef struct Point Point;",
-        "/** The words of `text`, separated by spaces. */\nsize_t words_count(char *text);",
+        "/** The words of `text`, separated by spaces. */\nsize_t words_count(const char *text);",
         "double words_distance(Point a, Point b);",
         "void words_each(int count, void (*visit)(int));",
     ] {
@@ -169,7 +169,7 @@ fn a_project_of_modules_publishes_its_types_by_their_names() {
     let built = tondo(&dir, &["build", "--library", "--output", "out"]);
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let header = std::fs::read_to_string(dir.join("out/textkit.h")).unwrap();
-    for declaration in ["typedef struct Stats Stats;", "struct Stats {", "Stats textkit_stats(char *input);"] {
+    for declaration in ["typedef struct Stats Stats;", "struct Stats {", "Stats textkit_stats(const char *input);"] {
         assert!(header.contains(declaration), "{declaration} in\n{header}");
     }
     std::fs::write(
