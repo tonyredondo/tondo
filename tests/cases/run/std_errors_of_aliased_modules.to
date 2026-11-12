@@ -1,0 +1,21 @@
+// The errors of modules the compiler implements have `Reflect`, which the
+// standard library implements in the modules that complete them, whatever
+// name the program imports those modules by.
+
+import std.console
+import std.fs as files
+import std.reflect
+import std.time as clock
+
+fn main() {
+    let late = clock.parseDuration("soon")
+    let missing = files.readText("missing.txt")
+    match (late, missing) {
+        (err(timing), err(reading)) => console.println("{reflect.valueOf(timing)} {reflect.valueOf(reading)}")
+        _ => console.println("no errors")
+    }
+    console.println("{clock.seconds(90)}")
+}
+
+// expect-stdout: invalid duration not found
+// expect-stdout: 1m30s

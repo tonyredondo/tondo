@@ -323,6 +323,19 @@ impl<'a> Checker<'a> {
         Some((id, args))
     }
 
+    /// The error the compiler declares for a standard module it implements.
+    fn module_error(&self, module: &str) -> Option<Ty> {
+        match module {
+            "fs" => self.fs.as_ref().map(|fs| fs.error),
+            "time" => self.time_error,
+            "env" => self.env_error,
+            "process" => self.process.as_ref().map(|process| process.error),
+            "text" => Some(self.text_error),
+            "io" => Some(self.io_error),
+            _ => None,
+        }
+    }
+
     /// Checks an implementation's header and registers its methods (12.4).
     pub(super) fn implementation<'d>(&mut self, decl: &'d ast::ImplDecl, bodies: &mut Vec<&'d ast::FnDecl>) {
         let binders = self.declare_generics(&decl.generics, true, decl.module);
@@ -347,13 +360,12 @@ impl<'a> Checker<'a> {
         // Coherence (12.6): the module owns the trait or the target's nominal type.
         let local_trait = self.trait_modules.get(&trait_id) == Some(&decl.module);
         // A standard module written in Tondo that completes one the compiler
-        // implements owns that module's types, as `files` the errors of `fs`.
+        // implements owns the error the compiler declares for it, as `files`
+        // that of `fs`, whatever name the program imports the module by.
         let completes = || match self.module_paths.get(decl.module as usize).map(Vec::as_slice) {
-            // Named as the module that declared it imports it, `__time` in a
-            // companion.
-            Some([std, companion]) if std == "std" => crate::stdlib::completed(companion).is_some_and(|module| {
-                target_name.trim_start_matches("__").strip_prefix(module).is_some_and(|rest| rest.starts_with('.'))
-            }),
+            Some([std, companion]) if std == "std" => {
+                crate::stdlib::completed(companion).is_some_and(|module| self.module_error(module) == Some(target))
+            }
             _ => false,
         };
         let local_target = self.owner(target).is_some_and(|o| o.module == decl.module)
