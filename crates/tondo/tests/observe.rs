@@ -2814,7 +2814,7 @@ fn debug_adapter_follows_children() {
     let child = "import std.console\n\nfn main() {\n    let greeting = \"hi\"\n    console.println(greeting)\n}\n";
     std::fs::write(dir.join("child.to"), child).unwrap();
     let parent =
-        "import std.process\n\nfn main(): !process.ProcessError {\n    _ = process.command(\"./child\").run()?\n}\n";
+        "import std.process\n\nfn main(): !process.ProcessError {\n    process.command(\"./child\").run()?\n}\n";
     std::fs::write(dir.join("parent.to"), parent).unwrap();
     let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "child.to", "--debug", "--output", "child"])
@@ -2859,7 +2859,7 @@ fn debug_adapter_opens_the_recordings_of_children() {
     let child = "import std.console\n\nfn main() {\n    let greeting = \"hi\"\n    console.println(greeting)\n}\n";
     std::fs::write(dir.join("child.to"), child).unwrap();
     let parent =
-        "import std.process\n\nfn main(): !process.ProcessError {\n    _ = process.command(\"./child\").run()?\n}\n";
+        "import std.process\n\nfn main(): !process.ProcessError {\n    process.command(\"./child\").run()?\n}\n";
     std::fs::write(dir.join("parent.to"), parent).unwrap();
     for args in [&["build", "child.to", "--debug", "--output", "child"][..], &["run", "--record", "run", "parent.to"]] {
         let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();

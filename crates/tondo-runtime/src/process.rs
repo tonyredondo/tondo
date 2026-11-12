@@ -806,9 +806,12 @@ struct StatusLayout {
 
 /// Writes a `ProcessOutput` as four words, then the overall status as two:
 /// stdout, stderr, combined, statuses, code and success.
-unsafe fn write_output(running: &mut Running, layout: StatusLayout, out: *mut i64) -> (i64, bool) {
+unsafe fn write_output(running: &mut Running, layout: StatusLayout, out: *mut i64, failed_only: bool) -> (i64, bool) {
     let statuses = finish(running);
     let (code, success) = overall(&statuses);
+    if failed_only && success {
+        return (code, success);
+    }
     let captured = running.captured.lock().unwrap_or_else(|e| e.into_inner());
     let array = tondo_rt_array_new(layout.size, statuses.len());
     for (index, &(code, success)) in statuses.iter().enumerate() {
@@ -850,8 +853,13 @@ pub unsafe extern "C" fn tondo_rt_process_run(plan: *mut PlanObject, quiet: u8, 
     0
 }
 
-/// `output()` and `check()`: a `ProcessOutput` into `out` (see
-/// `write_output`); `check` fails with `Failed` when a stage did.
+/// `output()` (`check` 0) and `check()` (1): a `ProcessOutput` into `out`
+/// (see `write_output`); `check` fails with `Failed` when a stage did. And
+/// `run()` (2): the program's streams, and nothing into `out` unless it
+/// fails so, with the status of each stage and nothing captured. `text()`
+/// (3) and `lines()` (4) are `check()`, then its standard output as text
+/// without the new lines at its end, or by lines, into `out`: `InvalidData`
+/// when it is not UTF-8.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_process_output(
     plan: *mut PlanObject,
@@ -861,17 +869,43 @@ pub unsafe extern "C" fn tondo_rt_process_output(
     out: *mut i64,
 ) -> i64 {
     let layout = StatusLayout { size: size as usize, success: success_offset as usize };
-    let mut running = match spawn(plan_ref(plan), Defaults::Capture) {
+    let run = check == 2;
+    let mut running = match spawn(plan_ref(plan), if run { Defaults::Inherit } else { Defaults::Capture }) {
         Ok(running) => running,
         Err(error) => return error_status(&error),
     };
     let (pids, group, grace, reaped) = (running.pids.clone(), running.group, running.grace, running.reaped.clone());
     let out = out as usize;
     let (_, success) = host_cancellable(
-        move || unsafe { write_output(&mut running, layout, out as *mut i64) },
+        move || unsafe { write_output(&mut running, layout, out as *mut i64, run) },
         || stop_all(&pids, group, grace, &reaped),
     );
-    if check != 0 && !success { FAILED } else { 0 }
+    if check != 0 && !success {
+        return FAILED;
+    }
+    if check < 3 {
+        return 0;
+    }
+    // The text of standard output, and the arrays of the output let go.
+    let words = out as *mut i64;
+    let arrays: Vec<*mut ArrayHeader> = (0..4).map(|index| unsafe { *words.add(index) } as *mut ArrayHeader).collect();
+    let text = std::str::from_utf8(unsafe { array_items::<u8>(arrays[0]) })
+        .map(|text| text.trim_end_matches(['\n', '\r']).to_string());
+    for (index, &array) in arrays.iter().enumerate() {
+        let size = if index == 3 { layout.size } else { 1 };
+        unsafe { super::arrays::tondo_rt_array_release(array, size, None) };
+    }
+    let Ok(text) = text else { return INVALID_DATA };
+    unsafe {
+        *words = if check == 3 {
+            super::str_new(text.as_bytes()) as i64
+        } else {
+            let lines: Vec<String> =
+                if text.is_empty() { Vec::new() } else { text.lines().map(str::to_string).collect() };
+            super::arrays::string_array(&lines) as i64
+        };
+    }
+    0
 }
 
 /// A started process.
@@ -1020,7 +1054,8 @@ pub unsafe extern "C" fn tondo_rt_process_collect(
 ) -> i64 {
     let layout = StatusLayout { size: size as usize, success: success_offset as usize };
     let out = out as usize;
-    let (_, success) = settle(process, false, move |running| unsafe { write_output(running, layout, out as *mut i64) });
+    let (_, success) =
+        settle(process, false, move |running| unsafe { write_output(running, layout, out as *mut i64, false) });
     if check != 0 && !success { FAILED } else { 0 }
 }
 

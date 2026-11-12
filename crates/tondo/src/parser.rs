@@ -2338,6 +2338,10 @@ impl Parser<'_> {
                 self.bump();
                 ExprKind::Str(self.string_segments(parts)?)
             }
+            Tok::Command(pieces) => {
+                self.bump();
+                ExprKind::Command(self.command_stages(pieces)?)
+            }
             Tok::Ident(name) if CONTEXTUAL_CONSTRUCTORS.contains(&name.as_str()) && self.nth(1) == &Tok::LParen => {
                 let constructor = CONTEXTUAL_CONSTRUCTORS.iter().find(|c| **c == name).unwrap();
                 self.bump();
@@ -2484,6 +2488,158 @@ impl Parser<'_> {
         }
         self.expect(Tok::RParen)?;
         Ok(Expr { kind: ExprKind::Tuple(items), span: start.to(self.prev_span()) })
+    }
+
+    /// The stages of a command literal from its pieces (20.5): split at
+    /// each `|`, with the `NAME=value` words before a stage's program, and
+    /// each redirection with the word after it.
+    fn command_stages(&mut self, pieces: Vec<crate::lexer::CommandPiece>) -> PResult<Vec<CommandStage>> {
+        use crate::lexer::{CommandPiece, Redirect};
+        let mut stages: Vec<CommandStage> = Vec::new();
+        let mut stage: Option<CommandStage> = None;
+        let mut pieces = pieces.into_iter().peekable();
+        let mut last_span = Span::default();
+        let mut bad = false;
+        while let Some(piece) = pieces.next() {
+            match piece {
+                CommandPiece::Pipe(span) => {
+                    match stage.take() {
+                        Some(done) => stages.push(done),
+                        None => {
+                            self.diags.error(
+                                "E0008",
+                                span,
+                                "a `|` with no command before it: write the stage it reads from",
+                            );
+                            bad = true;
+                        }
+                    }
+                    last_span = span;
+                }
+                CommandPiece::Redirect(redirect, span) => {
+                    let current = stage.get_or_insert_with(|| CommandStage {
+                        env: Vec::new(),
+                        words: Vec::new(),
+                        redirects: Vec::new(),
+                        span,
+                    });
+                    current.span = current.span.to(span);
+                    if redirect == Redirect::ErrorsToOutput {
+                        current.redirects.push((redirect, None, span));
+                        continue;
+                    }
+                    match pieces.next_if(|p| matches!(p, CommandPiece::Word(..))) {
+                        Some(CommandPiece::Word(parts, None, word_span)) => {
+                            let target = Expr { kind: ExprKind::Str(self.string_segments(parts)?), span: word_span };
+                            current.span = current.span.to(word_span);
+                            current.redirects.push((redirect, Some(target), span));
+                        }
+                        _ => {
+                            self.diags.error("E0008", span, "a redirection names the file after it, as `> {path}`");
+                            bad = true;
+                        }
+                    }
+                    last_span = span;
+                }
+                CommandPiece::Word(parts, spread, span) => {
+                    let current = stage.get_or_insert_with(|| CommandStage {
+                        env: Vec::new(),
+                        words: Vec::new(),
+                        redirects: Vec::new(),
+                        span,
+                    });
+                    current.span = current.span.to(span);
+                    last_span = span;
+                    if let Some(values) = spread {
+                        let tokens = lexer::lex(self.file, Some(values), self.diags);
+                        let mut inner = Parser {
+                            file: self.file,
+                            tokens,
+                            pos: 0,
+                            diags: &mut *self.diags,
+                            recovering: false,
+                            no_brace: false,
+                            parens: Vec::new(),
+                        };
+                        inner.skip_newlines();
+                        let value = inner.expression()?;
+                        current.words.push(CommandWord::Each(value));
+                        continue;
+                    }
+                    // `NAME=value` before the program sets its environment.
+                    let assigned = match parts.first() {
+                        Some(StrPart::Text(first)) if current.words.is_empty() => {
+                            first.split_once('=').map(|(name, _)| name.to_string()).filter(|name| {
+                                !name.is_empty()
+                                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                                    && !name.starts_with(|c: char| c.is_ascii_digit())
+                            })
+                        }
+                        _ => None,
+                    };
+                    if let Some(name) = assigned {
+                        let name_span = Span::new(span.start, span.start + name.len() as u32);
+                        let mut parts = parts;
+                        if let StrPart::Text(first) = &mut parts[0] {
+                            *first = first[name.len() + 1..].to_string();
+                        }
+                        let ident = Ident { name, span: name_span };
+                        let value = Expr { kind: ExprKind::Str(self.string_segments(parts)?), span };
+                        current.env.push((ident, value));
+                        continue;
+                    }
+                    let word = Expr { kind: ExprKind::Str(self.string_segments(parts)?), span };
+                    current.words.push(CommandWord::One(word));
+                }
+            }
+        }
+        match stage {
+            Some(done) => stages.push(done),
+            None if !stages.is_empty() => {
+                self.diags.error("E0008", last_span, "a `|` with no command after it: write the stage that reads");
+                bad = true;
+            }
+            None => {}
+        }
+        let count = stages.len();
+        for (index, stage) in stages.iter().enumerate() {
+            if stage.words.is_empty() {
+                let message = if stage.env.is_empty() {
+                    "a stage with no program: write the program first"
+                } else {
+                    "a stage of only `NAME=value` sets the environment of no program: write the program after them"
+                };
+                self.diags.error("E0008", stage.span, message);
+                bad = true;
+            }
+            if let Some(CommandWord::Each(value)) = stage.words.first() {
+                self.diags.error(
+                    "E0008",
+                    value.span,
+                    "a stage's first word is its program, one word: write `{program}`",
+                );
+                bad = true;
+            }
+            for (redirect, _, span) in &stage.redirects {
+                let wrong = match redirect {
+                    Redirect::In => index != 0,
+                    Redirect::Out | Redirect::Append => index + 1 != count,
+                    _ => false,
+                };
+                if wrong {
+                    let message = match redirect {
+                        Redirect::In => "`<` gives the first stage its input; the others read the stage before",
+                        _ => "`>` and `>>` take the last stage's output; the others' goes to the stage after",
+                    };
+                    self.diags.error("E0008", *span, message);
+                    bad = true;
+                }
+            }
+        }
+        if bad {
+            return Err(());
+        }
+        Ok(stages)
     }
 
     fn string_segments(&mut self, parts: Vec<StrPart>) -> PResult<Vec<StrSegment>> {

@@ -6283,3 +6283,24 @@ for a `var` map as `map[key] = value` does. Read as a value it changes nothing, 
 gives `map[key] ?? value`, to keep one way to read; `map[key, default: value] = x` is one too, as
 `map[key] = x` already inserts or replaces. The entry is found, or added, when the place is, before
 the right side of an assignment, so a right side that fails leaves the entry with its value.
+
+## Commands as text: `$( )`
+
+`process.command("git", "log", "-n", "{count}") | process.command("head", "-5")` says what a shell
+line says in three times the text, and scripts are where Tondo meets those lines most. `$(git log -n
+{count} | head -5)` writes it as the shell would and gives the same `Command` or `Pipeline`, without
+a shell: the compiler splits it when it compiles, so a `{value}` is one argument whatever it holds,
+spaces, quotes, `|` or `$` included, and nothing is expanded later. What only a shell does, a
+variable, a pattern of files, `&&`, `;`, `&`, backquotes or a command inside another, is an error
+that gives the Tondo for it rather than a different meaning, and `process.shell` stays for a line a
+real shell must run. The text keeps its words as written, which `tondo fmt` leaves alone; a literal
+with a prefix, a line that starts with `$` and backquotes were not chosen, as they read as another
+language's or hide where the command ends.
+
+`run()` gave the `ExitStatus`, so `$(make).run()?` went on after `make` failed, unlike a script that
+stops there. It now fails with `ProcessError.Failed`, the status of each stage inside and nothing
+captured, which the runtime builds only then; `status()`, `output()` and `start()` still give the
+status as a value, and a program that wants the code of a command run with its own streams matches
+the error. `text()` and `lines()` are `check()` and its output as text without the new lines at its
+end, the form a script wants most, as `$(git branch --show-current).text()?`. The calls of `run()`
+that read the status were rewritten to match `Failed`.

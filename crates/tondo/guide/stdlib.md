@@ -78,8 +78,22 @@ fn main(): !(fs.FsError | json.JsonError | process.ProcessError) {
     }
     let output = process.command("ls", "-l").output()?
     console.println(output.text()?)
+    let pattern = "con fig"
+    let found = $(ls -la | grep {pattern} > found.txt).status()?
+    console.println("{found.code}")
 }
 ```
+
+`$( )` writes a command as a shell would and runs no shell: the compiler
+splits it, so `{value}` is one argument whatever it holds, `{...values}` one
+for each element, `'...'` text as it is and `"..."` a string; `|`, `<`, `>`,
+`>>`, `2>` and `2>&1` join and redirect, and `NAME=value` first sets a
+variable. What a shell expands, as `$HOME`, `*` or `&&`, is an error that
+says what to write. `process.command(program, ...arguments)` takes them
+apart, and `process.shell(line)` runs a real shell. `run()` fails with
+`ProcessError.Failed` when a stage ends badly; `text()` and `lines()` give
+what it wrote, without the new lines at its end, and fail so too;
+`status()` and `output()` give the status as a value.
 
 Ctrl-C, `kill` or `docker stop` cancel the program, with nothing to write:
 every wait ends, the tasks run their `defer`s, and it ends with 130 or 143;

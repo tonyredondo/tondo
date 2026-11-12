@@ -10,6 +10,9 @@
       "include": "#comments"
     },
     {
+      "include": "#commands"
+    },
+    {
       "include": "#strings"
     },
     {
@@ -258,6 +261,65 @@
         {
           "match": "\\?\\?|==|!=|<=|>=|<<=|>>=|<<|>>|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|[+\\-*/%<>=&|^!?]",
           "name": "keyword.operator.tondo"
+        }
+      ]
+    },
+    "commands": {
+      "comment": "`$( )`, a command split when the program compiles (language 20.5).",
+      "begin": "\\$\\(",
+      "end": "\\)",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.command.begin.tondo"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.command.end.tondo"
+        }
+      },
+      "name": "string.interpolated.command.tondo",
+      "patterns": [
+        {
+          "begin": "'",
+          "end": "'",
+          "name": "string.quoted.single.command.tondo"
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "match": "\\{\\{|\\}\\}",
+          "name": "constant.character.escape.brace.tondo"
+        },
+        {
+          "begin": "\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.section.interpolation.begin.tondo"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.section.interpolation.end.tondo"
+            }
+          },
+          "name": "meta.interpolation.tondo",
+          "contentName": "source.tondo",
+          "patterns": [
+            {
+              "include": "$self"
+            }
+          ]
+        },
+        {
+          "match": "\\|",
+          "name": "keyword.operator.pipe.tondo"
+        },
+        {
+          "match": "2>&1|2>>|2>|>>|>|<",
+          "name": "keyword.operator.redirect.tondo"
         }
       ]
     }

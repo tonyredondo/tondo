@@ -7524,10 +7524,12 @@ pub fn Pipeline.group(self): Pipeline
 pub fn Pipeline.grace(self, grace: time.Duration): Pipeline
 
 // En Command y en Pipeline:
-pub fn run(self): ExitStatus ! ProcessError
+pub fn run(self): Unit ! ProcessError
 pub fn status(self): ExitStatus ! ProcessError
 pub fn output(self): ProcessOutput ! ProcessError
 pub fn check(self): ProcessOutput ! ProcessError
+pub fn text(self): String ! ProcessError
+pub fn lines(self): Array[String] ! ProcessError
 pub fn start(self): Process ! ProcessError
 
 pub fn ProcessOutput.text(self): String ! ProcessError
@@ -7572,11 +7574,17 @@ Planes:
 
 Ejecución:
 
-- `run` usa por defecto los streams del programa, espera y devuelve el estado.
+- `run` usa por defecto los streams del programa, espera, y falla con
+  `ProcessError.Failed` cuando una etapa no termina con éxito, con el estado
+  de cada etapa dentro y nada capturado. Un programa que quiere el código de
+  un comando que corre con sus streams compara ese error.
 - `status` espera sin entrada y descartando la salida.
 - `output` captura stdout y stderr, sin entrada, y devuelve un
   `ProcessOutput`. `check` hace lo mismo y devuelve `ProcessError.Failed` con
   el estado y la salida si alguna etapa no termina con éxito.
+- `text` es `check`, y después su stdout como UTF-8 (`InvalidData` si no lo
+  es) sin los saltos de línea del final; `lines`, ese texto por líneas, y
+  ninguna sin salida.
 - `start` inicia el proceso sin esperarlo; sus streams son los del programa
   salvo los redirigidos. `Process.wait`, `output`, `check` y `cancel` lo
   esperan; `cancel` termina antes todas sus etapas.

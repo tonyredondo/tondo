@@ -1073,6 +1073,10 @@ pub enum ProcessFn {
     Status,
     Output,
     Check,
+    /// `text()` and `lines()` of a `Command` or a `Pipeline`: what `check()`
+    /// captured, as text.
+    ReadText,
+    ReadLines,
     Start,
     Text,
     /// `stdin()`, `stdout()` or `stderr()` of a process: 0, 1 or 2.

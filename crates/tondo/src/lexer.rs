@@ -25,6 +25,9 @@ pub enum Tok {
     BigInt(String),
     Char(char),
     Str(Vec<StrPart>),
+    /// `$(git log -n {count} | head -5)` (20.5): its words, `|` and
+    /// redirections, as the compiler splits them.
+    Command(Vec<CommandPiece>),
     LParen,
     RParen,
     LBracket,
@@ -97,6 +100,34 @@ fn format_like(text: &str) -> bool {
 pub enum StrPart {
     Text(String),
     Expr(Span, Option<Span>),
+}
+
+/// A piece of a command literal (20.5).
+#[derive(Clone, Debug, PartialEq)]
+pub enum CommandPiece {
+    /// What lies between spaces: its parts, joined into one argument, and
+    /// the span of `{...values}` when it is one, an argument for each.
+    Word(Vec<StrPart>, Option<Span>, Span),
+    /// `|`: what a stage writes is what the next reads.
+    Pipe(Span),
+    Redirect(Redirect, Span),
+}
+
+/// Where a redirection of a command literal sends a stream (20.5).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Redirect {
+    /// `<`: the first stage reads a file.
+    In,
+    /// `>`: the last stage writes one.
+    Out,
+    /// `>>`: the last stage adds to one.
+    Append,
+    /// `2>`: a stage's errors to a file.
+    Errors,
+    /// `2>>`: a stage's errors added to a file.
+    ErrorsAppend,
+    /// `2>&1`: a stage's errors where its output goes.
+    ErrorsToOutput,
 }
 
 macro_rules! keywords {
@@ -426,6 +457,7 @@ impl Lexer<'_> {
                 }
                 '/' if self.rest().starts_with("/*") => self.block_comment(),
                 '"' => self.string(false),
+                '$' if self.peek_at(1) == Some('(') => self.command(),
                 'r' if self.rest().starts_with("r\"") => {
                     self.pos += 1;
                     self.string(true);
@@ -1100,6 +1132,304 @@ impl Lexer<'_> {
         }
         self.pos = after;
         self.push(Tok::Str(parts), start);
+    }
+}
+
+impl Lexer<'_> {
+    /// `$( ... )` (language 20.5): the words of a command and its stages,
+    /// split when the program compiles, as no shell runs. The first `)`
+    /// outside quotes and `{ }` ends it.
+    fn command(&mut self) {
+        let start = self.pos;
+        self.pos += 2;
+        let mut pieces = Vec::new();
+        // The word being read: its parts, its text so far, where it started,
+        // and whether a quote made it a word although it is empty.
+        let mut parts: Vec<StrPart> = Vec::new();
+        let mut text = String::new();
+        let mut word_start: Option<usize> = None;
+        let mut spread: Option<Span> = None;
+        let end_word = |this: &mut Self,
+                        parts: &mut Vec<StrPart>,
+                        text: &mut String,
+                        word_start: &mut Option<usize>,
+                        spread: &mut Option<Span>,
+                        pieces: &mut Vec<CommandPiece>| {
+            let Some(from) = word_start.take() else { return };
+            if !text.is_empty() || parts.is_empty() {
+                parts.push(StrPart::Text(std::mem::take(text)));
+            }
+            pieces.push(CommandPiece::Word(std::mem::take(parts), spread.take(), this.span(from, this.pos)));
+        };
+        let refuse = |this: &mut Self, from: usize, to: usize, message: String| {
+            this.error("E0008", from, to, message);
+        };
+        loop {
+            let Some(c) = self.peek() else {
+                self.error(
+                    "E0002",
+                    start,
+                    start + 2,
+                    "unterminated command: `$(` ends at the first `)` outside quotes",
+                );
+                self.push(Tok::Command(pieces), start);
+                return;
+            };
+            let at = self.pos;
+            match c {
+                ')' => {
+                    end_word(self, &mut parts, &mut text, &mut word_start, &mut spread, &mut pieces);
+                    self.pos += 1;
+                    break;
+                }
+                ' ' | '\t' | '\n' | '\r' => {
+                    end_word(self, &mut parts, &mut text, &mut word_start, &mut spread, &mut pieces);
+                    self.pos += 1;
+                }
+                '\'' => {
+                    word_start.get_or_insert(at);
+                    self.pos += 1;
+                    match self.rest().find('\'') {
+                        Some(close) => {
+                            text.push_str(&self.text[self.pos..self.pos + close]);
+                            self.pos += close + 1;
+                        }
+                        None => {
+                            self.error("E0002", at, at + 1, "unterminated `'` in a command");
+                            self.pos = self.end;
+                        }
+                    }
+                }
+                '"' => {
+                    word_start.get_or_insert(at);
+                    self.pos += 1;
+                    self.command_quoted(at, &mut parts, &mut text);
+                }
+                '{' if self.peek_at(1) == Some('{') => {
+                    word_start.get_or_insert(at);
+                    text.push('{');
+                    self.pos += 2;
+                }
+                '}' if self.peek_at(1) == Some('}') => {
+                    word_start.get_or_insert(at);
+                    text.push('}');
+                    self.pos += 2;
+                }
+                '{' => {
+                    self.pos += 1;
+                    let Some(close) = self.skip_interpolation(true) else {
+                        self.error("E0003", at, at + 1, "unterminated `{` in a command");
+                        self.pos = self.end;
+                        continue;
+                    };
+                    let inner = &self.text[at + 1..close];
+                    if inner.trim().is_empty() {
+                        refuse(
+                            self,
+                            at,
+                            close + 1,
+                            "an empty `{}` in a command; braces as text are written twice: `{{}}`".into(),
+                        );
+                    } else if let Some(rest) = inner.trim_start().strip_prefix("...") {
+                        // `{...values}`: a word of its own.
+                        let offset = at + 1 + (inner.len() - rest.len());
+                        if word_start.is_some()
+                            || !matches!(self.text[close + 1..].chars().next(), Some(' ' | '\t' | '\n' | '\r' | ')'))
+                        {
+                            refuse(self, at, close + 1, "`{...values}` gives an argument for each element, so it is a word of its own: put spaces around it".into());
+                        }
+                        word_start = Some(at);
+                        spread = Some(self.span(offset, close));
+                        self.pos = close + 1;
+                        end_word(self, &mut parts, &mut text, &mut word_start, &mut spread, &mut pieces);
+                        continue;
+                    } else {
+                        word_start.get_or_insert(at);
+                        if !text.is_empty() {
+                            parts.push(StrPart::Text(std::mem::take(&mut text)));
+                        }
+                        parts.push(match self.format_colon(at + 1, close) {
+                            Some(colon) => StrPart::Expr(self.span(at + 1, colon), Some(self.span(colon + 1, close))),
+                            None => StrPart::Expr(self.span(at + 1, close), None),
+                        });
+                    }
+                    self.pos = close + 1;
+                }
+                '}' => {
+                    refuse(self, at, at + 1, "a `}` in a command without its `{`; write `}}` for the brace".into());
+                    self.pos += 1;
+                }
+                '|' if self.peek_at(1) == Some('|') => {
+                    refuse(self, at, at + 2, "`||` runs a command when another fails, which a shell does: run each one and decide in Tondo, or use `process.shell` for a line a shell must run".into());
+                    self.pos += 2;
+                }
+                '|' => {
+                    end_word(self, &mut parts, &mut text, &mut word_start, &mut spread, &mut pieces);
+                    self.pos += 1;
+                    pieces.push(CommandPiece::Pipe(self.span(at, self.pos)));
+                }
+                '&' => {
+                    let (length, what) = match self.peek_at(1) {
+                        Some('&') => (
+                            2,
+                            "`&&` runs a command when another succeeds, which a shell does: write `.run()?` for each",
+                        ),
+                        Some('>') => (2, "`&>` sends both streams to a file: write `> file 2>&1`"),
+                        _ => (1, "`&` runs a command in the background, which a shell does: `start()` it"),
+                    };
+                    refuse(self, at, at + length, what.into());
+                    self.pos += length;
+                }
+                ';' => {
+                    refuse(
+                        self,
+                        at,
+                        at + 1,
+                        "`;` runs commands one after another, which a shell does: write a `$( )` for each".into(),
+                    );
+                    self.pos += 1;
+                }
+                '`' => {
+                    // Up to the closing one, refused as one.
+                    let length = self.text[at + 1..self.end].find('`').map_or(1, |close| close + 2);
+                    refuse(self, at, at + length, "backquotes run a command inside another, which a shell does: run it first and give its `text()` as `{value}`".into());
+                    self.pos += length;
+                }
+                '$' => {
+                    let name: String =
+                        self.text[at + 1..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+                    let (length, message) = match self.peek_at(1) {
+                        // Up to its `)`, refused as one.
+                        Some('(') => (
+                            self.text[at..self.end].find(')').map_or(2, |close| close + 1),
+                            "a `$( )` inside another runs a command for its text, which a shell does: run it first and give its `text()` as `{value}`".to_string(),
+                        ),
+                        Some('{') => (2, "`${...}` reads a variable of the shell, which runs none: write `{env.get(\"NAME\") ?? \"\"}`".to_string()),
+                        _ if !name.is_empty() => (1 + name.len(), format!("`${name}` reads a variable of the shell, which runs none: write `{{env.get(\"{name}\") ?? \"\"}}`, or quote the `$`")),
+                        _ => (1, "a `$` alone in a command is quoted: `'$'`".to_string()),
+                    };
+                    refuse(self, at, at + length, message);
+                    self.pos += length;
+                }
+                '*' | '?' => {
+                    refuse(
+                        self,
+                        at,
+                        at + 1,
+                        format!(
+                            "`{c}` matches files in a shell, which runs none: write `{{...fs.glob(\"*.md\")?}}`, or quote it when the character is meant: `'{c}'`"
+                        ),
+                    );
+                    self.pos += 1;
+                }
+                '~' if word_start.is_none() => {
+                    refuse(self, at, at + 1, "a leading `~` is the home directory in a shell, which runs none: write `{env.homeDirectory() ?? \"\"}`, or quote it: `'~'`".into());
+                    self.pos += 1;
+                }
+                '\\' => {
+                    refuse(self, at, at + 1, "a backslash outside quotes: quote the word, as `'a b'`".into());
+                    self.pos += 1;
+                }
+                '(' => {
+                    refuse(self, at, at + 1, "a `(` inside a command is quoted: `'('`".into());
+                    self.pos += 1;
+                }
+                '<' => {
+                    end_word(self, &mut parts, &mut text, &mut word_start, &mut spread, &mut pieces);
+                    if self.rest().starts_with("<<") || self.rest().starts_with("<(") {
+                        let length = if self.rest().starts_with("<<<") { 3 } else { 2 };
+                        refuse(self, at, at + length, "this redirection is a shell's: give the text with `stdin(process.Input.Text(text))`, or run the inner command first".into());
+                        self.pos += length;
+                    } else {
+                        self.pos += 1;
+                        pieces.push(CommandPiece::Redirect(Redirect::In, self.span(at, self.pos)));
+                    }
+                }
+                '>' => {
+                    end_word(self, &mut parts, &mut text, &mut word_start, &mut spread, &mut pieces);
+                    let (redirect, length) =
+                        if self.peek_at(1) == Some('>') { (Redirect::Append, 2) } else { (Redirect::Out, 1) };
+                    self.pos += length;
+                    pieces.push(CommandPiece::Redirect(redirect, self.span(at, self.pos)));
+                }
+                '2' if word_start.is_none() && self.peek_at(1) == Some('>') => {
+                    let (redirect, length) = if self.rest().starts_with("2>&1") {
+                        (Redirect::ErrorsToOutput, 4)
+                    } else if self.rest().starts_with("2>>") {
+                        (Redirect::ErrorsAppend, 3)
+                    } else {
+                        (Redirect::Errors, 2)
+                    };
+                    self.pos += length;
+                    pieces.push(CommandPiece::Redirect(redirect, self.span(at, self.pos)));
+                }
+                c => {
+                    word_start.get_or_insert(at);
+                    text.push(c);
+                    self.pos += c.len_utf8();
+                }
+            }
+        }
+        if pieces.is_empty() {
+            self.error(
+                "E0008",
+                start,
+                self.pos,
+                "`$()` runs nothing: write the program and its arguments, as `$(git status)`",
+            );
+        }
+        self.push(Tok::Command(pieces), start);
+    }
+
+    /// The rest of a `"..."` inside a command, after its quote: a string's
+    /// escapes and interpolations, into the word being read.
+    fn command_quoted(&mut self, open: usize, parts: &mut Vec<StrPart>, text: &mut String) {
+        loop {
+            let Some(c) = self.peek() else {
+                self.error("E0002", open, open + 1, "unterminated `\"` in a command");
+                return;
+            };
+            let at = self.pos;
+            match c {
+                '"' => {
+                    self.pos += 1;
+                    return;
+                }
+                '\\' => text.extend(self.escape('"')),
+                '{' if self.peek_at(1) == Some('{') => {
+                    text.push('{');
+                    self.pos += 2;
+                }
+                '}' if self.peek_at(1) == Some('}') => {
+                    text.push('}');
+                    self.pos += 2;
+                }
+                '{' => {
+                    self.pos += 1;
+                    let Some(close) = self.skip_interpolation(true) else {
+                        self.error("E0003", at, at + 1, "unterminated interpolation");
+                        self.pos = self.end;
+                        return;
+                    };
+                    if !text.is_empty() {
+                        parts.push(StrPart::Text(std::mem::take(text)));
+                    }
+                    parts.push(match self.format_colon(at + 1, close) {
+                        Some(colon) => StrPart::Expr(self.span(at + 1, colon), Some(self.span(colon + 1, close))),
+                        None => StrPart::Expr(self.span(at + 1, close), None),
+                    });
+                    self.pos = close + 1;
+                }
+                '}' => {
+                    self.error("E0003", at, at + 1, "unmatched `}` in string literal; write `}}`");
+                    self.pos += 1;
+                }
+                c => {
+                    text.push(c);
+                    self.pos += c.len_utf8();
+                }
+            }
+        }
     }
 }
 

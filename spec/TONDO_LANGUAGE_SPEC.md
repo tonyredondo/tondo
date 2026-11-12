@@ -8116,6 +8116,53 @@ fn command(program: String, arguments: ...String): Command
 
 Construir un comando no lo ejecuta. `Command` y `Pipeline` son siempre planes inertes `Copy + Send + Share`, por lo que su configuración persistente solo puede contener datos copiables, compartibles y reutilizables, entre ellos los streams compartidos de `std.io`; las pipes y los procesos que crea una ejecución pertenecen a esa ejecución o a su handle. No hay parsing de shell, interpolación textual, globbing ni expansión de variables implícita. Cada argumento conserva exactamente los caracteres del `String` recibido.
 
+Un comando conocido al escribir el programa se escribe como lo escribiría una
+shell, `$( )`, y da el mismo valor: un `Command` con una etapa y un `Pipeline`
+con varias, que se unen con `|`:
+
+~~~tondo
+let branch = $(git branch --show-current).text()?
+$(ls -S {dir} | grep {pattern} | head -5 > {report}).run()?
+~~~
+
+`$(` lo abre y el primer `)` fuera de comillas y de `{ }` lo cierra; un
+paréntesis dentro va entre comillas, y `$()` es `E0008`. Es una primaria
+(23.20) que no necesita `import`. El compilador lo divide al compilar y ninguna
+shell lo ejecuta:
+
+| | Ejemplo | Significado |
+| --- | --- | --- |
+| Una palabra | `-la`, `--date=short` | un argumento |
+| `'...'` | `'*.to'` | texto tal cual, sin mirar dentro, tampoco `{ }` |
+| `"..."` | `"fix: {title}"` | un argumento, con la interpolación y los escapes de un string |
+| `{valor}` | `{dir}`, `--out={path}` | un argumento o parte de uno, que nunca se vuelve a dividir |
+| `{...valores}` | `{...files}` | un argumento por cada elemento |
+| `\|` | `sort \| uniq -c` | lo que escribe una etapa es lo que lee la siguiente |
+| `<`, `>`, `>>` | `< {input}`, `>> out.txt` | la primera etapa lee un archivo; la última escribe uno, o añade a él |
+| `2>`, `2>>`, `2>&1` | `2> errors.log` | los errores de una etapa, a un archivo o a donde va su salida |
+| `NOMBRE=valor` primero | `LANG=C sort` | una variable del entorno de esa etapa |
+
+Una palabra es lo que hay entre espacios, y sus partes —texto, `'...'`, `"..."`
+y `{valor}`— forman un argumento cuando nada las separa: `--out={path}`,
+`"{dir}"/src`. Un salto de línea dentro de los paréntesis es un espacio. `{{` y
+`}}` son llaves, como en un string. Un `{valor}` se muestra con su `Display` y
+admite los formatos de una interpolación (`{n:03}`); un array, un set, una
+opción o un resultado ahí es `E1102`, que dice que se esparza o que se tome su
+valor. `{...valores}`, de un `Array[String]`, es una palabra propia. La primera
+palabra de una etapa es su programa, que puede ser un `{valor}`, y las palabras
+`NOMBRE=valor` antes de él fijan su entorno (`Command.env`). Las redirecciones
+son las de `std.process`, que piden su `import`: `<` es `Input.File`, `>`
+`Output.File`, `>>` `Output.Append`, `2>` y `2>>` la salida de errores de la
+etapa, y `2>&1` `mergeStderr()`; `<` es de la primera etapa, y `>` y `>>` de la
+última.
+
+Lo que haría una shell es `E0008`, que dice qué escribir en su lugar: `$NOMBRE`
+(`{env.get("NOMBRE") ?? ""}`), `*`, `?` y un `~` inicial fuera de comillas
+(`{...fs.glob("*.md")?}`, `{env.homeDirectory() ?? ""}`, o comillas cuando se
+quiere el carácter), `&&`, `||`, `;`, `&`, las comillas invertidas, un `$( )`
+dentro de otro, una barra invertida fuera de comillas, `<<`, `<<<`, `&>` y
+`<( )`. `tondo fmt` deja el texto de un literal como está escrito.
+
 La ejecución mediante shell requiere una API nombrada y explícita:
 
 ~~~tondo
@@ -8149,10 +8196,13 @@ Un pipeline comienza a ejecutar únicamente mediante una operación de ejecució
 explícita de `std.process` (19.2 de la librería estándar):
 
 - `start()`: inicia y devuelve un handle de proceso.
-- `run()`: conecta los streams configurados, espera y devuelve el estado.
+- `run()`: conecta los streams configurados, espera, y falla con
+  `ProcessError.Failed` cuando una etapa no termina con éxito.
 - `status()`: espera sin entrada ni salida y devuelve el estado.
 - `output()`: espera y captura stdout y stderr.
 - `check()`: como `output()`, y convierte un estado sin éxito en error.
+- `text()` y `lines()`: como `check()`, y su stdout como texto sin los saltos
+  de línea del final, o por líneas.
 
 Las operaciones que esperan I/O son funciones ordinarias que esperan sin marcas
 (11.10): detienen la tarea, no el thread.
@@ -8173,7 +8223,7 @@ Esta separación preserva fidelidad binaria, evita elegir codecs implícitos y m
 
 ### 20.8 Inicio, salida y errores de procesos
 
-No poder crear un proceso, perder un stream o fallar al esperar son errores recuperables de la API de proceso. Un código de salida no cero es inicialmente un valor `ExitStatus`, no un pánico ni necesariamente un error Tondo.
+No poder crear un proceso, perder un stream o fallar al esperar son errores recuperables de la API de proceso. Con `status()`, `output()` y `start()`, un código de salida no cero es un valor `ExitStatus`, no un pánico ni un error Tondo; `run()`, `check()`, `text()` y `lines()` lo convierten en `ProcessError.Failed`.
 
 `check()` devuelve `ProcessError.Failed` con el estado y la salida cuando una
 etapa no termina con éxito. En un pipeline, el resultado conserva el estado de
@@ -8934,6 +8984,7 @@ oculten un diagnóstico independiente.
 | `E0005` | `invalid-operator-chain` | Cadena de operadores prohibida, incluida una comparación encadenada. |
 | `E0006` | `invalid-source-form` | Mezcla o selección inválida de forma módulo, script o snippet. |
 | `E0007` | `invalid-allow` | Un comentario `// tondo: allow` sin códigos de aviso o sin razón. |
+| `E0008` | `invalid-command` | Un literal de comando `$( )` con lo que haría una shell, que no corre: una variable, un patrón de archivos, `&&`, `;`, o una redirección o una etapa fuera de su sitio. |
 
 #### Nombres y módulos
 
@@ -10366,7 +10417,17 @@ primary_expression
                 | unsafe_expression
                 | recover_expression
                 | within_expression
+                | command_literal
                 | block ;
+
+(* `$( )` (20.5): sus palabras se dividen al compilar. Un salto de línea dentro
+   es un espacio; `{`, `}` y las comillas siguen las reglas de 20.5. *)
+command_literal = "$(", { command_piece }, ")" ;
+command_piece   = command_word | "|" | "<" | ">" | ">>" | "2>" | "2>>" | "2>&1" ;
+command_word    = command_part, { command_part } ;
+command_part    = command_text | "'", { ? cualquier carácter salvo "'" ? }, "'"
+                | string_literal | "{", expression, [ ":", format_spec ], "}"
+                | "{", "...", expression, "}" ;
 
 unsafe_expression = "unsafe", block ;
 

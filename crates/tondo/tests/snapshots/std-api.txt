@@ -2491,15 +2491,17 @@ pub fn ProcessOutput.text(self): String ! ProcessError
 pub fn check(self): ProcessOutput ! ProcessError
 pub fn command(program: String, arguments: ...String): Command
 pub fn exit(code: Int): Never
+pub fn lines(self): Array[String] ! ProcessError
 pub fn output(self): ProcessOutput ! ProcessError
 pub fn quoted(words: Array[String]): String
-pub fn run(self): ExitStatus ! ProcessError
+pub fn run(self): !ProcessError
 pub fn shell(text: String): Command
 pub fn signal(pid: Int, sent: Signal): !ProcessError
 pub fn signals(wanted: ...Signal): Receiver[Signal]
 pub fn splitWords(text: String): Array[String]?
 pub fn start(self): Process ! ProcessError
 pub fn status(self): ExitStatus ! ProcessError
+pub fn text(self): String ! ProcessError
 pub fn which(name: String): String?
 pub type ExitStatus = {
     code: Int

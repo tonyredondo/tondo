@@ -665,8 +665,10 @@ impl Rt {
                 ProcessFn::Exit => ("tondo_rt_process_exit", &[I64], &[]),
                 ProcessFn::Pipe => ("tondo_rt_process_pipe", &[I64, I64], &[I64]),
                 ProcessFn::Configure(_) => ("tondo_rt_process_configure", &[I64, I64, I64, I64], &[I64]),
-                ProcessFn::Run | ProcessFn::Status => ("tondo_rt_process_run", &[I64, I8, I64], &[I64]),
-                ProcessFn::Output | ProcessFn::Check => ("tondo_rt_process_output", &[I64, I8, I64, I64, I64], &[I64]),
+                ProcessFn::Status => ("tondo_rt_process_run", &[I64, I8, I64], &[I64]),
+                ProcessFn::Run | ProcessFn::Output | ProcessFn::Check | ProcessFn::ReadText | ProcessFn::ReadLines => {
+                    ("tondo_rt_process_output", &[I64, I8, I64, I64, I64], &[I64])
+                }
                 ProcessFn::Start => ("tondo_rt_process_start", &[I64, I64], &[I64]),
                 ProcessFn::Exec => ("tondo_rt_process_exec", &[I64, I64], &[I64]),
                 ProcessFn::Text => ("tondo_rt_process_text", &[I64, I64], &[I64]),

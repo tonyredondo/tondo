@@ -15,6 +15,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "invalid-allow",
         "A `// tondo: allow` comment without the codes of warnings or without why: `// tondo: allow W1004: the name C gives it`.",
     ),
+    (
+        "E0008",
+        "invalid-command",
+        "A command literal, `$( )`, holds what a shell does and no shell runs it: a variable, a pattern of files, `&&`, `;`, or a redirection or stage out of place.",
+    ),
     ("E1001", "unknown-name", "No visible declaration has the name."),
     ("E1002", "duplicate-name", "Two declarations take the same name in the same namespace and scope."),
     ("E1003", "shadowing", "A declaration would hide a binding that is still visible."),

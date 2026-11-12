@@ -625,6 +625,9 @@ pub enum ExprKind {
     Bool(bool),
     Char(char),
     Str(Vec<StrSegment>),
+    /// `$(sort | uniq -c > {path})` (20.5): its stages, of which the checker
+    /// makes a `Command`, or a `Pipeline` when there are several.
+    Command(Vec<CommandStage>),
     Unit,
     /// `a.b.c` before resolution decides between module members and fields.
     Path(Vec<Ident>),
@@ -741,6 +744,25 @@ pub struct FieldInit {
     pub name: Ident,
     /// `None` for the shorthand `name`, which reads the binding `name`.
     pub value: Option<Expr>,
+}
+
+/// A stage of a command literal (20.5): the variables of its environment,
+/// its program and arguments, and its redirections, each to the file a
+/// word names or, for `2>&1`, to its output.
+#[derive(Clone, Debug)]
+pub struct CommandStage {
+    pub env: Vec<(Ident, Expr)>,
+    pub words: Vec<CommandWord>,
+    pub redirects: Vec<(crate::lexer::Redirect, Option<Expr>, Span)>,
+    pub span: Span,
+}
+
+/// A word of a command literal: one argument, a string's parts joined; or
+/// `{...values}`, an argument for each element.
+#[derive(Clone, Debug)]
+pub enum CommandWord {
+    One(Expr),
+    Each(Expr),
 }
 
 #[derive(Clone, Debug)]

@@ -5,7 +5,8 @@ import std.time
 
 fn slow(): Int {
     match process.command("sleep", "5").run() {
-        ok(status) => status.code
+        ok(_) => 0
+        err(process.ProcessError.Failed(status, _)) => status.code
         err(_) => -1
     }
 }
@@ -27,15 +28,15 @@ fn main(): !process.ProcessError {
     console.println("pipefail with sigpipe: {status.success}")
     let failing = (process.command("false") | process.command("true")).status()?
     console.println("pipefail: {failing.success} {failing.code}")
-    _ = process.command("echo", "line one").stdout(process.Output.File("proc_out.txt")).run()?
-    _ = process.command("echo", "line two").stdout(process.Output.Append("proc_out.txt")).run()?
+    process.command("echo", "line one").stdout(process.Output.File("proc_out.txt")).run()?
+    process.command("echo", "line two").stdout(process.Output.Append("proc_out.txt")).run()?
     let counted = process.command("wc", "-l").stdin(process.Input.File("proc_out.txt")).output()?
     // macOS pads the count.
     console.println("lines: {counted.text()?.trim()}")
     let buffer = io.Buffer()
     let previous = console.stdout()
     console.setOutput(buffer.writer())
-    _ = process.command("echo", "child inherits the redirected console").run()?
+    process.command("echo", "child inherits the redirected console").run()?
     console.setOutput(previous)
     console.println("captured {buffer.length()} bytes")
     var dropped = process.command("sleep", "0.2").start()?

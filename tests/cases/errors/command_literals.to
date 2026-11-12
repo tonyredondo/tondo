@@ -1,0 +1,43 @@
+// What a shell does and a command literal does not, as no shell runs it,
+// is an error that says what to write instead.
+
+import std.console
+import std.process
+
+fn main(): !process.ProcessError {
+    let files = ["a"]
+    _ = $(echo $HOME).status()?
+    _ = $(ls *.to).status()?
+    _ = $(ls ~/notes).status()?
+    _ = $(make && make install).status()?
+    _ = $(make || true).status()?
+    _ = $(a; b).status()?
+    _ = $(sleep 1 &).status()?
+    _ = $(echo `date`).status()?
+    _ = $(echo $(date)).status()?
+    _ = $(echo a\ b).status()?
+    _ = $(cat <<< text).status()?
+    _ = $(echo --x={...files}).status()?
+    _ = $(sort > out.txt | head).status()?
+    _ = $(LANG=C).status()?
+    _ = $(echo >).status()?
+    _ = $().status()?
+    console.println("unreached")
+}
+
+// expect-error: E0008 `$HOME` reads a variable of the shell, which runs none: write `{env.get("HOME") ?? ""}`, or quote the `$`
+// expect-error: E0008 `*` matches files in a shell, which runs none: write `{...fs.glob("*.md")?}`, or quote it when the character is meant: `'*'`
+// expect-error: E0008 a leading `~` is the home directory in a shell, which runs none: write `{env.homeDirectory() ?? ""}`, or quote it: `'~'`
+// expect-error: E0008 `&&` runs a command when another succeeds, which a shell does: write `.run()?` for each
+// expect-error: E0008 `||` runs a command when another fails, which a shell does: run each one and decide in Tondo, or use `process.shell` for a line a shell must run
+// expect-error: E0008 `;` runs commands one after another, which a shell does: write a `$( )` for each
+// expect-error: E0008 `&` runs a command in the background, which a shell does: `start()` it
+// expect-error: E0008 backquotes run a command inside another, which a shell does: run it first and give its `text()` as `{value}`
+// expect-error: E0008 a `$( )` inside another runs a command for its text, which a shell does: run it first and give its `text()` as `{value}`
+// expect-error: E0008 a backslash outside quotes: quote the word, as `'a b'`
+// expect-error: E0008 this redirection is a shell's: give the text with `stdin(process.Input.Text(text))`, or run the inner command first
+// expect-error: E0008 `{...values}` gives an argument for each element, so it is a word of its own: put spaces around it
+// expect-error: E0008 `>` and `>>` take the last stage's output; the others' goes to the stage after
+// expect-error: E0008 a stage of only `NAME=value` sets the environment of no program: write the program after them
+// expect-error: E0008 a redirection names the file after it, as `> {path}`
+// expect-error: E0008 `$()` runs nothing: write the program and its arguments, as `$(git status)`

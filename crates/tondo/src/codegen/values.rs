@@ -412,15 +412,29 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.status_call(rt, args, place);
                 return None;
             }
-            ProcessFn::Run | ProcessFn::Status | ProcessFn::Wait | ProcessFn::Cancel => {
+            ProcessFn::Status | ProcessFn::Wait | ProcessFn::Cancel => {
                 let on = matches!(function, ProcessFn::Status | ProcessFn::Cancel);
                 values.push(flag(self, on));
             }
-            ProcessFn::Output | ProcessFn::Check | ProcessFn::Collect(_) => {
-                let check = matches!(function, ProcessFn::Check | ProcessFn::Collect(true));
-                values.push(flag(self, check));
+            ProcessFn::Run
+            | ProcessFn::Output
+            | ProcessFn::Check
+            | ProcessFn::ReadText
+            | ProcessFn::ReadLines
+            | ProcessFn::Collect(_) => {
+                // `run` fails as `check` does, without capturing; `text` and
+                // `lines` are what `check` captured.
+                let check = match function {
+                    ProcessFn::Run => 2,
+                    ProcessFn::ReadText => 3,
+                    ProcessFn::ReadLines => 4,
+                    ProcessFn::Check | ProcessFn::Collect(true) => 1,
+                    _ => 0,
+                };
+                values.push(self.e.fb.ins().iconst(types::I8, check));
                 // Where the runtime writes each `ExitStatus` of the array.
-                let TyKind::Result(result, _) = *self.e.cg.types().kind(ty) else { unreachable!("a result") };
+                let TyKind::Result(_, error) = *self.e.cg.types().kind(ty) else { unreachable!("a result") };
+                let result = self.e.cg.types().variants(error).unwrap()[3][1];
                 let statuses = self.e.cg.types().components(result).unwrap()[3];
                 let TyKind::Array(status) = *self.e.cg.types().kind(statuses) else { unreachable!("an array") };
                 let size = self.e.fb.ins().iconst(types::I64, self.e.cg.layout(status).size as i64);
@@ -459,7 +473,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let variant = self.e.fb.ins().ireduce(types::I8, variant);
         self.e.fb.ins().store(flags(), variant, value, 0);
         let output_ty = self.e.cg.types().variants(error).unwrap()[FAILED as usize - 1][1];
-        if success == output_ty {
+        // `check` fails with the output, and so do `run`, `text` and `lines`.
+        let checked = matches!(rt, Rt::Process(ProcessFn::Run | ProcessFn::ReadText | ProcessFn::ReadLines));
+        if success == output_ty || checked {
             let (failure, other) = (self.e.fb.create_block(), self.e.fb.create_block());
             let is_failure = self.e.fb.ins().icmp_imm_s(IntCC::Equal, status, FAILED);
             self.e.fb.ins().brif(is_failure, failure, &[], other, &[]);
@@ -484,12 +500,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             self.e.fb.switch_to_block(done);
             return;
         }
-        let ok = match self.e.cg.types().components(success).map(|c| c.len()) {
-            Some(count) => self.record_from_words(success, &words[0..count]),
-            None => Val::Scalar(words[0]),
-        };
-        let slot = self.e.cg.slot(ty, Proj::Variant(OK, 0));
-        self.e.init_component(base, &slot, ok);
+        if success != Ty::UNIT {
+            let ok = match self.e.cg.types().components(success).map(|c| c.len()) {
+                Some(count) => self.record_from_words(success, &words[0..count]),
+                None => Val::Scalar(words[0]),
+            };
+            let slot = self.e.cg.slot(ty, Proj::Variant(OK, 0));
+            self.e.init_component(base, &slot, ok);
+        }
         self.e.fb.ins().jump(done, &[]);
         self.e.fb.switch_to_block(done);
     }

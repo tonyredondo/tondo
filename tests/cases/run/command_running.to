@@ -1,0 +1,52 @@
+// `run()` fails with `ProcessError.Failed`, the status of each stage inside
+// and nothing captured, when a stage ends badly; `text()` and `lines()` are
+// `check()` and what it wrote as text, without the new lines at its end.
+
+import std.console
+import std.process
+
+fn main(): !process.ProcessError {
+    let branch = $(printf "main\n\n").text()?
+    console.println("[{branch}]")
+    console.println(
+        "{$(printf "a\nb\n").lines()?} {$(printf "").lines()?} {$(printf "x").lines()?}",
+    )
+    $(printf "run shows this\n").run()?
+    match $(sh -c 'exit 3').run() {
+        ok(_) => console.println("unexpected")
+        err(process.ProcessError.Failed(status, output)) => console.println(
+            "failed {status.code} {output.statuses.length()} {output.stdout.length()}",
+        )
+        err(error) => console.println("{error}")
+    }
+    match ($(printf "x") | $(sh -c 'cat; exit 2') | $(cat)).run() {
+        err(process.ProcessError.Failed(status, output)) => console.println(
+            "pipeline {status.code} {output.statuses.map((s) { s.code })}",
+        )
+        _ => console.println("unexpected")
+    }
+    match $(sh -c 'printf partial; exit 1').text() {
+        err(process.ProcessError.Failed(status, output)) => console.println(
+            "text failed {status.code} {output.stdout.length()}",
+        )
+        _ => console.println("unexpected")
+    }
+    match $(printf '\377').text() {
+        err(process.ProcessError.InvalidData) => console.println("invalid data")
+        _ => console.println("unexpected")
+    }
+    match $(surely-not-a-program).run() {
+        err(process.ProcessError.NotFound) => console.println("not found")
+        _ => console.println("unexpected")
+    }
+}
+
+// expect-stdout: [main]
+// expect-stdout: [a, b] [] [x]
+// expect-stdout: run shows this
+// expect-stdout: failed 3 1 0
+// expect-stdout: xpipeline 2 [0, 2, 0]
+// expect-stdout: text failed 1 7
+// expect-stdout: invalid data
+// expect-stdout: not found
+// expect-no-replay: what a child writes straight to the terminal is not the program's

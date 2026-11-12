@@ -1011,9 +1011,14 @@ impl Formatter<'_> {
     /// Whether an expression ends in brackets of its own that can hold its
     /// line breaks.
     fn opens_brackets(&self, expr: &Expr) -> bool {
-        // A string of several lines starts on the line of its operator.
-        if let ExprKind::Str(_) = expr.kind {
-            return self.source(expr.span).contains('\n');
+        // A string or a command of several lines starts on the line of its
+        // operator, also when methods follow it.
+        let mut base = expr;
+        while let ExprKind::Try(inner) | ExprKind::Field(inner, _) | ExprKind::Call { callee: inner, .. } = &base.kind {
+            base = inner;
+        }
+        if let ExprKind::Str(_) | ExprKind::Command(_) = base.kind {
+            return self.source(base.span).contains('\n');
         }
         !self.parenthesized(expr)
             && matches!(
@@ -1050,7 +1055,9 @@ impl Formatter<'_> {
             | ExprKind::Float { .. }
             | ExprKind::BigInt(_)
             | ExprKind::Char(_)
-            | ExprKind::Str(_) => text(self.source(expr.span).to_string()),
+            | ExprKind::Str(_)
+            // A command keeps its text as written.
+            | ExprKind::Command(_) => text(self.source(expr.span).to_string()),
             ExprKind::Bool(value) => text(value.to_string()),
             ExprKind::Unit => text("()"),
             ExprKind::None => text("none"),

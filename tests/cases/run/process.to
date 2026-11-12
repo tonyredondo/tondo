@@ -4,8 +4,8 @@ import std.process
 
 fn main(): !process.ProcessError {
     let echo = process.command("echo", "hello", "world")
-    let status = echo.run()?
-    console.println("run: code {status.code} success {status.success}")
+    echo.run()?
+    console.println("run: it ended well")
     let output = echo.output()?
     console.println("output: [{output.text()?}] statuses {output.statuses.length()}")
     let pipeline =
@@ -37,7 +37,7 @@ fn main(): !process.ProcessError {
     let fed = process.command("tr", "a-z", "A-Z").stdin(process.Input.Text("shout\n")).output()?
     console.println("fed: {fed.text()?}")
     let buffer = io.Buffer()
-    _ = process.command("echo", "into buffer").stdout(process.Output.Writer(buffer.writer())).run()?
+    process.command("echo", "into buffer").stdout(process.Output.Writer(buffer.writer())).run()?
     console.println("buffer: {buffer.length()} bytes")
     let env =
         process
@@ -59,7 +59,7 @@ fn main(): !process.ProcessError {
 }
 
 // expect-stdout: hello world
-// expect-stdout: run: code 0 success true
+// expect-stdout: run: it ended well
 // expect-stdout: output: [hello world
 // expect-stdout: ] statuses 1
 // expect-stdout: pipeline: [a

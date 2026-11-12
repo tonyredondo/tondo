@@ -1042,6 +1042,20 @@ impl Linker<'_> {
                     }
                 }
             }
+            ExprKind::Command(stages) => {
+                for stage in stages {
+                    for (_, value) in &mut stage.env {
+                        self.expr(value);
+                    }
+                    for word in &mut stage.words {
+                        let (CommandWord::One(value) | CommandWord::Each(value)) = word;
+                        self.expr(value);
+                    }
+                    for (_, target, _) in &mut stage.redirects {
+                        target.iter_mut().for_each(|target| self.expr(target));
+                    }
+                }
+            }
             ExprKind::Unsafe(block) | ExprKind::Recover(block) => self.block(block),
             ExprKind::Within(limit, block) => {
                 self.expr(limit);

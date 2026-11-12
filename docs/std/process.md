@@ -106,7 +106,7 @@ The scripts [`authors.to`](../../examples/scripts/authors.to) and
 
 `tondo api std.process` shows the same in a terminal.
 
-- [Functions](#functions): [`command`](#command), [`shell`](#shell), [`exit`](#exit), [`signals`](#signals), [`run`](#run), [`status`](#status), [`output`](#output), [`check`](#check), [`start`](#start), [`which`](#which), [`signal`](#signal), [`splitWords`](#splitwords), [`quoted`](#quoted)
+- [Functions](#functions): [`command`](#command), [`shell`](#shell), [`exit`](#exit), [`signals`](#signals), [`run`](#run), [`status`](#status), [`output`](#output), [`check`](#check), [`start`](#start), [`text`](#text), [`lines`](#lines), [`which`](#which), [`signal`](#signal), [`splitWords`](#splitwords), [`quoted`](#quoted)
 - [Signal](#signal-1)
 - [Input](#input)
 - [Output](#output-1)
@@ -165,10 +165,12 @@ ones the channel has not given yet are one.
 #### run
 
 ```tondo
-pub fn run(self): ExitStatus ! ProcessError
+pub fn run(self): !ProcessError
 ```
 
-On a Command or a Pipeline: with the program's streams, waits.
+On a Command or a Pipeline: with the program's streams, waits, and
+fails with `ProcessError.Failed`, the status of each stage inside and
+nothing captured, when a stage does not end well.
 
 #### status
 
@@ -201,6 +203,23 @@ pub fn start(self): Process ! ProcessError
 ```
 
 On a Command or a Pipeline: starts without waiting.
+
+#### text
+
+```tondo
+pub fn text(self): String ! ProcessError
+```
+
+On a Command or a Pipeline: as `check`, its standard output as UTF-8,
+without the new lines at its end.
+
+#### lines
+
+```tondo
+pub fn lines(self): Array[String] ! ProcessError
+```
+
+On a Command or a Pipeline: as `text`, by lines; none for no output.
 
 #### which
 
@@ -327,7 +346,7 @@ error: `2>&1`), or the program through the `Process` (`Pipe`).
 import std.process
 
 // Standard error into a file, and standard output as it is.
-_ = process.command("make").stderr(process.Output.File("build.log")).run()?
+process.command("make").stderr(process.Output.File("build.log")).run()?
 ```
 
 ### ExitStatus

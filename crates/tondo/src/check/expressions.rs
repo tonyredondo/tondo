@@ -517,6 +517,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Int { value, suffix } => self.int_literal(false, *value, *suffix, expected, span),
             ast::ExprKind::Bool(b) => Self::mk(hir::ExprKind::Bool(*b), Ty::BOOL, span),
             ast::ExprKind::Unit => Self::mk(hir::ExprKind::Unit, Ty::UNIT, span),
+            ast::ExprKind::Command(stages) => self.command_literal(cx, stages, span),
             ast::ExprKind::Str(segments) => {
                 match expected.and_then(|ty| self.query_type().filter(|&query| query == ty)) {
                     Some(query) => self.query_literal(cx, segments, query, span),

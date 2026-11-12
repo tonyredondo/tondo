@@ -1,0 +1,46 @@
+// `$( )` writes a command as a shell would, split when the program
+// compiles and run by no shell: a value is one argument whatever it holds,
+// `{...values}` one for each element, `'...'` is text as it is and `"..."`
+// a string; `|` joins stages, and `<`, `>`, `>>`, `2>` and `2>&1` redirect.
+
+import std.console
+import std.process
+
+fn main(): !process.ProcessError {
+    let name = "two words | $HOME 'q'"
+    let files = ["a.txt", "b c.txt"]
+    let shown = $(printf "[%s]" {name} --x={1 + 2} {...files} 'lit {x} *' "q {name}" {{}}).output()?
+    console.println(shown.text()?)
+    let counted = $(printf "b\na\nb\n" | sort | uniq -c).output()?
+    console.print(counted.text()?)
+    let status = $(LANG=C sh -c 'exit 3').status()?
+    console.println("{status.code}")
+    _ = $(printf "first" > command_literals.txt).status()?
+    _ = $(printf " second" >> command_literals.txt).status()?
+    let back = $(cat < command_literals.txt).output()?
+    console.println(back.text()?)
+    let merged = $(sh -c 'echo err >&2' 2>&1).output()?
+    console.print(merged.text()?)
+    _ = $(sh -c 'echo hidden >&2' 2> command_literals.txt).status()?
+    console.print($(cat command_literals.txt).output()?.text()?)
+    let joined = $(printf "c\nb\na\n") | $(sort)
+    console.print(joined.output()?.text()?)
+    let spread = $(
+        printf "%s,"
+        {...files}
+        end
+    ).output()?
+    console.println(spread.text()?)
+}
+
+// expect-stdout: [two words | $HOME 'q'][--x=3][a.txt][b c.txt][lit {x} *][q two words | $HOME 'q'][{}]
+// expect-stdout:       1 a
+// expect-stdout:       2 b
+// expect-stdout: 3
+// expect-stdout: first second
+// expect-stdout: err
+// expect-stdout: hidden
+// expect-stdout: a
+// expect-stdout: b
+// expect-stdout: c
+// expect-stdout: a.txt,b c.txt,end,

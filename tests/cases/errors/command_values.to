@@ -1,0 +1,18 @@
+// A value in a command literal is one argument: a collection is spread
+// with `{...values}`, an option's value is taken first, and a spread is of
+// texts.
+
+import std.process
+
+fn main(): !process.ProcessError {
+    let files = ["a"]
+    let counts = [1, 2]
+    let maybe: String? = none
+    _ = $(echo {files}).status()?
+    _ = $(echo {maybe}).status()?
+    _ = $(echo {...counts}).status()?
+}
+
+// expect-error: E1102 this value is several: write `{...values}`, a word of its own, for an argument each
+// expect-error: E1102 this value may have nothing: take what it holds first, as `{value ?? ""}` or `{value?}`
+// expect-error: E1102 `{...values}` gives an argument for each element of an `Array[String]`, and this is `Array[Int]`: write `{...values.map((value) { "{value}" })}`

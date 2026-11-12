@@ -305,6 +305,127 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// A command literal (20.5): a `Command` for one stage and a `Pipeline`
+    /// of several, each stage the command of its program and arguments,
+    /// with the variables and redirections it names.
+    pub(super) fn command_literal(&mut self, cx: &mut FnCx, stages: &[ast::CommandStage], span: Span) -> hir::Expr {
+        use crate::lexer::Redirect;
+        use hir::ProcessFn as P;
+        let command = self.types.handle(Handle::Command, Ty::UNIT);
+        let pipeline = self.types.handle(Handle::Pipeline, Ty::UNIT);
+        let strings = self.types.intern(TyKind::Array(Ty::STRING));
+        let call = |function: P, args: Vec<hir::Expr>, ty: Ty, span: Span| {
+            Self::mk(hir::ExprKind::Call(Callee::Std(StdFn::Process(function)), Vec::new(), args), ty, span)
+        };
+        // Arrays of arguments, one after the other.
+        let joined = |front: Option<hir::Expr>, next: hir::Expr| match front {
+            None => next,
+            Some(front) => {
+                let span = front.span.to(next.span);
+                Self::mk(hir::ExprKind::ArrayOp(hir::ArrayOp::Concat, vec![front, next]), strings, span)
+            }
+        };
+        let mut whole: Option<hir::Expr> = None;
+        for stage in stages {
+            let mut words = stage.words.iter();
+            let Some(ast::CommandWord::One(program)) = words.next() else { return Self::error_expr(span) };
+            let program = self.command_word(cx, program);
+            let (mut arguments, mut single) = (None, Vec::new());
+            for word in words {
+                match word {
+                    ast::CommandWord::One(word) => single.push(self.command_word(cx, word)),
+                    ast::CommandWord::Each(values) => {
+                        if !single.is_empty() {
+                            let span = values.span;
+                            let array = Self::mk(hir::ExprKind::Array(std::mem::take(&mut single)), strings, span);
+                            arguments = Some(joined(arguments, array));
+                        }
+                        let values = self.expr(cx, values, Some(strings));
+                        if values.ty != strings && !self.types.has_error(values.ty) {
+                            let message = format!(
+                                "`{{...values}}` gives an argument for each element of an `Array[String]`, and this is {}: write `{{...values.map((value) {{ \"{{value}}\" }})}}`",
+                                self.display(values.ty)
+                            );
+                            self.diags.error("E1102", values.span, message);
+                        }
+                        arguments = Some(joined(arguments, values));
+                    }
+                }
+            }
+            if !single.is_empty() || arguments.is_none() {
+                arguments = Some(joined(arguments, Self::mk(hir::ExprKind::Array(single), strings, stage.span)));
+            }
+            let arguments = arguments.expect("an array of arguments");
+            let mut value = call(P::Command, vec![program, arguments], command, stage.span);
+            for (name, word) in &stage.env {
+                let name = Self::mk(hir::ExprKind::Str(name.name.clone()), Ty::STRING, name.span);
+                let word = self.command_word(cx, word);
+                value = call(P::Configure(1), vec![value, name, word], command, stage.span);
+            }
+            for (redirect, target, at) in &stage.redirects {
+                if *redirect == Redirect::ErrorsToOutput {
+                    value = call(P::Configure(7), vec![value], command, *at);
+                    continue;
+                }
+                let Some(types) = self.process else {
+                    let message =
+                        "a redirection of a command names a `process.Input` or `process.Output`: `import std.process`";
+                    self.diags.error("E1001", *at, message);
+                    continue;
+                };
+                let Some(target) = target else { continue };
+                let path = self.command_word(cx, target);
+                let (setting, ty, variant) = match redirect {
+                    Redirect::In => (4, types.input, "File"),
+                    Redirect::Out => (5, types.output, "File"),
+                    Redirect::Append => (5, types.output, "Append"),
+                    Redirect::Errors => (6, types.output, "File"),
+                    _ => (6, types.output, "Append"),
+                };
+                let index = match self.types.kind(ty) {
+                    TyKind::Adt(id) => match &self.types.adt(*id).kind {
+                        AdtKind::Enum(variants) => variants.iter().position(|v| v.name == variant),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some(index) = index else { continue };
+                let destination = Self::mk(hir::ExprKind::Variant(index as u32, vec![(0, path)]), ty, *at);
+                value = call(P::Configure(setting), vec![value, destination], command, *at);
+            }
+            whole = Some(match whole {
+                None => value,
+                Some(left) => call(P::Pipe, vec![left, value], pipeline, span),
+            });
+        }
+        let mut whole = whole.unwrap_or_else(|| Self::error_expr(span));
+        whole.span = span;
+        whole
+    }
+
+    /// A word of a command literal: one argument, whose values show with
+    /// their `Display`; a collection or an option there is an error that
+    /// says to spread it or to take its value.
+    fn command_word(&mut self, cx: &mut FnCx, word: &ast::Expr) -> hir::Expr {
+        let value = self.expr(cx, word, Some(Ty::STRING));
+        if let hir::ExprKind::Interpolate(segments) = &value.kind {
+            for segment in segments {
+                let hir::Segment::Value(part) = segment else { continue };
+                let message = match self.types.kind(part.ty) {
+                    TyKind::Array(_) | TyKind::Set(_) | TyKind::Deque(_) => {
+                        "this value is several: write `{...values}`, a word of its own, for an argument each"
+                    }
+                    TyKind::Option(_) | TyKind::Result(..) => {
+                        "this value may have nothing: take what it holds first, as `{value ?? \"\"}` or `{value?}`"
+                    }
+                    _ => continue,
+                };
+                self.diags.error("E1102", part.span, message);
+            }
+        }
+        value
+    }
+
     /// A method of a `Command`, a `Pipeline` or a `process.Process` (19.2).
     pub(super) fn process_method(
         &mut self,
@@ -345,7 +466,12 @@ impl<'a> Checker<'a> {
             }
             (Handle::Command, "invokedAs") => (P::Configure(10), vec![s], ty),
             (Handle::Command, "exec") => (P::Exec, vec![], self.types.intern(TyKind::Result(Ty::NEVER, types.error))),
-            (_, "run") if plan => (P::Run, vec![], failing(self, types.status)),
+            (_, "run") if plan => (P::Run, vec![], failing(self, Ty::UNIT)),
+            (_, "text") if plan => (P::ReadText, vec![], failing(self, Ty::STRING)),
+            (_, "lines") if plan => {
+                let lines = self.types.intern(TyKind::Array(Ty::STRING));
+                (P::ReadLines, vec![], failing(self, lines))
+            }
             (_, "status") if plan => (P::Status, vec![], failing(self, types.status)),
             (_, "output") if plan => (P::Output, vec![], failing(self, types.result)),
             (_, "check") if plan => (P::Check, vec![], failing(self, types.result)),

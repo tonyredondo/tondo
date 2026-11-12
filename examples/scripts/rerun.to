@@ -23,12 +23,17 @@ if command.isEmpty() {
 
 fn once(command: Array[String]) {
     let started = time.now()
-    match process.command(command[0], ...command[1:]).run() {
-        ok(status) => console.println(
-            "--- {command.join(" ")}: exit {status.code} in {started.elapsed().milliseconds()} ms",
-        )
-        err(error) => console.println("--- {command.join(" ")} did not run: {error}")
+    let ended = match process.command(command[0], ...command[1:]).run() {
+        ok(_) => 0
+        err(process.ProcessError.Failed(status, _)) => status.code
+        err(error) => {
+            console.println("--- {command.join(" ")} did not run: {error}")
+            return
+        }
     }
+    console.println(
+        "--- {command.join(" ")}: exit {ended} in {started.elapsed().milliseconds()} ms",
+    )
 }
 
 once(command)
