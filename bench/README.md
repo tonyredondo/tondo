@@ -30,56 +30,57 @@ and server negotiate them, with the certificate in `tondo/src/tls`, made
 for these benchmarks alone.
 
 The tables were measured on an AMD Ryzen 9 5950X, Linux, with Go 1.27.
-Now, on 2026-11-12 at 17eb3213:
+Now, on 2026-11-12 at ab5eac89:
 
 | Benchmark | Tondo | Go | Tondo/Go | Allocs/op Tondo | Allocs/op Go | Ins/op Tondo | Ins/op Go | Cycles/op Tondo | Cycles/op Go |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| runtime/select 1000 | 157.32 µs | 147.09 µs | 1.07× ⚠ | 4 | 4 | 1.67M | 2.10M | 689.9k | 731.7k |
-| tasks/spawn 1000 | 178.11 µs | 173.23 µs | 1.03× ⚠ | 1954 | 2002 | 2.27M | 2.31M | 1.40M | 1.63M |
-| loops/collatz 10000 | 876.74 µs | 856.23 µs | 1.02× ⚠ | 0 | 0 | 15.36M | 8.86M | 4.22M | 4.13M |
-| floats/sqrt 100000 | 180.19 µs | 176.18 µs | 1.02× ⚠ | 0 | 0 | 725.0k | 700.0k | 889.2k | 862.6k |
-| net/tls echo 1x1000 | 13.11 ms | 12.91 ms | 1.02× ⚠ | 7000 | 3745 | 18.66M | 14.17M | 14.62M | 11.37M |
-| net/echo 1x1000 | 11.48 ms | 11.67 ms | 0.98× | 3000 | 3744 | 10.60M | 7.13M | 9.02M | 7.23M |
-| calls/closure 1000 | 205.7 ns | 210.8 ns | 0.98× | 0 | 0 | 3.3k | 5.0k | 1.0k | 1.0k |
-| runtime/mutex 4x1000 | 20.84 µs | 21.45 µs | 0.97× | 6 | 6 | 408.9k | 119.2k | 95.5k | 143.8k |
-| strings/split 100 | 767.8 ns | 790.6 ns | 0.97× | 2 | 1 | 15.9k | 13.8k | 3.6k | 3.9k |
-| floats/mandelbrot 64 | 136.35 µs | 141.41 µs | 0.96× | 0 | 0 | 1.19M | 1.57M | 668.7k | 687.9k |
-| arrays/index sum 10000 | 2.09 µs | 2.21 µs | 0.95× | 0 | 0 | 45.0k | 40.0k | 10.0k | 10.5k |
-| strings/builder 100 | 775.3 ns | 831.0 ns | 0.93× | 6 | 8 | 16.1k | 13.5k | 3.7k | 4.1k |
-| json/decode struct | 1.19 µs | 1.31 µs | 0.90× | 2 | 4 | 18.1k | 21.0k | 5.7k | 6.2k |
-| strings/interpolate | 28.5 ns | 33.4 ns | 0.86× | 1 | 1 | 499 | 664 | 134 | 156 |
-| loops/sum 1000000 | 619.69 µs | 732.01 µs | 0.85× | 0 | 0 | 8.25M | 15.00M | 3.00M | 3.52M |
-| strings/contains 1000 | 13.1 ns | 15.9 ns | 0.82× | 0 | 0 | 330 | 394 | 62 | 76 |
-| http/hello 1x1000 | 33.56 ms | 41.25 ms | 0.81× | 68000 | 69184 | 71.31M | 151.93M | 83.53M | 149.62M |
-| runtime/join 1 | 259.3 ns | 323.4 ns | 0.80× | 1 | 2 | 2.8k | 3.3k | 1.2k | 1.4k |
-| json/encode 100 structs | 23.95 µs | 31.21 µs | 0.77× | 2 | 4 | 406.0k | 443.1k | 113.7k | 148.8k |
-| calls/fib 25 | 220.98 µs | 291.22 µs | 0.76× | 0 | 0 | 4.57M | 3.52M | 1.06M | 1.40M |
-| strings/int to text 1000 | 8.05 µs | 11.01 µs | 0.73× | 0 | 900 | 163.6k | 211.4k | 38.2k | 52.5k |
-| maps/lookup 10000 ints | 54.82 µs | 77.18 µs | 0.71× | 0 | 0 | 965.0k | 1.06M | 257.8k | 355.2k |
-| http/tls 64x100 | 62.73 ms | 88.60 ms | 0.71× | 500350 | 460312 | 610.65M | 1.74G | 870.79M | 1.52G |
-| tasks/channel 10000 | 192.77 µs | 274.96 µs | 0.70× | 2 | 2 | 3.17M | 4.42M | 907.0k | 1.30M |
-| json/parse object | 2.30 µs | 3.67 µs | 0.63× | 17 | 36 | 35.0k | 48.1k | 10.9k | 17.3k |
-| arrays/map filter sum 10000 | 17.00 µs | 32.15 µs | 0.53× | 12 | 16 | 373.9k | 495.8k | 81.0k | 209.6k |
-| json/parse 1000 numbers | 75.42 µs | 144.81 µs | 0.52× | 909 | 2015 | 1.39M | 2.12M | 358.2k | 670.8k |
-| structs/users 1000 | 19.48 µs | 38.95 µs | 0.50× | 1001 | 1910 | 409.3k | 672.2k | 91.9k | 202.2k |
-| http/json 64x100 | 51.81 ms | 103.81 ms | 0.50× | 678929 | 713159 | 749.91M | 3.50G | 2.21G | 3.89G |
-| maps/insert 1000 strings | 45.47 µs | 101.89 µs | 0.45× | 1030 | 1920 | 680.1k | 1.30M | 215.2k | 471.0k |
-| maps/insert 10000 ints | 134.80 µs | 498.58 µs | 0.27× | 42 | 79 | 2.33M | 5.36M | 640.3k | 2.47M |
-| regex/match 1000 | 38.47 µs | 151.24 µs | 0.25× | 0 | 0 | 573.3k | 2.99M | 184.1k | 712.3k |
-| http/hello 64x100 | 22.30 ms | 87.83 ms | 0.25× | 435560 | 452401 | 455.01M | 3.26G | 1.02G | 6.34G |
-| structs/points 1000 | 1.58 µs | 7.06 µs | 0.22× | 1 | 12 | 34.5k | 84.7k | 7.5k | 46.3k |
-| arrays/sort 10000 | 67.17 µs | 364.33 µs | 0.18× | 1 | 1 | 1.37M | 2.42M | 321.1k | 1.72M |
-| arrays/push 1000 | 515.6 ns | 3.32 µs | 0.16× | 1 | 12 | 13.0k | 42.3k | 2.4k | 22.9k |
+| loops/collatz 10000 | 905.83 µs | 845.91 µs | 1.07× ⚠ | 0 | 0 | 15.37M | 8.86M | 4.40M | 4.15M |
+| tasks/spawn 1000 | 179.61 µs | 171.83 µs | 1.05× ⚠ | 1952 | 2002 | 2.27M | 2.35M | 1.41M | 1.86M |
+| floats/sqrt 100000 | 178.24 µs | 174.21 µs | 1.02× ⚠ | 0 | 0 | 725.0k | 700.0k | 890.7k | 865.0k |
+| calls/closure 1000 | 205.8 ns | 207.5 ns | 0.99× | 0 | 0 | 3.3k | 5.0k | 1.0k | 1.0k |
+| strings/split 100 | 752.1 ns | 760.2 ns | 0.99× | 1 | 1 | 16.0k | 13.7k | 3.6k | 3.9k |
+| net/tls echo 1x1000 | 12.73 ms | 13.06 ms | 0.98× | 7000 | 3744 | 18.66M | 14.34M | 14.28M | 11.83M |
+| floats/mandelbrot 64 | 134.91 µs | 139.15 µs | 0.97× | 0 | 0 | 1.20M | 1.57M | 668.0k | 687.5k |
+| arrays/index sum 10000 | 2.09 µs | 2.16 µs | 0.97× | 0 | 0 | 45.0k | 40.0k | 10.0k | 10.6k |
+| net/echo 1x1000 | 11.29 ms | 11.85 ms | 0.95× | 3000 | 3744 | 10.60M | 7.14M | 9.10M | 7.45M |
+| strings/builder 100 | 758.8 ns | 805.1 ns | 0.94× | 6 | 8 | 16.1k | 13.4k | 3.6k | 3.9k |
+| runtime/mutex 4x1000 | 20.43 µs | 21.84 µs | 0.94× | 6 | 6 | 409.0k | 120.6k | 94.7k | 151.8k |
+| json/decode struct | 1.20 µs | 1.29 µs | 0.93× | 2 | 4 | 18.1k | 21.1k | 5.8k | 6.3k |
+| loops/sum 1000000 | 612.29 µs | 724.40 µs | 0.85× | 0 | 0 | 8.25M | 15.00M | 3.00M | 3.54M |
+| runtime/join 1 | 262.2 ns | 315.5 ns | 0.83× | 1 | 2 | 2.8k | 3.3k | 1.2k | 1.4k |
+| strings/contains 1000 | 12.9 ns | 15.7 ns | 0.82× | 0 | 0 | 332 | 394 | 62 | 75 |
+| calls/fib 25 | 232.38 µs | 290.51 µs | 0.80× | 0 | 0 | 4.81M | 3.52M | 1.13M | 1.41M |
+| runtime/select 1000 | 124.60 µs | 159.16 µs | 0.78× | 4 | 4 | 1.34M | 2.09M | 547.7k | 742.2k |
+| json/encode 100 structs | 23.77 µs | 30.43 µs | 0.78× | 2 | 4 | 406.6k | 439.3k | 113.3k | 147.1k |
+| http/hello 1x1000 | 33.11 ms | 43.64 ms | 0.76× | 67000 | 69197 | 71.47M | 147.69M | 81.95M | 144.98M |
+| maps/lookup 10000 ints | 54.45 µs | 74.36 µs | 0.73× | 0 | 0 | 965.1k | 1.06M | 258.4k | 354.1k |
+| strings/int to text 1000 | 7.94 µs | 10.89 µs | 0.73× | 0 | 900 | 163.6k | 211.3k | 38.2k | 51.9k |
+| http/tls 64x100 | 66.22 ms | 92.73 ms | 0.71× | 493857 | 461065 | 613.89M | 1.82G | 949.54M | 1.79G |
+| strings/interpolate | 23.2 ns | 32.7 ns | 0.71× | 1 | 1 | 501 | 665 | 111 | 154 |
+| tasks/channel 10000 | 191.76 µs | 273.01 µs | 0.70× | 2 | 2 | 3.17M | 4.42M | 909.8k | 1.38M |
+| json/parse object | 2.28 µs | 3.62 µs | 0.63× | 17 | 36 | 34.9k | 47.5k | 10.9k | 17.2k |
+| arrays/map filter sum 10000 | 16.91 µs | 30.20 µs | 0.56× | 12 | 16 | 374.0k | 482.1k | 80.7k | 201.8k |
+| json/parse 1000 numbers | 74.94 µs | 139.28 µs | 0.54× | 909 | 2015 | 1.38M | 2.12M | 359.1k | 673.9k |
+| structs/users 1000 | 19.28 µs | 38.12 µs | 0.51× | 1001 | 1910 | 409.6k | 663.1k | 91.7k | 198.2k |
+| http/json 64x100 | 51.11 ms | 110.79 ms | 0.46× | 672536 | 714967 | 752.23M | 3.72G | 2.22G | 6.42G |
+| maps/insert 1000 strings | 44.99 µs | 98.29 µs | 0.46× | 1030 | 1920 | 680.1k | 1.30M | 214.4k | 473.4k |
+| maps/insert 10000 ints | 135.64 µs | 490.74 µs | 0.28× | 42 | 79 | 2.33M | 5.38M | 639.9k | 2.36M |
+| regex/match 1000 | 38.09 µs | 149.22 µs | 0.26× | 0 | 0 | 573.3k | 2.99M | 183.6k | 725.1k |
+| structs/points 1000 | 1.57 µs | 6.68 µs | 0.23× | 1 | 12 | 34.6k | 82.0k | 7.5k | 46.9k |
+| arrays/sort 10000 | 66.85 µs | 354.46 µs | 0.19× | 1 | 1 | 1.37M | 2.41M | 321.0k | 1.72M |
+| http/hello 64x100 | 21.05 ms | 111.75 ms | 0.19× | 429280 | 454933 | 456.66M | 3.09G | 1.18G | 5.74G |
+| arrays/push 1000 | 511.4 ns | 3.19 µs | 0.16× | 1 | 12 | 13.0k | 40.4k | 2.4k | 25.5k |
 
-5 of 36 benchmarks are slower than Go; 9 run more instructions than Go.
+3 of 36 benchmarks are slower than Go; 9 run more instructions than Go.
 
-`runtime/select` moves between 146 and 157 µs with where its code lies
-(`tondo test --bench --layouts`), and `tasks/spawn` with which cores a
-run's threads land on: the 5950X's two sets of eight cores share no cache,
-and Tondo's workers keep to those that share one (docs/decisions.md).
-`net/tls echo` makes four more allocations a round trip than Go: rustls
-encrypts each record into a new buffer, and leaves each one it reads in
-another. `strings/split` and `http/tls` make more allocations than Go too.
+`tasks/spawn` moves with which cores a run's threads land on: the
+5950X's two sets of eight cores share no cache, and Tondo's workers keep to
+those that share one (docs/decisions.md). `loops/collatz` took 1.02× Go's
+time on the measurement before this one, and runs 1.7 times Go's
+instructions. `net/tls echo` makes about three more allocations a round trip
+than Go, and `http/tls` a few more a request: rustls 0.23 makes a buffer for
+each record it encrypts and copies each one it reads into another, in its
+buffered API and its unbuffered one alike.
 
 On 2026-10-26, before any of the work they call for:
 
