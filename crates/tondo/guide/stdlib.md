@@ -130,7 +130,9 @@ fn main(): !toml.TomlError {
 }
 ```
 
-TOML has no null: a `none` field is left out when written.
+TOML has no null: a `none` field is left out when written. A `time.DateTime`
+is written as RFC 3339 and a `time.Duration` as it displays, `1h30m` or
+`250ms`, and both read back exactly.
 
 A field's annotations hold in every format. `@name("user_id")` gives it
 another key, `@ignore` leaves it out, and it must have a default or be

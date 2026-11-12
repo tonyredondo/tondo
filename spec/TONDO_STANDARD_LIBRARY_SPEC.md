@@ -3116,8 +3116,9 @@ pub trait Decode {
 
 - `Encode` y `Decode` están implementados para todos los números, `Byte` (un
   entero de 0 a 255), `Bool`, `String`, `T?`, `Array[T]`, `Map[String, V]`,
-  las tuplas de hasta ocho elementos y `time.DateTime` (texto RFC 3339 en UTC,
-  o el `DateTime` del formato), y el compilador los implementa para cada
+  las tuplas de hasta ocho elementos, `time.DateTime` (texto RFC 3339 en UTC,
+  o el `DateTime` del formato) y `time.Duration` (el texto de su `Display`,
+  `1h30m`, que `parseDuration` lee exacto), y el compilador los implementa para cada
   record, enum y newtype del programa cuyas partes los implementan, y para cada
   unión estructural cuyos miembros los implementan, cuando el programa trae
   `std.serialization` directamente o por un formato. Una implementación escrita

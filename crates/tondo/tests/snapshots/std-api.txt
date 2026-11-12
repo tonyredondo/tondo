@@ -3997,8 +3997,10 @@ impl reflect.Reflect for Weekday
 impl reflect.Reflect for Zone
 impl reflect.Reflect for ZonedDateTime
 impl serialization.Decode for DateTime
+impl serialization.Decode for Duration
 impl serialization.Decode for ZonedDateTime
 impl serialization.Encode for DateTime
+impl serialization.Encode for Duration
 impl serialization.Encode for ZonedDateTime
 pub enum TimeError {
     InvalidDateTime

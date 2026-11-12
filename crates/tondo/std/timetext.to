@@ -576,11 +576,12 @@ pub fn duration(text: String): Int? {
         ("m", 60000000000),
         ("h", 3600000000000),
     ]
-    var (total, at) = (0, 0)
+    // In an Int128, as the shortest duration has no positive Int.
+    var (total, at) = (Int128(0), 0)
     for at < chars.length() {
-        var (whole, fraction, scale, seen) = (0, 0, 1, 0)
+        var (whole, fraction, scale, seen) = (Int128(0), 0, 1, 0)
         for at < chars.length() and chars[at].isDigit() {
-            whole = whole.checkedMul(10)?.checkedAdd(chars[at].code() - '0'.code())?
+            whole = whole.checkedMul(10)?.checkedAdd(Int128(chars[at].code() - '0'.code()))?
             seen += 1
             at += 1
         }
@@ -611,11 +612,8 @@ pub fn duration(text: String): Int? {
             return none
         }
         at += size
-        let part = match Int(Int128(fraction) * Int128(unit) / Int128(scale)) {
-            ok(fractional) => whole.checkedMul(unit)?.checkedAdd(fractional)?
-            err(_) => return none
-        }
+        let part = whole.checkedMul(Int128(unit))?.checkedAdd(Int128(fraction) * Int128(unit) / Int128(scale))?
         total = total.checkedAdd(part)?
     }
-    some(if negative { -total } else { total })
+    Int(if negative { -total } else { total }).ok()
 }

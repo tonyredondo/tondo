@@ -70,7 +70,7 @@ impl Kind {
             (Kind::Serialization, "json") => matches!(name, "Value" | "Number" | "Raw"),
             (Kind::Serialization, "toml" | "yaml" | "messagepack" | "cbor") => name == "Value",
             (Kind::Serialization, "serialization") => name == "Bytes",
-            (Kind::Serialization, "time") => matches!(name, "DateTime" | "ZonedDateTime"),
+            (Kind::Serialization, "time") => matches!(name, "Duration" | "DateTime" | "ZonedDateTime"),
             (Kind::Serialization, "model") => matches!(name, "Queue" | "Bag"),
             (Kind::Reflect, "reflect") => name == "Value",
             (Kind::Reflect, "json" | "yaml" | "toml") => name == "Value",

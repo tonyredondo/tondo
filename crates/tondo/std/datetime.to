@@ -97,6 +97,34 @@ pub fn parseDuration(text: String): __time.Duration ! __time.TimeError {
     }
 }
 
+/// A duration, as `Display` writes it: `1h30m`, `1.5s`, `250ms`.
+impl serialization.Encode for __time.Duration {
+    fn encode[S: serialization.Sink](self, out: S) {
+        out.text("{self}")
+    }
+}
+
+/// Read as `parseDuration` reads it, which gives back what was written.
+impl serialization.Decode for __time.Duration {
+    fn decode[S: serialization.Source](
+        input: S,
+        first: serialization.Event,
+    ): __time.Duration ! serialization.Error {
+        let text = match first {
+            serialization.Event.Text(text) => text
+            serialization.Event.Untyped(text) => text.trim()
+            _ => fail input.mismatch(first, "a duration, as `1h30m` or `250ms`")
+        }
+        match parseDuration(text) {
+            ok(value) => value
+            err(_) => fail input.failure(
+                serialization.ErrorKind.Type,
+                "`{text}` is not a duration: write it as `1h30m`, `1.5s` or `250ms`",
+            )
+        }
+    }
+}
+
 /// `DateTime.sinceEpoch()`: the inverse of `time.utc`.
 fn sinceEpoch(date: __time.DateTime): __time.Duration {
     let seconds =

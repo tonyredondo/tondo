@@ -1,0 +1,53 @@
+// A `time.Duration` is written as `Display` writes it and read as
+// `parseDuration` reads it, which gives back every duration exactly, the
+// shortest and the longest too.
+
+import std.console
+import std.json
+import std.time
+
+type Run = {
+    name: String
+    took: time.Duration
+    limit: time.Duration?
+}
+
+fn main(): !json.JsonError {
+    let values = [
+        time.nanoseconds(1),
+        time.nanoseconds(1500),
+        time.nanoseconds(1000000001),
+        time.milliseconds(-250),
+        time.hours(1) + time.minutes(30),
+        time.nanoseconds(-9223372036854775807 - 1),
+        time.nanoseconds(9223372036854775807),
+        time.seconds(0),
+    ]
+    for value in values {
+        let text = json.encode(Run { name: "a", took: value, limit: none })
+        let back = json.decode[Run](text)?
+        console.println("{text} {back.took == value}")
+    }
+    let read = json.decode[Run]("{{\"name\": \"b\", \"took\": \"2m3.5s\", \"limit\": \"1h\"}}")?
+    console.println("{read.took} {read.limit}")
+    match json.decode[Run]("{{\"name\": \"c\", \"took\": \"soon\", \"limit\": null}}") {
+        ok(_) => console.println("read")
+        err(error) => console.println("{error}")
+    }
+    match json.decode[Run]("{{\"name\": \"c\", \"took\": 5, \"limit\": null}}") {
+        ok(_) => console.println("read")
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: {"name":"a","took":"1ns","limit":null} true
+// expect-stdout: {"name":"a","took":"1.5µs","limit":null} true
+// expect-stdout: {"name":"a","took":"1.000000001s","limit":null} true
+// expect-stdout: {"name":"a","took":"-250ms","limit":null} true
+// expect-stdout: {"name":"a","took":"1h30m0s","limit":null} true
+// expect-stdout: {"name":"a","took":"-2562047h47m16.854775808s","limit":null} true
+// expect-stdout: {"name":"a","took":"2562047h47m16.854775807s","limit":null} true
+// expect-stdout: {"name":"a","took":"0s","limit":null} true
+// expect-stdout: 2m3.5s some(1h0m0s)
+// expect-stdout: `soon` is not a duration: write it as `1h30m`, `1.5s` or `250ms` at $.took (line 1, column 29)
+// expect-stdout: expected a duration, as `1h30m` or `250ms`, found a number at $.took (line 1, column 24)
