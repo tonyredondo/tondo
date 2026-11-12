@@ -231,11 +231,13 @@ fn every_standard_error_has_reflect() {
             let kind = declaration["kind"].as_str().unwrap_or_default();
             let name = declaration["name"].as_str().unwrap_or_default();
             errors += usize::from(["type", "enum"].contains(&kind) && name.ends_with("Error"));
-            let implemented = [format!("impl reflect.Reflect for {name}\n"), format!("impl Reflect for {name}\n")];
-            if ["type", "enum"].contains(&kind)
-                && name.ends_with("Error")
-                && name != "CollectionError"
-                && !implemented.iter().any(|line| text.contains(line.as_str()))
+            // By its name, or with its module's, as `text.TextError`.
+            let implemented = text.lines().any(|line| {
+                line.starts_with("impl ")
+                    && line.contains("Reflect for ")
+                    && (line.ends_with(&format!(" {name}")) || line.ends_with(&format!(".{name}")))
+            });
+            if ["type", "enum"].contains(&kind) && name.ends_with("Error") && name != "CollectionError" && !implemented
             {
                 missing.push(format!("{module}.{name}"));
             }
