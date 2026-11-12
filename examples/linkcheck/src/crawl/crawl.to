@@ -42,8 +42,8 @@ pub type Checked = {
     /// The page it was first found in: empty for where the crawl began.
     from: String
     outcome: Outcome
-    /// How long the answer took, in milliseconds.
-    ms: Int
+    /// How long the answer took.
+    took: time.Duration
 }
 
 pub fn Checked.isFine(self): Bool {
@@ -195,12 +195,7 @@ fn visit(client: http.Client, home: url.Url, job: Job): Visit {
         err(other) => Outcome.Unreachable("{other}")
     }
     Visit {
-        checked: Checked {
-            url: job.url
-            from: job.from
-            outcome
-            ms: started.elapsed().milliseconds()
-        }
+        checked: Checked { url: job.url, from: job.from, outcome, took: started.elapsed() }
         page
         links: found
     }

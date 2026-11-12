@@ -66,10 +66,13 @@ $ tondo run examples/linkcheck -- http://localhost:8765 --json
       "outcome": {
         "Fine": 200
       },
-      "ms": 2
+      "took": "2.987463ms"
     },
     ...
 ```
+
+The time each answer took is a `time.Duration` in the program, and is
+written as text that reads back as the same duration.
 
 ## What to look at
 
