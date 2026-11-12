@@ -83,7 +83,9 @@ is the whole declaration of a tool. Its `///` is the description, the
 fields of `WriteInput` are its arguments with their own documentation, and a
 field with a default is not required. There is no schema to write and none
 to keep in step with the code: the schema above is this type. A method that
-is not `pub`, as `Notes.files`, is no tool.
+is not `pub` is no tool, and a `pub` one that cannot be a tool, as one that
+gives a channel, is a compile error that says why (`E1912`): a tool is
+never left out in silence.
 
 **Arguments are checked before the method runs.** `name` carries
 `@validate.Matches("[a-z0-9-]+")` and `limit` a `Min` and a `Max`. A call
@@ -116,9 +118,13 @@ arguments.
 **Two transports, one server.** `mcp.serve(server)` speaks over standard
 input and output, and `mcp.handler(server)` is a handler for a route of
 `std.http`. [`tests/protocol.to`](tests/protocol.to) uses the second to test
-the protocol itself against a directory made for each test: what the server
-offers, each tool, the errors, and that arguments that break their rules
-leave the directory empty.
+the protocol itself: what the server offers, each tool, the errors, and that
+arguments that break their rules write no file.
+
+**The server holds a file system, not a path.** `Notes` has one field, an
+`fs.FileSystem`. `main` gives it `fs.disk(directory)`, and the tests of the
+protocol give it `fs.memory()`, so the whole server, from the JSON of a
+request to the file a tool writes, is tested without touching the disk.
 
 **The notes do not know about the protocol.**
 [`library.to`](src/library/library.to) takes an `fs.FileSystem` and knows
