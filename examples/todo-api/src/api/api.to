@@ -12,28 +12,18 @@ pub context Request = {
     id: String = ""
 }
 
-/// What `GET /tasks` can be asked for.
-type Filter = {
-    done: Bool? = none
-}
-
 /// The routes of the API over a database.
 pub fn routes(db: sql.Database): http.App {
     var app = http.App()
     app.use(traced)
 
-    // The query read into a type: `/tasks?done=true`. The array the store
-    // gives is written as JSON.
-    app.get(
-        "/tasks",
-        (request) {
-            let filter = request.queryAs[Filter]()?
-            http.Reply.json(store.list(db, filter.done).mapErr(failed)?)
-        },
-    )
+    // Typed handlers. A parameter that is not in the path is read from the
+    // query: `/tasks?done=true` gives `some(true)`, `/tasks` gives `none`,
+    // and `/tasks?done=maybe` is a 400. The array is written as JSON.
+    app.get("/tasks", (done: Bool?) { store.list(db, done) })
 
-    // A typed handler: the route's `id` arrives as an `Int`, the task it
-    // gives is written as JSON, and `none` is a 404.
+    // The route's `id` arrives as an `Int`, the task it gives is written as
+    // JSON, and `none` is a 404.
     app.get("/tasks/:id", (id: Int) { store.find(db, id) })
 
     // A handler that builds its own reply: 201, with where the task is.

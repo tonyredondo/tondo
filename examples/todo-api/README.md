@@ -64,14 +64,17 @@ field is checked by the decoder, so a handler never sees a task with an
 empty title: the request is answered with 422 and what is wrong before the
 handler runs.
 
-**A typed handler.** In [`api.to`](src/api/api.to),
+**Typed handlers.** In [`api.to`](src/api/api.to),
 
 ```text
+app.get("/tasks", (done: Bool?) { store.list(db, done) })
 app.get("/tasks/:id", (id: Int) { store.find(db, id) })
 ```
 
-is the whole route: the path's `id` arrives as an `Int` (a 400 if it is not
-one), the `Task?` it gives is written as JSON, and `none` is a 404. The
+are two whole routes. A parameter named in the path arrives from it, `id`
+as an `Int`, and one that is not is read from the query, `done` as a
+`Bool?`. A value that does not fit is a 400 that says which one and why.
+What the handler gives is written as JSON, and `none` is a 404. The
 handlers that need more take the request and build the reply.
 
 **Queries cannot be injected.** A query is a string literal where a
