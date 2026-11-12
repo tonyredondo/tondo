@@ -62,6 +62,9 @@ enum Layout {
 
 struct Function {
     name: String,
+    /// Whether it takes a loan of its caller's, as a `mut` or `var`
+    /// parameter or a closure's environment, which it can change.
+    lends: bool,
     bindings: Vec<Binding>,
     /// Where the addresses of its bindings and which of them hold values
     /// are, from its frame pointer, when the compiler said.
@@ -809,7 +812,12 @@ unsafe fn parse(raw: *const Raw, base: usize) -> (Vec<Function>, Vec<Site>, Vec<
     for line in text.lines() {
         let parts: Vec<&str> = line.split('\t').collect();
         match parts.as_slice() {
-            ["F", name] => functions.push(Function { name: name.to_string(), bindings: Vec::new(), offsets: None }),
+            ["F", name, lends] => functions.push(Function {
+                name: name.to_string(),
+                lends: *lends == "1",
+                bindings: Vec::new(),
+                offsets: None,
+            }),
             ["O", addresses, alive] => {
                 if let (Some(function), Ok(addresses), Ok(alive)) =
                     (functions.last_mut(), addresses.parse(), alive.parse())

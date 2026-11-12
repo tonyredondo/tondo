@@ -27,7 +27,7 @@ enum Asked {
     /// A function of C, whose import depends on those before: the function
     /// is built again in its turn.
     CFunction(ir::Signature),
-    DebugFunction(String, Vec<DebugBinding>),
+    DebugFunction(String, bool, Vec<DebugBinding>),
     DumpBindings(Vec<super::DumpBinding>),
     FunctionSites,
     Attention,
@@ -356,8 +356,8 @@ impl<'t> Gen<'t> for Worker<'_, '_, 't> {
     fn dump_bindings(&mut self, described: Vec<super::DumpBinding>) {
         self.ask(Asked::DumpBindings(described));
     }
-    fn debug_function(&mut self, name: String, described: Vec<DebugBinding>) -> u32 {
-        self.ask(Asked::DebugFunction(name, described));
+    fn debug_function(&mut self, name: String, lends: bool, described: Vec<DebugBinding>) -> u32 {
+        self.ask(Asked::DebugFunction(name, lends, described));
         // Each function of the program has one, in order.
         self.current as u32
     }
@@ -412,12 +412,12 @@ pub(super) fn replay(cg: &mut Codegen, bodies: &[Body], built: &mut Built) {
             Asked::MapGlue(ty) => Codegen::map_glue(cg, ty).as_u32(),
             Asked::ClosureCode(body) => Codegen::closure_code(cg, body).as_u32(),
             Asked::Callback(target, ty, closure) => Codegen::callback(cg, target, ty, closure).as_u32(),
-            Asked::DebugFunction(name, described) => {
+            Asked::DebugFunction(name, lends, described) => {
                 let described = described
                     .into_iter()
                     .map(|(name, ty, glue, raw)| (name, ty, real(glue, &ids), raw.map(|raw| real(raw, &ids))))
                     .collect();
-                let function = Gen::debug_function(cg, name, described);
+                let function = Gen::debug_function(cg, name, lends, described);
                 debug_assert_eq!(function as usize, cg.current);
                 0
             }

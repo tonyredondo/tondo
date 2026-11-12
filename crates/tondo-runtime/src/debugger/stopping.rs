@@ -107,9 +107,10 @@ pub(super) struct Watch {
     pub(super) text: String,
     /// The frame, and those that called it, which live while it does.
     pub(super) frames: Vec<Frame>,
-    /// The value as it was, and the site of the task's last probe.
+    /// The value as it was, and the frame and site of the task's last
+    /// probe in each frame from the watched one in, the outer first.
     pub(super) value: String,
-    pub(super) last: usize,
+    pub(super) last: Vec<(usize, usize)>,
     /// When a change stops: its condition holds, and its count of such
     /// changes reaches `hits`.
     pub(super) condition: Option<Expr>,
@@ -1900,17 +1901,32 @@ pub(super) fn watched(table: &Table, state: &mut State, task: u64, frame: usize,
                 // A shared value changes in some task: the line is that of
                 // the frame's own changes only.
                 let at = match watch.shared {
-                    None => format!(" at {}", place_in(table, watch.last)),
+                    None => format!(" at {}", place_in(table, changer(table, &watch.last, frame, site))),
                     Some(_) => String::new(),
                 };
                 changed
                     .get_or_insert(format!("watch {}: {} changed from {before} to {after}{at}", watch.id, watch.text));
             }
         }
-        watch.last = site;
+        // A frame in a frame below which the task runs now returned.
+        watch.last.retain(|&(outer, _)| outer > frame);
+        watch.last.push((frame, site));
     }
     unwatch(state, |watch| ended.contains(&watch.id));
     changed
+}
+
+/// The site of the line that changed a value since the last probes of each
+/// frame, `last`, with the task now at `site` in `frame`: that of the last
+/// probe, but of a call that returned and could not change it, as one of
+/// the standard library's or one with no loan, the line that called it.
+fn changer(table: &Table, last: &[(usize, usize)], frame: usize, site: usize) -> usize {
+    let function = |site: usize| table.sites.get(site).map(|s| s.function);
+    let could = |&&(at, probe): &&(usize, usize)| {
+        let alive = at > frame || (at == frame && function(probe) == function(site));
+        alive || table.sites.get(probe).is_none_or(|s| !s.generated() && table.functions[s.function].lends)
+    };
+    last.iter().rev().find(could).or(last.last()).map_or(usize::MAX, |&(_, probe)| probe)
 }
 
 /// Holds the task until the program goes on: as the one that stopped,

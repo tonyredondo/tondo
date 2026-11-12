@@ -239,8 +239,8 @@ impl Codegen<'_> {
         let mut text = String::new();
         let mut glues = Vec::new();
         let (mut layouts, mut known) = (Vec::new(), HashMap::new());
-        for (index, (name, bindings)) in self.debug_functions.clone().into_iter().enumerate() {
-            text.push_str(&format!("F\t{name}\n"));
+        for (index, (name, lends, bindings)) in self.debug_functions.clone().into_iter().enumerate() {
+            text.push_str(&format!("F\t{name}\t{}\n", u8::from(lends)));
             if let Some((alive, addresses)) = self.debug_slots.get(&(index as u32)) {
                 text.push_str(&format!("O\t{addresses}\t{alive}\n"));
             }

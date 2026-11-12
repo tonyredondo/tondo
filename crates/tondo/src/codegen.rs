@@ -511,7 +511,10 @@ struct Codegen<'a> {
     /// A debug build's probes (toolchain 7.6): each function's name and
     /// the bindings it shows, and each probe's source and function.
     debug: Option<DataId>,
-    debug_functions: Vec<(String, Vec<DebugBinding>)>,
+    /// Each function's name, whether it takes a loan of its caller's (a
+    /// `mut` or `var` parameter, or a closure's environment), and its
+    /// bindings.
+    debug_functions: Vec<(String, bool, Vec<DebugBinding>)>,
     /// Where each debug function's slots are, by its number.
     debug_slots: HashMap<u32, (i64, i64)>,
     /// A debug build's probes: where each is, its function, and whether its
@@ -1236,8 +1239,9 @@ trait Gen<'t> {
     /// The runtime's count of reasons to check for cancellation.
     fn attention(&mut self) -> DataId;
 
-    /// A debug build's function, with the bindings it shows: its number.
-    fn debug_function(&mut self, name: String, described: Vec<DebugBinding>) -> u32;
+    /// A debug build's function, whether it takes a loan, and the bindings
+    /// it shows: its number.
+    fn debug_function(&mut self, name: String, lends: bool, described: Vec<DebugBinding>) -> u32;
     /// A build without probes: whether its dumps show bindings.
     fn dumps(&self) -> bool;
     /// What a dump finds in the function that is being built.
@@ -1407,8 +1411,8 @@ impl<'t> Gen<'t> for Codegen<'t> {
     fn attention(&mut self) -> DataId {
         self.module.declare_data("tondo_rt_attention", Linkage::Import, true, false).expect("the runtime's attention")
     }
-    fn debug_function(&mut self, name: String, described: Vec<DebugBinding>) -> u32 {
-        self.debug_functions.push((name, described));
+    fn debug_function(&mut self, name: String, lends: bool, described: Vec<DebugBinding>) -> u32 {
+        self.debug_functions.push((name, lends, described));
         self.debug_functions.len() as u32 - 1
     }
     fn dumps(&self) -> bool {
@@ -3029,7 +3033,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             let count = shown.len() + captured.len();
             let words = count.div_ceil(64).max(1) as u32;
-            let function = cg.debug_function(body.name.clone(), described);
+            let function = cg.debug_function(body.name.clone(), body.loans.contains(&true), described);
             // Keyed by the function and which they are, so that where they
             // are in its frame goes in the debugger's table.
             let slot = |size: u32, which: u64| {

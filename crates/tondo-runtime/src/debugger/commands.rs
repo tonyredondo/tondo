@@ -828,7 +828,7 @@ pub(super) fn watch(table: &Table, text: &str) -> Result<String, String> {
         .selected
         .or(state.stopped.as_ref().map(|s| (s.task, 0)))
         .ok_or("the program runs: `pause` stops it, or a breakpoint")?;
-    let last = state.held.iter().find(|h| h.task == task).map_or(usize::MAX, |h| h.site);
+    let last = state.held.iter().filter(|h| h.task == task).map(|h| (h.frame, h.site)).collect();
     let id = state.next_breakpoint;
     state.next_breakpoint += 1;
     let everywhere = if shared.is_some() { ",\"everywhere\":true" } else { "" };

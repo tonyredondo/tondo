@@ -992,6 +992,44 @@ fn debugger_evaluates_watches_and_catches_errors() {
     assert!(lines.iter().any(|l| l.get("exited").is_some()));
 }
 
+/// A watch names the line that changed its value, not a call that line
+/// made before and that could not change it: one of the standard library's,
+/// or one with no loan.
+#[test]
+fn a_watch_names_the_line_that_changed_it() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-watch-line");
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "fn plus(a: Int, b: Int): Int {\n    a + b\n}\n\nfn main() {\n    \
+        var counts: Map[String, Int] = [:]\n    for word in [\"a\", \"b\"] {\n        \
+        counts[word] = plus(counts.get(word).unwrapOr(0), 1)\n    }\n}\n";
+    std::fs::write(dir.join("counted.to"), program).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "counted.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = "break counted.to:7\ncontinue\nwatch counts\ndelete 1\ncontinue\ncontinue\ncontinue\n";
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let whys: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter_map(|l| l["stopped"]["why"].as_str().map(str::to_string))
+        .filter(|why| why.starts_with("watch"))
+        .collect();
+    assert_eq!(
+        whys,
+        [
+            "watch 2: counts changed from [:] to [\"a\": 1] at counted.to:8 in main",
+            "watch 2: counts changed from [\"a\": 1] to [\"a\": 1, \"b\": 1] at counted.to:8 in main",
+        ]
+    );
+}
+
 /// The adapter's function breakpoints, errors as exceptions, pages of an
 /// array, expressions, and watches as data breakpoints.
 #[test]
