@@ -441,28 +441,19 @@ fn firstLine(path: String): String? ! fs.FsError {
     line
 }
 
-fn countLines(): Int ! fs.FsError {
+fn main(): !fs.FsError {
     let directory = fs.createTemporaryDirectory()?
     defer {
         _ = fs.remove(directory, recursive: true)
     }
     let path = "{directory}/notes.txt"
     fs.writeText(path, "one\ntwo\n")?
-    fs.readText(path)?.lines().length()
-}
-
-fn main() {
-    match firstLine("/etc/hostname") {
-        ok(line) => console.println("{line.isSome()}")
-        err(error) => console.println("{error}")
-    }
-    console.println("{countLines()}")
+    console.println("{firstLine(path)?} {fs.readText(path)?.lines().length()}")
 }
 ```
 
 ```text output
-true
-ok(2)
+some(one) 2
 ```
 
 - A release that happens by itself cannot report a failure. When the

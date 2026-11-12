@@ -152,20 +152,21 @@ fn lineCount(path: String): Int ! fs.FsError {
     text.lines().length()
 }
 
-fn main() {
-    match lineCount("/etc/hostname") {
-        ok(count) => console.println("{count > 0}")
-        err(error) => console.println("cannot read it: {error}")
+fn main(): !fs.FsError {
+    let notes = fs.createTemporaryFile()?
+    fs.writeText(notes, "one\ntwo\n")?
+    for path in [notes, "/missing/file"] {
+        match lineCount(path) {
+            ok(count) => console.println("{count} lines")
+            err(error) => console.println("cannot read it: {error}")
+        }
     }
-    match lineCount("/missing/file") {
-        ok(count) => console.println("{count}")
-        err(error) => console.println("cannot read it: {error}")
-    }
+    fs.remove(notes)?
 }
 ```
 
 ```text output
-true
+2 lines
 cannot read it: not found
 ```
 
