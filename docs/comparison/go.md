@@ -1139,7 +1139,7 @@ Hello, Ada! (3)
 
 ## Where Go is the better choice today
 
-- **It is finished, and Tondo is not.** Go has fifteen years of
+- **It is finished, and Tondo is not.** Go has more than a decade of
   compatibility behind it. Tondo is in early development and can still
   change.
 - **Its ecosystem.** Whatever the service talks to has a Go client. Tondo's
