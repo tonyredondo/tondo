@@ -401,13 +401,96 @@ then: built with `--cpu x86-64-v3`, the program above has neither the test
 nor the second message in it. Any other feature is read from what the
 program found when it started, and `cpu.features()` gives all of them.
 
+### One instruction of a processor
+
 `std.cpu.x64` and `std.cpu.arm64` have functions that are one instruction
-each, for the files of their architecture
-([Modules](../language/15-modules.md#code-for-one-system-or-architecture)):
-CRC32C, the rounds of AES, carry-less multiplication, and BMI2's `pdep` and
-`pext`. A function that uses one needs its feature. The compiler works that
-out from the bodies, for the whole program, and nothing is written for it:
-the call goes under a test of the processor, with the plain way beside it.
+each, as the intrinsics of other languages are, for the files of their
+architecture
+([Modules](../language/15-modules.md#code-for-one-system-or-architecture)).
+
+| | `std.cpu.x64` | `std.cpu.arm64` | Needs |
+| --- | --- | --- | --- |
+| CRC-32C | `crc32cByte`, `crc32cInt` | `crc32cByte`, `crc32cInt` | SSE4.2, which the baseline has; `Crc32` on arm64 |
+| Bits put or gathered by a mask | `depositBits`, `extractBits` | | BMI2 |
+| A round of AES | `aesEncrypt`, `aesEncryptLast`, `aesDecrypt`, `aesDecryptLast` | `aesEncrypt`, `aesDecrypt`, `aesMixColumns`, `aesInverseMixColumns` | AES |
+| A product without carries | `carrylessMultiply` | `polynomialMultiply` | PCLMULQDQ; PMULL on arm64 |
+| A turn of a loop that waits | `pause` | `pause` | nothing |
+
+Those of AES and of the product take and give `simd.Vector128` values, so
+they work with the vectors' own operations
+([Numbers](../language/10-numbers.md#vectors)).
+
+A function that uses one needs its feature. The compiler works that out
+from the bodies, for the whole program, and nothing is written for it. A
+checksum with the instruction of each architecture is three files, the
+common one with the way that every processor can run:
+
+```text
+// src/checksum/checksum.to
+/// The CRC-32C of the bytes, the checksum of iSCSI and ext4.
+pub fn crc32c(bytes: Array[Byte]): UInt32 {
+    ~update(0xFFFF_FFFF, bytes)
+}
+
+/// A bit at a time, for a processor without the instruction.
+fn byBits(crc: UInt32, bytes: Array[Byte]): UInt32 {
+    var value = crc
+    for byte in bytes {
+        value = value ^ UInt32(byte)
+        for _ in 0..8 {
+            value = if value & 1 == 1 { (value >> 1) ^ 0x82F6_3B78 } else { value >> 1 }
+        }
+    }
+    value
+}
+```
+
+```text
+// src/checksum/checksum_x64.to
+import std.cpu.x64
+
+/// SSE4.2's `crc32`, which every x64 processor of the baseline has.
+fn update(crc: UInt32, bytes: Array[Byte]): UInt32 {
+    var value = crc
+    for byte in bytes {
+        value = x64.crc32cByte(value, byte)
+    }
+    value
+}
+```
+
+```text
+// src/checksum/checksum_arm64.to
+import std.cpu
+import std.cpu.arm64
+
+fn update(crc: UInt32, bytes: Array[Byte]): UInt32 {
+    if cpu.has(cpu.Feature.Crc32) { byInstruction(crc, bytes) } else { byBits(crc, bytes) }
+}
+
+/// `crc32cb`, where the processor has it.
+fn byInstruction(crc: UInt32, bytes: Array[Byte]): UInt32 {
+    var value = crc
+    for byte in bytes {
+        value = arm64.crc32cByte(value, byte)
+    }
+    value
+}
+```
+
+On x64 the instruction is of the baseline, so nothing is tested. On arm64
+it is beyond it, so the call goes under a test of the processor, with the
+plain way beside it. Over a page of a thousand lines, on x64:
+
+```text
+$ tondo test --bench
+test crc::unit::checksum::theInstructionAndTheBitsAgree ... ok
+  by the instruction     25.37 µs/op  ±0.4%  0 allocs/op  0 B/op  294.1k ins/op
+  a bit at a time        213.1 µs/op  ±0.2%  0 allocs/op  0 B/op  4.07M ins/op
+```
+
+On x64 a feature beyond the baseline takes the same test. This function
+uses BMI2's `pdep`:
 
 ```text
 // src/bits/bits_x64.to

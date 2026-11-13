@@ -991,6 +991,8 @@ Hello, Ada! (3)
 | `switch` | `match`, which covers every case |
 | `&&`, `\|\|`, `!` | `and`, `or`, `not` |
 | `(int)x`, `x as Foo` | `Int(x)`, which fails if it does not fit; `match` |
+| `Vector128<float>`, `Vector<T>` | `simd.Vector128[Float32]`, `simd.Vector[T]` |
+| `Sse42.IsSupported`, `Sse42.Crc32(crc, b)` | `cpu.has(cpu.Feature.Sse42)`, `x64.crc32cByte(crc, b)` in a file of x64 |
 | `[Attribute]` | `@annotation`, which is only data |
 | `namespace` and `using` | a directory is a module; `import app.orders` |
 | `;` and `{ }` on their own lines | no semicolons; one layout, written by `tondo fmt` |
