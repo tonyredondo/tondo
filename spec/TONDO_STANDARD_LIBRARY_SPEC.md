@@ -7331,6 +7331,59 @@ pub fn Vector128[T].cast[U](self): Vector128[U]
   mismos bits como carriles de cualquier `U`. Otro `U` en `to` es un error que
   nombra los que hay y `cast`.
 
+### 14.47 `std.cpu.x64` y `std.cpu.arm64`
+
+Cada función de estos módulos es una instrucción del procesador, o las pocas
+que hacen una operación, y su documentación dice qué variante de
+`cpu.Feature` necesita. `std.cpu.x64` es de x64 y `std.cpu.arm64` de arm64
+(6.8 del lenguaje): importar uno desde un archivo que también es de la otra
+arquitectura es `E1008`, cuyo mensaje dice que se importe desde un archivo de
+la suya, como `name_x64.to`, o que se limite el paquete con
+`architectures = ["x64"]`.
+
+~~~tondo pseudocode
+// std.cpu.x64
+pub fn crc32cByte(crc: UInt32, value: Byte): UInt32           // Sse42, que el baseline tiene
+pub fn crc32cInt(crc: UInt32, value: UInt): UInt32            // Sse42
+pub fn depositBits(value: UInt, mask: UInt): UInt             // Bmi2
+pub fn extractBits(value: UInt, mask: UInt): UInt             // Bmi2
+pub fn aesEncrypt(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]      // Aes
+pub fn aesEncryptLast(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]  // Aes
+pub fn aesDecrypt(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]      // Aes
+pub fn aesDecryptLast(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]  // Aes
+pub fn carrylessMultiply(a: simd.Vector128[UInt], b: simd.Vector128[UInt], halves: Int): simd.Vector128[UInt]  // Pclmulqdq
+pub fn pause()                                                // ninguna
+
+// std.cpu.arm64
+pub fn crc32cByte(crc: UInt32, value: Byte): UInt32           // Crc32
+pub fn crc32cInt(crc: UInt32, value: UInt): UInt32            // Crc32
+pub fn aesEncrypt(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]  // Aes
+pub fn aesDecrypt(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]  // Aes
+pub fn aesMixColumns(state: simd.Vector128[Byte]): simd.Vector128[Byte]          // Aes
+pub fn aesInverseMixColumns(state: simd.Vector128[Byte]): simd.Vector128[Byte]   // Aes
+pub fn polynomialMultiply(a: UInt, b: UInt): simd.Vector128[UInt]                // Pmull
+pub fn pause()                                                // ninguna
+~~~
+
+- En x64 son, en orden, `crc32` sobre un byte y sobre 64 bits, `pdep`,
+  `pext`, `aesenc`, `aesenclast`, `aesdec`, `aesdeclast`, `pclmulqdq` y
+  `pause`; en arm64, `crc32cb`, `crc32cx`, `aese`, `aesd`, `aesmc`, `aesimc`,
+  `pmull` de 64 bits e `isb`. El CRC es el CRC-32C, de Castagnoli, sin
+  invertir antes ni después; los 64 bits entran del byte más bajo al más
+  alto. El estado de AES tiene en el byte `r + 4c` la fila `r` de la columna
+  `c`, como FIPS 197 lo pone en memoria.
+- `halves` de `carrylessMultiply` es una constante escrita en la llamada, que
+  la instrucción lleva dentro: 0 multiplica las mitades bajas de los dos, 1 la
+  alta de `a` y la baja de `b`, 16 la baja de `a` y la alta de `b`, y 17 las
+  altas. Otro valor, o uno que no se conoce al compilar, es `E1901`, cuyo
+  mensaje da los cuatro y lo que toma cada uno.
+- Una llamada es la instrucción, en el sitio donde se escribe, y hace que la
+  función que la contiene necesite la característica, salvo que el nivel del
+  build la tenga (7.8 del toolchain).
+- Lo que tienen las dos arquitecturas se ofrece una vez, desde el módulo al
+  que pertenece y escrito con estas por dentro, como un `hash.crc32c(bytes)`:
+  cada una de esas funciones es un cambio aparte.
+
 ## 15. Contrato exigido a cada módulo
 
 Antes de considerarse especificado, cada módulo debe incluir:

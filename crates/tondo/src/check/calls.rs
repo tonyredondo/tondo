@@ -3179,6 +3179,24 @@ impl<'a> Checker<'a> {
                 span,
             );
         }
+        // A function of `std.cpu.x64` or `std.cpu.arm64` is its instruction,
+        // where the call is (standard library 14.47).
+        if let Callee::Fn(id) = callee
+            && let Some(&instruction) = self.instructions.get(&id)
+            && slots.iter().all(Option::is_some)
+        {
+            let args: Vec<hir::Expr> = slots.iter().map(|slot| values[slot.unwrap()].take().unwrap()).collect();
+            if instruction == crate::instructions::Instruction::Pclmulqdq {
+                self.check_halves(&args[2]);
+            }
+            self.instructions_used.insert(instruction);
+            let result = signature.result;
+            return Self::mk(
+                hir::ExprKind::Call(hir::Callee::Std(StdFn::Cpu(instruction)), Vec::new(), args),
+                result,
+                span,
+            );
+        }
         // `format.apply` writes an integer or a float as one, as an
         // interpolation does (standard library 10.6).
         if let Callee::Fn(id) = callee

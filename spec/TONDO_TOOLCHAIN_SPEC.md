@@ -1689,6 +1689,33 @@ las que el generador no tiene flag: no se genera nada con ellas.
   La comprobación corre en cualquier procesador de la arquitectura. Una
   librería la hace cuando arranca su runtime, en su primera llamada.
 
+Lo que cada función necesita del procesador:
+
+- Las funciones de `std.cpu.x64` y `std.cpu.arm64` (14.47 de la librería
+  estándar) son una instrucción cada una, que necesita una característica.
+  Una función necesita, además del nivel del build, la característica de cada
+  una de esas instrucciones que hay en su cuerpo, esté donde esté, también
+  bajo un `if cpu.has(...)`; y lo que necesitan las funciones que llama, salvo
+  lo que prueba la guarda bajo la que está la llamada. Lo que el nivel tiene
+  no se necesita. El compilador lo calcula sobre todo el programa a partir de
+  los cuerpos: en el código no se escribe nada.
+- Una guarda es el bloque de un `if` cuya condición es `cpu.has(F)` con la
+  variante escrita, o varias unidas con `and`: una llamada dentro de ese
+  bloque está guardada para esas características. No es una guarda el `else`
+  de un `not cpu.has(F)`, ni lo que sigue a un `return` temprano.
+- No pueden necesitar ninguna característica `main`, ni el nivel superior de
+  un script; un test; una `pub extern fn`; un método que implementa un trait;
+  ni una función o closure usada como valor, que arranca `spawn` o que se da a
+  C. Es el error `E1809`, en cada llamada o instrucción que trae la
+  característica sin guarda, y dice cuál es, la cadena de llamadas hasta la
+  instrucción y que se ponga la llamada bajo `if cpu.has(...)`; una
+  instrucción escrita ahí mismo, que se lleve a una función propia.
+- Cada función se compila para lo suyo: las características del nivel y las
+  que necesita. Una función nunca se inlinea en otra que necesita menos, y
+  `tondo asm` y `tondo optimizations` lo dicen de la llamada que queda.
+- `tondo check` toma el nivel del `[build]` del `tondo.toml` raíz, o
+  `baseline`; `build`, `run` y `test`, también el de `--cpu`.
+
 ### 7.9 `tondo mcp`
 
 `tondo mcp` es un servidor del Model Context Protocol por la entrada y la

@@ -480,6 +480,7 @@ fn lower_function(
         ways: b.ways,
         inlined: Vec::new(),
         scopes: Vec::new(),
+        needs: function.needs,
     }
 }
 

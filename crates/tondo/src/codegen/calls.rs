@@ -101,6 +101,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let tag = self.e.fb.ins().uextend(types::I64, tag);
                 self.e.call_rt(Rt::CpuHas, &[tag])
             }
+            Callee::Std(StdFn::Cpu(instruction)) => self.instruction(instruction, args, &values),
             Callee::Std(StdFn::ConsoleEprint) => self.e.call_rt(Rt::ConsoleEprint, &values),
             Callee::Std(StdFn::ConsoleEprintln) => self.e.call_rt(Rt::ConsoleEprintln, &values),
             Callee::Std(StdFn::Io(IoFn::BufferClear)) => self.e.call_rt(Rt::Io(IoFn::BufferClear), &values),
@@ -354,6 +355,44 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             return slot;
         }
         self.pointer_to(place, true)
+    }
+
+    /// A function of `std.cpu.x64` or `std.cpu.arm64`, the instruction it
+    /// is (standard library 14.47); the checker let it be only where its
+    /// feature is sure, and the function is compiled with that feature.
+    fn instruction(
+        &mut self,
+        instruction: crate::instructions::Instruction,
+        args: &[Operand],
+        values: &[ir::Value],
+    ) -> Option<ir::Value> {
+        use crate::instructions::Instruction as I;
+        let ins = self.e.fb.ins();
+        Some(match instruction {
+            I::Crc32cByte => ins.crc32c8(values[0], values[1]),
+            I::Crc32cInt => ins.crc32c64(values[0], values[1]),
+            I::Pdep => ins.x86_pdep(values[0], values[1]),
+            I::Pext => ins.x86_pext(values[0], values[1]),
+            I::AesEnc => ins.x86_aesenc(values[0], values[1]),
+            I::AesEncLast => ins.x86_aesenclast(values[0], values[1]),
+            I::AesDec => ins.x86_aesdec(values[0], values[1]),
+            I::AesDecLast => ins.x86_aesdeclast(values[0], values[1]),
+            I::Pclmulqdq => {
+                let Operand::Const(Const::Int(halves, _)) = args[2] else {
+                    unreachable!("the checker asks for a constant `halves`")
+                };
+                ins.x86_pclmulqdq(values[0], values[1], halves as u8)
+            }
+            I::Aese => ins.aarch64_aese(values[0], values[1]),
+            I::Aesd => ins.aarch64_aesd(values[0], values[1]),
+            I::Aesmc => ins.aarch64_aesmc(values[0]),
+            I::Aesimc => ins.aarch64_aesimc(values[0]),
+            I::Pmull => ins.aarch64_pmull64(values[0], values[1]),
+            I::Pause => {
+                ins.spin_hint();
+                return None;
+            }
+        })
     }
 }
 

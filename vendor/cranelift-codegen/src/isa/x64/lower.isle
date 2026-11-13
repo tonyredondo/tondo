@@ -5244,3 +5244,36 @@
 (rule (lower (sequence_point))
       (side_effect
        (x64_sequence_point)))
+
+;; Tondo: the instructions of `std.cpu.x64` (Tondo's change 23), one each.
+;; The checker allows them only where their feature is sure.
+
+(rule (lower (crc32c8 _ crc x))
+      (x64_crc32b_rm crc x))
+
+(rule (lower (crc32c64 _ crc x))
+      (x64_crc32q_rm crc x))
+
+(rule (lower (x86_pdep _ x mask))
+      (x64_pdepq_rvm x mask))
+
+(rule (lower (x86_pext _ x mask))
+      (x64_pextq_rvm x mask))
+
+(rule (lower (x86_aesenc _ state key))
+      (x64_aesenc_a state key))
+
+(rule (lower (x86_aesenclast _ state key))
+      (x64_aesenclast_a state key))
+
+(rule (lower (x86_aesdec _ state key))
+      (x64_aesdec_a state key))
+
+(rule (lower (x86_aesdeclast _ state key))
+      (x64_aesdeclast_a state key))
+
+(rule (lower (x86_pclmulqdq _ x y (u8_from_uimm8 halves)))
+      (x64_pclmulqdq_a x y halves))
+
+(rule (lower (spin_hint))
+      (side_effect (x64_pause_zo)))

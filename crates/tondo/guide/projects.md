@@ -104,6 +104,14 @@ asks the processor; a feature the level has, or one of the other
 architecture, is known when compiling, and only the way of the `if` that
 runs is compiled.
 
+`std.cpu.x64` and `std.cpu.arm64` have functions that are one instruction
+each, as `x64.depositBits` (BMI2's `pdep`), for the files of their
+architecture. A function that uses one needs its feature, and is compiled
+for it; call such a function under `if cpu.has(cpu.Feature.Bmi2) { ... }`,
+with the plain way in the `else`. `main`, a test, a `pub extern fn`, a
+trait's method and a function used as a value cannot need a feature: the
+error says which call brings it in.
+
 ## Editors
 
 In VS Code, and Cursor, VSCodium and Windsurf, the Tondo extension

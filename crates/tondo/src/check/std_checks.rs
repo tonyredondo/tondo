@@ -31,6 +31,24 @@ impl<'a> Checker<'a> {
             })
     }
 
+    /// That the `halves` of `x64.carrylessMultiply` is a constant of 0, 1,
+    /// 16 or 17, which the instruction holds in itself (standard library
+    /// 14.47).
+    pub(super) fn check_halves(&mut self, halves: &hir::Expr) {
+        if let hir::ExprKind::Int(value) = halves.kind
+            && crate::instructions::HALVES.iter().any(|(allowed, _)| *allowed == value)
+        {
+            return;
+        }
+        let values: Vec<String> =
+            crate::instructions::HALVES.iter().map(|(value, takes)| format!("{value} takes {takes}")).collect();
+        let message = format!(
+            "`halves` is a constant written in the call, one of four: {}; write the one you mean, as `x64.carrylessMultiply(a, b, 0)`",
+            values.join(", ")
+        );
+        self.diags.error("E1901", halves.span, message);
+    }
+
     /// The function of `std.format` that applies a format to a value of
     /// `ty` as an integer or a float, as `formatted` does.
     pub(super) fn typed_apply(&mut self, ty: Ty) -> Option<FnId> {

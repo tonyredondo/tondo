@@ -1601,6 +1601,16 @@ impl asm::AvailableFeatures for &EmitInfo {
     fn apx(&self) -> bool {
         self.isa_flags.has_apx()
     }
+
+    // Tondo: the features of `std.cpu.x64`'s AES and carry-less
+    // multiplication.
+    fn aes(&self) -> bool {
+        self.isa_flags.has_aes()
+    }
+
+    fn pclmulqdq(&self) -> bool {
+        self.isa_flags.has_pclmulqdq()
+    }
 }
 
 impl MachInstEmit for Inst {

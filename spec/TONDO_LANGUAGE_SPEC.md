@@ -9253,7 +9253,8 @@ oculten un diagnóstico independiente.
 | `E1806` | `missing-main` | Un target ejecutable hosted no contiene `main` válido ni script raíz. |
 | `E1807` | `library-without-functions` | Una librería para C (toolchain 7.7) no publica ninguna `pub extern fn` con cuerpo. |
 | `E1808` | `system-signature-mismatch` | Una declaración de un archivo de un sistema no es como la del mismo nombre para otro sistema (6.8). |
-| `E1901` | `nonconstant-expression` | Un `const` usa una operación no evaluable en compilación. |
+| `E1809` | `unguarded-processor-feature` | Necesita una característica del procesador una función que no puede: `main`, un test, una `pub extern fn`, un método de un trait o una función usada como valor (7.8 del toolchain). |
+| `E1901` | `nonconstant-expression` | Un `const`, o un argumento que debe ser constante, usa lo que no se conoce en compilación. |
 | `E1902` | `constant-cycle` | Dependencias entre constantes forman un ciclo. |
 | `E1903` | `constant-panic` | La evaluación constante produciría un pánico. |
 | `E1904` | `invalid-embed` | `std.embed` recibe una ruta que no es un literal, sale del paquete o no existe, un directorio donde va un archivo o al revés, o un archivo que no es UTF-8 en `text`. |

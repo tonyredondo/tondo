@@ -145,7 +145,16 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "system-signature-mismatch",
         "A declaration of a file of one system differs from the one of the same name for another system.",
     ),
-    ("E1901", "nonconstant-expression", "A `const` uses an operation that cannot run while compiling."),
+    (
+        "E1809",
+        "unguarded-processor-feature",
+        "`main`, a test, a `pub extern fn`, a trait's method or a function used as a value needs a feature of the processor.",
+    ),
+    (
+        "E1901",
+        "nonconstant-expression",
+        "A `const`, or an argument that must be a constant, uses what cannot be known while compiling.",
+    ),
     ("E1902", "constant-cycle", "Constants depend on each other in a cycle."),
     ("E1903", "constant-panic", "Evaluating a constant would panic."),
     (

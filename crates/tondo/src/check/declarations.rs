@@ -217,9 +217,9 @@ impl<'a> Checker<'a> {
             ["std", "internal", "image"] => StdModule::InternalImage,
             ["std", "internal", "context"] => StdModule::InternalContext,
             ["std", "internal", "channel"] => StdModule::InternalChannel,
-            ["std", rest @ ..] if let Some((systems, suffix)) = crate::stdlib::elsewhere(&path) => {
+            ["std", rest @ ..] if let Some((targets, suffix, key)) = crate::stdlib::elsewhere(&path) => {
                 let message = format!(
-                    "`std.{}` is of {systems} only: import it from a file of {systems}, as `name_{suffix}.to`, or limit the package with `systems = [\"{suffix}\"]` in tondo.toml",
+                    "`std.{}` is of {targets} only: import it from a file of {targets}, as `name_{suffix}.to`, or limit the package with `{key} = [\"{suffix}\"]` in tondo.toml",
                     rest.join(".")
                 );
                 self.diags.error("E1008", import.span, message);

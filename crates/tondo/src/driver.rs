@@ -159,6 +159,9 @@ thread_local! {
     static CPU: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     /// The level the build of this thread lowers its code for.
     static LEVEL: std::cell::RefCell<Option<crate::target::Cpu>> = const { std::cell::RefCell::new(None) };
+    /// The level the root package's `[build] cpu` asks for, as the program
+    /// of this thread is checked.
+    static PROJECT_CPU: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Makes the builds of this thread for the level of processor `--cpu`
@@ -187,6 +190,19 @@ pub fn cpu(analysis: &Analysis, target: Option<Target>) -> Result<crate::target:
     };
     LEVEL.with(|cell| *cell.borrow_mut() = Some(level.clone()));
     Ok(level)
+}
+
+/// The level a check of this thread's program takes the build's to be
+/// (toolchain 7.8), for what a function needs beyond it: `--cpu`'s, or else
+/// the root package's `[build] cpu`, or else `baseline`, for the target
+/// checked. A name that is no level is `baseline` here: the build says
+/// what is wrong with it.
+pub fn checked_level() -> crate::target::Cpu {
+    let arch = target().arch;
+    let name = CPU.with(|cpu| cpu.borrow().clone()).or_else(|| PROJECT_CPU.with(|cpu| cpu.borrow().clone()));
+    name.and_then(|name| crate::target::Cpu::parse(&name, arch, None).ok()).unwrap_or_else(|| {
+        crate::target::Cpu::parse("baseline", arch, None).expect("every architecture has a baseline")
+    })
 }
 
 /// The level the code of this thread's build is lowered for: the last
@@ -275,8 +291,12 @@ pub fn check(path: &Path) -> Result<Analysis, String> {
                 })
             })
             .collect();
-        let tests =
-            path.is_dir().then(|| beside(scope, &carried, || analyze_with(path, true, false, false, Root::Checked)));
+        // The tests, for the first target too: a package may not run on
+        // this machine's.
+        let first = targets[0].0;
+        let tests = path.is_dir().then(|| {
+            beside(scope, &carried, move || for_target(first, || analyze_with(path, true, false, false, Root::Checked)))
+        });
         let mut analysis = for_target(targets[0].0, || analyze_with(path, false, false, false, Root::Checked))?;
         let mut more = Vec::new();
         for (handle, (_, stands)) in others.into_iter().zip(&targets[1..]) {
@@ -577,6 +597,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
     let mut libraries: Vec<String> = Vec::new();
     let mut elsewhere = Vec::new();
     let mut cpu = None;
+    PROJECT_CPU.with(|project| *project.borrow_mut() = None);
     // The dependencies, whose warnings their authors see, not this program's.
     let mut dependencies: Vec<String> = Vec::new();
     // A file alone is a program of its name, at version 0.0.0.
@@ -621,6 +642,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         dependencies = packages[1..].iter().map(|p| p.name.clone()).collect();
         // The program's own `[build]` decides, not a dependency's.
         cpu = packages[0].cpu.clone();
+        PROJECT_CPU.with(|project| *project.borrow_mut() = cpu.as_ref().map(|(name, _)| name.clone()));
         built = ast::Built {
             name: packages[0].name.clone(),
             version: packages[0].version.clone(),

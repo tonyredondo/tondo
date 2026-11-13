@@ -234,18 +234,31 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     // of the processor its level has (toolchain 7.8): what the system's
     // conventions ask of the code, as macOS signing return addresses, stays
     // as cranelift-native sets it.
-    let mut builder = match target {
-        Some(triple) => cranelift_codegen::isa::lookup_by_name(triple).map_err(|e| format!("{triple}: {e}"))?,
-        None => cranelift_native::builder().map_err(|e| format!("unsupported host: {e}"))?,
+    // A function that needs features beyond the level is compiled with
+    // them: a generator for each set of them the program's functions need.
+    let flags = settings::Flags::new(flags);
+    let isa_for = |needs: u32| -> Result<cranelift_codegen::isa::OwnedTargetIsa, String> {
+        let mut builder = match target {
+            Some(triple) => cranelift_codegen::isa::lookup_by_name(triple).map_err(|e| format!("{triple}: {e}"))?,
+            None => cranelift_native::builder().map_err(|e| format!("unsupported host: {e}"))?,
+        };
+        for (flag, on) in cpu.settings_with(needs) {
+            builder.set(flag, if on { "true" } else { "false" }).map_err(|e| format!("{flag}: {e}"))?;
+        }
+        builder.finish(flags.clone()).map_err(|e| e.to_string())
     };
-    for (flag, on) in cpu.settings() {
-        builder.set(flag, if on { "true" } else { "false" }).map_err(|e| format!("{flag}: {e}"))?;
+    let isa = isa_for(0)?;
+    let mut isas = HashMap::new();
+    for body in bodies.iter().filter(|body| body.needs != 0) {
+        if let std::collections::hash_map::Entry::Vacant(entry) = isas.entry(body.needs) {
+            entry.insert(isa_for(body.needs)?);
+        }
     }
-    let isa = builder.finish(settings::Flags::new(flags)).map_err(|e| e.to_string())?;
     let shapes = Shapes::new(&program.types, &*isa);
     let builder =
         ObjectBuilder::new(isa, "tondo", cranelift_module::default_libcall_names()).map_err(|e| e.to_string())?;
     let mut cg = Codegen {
+        isas,
         roots,
         cpu: cpu.needed(),
         module: ObjectModule::new(builder),
@@ -329,10 +342,11 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     // to declare is declared in the functions' order (see `worker`);
     // `compile_all` compiles them on every core.
     let mut jobs = Vec::new();
-    let mut job = |id: FuncId, context: &mut cranelift_codegen::Context, traced: Option<&str>, sites, inlined, body| {
-        let func = std::mem::replace(&mut context.func, ir::Function::new());
-        jobs.push(Job { id, func, traced: traced.map(str::to_string), sites, inlined, body });
-    };
+    let mut job =
+        |id: FuncId, context: &mut cranelift_codegen::Context, traced: Option<&str>, sites, inlined, body, needs| {
+            let func = std::mem::replace(&mut context.func, ir::Function::new());
+            jobs.push(Job { id, func, traced: traced.map(str::to_string), sites, inlined, body, needs });
+        };
     let built = {
         let shared = worker::Shared::new(&cg);
         let indices: Vec<usize> = (0..bodies.len()).collect();
@@ -348,11 +362,11 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
             context.func.signature = cg.signature(body);
             context.func.name = UserFuncName::user(0, index as u32);
             let sites = FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
-            job(cg.functions[index], &mut context, traced, sites, body.inlined.clone(), index);
+            job(cg.functions[index], &mut context, traced, sites, body.inlined.clone(), index, body.needs);
         } else {
             worker::replay(&mut cg, bodies, &mut built);
             context.func = built.func;
-            job(cg.functions[index], &mut context, traced, built.sites, body.inlined.clone(), index);
+            job(cg.functions[index], &mut context, traced, built.sites, body.inlined.clone(), index, body.needs);
         }
         cg.module.clear_context(&mut context);
     }
@@ -365,14 +379,14 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
             let main = main.0 as usize;
             let entry =
                 cg.entry_point(main, bodies[main].result, &program.tests, trace, &mut context, &mut builder_context)?;
-            job(entry, &mut context, None, Vec::new(), Vec::new(), 0);
+            job(entry, &mut context, None, Vec::new(), Vec::new(), 0, 0);
             cg.module.clear_context(&mut context);
             let start = cg.process_main(entry, &mut context, &mut builder_context)?;
-            job(start, &mut context, None, Vec::new(), Vec::new(), 0);
+            job(start, &mut context, None, Vec::new(), Vec::new(), 0, 0);
         }
         None => {
             let init = cg.library_start(trace, &mut context, &mut builder_context)?;
-            job(init, &mut context, None, Vec::new(), Vec::new(), 0);
+            job(init, &mut context, None, Vec::new(), Vec::new(), 0, 0);
             cg.library = Some(init);
         }
     }
@@ -382,26 +396,26 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.name = UserFuncName::user(3, thunk.as_u32());
         define_thunk(&mut cg, &bodies[target.0 as usize], target, &mut context.func, &mut builder_context);
         // In the table of the trace, without lines, for its handler.
-        job(thunk, &mut context, Some(""), Vec::new(), Vec::new(), 0);
+        job(thunk, &mut context, Some(""), Vec::new(), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
     }
     while let Some((target, forward)) = cg.pending_forwarders.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(forward).signature.clone();
         context.func.name = UserFuncName::user(6, forward.as_u32());
         define_forwarder(&mut cg, target, &mut context.func, &mut builder_context);
-        job(forward, &mut context, Some(""), Vec::new(), Vec::new(), 0);
+        job(forward, &mut context, Some(""), Vec::new(), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
     }
     while let Some(callback) = cg.pending_callbacks.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(callback.adapter).signature.clone();
         context.func.name = UserFuncName::user(4, callback.adapter.as_u32());
         define_adapter(&mut cg, &callback, &mut context.func, &mut builder_context);
-        job(callback.adapter, &mut context, None, Vec::new(), Vec::new(), 0);
+        job(callback.adapter, &mut context, None, Vec::new(), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
         context.func.signature = cg.module.declarations().get_function_decl(callback.inner).signature.clone();
         context.func.name = UserFuncName::user(5, callback.inner.as_u32());
         define_inner(&mut cg, &bodies[callback.target.0 as usize], &callback, &mut context.func, &mut builder_context);
-        job(callback.inner, &mut context, Some(&bodies[callback.target.0 as usize].name), Vec::new(), Vec::new(), 0);
+        job(callback.inner, &mut context, Some(&bodies[callback.target.0 as usize].name), Vec::new(), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
     }
     // A patch's conversions of the running program's values, which the
@@ -417,7 +431,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.signature = signature;
         context.func.name = UserFuncName::user(7, id.as_u32());
         define_conversion(&mut cg, body, function, &mut context.func, &mut builder_context);
-        job(id, &mut context, None, Vec::new(), Vec::new(), 0);
+        job(id, &mut context, None, Vec::new(), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
         let TyKind::Option(new) = *cg.types.kind(body.result) else { unreachable!("a conversion gives `T?`") };
         let old = body.locals[body.params[0].0 as usize];
@@ -437,7 +451,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.signature = cg.glue_signature(kind);
         context.func.name = UserFuncName::user(2, id.as_u32());
         define_glue(&mut cg, kind, ty, &mut context.func, &mut builder_context);
-        job(id, &mut context, None, Vec::new(), Vec::new(), 0);
+        job(id, &mut context, None, Vec::new(), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
     }
     drop(building);
@@ -486,6 +500,10 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
 }
 
 struct Codegen<'a> {
+    /// The generator of each set of features of the processor some
+    /// function needs beyond the level (toolchain 7.8); the module's is the
+    /// level's.
+    isas: HashMap<u32, cranelift_codegen::isa::OwnedTargetIsa>,
     /// Where the program comes from, which the runtime gives to tools.
     roots: &'a str,
     /// The level of processor the program is for and what it needs, a
@@ -680,6 +698,9 @@ struct Job {
     inlined: Vec<crate::mir::Inlined>,
     /// The body it is of.
     body: usize,
+    /// The features of the processor it needs beyond the level, which pick
+    /// the generator it is compiled with (toolchain 7.8).
+    needs: u32,
 }
 
 /// A function's machine code, its relocations, and its size and calls for
@@ -1559,7 +1580,7 @@ impl Codegen<'_> {
         };
         // Each function goes to the thread that compiles it, which says
         // which it compiles when the rules it gets are counted.
-        type Compiling = (FuncId, std::sync::Mutex<Option<ir::Function>>, bool, Option<String>);
+        type Compiling = (FuncId, std::sync::Mutex<Option<ir::Function>>, bool, Option<String>, u32);
         let functions: Vec<Compiling> = jobs
             .iter_mut()
             .map(|job| {
@@ -1567,10 +1588,11 @@ impl Codegen<'_> {
                 let counted =
                     asked.as_ref().filter(|asked| asked.rules && wanted(job).is_some()).and(job.traced.clone());
                 let function = std::sync::Mutex::new(Some(std::mem::replace(&mut job.func, ir::Function::new())));
-                (job.id, function, ir, counted)
+                (job.id, function, ir, counted, job.needs)
             })
             .collect();
-        let compiled = crate::parallel::map(&functions, 1, |(id, function, ir, _counted)| {
+        let isas = &self.isas;
+        let compiled = crate::parallel::map(&functions, 1, |(id, function, ir, _counted, needs)| {
             thread_local! {
                 static CONTEXT: std::cell::RefCell<cranelift_codegen::Context> =
                     std::cell::RefCell::new(cranelift_codegen::Context::new());
@@ -1578,6 +1600,7 @@ impl Codegen<'_> {
             let function = function.lock().unwrap_or_else(|e| e.into_inner()).take().expect("a function");
             #[cfg(feature = "rules")]
             crate::rules::compiling(_counted.as_deref());
+            let isa = isas.get(needs).map_or(isa, |isa| &**isa);
             let compiled = CONTEXT.with(|context| compile_one(isa, &mut context.borrow_mut(), *id, function, *ir));
             #[cfg(feature = "rules")]
             crate::rules::compiling(None);

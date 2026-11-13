@@ -294,6 +294,7 @@ impl Mono<'_> {
             body: Block { stmts: Vec::new(), tail: None, ty: Ty::UNIT },
             moves: Default::default(),
             test: false,
+            needs: self.functions[id.0 as usize].needs,
             span: self.functions[id.0 as usize].span,
         };
         if !args.is_empty() {
@@ -731,6 +732,7 @@ impl Mono<'_> {
                 body: Block { stmts: Vec::new(), tail: Some(Box::new(tail)), ty: Ty::UNIT },
                 moves: Default::default(),
                 test: false,
+                needs: 0,
                 span,
             }
         } else {
@@ -863,6 +865,7 @@ impl Mono<'_> {
                 body: Block { stmts, tail: None, ty: Ty::NEVER },
                 moves: Default::default(),
                 test: false,
+                needs: 0,
                 span,
             }
         };

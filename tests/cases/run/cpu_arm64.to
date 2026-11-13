@@ -1,0 +1,38 @@
+// The functions of std.cpu.arm64 (standard library 14.47), each the
+// instruction it is, in functions that need their features, called under
+// guards (toolchain 7.8), with the same values written out in the other
+// way.
+// expect-platform: aarch64
+
+import std.console
+import std.cpu
+import std.cpu.arm64
+import std.simd
+
+fn checksum(crc: UInt32, value: UInt): UInt32 {
+    arm64.crc32cInt(crc, value)
+}
+
+fn rounds(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte] {
+    arm64.aesInverseMixColumns(arm64.aesMixColumns(arm64.aesEncrypt(state, key)))
+}
+
+fn product(a: UInt, b: UInt): UInt {
+    arm64.polynomialMultiply(a, b).lane(0)
+}
+
+fn main() {
+    let crc = if cpu.has(cpu.Feature.Crc32) { checksum(0xFFFFFFFF, 0) } else { 1943489909 }
+    console.println("{crc}")
+    let state = simd.Vector128[Byte].all(1)
+    let key = simd.Vector128[Byte].all(2)
+    let encrypted = if cpu.has(cpu.Feature.Aes) { rounds(state, key).lane(0) } else { 123 }
+    console.println("{encrypted}")
+    let multiplied = if cpu.has(cpu.Feature.Pmull) { product(3, 7) } else { 9 }
+    console.println("{multiplied}")
+    arm64.pause()
+}
+
+// expect-stdout: 1943489909
+// expect-stdout: 123
+// expect-stdout: 9

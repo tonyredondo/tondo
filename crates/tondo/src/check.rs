@@ -8,6 +8,7 @@ mod calls;
 mod contexts;
 mod declarations;
 mod expressions;
+mod features;
 mod foreign;
 mod functions;
 mod indexing;
@@ -136,6 +137,8 @@ fn check_with<'a>(
         datetime_module: None,
         pacing_module: None,
         unrepeatable: HashMap::new(),
+        instructions: HashMap::new(),
+        instructions_used: HashSet::new(),
         checks_models: HashSet::new(),
         calling: None,
         calls: HashMap::new(),
@@ -946,6 +949,11 @@ struct Checker<'a> {
     /// The standard functions whose values depend on the moment or the
     /// machine, which the `meta` profile cannot call, with their names.
     unrepeatable: HashMap<FnId, &'static str>,
+    /// The functions of `std.cpu.x64` and `std.cpu.arm64` (standard library
+    /// 14.47), each the instruction its calls become.
+    instructions: HashMap<FnId, crate::instructions::Instruction>,
+    /// The instructions the checked code uses, for `features.rs`.
+    instructions_used: HashSet<crate::instructions::Instruction>,
     /// The functions of `std.model` that make a test that calls them one
     /// that checks a model.
     checks_models: HashSet<FnId>,

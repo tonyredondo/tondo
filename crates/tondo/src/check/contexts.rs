@@ -114,6 +114,7 @@ impl<'a> Checker<'a> {
                     body: hir::Block { stmts: Vec::new(), tail: Some(Box::new(made)), ty: reference },
                     moves: HashSet::new(),
                     test: false,
+                    needs: 0,
                     span: default.span,
                 };
                 self.ownership(&mut function, &own.params);
@@ -134,6 +135,7 @@ impl<'a> Checker<'a> {
                 body,
                 moves: HashSet::new(),
                 test: false,
+                needs: 0,
                 span: Span::default(),
             };
             self.ownership(&mut maker, &[]);
@@ -239,6 +241,7 @@ impl<'a> Checker<'a> {
             body: hir::Block { stmts: Vec::new(), tail: Some(Box::new(value)), ty: reference },
             moves: HashSet::new(),
             test: false,
+            needs: 0,
             span,
         };
         self.ownership(&mut function, &cx.params);
@@ -324,6 +327,7 @@ impl<'a> Checker<'a> {
             body,
             moves: HashSet::new(),
             test: false,
+            needs: 0,
             span: Span::default(),
         };
         self.ownership(&mut function, &cx.params);

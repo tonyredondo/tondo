@@ -125,6 +125,8 @@ fn detected(name: &str) -> bool {
             "avx512vbmi" => std::is_x86_feature_detected!("avx512vbmi"),
             "avx512vnni" => std::is_x86_feature_detected!("avx512vnni"),
             "avxvnni" => std::is_x86_feature_detected!("avxvnni"),
+            "aes" => std::is_x86_feature_detected!("aes"),
+            "pclmulqdq" => std::is_x86_feature_detected!("pclmulqdq"),
             _ => false,
         }
     }
@@ -163,6 +165,8 @@ fn shown(name: &str) -> &str {
         "avx512vbmi" => "AVX-512 VBMI",
         "avx512vnni" => "AVX-512 VNNI",
         "avxvnni" => "AVX-VNNI",
+        "aes" => "AES",
+        "pclmulqdq" => "PCLMULQDQ",
         "lse" => "LSE",
         "paca" => "pointer authentication",
         "fp16" => "FP16",

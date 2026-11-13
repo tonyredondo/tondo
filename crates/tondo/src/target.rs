@@ -134,7 +134,7 @@ impl Target {
 /// The features of a processor the code generator has a flag for: the
 /// flag, and the name Rust's detection gives the feature, which the runtime
 /// checks at the start (toolchain 7.8).
-const FLAGS: [(crate::project::Arch, &str, &str); 24] = {
+const FLAGS: [(crate::project::Arch, &str, &str); 26] = {
     use crate::project::Arch::{Arm64, X64};
     [
         (X64, "has_sse3", "sse3"),
@@ -156,6 +156,8 @@ const FLAGS: [(crate::project::Arch, &str, &str); 24] = {
         (X64, "has_avx512vbmi", "avx512vbmi"),
         (X64, "has_avx512vnni", "avx512vnni"),
         (X64, "has_avx_vnni", "avxvnni"),
+        (X64, "has_aes", "aes"),
+        (X64, "has_pclmulqdq", "pclmulqdq"),
         (Arm64, "has_lse", "lse"),
         (Arm64, "has_pauth", "paca"),
         (Arm64, "has_fp16", "fp16"),
@@ -185,7 +187,7 @@ const FEATURES: [(Option<crate::project::Arch>, Option<&str>); 23] = {
         (Some(X64), Some("has_avx512dq")),
         (Some(X64), Some("has_avx512vl")),
         (Some(X64), None),
-        (Some(X64), None),
+        (Some(X64), Some("has_pclmulqdq")),
         (Some(X64), None),
         (Some(Arm64), Some("neon")),
         (Some(Arm64), Some("has_lse")),
@@ -195,6 +197,33 @@ const FEATURES: [(Option<crate::project::Arch>, Option<&str>); 23] = {
         (None, None),
     ]
 };
+
+/// The names of the variants of `cpu.Feature`, in order.
+pub const FEATURE_NAMES: [&str; 23] = [
+    "Sse3",
+    "Ssse3",
+    "Sse41",
+    "Sse42",
+    "Popcnt",
+    "Avx",
+    "Avx2",
+    "Fma",
+    "Bmi1",
+    "Bmi2",
+    "Lzcnt",
+    "Avx512F",
+    "Avx512Dq",
+    "Avx512Vl",
+    "Avx512Bw",
+    "Pclmulqdq",
+    "Sha",
+    "Neon",
+    "Lse",
+    "Crc32",
+    "Pmull",
+    "Sha2",
+    "Aes",
+];
 
 /// The levels of x64: each the flags of `FLAGS` it adds to the one before.
 const X64_LEVELS: [(&str, usize); 4] = [("baseline", 6), ("x86-64-v2", 6), ("x86-64-v3", 12), ("x86-64-v4", 15)];
@@ -250,11 +279,22 @@ impl Cpu {
     /// `cpu.Feature`, when the level says: one of the other architecture is
     /// not there, one the level turns on is, and NEON is on every arm64.
     pub fn has(&self, feature: u32) -> Option<bool> {
-        let (arch, flag) = *FEATURES.get(feature as usize)?;
+        let (arch, _) = *FEATURES.get(feature as usize)?;
         if arch.is_some_and(|arch| arch != self.arch) {
             return Some(false);
         }
-        flag.is_some_and(|flag| flag == "neon" || self.flags.contains(&flag)).then_some(true)
+        flag_of(feature, self.arch).is_some_and(|flag| flag == "neon" || self.flags.contains(&flag)).then_some(true)
+    }
+
+    /// The generator's flags of a function that needs the features
+    /// `needs`, a bit each, beyond the level (toolchain 7.8): the level's,
+    /// with the flag of each feature it needs that has one.
+    pub fn settings_with(&self, needs: u32) -> impl Iterator<Item = (&'static str, bool)> + '_ {
+        let needed: Vec<&str> = (0..FEATURES.len() as u32)
+            .filter(|feature| needs & (1 << feature) != 0)
+            .filter_map(|feature| flag_of(feature, self.arch))
+            .collect();
+        self.settings().map(move |(flag, on)| (flag, on || needed.contains(&flag)))
     }
 
     /// Every flag of its architecture's features, and whether it is on: the
@@ -268,6 +308,16 @@ impl Cpu {
     pub fn needed(&self) -> String {
         let names = FLAGS.iter().filter(|(_, flag, _)| self.flags.contains(flag)).map(|(.., detected)| *detected);
         std::iter::once(self.name.as_str()).chain(names).collect::<Vec<_>>().join("\n")
+    }
+}
+
+/// The generator's flag of the variant `feature` of `cpu.Feature` on
+/// `arch`, if it has one: `Aes` is of both architectures, and has one on
+/// x64 only.
+fn flag_of(feature: u32, arch: crate::project::Arch) -> Option<&'static str> {
+    match (FEATURE_NAMES.get(feature as usize), arch) {
+        (Some(&"Aes"), crate::project::Arch::X64) => Some("has_aes"),
+        _ => FEATURES.get(feature as usize)?.1,
     }
 }
 
@@ -296,6 +346,8 @@ fn detected_here(name: &str) -> bool {
             "avx512vbmi" => std::is_x86_feature_detected!("avx512vbmi"),
             "avx512vnni" => std::is_x86_feature_detected!("avx512vnni"),
             "avxvnni" => std::is_x86_feature_detected!("avxvnni"),
+            "aes" => std::is_x86_feature_detected!("aes"),
+            "pclmulqdq" => std::is_x86_feature_detected!("pclmulqdq"),
             _ => false,
         }
     }

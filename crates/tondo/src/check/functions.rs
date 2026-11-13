@@ -145,6 +145,7 @@ impl<'a> Checker<'a> {
             body,
             moves: HashSet::new(),
             test: false,
+            needs: 0,
             span: f.name.span,
         };
         self.ownership(&mut function, &cx.params);
@@ -223,6 +224,7 @@ impl<'a> Checker<'a> {
             body,
             moves: HashSet::new(),
             test: false,
+            needs: 0,
             span: statements.first().map_or(Span::default(), |s| s.span),
         };
         self.ownership(&mut function, &cx.params);
@@ -853,6 +855,7 @@ impl<'a> Checker<'a> {
             body,
             moves: HashSet::new(),
             test,
+            needs: 0,
             span,
         };
         // A cleanup runs once, so it may give its captures away; another
@@ -985,6 +988,7 @@ impl<'a> Checker<'a> {
             body,
             moves: HashSet::new(),
             test: false,
+            needs: 0,
             span,
         }));
         let values = values.into_iter().enumerate().map(|(i, a)| (i as u32, a)).collect();

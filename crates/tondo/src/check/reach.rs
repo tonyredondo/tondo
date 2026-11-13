@@ -180,7 +180,7 @@ impl<'a> Checker<'a> {
 }
 
 /// Calls `f` on every expression of `block`, however deep.
-fn each_expr(block: &hir::Block, f: &mut impl FnMut(&hir::Expr)) {
+pub(super) fn each_expr(block: &hir::Block, f: &mut impl FnMut(&hir::Expr)) {
     for stmt in &block.stmts {
         match stmt {
             hir::Stmt::Let(_, value)

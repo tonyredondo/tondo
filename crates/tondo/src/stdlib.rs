@@ -63,6 +63,8 @@ const SOURCES: &[(&str, &[(&str, &str)])] = &[
     ("format", &[file!("format")]),
     ("uuid", &[file!("uuid")]),
     ("cpu", &[file!("cpu")]),
+    ("cpu.x64", &[file!("cpu/x64/instructions_x64")]),
+    ("cpu.arm64", &[file!("cpu/arm64/instructions_arm64")]),
     ("os", &[file!("os")]),
     (
         "os.linux",
@@ -196,25 +198,36 @@ pub(crate) fn targeted(name: &str) -> Option<(bool, bool)> {
     (systems || archs).then_some((systems, archs))
 }
 
-/// For a standard module of none of the build's files, of another system:
-/// the systems it is for, and the suffix of a file of the first.
-pub(crate) fn elsewhere(path: &[&str]) -> Option<(String, &'static str)> {
+/// For a standard module of none of the build's files, of another system
+/// or architecture: the systems it is for, or else its architectures; the
+/// suffix of a file of the first; and the key of `[package]` that limits a
+/// package to it.
+pub(crate) fn elsewhere(path: &[&str]) -> Option<(String, &'static str, &'static str)> {
     let ["std", rest @ ..] = path else { return None };
     let name = SOURCES.iter().find(|(n, _)| n.split('.').eq(rest.iter().copied()))?.0;
     if built_files(name).next().is_some() {
         return None;
     }
-    let mut systems: Vec<crate::project::System> = Vec::new();
+    let (mut systems, mut archs): (Vec<crate::project::System>, Vec<crate::project::Arch>) = (Vec::new(), Vec::new());
     for (file, _) in files(name).unwrap_or_default() {
-        let file = format!("{file}.to");
-        for &system in crate::project::suffixes(Path::new(&file)).0.unwrap_or_default() {
+        let (of_systems, of_archs) = crate::project::suffixes(Path::new(&format!("{file}.to")));
+        for &system in of_systems.unwrap_or_default() {
             if !systems.contains(&system) {
                 systems.push(system);
             }
         }
+        for &arch in of_archs.unwrap_or_default() {
+            if !archs.contains(&arch) {
+                archs.push(arch);
+            }
+        }
+    }
+    if systems.is_empty() {
+        let shown: Vec<&str> = archs.iter().map(|a| a.name()).collect();
+        return Some((shown.join(" and "), archs.first()?.name(), "architectures"));
     }
     let shown: Vec<&str> = systems.iter().map(|s| s.shown()).collect();
-    Some((shown.join(" and "), systems.first()?.name()))
+    Some((shown.join(" and "), systems.first()?.name(), "systems"))
 }
 
 /// The source of a file of the standard library, by its path in `std/`
@@ -230,7 +243,9 @@ pub fn names() -> impl Iterator<Item = &'static str> {
 
 /// The files of a standard module that its API shows: those a build for
 /// the target of this thread has, or of a module of another system, as
-/// `std.os.macos` on Linux, those of that system on this architecture.
+/// `std.os.macos` on Linux, those of that system on this architecture, or
+/// of a module of another architecture, as `std.cpu.arm64` on x64, those of
+/// the first target of it.
 fn shown_files(name: &str) -> Vec<&'static str> {
     let files = files(name).unwrap_or_default();
     let of = |target| -> Vec<&'static str> {
@@ -239,7 +254,8 @@ fn shown_files(name: &str) -> Vec<&'static str> {
     };
     let here = crate::driver::target();
     let elsewhere = crate::project::Target::ALL.into_iter().filter(|target| target.arch == here.arch);
-    std::iter::once(here).chain(elsewhere).map(of).find(|found| !found.is_empty()).unwrap_or_default()
+    let anywhere = crate::project::Target::ALL;
+    std::iter::once(here).chain(elsewhere).chain(anywhere).map(of).find(|found| !found.is_empty()).unwrap_or_default()
 }
 
 /// The source of a standard module written in Tondo, its files one after

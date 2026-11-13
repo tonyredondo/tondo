@@ -265,6 +265,11 @@ pub struct Function {
     /// Whether it runs a test or a suite's setup, which tells the runner
     /// where an error leaves it (testing 7.6).
     pub test: bool,
+    /// The features of `cpu.Feature` it needs beyond the build's level, a
+    /// bit each by variant (toolchain 7.8): what its instructions of
+    /// `std.cpu.x64` or `std.cpu.arm64` need, and what the functions it
+    /// calls outside a guard need.
+    pub needs: u32,
     /// Where it is declared: a function's name, a closure, a script's
     /// first statement; none for what the compiler makes.
     pub span: Span,
@@ -958,6 +963,9 @@ pub enum StdFn {
     /// `cpu.has(feature)` (toolchain 7.8): what the runtime found at the
     /// start, when the build's level does not say.
     CpuHas,
+    /// A function of `std.cpu.x64` or `std.cpu.arm64`: one instruction
+    /// (standard library 14.47).
+    Cpu(crate::instructions::Instruction),
     /// A named operation of a number (18.9).
     Number(crate::numbers::NumOp),
     /// An operation of `std.simd` (standard library 14.46).

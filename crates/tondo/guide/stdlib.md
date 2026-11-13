@@ -18,6 +18,8 @@ std.model      a design checked in every order of its steps, before any code
 std.path       join, parent, fileName, extension, clean, relative, glob patterns
 std.env        args, environment, directories, processors, hostname, what was built
 std.cpu        what the processor has beyond the build's level (`cpu.has`)
+std.cpu.x64    one instruction each: CRC32C, `pdep`, `pext`, AES, `pclmulqdq`, from an `_x64.to` file
+std.cpu.arm64  one instruction each: CRC32C, AES, `pmull`, from an `_arm64.to` file
 std.simd       vectors: `simd.Vector[Float32].load(ref values, at: i)`, `+ - *` per lane, `sum`
 std.os         the system's error number, `os.Errno`, which a C function fails with
 std.os.linux   Linux's calls with C's names, and `syscall`, from a `_linux.to` file

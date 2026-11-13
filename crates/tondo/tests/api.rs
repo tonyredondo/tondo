@@ -275,10 +275,12 @@ fn standard_examples_compile() {
                                 write(case.join("src/main_test.to"), code);
                                 tondo(&case, &["test", "--list"])
                             }
-                            // One of a module of one system, in a file of it.
+                            // One of a module of one system or architecture, in a
+                            // file of it.
                             false => {
-                                let system = ["linux", "macos"].into_iter().find(|s| file.ends_with(&format!("_{s}")));
-                                let main = format!("main{}.to", system.map(|s| format!("_{s}")).unwrap_or_default());
+                                let only = ["linux", "macos", "x64", "arm64"];
+                                let target = only.into_iter().find(|s| file.ends_with(&format!("_{s}")));
+                                let main = format!("main{}.to", target.map(|s| format!("_{s}")).unwrap_or_default());
                                 write(case.join(&main), code);
                                 tondo(&case, &["check", &main])
                             }
@@ -311,10 +313,15 @@ fn the_standard_library_has_no_warnings() {
     let (modules, stderr, status) = tondo(&dir, &["api", "--list"]);
     assert_eq!(status, 0, "{stderr}");
     let names = modules.lines().filter_map(|line| line.split_whitespace().next());
-    // Those of one system, as `std.os.linux`, from a file of it.
+    // Those of one system or architecture, as `std.os.linux`, from a file
+    // of it.
     let mut files: HashMap<&str, String> = HashMap::new();
     for name in names.map(|name| name.trim_start_matches("std.")).filter(|n| !matches!(*n, "prelude" | "testing")) {
-        let file = name.rsplit('.').next().filter(|last| matches!(*last, "linux" | "macos")).unwrap_or_default();
+        let file = name
+            .rsplit('.')
+            .next()
+            .filter(|last| matches!(*last, "linux" | "macos" | "x64" | "arm64"))
+            .unwrap_or_default();
         files.entry(file).or_default().push_str(&format!("import std.{name}\n"));
     }
     std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"all\"\n").unwrap();

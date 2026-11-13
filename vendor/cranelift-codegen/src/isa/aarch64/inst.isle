@@ -363,6 +363,31 @@
        ;; Consumption of speculative data barrier.
        (Csdb)
 
+       ;; Tondo: an instruction of `std.cpu.arm64` of three registers:
+       ;; `crc32cb` and `crc32cx` of general ones, `pmull` of vectors.
+       (TondoRRR
+         (op TondoOp)
+         (rd WritableReg)
+         (rn Reg)
+         (rm Reg))
+
+       ;; Tondo: `aese` or `aesd`, which change their first register.
+       (TondoRRMod
+         (op TondoOp)
+         (rd WritableReg)
+         (ri Reg)
+         (rn Reg))
+
+       ;; Tondo: `aesmc` or `aesimc`.
+       (TondoRR
+         (op TondoOp)
+         (rd WritableReg)
+         (rn Reg))
+
+       ;; Tondo: `isb`, which a loop that waits gives the processor as a
+       ;; hint, as Rust's `spin_loop` does.
+       (Isb)
+
        ;; FPU 32-bit move.
        (FpuMove32
          (rd WritableReg)
@@ -1897,6 +1922,17 @@
 ))
 
 ;; A Vector miscellaneous operation with two registers.
+;; Tondo: the instructions of `std.cpu.arm64` (Tondo's change 23).
+(type TondoOp
+  (enum
+    (Crc32cb)
+    (Crc32cx)
+    (Pmull64)
+    (Aese)
+    (Aesd)
+    (Aesmc)
+    (Aesimc)))
+
 (type VecMisc2
   (enum
     ;; Bitwise NOT
@@ -2803,6 +2839,35 @@
       (let ((dst WritableReg (temp_writable_reg $I8X16))
             (_ Unit (emit (MInst.VecMisc op dst src size))))
         dst))
+
+;; Tondo: helpers for the instructions of `std.cpu.arm64`.
+(decl tondo_gpr (TondoOp Reg Reg) Reg)
+(rule (tondo_gpr op rn rm)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.TondoRRR op dst rn rm))))
+        dst))
+
+(decl tondo_vec (TondoOp Reg Reg) Reg)
+(rule (tondo_vec op rn rm)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.TondoRRR op dst rn rm))))
+        dst))
+
+(decl tondo_vec_mod (TondoOp Reg Reg) Reg)
+(rule (tondo_vec_mod op ri rn)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.TondoRRMod op dst ri rn))))
+        dst))
+
+(decl tondo_vec_unary (TondoOp Reg) Reg)
+(rule (tondo_vec_unary op rn)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_ Unit (emit (MInst.TondoRR op dst rn))))
+        dst))
+
+(decl isb () SideEffectNoResult)
+(rule (isb)
+      (SideEffectNoResult.Inst (MInst.Isb)))
 
 ;; Helper for emitting `MInst.VecTbl` instructions.
 (decl vec_tbl (Reg Reg) Reg)

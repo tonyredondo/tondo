@@ -450,6 +450,30 @@ pub enum Feature {
 }
 pub fn features(): Array[Feature]
 pub fn has(feature: Feature): Bool
+== std.cpu.arm64
+pub fn aesDecrypt(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]
+pub fn aesEncrypt(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]
+pub fn aesInverseMixColumns(state: simd.Vector128[Byte]): simd.Vector128[Byte]
+pub fn aesMixColumns(state: simd.Vector128[Byte]): simd.Vector128[Byte]
+pub fn crc32cByte(crc: UInt32, value: Byte): UInt32
+pub fn crc32cInt(crc: UInt32, value: UInt): UInt32
+pub fn pause()
+pub fn polynomialMultiply(a: UInt, b: UInt): simd.Vector128[UInt]
+== std.cpu.x64
+pub fn aesDecrypt(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]
+pub fn aesDecryptLast(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]
+pub fn aesEncrypt(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]
+pub fn aesEncryptLast(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]
+pub fn carrylessMultiply(
+    a: simd.Vector128[UInt],
+    b: simd.Vector128[UInt],
+    halves: Int,
+): simd.Vector128[UInt]
+pub fn crc32cByte(crc: UInt32, value: Byte): UInt32
+pub fn crc32cInt(crc: UInt32, value: UInt): UInt32
+pub fn depositBits(value: UInt, mask: UInt): UInt
+pub fn extractBits(value: UInt, mask: UInt): UInt
+pub fn pause()
 == std.crypto
 impl Display for CryptoError
 impl Display for KeyKind

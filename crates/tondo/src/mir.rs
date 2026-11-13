@@ -157,6 +157,10 @@ pub struct Body {
     /// comes from, when it comes from one (`inline`).
     pub inlined: Vec<Inlined>,
     pub scopes: Vec<Option<u32>>,
+    /// The features of `cpu.Feature` it needs beyond the build's level, a
+    /// bit each (toolchain 7.8): it is compiled with them, and never
+    /// inlined into a function that needs fewer.
+    pub needs: u32,
 }
 
 /// A call inlined: the function it called and where that function is,

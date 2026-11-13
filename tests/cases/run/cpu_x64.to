@@ -1,0 +1,41 @@
+// The functions of std.cpu.x64 (standard library 14.47), each the
+// instruction it is: crc32, whose SSE4.2 the baseline has, in `main`; the
+// others in functions that need their features, called under guards
+// (toolchain 7.8), with the same values written out in the other way.
+// expect-platform: x86_64
+
+import std.console
+import std.cpu
+import std.cpu.x64
+import std.simd
+
+fn spread(value: UInt, mask: UInt): UInt {
+    x64.depositBits(value, mask)
+}
+
+fn rounds(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte] {
+    x64.aesEncryptLast(x64.aesEncrypt(state, key), key)
+}
+
+fn product(a: UInt, b: UInt): UInt {
+    let wide = x64.carrylessMultiply(simd.Vector128[UInt].of(a, 0), simd.Vector128[UInt].of(b, 0), 0)
+    wide.lane(0)
+}
+
+fn main() {
+    console.println("{x64.crc32cInt(0xFFFFFFFF, 0)}")
+    let spreadOut = if cpu.has(cpu.Feature.Bmi2) { spread(0b101, 0xF0) } else { 0b1010000 }
+    console.println("{spreadOut}")
+    let state = simd.Vector128[Byte].all(1)
+    let key = simd.Vector128[Byte].all(2)
+    let encrypted = if cpu.has(cpu.Feature.Aes) { rounds(state, key).lane(0) } else { 241 }
+    console.println("{encrypted}")
+    let multiplied = if cpu.has(cpu.Feature.Pclmulqdq) { product(3, 7) } else { 9 }
+    console.println("{multiplied}")
+    x64.pause()
+}
+
+// expect-stdout: 1943489909
+// expect-stdout: 80
+// expect-stdout: 241
+// expect-stdout: 9

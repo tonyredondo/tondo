@@ -76,6 +76,11 @@ impl<'a> Checker<'a> {
             {
                 self.checks_models.insert(id);
             }
+            if let (m, None, n) = &qualified
+                && let Some((instruction, _)) = m.strip_prefix("std.").and_then(|m| crate::instructions::of(m, n))
+            {
+                self.instructions.insert(id, instruction);
+            }
             let unrepeatable = match qualified {
                 (m, Some(o), n) if m == "std.uuid" && o == "Uuid" && n == "v4" => Some("`Uuid.v4`"),
                 (m, Some(o), n) if m == "std.uuid" && o == "Uuid" && n == "v7" => Some("`Uuid.v7`"),
@@ -247,12 +252,15 @@ impl<'a> Checker<'a> {
                     body: hir::Block { stmts: Vec::new(), tail: None, ty: Ty::UNIT },
                     moves: HashSet::new(),
                     test: false,
+                    needs: 0,
                     span: f.name.span,
                 }
             }));
         }
         functions.extend(made);
+        let first_closure = functions.len();
         functions.extend(std::mem::take(&mut self.closure_functions).into_iter().map(|f| f.expect("checked closure")));
+        let closures: Vec<FnId> = (first_closure..functions.len()).map(|id| FnId(id as u32)).collect();
         let mut contexts = Vec::new();
         for ContextMade { maker, log, label, initials } in makers {
             let mut add = |function: hir::Function| {
@@ -277,6 +285,7 @@ impl<'a> Checker<'a> {
             contexts.push(hir::ContextFns { maker, log, label, computed });
         }
 
+        self.check_features(&mut functions, main, &closures);
         if module.c_library && self.c_functions.is_empty() {
             let message = "the library publishes no function: C calls a `pub extern fn name(...) { ... }` of the package by its name";
             self.diags.error_without_span("E1807", message);
@@ -397,6 +406,7 @@ impl<'a> Checker<'a> {
             body,
             moves: HashSet::new(),
             test: false,
+            needs: 0,
             span: Span::default(),
         };
         self.ownership(&mut function, &cx.params);

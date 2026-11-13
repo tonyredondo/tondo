@@ -51,8 +51,25 @@ with its feature `rules`, counts them by function.
 Only the code of x86-64 and arm64 is kept; the build still compiles every
 target's ISLE, so the `.isle` files of the others stay.
 
+The instructions of `std.cpu.x64` and `std.cpu.arm64` are here too, as
+Cranelift has none of them. `cranelift-codegen-meta/` 0.137.0, which
+defines the generator's instructions and settings, has the CLIF of each in
+`define_tondo` of `src/shared/instructions.rs`: `crc32c8`, `crc32c64` and
+`spin_hint` for both, `x86_pdep`, `x86_pext`, the four `x86_aes*` and
+`x86_pclmulqdq` for x86-64, and the four `aarch64_aes*` and
+`aarch64_pmull64` for arm64; and the settings `has_aes` and `has_pclmulqdq`
+in `src/isa/x86.rs`. `cranelift-assembler-x64-meta/` 0.137.0, from which
+the assembler of x86-64 is made, has their instructions in
+`src/instructions/tondo.rs`, with the features `aes` and `pclmulqdq`, and
+`cranelift-assembler-x64/` is the published crate, kept beside it so that
+it builds from this one. Their lowering is marked `Tondo:` in
+`src/isa/x64/lower.isle` and `src/isa/aarch64/lower.isle`, and arm64's
+instructions, `TondoRRR`, `TondoRRMod`, `TondoRR` and `Isb`, in
+`src/isa/aarch64/inst.isle` and `inst/`, with their encodings from the
+Arm Architecture Reference Manual, as `llvm-mc` gives them too.
+
 This copy is where an optimization that Tondo's code needs and Cranelift
 lacks is written, as a rule marked `Tondo:`. To move to a newer Cranelift:
-copy the published crate here, drop `src/isa/riscv64`, `src/isa/s390x` and
-`src/isa/pulley_shared` but their `.isle` files, and add the rules again,
-but those Cranelift has by then.
+copy the published crates here, drop `src/isa/riscv64`, `src/isa/s390x` and
+`src/isa/pulley_shared` but their `.isle` files, and add the rules and the
+instructions again, but those Cranelift has by then.

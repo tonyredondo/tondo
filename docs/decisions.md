@@ -6468,3 +6468,37 @@ same loops in Tondo with `std.simd` kept a bounds check for each load, and were 
 plain sum they replaced. The arithmetic of arrays of floats went element by element through one
 function for every type; a loop of its own for each operation and shape now does the same
 operations ten times as fast. A row of `bench/` measures each against Go's loops.
+
+## One instruction each, and what each function needs of the processor
+
+`std.cpu.x64` and `std.cpu.arm64` are modules written in Tondo, one file of each architecture, so
+that `tondo api`, their documents and the error of an import from a file of the other architecture
+come as they do for `std.os.linux`. Each function's body calls itself, and the checker makes every
+call of one the instruction, where the call is written: the instruction is in the caller's body,
+which is what makes the caller need its feature, as the specification asks, and not in a function
+of the library that a guarded call would reach. `carrylessMultiply` takes its `halves` from the
+call, a constant the instruction holds; its body, which only a use of it as a value compiles, has
+a way for each of the four.
+
+What a function needs is worked out once the whole program is checked, from the bodies before
+they are made concrete: an instruction adds its feature unless the level has it, a call adds what
+the callee needs but the features of the guards around it, until nothing changes. The analysis
+runs only when some instruction beyond the level is used. Each place that may need nothing gets
+an error for every call or instruction that brings a feature in, with the shortest chain of calls
+to the instruction, so that one reading fixes them all. A call of a trait's method brings nothing,
+as an implementation of one may need nothing. `tondo check` takes the level of `[build] cpu`;
+`--cpu` is an option of the commands that build.
+
+The generator is made once for the level and once more for each set of features some function
+needs, and each function is compiled with its own: on x64 the assembler refuses an instruction
+whose feature the generator was not given, and the function's other code gets what the feature
+allows too. Inlining, and the copying of a callee's first test into its caller, skip a callee
+that needs more than the caller, and `tondo optimizations` says so of the call left.
+
+Cranelift has none of these instructions, and the assembler of x86-64 and the crate that defines
+the generator's instructions were dependencies outside `vendor/`: they are brought in beside the
+generator, with the instructions and the settings `has_aes` and `has_pclmulqdq` added, marked
+`Tondo:`. arm64's instructions are variants of the generator's own, encoded as the architecture's
+manual says, which `llvm-mc` confirms. A test runs each function against a definition written
+plainly, FIPS 197's rounds among them, on this machine's architecture in a release and a debug
+build, and finds its instruction in `tondo asm`.
