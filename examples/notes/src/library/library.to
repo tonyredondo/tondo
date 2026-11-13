@@ -20,10 +20,9 @@ pub enum NoteError {
 impl Display for NoteError {
     fn display(self): String {
         match self {
-            NoteError.NotFound(name) => "there is no note `{name}`"
-            NoteError.BadName(name) =>
-                "`{name}` is not a name: use lower-case letters, digits and `-`"
-            NoteError.Files(error) => "the notes cannot be reached: {error}"
+            NotFound(name) => "there is no note `{name}`"
+            BadName(name) => "`{name}` is not a name: use lower-case letters, digits and `-`"
+            Files(error) => "the notes cannot be reached: {error}"
         }
     }
 }
@@ -35,7 +34,7 @@ fn checked(name: String): String ! NoteError {
         .chars()
         .all((c) { (c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c == '-' })
     if not fine or name.isEmpty() {
-        fail NoteError.BadName(name)
+        fail BadName(name)
     }
     name
 }
@@ -67,22 +66,22 @@ fn parsed(name: String, content: String): Note {
 /// Writes a note, replacing the one of that name.
 pub fn save(files: fs.FileSystem, note: Note): !NoteError {
     let name = checked(note.name)?
-    files.writeText("{name}.md", written(note)).mapErr((error) { NoteError.Files(error) })?
+    files.writeText("{name}.md", written(note)).mapErr(NoteError.Files)?
 }
 
 /// The note of a name.
 pub fn load(files: fs.FileSystem, name: String): Note ! NoteError {
     let file = "{checked(name)?}.md"
     if not files.exists(file) {
-        fail NoteError.NotFound(name)
+        fail NotFound(name)
     }
-    parsed(name, files.readText(file).mapErr((error) { NoteError.Files(error) })?)
+    parsed(name, files.readText(file).mapErr(NoteError.Files)?)
 }
 
 /// Every note, by name.
 pub fn all(files: fs.FileSystem): Array[Note] ! NoteError {
     var notes: Array[Note] = []
-    for file in files.glob("*.md").mapErr((error) { NoteError.Files(error) })?.sorted() {
+    for file in files.glob("*.md").mapErr(NoteError.Files)?.sorted() {
         notes.push(load(files, file.removeSuffix(".md"))?)
     }
     notes
@@ -92,9 +91,9 @@ pub fn all(files: fs.FileSystem): Array[Note] ! NoteError {
 pub fn remove(files: fs.FileSystem, name: String): !NoteError {
     let file = "{checked(name)?}.md"
     if not files.exists(file) {
-        fail NoteError.NotFound(name)
+        fail NotFound(name)
     }
-    files.remove(file).mapErr((error) { NoteError.Files(error) })?
+    files.remove(file).mapErr(NoteError.Files)?
 }
 
 /// A note that says something of what was looked for.

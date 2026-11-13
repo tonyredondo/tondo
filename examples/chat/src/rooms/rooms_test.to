@@ -42,11 +42,11 @@ fn heard(who: ref Guest): Array[String] ! json.JsonError {
         let event = json.decode[Event](text)?
         words.push(
             match event.kind {
-                Kind.Welcome => "welcome to {event.room} with {event.people}"
-                Kind.Joined => "{event.from} joined: {event.people}"
-                Kind.Said => "{event.from}: {event.text}"
-                Kind.Left => "{event.from} left: {event.people}"
-                Kind.Missed => "missed {event.text}"
+                Welcome => "welcome to {event.room} with {event.people}"
+                Joined => "{event.from} joined: {event.people}"
+                Said => "{event.from}: {event.text}"
+                Left => "{event.from} left: {event.people}"
+                Missed => "missed {event.text}"
             },
         )
     }

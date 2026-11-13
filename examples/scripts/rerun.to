@@ -25,7 +25,7 @@ fn once(command: Array[String]) {
     let started = time.now()
     let ended = match process.command(command[0], ...command[1:]).run() {
         ok(_) => 0
-        err(process.ProcessError.Failed(status, _)) => status.code
+        err(Failed(status, _)) => status.code
         err(error) => {
             console.println("--- {command.join(" ")} did not run: {error}")
             return

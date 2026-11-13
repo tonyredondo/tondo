@@ -57,10 +57,7 @@ pub fn add(db: sql.Database, input: NewTask): Task ! sql.SqlError {
 pub fn change(db: sql.Database, id: Int, edit: TaskChange): Task? ! sql.SqlError {
     db.transaction(
         (tx): Task? ! sql.SqlError {
-            let current = match find(tx, id)? {
-                some(task) => task
-                none => return none
-            }
+            let current = find(tx, id)? ?? return none
             let next = current with {
                 title: edit.title ?? current.title
                 done: edit.done ?? current.done

@@ -126,7 +126,8 @@ since rendering only reads it.
 
 **One error for the whole build.** `BuildError` is an enum of what can go
 wrong, a variant for each module it calls, and `mapErr` says which at each
-call. `main` matches on the result once, prints it, and exits with 1.
+call by the variant's name alone, `.mapErr(BuildError.Files)`: a variant is
+the function that wraps its data. `main` matches on the result once, prints it, and exits with 1.
 
 **The command line is a record.** `Sitegen` in [`main.to`](src/main.to)
 has a field for each argument and option, with its default and its

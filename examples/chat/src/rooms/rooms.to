@@ -90,7 +90,7 @@ pub fn start(counts: sync.Map[String, Int]): executor.Actor[Told, Never] ! execu
 /// One message at a time: there is nothing here to lock.
 fn handle(state: var State, told: Told) {
     match told {
-        Told.Enter(id, room, name, outbox) => {
+        Enter(id, room, name, outbox) => {
             let member = Member { name: tidy(name, NameLimit), room: tidy(room, NameLimit), outbox }
             state.members[id] = member
             count(var state, member.room)
@@ -113,11 +113,8 @@ fn handle(state: var State, told: Told) {
             }
             broadcast(var state, member.room, line(joined), except: id)
         }
-        Told.Say(id, text) => {
-            let member = match state.members.get(id) {
-                some(found) => found
-                none => return
-            }
+        Say(id, text) => {
+            let member = state.members.get(id) ?? return
             let words = tidy(text, TextLimit)
             if words.isEmpty() {
                 return
@@ -128,20 +125,17 @@ fn handle(state: var State, told: Told) {
             var kept = state.recent.get(member.room) ?? []
             kept.push(said)
             if kept.length() > Kept {
-                _ = kept.removeAt(0)
+                kept.removeAt(0)
             }
             state.recent[member.room] = kept
             broadcast(var state, member.room, said)
         }
-        Told.Leave(id) => {
-            let member = match state.members.remove(id) {
-                some(found) => found
-                none => return
-            }
+        Leave(id) => {
+            let member = state.members.remove(id) ?? return
             count(var state, member.room)
             let now = people(state, member.room)
             if now.isEmpty() {
-                _ = state.recent.remove(member.room)  // an empty room forgets
+                state.recent.remove(member.room)  // an empty room forgets
             }
             let left = Event { kind: Kind.Left, room: member.room, from: member.name, people: now }
             broadcast(var state, member.room, line(left))
@@ -171,11 +165,7 @@ fn people(state: State, room: String): Array[String] {
 /// Writes how many people a room has where the rest of the program reads it.
 fn count(state: var State, room: String) {
     let now = people(state, room).length()
-    if now == 0 {
-        _ = state.counts.remove(room)
-    } else {
-        _ = state.counts.insert(room, now)
-    }
+    if now == 0 { state.counts.remove(room) } else { state.counts.insert(room, now) }
 }
 
 /// Sends a line to everyone in a room.
@@ -191,10 +181,7 @@ fn broadcast(state: var State, room: String, text: String, except: Int? = none) 
 /// full loses the line, and its owner is told how many were lost once there
 /// is room again: one slow reader never holds up a room.
 fn deliver(state: var State, id: Int, text: String) {
-    var member = match state.members.get(id) {
-        some(found) => found
-        none => return
-    }
+    var member = state.members.get(id) ?? return
     if member.missed > 0 {
         let gap = Event { kind: Kind.Missed, room: member.room, text: "{member.missed}" }
         if member.outbox.trySend(line(gap)).isOk() {

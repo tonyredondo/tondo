@@ -4,8 +4,9 @@
 //
 //     tondo authors.to [<how many commits>]
 //
-// It runs `git log` and reads what it prints: a command is a program and
-// its arguments, each on its own, so nothing here is read by a shell.
+// It runs `git log` and reads what it prints. The command is written as in
+// a shell, and no shell reads it: the compiler splits it into a program and
+// its arguments, and `wanted` is one argument whatever it holds.
 
 import std.cli
 import std.console
@@ -19,9 +20,8 @@ type Author = {
 }
 
 let wanted = env.args().get(0) ?? "100"
-let log = process.command("git", "log", "-n", wanted, "--format=%an%x09%ad%x09%s", "--date=short")
-let output = match log.check() {
-    ok(ran) => ran.text()?
+let log = match $(git log -n {wanted} --format=%an%x09%ad%x09%s --date=short).lines() {
+    ok(lines) => lines
     err(error) => {
         console.eprintln("git log did not run here: {error}")
         process.exit(1)
@@ -29,13 +29,12 @@ let output = match log.check() {
 }
 
 var authors: Map[String, Author] = [:]
-for line in output.lines() {
+for line in log {
     match line.split("\t", limit: 3) {
         [name, date, subject] => {
             // The log is newest first: the first commit seen of an author is their latest.
-            let known =
-                authors.get(name) ?? Author { commits: 0, author: name, latest: "{date} {subject}" }
-            authors[name] = known with { commits: known.commits + 1 }
+            let first = Author { commits: 0, author: name, latest: "{date} {subject}" }
+            authors[name, default: first].commits += 1
         }
         _ => {}
     }

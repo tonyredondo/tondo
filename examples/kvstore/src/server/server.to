@@ -54,10 +54,7 @@ fn serve(connection: net.Stream, state: sync.Mutex[store.Store]) {
 
 fn converse(connection: net.Stream, state: sync.Mutex[store.Store]): !net.NetError {
     for {
-        let line = match connection.readLine(timeout: time.minutes(1))? {
-            some(text) => text
-            none => return
-        }
+        let line = connection.readLine(timeout: time.minutes(1))? ?? return
         let reply = match protocol.parse(line) {
             ok(command) => answer(state, command)
             err(error) => protocol.Reply.Error("{error}")

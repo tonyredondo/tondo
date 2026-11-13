@@ -54,16 +54,18 @@ that changes its state,
 ```text
 fn handle(state: var State, told: Told) {
     match told {
-        Told.Enter(id, room, name, outbox) => { ... }
-        Told.Say(id, text) => { ... }
-        Told.Leave(id) => { ... }
+        Enter(id, room, name, outbox) => { ... }
+        Say(id, text) => { ... }
+        Leave(id) => { ... }
     }
 }
 ```
 
 and there is no lock in it, since no other task can reach that state. Two
 people speaking at once are two messages in the hub's mailbox, handled one
-after the other.
+after the other. Its arms name the variants alone, and a message from a
+connection it does not know is dropped in one line,
+`let member = state.members.get(id) ?? return`.
 
 **What happens is a type.** `Told` is an enum of the three things a
 connection can tell the hub. A connection that comes in gives, in its

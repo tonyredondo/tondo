@@ -29,9 +29,9 @@ pub enum Outcome {
 impl Display for Outcome {
     fn display(self): String {
         match self {
-            Outcome.Fine(status) => "{status}"
-            Outcome.Broken(status) => "{status}"
-            Outcome.Unreachable(why) => why
+            Fine(status) => "{status}"
+            Broken(status) => "{status}"
+            Unreachable(why) => why
         }
     }
 }
@@ -48,7 +48,7 @@ pub type Checked = {
 
 pub fn Checked.isFine(self): Bool {
     match self.outcome {
-        Outcome.Fine(_) => true
+        Fine(_) => true
         _ => false
     }
 }
@@ -79,8 +79,8 @@ pub enum CrawlError {
 impl Display for CrawlError {
     fn display(self): String {
         match self {
-            CrawlError.NoAddress(error) => "{error}"
-            CrawlError.NotTheWeb(address) =>
+            NoAddress(error) => "{error}"
+            NotTheWeb(address) =>
                 "`{address}` is not an address of the web, as `https://example.com`"
         }
     }
@@ -104,9 +104,9 @@ type Visit = {
 /// Checks a site from one of its pages: follows the links of every page of
 /// the same site, and asks whether what they link to elsewhere is there.
 pub fn crawl(start: String, options: Options = Options {}): Report ! CrawlError {
-    let home = url.parse(start).mapErr((error) { CrawlError.NoAddress(error) })?
+    let home = url.parse(start).mapErr(CrawlError.NoAddress)?
     if home.scheme != "http" and home.scheme != "https" {
-        fail CrawlError.NotTheWeb(start)
+        fail NotTheWeb(start)
     }
     let client = http.Client(timeout: options.timeout)
     let pace = sync.RateLimiter(options.rate)
@@ -125,10 +125,7 @@ pub fn crawl(start: String, options: Options = Options {}): Report ! CrawlError 
     jobs.send(Job { url: start, from: "", inside: true })
     var report = Report {}
     for out > 0 {
-        let answer = match inbox.receive() {
-            some(arrived) => arrived
-            none => break
-        }
+        let answer = inbox.receive() ?? break
         out -= 1
         report.checked.push(answer.checked)
         if answer.page {
@@ -142,7 +139,7 @@ pub fn crawl(start: String, options: Options = Options {}): Report ! CrawlError 
                 report.cut = true
                 break
             }
-            _ = seen.insert(link)
+            seen.insert(link)
             out += 1
             let inside = match url.parse(link) {
                 ok(address) => links.sameSite(home, address)
@@ -152,7 +149,7 @@ pub fn crawl(start: String, options: Options = Options {}): Report ! CrawlError 
         }
     }
     jobs.close()  // the workers' loops end, and they with them
-    _ = workers.wait()
+    workers.wait()
     report
 }
 
@@ -190,8 +187,8 @@ fn visit(client: http.Client, home: url.Url, job: Job): Visit {
             }
             Outcome.Fine(response.status())
         }
-        err(http.HttpError.Status(response)) => Outcome.Broken(response.status())
-        err(http.HttpError.Timeout) => Outcome.Unreachable("no answer in time")
+        err(Status(response)) => Outcome.Broken(response.status())
+        err(Timeout) => Outcome.Unreachable("no answer in time")
         err(other) => Outcome.Unreachable("{other}")
     }
     Visit {

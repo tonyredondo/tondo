@@ -12,9 +12,9 @@ pub enum BuildError {
 impl Display for BuildError {
     fn display(self): String {
         match self {
-            BuildError.Files(error) => "{error}"
-            BuildError.Content(error) => "{error}"
-            BuildError.Template(error) => "{error}"
+            Files(error) => "{error}"
+            Content(error) => "{error}"
+            Template(error) => "{error}"
         }
     }
 }
@@ -53,10 +53,10 @@ pub type Built = {
 /// The pages of `content/`, newest first.
 pub fn load(site: fs.FileSystem): Array[content.Page] ! BuildError {
     var pages: Array[content.Page] = []
-    for path in site.glob("content/*.md").mapErr((e) { BuildError.Files(e) })? {
-        let text = site.readText(path).mapErr((e) { BuildError.Files(e) })?
+    for path in site.glob("content/*.md").mapErr(BuildError.Files)? {
+        let text = site.readText(path).mapErr(BuildError.Files)?
         let name = path.removePrefix("content/")
-        pages.push(content.parse(name, text).mapErr((e) { BuildError.Content(e) })?)
+        pages.push(content.parse(name, text).mapErr(BuildError.Content)?)
     }
     pages.sortedBy((page) { page.meta.date }).reversed()
 }
@@ -83,7 +83,7 @@ fn renderPost(
 /// list of them all, and a list for each tag.
 pub fn build(site: fs.FileSystem, out: fs.FileSystem, name: String): Built ! BuildError {
     var theme = template.Set.html()
-    theme.addFiles(site.sub("theme"), "**/*.html").mapErr((e) { BuildError.Template(e) })?
+    theme.addFiles(site.sub("theme"), "**/*.html").mapErr(BuildError.Template)?
     let all = load(site)?
     let pages = all.filter((page) { not page.meta.draft })
 
@@ -93,7 +93,7 @@ pub fn build(site: fs.FileSystem, out: fs.FileSystem, name: String): Built ! Bui
     for page in pages {
         rendering.add(spawn renderPost(theme, name, page))
     }
-    let rendered = rendering.wait().mapErr((e) { BuildError.Template(e) })?
+    let rendered = rendering.wait().mapErr(BuildError.Template)?
 
     var files: Array[String] = []
     for (page, html) in pages.zip(rendered) {
@@ -102,7 +102,7 @@ pub fn build(site: fs.FileSystem, out: fs.FileSystem, name: String): Built ! Bui
 
     let links = pages.map((page) { link(page) })
     let index = theme.render("index.html", IndexView { site: name, heading: "Posts", posts: links })
-    files.push(write(out, "index.html", index.mapErr((e) { BuildError.Template(e) })?)?)
+    files.push(write(out, "index.html", index.mapErr(BuildError.Template)?)?)
 
     let byTag = pages
         .flatMap((page) { page.meta.tags.map((tag) { (tag, page) }) })
@@ -113,7 +113,7 @@ pub fn build(site: fs.FileSystem, out: fs.FileSystem, name: String): Built ! Bui
             heading: "Tagged {tag}"
             posts: tagged.map((pair) { link(pair.1) })
         }
-        let html = theme.render("index.html", view).mapErr((e) { BuildError.Template(e) })?
+        let html = theme.render("index.html", view).mapErr(BuildError.Template)?
         files.push(write(out, "tags/{tag}.html", html)?)
     }
     Built { pages: pages.length(), drafts: all.length() - pages.length(), files }
@@ -127,9 +127,9 @@ fn link(page: content.Page): PostLink {
 fn write(out: fs.FileSystem, path: String, html: String): String ! BuildError {
     match path.splitOnce("/") {
         some((directory, _)) if not out.exists(directory) =>
-            out.createDirectory(directory).mapErr((e) { BuildError.Files(e) })?
+            out.createDirectory(directory).mapErr(BuildError.Files)?
         _ => {}
     }
-    out.writeText(path, html).mapErr((e) { BuildError.Files(e) })?
+    out.writeText(path, html).mapErr(BuildError.Files)?
     path
 }

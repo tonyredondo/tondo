@@ -40,10 +40,7 @@ fn invalid(message: String): grpc.Status {
 /// Changes how many units of an item there are, and notes it for whoever
 /// watches. Units that are not there cannot be taken.
 fn State.change(var self, sku: String, delta: Int): stock.Item ! grpc.Status {
-    let item = match self.items.get(sku) {
-        some(found) => found
-        none => fail missing(sku)
-    }
+    let item = self.items.get(sku) ?? fail missing(sku)
     if item.available + delta < 0 {
         fail grpc.Status {
             code: grpc.Code.FailedPrecondition
@@ -54,7 +51,7 @@ fn State.change(var self, sku: String, delta: Int): stock.Item ! grpc.Status {
     self.items[sku] = changed
     self.changes.push(stock.Change { item: changed, delta })
     if self.changes.length() > Kept {
-        _ = self.changes.removeAt(0)
+        self.changes.removeAt(0)
     }
     self.version += 1
     changed
@@ -104,7 +101,7 @@ impl stock.StockService for Shelves {
             if units.quantity <= 0 {
                 fail invalid("a delivery of `{units.sku}` brings at least one unit")
             }
-            _ = self.state.update((now) { now.change(units.sku, units.quantity) })?
+            self.state.update((now) { now.change(units.sku, units.quantity) })?
             done.items += 1
             done.units += units.quantity
         }

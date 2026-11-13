@@ -28,9 +28,9 @@ pub enum ContentError {
 impl Display for ContentError {
     fn display(self): String {
         match self {
-            ContentError.NoFrontMatter(name) =>
+            NoFrontMatter(name) =>
                 "{name}: a page starts with its title and date between two lines of `---`"
-            ContentError.BadFrontMatter(name, why) => "{name}: {why}"
+            BadFrontMatter(name, why) => "{name}: {why}"
         }
     }
 }
@@ -39,11 +39,11 @@ impl Display for ContentError {
 pub fn parse(name: String, text: String): Page ! ContentError {
     let rest = match text.trimStart().splitOnce("---\n") {
         some(("", after)) => after
-        _ => fail ContentError.NoFrontMatter(name)
+        _ => fail NoFrontMatter(name)
     }
     let (front, body) = match rest.splitOnce("\n---") {
         some(parts) => parts
-        none => fail ContentError.NoFrontMatter(name)
+        none => fail NoFrontMatter(name)
     }
     let meta =
         yaml.decode[Meta](front).mapErr((error) { ContentError.BadFrontMatter(name, "{error}") })?

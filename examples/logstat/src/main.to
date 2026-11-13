@@ -101,6 +101,6 @@ fn main() {
     match cli.parse[Logstat]() {
         Logstat.Routes(options) => routes(options)
         Logstat.Slow(options) => slow(options)
-        Logstat.Status(options) => status(options)
+        Status(options) => status(options)
     }
 }

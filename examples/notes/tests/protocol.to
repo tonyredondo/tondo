@@ -34,8 +34,8 @@ fn call(
     arguments: String,
 ): (String, Bool) ! (http.HttpError | json.JsonError) {
     let answer = ask(server, "tools/call", "{{\"name\":\"{tool}\",\"arguments\":{arguments}}}")?
-    let said = answer.find("result.content[0].text").andThen((text) { text.asText() }) ?? "no text"
-    let failed = (answer.find("result.isError").andThen((flag) { flag.asBool() }) ?? true)
+    let said = answer.find("result.content[0].text")?.asText() ?? "no text"
+    let failed = (answer.find("result.isError")?.asBool() ?? true)
     (said, failed)
 }
 
@@ -45,16 +45,14 @@ test saysWhatItOffers {
     defer server.stop()
 
     let listed = ask(server, "tools/list")?
-    let names = listed.find("result.tools").andThen((list) { list.asArray() }) ?? []
+    let names = listed.find("result.tools")?.asArray() ?? []
     assert(
         names.map((tool) { tool.field("name").asText() ?? "" }) ==
             ["write", "search", "list", "remove"],
     )
     // The schema of a tool is its record: the documentation, and what is required.
     assert(
-        listed
-            .find("result.tools[0].inputSchema.properties.tags.description")
-            .andThen((text) { text.asText() }) ==
+        listed.find("result.tools[0].inputSchema.properties.tags.description")?.asText() ==
             "Words to find it by.",
     )
     assert(
@@ -63,12 +61,9 @@ test saysWhatItOffers {
     )
 
     let templates = ask(server, "resources/templates/list")?
-    assert(
-        templates.find("result.resourceTemplates[0].uriTemplate").andThen((text) { text.asText() }) ==
-            r"notes://{name}",
-    )
+    assert(templates.find("result.resourceTemplates[0].uriTemplate")?.asText() == r"notes://{name}")
     let prompts = ask(server, "prompts/list")?
-    assert(prompts.find("result.prompts[0].name").andThen((text) { text.asText() }) == "review")
+    assert(prompts.find("result.prompts[0].name")?.asText() == "review")
 }
 
 test writesSearchesReadsAndRemoves {
@@ -85,14 +80,8 @@ test writesSearchesReadsAndRemoves {
     assert(not failed and found == r"""[{"name":"green-tea","score":1,"line":"Buy sencha."}]""")
 
     let read = ask(server, "resources/read", r"""{"uri":"notes://green-tea"}""")?
-    assert(
-        read.find("result.contents[0].text").andThen((text) { text.asText() }) ==
-            "Buy sencha.\nBrew it at 70 degrees.",
-    )
-    assert(
-        read.find("result.contents[0].mimeType").andThen((text) { text.asText() }) ==
-            "text/markdown",
-    )
+    assert(read.find("result.contents[0].text")?.asText() == "Buy sencha.\nBrew it at 70 degrees.")
+    assert(read.find("result.contents[0].mimeType")?.asText() == "text/markdown")
 
     assert(call(server, "remove", r"""{"name":"green-tea"}""")? == ("removed green-tea", false))
     assert(call(server, "list", r"{}")? == ("[]", false))

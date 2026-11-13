@@ -16,8 +16,8 @@ fn enter(server: http.Server, room: String, name: String): http.WebSocket ! http
 fn told(socket: http.WebSocket): rooms.Event ! (http.HttpError | json.JsonError | time.TimedOut) {
     let message = within time.seconds(5) { socket.receive() }?
     match message {
-        some(http.Message.Text(text)) => json.decode[rooms.Event](text)?
-        _ => fail http.HttpError.Protocol("the connection closed")
+        some(Text(text)) => json.decode[rooms.Event](text)?
+        _ => fail Protocol("the connection closed")
     }
 }
 
@@ -76,7 +76,7 @@ test aNewcomerHearsWhatWasSaid {
     let server = chat.routes().start()?
     defer server.stop()
     let ada = enter(server, "tea", "ada")?
-    _ = told(ada)?
+    told(ada)?
     ada.sendText("one")?
     ada.sendText("two")?
     assert(told(ada)?.text == "one" and told(ada)?.text == "two")

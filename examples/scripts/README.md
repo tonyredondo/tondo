@@ -112,11 +112,15 @@ needs for a file that is not there. Where a failure deserves its own words,
 as `git` not being run in a repository in `authors.to`, a `match` gives
 them.
 
-**No shell in between.** `process.command("git", "log", "-n", wanted, ...)`
-runs a program with its arguments, each one on its own. Nothing is split at
-spaces, expanded or quoted, so a file name with a space or a `$` in it is
-only a file name. `rerun.to` passes on a whole command line the same way,
-with `...command[1:]`.
+**A command is written as in a shell, and no shell runs it.**
+`$(git log -n {wanted} --date=short)` in `authors.to` is split into a
+program and its arguments when the script is compiled, and `wanted` is one
+argument whatever it holds: nothing is expanded or split again, so a file
+name with a space or a `$` in it is only a file name. A command that fails
+is an error, as a function's is. `rerun.to` has its command as values, not
+as text, so it uses the other form, `process.command(command[0],
+...command[1:])`, and reads the exit code of a command that failed from the
+error.
 
 **The library a script needs is there.** JSON, CSV, hashes, dates, tables,
 watching files and a web server are in the standard library, so a script is

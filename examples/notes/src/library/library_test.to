@@ -53,7 +53,7 @@ test aNameCannotLeaveTheDirectory {
     let files = shelf()?
     for name in ["../secrets", "a/b", "Tea", "tea.md", "", "té"] {
         match save(files, Note { name, text: "x" }) {
-            err(NoteError.BadName(_)) => {}
+            err(BadName(_)) => {}
             _ => assert(false, "`{name}` was taken as a name")
         }
         assert(load(files, name).isErr())

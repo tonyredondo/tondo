@@ -88,7 +88,7 @@ for out > 0 {
     out -= 1
     for link in answer.links {
         if seen.contains(link) { continue }
-        _ = seen.insert(link)
+        seen.insert(link)
         out += 1
         jobs.send(Job { url: link, from: answer.checked.url, inside })
     }
@@ -120,9 +120,7 @@ one on purpose.
 **A deadline is not a parameter.** In [`main.to`](src/main.to),
 
 ```text
-let result = within options.deadline.unwrapOr(time.hours(24)) {
-    crawl.crawl(options.url, settings)
-}
+let result = within options.deadline ?? time.hours(24) { crawl.crawl(options.url, settings) }
 ```
 
 gives the whole crawl a time limit. No function of `crawl.to` knows about

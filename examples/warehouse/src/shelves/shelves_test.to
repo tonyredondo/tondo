@@ -95,8 +95,8 @@ test aWatcherIsSentWhatThereIsAndThenWhatChanges {
     let watching = spawn shelves.watch(stock.WatchItems { skus: ["TEA-001"] }, out)
     assert(next(changes) == "TEA-001 5 0")
 
-    _ = shelves.reserve(stock.Units { sku: "CUP-007", quantity: 1 })?  // not watched
-    _ = shelves.reserve(stock.Units { sku: "TEA-001", quantity: 2 })?
+    shelves.reserve(stock.Units { sku: "CUP-007", quantity: 1 })?  // not watched
+    shelves.reserve(stock.Units { sku: "TEA-001", quantity: 2 })?
     assert(next(changes) == "TEA-001 3 -2")
     watching.cancel()
 }
@@ -107,7 +107,7 @@ test aWatcherOfEverythingIsSentEverything {
     let watching = spawn shelves.watch(stock.WatchItems {}, out)
     assert([next(changes), next(changes)] == ["TEA-001 5 0", "CUP-007 2 0"])
 
-    _ = shelves.reserve(stock.Units { sku: "CUP-007", quantity: 1 })?
+    shelves.reserve(stock.Units { sku: "CUP-007", quantity: 1 })?
     assert(next(changes) == "CUP-007 1 -1")
     watching.cancel()
 }
