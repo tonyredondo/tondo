@@ -449,7 +449,7 @@ impl Display for LibraryError {
             NotLoaded(why) => "the library did not load: {why}"
             NoSymbol(name) => "the library publishes no `{name}`"
             NotUnloaded(why) => "the library was not unloaded: {why}"
-            Closed => "the library was closed"
+            LibraryError.Closed => "the library was closed"
         }
     }
 }
