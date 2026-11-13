@@ -81,6 +81,60 @@ impl<'a> Checker<'a> {
         Self::error_expr(span)
     }
 
+    /// The generic type and its type arguments written before `.name(...)`:
+    /// `Box[Float]`, which parses as an index, or `Pair[Int, String]`.
+    fn explicit_owner(&mut self, cx: &FnCx, receiver: &ast::Expr) -> Option<(crate::types::TemplateId, Vec<Ty>)> {
+        let (base, written) = match &receiver.kind {
+            ast::ExprKind::Index { base, index } => (base, vec![Self::type_of_expr(index)?]),
+            ast::ExprKind::Generic { base, args } => (base, args.clone()),
+            _ => return None,
+        };
+        let ast::ExprKind::Path(segments) = &base.kind else { return None };
+        let first = segments[0].name.as_str();
+        if self.lookup(cx, first).is_some()
+            || self.visible_capture(cx, first)
+            || matches!(self.names.get(first), Some(ModuleName::Const(_)))
+        {
+            return None;
+        }
+        let name = segments.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
+        let Some(&TypeName::Template(template)) = self.type_names.get(&name) else { return None };
+        Some((template, written.iter().map(|t| self.resolve_type(t)).collect()))
+    }
+
+    /// `Box[Float].name(...)`: the function `name` of `Box`, with `T` given.
+    #[allow(clippy::too_many_arguments)]
+    fn owner_call(
+        &mut self,
+        cx: &mut FnCx,
+        template: crate::types::TemplateId,
+        given: Vec<Ty>,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        let declared = self.types.template(template);
+        let (params, name) = (declared.params.clone(), declared.name.clone());
+        if params.len() != given.len() {
+            let message = format!("`{name}` takes {} type argument(s), and {} are given", params.len(), given.len());
+            self.diags.error("E1104", span, message);
+            return Self::error_expr(span);
+        }
+        let owner = self.types.instantiate(template, params);
+        let Some(id) = self.methods.get(&(owner, method.name.clone())).copied() else {
+            let message = format!("`{name}` has no operation named `{}`", method.name);
+            self.diags.error("E1001", method.span, message);
+            return Self::error_expr(span);
+        };
+        self.index_refer(method, crate::index::Key::Fn(id.0));
+        self.check_method_visible(id, span);
+        let signature = self.signatures[id.0 as usize].clone();
+        let prebound = signature.generics.iter().copied().zip(given).collect();
+        let target = CallTarget { prebound, ..CallTarget::new(Callee::Fn(id), signature, expected) };
+        self.call_signature(cx, target, None, args, span)
+    }
+
     /// `Array[T]()` and `Array.withCapacity[T](capacity)`.
     pub(super) fn generic_call(
         &mut self,
@@ -1545,6 +1599,13 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
+        // `Box[Float].name(...)`: a function of a generic type, its type
+        // arguments given where nothing else gives them.
+        if let ast::ExprKind::Field(receiver, method) = &callee.kind
+            && let Some((template, given)) = self.explicit_owner(cx, receiver)
+        {
+            return self.owner_call(cx, template, given, method, args, expected, span);
+        }
         match &callee.kind {
             ast::ExprKind::Field(receiver, method) => {
                 return self.method_call(cx, receiver, method, args, expected, span);
@@ -2899,10 +2960,19 @@ impl<'a> Checker<'a> {
             return Self::error_expr(span);
         }
         if !unknown.is_empty() {
-            let message = format!(
-                "cannot infer {} from the arguments; write the type arguments: `name[...](...)`",
-                unknown.join(", ")
-            );
+            // A function of a generic type takes the type's arguments before
+            // its name: `Box[Float].count()`.
+            let form = match signature.name.rsplit_once('.') {
+                Some((owner, name))
+                    if signature.receiver.is_none()
+                        && matches!(self.type_names.get(owner), Some(TypeName::Template(_))) =>
+                {
+                    format!("`{owner}[...].{name}(...)`")
+                }
+                _ => "`name[...](...)`".to_string(),
+            };
+            let message =
+                format!("cannot infer {} from the arguments; write the type arguments: {form}", unknown.join(", "));
             self.diags.error("E1101", span, message);
             return Self::error_expr(span);
         }

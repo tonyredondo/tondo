@@ -3492,6 +3492,13 @@ Resource.release(resource)
 
 Una declaración `fn Type.operation(...)` que no contiene `self`, `mut self` ni `var self` es siempre asociada y nunca participa en dot-call. Un primer parámetro ordinario del mismo tipo no se convierte en receptor implícitamente.
 
+Los parámetros del propietario de una operación asociada de un tipo genérico se
+infieren de los argumentos y del tipo esperado del resultado. Cuando nada los
+da, como en `fn Box[T].count(): Int`, se escriben tras el nombre del tipo:
+`Box[Float].count()`, `Pair[Int, String].names()`. Los argumentos genéricos
+propios del método siguen después de su nombre. El error de una llamada cuyo
+propietario no se infiere muestra esta forma.
+
 El receptor `self` tiene la misma semántica compartida que un parámetro `ref`,
 pero omite el modificador porque la posición de receptor ya declara el préstamo.
 `mut self` y `var self` conservan sus permisos exclusivos. Una operación libre o

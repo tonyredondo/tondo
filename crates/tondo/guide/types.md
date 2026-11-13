@@ -239,6 +239,10 @@ A trait may require others, `trait Shape: Display { ... }`: implementing it
 needs an `impl Display` too, and a bound `S: Shape` gives `Display`'s methods
 as well.
 
+A function without `self` of a generic type, `fn Box[T].empty(): Box[T]`,
+takes `T` from its arguments or from the type expected; when neither gives
+it, write it after the type: `Box[Int].empty()`.
+
 The prelude's traits: `Display`, `Ordered` (`compare`), `Iterator[T]`
 (`next`), and the arithmetic. A type that implements `Ordered`, and a
 `T: Ordered`, gets `<`, `<=`, `>` and `>=`, which compare by it. `Copy`, `Equatable`, `Key`, `Send` and `Share`
