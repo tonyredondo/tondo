@@ -307,6 +307,10 @@ fn main(): !ffi.LibraryError {{
     // A C function of it that fails with the system's error number.
     let change = unsafe {{ program.function[extern fn(ffi.CString): ffi.CInt ! os.Errno]("chdir")? }}
     console.println("{{unsafe {{ change("/no/such") }}}} {{unsafe {{ change.raw()(".") }}}}")
+    // And as `toFunction` gives it, from its address.
+    let address = unsafe {{ program.pointer[UInt8]("chdir")?.address() }}
+    let fromAddress = unsafe {{ address.toFunction[extern fn(ffi.CString): ffi.CInt ! os.Errno]() }}
+    console.println("{{unsafe {{ fromAddress("/no/such") }}}}")
 {environ}    unsafe {{ plugin.close()? }}
     console.println("{{plugin.has("plugin_twice")}}")
     console.println(asked(unsafe {{ plugin.function[extern fn(): ffi.CInt]("plugin_twice") }}.map((_) {{ true }})))
@@ -322,7 +326,7 @@ fn main(): !ffi.LibraryError {{
     let run = Command::new(host.join("host")).current_dir(&host).env(search, plugin.join("out")).output().unwrap();
     assert_eq!(
         String::from_utf8_lossy(&run.stdout),
-        "42 true false\ntrue 4\n8\nthe library publishes no `plugin_thrice`\nnot loaded: true\nnot loaded: true\ntrue\nerr(os error 2: No such file or directory) ok(0)\ntrue\nfalse\nthe library was closed\nthe library was closed\nthe library was not unloaded: the program itself is never unloaded\n",
+        "42 true false\ntrue 4\n8\nthe library publishes no `plugin_thrice`\nnot loaded: true\nnot loaded: true\ntrue\nerr(os error 2: No such file or directory) ok(0)\nerr(os error 2: No such file or directory)\ntrue\nfalse\nthe library was closed\nthe library was closed\nthe library was not unloaded: the program itself is never unloaded\n",
         "{}",
         String::from_utf8_lossy(&run.stderr)
     );
