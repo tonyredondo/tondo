@@ -1409,6 +1409,10 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             for define in args.list("define") {
                 argv.extend(["-D".to_string(), define]);
             }
+            if args.flag("included") {
+                argv.push("--included".to_string());
+            }
+            option(&mut argv, "--fails", "fails");
         }
         "update" => {
             push(&["update", "--json"]);
@@ -2609,6 +2613,8 @@ is reduced and kept in the project's `fuzz/` store, which every run of the tests
             ("output", "string", "The .to file to write."),
             ("include", "strings", "Directories of headers (-I)."),
             ("define", "strings", "Macros, as name or name=value (-D)."),
+            ("included", "boolean", "Bind the headers the named ones include, too (`--included`)."),
+            ("fails", "string", "A file naming the functions that fail with the system's error number (`--fails`)."),
         ],
     },
     Tool {
