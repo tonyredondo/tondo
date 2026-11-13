@@ -411,9 +411,12 @@ impl<'a> Checker<'a> {
             read
         };
         let bound = hir::Pattern { kind: hir::PatKind::Binding(local), ty: payload, span };
-        let some = hir::Pattern { kind: hir::PatKind::Variant(present, vec![bound]), ty: value.ty, span };
+        // Its ways are where the value is, which tells them apart from the
+        // arms of a match the program wrote (testing 10.3).
+        let looked = value.span;
+        let some = hir::Pattern { kind: hir::PatKind::Variant(present, vec![bound]), ty: value.ty, span: looked };
         let rest = error.map(|ty| hir::Pattern { kind: hir::PatKind::Wildcard, ty, span }).into_iter().collect();
-        let none = hir::Pattern { kind: hir::PatKind::Variant(absent, rest), ty: value.ty, span };
+        let none = hir::Pattern { kind: hir::PatKind::Variant(absent, rest), ty: value.ty, span: looked };
         let arms = vec![
             hir::Arm { pattern: some, guard: None, body: read },
             hir::Arm { pattern: none, guard: None, body: fallback },
@@ -457,8 +460,11 @@ impl<'a> Checker<'a> {
                     }
                 };
                 let bound = hir::Pattern { kind: hir::PatKind::Binding(local), ty: payload, span };
-                let present = hir::Pattern { kind: hir::PatKind::Variant(SOME, vec![bound]), ty: value.ty, span };
-                let absent = hir::Pattern { kind: hir::PatKind::Variant(NONE, Vec::new()), ty: value.ty, span };
+                // Its ways are where the option is, as those of a `??`.
+                let looked = value.span;
+                let present =
+                    hir::Pattern { kind: hir::PatKind::Variant(SOME, vec![bound]), ty: value.ty, span: looked };
+                let absent = hir::Pattern { kind: hir::PatKind::Variant(NONE, Vec::new()), ty: value.ty, span: looked };
                 let none = Self::mk(hir::ExprKind::Variant(NONE, Vec::new()), result, span);
                 let arms = vec![
                     hir::Arm { pattern: present, guard: None, body: then },

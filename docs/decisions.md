@@ -6356,3 +6356,11 @@ written, and a function is called through its address as `F`, which the compiler
 is known, so a library's function costs what a call of C costs. A static executable, as `--static`
 and every `--target` build make, loads nothing, so a program that reaches the loading is refused
 when it links, by what its code calls, rather than failing when it runs.
+
+## `??` and `?.` are branches of coverage
+
+A `??` decides between its value and its default, and a `?.` between going on and `none`, as an
+`and` decides whether to evaluate its right side: a test that never meets the missing value leaves
+untried the code that is most often wrong. Coverage gives each of them two ways, `value` and `none`
+(`error` on a result), at the value it looks at; before, the match the compiler writes for them
+counted as one way, covered whichever ran.

@@ -1634,16 +1634,23 @@ test logic {
         .map(|l| (l["line"].as_u64().unwrap(), l["count"].as_u64().unwrap()))
         .collect();
     assert_eq!(lines, [(2, 1), (3, 4), (4, 3), (6, 1), (7, 3), (8, 2), (10, 1)]);
-    // A `??` is no branch: the match the compiler writes for it has no
-    // ways, which would count as run whichever ran.
-    let defaulted = project("coverage-default", "test one {\n    assert(first([4]) == 4)\n}\n");
-    let source = "pub fn first(values: Array[Int]): Int {\n    values.first() ?? 0\n}\n\nfn main() {}\n";
+    // A `??` and a `?.` are branches of two ways: there was a value, or
+    // there was none.
+    let tests = "test one {\n    assert(first([4]) == 4)\n    assert(length(none) == none)\n}\n";
+    let defaulted = project("coverage-default", tests);
+    let source = "pub fn first(values: Array[Int]): Int {\n    values.first() ?? 0\n}\n\npub fn length(text: String?): Int? {\n    text?.length()\n}\n\nfn main() {}\n";
     std::fs::write(defaulted.join("src/main.to"), source).unwrap();
     let report = defaulted.join("coverage.json");
     let (_, stderr, status) = tondo(&defaulted, &["test", "--report", &format!("coverage={}", report.display())]);
     assert_eq!(status, 0, "{stderr}");
     let covered: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&report).unwrap()).unwrap();
-    assert_eq!(covered["files"][0]["branches"], serde_json::json!([]), "{covered}");
+    let ways: Vec<(u64, &str, u64)> = covered["files"][0]["branches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| (b["branch"]["line"].as_u64().unwrap(), b["label"].as_str().unwrap(), b["count"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(ways, [(2, "none", 0), (2, "value", 1), (6, "none", 1), (6, "value", 0)], "{covered}");
     // Without coverage the build counts nothing, and says nothing of it.
     let (stdout, _, _) = tondo(&dir, &["test"]);
     assert!(!stdout.contains("coverage"), "{stdout}");

@@ -1118,10 +1118,19 @@ impl Builder<'_> {
                 self.goto(next);
                 self.switch_to(body);
             }
-            // A branch is each arm of a match the program wrote (testing
-            // 10.3): one the compiler wrote, as for `??`, whose patterns are
-            // the whole expression, has none.
-            if arm.pattern.span != e.span {
+            // A branch is each arm of a match the program wrote, and the
+            // two ways of a `??` or a `?.`, whose patterns are where the
+            // value they look at is: it was there, or it was none or an
+            // error (testing 10.3). Another match the compiler wrote, whose
+            // patterns are the whole expression, has none.
+            if arm.pattern.span == scrutinee.span {
+                let label = match (&arm.pattern.kind, self.types.kind(scrutinee.ty)) {
+                    (hir::PatKind::Variant(NONE, _), TyKind::Option(_)) => "none",
+                    (hir::PatKind::Variant(ERR, _), TyKind::Result(..)) => "error",
+                    _ => "value",
+                };
+                self.way(None, e.span, arm.pattern.span, label);
+            } else if arm.pattern.span != e.span {
                 self.way(None, e.span, arm.pattern.span, "arm");
             }
             self.start(arm.body.span);
