@@ -130,7 +130,7 @@ error.
 **The system is within reach.** `ask.to` takes one key without waiting for
 Enter, which is a setting of the terminal: `unix.terminalMode` reads it,
 the script clears two of its flags for the length of one `unix.read`, and
-sets it back. The calls are those of C by their names, in `std.os.unix`,
+a `defer` sets it back, whether the read gave a key or failed. The calls are those of C by their names, in `std.os.unix`,
 safe to call and failing with the system's error. When its input is not a
 terminal the script reads a line instead, so it works in a pipe too.
 

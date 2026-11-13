@@ -18,11 +18,12 @@ fn key(input: ref unix.Fd): Byte ! os.Errno {
     var quiet = before
     quiet.c_lflag = quiet.c_lflag & ~(unix.ICANON | unix.ECHO)
     unix.setTerminalMode(ref input, quiet, unix.TCSANOW)?
+    defer {
+        _ = unix.setTerminalMode(ref input, before, unix.TCSANOW)
+    }
     let zero: Byte = 0
     var one = [zero]
-    let read = unix.read(ref input, mut one)
-    unix.setTerminalMode(ref input, before, unix.TCSANOW)?
-    _ = read?
+    _ = unix.read(ref input, mut one)?
     one[0]
 }
 
