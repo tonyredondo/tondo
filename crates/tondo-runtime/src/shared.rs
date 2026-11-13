@@ -168,12 +168,15 @@ fn let_go(participant: &'static Participant) {
     // Only what is there now is due: letting go of a task's handle may wait
     // for it, and this task go on in another thread, while this one retires
     // more. Most often it is one value, taken without giving up the room.
-    let (one, more) = {
-        let mut prompt = participant.prompt.lock().unwrap_or_else(|e| e.into_inner());
-        if prompt.len() == 1 { (prompt.pop(), Vec::new()) } else { (None, std::mem::take(&mut *prompt)) }
-    };
-    for garbage in one.into_iter().chain(more) {
-        (garbage.0)();
+    let mut prompt = participant.prompt.lock().unwrap_or_else(|e| e.into_inner());
+    if prompt.len() == 1 {
+        let garbage = prompt.pop();
+        drop(prompt);
+        garbage.into_iter().for_each(|garbage| (garbage.0)());
+    } else {
+        let all = std::mem::take(&mut *prompt);
+        drop(prompt);
+        all.into_iter().for_each(|garbage| (garbage.0)());
     }
     collect(participant, false);
 }
