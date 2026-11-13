@@ -11,7 +11,7 @@ both, and the value that may be missing.
 - [Passing a failure on with ?](#passing-a-failure-on-with-)
 - [Several ways to fail](#several-ways-to-fail)
 - [Working with options and results](#working-with-options-and-results)
-- [try: a ? that stays in the block](#try-a--that-stays-in-the-block)
+- [A fallback and a chain: ?? and ?.](#a-fallback-and-a-chain--and-)
 - [Saying what the program was doing: Failure](#saying-what-the-program-was-doing-failure)
 - [Designing a module's errors](#designing-a-modules-errors)
 - [Panics](#panics)
@@ -48,9 +48,9 @@ fn main() {
         some(user) => console.println("found {user.name}")
         none => console.println("nobody")
     }
-    let email = find(users, "bo").andThen((user) { user.email }) ?? "no email"
+    let email = find(users, "bo")?.email ?? "no email"
     console.println(email)
-    console.println("{find(users, "cy").isNone()} {users.get(5).isSome()} {users.first().map((user) { user.name })}")
+    console.println("{find(users, "cy").isNone()} {users.get(5).isSome()} {users.first()?.name}")
 }
 ```
 
@@ -82,23 +82,20 @@ pub enum AgeError {
 impl Display for AgeError {
     fn display(self): String {
         match self {
-            AgeError.NotANumber(text) => "`{text}` is not a number"
-            AgeError.Negative(age) => "{age} is negative"
-            AgeError.TooOld(age) => "nobody is {age}"
+            NotANumber(text) => "`{text}` is not a number"
+            Negative(age) => "{age} is negative"
+            TooOld(age) => "nobody is {age}"
         }
     }
 }
 
 fn parseAge(text: String): Int ! AgeError {
-    let age = match Int.parse(text.trim()) {
-        ok(number) => number
-        err(_) => fail AgeError.NotANumber(text)
-    }
+    let age = Int.parse(text.trim()) ?? fail NotANumber(text)
     if age < 0 {
-        fail AgeError.Negative(age)
+        fail Negative(age)
     }
     if age > 150 {
-        fail AgeError.TooOld(age)
+        fail TooOld(age)
     }
     age
 }
@@ -128,13 +125,17 @@ error: nobody is 999
   fails with it.
 - `fail error` is to errors what `return value` is to success. `err(error)`
   builds a result as a value, to store it or return it from a `match`.
+- After `fail`, and in a pattern, a variant is written alone: the signature
+  says which enum the error is, so `fail Negative(age)` is
+  `fail AgeError.Negative(age)`. Where no error is declared, as in `main`,
+  the variant takes its enum's name.
 
 The caller cannot forget the failure. A result that is not used is a compile
 error, and so is using a `T ! E` where a `T` goes:
 
 ```text
 error[E1303]: a value of type `String ! fs.FsError` is not used; pass a failure on with `?`, handle it with `match`, or discard it with `_ = ...`
-error[E1102]: operator `+` cannot be applied to `Int ! text.TextError`: the value may be missing or an error; get the number first with `?`, `.unwrapOr(value)` or `match`
+error[E1102]: expected `Int`, found `Int ! text.TextError`: add `?` to pass the failure on, give a fallback with `value ?? fallback`, or handle it with `match`
 ```
 
 ## Passing a failure on with ?
@@ -222,7 +223,7 @@ enum ParseError {
 
 fn parse(text: String): Int ! ParseError {
     if text.isEmpty() {
-        fail ParseError.Empty
+        fail Empty
     }
     Int.parse(text).mapErr((_) { ParseError.NotANumber(text) })
 }
@@ -237,8 +238,8 @@ fn main() {
         ok(value) => console.println("{value}")
         err(fs.FsError(error)) => console.println("cannot read it: {error}")
         err(ParseError(error)) => match error {
-            ParseError.Empty => console.println("the file is empty")
-            ParseError.NotANumber(text) => console.println("not a number: {text}")
+            Empty => console.println("the file is empty")
+            NotANumber(text) => console.println("not a number: {text}")
         }
     }
 }
@@ -256,17 +257,19 @@ code's back: to change an error, call `mapErr`.
 
 ## Working with options and results
 
-`match` handles every case. For the common ones there are methods, which
+`match` handles every case. For the common ones there are two operators,
+`??` and `?.`, which the next section is about, and methods, which
 `tondo api Option` and `tondo api Result` list:
 
 | To | Option | Result |
 | --- | --- | --- |
 | ask | `isSome()`, `isNone()` | `isOk()`, `isErr()` |
-| give a fallback | `unwrapOr(value)` | `unwrapOr(value)` |
+| give a fallback | `value ?? fallback` | `value ?? fallback` |
 | change the value | `map((x) { ... })` | `map((x) { ... })` |
 | change the error | | `mapErr((e) { ... })` |
 | go on with something that may be missing or fail | `andThen((x) { ... })` | `andThen((x) { ... })` |
-| take another when it is missing | `orElse(other)` | |
+| take another when it is missing | `value ?? other` | |
+| go on along a chain while there is a value | `value?.field` | |
 | keep it only if | `filter((x) { ... })` | |
 | turn into the other | `okOr(error)` | `ok()`, `err()` |
 | insist, and panic otherwise | `expect("why it is there")` | `expect("why it worked")` |
@@ -300,10 +303,11 @@ none some(1) 7
 does fail, that is a bug, and it panics with the reason. There is no bare
 `unwrap`.
 
-## try: a ? that stays in the block
+## A fallback and a chain: ?? and ?.
 
-Inside `try { ... }`, `?` ends the block instead of the function. The block
-gives its last expression, or what a `?` passed on:
+`a ?? b` is the value that `a` holds, or `b` when it holds none. `a?.b` goes
+on along a chain of values that may be missing, and is `none` as soon as one
+is:
 
 ```tondo
 import std.console
@@ -311,25 +315,74 @@ import std.console
 type Address = { city: String? }
 type User = { name: String, address: Address? }
 
+/// `?.` goes on along the chain only while there is a value.
 fn cityOf(user: User): String {
-    let city: String? = user.address?.city
-    city ?? "nowhere"
+    user.address?.city ?? "nowhere"
+}
+
+/// The right side of `??` may leave the function instead of giving a value.
+fn cityIn(users: Map[String, User], name: String): String ! String {
+    let user = users[name] ?? fail "nobody is called {name}"
+    cityOf(user)
+}
+
+fn expensive(): Int {
+    console.println("computing the fallback")
+    0
 }
 
 fn main() {
     let ada = User { name: "ada", address: Address { city: "London" } }
     let bo = User { name: "bo", address: none }
+    let users = ["ada": ada, "bo": bo]
     console.println("{cityOf(ada)} {cityOf(bo)}")
+    console.println("{cityIn(users, "ada")} {cityIn(users, "cy")}")
+
+    // The right side runs only when it is needed.
+    let known: Int? = 7
+    let missing: Int? = none
+    console.println("{known ?? expensive()} {missing ?? expensive()}")
+
+    // A result's error is dropped for the fallback, and fallbacks chain.
+    let port = Int.parse("eighty") ?? missing ?? 8080
+    console.println("{port}")
+
+    var total = 0
+    for text in ["1", "two", "3"] {
+        let number = Int.parse(text) ?? continue
+        total += number
+    }
+    console.println("{total}")
 }
 ```
 
 ```text output
 London nowhere
+ok(London) err(nobody is called cy)
+computing the fallback
+7 0
+8080
+4
 ```
 
-This is how a chain of values that may be missing is read without a
-function for it. `try` works with results too, when several steps should
-give one result to handle in one place.
+- **`??` takes an option or a result on its left.** With a result, the error
+  is dropped for the fallback, so use it where the error does not matter.
+- **Its right side is evaluated only when it is needed**, as `expensive`
+  shows: it ran once, for the value that was missing.
+- **Its right side may leave**: `?? return`, `?? continue`, `?? break` and
+  `?? fail error`. That is how a function takes a value or gives up, in one
+  line.
+- **Fallbacks chain** when the one in the middle may be missing too:
+  `first ?? second ?? last`.
+- **`??` binds last of all the operators**, so `count ?? 0 + 1` is
+  `count ?? (0 + 1)`. Write `(count ?? 0) + 1` for the other.
+- **`?.` on an option stays in the function.** `user.address?.city` is
+  `none` when there is no address, and otherwise what `city` is. A `?` that
+  ends an expression still leaves the function, as before: in a function
+  that gives an option, `user.address?.city?` passes `none` on.
+- **On a result, `?.` passes the error on**, as `?` does:
+  `client.get(url)?.text()?`. To leave the function when an option is
+  missing and go on otherwise, write it with parentheses: `(user.address?).city`.
 
 ## Saying what the program was doing: Failure
 
@@ -410,9 +463,9 @@ pub enum SettingsError {
 impl Display for SettingsError {
     fn display(self): String {
         match self {
-            SettingsError.Missing(path) => "there is no {path}"
-            SettingsError.Unreadable(error) => "cannot read the settings: {error}"
-            SettingsError.Invalid(why) => "the settings are not valid: {why}"
+            Missing(path) => "there is no {path}"
+            Unreadable(error) => "cannot read the settings: {error}"
+            Invalid(why) => "the settings are not valid: {why}"
         }
     }
 }
@@ -420,8 +473,8 @@ impl Display for SettingsError {
 pub fn loadSettings(path: String): Settings ! SettingsError {
     let text = match fs.readText(path) {
         ok(text) => text
-        err(fs.FsError.NotFound) => fail SettingsError.Missing(path)
-        err(error) => fail SettingsError.Unreadable(error)
+        err(NotFound) => fail Missing(path)
+        err(error) => fail Unreadable(error)
     }
     json.decode[Settings](text).mapErr((error) { SettingsError.Invalid("{error}") })
 }
@@ -574,7 +627,7 @@ rebuilding: broken
 | Is | a value, in the signature | a stop, with a report |
 | Examples | a missing file, bad input, a timeout | an index out of range, an overflow, a broken invariant |
 | The caller | must handle it or pass it on | does nothing, and should not |
-| Handled with | `?`, `match`, `unwrapOr`, `context` | a fix; `recover` at the edge of a request |
+| Handled with | `?`, `match`, `??`, `context` | a fix; `recover` at the edge of a request |
 
 When writing a function, ask who is at fault if it cannot do its job. If it
 is whoever calls it with input they cannot know to be good, return an error.

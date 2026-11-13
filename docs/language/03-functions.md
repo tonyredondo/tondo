@@ -320,9 +320,10 @@ ready
 [3, 5] [one]
 ```
 
-The parentheses are always there, also around one parameter. A closure that
-can fail declares its result, `(): String ! LoadError { ... }`, unless the
-function it is passed to already says so.
+The parentheses are always there, also around one parameter. A closure says
+its result only when it wants to: what it gives and what it fails with are
+worked out from its body, so one that holds a `fail LoadError.Missing` and
+gives a `String` is a `fn(...): String ! LoadError`.
 
 ## What a closure captures
 
@@ -427,9 +428,46 @@ names are not, so a call through a function value gives its arguments by
 position.
 
 A generic function becomes a value once its types are known,
-`identity[Int]`, or when what is expected leaves one answer. A method is
-called where it is named: `value.method` alone is not a value, and a closure
-does the job, `(x) { value.method(x) }`.
+`identity[Int]`, or when what is expected leaves one answer.
+
+What builds a value is a function too, and is given by its name where a
+function is expected: a method by its type, a variant with data, a newtype,
+and `some`, `ok` and `err`. No closure is needed only to wrap or to forward:
+
+```tondo
+import std.console
+import std.text
+
+type UserId = Int
+
+enum LoadError {
+    BadNumber(text.TextError)
+}
+
+fn userId(written: String): UserId ! LoadError {
+    Int.parse(written).map(UserId).mapErr(LoadError.BadNumber)
+}
+
+fn main() {
+    let names = ["ada", "bo"].map(String.toUpper)
+    let ids = [7, 8].map(UserId)
+    let found: Array[Int?] = [1, 2].map(some)
+    console.println("{names} {ids.map((id) { id.value })} {found}")
+    match userId("x") {
+        ok(id) => console.println("{id.value}")
+        err(error) => console.println("{error}")
+    }
+}
+```
+
+```text output
+[ADA, BO] [7, 8] [some(1), some(2)]
+BadNumber(invalid data)
+```
+
+`String.toUpper` is the function that takes a `String` and calls `toUpper`
+on it. A method bound to one value, `value.method` with no call, is still
+not a value: a closure does that job, `(x) { value.method(x) }`.
 
 ## Taking a function: fn types and Call bounds
 

@@ -274,7 +274,7 @@ fn keep[T: ~Copy](value: T): T {
 fn main() {
     let job = spawn keep(1)
     let same = keep(job)
-    _ = same.wait()
+    same.wait()
 }
 ```
 
@@ -306,7 +306,7 @@ fn main() {
     console.println("{util == twin} {util.value.name == twin.value.name}")
 
     var seen: Set[Ref[Module]] = Set[util]
-    _ = seen.insert(http.value.imports[0])
+    seen.insert(http.value.imports[0])
     console.println("{seen.length()} {http.value.name} imports {http.value.imports.length()}")
 }
 ```
@@ -369,7 +369,7 @@ import std.sync
 type Image = { name: String, pixels: Array[Int] }
 
 fn load(cache: sync.Mutex[Map[String, WeakRef[Image]]], name: String): Ref[Image] {
-    match cache.get().get(name).andThen((weak) { weak.get() }) {
+    match cache.get().get(name)?.get() {
         some(image) => image
         none => {
             let image = Ref(Image { name, pixels: [1, 2, 3] })

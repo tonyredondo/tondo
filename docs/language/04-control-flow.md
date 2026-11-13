@@ -324,6 +324,8 @@ is no `++` or `--`: write `index += 1`.
 | `..` `..=` | integers and `Char` | A range, without and with its end |
 | `in` | a value and a collection | Membership, below |
 | `?` | a `T ! E` or a `T?` | Gives the value, or leaves with the failure |
+| `??` | a `T?` or a `T ! E`, and a fallback | The value, or else the fallback, evaluated only then |
+| `?.` | a `T?` and what follows it | Goes on only when there is a value ([Errors](07-errors.md#a-fallback-and-a-chain--and-)) |
 | `with` | a record | A copy with some fields changed |
 | `\|` | two commands | A pipeline of processes |
 
@@ -359,8 +361,8 @@ Some operators other languages have are named instead:
 | `[1] + [2]` | `first.concat(second)` |
 | `!x`, `&&`, `\|\|` | `not x`, `and`, `or` |
 | `x++` | `x += 1` |
-| `a ?? b` | `a.unwrapOr(b)` |
-| `a?.b` | `try { a?.b }`, or `a.map((x) { x.b })` |
+| `a ?: b` | `a ?? b` |
+| `c ? a : b` | `if c { a } else { b }` |
 | `0 < x < 10` | `0 < x and x < 10` |
 
 ## in
@@ -409,9 +411,12 @@ From the tightest to the loosest:
 | 12 | `and` | left to right |
 | 13 | `or` | left to right |
 | 14 | `with` | left to right |
+| 15 | `??` | right to left |
 
 `not` binds tighter than a comparison, so `not a == b` is `(not a) == b`:
-write `a != b`, or `not (a == b)`. `tondo fmt` keeps only the parentheses
+write `a != b`, or `not (a == b)`. `??` binds last of all, so everything to
+its right is the fallback: `count ?? 0 + 1` is `count ?? (0 + 1)`, and the
+other reading takes parentheses, `(count ?? 0) + 1`. `tondo fmt` keeps only the parentheses
 the table makes necessary.
 
 Next: [Records, tuples and newtypes](05-records.md).

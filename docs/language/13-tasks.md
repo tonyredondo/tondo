@@ -520,7 +520,7 @@ fn main() {
     for _ in 0..1000 {
         group.add(spawn hits.add(1))
     }
-    _ = group.wait()
+    group.wait()
     console.println("{hits.load()} {hits.swap(0)} {hits.load()}")
 }
 ```
@@ -570,7 +570,7 @@ import std.sync
 fn count(words: Array[String], seen: sync.Set[String], lengths: sync.Map[Int, Int]) {
     for word in words {
         if seen.insert(word) {
-            _ = lengths.insert(word.length(), 1)
+            lengths.insert(word.length(), 1)
         }
     }
 }

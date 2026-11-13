@@ -118,9 +118,9 @@ fn User.describe(self): String {
 
 fn label(payment: Payment): String {
     match payment {
-        Payment.Cash => "cash"
-        Payment.Card(number) => "card {number}"
-        Payment.Transfer { iban, reference } => "transfer {iban} {reference}"
+        Cash => "cash"
+        Card(number) => "card {number}"
+        Transfer { iban, reference } => "transfer {iban} {reference}"
     }
 }
 
@@ -129,12 +129,14 @@ fn main() {
     let older = ada with { age: 37 }          // a copy with one change
     console.println("{ada.describe()} {older.describe()} {older.admin}")
     console.println(label(Payment.Card("4242")))
+    console.println("{older} {Payment.Card("4242")}")      // shown with no code written for it
 }
 ```
 
 ```text
 Ada (36) Ada (37) false
 card 4242
+User { name: Ada, age: 37, admin: false } Card(4242)
 ```
 
 A `match` covers every case, and the compiler names the one that is missing.
@@ -144,6 +146,11 @@ Without the last arm of `label`:
 error[E1204]: `match` is not exhaustive: `Payment.Transfer { .. }` is not covered
   --> pay.to:10:5
 ```
+
+A pattern names a variant alone, since the value matched says which enum it
+is of, and several patterns that bind nothing share an arm with `|`. A record
+and an enum are shown as they are with nothing to write; a type that wants
+another text for people implements `Display`.
 
 There are no classes and nothing is inherited: a program is records, enums,
 functions and traits. `pub` exports a name, and `priv` hides a field from
@@ -169,20 +176,17 @@ pub enum ConfigError {
 impl Display for ConfigError {
     fn display(self): String {
         match self {
-            ConfigError.Missing(key) => "missing `{key}`"
-            ConfigError.Invalid(key) => "`{key}` is not valid"
+            Missing(key) => "missing `{key}`"
+            Invalid(key) => "`{key}` is not valid"
         }
     }
 }
 
 fn port(text: String): Int ! ConfigError {
     if text.isEmpty() {
-        fail ConfigError.Missing("port")
+        fail Missing("port")
     }
-    match Int.parse(text) {
-        ok(value) => value
-        err(_) => fail ConfigError.Invalid("port")
-    }
+    Int.parse(text) ?? fail Invalid("port")      // the value, or else leave
 }
 
 fn address(host: String, text: String): String ! ConfigError {
@@ -190,25 +194,30 @@ fn address(host: String, text: String): String ! ConfigError {
     "{host}:{number}"
 }
 
-fn first(names: Array[String]): String? {
-    names.get(0)
+type Profile = { nickname: String? }
+
+fn shown(names: Array[String], profile: Profile?): String {
+    profile?.nickname ?? names.get(0) ?? "nobody"       // along a chain, then one fallback after another
 }
 
 fn main() {
     console.println("{address("localhost", "8080")}")
     console.println("{address("localhost", "http")}")
-    console.println(first([]) ?? "nobody")
+    console.println("{shown([], none)} {shown(["ada"], none)} {shown(["ada"], Profile { nickname: "countess" })}")
 }
 ```
 
 ```text
 ok(localhost:8080)
 err(`port` is not valid)
-nobody
+nobody ada countess
 ```
 
 - `?` gives the value or returns the error. A result that nobody uses is a
   compile error, so a failure cannot be dropped by forgetting it.
+- `value ?? fallback` gives the value or else the fallback, which is
+  evaluated only then and may leave instead: `?? return`, `?? fail error`.
+  `profile?.nickname` goes on along a chain only while there is a value.
 - A function that fails in several ways says `!(ConfigError | NetworkError)`,
   and `?` widens into it with no conversion to write.
 - `.context("reading {path}")` turns any error into a `Failure` that says
@@ -347,7 +356,7 @@ impl Shape for Square {
     }
 }
 
-/// `Display` makes a type usable in `"{value}"`.
+/// `Display` says how a type reads in `"{value}"`, in place of its name and fields.
 impl Display for Square {
     fn display(self): String {
         "square {self.side}"
@@ -524,7 +533,7 @@ pub type Stats = { hits: Int }
 
 fn record(stats: sync.Mutex[Stats], counter: sync.Atomic[Int]) {
     stats.update((s) { s.hits += 1 })
-    _ = counter.add(1)
+    counter.add(1)
 }
 
 fn main() {
@@ -684,16 +693,20 @@ the orders of them that differ. [The toolchain](toolchain.md) shows what
 
 ## Processes, cleanup and C
 
-A command is a value, and `|` joins commands into a pipeline with no shell
-in between, so there is nothing to quote and nothing to inject:
+A command is written as in a shell, between `$(` and `)`, and no shell runs
+it: the compiler splits the line, and a value put in it is always one
+argument, so there is nothing to quote and nothing to inject. A command that
+fails is an error, as a function's is:
 
 ```tondo
 import std.console
 import std.process
 
 fn main(): !process.ProcessError {
-    let commits = process.command("git", "log", "--oneline") | process.command("head", "-n", "3")
-    console.print(commits.output()?.text()?)
+    let count = 3
+    for line in $(git log --oneline | head -n {count}).lines()? {
+        console.println(line)
+    }
 }
 ```
 
@@ -748,6 +761,7 @@ a signature should say.
 | Macros | `derive` and generators, which are Tondo programs, and annotations |
 | Lifetimes | Loans that last one call: `ref`, `mut`, `var` |
 | Semicolons, `while`, `loop`, a ternary operator | A newline, `for`, and `if` as an expression |
+| A shell between a program and the commands it runs | `$(...)`, split by the compiler |
 | Shadowing | A new name |
 | A build that behaves differently when optimized | The same overflow checks, order of evaluation and results in every build |
 

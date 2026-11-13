@@ -90,8 +90,8 @@ enum Tree[T] {
 
 fn Tree[T].size(self): Int {
     match self {
-        Tree.Leaf => 0
-        Tree.Node(left, _, right) => left.size() + 1 + right.size()
+        Leaf => 0
+        Node(left, _, right) => left.size() + 1 + right.size()
     }
 }
 
@@ -414,7 +414,7 @@ These need no import:
 
 | Trait | A type that implements it | Gives |
 | --- | --- | --- |
-| `Display` | writes `display(self): String` | `"{value}"`, `join`, being printed |
+| `Display` | writes `display(self): String`, or nothing: a record and an enum are shown as they are | `"{value}"`, `join`, being printed |
 | `Ordered` | writes `compare(self, other: Self): Int` | `<` `<=` `>` `>=`, `sorted()`, `min()`, `max()` |
 | `Iterator[T]` | writes `next(mut self): T?` | `for`, and every adapter |
 | `Additive` | writes `zero`, `plus`, `minus` | `+`, `-`, `sum()` |
@@ -560,8 +560,8 @@ enum Shape {
 
 fn area(shape: Shape): Float {
     match shape {
-        Shape.Round(circle) => 3.14159 * circle.radius * circle.radius
-        Shape.Boxy(square) => square.side * square.side
+        Round(circle) => 3.14159 * circle.radius * circle.radius
+        Boxy(square) => square.side * square.side
     }
 }
 

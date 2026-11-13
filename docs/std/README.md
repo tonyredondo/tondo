@@ -36,7 +36,7 @@ these types; the pages list their methods.
 | [Bool](prelude/bool.md) | `true` and `false` |
 | [Int and the integers](prelude/int.md) | every width, with wrapping, checked and saturating arithmetic, bits and bytes |
 | [Float and Float32](prelude/float.md) | rounding, roots, powers, tests for NaN and infinity |
-| [Option](prelude/option.md) | `T?`: `map`, `andThen`, `unwrapOr`, `okOr` |
+| [Option](prelude/option.md) | `T?`: `map`, `andThen`, `filter`, `okOr`, with `??` and `?.` for the common cases |
 | [Result, Failure and Panic](prelude/result.md) | `T ! E`: `map`, `mapErr`, `context`; what a `recover` gives |
 | [Array](prelude/array.md) | `map`, `filter`, `reduce`, sorting, grouping, slices |
 | [Map](prelude/map.md) | keys in the order they were added |

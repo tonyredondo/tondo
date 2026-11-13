@@ -199,7 +199,7 @@ fn main() {
     console.println("{infinite} {-infinite} {undefined} {undefined == undefined} {undefined.isNaN()}")
     console.println("{2.5.round()} {3.5.round()} {2.5.roundTiesAway()} {2.7.floor()} {2.2.ceil()} {(-2.7).truncate()}")
     console.println("{2.0.pow(10.0)} {(-3.5).abs()} {3.14159.toFixed(2)} {7.5.clamp(0.0, 5.0)} {1.5.min(2.5)}")
-    console.println("{2.0.checkedSqrt()} {(-1.0).checkedSqrt().isErr()}")
+    console.println("{2.0.sqrt()} {(-1.0).sqrt()} {(-1.0).checkedSqrt().isErr()}")
 }
 ```
 
@@ -208,14 +208,15 @@ fn main() {
 inf -inf NaN false true
 2.0 4.0 3.0 2.0 3.0 -2.0
 1024.0 3.5 3.14 5.0 1.5
-ok(1.4142135623730951) true
+1.4142135623730951 NaN true
 ```
 
 - Floats are approximate. `0.1 + 0.2` is not `0.3`: compare with a
   tolerance, `(a - b).abs() < 0.000001`, or use a `Decimal` when the number
   is money.
 - Dividing by zero gives infinity or NaN, and NaN is equal to nothing, not
-  even itself: test it with `isNaN()`.
+  even itself: test it with `isNaN()`. The square root of a negative number
+  is NaN in the same way.
 - `round()` rounds halves to the even neighbour, as IEEE does, and
   `roundTiesAway()` away from zero, as school does.
 - A float is not a key of a map and has no `%`.
@@ -261,7 +262,7 @@ import std.math
 fn main() {
     console.println("{math.hypot(3.0, 4.0)} {math.pow(2.0, 0.5):.4} {math.exp(1.0):.4}")
     console.println("{math.sin(0.0)} {math.cos(0.0)} {math.atan2(1.0, 1.0):.4}")
-    console.println("{math.checkedSqrt(2.0)} {math.checkedLn(-1.0).isErr()} {math.checkedLog10(1000.0)}")
+    console.println("{math.sqrt(2.0)} {math.ln(-1.0)} {math.ln(0.0)} {math.log10(1000.0)} {math.checkedLn(-1.0).isErr()}")
     console.println("{math.gcd(12, 18)} {math.lcm(4, 6)}")
 }
 ```
@@ -269,12 +270,16 @@ fn main() {
 ```text output
 5.0 1.4142 2.7183
 0.0 1.0 0.7854
-ok(1.4142135623730951) true ok(3.0)
+1.4142135623730951 NaN -inf 3.0 true
 6 12
 ```
 
 A function that is not defined for every input, as `sqrt`, `ln` and `asin`,
-gives a result rather than a NaN to find later.
+follows the rest of the floats: outside its domain it gives NaN, or an
+infinity where that is the limit, as `ln(0.0)`. Each has a twin that fails
+with `math.MathError` instead, for code that would rather not find a NaN
+later: `checkedSqrt`, `checkedLn`, `checkedLog10`, `checkedLog2`,
+`checkedAsin` and `checkedAcos`.
 
 ## Exact decimals and big integers
 
