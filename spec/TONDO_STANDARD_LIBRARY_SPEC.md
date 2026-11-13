@@ -7394,6 +7394,10 @@ pub fn Vector128[T].cast[U](self): Vector128[U]
   versiones de una función por nivel (18.11 del lenguaje).
 - `of` recibe exactamente `lanes()` valores; otra cantidad es un error donde
   los valores se escriben en la llamada, y `P0006` con un array esparcido.
+  `Vector[T]` no tiene `of`, que es un error de compilación que da `all`,
+  `load` y el `of` de `Vector128[T]`: sus carriles pueden ser más en la
+  versión de una función para un nivel con vectores más anchos, y los mismos
+  valores escritos no llenarían los dos.
 - `load` lee `lanes()` elementos desde `at` y `store` los escribe. Si el array
   tiene menos de `at + lanes()` elementos, o `at` es negativo, entran en pánico
   como un índice fuera de rango (`P0001`). `lane`, `withLane` y el `lane` de una

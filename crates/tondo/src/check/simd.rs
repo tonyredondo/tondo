@@ -138,6 +138,16 @@ impl<'a> Checker<'a> {
             }
             "zero" => (SimdOp::Zero, Vec::new(), owner),
             "all" => (SimdOp::Splat, vec![("value", own.lane, ast::Mode::Value, None)], owner),
+            "of" if own.width == Width::Widest => {
+                let (name, lane) = (self.types.display(owner), self.types.display(own.lane));
+                let message = format!(
+                    "{shown} has no function `of`: it can have more lanes in the version of a function for a \
+                     processor with wider vectors; `{name}.all(value)` gives each lane one value, `{name}.load(ref \
+                     values)` takes them from an array, and `simd.Vector128[{lane}].of(...)` takes as many as 128 bits hold"
+                );
+                self.diags.error("E1001", method.span, message);
+                return Self::error_expr(span);
+            }
             "of" => return self.simd_of(cx, owner, own, count, args, span),
             "load" => {
                 let array = self.types.intern(TyKind::Array(own.lane));
@@ -153,7 +163,8 @@ impl<'a> Checker<'a> {
             }
             name => {
                 let message = format!(
-                    "{shown} has no function `{name}`: it has `zero`, `all`, `of`, `load`, `lanes` and `accelerated`{}",
+                    "{shown} has no function `{name}`: it has `zero`, `all`, {}`load`, `lanes` and `accelerated`{}",
+                    if own.width == Width::Widest { "" } else { "`of`, " },
                     if matches!(own.width, Width::W256 | Width::W512) { ", and `joined`" } else { "" }
                 );
                 self.diags.error("E1001", method.span, message);

@@ -6701,3 +6701,12 @@ is now checked for ownership too, as any closure's. A `mut` or `var` parameter i
 the block runs after code that may change it, and so is another closure, which may outlive the
 call.
 
+
+## `Vector[T]` has no `of`
+
+`Vector[T]` is meant to be as wide as each version of a function can make it, which gives it more
+lanes in a version for `x86-64-v3` than in the body for the baseline. `of` with its values written
+in the call cannot fill both: the count that one version takes is an error in the other, or a panic
+as it runs, as with an array spread. `Vector[T]` gives `of` up, as a build error that names `all`,
+`load` and the `of` of `Vector128[T]`, where the count is known when the code is written. Keeping
+`of` would have kept `Vector[T]` at 128 bits in every version.
