@@ -413,10 +413,10 @@ console.println("{simd.Vector512[Byte].lanes()}")
 pub type Vector[T]
 ```
 
-The widest vector that is accelerated where the code runs, with the
-functions and methods of `Vector128`: 128 bits until a function has
-versions for each level of processor. Its result can differ by its
-width, as `sum` groups the lanes by it.
+The vector meant to be the widest that is accelerated where the code
+runs, with the functions and methods of `Vector128`: for now of 128 bits
+at every level, in the versions of a function for a higher level too.
+Its result can differ by its width, as `sum` groups the lanes by it.
 
 ```tondo
 import std.console

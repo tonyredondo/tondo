@@ -1,9 +1,8 @@
 // std.simd: vectors of numbers, each lane computed at once by the
 // processor's vector instructions (standard library 14.46). Vectors of 128,
-// 256 and 512 bits, and `Vector[T]`, the widest that is accelerated where
-// the code runs, give the same results everywhere: a width the processor
-// does not do is computed on halves, of 256 bits on an x64 with AVX2 and of
-// 128 bits elsewhere.
+// 256 and 512 bits, and `Vector[T]`, of 128 bits for now, give the same
+// results everywhere: a width the processor does not do is computed on
+// halves, of 256 bits on an x64 with AVX2 and of 128 bits elsewhere.
 //
 // ```tondo
 // import std.console
@@ -73,10 +72,10 @@ pub type Vector256[T]
 /// ```
 pub type Vector512[T]
 
-/// The widest vector that is accelerated where the code runs, with the
-/// functions and methods of `Vector128`: 128 bits until a function has
-/// versions for each level of processor. Its result can differ by its
-/// width, as `sum` groups the lanes by it.
+/// The vector meant to be the widest that is accelerated where the code
+/// runs, with the functions and methods of `Vector128`: for now of 128 bits
+/// at every level, in the versions of a function for a higher level too.
+/// Its result can differ by its width, as `sum` groups the lanes by it.
 ///
 /// ```tondo
 /// import std.console
