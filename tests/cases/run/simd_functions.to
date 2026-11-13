@@ -1,0 +1,29 @@
+// Vectors of std.simd as the parameters and results of functions, of 128
+// bits, which are one register, and of 256, which are in memory; in every
+// build, a live one too, whose locals start as zeros of their type.
+
+import std.console
+import std.simd
+
+fn doubled(values: simd.Vector128[Float32]): simd.Vector128[Float32] {
+    values + values
+}
+
+fn mixed(a: simd.Vector128[Byte], b: simd.Vector128[Byte]): simd.Vector128[Byte] {
+    a ^ b
+}
+
+fn summed(values: simd.Vector256[Int]): Int {
+    let total = values + values
+    total.sum()
+}
+
+fn main() {
+    console.println("{doubled(simd.Vector128[Float32].of(1.0, 2.0, 3.0, 4.0))}")
+    console.println("{mixed(simd.Vector128[Byte].all(3), simd.Vector128[Byte].all(5)).lane(0)}")
+    console.println("{summed(simd.Vector256[Int].of(1, 2, 3, 4))}")
+}
+
+// expect-stdout: <2.0, 4.0, 6.0, 8.0>
+// expect-stdout: 6
+// expect-stdout: 20

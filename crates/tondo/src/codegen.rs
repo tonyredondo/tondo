@@ -1886,6 +1886,17 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
 
     /// An integer constant of type `ty`, from its bits.
     fn int_const(&mut self, ty: ir::Type, value: i128) -> ir::Value {
+        // A vector of `std.simd`, which only the zero of a value is made as:
+        // zero in every lane.
+        if ty.is_vector() {
+            debug_assert_eq!(value, 0, "a vector constant is all zeros");
+            let zero = match ty.lane_type() {
+                types::F32 => self.fb.ins().f32const(0.0),
+                types::F64 => self.fb.ins().f64const(0.0),
+                lane => self.fb.ins().iconst(lane, 0),
+            };
+            return self.fb.ins().splat(ty, zero);
+        }
         // Narrow immediates are zero-extended bit patterns; one of 128 bits
         // is made of its two halves.
         match ty.bits() {
