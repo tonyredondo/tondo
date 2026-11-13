@@ -51,7 +51,7 @@ pub static VERSIONS: AtomicU8 = AtomicU8::new(0);
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_cpu_versions(needed: *mut Str) {
     let text = String::from_utf8_lossy(unsafe { str_bytes(needed) }).into_owned();
-    let off = std::env::var("TONDO_VERSIONS").is_ok_and(|value| value.trim() == "0");
+    let off = crate::config::config().versions.as_ref().is_some_and(|value| value == "0");
     let has = text.lines().skip(1).all(detected);
     VERSIONS.store(u8::from(has && !off), Ordering::Relaxed);
 }

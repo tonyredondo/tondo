@@ -38,6 +38,10 @@ pub(crate) struct Config {
     pub(crate) lock_order: Option<String>,
     /// `TONDO_WAKES`: `1` keeps each task's last waits and wakes, for a dump.
     pub(crate) wakes: Option<OsString>,
+    /// `TONDO_VERSIONS`: `0` runs the code of the level the program was built
+    /// for, not the versions of its functions for a higher one, as a
+    /// processor without that level would.
+    pub(crate) versions: Option<OsString>,
     /// `TONDO_CACHE_DOMAINS`: `0` takes every core as one domain: the
     /// workers do not keep to the cores that share a cache.
     pub(crate) cache_domains: Option<String>,
@@ -137,6 +141,7 @@ pub(crate) fn config() -> &'static Config {
             lock_order: text("TONDO_LOCK_ORDER"),
             zones: text("TONDO_ZONES"),
             wakes: os("TONDO_WAKES"),
+            versions: os("TONDO_VERSIONS"),
             cache_domains: text("TONDO_CACHE_DOMAINS"),
             debug: os("TONDO_DEBUG"),
             trace: os("TONDO_TRACE"),
