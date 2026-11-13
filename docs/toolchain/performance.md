@@ -250,6 +250,7 @@ source.
 | `tondo asm <function>` | one function of the project |
 | `tondo asm --all` | every function |
 | `--clif` | Cranelift's intermediate code as well, before and after it optimizes |
+| `--cpu <level>` | the code of a [level of processor](#the-processor-a-build-is-for) |
 | `--tests` | a function of the tests or benchmarks |
 | `--against <rev>` | the difference with a revision's code |
 | `tondo profile show <profile> --asm` | the same listing, with the share of the samples on each instruction |
@@ -316,40 +317,38 @@ fn main() {
 ```text
 $ tondo test --bench --save-baseline level
 test sizes::unit::sizes::widestOf10000 ... ok
-  widest     12.20 µs/op  ±0.1%  0 allocs/op  0 B/op  190.1k ins/op
+  widest     11.18 µs/op  ±0.2%  0 allocs/op  0 B/op  125.1k ins/op
 $ tondo test --bench --cpu x86-64-v3 --baseline level
 test sizes::unit::sizes::widestOf10000 ... ok
-  widest     6.279 µs/op  ±0.8%  0 allocs/op  0 B/op  150.1k ins/op  -48.5% faster, -21.0% ins, cycles -49.8%
+  widest     4.103 µs/op  ±0.1%  0 allocs/op  0 B/op  85.1k ins/op  -63.3% faster, -32.0% ins, cycles -63.7%
 ```
 
-`tondo asm widest` shows why. At `baseline` the line is a `bsr` and what
-makes it right for a word of zero:
+`tondo asm widest` shows why, under each turn of the loop. At `baseline`
+the line is a `bsr` and what makes it right for a word of zero:
 
 ```text
 src/main.to:7  most = most.max(64 - word.leadingZeros())
         ; `64 - word.leadingZeros()` keeps its overflow check, in a loop
-     2f  nop dword [rax + rax * 1]
-     34  mov esi, 0x40
-     39  mov r10, -0x1
-     40  bsr r9, r8
-     44  cmovz r9, r10
-     48  mov r8d, 0x3f
-     4e  sub r8, r9
-     51  sub rsi, r8
-     54  jo $+0x2f
+     6f  mov r9, -0x1
+     76  bsr rsi, rdx
+     7a  cmovz rsi, r9
+     7e  mov edx, 0x3f
+     83  sub rdx, rsi
+     86  sub r11, rdx
+     89  jo $+0x382
+     8f  lea rdx, qword [rcx + 0x1]
 ```
 
-With `cpu = "x86-64-v3"` in `[build]`, which `tondo asm` reads, it is one
-`lzcnt`:
+`tondo asm widest --cpu x86-64-v3` has one `lzcnt` there. `tondo
+optimizations` takes the option too:
 
 ```text
 src/main.to:7  most = most.max(64 - word.leadingZeros())
         ; `64 - word.leadingZeros()` keeps its overflow check, in a loop
-     2f  nop dword [rax + rax * 1]
-     34  mov r8d, 0x40
-     3a  lzcnt rsi, rsi
-     3f  sub r8, rsi
-     42  jo $+0x2f
+     76  lzcnt r8, r8
+     7b  sub rsi, r8
+     7e  jo $+0x2f9
+     84  lea r8, qword [rdx + 0x1]
 ```
 
 Code that uses nothing the level adds is the same at both, and that is
