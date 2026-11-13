@@ -1235,6 +1235,10 @@ struct FnCx {
     /// The closure itself, the first parameter of its body.
     env: Option<LocalId>,
     captures: Vec<Capture>,
+    /// For a `defer` block: the `ref` parameters of its function it uses,
+    /// each by the capture that holds it and the binding of the body that
+    /// lends it, as a `ref` parameter (13.7).
+    loans_kept: Vec<(u32, LocalId)>,
     /// Whether the body changes a capture (`CallMut`).
     mutates: bool,
     /// A closure without a declared result infers it from its body.

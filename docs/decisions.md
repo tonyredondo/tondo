@@ -6689,3 +6689,15 @@ macro goes in which field, which C does not say. `std.os.unix` shares a constant
 same alias on every target, as it shares the alias, so `ICANON` stays common although `tcflag_t`
 names a different number on each system; `CRTSCTS` and `NOFLSH`, whose types differed, are now
 common too.
+
+## A `defer` block may use a `ref` parameter
+
+A `defer` block that put a terminal's mode back through the descriptor its function borrowed was
+refused as a closure that captures a loan, as be920cfb found for a raw pointer. A `defer` block is
+no value that leaves its scope, and a `ref` parameter's loan lasts the whole call, so the block
+holds a copy of the parameter, retained and released as any capture is, and its body lends it as a
+`ref` parameter, which it can read and pass on with `ref` but not give away: the body of a `defer`
+is now checked for ownership too, as any closure's. A `mut` or `var` parameter is still refused, as
+the block runs after code that may change it, and so is another closure, which may outlive the
+call.
+

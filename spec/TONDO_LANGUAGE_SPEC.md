@@ -5187,6 +5187,10 @@ Reglas:
   binding deja de estar disponible.
 - Un bloque defer captura valores `Copy` al registrarse. No puede capturar un valor afín; su cleanup utiliza la forma de llamada.
 - No se difiere un préstamo `ref`, `mut` o `var`: termina antes que el scope.
+  Un bloque defer sí usa un parámetro `ref` de su función, cuyo préstamo
+  dura toda la llamada: lo lee como el préstamo que es, sin moverlo, como
+  `defer { _ = unix.setTerminalMode(ref input, before, unix.TCSANOW) }`. Un
+  parámetro `mut` o `var` no, como tampoco otro cierre (16.5).
 - La expresión diferida debe ser infallible y devolver `Unit`.
 - Un cleanup puede esperar como cualquier llamada, pero no inicia tareas con
   `spawn`. La llamada no se inicia al registrar el defer: sus operandos y
@@ -6505,7 +6509,9 @@ Ningún préstamo puede:
 
 - Devolverse.
 - Guardarse en un record, enum, array o map.
-- Capturarse por un cierre.
+- Capturarse por un cierre, salvo un parámetro `ref` por un bloque `defer`
+  de su función (13.7), que no sale del scope y corre antes de que el
+  préstamo termine: lo usa como el préstamo que es, sin moverlo.
 - Asignarse a estado global.
 - Sobrevivir al valor origen.
 

@@ -27,6 +27,7 @@ impl<'a> Checker<'a> {
             parent: None,
             env: None,
             captures: Vec::new(),
+            loans_kept: Vec::new(),
             mutates: false,
             infer_result: false,
             params: Vec::new(),
@@ -578,6 +579,33 @@ impl<'a> Checker<'a> {
         }
         let env = cx.env?;
         let test_member = cx.test_member;
+        if let Some(index) = cx.captures.iter().position(|c| c.name == name)
+            && let Some(&(_, lent)) = cx.loans_kept.iter().find(|(i, _)| *i == index as u32)
+        {
+            return Some(Self::mk(hir::ExprKind::Local(lent), cx.captures[index].ty, span));
+        }
+        // A `defer` block uses a `ref` parameter of its function as the loan
+        // it is, which outlives the block (13.7): the closure holds a copy
+        // of it, which its body lends as a `ref` parameter.
+        let deferred_loan = cx.deferred
+            && cx.parent.as_deref().is_some_and(|parent| {
+                self.lookup(parent, name).is_some_and(|local| {
+                    parent.params[local.0 as usize] == Some(ast::Mode::Ref) && Some(local) != parent.env
+                })
+            });
+        if deferred_loan && !cx.captures.iter().any(|c| c.name == name) {
+            let parent = cx.parent.as_deref_mut()?;
+            let local = self.lookup(parent, name)?;
+            parent.reads.insert(local);
+            let ty = parent.locals[local.0 as usize].ty;
+            let source = Self::mk(hir::ExprKind::Loan(hir::Place { local, path: Vec::new() }), ty, span);
+            cx.captures.push(Capture { name: name.into(), ty, source, mutable: false });
+            let index = cx.captures.len() as u32 - 1;
+            let lent = self.hidden_local(cx, ty);
+            cx.params[lent.0 as usize] = Some(ast::Mode::Ref);
+            cx.loans_kept.push((index, lent));
+            return Some(Self::mk(hir::ExprKind::Local(lent), ty, span));
+        }
         let index = match cx.captures.iter().position(|c| c.name == name) {
             Some(index) => index,
             None => {
@@ -809,7 +837,12 @@ impl<'a> Checker<'a> {
             locals.push(local);
         }
         let success = (!cx.infer_result).then_some(cx.result);
-        let body = check_body(self, cx, success);
+        let mut body = check_body(self, cx, success);
+        // The loans a `defer` block keeps, lent from its captures.
+        for &(index, lent) in cx.loans_kept.iter().rev() {
+            let place = hir::Place { local: env, path: vec![hir::PlaceStep::Field(index)] };
+            body.stmts.insert(0, hir::Stmt::Lend { local: lent, place });
+        }
         if let Some(outer) = outer_naming {
             self.naming = outer;
         }
@@ -858,9 +891,10 @@ impl<'a> Checker<'a> {
             needs: 0,
             span,
         };
-        // A cleanup runs once, so it may give its captures away; another
-        // closure that does is called once (`CallOnce`).
-        if !deferred && self.ownership(&mut function, &params) {
+        // A cleanup runs once, so it may give its captures away, but not a
+        // loan it keeps; another closure that gives one away is called once
+        // (`CallOnce`).
+        if self.ownership(&mut function, &params) && !deferred {
             self.types.closure_info_mut(template).once = true;
         }
         self.closure_functions[index] = Some(function);
