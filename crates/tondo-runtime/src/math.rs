@@ -79,7 +79,7 @@ pub extern "C" fn tondo_rt_char_from(code: i64) -> u32 {
 /// addition one of the type, never fused with a product. Each partial sum
 /// takes its values in order, so the compiler's vectors give the same bits.
 macro_rules! fixed_sums {
-    ($sum:ident, $dot:ident, $t:ty, $out:ty, $lanes:literal, $give:expr) => {
+    ($t:ty, $lanes:literal) => {
         fn reduce(mut partial: [$t; $lanes]) -> $t {
             let mut lanes = $lanes;
             while lanes > 1 {
@@ -91,9 +91,7 @@ macro_rules! fixed_sums {
             partial[0]
         }
 
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $sum(values: *mut crate::ArrayHeader) -> $out {
-            let values = unsafe { crate::array_items::<$t>(values) };
+        pub fn sum(values: &[$t]) -> $t {
             let mut partial = [0.0 as $t; $lanes];
             let chunks = values.chunks_exact($lanes);
             let rest = chunks.remainder();
@@ -105,13 +103,11 @@ macro_rules! fixed_sums {
             for (j, &value) in rest.iter().enumerate() {
                 partial[j] += value;
             }
-            $give(reduce(partial))
+            reduce(partial)
         }
 
         /// The arrays have one length: the caller checked it.
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $dot(a: *mut crate::ArrayHeader, b: *mut crate::ArrayHeader) -> $out {
-            let (a, b) = unsafe { (crate::array_items::<$t>(a), crate::array_items::<$t>(b)) };
+        pub fn dot(a: &[$t], b: &[$t]) -> $t {
             let mut partial = [0.0 as $t; $lanes];
             let (chunks, others) = (a.chunks_exact($lanes), b.chunks_exact($lanes));
             let (rest, other_rest) = (chunks.remainder(), others.remainder());
@@ -123,17 +119,37 @@ macro_rules! fixed_sums {
             for (j, (&x, &y)) in rest.iter().zip(other_rest).enumerate() {
                 partial[j] += x * y;
             }
-            $give(reduce(partial))
+            reduce(partial)
         }
     };
 }
 
 mod sums64 {
-    fixed_sums!(tondo_rt_math_sum_f64, tondo_rt_math_dot_f64, f64, f64, 8, |sum: f64| sum);
+    fixed_sums!(f64, 8);
 }
 
 mod sums32 {
-    // A `Float32` goes back as its bits, which a `Float` would change for a
-    // NaN.
-    fixed_sums!(tondo_rt_math_sum_f32, tondo_rt_math_dot_f32, f32, i64, 16, |sum: f32| sum.to_bits() as i64);
+    fixed_sums!(f32, 16);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_math_sum_f64(values: *mut crate::ArrayHeader) -> f64 {
+    sums64::sum(unsafe { crate::array_items::<f64>(values) })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_math_dot_f64(a: *mut crate::ArrayHeader, b: *mut crate::ArrayHeader) -> f64 {
+    sums64::dot(unsafe { crate::array_items::<f64>(a) }, unsafe { crate::array_items::<f64>(b) })
+}
+
+// A `Float32` goes back as its bits, which a `Float` would change for a NaN.
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_math_sum_f32(values: *mut crate::ArrayHeader) -> i64 {
+    sums32::sum(unsafe { crate::array_items::<f32>(values) }).to_bits() as i64
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_math_dot_f32(a: *mut crate::ArrayHeader, b: *mut crate::ArrayHeader) -> i64 {
+    sums32::dot(unsafe { crate::array_items::<f32>(a) }, unsafe { crate::array_items::<f32>(b) }).to_bits() as i64
 }
