@@ -899,6 +899,51 @@ impl Types {
         self.replace(ty, &map)
     }
 
+    /// The definitions of the records, enums and newtypes whose parts hold
+    /// an opaque result, with its witness instead, as monomorphized code
+    /// needs: the closure that captures a value of an `impl Trait` holds one.
+    pub fn reveal_definitions(&mut self) {
+        for index in 0..self.adts.len() {
+            let kind = self.adts[index].kind.clone();
+            let parts: Vec<Ty> = match &kind {
+                AdtKind::Record(fields) => fields.iter().map(|f| f.ty).collect(),
+                AdtKind::Newtype(inner) => vec![*inner],
+                AdtKind::Enum(variants) => variants.iter().flat_map(|v| v.payload.types()).collect(),
+            };
+            let mut found = Vec::new();
+            parts.iter().for_each(|&part| self.opaques_in(part, &mut found));
+            // An opaque of a body that was not checked has no witness, and
+            // nothing compiled holds it.
+            let known = |types: &Self, opaque: Ty| matches!(types.kind(opaque), TyKind::Opaque(id, _) if types.opaques[*id as usize].witness.is_some());
+            if found.is_empty() || !found.iter().all(|&opaque| known(self, opaque)) {
+                continue;
+            }
+            let field = |types: &mut Self, f: &Field| Field { ty: types.reveal(f.ty), ..f.clone() };
+            let revealed = match kind {
+                AdtKind::Record(fields) => AdtKind::Record(fields.iter().map(|f| field(self, f)).collect()),
+                AdtKind::Newtype(inner) => AdtKind::Newtype(self.reveal(inner)),
+                AdtKind::Enum(variants) => AdtKind::Enum(
+                    variants
+                        .into_iter()
+                        .map(|v| {
+                            let payload = match v.payload {
+                                Payload::Unit => Payload::Unit,
+                                Payload::Tuple(types) => {
+                                    Payload::Tuple(types.into_iter().map(|t| self.reveal(t)).collect())
+                                }
+                                Payload::Record(fields) => {
+                                    Payload::Record(fields.iter().map(|f| field(self, f)).collect())
+                                }
+                            };
+                            Variant { payload, ..v }
+                        })
+                        .collect(),
+                ),
+            };
+            self.define_adt(AdtId(index as u32), revealed);
+        }
+    }
+
     fn opaques_in(&self, ty: Ty, out: &mut Vec<Ty>) {
         match self.kind(ty) {
             TyKind::Opaque(..) => out.push(ty),

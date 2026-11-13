@@ -92,6 +92,7 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         })
         .collect();
     mono.drain();
+    mono.types.reveal_definitions();
     // The views the debugger shows the values of a type as, for every type
     // a function holds, when the program implements `debug.View`.
     let view = traits.iter().position(|t| t.name == "debug.View").map(|i| TraitId(i as u32));
