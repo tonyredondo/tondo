@@ -586,13 +586,20 @@ fn cpu_has_answers_from_the_level_or_the_processor() {
         assert_eq!(code, 0, "{err}");
         (out.contains("tondo_rt_cpu_has"), out)
     };
-    // One text of the two: the way that runs.
+    // One text of the two: the way that runs. arm64 names a text at each
+    // of the two instructions that load its address.
+    let texts = |code: &str| {
+        let mut named: Vec<&str> = code.split_whitespace().filter(|word| word.starts_with("tondo_str")).collect();
+        named.sort_unstable();
+        named.dedup();
+        named.len()
+    };
     for function in ["level", "other"] {
         let (tested, code) = asked(function);
-        assert!(!tested && code.matches("tondo_str").count() == 1, "{code}");
+        assert!(!tested && texts(&code) == 1, "{code}");
     }
     let (tested, code) = asked("above");
-    assert!(tested && code.matches("tondo_str").count() == 2, "{code}");
+    assert!(tested && texts(&code) == 2, "{code}");
     let (out, err, code) = tondo(&dir, &["run", "has.to"]);
     assert_eq!(code, 0, "{err}");
     assert!(out.starts_with("level not other "), "{out}");
