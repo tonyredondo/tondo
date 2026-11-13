@@ -4513,6 +4513,31 @@ fn a_line_stops_once_however_many_blocks_it_takes() {
     std::io::Write::write_all(&mut debugger.stdin.take().unwrap(), commands.as_bytes()).unwrap();
     let text = String::from_utf8(debugger.wait_with_output().unwrap().stdout).unwrap();
     assert_eq!(text.matches("stopped at once.to:10").count(), 1, "{text}");
+    // Where the ways of a `??` or of a map's entry meet, and a loop's test
+    // after its step, built after the code that leads to them.
+    let program = "import std.console\n\nfn main() {\n    var counts: Map[String, Int] = [:]\n    var other: Map[String, Int] = [:]\n    for word in [\"to\", \"be\"] {\n        counts[word] = (counts[word] ?? 0) + 1\n        other[word, default: 0] += 1\n    }\n    console.println(\"{counts} {other}\")\n}\n";
+    std::fs::write(dir.join("joined.to"), program).unwrap();
+    let debug = |commands: &str| {
+        let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(["debug", "joined.to"])
+            .current_dir(&dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::io::Write::write_all(&mut debugger.stdin.take().unwrap(), commands.as_bytes()).unwrap();
+        String::from_utf8(debugger.wait_with_output().unwrap().stdout).unwrap()
+    };
+    let text = debug("break joined.to:7\nbreak joined.to:8\ncontinue\ncontinue\ncontinue\ncontinue\ncontinue\n");
+    let stops: Vec<&str> = text.lines().filter(|line| line.contains("stopped at")).collect();
+    assert_eq!(stops.len(), 4, "{text}");
+    assert!(stops.iter().step_by(2).all(|stop| stop.contains("joined.to:7")), "{text}");
+    let text = debug("break joined.to:8\ncontinue\nnext\nprint other\nquit\n");
+    assert!(text.contains("stopped at joined.to:6 in main (step)"), "{text}");
+    assert!(text.contains("other: Map[String, Int] = [\"to\": 1]"), "{text}");
+    // The loop's line once a turn, and once more for the test that ends it.
+    let text = debug("break joined.to:6\ncontinue\ncontinue\ncontinue\ncontinue\ncontinue\n");
+    assert_eq!(text.matches("stopped at joined.to:6").count(), 3, "{text}");
 }
 
 /// The processes of these process groups, from /proc, as each says it in

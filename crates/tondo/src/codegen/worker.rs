@@ -127,7 +127,8 @@ struct Worker<'w, 's, 't> {
     site_constants: Vec<(ir::Inst, usize)>,
     counter_offsets: Vec<(ir::Inst, usize)>,
     point_layouts: HashMap<u32, StateLayout>,
-    sites: usize,
+    /// Where each site of the function is among what it asked for.
+    sites: Vec<usize>,
     counters: usize,
     serial: bool,
 }
@@ -149,7 +150,7 @@ pub(super) fn build(shared: &Shared, bodies: &[Body], index: usize) -> Built {
         site_constants: Vec::new(),
         counter_offsets: Vec::new(),
         point_layouts: HashMap::new(),
-        sites: 0,
+        sites: Vec::new(),
         counters: 0,
         serial: false,
     };
@@ -366,9 +367,14 @@ impl<'t> Gen<'t> for Worker<'_, '_, 't> {
         Some((DataId::from_u32(self.ask(Asked::FunctionSites)), 0))
     }
     fn debug_site(&mut self, start: u32, function: u32, goes_on: bool) -> usize {
+        self.sites.push(self.asked.len());
         self.ask(Asked::DebugSite(start, function, goes_on));
-        self.sites += 1;
-        self.sites - 1
+        self.sites.len() - 1
+    }
+    fn site_goes_on(&mut self, index: usize) {
+        if let Asked::DebugSite(_, _, goes_on) = &mut self.asked[self.sites[index]] {
+            *goes_on = true;
+        }
     }
     fn site_constant(&mut self, fb: &mut FunctionBuilder, index: usize) -> ir::Value {
         let value = fb.ins().iconst(types::I64, index as i64);

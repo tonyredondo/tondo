@@ -590,26 +590,6 @@ fn call_body_with<'t, G: Gen<'t> + ?Sized>(
     fb.ins().call_indirect(signature, code, args)
 }
 
-/// For each block, the block before it when only one jumps to it.
-fn only_before(blocks: &[crate::mir::BlockData]) -> Vec<Option<usize>> {
-    let mut before: Vec<(usize, Option<usize>)> = vec![(0, None); blocks.len()];
-    let mut jump = |from: usize, to: &crate::mir::BlockId| {
-        let target = &mut before[to.0 as usize];
-        *target = (target.0 + 1, Some(from));
-    };
-    for (index, block) in blocks.iter().enumerate() {
-        match &block.terminator {
-            Terminator::Goto(next) => jump(index, next),
-            Terminator::Branch(_, then, otherwise) => {
-                jump(index, then);
-                jump(index, otherwise);
-            }
-            _ => {}
-        }
-    }
-    before.into_iter().map(|(count, from)| from.filter(|_| count == 1)).collect()
-}
-
 /// The line of the last logpoint site in a function and in each inlined
 /// call its code is in, by the call's scope.
 type LatentLines = Vec<(Option<u32>, usize)>;
@@ -1258,6 +1238,8 @@ trait Gen<'t> {
     fn function_sites(&mut self) -> Option<(DataId, usize)>;
     /// A probe of the function `function` at `start`: its site's number.
     fn debug_site(&mut self, start: u32, function: u32, goes_on: bool) -> usize;
+    /// The site `index` goes on in the line of the code before it.
+    fn site_goes_on(&mut self, index: usize);
     /// The number of the site `index`, as an instruction's constant.
     fn site_constant(&mut self, fb: &mut FunctionBuilder, index: usize) -> ir::Value;
     /// In a live build, the site of the probe of a point of the function.
@@ -1439,6 +1421,9 @@ impl<'t> Gen<'t> for Codegen<'t> {
     fn debug_site(&mut self, start: u32, function: u32, goes_on: bool) -> usize {
         self.debug_sites.push((start, function, goes_on));
         self.debug_sites.len() - 1
+    }
+    fn site_goes_on(&mut self, index: usize) {
+        self.debug_sites[index].2 = true;
     }
     fn site_constant(&mut self, fb: &mut FunctionBuilder, index: usize) -> ir::Value {
         fb.ins().iconst(types::I64, index as i64)
@@ -3086,8 +3071,8 @@ struct DebugFrame {
     alive: ir::StackSlot,
     addresses: ir::StackSlot,
     line: Option<(String, usize)>,
-    /// The line the only block that leads to this one ended in.
-    before: Option<(String, usize)>,
+    /// The first site of each block that starts a line, with the line.
+    opened: Vec<(usize, usize, (String, usize))>,
     /// The site of the last probe.
     site: usize,
 }
@@ -3239,7 +3224,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             let alive = fb.create_sized_stack_slot(slot(words * 8, 0));
             let addresses = fb.create_sized_stack_slot(slot((count.max(1) * 8) as u32, 1));
             let first = cg.function_sites();
-            DebugFrame { function, first, shown, captured, alive, addresses, line: None, before: None, site: 0 }
+            DebugFrame { function, first, shown, captured, alive, addresses, line: None, opened: Vec::new(), site: 0 }
         });
         FnCodegen {
             e: Emit::new(cg, fb),
@@ -3346,19 +3331,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         // A value that comes into a block is a value of its own, which says
         // whose it is: only those it reads, so no code changes for it.
         let live = (!self.labels.is_empty()).then(|| crate::mir::live_in(&self.body.blocks, self.body.locals.len()));
-        // The block that alone leads to each, and the line each ended in.
-        let from = only_before(&self.body.blocks);
-        let mut ended: Vec<Option<(String, usize)>> = vec![None; self.body.blocks.len()];
-        // With logpoint sites, the blocks that lead to each, and the lines
-        // of the last sites each ended in.
+        // With probes or logpoint sites, the blocks that lead to each, and
+        // the line each ended in, or the lines of the last sites.
         let latent = self.debug.is_none() && self.e.cg.dumps() && crate::driver::logpoint_sites();
-        let mut leading = vec![Vec::new(); if latent { self.body.blocks.len() } else { 0 }];
-        for (index, block) in self.body.blocks.iter().enumerate().filter(|_| latent) {
+        let lines = latent || self.debug.is_some();
+        let mut leading = vec![Vec::new(); if lines { self.body.blocks.len() } else { 0 }];
+        for (index, block) in self.body.blocks.iter().enumerate().filter(|_| lines) {
             for next in crate::mir::successors(&block.terminator) {
                 leading[next].push(index);
             }
         }
-        let mut latent_ended: Vec<Option<LatentLines>> = vec![None; leading.len()];
+        let mut ended: Vec<Option<(String, usize)>> = vec![None; self.body.blocks.len()];
+        let mut latent_ended: Vec<Option<LatentLines>> = vec![None; if latent { leading.len() } else { 0 }];
         for (index, block) in self.body.blocks.iter().enumerate() {
             self.scope = self.body.scopes.get(index).copied().flatten();
             if index > 0 {
@@ -3396,10 +3380,6 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 // the statement goes on in only takes it.
                 self.carrying =
                     debug.line.is_some() && !self.body.points.iter().any(|p| p.continues.0 as usize == index);
-                // Code that only follows the one before goes on in its line,
-                // as after a call that may panic: its probe sees the line
-                // go on, for what it changed, and stops nobody there.
-                debug.before = from[index].and_then(|before| ended[before].clone());
             }
             let returns = matches!(block.terminator, Terminator::Return(_));
             let last_resume = block.stmts.iter().rposition(resumes);
@@ -3464,6 +3444,19 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             ended[index] = self.debug.as_ref().and_then(|debug| debug.line.clone());
             if latent {
                 latent_ended[index] = Some(self.latent_lines.clone());
+            }
+        }
+        // Code that only follows code that ended in its line goes on in
+        // it, as after a call that may panic, where the ways of a `??` meet
+        // or a loop's step goes back to its test: its probe sees the line
+        // go on, for what it changed, and stops nobody there. Which blocks
+        // lead to one is known once all are built.
+        for (block, site, line) in
+            self.debug.as_mut().map(|debug| std::mem::take(&mut debug.opened)).unwrap_or_default()
+        {
+            let before = &leading[block];
+            if !before.is_empty() && before.iter().all(|&other| ended[other].as_ref() == Some(&line)) {
+                self.e.cg.site_goes_on(site);
             }
         }
         self.e.fb.seal_all_blocks();
