@@ -516,12 +516,14 @@ pub fn counted_loops(blocks: &[BlockData]) -> Vec<Counted> {
 }
 
 /// Whether an rvalue calls a function: a native the processor does in one
-/// instruction, as a square root, calls nothing.
+/// instruction, as a square root, calls nothing, nor an operation of a
+/// number the code generator writes as instructions, as `leadingZeros`.
 pub fn calls(rvalue: &Rvalue) -> bool {
     match rvalue {
         Rvalue::Call(Callee::Std(hir::StdFn::Native(index)), _) => {
             !hir::IN_ONE_INSTRUCTION.contains(&hir::NATIVES[*index as usize].symbol)
         }
+        Rvalue::Call(Callee::Std(hir::StdFn::Number(op)), _) => op.calls(),
         Rvalue::Call(..) | Rvalue::CallIndirect(..) => true,
         _ => false,
     }

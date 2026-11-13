@@ -105,6 +105,24 @@ pub enum NumOp {
 }
 
 impl NumOp {
+    /// Whether the code generator calls the runtime for it, rather than
+    /// write the processor's instructions: a power, conversions to and from
+    /// bytes and text, rounding half away from zero, and a saturation, which
+    /// of a float into 128 bits calls it.
+    pub fn calls(self) -> bool {
+        matches!(
+            self,
+            NumOp::Pow
+                | NumOp::ToBytes
+                | NumOp::FromBytes
+                | NumOp::Saturating
+                | NumOp::Parse
+                | NumOp::ToString
+                | NumOp::RoundTiesAway
+                | NumOp::ToFixed
+        )
+    }
+
     /// Whether it can panic: a negative exponent, a result that does not
     /// fit where it panics, a radix out of range, bytes that are not there.
     pub fn may_panic(self) -> bool {
