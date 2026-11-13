@@ -1,0 +1,11 @@
+import renderer.api
+
+test aTableAsMarkdown {
+    let table = api.Table {
+        title: "Sales"
+        columns: ["region", "amount"]
+        rows: [["north", "120.50"]]
+    }
+    let text = Markdown {}.render(table) ?? ""
+    assert(text == "## Sales\n\n| region | amount |\n| --- | --- |\n| north | 120.50 |")
+}

@@ -16,6 +16,7 @@ building a Tondo library that C calls.
 - [The system's calls](#the-systems-calls)
 - [Linking a library](#linking-a-library)
 - [A library loaded as the program runs](#a-library-loaded-as-the-program-runs)
+- [Plugins with a contract](#plugins-with-a-contract)
 - [Bindings written for you](#bindings-written-for-you)
 - [A library for C](#a-library-for-c)
 - [C and tasks](#c-and-tasks)
@@ -473,6 +474,71 @@ the library publishes no `kit_start`
 
 The [`textkit`](../../examples/textkit) example is loaded this way by a
 Tondo program.
+
+## Plugins with a contract
+
+`ffi.Library` gives C's functions. A plugin written in Tondo gives more with
+`std.plugin`, and with no `unsafe`: it implements a trait, and the program
+calls it as that trait, with Tondo's types on both sides.
+
+```tondo
+import std.console
+import std.plugin
+
+/// What greets someone.
+@plugin.Contract
+pub trait Greeter {
+    fn greet(self, name: String): String ! plugin.Error
+}
+
+type Polite = {}
+
+impl Greeter for Polite {
+    fn greet(self, name: String): String ! plugin.Error {
+        "good morning, {name}"
+    }
+}
+
+/// A greeting from whatever greets: this program's own type, or a plugin.
+fn greeting[G: Greeter](greeter: G): String {
+    greeter.greet("Ada") ?? "nobody greets"
+}
+
+fn main() {
+    console.println(greeting(Polite {}))
+    match GreeterPlugin.load("plugins/libpolite.so") {
+        ok(loaded) => console.println(greeting(loaded))
+        err(_) => console.println("no plugin is installed")
+    }
+}
+```
+
+```text output
+good morning, Ada
+no plugin is installed
+```
+
+- `@plugin.Contract` before a trait makes it a contract. Each of its methods
+  takes `self` and gives `T ! plugin.Error`, or `T ! (E | plugin.Error)`
+  with an error of its own, since a plugin can be gone when it is called;
+  its types are those that are written and read, as records, enums, arrays
+  and maps.
+- The contract's module gets a type the compiler writes, `GreeterPlugin`,
+  which implements `Greeter` by calling a plugin. `GreeterPlugin.load(path)`
+  loads a library built with `tondo build --library`, whose function marked
+  `@plugin.Export`, as `fn greeter(): impl Greeter { Polite {} }`, gives
+  what it offers. `GreeterPlugin.start(process.command("polite"))` starts a
+  program, whose `main` serves with `serveGreeter(Polite {})`.
+- What crosses is MessagePack, written and read for the contract's types by
+  the compiler's own code. Loading compares a fingerprint of the contract,
+  its methods and every type they reach, and a plugin built against another
+  is `plugin.Error.Contract`. A panic in the plugin comes back as
+  `Panicked`, and a program that ended as `Closed`.
+- A `GreeterPlugin` is shared by tasks, and the program it started ends
+  when its last copy goes.
+
+The [`tabulate`](../../examples/tabulate) example is a program with a
+plugin of each kind, each a package of its own.
 
 ## Bindings written for you
 

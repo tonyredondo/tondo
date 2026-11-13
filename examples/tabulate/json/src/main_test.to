@@ -1,0 +1,12 @@
+import renderer.api
+
+test aRowIsAnObject {
+    let table = api.Table {
+        title: "Sales"
+        columns: ["region", "amount"]
+        rows: [["north", "120.50"]]
+    }
+    let text = Objects {}.render(table) ?? ""
+    assert(text.contains("\"region\": \"north\""))
+    assert(text.contains("\"amount\": \"120.50\""))
+}

@@ -1,0 +1,16 @@
+import renderer.api
+
+test aTableOfACsv {
+    let data = tableOf("sales.csv", "region,amount\nnorth,120.50\nsouth,80.00\n")?
+    assert(data.columns == ["region", "amount"])
+    assert(data.rows.length() == 2)
+}
+
+test theRendererOfTheProgramItself {
+    let data = api.Table {
+        title: "Sales"
+        columns: ["region", "amount"]
+        rows: [["north", "120.50"], ["east", "9"]]
+    }
+    assert((shown(Plain {}, data) ?? "") == "Sales\nregion  amount\nnorth   120.50\neast    9")
+}

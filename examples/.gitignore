@@ -2,3 +2,4 @@ target/
 *.db
 # What `tondo build --library` and the C compiler write.
 textkit/demo/out/
+tabulate/out/

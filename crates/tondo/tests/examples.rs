@@ -30,8 +30,22 @@ fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// What is wrong with one example, a project or the scripts of a directory.
+/// What is wrong with one example: a project, the packages of a directory
+/// or its scripts.
 fn problems(example: &Path) -> Vec<String> {
+    if !example.join("tondo.toml").exists() {
+        // A directory of packages, as a program and its plugins: each is a
+        // project of its own.
+        let mut packages: Vec<PathBuf> = std::fs::read_dir(example)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.join("tondo.toml").exists())
+            .collect();
+        packages.sort();
+        if !packages.is_empty() {
+            return packages.iter().flat_map(|package| problems(package)).collect();
+        }
+    }
     let name = example.file_name().unwrap().to_string_lossy().into_owned();
     let mut found = Vec::new();
     let mut files = Vec::new();
@@ -54,8 +68,12 @@ fn problems(example: &Path) -> Vec<String> {
         }
         return found;
     }
-    // A project that declares functions for C is a library for C.
-    let library = files.iter().any(|file| std::fs::read_to_string(file).unwrap().contains("pub extern fn"));
+    // A project that declares functions for C, or gives a plugin, is a
+    // library.
+    let library = files.iter().any(|file| {
+        let text = std::fs::read_to_string(file).unwrap();
+        text.contains("pub extern fn") || text.contains("@plugin.Export")
+    });
     let flag: &[&str] = if library { &["--library"] } else { &[] };
     let (said, ok) = tondo(example, &[&["check"], flag].concat());
     if !ok || said.contains("warning[") {

@@ -1,0 +1,34 @@
+import renderer.api
+import std.plugin
+
+/// A table as Markdown writes one.
+pub type Markdown = {}
+
+impl api.Renderer for Markdown {
+    fn name(self): String ! plugin.Error {
+        "markdown"
+    }
+
+    fn render(self, table: api.Table): String ! plugin.Error {
+        var lines = [
+            "## {table.title}",
+            "",
+            row(table.columns),
+            row(table.columns.map((_) { "---" })),
+        ]
+        for cells in table.rows {
+            lines.push(row(cells))
+        }
+        lines.join("\n")
+    }
+}
+
+fn row(cells: Array[String]): String {
+    "| {cells.join(" | ")} |"
+}
+
+/// What the library gives to the program that loads it.
+@plugin.Export
+fn renderer(): impl api.Renderer {
+    Markdown {}
+}
