@@ -1,0 +1,25 @@
+// math.dot and the sum of floats: floats add in the order the language
+// fixes (18.5), the same everywhere, where left to right would give 3.0;
+// integers multiply and add from left to right, and the first operation
+// that overflows panics as the operator does.
+
+import std.console
+import std.math
+
+fn main() {
+    console.println("{math.dot([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])} {math.dot([2, 3], [4, 5])}")
+    let values: Array[Float] = [1.0e16, 1.0, -1.0e16, 1.0, 2.0]
+    let ones: Array[Float] = [1.0, 1.0, 1.0, 1.0, 1.0]
+    console.println("{values.sum()} {math.dot(values, ones)}")
+    let small: Array[Float32] = [1.0, 2.0, 3.0]
+    console.println("{small.sum()} {math.dot(small, small)}")
+    let bytes: Array[Int8] = [10, 100]
+    console.println("{math.dot(bytes, [1, 1])}")
+    console.println("{math.dot(bytes, bytes)}")
+}
+
+// expect-stdout: 32.0 23
+// expect-stdout: 4.0 4.0
+// expect-stdout: 6.0 14.0
+// expect-stdout: 110
+// expect-panic: P0005

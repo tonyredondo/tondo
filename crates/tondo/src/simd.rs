@@ -62,6 +62,12 @@ pub fn count(width: Width, lanes: Lanes) -> u32 {
     width.bits() / lanes.bits()
 }
 
+/// The functions of the standard library that a program's call reaches in
+/// another form for an `Array[Float]` or an `Array[Float32]`: one that adds
+/// in the order the language fixes (18.5), with vectors.
+pub const FLOAT_FORMS: [(&str, &str, &str); 2] =
+    [("Array.sum", "prelude.sumFloat", "prelude.sumFloat32"), ("math.dot", "math.dotFloat", "math.dotFloat32")];
+
 /// An operation of `std.simd`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SimdOp {

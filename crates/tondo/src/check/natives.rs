@@ -218,6 +218,8 @@ impl<'a> Checker<'a> {
             hir::NativeTy::BytePointer => self.types.intern(TyKind::Pointer(Ty::BYTE)),
             hir::NativeTy::Bytes => self.types.intern(TyKind::Array(Ty::BYTE)),
             hir::NativeTy::Ints => self.types.intern(TyKind::Array(Ty::INT)),
+            hir::NativeTy::Floats => self.types.intern(TyKind::Array(Ty::F64)),
+            hir::NativeTy::Floats32 => self.types.intern(TyKind::Array(Ty::F32)),
             hir::NativeTy::Regex => self.types.handle(Handle::Regex, Ty::UNIT),
             hir::NativeTy::ReflectBox => self.types.handle(Handle::ReflectBox, Ty::UNIT),
             hir::NativeTy::Strings => self.types.intern(TyKind::Array(Ty::STRING)),

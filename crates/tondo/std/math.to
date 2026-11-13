@@ -208,6 +208,46 @@ pub fn fma(a: Float, b: Float, c: Float): Float {
     mathNative.fma(a, b, c)
 }
 
+/// The scalar product: the sum of the products of the elements at each
+/// place. Arrays of different lengths panic (`P0006`). Of `Float` and
+/// `Float32` it adds the products in the order of `sum` (language 18.5),
+/// each product and each sum rounded on its own; of any other `T` it
+/// multiplies and adds from left to right, as its operators do.
+///
+/// ```tondo
+/// import std.console
+/// import std.math
+///
+/// console.println("{math.dot([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])} {math.dot([2, 3], [4, 5])}")
+/// ```
+pub fn dot[T: Number](a: Array[T], b: Array[T]): T {
+    if a.length() != b.length() {
+        // The panic of arrays of other lengths, as `a * b` gives it.
+        _ = a.map((_) { 0 }) * b.map((_) { 0 })
+    }
+    var total = Additive.zero[T]()
+    for (index, value) in a.enumerate() {
+        total = total + value * b[index]
+    }
+    total
+}
+
+/// `dot` of `Array[Float32]`s: the products' sum in the order of `sum`.
+fn dotFloat32(a: Array[Float32], b: Array[Float32]): Float32 {
+    if a.length() != b.length() {
+        _ = a * b
+    }
+    Float32.fromBits(UInt32.wrapping(mathNative.dotFloat32(a, b)))
+}
+
+/// `dot` of `Array[Float]`s: the products' sum in the order of `sum`.
+fn dotFloat(a: Array[Float], b: Array[Float]): Float {
+    if a.length() != b.length() {
+        _ = a * b
+    }
+    mathNative.dotFloat(a, b)
+}
+
 /// The greatest common divisor, never negative.
 pub fn gcd[T: Integer](a: T, b: T): T {
     var x = magnitude(a)

@@ -4,6 +4,7 @@
 
 import std.formats as __formats
 import std.internal.context as contextNative
+import std.internal.math as mathNative
 import std.internal.reflect as reflectNative
 import std.internal.text as textNative
 // tondo: allow W1001: the operations of the numbers that fail do so with `math.MathError`
@@ -876,6 +877,19 @@ pub fn Array[T: Additive].sum(self): T {
         total = total + item
     }
     total
+}
+
+/// The sum of an `Array[Float32]` in the order 18.5 fixes, which every
+/// machine gives: element `i` into partial sum `i mod 16`, then the partial
+/// sums by halves. `sum` of an `Array[Float32]` is this.
+fn sumFloat32(values: Array[Float32]): Float32 {
+    Float32.fromBits(UInt32.wrapping(mathNative.sumFloat32(values)))
+}
+
+/// The sum of an `Array[Float]` in the order 18.5 fixes: element `i` into
+/// partial sum `i mod 8`, then by halves.
+fn sumFloat(values: Array[Float]): Float {
+    mathNative.sumFloat(values)
 }
 
 /// The smallest element, the first of equal ones, or `none` when the array

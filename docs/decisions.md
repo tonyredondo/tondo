@@ -6454,3 +6454,17 @@ dropped, which changes no code made before, as nothing else read it.
 A test makes a program for every type of lanes with every operation at each width, and holds what
 it prints to each operation's definition worked out a lane at a time, any NaN being equal to
 another, since their payloads differ between processors.
+
+## The sum of floats in a fixed order, and arrays of floats with vectors
+
+`sum` of floats added from left to right, one addition waiting on the one before, and no faster
+order gives the same number. The language now fixes the order, sixteen partial sums for `Float32`
+and eight for `Float`, each taking the elements at its place in turn, then halves of them: an order
+vectors compute at their full speed and that gives the same bits on every machine, level and
+width, since each partial sum takes its values in the same order whatever does the work.
+`math.dot` adds its products the same way. Both are loops of the runtime, which its compiler makes
+with vector instructions, taken where `sum` of floats is instantiated, also from generic code: the
+same loops in Tondo with `std.simd` kept a bounds check for each load, and were slower than the
+plain sum they replaced. The arithmetic of arrays of floats went element by element through one
+function for every type; a loop of its own for each operation and shape now does the same
+operations ten times as fast. A row of `bench/` measures each against Go's loops.

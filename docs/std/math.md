@@ -16,7 +16,7 @@ console.println("{side} {math.round(2.5)} {math.pow(2.0, 10.0)}")
 
 `tondo api std.math` shows the same in a terminal.
 
-- [Functions](#functions): [`Pi`](#pi), [`E`](#e), [`sqrt`](#sqrt), [`checkedSqrt`](#checkedsqrt), [`pow`](#pow), [`exp`](#exp), [`ln`](#ln), [`checkedLn`](#checkedln), [`log10`](#log10), [`checkedLog10`](#checkedlog10), [`log2`](#log2), [`checkedLog2`](#checkedlog2), [`sin`](#sin), [`cos`](#cos), [`tan`](#tan), [`asin`](#asin), [`checkedAsin`](#checkedasin), [`acos`](#acos), [`checkedAcos`](#checkedacos), [`atan`](#atan), [`atan2`](#atan2), [`hypot`](#hypot), [`floor`](#floor), [`ceil`](#ceil), [`round`](#round), [`roundTiesAway`](#roundtiesaway), [`truncate`](#truncate), [`fma`](#fma), [`gcd`](#gcd), [`lcm`](#lcm)
+- [Functions](#functions): [`Pi`](#pi), [`E`](#e), [`sqrt`](#sqrt), [`checkedSqrt`](#checkedsqrt), [`pow`](#pow), [`exp`](#exp), [`ln`](#ln), [`checkedLn`](#checkedln), [`log10`](#log10), [`checkedLog10`](#checkedlog10), [`log2`](#log2), [`checkedLog2`](#checkedlog2), [`sin`](#sin), [`cos`](#cos), [`tan`](#tan), [`asin`](#asin), [`checkedAsin`](#checkedasin), [`acos`](#acos), [`checkedAcos`](#checkedacos), [`atan`](#atan), [`atan2`](#atan2), [`hypot`](#hypot), [`floor`](#floor), [`ceil`](#ceil), [`round`](#round), [`roundTiesAway`](#roundtiesaway), [`truncate`](#truncate), [`fma`](#fma), [`dot`](#dot), [`gcd`](#gcd), [`lcm`](#lcm)
 - [MathError](#matherror)
 - [BigInt](#bigint): [`BigInt.parse`](#bigintparse), [`BigInt.toInt`](#biginttoint), [`BigInt.toString`](#biginttostring), [`BigInt.abs`](#bigintabs), [`BigInt.remainder`](#bigintremainder), [`BigInt.pow`](#bigintpow), [`BigInt.modPow`](#bigintmodpow), [`BigInt.gcd`](#bigintgcd)
 - [Decimal](#decimal): [`Decimal.parse`](#decimalparse), [`Decimal.round`](#decimalround), [`Decimal.divide`](#decimaldivide), [`Decimal.scale`](#decimalscale), [`Decimal.toFloat`](#decimaltofloat)
@@ -257,6 +257,25 @@ pub fn fma(a: Float, b: Float, c: Float): Float
 ```
 
 `a * b + c`, rounded once.
+
+#### dot
+
+```tondo
+pub fn dot[T: Number](a: Array[T], b: Array[T]): T
+```
+
+The scalar product: the sum of the products of the elements at each
+place. Arrays of different lengths panic (`P0006`). Of `Float` and
+`Float32` it adds the products in the order of `sum` (language 18.5),
+each product and each sum rounded on its own; of any other `T` it
+multiplies and adds from left to right, as its operators do.
+
+```tondo
+import std.console
+import std.math
+
+console.println("{math.dot([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])} {math.dot([2, 3], [4, 5])}")
+```
 
 #### gcd
 

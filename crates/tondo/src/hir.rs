@@ -1258,6 +1258,9 @@ pub enum NativeTy {
     Bytes,
     /// `Array[Int]`
     Ints,
+    /// `Array[Float]` and `Array[Float32]`.
+    Floats,
+    Floats32,
     /// The runtime's compiled regular expression (`std.internal.regex`).
     Regex,
     /// The box of a `reflect.Value` (`std.internal.reflect`).
@@ -1924,6 +1927,12 @@ pub const NATIVES: &[Native] = {
         net("failure", &[Object, Int], Int, "tondo_rt_net_failure"),
         net("detail", &[Object, Int], String, "tondo_rt_net_detail"),
         math("sin", &[Float], Float, "tondo_rt_math_sin"),
+        // The sums of floats in the order 18.5 fixes; a `Float32` comes
+        // back as its bits.
+        math("sumFloat", &[Floats], Float, "tondo_rt_math_sum_f64"),
+        math("sumFloat32", &[Floats32], Int, "tondo_rt_math_sum_f32"),
+        math("dotFloat", &[Floats, Floats], Float, "tondo_rt_math_dot_f64"),
+        math("dotFloat32", &[Floats32, Floats32], Int, "tondo_rt_math_dot_f32"),
         math("cos", &[Float], Float, "tondo_rt_math_cos"),
         math("tan", &[Float], Float, "tondo_rt_math_tan"),
         math("asin", &[Float], Float, "tondo_rt_math_asin"),

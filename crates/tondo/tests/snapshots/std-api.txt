@@ -1990,6 +1990,7 @@ pub fn checkedLog10(value: Float): Float ! MathError
 pub fn checkedLog2(value: Float): Float ! MathError
 pub fn checkedSqrt(value: Float): Float ! MathError
 pub fn cos(value: Float): Float
+pub fn dot[T: Number](a: Array[T], b: Array[T]): T
 pub fn exp(value: Float): Float
 pub fn floor(value: Float): Float
 pub fn fma(a: Float, b: Float, c: Float): Float

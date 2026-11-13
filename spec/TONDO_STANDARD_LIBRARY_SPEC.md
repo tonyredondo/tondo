@@ -2893,7 +2893,7 @@ fn all(self, predicate: fn(T): Bool): Bool
 fn find(self, predicate: fn(T): Bool): T?
 fn findIndex(self, predicate: fn(T): Bool): Int?
 fn count(self, predicate: fn(T): Bool): Int
-fn sum(self): T                                     // T: Additive
+fn sum(self): T                                     // T: Additive; de floats, en el orden de 18.5
 fn min(self): T?                                    // T: Ordered
 fn max(self): T?                                    // T: Ordered
 fn sorted(self): Array[T]                           // T: Ordered, estable
@@ -2982,9 +2982,17 @@ pub fn round(value: Float): Float                   // la mitad va al par
 pub fn roundTiesAway(value: Float): Float           // la mitad se aleja de cero
 pub fn truncate(value: Float): Float
 pub fn fma(a: Float, b: Float, c: Float): Float     // redondea una vez
+pub fn dot[T: Number](a: Array[T], b: Array[T]): T  // producto escalar
 pub fn gcd[T: Integer](a: T, b: T): T
 pub fn lcm[T: Integer](a: T, b: T): T
 ~~~
+
+`dot` es la suma de los productos de los elementos de cada posición. Dos
+arrays de longitudes distintas son `P0006`. De `Float` y `Float32` suma los
+productos en el orden de 18.5 del lenguaje, cada producto y cada suma
+redondeados por separado; de cualquier otro `T`, multiplica y suma de
+izquierda a derecha con las reglas de sus operadores, con el pánico de la
+primera operación que desborda.
 
 `BigInt` es un entero de cualquier tamaño, que nunca desborda, y `Decimal` un
 decimal exacto, también de cualquier tamaño, para dinero y medidas que un

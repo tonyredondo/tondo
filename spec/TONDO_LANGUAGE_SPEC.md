@@ -2784,7 +2784,10 @@ acuerdo con 16.17. Estas son garantías de valor, no una exigencia de realizar
 copias físicas cuando COW, fusión o reutilización preserven todos los
 observables.
 
-Producto escalar, producto matricial y broadcasting multidimensional pertenecen a módulos matemáticos:
+La aritmética de arrays de `Float` y `Float32` da, elemento a elemento, el
+resultado del operador escalar, aunque se haga con instrucciones vectoriales.
+
+Producto escalar, producto matricial y broadcasting multidimensional pertenecen a módulos matemáticos; `math.dot` es el producto escalar (librería estándar 14.5):
 
 ~~~tondo
 math.dot(a, b)
@@ -7584,6 +7587,27 @@ Reglas:
 - El signo de cero se conserva donde IEEE lo haga observable.
 
 Una implementación compatible no puede activar “fast math” que cambie resultados observables sin una opción explícita fuera del modo semántico normal.
+
+La suma de un `Array[Float]` o de un `Array[Float32]`, `sum()`, y el producto
+escalar `math.dot` de dos de ellos suman en este orden, que da el mismo número
+en cada máquina, nivel de procesador y ancho de vector, y no de izquierda a
+derecha:
+
+~~~text
+lanes = 8 para Float, 16 para Float32
+partial[0 .. lanes-1] = +0.0
+para i de 0 a length-1, en orden:
+    partial[i mod lanes] = partial[i mod lanes] + values[i]
+mientras lanes > 1:
+    lanes = lanes / 2
+    para j de 0 a lanes-1:
+        partial[j] = partial[j] + partial[j + lanes]
+resultado = partial[0]
+~~~
+
+Cada suma es una suma IEEE 754 de su tipo; en `math.dot`, `values[i]` es el
+producto `a[i] * b[i]`, una multiplicación que nunca se contrae con la suma.
+`sum` de cualquier otro `T` suma de izquierda a derecha.
 
 No puede contraer automáticamente `a * b + c` a FMA si cambia el redondeo. La FMA se solicita mediante operación nombrada.
 

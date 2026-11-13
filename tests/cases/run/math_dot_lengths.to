@@ -1,0 +1,12 @@
+// math.dot of arrays of different lengths panics as `a * b` does (P0006).
+
+import std.console
+import std.math
+
+fn main() {
+    let a: Array[Float] = [1.0, 2.0]
+    console.println("{math.dot(a, [1.0])}")
+}
+
+// expect-panic: P0006
+// expect-stderr: panic[P0006]: array-shape-mismatch: arrays of lengths 2 and 1 cannot go element by element: they must have the same length

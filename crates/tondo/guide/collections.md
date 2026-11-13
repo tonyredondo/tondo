@@ -64,6 +64,11 @@ fn main() {
 }
 ```
 
+`sum` of floats adds in partial sums, each element into the one of its place,
+an order every machine gives alike and vectors compute fast: it can differ
+in the last bits from adding left to right. `math.dot(a, b)` adds products the
+same way, and `a + b`, `a * 2.0` and the like go element by element.
+
 ## Ranges and iterators
 
 `0..10` and `0..=10` are `Range[Int]` values; `'a'..='z'` a `Range[Char]`.

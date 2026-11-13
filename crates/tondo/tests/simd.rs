@@ -498,3 +498,148 @@ fn every_operation_of_every_lane_is_its_definition() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// The sum of floats in the order the language fixes (18.5): element `i`
+/// into partial sum `i mod lanes`, then the partial sums by halves.
+fn fixed_sum(lane: Lane, values: &[u64]) -> u64 {
+    let lanes = if lane.bits == 32 { 16 } else { 8 };
+    let zero = lane.float_bits(0.0);
+    let mut partial = vec![zero; lanes];
+    for (i, &value) in values.iter().enumerate() {
+        partial[i % lanes] = lane.float(partial[i % lanes], value, 0, "add");
+    }
+    let mut lanes = lanes;
+    while lanes > 1 {
+        lanes /= 2;
+        for j in 0..lanes {
+            partial[j] = lane.float(partial[j], partial[j + lanes], 0, "add");
+        }
+    }
+    partial[0]
+}
+
+/// `sum` and `math.dot` of floats (21): their definition, for every length
+/// from 0 to 70, at the program's level and at this machine's.
+#[test]
+fn sums_of_floats_add_in_the_fixed_order() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("simd-sums");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut random = Random(0x2545_f491_4f6c_dd1d);
+    let mut code = String::from("import std.console\nimport std.math\n\nfn main() {\n");
+    let mut expected = String::new();
+    for lane in [LANES[9], LANES[10]] {
+        for length in 0..=70 {
+            let (a, b) = (lane.values(&mut random, length), lane.values(&mut random, length));
+            let array = |values: &[u64]| values.iter().map(|&x| lane.literal(x)).collect::<Vec<_>>().join(", ");
+            let t = lane.name;
+            let _ = writeln!(code, "    let a{t}{length}: Array[{t}] = [{}]", array(&a));
+            let _ = writeln!(code, "    let b{t}{length}: Array[{t}] = [{}]", array(&b));
+            let _ = writeln!(code, "    console.println(\"sum {t} {length}: {{a{t}{length}.sum().bits()}}\")");
+            let _ = writeln!(
+                code,
+                "    console.println(\"dot {t} {length}: {{math.dot(a{t}{length}, b{t}{length}).bits()}}\")"
+            );
+            let products: Vec<u64> = a.iter().zip(&b).map(|(&x, &y)| lane.float(x, y, 0, "mul")).collect();
+            let _ = writeln!(expected, "sum {t} {length}: {}", fixed_sum(lane, &a));
+            let _ = writeln!(expected, "dot {t} {length}: {}", fixed_sum(lane, &products));
+        }
+    }
+    code.push_str("}\n");
+    let file = dir.join("sums.to");
+    std::fs::write(&file, &code).unwrap();
+    let mut outputs = Vec::new();
+    for cpu in ["baseline", "native"] {
+        let run = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(["run", &file.to_string_lossy(), "--cpu", cpu])
+            .output()
+            .unwrap();
+        assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+        outputs.push(String::from_utf8_lossy(&run.stdout).into_owned());
+    }
+    // The same bits at every level (rule 2 of change 21).
+    assert_eq!(outputs[0], outputs[1], "a sum differs between the baseline and this machine's level");
+    let mut failures = Vec::new();
+    for (got, wanted) in outputs[0].lines().zip(expected.lines()) {
+        let lane = if wanted.contains("Float32") { LANES[9] } else { LANES[10] };
+        let value = |line: &str| line.rsplit(": ").next().and_then(|n| n.parse::<u64>().ok());
+        let same = match (value(got), value(wanted)) {
+            (Some(x), Some(y)) => x == y || (lane.is_nan(x) && lane.is_nan(y)),
+            _ => false,
+        };
+        if !same {
+            failures.push(format!("printed {got}\n  wanted  {wanted}"));
+        }
+    }
+    assert_eq!(outputs[0].lines().count(), expected.lines().count(), "{}", outputs[0]);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The arithmetic of arrays of floats (10.6), done with vectors: each
+/// element is the scalar operator's, with another array or a number on
+/// either side, for every length from 0 to 70.
+#[test]
+fn arithmetic_of_float_arrays_is_the_scalar_operator() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("simd-arrays");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut random = Random(0x6a09_e667_f3bc_c909);
+    // A function for each length, which `main` calls in order.
+    let (mut code, mut calls) = (String::from("import std.console\n"), String::from("\nfn main() {\n"));
+    let mut expected = Vec::new();
+    for lane in [LANES[9], LANES[10]] {
+        let t = lane.name;
+        for length in 0..=70 {
+            let _ = writeln!(code, "\nfn check{t}{length}() {{");
+            let _ = writeln!(calls, "    check{t}{length}()");
+            let (a, b, s) =
+                (lane.values(&mut random, length), lane.values(&mut random, length), lane.values(&mut random, 1)[0]);
+            let array = |values: &[u64]| values.iter().map(|&x| lane.literal(x)).collect::<Vec<_>>().join(", ");
+            let _ = writeln!(code, "    let a{t}{length}: Array[{t}] = [{}]", array(&a));
+            let _ = writeln!(code, "    let b{t}{length}: Array[{t}] = [{}]", array(&b));
+            let _ = writeln!(code, "    let s{t}{length} = {}", lane.literal(s));
+            for (op, symbol) in [("add", "+"), ("sub", "-"), ("mul", "*"), ("div", "/")] {
+                let forms = [
+                    (
+                        format!("a{t}{length} {symbol} b{t}{length}"),
+                        (0..length).map(|i| lane.float(a[i], b[i], 0, op)).collect::<Vec<_>>(),
+                    ),
+                    (
+                        format!("a{t}{length} {symbol} s{t}{length}"),
+                        (0..length).map(|i| lane.float(a[i], s, 0, op)).collect(),
+                    ),
+                    (
+                        format!("s{t}{length} {symbol} b{t}{length}"),
+                        (0..length).map(|i| lane.float(s, b[i], 0, op)).collect(),
+                    ),
+                ];
+                for (expression, wanted) in forms {
+                    let _ = writeln!(code, "    console.println(\"{{({expression}).map((x) {{ x.bits() }})}}\")");
+                    expected.push((lane, expression, wanted));
+                }
+            }
+            code.push_str("}\n");
+        }
+    }
+    code.push_str(&calls);
+    code.push_str("}\n");
+    let file = dir.join("arrays.to");
+    std::fs::write(&file, &code).unwrap();
+    let run = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["run", &file.to_string_lossy()]).output().unwrap();
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    let printed = String::from_utf8_lossy(&run.stdout);
+    let mut failures = Vec::new();
+    for (line, (lane, expression, wanted)) in printed.lines().zip(&expected) {
+        let got: Vec<u64> = line
+            .trim_matches(|c| c == '[' || c == ']')
+            .split(", ")
+            .filter(|n| !n.is_empty())
+            .map(|n| n.parse().unwrap())
+            .collect();
+        let same = got.len() == wanted.len()
+            && got.iter().zip(wanted).all(|(&x, &y)| x == y || (lane.is_nan(x) && lane.is_nan(y)));
+        if !same {
+            failures.push(format!("{expression}:\n  printed {got:?}\n  wanted  {wanted:?}"));
+        }
+    }
+    assert_eq!(printed.lines().count(), expected.len());
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

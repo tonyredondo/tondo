@@ -78,7 +78,19 @@ impl<'a> Checker<'a> {
 
     fn reach_expr(&mut self, e: &hir::Expr, reach: &mut Reach) {
         match &e.kind {
-            hir::ExprKind::Call(Callee::Fn(id), ..) | hir::ExprKind::FnValue(id, _) => reach.add(*id),
+            hir::ExprKind::Call(Callee::Fn(id), ..) | hir::ExprKind::FnValue(id, _) => {
+                reach.add(*id);
+                // `sum` of an array of floats is another function (18.5), as
+                // `mono.rs` makes it.
+                let name = &self.signatures[id.0 as usize].name;
+                if let Some(&(_, wide, narrow)) = crate::simd::FLOAT_FORMS.iter().find(|(n, ..)| n == name) {
+                    for form in [wide, narrow] {
+                        if let Some(at) = self.signatures.iter().position(|s| s.name == form) {
+                            reach.add(FnId(at as u32));
+                        }
+                    }
+                }
+            }
             hir::ExprKind::Call(Callee::Trait(trait_id, method), types, _) => {
                 let receiver = types.first().copied().unwrap_or(Ty::ERROR);
                 // What is not a nominal type displays itself, what it holds by theirs.
