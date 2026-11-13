@@ -263,7 +263,7 @@ fn main() {
     console.println("{math.hypot(3.0, 4.0)} {math.pow(2.0, 0.5):.4} {math.exp(1.0):.4}")
     console.println("{math.sin(0.0)} {math.cos(0.0)} {math.atan2(1.0, 1.0):.4}")
     console.println("{math.sqrt(2.0)} {math.ln(-1.0)} {math.ln(0.0)} {math.log10(1000.0)} {math.checkedLn(-1.0).isErr()}")
-    console.println("{math.gcd(12, 18)} {math.lcm(4, 6)}")
+    console.println("{math.gcd(12, 18)} {math.lcm(4, 6)} {math.dot([10.0, 20.0], [3.0, 1.0])}")
 }
 ```
 
@@ -271,7 +271,7 @@ fn main() {
 5.0 1.4142 2.7183
 0.0 1.0 0.7854
 1.4142135623730951 NaN -inf 3.0 true
-6 12
+6 12 50.0
 ```
 
 A function that is not defined for every input, as `sqrt`, `ln` and `asin`,
@@ -280,6 +280,10 @@ infinity where that is the limit, as `ln(0.0)`. Each has a twin that fails
 with `math.MathError` instead, for code that would rather not find a NaN
 later: `checkedSqrt`, `checkedLn`, `checkedLog10`, `checkedLog2`,
 `checkedAsin` and `checkedAcos`.
+
+`math.dot` is the sum of the products of two arrays of numbers. For floats
+it adds as an array's `sum` does, in an order that is the same on every
+machine ([Collections](08-collections.md#arithmetic-on-arrays)).
 
 ## Exact decimals and big integers
 

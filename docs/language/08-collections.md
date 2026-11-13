@@ -161,6 +161,35 @@ of their type: integers still panic on overflow, and nothing is converted.
 `+` never joins two arrays and `*` never repeats one. Those are
 `a.concat(b)` and `a.repeat(3)`.
 
+The arithmetic of float arrays is done several elements at a time where the
+processor can, and gives for each element what the operator gives for two
+numbers. Their `sum` is the one place where the order is not that of a
+loop: it keeps eight partial sums, sixteen for `Float32`, adds each element
+to the one of its place, and adds those at the end. Every machine adds in
+that order, so every machine gives the same number, and it is an order that
+is fast to compute. It can differ from a loop's result in the last bits, or
+by more when numbers of very different sizes cancel:
+
+```tondo
+import std.console
+
+fn main() {
+    let values = [1e16, 1.0, -1e16, 1.0]
+    var inOrder = 0.0
+    for value in values {
+        inOrder += value
+    }
+    console.println("{values.sum()} {inOrder}")
+}
+```
+
+```text output
+2.0 1.0
+```
+
+`math.dot(a, b)`, the sum of the products of two arrays, adds in the same
+order.
+
 ## The methods of an array
 
 `tondo api Array` lists them all, with what each gives. By what they are
