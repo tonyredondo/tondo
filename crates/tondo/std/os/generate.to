@@ -4,8 +4,8 @@
 //
 //   tondo run crates/tondo/std/os/generate.to -- linux_x64
 //
-// It runs from the repository's root, with the headers of the target's
-// system where the C preprocessor finds them: for another architecture,
+// It runs from the repository's root, on the target's system, whose headers
+// the C preprocessor reads: for another architecture of Linux,
 // `TONDO_CC` names a preprocessor of it, as `container-cpp.sh` beside it
 // does with a container's. `TONDO` names the `tondo` that binds, `tondo` on
 // PATH by default.
@@ -44,11 +44,26 @@ fn calls(target: String): String {
     "crates/tondo/std/os/{system}/calls_{target}.to"
 }
 
-/// The declarations of a target, bound from the headers in `/usr/include`.
+/// Where the system's headers are: on macOS, in the SDK that `xcrun` names.
+fn includes(target: String): String ! String {
+    if not target.startsWith("macos") {
+        return "/usr/include"
+    }
+    let sdk =
+        process
+            .command("xcrun", "--show-sdk-path")
+            .output()
+            .mapErr((e) { "cannot run xcrun: {e}" })?
+    let path = sdk.text().mapErr((e) { "what xcrun gave is not text: {e}" })?
+    "{path.trim()}/usr/include"
+}
+
+/// The declarations of a target, bound from the system's headers.
 fn bound(target: String, headers: Array[String]): !String {
     let tondo = env.get("TONDO") ?? "tondo"
     let written = "/tmp/tondo-os-{target}.to"
-    let paths = headers.map((header) { "/usr/include/{header}" })
+    let root = includes(target)?
+    let paths = headers.map((header) { "{root}/{header}" })
     let options = ["--included", "--fails", "crates/tondo/std/os/fails.txt", "--output", written]
     _ =
         process
