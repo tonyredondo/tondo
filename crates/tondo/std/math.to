@@ -1019,6 +1019,9 @@ impl Number for Decimal {
     }
 }
 
+/// A decimal's division keeps the fraction, to 34 digits.
+impl Fractional for Decimal {}
+
 impl __serialization.Encode for Decimal {
     fn encode[S: __serialization.Sink](self, out: S) {
         out.number("{self}")

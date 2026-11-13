@@ -6665,3 +6665,16 @@ library ends, stays, and a later call or load starts it again, which its tests c
 musl's `__cxa_finalize` runs nothing either, the runtime keeps what it registered for the end of
 the process and runs it itself at the stop, once.
 
+## `Fractional`: the numbers whose division keeps the fraction
+
+`mean` of a tensor of integers would round, so the brief gave it to tensors of floats alone, by a
+method of one concrete instance, `Tensor[Float].mean`, which the language does not have. A method
+may already ask more of its type's parameter than the type does, `fn Tensor[T: Fractional].mean`,
+so a trait of the prelude says it instead: `Fractional: Number`, with nothing of its own, whose
+promise is what `dividedBy` means. The compiler gives it to every float, as it gives `Integer` to
+every integer, and `math.Decimal` implements it, as a program's exact fraction may: the name says
+what a mean needs, a division that does not round, rather than how a number is stored, which
+`Floating` would have and left the decimal out; `Real` would have taken the integers in. A tensor
+of integers that asks for its mean is E1105, which says the mean is of floats and how to divide
+the sum as floats.
+

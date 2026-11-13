@@ -21,7 +21,7 @@ console.println("{side} {math.round(2.5)} {math.pow(2.0, 10.0)}")
 - [BigInt](#bigint): [`BigInt.parse`](#bigintparse), [`BigInt.toInt`](#biginttoint), [`BigInt.toString`](#biginttostring), [`BigInt.abs`](#bigintabs), [`BigInt.remainder`](#bigintremainder), [`BigInt.pow`](#bigintpow), [`BigInt.modPow`](#bigintmodpow), [`BigInt.gcd`](#bigintgcd)
 - [Decimal](#decimal): [`Decimal.parse`](#decimalparse), [`Decimal.round`](#decimalround), [`Decimal.divide`](#decimaldivide), [`Decimal.scale`](#decimalscale), [`Decimal.toFloat`](#decimaltofloat)
 - [Rounding](#rounding)
-- [Tensor](#tensor): [`Tensor`](#tensor-1), [`Tensor.fromRows`](#tensorfromrows), [`Tensor.zeros`](#tensorzeros), [`Tensor.filled`](#tensorfilled), [`Tensor.shape`](#tensorshape), [`Tensor.rank`](#tensorrank), [`Tensor.length`](#tensorlength), [`Tensor.values`](#tensorvalues), [`Tensor.at`](#tensorat), [`Tensor.set`](#tensorset), [`Tensor.slice`](#tensorslice), [`Tensor.reshape`](#tensorreshape), [`Tensor.transposed`](#tensortransposed), [`Tensor.map`](#tensormap), [`Tensor.sum`](#tensorsum), [`Tensor.sumAlong`](#tensorsumalong), [`Tensor.min`](#tensormin), [`Tensor.max`](#tensormax), [`Tensor.indexOfMax`](#tensorindexofmax), [`Tensor.dot`](#tensordot), [`Tensor.matmul`](#tensormatmul)
+- [Tensor](#tensor): [`Tensor`](#tensor-1), [`Tensor.fromRows`](#tensorfromrows), [`Tensor.zeros`](#tensorzeros), [`Tensor.filled`](#tensorfilled), [`Tensor.shape`](#tensorshape), [`Tensor.rank`](#tensorrank), [`Tensor.length`](#tensorlength), [`Tensor.values`](#tensorvalues), [`Tensor.at`](#tensorat), [`Tensor.set`](#tensorset), [`Tensor.slice`](#tensorslice), [`Tensor.reshape`](#tensorreshape), [`Tensor.transposed`](#tensortransposed), [`Tensor.map`](#tensormap), [`Tensor.sum`](#tensorsum), [`Tensor.sumAlong`](#tensorsumalong), [`Tensor.mean`](#tensormean), [`Tensor.meanAlong`](#tensormeanalong), [`Tensor.min`](#tensormin), [`Tensor.max`](#tensormax), [`Tensor.indexOfMax`](#tensorindexofmax), [`Tensor.dot`](#tensordot), [`Tensor.matmul`](#tensormatmul)
 
 ### Functions
 
@@ -448,7 +448,7 @@ let share = price.divide(math.Decimal.parse("3")?, 2)
 console.println("{share} {share.scale()}")
 ```
 
-Implements `Display`, `Ordered`, `Additive`, `Number`, `serialization.Encode`, `serialization.Decode`, `reflect.Reflect`.
+Implements `Display`, `Ordered`, `Additive`, `Number`, `Fractional`, `serialization.Encode`, `serialization.Decode`, `reflect.Reflect`.
 
 #### Decimal.parse
 
@@ -674,6 +674,33 @@ pub fn Tensor[T: Number].sumAlong(self, axis: Int): Tensor[T]
 
 The tensor of one rank less whose each value is the `sum` of the values
 along `axis`, in the order of its index.
+
+#### Tensor.mean
+
+```tondo
+pub fn Tensor[T: Fractional].mean(self): T
+```
+
+The mean of its values: their `sum` divided by how many there are, NaN
+for a tensor of floats with none. Of a tensor of a `Fractional` number,
+as a mean of integers would round; for those, divide the `sum` as floats.
+
+```tondo
+import std.console
+import std.math
+
+let readings = math.Tensor([1.0, 2.0, 3.0, 6.0], shape: [2, 2])
+console.println("{readings.mean()} {readings.meanAlong(0)}")
+```
+
+#### Tensor.meanAlong
+
+```tondo
+pub fn Tensor[T: Fractional].meanAlong(self, axis: Int): Tensor[T]
+```
+
+The tensor of one rank less whose each value is the mean of the values
+along `axis`: `sumAlong(axis)` divided by the size of that axis.
 
 #### Tensor.min
 

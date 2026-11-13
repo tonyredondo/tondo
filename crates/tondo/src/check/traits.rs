@@ -128,6 +128,7 @@ impl<'a> Checker<'a> {
         self.additive = self.trait_names.get("Additive").copied();
         self.number = self.trait_names.get("Number").copied();
         self.integer = self.trait_names.get("Integer").copied();
+        self.fractional = self.trait_names.get("Fractional").copied();
         self.ordered = self.trait_names.get("Ordered").copied();
     }
 
@@ -182,12 +183,16 @@ impl<'a> Checker<'a> {
 
     /// Whether a language type implements a trait of the prelude's
     /// arithmetic, which the compiler gives it (18.10): every number is
-    /// `Additive` and `Number`, every integer `Integer`, and a duration
-    /// `Additive`. `None` for other traits and types.
+    /// `Additive` and `Number`, every integer `Integer`, every float
+    /// `Fractional`, and a duration `Additive`. `None` for other traits and
+    /// types.
     pub(super) fn arithmetic_impl(&self, ty: Ty, trait_id: TraitId) -> Option<bool> {
         let number = matches!(self.types.kind(ty), TyKind::Int(_) | TyKind::Float(_));
         if Some(trait_id) == self.integer {
             return Some(matches!(self.types.kind(ty), TyKind::Int(_)));
+        }
+        if Some(trait_id) == self.fractional && number {
+            return Some(matches!(self.types.kind(ty), TyKind::Float(_)));
         }
         if Some(trait_id) == self.number && number {
             return Some(true);

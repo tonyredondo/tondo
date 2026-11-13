@@ -154,6 +154,9 @@ pub trait Additive {
 
     fn minus(self, other: Self): Self
 }
+pub trait Fractional: Number {
+
+}
 pub trait Integer: Number + Ordered + Display {
 
 }
@@ -1961,6 +1964,7 @@ impl Additive for Decimal
 impl Display for BigInt
 impl Display for Decimal
 impl Display for MathError
+impl Fractional for Decimal
 impl Number for BigInt
 impl Number for Decimal
 impl Ordered for BigInt
@@ -2005,6 +2009,8 @@ pub fn Decimal.parse(text: String): Decimal ! MathError
 pub fn Decimal.round(self, decimals: Int, mode: Rounding = Rounding.HalfEven): Decimal
 pub fn Decimal.scale(self): Int
 pub fn Decimal.toFloat(self): Float
+pub fn Tensor[T: Fractional].mean(self): T
+pub fn Tensor[T: Fractional].meanAlong(self, axis: Int): Tensor[T]
 pub fn Tensor[T: Number + Ordered].indexOfMax(self): Array[Int]?
 pub fn Tensor[T: Number + Ordered].max(self): T?
 pub fn Tensor[T: Number + Ordered].min(self): T?

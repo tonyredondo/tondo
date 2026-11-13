@@ -114,6 +114,7 @@ fn check_with<'a>(
         additive: None,
         number: None,
         integer: None,
+        fractional: None,
         ordered: None,
         instant: None,
         datetime: None,
@@ -1033,6 +1034,7 @@ struct Checker<'a> {
     additive: Option<TraitId>,
     number: Option<TraitId>,
     integer: Option<TraitId>,
+    fractional: Option<TraitId>,
     /// The prelude's `Ordered`, which the relational operators use (17.8).
     ordered: Option<TraitId>,
     /// `time.Instant`: nanoseconds of the monotonic clock.

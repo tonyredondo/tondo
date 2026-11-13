@@ -7835,6 +7835,8 @@ pub trait Number: Additive {
 }
 
 pub trait Integer: Number + Ordered + Display   // Ordered: 14.5 de la librería
+
+pub trait Fractional: Number
 ~~~
 
 - **Operadores.** Sobre un tipo que implementa `Additive`, `a + b` es
@@ -7859,7 +7861,12 @@ pub trait Integer: Number + Ordered + Display   // Ordered: 14.5 de la librería
   implementan además `Integer`, que un programa no puede implementar
   (`E1114`): sobre `T: Integer` vale todo lo de un entero concreto, sus
   operadores, sus comparaciones, sus constantes (`T.max`), `T.parse(...)` y las
-  operaciones de 18.9. `Byte` no implementa ninguno.
+  operaciones de 18.9. Los floats implementan además `Fractional`: un número
+  cuya división conserva la fracción, `1.0 / 2.0` es `0.5` donde un `Integer`
+  da 0. Lo pide lo que divide para dar una parte de un todo, como una media
+  (`Tensor.mean`, 10.7 de la biblioteca estándar); `math.Decimal` también lo
+  implementa, y un tipo del programa puede, como un racional exacto. `Byte` no
+  implementa ninguno.
 - **Los tipos del programa.** Un tipo que suma, como un importe, una duración o
   un vector, implementa `Additive`; uno que además multiplica y divide, como un
   decimal, un racional o un complejo, `Number`, que exige `Additive` (12.3).

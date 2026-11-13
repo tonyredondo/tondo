@@ -1,6 +1,7 @@
 // The diagnostics of math.Tensor: an operator a tensor does not have, two
-// tensors of other numbers, `+=`, which would change a tensor in place, and
-// a tensor of what is not a number.
+// tensors of other numbers, `+=`, which would change a tensor in place, a
+// tensor of what is not a number, and the mean of integers, which is of
+// floats.
 
 import std.console
 import std.math
@@ -13,10 +14,11 @@ fn main() {
     var total = ints
     total += ints
     let words = math.Tensor(["a", "b"])
-    console.println("{total} {words.rank()}")
+    console.println("{total} {words.rank()} {ints.mean()}")
 }
 
 // expect-error: E1102 operator `%` cannot be applied to tensors: a tensor has `+`, `-`, `*` and `/`, element by element
 // expect-error: E1102 operator `+` cannot combine `math.Tensor[Int]` and `math.Tensor[Float]`: a tensor combines with a tensor of its numbers, or with one of them
 // expect-error: E1102 `+=` does not change a tensor in place: write `target = target + value`, which makes another
 // expect-error: E1105 `String` does not implement `Number`, which `math.Tensor` requires of `T`: a tensor holds numbers, as `Int`, `Float` or `math.Decimal`
+// expect-error: E1105 `Int` does not implement `Fractional`, which `math.Tensor.mean` requires of `T`: its mean is of floats; for integers, divide the `sum()` as floats, as in `Float(tensor.sum()) / Float(tensor.length())`

@@ -695,11 +695,13 @@ pub fn declarations() -> &'static str {
             }
         }
         // The arithmetic the compiler gives them (18.10).
-        text.push_str("\n// Every number is `Additive` and `Number`, and every integer `Integer` (language 18.10).\n");
+        text.push_str(
+            "\n// Every number is `Additive` and `Number`, every integer `Integer` and every float `Fractional` (language 18.10).\n",
+        );
         for kind in Kind::ALL.iter().filter(|k| !matches!(k, Kind::Byte)) {
             let traits: &[&str] = match kind {
                 Kind::Int(_) => &["Additive", "Number", "Integer"],
-                _ => &["Additive", "Number"],
+                _ => &["Additive", "Number", "Fractional"],
             };
             for name in traits {
                 text.push_str(&format!("impl {name} for {}\n", kind.name()));

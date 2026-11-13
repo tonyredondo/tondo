@@ -186,6 +186,29 @@ pub fn Tensor[T: Number].sumAlong(self, axis: Int): Tensor[T] {
     Tensor { sizes: self.sizes[:axis].concat(self.sizes[axis + 1:]), items: values }
 }
 
+/// The mean of its values: their `sum` divided by how many there are, NaN
+/// for a tensor of floats with none. Of a tensor of a `Fractional` number,
+/// as a mean of integers would round; for those, divide the `sum` as floats.
+///
+/// ```tondo
+/// import std.console
+/// import std.math
+///
+/// let readings = math.Tensor([1.0, 2.0, 3.0, 6.0], shape: [2, 2])
+/// console.println("{readings.mean()} {readings.meanAlong(0)}")
+/// ```
+pub fn Tensor[T: Fractional].mean(self): T {
+    self.items.sum().dividedBy(Number.fromInt[T](self.items.length()))
+}
+
+/// The tensor of one rank less whose each value is the mean of the values
+/// along `axis`: `sumAlong(axis)` divided by the size of that axis.
+pub fn Tensor[T: Fractional].meanAlong(self, axis: Int): Tensor[T] {
+    let sums = self.sumAlong(axis)
+    let size = Number.fromInt[T](self.sizes[axis])
+    Tensor { sizes: sums.sizes, items: sums.items.map((sum) { sum.dividedBy(size) }) }
+}
+
 /// The smallest value, the first of equal ones, or `none` when it has none.
 pub fn Tensor[T: Number + Ordered].min(self): T? {
     self.items.min()

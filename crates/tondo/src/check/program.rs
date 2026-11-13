@@ -305,7 +305,8 @@ impl<'a> Checker<'a> {
                 defaults: t.methods.iter().map(|m| m.default).collect(),
                 param_count: t.params.len(),
                 methods: t.methods.iter().map(|m| m.name.clone()).collect(),
-                arithmetic: [self.additive, self.number, self.integer].contains(&Some(TraitId(id as u32))),
+                arithmetic: [self.additive, self.number, self.integer, self.fractional]
+                    .contains(&Some(TraitId(id as u32))),
             })
             .collect();
         let impls = self

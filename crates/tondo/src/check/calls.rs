@@ -3090,6 +3090,10 @@ impl<'a> Checker<'a> {
                     None if signature.name.starts_with("math.Tensor") && missing == "`Number`" => {
                         ": a tensor holds numbers, as `Int`, `Float` or `math.Decimal`".into()
                     }
+                    // The mean of integers, which would round (10.7).
+                    None if signature.name.starts_with("math.Tensor") && missing == "`Fractional`" => {
+                        ": its mean is of floats; for integers, divide the `sum()` as floats, as in `Float(tensor.sum()) / Float(tensor.length())`".into()
+                    }
                     None => String::new(),
                 };
                 let message = format!(

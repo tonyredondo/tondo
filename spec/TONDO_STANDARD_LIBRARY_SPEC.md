@@ -2829,7 +2829,7 @@ Los números no tienen métodos del prelude: sus operaciones (`parse`,
 `toString`, `abs`, `pow`, las variantes de desbordamiento, los bits, los bytes,
 las conversiones nombradas, `floor`, `sqrt`...) y sus constantes son intrinsics
 del lenguaje, iguales en todos los anchos (18.9 del lenguaje), y los traits
-`Additive`, `Number` e `Integer` también son del lenguaje (18.10).
+`Additive`, `Number`, `Integer` y `Fractional` también son del lenguaje (18.10).
 
 `String`:
 
@@ -3061,6 +3061,8 @@ pub fn Tensor[T].transposed(self, axes: Array[Int]? = none): Tensor[T]
 pub fn Tensor[T].map(self, transform: fn(T): T): Tensor[T]
 pub fn Tensor[T].sum(self): T
 pub fn Tensor[T].sumAlong(self, axis: Int): Tensor[T]
+pub fn Tensor[T: Fractional].mean(self): T
+pub fn Tensor[T: Fractional].meanAlong(self, axis: Int): Tensor[T]
 pub fn Tensor[T: Ordered].min(self): T?
 pub fn Tensor[T: Ordered].max(self): T?
 pub fn Tensor[T: Ordered].indexOfMax(self): Array[Int]?
@@ -3088,7 +3090,12 @@ pub fn Tensor[T].matmul(self, other: Tensor[T]): Tensor[T]
   broadcasting y con un número a cualquier lado (10.7 del lenguaje).
 - `sum` es el `sum` de `values()`: de floats, en el orden de 18.5 del
   lenguaje. `sumAlong` da un tensor de un rango menos, cada valor el `sum` de
-  los valores a lo largo de ese eje, en el orden de su índice. `min`, `max` e
+  los valores a lo largo de ese eje, en el orden de su índice. `mean` es
+  `sum` dividido por `length`, y `meanAlong` cada valor de `sumAlong` dividido
+  por el tamaño de su eje; son de un tensor de `Fractional` (18.10 del
+  lenguaje), cuya división no redondea: `Float`, `Float32` y `math.Decimal`.
+  Sin valores, la de floats es NaN. Sobre un tensor de enteros es `E1105`, que
+  dice que la media es de floats y cómo dividir `sum` como floats. `min`, `max` e
   `indexOfMax` son `none` en un tensor sin valores; `indexOfMax` da los
   índices del primero de los mayores.
 - `dot` toma dos tensores de rango 1 y una longitud y es `math.dot` de sus
