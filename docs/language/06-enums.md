@@ -142,7 +142,7 @@ enum Token {
 
 fn kind(token: Token): String {
     match token {
-        Token.Plus | Token.Minus | Token.Star => "an operator"
+        Plus | Minus | Star => "an operator"
         Number(_) | Word(_) => "an operand"
     }
 }

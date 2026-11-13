@@ -450,9 +450,10 @@ fn userId(written: String): UserId ! LoadError {
 
 fn main() {
     let names = ["ada", "bo"].map(String.toUpper)
+    let lengths = ["ada", "bo"].map(String.length)
     let ids = [7, 8].map(UserId)
     let found: Array[Int?] = [1, 2].map(some)
-    console.println("{names} {ids.map((id) { id.value })} {found}")
+    console.println("{names} {lengths} {ids.map((id) { id.value })} {found}")
     match userId("x") {
         ok(id) => console.println("{id.value}")
         err(error) => console.println("{error}")
@@ -461,13 +462,16 @@ fn main() {
 ```
 
 ```text output
-[ADA, BO] [7, 8] [some(1), some(2)]
+[ADA, BO] [3, 2] [7, 8] [some(1), some(2)]
 BadNumber(invalid data)
 ```
 
 `String.toUpper` is the function that takes a `String` and calls `toUpper`
-on it. A method bound to one value, `value.method` with no call, is still
-not a value: a closure does that job, `(x) { value.method(x) }`.
+on it. A function value has no defaults, so a method that has them is
+given whole or with a closure: `String.trim` takes the text and what to
+trim, and `(name) { name.trim() }` the text alone. A method bound to one
+value, `value.method` with no call, is still not a value: a closure does
+that job, `(x) { value.method(x) }`.
 
 ## Taking a function: fn types and Call bounds
 
