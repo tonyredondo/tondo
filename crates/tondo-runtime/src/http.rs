@@ -60,16 +60,23 @@ pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
         }
     };
     builder.enable_all();
-    // Built on a thread of the runtime: tokio starts its threads with std's
-    // `spawn`, which in a library would keep it loaded while the thread of
-    // its host that asked first lives.
-    let built = Arc::new(Mutex::new(None));
-    let given = built.clone();
-    super::tasks::spawn_thread(None, move || {
-        *given.lock().unwrap_or_else(|e| e.into_inner()) = Some(builder.build().expect("the HTTP runtime starts"));
-    })
-    .join();
-    let runtime = built.lock().unwrap_or_else(|e| e.into_inner()).take().expect("the HTTP runtime starts");
+    // In a library, built on a thread of the runtime: tokio starts its
+    // threads with std's `spawn`, which would keep the library loaded while
+    // the thread of its host that asked first lives. A recorded run, and
+    // its replay, which call the system from one thread, build it there.
+    let runtime = match crate::library() && !super::replay::on() {
+        true => {
+            let built = Arc::new(Mutex::new(None));
+            let given = built.clone();
+            super::tasks::spawn_thread(None, move || {
+                *given.lock().unwrap_or_else(|e| e.into_inner()) = Some(builder.build());
+            })
+            .join();
+            built.lock().unwrap_or_else(|e| e.into_inner()).take().expect("the HTTP runtime's thread ended")
+        }
+        false => builder.build(),
+    };
+    let runtime = runtime.expect("the HTTP runtime starts");
     let runtime = Box::into_raw(Box::new(runtime));
     RUNTIME.store(runtime, Ordering::Release);
     unsafe { &*runtime }

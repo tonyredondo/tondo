@@ -813,6 +813,17 @@ fn poll_once<F: std::future::Future>(
     if context {
         super::tasks::leave_host_thread();
     }
+    polled(future, waker, context)
+}
+
+/// The poll of `poll_once`, on the thread the task is on now: never
+/// inlined, so that the thread-locals it reads are this thread's.
+#[inline(never)]
+fn polled<F: std::future::Future>(
+    future: std::pin::Pin<&mut F>,
+    waker: &std::task::Waker,
+    context: bool,
+) -> (std::task::Poll<F::Output>, Vec<usize>) {
     let _context = context.then(|| super::http::runtime().enter());
     holding(|| future.poll(&mut std::task::Context::from_waker(waker)))
 }

@@ -146,7 +146,10 @@ thread_local! {
 /// Moves the running task of a call from C, in a library, from the thread
 /// of its host onto a worker, before it uses what keeps thread-locals that
 /// drop, as tokio does: in glibc each would keep the library loaded while
-/// that thread of the host lives. It goes on there as after a wait.
+/// that thread of the host lives. It goes on there as after a wait: the
+/// caller reads no thread-local after this but through a function never
+/// inlined, which finds the worker's.
+#[inline(never)]
 pub(crate) fn leave_host_thread() {
     if !crate::library() || RUNTIME_THREAD.with(Cell::get) || exploring().is_some() {
         return;
@@ -299,7 +302,9 @@ static GENERATION: AtomicUsize = AtomicUsize::new(1);
 /// Every thread's, for a library's end, which frees their spare stacks.
 static EVERY_KEPT: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
-/// What the runtime keeps for this thread.
+/// What the runtime keeps for this thread. Never inlined: a task may
+/// resume on another thread, and its caller must not keep this thread's.
+#[inline(never)]
 pub(crate) fn kept() -> &'static Kept {
     let mut kept = KEPT.with(Cell::get);
     if kept.is_null() {
