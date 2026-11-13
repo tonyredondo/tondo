@@ -647,6 +647,32 @@ fn cpu_has_answers_from_the_level_or_the_processor() {
     }
 }
 
+/// `math.fma` is one instruction where the level has it: every arm64, and
+/// an x64 from x86-64-v3; a call of the runtime below that.
+#[test]
+fn fma_is_one_instruction_where_the_level_has_it() {
+    let dir = scratch("fused");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let program = "import std.console\nimport std.math\n\nfn fused(a: Float, b: Float, c: Float): Float {\n    math.fma(a, b, c)\n}\n\nfn main() {\n    console.println(\"{fused(2.0, 3.0, 1.0)}\")\n}\n";
+    std::fs::write(dir.join("src/main.to"), program).unwrap();
+    let levels: &[(&str, bool)] =
+        if cfg!(target_arch = "aarch64") { &[("baseline", true)] } else { &[("baseline", false), ("x86-64-v3", true)] };
+    for &(level, fused) in levels {
+        std::fs::write(dir.join("tondo.toml"), format!("[package]\nname = \"fused\"\n\n[build]\ncpu = \"{level}\"\n"))
+            .unwrap();
+        let (out, err, code) = tondo(&dir, &["asm", "fused"]);
+        assert_eq!(code, 0, "{err}");
+        assert_eq!(!out.contains("tondo_rt_math_fma"), fused, "{level}: {out}");
+        assert_eq!(tondo(&dir, &["run"]).0, "7.0\n");
+    }
+    // `--cpu` shows a level's code without the manifest's.
+    if cfg!(target_arch = "x86_64") {
+        std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"fused\"\n").unwrap();
+        let (out, err, code) = tondo(&dir, &["asm", "fused", "--cpu", "x86-64-v3"]);
+        assert!(code == 0 && !out.contains("tondo_rt_math_fma"), "{out}{err}");
+    }
+}
+
 /// A write made from an earlier read has a repair: one `update`, unless what
 /// was read goes on being used.
 #[test]

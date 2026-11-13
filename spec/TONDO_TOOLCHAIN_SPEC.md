@@ -266,8 +266,8 @@ tondo fmt [--check | --compact] [--json] <file.to>...
 tondo api [<module>|<module>.<declaration>|<file.to>] [--private] [--list] [--project <dir>] [--json]
 tondo api --search <palabras> [--project <dir>] [--json]
 tondo graph [<project>|<dir>|<file.to>] [--packages | --files] [--module <module> [--reverse]] [--json | --dot | --mermaid]
-tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>] [--against <revision> | --compiler <tondo|revision>] [--json]
-tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--against <revision> | --compiler <tondo|revision>] [--json]
+tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>] [--cpu <level>] [--against <revision> | --compiler <tondo|revision>] [--json]
+tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--cpu <level>] [--against <revision> | --compiler <tondo|revision>] [--json]
 tondo asm --runtime <function> [--compiler <tondo|revision>] [--json]
 tondo compiler <tondo|revision> [--json]
 tondo guide [<topic>] [--list] [--skill] [--json]
@@ -1645,7 +1645,9 @@ las que el generador no tiene flag: no se genera nada con ellas.
 
 - El nivel es `baseline` en `build`, `run`, `test` y `build --library`, con
   `--target` y sin él. `--cpu <level>` pide otro, y `cpu` en el `[build]` del
-  `tondo.toml` raíz también (sección 3); la opción gana al archivo.
+  `tondo.toml` raíz también (sección 3); la opción gana al archivo. `tondo
+  asm` y `tondo optimizations` toman `--cpu` del mismo modo, para ver lo que
+  un build de ese nivel hace del código.
 - Un nombre desconocido es error, que da los niveles de la arquitectura del
   target; un nivel de la otra arquitectura, también, y dice de cuál es.
   `native` con un `--target` que no es esta máquina es error: es el

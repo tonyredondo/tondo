@@ -2076,6 +2076,9 @@ fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
     };
     let (function, kind, against) = (valued("--function")?, valued("--kind")?, valued("--against")?);
     let compiler = valued("--compiler")?;
+    if let Some(level) = valued("--cpu")? {
+        driver::set_cpu(&level);
+    }
     if against.is_some() && compiler.is_some() {
         return Err(format!("--against compares with a revision, --compiler with another tondo: choose one\n{USAGE}"));
     }
@@ -2222,6 +2225,9 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
         Ok(Some(value))
     };
     let (against, compiler) = (valued("--against")?, valued("--compiler")?);
+    if let Some(level) = valued("--cpu")? {
+        driver::set_cpu(&level);
+    }
     if let Some(flag) = args.iter().find(|a| a.to_string_lossy().starts_with('-')) {
         return Err(format!("asm does not take {}\n{USAGE}", flag.display()));
     }

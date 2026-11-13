@@ -66,7 +66,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Callee::Std(StdFn::Number(_)) => unreachable!("assigned by `number`"),
             Callee::Std(StdFn::Native(index)) => {
                 // Arithmetic the processor does in one instruction, as
-                // `hir::IN_ONE_INSTRUCTION` lists it.
+                // `hir::IN_ONE_INSTRUCTION` lists it, and a fused multiply
+                // and add where the level has it (toolchain 7.8).
+                let fused = fused_multiply_add(self.e.cg.isa());
                 let ins = self.e.fb.ins();
                 match crate::hir::NATIVES[index as usize].symbol {
                     "tondo_rt_math_sqrt" => Some(ins.sqrt(values[0])),
@@ -74,6 +76,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     "tondo_rt_math_ceil" => Some(ins.ceil(values[0])),
                     "tondo_rt_math_trunc" => Some(ins.trunc(values[0])),
                     "tondo_rt_math_round" => Some(ins.nearest(values[0])),
+                    "tondo_rt_math_fma" if fused => Some(ins.fma(values[0], values[1], values[2])),
                     // What a model's marks need, only in a build of tests.
                     "tondo_rt_model_recording" => Some(ins.iconst(types::I8, self.e.cg.testing() as i64)),
                     _ => self.e.call_rt(Rt::Native(index), &values),
@@ -351,4 +354,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
         self.pointer_to(place, true)
     }
+}
+
+/// Whether the code's processor multiplies and adds in one instruction:
+/// every arm64, and an x64 with FMA.
+fn fused_multiply_add(isa: &dyn cranelift_codegen::isa::TargetIsa) -> bool {
+    isa.name() == "aarch64" || isa.isa_flags().iter().any(|flag| flag.name == "has_fma" && flag.as_bool() == Some(true))
 }

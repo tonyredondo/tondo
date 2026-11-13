@@ -181,12 +181,12 @@ usage:
                                                        holds, or where its tasks are, in pprof's format; show
                                                        reads one: the functions and lines that take the most
   tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>]
-            [--against <rev> | --compiler <tondo|rev>] [--json]
+            [--cpu <level>] [--against <rev> | --compiler <tondo|rev>] [--json]
                                                        what a release build makes of the code: the calls it
                                                        inlines and those it keeps, the texts and closures made
                                                        without the heap, the checks it drops and those it keeps
   tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--against <rev> | --compiler <tondo|rev>]
-            [--json]
+            [--cpu <level>] [--json]
   tondo asm --runtime <function> [--compiler <tondo|rev>] [--json]
                                                        the machine code a release build makes of a function, by
                                                        the lines of the program, with what the passes did there;
