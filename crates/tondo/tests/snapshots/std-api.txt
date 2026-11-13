@@ -2584,6 +2584,65 @@ pub fn join(base: String, part: String): String
 pub fn matches(pattern: String, path: String): Bool
 pub fn parent(path: String): String?
 pub fn relative(from: String, to: String): String?
+== std.plugin
+impl Display for Error
+impl reflect.Reflect for Error
+impl serialization.Decode for Error
+impl serialization.Encode for Error
+pub annotation Contract = {}
+pub annotation Export = {}
+pub const Broken: Int = 2
+pub const Failed: Int = 1
+pub const Returned: Int = 0
+pub enum Error {
+    /// The library or the program could not be loaded or started, with why.
+    NotLoaded(String)
+    /// The plugin was built against another contract, with what differs.
+    Contract(String)
+    /// The plugin panicked in a call, with the panic's message.
+    Panicked(String)
+    /// What crossed could not be read, with why.
+    Format(String)
+    /// The plugin is gone: unloaded, or its program ended.
+    Closed
+}
+pub fn Link.call(self, method: Int, input: Array[Byte]): (Int, Array[Byte]) ! Error
+pub fn Link.load(path: String, contract: Description): Link ! Error
+pub fn Link.start(command: Command, contract: Description): Link ! Error
+pub fn answered(
+    answer: fn(Int, Array[Byte]): (Int, Array[Byte]),
+    method: Int,
+    given: Array[Byte],
+): (Int, Array[Byte])
+pub fn argument[T: serialization.Decode](given: Array[Byte], index: Int): T ! Error
+pub fn broken(error: Error): (Int, Array[Byte])
+pub fn contractText[P](): String
+pub fn decoded[T: serialization.Decode](bytes: Array[Byte]): T ! Error
+pub fn described(name: String, text: String, methods: Array[String]): Description
+pub fn nothing(): Array[Byte]
+pub fn serve(contract: Description, answer: fn(Int, Array[Byte]): (Int, Array[Byte])): !Error
+pub type Description = {
+    name: String
+    fingerprint: String
+    methods: Array[String]
+}
+pub type Link = {
+    // private fields
+}
+pub unsafe fn offer(
+    contract: Description,
+    answer: fn(Int, Array[Byte]): (Int, Array[Byte]),
+    bytes: Pointer[Pointer[Byte]],
+    length: Pointer[ffi.CSize],
+)
+pub unsafe fn offered(
+    method: UInt32,
+    input: Pointer[Byte],
+    inputLength: ffi.CSize,
+    output: Pointer[Pointer[Byte]],
+    length: Pointer[ffi.CSize],
+): Int32
+pub unsafe fn release(bytes: Pointer[Byte], length: ffi.CSize)
 == std.process
 impl reflect.Reflect for ProcessError
 pub enum Input {

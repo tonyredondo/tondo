@@ -1,0 +1,32 @@
+// What a contract of std.plugin may hold (standard library 14.48): each
+// method takes `self`, has no type parameters, and gives `T ! plugin.Error`
+// or `T ! (E | plugin.Error)` of types that are written and read.
+
+import std.plugin
+import std.sync
+
+type Shared = { count: sync.Mutex[Int] }
+
+@plugin.Contract
+pub trait Broken {
+    fn changes(mut self): Int ! plugin.Error
+    fn generic[T](self, value: T): Int ! plugin.Error
+    fn plain(self): Int
+    fn other(self): Int ! String
+    fn shares(self, value: Shared): Int ! plugin.Error
+    fn fine(self, value: Int): Int ! plugin.Error
+}
+
+@plugin.Contract
+pub trait Wider[T] {
+    fn get(self): Int ! plugin.Error
+}
+
+fn main() {}
+
+// expect-error: E1119 the method `changes` of the contract `Broken` takes `mut self`, and a plugin is not changed by a call: take `self`
+// expect-error: E1119 the method `generic` of the contract `Broken` has type parameters, which do not cross to a plugin
+// expect-error: E1119 the method `plain` of the contract `Broken` gives no `T ! plugin.Error`
+// expect-error: E1119 the method `other` of the contract `Broken` fails with `String`, without `plugin.Error`
+// expect-error: E1119 the method `shares` of the contract `Broken` takes or gives `Shared`, which is not written and read
+// expect-error: E1119 the contract `Wider` has no type parameters and requires no other trait

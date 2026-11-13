@@ -1593,7 +1593,10 @@ que un programa de C enlaza o carga: escribe en el directorio de `--output`, o
 en el actual, la librería compartida `lib<nombre>.so` (`lib<nombre>.dylib` en
 macOS), la estática `lib<nombre>.a` y su header `<nombre>.h`, con el nombre
 del paquete o del archivo. La librería no tiene `main` ni script; publica las `pub extern fn`
-con cuerpo de su paquete (16.16 del lenguaje), y sin ninguna es `E1807`.
+con cuerpo de su paquete (16.16 del lenguaje), y sin ninguna es `E1807`. Una
+función con `@plugin.Export` la hace un plugin: publica las tres entradas de
+14.48 de la librería estándar, `tondo_plugin_contract`, `tondo_plugin_call`
+y `tondo_plugin_free`, cuyos nombres no se reservan para ella.
 `check --library` y `test --library` la comprueban y la prueban sin pedir
 `main`.
 

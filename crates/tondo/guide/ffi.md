@@ -62,6 +62,49 @@ fn main(): !ffi.LibraryError {
   library publishes a name. A `--static` or `--target` build cannot load
   libraries, and says so.
 
+## Typed plugins
+
+A trait with `@plugin.Contract` is a contract: a plugin implements it in a
+library or a program of its own, and the program loads it while it runs.
+What crosses is MessagePack, so each method takes `self` and gives
+`T ! plugin.Error`, or `T ! (E | plugin.Error)` with an error of its own, of
+types that are written and read.
+
+```tondo
+import std.console
+import std.plugin
+
+@plugin.Contract
+pub trait Greeter {
+    fn greet(self, name: String): String ! plugin.Error
+}
+
+type Polite = {}
+
+impl Greeter for Polite {
+    fn greet(self, name: String): String ! plugin.Error {
+        "good morning, {name}"
+    }
+}
+
+fn main() {
+    console.println("{Polite {}.greet("Ada")}")
+}
+```
+
+- The contract's module gets `GreeterPlugin`, which implements `Greeter` by
+  calling the plugin: `GreeterPlugin.load("plugins/libpolite.so")` loads a
+  library, `GreeterPlugin.start(process.command("polite"))` starts a
+  program. A program serves with `serveGreeter(Polite {})` in its `main`; a
+  library built with `tondo build --library` marks the function that gives
+  its implementation, `@plugin.Export fn greeter(): impl Greeter { Polite {} }`.
+- Loading compares the contract's fingerprint, its methods and every type
+  they reach: a plugin built against another contract is
+  `plugin.Error.Contract`. A panic in the plugin comes back as `Panicked`, a
+  program that ends as `Closed`.
+- A `GreeterPlugin` is shared by tasks; the program it started ends when its
+  last copy goes.
+
 ## Libraries for C
 
 `tondo build --library` compiles a project without `main` into a shared

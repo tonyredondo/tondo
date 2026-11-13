@@ -3196,6 +3196,16 @@ impl<'a> Checker<'a> {
                 span,
             );
         }
+        // The text of a contract, whose SHA-256 is its fingerprint, which the
+        // declarations a contract makes ask for (standard library 14.48).
+        if let Callee::Fn(id) = callee
+            && self.is_std_fn(id, "plugin", "plugin.contractText")
+            && let Some(&plugin) = type_args.first()
+            && let Some(contract) = self.types.display(plugin).strip_suffix("Plugin").map(str::to_string)
+            && let Some(text) = self.contract_text(&contract)
+        {
+            return Self::mk(hir::ExprKind::Str(text), Ty::STRING, span);
+        }
         // A function of `std.cpu.x64` or `std.cpu.arm64` is its instruction,
         // where the call is (standard library 14.47).
         if let Callee::Fn(id) = callee

@@ -17,6 +17,7 @@ mod natives;
 mod operators;
 mod owners;
 mod patterns;
+mod plugins;
 mod program;
 mod reach;
 mod routes;
@@ -474,6 +475,7 @@ enum Annotated {
     Function(FnId),
     /// A function's parameter, by its index.
     Parameter(FnId, u32),
+    Trait(TraitId),
 }
 
 /// What a call invokes: the callee, its signature, explicit type arguments

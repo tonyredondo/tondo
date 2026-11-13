@@ -47,6 +47,9 @@ impl<'a> Checker<'a> {
                 "C already calls another function `{symbol}`, at {}: give one of them another `@symbol(\"...\")`",
                 self.sources.location(at)
             )),
+            // The entries of a library that offers a plugin are named by
+            // `std.plugin` (14.48).
+            None if crate::plugins::ENTRIES.contains(&symbol.as_str()) => None,
             None if symbol == "main" || symbol.starts_with("tondo_") => Some(format!(
                 "`{symbol}` is a symbol of the program itself: give the function another name, or `@symbol(\"...\")`"
             )),

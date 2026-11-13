@@ -7455,6 +7455,128 @@ pub fn pause()                                                // ninguna
   que pertenece y escrito con estas por dentro, como un `hash.crc32c(bytes)`:
   cada una de esas funciones es un cambio aparte.
 
+### 14.48 `std.plugin`
+
+Un plugin es una implementación de un trait que el programa carga mientras
+corre: de una librería compartida, en el mismo proceso, o de un programa
+propio, por su entrada y su salida estándar. Lo que cruza son datos escritos
+en MessagePack, y el contrato se comprueba al cargar el plugin.
+
+~~~tondo pseudocode
+pub annotation Contract = {}
+pub annotation Export = {}
+
+pub enum Error {
+    NotLoaded(String)   // la librería o el programa no se cargó o no arrancó, con por qué
+    Contract(String)    // el plugin se hizo con otro contrato, con qué difiere
+    Panicked(String)    // el plugin entró en pánico en una llamada, con su mensaje
+    Format(String)      // lo que cruzó no se pudo leer, con por qué
+    Closed              // el plugin ya no está: su programa terminó
+}
+impl Display for Error
+impl serialization.Encode for Error
+impl serialization.Decode for Error
+~~~
+
+#### El contrato
+
+- Un contrato es un trait con `@plugin.Contract` delante (27.13 del
+  lenguaje). Cada método toma `self`, no `mut self` ni `var self`, no tiene
+  parámetros de tipo y da `T ! plugin.Error` o `T ! (E | plugin.Error)`; los
+  tipos de sus parámetros, `T` y `E` implementan `serialization.Encode` y
+  `serialization.Decode`. El trait no tiene parámetros de tipo ni requiere
+  otro trait. Cada incumplimiento es `E1119` en el método o el trait, y dice
+  cuál es.
+- En el módulo de un contrato `Name`, el compilador declara, como declara el
+  cliente de un servicio de un `.proto`:
+
+  ~~~tondo pseudocode
+  pub type NamePlugin
+  impl Name for NamePlugin
+  pub fn NamePlugin.load(path: String): NamePlugin ! plugin.Error
+  pub fn NamePlugin.start(command: Command): NamePlugin ! plugin.Error
+  pub fn NamePlugin.contract(): plugin.Description
+  pub fn NamePlugin.answer[T: Name](implementation: T, method: Int, given: Array[Byte]): (Int, Array[Byte])
+  pub fn serveName[T: Name + Send + Share](implementation: T): !plugin.Error
+  ~~~
+
+  `load` carga el plugin de una librería, `start` arranca un programa y habla
+  con el plugin que sirve, y `serveName` sirve `implementation` al programa
+  que arrancó este, hasta que ese programa cierra su lado. `contract` y
+  `answer` son lo que usan `serveName` y las entradas de una librería.
+- Un `NamePlugin` es un handle, `Send` y `Share`, cuyos métodos se pueden
+  llamar desde varias tareas a la vez: cada llamada escribe sus argumentos,
+  hace la llamada y lee el resultado o el error. Cuando se va su última
+  copia, se va el plugin: un programa recibe el fin de su entrada y se le
+  espera, como a un `Process` (14.13); una librería queda cargada, pues una
+  librería que Tondo construyó todavía no se descarga.
+
+#### Un plugin
+
+- **Como librería.** Un proyecto construido con `tondo build --library`
+  ofrece un contrato con una función marcada `@plugin.Export`, sin
+  parámetros, que da `impl Name` de un tipo `Send` y `Share`. Se la llama una
+  vez, al cargar la librería, y su valor vive mientras la librería. Una
+  segunda función así, una con parámetros o una que no da un `impl` es
+  `E1119`, que dice la forma que se escribe.
+- **Como programa.** Un programa cuyo `main` llama `serveName(value)` es un
+  plugin con el que habla `NamePlugin.start`. La misma implementación sirve de
+  las dos maneras.
+
+#### Lo que cruza
+
+- Los bytes de una llamada son MessagePack de una lista de los argumentos del
+  método, en su orden; los de un resultado, del valor, `nil` cuando no hay
+  valor; los de un fallo, del error.
+- La huella de un contrato es el SHA-256 en hexadecimal de este texto: una
+  línea `contract <módulo>.<Name>`; una línea por método, en el orden en que
+  se declaran, `fn <nombre>(<tipos de los parámetros>): <tipo del resultado>`;
+  y una línea por cada record, enum o newtype que esos tipos alcanzan, en el
+  orden en que aparecen, `type <nombre> = { <campo>: <tipo>, ... }`,
+  `type <nombre> = enum { <Variante>, <Variante>(<tipos>), <Variante> { ... } }`
+  o `type <nombre> = (<tipo>)`. Cada tipo se escribe con el nombre con que
+  lo muestran los diagnósticos. Dos contratos con una huella son el mismo
+  para un plugin; cualquier otra diferencia es otro contrato.
+- Una librería con una función `@plugin.Export` publica, con las convenciones
+  de C, nombres que esta sección fija para que un plugin se pueda escribir
+  en otro lenguaje:
+
+  ~~~c
+  /* El contrato: MessagePack de [módulo y nombre, huella, nombres de los métodos]. */
+  void tondo_plugin_contract(const uint8_t **bytes, size_t *length);
+
+  /* Llama al método número `method`, contado desde 0 en el orden del trait.
+   * Da 0 y el resultado, 1 y el error propio del método, o 2 y un
+   * plugin.Error. `*output` se libera con tondo_plugin_free. */
+  int32_t tondo_plugin_call(uint32_t method, const uint8_t *input, size_t input_length,
+                            uint8_t **output, size_t *output_length);
+
+  void tondo_plugin_free(uint8_t *bytes, size_t length);
+  ~~~
+
+- Cargar una librería la abre (19.3), lee su contrato y compara la huella.
+  Si difieren, o falta una entrada, es `plugin.Error.Contract`, con los
+  nombres de los dos contratos. Su función `@plugin.Export` se llama al leer
+  el contrato, una vez.
+- Un programa habla en tramas por su entrada y su salida estándar: una
+  longitud de cuatro bytes, el más significativo primero, y tantos bytes de
+  MessagePack. La primera trama del plugin es su contrato, como arriba. Una
+  petición es `[id, method, arguments]`, con los argumentos como una lista
+  de MessagePack, y su respuesta `[id, status, payload]`, con el `status` de
+  arriba y el valor del `payload` dentro. Las respuestas pueden llegar en
+  cualquier orden; `id` las empareja. Lo que el plugin escribe en su salida de
+  errores va donde va la del programa.
+- Un pánico del plugin se detiene en la llamada con `recover` y vuelve como
+  `plugin.Error.Panicked`, en una librería y en un programa. Un programa que
+  termina deja cada llamada que espera con `plugin.Error.Closed`.
+- Una tarea que se cancela mientras espera a un plugin deja de esperar. En una
+  librería, la llamada sigue hasta su fin y su resultado se descarta; en un
+  programa, su respuesta se descarta cuando llega.
+- Fuera de este alcance quedan las llamadas del plugin al programa que lo
+  cargó, los métodos que dan o toman un canal o un stream, un plazo que viaje
+  con una llamada, un plugin cargado en el proceso con un muro alrededor, y
+  los contratos que cambian y siguen siendo compatibles.
+
 ## 15. Contrato exigido a cada módulo
 
 Antes de considerarse especificado, cada módulo debe incluir:

@@ -56,6 +56,7 @@ pub mod observe;
 pub mod ownership;
 pub mod parallel;
 pub mod parser;
+pub mod plugins;
 #[path = "../../tondo-runtime/src/pprof.rs"]
 pub mod pprof;
 pub mod profile;

@@ -145,7 +145,7 @@ struct Arm<'a> {
 type ArmBody<'a> = &'a dyn Fn(&str, &[(String, String)], &ast::VariantPayload) -> String;
 
 /// The alias a file imports a standard module under, if any.
-fn alias_of(file: &ast::Module, module: &str) -> Option<String> {
+pub(crate) fn alias_of(file: &ast::Module, module: &str) -> Option<String> {
     file.imports
         .iter()
         .find(|i| matches!(&i.path[..], [s, m] if s.name == "std" && m.name == module))
@@ -154,6 +154,9 @@ fn alias_of(file: &ast::Module, module: &str) -> Option<String> {
 
 /// Writes the automatic implementations of every kind the program asks for.
 pub fn derive(modules: &mut [ModuleSource], sources: &mut SourceMap, diags: &mut Diagnostics) {
+    // A contract's declarations first: they write and read values, which
+    // asks for the implementations below.
+    crate::plugins::derive(modules, sources, diags);
     derive_display(modules, sources, diags);
     for kind in [Kind::Serialization, Kind::Reflect] {
         if modules.iter().any(|m| m.files.iter().any(|(f, _)| kind.brought(f))) {

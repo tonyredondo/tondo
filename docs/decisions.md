@@ -6525,3 +6525,35 @@ The library raises the language's panics of shapes and indexes, `P0006` and `P00
 and `values()`, and written with those names by an `Encode` and a `Decode` of its own, as the
 library's types do.
 
+## Typed plugins
+
+A contract's declarations are Tondo source the compiler writes into its module, as it writes the
+implementations of serialization: `NamePlugin`, its `load` and `start`, `serveName`, and two
+functions the generated code shares, `NamePlugin.contract()` and `NamePlugin.answer`. A library's
+entries are written the same way next to its `@plugin.Export` function, and their three names are
+the only `tondo_` names a program may publish. The transport is `std.plugin`, in Tondo: a library is
+called through `std.ffi`, a program through its piped standard streams, with a task of its own that
+reads the answers and hands each to the call that waits for it by its number.
+
+The fingerprint is the SHA-256 of a text the checker writes, where every type is resolved: the
+contract, each method's types, and every record, enum and newtype they reach, written out. The
+generated code asks for it by the plugin's type, `plugin.contractText[NamePlugin]()`, which the
+checker replaces with the text; a name in a string would not survive the renaming of the modules'
+names.
+
+The arguments of a call and the payload of an answer travel inside the frame as MessagePack values,
+`[id, method, [arguments]]`, rather than as bytes in it: MessagePack writes an `Array[Byte]` as a
+list of numbers, and a plugin in another language reads values more easily.
+
+A plugin that is a program ends when the last copy of its `NamePlugin` goes, as a `Process` does:
+its input is released before the process, so that it sees the end of its input before it is waited
+for. A library stays loaded until 18b lets a library Tondo built be unloaded.
+
+Building it showed three things. A closure that captures a value of an `impl Trait` result did not
+compile: the record of its captures kept the opaque type after monomorphization, which now puts
+each opaque part of a definition's fields in its witness. A value taken out of a `sync.Map` keeps
+the map's reference until the map's memory is reclaimed, in batches, so a `Sender` taken out does
+not close its channel when dropped: the plugin's reader closes them, and the runtime's behavior is
+a question of its own. And an annotation before a trait, which the parser dropped, is checked and
+kept; one before any declaration that reads none is an error.
+

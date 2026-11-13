@@ -9183,6 +9183,7 @@ oculten un diagnóstico independiente.
 | `E1116` | `duplicate-map-key` | Un literal de map repite una clave constante. |
 | `E1117` | `invalid-opaque-result` | Un resultado opaco carece de testigo normal o viola unicidad concreta o bounds publicados. |
 | `E1118` | `invalid-format` | El formato de una interpolación no se lee, o tiene una opción que el tipo del valor no admite (19.6). |
+| `E1119` | `invalid-plugin` | Un contrato de `std.plugin` tiene lo que no puede cruzar, o `@plugin.Export` no está en la única función que da su implementación (14.48 de la librería estándar). |
 
 #### Patrones y control de flujo
 
@@ -12215,9 +12216,10 @@ pub annotation Check = { required: Bool = false, min: Int? = none, max: Int? = n
 pub annotation Get = { path: String }
 ~~~
 
-Se escribe delante de un tipo, una variante, un campo, una función, un método
-o un parámetro, con el nombre de su tipo, cualificado con su módulo desde otro,
-y sus campos como los parámetros de una llamada:
+Se escribe delante de un tipo, una variante, un campo, un trait, una función,
+un método o un parámetro, con el nombre de su tipo, cualificado con su módulo
+desde otro, y sus campos como los parámetros de una llamada. Delante de otra
+declaración es `E1619`, que dice dónde va:
 
 ~~~tondo
 import binding

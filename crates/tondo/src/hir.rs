@@ -1564,6 +1564,8 @@ pub const NATIVES: &[Native] = {
         library("path", &[Object], String, "tondo_rt_library_path"),
         library("close", &[Object], String, "tondo_rt_library_close"),
         library("fileName", &[String, String], String, "tondo_rt_library_file_name"),
+        library("keep", &[Int], Unit, "tondo_rt_plugin_keep"),
+        library("kept", &[], Int, "tondo_rt_plugin_kept"),
         env("cpu", &[], String, "tondo_rt_env_cpu"),
         codec("base64Encode", &[Bytes, Bool], String, "tondo_rt_base64_encode"),
         codec("base64Check", &[String, Bool], Int, "tondo_rt_base64_check"),

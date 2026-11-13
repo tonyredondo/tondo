@@ -152,3 +152,21 @@ pub extern "C" fn tondo_rt_library_file_name(name: *const Str, version: *const S
     };
     str_new(file.as_bytes())
 }
+
+/// The address of what a library that offers a plugin answers with (standard
+/// library 14.48): each library has a runtime of its own, and so a slot of
+/// its own, which its first `tondo_plugin_contract` fills.
+static KEPT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// Keeps `address` unless an address is kept already.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_plugin_keep(address: i64) {
+    let _ =
+        KEPT.compare_exchange(0, address, std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Acquire);
+}
+
+/// The address kept, or 0.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_plugin_kept() -> i64 {
+    KEPT.load(std::sync::atomic::Ordering::Acquire)
+}

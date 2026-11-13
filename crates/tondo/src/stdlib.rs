@@ -63,6 +63,7 @@ const SOURCES: &[(&str, &[(&str, &str)])] = &[
     ("format", &[file!("format")]),
     ("uuid", &[file!("uuid")]),
     ("cpu", &[file!("cpu")]),
+    ("plugin", &[file!("plugin")]),
     ("cpu.x64", &[file!("cpu/x64/instructions_x64")]),
     ("cpu.arm64", &[file!("cpu/arm64/instructions_arm64")]),
     ("os", &[file!("os")]),

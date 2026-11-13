@@ -520,7 +520,17 @@ impl Parser<'_> {
                 self.misplaced(&annotations, "an enum");
                 e.uses = uses;
             }
-            _ => {}
+            Item::Trait(t) => {
+                self.misplaced(&annotations, "a trait");
+                t.uses = uses;
+            }
+            // Nothing reads an annotation there: say so rather than drop it.
+            _ => {
+                for span in annotations.iter().map(|a| a.span).chain(uses.iter().map(|u| u.span)) {
+                    let message = "an annotation goes before a type, an enum, a variant, a field, a trait, a function or a parameter, and nothing reads one here: remove it";
+                    self.diags.error("E1619", span, message);
+                }
+            }
         }
         item
     }
@@ -1051,7 +1061,7 @@ impl Parser<'_> {
         let methods = self.method_block()?;
         let span = start.to(self.prev_span());
         self.end_of_statement()?;
-        Ok(TraitDecl { public, name, generics, requires, methods, span, module: 0 })
+        Ok(TraitDecl { public, name, generics, requires, methods, uses: Vec::new(), span, module: 0 })
     }
 
     fn impl_declaration(&mut self, start: Span) -> PResult<ImplDecl> {
