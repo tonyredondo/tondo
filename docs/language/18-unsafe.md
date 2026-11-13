@@ -462,9 +462,9 @@ true false
   `openUnloadable`: when its last holder goes, or at `close()`, its runtime
   is ended first, its tasks cancelled and its threads finished, and then it
   is unloaded. Whether the memory is given back is the system's decision:
-  Linux unloads the library, and macOS keeps one that has variables of its
-  threads, as Tondo's runtime does, so there it ends, stays, and starts
-  again when it is next loaded.
+  Linux with glibc unloads the library, and macOS and Linux with musl keep
+  it, so there it ends, stays, and starts again when it is next loaded or
+  called.
 - A static executable loads no library, so a build with `--static` or
   `--target` of a program that reaches `ffi.Library` is refused, and says
   to build it without.
