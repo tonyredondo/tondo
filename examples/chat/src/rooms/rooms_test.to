@@ -158,6 +158,7 @@ test aSlowReaderMissesLinesAndIsToldHowMany {
     let gate = sync.Mutex(false)
     let ada = guest()?
     let leo = guestBehind(gate, capacity: 2)?
+    let zoe = guest()?
     let to = hub.reference()
     to.send(Told.Enter(1, "tea", "ada", ada.mailbox.reference()))?
     to.send(Told.Enter(2, "tea", "leo", leo.mailbox.reference()))?
@@ -166,7 +167,11 @@ test aSlowReaderMissesLinesAndIsToldHowMany {
     for text in ["one", "two", "three", "four"] {
         to.send(Told.Say(1, text))?
     }
-    waitFor(ref ada, 6)  // the hub sent all four: two did not fit leo's mailbox
+    // The hub takes one message at a time, so once it has answered someone
+    // who came later, in another room, it is done with all four lines: two
+    // did not fit leo's mailbox.
+    to.send(Told.Enter(3, "coffee", "zoe", zoe.mailbox.reference()))?
+    waitFor(ref zoe, 1)
 
     gate.set(true)  // leo's network is back
     waitFor(ref leo, 3)
@@ -174,6 +179,7 @@ test aSlowReaderMissesLinesAndIsToldHowMany {
     hub.stop()?
     ada.mailbox.stop()?
     leo.mailbox.stop()?
+    zoe.mailbox.stop()?
 
     assert(
         heard(ref leo)? ==
