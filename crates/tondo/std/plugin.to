@@ -144,7 +144,10 @@ impl __serialization.Encode for Error {
 }
 
 impl __serialization.Decode for Error {
-    fn decode[S: __serialization.Source](input: S, first: __serialization.Event): Error ! __serialization.Error {
+    fn decode[S: __serialization.Source](
+        input: S,
+        first: __serialization.Event,
+    ): Error ! __serialization.Error {
         input.beginMap(first, "Error")?
         var (kind, detail) = ("", "")
         let names: Array[String] = ["kind", "detail"]
@@ -213,7 +216,9 @@ fn Description.agrees(self, other: Description): !Error {
             true => "`{self.name}` of other methods or types"
             false => "`{other.name}`"
         }
-        fail Error.Contract("this program expects `{self.name}`, and the plugin offers {which}: their fingerprints differ")
+        fail Error.Contract(
+            "this program expects `{self.name}`, and the plugin offers {which}: their fingerprints differ",
+        )
     }
 }
 
@@ -243,10 +248,13 @@ pub fn nothing(): Array[Byte] {
     [Byte(0xc0) ?? 0]
 }
 
-/// The status of an answer: the method's result, its own error, or a
-/// `plugin.Error` (14.48).
+/// The status of an answer that holds the method's result (14.48).
 pub const Returned: Int = 0
+
+/// The status of an answer that holds the method's own error.
 pub const Failed: Int = 1
+
+/// The status of an answer that holds a `plugin.Error`.
 pub const Broken: Int = 2
 
 /// The other end of a contract's plugin. For the declarations a contract
@@ -278,7 +286,15 @@ enum Way {
 
 /// The entries a library that offers a contract publishes (14.48).
 alias DescribeEntry = extern fn(Pointer[Pointer[Byte]], Pointer[ffi.CSize])
-alias CallEntry = extern fn(UInt32, Pointer[Byte], ffi.CSize, Pointer[Pointer[Byte]], Pointer[ffi.CSize]): Int32
+
+alias CallEntry = extern fn(
+    UInt32,
+    Pointer[Byte],
+    ffi.CSize,
+    Pointer[Pointer[Byte]],
+    Pointer[ffi.CSize],
+): Int32
+
 alias FreeEntry = extern fn(Pointer[Byte], ffi.CSize)
 
 type Exports = {
@@ -307,30 +323,37 @@ pub fn Link.load(path: String, contract: Description): Link ! Error {
     }
     let published = (name: String) {
         if not library.has(name) {
-            fail Error.Contract("`{path}` publishes no `{name}`: it is no plugin of `{contract.name}`")
+            fail Error.Contract(
+                "`{path}` publishes no `{name}`: it is no plugin of `{contract.name}`",
+            )
         }
     }
     published("tondo_plugin_contract")?
     published("tondo_plugin_call")?
     published("tondo_plugin_free")?
-    let given = unsafe {
-        let (bytes, length) = (ffi.allocate[Pointer[Byte]](), ffi.allocate[ffi.CSize]())
-        match library.function[DescribeEntry]("tondo_plugin_contract") {
-            ok(entry) => entry.raw()(bytes, length)
-            err(error) => fail Error.NotLoaded("{error}")
+    let given =
+        unsafe {
+            let (bytes, length) = (ffi.allocate[Pointer[Byte]](), ffi.allocate[ffi.CSize]())
+            match library.function[DescribeEntry]("tondo_plugin_contract") {
+                ok(entry) => entry.raw()(bytes, length)
+                err(error) => fail Error.NotLoaded("{error}")
+            }
+            let found = ffi.bytes(bytes.read(), Int.wrapping(length.read()))
+            ffi.free(bytes.cast[ffi.Void]())
+            ffi.free(length.cast[ffi.Void]())
+            found
         }
-        let found = ffi.bytes(bytes.read(), Int.wrapping(length.read()))
-        ffi.free(bytes.cast[ffi.Void]())
-        ffi.free(length.cast[ffi.Void]())
-        found
-    }
     contract.agrees(contractIn(given)?)?
-    let exports = unsafe {
-        match (library.function[CallEntry]("tondo_plugin_call"), library.function[FreeEntry]("tondo_plugin_free")) {
-            (ok(call), ok(free)) => Exports { library, call, free }
-            _ => fail Error.NotLoaded("`{path}` lost its entries")
+    let exports =
+        unsafe {
+            match (
+                library.function[CallEntry]("tondo_plugin_call"),
+                library.function[FreeEntry]("tondo_plugin_free"),
+            ) {
+                (ok(call), ok(free)) => Exports { library, call, free }
+                _ => fail Error.NotLoaded("`{path}` lost its entries")
+            }
         }
-    }
     Link { contract, way: Way.Library(exports) }
 }
 
@@ -350,11 +373,11 @@ pub fn Link.start(command: Command, contract: Description): Link ! Error {
     // The program ends with the last copy of the link, as a process does
     // with its last holder.
     let peer = Peer {
-        input: sync.Mutex(input),
-        process: sync.Mutex(child),
-        waiting: sync.Map(),
-        next: sync.Atomic(0),
-        gone: sync.Atomic(false),
+        input: sync.Mutex(input)
+        process: sync.Mutex(child)
+        waiting: sync.Map()
+        next: sync.Atomic(0)
+        gone: sync.Atomic(false)
     }
     spawn detached answers(output, peer.waiting, peer.gone)
     Link { contract, way: Way.Program(peer) }
@@ -384,7 +407,13 @@ fn called(exports: Exports, method: Int, input: Array[Byte]): (Int, Array[Byte])
             data.offset(index).write(byte)
         }
         let (output, length) = (ffi.allocate[Pointer[Byte]](), ffi.allocate[ffi.CSize]())
-        let status = exports.call.raw()(UInt32.wrapping(method), data, UInt.wrapping(input.length()), output, length)
+        let status = exports.call.raw()(
+            UInt32.wrapping(method),
+            data,
+            UInt.wrapping(input.length()),
+            output,
+            length,
+        )
         let answer = ffi.bytes(output.read(), Int.wrapping(length.read()))
         exports.free.raw()(output.read(), length.read())
         ffi.free(data.cast[ffi.Void]())
@@ -424,7 +453,11 @@ fn asked(peer: Peer, method: Int, input: Array[Byte]): (Int, Array[Byte]) ! Erro
 
 /// Reads a program's answers and hands each to the call that waits for it;
 /// when the program ends, every call still waiting gets `Closed`.
-fn answers(output: io.Reader, waiting: sync.Map[Int, Sender[(Int, Array[Byte])]], gone: sync.Atomic[Bool]) {
+fn answers(
+    output: io.Reader,
+    waiting: sync.Map[Int, Sender[(Int, Array[Byte])]],
+    gone: sync.Atomic[Bool],
+) {
     for {
         let bytes = match frame(output) {
             some(bytes) => bytes
@@ -453,7 +486,10 @@ fn answers(output: io.Reader, waiting: sync.Map[Int, Sender[(Int, Array[Byte])]]
 /// MessagePack of `[first, second, value]`, where `value` is MessagePack
 /// already: a request's arguments or an answer's payload (14.48).
 fn triple(first: Int, second: Int, value: Array[Byte]): Array[Byte] {
-    [Byte(0x93) ?? 0].concat(messagepack.encode(first)).concat(messagepack.encode(second)).concat(value)
+    [Byte(0x93) ?? 0]
+        .concat(messagepack.encode(first))
+        .concat(messagepack.encode(second))
+        .concat(value)
 }
 
 /// The three parts of what `triple` makes.
@@ -530,7 +566,11 @@ fn replied(
 }
 
 /// The answer of a method, with a panic of it as `Panicked`.
-pub fn answered(answer: fn(Int, Array[Byte]): (Int, Array[Byte]), method: Int, given: Array[Byte]): (Int, Array[Byte]) {
+pub fn answered(
+    answer: fn(Int, Array[Byte]): (Int, Array[Byte]),
+    method: Int,
+    given: Array[Byte],
+): (Int, Array[Byte]) {
     match recover { answer(method, given) } {
         ok(result) => result
         err(stopped) => (Broken, messagepack.encode(Error.Panicked(stopped.message)))
@@ -586,10 +626,16 @@ pub unsafe fn offered(
 ): Int32 {
     let kept = libraryNative.kept()
     if kept == 0 {
-        handed(messagepack.encode(Error.NotLoaded("the library's contract was not read first")), output, length)
+        handed(
+            messagepack.encode(Error.NotLoaded("the library's contract was not read first")),
+            output,
+            length,
+        )
         return Int32.wrapping(Broken)
     }
-    let answer = ffi.fromContext[fn(Int, Array[Byte]): (Int, Array[Byte])](UInt64.wrapping(kept).toPointer[ffi.Void]())
+    let answer = ffi.fromContext[fn(Int, Array[Byte]): (Int, Array[Byte])](
+        UInt64.wrapping(kept).toPointer[ffi.Void](),
+    )
     let given = ffi.bytes(input, Int.wrapping(inputLength))
     let (status, payload) = answered(answer, Int(method), given)
     handed(payload, output, length)
@@ -613,4 +659,3 @@ unsafe fn handed(payload: Array[Byte], output: Pointer[Pointer[Byte]], length: P
     output.write(copy)
     length.write(UInt.wrapping(payload.length()))
 }
-

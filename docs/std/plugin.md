@@ -85,8 +85,7 @@ The bytes of a method's answer that gives nothing: MessagePack's nil.
 pub const Returned: Int = 0
 ```
 
-The status of an answer: the method's result, its own error, or a
-`plugin.Error` (14.48).
+The status of an answer that holds the method's result (14.48).
 
 #### Failed
 
@@ -94,11 +93,15 @@ The status of an answer: the method's result, its own error, or a
 pub const Failed: Int = 1
 ```
 
+The status of an answer that holds the method's own error.
+
 #### Broken
 
 ```tondo
 pub const Broken: Int = 2
 ```
+
+The status of an answer that holds a `plugin.Error`.
 
 #### serve
 
