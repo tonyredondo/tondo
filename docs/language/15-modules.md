@@ -14,7 +14,7 @@ kept inside the executable, and what gets built.
 - [tondo.toml](#tondotoml)
 - [Dependencies](#dependencies)
 - [Libraries](#libraries)
-- [Code for one system](#code-for-one-system)
+- [Code for one system or architecture](#code-for-one-system-or-architecture)
 - [Files inside the executable](#files-inside-the-executable)
 - [Other kinds of source](#other-kinds-of-source)
 - [What gets built](#what-gets-built)
@@ -206,7 +206,7 @@ libraries = ["sqlite3"]
 
 | Section | Says |
 | --- | --- |
-| `[package]` | the package's `name`, its `version`, and `systems` when it is for some only |
+| `[package]` | the package's `name`, its `version`, and `systems` or `architectures` when it is for some only |
 | `[dependencies]` | the packages it uses, each under the name it is imported by |
 | `[dev-dependencies]` | those only its tests use |
 | `[native]` | the C libraries its `extern fn`s link ([Unsafe and C](18-unsafe.md)) |
@@ -264,28 +264,48 @@ A good library is small in what it exports, documents each `pub` name with
 ([Errors](07-errors.md)). `tondo check --docs` lists what is public and
 undocumented, and `tondo check --unreached` what nothing reaches.
 
-## Code for one system
+## Code for one system or architecture
 
-Code that differs between systems goes in files whose names say which:
+Code that differs between systems, or between processors, goes in files
+whose names say which:
 
 ```text
 src/watch/
-  watch.to             what every system shares
+  watch.to             what every target shares
   watch_linux.to       fn changes(path: String): ...   with inotify
   watch_macos.to       fn changes(path: String): ...   with FSEvents
   signals_unix.to      for both Linux and macOS
   watch_linux_test.to  tests of the Linux file
+
+src/checksum/
+  checksum.to          pub fn of(bytes: Array[Byte]): Int   calls add(bytes)
+  checksum_x64.to      fn add(bytes: Array[Byte]): Int      for x86-64
+  checksum_arm64.to    fn add(bytes: Array[Byte]): Int      for AArch64
 ```
 
-A build takes the files of its system. The common code calls what each of
-them declares, and the declarations must have the same signature in every
-system. There is no `#if` and no flag inside a file: a file is for a system
-or for all.
+A name ends in a system, `linux`, `macos` or `unix` for both; in an
+architecture, `x64` or `arm64`; or in a system and then an architecture, as
+`poll_linux_arm64.to`. The system goes first, and `tondo` refuses
+`poll_arm64_linux.to` with the name to give it.
 
-`tondo check` and the language server check every system, on any machine.
-An error that only macOS would have shows on Linux as `on macOS: ...`, so a
-change is not found broken later by someone else. A program that needs to
-know where it runs asks `env.build().target` or `env.system()`.
+A build takes the files of its target, which is a system and an
+architecture. The common code calls what each of them declares, and the
+declarations must have the same signature in every target. There is no
+`#if` and no flag inside a file: a file is for some targets or for all.
+
+`tondo check` and the language server check every target, on any machine.
+An error that only some would have names them, as `on macOS:`, `on arm64:`
+or `on Linux arm64:`, so a change is not found broken later by someone
+else. Here `checksum_arm64.to` has not been written yet:
+
+```text
+error[E1001]: on arm64: unknown name `add`; `add` is in `src/checksum/checksum_x64.to`, for x64: write it for arm64 too, in a file `*_arm64.to` or a common one, as `fn add(bytes: Array[Byte]): Int`
+```
+
+A package that is for some targets only says so in `tondo.toml`, with
+`systems = ["linux"]` or `architectures = ["x64"]` in `[package]`, and is
+checked and built for those alone. A program that needs to know where it
+runs asks `env.build().target` or `env.system()`.
 
 ## Files inside the executable
 

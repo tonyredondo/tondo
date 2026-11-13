@@ -96,6 +96,11 @@ only says what is wrong leaves the reader, or the model, to guess the fix.
   the code`.
 - `tondo check --docs` lists what is public and has no documentation, and
   `--performance` a copy that a loop makes on every turn.
+- A project with files for one system or one architecture, as
+  `watch_macos.to` or `checksum_arm64.to`, is checked for every target it
+  is for, on any machine: an error that another target would have shows as
+  `on macOS: ...` or `on arm64: ...`
+  ([Modules](../language/15-modules.md#code-for-one-system-or-architecture)).
 - Warnings are few and each means something: an unused import, a result
   that is dropped, a `spawn` in a loop that waits for each task.
 

@@ -45,7 +45,7 @@ output.
 | Refactors | change a signature, move a declaration to another module, inline a call, extract a trait, group parameters into a type, make a function a method and back |
 | Formatting | of a file or a selection, with the imports a file lacks added and those it does not use removed |
 | Tests | each test and suite with a lens to run or debug it, and how many tests reach each function |
-| Files of one system | `name_linux.to` and `name_macos.to` are both checked, wherever the editor runs |
+| Files of one system or architecture | `name_linux.to`, `name_macos.to` and `name_arm64.to` are all checked, wherever the editor runs |
 
 The refactors are checked by compiling: one that would leave the program
 with an error is not offered as done.
