@@ -18,6 +18,61 @@ pub(super) struct Vectored {
 
 const WIDTHS: [Width; 4] = [Width::W128, Width::W256, Width::W512, Width::Widest];
 
+impl<'a> Checker<'a> {
+    /// A field is no place for a `Vector[T]` or a `Mask[T]` (18.11).
+    pub(super) fn vector_field(&mut self, name: &str, ty: Ty, span: Span) {
+        if let Some(vector) = self.types.reaches_widest(ty) {
+            let vector = self.types.display(vector);
+            let what = match self.types.display(ty) {
+                shown if shown == vector => format!("the field `{name}` is a `{vector}`"),
+                shown => format!("the field `{name}`, a `{shown}`, keeps a `{vector}`"),
+            };
+            self.diags.error("E1120", span, crate::simd::kept(&what, &vector));
+        }
+    }
+
+    /// The first place of each function that keeps a `Vector[T]` or a
+    /// `Mask[T]` where it may not be: only locals, parameters and results
+    /// hold one (18.11).
+    pub(super) fn vector_places(&mut self, functions: &[hir::Function]) {
+        let types = &self.types;
+        let mut holds: HashMap<Ty, Option<Ty>> = HashMap::new();
+        let mut found = Vec::new();
+        for function in functions {
+            let mut first: Option<(Span, Ty, Ty)> = None;
+            let mut note = |ty: Ty, span: Span| {
+                if span == Span::default() || first.is_some_and(|(at, ..)| at.start <= span.start) {
+                    return;
+                }
+                if let Some(vector) = *holds.entry(ty).or_insert_with(|| types.holds_widest(ty)) {
+                    first = Some((span, ty, vector));
+                }
+            };
+            // A closure's body holds the closure: where it is made says it.
+            for local in function.locals.iter().filter(|local| !types.is_closure(local.ty)) {
+                note(local.ty, local.span);
+            }
+            super::reach::each_expr(&function.body, &mut |e| {
+                if !matches!(e.kind, hir::ExprKind::Local(_)) || !types.is_closure(e.ty) {
+                    note(e.ty, e.span)
+                }
+            });
+            found.extend(first);
+        }
+        let mut reported = HashSet::new();
+        for (span, ty, vector) in found {
+            if reported.insert(span) {
+                let vector = self.types.display(vector);
+                let what = match self.types.is_closure(ty) {
+                    true => format!("this closure captures a `{vector}`"),
+                    false => format!("`{}` keeps a `{vector}`", self.types.display(ty)),
+                };
+                self.diags.error("E1120", span, crate::simd::kept(&what, &vector));
+            }
+        }
+    }
+}
+
 /// A parameter of an operation: its name, type, mode and default.
 type Param<'s> = (&'s str, Ty, ast::Mode, Option<hir::Expr>);
 

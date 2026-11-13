@@ -60,6 +60,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "invalid-plugin",
         "A plugin's contract holds what cannot cross, or `@plugin.Export` is not on the one function that gives its implementation.",
     ),
+    (
+        "E1120",
+        "vector-kept-in-place",
+        "A `Vector[T]` or `Mask[T]` in a field, an element, an option, a tuple, a channel, a capture or a function's type.",
+    ),
     ("E1201", "refutable-binding-pattern", "A pattern that can fail is used where one that cannot is required."),
     ("E1202", "invalid-pattern", "A pattern's form does not fit the value matched or its place."),
     ("E1203", "unreachable-match-arm", "An arm of `match` is covered by the arms before it."),

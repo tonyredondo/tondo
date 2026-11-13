@@ -7928,6 +7928,14 @@ corre el código. Cada uno tiene su máscara, `Mask128[T]` y las demás, con un
   cuando lo es cada carril, por el `==` de `T`. Se muestran como sus carriles,
   `<1.0, 2.0, 3.0, 4.0>`, y una máscara como `<true, false, true, true>`.
 - `Vector[T]` y `Mask[T]` no se convierten solos a un ancho fijo ni al revés.
+- `Vector[T]` y `Mask[T]` viven solo en locales, parámetros y resultados, y
+  como valor de un resultado `T ! E`: la versión de una función para un
+  procesador con vectores más anchos les da más carriles, y un valor que
+  pasara de una a otra no los tendría todos. En un campo, un elemento, una
+  opción, una tupla, un canal, una captura o el tipo de una función son el
+  error `E1120`, que nombra los anchos fijos y el array de sus carriles; en
+  una función genérica, donde su instancia los guarda. Se muestran, se
+  comparan y se pasan a otra función como cualquier valor.
 - No cruzan a C: uno en la firma de un `extern fn` es `E1703`.
 - `+`, `-` y `*` operan carril a carril entre dos vectores de un tipo, y entre
   un vector y un `T` a cualquier lado, que vale por todos los carriles; `/`
@@ -9197,6 +9205,7 @@ oculten un diagnóstico independiente.
 | `E1117` | `invalid-opaque-result` | Un resultado opaco carece de testigo normal o viola unicidad concreta o bounds publicados. |
 | `E1118` | `invalid-format` | El formato de una interpolación no se lee, o tiene una opción que el tipo del valor no admite (19.6). |
 | `E1119` | `invalid-plugin` | Un contrato de `std.plugin` tiene lo que no puede cruzar, o `@plugin.Export` no está en la única función que da su implementación (14.48 de la librería estándar). |
+| `E1120` | `vector-kept-in-place` | Un `Vector[T]` o un `Mask[T]` en un campo, un elemento, una opción, una tupla, un canal, una captura o el tipo de una función (18.11). |
 
 #### Patrones y control de flujo
 

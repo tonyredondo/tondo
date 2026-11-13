@@ -1,0 +1,59 @@
+// A `Vector[T]` or a `Mask[T]` lives only in locals, parameters and
+// results, as a version of a function for a processor with wider vectors
+// gives it more lanes (18.11): a field, an element, an option, a tuple, a
+// channel, a capture and a function's type are each an error that names
+// the fixed widths. A fallible result holds one, as any result does.
+
+import std.simd
+
+type Sums = {
+    total: simd.Vector[Float32]
+}
+
+fn pair(a: simd.Vector[Float32]): (simd.Vector[Float32], Int) {
+    (a, 1)
+}
+
+fn maybe(a: simd.Vector[Float32]): simd.Vector[Float32]? {
+    a
+}
+
+fn many(a: simd.Vector[Float32]): Int {
+    let all = [a, a]
+    all.length()
+}
+
+fn sent(a: simd.Vector[Float32]) {
+    let (out, _) = channel[simd.Vector[Float32]](1)
+    out.send(a)
+}
+
+fn scaled(a: simd.Vector[Float32]): Float32 {
+    let by = (x: Float32) { (a * x).sum() }
+    by(2.0)
+}
+
+fn twice(a: simd.Vector[Float32]): simd.Vector[Float32] {
+    a + a
+}
+
+fn named(): Bool {
+    let call = twice
+    call(simd.Vector[Float32].zero()).sum() == 0.0
+}
+
+fn checked(a: simd.Mask[Int32]): simd.Mask[Int32] ! String {
+    a
+}
+
+fn main() {
+    _ = checked(simd.Vector[Int32].zero().equal(simd.Vector[Int32].zero()))
+}
+
+// expect-error: E1120 the field `total` is a `simd.Vector[Float32]`, which lives only in locals, parameters and results, as the version of a function for a processor with wider vectors gives it more lanes: keep a `simd.Vector128[Float32]` or a `simd.Vector256[Float32]` here, or its lanes in an array, with `toArray` or `store`
+// expect-error: E1120 `(simd.Vector[Float32], Int)` keeps a `simd.Vector[Float32]`, which lives only in locals, parameters and results, as the version of a function for a processor with wider vectors gives it more lanes: keep a `simd.Vector128[Float32]` or a `simd.Vector256[Float32]` here, or its lanes in an array, with `toArray` or `store`
+// expect-error: E1120 `simd.Vector[Float32]?` keeps a `simd.Vector[Float32]`, which lives only in locals, parameters and results, as the version of a function for a processor with wider vectors gives it more lanes: keep a `simd.Vector128[Float32]` or a `simd.Vector256[Float32]` here, or its lanes in an array, with `toArray` or `store`
+// expect-error: E1120 `Array[simd.Vector[Float32]]` keeps a `simd.Vector[Float32]`, which lives only in locals, parameters and results, as the version of a function for a processor with wider vectors gives it more lanes: keep a `simd.Vector128[Float32]` or a `simd.Vector256[Float32]` here, or its lanes in an array, with `toArray` or `store`
+// expect-error: E1120 `Sender[simd.Vector[Float32]]` keeps a `simd.Vector[Float32]`, which lives only in locals, parameters and results, as the version of a function for a processor with wider vectors gives it more lanes: keep a `simd.Vector128[Float32]` or a `simd.Vector256[Float32]` here, or its lanes in an array, with `toArray` or `store`
+// expect-error: E1120 this closure captures a `simd.Vector[Float32]`, which lives only in locals, parameters and results, as the version of a function for a processor with wider vectors gives it more lanes: keep a `simd.Vector128[Float32]` or a `simd.Vector256[Float32]` here, or its lanes in an array, with `toArray` or `store`
+// expect-error: E1120 `fn(simd.Vector[Float32]): simd.Vector[Float32]` keeps a `simd.Vector[Float32]`, which lives only in locals, parameters and results, as the version of a function for a processor with wider vectors gives it more lanes: keep a `simd.Vector128[Float32]` or a `simd.Vector256[Float32]` here, or its lanes in an array, with `toArray` or `store`

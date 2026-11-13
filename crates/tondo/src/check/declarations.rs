@@ -1043,6 +1043,7 @@ impl<'a> Checker<'a> {
                 self.diags.related(first, format!("`{}` is first declared here", field.name.name));
             }
             let ty = self.resolve_type(&field.ty);
+            self.vector_field(&field.name.name, ty, field.ty.span);
             for annotation in &field.annotations {
                 match (annotation.name.name.as_str(), &annotation.argument) {
                     ("secret", None) => {}

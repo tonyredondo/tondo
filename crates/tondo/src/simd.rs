@@ -59,6 +59,20 @@ pub const LANE_TYPES: &str =
 
 /// Whether a value of `ty` is a vector or a mask wider than 128 bits,
 /// which code for a level with wider vectors keeps in another way.
+/// Why a place, which `what` says, may not keep `vector`, a `Vector[T]`
+/// or a `Mask[T]`, and what to keep instead (`E1120`, language 18.11).
+pub fn kept(what: &str, vector: &str) -> String {
+    let (kind, lanes) = vector.split_once('[').unwrap_or((vector, "T]"));
+    let fixed = |bits: u32| format!("{kind}{bits}[{lanes}");
+    format!(
+        "{what}, which lives only in locals, parameters and results, as the version of a function for a processor \
+         with wider vectors gives it more lanes: keep a `{}` or a `{}` here, or its lanes in an array, with `toArray` \
+         or `store`",
+        fixed(128),
+        fixed(256)
+    )
+}
+
 pub fn wide(types: &Types, ty: Ty) -> bool {
     matches!(*types.kind(types.repr(ty)), TyKind::Vector(width, _) | TyKind::Mask(width, _) if width.bits() > 128)
 }

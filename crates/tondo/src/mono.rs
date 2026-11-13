@@ -54,6 +54,9 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         shown_parts: HashSet::new(),
         runaway: None,
         conversions: Vec::new(),
+        held: None,
+        widest: Vec::new(),
+        holds: HashMap::new(),
         unions: HashMap::new(),
         made: Vec::new(),
         named: functions
@@ -123,6 +126,21 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
             }
             Err(why) => diags.error("E2110", span, format!("`reflect.convert` cannot convert here: {why}")),
         }
+    }
+    // A `Vector[T]` lives in locals, parameters and results (18.11): the
+    // checker saw the rest, and this the instances of generic functions.
+    let mut reported = HashSet::new();
+    for (span, ty, vector) in std::mem::take(&mut mono.widest) {
+        if !reported.insert(span) {
+            continue;
+        }
+        let vector = mono.types.display(vector);
+        let what = match mono.types.is_closure(ty) {
+            true => format!("this closure captures a `{vector}`"),
+            false => format!("`{}` keeps a `{vector}`", mono.types.display(ty)),
+        };
+        let message = crate::simd::kept(&what, &vector);
+        diags.error("E1120", span, message);
     }
     if diags.has_errors() {
         return None;
@@ -246,6 +264,12 @@ struct Mono<'a> {
     /// The calls of `reflect.convert`, from and to which type, checked once
     /// every instance is known.
     conversions: Vec<(crate::source::Span, Ty, Ty)>,
+    /// The first place of the function being made that keeps a vector of
+    /// the widest width where it may not be, with its type and the vector's;
+    /// those of every function; and which types keep one.
+    held: Option<(Span, Ty, Ty)>,
+    widest: Vec<(Span, Ty, Ty)>,
+    holds: HashMap<Ty, Option<Ty>>,
     /// The `Encode` or `Decode` written for a union, by trait, union and
     /// the format's type.
     unions: HashMap<(TraitId, Ty, Vec<Ty>), FnId>,
@@ -318,12 +342,33 @@ impl Mono<'_> {
             let shown: Vec<String> = f.generics.iter().map(|g| self.types.display(map[g])).collect();
             f.name = format!("{}[{}]", f.name, shown.join(", "));
         }
+        // The checker saw what the code writes; here what type arguments make.
+        self.held = None;
+        let instance = !f.generics.is_empty();
         f.generics.clear();
         for local in &mut f.locals {
             local.ty = self.ty(local.ty, map);
+            // A closure's body holds the closure: where it is made says it.
+            if !self.types.is_closure(local.ty) {
+                self.note_held(local.ty, local.span);
+            }
         }
         f.result = self.ty(f.result, map);
         self.block(&mut f.body, map);
+        let held = self.held.take();
+        self.widest.extend(held.filter(|_| instance));
+    }
+
+    /// The first place of the function being made that keeps a `Vector[T]`
+    /// or a `Mask[T]` where it may not be (18.11).
+    fn note_held(&mut self, ty: Ty, span: Span) {
+        if span == Span::default() || self.held.is_some_and(|(at, ..)| at.start <= span.start) {
+            return;
+        }
+        let types = &*self.types;
+        if let Some(vector) = *self.holds.entry(ty).or_insert_with(|| types.holds_widest(ty)) {
+            self.held = Some((span, ty, vector));
+        }
     }
 
     fn block(&mut self, block: &mut Block, map: &HashMap<Ty, Ty>) {
@@ -410,6 +455,9 @@ impl Mono<'_> {
 
     fn expr(&mut self, e: &mut Expr, map: &HashMap<Ty, Ty>) {
         e.ty = self.ty(e.ty, map);
+        if !matches!(e.kind, ExprKind::Local(_)) || !self.types.is_closure(e.ty) {
+            self.note_held(e.ty, e.span);
+        }
         match &mut e.kind {
             ExprKind::Int(_)
             | ExprKind::Float(_)

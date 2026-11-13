@@ -678,7 +678,10 @@ fn main() {
 Lanes are `Int8` to `Int`, `UInt8` to `UInt`, `Byte`, `Float32` and
 `Float`; integer lanes wrap. `simd.Vector128[Int32].of(1, 2, 3, 4)` writes
 each lane of a vector of a fixed width; a `Vector[T]` has no `of`, as it can
-have more lanes in a version for wider vectors: `all` and `load` make one. Comparisons are methods, `less` and the others,
+have more lanes in a version for wider vectors: `all` and `load` make one.
+For the same reason a `Vector[T]` lives only in locals, parameters and
+results: a field, an array, an option or a closure keeps a `Vector128[T]`
+or a `Vector256[T]`, or the lanes in an array (`E1120`). Comparisons are methods, `less` and the others,
 that give a mask; `store(mut into, at: i)` writes the lanes back, and
 `sum`, `minLane` and `maxLane` combine them. `Vector256` and `Vector512`
 work everywhere with the same results. On an x64 with AVX2 a `Vector256`

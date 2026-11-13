@@ -1739,6 +1739,50 @@ impl Types {
         })
     }
 
+    /// Whether a value of this type keeps a `Vector[T]` or a `Mask[T]`
+    /// where it could pass between code built for two widths of it: in a
+    /// field, an element, an option, a tuple, a channel, a capture or a
+    /// function's type. Only a local, a parameter and a result hold one, as
+    /// the value of a fallible result too (18.11).
+    /// Gives the one it keeps.
+    pub fn holds_widest(&self, ty: Ty) -> Option<Ty> {
+        match self.kind(self.repr(ty)) {
+            TyKind::Vector(..) | TyKind::Mask(..) => None,
+            TyKind::Result(ok, err) => self.holds_widest(*ok).or_else(|| self.reaches_widest(*err)),
+            _ => self.reaches_widest(ty),
+        }
+    }
+
+    /// A `Vector[T]` or a `Mask[T]` that is this type or part of it.
+    pub fn reaches_widest(&self, ty: Ty) -> Option<Ty> {
+        let (mut seen, mut pending) = (vec![ty], vec![ty]);
+        while let Some(current) = pending.pop() {
+            let repr = self.repr(current);
+            let parts = match self.kind(repr) {
+                TyKind::Vector(Width::Widest, _) | TyKind::Mask(Width::Widest, _) => return Some(repr),
+                TyKind::Array(t) | TyKind::Deque(t) | TyKind::Set(t) | TyKind::Option(t) | TyKind::Pointer(t) => {
+                    vec![*t]
+                }
+                TyKind::Handle(_, t) => vec![*t],
+                TyKind::Map(k, v) | TyKind::Result(k, v) => vec![*k, *v],
+                TyKind::Fn(params, result, ..) => params.iter().copied().chain([*result]).collect(),
+                TyKind::Union(items) | TyKind::Tuple(items) | TyKind::Opaque(_, items) => items.clone(),
+                _ => match (self.components(repr), self.variants(repr)) {
+                    (Some(items), _) => items,
+                    (None, Some(variants)) => variants.concat(),
+                    (None, None) => Vec::new(),
+                },
+            };
+            for part in parts {
+                if !seen.contains(&part) {
+                    seen.push(part);
+                    pending.push(part);
+                }
+            }
+        }
+        None
+    }
+
     /// The types a value of this type can refer to, itself included.
     fn reach(&self, ty: Ty) -> Vec<Ty> {
         let (mut seen, mut pending) = (vec![ty], vec![ty]);

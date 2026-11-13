@@ -289,6 +289,7 @@ impl<'a> Checker<'a> {
         }
 
         self.check_features(&mut functions, main, &closures);
+        self.vector_places(&functions);
         if module.c_library && self.c_functions.is_empty() {
             let message = "the library publishes no function: C calls a `pub extern fn name(...) { ... }` of the package by its name";
             self.diags.error_without_span("E1807", message);

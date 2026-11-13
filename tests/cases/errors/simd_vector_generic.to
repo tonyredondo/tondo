@@ -1,0 +1,16 @@
+// A generic function that keeps its `T` in an element, called with a
+// `Vector[T]`: the instance keeps the vector where it may not be (18.11),
+// which the error says where the function does it.
+
+import std.console
+import std.simd
+
+fn count[T](value: T): Int {
+    [value, value].length()
+}
+
+fn main() {
+    console.println("{count(simd.Vector[Float32].zero())}")
+}
+
+// expect-error: E1120 `Array[simd.Vector[Float32]]` keeps a `simd.Vector[Float32]`, which lives only in locals, parameters and results, as the version of a function for a processor with wider vectors gives it more lanes: keep a `simd.Vector128[Float32]` or a `simd.Vector256[Float32]` here, or its lanes in an array, with `toArray` or `store`

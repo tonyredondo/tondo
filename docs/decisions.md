@@ -6743,3 +6743,16 @@ record or enum is such a value when one of its parts is. Values that only hold m
 records of numbers, the commonest ones, keep the batches, which make taking them out cheap: the
 line is drawn at what the program sees go, not at whether a value has anything to release, which
 every text has.
+
+## `Vector[T]` lives in locals, parameters and results
+
+`Vector[T]` is to have as many lanes as the version of a function it is in can compute at once: 4
+`Float32` in the body for the baseline and 8 in the version for `x86-64-v3`. A value kept where code
+of the other version can read it would have half its lanes there: in a field, an array, an option,
+a tuple, a channel, a closure's captures or a function's type. Rather than keep `Vector[T]` at 128
+bits in every program where one could cross, or in all of them, a `Vector[T]` or a `Mask[T]` lives
+only in locals, parameters and results, as the value of a fallible result too, and anywhere else
+is `E1120`, which names `Vector128[T]`, `Vector256[T]` and an array of the lanes. The checker sees
+what the code writes, and monomorphization what a generic function's instance keeps, where the
+generic function keeps it. Showing one, `==` and passing one to a function stay, as the compiler
+makes them in each version.
