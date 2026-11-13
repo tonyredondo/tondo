@@ -410,8 +410,12 @@ fn round(path: String): Int64 ! ffi.LibraryError {
 
 fn main(): !ffi.LibraryError {
     let (path, noLoad) = (env.args()[0], if env.args()[1] == "16" { 16i32 } else { 4i32 })
+    // The program's output and the library's are two runtimes' own: each
+    // line goes out before the library runs again.
     console.println("listening {round(path)? > 0}, loaded {loaded(path, noLoad)?}")
+    _ = console.flush()
     console.println("listening {round(path)? > 0}, loaded {loaded(path, noLoad)?}")
+    _ = console.flush()
     let ends = ffi.Library.open(path)?
     let twice = unsafe { ends.function[extern fn(Int64): Int64]("ends_twice")? }
     console.println("{unsafe { twice(5) }}")
