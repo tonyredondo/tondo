@@ -87,6 +87,16 @@ pub extern "C" fn tondo_rt_library_stop() {
         fn __cxa_finalize(image: *mut u8);
     }
     unsafe { __cxa_finalize(crate::image()) };
+    // And what C registered under the image's own handle, as mimalloc's
+    // handler of `fork`, which C's start files remove as the image goes,
+    // and an image that Tondo linked has none of.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        unsafe extern "C" {
+            static __dso_handle: u8;
+        }
+        unsafe { __cxa_finalize(&raw const __dso_handle as *mut u8) };
+    }
     STARTED.store(false, Ordering::Release);
     let held = std::mem::take(&mut state.held);
     drop(state);
