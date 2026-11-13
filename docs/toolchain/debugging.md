@@ -27,7 +27,7 @@ the program waits before main: set breakpoints, then `continue`
 breakpoint 1 at src/main.to:11
 > continue
 task 1 stopped at src/main.to:11 in count (breakpoint 1)
-   11 |         counts[word] = (counts[word] ?? 0) + 1
+   11 |         counts[word, default: 0] += 1
 > locals
 text: String = "To be, or not to be: that is the question.\n"
 counts: Map[String, Int] = ["to": 1, "be": 1, "or": 1]
@@ -140,39 +140,42 @@ task 1 stopped at src/main.to:13 in count (breakpoint 1)
 counts: Map[String, Int] = ["to": 2, "be": 2, "or": 1, "not": 1, "that": 1, "is": 1, "the": 1, "question": 1]
 > why counts
 task 1 stopped at src/main.to:11 in count (`counts` became ["to": 2, "be": 2, "or": 1, "not": 1, "that": 1, "is": 1, "the": 1, "question": 1] on this line)
-  `counts` was ["to": 2, "be": 2, "or": 1, "not": 1, "that": 1, "is": 1, "the": 1], from src/main.to:11 in count (probe 1074)
-  `word` was "question", from src/main.to:10 in count (probe 1358)
-   11 |         counts[word] = (counts[word] ?? 0) + 1
+  `counts` was ["to": 2, "be": 2, "or": 1, "not": 1, "that": 1, "is": 1, "the": 1], from src/main.to:11 in count (probe 1059)
+  `word` was "question", from textutil/src/clean/clean.to:3 in closure in textutil.clean.word (probe 1320)
+   11 |         counts[word, default: 0] += 1
 ```
 
 `why counts` went back to the line that gave `counts` its value, and its
-causes say where each binding that line read got its own: asking `why` of
-one of them goes a step further back. The program is as it was at that
-moment, so `locals` and `print` work there:
+causes say where each binding that line read got its own. `counts` got it
+on this same line, a turn of the loop before. `word` came from a call, so
+its cause is the line that computed it, inside the function that was
+called. Asking `why` of one of them goes a step further back. The program
+is as it was at that moment, so `locals` and `print` work there, and `back`
+goes on from it:
 
 ```text
-> back 2
-task 1 stopped at src/main.to:11 in count (2 lines back)
-   11 |         counts[word] = (counts[word] ?? 0) + 1
 > locals
 text: String = "To be, or not to be: that is the question.\n"
 counts: Map[String, Int] = ["to": 2, "be": 2, "or": 1, "not": 1, "that": 1, "is": 1, "the": 1]
 each: String = "question."
 word: String = "question"
 > timeline word
-"to"  at src/main.to:10 in count (probe 108)
-"be"  at src/main.to:10 in count (probe 230)
-"or"  at src/main.to:10 in count (probe 331)
-"not"  at src/main.to:10 in count (probe 460)
-"to"  at src/main.to:10 in count (probe 561)
-"be"  at src/main.to:10 in count (probe 682)
-"that"  at src/main.to:10 in count (probe 838)
-"is"  at src/main.to:10 in count (probe 939)
-"the"  at src/main.to:10 in count (probe 1068)
-"question"  at src/main.to:10 in count (probe 1358)
+"to"  at textutil/src/clean/clean.to:3 in closure in textutil.clean.word (probe 74)
+"be"  at textutil/src/clean/clean.to:3 in closure in textutil.clean.word (probe 202)
+"or"  at textutil/src/clean/clean.to:3 in closure in textutil.clean.word (probe 295)
+"not"  at textutil/src/clean/clean.to:3 in closure in textutil.clean.word (probe 423)
+"to"  at textutil/src/clean/clean.to:3 in closure in textutil.clean.word (probe 523)
+"be"  at textutil/src/clean/clean.to:3 in closure in textutil.clean.word (probe 649)
+"that"  at textutil/src/clean/clean.to:3 in closure in textutil.clean.word (probe 796)
+"is"  at textutil/src/clean/clean.to:3 in closure in textutil.clean.word (probe 896)
+"the"  at textutil/src/clean/clean.to:3 in closure in textutil.clean.word (probe 1024)
+"question"  at textutil/src/clean/clean.to:3 in closure in textutil.clean.word (probe 1320)
+> back 1
+task 1 stopped at src/main.to:10 in count (1 lines back)
+   10 |         let word = clean.word(each)
 > first counts.length() > 2
 task 1 stopped at src/main.to:11 in count (the first time `counts.length() > 2` holds, after this line)
-   11 |         counts[word] = (counts[word] ?? 0) + 1
+   11 |         counts[word, default: 0] += 1
 ```
 
 | | |

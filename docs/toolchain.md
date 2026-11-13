@@ -48,7 +48,7 @@ pub fn count(text: String): Map[String, Int] {
         if word.isEmpty() {
             continue
         }
-        counts[word] = (counts[word] ?? 0) + 1
+        counts[word, default: 0] += 1
     }
     counts
 }
@@ -114,7 +114,7 @@ import std.testing
 fn count(text: String): Map[String, Int] {
     var counts: Map[String, Int] = [:]
     for word in text.split(" ") {
-        counts[word] = (counts[word] ?? 0) + 1
+        counts[word, default: 0] += 1
     }
     counts
 }
@@ -149,8 +149,8 @@ test words::unit::words::countsEachWord ... ok
 ok. 2 passed; 0 failed; 0 skipped; 0 blocked; 0.00s
 
 coverage:
-  src/main.to  lines 83.3% (5/6)       functions 50.0% (1/2)     branches 100.0% (4/4)
-  total        lines 83.3% (5/6)       functions 50.0% (1/2)     branches 100.0% (4/4)
+  src/main.to  lines 83.3% (5/6)       functions 50.0% (1/2)     branches 100.0% (2/2)
+  total        lines 83.3% (5/6)       functions 50.0% (1/2)     branches 100.0% (2/2)
 ```
 
 A test that ends with tasks still running fails, and says where each one
@@ -329,7 +329,7 @@ do as well as on lines: a spawn, a send, a lock, a request.
 breakpoint 1 at src/main.to:10
 (tondo) continue
 task 1 stopped at src/main.to:10 in count (breakpoint 1)
-   10 |         counts[word] = (counts[word] ?? 0) + 1
+   10 |         counts[word, default: 0] += 1
 (tondo) locals
 text: String = "to be or not to be"
 counts: Map[String, Int] = ["to": 1, "be": 1]
@@ -349,9 +349,9 @@ task 1 stopped at src/main.to:12 in count (breakpoint 1)
    12 |     counts
 (tondo) why counts
 task 1 stopped at src/main.to:10 in count (`counts` became ["to": 2, "be": 2, "or": 1, "not": 1] on this line)
-  `counts` was ["to": 2, "be": 1, "or": 1, "not": 1], from src/main.to:10 in count (probe 64)
-  `word` was "be", from src/main.to:6 in count (probe 67)
-   10 |         counts[word] = (counts[word] ?? 0) + 1
+  `counts` was ["to": 2, "be": 1, "or": 1, "not": 1], from src/main.to:10 in count (probe 56)
+  `word` was "be", from src/main.to:6 in count (probe 59)
+   10 |         counts[word, default: 0] += 1
 ```
 
 On Linux, `tondo test --record` keeps the runs of the tests that fail, which
@@ -463,10 +463,10 @@ tondo graph --mermaid                the modules and what each imports
 ```
 
 ```text
-src/main.to:5:36: `[:]` is made on the heap: a map (in count)
-src/main.to:6:17: `text.split(" ")` stays a call of `String.split`: its body costs 74, more than the 30 inlining takes (in count)
-src/main.to:10:24: `(counts[word] ?? 0) + 1` keeps its overflow check, in a loop (in count)
-src/main.to:16:23: `count("to be or not to be")` stays a call of `count`: its body costs 35, more than the 30 inlining takes (in main)
+src/main.to:5:36: `[:]` is made on the heap: a map (in count, main)
+src/main.to:6:17: `text.split(" ")` stays a call of `String.split`: its body costs 74, more than the 30 inlining takes (in count, main)
+src/main.to:10:9: `counts[word, default: 0] += 1` keeps its overflow check, in a loop (in count, main)
+src/main.to:16:23: `count("to be or not to be")` is inlined: the body of `count` is copied here (in main)
 ```
 
 Each line says what was decided and why, so the reason a loop is slow or a
