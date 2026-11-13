@@ -290,6 +290,7 @@ library, which makes it the content of a container image from `scratch`.
 | `--strip` | without its symbol table |
 | `--debug` | with what the debugger needs |
 | `--target aarch64-linux` | for another architecture |
+| `--cpu x86-64-v3` | for a level of processor above the baseline |
 | `--link <library>` | a C library to link, for `extern fn` |
 | `--library` | a library for C instead: `lib<name>.so`, `lib<name>.a` and a header |
 
@@ -300,6 +301,12 @@ Building for another architecture needs that architecture's runtime. A
 $ tondo build --target aarch64-linux
 tondo: building for aarch64-linux needs its runtime, which this tondo does not carry: write it with `tondo target pack <dir>` of a tondo for aarch64-linux, and set TONDO_TARGETS to <dir>
 ```
+
+A build is for a level of processor, and for the same one wherever it is
+made: `baseline`, which is x86-64-v2 or ARMv8.0. `--cpu x86-64-v3`, or `cpu`
+in the `[build]` of `tondo.toml`, lets the code use more, and the program
+then checks its processor when it starts
+([Performance](performance.md#the-processor-a-build-is-for)).
 
 Tondo links its own executables, so a build needs no C compiler and no
 linker on the machine. The [`textkit`](../../examples/textkit) example

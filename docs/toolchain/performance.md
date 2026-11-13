@@ -11,6 +11,7 @@ heap and why, and which checks a loop keeps. Everything shown was run.
 - [What the compiler made: optimizations](#what-the-compiler-made-optimizations)
 - [The machine code: asm](#the-machine-code-asm)
 - [Against another version](#against-another-version)
+- [The processor a build is for](#the-processor-a-build-is-for)
 - [Memory](#memory)
 - [What not to be fooled by](#what-not-to-be-fooled-by)
 
@@ -212,7 +213,7 @@ line beside it:
 
 ```text
 $ tondo asm stats.to mean
-mean (1192 bytes, 12 of them constants)
+mean (1224 bytes, 12 of them constants)
       0  push rbp
       1  mov rbp, rsp
       4  sub rsp, 0x90
@@ -233,7 +234,7 @@ stats.to:10  if reading.sensor == sensor {
      ac  jz $+0x19
      b2  movdqu xmm0, xmmword [rsp + 0x40]
 stats.to:11  total += reading.value
-     b8  vaddsd xmm0, xmm0, qword [r14 + 0x8]
+     b8  addsd xmm0, qword [r14 + 0x8]
      be  movdqu xmmword [rsp + 0x40], xmm0
 ```
 
@@ -270,6 +271,135 @@ do more work.
 `--compiler <tondo|rev>` in the same three commands compares what two
 versions of Tondo itself make of the same program, which is how a change to
 the compiler is judged.
+
+## The processor a build is for
+
+A build is for a level of processor, which says which instructions its code
+may use. The default is `baseline`, x86-64-v2 on x64 and ARMv8.0 on arm64,
+whichever machine builds, so an executable made on a new machine runs on an
+older one. `--cpu` asks for another level in `build`, `run` and `test`, and
+so does `cpu` in the `[build]` of the program's `tondo.toml`:
+
+| Level | For | Its code may use |
+| --- | --- | --- |
+| `baseline` | x64 | SSE3, SSSE3, SSE4.1, SSE4.2, POPCNT and CMPXCHG16B, which is x86-64-v2 |
+| `x86-64-v3` | x64 | those, and AVX, AVX2, FMA, BMI1, BMI2 and LZCNT |
+| `x86-64-v4` | x64 | those, and AVX-512 F, DQ and VL |
+| `baseline` | arm64 | ARMv8.0 with NEON, which every 64-bit ARM has |
+| `native` | both | what the processor of the machine that builds has |
+
+What a level gains is measured as anything else is: the benchmarks at one
+level, kept, and again at the other. This function asks for the leading
+zeros of each word, which x86-64-v3 has an instruction for:
+
+```tondo
+import std.console
+
+/// How many bits the largest of the words needs.
+pub fn widest(words: Array[Int]): Int {
+    var most = 0
+    for word in words {
+        most = most.max(64 - word.leadingZeros())
+    }
+    most
+}
+
+fn main() {
+    console.println("{widest([5, 300])}")
+}
+```
+
+```text output
+9
+```
+
+```text
+$ tondo test --bench --save-baseline level
+test sizes::unit::sizes::widestOf10000 ... ok
+  widest     12.20 µs/op  ±0.1%  0 allocs/op  0 B/op  190.1k ins/op
+$ tondo test --bench --cpu x86-64-v3 --baseline level
+test sizes::unit::sizes::widestOf10000 ... ok
+  widest     6.279 µs/op  ±0.8%  0 allocs/op  0 B/op  150.1k ins/op  -48.5% faster, -21.0% ins, cycles -49.8%
+```
+
+`tondo asm widest` shows why. At `baseline` the line is a `bsr` and what
+makes it right for a word of zero:
+
+```text
+src/main.to:7  most = most.max(64 - word.leadingZeros())
+        ; `64 - word.leadingZeros()` keeps its overflow check, in a loop
+     2f  nop dword [rax + rax * 1]
+     34  mov esi, 0x40
+     39  mov r10, -0x1
+     40  bsr r9, r8
+     44  cmovz r9, r10
+     48  mov r8d, 0x3f
+     4e  sub r8, r9
+     51  sub rsi, r8
+     54  jo $+0x2f
+```
+
+With `cpu = "x86-64-v3"` in `[build]`, which `tondo asm` reads, it is one
+`lzcnt`:
+
+```text
+src/main.to:7  most = most.max(64 - word.leadingZeros())
+        ; `64 - word.leadingZeros()` keeps its overflow check, in a loop
+     2f  nop dword [rax + rax * 1]
+     34  mov r8d, 0x40
+     3a  lzcnt rsi, rsi
+     3f  sub r8, rsi
+     42  jo $+0x2f
+```
+
+Code that uses nothing the level adds is the same at both, and that is
+most code: [`bench/README.md`](../../bench/README.md) has every benchmark
+of Tondo at the two levels.
+
+A program checks its processor when it starts, before any of its own code
+runs. On one that lacks what the level needs it says so, and which build
+runs there, where it would otherwise stop at the first instruction the
+processor does not have:
+
+```text
+$ tondo build --cpu x86-64-v4
+$ ./sizes
+fatal: this program was built for x86-64-v4 and this processor lacks AVX-512F, AVX-512DQ and AVX-512VL: build it with --cpu baseline
+$ echo $?
+101
+```
+
+`env.build().cpu` gives the level a program was built for, and
+[`std.cpu`](../std/cpu.md) what its processor has beyond it:
+
+```tondo
+import std.console
+import std.cpu
+import std.env
+
+fn main() {
+    console.println("built for {env.build().cpu}")
+    if cpu.has(cpu.Feature.Avx2) {
+        console.println("this processor has AVX2")
+    } else {
+        console.println("this processor has no AVX2")
+    }
+}
+```
+
+Built with no option, on the machine of this page:
+
+```text
+built for baseline
+this processor has AVX2
+```
+
+With the variant written in the call, the compiler answers `cpu.has` when
+it can: `true` for a feature of the build's level, and `false` for one of
+the other architecture. Only the way of the `if` that runs is compiled
+then: built with `--cpu x86-64-v3`, the program above has neither the test
+nor the second message in it. Any other feature is read from what the
+program found when it started, and `cpu.features()` gives all of them.
 
 ## Memory
 

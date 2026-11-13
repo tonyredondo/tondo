@@ -202,6 +202,9 @@ fixtures = { path = "../fixtures" }
 
 [native]
 libraries = ["sqlite3"]
+
+[build]
+cpu = "x86-64-v3"
 ```
 
 | Section | Says |
@@ -210,6 +213,7 @@ libraries = ["sqlite3"]
 | `[dependencies]` | the packages it uses, each under the name it is imported by |
 | `[dev-dependencies]` | those only its tests use |
 | `[native]` | the C libraries its `extern fn`s link ([Unsafe and C](18-unsafe.md)) |
+| `[build]` | how the program is built: `cpu`, the level of processor it is for ([Performance](../toolchain/performance.md#the-processor-a-build-is-for)). Only the program's own package says it: a dependency's is not read |
 | `[derive]`, `[generators.x]` | programs that write code when it compiles ([Metaprogramming](17-meta.md)) |
 | `[source]` | how to link to a line of its sources, on a host of its own |
 

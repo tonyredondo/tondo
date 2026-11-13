@@ -97,6 +97,7 @@ tondo script.to a b                 the same for a script
 tondo build --output app            a native executable
 tondo build --static --strip        one with no dynamic libraries, without its symbols
 tondo build --target aarch64-linux  for another architecture, from this machine
+tondo build --cpu x86-64-v3         for processors with AVX2; x86-64-v2 or ARMv8.0 otherwise
 tondo build --library               a library for C: lib<name>.so, lib<name>.a and a header
 tondo bind lib.h --library z        the declarations of a C header, to call it
 ```
