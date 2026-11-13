@@ -425,7 +425,11 @@ fn vectors_at_the_level_of_avx2() {
     };
     #[cfg(not(target_arch = "x86_64"))]
     let here = false;
-    if !here {
+    // It builds in its own modes, which a variable of another mode would
+    // give twice.
+    let modes =
+        ["TONDO_CASES_STATIC", "TONDO_CASES_DEBUG", "TONDO_CASES_LIVE", "TONDO_CASES_REPLAY", "TONDO_CASES_CPU"];
+    if !here || modes.iter().any(|mode| std::env::var_os(mode).is_some()) {
         return;
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/cases/run");
