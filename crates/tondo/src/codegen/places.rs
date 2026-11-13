@@ -32,11 +32,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         };
         let mut ty = self.body.locals[place.local.0 as usize];
         for &proj in &place.path {
-            if let Proj::Index(index, _) = proj
+            if let Proj::Index(index, _) | Proj::InBounds(index) = proj
                 && matches!(self.e.cg.types().kind(self.e.cg.types().repr(ty)), TyKind::Map(..) | TyKind::Set(_))
             {
-                // Iteration over a map or set: the entry at a valid position,
-                // in storage of its own when it changes (13.3).
+                // Iteration over a map or set, or an entry its key found: the
+                // entry at a valid position, in storage of its own when it
+                // changes (13.3).
                 let map = match base {
                     Some(address) => {
                         if write {

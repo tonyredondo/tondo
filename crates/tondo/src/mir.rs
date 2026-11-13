@@ -23,8 +23,8 @@ pub enum Proj {
     /// An array element at the index held by the local; out-of-bounds
     /// accesses panic at the span.
     Index(Local, Span),
-    /// An array element at an index that the loop it is read in keeps
-    /// within bounds: `xs[i]` in `for i in 0..xs.length()`.
+    /// An element at an index known to be within bounds: `xs[i]` in
+    /// `for i in 0..xs.length()`, or the entry a map's key found.
     InBounds(Local),
     /// The value a `Ref[T]` identifies, which is only read.
     Deref,
@@ -306,9 +306,10 @@ pub enum Rvalue {
     Binary(BinOp, Operand, Operand),
     /// Unchecked `+ 1`, used by range iteration after its bound check.
     Increment(Operand),
-    /// A sum, difference or product of `Int`s that `prove` showed cannot
-    /// overflow, without the check; or a quotient or remainder of one it
-    /// showed is not negative by a power of two, without signs.
+    /// A sum, difference or product of `Int`s that cannot overflow, as
+    /// `prove` shows or a length less one is, without the check; or a
+    /// quotient or remainder of one `prove` showed is not negative by a
+    /// power of two, without signs.
     Exact(BinOp, Operand, Operand),
     Call(Callee, Vec<Operand>),
     /// A named function as a `fn(...)` value: a static object.

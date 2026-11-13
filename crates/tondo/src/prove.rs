@@ -37,6 +37,7 @@ fn kept(body: &mut Body, types: &Types) {
     use crate::ast::BinOp;
     let tight = crate::mir::inner_loops(&body.blocks, true);
     let mut remarks: Vec<(Span, &'static str, &'static str)> = Vec::new();
+    let locals = &body.locals;
     for (index, block) in body.blocks.iter_mut().enumerate() {
         let looping = tight.get(index).copied().unwrap_or(false);
         for statement in &mut block.stmts {
@@ -49,10 +50,9 @@ fn kept(body: &mut Body, types: &Types) {
             }
             let Statement::Assign(place, rvalue, span) = statement else { continue };
             let Rvalue::Binary(op @ (BinOp::Add | BinOp::Sub | BinOp::Mul), a, b) = &**rvalue else { continue };
-            let Some(int) = place.path.is_empty().then(|| types.as_int(body.locals[place.local.0 as usize])).flatten()
-            else {
-                continue;
-            };
+            // Of a local, a field or a map's entry alike.
+            let ty = place.path.iter().fold(locals[place.local.0 as usize], |ty, &proj| project(types, ty, proj));
+            let Some(int) = types.as_int(ty) else { continue };
             let constant = match (a, b) {
                 (_, Operand::Const(Const::Int(c, _))) | (Operand::Const(Const::Int(c, _)), _) => Some(*c),
                 _ => None,

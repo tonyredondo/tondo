@@ -2160,12 +2160,15 @@ impl Builder<'_> {
             let insert = Rvalue::Mutate(hir::Mutation::Insert, map.clone(), vec![key, value], retain, span);
             b.temp(replaced, insert, span);
             let length = b.temp(Ty::INT, Rvalue::Length(Operand::Copy(map.clone())), span);
-            let last = Rvalue::Binary(BinOp::Sub, length, Operand::Const(Const::Int(1, Ty::INT)));
+            // A length less one cannot overflow.
+            let last = Rvalue::Exact(BinOp::Sub, length, Operand::Const(Const::Int(1, Ty::INT)));
             b.assign(Place::local(position), last, span);
         });
         self.goto(done);
         self.switch_to(done);
-        map.index(position, span).field(1)
+        // Within bounds: where the key was found, or the last entry, the
+        // one just added.
+        map.in_bounds(position).field(1)
     }
 
     fn loop_body(&mut self, body: &hir::Block, break_to: BlockId, continue_to: BlockId) {
