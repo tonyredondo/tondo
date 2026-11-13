@@ -353,8 +353,9 @@ pub type Vector256[T]
 ```
 
 A vector of 256 bits, with the functions and methods of `Vector128` at its
-width, and `joined`, `lower` and `upper`. It is computed on halves of 128
-bits until the code generator makes vectors of 256 bits.
+width, and `joined`, `lower` and `upper`. Code built for an x64 level with
+AVX2, as `--cpu x86-64-v3`, does it with the processor's instructions of
+256 bits; elsewhere it is computed on halves of 128 bits.
 
 ```tondo
 import std.console
@@ -410,9 +411,10 @@ console.println("{simd.Vector512[Byte].lanes()}")
 pub type Vector[T]
 ```
 
-The widest vector that is accelerated where the code runs, 128 bits until
-wider ones are, with the functions and methods of `Vector128`. Its result
-can differ by its width, as `sum` groups the lanes by it.
+The widest vector that is accelerated where the code runs, with the
+functions and methods of `Vector128`: 128 bits until a function has
+versions for each level of processor. Its result can differ by its
+width, as `sum` groups the lanes by it.
 
 ```tondo
 import std.console

@@ -31,6 +31,12 @@ impl<R: AsReg> Xmm<R> {
         self.0.to_string(None)
     }
 
+    /// Tondo: return the name of the register's 256 bits, `%ymm0` for
+    /// `%xmm0`.
+    pub fn to_string_ymm(&self) -> String {
+        self.0.to_string(None).replacen("%xmm", "%ymm", 1)
+    }
+
     /// Emit this register as the `r/m` field of a ModR/M byte.
     pub(crate) fn encode_modrm(&self, sink: &mut impl CodeSink, enc_reg: u8) {
         sink.put1(encode_modrm(0b11, enc_reg & 0b111, self.enc() & 0b111));

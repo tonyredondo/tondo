@@ -16,6 +16,10 @@ pub struct EmitState {
     /// A copy of the frame layout, used during the emission of `Inst::ReturnCallKnown` and
     /// `Inst::ReturnCallUnknown` instructions and exception callsites.
     pub frame_layout: FrameLayout,
+
+    /// Tondo: whether the function has a vector of 256 bits, and so ends
+    /// the upper halves' state before its calls and its returns.
+    pub wide_vectors: bool,
 }
 
 impl MachInstEmitState<Inst> for EmitState {
@@ -24,6 +28,7 @@ impl MachInstEmitState<Inst> for EmitState {
             user_stack_map: None,
             ctrl_plane,
             frame_layout: abi.frame_layout().clone(),
+            wide_vectors: abi.wide_vectors(),
         }
     }
 

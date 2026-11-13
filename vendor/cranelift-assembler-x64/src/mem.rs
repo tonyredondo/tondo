@@ -381,6 +381,22 @@ impl<R: AsReg, M: AsReg> XmmMem<R, M> {
         }
     }
 
+    /// Tondo: pretty-print the operand of 256 bits, a register as `%ymm0`.
+    pub fn to_string_ymm(&self) -> String {
+        match self {
+            XmmMem::Xmm(xmm) => xmm.to_string(None).replacen("%xmm", "%ymm", 1),
+            XmmMem::Mem(amode) => amode.to_string(),
+        }
+    }
+
+    /// Tondo: the same in XED's dialect.
+    pub fn to_string_ymm_xed(&self) -> String {
+        match self {
+            XmmMem::Xmm(xmm) => xmm.to_string(None).replacen("%xmm", "%ymm", 1),
+            XmmMem::Mem(amode) => alloc::format!("{amode:#}"),
+        }
+    }
+
     /// Return the [`RexPrefix`] for each variant of this [`XmmMem`].
     #[must_use]
     pub(crate) fn as_rex_prefix(&self, enc_reg: u8, has_w_bit: bool, uses_8bit: bool) -> RexPrefix {

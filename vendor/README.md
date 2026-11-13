@@ -68,6 +68,15 @@ instructions, `TondoRRR`, `TondoRRMod`, `TondoRR` and `Isb`, in
 `src/isa/aarch64/inst.isle` and `inst/`, with their encodings from the
 Arm Architecture Reference Manual, as `llvm-mc` gives them too.
 
+And the vectors of 256 bits on x86-64 with AVX2, which `std.simd` makes
+and Cranelift does not: their VEX.256 instructions, with operands `ymm1`
+to `ymm3`, `ymm_m256` and `m256`, in `src/instructions/wide.rs` of the
+assembler's meta crate; the lowering of each operation in
+`src/isa/x64/wide.isle`, with the type `XmmMem256`; their loads, stores and
+moves in `src/isa/x64/inst/mod.rs`; and in `src/machinst/abi.rs` and the
+x64 emission, marked `Tondo:`, the whole spills of a function that has
+one and its `vzeroupper` before calls and returns.
+
 This copy is where an optimization that Tondo's code needs and Cranelift
 lacks is written, as a rule marked `Tondo:`. To move to a newer Cranelift:
 copy the published crates here, drop `src/isa/riscv64`, `src/isa/s390x` and

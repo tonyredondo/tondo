@@ -609,6 +609,12 @@ impl ABIMachineSpec for X64ABIMachineSpec {
         smallvec![Inst::External { inst }]
     }
 
+    fn gen_wide_vectors_end() -> SmallInstVec<Self::I> {
+        smallvec![Inst::External {
+            inst: asm::inst::vzeroupper_zo::new().into()
+        }]
+    }
+
     fn gen_probestack(insts: &mut SmallInstVec<Self::I>, frame_size: u32) {
         insts.push(Inst::imm(
             OperandSize::Size32,

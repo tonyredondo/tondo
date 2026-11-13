@@ -133,7 +133,7 @@ impl<'a> Checker<'a> {
                 }
                 return match method.name.as_str() {
                     "lanes" => Self::mk(hir::ExprKind::Int(count as i128), Ty::INT, span),
-                    _ => Self::mk(hir::ExprKind::Bool(own.width.bits() == 128), Ty::BOOL, span),
+                    _ => Self::simd_call(SimdOp::Accelerated(own.width), Vec::new(), Ty::BOOL, span),
                 };
             }
             "zero" => (SimdOp::Zero, Vec::new(), owner),

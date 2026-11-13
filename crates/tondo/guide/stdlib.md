@@ -678,7 +678,10 @@ fn main() {
 Lanes are `Int8` to `Int`, `UInt8` to `UInt`, `Byte`, `Float32` and
 `Float`; integer lanes wrap. Comparisons are methods, `less` and the others,
 that give a mask; `store(mut into, at: i)` writes the lanes back, and
-`sum`, `minLane` and `maxLane` combine them.
+`sum`, `minLane` and `maxLane` combine them. `Vector256` and `Vector512`
+work everywhere with the same results; built for an x64 level with AVX2,
+as `--cpu x86-64-v3`, a `Vector256` uses the processor's instructions of
+256 bits, which `simd.Vector256[T].accelerated()` tells.
 
 ## Time, logging and CSV
 

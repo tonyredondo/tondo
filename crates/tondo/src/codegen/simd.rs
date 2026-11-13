@@ -1,6 +1,7 @@
 //! The operations of `std.simd` (standard library 14.46): on a vector of
 //! 128 bits, the generator's instruction for each lane; on a wider one, the
-//! same on each of its parts of 128 bits, which it keeps in memory.
+//! same on each of its parts, which it keeps in memory: parts of 256 bits
+//! where the processor has AVX2, of 128 bits elsewhere.
 
 use super::*;
 use crate::simd::{Lanes, SimdOp};
@@ -8,24 +9,36 @@ use crate::types::Width;
 use cranelift_codegen::ir::Endianness;
 
 /// What a vector or a mask type is: its width, its lanes' type and kind,
-/// and whether it is a mask.
+/// whether it is a mask, and the bits of the parts it is computed by.
 #[derive(Copy, Clone)]
 struct Shape {
     width: Width,
     lane: Ty,
     lanes: Lanes,
     mask: bool,
+    part: u32,
 }
 
 impl Shape {
-    /// Its parts of 128 bits.
+    /// Its parts.
     fn parts(self) -> usize {
-        (self.width.bits() / 128) as usize
+        (self.width.bits() / self.part) as usize
+    }
+
+    /// The bytes of a part.
+    fn part_bytes(self) -> i32 {
+        (self.part / 8) as i32
     }
 
     /// The lanes in each part.
     fn per_part(self) -> u32 {
-        128 / self.lanes.bits()
+        self.part / self.lanes.bits()
+    }
+
+    /// The same, by parts of 128 bits: for what moves lanes between parts,
+    /// or takes them one at a time, in memory.
+    fn narrow(self) -> Shape {
+        Shape { part: 128, ..self }
     }
 
     fn count(self) -> u32 {
@@ -47,13 +60,28 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             _ => unreachable!("not a vector: {}", types.display(ty)),
         };
         let lanes = Lanes::of(types, lane).expect("the checker allows only these");
-        Shape { width, lane, lanes, mask }
+        let part = if width.bits() >= 256 && self.accelerated(Width::W256) { 256 } else { 128 };
+        Shape { width, lane, lanes, mask, part }
+    }
+
+    /// Whether the vectors of `width` are done with instructions of that
+    /// width in this function's code: 128 bits on x64 and arm64, and 256
+    /// bits on an x64 with AVX2 (rules 16 to 18 of the standard library's
+    /// 14.46).
+    fn accelerated(&self, width: Width) -> bool {
+        let isa = self.e.cg.isa();
+        let has = |name: &str| isa.isa_flags().iter().any(|flag| flag.name == name && flag.as_bool() == Some(true));
+        match width.bits() {
+            128 => true,
+            256 => isa.name() == "x64" && has("has_avx") && has("has_avx2"),
+            _ => false,
+        }
     }
 
     /// The generator's type of a part of a vector of `shape`: a mask's
     /// lanes are integers of the lanes' width.
     fn part_type(&mut self, shape: Shape) -> ir::Type {
-        let vector = vector_type(self.e.cg.types(), shape.lane);
+        let vector = vector_type(self.e.cg.types(), shape.lane).by(shape.part / 128).expect("a vector type");
         if shape.mask { vector.as_int() } else { vector }
     }
 
@@ -68,22 +96,27 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         match self.operand(operand) {
             Val::Scalar(value) => vec![value],
             Val::Memory(address) => {
-                (0..shape.parts()).map(|at| self.e.fb.ins().load(part, flags(), address, at as i32 * 16)).collect()
+                let bytes = shape.part_bytes();
+                (0..shape.parts()).map(|at| self.e.fb.ins().load(part, flags(), address, at as i32 * bytes)).collect()
             }
             Val::Zero => unreachable!("a vector has bits"),
         }
     }
 
-    /// A vector's value from its parts.
+    /// A vector's value from its parts: one register of 128 bits, or a
+    /// wider vector in memory.
     fn assembled(&mut self, parts: Vec<ir::Value>) -> Val {
-        if let [one] = parts.as_slice() {
+        let bytes = self.e.fb.func.dfg.value_type(parts[0]).bytes();
+        if let [one] = parts.as_slice()
+            && bytes == 16
+        {
             return Val::Scalar(*one);
         }
-        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, parts.len() as u32 * 16, 4);
+        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, parts.len() as u32 * bytes, 4);
         let slot = self.e.fb.create_sized_stack_slot(data);
         let address = self.e.fb.ins().stack_addr(POINTER, slot, 0);
         for (at, part) in parts.into_iter().enumerate() {
-            self.e.fb.ins().store(flags(), part, address, at as i32 * 16);
+            self.e.fb.ins().store(flags(), part, address, at as i32 * bytes as i32);
         }
         Val::Memory(address)
     }
@@ -109,6 +142,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     pub(super) fn simd(&mut self, op: SimdOp, args: &[Operand], place: &Place, ty: Ty, span: Span) -> Option<Val> {
         use SimdOp::*;
         let _ = place;
+        if let Accelerated(width) = op {
+            let accelerated = self.accelerated(width) as i64;
+            return Some(Val::Scalar(self.e.fb.ins().iconst(types::I8, accelerated)));
+        }
         // The vector the operation is of: its first argument's, or what it
         // makes.
         let own = match op {
@@ -117,6 +154,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             _ => self.operand_ty(&args[0]),
         };
         let shape = self.simd_shape(own);
+        // What moves lanes between parts or takes them one at a time does
+        // it by parts of 128 bits.
+        let shape = match op {
+            Of | Lane | WithLane | MaskLane | Reversed | Swizzle | Joined | Lower | Upper | To => shape.narrow(),
+            _ => shape,
+        };
         let part = self.part_type(shape);
         let lane = self.lane_type(shape);
         let lanes = shape.lanes;
@@ -137,8 +180,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let at = self.scalar(&args[1]);
                 let array_ty = self.operand_ty(&args[0]);
                 let address = self.lanes_address(array, array_ty, at, shape, span);
-                let parts =
-                    (0..shape.parts()).map(|p| self.e.fb.ins().load(part, flags(), address, p as i32 * 16)).collect();
+                let bytes = shape.part_bytes();
+                let parts = (0..shape.parts())
+                    .map(|p| self.e.fb.ins().load(part, flags(), address, p as i32 * bytes))
+                    .collect();
                 self.assembled(parts)
             }
             Store => {
@@ -154,8 +199,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
                 let at = self.scalar(&args[2]);
                 let address = self.lanes_address(array, array_ty, at, shape, span);
+                let bytes = shape.part_bytes();
                 for (p, part) in parts.into_iter().enumerate() {
-                    self.e.fb.ins().store(flags(), part, address, p as i32 * 16);
+                    self.e.fb.ins().store(flags(), part, address, p as i32 * bytes);
                 }
                 Val::Zero
             }
@@ -164,8 +210,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let size = self.e.fb.ins().iconst(types::I64, (lanes.bits() / 8) as i64);
                 let count = self.e.fb.ins().iconst(types::I64, shape.count() as i64);
                 let array = self.e.call_rt(Rt::ArrayNew, &[size, count]).unwrap();
+                let bytes = shape.part_bytes();
                 for (p, part) in parts.into_iter().enumerate() {
-                    self.e.fb.ins().store(flags(), part, array, ARRAY_HEADER as i32 + p as i32 * 16);
+                    self.e.fb.ins().store(flags(), part, array, ARRAY_HEADER as i32 + p as i32 * bytes);
                 }
                 Val::Scalar(array)
             }
@@ -266,7 +313,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Choose => {
                 let mask = self.parts_of(&args[0], shape);
-                let result_shape = self.simd_shape(ty);
+                let result_shape = Shape { part: shape.part, ..self.simd_shape(ty) };
                 let yes = self.parts_of(&args[1], result_shape);
                 let no = self.parts_of(&args[2], result_shape);
                 let vector = self.part_type(result_shape);
@@ -335,7 +382,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.assembled(kept)
             }
             Cast => {
-                let target = self.simd_shape(ty);
+                let target = Shape { part: shape.part, ..self.simd_shape(ty) };
                 let target_part = self.part_type(target);
                 let parts = self.parts_of(&args[0], shape);
                 let parts = parts
@@ -345,7 +392,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.assembled(parts)
             }
             To => {
-                let target = self.simd_shape(ty);
+                let target = Shape { part: shape.part, ..self.simd_shape(ty) };
                 let parts = self.parts_of(&args[0], shape);
                 let parts = parts.into_iter().map(|p| self.convert(p, shape, target)).collect();
                 self.assembled(parts)
@@ -367,6 +414,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
                 Val::Scalar(all.unwrap())
             }
+            Accelerated(_) => unreachable!("answered above"),
         };
         Some(value)
     }
@@ -441,7 +489,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// The product of lanes of 8 bits, which x64 has no instruction for:
     /// the low bits of the products of the lanes widened to 16 bits.
     fn multiply_bytes(&mut self, a: ir::Value, b: ir::Value) -> ir::Value {
-        if self.e.cg.isa().name() == "aarch64" {
+        // arm64 has it, and so has our generator of 256 bits on x64.
+        if self.e.cg.isa().name() == "aarch64" || self.e.fb.func.dfg.value_type(a).bits() == 256 {
             return self.e.fb.ins().imul(a, b);
         }
         let low_byte = self.e.fb.ins().iconst(types::I16, 0xff);
@@ -603,6 +652,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             let half = parts.len() / 2;
             parts = (0..half).map(|p| combine(self, parts[p], parts[p + half])).collect();
         }
+        // A part of 256 bits goes on by its halves, with the vector
+        // operation of 128 bits as at every level: the same bits.
+        let mut shape = shape;
+        if shape.part == 256 {
+            let [low, high] = self.halves(parts[0], shape);
+            shape = shape.narrow();
+            parts[0] = combine(self, low, high);
+        }
         let part = parts[0];
         let mut lanes: Vec<ir::Value> =
             (0..shape.per_part() as u8).map(|index| self.e.fb.ins().extractlane(part, index)).collect();
@@ -611,6 +668,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             lanes = (0..half).map(|j| combine(self, lanes[j], lanes[j + half])).collect();
         }
         lanes[0]
+    }
+
+    /// The halves of 128 bits of a part of 256, through memory.
+    fn halves(&mut self, part: ir::Value, shape: Shape) -> [ir::Value; 2] {
+        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 32, 4);
+        let slot = self.e.fb.create_sized_stack_slot(data);
+        let address = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+        self.e.fb.ins().store(flags(), part, address, 0);
+        let half = self.part_type(shape.narrow());
+        [0, 16].map(|offset| self.e.fb.ins().load(half, flags(), address, offset))
     }
 
     /// A part with its lanes in the opposite order.

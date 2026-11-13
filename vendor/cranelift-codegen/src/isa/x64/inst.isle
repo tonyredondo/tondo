@@ -751,6 +751,8 @@
 (type XmmMem32 extern (enum))
 (type XmmMem64 extern (enum))
 (type XmmMem128 extern (enum))
+;; Tondo: an operand of 256 bits, a YMM register or memory.
+(type XmmMem256 extern (enum))
 (type XmmMemAligned extern (enum))
 (type XmmMemAligned8 extern (enum))
 (type XmmMemAligned16 extern (enum))

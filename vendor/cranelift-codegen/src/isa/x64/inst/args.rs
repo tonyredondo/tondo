@@ -376,6 +376,8 @@ newtype_of_reg!(
               XmmMem32         size:32,
               XmmMem64         size:64,
               XmmMem128        size:128,
+              // Tondo: an operand of 256 bits, a YMM register or memory.
+              XmmMem256        size:256,
               XmmMemAligned                    aligned:true,
               XmmMemAligned8   size:8          aligned:true,
               XmmMemAligned16  size:16         aligned:true,

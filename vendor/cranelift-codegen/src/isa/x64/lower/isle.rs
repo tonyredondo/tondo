@@ -467,6 +467,45 @@ impl Context for IsleContext<'_, '_, MInst, X64Backend> {
         self.backend.x64_flags.has_avx() && self.backend.x64_flags.has_avx2()
     }
 
+    // Tondo: the helpers of `wide.isle`, vectors of 256 bits.
+
+    fn ty_vec256(&mut self, ty: Type) -> Option<Type> {
+        (ty.is_vector() && ty.bits() == 256).then_some(ty)
+    }
+
+    fn put_in_xmm_mem_256(&mut self, val: Value) -> XmmMem256 {
+        debug_assert_eq!(self.lower_ctx.dfg().value_type(val).bits(), 256);
+        XmmMem256::unwrap_new(self.put_in_xmm_mem(val).to_reg_mem())
+    }
+
+    fn xmm_to_xmm_mem_256(&mut self, r: Xmm) -> XmmMem256 {
+        XmmMem256::unwrap_new(RegMem::reg(r.to_reg()))
+    }
+
+    fn writable_xmm_to_xmm_mem_256(&mut self, r: WritableXmm) -> XmmMem256 {
+        XmmMem256::unwrap_new(RegMem::reg(r.to_reg().to_reg()))
+    }
+
+    fn amode_to_xmm_mem_256(&mut self, amode: &SyntheticAmode) -> XmmMem256 {
+        XmmMem256::unwrap_new(RegMem::mem(amode.clone()))
+    }
+
+    fn wide_per_half(&mut self, ty: Type) -> u8 {
+        (ty.lane_count() / 2) as u8
+    }
+
+    fn wide_half(&mut self, index: u8, per: u8) -> u8 {
+        index / per
+    }
+
+    fn wide_lane(&mut self, index: u8, per: u8) -> u8 {
+        index % per
+    }
+
+    fn wide_imm_count(&mut self, ty: Type, n: u64) -> u8 {
+        (n as u8) & self.shift_mask(ty)
+    }
+
     #[inline]
     fn has_avx512vl(&mut self) -> bool {
         self.backend.x64_flags.has_avx512vl()

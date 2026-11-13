@@ -33,6 +33,7 @@ mod stack;
 mod sub;
 // Tondo: the instructions of `std.cpu.x64`.
 mod tondo;
+mod wide;
 mod unpack;
 mod xor;
 
@@ -74,6 +75,7 @@ pub fn list() -> Vec<Inst> {
     all.extend(stack::list());
     all.extend(sub::list());
     all.extend(tondo::list());
+    all.extend(wide::list());
     all.extend(unpack::list());
     all.extend(xor::list());
 

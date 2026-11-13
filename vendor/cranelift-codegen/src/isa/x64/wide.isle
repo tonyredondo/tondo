@@ -1,0 +1,505 @@
+;; Tondo: vectors of 256 bits on x86-64 with AVX2 (Tondo's change 22b), in
+;; the YMM registers, the XMM registers' 256 bits. These are the operations
+;; that the vectors of `std.simd` are made of; each rule needs AVX2, and a
+;; function without it makes no value of these types. A value of 256 bits is
+;; in one register of the class of floats; `Callee` makes the spills, the
+;; reloads and the moves of a function that has one 256 bits wide, and ends
+;; the upper halves' state with `vzeroupper` before its calls and returns.
+;;
+;; AVX2's instructions that move bytes between lanes (packs, unpacks,
+;; shuffles) work within each half; what crosses halves goes through
+;; `vextracti128` and `vinserti128`.
+
+(extern const $I8X32 Type)
+(extern const $I16X16 Type)
+(extern const $I32X8 Type)
+(extern const $I64X4 Type)
+(extern const $F32X8 Type)
+(extern const $F64X4 Type)
+
+;; Any vector type of 256 bits.
+(decl ty_vec256 (Type) Type)
+(extern extractor ty_vec256 ty_vec256)
+
+(decl put_in_xmm_mem_256 (Value) XmmMem256)
+(extern constructor put_in_xmm_mem_256 put_in_xmm_mem_256)
+(decl xmm_to_xmm_mem_256 (Xmm) XmmMem256)
+(extern constructor xmm_to_xmm_mem_256 xmm_to_xmm_mem_256)
+(decl amode_to_xmm_mem_256 (SyntheticAmode) XmmMem256)
+(extern constructor amode_to_xmm_mem_256 amode_to_xmm_mem_256)
+(convert Value XmmMem256 put_in_xmm_mem_256)
+(convert Xmm XmmMem256 xmm_to_xmm_mem_256)
+(decl writable_xmm_to_xmm_mem_256 (WritableXmm) XmmMem256)
+(extern constructor writable_xmm_to_xmm_mem_256 writable_xmm_to_xmm_mem_256)
+(convert WritableXmm XmmMem256 writable_xmm_to_xmm_mem_256)
+(convert SyntheticAmode XmmMem256 amode_to_xmm_mem_256)
+
+;; Lane `index` of a vector of `lanes`: the half it is in, and its place
+;; there.
+(decl pure wide_half (u8 u8) u8)
+(extern constructor wide_half wide_half)
+(decl pure wide_lane (u8 u8) u8)
+(extern constructor wide_lane wide_lane)
+
+;; Every bit set, from any register: it equals itself.
+(decl wide_ones (Xmm) Xmm)
+(rule (wide_ones x) (x64_vpcmpeqd_by x x))
+
+(decl wide_zero (Xmm) Xmm)
+(rule (wide_zero x) (x64_vpxor_by x x))
+
+;; Half 0 or 1 of a vector, in the low bits of a register.
+(decl wide_get_half (Xmm u8) Xmm)
+(rule (wide_get_half x 0) x)
+(rule (wide_get_half x 1) (x64_vextracti128_mriy x 1))
+
+;;;; Loads and stores ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 100 (lower (load (ty_vec256 ty) (little_or_native_endian flags) address offset))
+      (if-let true (use_avx2))
+      (x64_vmovdqu_ay (amode_to_xmm_mem_256 (to_amode flags address offset))))
+
+(rule 100 (lower (store (little_or_native_endian flags)
+                        value @ (value_type (ty_vec256 _))
+                        address
+                        offset))
+      (if-let true (use_avx2))
+      (side_effect (x64_vmovdqu_by_mem (to_amode flags address offset) value)))
+
+;; The same bits as another type.
+(rule 100 (lower (bitcast (ty_vec256 _) _ x @ (value_type (ty_vec256 _))))
+      (if-let true (use_avx2))
+      x)
+
+;;;; One value in every lane ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; A byte or a word goes through a 32-bit move, whose upper bits the
+;; broadcast does not read.
+(rule 100 (lower (splat $I8X32 src))
+      (if-let true (use_avx2))
+      (let ((src Gpr src)) (x64_vpbroadcastb_ay (x64_movd_to_xmm src))))
+(rule 100 (lower (splat $I16X16 src))
+      (if-let true (use_avx2))
+      (let ((src Gpr src)) (x64_vpbroadcastw_ay (x64_movd_to_xmm src))))
+(rule 100 (lower (splat $I32X8 src))
+      (if-let true (use_avx2))
+      (x64_vpbroadcastd_ay (x64_movd_to_xmm src)))
+(rule 100 (lower (splat $I64X4 src))
+      (if-let true (use_avx2))
+      (x64_vpbroadcastq_ay (x64_movq_to_xmm src)))
+(rule 100 (lower (splat $F32X8 src))
+      (if-let true (use_avx2))
+      (x64_vpbroadcastd_ay (xmm_to_xmm_mem_32 src)))
+(rule 100 (lower (splat $F64X4 src))
+      (if-let true (use_avx2))
+      (x64_vpbroadcastq_ay (xmm_to_xmm_mem_64 src)))
+
+;;;; Arithmetic ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 100 (lower (iadd $I8X32 x y)) (if-let true (use_avx2)) (x64_vpaddb_by x y))
+(rule 100 (lower (iadd $I16X16 x y)) (if-let true (use_avx2)) (x64_vpaddw_by x y))
+(rule 100 (lower (iadd $I32X8 x y)) (if-let true (use_avx2)) (x64_vpaddd_by x y))
+(rule 100 (lower (iadd $I64X4 x y)) (if-let true (use_avx2)) (x64_vpaddq_by x y))
+(rule 100 (lower (isub $I8X32 x y)) (if-let true (use_avx2)) (x64_vpsubb_by x y))
+(rule 100 (lower (isub $I16X16 x y)) (if-let true (use_avx2)) (x64_vpsubw_by x y))
+(rule 100 (lower (isub $I32X8 x y)) (if-let true (use_avx2)) (x64_vpsubd_by x y))
+(rule 100 (lower (isub $I64X4 x y)) (if-let true (use_avx2)) (x64_vpsubq_by x y))
+(rule 100 (lower (sadd_sat $I8X32 x y)) (if-let true (use_avx2)) (x64_vpaddsb_by x y))
+(rule 100 (lower (sadd_sat $I16X16 x y)) (if-let true (use_avx2)) (x64_vpaddsw_by x y))
+(rule 100 (lower (uadd_sat $I8X32 x y)) (if-let true (use_avx2)) (x64_vpaddusb_by x y))
+(rule 100 (lower (uadd_sat $I16X16 x y)) (if-let true (use_avx2)) (x64_vpaddusw_by x y))
+(rule 100 (lower (ssub_sat $I8X32 x y)) (if-let true (use_avx2)) (x64_vpsubsb_by x y))
+(rule 100 (lower (ssub_sat $I16X16 x y)) (if-let true (use_avx2)) (x64_vpsubsw_by x y))
+(rule 100 (lower (usub_sat $I8X32 x y)) (if-let true (use_avx2)) (x64_vpsubusb_by x y))
+(rule 100 (lower (usub_sat $I16X16 x y)) (if-let true (use_avx2)) (x64_vpsubusw_by x y))
+(rule 100 (lower (imul $I16X16 x y)) (if-let true (use_avx2)) (x64_vpmullw_by x y))
+(rule 100 (lower (imul $I32X8 x y)) (if-let true (use_avx2)) (x64_vpmulld_by x y))
+
+;; Bytes have no product: the words' products keep the right low byte, and
+;; the high bytes' products come from the words shifted down.
+(rule 100 (lower (imul $I8X32 x y))
+      (if-let true (use_avx2))
+      (let ((x Xmm x)
+            (y Xmm y)
+            (low_bytes Xmm (x64_vpsrlw_dy (wide_ones x) 8))
+            (even Xmm (x64_vpand_by (x64_vpmullw_by x y) low_bytes))
+            (odd Xmm (x64_vpsllw_dy (x64_vpmullw_by (x64_vpsrlw_dy x 8) (x64_vpsrlw_dy y 8)) 8)))
+        (x64_vpor_by even odd)))
+
+;; Of 64 bits, from the products of 32-bit halves:
+;; `lo(x) * lo(y) + ((hi(x) * lo(y) + lo(x) * hi(y)) << 32)`.
+(rule 100 (lower (imul $I64X4 x y))
+      (if-let true (use_avx2))
+      (let ((x Xmm x)
+            (y Xmm y)
+            (cross1 Xmm (x64_vpmuludq_by (x64_vpsrlq_dy x 32) y))
+            (cross2 Xmm (x64_vpmuludq_by x (x64_vpsrlq_dy y 32)))
+            (cross Xmm (x64_vpsllq_dy (x64_vpaddq_by cross1 cross2) 32)))
+        (x64_vpaddq_by (x64_vpmuludq_by x y) cross)))
+
+(rule 100 (lower (ineg $I8X32 x)) (if-let true (use_avx2)) (let ((x Xmm x)) (x64_vpsubb_by (wide_zero x) x)))
+(rule 100 (lower (ineg $I16X16 x)) (if-let true (use_avx2)) (let ((x Xmm x)) (x64_vpsubw_by (wide_zero x) x)))
+(rule 100 (lower (ineg $I32X8 x)) (if-let true (use_avx2)) (let ((x Xmm x)) (x64_vpsubd_by (wide_zero x) x)))
+(rule 100 (lower (ineg $I64X4 x)) (if-let true (use_avx2)) (let ((x Xmm x)) (x64_vpsubq_by (wide_zero x) x)))
+
+(rule 100 (lower (iabs $I8X32 x)) (if-let true (use_avx2)) (x64_vpabsb_ay x))
+(rule 100 (lower (iabs $I16X16 x)) (if-let true (use_avx2)) (x64_vpabsw_ay x))
+(rule 100 (lower (iabs $I32X8 x)) (if-let true (use_avx2)) (x64_vpabsd_ay x))
+;; `(x ^ s) - s`, `s` all ones where `x` is negative.
+(rule 100 (lower (iabs $I64X4 x))
+      (if-let true (use_avx2))
+      (let ((x Xmm x)
+            (sign Xmm (x64_vpcmpgtq_by (wide_zero x) x)))
+        (x64_vpsubq_by (x64_vpxor_by x sign) sign)))
+
+(rule 100 (lower (fadd $F32X8 x y)) (if-let true (use_avx2)) (x64_vaddps_by x y))
+(rule 100 (lower (fadd $F64X4 x y)) (if-let true (use_avx2)) (x64_vaddpd_by x y))
+(rule 100 (lower (fsub $F32X8 x y)) (if-let true (use_avx2)) (x64_vsubps_by x y))
+(rule 100 (lower (fsub $F64X4 x y)) (if-let true (use_avx2)) (x64_vsubpd_by x y))
+(rule 100 (lower (fmul $F32X8 x y)) (if-let true (use_avx2)) (x64_vmulps_by x y))
+(rule 100 (lower (fmul $F64X4 x y)) (if-let true (use_avx2)) (x64_vmulpd_by x y))
+(rule 100 (lower (fdiv $F32X8 x y)) (if-let true (use_avx2)) (x64_vdivps_by x y))
+(rule 100 (lower (fdiv $F64X4 x y)) (if-let true (use_avx2)) (x64_vdivpd_by x y))
+(rule 100 (lower (sqrt $F32X8 x)) (if-let true (use_avx2)) (x64_vsqrtps_by x))
+(rule 100 (lower (sqrt $F64X4 x)) (if-let true (use_avx2)) (x64_vsqrtpd_by x))
+(rule 100 (lower (fma $F32X8 x y z))
+      (if-let true (use_avx2))
+      (if-let true (use_fma))
+      (x64_vfmadd213ps_ay x y z))
+(rule 100 (lower (fma $F64X4 x y z))
+      (if-let true (use_avx2))
+      (if-let true (use_fma))
+      (x64_vfmadd213pd_ay x y z))
+
+;; Rounding: the immediate's low bits say how, and bit 3 keeps the
+;; precision exception quiet, as Cranelift's `RoundImm` does.
+(rule 100 (lower (nearest $F32X8 x)) (if-let true (use_avx2)) (x64_vroundps_rmiy x (encode_round_imm (RoundImm.RoundNearest))))
+(rule 100 (lower (nearest $F64X4 x)) (if-let true (use_avx2)) (x64_vroundpd_rmiy x (encode_round_imm (RoundImm.RoundNearest))))
+(rule 100 (lower (floor $F32X8 x)) (if-let true (use_avx2)) (x64_vroundps_rmiy x (encode_round_imm (RoundImm.RoundDown))))
+(rule 100 (lower (floor $F64X4 x)) (if-let true (use_avx2)) (x64_vroundpd_rmiy x (encode_round_imm (RoundImm.RoundDown))))
+(rule 100 (lower (ceil $F32X8 x)) (if-let true (use_avx2)) (x64_vroundps_rmiy x (encode_round_imm (RoundImm.RoundUp))))
+(rule 100 (lower (ceil $F64X4 x)) (if-let true (use_avx2)) (x64_vroundpd_rmiy x (encode_round_imm (RoundImm.RoundUp))))
+(rule 100 (lower (trunc $F32X8 x)) (if-let true (use_avx2)) (x64_vroundps_rmiy x (encode_round_imm (RoundImm.RoundZero))))
+(rule 100 (lower (trunc $F64X4 x)) (if-let true (use_avx2)) (x64_vroundpd_rmiy x (encode_round_imm (RoundImm.RoundZero))))
+
+;; The sign bit flipped or cleared.
+(rule 100 (lower (fneg $F32X8 x))
+      (if-let true (use_avx2))
+      (let ((x Xmm x)) (x64_vpxor_by x (x64_vpslld_dy (wide_ones x) 31))))
+(rule 100 (lower (fneg $F64X4 x))
+      (if-let true (use_avx2))
+      (let ((x Xmm x)) (x64_vpxor_by x (x64_vpsllq_dy (wide_ones x) 63))))
+(rule 100 (lower (fabs $F32X8 x))
+      (if-let true (use_avx2))
+      (let ((x Xmm x)) (x64_vpand_by x (x64_vpsrld_dy (wide_ones x) 1))))
+(rule 100 (lower (fabs $F64X4 x))
+      (if-let true (use_avx2))
+      (let ((x Xmm x)) (x64_vpand_by x (x64_vpsrlq_dy (wide_ones x) 1))))
+
+;; `fmin` and `fmax` as Cranelift makes them of 128 bits: NaN when either
+;; is, and -0.0 less than +0.0.
+(rule 100 (lower (fmin $F32X8 x y))
+      (if-let true (use_avx2))
+      (let ((x Xmm x)
+            (y Xmm y)
+            (min1 Xmm (x64_vminps_by x y))
+            (min2 Xmm (x64_vminps_by y x))
+            (min_or Xmm (x64_vorps_ay min1 min2))
+            (is_nan_mask Xmm (x64_vcmpps_by min_or min2 (encode_fcmp_imm (FcmpImm.Unordered))))
+            (min_or_2 Xmm (x64_vorps_ay min_or is_nan_mask))
+            (nan_fraction_mask Xmm (x64_vpsrld_dy is_nan_mask 10)))
+        (x64_vandnps_ay nan_fraction_mask min_or_2)))
+(rule 100 (lower (fmin $F64X4 x y))
+      (if-let true (use_avx2))
+      (let ((x Xmm x)
+            (y Xmm y)
+            (min1 Xmm (x64_vminpd_by x y))
+            (min2 Xmm (x64_vminpd_by y x))
+            (min_or Xmm (x64_vorps_ay min1 min2))
+            (is_nan_mask Xmm (x64_vcmppd_by min1 min2 (encode_fcmp_imm (FcmpImm.Unordered))))
+            (min_or_2 Xmm (x64_vorps_ay min_or is_nan_mask))
+            (nan_fraction_mask Xmm (x64_vpsrlq_dy is_nan_mask 13)))
+        (x64_vandnps_ay nan_fraction_mask min_or_2)))
+(rule 100 (lower (fmax $F32X8 x y))
+      (if-let true (use_avx2))
+      (let ((x Xmm x)
+            (y Xmm y)
+            (max1 Xmm (x64_vmaxps_by x y))
+            (max2 Xmm (x64_vmaxps_by y x))
+            (max_xor Xmm (x64_vxorps_ay max1 max2))
+            (max_blended_nan Xmm (x64_vorps_ay max1 max_xor))
+            (max_blended_nan_positive Xmm (x64_vsubps_by max_blended_nan max_xor))
+            (is_nan_mask Xmm (x64_vcmpps_by max_blended_nan max_blended_nan (encode_fcmp_imm (FcmpImm.Unordered))))
+            (nan_fraction_mask Xmm (x64_vpsrld_dy is_nan_mask 10)))
+        (x64_vandnps_ay nan_fraction_mask max_blended_nan_positive)))
+(rule 100 (lower (fmax $F64X4 x y))
+      (if-let true (use_avx2))
+      (let ((x Xmm x)
+            (y Xmm y)
+            (max1 Xmm (x64_vmaxpd_by x y))
+            (max2 Xmm (x64_vmaxpd_by y x))
+            (max_xor Xmm (x64_vxorps_ay max1 max2))
+            (max_blended_nan Xmm (x64_vorps_ay max1 max_xor))
+            (max_blended_nan_positive Xmm (x64_vsubpd_by max_blended_nan max_xor))
+            (is_nan_mask Xmm (x64_vcmppd_by max_blended_nan max_blended_nan (encode_fcmp_imm (FcmpImm.Unordered))))
+            (nan_fraction_mask Xmm (x64_vpsrlq_dy is_nan_mask 13)))
+        (x64_vandnps_ay nan_fraction_mask max_blended_nan_positive)))
+
+;;;; Least and greatest ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 100 (lower (smin $I8X32 x y)) (if-let true (use_avx2)) (x64_vpminsb_by x y))
+(rule 100 (lower (smin $I16X16 x y)) (if-let true (use_avx2)) (x64_vpminsw_by x y))
+(rule 100 (lower (smin $I32X8 x y)) (if-let true (use_avx2)) (x64_vpminsd_by x y))
+(rule 100 (lower (umin $I8X32 x y)) (if-let true (use_avx2)) (x64_vpminub_by x y))
+(rule 100 (lower (umin $I16X16 x y)) (if-let true (use_avx2)) (x64_vpminuw_by x y))
+(rule 100 (lower (umin $I32X8 x y)) (if-let true (use_avx2)) (x64_vpminud_by x y))
+(rule 100 (lower (smax $I8X32 x y)) (if-let true (use_avx2)) (x64_vpmaxsb_by x y))
+(rule 100 (lower (smax $I16X16 x y)) (if-let true (use_avx2)) (x64_vpmaxsw_by x y))
+(rule 100 (lower (smax $I32X8 x y)) (if-let true (use_avx2)) (x64_vpmaxsd_by x y))
+(rule 100 (lower (umax $I8X32 x y)) (if-let true (use_avx2)) (x64_vpmaxub_by x y))
+(rule 100 (lower (umax $I16X16 x y)) (if-let true (use_avx2)) (x64_vpmaxuw_by x y))
+(rule 100 (lower (umax $I32X8 x y)) (if-let true (use_avx2)) (x64_vpmaxud_by x y))
+
+;; Of 64 bits, by a comparison: unsigned ones with their sign bits flipped.
+(rule 100 (lower (smin $I64X4 x y))
+      (if-let true (use_avx2))
+      (let ((x Xmm x) (y Xmm y))
+        (x64_vpblendvb_rvmry x y (x64_vpcmpgtq_by x y))))
+(rule 100 (lower (smax $I64X4 x y))
+      (if-let true (use_avx2))
+      (let ((x Xmm x) (y Xmm y))
+        (x64_vpblendvb_rvmry y x (x64_vpcmpgtq_by x y))))
+(rule 100 (lower (umin $I64X4 x y))
+      (if-let true (use_avx2))
+      (let ((x Xmm x) (y Xmm y))
+        (x64_vpblendvb_rvmry x y (wide_ugtq x y))))
+(rule 100 (lower (umax $I64X4 x y))
+      (if-let true (use_avx2))
+      (let ((x Xmm x) (y Xmm y))
+        (x64_vpblendvb_rvmry y x (wide_ugtq x y))))
+
+;; All ones in each lane of 64 bits where `x > y` without sign.
+(decl wide_ugtq (Xmm Xmm) Xmm)
+(rule (wide_ugtq x y)
+      (let ((sign Xmm (x64_vpsllq_dy (wide_ones x) 63)))
+        (x64_vpcmpgtq_by (x64_vpxor_by x sign) (x64_vpxor_by y sign))))
+
+;;;; Bits ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 100 (lower (band (ty_vec256 _) x y)) (if-let true (use_avx2)) (x64_vpand_by x y))
+(rule 100 (lower (bor (ty_vec256 _) x y)) (if-let true (use_avx2)) (x64_vpor_by x y))
+(rule 100 (lower (bxor (ty_vec256 _) x y)) (if-let true (use_avx2)) (x64_vpxor_by x y))
+(rule 100 (lower (bnot (ty_vec256 _) x))
+      (if-let true (use_avx2))
+      (let ((x Xmm x)) (x64_vpxor_by x (wide_ones x))))
+
+;; `(t & c) | (f & ~c)`, or one blend when every byte of `c` is all ones or
+;; all zeros, as a comparison makes.
+(rule 100 (lower (bitselect (ty_vec256 _) c t f))
+      (if-let true (use_avx2))
+      (let ((c Xmm c))
+        (x64_vpor_by (x64_vpand_by t c) (x64_vpandn_by c f))))
+(rule 101 (lower (bitselect (ty_vec256 _) c t f))
+      (if-let true (use_avx2))
+      (if (all_ones_or_all_zeros c))
+      (x64_vpblendvb_rvmry f t c))
+
+;;;; Shifts ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; The count, masked to the lanes' width, in the low bits of a register.
+(decl wide_count (Type Value) Xmm)
+(rule (wide_count ty amt)
+      (x64_movq_to_xmm (x64_and $I64 (lo_gpr amt) (RegMemImm.Imm (shift_mask ty)))))
+
+;; The count as a byte, masked.
+(decl wide_count_gpr (Type Value) Gpr)
+(rule (wide_count_gpr ty amt) (x64_and $I64 (lo_gpr amt) (RegMemImm.Imm (shift_mask ty))))
+
+(rule 100 (lower (ishl ty @ $I16X16 x amt)) (if-let true (use_avx2)) (x64_vpsllw_cy x (wide_count ty amt)))
+(rule 100 (lower (ishl ty @ $I32X8 x amt)) (if-let true (use_avx2)) (x64_vpslld_cy x (wide_count ty amt)))
+(rule 100 (lower (ishl ty @ $I64X4 x amt)) (if-let true (use_avx2)) (x64_vpsllq_cy x (wide_count ty amt)))
+(rule 100 (lower (ushr ty @ $I16X16 x amt)) (if-let true (use_avx2)) (x64_vpsrlw_cy x (wide_count ty amt)))
+(rule 100 (lower (ushr ty @ $I32X8 x amt)) (if-let true (use_avx2)) (x64_vpsrld_cy x (wide_count ty amt)))
+(rule 100 (lower (ushr ty @ $I64X4 x amt)) (if-let true (use_avx2)) (x64_vpsrlq_cy x (wide_count ty amt)))
+(rule 100 (lower (sshr ty @ $I16X16 x amt)) (if-let true (use_avx2)) (x64_vpsraw_cy x (wide_count ty amt)))
+(rule 100 (lower (sshr ty @ $I32X8 x amt)) (if-let true (use_avx2)) (x64_vpsrad_cy x (wide_count ty amt)))
+
+;; By a constant, the count in the instruction.
+(rule 101 (lower (ishl ty @ $I16X16 x (u64_from_iconst n))) (if-let true (use_avx2)) (x64_vpsllw_dy x (wide_imm_count ty n)))
+(rule 101 (lower (ishl ty @ $I32X8 x (u64_from_iconst n))) (if-let true (use_avx2)) (x64_vpslld_dy x (wide_imm_count ty n)))
+(rule 101 (lower (ishl ty @ $I64X4 x (u64_from_iconst n))) (if-let true (use_avx2)) (x64_vpsllq_dy x (wide_imm_count ty n)))
+(rule 101 (lower (ushr ty @ $I16X16 x (u64_from_iconst n))) (if-let true (use_avx2)) (x64_vpsrlw_dy x (wide_imm_count ty n)))
+(rule 101 (lower (ushr ty @ $I32X8 x (u64_from_iconst n))) (if-let true (use_avx2)) (x64_vpsrld_dy x (wide_imm_count ty n)))
+(rule 101 (lower (ushr ty @ $I64X4 x (u64_from_iconst n))) (if-let true (use_avx2)) (x64_vpsrlq_dy x (wide_imm_count ty n)))
+(rule 101 (lower (sshr ty @ $I16X16 x (u64_from_iconst n))) (if-let true (use_avx2)) (x64_vpsraw_dy x (wide_imm_count ty n)))
+(rule 101 (lower (sshr ty @ $I32X8 x (u64_from_iconst n))) (if-let true (use_avx2)) (x64_vpsrad_dy x (wide_imm_count ty n)))
+
+(decl pure wide_imm_count (Type u64) u8)
+(extern constructor wide_imm_count wide_imm_count)
+
+;; Bytes shift as words, without the bits that crossed into the next byte:
+;; each byte of the mask is 0xff shifted the same.
+(rule 100 (lower (ishl ty @ $I8X32 x amt))
+      (if-let true (use_avx2))
+      (let ((count Gpr (wide_count_gpr ty amt))
+            (shifted Xmm (x64_vpsllw_cy x (x64_movq_to_xmm count)))
+            (mask Gpr (x64_shl $I32 (imm $I32 0xff) (Imm8Gpr.Gpr count))))
+        (x64_vpand_by shifted (x64_vpbroadcastb_ay (x64_movd_to_xmm mask)))))
+(rule 100 (lower (ushr ty @ $I8X32 x amt))
+      (if-let true (use_avx2))
+      (wide_ushr_bytes x (wide_count_gpr ty amt)))
+
+(decl wide_ushr_bytes (Xmm Gpr) Xmm)
+(rule (wide_ushr_bytes x count)
+      (let ((shifted Xmm (x64_vpsrlw_cy x (x64_movq_to_xmm count)))
+            (mask Gpr (x64_shr $I32 (imm $I32 0xff) (Imm8Gpr.Gpr count))))
+        (x64_vpand_by shifted (x64_vpbroadcastb_ay (x64_movd_to_xmm mask)))))
+
+;; With sign, of bytes and of 64 bits, which have no instruction: the
+;; unsigned shift `u`, and `(u ^ s) - s`, with `s` the sign bit `m` shifted
+;; the same, extends the sign.
+(rule 100 (lower (sshr ty @ $I8X32 x amt))
+      (if-let true (use_avx2))
+      (let ((count Gpr (wide_count_gpr ty amt))
+            (m Xmm (x64_vpbroadcastb_ay (x64_movd_to_xmm (imm $I32 0x80))))
+            (u Xmm (wide_ushr_bytes x count))
+            (s Xmm (wide_ushr_bytes m count)))
+        (x64_vpsubb_by (x64_vpxor_by u s) s)))
+(rule 100 (lower (sshr ty @ $I64X4 x amt))
+      (if-let true (use_avx2))
+      (let ((x Xmm x)
+            (count Xmm (wide_count ty amt))
+            (m Xmm (x64_vpsllq_dy (wide_ones x) 63))
+            (u Xmm (x64_vpsrlq_cy x count))
+            (s Xmm (x64_vpsrlq_cy m count)))
+        (x64_vpsubq_by (x64_vpxor_by u s) s)))
+
+;;;; Comparisons ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; All ones in each lane where the condition holds.
+(rule 100 (lower (icmp _ cc a @ (value_type (ty_vec256 ty)) b))
+      (if-let true (use_avx2))
+      (wide_icmp cc ty a b))
+
+(decl wide_icmp (IntCC Type Xmm Xmm) Xmm)
+(rule (wide_icmp (IntCC.Equal) ty a b) (wide_eq ty a b))
+(rule (wide_icmp (IntCC.NotEqual) ty a b) (wide_not (wide_eq ty a b)))
+(rule (wide_icmp (IntCC.SignedGreaterThan) ty a b) (wide_sgt ty a b))
+(rule (wide_icmp (IntCC.SignedLessThan) ty a b) (wide_sgt ty b a))
+(rule (wide_icmp (IntCC.SignedLessThanOrEqual) ty a b) (wide_not (wide_sgt ty a b)))
+(rule (wide_icmp (IntCC.SignedGreaterThanOrEqual) ty a b) (wide_not (wide_sgt ty b a)))
+(rule (wide_icmp (IntCC.UnsignedGreaterThan) ty a b) (wide_not (wide_ule ty a b)))
+(rule (wide_icmp (IntCC.UnsignedLessThan) ty a b) (wide_not (wide_ule ty b a)))
+(rule (wide_icmp (IntCC.UnsignedLessThanOrEqual) ty a b) (wide_ule ty a b))
+(rule (wide_icmp (IntCC.UnsignedGreaterThanOrEqual) ty a b) (wide_ule ty b a))
+
+(decl wide_not (Xmm) Xmm)
+(rule (wide_not x) (x64_vpxor_by x (wide_ones x)))
+
+(decl wide_eq (Type Xmm Xmm) Xmm)
+(rule (wide_eq (multi_lane 8 32) a b) (x64_vpcmpeqb_by a b))
+(rule (wide_eq (multi_lane 16 16) a b) (x64_vpcmpeqw_by a b))
+(rule (wide_eq (multi_lane 32 8) a b) (x64_vpcmpeqd_by a b))
+(rule (wide_eq (multi_lane 64 4) a b) (x64_vpcmpeqq_by a b))
+
+(decl wide_sgt (Type Xmm Xmm) Xmm)
+(rule (wide_sgt (multi_lane 8 32) a b) (x64_vpcmpgtb_by a b))
+(rule (wide_sgt (multi_lane 16 16) a b) (x64_vpcmpgtw_by a b))
+(rule (wide_sgt (multi_lane 32 8) a b) (x64_vpcmpgtd_by a b))
+(rule (wide_sgt (multi_lane 64 4) a b) (x64_vpcmpgtq_by a b))
+
+;; `a <= b` without sign: `a` is the least of the two. Lanes of 64 bits have
+;; no least: their sign bits flipped, they compare with sign.
+(decl wide_ule (Type Xmm Xmm) Xmm)
+(rule (wide_ule (multi_lane 8 32) a b) (x64_vpcmpeqb_by (x64_vpminub_by a b) a))
+(rule (wide_ule (multi_lane 16 16) a b) (x64_vpcmpeqw_by (x64_vpminuw_by a b) a))
+(rule (wide_ule (multi_lane 32 8) a b) (x64_vpcmpeqd_by (x64_vpminud_by a b) a))
+(rule (wide_ule (multi_lane 64 4) a b) (wide_not (wide_ugtq a b)))
+
+;; Floats: the comparison's predicate, quiet, as VEX has every one.
+(rule 100 (lower (fcmp _ cc a @ (value_type $F32X8) b))
+      (if-let true (use_avx2))
+      (x64_vcmpps_by a b (wide_fcmp_imm cc)))
+(rule 100 (lower (fcmp _ cc a @ (value_type $F64X4) b))
+      (if-let true (use_avx2))
+      (x64_vcmppd_by a b (wide_fcmp_imm cc)))
+
+(decl wide_fcmp_imm (FloatCC) u8)
+(rule (wide_fcmp_imm (FloatCC.Equal)) 0x00)
+(rule (wide_fcmp_imm (FloatCC.LessThan)) 0x11)
+(rule (wide_fcmp_imm (FloatCC.LessThanOrEqual)) 0x12)
+(rule (wide_fcmp_imm (FloatCC.Unordered)) 0x03)
+(rule (wide_fcmp_imm (FloatCC.NotEqual)) 0x04)
+(rule (wide_fcmp_imm (FloatCC.Ordered)) 0x07)
+(rule (wide_fcmp_imm (FloatCC.GreaterThanOrEqual)) 0x1D)
+(rule (wide_fcmp_imm (FloatCC.GreaterThan)) 0x1E)
+
+;;;; Masks ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 100 (lower (vany_true _ val @ (value_type (ty_vec256 _))))
+      (if-let true (use_avx2))
+      (let ((val Xmm val))
+        (lower_cond_bool (CondResult.CC (x64_vptest_rmy val val) (CC.NZ)))))
+
+;; No lane is zero.
+(rule 100 (lower (vall_true _ val @ (value_type (ty_vec256 ty))))
+      (if-let true (use_avx2))
+      (let ((val Xmm val)
+            (zeros Xmm (wide_eq ty val (wide_zero val))))
+        (lower_cond_bool (CondResult.CC (x64_vptest_rmy zeros zeros) (CC.Z)))))
+
+(rule 100 (lower (vhigh_bits _ val @ (value_type (multi_lane 8 32))))
+      (if-let true (use_avx2))
+      (x64_vpmovmskb_rmy val))
+(rule 100 (lower (vhigh_bits _ val @ (value_type (multi_lane 32 8))))
+      (if-let true (use_avx2))
+      (x64_vmovmskps_rmy val))
+(rule 100 (lower (vhigh_bits _ val @ (value_type (multi_lane 64 4))))
+      (if-let true (use_avx2))
+      (x64_vmovmskpd_rmy val))
+;; Words packed to bytes, the halves together.
+(rule 100 (lower (vhigh_bits _ val @ (value_type (multi_lane 16 16))))
+      (if-let true (use_avx2))
+      (let ((val Xmm val))
+        (x64_pmovmskb (x64_packsswb val (wide_get_half val 1)))))
+
+;;;; Lanes ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; A lane is read from its half.
+(rule 100 (lower (extractlane _ val @ (value_type ty @ (ty_vec256 _)) (u8_from_uimm8 index)))
+      (if-let true (use_avx2))
+      (let ((per u8 (wide_per_half ty))
+            (half Xmm (wide_get_half val (wide_half index per))))
+        (wide_extract ty half (wide_lane index per))))
+
+(decl pure wide_per_half (Type) u8)
+(extern constructor wide_per_half wide_per_half)
+
+(decl wide_extract (Type Xmm u8) InstOutput)
+(rule (wide_extract $I8X32 half lane) (output_gpr (x64_pextrb half lane)))
+(rule (wide_extract $I16X16 half lane) (output_gpr (x64_pextrw half lane)))
+(rule (wide_extract $I32X8 half lane) (output_gpr (x64_pextrd half lane)))
+(rule (wide_extract $I64X4 half lane) (output_gpr (x64_pextrq half lane)))
+(rule 1 (wide_extract $F32X8 half 0) (output_xmm half))
+(rule (wide_extract $F32X8 half lane) (output_xmm (x64_pshufd half lane)))
+(rule (wide_extract $F64X4 half 0) (output_xmm half))
+(rule (wide_extract $F64X4 half 1) (output_xmm (x64_pshufd half 0xee)))
+
+;; A lane is written in its half, which goes back in its place.
+(rule 100 (lower (insertlane _ vec @ (value_type ty @ (ty_vec256 _)) val (u8_from_uimm8 index)))
+      (if-let true (use_avx2))
+      (let ((vec Xmm vec)
+            (per u8 (wide_per_half ty))
+            (which u8 (wide_half index per))
+            (half Xmm (wide_get_half vec which))
+            (changed Xmm (wide_insert ty half val (wide_lane index per))))
+        (x64_vinserti128_rvmiy vec changed which)))
+
+(decl wide_insert (Type Xmm Value u8) Xmm)
+(rule (wide_insert $I8X32 half val lane) (x64_pinsrb half val lane))
+(rule (wide_insert $I16X16 half val lane) (x64_pinsrw half val lane))
+(rule (wide_insert $I32X8 half val lane) (x64_pinsrd half val lane))
+(rule (wide_insert $I64X4 half val lane) (x64_pinsrq half val lane))
+(rule (wide_insert $F32X8 half val lane) (x64_insertps half val (sse_insertps_lane_imm lane)))
+(rule (wide_insert $F64X4 half val 0) (x64_movsd_regmove half val))
+(rule (wide_insert $F64X4 half val 1) (x64_movlhps half val))

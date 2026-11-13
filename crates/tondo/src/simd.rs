@@ -135,6 +135,9 @@ pub enum SimdOp {
     Cast,
     /// `==` of two vectors or masks: every lane equal.
     Same,
+    /// `accelerated()` of the vectors of a width, which each function's
+    /// code knows as it is compiled.
+    Accelerated(Width),
 }
 
 impl SimdOp {

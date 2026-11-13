@@ -6455,6 +6455,33 @@ A test makes a program for every type of lanes with every operation at each widt
 it prints to each operation's definition worked out a lane at a time, any NaN being equal to
 another, since their payloads differ between processors.
 
+## Vectors of 256 bits in the generator, on x64 with AVX2
+
+Our copy of Cranelift makes the vectors of 256 bits where the code's level has AVX2: the
+assembler has the VEX.256 forms of the instructions `std.simd` needs, and `wide.isle` lowers
+each operation it emits on the six types of 256 bits, and no other. A value of 256 bits is one
+YMM register, of the class of floats: a function that has one spills, reloads and moves its float
+registers whole, and runs `vzeroupper` before its calls and its return, as the runtime and C run
+SSE instructions, which pay for upper halves left set. Arguments and results stay within 128 bits:
+a vector wider than that crosses a call in memory at every level, so code built for one level
+calls code built for another without converting.
+
+What AVX2 has no instruction for is made of others: the product of bytes from the products of
+words, the product of 64 bits from those of its halves of 32, a shift with sign of bytes or of
+64 bits from the unsigned shift with its sign extended, the comparisons of 64 bits without sign
+with their sign bits flipped, and the least and greatest of 64 bits by a comparison and a blend.
+`min` and `max` of floats are Cranelift's sequence of 128 bits at the new width, which gives NaN
+and takes -0.0 as the lesser the same way.
+
+What moves lanes between the halves of a register or takes them one at a time, `of`, `lane`,
+`withLane`, `reversed`, `to`, `joined`, `lower` and `upper`, goes by parts of 128 bits, as AVX2's
+shuffles keep to each half. `sum`, `minLane` and `maxLane` bring a part of 256 bits to 128 with the
+vector operation on its halves before they take the lanes, as the narrower parts are combined at the
+baseline: with one more step done on single lanes, the sign of a NaN differed between levels.
+`accelerated()` is answered as each function is compiled, from its level. The test of every
+operation runs at the baseline and at the machine's level, and holds both to the definitions and
+to the same bits.
+
 ## The sum of floats in a fixed order, and arrays of floats with vectors
 
 `sum` of floats added from left to right, one addition waiting on the one before, and no faster

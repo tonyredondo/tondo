@@ -409,6 +409,10 @@ pub(crate) fn emit(
         }
 
         Inst::CallKnown { info: call_info } => {
+            // A patchable call is a `nop` until a debugger patches it.
+            if !call_info.patchable {
+                vzeroupper_if_wide(sink, info, state);
+            }
             let start = sink.cur_offset();
             let stack_map = state.take_stack_map();
 
@@ -467,6 +471,7 @@ pub(crate) fn emit(
         }
 
         Inst::ReturnCallKnown { info: call_info } => {
+            vzeroupper_if_wide(sink, info, state);
             emit_return_call_common_sequence(sink, info, state, &call_info);
 
             // Finally, jump to the callee!
@@ -485,6 +490,7 @@ pub(crate) fn emit(
         Inst::ReturnCallUnknown { info: call_info } => {
             let callee = call_info.dest;
 
+            vzeroupper_if_wide(sink, info, state);
             emit_return_call_common_sequence(sink, info, state, &call_info);
 
             asm::inst::jmpq_m::new(callee).emit(sink, info, state);
@@ -494,6 +500,7 @@ pub(crate) fn emit(
         Inst::CallUnknown {
             info: call_info, ..
         } => {
+            vzeroupper_if_wide(sink, info, state);
             let stack_map = state.take_stack_map();
 
             let dest = match call_info.dest.clone() {
@@ -2209,5 +2216,15 @@ fn emit_lea<S>(
         }
 
         _ => lea(*dst.as_ref(), addr, sink),
+    }
+}
+
+/// Tondo: in a function with vectors of 256 bits, `vzeroupper` before a call,
+/// which may run SSE instructions, that pay for upper halves left set (the
+/// epilogue has its own, `gen_wide_vectors_end`). No value of 256 bits
+/// crosses a call: arguments and results keep their low 128 bits.
+fn vzeroupper_if_wide(sink: &mut MachBuffer<Inst>, info: &EmitInfo, state: &mut EmitState) {
+    if state.wide_vectors {
+        asm::inst::vzeroupper_zo::new().emit(sink, info, state);
     }
 }

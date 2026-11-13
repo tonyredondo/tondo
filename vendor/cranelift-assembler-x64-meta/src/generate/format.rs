@@ -510,6 +510,16 @@ impl dsl::Format {
                     evex_scaling,
                 }
             }
+            // Tondo: no operands, as `vzeroupper`: the fields of registers
+            // say none.
+            [] => {
+                assert!(!is4);
+                fmtln!(
+                    f,
+                    "let prefix = {prefix_type}::{two_op}(0, (None, None), {bits});"
+                );
+                ModRmStyle::None
+            }
             unknown => unimplemented!("unknown pattern: {unknown:?}"),
         };
 

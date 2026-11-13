@@ -203,6 +203,8 @@ pub fn get_isle_compilations(
                     vec![
                         src_isa_x64.join("inst.isle"),
                         src_isa_x64.join("lower.isle"),
+                        // Tondo: vectors of 256 bits.
+                        src_isa_x64.join("wide.isle"),
                     ],
                 ]
                 .concat(),

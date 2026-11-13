@@ -2,7 +2,8 @@
 // processor's vector instructions (standard library 14.46). Vectors of 128,
 // 256 and 512 bits, and `Vector[T]`, the widest that is accelerated where
 // the code runs, give the same results everywhere: a width the processor
-// does not do is computed on halves of 128 bits.
+// does not do is computed on halves, of 256 bits on an x64 with AVX2 and of
+// 128 bits elsewhere.
 //
 // ```tondo
 // import std.console
@@ -46,8 +47,9 @@
 pub type Vector128[T]
 
 /// A vector of 256 bits, with the functions and methods of `Vector128` at its
-/// width, and `joined`, `lower` and `upper`. It is computed on halves of 128
-/// bits until the code generator makes vectors of 256 bits.
+/// width, and `joined`, `lower` and `upper`. Code built for an x64 level with
+/// AVX2, as `--cpu x86-64-v3`, does it with the processor's instructions of
+/// 256 bits; elsewhere it is computed on halves of 128 bits.
 ///
 /// ```tondo
 /// import std.console
@@ -69,9 +71,10 @@ pub type Vector256[T]
 /// ```
 pub type Vector512[T]
 
-/// The widest vector that is accelerated where the code runs, 128 bits until
-/// wider ones are, with the functions and methods of `Vector128`. Its result
-/// can differ by its width, as `sum` groups the lanes by it.
+/// The widest vector that is accelerated where the code runs, with the
+/// functions and methods of `Vector128`: 128 bits until a function has
+/// versions for each level of processor. Its result can differ by its
+/// width, as `sum` groups the lanes by it.
 ///
 /// ```tondo
 /// import std.console

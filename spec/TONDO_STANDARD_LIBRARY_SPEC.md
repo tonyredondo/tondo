@@ -7372,8 +7372,13 @@ pub fn Vector128[T].cast[U](self): Vector128[U]
   `simd.Vector128[Float32].zero()` (11.5 del lenguaje), o sin él donde se
   espera un vector de ese ancho. `lanes()` y `accelerated()` se conocen al
   compilar; `accelerated()` es `true` para 128 bits en x64 y arm64, a cada
-  nivel, y `false` para 256 y 512 bits hasta que el generador de código haga
-  vectores de esos anchos. `Vector[T]` es entonces `Vector128[T]`.
+  nivel; para 256 bits, en el código compilado para un nivel de x64 con AVX2
+  (`x86-64-v3`, `x86-64-v4`, o `native` en un procesador que lo tiene), que
+  hace sus operaciones con las instrucciones de 256 bits; y `false` para 512
+  bits hasta que el generador de código haga vectores de ese ancho. Un ancho
+  que no está acelerado se calcula por mitades del mayor que lo está.
+  `Vector[T]` es por ahora `Vector128[T]` en todo nivel, hasta las versiones
+  de una función por nivel (18.11 del lenguaje).
 - `of` recibe exactamente `lanes()` valores; otra cantidad es un error donde
   los valores se escriben en la llamada, y `P0006` con un array esparcido.
 - `load` lee `lanes()` elementos desde `at` y `store` los escribe. Si el array

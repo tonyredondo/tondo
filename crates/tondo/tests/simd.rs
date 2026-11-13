@@ -472,6 +472,18 @@ fn agree(lane: Lane, printed: &str, wanted: &str) -> bool {
     }
 }
 
+/// Whether this machine's level does vectors of 256 bits with instructions
+/// of that width: an x64 with AVX2 (step 22b).
+fn wide_here() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    return std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma");
+    #[cfg(not(target_arch = "x86_64"))]
+    return false;
+}
+
+/// At the baseline and at this machine's level, where an x64 with AVX2 does
+/// vectors of 256 bits with its instructions of 256 bits: the definitions,
+/// and the same bits at both levels (rule 15).
 #[test]
 fn every_operation_of_every_lane_is_its_definition() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("simd");
@@ -482,18 +494,40 @@ fn every_operation_of_every_lane_is_its_definition() {
         let (code, expected) = program(lane, &mut random);
         let file = dir.join(format!("{}.to", lane.name.to_lowercase()));
         std::fs::write(&file, &code).unwrap();
-        let run = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["run", &file.to_string_lossy()]).output().unwrap();
-        let printed = String::from_utf8_lossy(&run.stdout);
-        if !run.status.success() {
-            failures.push(format!("{}: {}", lane.name, String::from_utf8_lossy(&run.stderr)));
-            continue;
-        }
-        let mut printed_lines = printed.lines();
-        for wanted in expected.lines() {
-            let got = printed_lines.next().unwrap_or("");
-            if !agree(lane, got, wanted) {
-                failures.push(format!("{} ({}):\n  printed {got}\n  wanted  {wanted}", lane.name, file.display()));
+        let mut outputs = Vec::new();
+        for (cpu, wide) in [("baseline", false), ("native", wide_here())] {
+            let run = Command::new(env!("CARGO_BIN_EXE_tondo"))
+                .args(["run", &file.to_string_lossy(), "--cpu", cpu])
+                .output()
+                .unwrap();
+            let printed = String::from_utf8_lossy(&run.stdout).into_owned();
+            if !run.status.success() {
+                failures.push(format!("{} at {cpu}: {}", lane.name, String::from_utf8_lossy(&run.stderr)));
+                continue;
             }
+            let expected = if wide {
+                expected.replace("accelerated 256: false", "accelerated 256: true")
+            } else {
+                expected.clone()
+            };
+            let mut printed_lines = printed.lines();
+            for wanted in expected.lines() {
+                let got = printed_lines.next().unwrap_or("");
+                if !agree(lane, got, wanted) {
+                    failures.push(format!(
+                        "{} at {cpu} ({}):\n  printed {got}\n  wanted  {wanted}",
+                        lane.name,
+                        file.display()
+                    ));
+                }
+            }
+            outputs
+                .push(printed.lines().filter(|line| !line.starts_with("accelerated")).collect::<Vec<_>>().join("\n"));
+        }
+        if let [baseline, native] = outputs.as_slice()
+            && baseline != native
+        {
+            failures.push(format!("{}: the bits differ between the baseline and this machine's level", lane.name));
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
