@@ -336,7 +336,8 @@ pub fn Map.remove(self, key: K): V?
 ```
 
 Removes `key` and gives its value, or `none` when the map did not have
-it.
+it. The map keeps nothing of it: a channel's end it gives closes once
+the program drops it, as a local's does.
 
 #### Map.compareExchange
 
@@ -454,7 +455,7 @@ pub fn Stack.pop(self): T?
 ```
 
 Removes the value on top and gives it, or `none` at once when the stack
-is empty.
+is empty. The stack keeps nothing of it, as `sync.Map.remove`.
 
 #### Stack.get
 
@@ -522,7 +523,7 @@ pub fn Queue.popFront(self): T?
 ```
 
 Removes the value at the front and gives it, or `none` at once when the
-queue is empty.
+queue is empty. The queue keeps nothing of it, as `sync.Map.remove`.
 
 #### Queue.get
 

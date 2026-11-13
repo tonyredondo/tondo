@@ -2551,6 +2551,17 @@ modo que son exactos cuando no hay escrituras concurrentes y, si las hay,
 pueden contar unas y no otras. Las demás operaciones son linealizables.
 `snapshot()` es O(n).
 
+Un valor que `remove`, `pop`, `popFront` o `compareExchange` sacan de una
+colección compartida, o que `insert` reemplaza, deja de ser suyo como deja de
+serlo un local que sale de su ámbito, cuando alcanza, directamente o en lo que
+contiene, algo cuyo fin ve otra parte del programa o el sistema: el extremo de
+un canal, una tarea, un grupo, un proceso, un permiso, un archivo, un
+descriptor u otro recurso del runtime, o un valor de función. La operación lo
+suelta antes de volver, en cuanto ninguna lectura concurrente puede verlo
+todavía, y el extremo de un canal del que no quedan copias se cierra. Un valor
+que solo ocupa memoria, como un `String` o un registro de números, se libera
+después, sin que el programa vea cuándo.
+
 #### 14.4.5 Executors, pools y actores
 
 `std.executor` construye políticas de ejecución sobre `spawn`, `Join` y

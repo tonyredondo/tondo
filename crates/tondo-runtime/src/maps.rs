@@ -51,6 +51,10 @@ pub struct MapGlue {
     /// For the cycle collector, when keys or values may refer to a cycle.
     pub(crate) key_visit: Option<cycles::Visit>,
     pub(crate) value_visit: Option<cycles::Visit>,
+    /// Whether letting go of a key or value does more than free memory,
+    /// as closing a channel's end: a shared map lets go of one it removed
+    /// as soon as no reader can see it, rather than in a batch.
+    pub(crate) prompt: u8,
 }
 
 impl MapObject {

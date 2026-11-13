@@ -6726,3 +6726,20 @@ on the M2, the benchmarks that allocate most are 6 to 11% faster, and two others
 the sum of two arrays of floats into a third, and a channel; against 3.3 on Linux, every benchmark
 runs within 1.5% of the instructions it took. The key of the runtime's build holds the vendored
 crate, so a change to its C builds the runtime again.
+
+## A shared collection lets go at once of what the program sees go
+
+A value taken out of a `sync.Map`, or replaced in it, kept the map's reference until the runtime
+reclaimed the map's memory, in batches of 64 retired entries, as a reader that takes no lock may
+still be copying it: a `Sender` taken out and dropped did not close its channel, and its reader
+waited for good. The same held for `pop` of a `sync.Stack` and `popFront` of a `sync.Queue`. Now
+such a value is let go of before the operation returns, as soon as the readers that may still see
+it are done, which takes as long as their reads, as a pinned operation never waits. That holds for
+a value that reaches, through its fields, variants and the state it shares, something whose end
+another part of the program or the system sees: a channel's end, a task or a group, a process, a
+permit or a lock, a file, a descriptor or another resource of the runtime, or a function value,
+which may hold any of them. The compiler tells the runtime so for each collection's types, and a
+record or enum is such a value when one of its parts is. Values that only hold memory, texts and
+records of numbers, the commonest ones, keep the batches, which make taking them out cheap: the
+line is drawn at what the program sees go, not at whether a value has anything to release, which
+every text has.

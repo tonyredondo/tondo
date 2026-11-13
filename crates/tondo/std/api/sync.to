@@ -296,7 +296,8 @@ pub fn Map.contains(self, key: K): Bool
 pub fn Map.insert(self, key: K, value: V): V?
 
 /// Removes `key` and gives its value, or `none` when the map did not have
-/// it.
+/// it. The map keeps nothing of it: a channel's end it gives closes once
+/// the program drops it, as a local's does.
 pub fn Map.remove(self, key: K): V?
 
 /// `expected = none` compares with absence; `desired = none` removes.
@@ -325,7 +326,7 @@ pub fn Set.snapshot(self): Set[K]
 pub fn Stack.push(self, value: T)
 
 /// Removes the value on top and gives it, or `none` at once when the stack
-/// is empty.
+/// is empty. The stack keeps nothing of it, as `sync.Map.remove`.
 pub fn Stack.pop(self): T?
 
 /// The value at `index` from the bottom, counting from the top when it is
@@ -339,7 +340,7 @@ pub fn Stack.snapshot(self): Array[T]
 pub fn Queue.push(self, value: T)
 
 /// Removes the value at the front and gives it, or `none` at once when the
-/// queue is empty.
+/// queue is empty. The queue keeps nothing of it, as `sync.Map.remove`.
 pub fn Queue.popFront(self): T?
 
 /// The value at `index` from the front, counting from the back when it is

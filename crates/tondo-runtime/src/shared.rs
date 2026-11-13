@@ -6,6 +6,10 @@
 //! Memory a concurrent reader may still see is retired through epochs: an
 //! operation pins the current epoch while it reads, and what a writer
 //! removes is freed once every thread pinned at that point has moved on.
+//! That is done in batches, but for values whose end another part of the
+//! program sees, as a channel's end that closes: the operation that took
+//! one out lets go of it before it returns, once the readers that may
+//! still see it are done, which takes as long as their reads.
 
 use super::cycles::{self, Kind, Taken, Visit, Visitor};
 use super::{
@@ -27,22 +31,54 @@ struct Participant {
     /// `epoch << 1 | 1` while pinned, 0 otherwise.
     state: AtomicUsize,
     garbage: Mutex<Vec<(usize, Garbage)>>,
+    /// What to let go of as soon as no reader can see it, and the epoch from
+    /// which none can: two after the last retired.
+    prompt: Mutex<Vec<Garbage>>,
+    due: AtomicUsize,
+    /// The participant registered before it; none is ever removed.
+    next: *const Participant,
 }
 
 struct Garbage(Box<dyn FnOnce()>);
 
-// Garbage is freed by whichever thread collects it; it only frees memory.
+// Garbage is freed by whichever thread collects it: it frees memory, and
+// lets go of values that the program shares between threads.
 unsafe impl Send for Garbage {}
 
 static EPOCH: AtomicUsize = AtomicUsize::new(0);
-static PARTICIPANTS: Mutex<Vec<&'static Participant>> = Mutex::new(Vec::new());
+/// The participant registered last, which leads to the others.
+static PARTICIPANTS: AtomicPtr<Participant> = AtomicPtr::new(std::ptr::null_mut());
+
+fn participants() -> impl Iterator<Item = &'static Participant> {
+    let mut next = PARTICIPANTS.load(Ordering::Acquire) as *const Participant;
+    std::iter::from_fn(move || {
+        let participant = unsafe { next.as_ref()? };
+        next = participant.next;
+        Some(participant)
+    })
+}
+
+/// The bit of `DEPTH` that says the outermost pin has something to let go
+/// of at once when it ends.
+const PROMPT: usize = 1 << (usize::BITS - 1);
 
 thread_local! {
     static LOCAL: &'static Participant = {
-        let participant: &'static Participant =
-            Box::leak(Box::new(Participant { state: AtomicUsize::new(0), garbage: Mutex::new(Vec::new()) }));
-        PARTICIPANTS.lock().unwrap_or_else(|e| e.into_inner()).push(participant);
-        participant
+        let participant = Box::leak(Box::new(Participant {
+            state: AtomicUsize::new(0),
+            garbage: Mutex::new(Vec::new()),
+            prompt: Mutex::new(Vec::new()),
+            due: AtomicUsize::new(0),
+            next: std::ptr::null(),
+        }));
+        let mut head = PARTICIPANTS.load(Ordering::Relaxed);
+        loop {
+            participant.next = head;
+            match PARTICIPANTS.compare_exchange_weak(head, participant, Ordering::Release, Ordering::Relaxed) {
+                Ok(_) => break &*participant,
+                Err(now) => head = now,
+            }
+        }
     };
     static DEPTH: Cell<usize> = const { Cell::new(0) };
 }
@@ -69,9 +105,25 @@ impl Pin {
         let epoch = EPOCH.load(Ordering::Relaxed);
         self.participant.garbage.lock().unwrap_or_else(|e| e.into_inner()).push((epoch, Garbage(Box::new(garbage))));
     }
+
+    /// Runs `garbage` once no thread can still see it, before the operation
+    /// that pinned returns, with `prompt`; otherwise as `retire` does.
+    #[inline(always)]
+    fn retire_now(&self, prompt: bool, garbage: impl FnOnce() + 'static) {
+        if prompt { self.retire_prompt(Garbage(Box::new(garbage))) } else { self.retire(garbage) }
+    }
+
+    #[inline(never)]
+    fn retire_prompt(&self, garbage: Garbage) {
+        let epoch = EPOCH.load(Ordering::Relaxed);
+        self.participant.prompt.lock().unwrap_or_else(|e| e.into_inner()).push(garbage);
+        self.participant.due.store(epoch + 2, Ordering::Relaxed);
+        DEPTH.with(|d| d.set(d.get() | PROMPT));
+    }
 }
 
 impl Drop for Pin {
+    #[inline(always)]
     fn drop(&mut self) {
         let depth = DEPTH.with(|d| {
             d.set(d.get() - 1);
@@ -80,22 +132,62 @@ impl Drop for Pin {
         if depth == 0 {
             self.participant.state.store(0, Ordering::Release);
             collect(self.participant, false);
+        } else {
+            let_go(self.participant);
         }
     }
+}
+
+/// Ends the outermost pin that has something to let go of at once, and
+/// lets go of it, waiting for the epoch to move past it: the threads that
+/// pinned an earlier one are reading, and an operation never waits while
+/// pinned. An operation that what it lets go of runs lets go of its own
+/// before it returns. An inner pin does nothing.
+#[cold]
+#[inline(never)]
+fn let_go(participant: &'static Participant) {
+    if DEPTH.with(|d| d.get()) != PROMPT {
+        return;
+    }
+    DEPTH.with(|d| d.set(0));
+    participant.state.store(0, Ordering::Release);
+    // With no thread pinned, none is reading what was taken out, and one
+    // that pins from now on finds it unlinked; else the epoch moves past it.
+    // What a reader took a reference to before it unpinned comes first.
+    fence(Ordering::SeqCst);
+    if participants().any(|other| other.state.load(Ordering::Acquire) & 1 == 1) {
+        let due = participant.due.load(Ordering::Relaxed);
+        let mut spins = 0;
+        while EPOCH.load(Ordering::Acquire) < due {
+            try_advance();
+            if EPOCH.load(Ordering::Acquire) < due {
+                backoff(&mut spins);
+            }
+        }
+    }
+    // Only what is there now is due: letting go of a task's handle may wait
+    // for it, and this task go on in another thread, while this one retires
+    // more. Most often it is one value, taken without giving up the room.
+    let (one, more) = {
+        let mut prompt = participant.prompt.lock().unwrap_or_else(|e| e.into_inner());
+        if prompt.len() == 1 { (prompt.pop(), Vec::new()) } else { (None, std::mem::take(&mut *prompt)) }
+    };
+    for garbage in one.into_iter().chain(more) {
+        (garbage.0)();
+    }
+    collect(participant, false);
 }
 
 /// Advances the epoch when every pinned thread has seen the current one.
 fn try_advance() {
     let global = EPOCH.load(Ordering::Relaxed);
     fence(Ordering::SeqCst);
-    let participants = PARTICIPANTS.lock().unwrap_or_else(|e| e.into_inner());
-    for participant in participants.iter() {
+    for participant in participants() {
         let state = participant.state.load(Ordering::Relaxed);
         if state & 1 == 1 && state >> 1 != global {
             return;
         }
     }
-    drop(participants);
     let _ = EPOCH.compare_exchange(global, global + 1, Ordering::Release, Ordering::Relaxed);
 }
 
@@ -121,9 +213,11 @@ fn collect(participant: &'static Participant, everything: bool) {
 /// Frees everything retired; the program has ended.
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
 pub fn flush() {
-    let participants: Vec<&'static Participant> =
-        PARTICIPANTS.lock().unwrap_or_else(|e| e.into_inner()).iter().copied().collect();
-    for participant in participants {
+    for participant in participants() {
+        let prompt = std::mem::take(&mut *participant.prompt.lock().unwrap_or_else(|e| e.into_inner()));
+        for garbage in prompt {
+            (garbage.0)();
+        }
         collect(participant, true);
     }
 }
@@ -264,7 +358,7 @@ impl SharedMap {
     /// its key and value.
     fn retire_node(&self, pin: &Pin, node: *mut Node) {
         let (glue, layout, offset) = (self.glue, self.node_layout(), self.value_offset);
-        pin.retire(move || unsafe { free_node(node, glue, layout, offset, true) });
+        pin.retire_now(self.glue().prompt != 0, move || unsafe { free_node(node, glue, layout, offset, true) });
     }
 
     /// The stripe of a bucket.
@@ -696,6 +790,8 @@ pub struct SharedQueue {
     retain: Option<Glue>,
     release: Option<Glue>,
     visit: Option<Visit>,
+    /// Whether a value taken out is let go of at once (`MapGlue::prompt`).
+    prompt: bool,
 }
 
 struct Segment {
@@ -706,7 +802,8 @@ struct Segment {
     capacity: usize,
     /// The position of the first slot in the whole queue.
     base: usize,
-    /// Each slot: a filled flag, then the value at offset 8.
+    /// Each slot: a flag, then the value at offset 8. The flag is 1 once
+    /// the value is in, and 2 when it was taken out and let go of apart.
     slots: *mut u8,
     slot_size: usize,
 }
@@ -760,7 +857,7 @@ unsafe fn free_segment(segment: *mut Segment, release: Option<Glue>) {
         let s = Box::from_raw(segment);
         if let Some(release) = release {
             for index in 0..s.capacity {
-                if s.filled(index).load(Ordering::Relaxed) != 0 {
+                if s.filled(index).load(Ordering::Relaxed) == 1 {
                     release(s.value(index));
                 }
             }
@@ -840,6 +937,7 @@ pub unsafe extern "C" fn tondo_rt_shared_queue_from(
     retain: Option<Glue>,
     release: Option<Glue>,
     visit: Option<Visit>,
+    prompt: usize,
 ) -> *mut SharedQueue {
     let segment = Segment::new(FIRST_SEGMENT, 0, size);
     LIVE_OBJECTS.made();
@@ -851,6 +949,7 @@ pub unsafe extern "C" fn tondo_rt_shared_queue_from(
         retain,
         release,
         visit,
+        prompt: prompt != 0,
     }));
     if visit.is_some() {
         cycles::remember(queue as *const u8, Kind::SharedQueue);
@@ -903,6 +1002,22 @@ pub unsafe extern "C" fn tondo_rt_shared_queue_pop(queue: *mut SharedQueue, out:
             segment.wait_filled(position);
             if segment.head.compare_exchange(position, position + 1, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
                 copy_retained(segment.value(position), out, q.size, q.retain);
+                if q.prompt
+                    && let Some(release) = q.release
+                {
+                    // The slot's reference goes once no reader can copy it,
+                    // from a copy, as the segment may be freed before.
+                    segment.filled(position).store(2, Ordering::Relaxed);
+                    if q.size <= 32 {
+                        let mut value = [0u64; 4];
+                        std::ptr::copy_nonoverlapping(segment.value(position), value.as_mut_ptr() as *mut u8, q.size);
+                        pin.retire_now(true, move || release(value.as_mut_ptr() as *mut u8));
+                    } else {
+                        let mut value = scratch(q.size);
+                        std::ptr::copy_nonoverlapping(segment.value(position), value.as_mut_ptr() as *mut u8, q.size);
+                        pin.retire_now(true, move || release(value.as_mut_ptr() as *mut u8));
+                    }
+                }
                 return 1;
             }
         }
@@ -986,7 +1101,7 @@ pub(crate) unsafe fn visit_queue(visitor: &mut Visitor, queue: *mut u8) {
         while !segment.is_null() {
             let s = &*segment;
             for index in 0..s.capacity {
-                if s.filled(index).load(Ordering::Acquire) != 0 {
+                if s.filled(index).load(Ordering::Acquire) == 1 {
                     visitor.visit(q.visit, s.value(index));
                 }
             }
@@ -1026,6 +1141,8 @@ pub struct SharedStack {
     retain: Option<Glue>,
     release: Option<Glue>,
     visit: Option<Visit>,
+    /// Whether a value taken out is let go of at once (`MapGlue::prompt`).
+    prompt: bool,
 }
 
 #[repr(C)]
@@ -1081,6 +1198,7 @@ pub unsafe extern "C" fn tondo_rt_shared_stack_from(
     retain: Option<Glue>,
     release: Option<Glue>,
     visit: Option<Visit>,
+    prompt: usize,
 ) -> *mut SharedStack {
     LIVE_OBJECTS.made();
     let stack = Box::into_raw(Box::new(SharedStack {
@@ -1090,6 +1208,7 @@ pub unsafe extern "C" fn tondo_rt_shared_stack_from(
         retain,
         release,
         visit,
+        prompt: prompt != 0,
     }));
     if visit.is_some() {
         cycles::remember(stack as *const u8, Kind::SharedStack);
@@ -1128,7 +1247,7 @@ pub unsafe extern "C" fn tondo_rt_shared_stack_pop(stack: *mut SharedStack, out:
                 copy_retained(stack_value(top), out, s.size, s.retain);
                 let (release, layout) = (s.release, s.layout());
                 let top = top as usize;
-                pin.retire(move || {
+                pin.retire_now(s.prompt, move || {
                     let node = top as *mut StackNode;
                     if let Some(release) = release {
                         release(stack_value(node));

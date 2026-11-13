@@ -379,6 +379,30 @@ impl Handle {
         )
     }
 
+    /// Whether letting go of it does more than free memory, which another
+    /// part of the program or the system sees: a channel's end closes, a
+    /// task's or a process's end is waited for, a permit or a lock is given
+    /// back, a file or a descriptor is closed; a reflected value may hold any
+    /// of them.
+    pub fn outside(self) -> bool {
+        matches!(
+            self,
+            Handle::Sender
+                | Handle::Receiver
+                | Handle::Join
+                | Handle::Group
+                | Handle::Permit
+                | Handle::Guard
+                | Handle::File
+                | Handle::Writer
+                | Handle::Reader
+                | Handle::Process
+                | Handle::Native
+                | Handle::Owned
+                | Handle::ReflectBox
+        )
+    }
+
     /// One of the five shared collections of `std.sync`.
     pub fn collection(self) -> bool {
         matches!(self, Handle::SyncArray | Handle::SyncMap | Handle::SyncSet | Handle::SyncStack | Handle::SyncQueue)
@@ -1700,6 +1724,19 @@ impl Types {
         });
         write(&self.can_cycle).insert(ty, result);
         result
+    }
+
+    /// Whether letting go of a value of this type can do more than free
+    /// memory: it reaches a handle whose end another part of the program
+    /// or the system sees, or a function value, which may hold one. A
+    /// shared collection lets go of such a value as soon as no reader can
+    /// still see it, and of the others in batches.
+    pub fn holds_outside(&self, ty: Ty) -> bool {
+        self.reach(ty).iter().any(|&t| match self.kind(self.repr(t)) {
+            TyKind::Fn(..) => true,
+            TyKind::Handle(handle, _) => handle.outside(),
+            _ => false,
+        })
     }
 
     /// The types a value of this type can refer to, itself included.

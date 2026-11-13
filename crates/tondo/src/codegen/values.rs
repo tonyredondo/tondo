@@ -59,9 +59,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let rt = match handle {
             Handle::SyncQueue => Rt::SharedQueueFrom,
             Handle::SyncStack => Rt::SharedStackFrom,
-            _ => Rt::SharedArrayFrom,
+            // An array lets go of a value it replaces under its lock.
+            _ => return self.e.call_rt(Rt::SharedArrayFrom, &[pointer, size, retain, release, visit]).unwrap(),
         };
-        self.e.call_rt(rt, &[pointer, size, retain, release, visit]).unwrap()
+        let prompt = self.e.fb.ins().iconst(POINTER, self.e.cg.types().holds_outside(element) as i64);
+        self.e.call_rt(rt, &[pointer, size, retain, release, visit, prompt]).unwrap()
     }
 
     /// `present` and the address of the payload of an option value, or of

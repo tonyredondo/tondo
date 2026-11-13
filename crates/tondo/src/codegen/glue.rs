@@ -558,7 +558,11 @@ impl Codegen<'_> {
         let name = format!("tondo_map_glue{}", self.map_glue.len());
         let id = self.module.declare_data(&name, Linkage::Local, false, false).expect("glue table");
         let mut data = DataDescription::new();
-        data.define(vec![0u8; 64].into_boxed_slice());
+        // Eight functions, then whether the runtime lets go of a removed
+        // key or value as soon as no reader can see it.
+        let mut bytes = vec![0u8; 72];
+        bytes[64] = (self.types.holds_outside(key) || self.types.holds_outside(value)) as u8;
+        data.define(bytes.into_boxed_slice());
         data.set_align(8);
         let entries = [
             (Glue::Hash, key, true),

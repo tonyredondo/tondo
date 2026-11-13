@@ -473,8 +473,8 @@ fn answers(
         }
     }
     gone.store(true)
-    // Closed here: a value taken out of a `sync.Map` keeps the map's
-    // reference until the map's memory is reclaimed.
+    // Closed here: the snapshot keeps a copy of each sender until the loop
+    // ends.
     for (id, _) in waiting.snapshot() {
         match waiting.remove(id) {
             some(send) => send.close()

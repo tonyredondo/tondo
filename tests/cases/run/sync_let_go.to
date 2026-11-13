@@ -1,0 +1,62 @@
+// A value taken out of a shared collection, or replaced in it, is let go of
+// as a local is, when it holds something whose end the program sees: the
+// end of a channel closes once the last copy goes, and its reader gets
+// `none` rather than waiting for good. A record that holds one is let go
+// of the same way; a text, which only holds memory, goes in batches.
+
+import std.console
+import std.sync
+
+type Session = {
+    name: String
+    out: Sender[String]
+}
+
+fn ended(input: Receiver[Int]): String {
+    match input.receive() {
+        some(value) => "got {value}"
+        none => "closed"
+    }
+}
+
+fn main() {
+    let (out, input) = channel[Int](1)
+    let map = sync.Map[Int, Sender[Int]]()
+    _ = map.insert(1, out)
+    _ = map.remove(1)
+    console.println("map remove: {ended(input)}")
+
+    let (first, fromFirst) = channel[Int](1)
+    let (second, _) = channel[Int](1)
+    let replaced = sync.Map[Int, Sender[Int]]()
+    _ = replaced.insert(1, first)
+    _ = replaced.insert(1, second)
+    console.println("map replace: {ended(fromFirst)}")
+
+    let (queued, fromQueue) = channel[Int](1)
+    let queue = sync.Queue[Sender[Int]]()
+    queue.push(queued)
+    _ = queue.popFront()
+    console.println("queue: {ended(fromQueue)}")
+
+    let (stacked, fromStack) = channel[Int](1)
+    let stack = sync.Stack[Sender[Int]]()
+    stack.push(stacked)
+    _ = stack.pop()
+    console.println("stack: {ended(fromStack)}")
+
+    let (lines, fromLines) = channel[String](1)
+    let sessions = sync.Map[String, Session]()
+    _ = sessions.insert("ana", Session { name: "ana", out: lines })
+    _ = sessions.remove("ana")
+    match fromLines.receive() {
+        some(line) => console.println("session: {line}")
+        none => console.println("session: closed")
+    }
+}
+
+// expect-stdout: map remove: closed
+// expect-stdout: map replace: closed
+// expect-stdout: queue: closed
+// expect-stdout: stack: closed
+// expect-stdout: session: closed
