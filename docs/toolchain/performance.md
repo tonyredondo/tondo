@@ -12,6 +12,7 @@ heap and why, and which checks a loop keeps. Everything shown was run.
 - [The machine code: asm](#the-machine-code-asm)
 - [Against another version](#against-another-version)
 - [The processor a build is for](#the-processor-a-build-is-for)
+- [Many numbers at once: vectors](#many-numbers-at-once-vectors)
 - [Memory](#memory)
 - [What not to be fooled by](#what-not-to-be-fooled-by)
 
@@ -399,6 +400,65 @@ the other architecture. Only the way of the `if` that runs is compiled
 then: built with `--cpu x86-64-v3`, the program above has neither the test
 nor the second message in it. Any other feature is read from what the
 program found when it started, and `cpu.features()` gives all of them.
+
+## Many numbers at once: vectors
+
+The arithmetic of float arrays, their `sum` and `math.dot` are computed with
+the processor's vector instructions, with nothing to write. A loop of
+another shape is written with
+[`std.simd`](../language/10-numbers.md#vectors). This one counts the lines
+of a text, a byte at a time and sixteen at a time:
+
+```tondo
+import std.console
+import std.simd
+
+/// How many lines a text has: its line feeds, one byte at a time.
+pub fn count(bytes: Array[Byte]): Int {
+    var lines = 0
+    for byte in bytes {
+        if byte == 10 {
+            lines += 1
+        }
+    }
+    lines
+}
+
+/// The same, sixteen bytes at a time.
+pub fn countByVectors(bytes: Array[Byte]): Int {
+    let feed = simd.Vector128[Byte].all(10)
+    var lines = 0
+    var at = 0
+    for at + 16 <= bytes.length() {
+        lines += simd.Vector128[Byte].load(ref bytes, at: at).equal(feed).count()
+        at += 16
+    }
+    lines + count(bytes[at:])
+}
+
+fn main() {
+    let text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\n".bytes()
+    console.println("{count(text)} {countByVectors(text)}")
+}
+```
+
+```text output
+7 7
+```
+
+Over a page of a thousand lines:
+
+```text
+$ tondo test --bench
+test lines::unit::lines::aPage ... ok
+  a byte at a time     17.00 µs/op  ±0.3%  0 allocs/op  0 B/op  231.1k ins/op
+  by vectors           2.233 µs/op  ±1.8%  1 allocs/op  32 B/op  76.5k ins/op
+```
+
+The vectors of 128 bits are accelerated on both architectures. Those of 256
+and 512 bits work everywhere and give the same results, and are computed
+today by their halves, so a wider type is not yet a faster one:
+`accelerated()` says which a type is where the code runs.
 
 ## Memory
 

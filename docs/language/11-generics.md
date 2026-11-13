@@ -117,6 +117,30 @@ Type parameters do not vary: an `Array[Int]` is never an `Array[Int |
 String]`, even though an `Int` can become that union. Turning one into the
 other is a `map`, so that what it costs can be seen.
 
+A function of a generic type that takes no `self` gets the type's parameters
+from its arguments, or from the type that is expected of its result. When
+neither gives them, they are written after the type's name:
+
+```tondo
+import std.console
+import std.ffi
+
+type Buffer[T] = { items: Array[T] }
+
+/// How many bytes one item takes.
+fn Buffer[T].itemSize(): Int {
+    ffi.sizeOf[T]()
+}
+
+fn main() {
+    console.println("{Buffer[Int32].itemSize()} {Buffer[Float].itemSize()}")
+}
+```
+
+```text output
+4 8
+```
+
 ## Traits
 
 A trait is a set of methods that a type can have. It declares behaviour and

@@ -14,6 +14,7 @@ size, and how a type of the program gets arithmetic.
 - [Floats](#floats)
 - [Mixing numbers](#mixing-numbers)
 - [Mathematics](#mathematics)
+- [Vectors](#vectors)
 - [Exact decimals and big integers](#exact-decimals-and-big-integers)
 - [Arithmetic for your types](#arithmetic-for-your-types)
 - [Code for any number](#code-for-any-number)
@@ -284,6 +285,89 @@ later: `checkedSqrt`, `checkedLn`, `checkedLog10`, `checkedLog2`,
 `math.dot` is the sum of the products of two arrays of numbers. For floats
 it adds as an array's `sum` does, in an order that is the same on every
 machine ([Collections](08-collections.md#arithmetic-on-arrays)).
+
+## Vectors
+
+`std.simd` computes several numbers at once, with the processor's vector
+instructions. A `simd.Vector128[Int32]` holds four `Int32`, its lanes, and
+an operator works on each lane, with a number on either side standing for
+every lane:
+
+```tondo
+import std.console
+import std.simd
+
+fn main() {
+    let a = simd.Vector128[Int32].of(1, 2, 3, 4)
+    let b = simd.Vector128[Int32].all(10)
+    console.println("{a + b} {a * 2} {a.sum()} {a.maxLane()}")
+    let big = a.greater(simd.Vector128[Int32].all(2))
+    console.println("{big} {big.count()} {big.choose(a, -a)}")
+}
+```
+
+```text output
+<11, 12, 13, 14> <2, 4, 6, 8> 10 4
+<false, false, true, true> 2 <-1, -2, 3, 4>
+```
+
+- The types are `Vector128[T]`, `Vector256[T]` and `Vector512[T]`, of that
+  many bits, and `Vector[T]`, the widest that is accelerated where the code
+  runs. `T` is an integer of any size, `Byte`, `Float32` or `Float`, and a
+  vector has as many lanes as fit: `Vector128[Float]` has two.
+- Every type works on every processor and gives the same results. A width
+  the processor has no instructions for is computed by its halves, and
+  `accelerated()` says which case it is; the 128-bit types are accelerated
+  on both architectures.
+- An integer lane that overflows wraps, where a number alone would panic:
+  no operation on vectors panics for what a lane holds. Float lanes follow
+  IEEE 754, each on its own.
+- Between vectors, `<` and the like would give one `Bool`, so comparing is
+  a method, `less`, `lessOrEqual`, `greater`, `greaterOrEqual` and `equal`,
+  that gives a mask: a `Bool` for each lane. A mask has `any`, `all` and
+  `count`, and `choose(a, b)` takes each lane from `a` where it is true and
+  from `b` where it is not.
+- `load(ref values, at: i)` takes its lanes from an array, and `store(mut
+  into, at: i)` writes them back; `sum`, `minLane` and `maxLane` make one
+  number of the lanes.
+
+A loop over an array takes a vector at a time, and what is left one by one:
+
+```tondo
+import std.console
+import std.simd
+
+/// The sum of each value doubled.
+fn doubled(values: Array[Float32]): Float32 {
+    let lanes = simd.Vector[Float32].lanes()
+    var total = simd.Vector[Float32].zero()
+    var at = 0
+    for at + lanes <= values.length() {
+        total = total + simd.Vector[Float32].load(ref values, at: at) * 2.0
+        at += lanes
+    }
+    var rest = total.sum()
+    for value in values[at:] {
+        rest += value * 2.0
+    }
+    rest
+}
+
+fn main() {
+    let values: Array[Float32] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+    console.println("{doubled(values)}")
+}
+```
+
+```text output
+90.0
+```
+
+Most code needs none of this: the arithmetic of arrays, their `sum` and
+`math.dot` already compute with vectors
+([Collections](08-collections.md#arithmetic-on-arrays)). `std.simd` is for
+the loop those do not express, and [`std.simd`](../std/simd.md) lists every
+operation.
 
 ## Exact decimals and big integers
 
