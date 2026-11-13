@@ -171,7 +171,7 @@ word: String = "question"
 "the"  at textutil/src/clean/clean.to:3 in closure in textutil.clean.word (probe 1024)
 "question"  at textutil/src/clean/clean.to:3 in closure in textutil.clean.word (probe 1320)
 > back 1
-task 1 stopped at src/main.to:10 in count (1 lines back)
+task 1 stopped at src/main.to:10 in count (1 line back)
    10 |         let word = clean.word(each)
 > first counts.length() > 2
 task 1 stopped at src/main.to:11 in count (the first time `counts.length() > 2` holds, after this line)
