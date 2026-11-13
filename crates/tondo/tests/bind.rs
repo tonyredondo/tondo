@@ -135,3 +135,32 @@ fn included_headers() {
     std::fs::write(dir.join("src/main.to"), format!("{deep}\nfn main() {{}}\n")).unwrap();
     run(Command::new(compiler).args(["check"]).current_dir(&dir));
 }
+
+/// `--fails` names the functions that fail with the system's error number,
+/// which are declared `T ! os.Errno`: of a signed integer or a pointer, the
+/// pointer no longer optional, since null is the failure.
+#[test]
+fn functions_that_fail_with_the_error_number() {
+    let dir = scratch("bind-fails");
+    let header = "int open_thing(const char *path);\nchar *name_of(int id);\nunsigned count(void);\nint plain(void);\n";
+    std::fs::write(dir.join("things.h"), header).unwrap();
+    std::fs::write(dir.join("fails.txt"), "# What gives -1 or null with errno.\nopen_thing\nname_of\ncount\n").unwrap();
+    let compiler = env!("CARGO_BIN_EXE_tondo");
+    run(Command::new(compiler)
+        .args(["bind", "things.h", "--fails", "fails.txt", "--output", "things.to"])
+        .current_dir(&dir));
+    let module = std::fs::read_to_string(dir.join("things.to")).unwrap();
+    for line in [
+        "import std.ffi\nimport std.os\n",
+        "pub extern fn open_thing(path: ffi.CString?): ffi.CInt ! os.Errno",
+        "pub extern fn name_of(id: ffi.CInt): ffi.CString ! os.Errno",
+        "pub extern fn plain(): ffi.CInt\n",
+        "// - count: it fails with -1 or null only when it gives a signed integer or a pointer",
+    ] {
+        assert!(module.contains(line), "{line:?} in\n{module}");
+    }
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"things\"\n").unwrap();
+    std::fs::write(dir.join("src/main.to"), format!("{module}\nfn main() {{}}\n")).unwrap();
+    run(Command::new(compiler).args(["check"]).current_dir(&dir));
+}

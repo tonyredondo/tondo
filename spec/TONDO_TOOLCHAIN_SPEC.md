@@ -279,7 +279,7 @@ tondo remove <alias> [--project <dir>] [--json]
 tondo fix [<project>|<file.to>] [--library] [--json]
 tondo explain [<code>] [--json]
 tondo clean [--all] [--json]
-tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [--included] [-I <dir>] [-D <name[=value]>] [--json]
+tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [--included] [--fails <file>] [-I <dir>] [-D <name[=value]>] [--json]
 tondo test [<project>] [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--watch] [--coverage] [--bench [--bench-time <seconds>]] [--fuzz [--fuzz-time <seconds>]] [--test-format human|json|events] [--json] [--diagnostic-format human|json]
 tondo doc-test [--edition 0.1] <markdown>
 tondo target pack [<dir>] [--json]
@@ -406,6 +406,12 @@ en otros (`bits/`, `asm-generic/`):
 | macro de un puntero | `const` de valor `none` si es `NULL`; si no, una función que lo construye |
 | macro con parámetros que llama a una función | una función `unsafe` que la llama, con los tipos de sus parámetros |
 | `va_list` como parámetro | `Pointer[ffi.VaList]` |
+
+`--fails <file>` nombra, una por línea y con `#` para comentarios, las
+funciones que fallan dando -1 o un puntero nulo con el número de error del
+sistema: se declaran `T ! os.Errno` (16.16 del lenguaje), con el puntero ya no
+opcional, porque el nulo es su fallo. Una de la lista que da otro tipo queda
+fuera del módulo, con el porqué.
 
 Los nombres de C se conservan; uno que es palabra reservada o nombre del
 prelude de Tondo recibe `_` al final. Un `typedef` de un nombre que el header
