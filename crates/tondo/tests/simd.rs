@@ -472,13 +472,27 @@ fn agree(lane: Lane, printed: &str, wanted: &str) -> bool {
     }
 }
 
-/// Whether this machine's level does vectors of 256 bits with instructions
-/// of that width: an x64 with AVX2 (step 22b).
-fn wide_here() -> bool {
+/// The level the tests build for beside the baseline, and whether vectors
+/// of 256 bits are registers of that width there: `x86-64-v3` where the
+/// processor has it, the level of the versions (step 22b, rule 19), and
+/// this machine's elsewhere.
+fn wide_level() -> (&'static str, bool) {
     #[cfg(target_arch = "x86_64")]
-    return std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma");
-    #[cfg(not(target_arch = "x86_64"))]
-    return false;
+    {
+        use std::arch::is_x86_feature_detected as has;
+        let v3 = has!("avx")
+            && has!("avx2")
+            && has!("bmi1")
+            && has!("bmi2")
+            && has!("fma")
+            && has!("f16c")
+            && has!("lzcnt")
+            && has!("movbe");
+        if v3 {
+            return ("x86-64-v3", true);
+        }
+    }
+    ("native", false)
 }
 
 /// At the baseline, with and without its versions for a higher level, and
@@ -497,10 +511,9 @@ fn every_operation_of_every_lane_is_its_definition() {
         std::fs::write(&file, &code).unwrap();
         let mut outputs = Vec::new();
         // The baseline's own code, then its versions (rule 19), which run
-        // where the processor has AVX2, then this machine's level.
-        for (cpu, versions, wide) in
-            [("baseline", "0", false), ("baseline", "1", wide_here()), ("native", "1", wide_here())]
-        {
+        // where the processor has AVX2, then x86-64-v3 itself.
+        let (level, wide) = wide_level();
+        for (cpu, versions, wide) in [("baseline", "0", false), ("baseline", "1", wide), (level, "1", wide)] {
             let run = Command::new(env!("CARGO_BIN_EXE_tondo"))
                 .args(["run", &file.to_string_lossy(), "--cpu", cpu])
                 .env("TONDO_VERSIONS", versions)
@@ -549,7 +562,7 @@ fn wide_vectors_spill_and_cross_calls() {
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("wide.to");
     std::fs::write(&file, WIDE).unwrap();
-    for (cpu, versions) in [("baseline", "0"), ("baseline", "1"), ("native", "1")] {
+    for (cpu, versions) in [("baseline", "0"), ("baseline", "1"), (wide_level().0, "1")] {
         for build in [None, Some("--debug"), Some("--live")] {
             let run = Command::new(env!("CARGO_BIN_EXE_tondo"))
                 .args(["run", &file.to_string_lossy(), "--cpu", cpu])
@@ -698,7 +711,7 @@ fn sums_of_floats_add_in_the_fixed_order() {
     let file = dir.join("sums.to");
     std::fs::write(&file, &code).unwrap();
     let mut outputs = Vec::new();
-    for cpu in ["baseline", "native"] {
+    for cpu in ["baseline", wide_level().0] {
         let run = Command::new(env!("CARGO_BIN_EXE_tondo"))
             .args(["run", &file.to_string_lossy(), "--cpu", cpu])
             .output()
