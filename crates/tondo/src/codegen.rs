@@ -330,11 +330,11 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         }
         builder.finish(flags.clone()).map_err(|e| e.to_string())
     };
-    let isa = isa_at(&cpu, 0)?;
+    let isa = isa_at(cpu, 0)?;
     let mut isas = HashMap::new();
     for body in bodies.iter().filter(|body| body.needs != 0) {
         if let std::collections::hash_map::Entry::Vacant(entry) = isas.entry(body.needs) {
-            entry.insert(isa_at(&cpu, body.needs)?);
+            entry.insert(isa_at(cpu, body.needs)?);
         }
     }
     // The versions of rule 19 of `std.simd`: a release build for an x64
@@ -440,13 +440,14 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
                 let isa = &cg.isas[&(body.needs | VERSION)];
                 let wide = Shapes::new(cg.types, &**isa).signature(body);
                 let declare = |cg: &mut Codegen, suffix: &str, signature: &ir::Signature| {
-                    cg.module.declare_function(&format!("{name}{suffix}"), Linkage::Local, signature)
+                    let named = format!("{name}{suffix}");
+                    cg.module.declare_function(&named, Linkage::Local, signature).map_err(|e| e.to_string())
                 };
-                let base = declare(&mut cg, "_base", &signature).map_err(|e| e.to_string())?;
-                let version = declare(&mut cg, "_avx2", &wide).map_err(|e| e.to_string())?;
+                let base = declare(&mut cg, "_base", &signature)?;
+                let version = declare(&mut cg, "_avx2", &wide)?;
                 let bridge = match wide == signature {
                     true => None,
-                    false => Some(declare(&mut cg, "_bridge", &signature).map_err(|e| e.to_string())?),
+                    false => Some(declare(&mut cg, "_bridge", &signature)?),
                 };
                 Some(Versions { base, version, bridge })
             }
