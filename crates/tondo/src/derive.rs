@@ -102,6 +102,8 @@ struct Declared {
     file: usize,
     name: String,
     generics: Vec<String>,
+    /// The bounds of each generic parameter, as written: `Number + Ordered`.
+    bounds: Vec<String>,
 }
 
 /// A `pub` method that reflection can call: it takes `self` or `mut self`
@@ -244,8 +246,12 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
                     ast::Item::Enum(e) => (&e.name.name, &e.generics),
                     _ => continue,
                 };
+                let bounds = generics
+                    .iter()
+                    .map(|g| g.bounds.iter().map(|b| sources.slice(b.span)).collect::<Vec<_>>().join(" + "))
+                    .collect();
                 let generics = generics.iter().map(|g| g.name.name.clone()).collect();
-                declared.push(Declared { module, file, name: name.clone(), generics });
+                declared.push(Declared { module, file, name: name.clone(), generics, bounds });
             }
         }
     }
@@ -800,7 +806,16 @@ impl Generator<'_> {
         if d.generics.is_empty() {
             return format!("impl {j}.{name} for {} {{\n", d.name);
         }
-        let binders: Vec<String> = d.generics.iter().map(|g| format!("{g}: {j}.{name}")).collect();
+        // A parameter keeps the bounds its type gives it.
+        let binders: Vec<String> = d
+            .generics
+            .iter()
+            .zip(&d.bounds)
+            .map(|(g, bounds)| match bounds.is_empty() {
+                true => format!("{g}: {j}.{name}"),
+                false => format!("{g}: {bounds} + {j}.{name}"),
+            })
+            .collect();
         format!("impl[{}] {j}.{name} for {}[{}] {{\n", binders.join(", "), d.name, d.generics.join(", "))
     }
 
