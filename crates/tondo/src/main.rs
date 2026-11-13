@@ -2988,6 +2988,7 @@ fn record_run(
         "tondo": driver::VERSION,
     });
     std::fs::write(dir.join("run.json"), serde_json::to_vec_pretty(&run).unwrap_or_default()).map_err(cannot)?;
+    catch_endings();
     let mut child = std::process::Command::new(&program)
         .args(program_args)
         .env("TONDO_RT_RECORD", dir.join("calls"))
@@ -3040,11 +3041,22 @@ extern "C" fn pass_on(signal: libc::c_int) {
     }
 }
 
-/// SIGTERM and SIGHUP of `tondo` reach the program it runs, `child`.
-fn pass_endings_on(child: &std::process::Child) {
-    RUNNING.store(child.id() as i32, std::sync::atomic::Ordering::SeqCst);
+/// Handles SIGTERM and SIGHUP from now on, before the program starts: one
+/// that came while it started reaches it too, rather than end `tondo` and
+/// leave it running.
+fn catch_endings() {
     for signal in [libc::SIGTERM, libc::SIGHUP] {
         unsafe { libc::signal(signal, pass_on as *const () as libc::sighandler_t) };
+    }
+}
+
+/// SIGTERM and SIGHUP of `tondo` reach the program it runs, `child`, and
+/// one that came before it was known reaches it now.
+fn pass_endings_on(child: &std::process::Child) {
+    RUNNING.store(child.id() as i32, std::sync::atomic::Ordering::SeqCst);
+    let ending = ENDING.load(std::sync::atomic::Ordering::SeqCst);
+    if ending != 0 {
+        unsafe { libc::kill(child.id() as i32, ending) };
     }
 }
 
@@ -3076,6 +3088,7 @@ fn watch(path: &Path, program_args: &[OsString], options: &BuildOptions) -> Resu
         pass_endings_on(&child);
         Ok(Some(child))
     };
+    catch_endings();
     // Read first: a change while it starts is a change.
     let mut seen = stamps();
     let mut child = start()?;
