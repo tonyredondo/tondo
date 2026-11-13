@@ -313,13 +313,16 @@ fn main() {
 ```
 
 - The types are `Vector128[T]`, `Vector256[T]` and `Vector512[T]`, of that
-  many bits, and `Vector[T]`, the widest that is accelerated where the code
-  runs. `T` is an integer of any size, `Byte`, `Float32` or `Float`, and a
-  vector has as many lanes as fit: `Vector128[Float]` has two.
+  many bits, and `Vector[T]`, for code that does not choose a width, which
+  is of 128 bits today. `T` is an integer of any size, `Byte`, `Float32` or
+  `Float`, and a vector has as many lanes as fit: `Vector128[Float]` has
+  two.
 - Every type works on every processor and gives the same results. A width
   the processor has no instructions for is computed by its halves, and
-  `accelerated()` says which case it is; the 128-bit types are accelerated
-  on both architectures.
+  `accelerated()` says which case it is where the code runs. The 128-bit
+  types are accelerated on both architectures, and the 256-bit ones on an
+  x64 processor with AVX2, in a build for any level
+  ([Performance](../toolchain/performance.md#many-numbers-at-once-vectors)).
 - An integer lane that overflows wraps, where a number alone would panic:
   no operation on vectors panics for what a lane holds. Float lanes follow
   IEEE 754, each on its own.

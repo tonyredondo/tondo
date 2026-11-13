@@ -449,7 +449,7 @@ The arithmetic of float arrays, their `sum` and `math.dot` are computed with
 the processor's vector instructions, with nothing to write. A loop of
 another shape is written with
 [`std.simd`](../language/10-numbers.md#vectors). This one counts the lines
-of a text, a byte at a time and sixteen at a time:
+of a text, a byte at a time, sixteen at a time and thirty-two at a time:
 
 ```tondo
 import std.console
@@ -478,14 +478,26 @@ pub fn countByVectors(bytes: Array[Byte]): Int {
     lines + count(bytes[at:])
 }
 
+/// The same, thirty-two bytes at a time.
+pub fn countByWideVectors(bytes: Array[Byte]): Int {
+    let feed = simd.Vector256[Byte].all(10)
+    var lines = 0
+    var at = 0
+    for at + 32 <= bytes.length() {
+        lines += simd.Vector256[Byte].load(ref bytes, at: at).equal(feed).count()
+        at += 32
+    }
+    lines + count(bytes[at:])
+}
+
 fn main() {
     let text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\n".bytes()
-    console.println("{count(text)} {countByVectors(text)}")
+    console.println("{count(text)} {countByVectors(text)} {countByWideVectors(text)}")
 }
 ```
 
 ```text output
-7 7
+7 7 7
 ```
 
 Over a page of a thousand lines:
@@ -493,14 +505,32 @@ Over a page of a thousand lines:
 ```text
 $ tondo test --bench
 test lines::unit::lines::aPage ... ok
-  a byte at a time     17.00 µs/op  ±0.3%  0 allocs/op  0 B/op  231.1k ins/op
-  by vectors           2.233 µs/op  ±1.8%  1 allocs/op  32 B/op  76.5k ins/op
+  a byte at a time     17.11 µs/op  ±0.2%  0 allocs/op  0 B/op  231.1k ins/op
+  by vectors           1.655 µs/op  ±0.3%  1 allocs/op  32 B/op  50.2k ins/op
+  by wide vectors      912.9 ns/op  ±0.1%  1 allocs/op  48 B/op  25.9k ins/op
 ```
 
 The vectors of 128 bits are accelerated on both architectures. Those of 256
-and 512 bits work everywhere and give the same results, and are computed
-today by their halves, so a wider type is not yet a faster one:
-`accelerated()` says which a type is where the code runs.
+bits are on an x64 processor with AVX2, and a build need not be for it: a
+release build compiles a function that uses them a second time, for
+x86-64-v3, and the program picks the version its processor runs when it
+starts. `tondo asm countByWideVectors` shows both, the second with AVX2's
+comparison of thirty-two bytes:
+
+```text
+countByWideVectors (x86-64-v3) (1088 bytes, 8 of them constants)
+    ...
+    26b  vmovdqu ymm1, ymmword [rdi + rcx * 1 + 0x20]
+    271  vpcmpeqb ymm1, ymm1, ymm0
+    275  vpmovmskb edx, ymm1
+```
+
+Where the processor lacks the instructions of a width, as an arm64 one
+lacks those of 256 bits, a vector is computed by its halves: the results are
+the same, and the wider type is then slower than the narrower. Vectors of
+512 bits are computed so everywhere today. `accelerated()` says which a type
+is where the code runs, and `TONDO_VERSIONS=0` in a program's environment
+keeps it to the level it was built for.
 
 ## Memory
 
