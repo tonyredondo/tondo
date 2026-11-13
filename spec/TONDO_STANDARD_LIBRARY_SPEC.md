@@ -7502,6 +7502,7 @@ pub enum ProcessError {
     InvalidData
     Failed(ExitStatus, ProcessOutput)
     Host
+    InvalidCommand(String)
 }
 pub type Process
 
@@ -7548,6 +7549,7 @@ pub enum Signal { Interrupt, Terminate, Hangup, User1, User2, Quit, Kill }
 pub fn signals(wanted: ...Signal): Receiver[Signal]
 pub fn signal(pid: Int, sent: Signal): Unit ! ProcessError
 pub fn which(name: String): String?
+pub fn parse(text: String): Pipeline ! ProcessError
 pub fn splitWords(text: String): Array[String]?
 pub fn quoted(words: Array[String]): String
 ~~~
@@ -7557,6 +7559,10 @@ Planes:
 - `command` guarda el programa y cada argumento por separado: no hay shell,
   globbing ni expansión de variables. `shell` es el único constructor que usa
   el shell del sistema (`/bin/sh -c` en Unix).
+- `parse` lee una línea que llega mientras el programa corre como `$( )` lee
+  su texto (20.5 del lenguaje), pero `{` y `}` son caracteres sin más. Da
+  siempre un `Pipeline`, de una etapa cuando hay una. Lo que rechaza el
+  literal es `ProcessError.InvalidCommand`, con el porqué.
 - `|` une el stdout de la última etapa de la izquierda con el stdin de la
   primera de la derecha mediante una pipe del sistema, que aplica
   backpressure. `mergeStderr()` envía además el stderr al mismo sitio que el

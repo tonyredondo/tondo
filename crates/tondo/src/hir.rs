@@ -1256,6 +1256,9 @@ pub enum NativeTy {
     Char,
     /// A value of the runtime (`std.internal.http`).
     Object,
+    /// A plan of `std.process`.
+    Command,
+    Pipeline,
 }
 
 /// A function of an internal module: `std.internal.json`, the runtime's
@@ -1496,6 +1499,7 @@ pub const NATIVES: &[Native] = {
         // of the host.
         process("kill", &[Int, Int], Int, "tondo_rt_process_kill"),
         process("which", &[String], String, "tondo_rt_process_which"),
+        process("alone", &[Command], Pipeline, "tondo_rt_process_alone"),
         // `std.internal.sql`: SQLite, for `std.sql`.
         sql("open", &[String], Object, "tondo_rt_sqlite_open"),
         sql("failure", &[Object], String, "tondo_rt_sqlite_failure"),

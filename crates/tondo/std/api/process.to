@@ -158,6 +158,9 @@ pub enum ProcessError {
     /// From `check`: a stage did not succeed.
     Failed(ExitStatus, ProcessOutput)
     Host
+    /// From `parse`: the text is no command, and why, as a `$HOME` that
+    /// no shell expands.
+    InvalidCommand(String)
 }
 
 /// A process started and not yet waited for.

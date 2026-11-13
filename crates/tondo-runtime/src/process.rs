@@ -129,6 +129,12 @@ pub unsafe extern "C" fn tondo_rt_process_command(program: *const Str, arguments
     plan(vec![stage(os(program), arguments.collect())])
 }
 
+/// A pipeline of the one stage of a command, as `process.parse` gives one.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_process_alone(command: *mut PlanObject) -> *mut PlanObject {
+    plan(unsafe { (*command).stages.clone() })
+}
+
 /// `process.shell(text)`: the system shell runs the text.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_process_shell(text: *const Str) -> *mut PlanObject {
@@ -1216,6 +1222,8 @@ pub unsafe extern "C" fn tondo_rt_sb_process_error(b: *mut super::Builder, tag: 
         1 => "permission denied".to_string(),
         2 => "invalid data".to_string(),
         3 => format!("exited with code {code}"),
+        // `InvalidCommand`, whose text is what `code` points to.
+        5 => String::from_utf8_lossy(unsafe { str_bytes(code as *const Str) }).into_owned(),
         _ => "host".to_string(),
     };
     unsafe { (*b).extend(text.as_bytes()) }

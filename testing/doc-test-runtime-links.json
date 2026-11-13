@@ -153,18 +153,20 @@
   },
   {
     "file": "spec/TONDO_LANGUAGE_SPEC.md",
-    "source_sha256": "96c0825b9eae96fe1f6027001c366a85baab2d1c621b318721a50dad44ef35e3",
+    "source_sha256": "17caa69b7a6bd630e256fef1156e5c57f92ecf403855fd20e84bce40d585a064",
     "kind": "runtime",
     "cases": [
-      "tests/cases/run/process.to"
+      "tests/cases/run/command_running.to"
     ]
   },
   {
     "file": "spec/TONDO_LANGUAGE_SPEC.md",
-    "source_sha256": "a43a2d793d634ebdab86a88cf1dd6c41ff66faf07db4c50189c168a91c5377dd",
+    "source_sha256": "82a1aea8a40bea435f4aa1ef95bdad6c302dd20bb48db40f05395734a2286b7f",
     "kind": "runtime",
     "cases": [
-      "tests/cases/run/process.to"
+      "tests/cases/run/process.to",
+      "tests/cases/run/command_literals.to",
+      "tests/cases/run/command_parse.to"
     ]
   }
 ]

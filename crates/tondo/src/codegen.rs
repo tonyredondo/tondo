@@ -2226,6 +2226,11 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
                 let status = self.component_address(address, &payload);
                 let code_slot = self.cg.slot(payload.ty, Proj::Field(0));
                 let code = self.fb.ins().load(types::I64, flags(), status, code_slot.offset as i32);
+                // `InvalidCommand`'s text, read only for it.
+                let text_slot = self.cg.slot(ty, Proj::Variant(5, 0));
+                let text = self.fb.ins().load(types::I64, flags(), address, text_slot.offset as i32);
+                let invalid = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, 5);
+                let code = self.fb.ins().select(invalid, text, code);
                 self.call_rt(Rt::SbProcessError, &[builder, tag, code]);
                 return;
             }

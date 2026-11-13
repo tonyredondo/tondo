@@ -219,6 +219,8 @@ impl<'a> Checker<'a> {
             hir::NativeTy::Strings => self.types.intern(TyKind::Array(Ty::STRING)),
             hir::NativeTy::Char => Ty::CHAR,
             hir::NativeTy::Object => self.types.handle(Handle::Native, Ty::UNIT),
+            hir::NativeTy::Command => self.types.handle(Handle::Command, Ty::UNIT),
+            hir::NativeTy::Pipeline => self.types.handle(Handle::Pipeline, Ty::UNIT),
         }
     }
 

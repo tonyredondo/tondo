@@ -2446,6 +2446,9 @@ pub enum ProcessError {
     /// From `check`: a stage did not succeed.
     Failed(ExitStatus, ProcessOutput)
     Host
+    /// From `parse`: the text is no command, and why, as a `$HOME` that
+    /// no shell expands.
+    InvalidCommand(String)
 }
 pub enum Signal {
     Interrupt
@@ -2493,6 +2496,7 @@ pub fn command(program: String, arguments: ...String): Command
 pub fn exit(code: Int): Never
 pub fn lines(self): Array[String] ! ProcessError
 pub fn output(self): ProcessOutput ! ProcessError
+pub fn parse(text: String): Pipeline ! ProcessError
 pub fn quoted(words: Array[String]): String
 pub fn run(self): !ProcessError
 pub fn shell(text: String): Command

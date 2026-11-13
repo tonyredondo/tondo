@@ -6304,3 +6304,10 @@ status as a value, and a program that wants the code of a command run with its o
 the error. `text()` and `lines()` are `check()` and its output as text without the new lines at its
 end, the form a script wants most, as `$(git branch --show-current).text()?`. The calls of `run()`
 that read the status were rewritten to match `Failed`.
+
+A line that arrives while the program runs, as a build command in a configuration, is
+`process.parse(line)?`: what `$( )` reads, with `{` and `}` as plain characters, written in Tondo in
+the standard library. It always gives a `Pipeline`, of one stage when there is one, so that its type
+does not depend on the text. What it refuses is `ProcessError.InvalidCommand`, a new variant with the
+reason, as `InvalidData` would have said nothing of why. A file that writes a `$( )` uses
+`std.process`, which runs it, so its import is not reported unused.

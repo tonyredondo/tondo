@@ -227,6 +227,7 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
                 prefixes: &prefixes,
                 paths: &paths,
                 used: HashSet::new(),
+                commands: false,
                 outer: &outer,
                 visible: Visible::default(),
                 templates: file.templates.iter().cloned().collect(),
@@ -268,8 +269,15 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
                         .iter()
                         .any(|d| d.severity == crate::diag::Severity::Error && d.span == Some(import.span))
             };
-            let unused: Vec<&crate::ast::Import> =
-                written.iter().filter(|i| !malformed && !linker.used.contains(i.alias_name()) && !failed(i)).collect();
+            // A command, `$( )`, uses `std.process`, which runs it.
+            let runs = |i: &crate::ast::Import| {
+                linker.commands
+                    && matches!(i.path.as_slice(), [std, process] if std.name == "std" && process.name == "process")
+            };
+            let unused: Vec<&crate::ast::Import> = written
+                .iter()
+                .filter(|i| !malformed && !linker.used.contains(i.alias_name()) && !runs(i) && !failed(i))
+                .collect();
             for import in unused {
                 let message = format!("`{}` is imported but never used: remove the import", import.alias_name());
                 linker.diags.warning("W1001", import.span, message);
@@ -540,6 +548,8 @@ struct Linker<'a> {
     paths: &'a [String],
     /// The first segments of the file's paths, which its imports must name.
     used: HashSet<String>,
+    /// Whether the file writes a command, `$( )`, which `std.process` runs.
+    commands: bool,
     /// The names of the module's scope, and the bindings visible where the
     /// linker is, with their skeletons.
     /// The names of the module, by their skeleton.
@@ -1043,6 +1053,7 @@ impl Linker<'_> {
                 }
             }
             ExprKind::Command(stages) => {
+                self.commands = true;
                 for stage in stages {
                     for (_, value) in &mut stage.env {
                         self.expr(value);

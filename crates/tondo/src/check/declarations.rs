@@ -390,6 +390,7 @@ impl<'a> Checker<'a> {
                 variant("InvalidData", None),
                 Variant { name: "Failed".into(), payload: Payload::Tuple(vec![status, result]) },
                 variant("Host", None),
+                Variant { name: "InvalidCommand".into(), payload: Payload::Tuple(vec![Ty::STRING]) },
             ];
             self.types.define_adt(id, AdtKind::Enum(variants));
             self.types.shown.insert(error, Shown::ProcessError);

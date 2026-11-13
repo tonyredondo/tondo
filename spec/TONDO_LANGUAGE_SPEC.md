@@ -317,6 +317,8 @@ Se adoptan:
 
 - Programas pequeños ejecutables directamente como scripts.
 - Procesos y pipelines como valores componibles.
+- Comandos escritos como en una shell, `$(git log | head -5)`, que el
+  compilador divide al compilar, sin shell (20.5).
 - El operador `|` para conectar stdout de un proceso con stdin del siguiente.
 - Conversión explícita entre streams de bytes y valores estructurados.
 
@@ -8116,9 +8118,17 @@ fn command(program: String, arguments: ...String): Command
 
 Construir un comando no lo ejecuta. `Command` y `Pipeline` son siempre planes inertes `Copy + Send + Share`, por lo que su configuración persistente solo puede contener datos copiables, compartibles y reutilizables, entre ellos los streams compartidos de `std.io`; las pipes y los procesos que crea una ejecución pertenecen a esa ejecución o a su handle. No hay parsing de shell, interpolación textual, globbing ni expansión de variables implícita. Cada argumento conserva exactamente los caracteres del `String` recibido.
 
-Un comando conocido al escribir el programa se escribe como lo escribiría una
-shell, `$( )`, y da el mismo valor: un `Command` con una etapa y un `Pipeline`
-con varias, que se unen con `|`:
+Un comando se escribe de tres formas, según de dónde viene; las tres dan el
+mismo valor, un `Command` con una etapa y un `Pipeline` con varias, que se
+unen con `|`:
+
+| De dónde viene | Se escribe |
+| --- | --- |
+| Conocido al escribir el programa | `$(git log -n {count} \| head -5)` |
+| Un texto que llega mientras corre | `process.parse(line)?`, siempre un `Pipeline` |
+| Un programa y sus argumentos, aparte | `process.command(program, ...arguments)` |
+
+El literal se escribe como lo escribiría una shell:
 
 ~~~tondo
 let branch = $(git branch --show-current).text()?
@@ -11099,16 +11109,12 @@ seguro que mantuviera dichas invariantes.
 import std.console
 import std.process
 
-let pipeline = (
-    process.command("git", "log", "--oneline") |
-    process.command("head", "-n", "5")
-)
-
-let output = pipeline.check()?
-console.print(output.text()?)
+let pipeline = $(git log --oneline | head -n 5)
+console.println(pipeline.text()?)
 ~~~
 
-La llamada a `check()` espera a que termine el pipeline. Construir el pipeline no ejecuta nada hasta alcanzarla.
+La llamada a `text()` espera a que termine el pipeline y falla si una etapa no
+termina con éxito. Construir el pipeline no ejecuta nada hasta alcanzarla.
 
 ---
 
@@ -12434,6 +12440,8 @@ import std.process
 let pipeline = process.command("producer") | process.command("consumer")
 let output = pipeline.output()?
 console.print(output.text()?)
+$(make test | tee {output.text()?}).run()?
+console.println("{process.parse("git status --short")?.lines()?}")
 ~~~
 
 Las sentencias top-level existen solo en el archivo raíz de un script y forman un `main` implícito.

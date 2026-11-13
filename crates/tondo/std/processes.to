@@ -103,6 +103,266 @@ pub fn splitWords(text: String): Array[String]? {
     words
 }
 
+/// The command of a line that arrives while the program runs, read as
+/// `$( )` reads its text (language 20.5): words, `'...'` and `"..."`, `|`,
+/// `<`, `>`, `>>`, `2>`, `2>>`, `2>&1` and `NAME=value` first, but `{` and
+/// `}` are plain characters. A pipeline, of one stage when there is one.
+/// What a shell does and no shell runs here, as `$HOME`, `*` or `&&`, is
+/// `ProcessError.InvalidCommand`, which says what.
+///
+/// ```tondo
+/// import std.console
+/// import std.process
+///
+/// let counted = process.parse("printf 'b\\na\\nb\\n' | sort | uniq -c")?.lines()?
+/// console.println("{counted.length()} lines")
+/// ```
+pub fn parse(text: String): Pipeline ! __process.ProcessError {
+    let pieces = commandPieces(text)?
+    var stages: Array[Array[Piece]] = [[]]
+    for piece in pieces {
+        match piece {
+            Piece.Pipe => {
+                if stages[-1].isEmpty() {
+                    fail invalid("a `|` with no command before it: write the stage it reads from")
+                }
+                stages.push([])
+            }
+            other => stages[-1].push(other)
+        }
+    }
+    if stages[-1].isEmpty() {
+        fail invalid(
+            if stages.length() == 1 {
+                "an empty command: write a program"
+            } else {
+                "a `|` with no command after it: write the stage that reads"
+            },
+        )
+    }
+    var whole: Pipeline? = none
+    for (index, stagePieces) in stages.enumerate() {
+        let stage = commandStage(stagePieces, index == 0, index == stages.length() - 1)?
+        whole = match whole {
+            none => processNative.alone(stage)
+            some(left) => left | stage
+        }
+    }
+    whole ?? fail invalid("an empty command: write a program")
+}
+
+/// A piece of a command's text.
+enum Piece {
+    /// A word, and whether it starts outside quotes, as `NAME=value`.
+    Word(String, Bool)
+    Pipe
+    /// `<`, `>`, `>>`, `2>`, `2>>` or `2>&1`.
+    Redirect(String)
+}
+
+fn invalid(why: String): __process.ProcessError {
+    __process.ProcessError.InvalidCommand(why)
+}
+
+/// The command of one stage, from its pieces.
+fn commandStage(pieces: Array[Piece], first: Bool, last: Bool): Command ! __process.ProcessError {
+    var words: Array[String] = []
+    var env: Array[(String, String)] = []
+    var redirects: Array[(String, String)] = []
+    var at = 0
+    for at < pieces.length() {
+        match pieces[at] {
+            Piece.Word(word, plain) => {
+                let (name, value) = word.splitOnce("=") ?? ("", "")
+                let ascii = (c: Char): Bool { c == '_' or (c.code() < 128 and c.isAlphanumeric()) }
+                let named =
+                    plain and
+                        not name.isEmpty() and
+                        name.chars().all(ascii) and
+                        not (name.chars().collect().first() ?? '0').isDigit()
+                if words.isEmpty() and named { env.push((name, value)) } else { words.push(word) }
+            }
+            Piece.Redirect(to) => {
+                if to == "2>&1" {
+                    redirects.push((to, ""))
+                } else {
+                    at += 1
+                    match pieces.get(at) {
+                        some(Piece.Word(path, _)) => redirects.push((to, path))
+                        _ => fail invalid("`{to}` names the file after it, as `{to} out.txt`")
+                    }
+                }
+            }
+            Piece.Pipe => {}
+        }
+        at += 1
+    }
+    if words.isEmpty() {
+        fail invalid(
+            "a stage of only `NAME=value` sets the environment of no program: write the program after them",
+        )
+    }
+    var command = __process.command(words[0], ...words[1:])
+    for (name, value) in env {
+        command = command.env(name, value)
+    }
+    for (to, path) in redirects {
+        if to == "<" and not first {
+            fail invalid("`<` gives the first stage its input; the others read the stage before")
+        }
+        if (to == ">" or to == ">>") and not last {
+            fail invalid(
+                "`{to}` takes the last stage's output; the others' goes to the stage after",
+            )
+        }
+        command = match to {
+            "<" => command.stdin(__process.Input.File(path))
+            ">" => command.stdout(__process.Output.File(path))
+            ">>" => command.stdout(__process.Output.Append(path))
+            "2>" => command.stderr(__process.Output.File(path))
+            "2>>" => command.stderr(__process.Output.Append(path))
+            _ => command.mergeStderr()
+        }
+    }
+    command
+}
+
+/// The pieces of a command's text: what `$( )` splits, with `{` and `}`
+/// as plain characters.
+fn commandPieces(text: String): Array[Piece] ! __process.ProcessError {
+    let chars = text.chars().collect()
+    var pieces: Array[Piece] = []
+    var word: Array[String] = []
+    var started = false
+    var plain = false
+    let shell =
+        "which a shell does, and `process.parse` runs none: run it with `process.shell`, or decide it in Tondo"
+    var at = 0
+    for at < chars.length() {
+        let c = chars[at]
+        let next = chars.get(at + 1)
+        let ends =
+            c == ' ' or c == '\t' or c == '\n' or c == '\r' or c == '|' or c == '<' or c == '>'
+        if ends and started {
+            pieces.push(Piece.Word(word.join(""), plain))
+            word = []
+            started = false
+        }
+        if c == ' ' or c == '\t' or c == '\n' or c == '\r' {
+            at += 1
+            continue
+        }
+        if c == '\'' {
+            let close =
+                chars[at + 1:].findIndex((d) { d == '\'' }) ??
+                    fail invalid("a `'` that does not close")
+            plain = if started { plain } else { false }
+            word.push(chars[at + 1:at + 1 + close].map((d) { "{d}" }).join(""))
+            started = true
+            at += close + 2
+            continue
+        }
+        if c == '"' {
+            plain = if started { plain } else { false }
+            started = true
+            at += 1
+            var closed = false
+            for at < chars.length() and not closed {
+                let d = chars[at]
+                if d == '"' {
+                    closed = true
+                } else if d == '\\' {
+                    let escaped = chars.get(at + 1) ?? fail invalid("a `\\` at the end of a quote")
+                    word.push(
+                        match escaped {
+                            'n' => "\n"
+                            't' => "\t"
+                            'r' => "\r"
+                            '0' => "\0"
+                            '\\' | '"' => "{escaped}"
+                            _ => fail invalid(
+                                "`\\{escaped}` is no escape of a string: write the character",
+                            )
+                        },
+                    )
+                    at += 1
+                } else {
+                    word.push("{d}")
+                }
+                at += 1
+            }
+            if not closed {
+                fail invalid("a `\"` that does not close")
+            }
+            continue
+        }
+        if c == '|' {
+            if next == '|' {
+                fail invalid("`||` runs a command when another fails, {shell}")
+            }
+            pieces.push(Piece.Pipe)
+            at += 1
+            continue
+        }
+        if c == '<' {
+            if next == '<' or next == '(' {
+                fail invalid(
+                    "this redirection is a shell's: give the text as `stdin(process.Input.Text(text))`",
+                )
+            }
+            pieces.push(Piece.Redirect("<"))
+            at += 1
+            continue
+        }
+        if c == '>' {
+            let to = if next == '>' { ">>" } else { ">" }
+            pieces.push(Piece.Redirect(to))
+            at += to.length()
+            continue
+        }
+        if c == '2' and not started and next == '>' {
+            let rest = chars[at:].take(4).map((d) { "{d}" }).join("")
+            let to = if rest == "2>&1" {
+                "2>&1"
+            } else if rest.startsWith("2>>") {
+                "2>>"
+            } else {
+                "2>"
+            }
+            pieces.push(Piece.Redirect(to))
+            at += to.length()
+            continue
+        }
+        let refused: String? = match c {
+            '&' if next == '&' => "`&&` runs a command when another succeeds, {shell}"
+            '&' if next == '>' => "`&>` sends both streams to a file: write `> file 2>&1`"
+            '&' => "`&` runs a command in the background, {shell}"
+            ';' => "`;` runs commands one after another, {shell}"
+            '`' => "backquotes run a command inside another, {shell}"
+            '$' => "`$` reads a variable or runs a command inside another, {shell}"
+            '*' | '?' =>
+                "`{c}` matches files in a shell, which runs none: quote it when the character is meant"
+            '~' if not started =>
+                "a leading `~` is the home directory in a shell, which runs none: write the directory"
+            '\\' => "a backslash outside quotes: quote the word, as `'a b'`"
+            '(' | ')' => "a `{c}` is quoted: `'{c}'`"
+            _ => none
+        }
+        match refused {
+            some(why) => fail invalid(why)
+            none => {}
+        }
+        plain = if started { plain } else { true }
+        word.push("{c}")
+        started = true
+        at += 1
+    }
+    if started {
+        pieces.push(Piece.Word(word.join(""), plain))
+    }
+    pieces
+}
+
 /// The words as one command line a POSIX shell splits back into them: a
 /// word with any character but letters, digits and `_@%+=:,./-` goes in
 /// single quotes.

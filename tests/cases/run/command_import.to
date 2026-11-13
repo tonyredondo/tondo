@@ -1,0 +1,9 @@
+// A command, `$( )`, uses `std.process`, which runs it: its import is no
+// unused one, though the script never writes `process.`.
+
+import std.console
+import std.process
+
+console.println($(printf ok).text() ?? "no")
+
+// expect-stdout: ok

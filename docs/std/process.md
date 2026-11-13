@@ -106,7 +106,7 @@ The scripts [`authors.to`](../../examples/scripts/authors.to) and
 
 `tondo api std.process` shows the same in a terminal.
 
-- [Functions](#functions): [`command`](#command), [`shell`](#shell), [`exit`](#exit), [`signals`](#signals), [`run`](#run), [`status`](#status), [`output`](#output), [`check`](#check), [`start`](#start), [`text`](#text), [`lines`](#lines), [`which`](#which), [`signal`](#signal), [`splitWords`](#splitwords), [`quoted`](#quoted)
+- [Functions](#functions): [`command`](#command), [`shell`](#shell), [`exit`](#exit), [`signals`](#signals), [`run`](#run), [`status`](#status), [`output`](#output), [`check`](#check), [`start`](#start), [`text`](#text), [`lines`](#lines), [`which`](#which), [`signal`](#signal), [`splitWords`](#splitwords), [`parse`](#parse), [`quoted`](#quoted)
 - [Signal](#signal-1)
 - [Input](#input)
 - [Output](#output-1)
@@ -251,6 +251,27 @@ The words of a command line as a POSIX shell splits them, with its
 quotes and backslashes, but expanding nothing: `go test -run 'A B'` is
 `["go", "test", "-run", "A B"]`. `none` when a quote is not closed or
 the text ends in a lone backslash.
+
+#### parse
+
+```tondo
+pub fn parse(text: String): Pipeline ! ProcessError
+```
+
+The command of a line that arrives while the program runs, read as
+`$( )` reads its text (language 20.5): words, `'...'` and `"..."`, `|`,
+`<`, `>`, `>>`, `2>`, `2>>`, `2>&1` and `NAME=value` first, but `{` and
+`}` are plain characters. A pipeline, of one stage when there is one.
+What a shell does and no shell runs here, as `$HOME`, `*` or `&&`, is
+`ProcessError.InvalidCommand`, which says what.
+
+```tondo
+import std.console
+import std.process
+
+let counted = process.parse("printf 'b\\na\\nb\\n' | sort | uniq -c")?.lines()?
+console.println("{counted.length()} lines")
+```
 
 #### quoted
 
@@ -409,6 +430,9 @@ pub enum ProcessError {
     /// From `check`: a stage did not succeed.
     Failed(ExitStatus, ProcessOutput)
     Host
+    /// From `parse`: the text is no command, and why, as a `$HOME` that
+    /// no shell expands.
+    InvalidCommand(String)
 }
 ```
 

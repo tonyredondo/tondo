@@ -1,0 +1,56 @@
+// `process.parse` reads a line that arrives while the program runs as `$( )`
+// reads its text, with `{` and `}` as plain characters: a pipeline, or
+// `ProcessError.InvalidCommand` with why, for what only a shell does.
+
+import std.console
+import std.process
+
+fn tried(line: String) {
+    match process.parse(line) {
+        ok(pipeline) => match pipeline.text() {
+            ok(text) => console.println("[{text}]")
+            err(error) => console.println("ran: {error}")
+        }
+        err(error) => console.println("{error}")
+    }
+}
+
+fn main(): !process.ProcessError {
+    tried("printf '%s|' a 'b c' \"d {{e}}\" {{x}}")
+    tried("printf 'b\\na\\nb\\n' | sort | uniq -c")
+    tried("LANG=C sh -c 'echo $LANG'")
+    tried("sh -c 'echo err >&2' 2>&1")
+    tried("printf '\"\\\\n\"'")
+    tried("printf x > command_parse.txt")
+    tried("cat < command_parse.txt")
+    tried("echo $HOME")
+    tried("ls *.to")
+    tried("make && make install")
+    tried("a | | b")
+    tried("")
+    tried("sort > out.txt | head")
+    tried("echo 'open")
+    tried("echo >")
+    tried("LANG=C")
+    process.parse("true")?.run()?
+    console.println("ran true")
+}
+
+// expect-stdout: [a|b c|d {e}|{x}|]
+// expect-stdout: [      1 a
+// expect-stdout:       2 b]
+// expect-stdout: [C]
+// expect-stdout: [err]
+// expect-stdout: ["\n"]
+// expect-stdout: []
+// expect-stdout: [x]
+// expect-stdout: `$` reads a variable or runs a command inside another, which a shell does, and `process.parse` runs none: run it with `process.shell`, or decide it in Tondo
+// expect-stdout: `*` matches files in a shell, which runs none: quote it when the character is meant
+// expect-stdout: `&&` runs a command when another succeeds, which a shell does, and `process.parse` runs none: run it with `process.shell`, or decide it in Tondo
+// expect-stdout: a `|` with no command before it: write the stage it reads from
+// expect-stdout: an empty command: write a program
+// expect-stdout: `>` takes the last stage's output; the others' goes to the stage after
+// expect-stdout: a `'` that does not close
+// expect-stdout: `>` names the file after it, as `> out.txt`
+// expect-stdout: a stage of only `NAME=value` sets the environment of no program: write the program after them
+// expect-stdout: ran true
