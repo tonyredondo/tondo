@@ -15,9 +15,8 @@ import std.process
 /// it is pressed and does not show it, and then it is as it was.
 fn key(input: ref unix.Fd): Byte ! os.Errno {
     let before = unix.terminalMode(ref input)?
-    let lineAndEcho = UInt32(unix.ICANON | unix.ECHO) ?? 0
     var quiet = before
-    quiet.c_lflag = quiet.c_lflag & ~lineAndEcho
+    quiet.c_lflag = quiet.c_lflag & ~(unix.ICANON | unix.ECHO)
     unix.setTerminalMode(ref input, quiet, unix.TCSANOW)?
     let zero: Byte = 0
     var one = [zero]
