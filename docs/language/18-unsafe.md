@@ -13,6 +13,7 @@ building a Tondo library that C calls.
 - [Structs](#structs)
 - [Pointers and raw memory](#pointers-and-raw-memory)
 - [Callbacks](#callbacks)
+- [The system's calls](#the-systems-calls)
 - [Linking a library](#linking-a-library)
 - [A library loaded as the program runs](#a-library-loaded-as-the-program-runs)
 - [Bindings written for you](#bindings-written-for-you)
@@ -70,6 +71,33 @@ of the call.
 
 An `unsafe { ... }` block is an expression, as any block is. It should hold
 the call and as little else as it can.
+
+Many of C's functions fail by giving -1, or a null pointer, and leaving the
+reason in `errno`. One declared with `! os.Errno` fails as a Tondo function
+does, with the system's error number, which the call reads before anything
+else can change it:
+
+```tondo
+import std.console
+import std.ffi
+import std.os
+
+extern fn chdir(path: ffi.CString): ffi.CInt ! os.Errno
+
+fn main() {
+    match unsafe { chdir("/no/such/place") } {
+        ok(_) => console.println("moved")
+        err(error) => console.println("{error} ({error.value})")
+    }
+}
+```
+
+```text output
+os error 2: No such file or directory (2)
+```
+
+The result is a signed integer or a pointer. A function that says it failed
+in another way is declared without `! os.Errno` and checked by hand.
 
 ## C's types
 
@@ -289,6 +317,79 @@ callback the way C libraries expect, through a `void *`: `ffi.context(value)`
 makes one of any Tondo value, and `ffi.fromContext[T](pointer)` reads it
 back in the callback.
 
+## The system's calls
+
+What the standard library does not wrap is still within reach, in three
+modules.
+
+`std.os.unix` has what Linux and macOS share, with the calls on descriptors
+made safe: a `unix.Fd` closes when its value goes, a call that a signal
+interrupts is made again, and each fails with `os.Errno`.
+
+```tondo
+import std.console
+import std.fs
+import std.os
+import std.os.unix
+
+/// The first bytes of a file, read as the system gives them.
+fn start(path: String, length: Int): String ! os.Errno {
+    let file = unix.open(path, unix.O_RDONLY)?
+    let zero: Byte = 0
+    var into = [zero].repeat(length)
+    let count = unix.read(ref file, mut into)?
+    String.fromBytes(into.take(count)) ?? ""
+}
+
+fn main(): !fs.FsError {
+    fs.writeText("note.txt", "remember the milk\n")?
+    console.println("{start("note.txt", 8)}")
+    console.println("{start("missing.txt", 8)}")
+    fs.remove("note.txt")?
+}
+```
+
+```text output
+ok(remember)
+err(os error 2: No such file or directory)
+```
+
+| | |
+| --- | --- |
+| `unix.open`, `read`, `write`, `seek`, `duplicate`, `pipe` | files and pipes by their descriptors |
+| `unix.poll` | waits until one of several descriptors is ready |
+| `unix.isTerminal`, `terminalMode`, `setTerminalMode` | a terminal, and how it gives its keys |
+| `unix.Mapping.of`, `Mapping.anonymous` | memory mapped from a file or from nothing, unmapped when its value goes |
+| `unix.O_RDONLY`, `unix.termios`, `unix.SIGTERM` | C's constants and types, by C's names |
+
+`std.os.linux` and `std.os.macos` declare what is of each system alone, with
+C's names and for the architecture of the build: `linux.epoll_create1(0)`,
+`linux.O_DIRECT`, thousands of them, which `tondo api
+std.os.linux.epoll_create1` shows one at a time. They are imported from a
+file of their system
+([Modules](15-modules.md#code-for-one-system-or-architecture)), and a call
+that has no function is made by its number:
+
+```text
+// src/process/process_linux.to
+import std.os
+import std.os.linux
+
+fn pid(): Int ! os.Errno {
+    unsafe { linux.syscall(linux.SYS_getpid) }
+}
+```
+
+From a file of every system the import is an error, which says where it
+goes:
+
+```text
+error[E1008]: on macOS: `std.os.linux` is of Linux only: import it from a file of Linux, as `name_linux.to`, or limit the package with `systems = ["linux"]` in tondo.toml
+```
+
+The script [`ask.to`](../../examples/scripts/ask.to) reads one key from a
+terminal with `std.os.unix`.
+
 ## Linking a library
 
 The system's C library needs nothing. Any other is named in `tondo.toml`,
@@ -389,6 +490,11 @@ that `tondo api app.zlib` then shows the library as it shows any module.
 `tondo bind` reads headers with the system's C compiler; the program built
 from its output does not need one.
 
+`--fails <file>` names, one on each line, the functions that fail with -1 or
+a null pointer and `errno`: they are declared `T ! os.Errno`. `--included`
+binds what the header includes as well, for a library that keeps its
+constants in other headers, as the system's do.
+
 The usual shape of a binding is two layers: the module `tondo bind` wrote,
 which is C's API as it is, and a small module over it that offers safe
 functions, with Tondo's strings, errors as values, and the `unsafe` inside.
@@ -459,7 +565,8 @@ check and test such a project.
   it why it is right: who owns the memory, how long it lives.
 - Copy out of C's memory at the boundary. A `String` or an `Array` built
   from it is safe from then on.
-- Free in a `defer`, right after the allocation.
+- Free in a `defer`, right after the allocation: `defer { unsafe {
+  ffi.free(buffer) } }`.
 - Prefer a library of the standard one when there is one. SQLite, TLS,
   compression, images and regular expressions are already there, with no
   `unsafe` in the program that uses them.
