@@ -6849,7 +6849,10 @@ Reglas adicionales:
   concreto deriva que no es `Send` ni `Share` porque `Pointer[T]` tampoco lo es.
   Una frontera que necesite cruzar una task o thread valida sus precondiciones y
   encapsula primero el puntero en un handle opaco auditado; `unsafe` no convierte
-  al puntero raw ni al cierre que lo contiene en `Send` o `Share`.
+  al puntero raw ni al cierre que lo contiene en `Send` o `Share`. Un bloque
+  `defer` (13.7) no es un cierre que salga de su scope: usa un puntero sin ser
+  `unsafe`, con sus operaciones raw dentro de `unsafe { ... }`, como
+  `defer { unsafe { ffi.free(buffer) } }`.
 - `malloc`, `free`, layouts y calling conventions pertenecen a `std.ffi` y a
   16.16, no al prelude seguro.
 

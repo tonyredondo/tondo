@@ -6399,3 +6399,11 @@ that system, which is how its examples are checked on macOS too.
 sets the number, rather than running the kernel's instruction itself: the C library already knows
 each architecture's convention. macOS has no such call, as Apple does not keep its kernel's
 interface stable.
+
+## A `defer` block may free a raw pointer
+
+A `defer` block that freed what a raw pointer held was refused as a closure that captures one,
+which must be `unsafe` so that whoever calls it later keeps the pointer valid. A `defer` block is
+no value that leaves its scope, and the fix the error offered, an `unsafe` closure, was not one a
+`defer` can take, so the memory could not be freed there at all. It now uses the pointer as a
+block does, with its raw operations inside `unsafe { ... }`.

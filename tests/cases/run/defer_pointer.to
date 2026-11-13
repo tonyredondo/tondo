@@ -1,0 +1,19 @@
+// A defer block frees what a raw pointer holds: it is no closure that
+// outlives its scope, so it needs no `unsafe` of its own, only around the
+// call (13.7).
+
+import std.console
+import std.ffi
+
+fn main() {
+    let buffer = ffi.allocate[Int](2)
+    defer {
+        unsafe { ffi.free(buffer) }
+        console.println("freed")
+    }
+    unsafe { buffer.write(42) }
+    console.println("{unsafe { buffer.read() }}")
+}
+
+// expect-stdout: 42
+// expect-stdout: freed

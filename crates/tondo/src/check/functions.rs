@@ -636,7 +636,8 @@ impl<'a> Checker<'a> {
                         (source, mutable)
                     }
                 };
-                if !cx.unsafe_body && self.holds_pointer(source.ty) {
+                // A defer block is no value that outlives its scope.
+                if !cx.unsafe_body && !cx.deferred && self.holds_pointer(source.ty) {
                     let message = format!(
                         "a closure that captures `{name}`, which holds a raw pointer, is `unsafe`: write `unsafe (...) {{ ... }}`"
                     );
