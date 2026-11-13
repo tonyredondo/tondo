@@ -334,6 +334,10 @@ fn main() {
 - `load(ref values, at: i)` takes its lanes from an array, and `store(mut
   into, at: i)` writes them back; `sum`, `minLane` and `maxLane` make one
   number of the lanes.
+- `of` gives each lane its value, so it is of the types whose width is
+  written, as `Vector128[Int32].of(1, 2, 3, 4)`. `Vector[T]` has none, since
+  how many lanes it has is not for the code to know: `all(value)`, `zero()`
+  and `load` make one.
 
 A loop over an array takes a vector at a time, and what is left one by one:
 
