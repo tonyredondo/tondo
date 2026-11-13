@@ -97,10 +97,12 @@ impl<'a> Checker<'a> {
 
     /// Declares the traits of the module: names and parameters first, so
     /// that bounds can mention any of them, then their bounds (12.3).
-    pub(super) fn declare_traits(&mut self, traits: &[&ast::TraitDecl]) {
+    /// Names the traits, before the types are declared, whose generic
+    /// parameters a trait may bound.
+    pub(super) fn name_traits(&mut self, traits: &[&ast::TraitDecl]) {
         for decl in traits {
             let name = &decl.name;
-            if self.trait_names.contains_key(&name.name) || self.type_names.contains_key(&name.name) {
+            if self.trait_names.contains_key(&name.name) {
                 let message = format!("`{}` is already declared", name.name);
                 self.diags.error("E1002", name.span, message);
                 self.first_declared(name);
@@ -127,6 +129,10 @@ impl<'a> Checker<'a> {
         self.number = self.trait_names.get("Number").copied();
         self.integer = self.trait_names.get("Integer").copied();
         self.ordered = self.trait_names.get("Ordered").copied();
+    }
+
+    /// Declares the methods of the traits `name_traits` named.
+    pub(super) fn declare_traits(&mut self, traits: &[&ast::TraitDecl]) {
         for (index, decl) in traits.iter().enumerate() {
             let id = TraitId(index as u32 + PRELUDE_TRAITS);
             self.index_trait(id.0, decl);

@@ -1,0 +1,11 @@
+// A type that takes the name of a trait, which the program names first.
+
+trait Shape {
+    fn area(self): Int
+}
+
+type Shape = { side: Int }
+
+fn main() {}
+
+// expect-error: E1002 `Shape` is already declared

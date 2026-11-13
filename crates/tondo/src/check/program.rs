@@ -25,7 +25,6 @@ impl<'a> Checker<'a> {
             self.diags.error_without_span("E2108", message);
         }
 
-        self.declare_types(&module.items);
         // The prelude's `trait Iterator[T]` adds methods to the intrinsic one.
         let (extensions, traits): (Vec<&ast::TraitDecl>, Vec<&ast::TraitDecl>) = module
             .items
@@ -39,6 +38,10 @@ impl<'a> Checker<'a> {
             // Its module names it by its own path.
             self.trait_names.insert(extension.name.name.clone(), ITERATOR);
         }
+        // The traits are named first: a type's parameters may be bounded
+        // by any of them.
+        self.name_traits(&traits);
+        self.declare_types(&module.items);
         self.declare_traits(&traits);
         for item in &module.items {
             if let ast::Item::Const(decl) = item {

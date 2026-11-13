@@ -606,6 +606,10 @@ impl<'a> Checker<'a> {
             let message = format!("type `{}` is declared more than once", name.name);
             self.diags.error("E1002", name.span, message);
             self.first_declared(name);
+        } else if self.trait_names.contains_key(&name.name) {
+            let message = format!("`{}` is already declared", name.name);
+            self.diags.error("E1002", name.span, message);
+            self.first_declared(name);
         } else {
             self.declared_at.insert(name.name.clone(), name.span);
         }
