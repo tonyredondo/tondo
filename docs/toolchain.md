@@ -148,8 +148,8 @@ test words::unit::words::countsEachWord ... ok
 ok. 2 passed; 0 failed; 0 skipped; 0 blocked; 0.00s
 
 coverage:
-  src/main.to  lines 83.3% (5/6)       functions 50.0% (1/2)     branches 100.0% (2/2)
-  total        lines 83.3% (5/6)       functions 50.0% (1/2)     branches 100.0% (2/2)
+  src/main.to  lines 83.3% (5/6)       functions 50.0% (1/2)     branches 100.0% (3/3)
+  total        lines 83.3% (5/6)       functions 50.0% (1/2)     branches 100.0% (3/3)
 ```
 
 A test that ends with tasks still running fails, and says where each one

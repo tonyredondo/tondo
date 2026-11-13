@@ -38,6 +38,11 @@ counts.length(): Int = 3
 > stack
 #0 src/main.to:11 in count
 #1 src/main.to:19 in main
+> next
+task 1 stopped at src/main.to:9 in count (step)
+    9 |     for each in text.words() {
+> print counts
+counts: Map[String, Int] = ["to": 1, "be": 1, "or": 1, "not": 1]
 ```
 
 - `tondo debug` takes a file, a project, an executable built with
