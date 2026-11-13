@@ -341,6 +341,34 @@ fn the_cache_keeps_a_programs_last_builds() {
     assert_eq!(builds.filter(|entry| entry.path().is_dir()).count(), 2);
 }
 
+/// A program built again where it runs still runs, and its new build runs
+/// too: written over in place, Linux refuses to write it and macOS kills
+/// the new one, whose file kept the old one's signature.
+#[test]
+fn a_program_built_again_while_it_runs() {
+    use std::io::Write;
+    let dir = scratch("cli-again");
+    let build = |source: &str| {
+        std::fs::write(dir.join("main.to"), source).unwrap();
+        let (_, stderr, status) = tondo(&dir, &["build", "main.to", "--output", "main"]);
+        assert_eq!(status, 0, "{stderr}");
+    };
+    build("import std.console\n\nconsole.println(\"first {console.readLine() ?? \"\"}\")\n");
+    let mut first = Command::new(dir.join("main"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    build("import std.console\n\nconsole.println(\"second\")\n");
+    let second = Command::new(dir.join("main")).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&second.stdout), "second\n", "{:?}", second.status);
+    writeln!(first.stdin.take().unwrap(), "done").unwrap();
+    let first = first.wait_with_output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&first.stdout), "first done\n");
+    let left: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|entry| entry.file_name()).collect();
+    assert_eq!(left.len(), 2, "{left:?}");
+}
+
 /// Every code a diagnostic of the compiler gives has its explanation.
 #[test]
 fn every_code_is_explained() {

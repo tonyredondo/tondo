@@ -207,13 +207,30 @@ pub fn link(
         }
         None => message,
     })?;
-    std::fs::write(output, bytes).map_err(|e| format!("cannot write {}: {e}", output.display()))?;
+    write_output(output, &bytes)?;
+    Ok(())
+}
+
+/// Writes what a linker made, executable: aside and renamed into place, a
+/// file of its own. macOS keeps the signature of a program it ran with its
+/// file, and kills one written over it in place.
+fn write_output(output: &Path, bytes: &[u8]) -> Result<(), String> {
+    let aside = output.with_file_name(format!(
+        ".{}.{}",
+        output.file_name().map_or_else(Default::default, |name| name.to_string_lossy()),
+        crate::driver::aside()
+    ));
+    let cannot = |e: std::io::Error| format!("cannot write {}: {e}", output.display());
+    std::fs::write(&aside, bytes).map_err(cannot)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(output, std::fs::Permissions::from_mode(0o755));
+        let _ = std::fs::set_permissions(&aside, std::fs::Permissions::from_mode(0o755));
     }
-    Ok(())
+    std::fs::rename(&aside, output).map_err(|e| {
+        let _ = std::fs::remove_file(&aside);
+        cannot(e)
+    })
 }
 
 /// The archives as the linkers read them, each with its index if it has one.
@@ -483,11 +500,6 @@ fn link_macho(
         recordable,
     };
     let bytes = macho::link(inputs)?;
-    std::fs::write(output, bytes).map_err(|e| format!("cannot write {}: {e}", output.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(output, std::fs::Permissions::from_mode(0o755));
-    }
+    write_output(output, &bytes)?;
     Ok(())
 }
