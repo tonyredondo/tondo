@@ -7934,10 +7934,10 @@ corre el código. Cada uno tiene su máscara, `Mask128[T]` y las demás, con un
   por su definición carril a carril. `accelerated()` dice si las de un tipo se
   hacen con instrucciones de su ancho donde corre el código, y se conoce al
   compilar, en cada versión compilada.
-- Cuando un ancho mayor que 128 bits esté acelerado, una función cuyo código
-  usa `Vector[T]`, `Vector256[T]` o `Vector512[T]`, en su cuerpo o en lo que
-  se le incorpora, se compila una vez para cada nivel en el que más de lo que
-  usa está acelerado, junto a su versión del nivel del build. Una llamada
+- Una función cuyo código usa `Vector[T]`, `Vector256[T]` o `Vector512[T]`,
+  en su cuerpo o en lo que se le incorpora, se compila una vez para cada nivel
+  en el que más de lo que usa está acelerado, junto a su versión del nivel del
+  build (7.8 de la herramienta dice cuándo). Una llamada
   desde código de un nivel menor pasa por una prueba del procesador, hecha una
   vez y recordada, que elige la versión más alta que el procesador puede
   ejecutar; desde una versión, la llamada a otra función con versiones va

@@ -47,7 +47,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let state = self.osr_arg.take();
                 match self.unwind_to.filter(|_| state.is_none() && self.e.cg.slot_of(id).is_none()) {
                     Some(unwind) => {
-                        let func = self.e.cg.function(id);
+                        let func = self.e.cg.direct(id);
                         let callee = self.e.cg.declare_func_in_func(func, self.e.fb.func);
                         self.try_call(Called::Direct(callee), &values, unwind, &spilled)
                     }

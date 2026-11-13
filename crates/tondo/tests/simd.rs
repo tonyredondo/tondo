@@ -481,9 +481,10 @@ fn wide_here() -> bool {
     return false;
 }
 
-/// At the baseline and at this machine's level, where an x64 with AVX2 does
-/// vectors of 256 bits with its instructions of 256 bits: the definitions,
-/// and the same bits at both levels (rule 15).
+/// At the baseline, with and without its versions for a higher level, and
+/// at this machine's level, where an x64 with AVX2 does vectors of 256 bits
+/// with its instructions of 256 bits: the definitions, and the same bits
+/// everywhere (rule 15).
 #[test]
 fn every_operation_of_every_lane_is_its_definition() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("simd");
@@ -495,9 +496,14 @@ fn every_operation_of_every_lane_is_its_definition() {
         let file = dir.join(format!("{}.to", lane.name.to_lowercase()));
         std::fs::write(&file, &code).unwrap();
         let mut outputs = Vec::new();
-        for (cpu, wide) in [("baseline", false), ("native", wide_here())] {
+        // The baseline's own code, then its versions (rule 19), which run
+        // where the processor has AVX2, then this machine's level.
+        for (cpu, versions, wide) in
+            [("baseline", "0", false), ("baseline", "1", wide_here()), ("native", "1", wide_here())]
+        {
             let run = Command::new(env!("CARGO_BIN_EXE_tondo"))
                 .args(["run", &file.to_string_lossy(), "--cpu", cpu])
+                .env("TONDO_VERSIONS", versions)
                 .output()
                 .unwrap();
             let printed = String::from_utf8_lossy(&run.stdout).into_owned();
@@ -524,10 +530,8 @@ fn every_operation_of_every_lane_is_its_definition() {
             outputs
                 .push(printed.lines().filter(|line| !line.starts_with("accelerated")).collect::<Vec<_>>().join("\n"));
         }
-        if let [baseline, native] = outputs.as_slice()
-            && baseline != native
-        {
-            failures.push(format!("{}: the bits differ between the baseline and this machine's level", lane.name));
+        if outputs.windows(2).any(|pair| pair[0] != pair[1]) {
+            failures.push(format!("{}: the bits differ between the levels and versions", lane.name));
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
@@ -535,24 +539,27 @@ fn every_operation_of_every_lane_is_its_definition() {
 
 /// Vectors of 256 bits held in registers where the processor has AVX2:
 /// many alive at once and across calls, which spills them whole; passed to
-/// and returned from a function that is not inlined; in records, arrays and
-/// loops. Each build and level gives what the baseline's halves give.
+/// and returned from a function that is not inlined, and through `fn(...)`
+/// values; in records, arrays and loops. Each build and level gives what
+/// the baseline's halves give: with the versions of rule 19, which a
+/// release build for the baseline has, and without them.
 #[test]
 fn wide_vectors_spill_and_cross_calls() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("simd-wide");
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("wide.to");
     std::fs::write(&file, WIDE).unwrap();
-    for cpu in ["baseline", "native"] {
+    for (cpu, versions) in [("baseline", "0"), ("baseline", "1"), ("native", "1")] {
         for build in [None, Some("--debug"), Some("--live")] {
             let run = Command::new(env!("CARGO_BIN_EXE_tondo"))
                 .args(["run", &file.to_string_lossy(), "--cpu", cpu])
                 .args(build)
+                .env("TONDO_VERSIONS", versions)
                 .output()
                 .unwrap();
             let printed = String::from_utf8_lossy(&run.stdout);
             assert!(run.status.success(), "{cpu} {build:?}: {}", String::from_utf8_lossy(&run.stderr));
-            assert_eq!(printed, WIDE_PRINTS, "at {cpu}, {build:?}");
+            assert_eq!(printed, WIDE_PRINTS, "at {cpu}, {build:?}, versions {versions}");
         }
     }
 }
@@ -632,10 +639,15 @@ fn main() {
     let bytes = simd.Vector256[UInt8].all(200) + simd.Vector256[UInt8].all(100)
     console.println("{bytes.lane(31)} {pair == pair} {acc.reversed().lower()}")
     console.println("{deep(simd.Vector256[Int32].of(1, 2, 3, 4, 5, 6, 7, 8), 20)}")
+    // Through `fn(...)` values, which take a vector as the build's level
+    // passes it.
+    let twice = (v: simd.Vector256[Int32]): simd.Vector256[Int32] { v * 2 }
+    let values = [pair.left, twice(pair.left) + 1]
+    console.println("{twice(pair.left).lane(7)} {values.map((v) { v.sum() })}")
 }
 "#;
 
-const WIDE_PRINTS: &str = "<-928616459, -1671509226, 1880565303, 1137672536, 394779769, -348112998, -1091005765, -1833898532> <1996.0, 1996.0, 1996.0, 1996.0> 1000\nmiddle <-71955, -71955, -71955, -71955, -71955, -71955, -71955, -71955>\n<-148911, -148911, -148911, -148911, -148911, -148911, -148911, -148911>\n<false, false, true, true, true, false, false, false> 3 28 696225996\n44 true <1996.0, 1996.0>\n<-744669701, 190539604, 1125748909, 2060958214, -1298799777, -363590472, 571618833, 1506828138>\n";
+const WIDE_PRINTS: &str = "<-928616459, -1671509226, 1880565303, 1137672536, 394779769, -348112998, -1091005765, -1833898532> <1996.0, 1996.0, 1996.0, 1996.0> 1000\nmiddle <-71955, -71955, -71955, -71955, -71955, -71955, -71955, -71955>\n<-148911, -148911, -148911, -148911, -148911, -148911, -148911, -148911>\n<false, false, true, true, true, false, false, false> 3 28 696225996\n44 true <1996.0, 1996.0>\n<-744669701, 190539604, 1125748909, 2060958214, -1298799777, -363590472, 571618833, 1506828138>\n627170232 [1834841924, -625283440]\n";
 
 /// The sum of floats in the order the language fixes (18.5): element `i`
 /// into partial sum `i mod lanes`, then the partial sums by halves.

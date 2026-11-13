@@ -3,7 +3,7 @@
 
 use super::{Str, str_bytes, str_new};
 use std::io::Write;
-use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, Ordering};
 
 /// The level the program was built for and the features it needs, a line
 /// each, as its compiled code hands them over.
@@ -36,6 +36,24 @@ pub unsafe extern "C" fn tondo_rt_cpu(needed: *mut Str) {
     let _ =
         writeln!(std::io::stderr(), "fatal: this program was built for {level} and this processor lacks {lacked}{fix}");
     std::process::exit(crate::PANIC_EXIT_CODE);
+}
+
+/// Whether the versions of functions for a higher level run (rule 19 of
+/// `std.simd`): 1 when this processor has all that level needs. A function
+/// with versions reads it as it is called, and calls the one it says.
+#[unsafe(export_name = "tondo_rt_versions")]
+pub static VERSIONS: AtomicU8 = AtomicU8::new(0);
+
+/// Before any of the program's code, after `tondo_rt_cpu`: the level of
+/// its functions' versions and what that needs, a line each. They run where
+/// the processor has it all, and not with `TONDO_VERSIONS=0`, which keeps
+/// the build's level, as a processor without it would.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_cpu_versions(needed: *mut Str) {
+    let text = String::from_utf8_lossy(unsafe { str_bytes(needed) }).into_owned();
+    let off = std::env::var("TONDO_VERSIONS").is_ok_and(|value| value.trim() == "0");
+    let has = text.lines().skip(1).all(detected);
+    VERSIONS.store(u8::from(has && !off), Ordering::Relaxed);
 }
 
 /// `cpu.has(feature)` for the variant `feature` of `cpu.Feature`, when

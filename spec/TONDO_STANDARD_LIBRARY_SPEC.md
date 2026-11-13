@@ -7373,8 +7373,10 @@ pub fn Vector128[T].cast[U](self): Vector128[U]
   espera un vector de ese ancho. `lanes()` y `accelerated()` se conocen al
   compilar; `accelerated()` es `true` para 128 bits en x64 y arm64, a cada
   nivel; para 256 bits, en el código compilado para un nivel de x64 con AVX2
-  (`x86-64-v3`, `x86-64-v4`, o `native` en un procesador que lo tiene), que
-  hace sus operaciones con las instrucciones de 256 bits; y `false` para 512
+  (`x86-64-v3`, `x86-64-v4`, o `native` en un procesador que lo tiene), y en
+  las versiones para `x86-64-v3` de un build de release para un nivel menor
+  (7.8 de la herramienta), que hacen sus operaciones con las instrucciones de
+  256 bits; y `false` para 512
   bits hasta que el generador de código haga vectores de ese ancho. Un ancho
   que no está acelerado se calcula por mitades del mayor que lo está.
   `Vector[T]` es por ahora `Vector128[T]` en todo nivel, hasta las versiones

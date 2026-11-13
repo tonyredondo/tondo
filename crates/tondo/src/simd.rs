@@ -57,6 +57,12 @@ impl Lanes {
 pub const LANE_TYPES: &str =
     "`Int8`, `Int16`, `Int32`, `Int`, `UInt8`, `UInt16`, `UInt32`, `UInt`, `Byte`, `Float32` and `Float`";
 
+/// Whether a value of `ty` is a vector or a mask wider than 128 bits,
+/// which code for a level with wider vectors keeps in another way.
+pub fn wide(types: &Types, ty: Ty) -> bool {
+    matches!(*types.kind(types.repr(ty)), TyKind::Vector(width, _) | TyKind::Mask(width, _) if width.bits() > 128)
+}
+
 /// How many lanes a vector of `width` with lanes of `lanes` has.
 pub fn count(width: Width, lanes: Lanes) -> u32 {
     width.bits() / lanes.bits()

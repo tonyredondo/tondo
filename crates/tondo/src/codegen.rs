@@ -190,6 +190,81 @@ pub(crate) fn wide_vectors(isa: &dyn cranelift_codegen::isa::TargetIsa) -> bool 
     isa.name() == "x64" && has("has_avx") && has("has_avx2")
 }
 
+/// The bit that marks, among the sets of features of the processor a
+/// function needs, those of a version's generator (rule 19 of `std.simd`).
+const VERSION: u32 = 1 << 31;
+
+/// A function's body for the build's level, its version for a higher one,
+/// and where they pass a vector differently, what calls the version as the
+/// build's level calls: code of the version's level, which converts.
+#[derive(Clone, Copy)]
+struct Versions {
+    base: FuncId,
+    version: FuncId,
+    bridge: Option<FuncId>,
+}
+
+/// Which functions get a version for a level whose vectors are wider (rule
+/// 19 of `std.simd`): those whose code uses vectors of more than 128 bits.
+/// A version passes such a vector as its level does, so a function stays
+/// without one where it passes one through a `fn(...)` value, or to a
+/// function without a version, as those take it as the build's level does;
+/// and where it calls C, as its calls of C are built in their turn.
+fn versioned(types: &Types, bodies: &[Body]) -> Vec<bool> {
+    use crate::simd::{SimdOp, wide};
+    fn rvalues(body: &Body) -> impl Iterator<Item = &Rvalue> {
+        body.blocks.iter().flat_map(|block| &block.stmts).filter_map(|stmt| match stmt {
+            Statement::Assign(_, rvalue, _) => Some(&**rvalue),
+            _ => None,
+        })
+    }
+    let passes_wide = |body: &Body| {
+        wide(types, body.result) || body.params.iter().any(|param| wide(types, body.locals[param.0 as usize]))
+    };
+    let fn_wide = |ty: Ty| match types.kind(types.repr(ty)) {
+        TyKind::Fn(params, result, ..) => params.iter().any(|&param| wide(types, param)) || wide(types, *result),
+        _ => false,
+    };
+    let mut versioned: Vec<bool> = bodies
+        .iter()
+        .map(|body| {
+            let mut uses = body.locals.iter().any(|&ty| wide(types, ty));
+            for rvalue in rvalues(body) {
+                match rvalue {
+                    Rvalue::Call(Callee::Std(StdFn::Simd(SimdOp::Accelerated(width))), _) if width.bits() > 128 => {
+                        uses = true
+                    }
+                    Rvalue::Call(Callee::Extern(_), _) | Rvalue::Callback(..) | Rvalue::ExternFn(_) => return false,
+                    Rvalue::CallIndirect(Operand::Copy(callee), _) if fn_wide(body.place_ty(types, callee)) => {
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+            uses
+        })
+        .collect();
+    loop {
+        let mut changed = false;
+        for (index, body) in bodies.iter().enumerate() {
+            let calls_unversioned = rvalues(body).any(|rvalue| match rvalue {
+                Rvalue::Call(Callee::Fn(id), _) => {
+                    let callee = id.0 as usize;
+                    !versioned[callee] && passes_wide(&bodies[callee])
+                }
+                _ => false,
+            });
+            if versioned[index] && calls_unversioned {
+                versioned[index] = false;
+                changed = true;
+            }
+        }
+        if !changed {
+            return versioned;
+        }
+    }
+}
+
 pub(crate) fn vector_type(types: &Types, lane: Ty) -> ir::Type {
     let lane = match types.kind(types.repr(lane)) {
         TyKind::Int(int) => int_type(*int),
@@ -245,7 +320,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     // A function that needs features beyond the level is compiled with
     // them: a generator for each set of them the program's functions need.
     let flags = settings::Flags::new(flags);
-    let isa_for = |needs: u32| -> Result<cranelift_codegen::isa::OwnedTargetIsa, String> {
+    let isa_at = |cpu: &crate::target::Cpu, needs: u32| -> Result<cranelift_codegen::isa::OwnedTargetIsa, String> {
         let mut builder = match target {
             Some(triple) => cranelift_codegen::isa::lookup_by_name(triple).map_err(|e| format!("{triple}: {e}"))?,
             None => cranelift_native::builder().map_err(|e| format!("unsupported host: {e}"))?,
@@ -255,11 +330,30 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         }
         builder.finish(flags.clone()).map_err(|e| e.to_string())
     };
-    let isa = isa_for(0)?;
+    let isa = isa_at(&cpu, 0)?;
     let mut isas = HashMap::new();
     for body in bodies.iter().filter(|body| body.needs != 0) {
         if let std::collections::hash_map::Entry::Vacant(entry) = isas.entry(body.needs) {
-            entry.insert(isa_for(body.needs)?);
+            entry.insert(isa_at(&cpu, body.needs)?);
+        }
+    }
+    // The versions of rule 19 of `std.simd`: a release build for an x64
+    // level without AVX2 compiles the functions that use wider vectors once
+    // more, for `x86-64-v3`, which the processor picks as the program runs.
+    let x64 = isa.name() == "x64";
+    let versioned = match x64 && !wide_vectors(&*isa) && !debug && live.is_none() && coverage.is_none() && !fuzz {
+        true => versioned(&program.types, bodies),
+        false => vec![false; bodies.len()],
+    };
+    let level = match versioned.contains(&true) {
+        true => Some(crate::target::Cpu::parse("x86-64-v3", cpu.arch, None)?),
+        false => None,
+    };
+    if let Some(level) = &level {
+        for (body, _) in bodies.iter().zip(&versioned).filter(|(_, versioned)| **versioned) {
+            if let std::collections::hash_map::Entry::Vacant(entry) = isas.entry(body.needs | VERSION) {
+                entry.insert(isa_at(level, body.needs)?);
+            }
         }
     }
     let shapes = Shapes::new(&program.types, &*isa);
@@ -267,6 +361,8 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         ObjectBuilder::new(isa, "tondo", cranelift_module::default_libcall_names()).map_err(|e| e.to_string())?;
     let mut cg = Codegen {
         isas,
+        versions: Vec::new(),
+        versions_level: level.as_ref().map(crate::target::Cpu::needed),
         roots,
         cpu: cpu.needed(),
         module: ObjectModule::new(builder),
@@ -301,6 +397,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         debug_sites: Vec::new(),
         dump: None,
         dump_bindings: HashMap::new(),
+        building_version: false,
         live: None,
         current: 0,
         takes_osr: bodies.iter().map(|body| body.osr.is_some()).collect(),
@@ -332,11 +429,29 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     }
     for (index, body) in bodies.iter().enumerate() {
         let signature = cg.signature(body);
-        let id = cg
-            .module
-            .declare_function(&symbol_name(index, &body.name), Linkage::Local, &signature)
-            .map_err(|e| e.to_string())?;
+        let name = symbol_name(index, &body.name);
+        let id = cg.module.declare_function(&name, Linkage::Local, &signature).map_err(|e| e.to_string())?;
         cg.functions.push(id);
+        // A function with a version: `id` calls the body of the build's
+        // level, or the version, by the processor.
+        let version = match versioned[index] {
+            false => None,
+            true => {
+                let isa = &cg.isas[&(body.needs | VERSION)];
+                let wide = Shapes::new(cg.types, &**isa).signature(body);
+                let declare = |cg: &mut Codegen, suffix: &str, signature: &ir::Signature| {
+                    cg.module.declare_function(&format!("{name}{suffix}"), Linkage::Local, signature)
+                };
+                let base = declare(&mut cg, "_base", &signature).map_err(|e| e.to_string())?;
+                let version = declare(&mut cg, "_avx2", &wide).map_err(|e| e.to_string())?;
+                let bridge = match wide == signature {
+                    true => None,
+                    false => Some(declare(&mut cg, "_bridge", &signature).map_err(|e| e.to_string())?),
+                };
+                Some(Versions { base, version, bridge })
+            }
+        };
+        cg.versions.push(version);
     }
     if let Some(build) = live.as_deref_mut() {
         cg.live = Some(LiveCodegen::new(&mut cg.module, build, bodies, &program.types)?);
@@ -355,28 +470,59 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
             let func = std::mem::replace(&mut context.func, ir::Function::new());
             jobs.push(Job { id, func, traced: traced.map(str::to_string), sites, inlined, body, needs });
         };
+    // Each function, then the versions of those that have one.
     let built = {
         let shared = worker::Shared::new(&cg);
-        let indices: Vec<usize> = (0..bodies.len()).collect();
-        crate::parallel::map(&indices, 1, |&index| worker::build(&shared, bodies, index))
+        let mut work: Vec<(usize, bool)> = (0..bodies.len()).map(|index| (index, false)).collect();
+        work.extend((0..bodies.len()).filter(|&index| cg.versions[index].is_some()).map(|index| (index, true)));
+        crate::parallel::map(&work, 1, |&(index, version)| {
+            (index, version, worker::build(&shared, bodies, index, version))
+        })
     };
-    for (index, (body, mut built)) in bodies.iter().zip(built).enumerate() {
+    for (index, version, mut built) in built {
+        let body = &bodies[index];
         cg.current = index;
+        cg.building_version = version;
         // The runner that calls the tests is not the program's; a test's
         // suites are, and a debugger shows their frames.
         let runner = !program.tests.is_empty() && program.main.is_some_and(|main| index == main.0 as usize);
         let traced = (!runner).then_some(body.name.as_str());
+        let (id, needs) = match cg.versions[index] {
+            Some(versions) if version => (versions.version, body.needs | VERSION),
+            Some(versions) => (versions.base, body.needs),
+            None => (cg.functions[index], body.needs),
+        };
         if built.serial {
+            // A function that calls C has no version.
             context.func.signature = cg.signature(body);
             context.func.name = UserFuncName::user(0, index as u32);
             let sites = FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
-            job(cg.functions[index], &mut context, traced, sites, body.inlined.clone(), index, body.needs);
+            job(id, &mut context, traced, sites, body.inlined.clone(), index, needs);
         } else {
             worker::replay(&mut cg, bodies, &mut built);
             context.func = built.func;
-            job(cg.functions[index], &mut context, traced, built.sites, body.inlined.clone(), index, body.needs);
+            job(id, &mut context, traced, built.sites, body.inlined.clone(), index, needs);
         }
         cg.module.clear_context(&mut context);
+    }
+    cg.building_version = false;
+    // What calls a function with a version: the version, where the
+    // processor has its level.
+    for (index, body) in bodies.iter().enumerate() {
+        let Some(versions) = cg.versions[index] else { continue };
+        let id = cg.functions[index];
+        context.func.signature = cg.module.declarations().get_function_decl(id).signature.clone();
+        context.func.name = UserFuncName::user(0, index as u32);
+        define_dispatcher(&mut cg, versions, &mut context.func, &mut builder_context);
+        job(id, &mut context, Some(""), Vec::new(), Vec::new(), 0, 0);
+        cg.module.clear_context(&mut context);
+        if let Some(bridge) = versions.bridge {
+            context.func.signature = cg.module.declarations().get_function_decl(bridge).signature.clone();
+            context.func.name = UserFuncName::user(0, index as u32);
+            define_bridge(&mut cg, body, versions.version, &mut context.func, &mut builder_context);
+            job(bridge, &mut context, Some(""), Vec::new(), Vec::new(), 0, body.needs | VERSION);
+            cg.module.clear_context(&mut context);
+        }
     }
     let trace = cg.module.declare_data("tondo_trace", Linkage::Local, false, false).map_err(|e| e.to_string())?;
     let patch = cg.live.as_ref().is_some_and(|live| live.patch.is_some());
@@ -510,8 +656,14 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
 struct Codegen<'a> {
     /// The generator of each set of features of the processor some
     /// function needs beyond the level (toolchain 7.8); the module's is the
-    /// level's.
+    /// level's. With `VERSION` set, of the level of the versions.
     isas: HashMap<u32, cranelift_codegen::isa::OwnedTargetIsa>,
+    /// The functions with a version for a higher level (rule 19 of
+    /// `std.simd`): where `functions` holds what calls the one the
+    /// processor runs.
+    versions: Vec<Option<Versions>>,
+    /// That level and what it needs, a line each, for the runtime.
+    versions_level: Option<String>,
     /// Where the program comes from, which the runtime gives to tools.
     roots: &'a str,
     /// The level of processor the program is for and what it needs, a
@@ -577,7 +729,10 @@ struct Codegen<'a> {
     /// A build without probes: the table of what its dumps show, and the
     /// bindings of each function, by its number.
     dump: Option<DataId>,
-    dump_bindings: HashMap<usize, Vec<DumpBinding>>,
+    /// By the function's number, and whether of its version.
+    dump_bindings: HashMap<(usize, bool), Vec<DumpBinding>>,
+    /// Whether what is built now is a function's version.
+    building_version: bool,
     live: Option<LiveCodegen>,
     /// The body whose IR is being built.
     current: usize,
@@ -624,7 +779,7 @@ fn call_body_with<'t, G: Gen<'t> + ?Sized>(
         args.push(state.unwrap_or_else(|| fb.ins().iconst(types::I64, 0)));
     }
     let args = &args[..];
-    let func = cg.function(id);
+    let func = cg.direct(id);
     let Some((table, slot)) = cg.slot_of(id) else {
         let callee = cg.declare_func_in_func(func, fb.func);
         return fb.ins().call(callee, args);
@@ -687,6 +842,9 @@ struct Traced {
     saved: Vec<(u16, i64)>,
     /// Its latent sites: where each starts, how long it is, and its site.
     latent: Vec<(u32, u32, u32)>,
+    /// Whether it is a function's version (rule 19 of `std.simd`), whose
+    /// bindings are its own, as its code keeps them elsewhere.
+    version: bool,
 }
 
 /// Where a statement's code is in the source, the type of the local it
@@ -1265,6 +1423,11 @@ trait Gen<'t> {
     /// A function of the program, and whether it takes a live build's
     /// hidden parameter.
     fn function(&self, id: FnId) -> FuncId;
+    /// What a direct call of the function calls: in a version, the
+    /// callee's version when it has one (rule 19 of `std.simd`).
+    fn direct(&self, id: FnId) -> FuncId {
+        self.function(id)
+    }
     fn takes_osr(&self, id: FnId) -> bool;
     fn function_signature(&self, id: FuncId) -> ir::Signature;
     /// In a live build, the table of slots and a function's slot.
@@ -1484,7 +1647,7 @@ impl<'t> Gen<'t> for Codegen<'t> {
         self.dump.is_some()
     }
     fn dump_bindings(&mut self, described: Vec<DumpBinding>) {
-        self.dump_bindings.insert(self.current, described);
+        self.dump_bindings.insert((self.current, self.building_version), described);
     }
     fn function_sites(&mut self) -> Option<(DataId, usize)> {
         self.live.as_ref()?;
@@ -1652,8 +1815,11 @@ impl Codegen<'_> {
                     _ => None,
                 };
                 let site = |site: u32| job.sites.get((site as usize).checked_sub(1)?).map(|site| site.0);
+                // A function's version is shown with its level.
+                let name = job.traced.clone().unwrap_or_default();
+                let name = if job.needs & VERSION != 0 { format!("{name} (x86-64-v3)") } else { name };
                 KEPT.lock().unwrap_or_else(|e| e.into_inner()).push(Kept {
-                    name: job.traced.clone().unwrap_or_default(),
+                    name,
                     bytes: code.bytes.clone(),
                     code_end: code.code_end as usize,
                     targets: code.relocs.iter().filter_map(|reloc| Some((reloc.offset, target(reloc)?))).collect(),
@@ -1680,6 +1846,7 @@ impl Codegen<'_> {
                 let (handlers, labelled, slots, body) = (code.handlers, code.labelled, code.slots, job.body);
                 let (saved, latent) = (code.saved, code.latent);
                 self.traced.push(Traced {
+                    version: job.needs & VERSION != 0,
                     latent,
                     id: job.id,
                     name,
@@ -1787,6 +1954,11 @@ impl Emit<'_, Codegen<'_>> {
         let needed = self.cg.cpu.clone();
         let text = self.string_ptr(&needed);
         self.call_rt(Rt::Cpu, &[text]);
+        // And whether the versions of functions run (rule 19 of `std.simd`).
+        if let Some(level) = self.cg.versions_level.clone() {
+            let text = self.string_ptr(&level);
+            self.call_rt(Rt::CpuVersions, &[text]);
+        }
     }
 
     /// Hands the runtime each context's functions, the maker of its

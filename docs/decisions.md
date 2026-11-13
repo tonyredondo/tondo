@@ -6486,6 +6486,29 @@ baseline: with one more step done on single lanes, the sign of a NaN differed be
 operation runs at the baseline and at the machine's level, and holds both to the definitions and
 to the same bits.
 
+## Versions of a function for a higher level, picked as the program runs
+
+A build is for the baseline unless asked otherwise, and the baseline of x64 has no AVX2: rule 19
+of `std.simd` gives the functions that use vectors of 256 bits a version for `x86-64-v3`, so that a
+program built once runs them with the processor's instructions where it has them. A release build
+for a level without AVX2 compiles such a function twice, its body for the build's level and its
+version, and what every other function, `fn(...)` value and the runtime call under its name is a
+small dispatcher: it reads a byte the runtime set before the program's code, from what the
+processor has of that level, and calls one or the other. Within a version, a direct call of a
+function that has one goes straight to it. The processor is tested once, not at each call, and the
+byte costs a load and a branch where code of the build's level calls into code of the version's.
+
+A version passes the vectors of 256 bits in registers, and the build's level in memory: where the
+signatures differ, the dispatcher calls a bridge of the version's level, which converts, as the
+dispatcher itself runs on any processor and holds no such vector. So that no pointer is called
+with the other level's convention, a function keeps no version where it passes such a vector
+through a `fn(...)` value or to a function without a version, which the analysis repeats until
+nothing changes; nor where it calls C, whose calls are built in their turn. Such a function runs as
+the build's level does, at the speed of its halves, and is right. Debug, live, coverage and fuzzing
+builds have no versions, which their tools would see twice; `TONDO_VERSIONS=0` keeps the build's
+level, which is how the tests run a program as a processor without AVX2 would. Each version has its
+own place in a dump's table, as its code keeps a value elsewhere than the body does.
+
 ## The sum of floats in a fixed order, and arrays of floats with vectors
 
 `sum` of floats added from left to right, one addition waiting on the one before, and no faster

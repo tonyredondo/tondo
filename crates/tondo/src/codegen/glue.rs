@@ -307,12 +307,25 @@ pub(super) fn call_passing(
     target: FnId,
     args: &[ir::Value],
 ) -> Vec<ir::Value> {
-    use cranelift_codegen::ir::{BlockArg, BlockCall, ExceptionTableData, ExceptionTableItem};
     if cg.live() || cg.takes_osr(target) || cg.slot_of(target).is_some() {
         let call = call_body(cg, fb, target, args);
         return fb.inst_results(call).to_vec();
     }
     let func = cg.function(target);
+    let own = fb.func.signature.returns.iter().map(|r| r.value_type).collect::<Vec<_>>();
+    call_passing_to(cg, fb, func, args, &own)
+}
+
+/// The same of the function `func`, whose results may differ from those of
+/// the function that calls it, `own`, which a panic returns zeros of.
+fn call_passing_to(
+    cg: &mut Codegen,
+    fb: &mut FunctionBuilder,
+    func: FuncId,
+    args: &[ir::Value],
+    own: &[ir::Type],
+) -> Vec<ir::Value> {
+    use cranelift_codegen::ir::{BlockArg, BlockCall, ExceptionTableData, ExceptionTableItem};
     let callee = cg.declare_func_in_func(func, fb.func);
     let signature = fb.func.dfg.ext_funcs[callee].signature;
     let returns: Vec<ir::Type> = fb.func.dfg.signatures[signature].returns.iter().map(|r| r.value_type).collect();
@@ -331,21 +344,113 @@ pub(super) fn call_passing(
     let pass = cg.runtime(Rt::UnwindPass);
     let pass = cg.declare_func_in_func(pass, fb.func);
     fb.ins().call(pass, &[]);
-    let zeros: Vec<ir::Value> = returns
+    let zero = |fb: &mut FunctionBuilder, ty: ir::Type| match ty {
+        types::F32 => fb.ins().f32const(0.0),
+        types::F64 => fb.ins().f64const(0.0),
+        types::I128 => {
+            let half = fb.ins().iconst(types::I64, 0);
+            fb.ins().iconcat(half, half)
+        }
+        ty => fb.ins().iconst(ty, 0),
+    };
+    let zeros: Vec<ir::Value> = own
         .iter()
-        .map(|&ty| match ty {
-            types::F32 => fb.ins().f32const(0.0),
-            types::F64 => fb.ins().f64const(0.0),
-            types::I128 => {
-                let half = fb.ins().iconst(types::I64, 0);
-                fb.ins().iconcat(half, half)
+        .map(|&ty| match ty.is_vector() {
+            true => {
+                let lane = zero(fb, ty.lane_type());
+                fb.ins().splat(ty, lane)
             }
-            ty => fb.ins().iconst(ty, 0),
+            false => zero(fb, ty),
         })
         .collect();
     fb.ins().return_(&zeros);
     fb.switch_to_block(next);
     fb.block_params(next).to_vec()
+}
+
+/// What calls a function with a version (rule 19 of `std.simd`): the
+/// version where the processor has its level, which the runtime found at
+/// the start, and else the body for the build's level. It is code of the
+/// build's level, which a vector wider than 128 bits does not pass through:
+/// the bridge converts it, in code of the version's level.
+pub(super) fn define_dispatcher(
+    cg: &mut Codegen,
+    versions: Versions,
+    func: &mut ir::Function,
+    fbc: &mut FunctionBuilderContext,
+) {
+    let own: Vec<ir::Type> = func.signature.returns.iter().map(|r| r.value_type).collect();
+    let mut fb = FunctionBuilder::new(func, fbc);
+    let entry = fb.create_block();
+    fb.append_block_params_for_function_params(entry);
+    fb.switch_to_block(entry);
+    let params = fb.block_params(entry).to_vec();
+    let flag = cg.module.declare_data("tondo_rt_versions", Linkage::Import, true, false).expect("the runtime's flag");
+    let flag = cg.module.declare_data_in_func(flag, fb.func);
+    let flag = fb.ins().symbol_value(POINTER, flag);
+    let on = fb.ins().load(types::I8, flags(), flag, 0);
+    let (wide, narrow) = (fb.create_block(), fb.create_block());
+    fb.ins().brif(on, wide, &[], narrow, &[]);
+    for (block, target) in [(narrow, versions.base), (wide, versions.bridge.unwrap_or(versions.version))] {
+        fb.switch_to_block(block);
+        let results = call_passing_to(cg, &mut fb, target, &params, &own);
+        fb.ins().return_(&results);
+    }
+    fb.seal_all_blocks();
+    let config = cg.module.isa().frontend_config();
+    fb.finalize(config);
+}
+
+/// What calls a function's version where it passes a vector differently
+/// from the build's level: it takes the arguments as the build's level
+/// passes them and converts each vector of more than 128 bits, which the
+/// version takes in a register and may give back in one.
+pub(super) fn define_bridge(
+    cg: &mut Codegen,
+    body: &Body,
+    version: FuncId,
+    func: &mut ir::Function,
+    fbc: &mut FunctionBuilderContext,
+) {
+    let own: Vec<ir::Type> = func.signature.returns.iter().map(|r| r.value_type).collect();
+    let mut fb = FunctionBuilder::new(func, fbc);
+    let entry = fb.create_block();
+    fb.append_block_params_for_function_params(entry);
+    fb.switch_to_block(entry);
+    let mut incoming = fb.block_params(entry).to_vec().into_iter();
+    let (mut shapes, config) = {
+        let isa = &cg.isas[&(body.needs | VERSION)];
+        (Shapes::new(cg.types, &**isa), isa.frontend_config())
+    };
+    let returned = (cg.class(body.result) == Class::Memory).then(|| incoming.next().expect("the result's place"));
+    let mut args = Vec::new();
+    if shapes.class(body.result) == Class::Memory {
+        args.push(returned.expect("in memory at both levels"));
+    }
+    for (index, &param) in body.params.iter().enumerate() {
+        let ty = body.locals[param.0 as usize];
+        let loan = body.loans[index];
+        match (cg.class(ty), shapes.class(ty)) {
+            (Class::Zero, _) if !loan => {}
+            (Class::Memory, Class::Scalar(clif)) if !loan => {
+                let address = incoming.next().expect("a parameter");
+                args.push(fb.ins().load(clif, flags(), address, 0));
+            }
+            _ => args.push(incoming.next().expect("a parameter")),
+        }
+    }
+    let results = call_passing_to(cg, &mut fb, version, &args, &own);
+    match (returned, results.as_slice()) {
+        (Some(address), [value]) => {
+            fb.ins().store(flags(), *value, address, 0);
+            fb.ins().return_(&[]);
+        }
+        _ => {
+            fb.ins().return_(&results);
+        }
+    }
+    fb.seal_all_blocks();
+    fb.finalize(config);
 }
 
 /// What the runtime calls to convert a value a frame brings to the new code

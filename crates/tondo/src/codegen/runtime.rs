@@ -85,6 +85,9 @@ pub(super) enum Rt {
     Cpu,
     /// `cpu.has(feature)` when the level does not say.
     CpuHas,
+    /// The level of the program's versions of functions, and what it
+    /// needs (rule 19 of `std.simd`).
+    CpuVersions,
     /// Before a panic, the registers its dump reads.
     KeepRegisters,
     /// Before a panic the program wrote, the numbers its dump shows.
@@ -404,6 +407,7 @@ impl Rt {
             Rt::SourceRoots => ("tondo_rt_source_roots", &[I64], &[]),
             Rt::Cpu => ("tondo_rt_cpu", &[I64], &[]),
             Rt::CpuHas => ("tondo_rt_cpu_has", &[I64], &[I8]),
+            Rt::CpuVersions => ("tondo_rt_cpu_versions", &[I64], &[]),
             Rt::Site => ("tondo_rt_site", &[], &[]),
             Rt::KeepRegisters => ("tondo_rt_keep_registers", &[], &[]),
             Rt::KeepNumbers => ("tondo_rt_keep_numbers", &[I64], &[]),

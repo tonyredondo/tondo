@@ -1719,6 +1719,23 @@ Lo que cada función necesita del procesador:
 - `tondo check` toma el nivel del `[build]` del `tondo.toml` raíz, o
   `baseline`; `build`, `run` y `test`, también el de `--cpu`.
 
+Las versiones de una función por nivel (18.11 del lenguaje):
+
+- Un build de release para un nivel de x64 sin AVX2, `baseline` o
+  `x86-64-v2`, compila además para `x86-64-v3` cada función cuyo código usa
+  vectores de más de 128 bits, salvo la que pasa uno por un valor `fn(...)`, la
+  que lo pasa a una función sin versión y la que llama a C. Esas funciones
+  toman y dan esos vectores en registros de 256 bits.
+- El runtime prueba el procesador una vez, antes que el código del programa.
+  Una llamada a esa función desde código del nivel del build pasa por esa
+  prueba y va a la versión donde el procesador tiene lo que `x86-64-v3`
+  necesita; desde una versión, va directa a la versión de la otra.
+- Un build de depuración, live, de cobertura o de fuzzing no tiene versiones,
+  ni uno para un nivel que ya tiene AVX2. `TONDO_VERSIONS=0` en el entorno del
+  programa corre el código del nivel del build, como en un procesador sin ese
+  nivel. `tondo asm` muestra una versión con su nivel, `nombre (x86-64-v3)`,
+  y un volcado muestra las variables de la versión que corre.
+
 ### 7.9 `tondo mcp`
 
 `tondo mcp` es un servidor del Model Context Protocol por la entrada y la

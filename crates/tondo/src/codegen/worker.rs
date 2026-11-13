@@ -61,6 +61,10 @@ pub(super) struct Shared<'s, 't> {
     fuzz: bool,
     testing: bool,
     dumps: bool,
+    /// The functions with a version (rule 19 of `std.simd`), and the
+    /// generators of their level.
+    versions: &'s [Option<Versions>],
+    isas: &'s HashMap<u32, cranelift_codegen::isa::OwnedTargetIsa>,
 }
 
 impl<'s, 't> Shared<'s, 't> {
@@ -91,6 +95,8 @@ impl<'s, 't> Shared<'s, 't> {
             coverage: Gen::coverage(cg),
             fuzz: Gen::fuzzing(cg),
             testing: Gen::testing(cg),
+            versions: &cg.versions,
+            isas: &cg.isas,
         }
     }
 }
@@ -115,6 +121,12 @@ pub(super) struct Built {
 
 struct Worker<'w, 's, 't> {
     shared: &'w Shared<'s, 't>,
+    /// The generator the function is built for: the module's, or that of
+    /// its version's level.
+    isa: &'s dyn cranelift_codegen::isa::TargetIsa,
+    /// Whether it builds a function's version, whose calls of functions
+    /// with versions call theirs.
+    version: bool,
     shapes: Shapes<'t>,
     current: usize,
     asked: Vec<Asked>,
@@ -133,14 +145,21 @@ struct Worker<'w, 's, 't> {
     serial: bool,
 }
 
-/// Builds the IR of the function `index`.
-pub(super) fn build(shared: &Shared, bodies: &[Body], index: usize) -> Built {
+/// Builds the IR of the function `index`, or with `version` that of its
+/// version for a higher level (rule 19 of `std.simd`).
+pub(super) fn build(shared: &Shared, bodies: &[Body], index: usize, version: bool) -> Built {
     thread_local! {
         static BUILDER: std::cell::RefCell<FunctionBuilderContext> = std::cell::RefCell::new(FunctionBuilderContext::new());
     }
+    let isa = match version {
+        true => &*shared.isas[&(bodies[index].needs | VERSION)],
+        false => shared.isa,
+    };
     let mut worker = Worker {
         shared,
-        shapes: Shapes::new(shared.types, shared.isa),
+        isa,
+        version,
+        shapes: Shapes::new(shared.types, isa),
         current: index,
         asked: Vec::new(),
         strings: HashMap::new(),
@@ -201,13 +220,19 @@ impl<'t> Gen<'t> for Worker<'_, '_, 't> {
         self.shared.meta
     }
     fn isa(&self) -> &dyn cranelift_codegen::isa::TargetIsa {
-        self.shared.isa
+        self.isa
     }
     fn loans(&self, id: FnId) -> Vec<bool> {
         self.shared.loans[id.0 as usize].clone()
     }
     fn function(&self, id: FnId) -> FuncId {
         self.shared.functions[id.0 as usize]
+    }
+    fn direct(&self, id: FnId) -> FuncId {
+        match self.shared.versions[id.0 as usize] {
+            Some(versions) if self.version => versions.version,
+            _ => self.function(id),
+        }
     }
     fn takes_osr(&self, id: FnId) -> bool {
         self.shared.takes_osr[id.0 as usize]

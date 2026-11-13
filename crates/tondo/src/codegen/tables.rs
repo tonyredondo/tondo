@@ -160,7 +160,8 @@ impl Codegen<'_> {
     pub(super) fn dump_table(&mut self, id: DataId) {
         let (mut text, mut glues) = (crate::cores::BINDINGS.to_string(), Vec::new());
         let (mut shapes, mut known) = (Vec::new(), HashMap::new());
-        let bound = self.traced.iter().filter_map(|function| self.dump_bindings.get(&function.body));
+        let bound =
+            self.traced.iter().filter_map(|function| self.dump_bindings.get(&(function.body, function.version)));
         let shaped: Vec<Ty> = bound.flatten().map(|binding| binding.1).collect();
         for ty in shaped {
             self.shape(ty, &mut shapes, &mut known);
@@ -175,7 +176,7 @@ impl Codegen<'_> {
                 let (file, line, _) = self.sources.position(start);
                 text.push_str(&format!("P\t{at}\t{length}\t{file}\t{line}\n"));
             }
-            let Some(bindings) = self.dump_bindings.get(&function.body) else { continue };
+            let Some(bindings) = self.dump_bindings.get(&(function.body, function.version)) else { continue };
             for (name, ty, glue, place, keep, scope, from) in bindings {
                 glues.push(*glue);
                 let shaped = ty;

@@ -47,9 +47,11 @@
 pub type Vector128[T]
 
 /// A vector of 256 bits, with the functions and methods of `Vector128` at its
-/// width, and `joined`, `lower` and `upper`. Code built for an x64 level with
-/// AVX2, as `--cpu x86-64-v3`, does it with the processor's instructions of
-/// 256 bits; elsewhere it is computed on halves of 128 bits.
+/// width, and `joined`, `lower` and `upper`. On an x64 with AVX2 it is done
+/// with the processor's instructions of 256 bits: in a build for that level,
+/// as `--cpu x86-64-v3`, and in a release build for a lower one, whose
+/// functions that use it get a version for it. Elsewhere it is computed on
+/// halves of 128 bits.
 ///
 /// ```tondo
 /// import std.console
