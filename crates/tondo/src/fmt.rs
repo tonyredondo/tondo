@@ -467,6 +467,7 @@ impl Formatter<'_> {
             }
             Item::Trait(t) => {
                 let mut head = vec![
+                    self.uses(&t.uses, false),
                     text(format!("{}trait {}", if t.public { "pub " } else { "" }, t.name.name)),
                     self.generics(&t.generics),
                 ];
@@ -1711,6 +1712,11 @@ mod tests {
                 "pub fn createTemporaryDirectory(\n    directory: String? = none,\n    pattern: String = \"\",\n): String ! __fs.FsError {}\n",
             ),
             ("pub const  Limit:Int=1<<4\nconst Name=\"x\"\n", "pub const Limit: Int = 1 << 4\n\nconst Name = \"x\"\n"),
+            // The annotations of a trait stay, below its comment.
+            (
+                "/// What greets.\n@plugin.Contract pub trait Greeter{fn greet(self):String}\n",
+                "/// What greets.\n@plugin.Contract\npub trait Greeter {\n    fn greet(self): String\n}\n",
+            ),
         ];
         for (input, output) in pairs {
             assert_eq!(format(input), output, "formatting {input:?}");
@@ -1737,7 +1743,8 @@ mod tests {
         }
     }
 
-    /// Formatting the test programs twice changes nothing the second time.
+    /// Formatting the test programs twice changes nothing the second time,
+    /// and the first keeps every annotation.
     #[test]
     fn idempotent() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/cases");
@@ -1759,6 +1766,13 @@ mod tests {
             let file = sources.add(&path, source);
             let Some(once) = super::format(sources.file(file), &mut Diagnostics::default()) else { continue };
             assert_eq!(format(&once), once, "{} is not formatted the same twice", path.display());
+            // And it keeps every annotation.
+            let formatted = sources.add(&path, once);
+            let annotations = |file| {
+                let tokens = crate::lexer::lex(sources.file(file), None, &mut Diagnostics::default());
+                tokens.iter().filter(|token| token.tok == crate::lexer::Tok::At).count()
+            };
+            assert_eq!(annotations(formatted), annotations(file), "formatting {} drops an annotation", path.display());
         }
     }
 }

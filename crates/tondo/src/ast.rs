@@ -165,6 +165,8 @@ pub struct TraitDecl {
     /// The traits it requires, after `:` (12.3).
     pub requires: Vec<TypeExpr>,
     pub methods: Vec<FnDecl>,
+    /// The program's annotations before it, as `@plugin.Contract` (27.13).
+    pub uses: Vec<AnnotationUse>,
     pub span: Span,
     /// The module that declares it, numbered when modules are linked; the
     /// root module is 0.

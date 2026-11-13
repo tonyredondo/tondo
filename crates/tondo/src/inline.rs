@@ -59,6 +59,9 @@ fn note_calls(bodies: &mut [Body]) {
             let callee = callee.0 as usize;
             let why = match callee == index {
                 true => "it is this one".to_string(),
+                false if !fits(&bodies[callee], &bodies[index]) => {
+                    "it needs features of the processor this function does not (toolchain 7.8)".to_string()
+                }
                 false => not_small(&bodies[callee]).unwrap_or_else(|| format!("inlining stops after {ROUNDS} rounds")),
             };
             let name = &bodies[callee].name;
@@ -281,6 +284,13 @@ fn warm(body: &Body) -> Vec<bool> {
     warm
 }
 
+/// Whether a function's code may go into a caller's: it needs no feature
+/// of the processor the caller does not, as the caller is compiled for its
+/// own (toolchain 7.8).
+fn fits(callee: &Body, caller: &Body) -> bool {
+    callee.needs & !caller.needs == 0
+}
+
 /// Whether a function is worth inlining and can be: it is small,
 /// registers no `defer`, and uses its loans only as places. A call of
 /// itself it makes is not inlined, and each round inlines one level more.
@@ -377,7 +387,9 @@ fn defined(body: &Body) -> HashSet<Local> {
 fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Body> {
     let callee_of = |statement: &Statement| match statement {
         Statement::Assign(_, rvalue, _) => match &**rvalue {
-            Rvalue::Call(Callee::Fn(id), _) if id.0 as usize != index => small[id.0 as usize].as_ref(),
+            Rvalue::Call(Callee::Fn(id), _) if id.0 as usize != index => {
+                small[id.0 as usize].as_ref().filter(|callee| fits(callee, caller))
+            }
             _ => None,
         },
         _ => None,
@@ -631,7 +643,7 @@ impl Guard {
 fn guard_calls(caller: &Body, guards: &[Option<Guard>]) -> Option<Body> {
     let guard_of = |statement: &Statement| match statement {
         Statement::Assign(_, rvalue, _) => match &**rvalue {
-            Rvalue::Call(Callee::Fn(id), _) => guards[id.0 as usize].as_ref(),
+            Rvalue::Call(Callee::Fn(id), _) => guards[id.0 as usize].as_ref().filter(|guard| fits(&guard.body, caller)),
             _ => None,
         },
         _ => None,

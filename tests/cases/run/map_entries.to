@@ -2,7 +2,8 @@
 // first when the map has none: a place to change with a compound
 // assignment, a `mut` or `var` method or a `var` loan. The key is evaluated
 // once and the value only when the key is missing; a map another binding
-// shares is copied before its entry changes.
+// shares is copied before its entry changes. The entry found is within
+// bounds, so in a loop the only check left is the addition's.
 
 import std.console
 import std.math
@@ -79,3 +80,5 @@ fn main() {
 // expect-stdout: some(13) some(14)
 // expect-stdout: [a: 3]
 // expect-stdout: [x: [ANA, EVA], y: [leo]]
+// expect-optimization: 38:9 checked keeps its overflow check, in a loop
+// expect-no-optimization: 38:16 checked

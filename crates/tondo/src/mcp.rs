@@ -1264,6 +1264,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         switch(argv, "--static", "static");
         switch(argv, "--debug", "debug");
         option(argv, "--target", "target");
+        option(argv, "--cpu", "cpu");
         for library in args.list("link") {
             argv.extend(["--link".to_string(), library]);
         }
@@ -1408,6 +1409,10 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             for define in args.list("define") {
                 argv.extend(["-D".to_string(), define]);
             }
+            if args.flag("included") {
+                argv.push("--included".to_string());
+            }
+            option(&mut argv, "--fails", "fails");
         }
         "update" => {
             push(&["update", "--json"]);
@@ -2122,7 +2127,7 @@ fn resource(uri: &str) -> Option<(&'static str, String)> {
     if let Some(topic) = uri.strip_prefix("tondo://guide/") {
         return crate::guide::topic(topic).map(|text| ("text/markdown", text.to_string()));
     }
-    crate::api::standard(uri.strip_prefix("tondo://api/")?).map(|text| ("text/plain", text))
+    crate::api::shown(uri.strip_prefix("tondo://api/")?).map(|text| ("text/plain", text))
 }
 
 /// How a tool acts on the world, as its annotations say.
@@ -2155,6 +2160,11 @@ const STATIC: (&str, &str, &str) = ("static", "boolean", "A static executable, w
 const DEBUG: (&str, &str, &str) = ("debug", "boolean", "A debug build, which `debug_start` can debug (`--debug`).");
 const TARGET: (&str, &str, &str) =
     ("target", "string", "Build for another machine: x86_64-linux or aarch64-linux, static (`--target`).");
+const CPU: (&str, &str, &str) = (
+    "cpu",
+    "string",
+    "The level of processor to build for: baseline (the default), x86-64-v3, x86-64-v4 or native (`--cpu`).",
+);
 const LINK: (&str, &str, &str) = ("link", "strings", "Native libraries to link, by name (-l) or file (`--link`).");
 const PROGRAM: (&str, &str, &str) =
     ("program", "string!", "A running program's process ID or name, as `ps` lists them.");
@@ -2481,6 +2491,7 @@ and the header <name>.h.",
             ("strip", "boolean", "Without its symbol table (`--strip`)."),
             DEBUG,
             TARGET,
+            CPU,
             LINK,
         ],
     },
@@ -2510,6 +2521,7 @@ message, data, source and stack, as data.",
             STATIC,
             DEBUG,
             TARGET,
+            CPU,
             LINK,
         ],
     },
@@ -2576,6 +2588,7 @@ is reduced and kept in the project's `fuzz/` store, which every run of the tests
             STATIC,
             DEBUG,
             TARGET,
+            CPU,
             ("flags", "strings", "Other options, as `tondo test` takes them: --seed, --timeout, --repeat..."),
         ],
     },
@@ -2600,6 +2613,8 @@ is reduced and kept in the project's `fuzz/` store, which every run of the tests
             ("output", "string", "The .to file to write."),
             ("include", "strings", "Directories of headers (-I)."),
             ("define", "strings", "Macros, as name or name=value (-D)."),
+            ("included", "boolean", "Bind the headers the named ones include, too (`--included`)."),
+            ("fails", "string", "A file naming the functions that fail with the system's error number (`--fails`)."),
         ],
     },
     Tool {

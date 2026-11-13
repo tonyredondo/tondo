@@ -26,9 +26,11 @@ mod config;
 mod console;
 mod contexts;
 mod counters;
+mod cpu;
 mod crypto;
 mod cycles;
 mod debugger;
+mod descriptors;
 mod diagnostics;
 mod env;
 mod events;
@@ -43,6 +45,7 @@ mod image;
 mod io;
 mod json;
 mod labels;
+mod library;
 mod live;
 mod locales;
 mod lockorder;
@@ -91,6 +94,8 @@ mod text;
 mod time;
 mod toml;
 mod trace;
+mod unloading;
+pub(crate) use unloading::start_library;
 mod yaml;
 mod zones;
 pub(crate) use arrays::*;
@@ -142,26 +147,49 @@ pub(crate) fn library() -> bool {
     LIBRARY.load(Ordering::Relaxed)
 }
 
-/// Starts a library at the first call from C: the runtime reads its
-/// settings and the compiled code hands it its tables. What the library
-/// wrote and did not deliver yet goes out when the process ends.
-pub(crate) fn start_library(start: unsafe extern "C" fn()) {
-    static STARTED: std::sync::Once = std::sync::Once::new();
-    STARTED.call_once(|| {
-        LIBRARY.store(true, Ordering::Relaxed);
-        config::config();
-        #[cfg(tondo_staticlib)]
-        meta::start();
-        diagnostics::start();
-        unsafe { start() };
-        unsafe extern "C" {
-            fn __cxa_atexit(function: extern "C" fn(*mut u8), argument: *mut u8, object: *mut u8) -> i32;
+/// An address in this runtime's image, which names it to `__cxa_atexit`:
+/// a library's end runs and forgets what it registered, which is its own.
+pub(crate) fn image() -> *mut u8 {
+    &LIBRARY as *const AtomicBool as *mut u8
+}
+
+/// What runs when the process ends, once: registered with the C library,
+/// and kept here too, as a library's end runs it itself, where musl's
+/// `__cxa_finalize` runs nothing.
+struct AtExit {
+    function: extern "C" fn(*mut u8),
+    done: AtomicBool,
+}
+
+static AT_EXIT: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+/// Runs `function` when the process ends, or when a library ends before.
+pub(crate) fn at_exit(function: extern "C" fn(*mut u8)) {
+    // `atexit` is not a symbol of glibc's shared library.
+    unsafe extern "C" {
+        fn __cxa_atexit(function: extern "C" fn(*mut u8), argument: *mut u8, image: *mut u8) -> i32;
+    }
+    extern "C" fn once(entry: *mut u8) {
+        let entry = unsafe { &*(entry as *const AtExit) };
+        if !entry.done.swap(true, Ordering::AcqRel) {
+            (entry.function)(std::ptr::null_mut());
         }
-        extern "C" fn flush(_: *mut u8) {
-            flush_stdout();
+    }
+    let entry = Box::into_raw(Box::new(AtExit { function, done: AtomicBool::new(false) }));
+    AT_EXIT.lock().unwrap_or_else(|e| e.into_inner()).push(entry as usize);
+    unsafe { __cxa_atexit(once, entry as *mut u8, image()) };
+}
+
+/// At a library's end: what it registered for the end of the process runs
+/// now, last first, and not again.
+pub(crate) fn run_at_exit() {
+    let entries = std::mem::take(&mut *AT_EXIT.lock().unwrap_or_else(|e| e.into_inner()));
+    for &entry in entries.iter().rev() {
+        let entry = unsafe { &*(entry as *const AtExit) };
+        if !entry.done.swap(true, Ordering::AcqRel) {
+            (entry.function)(std::ptr::null_mut());
         }
-        unsafe { __cxa_atexit(flush, std::ptr::null_mut(), std::ptr::null_mut()) };
-    });
+    }
 }
 
 /// Runs a program: the `main` the compiler generates for an executable

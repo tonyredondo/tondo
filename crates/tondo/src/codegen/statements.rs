@@ -135,6 +135,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     }
                     self.e.call_rt(Rt::Env(*function), &values);
                 }
+                Rvalue::Call(Callee::Std(StdFn::Simd(op)), args) => {
+                    self.simd(*op, args, place, Ty::UNIT, span);
+                }
                 Rvalue::Call(callee, args) => {
                     self.call(*callee, args, None);
                 }
@@ -172,6 +175,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Rvalue::Call(Callee::Std(StdFn::Number(op)), args) => match self.number(*op, args, place, ty, span) {
                 Some(value) => value,
                 None => return,
+            },
+            Rvalue::Call(Callee::Std(StdFn::Simd(op)), args) => match self.simd(*op, args, place, ty, span) {
+                Some(Val::Zero) | None => return,
+                Some(value) => value,
             },
             Rvalue::Call(Callee::Std(StdFn::Fs(FsFn::Exists)), args) => {
                 let values: Vec<ir::Value> = args.iter().map(|a| self.scalar(a)).collect();

@@ -153,6 +153,9 @@ pub struct TestNodeInfo {
 pub struct CApi {
     pub functions: Vec<CFunction>,
     pub structs: Vec<CStruct>,
+    /// The library's name, in a build of one, whose `<name>_stop` ends
+    /// its runtime (toolchain 7.7).
+    pub name: Option<String>,
 }
 
 #[derive(Clone)]
@@ -265,6 +268,11 @@ pub struct Function {
     /// Whether it runs a test or a suite's setup, which tells the runner
     /// where an error leaves it (testing 7.6).
     pub test: bool,
+    /// The features of `cpu.Feature` it needs beyond the build's level, a
+    /// bit each by variant (toolchain 7.8): what its instructions of
+    /// `std.cpu.x64` or `std.cpu.arm64` need, and what the functions it
+    /// calls outside a guard need.
+    pub needs: u32,
     /// Where it is declared: a function's name, a closure, a script's
     /// first statement; none for what the compiler makes.
     pub span: Span,
@@ -955,8 +963,16 @@ pub enum StdFn {
     Process(ProcessFn),
     /// A function of an internal standard module, by its index in `NATIVES`.
     Native(u16),
+    /// `cpu.has(feature)` (toolchain 7.8): what the runtime found at the
+    /// start, when the build's level does not say.
+    CpuHas,
+    /// A function of `std.cpu.x64` or `std.cpu.arm64`: one instruction
+    /// (standard library 14.47).
+    Cpu(crate::instructions::Instruction),
     /// A named operation of a number (18.9).
     Number(crate::numbers::NumOp),
+    /// An operation of `std.simd` (standard library 14.46).
+    Simd(crate::simd::SimdOp),
     /// `time.sleep(delay)`: waits without blocking the thread (14.3.3).
     TimeSleep,
     /// `time.now()`, `unixTime()`, `utcNow()` and `utc(sinceEpoch)` (14.3).
@@ -1222,6 +1238,12 @@ impl StdFn {
             // They observe the process; the others take it.
             StdFn::Process(ProcessFn::Stream(_) | ProcessFn::Id) => vec![Mode::Ref],
             StdFn::Process(ProcessFn::Signal) => vec![Mode::Ref, Mode::Value],
+            // A value of one owner is lent to the runtime, which keeps none.
+            StdFn::Native(index) => NATIVES[index as usize]
+                .params
+                .iter()
+                .map(|param| if *param == NativeTy::Owned { Mode::Ref } else { Mode::Value })
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -1247,6 +1269,9 @@ pub enum NativeTy {
     Bytes,
     /// `Array[Int]`
     Ints,
+    /// `Array[Float]` and `Array[Float32]`.
+    Floats,
+    Floats32,
     /// The runtime's compiled regular expression (`std.internal.regex`).
     Regex,
     /// The box of a `reflect.Value` (`std.internal.reflect`).
@@ -1256,6 +1281,8 @@ pub enum NativeTy {
     Char,
     /// A value of the runtime (`std.internal.http`).
     Object,
+    /// A value of the runtime with one owner (`std.os.unix`'s descriptors).
+    Owned,
     /// A plan of `std.process`.
     Command,
     Pipeline,
@@ -1367,6 +1394,14 @@ pub const NATIVES: &[Native] = {
     const fn image(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "image", name, receiver: None, params, result, symbol }
     }
+    const fn library(
+        name: &'static str,
+        params: &'static [NativeTy],
+        result: NativeTy,
+        symbol: &'static str,
+    ) -> Native {
+        Native { module: "library", name, receiver: None, params, result, symbol }
+    }
     const fn env(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "env", name, receiver: None, params, result, symbol }
     }
@@ -1429,6 +1464,7 @@ pub const NATIVES: &[Native] = {
         memory("cString", &[String], BytePointer, "tondo_rt_memory_c_string"),
         memory("fromCString", &[BytePointer], String, "tondo_rt_memory_from_c_string"),
         memory("bytes", &[BytePointer, Int], Bytes, "tondo_rt_memory_bytes"),
+        memory("store", &[Bytes, BytePointer], Unit, "tondo_rt_memory_store"),
         memory("fromCChars", &[Bytes], String, "tondo_rt_memory_from_c_chars"),
         model("recording", &[], Bool, "tondo_rt_model_recording"),
         model("report", &[String], Unit, "tondo_rt_model_report"),
@@ -1522,6 +1558,18 @@ pub const NATIVES: &[Native] = {
         image("pixel", &[Object, Int, Int], Int, "tondo_rt_image_pixel"),
         image("encode", &[Object, Int, Int], Bytes, "tondo_rt_image_encode"),
         env("target", &[], String, "tondo_rt_env_target"),
+        // `std.internal.library`: shared libraries, for `std.ffi`.
+        library("open", &[String, Bool, Bool], Object, "tondo_rt_library_open"),
+        library("program", &[], Object, "tondo_rt_library_program"),
+        library("failure", &[Object], String, "tondo_rt_library_failure"),
+        library("closed", &[Object], Bool, "tondo_rt_library_closed"),
+        library("symbol", &[Object, String], Int, "tondo_rt_library_symbol"),
+        library("path", &[Object], String, "tondo_rt_library_path"),
+        library("close", &[Object], String, "tondo_rt_library_close"),
+        library("fileName", &[String, String], String, "tondo_rt_library_file_name"),
+        library("keep", &[Int], Unit, "tondo_rt_plugin_keep"),
+        library("kept", &[], Int, "tondo_rt_plugin_kept"),
+        env("cpu", &[], String, "tondo_rt_env_cpu"),
         codec("base64Encode", &[Bytes, Bool], String, "tondo_rt_base64_encode"),
         codec("base64Check", &[String, Bool], Int, "tondo_rt_base64_check"),
         codec("base64Decode", &[String, Bool], Bytes, "tondo_rt_base64_decode"),
@@ -1553,6 +1601,15 @@ pub const NATIVES: &[Native] = {
         fs("stat", &[String], Object, "tondo_rt_files_stat"),
         fs("walk", &[String, Int, Bool], Object, "tondo_rt_files_walk"),
         fs("hostError", &[Object], Int, "tondo_rt_files_host_error"),
+        fs("osErrorText", &[Int], String, "tondo_rt_os_error_text"),
+        // The descriptors and mappings of `std.os.unix`.
+        fs("descriptor", &[Int, Bool], Owned, "tondo_rt_os_descriptor"),
+        fs("descriptorNumber", &[Owned], Int, "tondo_rt_os_descriptor_number"),
+        fs("descriptorClose", &[Owned], Int, "tondo_rt_os_descriptor_close"),
+        fs("mapping", &[Int, Int], Owned, "tondo_rt_os_mapping"),
+        fs("mappingAddress", &[Owned], Int, "tondo_rt_os_mapping_address"),
+        fs("mappingLength", &[Owned], Int, "tondo_rt_os_mapping_length"),
+        fs("mappingClose", &[Owned], Int, "tondo_rt_os_mapping_close"),
         fs("temporary", &[Bool, String, String], Object, "tondo_rt_files_temporary"),
         fs("setPermissions", &[String, Int], Object, "tondo_rt_files_set_permissions"),
         fs("symlink", &[String, String], Object, "tondo_rt_files_symlink"),
@@ -1883,6 +1940,16 @@ pub const NATIVES: &[Native] = {
         net("failure", &[Object, Int], Int, "tondo_rt_net_failure"),
         net("detail", &[Object, Int], String, "tondo_rt_net_detail"),
         math("sin", &[Float], Float, "tondo_rt_math_sin"),
+        // The sums of floats in the order 18.5 fixes; a `Float32` comes
+        // back as its bits.
+        math("sumFloat", &[Floats], Float, "tondo_rt_math_sum_f64"),
+        math("sumFloat32", &[Floats32], Int, "tondo_rt_math_sum_f32"),
+        math("dotFloat", &[Floats, Floats], Float, "tondo_rt_math_dot_f64"),
+        math("dotFloat32", &[Floats32, Floats32], Int, "tondo_rt_math_dot_f32"),
+        math("dotAtFloat", &[Floats, Int, Floats, Int, Int, Int], Float, "tondo_rt_math_dot_at_f64"),
+        math("dotAtFloat32", &[Floats32, Int, Floats32, Int, Int, Int], Int, "tondo_rt_math_dot_at_f32"),
+        math("cycledFloat", &[Floats, Floats, Int, Bool], Floats, "tondo_rt_math_cycled_f64"),
+        math("cycledFloat32", &[Floats32, Floats32, Int, Bool], Floats32, "tondo_rt_math_cycled_f32"),
         math("cos", &[Float], Float, "tondo_rt_math_cos"),
         math("tan", &[Float], Float, "tondo_rt_math_tan"),
         math("asin", &[Float], Float, "tondo_rt_math_asin"),

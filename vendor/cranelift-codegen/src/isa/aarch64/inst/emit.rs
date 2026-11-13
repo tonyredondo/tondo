@@ -1812,6 +1812,52 @@ impl MachInstEmit for Inst {
             &Inst::Csdb {} => {
                 sink.put4(0xd503229f);
             }
+            // Tondo: the instructions of `std.cpu.arm64`, by the encodings
+            // of the Arm Architecture Reference Manual.
+            &Inst::TondoRRR { op, rd, rn, rm } => {
+                let (base, rd, rn, rm) = match op {
+                    TondoOp::Crc32cb => (
+                        0x1ac0_5000,
+                        machreg_to_gpr(rd.to_reg()),
+                        machreg_to_gpr(rn),
+                        machreg_to_gpr(rm),
+                    ),
+                    TondoOp::Crc32cx => (
+                        0x9ac0_5c00,
+                        machreg_to_gpr(rd.to_reg()),
+                        machreg_to_gpr(rn),
+                        machreg_to_gpr(rm),
+                    ),
+                    TondoOp::Pmull64 => (
+                        0x0ee0_e000,
+                        machreg_to_vec(rd.to_reg()),
+                        machreg_to_vec(rn),
+                        machreg_to_vec(rm),
+                    ),
+                    _ => unreachable!("{op:?} is not of three registers"),
+                };
+                sink.put4(base | rm << 16 | rn << 5 | rd);
+            }
+            &Inst::TondoRRMod { op, rd, ri, rn } => {
+                debug_assert_eq!(rd.to_reg(), ri);
+                let base = match op {
+                    TondoOp::Aese => 0x4e28_4800,
+                    TondoOp::Aesd => 0x4e28_5800,
+                    _ => unreachable!("{op:?} does not change its first register"),
+                };
+                sink.put4(base | machreg_to_vec(rn) << 5 | machreg_to_vec(rd.to_reg()));
+            }
+            &Inst::TondoRR { op, rd, rn } => {
+                let base = match op {
+                    TondoOp::Aesmc => 0x4e28_6800,
+                    TondoOp::Aesimc => 0x4e28_7800,
+                    _ => unreachable!("{op:?} is not of two registers"),
+                };
+                sink.put4(base | machreg_to_vec(rn) << 5 | machreg_to_vec(rd.to_reg()));
+            }
+            &Inst::Isb => {
+                sink.put4(0xd503_3fdf);
+            }
             &Inst::FpuMove32 { rd, rn } => {
                 sink.put4(enc_fpurr(0b000_11110_00_1_000000_10000, rd, rn));
             }

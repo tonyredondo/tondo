@@ -102,6 +102,8 @@ struct Declared {
     file: usize,
     name: String,
     generics: Vec<String>,
+    /// The bounds of each generic parameter, as written: `Number + Ordered`.
+    bounds: Vec<String>,
 }
 
 /// A `pub` method that reflection can call: it takes `self` or `mut self`
@@ -143,7 +145,7 @@ struct Arm<'a> {
 type ArmBody<'a> = &'a dyn Fn(&str, &[(String, String)], &ast::VariantPayload) -> String;
 
 /// The alias a file imports a standard module under, if any.
-fn alias_of(file: &ast::Module, module: &str) -> Option<String> {
+pub(crate) fn alias_of(file: &ast::Module, module: &str) -> Option<String> {
     file.imports
         .iter()
         .find(|i| matches!(&i.path[..], [s, m] if s.name == "std" && m.name == module))
@@ -152,6 +154,9 @@ fn alias_of(file: &ast::Module, module: &str) -> Option<String> {
 
 /// Writes the automatic implementations of every kind the program asks for.
 pub fn derive(modules: &mut [ModuleSource], sources: &mut SourceMap, diags: &mut Diagnostics) {
+    // A contract's declarations first: they write and read values, which
+    // asks for the implementations below.
+    crate::plugins::derive(modules, sources, diags);
     derive_display(modules, sources, diags);
     for kind in [Kind::Serialization, Kind::Reflect] {
         if modules.iter().any(|m| m.files.iter().any(|(f, _)| kind.brought(f))) {
@@ -244,8 +249,12 @@ fn derive_kind(kind: Kind, modules: &mut [ModuleSource], sources: &mut SourceMap
                     ast::Item::Enum(e) => (&e.name.name, &e.generics),
                     _ => continue,
                 };
+                let bounds = generics
+                    .iter()
+                    .map(|g| g.bounds.iter().map(|b| sources.slice(b.span)).collect::<Vec<_>>().join(" + "))
+                    .collect();
                 let generics = generics.iter().map(|g| g.name.name.clone()).collect();
-                declared.push(Declared { module, file, name: name.clone(), generics });
+                declared.push(Declared { module, file, name: name.clone(), generics, bounds });
             }
         }
     }
@@ -800,7 +809,16 @@ impl Generator<'_> {
         if d.generics.is_empty() {
             return format!("impl {j}.{name} for {} {{\n", d.name);
         }
-        let binders: Vec<String> = d.generics.iter().map(|g| format!("{g}: {j}.{name}")).collect();
+        // A parameter keeps the bounds its type gives it.
+        let binders: Vec<String> = d
+            .generics
+            .iter()
+            .zip(&d.bounds)
+            .map(|(g, bounds)| match bounds.is_empty() {
+                true => format!("{g}: {j}.{name}"),
+                false => format!("{g}: {bounds} + {j}.{name}"),
+            })
+            .collect();
         format!("impl[{}] {j}.{name} for {}[{}] {{\n", binders.join(", "), d.name, d.generics.join(", "))
     }
 

@@ -829,12 +829,64 @@ pub(crate) unsafe fn lifted(
         let len = if da > 0 { (*array_at(a)).len } else { (*array_at(b)).len };
         let size = nested_size(da.max(db) - 1, number);
         let result = array_alloc(size, len, len);
+        // Floats, one array deep: each element is the scalar operator's,
+        // in loops the compiler makes with vector instructions.
+        if da.max(db) == 1 && matches!(number, 8 | 9) {
+            match number {
+                8 => floats::<f32>(a, da, b, db, op, result, len),
+                _ => floats::<f64>(a, da, b, db, op, result, len),
+            }
+            (out as *mut *mut ArrayHeader).write(result);
+            return;
+        }
         for k in 0..len {
             let x = if da > 0 { element(array_at(a), nested_size(da - 1, number), k) } else { a as *mut u8 };
             let y = if db > 0 { element(array_at(b), nested_size(db - 1, number), k) } else { b as *mut u8 };
             lifted(x, da.saturating_sub(1), y, db.saturating_sub(1), op, number, element(result, size, k), location);
         }
         (out as *mut *mut ArrayHeader).write(result);
+    }
+}
+
+/// `+`, `-`, `*` or `/` of an array of floats with another or with a float,
+/// into `result`: a loop for each operation and shape, which the compiler
+/// makes with the processor's vector instructions.
+unsafe fn floats<F>(a: *const u8, da: u32, b: *const u8, db: u32, op: u32, result: *mut ArrayHeader, len: usize)
+where
+    F: Copy
+        + std::ops::Add<Output = F>
+        + std::ops::Sub<Output = F>
+        + std::ops::Mul<Output = F>
+        + std::ops::Div<Output = F>,
+{
+    let size = std::mem::size_of::<F>();
+    let side = |value: *const u8, depth: u32| -> Result<&[F], F> {
+        match depth {
+            0 => Err(unsafe { (value as *const F).read_unaligned() }),
+            _ => Ok(unsafe { std::slice::from_raw_parts(element(array_at(value), size, 0) as *const F, len) }),
+        }
+    };
+    let out = unsafe { std::slice::from_raw_parts_mut(element(result, size, 0) as *mut F, len) };
+    fn each<F: Copy>(out: &mut [F], x: impl Fn(usize) -> F, y: impl Fn(usize) -> F, f: impl Fn(F, F) -> F) {
+        for (k, slot) in out.iter_mut().enumerate() {
+            *slot = f(x(k), y(k));
+        }
+    }
+    macro_rules! shapes {
+        ($f:expr) => {
+            match (side(a, da), side(b, db)) {
+                (Ok(x), Ok(y)) => each(out, |k| x[k], |k| y[k], $f),
+                (Ok(x), Err(y)) => each(out, |k| x[k], |_| y, $f),
+                (Err(x), Ok(y)) => each(out, |_| x, |k| y[k], $f),
+                (Err(x), Err(y)) => each(out, |_| x, |_| y, $f),
+            }
+        };
+    }
+    match op {
+        0 => shapes!(|x: F, y: F| x + y),
+        1 => shapes!(|x: F, y: F| x - y),
+        2 => shapes!(|x: F, y: F| x * y),
+        _ => shapes!(|x: F, y: F| x / y),
     }
 }
 
@@ -956,9 +1008,12 @@ pub unsafe extern "C" fn tondo_rt_array_repeat(
         }
         let total = total as usize;
         let new = array_alloc(size, total, total);
-        for k in 0..total {
-            std::ptr::copy_nonoverlapping(element(a, size, k % len.max(1)), element(new, size, k), size);
-            if let Some(retain) = retain {
+        // The whole array at a time, then each element retained once.
+        for copy in 0..count as usize {
+            std::ptr::copy_nonoverlapping(element(a, size, 0), element(new, size, copy * len), len * size);
+        }
+        if let Some(retain) = retain {
+            for k in 0..total {
                 retain(element(new, size, k));
             }
         }

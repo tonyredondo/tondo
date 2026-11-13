@@ -777,20 +777,27 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         None => None,
     };
     printer.regressions = regressions;
-    // The files of other systems, not built here, which coverage does not
+    // The files of other targets, not built here, which coverage does not
     // count as code that did not run (language 6.8).
-    let system = crate::driver::system();
-    let elsewhere = crate::project::sources(dir, "package", None)
+    let target = crate::driver::target();
+    let elsewhere: Vec<std::path::PathBuf> = crate::project::sources(dir, "package", None)
         .map(|(files, _)| {
             files
                 .into_iter()
-                .filter(|file| !crate::project::belongs(&file.path, Some(system)))
-                .map(|file| format!("`{}`", file.path.strip_prefix(dir).unwrap_or(&file.path).display()))
-                .collect::<Vec<_>>()
+                .map(|file| file.path)
+                .filter(|path| !crate::project::belongs(path, Some(target)))
+                .collect()
         })
         .unwrap_or_default();
+    // This machine's system alone, unless a file names an architecture.
+    let shown = match elsewhere.iter().any(|path| crate::project::suffixes(path).1.is_some()) {
+        true => target.shown(),
+        false => target.system.shown().to_string(),
+    };
+    let elsewhere: Vec<String> =
+        elsewhere.iter().map(|path| format!("`{}`", path.strip_prefix(dir).unwrap_or(path).display())).collect();
     let elsewhere = (covered.is_some() && !elsewhere.is_empty())
-        .then(|| format!("Not built on {}, so not counted: {}.", system.shown(), elsewhere.join(", ")));
+        .then(|| format!("Not built on {shown}, so not counted: {}.", elsewhere.join(", ")));
     if options.json {
         say!("{}", json::reported(&report, options));
         for recording in &recordings {
@@ -1575,13 +1582,14 @@ pub fn build_dir(
     // Each layout's build is kept beside the others (`--layouts`).
     let layout = crate::driver::layout_seed().map_or(String::new(), |seed| format!("layout{seed}"));
     let linking = format!(
-        "{}{}{}{}{}{}{layout}",
+        "{}{}{}{}{}{}{}{layout}",
         if statically { "static" } else { "" },
         if debug { "debug" } else { "" },
         if live { "live" } else { "" },
         if counting { "coverage" } else { "" },
         if fuzz { "fuzz" } else { "" },
-        target.map_or("", crate::target::Target::name)
+        target.map_or("", crate::target::Target::name),
+        crate::driver::asked_cpu(),
     );
     let mut parts = vec![identity.into_bytes(), linking.as_bytes().to_vec()];
     for input in crate::driver::test_inputs(path)? {

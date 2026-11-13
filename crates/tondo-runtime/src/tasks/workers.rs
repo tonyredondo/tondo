@@ -346,7 +346,7 @@ pub(super) fn claim(
     // One worker, exploring orders, waits for the events itself: nothing
     // else wakes it.
     if exploring().is_none() {
-        WATCHER.get_or_init(|| spawn_thread(Some(64 * 1024), watch).thread().clone());
+        WATCHER.start_once(|| spawn_thread(Some(64 * 1024), watch));
     }
     Some((poller, poll))
 }
@@ -372,11 +372,8 @@ pub(super) fn poll(
     queue.polling = false;
     let alone = queue.runnable.is_empty();
     drop(queue);
-    if WATCHER_ASLEEP.load(Ordering::Relaxed)
-        && WATCHER_ASLEEP.swap(false, Ordering::SeqCst)
-        && let Some(watcher) = WATCHER.get()
-    {
-        watcher.unpark();
+    if WATCHER_ASLEEP.load(Ordering::Relaxed) && WATCHER_ASLEEP.swap(false, Ordering::SeqCst) {
+        WATCHER.unpark();
     }
     worker(|w| w.looks_next.set(alone));
     events.wake();
@@ -385,7 +382,7 @@ pub(super) fn poll(
     self::queue()
 }
 
-pub(super) static WATCHER: std::sync::OnceLock<std::thread::Thread> = std::sync::OnceLock::new();
+pub(super) static WATCHER: ThreadSlot = ThreadSlot::new();
 pub(super) static WATCHER_ASLEEP: AtomicBool = AtomicBool::new(false);
 /// How long the network may go without a worker waiting for its events.
 pub(super) const WATCH_PERIOD: Duration = Duration::from_millis(10);
@@ -398,13 +395,18 @@ pub(super) fn watch() {
     let mut seen = 0;
     loop {
         std::thread::sleep(WATCH_PERIOD);
+        if stopping() {
+            return;
+        }
         let queue = queue();
         let unattended = !queue.polling && queue.polls == seen && queue.idle > 0;
         seen = queue.polls;
         if queue.polling {
             WATCHER_ASLEEP.store(true, Ordering::SeqCst);
             drop(queue);
-            std::thread::park();
+            if !stopping() {
+                WATCHER.park();
+            }
             continue;
         }
         let asleep = domain_asleep(&queue, 0);

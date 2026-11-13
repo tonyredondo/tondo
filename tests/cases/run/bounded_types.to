@@ -1,0 +1,54 @@
+// Generic types whose parameters a trait bounds, one of the prelude's and
+// one of the program's, which the types are declared before: their methods
+// use what the bounds give, and the implementations the compiler writes
+// for them keep the bounds.
+
+import std.console
+import std.json
+
+type Best[T: Ordered] = {
+    value: T
+}
+
+fn Best[T: Ordered].offer(var self, other: T) {
+    if other > self.value {
+        self.value = other
+    }
+}
+
+trait Named {
+    fn name(self): String
+}
+
+type Team[T: Named] = {
+    members: Array[T]
+}
+
+fn Team[T: Named].roll(self): String {
+    self.members.map((member) { member.name() }).join(", ")
+}
+
+type Person = {
+    first: String
+}
+
+impl Named for Person {
+    fn name(self): String {
+        self.first
+    }
+}
+
+fn main() {
+    var best = Best { value: 3 }
+    best.offer(7)
+    best.offer(5)
+    console.println("{best.value}")
+    let team = Team { members: [Person { first: "Ada" }, Person { first: "Grace" }] }
+    console.println(team.roll())
+    let back: Best[Float] = json.decode(json.encode(Best { value: 2.5 }))?
+    console.println("{back.value}")
+}
+
+// expect-stdout: 7
+// expect-stdout: Ada, Grace
+// expect-stdout: 2.5

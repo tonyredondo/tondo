@@ -31,7 +31,29 @@ fn roots(count: Int): Float {
     total
 }
 
+fn floatsOf(count: Int): Array[Float] {
+    var values: Array[Float] = []
+    for i in 0..count {
+        values.push(Float(i % 97) * 0.5)
+    }
+    values
+}
+
 test floats {
     testing.bench("mandelbrot 64", () { mandelbrot(64) })
     testing.bench("sqrt 100000", () { roots(100_000) })
+    let values = floatsOf(100_000)
+    let others = floatsOf(100_000).reversed()
+    testing.bench("sum 100000", () { values.sum() })
+    testing.bench("dot 100000", () { math.dot(values, others) })
+    testing.bench("add 100000", () { values + others })
+}
+
+test tensors {
+    let left = math.Tensor(floatsOf(64 * 64), [64, 64])
+    let other = math.Tensor(floatsOf(64 * 64).reversed(), [64, 64])
+    testing.bench("matmul 64", () { left.matmul(other) })
+    let wide = math.Tensor(floatsOf(256 * 256), [256, 256])
+    let row = math.Tensor(floatsOf(256), [256])
+    testing.bench("broadcast 256", () { wide + row })
 }

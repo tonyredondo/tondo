@@ -1,0 +1,20 @@
+// The type arguments of a generic type's function: how many it takes, and
+// the form the error of one that cannot be inferred shows.
+
+type Box[T] = {
+    value: T
+}
+
+fn Box[T].count(): Int {
+    1
+}
+
+fn main() {
+    _ = Box.count()
+    _ = Box[Int, Int].count()
+    _ = Box[Int].missing()
+}
+
+// expect-error: E1101 cannot infer `T` from the arguments; write the type arguments: `Box[...].count(...)`
+// expect-error: E1104 `Box` takes 1 type argument(s), and 2 are given
+// expect-error: E1001 `Box` has no operation named `missing`

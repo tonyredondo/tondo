@@ -1,0 +1,14 @@
+// Tensors whose shapes do not fit go element by element in no way: the
+// panic P0006 says both shapes and the axis where they differ.
+
+import std.console
+import std.math
+
+fn main() {
+    let a = math.Tensor.fromRows([[1, 2, 3], [4, 5, 6]])
+    let b = math.Tensor([1, 2])
+    console.println("{a + b}")
+}
+
+// expect-panic: P0006
+// expect-stderr: panic[P0006]: array-shape-mismatch: tensors of shapes [2, 3] and [2] cannot go element by element: sizes 3 and 2 of axis 1 differ, and neither is 1

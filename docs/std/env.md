@@ -232,6 +232,9 @@ pub type Build = {
     modified: Bool
     /// The target, as tondo names it: `x86_64-linux-gnu`, `aarch64-macos`.
     target: String
+    /// The level of processor it was built for, as `--cpu` names it:
+    /// `baseline`, `x86-64-v3`, `native`.
+    cpu: String
     /// The compiler that built it: `tondo 0.1.0`.
     compiler: String
     /// The packages it uses, without those only its tests use.

@@ -122,7 +122,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let Some(mut debug) = self.debug.take() else { return };
         let (file, line, _) = self.e.cg.sources().position(span.start);
         if span != Span::default() && debug.line.as_ref() != Some(&(file.clone(), line)) {
-            let goes_on = debug.before.take().is_some_and(|before| before == (file.clone(), line));
+            // The first line of a block's code: whether it goes on from the
+            // code before is known once the function is built.
+            let opens = debug.line.is_none().then(|| (self.block, (file.clone(), line)));
             debug.line = Some((file, line));
             // The line's code starts here, which the DWARF says.
             let start = self.site(span.start, None);
@@ -158,7 +160,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     self.e.fb.ins().stack_store(POINTER, address, debug.addresses, index * 8);
                 }
             }
-            let index = self.e.cg.debug_site(span.start, debug.function, goes_on);
+            let index = self.e.cg.debug_site(span.start, debug.function, false);
+            if let Some((block, line)) = opens {
+                debug.opened.push((block, index, line));
+            }
             debug.site = index;
             let (site, addresses, alive) = self.debug_place(&debug);
             self.probed = self.e.call_rt(Rt::DebugLine, &[site, addresses, alive]);

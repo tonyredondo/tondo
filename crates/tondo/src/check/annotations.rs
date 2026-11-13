@@ -86,6 +86,14 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
+                ast::Item::Trait(decl) => {
+                    if let Some(&id) = self.trait_names.get(&decl.name.name) {
+                        self.annotate(Annotated::Trait(id), &decl.uses, decl.module);
+                        if self.is_contract(decl) {
+                            self.check_contract(id, decl);
+                        }
+                    }
+                }
                 ast::Item::Enum(decl) => {
                     let Some(ty) = declared(self, &decl.name.name) else { continue };
                     self.annotate(Annotated::Type(ty), &decl.uses, decl.module);

@@ -2411,8 +2411,10 @@ dependencias ni la stdlib. Cuenta tres cosas:
   nada las llame, así que cuentan cero; una genérica que ningún test
   instancia no aparece.
 - Los caminos de cada rama: `then` y `else` de un `if` (también el `else` que
-  no se escribió), cada brazo de un `match`, por su patrón, y `evaluated` y
-  `short-circuited` de `and` y `or`.
+  no se escribió), cada brazo de un `match`, por su patrón, `evaluated` y
+  `short-circuited` de `and` y `or`, y `value` y `none` de `??` y de `?.`: el
+  valor que miran estaba, o no estaba (`error` en vez de `none` sobre un
+  resultado).
 
 Cada trabajador escribe sus cuentas al terminar y el runner las suma; una
 línea o un camino que nada ejecutó cuenta cero. Un trabajador terminado a la

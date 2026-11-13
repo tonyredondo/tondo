@@ -425,6 +425,8 @@
 (decl cmp_true (Type) Value)
 (rule 0 (cmp_true (ty_int ty)) (iconst_u ty 1))
 (rule 1 (cmp_true (ty_vec128 ty)) (iconst_s ty -1))
+;; Tondo: and of 256 bits.
+(rule 2 (cmp_true (ty_vec256 ty)) (iconst_s ty -1))
 
 ;; (x + y) == (y + x) --> true
 (rule (simplify (eq ty (iadd cty x y) (iadd cty y x))) (cmp_true ty))

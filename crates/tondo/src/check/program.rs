@@ -25,7 +25,6 @@ impl<'a> Checker<'a> {
             self.diags.error_without_span("E2108", message);
         }
 
-        self.declare_types(&module.items);
         // The prelude's `trait Iterator[T]` adds methods to the intrinsic one.
         let (extensions, traits): (Vec<&ast::TraitDecl>, Vec<&ast::TraitDecl>) = module
             .items
@@ -39,6 +38,10 @@ impl<'a> Checker<'a> {
             // Its module names it by its own path.
             self.trait_names.insert(extension.name.name.clone(), ITERATOR);
         }
+        // The traits are named first: a type's parameters may be bounded
+        // by any of them.
+        self.name_traits(&traits);
+        self.declare_types(&module.items);
         self.declare_traits(&traits);
         for item in &module.items {
             if let ast::Item::Const(decl) = item {
@@ -75,6 +78,11 @@ impl<'a> Checker<'a> {
             if matches!(&qualified, (m, None, n) if m == "std.model" && matches!(n.as_str(), "check" | "machine" | "follows" | "watch"))
             {
                 self.checks_models.insert(id);
+            }
+            if let (m, None, n) = &qualified
+                && let Some((instruction, _)) = m.strip_prefix("std.").and_then(|m| crate::instructions::of(m, n))
+            {
+                self.instructions.insert(id, instruction);
             }
             let unrepeatable = match qualified {
                 (m, Some(o), n) if m == "std.uuid" && o == "Uuid" && n == "v4" => Some("`Uuid.v4`"),
@@ -247,12 +255,15 @@ impl<'a> Checker<'a> {
                     body: hir::Block { stmts: Vec::new(), tail: None, ty: Ty::UNIT },
                     moves: HashSet::new(),
                     test: false,
+                    needs: 0,
                     span: f.name.span,
                 }
             }));
         }
         functions.extend(made);
+        let first_closure = functions.len();
         functions.extend(std::mem::take(&mut self.closure_functions).into_iter().map(|f| f.expect("checked closure")));
+        let closures: Vec<FnId> = (first_closure..functions.len()).map(|id| FnId(id as u32)).collect();
         let mut contexts = Vec::new();
         for ContextMade { maker, log, label, initials } in makers {
             let mut add = |function: hir::Function| {
@@ -277,6 +288,7 @@ impl<'a> Checker<'a> {
             contexts.push(hir::ContextFns { maker, log, label, computed });
         }
 
+        self.check_features(&mut functions, main, &closures);
         if module.c_library && self.c_functions.is_empty() {
             let message = "the library publishes no function: C calls a `pub extern fn name(...) { ... }` of the package by its name";
             self.diags.error_without_span("E1807", message);
@@ -293,7 +305,8 @@ impl<'a> Checker<'a> {
                 defaults: t.methods.iter().map(|m| m.default).collect(),
                 param_count: t.params.len(),
                 methods: t.methods.iter().map(|m| m.name.clone()).collect(),
-                arithmetic: [self.additive, self.number, self.integer].contains(&Some(TraitId(id as u32))),
+                arithmetic: [self.additive, self.number, self.integer, self.fractional]
+                    .contains(&Some(TraitId(id as u32))),
             })
             .collect();
         let impls = self
@@ -310,7 +323,8 @@ impl<'a> Checker<'a> {
             .collect();
         // Before the program takes the types.
         self.index_finish();
-        let c_api = hir::CApi { structs: self.c_structs(), functions: std::mem::take(&mut self.c_functions) };
+        let c_api =
+            hir::CApi { structs: self.c_structs(), functions: std::mem::take(&mut self.c_functions), name: None };
         Some(hir::Program {
             views: HashMap::new(),
             types: std::mem::take(&mut self.types),
@@ -397,6 +411,7 @@ impl<'a> Checker<'a> {
             body,
             moves: HashSet::new(),
             test: false,
+            needs: 0,
             span: Span::default(),
         };
         self.ownership(&mut function, &cx.params);

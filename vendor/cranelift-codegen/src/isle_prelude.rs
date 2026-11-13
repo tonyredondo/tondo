@@ -608,6 +608,16 @@ macro_rules! isle_common_prelude_methods {
         }
 
         #[inline]
+        fn ty_vec256(&mut self, ty: Type) -> Option<Type> {
+            // Tondo: the vectors of 256 bits of `std.simd`.
+            if ty.is_vector() && ty.bits() == 256 {
+                Some(ty)
+            } else {
+                None
+            }
+        }
+
+        #[inline]
         fn ty_vec128(&mut self, ty: Type) -> Option<Type> {
             if ty.is_vector() && ty.bits() == 128 {
                 Some(ty)

@@ -154,20 +154,27 @@ pub(crate) fn write(node: u32, bench: Option<&str>) {
 /// The samples of `profile.startCpu`, while it runs, when it or its last
 /// period began, and the nanoseconds of processor time between samples.
 static SESSION: Mutex<Option<(Vec<Sample>, std::time::Instant, i64)>> = Mutex::new(None);
-/// The thread that empties the ring of samples into what collects them.
-static DRAINING: std::sync::Once = std::sync::Once::new();
+/// The thread that empties the ring of samples into what collects them,
+/// once started, until a library's end.
+static DRAINING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Empties the ring of samples every 50 ms, from now on.
 fn keep_draining() {
-    DRAINING.call_once(|| {
-        let _ = super::tasks::try_spawn_thread(Some(128 * 1024), || {
-            super::diagnostics::retire_here();
-            loop {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                drain();
-            }
-        });
+    if DRAINING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let _ = super::tasks::try_spawn_thread(Some(128 * 1024), || {
+        super::diagnostics::retire_here();
+        while !super::tasks::stopping() {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            drain();
+        }
     });
+}
+
+/// After a library's end, the next profile starts draining again.
+pub(crate) fn restart() {
+    DRAINING.store(false, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// A profile `std.profile` made: in pprof's format, as folded stacks, and

@@ -1745,7 +1745,8 @@ Tondo libraries, each with its own runtime and none in another's way. The
 library reaches its thread-local variables through the loader, with
 `__tls_get_addr` on x86-64 and TLS descriptors on arm64, rather than in
 the block a program reserves when it starts, so `dlopen` loads it at any
-time. It is never unloaded: the runtime's threads run its code. On macOS
+time. It holds itself loaded while its runtime runs, until its `<name>_stop` ends it (see "A
+library that Tondo built ends, and is unloaded"). On macOS
 it is a `MH_DYLIB` whose install name is `@rpath/lib<name>.dylib`, with an
 export trie of what it publishes. The shared library of the example
 program takes 1.2 MB, as its executable does.
@@ -2567,6 +2568,13 @@ names, and reads each element without a check but in live builds. Summing
 10,000 integers by index went from 6.2 to 2.5 µs, with a panic's values
 passed to the runtime in memory rather than in the registers of a call,
 which a loop's own values had been moved around for.
+
+A `load` or a `store` of `std.simd` is proved the same, for all its lanes: `at` not below zero and
+`at + lanes` not past the length, with the lanes `lanes()` gives; neither forgets the length, as
+no lane changes it. A local that is one the
+pass follows plus or minus a constant is followed too, so that `for at + 8 <= xs.length()`, as a
+loop over lanes is written, bounds `at`: a dot product of two arrays of floats with `Vector256` took
+12% fewer instructions, without the check of its loads and of the counter's sum.
 
 ## 2026-10-27 — Short counted loops run four turns at a time
 
@@ -6311,3 +6319,410 @@ the standard library. It always gives a `Pipeline`, of one stage when there is o
 does not depend on the text. What it refuses is `ProcessError.InvalidCommand`, a new variant with the
 reason, as `InvalidData` would have said nothing of why. A file that writes a `$( )` uses
 `std.process`, which runs it, so its import is not reported unused.
+
+## Files for an architecture, and for a system and an architecture
+
+Code for one processor, as a checksum with an instruction of x86-64 and another of AArch64, had
+nowhere to go but behind a test of `env.build()` at run time. A file's name now says its
+architecture as it says its system, `crc_arm64.to`, and both, the system first,
+`poll_linux_arm64.to`; a target is a system and an architecture, and everything files of a system
+had holds for targets. The other order, `crc_arm64_linux.to`, is refused with the name to write, as
+it would otherwise be a file of Linux named `crc_arm64`. `tondo check` checks a package for each
+target it admits, but one whose files name no architecture is the same on both, and one with no
+file of a system the same on each, so it checks one target for those it stands for. An error says
+where it happens by what it covers: a system alone when all of its architectures have it, as before,
+an architecture alone when all of its systems do, `on arm64:`, and otherwise the target,
+`on Linux arm64:`.
+
+## A build is for a level of processor
+
+A build without `--target` took every feature of the machine that compiled it, so an executable
+made on a new machine could hold an instruction an older one lacks and fail on it with an illegal
+instruction, far from its cause. A build is now for a declared level, `baseline` unless `--cpu` or
+`[build] cpu` asks for more: on x64 the level of x86-64-v2, SSE4.2 and POPCNT, one above Go's
+default, and on arm64 ARMv8.0. `native` keeps the old behaviour for those who want it. Only the
+processor's features change with the level; what the system asks of the code, as macOS signing
+return addresses, stays as cranelift-native sets it. The program checks at its start that the
+processor has what its level needs, before any of its code, and names what it lacks and the level
+to build for, so the failure is a sentence instead of a signal. `cpu.has(feature)` asks for more at
+run time, as .NET's `IsSupported`; with a variant written in the call the level answers it when
+compiling, so code for the other architecture under an `if` is never generated, and the test that
+needs the processor is a bit the runtime read once. `[build]` is a table of its own because it says
+how the program is built, which only the program decides: a dependency's is not read.
+
+## Shared libraries loaded as the program runs
+
+A program could load a plugin only by declaring `dlopen` and `dlsym` itself and turning an address
+into a function with `toFunction`, which keeps nothing loaded. `ffi.Library` opens a library by its
+path or its name, gives its functions as `ffi.Function[F]`, called as the `extern fn` `F` is, and its
+values as pointers, and closes it. A function holds its library, so a library that may be unloaded
+goes when the last of its copies and of the functions taken from it goes, as any value Tondo
+counts; `open` keeps one loaded until the program ends, since Tondo cannot see whether the library
+left a thread or a callback behind, and `openUnloadable` is the `unsafe` promise that it did not.
+`close` unloads now, also `unsafe`. `function[F]` is checked to be an `extern fn` where it is
+written, and a function is called through its address as `F`, which the compiler gives where `F`
+is known, so a library's function costs what a call of C costs. A static executable, as `--static`
+and every `--target` build make, loads nothing, so a program that reaches the loading is refused
+when it links, by what its code calls, rather than failing when it runs.
+
+## `??` and `?.` are branches of coverage
+
+A `??` decides between its value and its default, and a `?.` between going on and `none`, as an
+`and` decides whether to evaluate its right side: a test that never meets the missing value leaves
+untried the code that is most often wrong. Coverage gives each of them two ways, `value` and `none`
+(`error` on a result), at the value it looks at; before, the match the compiler writes for them
+counted as one way, covered whichever ran.
+
+## A C function fails with the system's error number
+
+A program that called C could not read `errno`: by the time Tondo code ran after the call, the
+runtime had run, and its calls may change it. A C function is now declared `T ! os.Errno`, and the
+compiled call reads the number at once when the function gives -1 or null, inside the call, before
+anything else runs, and gives `err(os.Errno(number))`, so the error is a value as any other.
+Only those two ways of failing are known: a function that reports a failure another way is
+declared without it and checked by hand. A function of Tondo that C calls has no number to give,
+so it cannot be one. `std.os` holds the number, for every system, and is where the parts of the
+library that are of one system go.
+
+## Linux's calls in the standard library, written by `tondo bind`
+
+`std.os.linux` declares what Linux's headers declare, with C's names, so that a program that needs
+a call the library does not wrap can make it without writing the declaration, and get it right:
+the numbers and the layouts differ by architecture, so there is a set for x64 and one for arm64,
+each written by `tondo bind` from that architecture's headers and kept in the repository. Writing
+them by hand would have been thousands of lines to keep right. `crates/tondo/std/os/generate.to`
+writes them again, the arm64 set with the preprocessor of a container
+(`container-cpp.sh`), and `crates/tondo/std/os/fails.txt` names the functions that fail with the
+error number, which `tondo bind --fails` declares so; a function that marks its failure another
+way, as `mmap` with `MAP_FAILED`, is left out of the list and checked by hand.
+
+The thousands of C names would drown what is written in Tondo: `tondo api std.os.linux` shows the
+module's own declarations, and a C one by its name or with `--search`; the suggestions for an
+unknown name do not offer them. A module of one system is still listed and shown on any machine,
+with its system's files for this machine's architecture, so that `docs/std` is the same wherever it
+is written. A file of one system checked alone, as `tondo check watch_linux.to`, is checked for
+that system, which is how its examples are checked on macOS too.
+
+`syscall` takes its arguments as `Int` and calls the C library's `syscall`, which gives -1 and
+sets the number, rather than running the kernel's instruction itself: the C library already knows
+each architecture's convention. macOS has no such call, as Apple does not keep its kernel's
+interface stable.
+
+## A `defer` block may free a raw pointer
+
+A `defer` block that freed what a raw pointer held was refused as a closure that captures one,
+which must be `unsafe` so that whoever calls it later keeps the pointer valid. A `defer` block is
+no value that leaves its scope, and the fix the error offered, an `unsafe` closure, was not one a
+`defer` can take, so the memory could not be freed there at all. It now uses the pointer as a
+block does, with its raw operations inside `unsafe { ... }`.
+
+## What Linux and macOS share, and the safe calls on descriptors
+
+`std.os.unix` is what a program that runs on both systems imports from a common file. Its C
+declarations are those the four targets have with one shape, which the generator finds by
+comparing them: a constant by its type, as its value may differ; a function by its signature
+without its parameters' names and with every alias written as what it names, since macOS writes
+`Int` where Linux writes `off_t`; a type or an alias by its name alone, as `termios` holds other
+fields on each system. What a shared declaration names that only one target declares, as the
+union glibc puts in `termios`, goes in that target's file too, and a declaration that names what
+its target lacks is left out: the generator checks each target's file with `tondo check` until all
+four check, rather than reading C's types itself.
+
+The safe calls are written in Tondo over the C library, each made again on `EINTR`. `Fd` and
+`Mapping` have one owner, through a handle of the runtime that is not `Copy`, as the language lets
+the library declare one: a handle that every copy shares would close the descriptor when its last
+copy went, not when its owner did. `close` gives the error of closing, which the value's going
+cannot. The calls take C's memory by address in the closures that retry them, as a closure that
+any task may call holds no raw pointer.
+
+Both architectures of macOS come from one SDK, the x86-64 one through `cc -arch x86_64`: the two
+runners GitHub has carry SDKs of different versions, whose declarations differ by more than the
+architecture.
+
+## Vectors in the language, computed on halves where they are wide
+
+`std.simd`'s vectors are types the compiler knows, as numbers are, so that each operation is the
+processor's instruction for every lane rather than a call: a vector of 128 bits lives in one
+register, and the operations of `+`, `-`, `*`, `min`, the comparisons and the others are the code
+generator's vector instructions, which x64 and arm64 both have. A vector of 256 or 512 bits is
+kept in memory and computed on its parts of 128 bits, which gives the same lanes as the
+definition, so a program that uses one is right everywhere before the generator learns those
+widths, and `accelerated()` says which it is.
+
+What the processor has no instruction for is made of others: the product of lanes of 8 bits on
+x64, from lanes widened to 16; the saturating sums of lanes of 32 and 64 bits, from the wrapped
+sum and the signs that tell an overflow; `fma` lane by lane through C's `fma` where the level has
+no fused multiply. `to[U]` between a signed and an unsigned type holds a value that does not fit
+at the least or the greatest, as it does a float, rather than wrapping.
+
+The generator was told that memory it reads and writes is aligned: x64's vector instructions fault
+on an address that is not a multiple of 16, and a vector can lie at one of 8, so that claim was
+dropped, which changes no code made before, as nothing else read it.
+
+A test makes a program for every type of lanes with every operation at each width, and holds what
+it prints to each operation's definition worked out a lane at a time, any NaN being equal to
+another, since their payloads differ between processors.
+
+## Vectors of 256 bits in the generator, on x64 with AVX2
+
+Our copy of Cranelift makes the vectors of 256 bits where the code's level has AVX2: the
+assembler has the VEX.256 forms of the instructions `std.simd` needs, and `wide.isle` lowers
+each operation it emits on the six types of 256 bits, and no other. At such a level a vector of
+256 bits is a value in a register as one of 128 is, in a function's locals and in its arguments and
+results, which pass in YMM registers; elsewhere it is in memory and computed by halves. A function
+that has one spills, reloads and moves its float registers whole, and runs `vzeroupper` before a
+call and a return, as the runtime and C run SSE instructions, which pay for upper halves left set:
+but not before a call that passes or returns one, nor before returning one, as the code on the
+other side is of the same level and its arguments would lose their upper halves. The code of one
+build is all of one level. The optimizer knew the constants of vectors of 128 bits: one of 256 is a
+splat of its lane, zeros and ones are made by a register from itself, and others are read from the
+pool. A dump leaves out a binding held in a YMM register, as it reads 128 bits of one.
+
+What AVX2 has no instruction for is made of others: the product of bytes from the products of
+words, the product of 64 bits from those of its halves of 32, a shift with sign of bytes or of
+64 bits from the unsigned shift with its sign extended, the comparisons of 64 bits without sign
+with their sign bits flipped, and the least and greatest of 64 bits by a comparison and a blend.
+`min` and `max` of floats are Cranelift's sequence of 128 bits at the new width, which gives NaN
+and takes -0.0 as the lesser the same way.
+
+What moves lanes between the halves of a register or takes them one at a time, `of`, `lane`,
+`withLane`, `reversed`, `to`, `joined`, `lower` and `upper`, goes by parts of 128 bits, as AVX2's
+shuffles keep to each half. `sum`, `minLane` and `maxLane` bring a part of 256 bits to 128 with the
+vector operation on its halves before they take the lanes, as the narrower parts are combined at the
+baseline: with one more step done on single lanes, the sign of a NaN differed between levels.
+`accelerated()` is answered as each function is compiled, from its level. The test of every
+operation runs at the baseline and at the machine's level, and holds both to the definitions and
+to the same bits.
+
+## Versions of a function for a higher level, picked as the program runs
+
+A build is for the baseline unless asked otherwise, and the baseline of x64 has no AVX2: rule 19
+of `std.simd` gives the functions that use vectors of 256 bits a version for `x86-64-v3`, so that a
+program built once runs them with the processor's instructions where it has them. A release build
+for a level without AVX2 compiles such a function twice, its body for the build's level and its
+version, and what every other function, `fn(...)` value and the runtime call under its name is a
+small dispatcher: it reads a byte the runtime set before the program's code, from what the
+processor has of that level, and calls one or the other. Within a version, a direct call of a
+function that has one goes straight to it. The processor is tested once, not at each call, and the
+byte costs a load and a branch where code of the build's level calls into code of the version's.
+
+A version passes the vectors of 256 bits in registers, and the build's level in memory: where the
+signatures differ, the dispatcher calls a bridge of the version's level, which converts, as the
+dispatcher itself runs on any processor and holds no such vector. So that no pointer is called
+with the other level's convention, a function keeps no version where it passes such a vector
+through a `fn(...)` value or to a function without a version, which the analysis repeats until
+nothing changes; nor where it calls C, whose calls are built in their turn. Such a function runs as
+the build's level does, at the speed of its halves, and is right. Debug, live, coverage and fuzzing
+builds have no versions, which their tools would see twice; `TONDO_VERSIONS=0` keeps the build's
+level, which is how the tests run a program as a processor without AVX2 would. Each version has its
+own place in a dump's table, as its code keeps a value elsewhere than the body does.
+
+## The sum of floats in a fixed order, and arrays of floats with vectors
+
+`sum` of floats added from left to right, one addition waiting on the one before, and no faster
+order gives the same number. The language now fixes the order, sixteen partial sums for `Float32`
+and eight for `Float`, each taking the elements at its place in turn, then halves of them: an order
+vectors compute at their full speed and that gives the same bits on every machine, level and
+width, since each partial sum takes its values in the same order whatever does the work.
+`math.dot` adds its products the same way. Both are loops of the runtime, which its compiler makes
+with vector instructions, taken where `sum` of floats is instantiated, also from generic code: the
+same loops in Tondo with `std.simd` kept a bounds check for each load, and were slower than the
+plain sum they replaced. The arithmetic of arrays of floats went element by element through one
+function for every type; a loop of its own for each operation and shape now does the same
+operations ten times as fast. A row of `bench/` measures each against Go's loops.
+
+## One instruction each, and what each function needs of the processor
+
+`std.cpu.x64` and `std.cpu.arm64` are modules written in Tondo, one file of each architecture, so
+that `tondo api`, their documents and the error of an import from a file of the other architecture
+come as they do for `std.os.linux`. Each function's body calls itself, and the checker makes every
+call of one the instruction, where the call is written: the instruction is in the caller's body,
+which is what makes the caller need its feature, as the specification asks, and not in a function
+of the library that a guarded call would reach. `carrylessMultiply` takes its `halves` from the
+call, a constant the instruction holds; its body, which only a use of it as a value compiles, has
+a way for each of the four.
+
+What a function needs is worked out once the whole program is checked, from the bodies before
+they are made concrete: an instruction adds its feature unless the level has it, a call adds what
+the callee needs but the features of the guards around it, until nothing changes. The analysis
+runs only when some instruction beyond the level is used. Each place that may need nothing gets
+an error for every call or instruction that brings a feature in, with the shortest chain of calls
+to the instruction, so that one reading fixes them all. A call of a trait's method brings nothing,
+as an implementation of one may need nothing. `tondo check` takes the level of `[build] cpu`;
+`--cpu` is an option of the commands that build.
+
+The generator is made once for the level and once more for each set of features some function
+needs, and each function is compiled with its own: on x64 the assembler refuses an instruction
+whose feature the generator was not given, and the function's other code gets what the feature
+allows too. Inlining, and the copying of a callee's first test into its caller, skip a callee
+that needs more than the caller, and `tondo optimizations` says so of the call left.
+
+Cranelift has none of these instructions, and the assembler of x86-64 and the crate that defines
+the generator's instructions were dependencies outside `vendor/`: they are brought in beside the
+generator, with the instructions and the settings `has_aes` and `has_pclmulqdq` added, marked
+`Tondo:`. arm64's instructions are variants of the generator's own, encoded as the architecture's
+manual says, which `llvm-mc` confirms. A test runs each function against a definition written
+plainly, FIPS 197's rounds among them, on this machine's architecture in a release and a debug
+build, and finds its instruction in `tondo asm`.
+
+## Tensors, written in Tondo
+
+`math.Tensor` is a record of Tondo over two arrays, its sizes and its values, always in one block
+in row-major order: no view shares another's values, which leaves nothing for a program to see
+change. Its operators are the language's one part, a closed rule as arrays have: the checker
+makes `a + b` with a tensor on either side a call of the library, a tensor with a tensor or with a
+number, and the library broadcasts.
+
+Its speed comes from the rest of the library. Where both operands have one shape, floats go through
+the arithmetic of arrays and their vector loops; where one operand's shape is the end of the other's,
+as a row with a matrix, a loop of the runtime repeats it along the other without copying it; any
+other broadcasting reads both by their steps, a row at a time. `matmul` reads a row and a column in
+place, the column by its step, through a `math.dot` of the runtime that takes where each starts, so
+that each value is the `math.dot` of its row and column in the order of `sum`, and allocates only
+its result. Copying an array that repeats, as `repeat` does, now copies the whole array at once
+instead of an element at a time.
+
+The library raises the language's panics of shapes and indexes, `P0006` and `P0001`, with
+`std.internal.panic.raise`. The fields are named apart from the methods that give them, `shape()`
+and `values()`, and written with those names by an `Encode` and a `Decode` of its own, as the
+library's types do.
+
+## Typed plugins
+
+A contract's declarations are Tondo source the compiler writes into its module, as it writes the
+implementations of serialization: `NamePlugin`, its `load` and `start`, `serveName`, and two
+functions the generated code shares, `NamePlugin.contract()` and `NamePlugin.answer`. A library's
+entries are written the same way next to its `@plugin.Export` function, and their three names are
+the only `tondo_` names a program may publish. The transport is `std.plugin`, in Tondo: a library is
+called through `std.ffi`, a program through its piped standard streams, with a task of its own that
+reads the answers and hands each to the call that waits for it by its number.
+
+The fingerprint is the SHA-256 of a text the checker writes, where every type is resolved: the
+contract, each method's types, and every record, enum and newtype they reach, written out. The
+generated code asks for it by the plugin's type, `plugin.contractText[NamePlugin]()`, which the
+checker replaces with the text; a name in a string would not survive the renaming of the modules'
+names.
+
+The arguments of a call and the payload of an answer travel inside the frame as MessagePack values,
+`[id, method, [arguments]]`, rather than as bytes in it: MessagePack writes an `Array[Byte]` as a
+list of numbers, and a plugin in another language reads values more easily.
+
+A plugin that is a program ends when the last copy of its `NamePlugin` goes, as a `Process` does:
+its input is released before the process, so that it sees the end of its input before it is waited
+for. A library ends its runtime and is unloaded then too (see the next entry).
+
+Building it showed three things. A closure that captures a value of an `impl Trait` result did not
+compile: the record of its captures kept the opaque type after monomorphization, which now puts
+each opaque part of a definition's fields in its witness. A value taken out of a `sync.Map` keeps
+the map's reference until the map's memory is reclaimed, in batches, so a `Sender` taken out does
+not close its channel when dropped: the plugin's reader closes them, and the runtime's behavior is
+a question of its own. And an annotation before a trait, which the parser dropped, is checked and
+kept; one before any declaration that reads none is an error.
+
+A library plugin is a second runtime in the program's process, with its own mimalloc. On macOS
+mimalloc 3 keeps each thread's heap in a fixed slot of the thread's storage, which every copy in
+a process reads: the library allocated from the program's heap with its own bookkeeping, and what
+it wrote read back as zeros, while from a C program, with one copy, it worked. The runtime takes
+mimalloc 2 on macOS, which keeps the heap in a thread-local of each copy, as mimalloc 3 does on
+Linux.
+
+## A library that Tondo built ends, and is unloaded
+
+A library's runtime leaves four things in the process that point into its code: its threads, what
+it registered for the process's end, its handlers of signals, and the destructors of thread-locals
+it registered in the threads of its host that called it. The linker marked it never to be unloaded.
+`<name>_stop` now ends all four, and `ffi.Library` knows a library of Tondo by the same entry under
+a name every one has, `tondo_library_stop`, and ends it before it unloads it, so a plugin's library
+goes with its last copy.
+
+The runtime starts its threads with POSIX's `pthread_create` and keeps each to join it: std's
+`spawn` registers a thread-local that drops in the thread that calls it, often one of the host, and
+a join is the only way to know that a thread's last steps, which run the library's code, are done.
+What it keeps for a thread, the signal stack, spare task stacks and blocks, the readers and writers
+of JSON, sits behind a key of POSIX threads, which a library's end deletes, rather than in
+thread-locals that drop: glibc holds a library loaded while one of those destructors is due, so a
+host's thread that called it, as every worker of a Tondo program that loads a plugin does, would
+have kept it loaded for good. For the same reason a call from C moves its task onto a worker before
+it enters tokio, and the runtime builds tokio and drops it on a thread of its own. A library holds
+itself loaded, with `dlopen` of itself, from its first call until `<name>_stop`, so a `dlclose`
+without it leaves the library where its threads and handlers still run, as the mark did. What
+it registered for the process's end is registered under its own image, and `__cxa_finalize` of
+that image runs it at the stop and forgets it.
+
+Each copy of a library that was loaded keeps, after it is unloaded, the memory its mimalloc took:
+about 4 MB and a reservation of a gigabyte of addresses. mimalloc can give it all back as its copy
+ends (`mi_option_destroy_on_exit`), but 3.3 does it safely only on the thread that loaded the
+library, and a host may unload from another; done elsewhere, it faults in mimalloc itself.
+
+The other threads of the host that called the library keep the signal stack it gave them, since
+the system may still deliver a signal there; their other values are freed at the stop, and a copy
+of the library loaded later keeps the signal stack it finds. A task that never waits again, or
+waits where a cancellation does not reach, as for a terminal nobody writes to, keeps the stop
+waiting; the processes the library started are ended, as at a program's end. Calling it again after a stop starts the
+runtime again, its threads and its handlers, as a first call does. macOS never unloads an image
+with thread-local variables, as the runtime's, and musl's `dlclose` unloads nothing: there a
+library ends, stays, and a later call or load starts it again, which its tests check there. As
+musl's `__cxa_finalize` runs nothing either, the runtime keeps what it registered for the end of
+the process and runs it itself at the stop, once.
+
+## `Fractional`: the numbers whose division keeps the fraction
+
+`mean` of a tensor of integers would round, so the brief gave it to tensors of floats alone, by a
+method of one concrete instance, `Tensor[Float].mean`, which the language does not have. A method
+may already ask more of its type's parameter than the type does, `fn Tensor[T: Fractional].mean`,
+so a trait of the prelude says it instead: `Fractional: Number`, with nothing of its own, whose
+promise is what `dividedBy` means. The compiler gives it to every float, as it gives `Integer` to
+every integer, and `math.Decimal` implements it, as a program's exact fraction may: the name says
+what a mean needs, a division that does not round, rather than how a number is stored, which
+`Floating` would have and left the decimal out; `Real` would have taken the integers in. A tensor
+of integers that asks for its mean is E1105, which says the mean is of floats and how to divide
+the sum as floats.
+
+## A terminal's flags are of their field's type
+
+C's headers write the flags of a terminal's mode as plain numbers, which `tondo bind` takes for
+`ffi.CInt`, while the fields of `termios` they go in are `tcflag_t`, an unsigned number of 32 bits
+on Linux and of 64 on macOS: clearing two flags of `c_lflag` needed a conversion that can fail,
+`UInt32(unix.ICANON | unix.ECHO) ?? 0`. The generator of `std.os` writes the flags of the four
+fields as `tcflag_t`, from a list of their names in it, rather than teaching `tondo bind` which
+macro goes in which field, which C does not say. `std.os.unix` shares a constant written with the
+same alias on every target, as it shares the alias, so `ICANON` stays common although `tcflag_t`
+names a different number on each system; `CRTSCTS` and `NOFLSH`, whose types differed, are now
+common too.
+
+## A `defer` block may use a `ref` parameter
+
+A `defer` block that put a terminal's mode back through the descriptor its function borrowed was
+refused as a closure that captures a loan, as be920cfb found for a raw pointer. A `defer` block is
+no value that leaves its scope, and a `ref` parameter's loan lasts the whole call, so the block
+holds a copy of the parameter, retained and released as any capture is, and its body lends it as a
+`ref` parameter, which it can read and pass on with `ref` but not give away: the body of a `defer`
+is now checked for ownership too, as any closure's. A `mut` or `var` parameter is still refused, as
+the block runs after code that may change it, and so is another closure, which may outlive the
+call.
+
+
+## `Vector[T]` has no `of`
+
+`Vector[T]` is meant to be as wide as each version of a function can make it, which gives it more
+lanes in a version for `x86-64-v3` than in the body for the baseline. `of` with its values written
+in the call cannot fill both: the count that one version takes is an error in the other, or a panic
+as it runs, as with an array spread. `Vector[T]` gives `of` up, as a build error that names `all`,
+`load` and the `of` of `Vector128[T]`, where the count is known when the code is written. Keeping
+`of` would have kept `Vector[T]` at 128 bits in every version.
+
+## mimalloc 3.6.1, carried in `vendor/`, on every system
+
+mimalloc 3.3 found a thread's heap on macOS in fixed slots of the thread's storage, which every copy
+in a process shares, so the runtime took mimalloc 2 there for a library of Tondo that a program of
+Tondo loads. mimalloc 2 was 6 to 11% slower than 3 on an M2 in the benchmarks that allocate most:
+building and interpolating strings, parsing numbers, records of strings. From 3.4.4 on, mimalloc
+finds the heap on macOS through a key of POSIX threads of each copy, read with assembly. The crate
+`libmimalloc-sys` still carries 3.3.2, so the workspace carries it in `vendor/` with 3.6.1, which
+every system takes. 3.6.1 asks where a block starts each time a string being built asks the size
+of its block, a division that 3.3 skipped on a page with no pointer inside a block; the copy skips
+it again, marked `Tondo:`, as it made building a string of 100 parts 5% slower. Against mimalloc 2
+on the M2, the benchmarks that allocate most are 6 to 11% faster, and two others 2 to 3% slower:
+the sum of two arrays of floats into a third, and a channel; against 3.3 on Linux, every benchmark
+runs within 1.5% of the instructions it took. The key of the runtime's build holds the vendored
+crate, so a change to its C builds the runtime again.

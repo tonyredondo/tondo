@@ -1,0 +1,53 @@
+// A `defer` block uses a `ref` parameter of its function (13.7): the loan
+// outlives the block, which runs as the scope ends, as a panic unwinds it
+// and as a cancelled task runs its cleanups.
+
+import std.console
+import std.time
+
+type Door = {
+    name: String
+}
+
+fn shut(door: ref Door) {
+    console.println("shut {door.name}")
+}
+
+fn risky(door: ref Door, broken: Bool) {
+    defer {
+        shut(ref door)
+    }
+    if broken {
+        panic("broken {door.name}")
+    }
+}
+
+fn waiting(door: ref Door) {
+    defer {
+        shut(ref door)
+    }
+    time.sleep(time.seconds(10))
+}
+
+fn holding(door: Door) {
+    waiting(ref door)
+}
+
+fn main() {
+    let door = Door { name: "front" }
+    risky(ref door, false)
+    match recover { risky(ref door, true) } {
+        ok(_) => console.println("no panic")
+        err(failure) => console.println("recovered: {failure.message}")
+    }
+    let job = spawn holding(Door { name: "back" })
+    time.sleep(time.milliseconds(20))
+    job.cancel()
+    console.println("still {door.name}")
+}
+
+// expect-stdout: shut front
+// expect-stdout: shut front
+// expect-stdout: recovered: broken front
+// expect-stdout: shut back
+// expect-stdout: still front

@@ -192,6 +192,42 @@ pub enum TyKind {
     /// function's type arguments. Callers only know its bounds;
     /// monomorphization replaces it with the witness its body returns.
     Opaque(u32, Vec<Ty>),
+    /// A vector of `std.simd` of a width, with lanes of a number type.
+    Vector(Width, Ty),
+    /// The mask of a vector of `std.simd`: a `Bool` for each lane.
+    Mask(Width, Ty),
+}
+
+/// The width of a vector of `std.simd`: `Widest` is the widest of the
+/// others that is accelerated where the code runs.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Width {
+    W128,
+    W256,
+    W512,
+    Widest,
+}
+
+impl Width {
+    /// Its bits, as the code is made: `Widest` is 128 until the generator
+    /// makes wider vectors.
+    pub fn bits(self) -> u32 {
+        match self {
+            Width::W128 | Width::Widest => 128,
+            Width::W256 => 256,
+            Width::W512 => 512,
+        }
+    }
+
+    /// The name of its vector type, and of its mask's.
+    pub fn names(self) -> (&'static str, &'static str) {
+        match self {
+            Width::W128 => ("Vector128", "Mask128"),
+            Width::W256 => ("Vector256", "Mask256"),
+            Width::W512 => ("Vector512", "Mask512"),
+            Width::Widest => ("Vector", "Mask"),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -242,6 +278,9 @@ pub enum Handle {
     /// A value of the runtime, such as an HTTP client or response
     /// (`std.internal.http`).
     Native,
+    /// A value of the runtime with one owner, which is not `Copy` (8.10):
+    /// a descriptor or a mapping of `std.os.unix`.
+    Owned,
     /// `Ref[T]` (16.10): a value with an identity, shared by its copies,
     /// which compare and hash by that identity.
     Ref,
@@ -296,6 +335,7 @@ impl Handle {
             Handle::Regex => "regex.NativeRegex",
             Handle::ReflectBox => "reflect.Box",
             Handle::Native => "internal.Native",
+            Handle::Owned => "internal.Owned",
             Handle::Ref => "Ref",
             Handle::Weak => "WeakRef",
         }
@@ -313,6 +353,7 @@ impl Handle {
                 | Handle::Guard
                 | Handle::File
                 | Handle::Process
+                | Handle::Owned
         )
     }
 
@@ -856,6 +897,51 @@ impl Types {
             map.insert(opaque, witness);
         }
         self.replace(ty, &map)
+    }
+
+    /// The definitions of the records, enums and newtypes whose parts hold
+    /// an opaque result, with its witness instead, as monomorphized code
+    /// needs: the closure that captures a value of an `impl Trait` holds one.
+    pub fn reveal_definitions(&mut self) {
+        for index in 0..self.adts.len() {
+            let kind = self.adts[index].kind.clone();
+            let parts: Vec<Ty> = match &kind {
+                AdtKind::Record(fields) => fields.iter().map(|f| f.ty).collect(),
+                AdtKind::Newtype(inner) => vec![*inner],
+                AdtKind::Enum(variants) => variants.iter().flat_map(|v| v.payload.types()).collect(),
+            };
+            let mut found = Vec::new();
+            parts.iter().for_each(|&part| self.opaques_in(part, &mut found));
+            // An opaque of a body that was not checked has no witness, and
+            // nothing compiled holds it.
+            let known = |types: &Self, opaque: Ty| matches!(types.kind(opaque), TyKind::Opaque(id, _) if types.opaques[*id as usize].witness.is_some());
+            if found.is_empty() || !found.iter().all(|&opaque| known(self, opaque)) {
+                continue;
+            }
+            let field = |types: &mut Self, f: &Field| Field { ty: types.reveal(f.ty), ..f.clone() };
+            let revealed = match kind {
+                AdtKind::Record(fields) => AdtKind::Record(fields.iter().map(|f| field(self, f)).collect()),
+                AdtKind::Newtype(inner) => AdtKind::Newtype(self.reveal(inner)),
+                AdtKind::Enum(variants) => AdtKind::Enum(
+                    variants
+                        .into_iter()
+                        .map(|v| {
+                            let payload = match v.payload {
+                                Payload::Unit => Payload::Unit,
+                                Payload::Tuple(types) => {
+                                    Payload::Tuple(types.into_iter().map(|t| self.reveal(t)).collect())
+                                }
+                                Payload::Record(fields) => {
+                                    Payload::Record(fields.iter().map(|f| field(self, f)).collect())
+                                }
+                            };
+                            Variant { payload, ..v }
+                        })
+                        .collect(),
+                ),
+            };
+            self.define_adt(AdtId(index as u32), revealed);
+        }
     }
 
     fn opaques_in(&self, ty: Ty, out: &mut Vec<Ty>) {
@@ -1811,7 +1897,9 @@ impl Types {
             | TyKind::String
             | TyKind::Unit
             | TyKind::Never
-            | TyKind::Error => true,
+            | TyKind::Error
+            | TyKind::Vector(..)
+            | TyKind::Mask(..) => true,
             TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => {
                 self.equatable_in(*element, visiting)
             }
@@ -1916,6 +2004,8 @@ impl Types {
             TyKind::Array(element) => format!("Array[{}]", self.display(*element)),
             TyKind::Pointer(element) => format!("Pointer[{}]", self.display(*element)),
             TyKind::CArray(element, count) => format!("{}[{count}]", self.display(*element)),
+            TyKind::Vector(width, lane) => format!("simd.{}[{}]", width.names().0, self.display(*lane)),
+            TyKind::Mask(width, lane) => format!("simd.{}[{}]", width.names().1, self.display(*lane)),
             TyKind::Deque(element) => format!("Deque[{}]", self.display(*element)),
             TyKind::Map(key, value) => format!("Map[{}, {}]", self.display(*key), self.display(*value)),
             TyKind::Set(element) => format!("Set[{}]", self.display(*element)),
@@ -1938,7 +2028,8 @@ impl Types {
                         | Handle::Clock
                         | Handle::Regex
                         | Handle::ReflectBox
-                        | Handle::Native,
+                        | Handle::Native
+                        | Handle::Owned,
                         _,
                     ) => {
                         return handle.name().to_string();

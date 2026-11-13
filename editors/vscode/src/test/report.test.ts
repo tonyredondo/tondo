@@ -457,6 +457,14 @@ test('a file of a system has its badge, and a target its system', () => {
   assert.deepEqual(systemBadge('/w/app/src/watch_linux.to'), { badge: 'L', tooltip: 'Linux only: tondo checks it, and builds it for Linux' });
   assert.equal(systemBadge('/w/app/src/watch_macos_test.to')?.badge, 'M');
   assert.equal(systemBadge('/w/app/src/signals_unix.to')?.badge, 'LM');
+  assert.equal(systemBadge('/w/app/src/crc_arm64.to')?.badge, 'A');
+  assert.equal(systemBadge('/w/app/src/crc_x64_test.to')?.badge, 'X');
+  assert.deepEqual(systemBadge('/w/app/src/poll_linux_arm64.to'), {
+    badge: 'La',
+    tooltip: 'Linux on arm64 only: tondo checks it, and builds it for Linux on arm64',
+  });
+  assert.equal(systemBadge('/w/app/src/poll_unix_x64_test.to')?.badge, 'Ux');
+  assert.equal(systemBadge('/w/app/src/poll.to'), undefined);
   assert.equal(systemBadge('/w/app/src/linux.to'), undefined);
   assert.equal(systemBadge('/w/app/src/main.to'), undefined);
   assert.equal(systemOfTarget('aarch64-macos'), 'macOS');

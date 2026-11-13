@@ -37,13 +37,16 @@ fn main() {
   breaking them. No annotation says so: where it lives does.
 - `import std.x` brings a standard module; there is nothing to install.
 - Modules cannot import each other in a cycle.
-- Code for one system goes in its own files, which their names mark:
-  `watch_linux.to`, `watch_macos.to`, and `signals_unix.to` for both, also
-  before `_test.to`. A build takes those of its system; common code calls
-  what each of them declares with the same signature, and `tondo check`
-  checks every system, so an error of macOS shows on Linux as `on macOS:`.
-  There is no `#if`: `env.build().target` tells a program where it runs.
-  `systems = ["linux"]` in `[package]` limits a package to some systems.
+- Code for one system or one architecture goes in its own files, which
+  their names mark: `watch_linux.to`, `watch_macos.to`, and
+  `signals_unix.to` for both; `crc_x64.to` and `crc_arm64.to`; and a system
+  then an architecture, `poll_linux_arm64.to`, also before `_test.to`. A
+  build takes those of its target; common code calls what each of them
+  declares with the same signature, and `tondo check` checks every target,
+  so an error of macOS shows on Linux as `on macOS:`, and one of arm64 as
+  `on arm64:` or `on Linux arm64:`. There is no `#if`: `env.build().target`
+  tells a program where it runs. `systems = ["linux"]` and
+  `architectures = ["x64"]` in `[package]` limit a package.
 
 ## tondo.toml
 
@@ -89,6 +92,25 @@ executable for that machine from any system. Another architecture's
 runtime comes in a pack that `tondo target pack <dir>` writes on a machine
 of it; `TONDO_TARGETS=<dir>` finds it. `tondo run` and `tondo test` run
 such a program under qemu-user.
+
+A build is for a level of processor: `baseline` unless `--cpu` asks for
+another, or `cpu` in the `[build]` of `tondo.toml`. On x64, `baseline` is
+x86-64-v2, up to SSE4.2 and POPCNT; `x86-64-v3` adds AVX2, BMI2 and FMA,
+`x86-64-v4` some of AVX-512, and `native` takes what the machine that
+builds has. A program checks at its start that its processor
+has what its level needs, and says which level to build it for when not.
+`env.build().cpu` names its level. Beyond it, `cpu.has(cpu.Feature.Avx2)`
+asks the processor; a feature the level has, or one of the other
+architecture, is known when compiling, and only the way of the `if` that
+runs is compiled.
+
+`std.cpu.x64` and `std.cpu.arm64` have functions that are one instruction
+each, as `x64.depositBits` (BMI2's `pdep`), for the files of their
+architecture. A function that uses one needs its feature, and is compiled
+for it; call such a function under `if cpu.has(cpu.Feature.Bmi2) { ... }`,
+with the plain way in the `else`. `main`, a test, a `pub extern fn`, a
+trait's method and a function used as a value cannot need a feature: the
+error says which call brings it in.
 
 ## Editors
 

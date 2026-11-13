@@ -53,7 +53,7 @@ const SOURCES: &[(&str, &[(&str, &str)])] = &[
     ("reflect", &[file!("reflect")]),
     ("prelude", &[file!("prelude")]),
     ("panics", &[file!("panics")]),
-    ("math", &[file!("math")]),
+    ("math", &[file!("math"), file!("math/tensor")]),
     ("meta", &[file!("meta")]),
     ("debug", &[file!("debug")]),
     ("encoding", &[file!("encoding")]),
@@ -62,6 +62,29 @@ const SOURCES: &[(&str, &[(&str, &str)])] = &[
     ("random", &[file!("random")]),
     ("format", &[file!("format")]),
     ("uuid", &[file!("uuid")]),
+    ("cpu", &[file!("cpu")]),
+    ("plugin", &[file!("plugin")]),
+    ("cpu.x64", &[file!("cpu/x64/instructions_x64")]),
+    ("cpu.arm64", &[file!("cpu/arm64/instructions_arm64")]),
+    ("os", &[file!("os")]),
+    (
+        "os.linux",
+        &[file!("os/linux/syscall_linux"), file!("os/linux/calls_linux_x64"), file!("os/linux/calls_linux_arm64")],
+    ),
+    (
+        "os.macos",
+        &[file!("os/macos/about_macos"), file!("os/macos/calls_macos_x64"), file!("os/macos/calls_macos_arm64")],
+    ),
+    (
+        "os.unix",
+        &[
+            file!("os/unix/calls_unix"),
+            file!("os/unix/shared_linux_x64"),
+            file!("os/unix/shared_linux_arm64"),
+            file!("os/unix/shared_macos_x64"),
+            file!("os/unix/shared_macos_arm64"),
+        ],
+    ),
     ("datetime", &[file!("datetime")]),
     ("csv", &[file!("csv")]),
     ("log", &[file!("log")]),
@@ -157,6 +180,57 @@ pub fn files(name: &str) -> Option<&'static [(&'static str, &'static str)]> {
     SOURCES.iter().find(|(n, _)| *n == name).map(|(_, files)| *files)
 }
 
+/// The files of a standard module that a build for the target of this
+/// thread has: those of a system or an architecture are of theirs alone
+/// (language 6.8), as `std.os.linux`'s.
+fn built_files(name: &str) -> impl Iterator<Item = &'static (&'static str, &'static str)> {
+    let target = crate::driver::target();
+    let belongs =
+        move |(path, _): &&(&str, &str)| crate::project::belongs(Path::new(&format!("{path}.to")), Some(target));
+    files(name).unwrap_or_default().iter().filter(belongs)
+}
+
+/// Whether the files of a standard module, as `os.linux`, are of some
+/// systems and of some architectures (language 6.8).
+pub(crate) fn targeted(name: &str) -> Option<(bool, bool)> {
+    let files = files(name)?;
+    let suffixes = files.iter().map(|(path, _)| crate::project::suffixes(Path::new(&format!("{path}.to"))));
+    let (systems, archs) = suffixes.fold((false, false), |(s, a), (sy, ar)| (s || sy.is_some(), a || ar.is_some()));
+    (systems || archs).then_some((systems, archs))
+}
+
+/// For a standard module of none of the build's files, of another system
+/// or architecture: the systems it is for, or else its architectures; the
+/// suffix of a file of the first; and the key of `[package]` that limits a
+/// package to it.
+pub(crate) fn elsewhere(path: &[&str]) -> Option<(String, &'static str, &'static str)> {
+    let ["std", rest @ ..] = path else { return None };
+    let name = SOURCES.iter().find(|(n, _)| n.split('.').eq(rest.iter().copied()))?.0;
+    if built_files(name).next().is_some() {
+        return None;
+    }
+    let (mut systems, mut archs): (Vec<crate::project::System>, Vec<crate::project::Arch>) = (Vec::new(), Vec::new());
+    for (file, _) in files(name).unwrap_or_default() {
+        let (of_systems, of_archs) = crate::project::suffixes(Path::new(&format!("{file}.to")));
+        for &system in of_systems.unwrap_or_default() {
+            if !systems.contains(&system) {
+                systems.push(system);
+            }
+        }
+        for &arch in of_archs.unwrap_or_default() {
+            if !archs.contains(&arch) {
+                archs.push(arch);
+            }
+        }
+    }
+    if systems.is_empty() {
+        let shown: Vec<&str> = archs.iter().map(|a| a.name()).collect();
+        return Some((shown.join(" and "), archs.first()?.name(), "architectures"));
+    }
+    let shown: Vec<&str> = systems.iter().map(|s| s.shown()).collect();
+    Some((shown.join(" and "), systems.first()?.name(), "systems"))
+}
+
 /// The source of a file of the standard library, by its path in `std/`
 /// without `.to`.
 pub fn file(path: &str) -> Option<&'static str> {
@@ -168,19 +242,49 @@ pub fn names() -> impl Iterator<Item = &'static str> {
     SOURCES.iter().map(|(name, _)| *name)
 }
 
+/// The files of a standard module that its API shows: those a build for
+/// the target of this thread has, or of a module of another system, as
+/// `std.os.macos` on Linux, those of that system on this architecture, or
+/// of a module of another architecture, as `std.cpu.arm64` on x64, those of
+/// the first target of it.
+fn shown_files(name: &str) -> Vec<&'static str> {
+    let files = files(name).unwrap_or_default();
+    let of = |target| -> Vec<&'static str> {
+        let belongs = |path: &str| crate::project::belongs(Path::new(&format!("{path}.to")), Some(target));
+        files.iter().filter(|(path, _)| belongs(path)).map(|(_, text)| *text).collect()
+    };
+    let here = crate::driver::target();
+    let elsewhere = crate::project::Target::ALL.into_iter().filter(|target| target.arch == here.arch);
+    let anywhere = crate::project::Target::ALL;
+    std::iter::once(here).chain(elsewhere).chain(anywhere).map(of).find(|found| !found.is_empty()).unwrap_or_default()
+}
+
 /// The source of a standard module written in Tondo, its files one after
-/// another.
+/// another, but those `tondo bind` writes, which `bound_text` gives.
 pub fn text(name: &str) -> Option<std::borrow::Cow<'static, str>> {
-    match files(name)? {
-        [(_, text)] => Some(std::borrow::Cow::Borrowed(text)),
-        files => Some(files.iter().map(|(_, text)| *text).collect::<Vec<_>>().join("\n").into()),
+    files(name)?;
+    let written: Vec<&str> = shown_files(name).into_iter().filter(|text| !crate::bind::written(text)).collect();
+    match written[..] {
+        [text] => Some(std::borrow::Cow::Borrowed(text)),
+        _ => Some(written.join("\n").into()),
     }
+}
+
+/// The files of a standard module that `tondo bind` writes, the
+/// declarations of C's headers, as `std.os.linux`'s, one after another.
+pub fn bound_text(name: &str) -> Option<String> {
+    let bound: Vec<&str> = shown_files(name).into_iter().filter(|text| crate::bind::written(text)).collect();
+    (!bound.is_empty()).then(|| bound.join("\n"))
 }
 
 /// The module written in Tondo an import brings.
 pub(crate) fn source(path: &[ast::Ident]) -> Option<&'static str> {
     match path {
         [std, name] if std.name == "std" => source_named(&name.name),
+        // A module inside another, as `std.os.linux`.
+        [std, rest @ ..] if std.name == "std" && rest.len() > 1 => {
+            source_named(&rest.iter().map(|part| part.name.as_str()).collect::<Vec<_>>().join("."))
+        }
         _ => None,
     }
 }
@@ -213,6 +317,7 @@ const OWN_REFLECTION: &[&str] = &[
     "archive",
     "crypto",
     "csv",
+    "ffi",
     "datetime",
     "encoding",
     "environment",
@@ -225,6 +330,7 @@ const OWN_REFLECTION: &[&str] = &[
     "math",
     "meta",
     "net",
+    "os",
     "pacing",
     "processes",
     "regex",
@@ -326,7 +432,7 @@ pub fn add_except(
     while at < pending.len() {
         let name = pending[at];
         at += 1;
-        for (_, text) in files(name).unwrap_or_default() {
+        for (_, text) in built_files(name) {
             for line in imported(text) {
                 if let Some(name) = source_named(line) {
                     want(name, &mut pending);
@@ -337,7 +443,7 @@ pub fn add_except(
     // Each file with its own identity, `<std>/http/server.to`.
     let files: Vec<(&str, &str, &str, usize)> = pending
         .iter()
-        .flat_map(|name| files(name).unwrap_or_default().iter().map(move |file| (*name, file)))
+        .flat_map(|name| built_files(name).map(move |file| (*name, file)))
         .map(|(name, (path, text))| {
             let file = sources.add(Path::new(&format!("{path}.to")), text.to_string());
             sources.set_identity(file, format!("<std>/{path}.to"), format!("std.{name}"));
@@ -366,7 +472,12 @@ pub fn add_except(
         }
     }
     for (name, files) in parts {
-        modules.push(ModuleSource { path: vec!["std".into(), name.into()], package, files });
+        // None of its files is of this build's target: it is not there.
+        if files.is_empty() {
+            continue;
+        }
+        let path = std::iter::once("std").chain(name.split('.')).map(String::from).collect();
+        modules.push(ModuleSource { path, package, files });
     }
     // Their enums of plain variants show their names, as the program's do.
     crate::derive::derive_display(&mut modules[first..], sources, diags);

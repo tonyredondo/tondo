@@ -1612,6 +1612,11 @@ Pueden ser privilegiadas:
 - Construcción de tipos opacos nativos.
 - Operaciones intrínsecas ya declaradas por el lenguaje.
 
+Con las llamadas del sistema de `std.os` (14.45), el acceso a host deja de
+necesitar el runtime: lo que hoy hace en Rust, abrir y leer un descriptor o
+esperar con `epoll`, puede escribirse en Tondo sobre ellas. Moverlo es un
+cambio de cada módulo, con su propia prueba de coste.
+
 ### 12.2 Unidades privilegiadas
 
 Una unidad privilegiada:
@@ -2284,6 +2289,7 @@ pub type Build = {
     commit: String?
     modified: Bool
     target: String
+    cpu: String
     compiler: String
     dependencies: Array[Dependency]
 }
@@ -2317,7 +2323,9 @@ pub type System = { name: String, release: String, machine: String }
   de su paquete, o el de su archivo sin `.to`; su `version` de `tondo.toml`,
   o `0.0.0`; el commit del repositorio git que lo contiene, si lo hay, y si
   sus archivos versionados tenían cambios sin confirmar; el target, como
-  tondo lo nombra (`x86_64-linux-gnu`, `aarch64-macos`); el compilador
+  tondo lo nombra (`x86_64-linux-gnu`, `aarch64-macos`); el nivel de
+  procesador, como lo nombra `--cpu` (`baseline`, `x86-64-v3`, `native`;
+  7.8 del toolchain); el compilador
   (`tondo 0.1.0`); y el nombre y la versión de cada paquete del que depende,
   sin los que solo usan sus pruebas. No lleva la hora de la compilación, que
   la haría irreproducible (13).
@@ -2821,7 +2829,7 @@ Los números no tienen métodos del prelude: sus operaciones (`parse`,
 `toString`, `abs`, `pow`, las variantes de desbordamiento, los bits, los bytes,
 las conversiones nombradas, `floor`, `sqrt`...) y sus constantes son intrinsics
 del lenguaje, iguales en todos los anchos (18.9 del lenguaje), y los traits
-`Additive`, `Number` e `Integer` también son del lenguaje (18.10).
+`Additive`, `Number`, `Integer` y `Fractional` también son del lenguaje (18.10).
 
 `String`:
 
@@ -2885,7 +2893,7 @@ fn all(self, predicate: fn(T): Bool): Bool
 fn find(self, predicate: fn(T): Bool): T?
 fn findIndex(self, predicate: fn(T): Bool): Int?
 fn count(self, predicate: fn(T): Bool): Int
-fn sum(self): T                                     // T: Additive
+fn sum(self): T                                     // T: Additive; de floats, en el orden de 18.5
 fn min(self): T?                                    // T: Ordered
 fn max(self): T?                                    // T: Ordered
 fn sorted(self): Array[T]                           // T: Ordered, estable
@@ -2974,9 +2982,18 @@ pub fn round(value: Float): Float                   // la mitad va al par
 pub fn roundTiesAway(value: Float): Float           // la mitad se aleja de cero
 pub fn truncate(value: Float): Float
 pub fn fma(a: Float, b: Float, c: Float): Float     // redondea una vez
+pub fn dot[T: Number](a: Array[T], b: Array[T]): T  // producto escalar
+pub fn norm(values: Array[Float]): Float               // longitud: la raíz de dot(values, values)
 pub fn gcd[T: Integer](a: T, b: T): T
 pub fn lcm[T: Integer](a: T, b: T): T
 ~~~
+
+`dot` es la suma de los productos de los elementos de cada posición. Dos
+arrays de longitudes distintas son `P0006`. De `Float` y `Float32` suma los
+productos en el orden de 18.5 del lenguaje, cada producto y cada suma
+redondeados por separado; de cualquier otro `T`, multiplica y suma de
+izquierda a derecha con las reglas de sus operadores, con el pánico de la
+primera operación que desborda.
 
 `BigInt` es un entero de cualquier tamaño, que nunca desborda, y `Decimal` un
 decimal exacto, también de cualquier tamaño, para dinero y medidas que un
@@ -3018,6 +3035,83 @@ pub fn Decimal.toFloat(self): Float
   `let price: math.Decimal = 19.99`.
 - Se escriben como números en JSON, YAML, TOML y los demás formatos, con
   todos sus dígitos, y se leen de un número o de un texto.
+
+`Tensor` son números en varias dimensiones: una forma, el tamaño de cada eje,
+cero o más, y sus valores en un bloque en orden de filas, el último índice el
+que cambia más deprisa. Su rango es la longitud de la forma; el rango 0 es un
+solo valor. Es un valor, que se copia como un array, y es `Send` y `Share`
+cuando `T` lo es. No es un marco de aprendizaje: sin gradientes, sin otros
+dispositivos, solo números.
+
+~~~tondo pseudocode
+pub type Tensor[T: Number]
+pub fn Tensor[T: Number](values: Array[T], shape: Array[Int]? = none): Tensor[T]
+pub fn Tensor[T: Number].fromRows(rows: Array[Array[T]]): Tensor[T]
+pub fn Tensor[T: Number].zeros(shape: Array[Int]): Tensor[T]
+pub fn Tensor[T: Number].filled(shape: Array[Int], value: T): Tensor[T]
+pub fn Tensor[T].shape(self): Array[Int]
+pub fn Tensor[T].rank(self): Int
+pub fn Tensor[T].length(self): Int
+pub fn Tensor[T].values(self): Array[T]
+pub fn Tensor[T].at(self, indexes: ...Int): T
+pub fn Tensor[T].set(mut self, value: T, indexes: ...Int)
+pub fn Tensor[T].slice(self, axis: Int, index: Int): Tensor[T]
+pub fn Tensor[T].reshape(self, shape: Array[Int]): Tensor[T]
+pub fn Tensor[T].transposed(self, axes: Array[Int]? = none): Tensor[T]
+pub fn Tensor[T].map(self, transform: fn(T): T): Tensor[T]
+pub fn Tensor[T].sum(self): T
+pub fn Tensor[T].sumAlong(self, axis: Int): Tensor[T]
+pub fn Tensor[T: Fractional].mean(self): T
+pub fn Tensor[T: Fractional].meanAlong(self, axis: Int): Tensor[T]
+pub fn Tensor[T: Ordered].min(self): T?
+pub fn Tensor[T: Ordered].max(self): T?
+pub fn Tensor[T: Ordered].indexOfMax(self): Array[Int]?
+pub fn Tensor[T].dot(self, other: Tensor[T]): T
+pub fn Tensor[T].matmul(self, other: Tensor[T]): Tensor[T]
+~~~
+
+- `math.Tensor(values)` tiene rango 1 y la longitud del array; con `shape`, el
+  producto de sus tamaños debe ser esa longitud. `fromRows` da rango 2 y pide
+  filas de una longitud. Lo que no encaja, y un tamaño negativo, son `P0006`.
+  Se llaman `math.Tensor(values)`, `math.Tensor.fromRows(rows)` y
+  `math.Tensor.filled(shape, 0.0)`, donde los argumentos dan `T`, y
+  `math.Tensor[Float].zeros([2, 3])` donde no (11.5 del lenguaje).
+- `length` es la cuenta de todos los valores y `values` los da en orden.
+  `at` y `set` toman tantos índices como el rango; otra cuenta, o un índice
+  fuera de su tamaño, es `P0001`. Un índice negativo cuenta desde el final,
+  como en un array. `set` cambia un valor en su sitio y conserva la forma.
+- `slice` fija un índice de un eje y da un tensor de un rango menos.
+  `reshape` conserva los valores y su orden; el producto de los tamaños debe
+  ser el mismo, o es `P0006`. `transposed` sin `axes` invierte el orden de los
+  ejes, que en rango 2 cambia filas por columnas; con `axes`, una permutación
+  de `0 .. rank-1`, el eje `i` del resultado es el eje `axes[i]` del tensor, y
+  otra cosa es `P0006`.
+- `+`, `-`, `*` y `/` van elemento a elemento, entre tensores con
+  broadcasting y con un número a cualquier lado (10.7 del lenguaje).
+- `sum` es el `sum` de `values()`: de floats, en el orden de 18.5 del
+  lenguaje. `sumAlong` da un tensor de un rango menos, cada valor el `sum` de
+  los valores a lo largo de ese eje, en el orden de su índice. `mean` es
+  `sum` dividido por `length`, y `meanAlong` cada valor de `sumAlong` dividido
+  por el tamaño de su eje; son de un tensor de `Fractional` (18.10 del
+  lenguaje), cuya división no redondea: `Float`, `Float32` y `math.Decimal`.
+  Sin valores, la de floats es NaN. Sobre un tensor de enteros es `E1105`, que
+  dice que la media es de floats y cómo dividir `sum` como floats. `min`, `max` e
+  `indexOfMax` son `none` en un tensor sin valores; `indexOfMax` da los
+  índices del primero de los mayores.
+- `dot` toma dos tensores de rango 1 y una longitud y es `math.dot` de sus
+  valores. `matmul` multiplica matrices: con rangos 2 y 2, una `n × k` por una
+  `k × m` da una `n × m`; un rango 1 a la izquierda es una fila y a la
+  derecha una columna, y el resultado tiene un rango menos. Cada valor del
+  resultado es el `math.dot` de una fila de la izquierda y una columna de la
+  derecha. Otros rangos, o tamaños que no encajan, son `P0006`.
+- Se muestra como arrays anidados: `[[1.0, 2.0], [3.0, 4.0]]`. Dos tensores
+  son iguales cuando sus formas y sus valores lo son. Todo formato de
+  `std.serialization` lo escribe y lo lee como un registro de `shape` y
+  `values`, y lo que lee debe encajar como al hacerlo.
+- Un `T` que no es un `Number` es `E1105`, cuyo mensaje dice que un tensor
+  guarda números.
+- Los resultados de floats son los de estas definiciones en toda máquina
+  (18.5 del lenguaje).
 
 ### 14.6 Arquitectura común de serialización
 
@@ -7069,6 +7163,442 @@ código que se salió del modelo. `Checked.vacuous` nombra las propiedades que s
 cumplieron sin decir nada, porque lo que las empieza no se dio en ningún estado,
 como un `leadsTo` cuyo `when` no se cumple nunca. Cada comprobación dice a `tondo test` lo que encontró (testing 8.12).
 
+### 14.44 `std.cpu`
+
+`std.cpu` dice qué tiene el procesador en que corre el programa además de lo
+que da el nivel para el que se compiló (7.8 del toolchain).
+
+~~~tondo
+pub enum Feature {
+    Sse3, Ssse3, Sse41, Sse42, Popcnt, Avx, Avx2, Fma, Bmi1, Bmi2, Lzcnt,
+    Avx512F, Avx512Dq, Avx512Vl, Avx512Bw, Pclmulqdq, Sha,
+    Neon, Lse, Crc32, Pmull, Sha2,
+    Aes
+}
+pub fn has(feature: Feature): Bool
+pub fn features(): Array[Feature]
+~~~
+
+- `Feature` tiene una variante por característica: las de x64, desde `Sse3`
+  hasta `Sha`; las de arm64, `Neon`, `Lse`, `Crc32`, `Pmull` y `Sha2`; y
+  `Aes`, que tienen las dos.
+- `has` dice si el procesador tiene la característica; `features`, todas las
+  que tiene, en el orden de `Feature`.
+- Con una variante escrita en la llamada, `has` se sabe al compilar: es
+  `true` sin prueba alguna cuando el nivel del build tiene la característica,
+  y `false` cuando es de la otra arquitectura. Un `if` cuya condición es esa
+  llamada, o varias unidas con `and`, compila solo el camino que corre, así
+  que el código de la otra arquitectura no entra en el programa. Esto no es
+  compilación condicional (20.11 del lenguaje): el código de los dos caminos
+  se comprueba en todos los targets. En otro caso `has` lee lo que el runtime
+  encontró una vez, al arrancar.
+
+### 14.45 `std.os`
+
+`std.os` es la parte de la librería que es de cada sistema. Existe para todos
+los sistemas y tiene el número de error del sistema, con el que falla una
+función de C declarada `T ! os.Errno` (16.16 del lenguaje):
+
+~~~tondo pseudocode
+pub type Errno = Int32
+impl Display for Errno
+~~~
+
+- `Errno` es un newtype: `error.value` es el número, y `os.Errno(2)` hace uno.
+  Se muestra como el sistema lo escribe, `os error 2: No such file or
+  directory`, igual que `fs.FsError.Host` muestra el mismo número.
+- 7.3 sigue valiendo: estos números son de un sistema, y `std.os` es la parte
+  de la librería que es por sistema.
+
+#### `std.os.linux`
+
+`std.os.linux` es de Linux (6.8 del lenguaje). Importarlo desde un archivo que
+también es de otro sistema es `E1008`, cuyo mensaje dice que se importe desde
+un archivo de Linux, `name_linux.to`, o que se limite el paquete con
+`systems = ["linux"]`; `tondo check` lo encuentra en cualquier máquina, con
+`on macOS:` en Linux.
+
+- Declara lo que `tondo bind --included` (7.1 del toolchain) escribe de los
+  headers `errno.h`, `fcntl.h`, `poll.h`, `signal.h`, `termios.h`,
+  `unistd.h`, `sys/file.h`, `sys/ioctl.h`, `sys/mman.h`, `sys/resource.h`,
+  `sys/socket.h`, `sys/stat.h`, `sys/epoll.h`, `sys/eventfd.h`,
+  `sys/inotify.h` y `sys/syscall.h`, una vez por arquitectura, porque los
+  números y las disposiciones cambian con ella. Conserva los nombres de C:
+  `linux.O_RDONLY`, `linux.epoll_create1`, `linux.SYS_openat`.
+- Las funciones que fallan dando -1 o un puntero nulo con el número de error
+  del sistema, nombradas en una lista que se guarda junto a los archivos
+  generados, se declaran `T ! os.Errno`; las demás, como `tondo bind` las
+  declara. Llamar a cualquiera es `unsafe`, como toda llamada a C.
+- `syscall` es la llamada del núcleo por su número:
+
+~~~tondo pseudocode
+pub unsafe fn syscall(number: Int, arguments: ...Int): Int ! os.Errno
+~~~
+
+- `number` es uno de `linux.SYS_...`, de la arquitectura del build. Toma hasta
+  seis argumentos; más es un pánico. Falla con el número de error del núcleo.
+  Es la función `syscall` de la librería de C, que da -1 y deja el número.
+- macOS no tiene llamada por número: Apple no mantiene estable la interfaz de
+  su núcleo, y un programa llama a la librería del sistema, con `extern fn`
+  o con las declaraciones de su módulo.
+
+#### `std.os.macos`
+
+`std.os.macos` es de macOS y declara, como `std.os.linux`, lo que `tondo bind
+--included` escribe de los headers comunes y de `sys/event.h`, una vez por
+arquitectura y desde un mismo SDK. Una macro que no es un número que una
+constante pueda guardar, como `FIONREAD`, que es `_IOR('f', 127, int)`, no
+se declara. Las flags del modo de un terminal, las de los campos `c_iflag`,
+`c_oflag`, `c_cflag` y `c_lflag` de `termios`, son constantes del tipo de
+esos campos, `tcflag_t`, y se combinan con ellos sin conversión:
+`mode.c_lflag & ~(unix.ICANON | unix.ECHO)`.
+
+#### `std.os.unix`
+
+`std.os.unix` es de Linux y de macOS, y se importa desde un archivo común.
+Tiene:
+
+- Las declaraciones de C que los cuatro targets tienen con una forma: una
+  constante con su tipo, aunque su valor cambie, o con un alias del mismo
+  nombre, que cada target define a su modo, como `tcflag_t`; una función con su firma,
+  sin contar los nombres de sus parámetros y con cada alias escrito como lo
+  que nombra; un tipo o un alias por su nombre, aunque su disposición cambie,
+  como `termios`. Cada target tiene además lo que esas declaraciones nombran
+  y solo él declara, como la unión que glibc pone en `termios`. Las funciones
+  que toman los nombres de las llamadas seguras, como `open` o `read`, se
+  quedan en `std.os.linux` y `std.os.macos`.
+- Las llamadas seguras, que hacen lo que la función de C del mismo propósito
+  (`open`, `read`, `write`, `lseek`, `pipe`, `dup`, `fcntl`, `ioctl`,
+  `isatty`, `tcgetattr`, `tcsetattr`, `poll`, `kill`, y `mmap` con `munmap`):
+
+~~~tondo pseudocode
+pub type Fd
+pub unsafe fn Fd.adopt(number: Int32): Fd
+pub fn Fd.number(self): Int32
+pub fn Fd.standardInput(): Fd
+pub fn Fd.standardOutput(): Fd
+pub fn Fd.standardError(): Fd
+pub fn Fd.close(self): !os.Errno
+
+pub fn open(path: String, flags: Int32, mode: Int32 = 0o644): Fd ! os.Errno
+pub fn read(from: ref Fd, into: mut Array[Byte]): Int ! os.Errno
+pub fn write(to: ref Fd, bytes: Array[Byte]): Int ! os.Errno
+pub fn seek(on: ref Fd, offset: Int, from: Int32): Int ! os.Errno
+pub fn pipe(): (Fd, Fd) ! os.Errno
+pub fn duplicate(of: ref Fd): Fd ! os.Errno
+pub fn control(on: ref Fd, command: Int32, argument: Int = 0): Int32 ! os.Errno
+pub unsafe fn deviceControl(on: ref Fd, request: UInt, argument: Pointer[ffi.Void]): Int32 ! os.Errno
+pub fn isTerminal(on: ref Fd): Bool
+pub fn terminalMode(of: ref Fd): termios ! os.Errno
+pub fn setTerminalMode(of: ref Fd, mode: termios, when: Int32): !os.Errno
+pub fn poll(descriptors: mut Array[pollfd], timeout: time.Duration? = none): Int ! os.Errno
+pub fn signal(pid: Int32, number: Int32): !os.Errno
+
+pub type Mapping
+pub unsafe fn Mapping.of(file: ref Fd, length: Int, protection: Int32, flags: Int32, offset: Int = 0): Mapping ! os.Errno
+pub unsafe fn Mapping.anonymous(length: Int, protection: Int32, flags: Int32): Mapping ! os.Errno
+pub fn Mapping.pointer(self): Pointer[Byte]
+pub fn Mapping.length(self): Int
+pub fn Mapping.close(self): !os.Errno
+~~~
+
+- `Fd` y `Mapping` no son `Copy` (8.10 del lenguaje): tienen un dueño, que
+  cierra el descriptor o desmapea la memoria cuando su valor se va, como
+  acción de salida; `close` lo hace antes y da el error del sistema. Los tres
+  descriptores estándar nunca se cierran. `Fd.adopt` es `unsafe` porque el
+  `Fd` cerrará un número que el programa obtuvo en otro sitio.
+- `read` pone en `into`, desde su inicio, como mucho `into.length()` bytes y
+  da cuántos: 0 al final de lo que hay que leer. `write` da cuántos escribió,
+  que pueden ser menos.
+- Los flags son números que se combinan con `|`, por los nombres de C:
+  `unix.open(path, unix.O_WRONLY | unix.O_CREAT)`. `Mapping.anonymous` añade
+  `MAP_ANON` a los suyos.
+- Una llamada que una señal interrumpe se hace de nuevo mientras falle con
+  `EINTR`; `poll` con `timeout` espera, en total, no más que ese tiempo.
+- `std.fs`, `std.net` y `std.process` no cambian: son lo que un programa usa
+  primero, igual en cada sistema, y `std.os` es lo que hay debajo.
+
+### 14.46 `std.simd`
+
+`std.simd` tiene los vectores de 18.11 del lenguaje. Estas son las funciones y
+métodos de cada ancho, escritos aquí para `Vector128` y `Mask128`; `V` es un
+vector de cualquier ancho con su `T`, y `M` su máscara:
+
+~~~tondo pseudocode
+pub fn Vector128[T].zero(): Vector128[T]
+pub fn Vector128[T].all(value: T): Vector128[T]
+pub fn Vector128[T].of(values: ...T): Vector128[T]
+pub fn Vector128[T].load(values: ref Array[T], at: Int = 0): Vector128[T]
+pub fn Vector128[T].lanes(): Int
+pub fn Vector128[T].accelerated(): Bool
+
+pub fn Vector128[T].lane(self, index: Int): T
+pub fn Vector128[T].withLane(self, index: Int, value: T): Vector128[T]
+pub fn Vector128[T].toArray(self): Array[T]
+pub fn Vector128[T].store(self, into: mut Array[T], at: Int = 0)
+
+pub fn V.min(self, other: V): V
+pub fn V.max(self, other: V): V
+pub fn V.abs(self): V
+pub fn V.saturatingAdd(self, other: V): V      // enteros
+pub fn V.saturatingSub(self, other: V): V      // enteros
+pub fn V.sqrt(self): V                         // floats
+pub fn V.floor(self): V                        // floats
+pub fn V.ceil(self): V                         // floats
+pub fn V.round(self): V                        // floats: al más cercano, empates al par
+pub fn V.truncate(self): V                     // floats
+pub fn V.fma(self, factor: V, addend: V): V    // floats: self * factor + addend, redondeado una vez
+
+pub fn V.equal(self, other: V): M
+pub fn V.notEqual(self, other: V): M
+pub fn V.less(self, other: V): M
+pub fn V.lessOrEqual(self, other: V): M
+pub fn V.greater(self, other: V): M
+pub fn V.greaterOrEqual(self, other: V): M
+
+pub fn M.choose(self, whenTrue: V, whenFalse: V): V
+pub fn M.any(self): Bool
+pub fn M.all(self): Bool
+pub fn M.count(self): Int
+pub fn M.bits(self): UInt
+pub fn M.lane(self, index: Int): Bool
+
+pub fn V.sum(self): T
+pub fn V.minLane(self): T
+pub fn V.maxLane(self): T
+
+pub fn V.reversed(self): V
+pub fn Vector128[Byte].swizzle(self, indexes: Vector128[Byte]): Vector128[Byte]
+pub fn Vector256[T].joined(lower: Vector128[T], upper: Vector128[T]): Vector256[T]
+pub fn Vector512[T].joined(lower: Vector256[T], upper: Vector256[T]): Vector512[T]
+pub fn Vector256[T].lower(self): Vector128[T]
+pub fn Vector256[T].upper(self): Vector128[T]
+pub fn Vector512[T].lower(self): Vector256[T]
+pub fn Vector512[T].upper(self): Vector256[T]
+pub fn Vector128[T].to[U](self): Vector128[U]
+pub fn Vector128[T].cast[U](self): Vector128[U]
+~~~
+
+- Las funciones sin `self` se llaman con el tipo de los carriles escrito,
+  `simd.Vector128[Float32].zero()` (11.5 del lenguaje), o sin él donde se
+  espera un vector de ese ancho. `lanes()` y `accelerated()` se conocen al
+  compilar; `accelerated()` es `true` para 128 bits en x64 y arm64, a cada
+  nivel; para 256 bits, en el código compilado para un nivel de x64 con AVX2
+  (`x86-64-v3`, `x86-64-v4`, o `native` en un procesador que lo tiene), y en
+  las versiones para `x86-64-v3` de un build de release para un nivel menor
+  (7.8 de la herramienta), que hacen sus operaciones con las instrucciones de
+  256 bits; y `false` para 512
+  bits hasta que el generador de código haga vectores de ese ancho. Un ancho
+  que no está acelerado se calcula por mitades del mayor que lo está.
+  `Vector[T]` es por ahora `Vector128[T]` en todo nivel, también en las
+  versiones de una función por nivel (18.11 del lenguaje).
+- `of` recibe exactamente `lanes()` valores; otra cantidad es un error donde
+  los valores se escriben en la llamada, y `P0006` con un array esparcido.
+  `Vector[T]` no tiene `of`, que es un error de compilación que da `all`,
+  `load` y el `of` de `Vector128[T]`: sus carriles pueden ser más en la
+  versión de una función para un nivel con vectores más anchos, y los mismos
+  valores escritos no llenarían los dos.
+- `load` lee `lanes()` elementos desde `at` y `store` los escribe. Si el array
+  tiene menos de `at + lanes()` elementos, o `at` es negativo, entran en pánico
+  como un índice fuera de rango (`P0001`). `lane`, `withLane` y el `lane` de una
+  máscara lo hacen con un índice que no es un carril.
+- `min` y `max` de floats dan NaN cuando cualquiera de los carriles lo es, y
+  toman `-0.0` por menor que `+0.0`, en cada procesador. `sqrt` de un carril
+  negativo es NaN. `abs` del menor entero da él mismo. `saturatingAdd` y
+  `saturatingSub` se quedan en el menor o el mayor valor del tipo.
+- Una comparación con un carril NaN es `false`, y `notEqual` es `true`.
+  `choose` da en cada carril el de `whenTrue` donde la máscara es `true` y el
+  de `whenFalse` donde no; no se llama `select`, que es palabra reservada.
+  `bits` tiene el bit `i` puesto cuando el carril `i` es `true`.
+- `sum`, `minLane` y `maxLane` combinan por mitades: el carril `j` con el
+  carril `j + lanes / 2`, hasta que queda uno. Los enteros se envuelven. El
+  resultado de `sum` con floats depende así del ancho, por cómo agrupa.
+- `swizzle` da en cada carril el byte de `self` en el índice que `indexes`
+  tiene ahí, y cero para un índice de 16 o más; existe también en
+  `Vector128[UInt8]` y `Vector128[Int8]`, con índices de su tipo.
+- `lower` tiene los carriles desde el 0 y `upper` el resto; `joined` los une.
+- `to[U]` convierte el valor de cada carril a un `U` del mismo ancho: entre
+  `Int32`, `UInt32` y `Float32`, y entre `Int`, `UInt` y `Float`. Un float pasa
+  al entero más cercano hacia cero, al mayor o al menor cuando no cabe, y a
+  cero si es NaN; un entero que no cabe, al mayor o al menor. `cast[U]` lee los
+  mismos bits como carriles de cualquier `U`. Otro `U` en `to` es un error que
+  nombra los que hay y `cast`.
+
+### 14.47 `std.cpu.x64` y `std.cpu.arm64`
+
+Cada función de estos módulos es una instrucción del procesador, o las pocas
+que hacen una operación, y su documentación dice qué variante de
+`cpu.Feature` necesita. `std.cpu.x64` es de x64 y `std.cpu.arm64` de arm64
+(6.8 del lenguaje): importar uno desde un archivo que también es de la otra
+arquitectura es `E1008`, cuyo mensaje dice que se importe desde un archivo de
+la suya, como `name_x64.to`, o que se limite el paquete con
+`architectures = ["x64"]`.
+
+~~~tondo pseudocode
+// std.cpu.x64
+pub fn crc32cByte(crc: UInt32, value: Byte): UInt32           // Sse42, que el baseline tiene
+pub fn crc32cInt(crc: UInt32, value: UInt): UInt32            // Sse42
+pub fn depositBits(value: UInt, mask: UInt): UInt             // Bmi2
+pub fn extractBits(value: UInt, mask: UInt): UInt             // Bmi2
+pub fn aesEncrypt(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]      // Aes
+pub fn aesEncryptLast(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]  // Aes
+pub fn aesDecrypt(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]      // Aes
+pub fn aesDecryptLast(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]  // Aes
+pub fn carrylessMultiply(a: simd.Vector128[UInt], b: simd.Vector128[UInt], halves: Int): simd.Vector128[UInt]  // Pclmulqdq
+pub fn pause()                                                // ninguna
+
+// std.cpu.arm64
+pub fn crc32cByte(crc: UInt32, value: Byte): UInt32           // Crc32
+pub fn crc32cInt(crc: UInt32, value: UInt): UInt32            // Crc32
+pub fn aesEncrypt(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]  // Aes
+pub fn aesDecrypt(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]  // Aes
+pub fn aesMixColumns(state: simd.Vector128[Byte]): simd.Vector128[Byte]          // Aes
+pub fn aesInverseMixColumns(state: simd.Vector128[Byte]): simd.Vector128[Byte]   // Aes
+pub fn polynomialMultiply(a: UInt, b: UInt): simd.Vector128[UInt]                // Pmull
+pub fn pause()                                                // ninguna
+~~~
+
+- En x64 son, en orden, `crc32` sobre un byte y sobre 64 bits, `pdep`,
+  `pext`, `aesenc`, `aesenclast`, `aesdec`, `aesdeclast`, `pclmulqdq` y
+  `pause`; en arm64, `crc32cb`, `crc32cx`, `aese`, `aesd`, `aesmc`, `aesimc`,
+  `pmull` de 64 bits e `isb`. El CRC es el CRC-32C, de Castagnoli, sin
+  invertir antes ni después; los 64 bits entran del byte más bajo al más
+  alto. El estado de AES tiene en el byte `r + 4c` la fila `r` de la columna
+  `c`, como FIPS 197 lo pone en memoria.
+- `halves` de `carrylessMultiply` es una constante escrita en la llamada, que
+  la instrucción lleva dentro: 0 multiplica las mitades bajas de los dos, 1 la
+  alta de `a` y la baja de `b`, 16 la baja de `a` y la alta de `b`, y 17 las
+  altas. Otro valor, o uno que no se conoce al compilar, es `E1901`, cuyo
+  mensaje da los cuatro y lo que toma cada uno.
+- Una llamada es la instrucción, en el sitio donde se escribe, y hace que la
+  función que la contiene necesite la característica, salvo que el nivel del
+  build la tenga (7.8 del toolchain).
+- Lo que tienen las dos arquitecturas se ofrece una vez, desde el módulo al
+  que pertenece y escrito con estas por dentro, como un `hash.crc32c(bytes)`:
+  cada una de esas funciones es un cambio aparte.
+
+### 14.48 `std.plugin`
+
+Un plugin es una implementación de un trait que el programa carga mientras
+corre: de una librería compartida, en el mismo proceso, o de un programa
+propio, por su entrada y su salida estándar. Lo que cruza son datos escritos
+en MessagePack, y el contrato se comprueba al cargar el plugin.
+
+~~~tondo pseudocode
+pub annotation Contract = {}
+pub annotation Export = {}
+
+pub enum Error {
+    NotLoaded(String)   // la librería o el programa no se cargó o no arrancó, con por qué
+    Contract(String)    // el plugin se hizo con otro contrato, con qué difiere
+    Panicked(String)    // el plugin entró en pánico en una llamada, con su mensaje
+    Format(String)      // lo que cruzó no se pudo leer, con por qué
+    Closed              // el plugin ya no está: su programa terminó
+}
+impl Display for Error
+impl serialization.Encode for Error
+impl serialization.Decode for Error
+~~~
+
+#### El contrato
+
+- Un contrato es un trait con `@plugin.Contract` delante (27.13 del
+  lenguaje). Cada método toma `self`, no `mut self` ni `var self`, no tiene
+  parámetros de tipo y da `T ! plugin.Error` o `T ! (E | plugin.Error)`; los
+  tipos de sus parámetros, `T` y `E` implementan `serialization.Encode` y
+  `serialization.Decode`. El trait no tiene parámetros de tipo ni requiere
+  otro trait. Cada incumplimiento es `E1119` en el método o el trait, y dice
+  cuál es.
+- En el módulo de un contrato `Name`, el compilador declara, como declara el
+  cliente de un servicio de un `.proto`:
+
+  ~~~tondo pseudocode
+  pub type NamePlugin
+  impl Name for NamePlugin
+  pub fn NamePlugin.load(path: String): NamePlugin ! plugin.Error
+  pub fn NamePlugin.start(command: Command): NamePlugin ! plugin.Error
+  pub fn NamePlugin.contract(): plugin.Description
+  pub fn NamePlugin.answer[T: Name](implementation: T, method: Int, given: Array[Byte]): (Int, Array[Byte])
+  pub fn serveName[T: Name + Send + Share](implementation: T): !plugin.Error
+  ~~~
+
+  `load` carga el plugin de una librería, `start` arranca un programa y habla
+  con el plugin que sirve, y `serveName` sirve `implementation` al programa
+  que arrancó este, hasta que ese programa cierra su lado. `contract` y
+  `answer` son lo que usan `serveName` y las entradas de una librería.
+- Un `NamePlugin` es un handle, `Send` y `Share`, cuyos métodos se pueden
+  llamar desde varias tareas a la vez: cada llamada escribe sus argumentos,
+  hace la llamada y lee el resultado o el error. Cuando se va su última
+  copia, se va el plugin: un programa recibe el fin de su entrada y se le
+  espera, como a un `Process` (14.13); una librería termina su runtime y se
+  descarga (19.3).
+
+#### Un plugin
+
+- **Como librería.** Un proyecto construido con `tondo build --library`
+  ofrece un contrato con una función marcada `@plugin.Export`, sin
+  parámetros, que da `impl Name` de un tipo `Send` y `Share`. Se la llama una
+  vez, al cargar la librería, y su valor vive mientras la librería. Una
+  segunda función así, una con parámetros o una que no da un `impl` es
+  `E1119`, que dice la forma que se escribe.
+- **Como programa.** Un programa cuyo `main` llama `serveName(value)` es un
+  plugin con el que habla `NamePlugin.start`. La misma implementación sirve de
+  las dos maneras.
+
+#### Lo que cruza
+
+- Los bytes de una llamada son MessagePack de una lista de los argumentos del
+  método, en su orden; los de un resultado, del valor, `nil` cuando no hay
+  valor; los de un fallo, del error.
+- La huella de un contrato es el SHA-256 en hexadecimal de este texto: una
+  línea `contract <módulo>.<Name>`; una línea por método, en el orden en que
+  se declaran, `fn <nombre>(<tipos de los parámetros>): <tipo del resultado>`;
+  y una línea por cada record, enum o newtype que esos tipos alcanzan, en el
+  orden en que aparecen, `type <nombre> = { <campo>: <tipo>, ... }`,
+  `type <nombre> = enum { <Variante>, <Variante>(<tipos>), <Variante> { ... } }`
+  o `type <nombre> = (<tipo>)`. Cada tipo se escribe con el nombre con que
+  lo muestran los diagnósticos. Dos contratos con una huella son el mismo
+  para un plugin; cualquier otra diferencia es otro contrato.
+- Una librería con una función `@plugin.Export` publica, con las convenciones
+  de C, nombres que esta sección fija para que un plugin se pueda escribir
+  en otro lenguaje:
+
+  ~~~c
+  /* El contrato: MessagePack de [módulo y nombre, huella, nombres de los métodos]. */
+  void tondo_plugin_contract(const uint8_t **bytes, size_t *length);
+
+  /* Llama al método número `method`, contado desde 0 en el orden del trait.
+   * Da 0 y el resultado, 1 y el error propio del método, o 2 y un
+   * plugin.Error. `*output` se libera con tondo_plugin_free. */
+  int32_t tondo_plugin_call(uint32_t method, const uint8_t *input, size_t input_length,
+                            uint8_t **output, size_t *output_length);
+
+  void tondo_plugin_free(uint8_t *bytes, size_t length);
+  ~~~
+
+- Cargar una librería la abre (19.3), lee su contrato y compara la huella.
+  Si difieren, o falta una entrada, es `plugin.Error.Contract`, con los
+  nombres de los dos contratos. Su función `@plugin.Export` se llama al leer
+  el contrato, una vez.
+- Un programa habla en tramas por su entrada y su salida estándar: una
+  longitud de cuatro bytes, el más significativo primero, y tantos bytes de
+  MessagePack. La primera trama del plugin es su contrato, como arriba. Una
+  petición es `[id, method, arguments]`, con los argumentos como una lista
+  de MessagePack, y su respuesta `[id, status, payload]`, con el `status` de
+  arriba y el valor del `payload` dentro. Las respuestas pueden llegar en
+  cualquier orden; `id` las empareja. Lo que el plugin escribe en su salida de
+  errores va donde va la del programa.
+- Un pánico del plugin se detiene en la llamada con `recover` y vuelve como
+  `plugin.Error.Panicked`, en una librería y en un programa. Un programa que
+  termina deja cada llamada que espera con `plugin.Error.Closed`.
+- Una tarea que se cancela mientras espera a un plugin deja de esperar. En una
+  librería, la llamada sigue hasta su fin y su resultado se descarta; en un
+  programa, su respuesta se descarta cuando llega.
+- Fuera de este alcance quedan las llamadas del plugin al programa que lo
+  cargó, los métodos que dan o toman un canal o un stream, un plazo que viaje
+  con una llamada, un plugin cargado en el proceso con un muro alrededor, y
+  los contratos que cambian y siguen siendo compatibles.
+
 ## 15. Contrato exigido a cada módulo
 
 Antes de considerarse especificado, cada módulo debe incluir:
@@ -7737,6 +8267,80 @@ pub unsafe fn freeContext[T: ~Copy](data: Pointer[Void])
   `void*` que las APIs de C devuelven a una función que llaman;
   `fromContext[T]` lee el valor, que debe ser un `T`, y `freeContext[T]` lo
   suelta y devuelve la memoria.
+
+#### Librerías compartidas
+
+`Library` carga una librería compartida mientras el programa corre, da sus
+funciones y sus valores, y la descarga:
+
+~~~tondo pseudocode
+pub type Library
+pub type Function[F]
+pub enum LibraryError { NotLoaded(String), NoSymbol(String), NotUnloaded(String), Closed }
+pub fn Library.open(path: String, global: Bool = false): Library ! LibraryError
+pub unsafe fn Library.openUnloadable(path: String, global: Bool = false): Library ! LibraryError
+pub fn Library.named(name: String, version: String? = none, global: Bool = false): Library ! LibraryError
+pub fn Library.program(): Library
+pub unsafe fn Library.function[F](self, name: String): Function[F] ! LibraryError
+pub unsafe fn Library.pointer[T](self, name: String): Pointer[T] ! LibraryError
+pub fn Library.has(self, name: String): Bool
+pub fn Library.path(self): String
+pub unsafe fn Library.close(self): !LibraryError
+pub fn Function[F].raw(self): F
+pub fn libraryFileName(name: String, version: String? = none): String
+~~~
+
+- `Library` es un handle (16.11 del lenguaje): una copia nombra la misma
+  librería cargada. Es `Copy`, `Send` y `Share`. `LibraryError` tiene
+  `Display`, con su mensaje.
+- `open(path)` carga el archivo de esa ruta, que si no es absoluta se toma del
+  directorio actual aunque no tenga `/`: `open` nunca busca. Los símbolos se
+  resuelven al cargarla, y quedan privados de la librería salvo con `global`,
+  que los ofrece a las que se carguen después.
+- `named(name, version)` carga por nombre, y busca como el sistema: el archivo
+  es `libraryFileName(name, version)`, que en Linux es `lib<name>.so` y, con
+  versión, `lib<name>.so.<version>`, y en macOS `lib<name>.dylib` y
+  `lib<name>.<version>.dylib`.
+- `program()` es el propio programa con las librerías con que arrancó. No se
+  descarga nunca: `close()` sobre ella es `LibraryError.NotUnloaded`, y su
+  `path()` es el del ejecutable.
+- `function[F](name)` da una función como `Function[F]`. `F` es un tipo
+  `extern fn`, también uno variádico; otro `F` es un error de compilación. Es
+  `unsafe` porque nada comprueba que la función tenga ese tipo.
+- Un `Function[F]` se llama como el `extern fn` que guarda: `f(argumentos)`,
+  dentro de `unsafe`, con las reglas de una llamada a C (16.16 del lenguaje).
+  Es un valor `Copy`, `Send` y `Share`, y mantiene cargada su librería. `raw()`
+  da el `extern fn` sin más, para dárselo a C como callback o guardarlo donde
+  un `Function` no cabe: no mantiene nada cargado.
+- `pointer[T](name)` da la dirección de un valor que la librería publica, que
+  no mantiene nada cargado, como cualquier puntero; `has(name)` dice si la
+  librería publica ese nombre.
+- Preguntar a una librería cerrada por una función, un puntero o un nombre es
+  `LibraryError.Closed`, y `has` es `false`.
+- Una librería es *descargable* cuando se abrió con `openUnloadable` o cuando
+  la construyó Tondo, que `Library` reconoce por la entrada que termina su
+  runtime, `tondo_library_stop` (7.7 del toolchain): cuando se va su último
+  dueño, la última copia de su `Library` y el último `Function` tomado de
+  ella, se descarga como lo hace `close()`, y un error entonces se descarta.
+  Una librería que no es descargable sigue cargada hasta que el programa
+  termina. `openUnloadable` es `unsafe` porque el programa
+  promete lo que Tondo no ve: que cuando se van sus dueños la librería no
+  tiene ningún thread corriendo, ningún callback dejado al sistema o a otra
+  librería y nada que correr al terminar el programa.
+- `close()` descarga ahora, sea cual sea la librería y como se abriera. A una
+  que construyó Tondo le termina antes su runtime, con esa entrada. Es
+  `unsafe`: el programa promete que nada tomado de ella se usa después y que
+  ningún código suyo está corriendo. Si el sistema se niega, es
+  `LibraryError.NotUnloaded` y la librería sigue abierta; cerrar dos veces es
+  `LibraryError.Closed`. Si la memoria se va lo decide el sistema, que puede
+  quedarse con una librería que se le pidió descargar: Tondo solo dice lo que
+  el sistema dice.
+- Un programa que puede llegar a `Library.open`, `openUnloadable`, `named` o
+  `program` y se compila con `--static` o con `--target` es un error de
+  compilación: un ejecutable estático no carga librerías (7.8 del toolchain).
+- Son llamadas de C y pueden tardar, como leer un archivo: siguen la regla de
+  cualquier llamada de C, y otro worker ocupa el sitio del que se queda en
+  ella.
 
 ### 19.4 Una sola implementación vigente
 

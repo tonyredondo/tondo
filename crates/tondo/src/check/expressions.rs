@@ -260,6 +260,16 @@ impl<'a> Checker<'a> {
             self.diags.error("E1705", span, message);
             return Self::error_expr(span);
         };
+        // A function of Tondo that C calls has no error number to give
+        // (16.16).
+        if matches!(self.types.kind(result), TyKind::Result(..)) {
+            let message = format!(
+                "{} is a C function's, which fails with the system's error number: a function of Tondo has none to give; take it from `toFunction` or `ffi.Library`",
+                self.display(expected)
+            );
+            self.diags.error("E1705", span, message);
+            return Self::error_expr(span);
+        }
         let found = self.types.intern(TyKind::Fn(p.clone(), r, v, modes.clone(), false));
         if variadic || v || p != params || r != result || modes.iter().any(|&m| m != ast::Mode::Value) {
             let message = format!(
@@ -411,9 +421,12 @@ impl<'a> Checker<'a> {
             read
         };
         let bound = hir::Pattern { kind: hir::PatKind::Binding(local), ty: payload, span };
-        let some = hir::Pattern { kind: hir::PatKind::Variant(present, vec![bound]), ty: value.ty, span };
+        // Its ways are where the value is, which tells them apart from the
+        // arms of a match the program wrote (testing 10.3).
+        let looked = value.span;
+        let some = hir::Pattern { kind: hir::PatKind::Variant(present, vec![bound]), ty: value.ty, span: looked };
         let rest = error.map(|ty| hir::Pattern { kind: hir::PatKind::Wildcard, ty, span }).into_iter().collect();
-        let none = hir::Pattern { kind: hir::PatKind::Variant(absent, rest), ty: value.ty, span };
+        let none = hir::Pattern { kind: hir::PatKind::Variant(absent, rest), ty: value.ty, span: looked };
         let arms = vec![
             hir::Arm { pattern: some, guard: None, body: read },
             hir::Arm { pattern: none, guard: None, body: fallback },
@@ -457,8 +470,11 @@ impl<'a> Checker<'a> {
                     }
                 };
                 let bound = hir::Pattern { kind: hir::PatKind::Binding(local), ty: payload, span };
-                let present = hir::Pattern { kind: hir::PatKind::Variant(SOME, vec![bound]), ty: value.ty, span };
-                let absent = hir::Pattern { kind: hir::PatKind::Variant(NONE, Vec::new()), ty: value.ty, span };
+                // Its ways are where the option is, as those of a `??`.
+                let looked = value.span;
+                let present =
+                    hir::Pattern { kind: hir::PatKind::Variant(SOME, vec![bound]), ty: value.ty, span: looked };
+                let absent = hir::Pattern { kind: hir::PatKind::Variant(NONE, Vec::new()), ty: value.ty, span: looked };
                 let none = Self::mk(hir::ExprKind::Variant(NONE, Vec::new()), result, span);
                 let arms = vec![
                     hir::Arm { pattern: present, guard: None, body: then },
@@ -528,7 +544,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Path(_)
                 if let Some(expected) = expected
                     && self.wants_function(expected)
-                    && let Some(form) = self.function_form(cx, e) =>
+                    && let Some(form) = self.function_form(cx, e, expected) =>
             {
                 self.expr_kind(cx, &form, Some(expected))
             }

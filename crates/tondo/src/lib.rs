@@ -34,6 +34,7 @@ pub mod header;
 pub mod hir;
 pub mod index;
 pub mod inline;
+pub mod instructions;
 pub mod lends;
 pub mod lexer;
 pub mod link;
@@ -55,6 +56,7 @@ pub mod observe;
 pub mod ownership;
 pub mod parallel;
 pub mod parser;
+pub mod plugins;
 #[path = "../../tondo-runtime/src/pprof.rs"]
 pub mod pprof;
 pub mod profile;
@@ -65,6 +67,7 @@ pub mod prove;
 pub mod reserve;
 #[cfg(feature = "rules")]
 pub mod rules;
+pub mod simd;
 pub mod stack;
 pub mod verify;
 // Its kinds of error are the runtime's; the compiler reads only their names.

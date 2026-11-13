@@ -1,0 +1,30 @@
+// A closure that captures a value of an `impl Trait` result, in a function
+// and in a closure that captures that closure: the record of its captures
+// holds the opaque type's witness once the program is concrete.
+
+import std.console
+
+trait Counts {
+    fn count(self): Int
+}
+
+type Twice = { of: Int }
+
+impl Counts for Twice {
+    fn count(self): Int {
+        self.of * 2
+    }
+}
+
+fn make(of: Int): impl Counts {
+    Twice { of }
+}
+
+fn main() {
+    let made = make(21)
+    let later = () { made.count() }
+    let outer = () { later() + 1 }
+    console.println("{later()} {outer()}")
+}
+
+// expect-stdout: 42 43

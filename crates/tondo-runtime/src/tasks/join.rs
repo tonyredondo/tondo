@@ -76,22 +76,44 @@ pub(super) struct Spawned {
     pub(super) result: [u64; 2],
 }
 
-/// The blocks of tasks that ended, which this thread's next spawns take,
-/// as Go keeps a goroutine that ended for the next: every block has the
-/// same size, and making one was an allocation of every spawn. A thread
-/// that ends frees them.
-struct SpareBlocks(std::cell::RefCell<Vec<*mut Spawned>>);
-
-impl Drop for SpareBlocks {
-    fn drop(&mut self) {
-        for block in self.0.get_mut().drain(..) {
-            unsafe { std::alloc::dealloc(block.cast(), std::alloc::Layout::new::<Spawned>()) };
-        }
-    }
+thread_local! {
+    /// The blocks of tasks that ended, which this thread's next spawns take,
+    /// as Go keeps a goroutine that ended for the next: every block has the
+    /// same size, and making one was an allocation of every spawn. Made when
+    /// the thread first keeps one; what the runtime keeps for the thread frees
+    /// them as it ends (`Kept`).
+    static SPARE_BLOCKS: Cell<*mut Vec<*mut Spawned>> = const { Cell::new(std::ptr::null_mut()) };
 }
 
-thread_local! {
-    static SPARE_BLOCKS: SpareBlocks = const { SpareBlocks(std::cell::RefCell::new(Vec::new())) };
+/// This thread's spare blocks.
+fn spare_blocks() -> &'static mut Vec<*mut Spawned> {
+    let mut blocks = SPARE_BLOCKS.with(Cell::get);
+    if blocks.is_null() {
+        blocks = Box::into_raw(Box::default());
+        kept().blocks.set(blocks);
+        SPARE_BLOCKS.with(|cell| cell.set(blocks));
+    }
+    // Nothing that holds them calls back here.
+    unsafe { &mut *blocks }
+}
+
+/// Frees spare blocks: a thread's as it ends, and the vector with them
+/// unless another thread may still read it.
+pub(super) fn free_blocks(blocks: *mut Vec<*mut Spawned>, own: bool) {
+    if blocks.is_null() {
+        return;
+    }
+    for block in unsafe { (*blocks).drain(..) } {
+        unsafe { std::alloc::dealloc(block.cast(), std::alloc::Layout::new::<Spawned>()) };
+    }
+    if own {
+        SPARE_BLOCKS.with(|cell| {
+            if cell.get() == blocks {
+                cell.set(std::ptr::null_mut());
+            }
+        });
+        drop(unsafe { Box::from_raw(blocks) });
+    }
 }
 
 /// How many blocks a thread keeps.
@@ -110,16 +132,10 @@ pub(super) unsafe fn let_go(join: *mut JoinObject) {
             std::alloc::dealloc(result, std::alloc::Layout::from_size_align((*join).size, (*join).align).unwrap());
         }
         std::ptr::drop_in_place(block);
-        // A thread that ends frees it as before.
-        let kept = SPARE_BLOCKS.try_with(|spare| {
-            let mut spare = spare.0.borrow_mut();
-            let room = spare.len() < SPARE_BLOCK_LIMIT;
-            if room {
-                spare.push(block);
-            }
-            room
-        });
-        if !kept.unwrap_or(false) {
+        let spare = spare_blocks();
+        if spare.len() < SPARE_BLOCK_LIMIT {
+            spare.push(block);
+        } else {
             std::alloc::dealloc(block.cast(), std::alloc::Layout::new::<Spawned>());
         }
     }
@@ -162,7 +178,8 @@ pub unsafe extern "C" fn tondo_rt_spawn(
         task: std::mem::MaybeUninit::uninit(),
         result: [0; 2],
     };
-    let block = match SPARE_BLOCKS.try_with(|spare| spare.0.borrow_mut().pop()).ok().flatten() {
+    let spare = SPARE_BLOCKS.with(Cell::get);
+    let block = match unsafe { spare.as_mut() }.and_then(Vec::pop) {
         Some(block) => unsafe {
             block.write(spawned);
             block

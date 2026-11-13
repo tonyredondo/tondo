@@ -1,0 +1,661 @@
+// std.plugin (standard library 14.48): typed plugins. A trait with
+// `@plugin.Contract` before it is a contract, and its module gets a type,
+// `NamePlugin`, that loads an implementation of it while the program runs:
+// from a shared library, `NamePlugin.load(path)`, or from a program of its
+// own, `NamePlugin.start(command)`; and `serveName(value)`, with which a
+// program serves one. What crosses is MessagePack, and the contract is
+// checked when the plugin loads.
+//
+// ```tondo
+// import std.console
+// import std.plugin
+//
+// /// What a plugin offers here.
+// @plugin.Contract
+// pub trait Greeter {
+//     fn greet(self, name: String): String ! plugin.Error
+// }
+//
+// type Polite = {}
+//
+// impl Greeter for Polite {
+//     fn greet(self, name: String): String ! plugin.Error {
+//         "good morning, {name}"
+//     }
+// }
+//
+// fn main() {
+//     let polite = Polite {}
+//     match polite.greet("Ada") {
+//         ok(text) => console.println(text)
+//         err(error) => console.println("{error}")
+//     }
+// }
+// ```
+
+import std.console
+import std.ffi
+import std.hash
+import std.internal.library as libraryNative
+import std.io
+import std.messagepack
+import std.process
+import std.reflect as __reflect
+import std.serialization as __serialization
+import std.sync
+
+/// Marks a trait as a contract (14.48): each method takes `self`, has no
+/// type parameters, and gives `T ! Error` or `T ! (E | Error)`, of types
+/// that are written and read.
+///
+/// ```tondo
+/// import std.plugin
+///
+/// @plugin.Contract
+/// pub trait Counter {
+///     fn count(self, text: String): Int ! plugin.Error
+/// }
+/// ```
+pub annotation Contract = {}
+
+/// Marks the function of a library that gives the implementation of a
+/// contract it offers: no parameters, and `impl Name` of a type that is
+/// `Send` and `Share`.
+///
+/// ```tondo
+/// import std.plugin
+///
+/// @plugin.Contract
+/// pub trait Counter {
+///     fn count(self, text: String): Int ! plugin.Error
+/// }
+///
+/// type Words = {}
+///
+/// impl Counter for Words {
+///     fn count(self, text: String): Int ! plugin.Error {
+///         text.split(" ").length()
+///     }
+/// }
+///
+/// @plugin.Export
+/// fn counter(): impl Counter {
+///     Words {}
+/// }
+/// ```
+pub annotation Export = {}
+
+/// What can go wrong with a plugin, beside a method's own errors.
+///
+/// ```tondo
+/// import std.console
+/// import std.plugin
+///
+/// console.println("{plugin.Error.NotLoaded("no such file")}")
+/// ```
+pub enum Error {
+    /// The library or the program could not be loaded or started, with why.
+    NotLoaded(String)
+    /// The plugin was built against another contract, with what differs.
+    Contract(String)
+    /// The plugin panicked in a call, with the panic's message.
+    Panicked(String)
+    /// What crossed could not be read, with why.
+    Format(String)
+    /// The plugin is gone: unloaded, or its program ended.
+    Closed
+}
+
+impl Display for Error {
+    fn display(self): String {
+        match self {
+            NotLoaded(why) => "the plugin did not load: {why}"
+            Error.Contract(why) => "the plugin is of another contract: {why}"
+            Panicked(message) => "the plugin panicked: {message}"
+            Format(why) => "what the plugin sent could not be read: {why}"
+            Error.Closed => "the plugin is gone"
+        }
+    }
+}
+
+impl __reflect.Reflect for Error {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
+}
+
+/// As a record of its `kind`, the variant's name, and its `detail`.
+impl __serialization.Encode for Error {
+    fn encode[S: __serialization.Sink](self, out: S) {
+        let (kind, detail) = match self {
+            NotLoaded(why) => ("NotLoaded", why)
+            Error.Contract(why) => ("Contract", why)
+            Panicked(message) => ("Panicked", message)
+            Format(why) => ("Format", why)
+            Error.Closed => ("Closed", "")
+        }
+        out.beginRecord(__serialization.Record { name: "Error", count: 2, notes: [] })
+        out.key("kind")
+        out.text(kind)
+        out.key("detail")
+        out.text(detail)
+        out.endMap()
+    }
+}
+
+impl __serialization.Decode for Error {
+    fn decode[S: __serialization.Source](
+        input: S,
+        first: __serialization.Event,
+    ): Error ! __serialization.Error {
+        input.beginMap(first, "Error")?
+        var (kind, detail) = ("", "")
+        let names: Array[String] = ["kind", "detail"]
+        for {
+            match input.nextField(names)? {
+                some(0) => {
+                    kind = __serialization.Decode.decode[String](input, input.value()?)?
+                }
+                some(1) => {
+                    detail = __serialization.Decode.decode[String](input, input.value()?)?
+                }
+                some(_) => {}
+                none => break
+            }
+        }
+        match kind {
+            "NotLoaded" => Error.NotLoaded(detail)
+            "Contract" => Error.Contract(detail)
+            "Panicked" => Error.Panicked(detail)
+            "Format" => Error.Format(detail)
+            "Closed" => Error.Closed
+            _ => fail input.mismatch(first, "a plugin.Error")
+        }
+    }
+}
+
+/// What a contract is, as both ends compare it: its module and name, the
+/// fingerprint of its methods' types (14.48), and its methods' names in
+/// order. For the declarations a contract makes.
+///
+/// ```tondo
+/// import std.console
+/// import std.plugin
+///
+/// @plugin.Contract
+/// pub trait Counter {
+///     fn count(self, text: String): Int ! plugin.Error
+/// }
+///
+/// console.println("{CounterPlugin.contract().methods}")
+/// ```
+pub type Description = {
+    name: String
+    fingerprint: String
+    methods: Array[String]
+}
+
+/// The bytes of a description: MessagePack of `[name, fingerprint,
+/// methods]`.
+fn Description.bytes(self): Array[Byte] {
+    messagepack.encode((self.name, self.fingerprint, self.methods))
+}
+
+/// The description in `bytes`, or why it is not one.
+fn contractIn(bytes: Array[Byte]): Description ! Error {
+    match messagepack.decode[(String, String, Array[String])](bytes) {
+        ok((name, fingerprint, methods)) => Description { name, fingerprint, methods }
+        err(error) => fail Error.Format("the plugin's contract: {error}")
+    }
+}
+
+/// That the other end's contract is this one.
+fn Description.agrees(self, other: Description): !Error {
+    if other.fingerprint != self.fingerprint {
+        let which = match other.name == self.name {
+            true => "`{self.name}` of other methods or types"
+            false => "`{other.name}`"
+        }
+        fail Error.Contract(
+            "this program expects `{self.name}`, and the plugin offers {which}: their fingerprints differ",
+        )
+    }
+}
+
+/// The description of a contract, its fingerprint the SHA-256 of `text`,
+/// the contract written out in full, which the checker gives
+/// `contractText` (14.48).
+pub fn described(name: String, text: String, methods: Array[String]): Description {
+    Description { name, fingerprint: hash.sha256(text.bytes()).hex(), methods }
+}
+
+/// The contract of `NamePlugin`, the trait `Name`, written out in full: the
+/// checker puts the text in place of the call.
+pub fn contractText[P](): String {
+    ""
+}
+
+/// The value in `bytes`, or why it is not a `T`.
+pub fn decoded[T: __serialization.Decode](bytes: Array[Byte]): T ! Error {
+    match messagepack.decode[T](bytes) {
+        ok(value) => value
+        err(error) => fail Error.Format("{error}")
+    }
+}
+
+/// The bytes of a method's answer that gives nothing: MessagePack's nil.
+pub fn nothing(): Array[Byte] {
+    [Byte(0xc0) ?? 0]
+}
+
+/// The status of an answer that holds the method's result (14.48).
+pub const Returned: Int = 0
+
+/// The status of an answer that holds the method's own error.
+pub const Failed: Int = 1
+
+/// The status of an answer that holds a `plugin.Error`.
+pub const Broken: Int = 2
+
+/// The other end of a contract's plugin. For the declarations a contract
+/// makes: a program calls the methods of `NamePlugin`, which holds one.
+///
+/// ```tondo
+/// import std.console
+/// import std.plugin
+///
+/// @plugin.Contract
+/// pub trait Counter {
+///     fn count(self, text: String): Int ! plugin.Error
+/// }
+///
+/// match CounterPlugin.load("plugins/missing.so") {
+///     ok(_) => console.println("loaded")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
+pub type Link = {
+    priv contract: Description
+    priv way: Way
+}
+
+enum Way {
+    Library(Exports)
+    Program(Peer)
+}
+
+/// The entries a library that offers a contract publishes (14.48).
+alias DescribeEntry = extern fn(Pointer[Pointer[Byte]], Pointer[ffi.CSize])
+
+alias CallEntry = extern fn(
+    UInt32,
+    Pointer[Byte],
+    ffi.CSize,
+    Pointer[Pointer[Byte]],
+    Pointer[ffi.CSize],
+): Int32
+
+alias FreeEntry = extern fn(Pointer[Byte], ffi.CSize)
+
+type Exports = {
+    library: ffi.Library
+    call: ffi.Function[CallEntry]
+    free: ffi.Function[FreeEntry]
+}
+
+/// A program that serves a contract, with the calls that wait for its
+/// answers, by their number.
+type Peer = {
+    // The input goes first, so that the program, which waits for its end,
+    // ends before the process is waited for.
+    input: sync.Mutex[io.Writer]
+    process: sync.Mutex[process.Process]
+    waiting: sync.Map[Int, Sender[(Int, Array[Byte])]]
+    next: sync.Atomic[Int]
+    gone: sync.Atomic[Bool]
+}
+
+/// The library at `path`, which must offer `contract`.
+pub fn Link.load(path: String, contract: Description): Link ! Error {
+    let library = match ffi.Library.open(path) {
+        ok(library) => library
+        err(error) => fail Error.NotLoaded("{error}")
+    }
+    let published = (name: String) {
+        if not library.has(name) {
+            fail Error.Contract(
+                "`{path}` publishes no `{name}`: it is no plugin of `{contract.name}`",
+            )
+        }
+    }
+    published("tondo_plugin_contract")?
+    published("tondo_plugin_call")?
+    published("tondo_plugin_free")?
+    let given =
+        unsafe {
+            let (bytes, length) = (ffi.allocate[Pointer[Byte]](), ffi.allocate[ffi.CSize]())
+            match library.function[DescribeEntry]("tondo_plugin_contract") {
+                ok(entry) => entry.raw()(bytes, length)
+                err(error) => fail Error.NotLoaded("{error}")
+            }
+            let found = ffi.bytes(bytes.read(), Int.wrapping(length.read()))
+            ffi.free(bytes.cast[ffi.Void]())
+            ffi.free(length.cast[ffi.Void]())
+            found
+        }
+    contract.agrees(contractIn(given)?)?
+    let exports =
+        unsafe {
+            match (
+                library.function[CallEntry]("tondo_plugin_call"),
+                library.function[FreeEntry]("tondo_plugin_free"),
+            ) {
+                (ok(call), ok(free)) => Exports { library, call, free }
+                _ => fail Error.NotLoaded("`{path}` lost its entries")
+            }
+        }
+    Link { contract, way: Way.Library(exports) }
+}
+
+/// Starts `command`, which must serve `contract` over its standard input
+/// and output.
+pub fn Link.start(command: Command, contract: Description): Link ! Error {
+    let child = match command.stdin(process.Input.Pipe).stdout(process.Output.Pipe).start() {
+        ok(child) => child
+        err(error) => fail Error.NotLoaded("{error}")
+    }
+    let (input, output) = (child.stdin(), child.stdout())
+    let given = match frame(output) {
+        some(bytes) => bytes
+        none => fail Error.NotLoaded("the program ended before it said its contract")
+    }
+    contract.agrees(contractIn(given)?)?
+    // The program ends with the last copy of the link, as a process does
+    // with its last holder.
+    let peer = Peer {
+        input: sync.Mutex(input)
+        process: sync.Mutex(child)
+        waiting: sync.Map()
+        next: sync.Atomic(0)
+        gone: sync.Atomic(false)
+    }
+    spawn detached answers(output, peer.waiting, peer.gone)
+    Link { contract, way: Way.Program(peer) }
+}
+
+/// Calls method number `method` with its arguments' bytes: the status and
+/// the bytes of the answer, or the `plugin.Error` the other end gave.
+pub fn Link.call(self, method: Int, input: Array[Byte]): (Int, Array[Byte]) ! Error {
+    let (status, bytes) = match self.way {
+        Library(exports) => called(exports, method, input)
+        Program(peer) => asked(peer, method, input)?
+    }
+    if status == Broken {
+        fail match messagepack.decode[Error](bytes) {
+            ok(error) => error
+            err(error) => Error.Format("{error}")
+        }
+    }
+    (status, bytes)
+}
+
+/// A call of a library's method, which runs on this thread.
+fn called(exports: Exports, method: Int, input: Array[Byte]): (Int, Array[Byte]) {
+    unsafe {
+        let data = ffi.allocate[Byte](input.length())
+        for (index, byte) in input.enumerate() {
+            data.offset(index).write(byte)
+        }
+        let (output, length) = (ffi.allocate[Pointer[Byte]](), ffi.allocate[ffi.CSize]())
+        let status = exports.call.raw()(
+            UInt32.wrapping(method),
+            data,
+            UInt.wrapping(input.length()),
+            output,
+            length,
+        )
+        let answer = ffi.bytes(output.read(), Int.wrapping(length.read()))
+        exports.free.raw()(output.read(), length.read())
+        ffi.free(data.cast[ffi.Void]())
+        ffi.free(output.cast[ffi.Void]())
+        ffi.free(length.cast[ffi.Void]())
+        (Int(status), answer)
+    }
+}
+
+/// A call of a program's method: a frame of `[id, method, arguments]`, and
+/// the answer of that `id`, which the task of `answers` hands over.
+fn asked(peer: Peer, method: Int, input: Array[Byte]): (Int, Array[Byte]) ! Error {
+    let id = peer.next.add(1)
+    // Only the reader keeps the sender: when it goes, the wait ends.
+    let receive = {
+        let (send, receive) = channel[(Int, Array[Byte])](1)
+        _ = peer.waiting.insert(id, send)
+        receive
+    }
+    // The reader marks the program gone before it lets the waiting calls
+    // go: one registered after that would wait for nothing.
+    if peer.gone.load() {
+        _ = peer.waiting.remove(id)
+        fail Error.Closed
+    }
+    let request = triple(id, method, input)
+    let written = peer.input.update((writer) { framed(writer, request) })
+    if written.isErr() {
+        _ = peer.waiting.remove(id)
+        fail Error.Closed
+    }
+    match receive.receive() {
+        some(answer) => answer
+        none => fail Error.Closed
+    }
+}
+
+/// Reads a program's answers and hands each to the call that waits for it;
+/// when the program ends, every call still waiting gets `Closed`.
+fn answers(
+    output: io.Reader,
+    waiting: sync.Map[Int, Sender[(Int, Array[Byte])]],
+    gone: sync.Atomic[Bool],
+) {
+    for {
+        let bytes = match frame(output) {
+            some(bytes) => bytes
+            none => break
+        }
+        let (id, status, payload) = match split(bytes) {
+            ok(answer) => answer
+            err(_) => break
+        }
+        match waiting.remove(id) {
+            some(send) => _ = send.send((status, payload))
+            none => {}
+        }
+    }
+    gone.store(true)
+    // Closed here: a value taken out of a `sync.Map` keeps the map's
+    // reference until the map's memory is reclaimed.
+    for (id, _) in waiting.snapshot() {
+        match waiting.remove(id) {
+            some(send) => send.close()
+            none => {}
+        }
+    }
+}
+
+/// MessagePack of `[first, second, value]`, where `value` is MessagePack
+/// already: a request's arguments or an answer's payload (14.48).
+fn triple(first: Int, second: Int, value: Array[Byte]): Array[Byte] {
+    [Byte(0x93) ?? 0]
+        .concat(messagepack.encode(first))
+        .concat(messagepack.encode(second))
+        .concat(value)
+}
+
+/// The three parts of what `triple` makes.
+fn split(bytes: Array[Byte]): (Int, Int, Array[Byte]) ! Error {
+    let parts = match messagepack.parse(bytes) {
+        ok(parts) => parts
+        err(error) => fail Error.Format("{error}")
+    }
+    let number = (index: Int) { parts.at(index).map((part) { part.asInt() }) ?? none }
+    match (number(0), number(1), parts.at(2)) {
+        (some(first), some(second), some(value)) => (first, second, messagepack.encode(value))
+        _ => fail Error.Format("a frame of three parts, the first two numbers")
+    }
+}
+
+/// The next frame of `stream`: four bytes of its length, most significant
+/// first, then that many; none at the end.
+fn frame(stream: io.Reader): Array[Byte]? {
+    let head = exactly(stream, 4)?
+    let length = (Int(head[0]) << 24) | (Int(head[1]) << 16) | (Int(head[2]) << 8) | Int(head[3])
+    exactly(stream, length)
+}
+
+/// `count` bytes of `stream`, or none when it ends first.
+fn exactly(stream: io.Reader, count: Int): Array[Byte]? {
+    var bytes: Array[Byte] = []
+    for bytes.length() < count {
+        let more = (stream.read(count - bytes.length()) ?? none)?
+        bytes = bytes.concat(more)
+    }
+    bytes
+}
+
+/// Writes `bytes` to `writer` as a frame.
+fn framed(writer: io.Writer, bytes: Array[Byte]): !io.IoError {
+    let length = bytes.length()
+    let head = [24, 16, 8, 0].map((shift) { Byte(length >> shift & 255) ?? 0 })
+    writer.writeBytes(head.concat(bytes))?
+    writer.flush()?
+}
+
+/// Serves a contract over this program's standard input and output: its
+/// contract first, then an answer for each request, each request in a task
+/// of its own, until the other end closes. For the declarations a contract
+/// makes: a program calls `serveName`.
+pub fn serve(contract: Description, answer: fn(Int, Array[Byte]): (Int, Array[Byte])): !Error {
+    let input = console.stdin()
+    let output = sync.Mutex(console.stdout())
+    if output.update((writer) { framed(writer, contract.bytes()) }).isErr() {
+        fail Error.Closed
+    }
+    var group = Group[Unit]()
+    for {
+        let bytes = match frame(input) {
+            some(bytes) => bytes
+            none => break
+        }
+        let (id, method, given) = split(bytes)?
+        group.add(spawn replied(output, answer, id, method, given))
+    }
+    group.wait()
+}
+
+/// Answers request `id` of the other end, on `output`.
+fn replied(
+    output: sync.Mutex[io.Writer],
+    answer: fn(Int, Array[Byte]): (Int, Array[Byte]),
+    id: Int,
+    method: Int,
+    given: Array[Byte],
+) {
+    let (status, payload) = answered(answer, method, given)
+    _ = output.update((writer) { framed(writer, triple(id, status, payload)) })
+}
+
+/// The answer of a method, with a panic of it as `Panicked`.
+pub fn answered(
+    answer: fn(Int, Array[Byte]): (Int, Array[Byte]),
+    method: Int,
+    given: Array[Byte],
+): (Int, Array[Byte]) {
+    match recover { answer(method, given) } {
+        ok(result) => result
+        err(stopped) => (Broken, messagepack.encode(Error.Panicked(stopped.message)))
+    }
+}
+
+/// The bytes of a failure with `error`, for a method that cannot read its
+/// arguments.
+pub fn broken(error: Error): (Int, Array[Byte]) {
+    (Broken, messagepack.encode(error))
+}
+
+/// Argument number `index` of `arguments`, MessagePack of an array of them.
+pub fn argument[T: __serialization.Decode](given: Array[Byte], index: Int): T ! Error {
+    let all = match messagepack.parse(given) {
+        ok(all) => all
+        err(error) => fail Error.Format("{error}")
+    }
+    let value = match all.at(index) {
+        some(value) => value
+        none => fail Error.Format("argument {index} is missing")
+    }
+    match messagepack.decode[T](messagepack.encode(value)) {
+        ok(read) => read
+        err(error) => fail Error.Format("argument {index}: {error}")
+    }
+}
+
+/// A library's `tondo_plugin_contract` (14.48): writes the contract's bytes
+/// where `bytes` and `length` point, which `release` frees, and keeps
+/// `answer`, the first time, for the calls.
+pub unsafe fn offer(
+    contract: Description,
+    answer: fn(Int, Array[Byte]): (Int, Array[Byte]),
+    bytes: Pointer[Pointer[Byte]],
+    length: Pointer[ffi.CSize],
+) {
+    if libraryNative.kept() == 0 {
+        libraryNative.keep(Int.wrapping(ffi.context(answer).address()))
+    }
+    handed(contract.bytes(), bytes, length)
+}
+
+/// A library's `tondo_plugin_call` (14.48): the answer of method `method`
+/// to the bytes at `input`, written where `output` and `length` point; its
+/// status is what the call gives.
+pub unsafe fn offered(
+    method: UInt32,
+    input: Pointer[Byte],
+    inputLength: ffi.CSize,
+    output: Pointer[Pointer[Byte]],
+    length: Pointer[ffi.CSize],
+): Int32 {
+    let kept = libraryNative.kept()
+    if kept == 0 {
+        handed(
+            messagepack.encode(Error.NotLoaded("the library's contract was not read first")),
+            output,
+            length,
+        )
+        return Int32.wrapping(Broken)
+    }
+    let answer = ffi.fromContext[fn(Int, Array[Byte]): (Int, Array[Byte])](
+        UInt64.wrapping(kept).toPointer[ffi.Void](),
+    )
+    let given = ffi.bytes(input, Int.wrapping(inputLength))
+    let (status, payload) = answered(answer, Int(method), given)
+    handed(payload, output, length)
+    Int32.wrapping(status)
+}
+
+/// A library's `tondo_plugin_free` (14.48): frees what `offer` or `offered`
+/// wrote.
+pub unsafe fn release(bytes: Pointer[Byte], length: ffi.CSize) {
+    _ = length
+    ffi.free(bytes.cast[ffi.Void]())
+}
+
+/// Copies `payload` to memory of C's, whose address and length go where
+/// `output` and `length` point.
+unsafe fn handed(payload: Array[Byte], output: Pointer[Pointer[Byte]], length: Pointer[ffi.CSize]) {
+    let copy = ffi.allocate[Byte](payload.length())
+    for (index, byte) in payload.enumerate() {
+        copy.offset(index).write(byte)
+    }
+    output.write(copy)
+    length.write(UInt.wrapping(payload.length()))
+}

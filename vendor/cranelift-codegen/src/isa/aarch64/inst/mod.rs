@@ -38,6 +38,8 @@ pub use crate::isa::aarch64::lower::isle::generated_code::{
     FPUOp1, FPUOp2, FPUOp3, FpuRoundMode, FpuToIntOp, IntToFpuOp, MInst as Inst, MoveWideOp,
     VecALUModOp, VecALUOp, VecExtendOp, VecLanesOp, VecMisc2, VecPairOp, VecRRLongOp,
     VecRRNarrowOp, VecRRPairLongOp, VecRRRLongModOp, VecRRRLongOp, VecShiftImmModOp, VecShiftImmOp,
+    // Tondo: the instructions of `std.cpu.arm64`.
+    TondoOp,
 };
 
 /// A floating-point unit (FPU) operation with two args, a register and an immediate.
@@ -542,6 +544,22 @@ fn aarch64_get_operands(inst: &mut Inst, collector: &mut impl OperandVisitor) {
             collector.reg_use(rt);
         }
         Inst::Fence {} | Inst::Csdb {} => {}
+        // Tondo: the instructions of `std.cpu.arm64`.
+        Inst::TondoRRR { rd, rn, rm, .. } => {
+            collector.reg_def(rd);
+            collector.reg_use(rn);
+            collector.reg_use(rm);
+        }
+        Inst::TondoRRMod { rd, ri, rn, .. } => {
+            collector.reg_reuse_def(rd, 1); // `rd` == `ri`.
+            collector.reg_use(ri);
+            collector.reg_use(rn);
+        }
+        Inst::TondoRR { rd, rn, .. } => {
+            collector.reg_def(rd);
+            collector.reg_use(rn);
+        }
+        Inst::Isb => {}
         Inst::FpuMove32 { rd, rn } => {
             collector.reg_def(rd);
             collector.reg_use(rn);
@@ -1752,6 +1770,35 @@ impl Inst {
             &Inst::Csdb {} => {
                 format!("csdb")
             }
+            // Tondo: the instructions of `std.cpu.arm64`.
+            &Inst::TondoRRR { op, rd, rn, rm } => match op {
+                TondoOp::Crc32cb | TondoOp::Crc32cx => {
+                    let name = if op == TondoOp::Crc32cb { "crc32cb" } else { "crc32cx" };
+                    let data = if op == TondoOp::Crc32cb { OperandSize::Size32 } else { OperandSize::Size64 };
+                    let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size32);
+                    let rn = pretty_print_ireg(rn, OperandSize::Size32);
+                    let rm = pretty_print_ireg(rm, data);
+                    format!("{name} {rd}, {rn}, {rm}")
+                }
+                _ => {
+                    let (rd, rn, rm) = (show_reg(rd.to_reg()), show_reg(rn), show_reg(rm));
+                    format!("pmull {rd}.1q, {rn}.1d, {rm}.1d")
+                }
+            },
+            &Inst::TondoRRMod { op, rd, ri, rn } => {
+                let name = if op == TondoOp::Aese { "aese" } else { "aesd" };
+                let rd = pretty_print_vreg_vector(rd.to_reg(), VectorSize::Size8x16);
+                let ri = pretty_print_vreg_vector(ri, VectorSize::Size8x16);
+                let rn = pretty_print_vreg_vector(rn, VectorSize::Size8x16);
+                format!("{name} {rd}, {ri}, {rn}")
+            }
+            &Inst::TondoRR { op, rd, rn } => {
+                let name = if op == TondoOp::Aesmc { "aesmc" } else { "aesimc" };
+                let rd = pretty_print_vreg_vector(rd.to_reg(), VectorSize::Size8x16);
+                let rn = pretty_print_vreg_vector(rn, VectorSize::Size8x16);
+                format!("{name} {rd}, {rn}")
+            }
+            &Inst::Isb => "isb".to_string(),
             &Inst::FpuMove32 { rd, rn } => {
                 let rd = pretty_print_vreg_scalar(rd.to_reg(), ScalarSize::Size32);
                 let rn = pretty_print_vreg_scalar(rn, ScalarSize::Size32);

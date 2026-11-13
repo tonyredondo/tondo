@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::thread::JoinHandle;
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::unix::pipe;
 
@@ -305,7 +305,7 @@ impl Sink {
 /// its replay, a task of the runtime its worker drives, whose calls the
 /// recording has.
 enum Worker {
-    Thread(JoinHandle<()>),
+    Thread(super::tasks::RuntimeThread),
     Task(tokio::task::JoinHandle<()>),
 }
 
@@ -322,7 +322,7 @@ impl Worker {
                         return;
                     }
                 }
-                let _ = handle.join();
+                handle.join();
             }
             Worker::Task(handle) => {
                 super::http::wait(async move {

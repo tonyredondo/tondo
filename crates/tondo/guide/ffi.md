@@ -21,6 +21,90 @@ fn main() {
   library. `tondo bind header.h` writes the `extern` declarations of a
   header for you.
 - `Pointer[T]` and raw memory exist only inside `unsafe`.
+- `extern fn chdir(path: ffi.CString): ffi.CInt ! os.Errno` fails with the
+  system's error number when it gives -1, or null for a pointer: the call
+  gives `err(os.Errno(2))`, shown `os error 2: No such file or directory`.
+- `std.os.linux` already declares Linux's calls, constants and types, with
+  C's names, for the build's architecture: `linux.epoll_create1(0)`,
+  `linux.O_RDONLY`, and `linux.syscall(linux.SYS_getpid)` by number. Import
+  it from a file of Linux, `name_linux.to`; `tondo api std.os.linux.<name>`
+  shows one declaration.
+- `std.os.unix`, from any file, has what Linux and macOS share, and safe
+  calls on descriptors: `unix.open(path, unix.O_RDONLY)` gives a `unix.Fd`,
+  which closes when its value goes; `unix.read(ref fd, mut into)`,
+  `unix.write`, `unix.poll`, `unix.pipe()`, terminals and `unix.Mapping`.
+
+## Loading a library as the program runs
+
+`ffi.Library` loads a shared library, a plugin, while the program runs, and
+gives its functions as `ffi.Function[F]`, called as the `extern fn` `F`:
+
+```tondo
+import std.console
+import std.ffi
+
+fn main(): !ffi.LibraryError {
+    let program = ffi.Library.program()
+    let length = unsafe { program.function[extern fn(ffi.CString): ffi.CSize]("strlen")? }
+    console.println("{unsafe { length("tondo") }}")
+}
+```
+
+- `Library.open("plugins/libkit.so")` loads a file, from the current
+  directory unless the path is absolute, and never searches;
+  `Library.named("z")` searches as the system does for `libz.so`
+  (`ffi.libraryFileName`).
+- A function keeps its library loaded. A library of `open` stays loaded until
+  the program ends, unless Tondo built it; one that Tondo built, or of
+  `unsafe { Library.openUnloadable(...) }`, is unloaded when nothing holds
+  it, and `unsafe { library.close() }` unloads any now. A library that Tondo
+  built ends its runtime first, with the `<name>_stop` its header declares.
+- `function[F]` takes an `extern fn` type, and `has(name)` asks whether the
+  library publishes a name. A `--static` or `--target` build cannot load
+  libraries, and says so.
+
+## Typed plugins
+
+A trait with `@plugin.Contract` is a contract: a plugin implements it in a
+library or a program of its own, and the program loads it while it runs.
+What crosses is MessagePack, so each method takes `self` and gives
+`T ! plugin.Error`, or `T ! (E | plugin.Error)` with an error of its own, of
+types that are written and read.
+
+```tondo
+import std.console
+import std.plugin
+
+@plugin.Contract
+pub trait Greeter {
+    fn greet(self, name: String): String ! plugin.Error
+}
+
+type Polite = {}
+
+impl Greeter for Polite {
+    fn greet(self, name: String): String ! plugin.Error {
+        "good morning, {name}"
+    }
+}
+
+fn main() {
+    console.println("{Polite {}.greet("Ada")}")
+}
+```
+
+- The contract's module gets `GreeterPlugin`, which implements `Greeter` by
+  calling the plugin: `GreeterPlugin.load("plugins/libpolite.so")` loads a
+  library, `GreeterPlugin.start(process.command("polite"))` starts a
+  program. A program serves with `serveGreeter(Polite {})` in its `main`; a
+  library built with `tondo build --library` marks the function that gives
+  its implementation, `@plugin.Export fn greeter(): impl Greeter { Polite {} }`.
+- Loading compares the contract's fingerprint, its methods and every type
+  they reach: a plugin built against another contract is
+  `plugin.Error.Contract`. A panic in the plugin comes back as `Panicked`, a
+  program that ends as `Closed`.
+- A `GreeterPlugin` is shared by tasks; the program it started ends when its
+  last copy goes.
 
 ## Libraries for C
 
@@ -46,4 +130,7 @@ pub extern fn words_count(text: ffi.CString): ffi.CSize {
   `dlopen`.
 - Each call runs as a task on the thread that calls; it may wait, and the
   tasks it spawns go on after it returns.
+- `<name>_stop()`, in the header, ends its runtime so that `dlclose` can
+  unload it: its tasks are cancelled and run their `defer`s, its threads
+  end. Without it the library stays loaded; `ffi.Library` calls it for you.
 - `tondo check --library` and `tondo test --library` check and test it.

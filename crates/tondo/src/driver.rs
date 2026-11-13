@@ -142,6 +142,9 @@ pub struct Analysis {
     /// Where the program comes from, which its executable keeps; none with
     /// `--no-source-links`.
     pub project: Option<crate::roots::Project>,
+    /// The level of processor the root package's `[build] cpu` asks for,
+    /// and where it says it.
+    pub cpu: Option<(String, String)>,
 }
 
 thread_local! {
@@ -149,20 +152,82 @@ thread_local! {
     static OPEN: std::cell::RefCell<std::collections::HashMap<PathBuf, String>> = Default::default();
     /// A function compiled though nothing calls it: a debugger's call.
     static ROOT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
-    /// The system a build is for, when it is not this machine's
+    /// The target a build is for, when it is not this machine's
     /// (language 6.8).
-    static SYSTEM: std::cell::Cell<Option<project::System>> = const { std::cell::Cell::new(None) };
+    static TARGET: std::cell::Cell<Option<project::Target>> = const { std::cell::Cell::new(None) };
+    /// The level of processor `--cpu` asks for (toolchain 7.8).
+    static CPU: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// The level the build of this thread lowers its code for.
+    static LEVEL: std::cell::RefCell<Option<crate::target::Cpu>> = const { std::cell::RefCell::new(None) };
+    /// The level the root package's `[build] cpu` asks for, as the program
+    /// of this thread is checked.
+    static PROJECT_CPU: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
-/// The system the builds of this thread are for: this machine's, or the
-/// one `for_system` sets.
+/// Makes the builds of this thread for the level of processor `--cpu`
+/// names.
+pub fn set_cpu(name: &str) {
+    CPU.with(|cpu| *cpu.borrow_mut() = Some(name.to_string()));
+}
+
+/// The level `--cpu` asked for, for a cache key: empty when none did.
+pub fn asked_cpu() -> String {
+    CPU.with(|cpu| cpu.borrow().clone().unwrap_or_default())
+}
+
+/// The level of processor a build of `analysis` is for (toolchain 7.8):
+/// `--cpu`'s, or else its `[build] cpu`, or else `baseline`; the lowering
+/// of this thread's builds takes it from here on.
+pub fn cpu(analysis: &Analysis, target: Option<Target>) -> Result<crate::target::Cpu, String> {
+    let foreign = target.filter(|target| !target.native()).map(Target::name);
+    let arch = self::target().arch;
+    let level = match (CPU.with(|cpu| cpu.borrow().clone()), &analysis.cpu) {
+        (Some(name), _) => crate::target::Cpu::parse(&name, arch, foreign)?,
+        (None, Some((name, place))) => {
+            crate::target::Cpu::parse(name, arch, foreign).map_err(|e| format!("{place}: {e}"))?
+        }
+        (None, None) => crate::target::Cpu::parse("baseline", arch, None)?,
+    };
+    LEVEL.with(|cell| *cell.borrow_mut() = Some(level.clone()));
+    Ok(level)
+}
+
+/// The level a check of this thread's program takes the build's to be
+/// (toolchain 7.8), for what a function needs beyond it: `--cpu`'s, or else
+/// the root package's `[build] cpu`, or else `baseline`, for the target
+/// checked. A name that is no level is `baseline` here: the build says
+/// what is wrong with it.
+pub fn checked_level() -> crate::target::Cpu {
+    let arch = target().arch;
+    let name = CPU.with(|cpu| cpu.borrow().clone()).or_else(|| PROJECT_CPU.with(|cpu| cpu.borrow().clone()));
+    name.and_then(|name| crate::target::Cpu::parse(&name, arch, None).ok()).unwrap_or_else(|| {
+        crate::target::Cpu::parse("baseline", arch, None).expect("every architecture has a baseline")
+    })
+}
+
+/// The level the code of this thread's build is lowered for: the last
+/// `cpu` resolved, or `baseline`.
+pub fn level() -> crate::target::Cpu {
+    let set = LEVEL.with(|cell| cell.borrow().clone());
+    set.unwrap_or_else(|| {
+        crate::target::Cpu::parse("baseline", target().arch, None).expect("every architecture has a baseline")
+    })
+}
+
+/// The target the builds of this thread are for: this machine's, or the
+/// one `for_target` sets.
+pub fn target() -> project::Target {
+    TARGET.get().unwrap_or_else(project::Target::host)
+}
+
+/// The system the builds of this thread are for.
 pub fn system() -> project::System {
-    SYSTEM.get().unwrap_or_else(project::System::host)
+    target().system
 }
 
-/// Makes the builds of this thread for `system`, as `--target` does.
-pub fn set_system(system: project::System) {
-    SYSTEM.set(Some(system));
+/// Makes the builds of this thread for `target`, as `--target` does.
+pub fn set_target(target: project::Target) {
+    TARGET.set(Some(target));
 }
 
 /// Runs `f` with the files `open` names read as it says, as an editor's
@@ -178,11 +243,11 @@ pub fn with_open<T>(open: std::collections::HashMap<PathBuf, String>, root: &str
     out
 }
 
-/// Runs `f` with builds for `system`, as `tondo check` does for each.
-pub fn for_system<T>(system: project::System, f: impl FnOnce() -> T) -> T {
-    let before = SYSTEM.replace(Some(system));
+/// Runs `f` with builds for `target`, as `tondo check` does for each.
+pub fn for_target<T>(target: project::Target, f: impl FnOnce() -> T) -> T {
+    let before = TARGET.replace(Some(target));
     let out = f();
-    SYSTEM.set(before);
+    TARGET.set(before);
     out
 }
 
@@ -212,27 +277,33 @@ pub fn analyze(path: &Path) -> Result<Analysis, String> {
 /// files of a system is checked for each system it runs on, and an error
 /// of only one says which (language 6.8).
 pub fn check(path: &Path) -> Result<Analysis, String> {
-    let systems = checked_systems(path)?;
+    let targets = checked_targets(path)?;
     let carried = Carried::here();
-    // The other systems' analyses and the tests' run beside this machine's,
+    // The other targets' analyses and the tests' run beside this machine's,
     // each on a thread of its own as this one is set, and are merged in the
     // same order as one after another (docs/speed.md, B5).
     std::thread::scope(|scope| {
-        let others: Vec<_> = systems[1..]
+        let others: Vec<_> = targets[1..]
             .iter()
-            .map(|&other| {
+            .map(|&(other, _)| {
                 beside(scope, &carried, move || {
-                    for_system(other, || analyze_with(path, false, false, false, Root::Checked))
+                    for_target(other, || analyze_with(path, false, false, false, Root::Checked))
                 })
             })
             .collect();
-        let tests =
-            path.is_dir().then(|| beside(scope, &carried, || analyze_with(path, true, false, false, Root::Checked)));
-        let mut analysis = for_system(systems[0], || analyze_with(path, false, false, false, Root::Checked))?;
-        for (handle, &other) in others.into_iter().zip(&systems[1..]) {
-            let more = joined(handle)?;
-            merge_system(&mut analysis, &more, other);
+        // The tests, for the first target too: a package may not run on
+        // this machine's.
+        let first = targets[0].0;
+        let tests = path.is_dir().then(|| {
+            beside(scope, &carried, move || for_target(first, || analyze_with(path, true, false, false, Root::Checked)))
+        });
+        let mut analysis = for_target(targets[0].0, || analyze_with(path, false, false, false, Root::Checked))?;
+        let mut more = Vec::new();
+        for (handle, (_, stands)) in others.into_iter().zip(&targets[1..]) {
+            more.push((stands.as_slice(), joined(handle)?));
         }
+        let more: Vec<(&[project::Target], &Analysis)> = more.iter().map(|(stands, a)| (*stands, a)).collect();
+        merge_targets(&mut analysis, &more, &targets);
         // A project's tests too, once its code is right, as an editor shows
         // them: what they alone say, in their own files.
         if let Some(handle) = tests {
@@ -241,7 +312,7 @@ pub fn check(path: &Path) -> Result<Analysis, String> {
                 let tests = tests?;
                 // And of the code, what only the tests show: a mark in it of a
                 // step no model in them has (`W1020`).
-                merge(&mut analysis, &tests, None, |diagnostic, file| {
+                merge(&mut analysis, &tests, |diagnostic, file| {
                     file.logical.ends_with("_test.to")
                         || Path::new(&file.logical).starts_with("tests")
                         || diagnostic.code == Some("W1020")
@@ -265,7 +336,7 @@ const ANALYSIS_STACK: usize = 8 << 20;
 struct Carried {
     open: std::collections::HashMap<PathBuf, String>,
     root: Option<String>,
-    system: Option<project::System>,
+    target: Option<project::Target>,
 }
 
 impl Carried {
@@ -273,7 +344,7 @@ impl Carried {
         Carried {
             open: OPEN.with(|o| o.borrow().clone()),
             root: ROOT.with(|r| r.borrow().clone()),
-            system: SYSTEM.get(),
+            target: TARGET.get(),
         }
     }
 
@@ -281,7 +352,7 @@ impl Carried {
     fn set<T>(self, f: impl FnOnce() -> T) -> T {
         OPEN.with(|o| *o.borrow_mut() = self.open);
         ROOT.with(|r| *r.borrow_mut() = self.root);
-        SYSTEM.set(self.system);
+        TARGET.set(self.target);
         f()
     }
 }
@@ -304,44 +375,132 @@ fn joined(handle: std::thread::ScopedJoinHandle<'_, Result<Analysis, String>>) -
     handle.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
-/// The systems `tondo check` checks a project for: this machine's, first,
-/// and those of the others the package runs on, when it has files of a
-/// system; or only the first it runs on.
-pub fn checked_systems(path: &Path) -> Result<Vec<project::System>, String> {
-    let here = system();
+/// The targets `tondo check` checks a project for: this machine's, first,
+/// and the others the package runs on, each with those it stands for. A
+/// package none of whose files, nor those of what it uses, names an
+/// architecture is the same on both, and one with no file of a system the
+/// same on each: then one of them is checked for all.
+pub fn checked_targets(path: &Path) -> Result<Vec<(project::Target, Vec<project::Target>)>, String> {
+    let here = target();
     if !path.is_dir() {
-        return Ok(vec![here]);
+        // A file of some targets, as `watch_linux.to`, is checked for one of
+        // them, this machine's or the nearest (language 6.8).
+        let of = project::targets_of(path).unwrap_or_default();
+        let nearest = of.into_iter().min_by_key(|t| (t.system != here.system, t.arch != here.arch)).unwrap_or(here);
+        return Ok(vec![(nearest, vec![nearest])]);
     }
     let packages = deps::resolve(path, None)?;
-    let runs = |system: &project::System| packages[0].systems.is_empty() || packages[0].systems.contains(system);
-    let mut systems: Vec<project::System> = project::System::ALL.into_iter().filter(runs).collect();
-    systems.sort_by_key(|system| *system != here);
-    let mut by_system = false;
+    let runs = |t: &project::Target| {
+        (packages[0].systems.is_empty() || packages[0].systems.contains(&t.system))
+            && (packages[0].architectures.is_empty() || packages[0].architectures.contains(&t.arch))
+    };
+    let mut targets: Vec<project::Target> = project::Target::ALL.into_iter().filter(runs).collect();
+    targets.sort_by_key(|t| (t.system != here.system, t.arch != here.arch));
+    let (mut by_system, mut by_arch) = (false, false);
     for package in &packages {
         let (files, _) = project::sources(&package.dir, &package.name, None)?;
-        by_system |= files.iter().any(|file| project::systems_of(&file.path).is_some());
+        for file in &files {
+            let (systems, archs) = project::suffixes(&file.path);
+            by_system |= systems.is_some();
+            by_arch |= archs.is_some();
+            // A module of the standard library of some targets, as
+            // `std.os.linux`, makes the targets differ too.
+            let text = std::fs::read_to_string(&file.path).unwrap_or_default();
+            let imported =
+                text.lines().filter_map(|line| line.trim().strip_prefix("import std.")?.split_whitespace().next());
+            if let Some((systems, archs)) =
+                imported.filter_map(stdlib::targeted).reduce(|a, b| (a.0 || b.0, a.1 || b.1))
+            {
+                by_system |= systems;
+                by_arch |= archs;
+            }
+        }
     }
-    if !by_system {
-        systems.truncate(1);
+    let mut kept: Vec<(project::Target, Vec<project::Target>)> = Vec::new();
+    for &t in &targets {
+        let same = |k: &project::Target| (!by_system || k.system == t.system) && (!by_arch || k.arch == t.arch);
+        match kept.iter_mut().find(|(k, _)| same(k)) {
+            Some((_, stands)) => stands.push(t),
+            None => kept.push((t, vec![t])),
+        }
     }
-    Ok(systems)
+    if kept.is_empty() {
+        kept.push((here, vec![here]));
+    }
+    Ok(kept)
 }
 
-/// Adds to an analysis the diagnostics of another system's that it does
-/// not have, each saying the system, with the files they are in.
-pub fn merge_system(into: &mut Analysis, from: &Analysis, system: project::System) {
-    merge(into, from, Some(system), |_, _| true);
+/// Adds to an analysis the diagnostics of other targets' that it does not
+/// have, with the files they are in, each saying where, of all the targets
+/// checked: a system alone when all of its architectures have it, an
+/// architecture alone when all of its systems do (language 6.8). Each
+/// analysis comes with the targets it stands for.
+pub fn merge_targets(
+    into: &mut Analysis,
+    others: &[(&[project::Target], &Analysis)],
+    checked: &[(project::Target, Vec<project::Target>)],
+) {
+    // Each diagnostic once, with the targets that have it.
+    let mut found: Vec<(crate::diag::Diagnostic, Vec<project::Target>)> = Vec::new();
+    for (stands, from) in others {
+        for diagnostic in moved(into, from, true, |_, _| true) {
+            let same = |(d, _): &&mut (crate::diag::Diagnostic, Vec<project::Target>)| {
+                d.code == diagnostic.code && d.message == diagnostic.message && d.span == diagnostic.span
+            };
+            match found.iter_mut().find(same) {
+                Some((_, targets)) => targets.extend(stands.iter()),
+                None => found.push((diagnostic, stands.to_vec())),
+            }
+        }
+    }
+    let checked: Vec<project::Target> = checked.iter().flat_map(|(_, stands)| stands.iter().copied()).collect();
+    let mut added = Vec::new();
+    for (mut diagnostic, targets) in found {
+        let known = into
+            .diags
+            .list
+            .iter()
+            .any(|d| d.code == diagnostic.code && d.message == diagnostic.message && d.span == diagnostic.span);
+        if !known {
+            diagnostic.message = format!("on {}: {}", project::shown_targets(&targets, &checked), diagnostic.message);
+            added.push(diagnostic);
+        }
+    }
+    into.diags.list.extend(added);
+    into.diags.sort(&into.sources);
 }
 
 /// Adds to an analysis the diagnostics of another that it does not have,
-/// of the files `wanted` takes, with those files; of another system's, each
-/// says which.
+/// of the files `wanted` takes, with those files.
 fn merge(
     into: &mut Analysis,
     from: &Analysis,
-    system: Option<project::System>,
     wanted: impl Fn(&crate::diag::Diagnostic, &crate::source::SourceFile) -> bool,
 ) {
+    let mut added = Vec::new();
+    for diagnostic in moved(into, from, false, wanted) {
+        let known = into
+            .diags
+            .list
+            .iter()
+            .any(|d| d.code == diagnostic.code && d.message == diagnostic.message && d.span == diagnostic.span);
+        if !known {
+            added.push(diagnostic);
+        }
+    }
+    into.diags.list.extend(added);
+    into.diags.sort(&into.sources);
+}
+
+/// The diagnostics of another analysis, of the files `wanted` takes, with
+/// their spans moved into `into`, which gets the files it lacks; those
+/// with no span when `spanless`, as another target's are.
+fn moved(
+    into: &mut Analysis,
+    from: &Analysis,
+    spanless: bool,
+    wanted: impl Fn(&crate::diag::Diagnostic, &crate::source::SourceFile) -> bool,
+) -> Vec<crate::diag::Diagnostic> {
     let mut moved = |span: Span| -> Span {
         let file = from.sources.file_of(span.start);
         let found = (0..into.sources.len()).find(|&i| {
@@ -359,11 +518,11 @@ fn merge(
         let base = into.sources.file(index).base;
         Span::new(span.start - file.base + base, span.end - file.base + base)
     };
-    let mut added = Vec::new();
     let taken = from.diags.list.iter().filter(|d| match d.span {
         Some(span) => wanted(d, from.sources.file_of(span.start)),
-        None => system.is_some(),
+        None => spanless,
     });
+    let mut out = Vec::new();
     for mut diagnostic in taken.cloned() {
         diagnostic.span = diagnostic.span.map(&mut moved);
         for fix in &mut diagnostic.fixes {
@@ -374,26 +533,29 @@ fn merge(
         for related in &mut diagnostic.related {
             related.0 = moved(related.0);
         }
-        let known = into
-            .diags
-            .list
-            .iter()
-            .any(|d| d.code == diagnostic.code && d.message == diagnostic.message && d.span == diagnostic.span);
-        if !known {
-            if let Some(system) = system {
-                diagnostic.message = format!("on {}: {}", system.shown(), diagnostic.message);
-            }
-            added.push(diagnostic);
-        }
+        out.push(diagnostic);
     }
-    into.diags.list.extend(added);
-    into.diags.sort(&into.sources);
+    out
 }
 
 /// Reads, parses and checks a library for C (toolchain 7): without `main`,
 /// it publishes `pub extern fn`s.
 pub fn analyze_library(path: &Path) -> Result<Analysis, String> {
-    analyze_with(path, false, false, false, Root::CLibrary)
+    let name = library_name(path)?;
+    let mut analysis = analyze_with(path, false, false, false, Root::CLibrary)?;
+    if let Some(program) = analysis.program.as_mut() {
+        program.c_api.name = Some(name);
+    }
+    Ok(analysis)
+}
+
+/// A library's name: its package's, or its file's.
+pub fn library_name(path: &Path) -> Result<String, String> {
+    if path.is_dir() {
+        return Ok(crate::deps::resolve(path, None)?[0].name.clone());
+    }
+    let stem = path.file_stem().ok_or_else(|| format!("cannot name a library after {}", path.display()))?;
+    Ok(stem.to_string_lossy().into_owned())
 }
 
 /// Reads, parses and checks the test build of a project (testing 5): its
@@ -448,6 +610,8 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
     let mut source_id = format!("root:{}", path.file_name().unwrap_or_default().to_string_lossy());
     let mut libraries: Vec<String> = Vec::new();
     let mut elsewhere = Vec::new();
+    let mut cpu = None;
+    PROJECT_CPU.with(|project| *project.borrow_mut() = None);
     // The dependencies, whose warnings their authors see, not this program's.
     let mut dependencies: Vec<String> = Vec::new();
     // A file alone is a program of its name, at version 0.0.0.
@@ -461,15 +625,24 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
     let module = if path.is_dir() {
         let packages = deps::resolve(path, None)?;
         project.dir = path.to_path_buf();
-        let system = system();
+        let target = target();
         for package in &packages {
-            if !package.systems.is_empty() && !package.systems.contains(&system) {
+            if !package.systems.is_empty() && !package.systems.contains(&target.system) {
                 let named: Vec<&str> = package.systems.iter().map(|s| s.shown()).collect();
                 return Err(format!(
                     "the package `{}` runs on {}, as `systems` in its tondo.toml says: it is not built for {}",
                     package.name,
                     named.join(" and "),
-                    system.shown()
+                    target.system.shown()
+                ));
+            }
+            if !package.architectures.is_empty() && !package.architectures.contains(&target.arch) {
+                let named: Vec<&str> = package.architectures.iter().map(|a| a.name()).collect();
+                return Err(format!(
+                    "the package `{}` runs on {}, as `architectures` in its tondo.toml says: it is not built for {}",
+                    package.name,
+                    named.join(" and "),
+                    target.arch.name()
                 ));
             }
         }
@@ -479,8 +652,11 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             .map(|p| (p.name.clone(), p.dir.clone(), p.origin.clone()))
             .collect();
         project.template = packages[0].source_url.clone();
-        elsewhere = packages.iter().flat_map(|package| declared_elsewhere(package, system)).collect();
+        elsewhere = packages.iter().flat_map(|package| declared_elsewhere(package, target)).collect();
         dependencies = packages[1..].iter().map(|p| p.name.clone()).collect();
+        // The program's own `[build]` decides, not a dependency's.
+        cpu = packages[0].cpu.clone();
+        PROJECT_CPU.with(|project| *project.borrow_mut() = cpu.as_ref().map(|(name, _)| name.clone()));
         built = ast::Built {
             name: packages[0].name.clone(),
             version: packages[0].version.clone(),
@@ -504,7 +680,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             if package.tests_only && !tests {
                 continue;
             }
-            let (files, root_file) = project::sources(&package.dir, &package.name, Some(system))?;
+            let (files, root_file) = project::sources(&package.dir, &package.name, Some(target))?;
             // `.proto` files are modules of their own, whose source the
             // compiler writes from them, all together.
             let root_path = files.get(root_file).map(|f| f.path.clone());
@@ -585,7 +761,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             // Companions join the module of their directory; each root
             // under `tests/` is a module of a package that depends on the
             // tested one.
-            let (companions, roots) = project::test_sources(&packages[0].dir, &tested, Some(system))?;
+            let (companions, roots) = project::test_sources(&packages[0].dir, &tested, Some(target))?;
             let first = sources.len();
             let parsed_files = parse_files(companions.iter().map(|f| f.path.as_path()), &mut sources, &mut diags)?;
             for (index, (file, parsed)) in companions.into_iter().zip(parsed_files).enumerate() {
@@ -628,6 +804,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                 expansions,
                 index,
                 project: Some(project.clone()),
+                cpu: cpu.clone(),
             });
         }
         let mut providers: Vec<Vec<(String, PathBuf)>> = packages.iter().map(|p| p.providers.clone()).collect();
@@ -676,6 +853,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                     expansions,
                     index,
                     project: Some(project.clone()),
+                    cpu: cpu.clone(),
                 });
             }
         };
@@ -740,6 +918,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             expansions,
             index,
             project: Some(project.clone()),
+            cpu: cpu.clone(),
         });
     }
     let checking = crate::times::part("check");
@@ -775,6 +954,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         expansions,
         index: None,
         project: Some(project.clone()),
+        cpu: cpu.clone(),
     })
 }
 
@@ -844,11 +1024,11 @@ fn drop_dependency_warnings(diags: &mut Diagnostics, sources: &SourceMap, depend
 /// Reads and parses one source file; `None` when it cannot be lexed.
 /// What the files of a package that are not for `system` declare at their
 /// top, for an error about a name only they have (language 6.8).
-fn declared_elsewhere(package: &deps::Package, system: project::System) -> Vec<ast::Elsewhere> {
+fn declared_elsewhere(package: &deps::Package, target: project::Target) -> Vec<ast::Elsewhere> {
     let Ok((files, _)) = project::sources(&package.dir, &package.name, None) else { return Vec::new() };
     let mut found = Vec::new();
     for file in files {
-        let Some(systems) = project::systems_of(&file.path).filter(|systems| !systems.contains(&system)) else {
+        let Some(targets) = project::targets_of(&file.path).filter(|targets| !targets.contains(&target)) else {
             continue;
         };
         let (mut sources, mut diags) = (SourceMap::default(), Diagnostics::default());
@@ -859,7 +1039,7 @@ fn declared_elsewhere(package: &deps::Package, system: project::System) -> Vec<a
             let text = source.slice(Span::new(span.start, end.max(span.start)));
             text.lines().next().unwrap_or_default().trim().trim_end_matches('{').trim_end().to_string()
         };
-        let systems: Vec<&str> = systems.iter().map(|system| system.shown()).collect();
+        let systems = project::shown_targets(&targets, &project::Target::ALL);
         let relative = file.path.strip_prefix(&package.dir).unwrap_or(&file.path);
         for item in &module.items {
             let (name, head) = match item {
@@ -874,7 +1054,7 @@ fn declared_elsewhere(package: &deps::Package, system: project::System) -> Vec<a
                 module: file.module.join("."),
                 name: name.clone(),
                 file: relative.display().to_string(),
-                systems: systems.join(" and "),
+                systems: systems.clone(),
                 head,
             });
         }
@@ -923,7 +1103,7 @@ pub fn proto_tondo(path: &Path) -> Option<String> {
     let path = path.canonicalize().ok()?;
     let dir = path.ancestors().find(|dir| dir.join("tondo.toml").is_file())?;
     let package = deps::resolve(dir, None).ok()?.into_iter().next()?;
-    let (files, _) = project::sources(&package.dir, &package.name, Some(system())).ok()?;
+    let (files, _) = project::sources(&package.dir, &package.name, Some(target())).ok()?;
     let protos: Vec<_> = files.iter().filter(|file| file.path.extension().is_some_and(|e| e == "proto")).collect();
     let module = protos.iter().find(|file| file.path.canonicalize().ok().as_deref() == Some(&path))?.module.clone();
     let source_root = if package.dir.join("src").is_dir() { package.dir.join("src") } else { package.dir.clone() };
@@ -1054,7 +1234,8 @@ pub fn library(analysis: &Analysis, object: &[u8], dir: &Path, name: &str) -> Re
         archives.push(carried("libunwind", UNWIND)?);
     }
     // The shared library, which publishes the functions alone.
-    let exports: Vec<String> = program.c_api.functions.iter().map(|f| f.symbol.clone()).collect();
+    let mut exports: Vec<String> = program.c_api.functions.iter().map(|f| f.symbol.clone()).collect();
+    exports.extend([format!("{name}_stop"), crate::header::STOP.to_string()]);
     let product = crate::link::Product::Library { exports: &exports };
     crate::link::link(object, &archives, &runtime_args, &analysis.libraries, &dir.join(&shared), product)?;
     // The static one, whose host links what it needs.
@@ -1144,6 +1325,7 @@ pub fn object_counting(
     fuzz: bool,
 ) -> Result<(Vec<u8>, Vec<codegen::Counted>), String> {
     let program = analysis.program.as_ref().expect("object_counting() requires a checked program");
+    let cpu = cpu(analysis, target)?;
     let bodies = lower::lower(program, false, debug, None);
     let mut counted = Vec::new();
     let triple = target.map(Target::triple);
@@ -1151,6 +1333,7 @@ pub fn object_counting(
         meta: analysis.meta,
         debug,
         target: triple,
+        cpu: &cpu,
         live: None,
         roots: "",
         coverage: Some(&mut counted),
@@ -1169,6 +1352,7 @@ pub fn compile(
 ) -> Result<Vec<u8>, String> {
     let program = analysis.program.as_ref().expect("object() requires a checked program");
     let debug = debug || live.is_some();
+    let cpu = cpu(analysis, target)?;
     let lowering = crate::times::part("lower");
     let mut bodies = lower::lower(program, live.is_some(), debug, live.as_ref().map(|build| &build.catch_ups));
     drop(lowering);
@@ -1184,6 +1368,7 @@ pub fn compile(
         meta: analysis.meta,
         debug,
         target: triple,
+        cpu: &cpu,
         live,
         coverage: None,
         fuzz: false,
@@ -1391,6 +1576,7 @@ pub fn optimizations(
     let program = analysis.program.as_ref().expect("optimizations() requires a checked program");
     let sources = &analysis.sources;
     crate::mir_text::ask_remarks(true);
+    cpu(analysis, None)?;
     let mut bodies = lower::lower(program, false, false, None);
     if !analysis.meta {
         optimize(&mut bodies, &program.types, sources);
@@ -1748,6 +1934,7 @@ pub fn assembly_with(
         let file = sources.file_of(body.span.start);
         body.span != crate::source::Span::default() && !file.dependency && !file.logical.starts_with("<std>/")
     };
+    cpu(analysis, None)?;
     let bodies = lower::lower(program, false, false, None);
     let mut names: std::collections::HashSet<String> = match function {
         Some(name) if bodies.iter().any(|body| body.name == name) => std::iter::once(name.to_string()).collect(),
@@ -2239,6 +2426,17 @@ fn link_arguments(linker: &str, library: &str) -> Result<Vec<String>, String> {
 /// `statically` links the C library into it, a `target` makes it for
 /// another machine, statically, and a debug build's runs can be recorded
 /// (toolchain 7.6).
+/// Whether an object calls the runtime's loading of shared libraries.
+fn loads_libraries(object: &[u8]) -> bool {
+    use object::{Object, ObjectSymbol};
+    let Ok(file) = object::File::parse(object) else { return false };
+    file.symbols().filter(|symbol| symbol.is_undefined()).any(|symbol| {
+        let name = symbol.name().unwrap_or_default();
+        let name = name.strip_prefix('_').filter(|_| file.format() == object::BinaryFormat::MachO).unwrap_or(name);
+        matches!(name, "tondo_rt_library_open" | "tondo_rt_library_program")
+    })
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct Linking {
     pub strip: bool,
@@ -2295,6 +2493,17 @@ pub fn runtime_functions(statically: bool, target: Option<Target>) -> Result<Vec
 
 pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking) -> Result<(), String> {
     let _linking = crate::times::part("link");
+    // A static executable loads no library (standard library 19.3): the
+    // object calls the runtime's loading when the program reaches it.
+    if (linking.statically || linking.target.is_some()) && loads_libraries(object) {
+        return Err(match linking.target {
+            Some(target) => format!(
+                "a static executable loads no library, and a build with --target {} is static: this program loads libraries with `ffi.Library`; build it on the machine it runs on, without --target",
+                target.name()
+            ),
+            None => "a static executable loads no library: this program loads libraries with `ffi.Library`; build it without --static".into(),
+        });
+    }
     if let Some(target) = linking.target.filter(|t| !t.native()) {
         let archives = target.pack(RUNTIME_IDENTITY.trim())?;
         let product = crate::link::Product::Executable {

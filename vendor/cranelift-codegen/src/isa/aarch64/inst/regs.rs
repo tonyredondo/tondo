@@ -163,7 +163,8 @@ fn show_vreg(reg: RealReg) -> String {
     format!("v{}", reg.hw_enc() & 31)
 }
 
-fn show_reg(reg: Reg) -> String {
+// Tondo: `pmull` of `std.cpu.arm64` prints its arrangements itself.
+pub(crate) fn show_reg(reg: Reg) -> String {
     if let Some(rreg) = reg.to_real_reg() {
         match rreg.class() {
             RegClass::Int => show_ireg(rreg),

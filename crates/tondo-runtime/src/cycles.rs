@@ -508,6 +508,17 @@ fn start_collector() {
     }
 }
 
+/// Ends the collector's thread, for a library's end.
+pub(crate) fn stop() {
+    let _wanted = WANTED.lock().unwrap_or_else(|e| e.into_inner());
+    WANT.notify_all();
+}
+
+/// The next collection starts the thread again.
+pub(crate) fn restart() {
+    COLLECTOR.store(false, Ordering::SeqCst);
+}
+
 /// What the collector's thread and those that ask it share.
 pub(crate) fn wanted() -> &'static Mutex<bool> {
     &WANTED
@@ -530,6 +541,9 @@ fn collector() {
     loop {
         let mut wanted = WANTED.lock().unwrap_or_else(|e| e.into_inner());
         while !*wanted {
+            if super::tasks::stopping() {
+                return;
+            }
             wanted = WANT.wait(wanted).unwrap_or_else(|e| e.into_inner());
         }
         *wanted = false;

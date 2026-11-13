@@ -106,6 +106,14 @@ uses them: the same record is read from JSON and written as YAML.
 | [std.image](image.md) | PNG, JPEG, GIF and WebP: resize, crop, rotate, colors, EXIF |
 | [std.process](process.md) | running programs and pipelines, their input and output, signals |
 | [std.env](env.md) | arguments, environment, directories, processors, what the program was built from |
+| [std.cpu](cpu.md) | what the processor has beyond the level the program was built for |
+| [std.cpu.x64](cpu.x64.md), [std.cpu.arm64](cpu.arm64.md) | one instruction of the processor each: CRC32C, AES, carry-less products, BMI2's bit deposit and extract |
+| [std.plugin](plugin.md) | typed plugins: a trait loaded from a library or a program while the program runs |
+| [std.simd](simd.md) | vectors of numbers computed a lane at a time by the processor's vector instructions |
+| [std.os](os.md) | what is of each system: its error number, `os.Errno` |
+| [std.os.linux](os.linux.md) | Linux's calls, constants and types with C's names, and `syscall` |
+| [std.os.macos](os.macos.md) | macOS's calls, constants and types with C's names |
+| [std.os.unix](os.unix.md) | what Linux and macOS share: descriptors, `read`, `write`, `poll`, terminals, mappings |
 
 ## Text, numbers and time
 

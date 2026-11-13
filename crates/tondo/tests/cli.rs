@@ -341,6 +341,34 @@ fn the_cache_keeps_a_programs_last_builds() {
     assert_eq!(builds.filter(|entry| entry.path().is_dir()).count(), 2);
 }
 
+/// A program built again where it runs still runs, and its new build runs
+/// too: written over in place, Linux refuses to write it and macOS kills
+/// the new one, whose file kept the old one's signature.
+#[test]
+fn a_program_built_again_while_it_runs() {
+    use std::io::Write;
+    let dir = scratch("cli-again");
+    let build = |source: &str| {
+        std::fs::write(dir.join("main.to"), source).unwrap();
+        let (_, stderr, status) = tondo(&dir, &["build", "main.to", "--output", "main"]);
+        assert_eq!(status, 0, "{stderr}");
+    };
+    build("import std.console\n\nconsole.println(\"first {console.readLine() ?? \"\"}\")\n");
+    let mut first = Command::new(dir.join("main"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    build("import std.console\n\nconsole.println(\"second\")\n");
+    let second = Command::new(dir.join("main")).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&second.stdout), "second\n", "{:?}", second.status);
+    writeln!(first.stdin.take().unwrap(), "done").unwrap();
+    let first = first.wait_with_output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&first.stdout), "first done\n");
+    let left: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|entry| entry.file_name()).collect();
+    assert_eq!(left.len(), 2, "{left:?}");
+}
+
 /// Every code a diagnostic of the compiler gives has its explanation.
 #[test]
 fn every_code_is_explained() {
@@ -453,6 +481,265 @@ fn builds_the_files_of_its_system() {
         shown(here)
     );
     assert!(err.contains(&refused), "{err}");
+}
+
+/// Files for one architecture, and for a system and an architecture
+/// (language 6.8): each build has its target's, `tondo check` checks every
+/// target, an error says where, and a name with the architecture first is
+/// refused.
+#[test]
+fn builds_the_files_of_its_architecture() {
+    let (here, other) = if cfg!(target_arch = "aarch64") { ("arm64", "x64") } else { ("x64", "arm64") };
+    let system = if cfg!(target_os = "macos") { "macos" } else { "linux" };
+    let dir = scratch("architectures");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\n").unwrap();
+    std::fs::write(dir.join("src/main.to"), "import std.console\n\nfn main() {\n    console.println(crc())\n}\n")
+        .unwrap();
+    let crc = |arch: &str| format!("fn crc(): String {{\n    \"{arch}\"\n}}\n");
+    std::fs::write(dir.join(format!("src/crc_{here}.to")), crc(here)).unwrap();
+    std::fs::write(
+        dir.join(format!("src/crc_{system}_{here}_test.to")),
+        format!("test crcIsHere {{\n    assert(crc() == \"{here}\")\n}}\n"),
+    )
+    .unwrap();
+    // Missing for the other architecture, on every system: named alone.
+    let (_, err, code) = tondo(&dir, &["check"]);
+    assert_eq!(code, 1, "{err}");
+    let hint = format!(
+        "on {other}: unknown name `crc`; `crc` is in `src/crc_{here}.to`, for {here}: write it for {other} too, in a file `*_{other}.to` or a common one, as `fn crc(): String`"
+    );
+    assert!(err.contains(&hint), "{err}");
+    // Both: it checks, and runs and tests this machine's.
+    std::fs::write(dir.join(format!("src/crc_{other}.to")), crc(other)).unwrap();
+    let (out, err, code) = tondo(&dir, &["check"]);
+    assert_eq!((out.as_str(), code), ("", 0), "{err}");
+    let (out, err, code) = tondo(&dir, &["run"]);
+    assert_eq!((out.as_str(), code), (format!("{here}\n").as_str(), 0), "{err}");
+    let (out, err, code) = tondo(&dir, &["test"]);
+    assert!(code == 0 && out.contains("1 passed"), "{out}{err}");
+    // A file of a system and an architecture, missing on the others.
+    std::fs::remove_file(dir.join(format!("src/crc_{other}.to"))).unwrap();
+    std::fs::rename(dir.join(format!("src/crc_{here}.to")), dir.join(format!("src/crc_{system}_{here}.to"))).unwrap();
+    let (_, err, code) = tondo(&dir, &["check"]);
+    assert_eq!(code, 1, "{err}");
+    // Each target that lacks it, with the file to write for it.
+    let (shown, elsewhere, named) =
+        if system == "linux" { ("Linux", "macOS", "macos") } else { ("macOS", "Linux", "linux") };
+    let lacking = [
+        format!("on {shown} {other}: unknown name `crc`"),
+        format!(
+            "on {elsewhere} {here}: unknown name `crc`; `crc` is in `src/crc_{system}_{here}.to`, for {shown} {here}: write it for {elsewhere} {here} too, in a file `*_{named}_{here}.to`"
+        ),
+    ];
+    assert!(lacking.iter().all(|line| err.contains(line.as_str())), "{err}");
+    // The architecture before the system: the name to write.
+    std::fs::rename(dir.join(format!("src/crc_{system}_{here}.to")), dir.join(format!("src/crc_{here}_{system}.to")))
+        .unwrap();
+    let (_, err, code) = tondo(&dir, &["check"]);
+    assert_ne!(code, 0, "{err}");
+    assert!(err.contains(&format!("the system goes before the architecture, as `crc_{system}_{here}.to`")), "{err}");
+    std::fs::rename(dir.join(format!("src/crc_{here}_{system}.to")), dir.join(format!("src/crc_{here}.to"))).unwrap();
+    // A package of the other architecture only; and an unknown one.
+    std::fs::write(dir.join("tondo.toml"), format!("[package]\nname = \"app\"\narchitectures = [\"{other}\"]\n"))
+        .unwrap();
+    let (_, err, code) = tondo(&dir, &["run"]);
+    assert_ne!(code, 0);
+    let refused = format!(
+        "the package `app` runs on {other}, as `architectures` in its tondo.toml says: it is not built for {here}"
+    );
+    assert!(err.contains(&refused), "{err}");
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\narchitectures = [\"riscv\"]\n").unwrap();
+    let (_, err, _) = tondo(&dir, &["check"]);
+    assert!(err.contains("names the architectures the package runs on: `x64`, `arm64`"), "{err}");
+}
+
+/// A module of the standard library of one system (standard library
+/// 14.45): from a common file, the error says where it is missing and what
+/// to write; from a file of Linux, of a project or alone, it checks on any
+/// machine, and on Linux its calls run, `syscall` with up to six arguments.
+#[test]
+fn imports_a_module_of_one_system() {
+    let dir = scratch("system-modules");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\n").unwrap();
+    let linux = "import std.console\nimport std.env\nimport std.os.linux\n\nfn main() {\n    \
+                 let process = unsafe { linux.syscall(linux.SYS_getpid) }\n    \
+                 console.println(\"{process == ok(env.processId())}\")\n    \
+                 console.println(\"{unsafe { linux.chdir(\"/no/such/directory\") }}\")\n    \
+                 _ = unsafe { linux.syscall(linux.SYS_getpid, 1, 2, 3, 4, 5, 6, 7) }\n}\n";
+    std::fs::write(dir.join("src/main.to"), linux).unwrap();
+    let (_, err, code) = tondo(&dir, &["check"]);
+    assert_eq!(code, 1, "{err}");
+    let missing = "`std.os.linux` is of Linux only: import it from a file of Linux, as `name_linux.to`, or limit the \
+                   package with `systems = [\"linux\"]` in tondo.toml";
+    assert!(err.contains(missing), "{err}");
+    assert!(cfg!(target_os = "macos") || err.contains(&format!("on macOS: {missing}")), "{err}");
+    std::fs::remove_file(dir.join("src/main.to")).unwrap();
+    std::fs::write(dir.join("src/main_linux.to"), linux).unwrap();
+    std::fs::write(dir.join("src/main_macos.to"), "fn main() {}\n").unwrap();
+    let (out, err, code) = tondo(&dir, &["check"]);
+    assert_eq!((out.as_str(), code), ("", 0), "{err}");
+    // A file alone is checked for the system its name says, on any machine.
+    std::fs::write(dir.join("alone_linux.to"), linux).unwrap();
+    std::fs::write(dir.join("alone_macos.to"), linux).unwrap();
+    let (_, err, code) = tondo(&dir, &["check", "alone_linux.to"]);
+    assert_eq!(code, 0, "{err}");
+    let (_, err, code) = tondo(&dir, &["check", "alone_macos.to"]);
+    assert!(code == 1 && err.contains(missing), "{err}");
+    if cfg!(target_os = "linux") {
+        let (out, err, code) = tondo(&dir, &["run"]);
+        assert_eq!(out, "true\nerr(os error 2: No such file or directory)\n", "{err}");
+        assert_ne!(code, 0);
+        assert!(err.contains("a system call takes at most six arguments, and this one has 7"), "{err}");
+    }
+}
+
+/// The level of processor a build is for (toolchain 7.8): `baseline`,
+/// another with `--cpu` or the root package's `[build] cpu`, each a build of
+/// its own, and a level that does not exist named with those that do.
+#[test]
+fn builds_for_a_level_of_processor() {
+    let dir = scratch("levels");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("dep/src")).unwrap();
+    std::fs::write(dir.join("src/main.to"), "import std.console\nimport std.env\nimport dep\n\nfn main() {\n    console.println(\"{env.build().cpu} {dep.answer()}\")\n}\n").unwrap();
+    // A dependency's `[build]` is not read: the program decides.
+    std::fs::write(dir.join("dep/tondo.toml"), "[package]\nname = \"dep\"\n\n[build]\ncpu = \"x86-64-v4\"\n").unwrap();
+    std::fs::write(dir.join("dep/src/dep.to"), "pub fn answer(): Int {\n    42\n}\n").unwrap();
+    let manifest =
+        |build: &str| format!("[package]\nname = \"app\"\n{build}\n[dependencies]\ndep = {{ path = \"dep\" }}\n");
+    std::fs::write(dir.join("tondo.toml"), manifest("")).unwrap();
+    let run = |args: &[&str]| tondo(&dir, &[&["run"][..], args].concat());
+    assert_eq!(run(&[]), ("baseline 42\n".into(), String::new(), 0));
+    assert_eq!(run(&["--cpu", "native"]).0, "native 42\n");
+    assert_eq!(run(&[]).0, "baseline 42\n");
+    std::fs::write(dir.join("tondo.toml"), manifest("\n[build]\ncpu = \"native\"\n")).unwrap();
+    assert_eq!(run(&[]).0, "native 42\n");
+    assert_eq!(run(&["--cpu", "baseline"]).0, "baseline 42\n");
+    // On x64, the next level, which this processor may lack.
+    #[cfg(target_arch = "x86_64")]
+    {
+        let (out, err, code) = run(&["--cpu", "x86-64-v3"]);
+        match std::is_x86_feature_detected!("avx2") {
+            true => assert_eq!((out.as_str(), code), ("x86-64-v3 42\n", 0), "{err}"),
+            false => assert!(code == 101 && err.contains("built for x86-64-v3 and this processor lacks"), "{err}"),
+        }
+    }
+    // A level that does not exist, and a key `[build]` does not have.
+    let (_, err, code) = run(&["--cpu", "fast"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("unknown processor level `fast`:") && err.contains("`baseline`"), "{err}");
+    std::fs::write(dir.join("tondo.toml"), manifest("\n[build]\nopt = \"3\"\n")).unwrap();
+    let (_, err, _) = run(&[]);
+    assert!(err.contains("tondo.toml:5: unknown key `opt` in `[build]`, which has `cpu`"), "{err}");
+}
+
+/// `cpu.has` (standard library 14.44): a feature of the build's level and
+/// one of the other architecture are known when compiling, with no test
+/// and nothing of the way that does not run; one above the level asks
+/// what the runtime found, which `cpu.features()` lists as the system does.
+#[test]
+fn cpu_has_answers_from_the_level_or_the_processor() {
+    let dir = scratch("cpu-has");
+    let (level, above, other) = match cfg!(target_arch = "aarch64") {
+        true => ("Neon", "Lse", "Avx2"),
+        false => ("Sse42", "Avx2", "Neon"),
+    };
+    let program = format!(
+        "import std.console\nimport std.cpu\n\nfn level(): String {{\n    if cpu.has(cpu.Feature.{level}) {{ \"level\" }} else {{ \"lacking\" }}\n}}\n\nfn above(): String {{\n    if cpu.has(cpu.Feature.{above}) {{ \"above\" }} else {{ \"not above\" }}\n}}\n\nfn other(): String {{\n    if cpu.has(cpu.Feature.{other}) {{ \"other\" }} else {{ \"not other\" }}\n}}\n\nfn main() {{\n    console.println(\"{{level()}} {{other()}} {{above()}} {{cpu.features()}}\")\n}}\n"
+    );
+    std::fs::write(dir.join("has.to"), program).unwrap();
+    let asked = |function: &str| {
+        let (out, err, code) = tondo(&dir, &["asm", "has.to", function]);
+        assert_eq!(code, 0, "{err}");
+        (out.contains("tondo_rt_cpu_has"), out)
+    };
+    // One text of the two: the way that runs. arm64 names a text at each
+    // of the two instructions that load its address.
+    let texts = |code: &str| {
+        let mut named: Vec<&str> = code.split_whitespace().filter(|word| word.starts_with("tondo_str")).collect();
+        named.sort_unstable();
+        named.dedup();
+        named.len()
+    };
+    for function in ["level", "other"] {
+        let (tested, code) = asked(function);
+        assert!(!tested && texts(&code) == 1, "{code}");
+    }
+    let (tested, code) = asked("above");
+    assert!(tested && texts(&code) == 2, "{code}");
+    let (out, err, code) = tondo(&dir, &["run", "has.to"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.starts_with("level not other "), "{out}");
+    // What the system says the processor has, by the names it gives them.
+    #[cfg(target_os = "linux")]
+    {
+        let info = std::fs::read_to_string("/proc/cpuinfo").unwrap();
+        let line = info.lines().find(|line| line.starts_with("flags") || line.starts_with("Features")).unwrap();
+        let flags: Vec<&str> = line.split_once(':').unwrap().1.split_whitespace().collect();
+        let names: &[(&str, &str)] = match cfg!(target_arch = "aarch64") {
+            true => &[
+                ("Neon", "asimd"),
+                ("Lse", "atomics"),
+                ("Crc32", "crc32"),
+                ("Pmull", "pmull"),
+                ("Sha2", "sha2"),
+                ("Aes", "aes"),
+            ],
+            false => &[
+                ("Sse3", "pni"),
+                ("Ssse3", "ssse3"),
+                ("Sse41", "sse4_1"),
+                ("Sse42", "sse4_2"),
+                ("Popcnt", "popcnt"),
+                ("Avx", "avx"),
+                ("Avx2", "avx2"),
+                ("Fma", "fma"),
+                ("Bmi1", "bmi1"),
+                ("Bmi2", "bmi2"),
+                ("Lzcnt", "abm"),
+                ("Avx512F", "avx512f"),
+                ("Avx512Dq", "avx512dq"),
+                ("Avx512Vl", "avx512vl"),
+                ("Avx512Bw", "avx512bw"),
+                ("Pclmulqdq", "pclmulqdq"),
+                ("Sha", "sha_ni"),
+                ("Aes", "aes"),
+            ],
+        };
+        let listed = out.trim_end().rsplit_once('[').unwrap().1.trim_end_matches(']');
+        let found: Vec<&str> = listed.split(", ").filter(|name| !name.is_empty()).collect();
+        let expected: Vec<&str> =
+            names.iter().filter(|(_, flag)| flags.contains(flag)).map(|(name, _)| *name).collect();
+        assert_eq!(found, expected, "{line}");
+    }
+}
+
+/// `math.fma` is one instruction where the level has it: every arm64, and
+/// an x64 from x86-64-v3; a call of the runtime below that.
+#[test]
+fn fma_is_one_instruction_where_the_level_has_it() {
+    let dir = scratch("fused");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let program = "import std.console\nimport std.math\n\nfn fused(a: Float, b: Float, c: Float): Float {\n    math.fma(a, b, c)\n}\n\nfn main() {\n    console.println(\"{fused(2.0, 3.0, 1.0)}\")\n}\n";
+    std::fs::write(dir.join("src/main.to"), program).unwrap();
+    let levels: &[(&str, bool)] =
+        if cfg!(target_arch = "aarch64") { &[("baseline", true)] } else { &[("baseline", false), ("x86-64-v3", true)] };
+    for &(level, fused) in levels {
+        std::fs::write(dir.join("tondo.toml"), format!("[package]\nname = \"fused\"\n\n[build]\ncpu = \"{level}\"\n"))
+            .unwrap();
+        let (out, err, code) = tondo(&dir, &["asm", "fused"]);
+        assert_eq!(code, 0, "{err}");
+        assert_eq!(!out.contains("tondo_rt_math_fma"), fused, "{level}: {out}");
+        assert_eq!(tondo(&dir, &["run"]).0, "7.0\n");
+    }
+    // `--cpu` shows a level's code without the manifest's.
+    if cfg!(target_arch = "x86_64") {
+        std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"fused\"\n").unwrap();
+        let (out, err, code) = tondo(&dir, &["asm", "fused", "--cpu", "x86-64-v3"]);
+        assert!(code == 0 && !out.contains("tondo_rt_math_fma"), "{out}{err}");
+    }
 }
 
 /// A write made from an earlier read has a repair: one `update`, unless what

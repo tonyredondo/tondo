@@ -181,6 +181,7 @@ impl<'a> Checker<'a> {
             ["std", "text"] => StdModule::Text,
             ["std", "time"] => StdModule::Time,
             ["std", "sync"] => StdModule::Sync,
+            ["std", "simd"] => StdModule::Simd,
             ["std", "fs"] => StdModule::Fs,
             ["std", "path"] => StdModule::Path,
             ["std", "io"] => StdModule::Io,
@@ -193,6 +194,8 @@ impl<'a> Checker<'a> {
             ["std", "internal", "reflect"] => StdModule::InternalReflect,
             ["std", "internal", "text"] => StdModule::InternalText,
             ["std", "internal", "math"] => StdModule::InternalMath,
+            ["std", "internal", "cpu"] => StdModule::InternalCpu,
+            ["std", "internal", "library"] => StdModule::InternalLibrary,
             ["std", "internal", "meta"] => StdModule::InternalMeta,
             ["std", "internal", "codec"] => StdModule::InternalCodec,
             ["std", "internal", "http"] => StdModule::InternalHttp,
@@ -214,6 +217,14 @@ impl<'a> Checker<'a> {
             ["std", "internal", "image"] => StdModule::InternalImage,
             ["std", "internal", "context"] => StdModule::InternalContext,
             ["std", "internal", "channel"] => StdModule::InternalChannel,
+            ["std", rest @ ..] if let Some((targets, suffix, key)) = crate::stdlib::elsewhere(&path) => {
+                let message = format!(
+                    "`std.{}` is of {targets} only: import it from a file of {targets}, as `name_{suffix}.to`, or limit the package with `{key} = [\"{suffix}\"]` in tondo.toml",
+                    rest.join(".")
+                );
+                self.diags.error("E1008", import.span, message);
+                return;
+            }
             ["std", rest @ ..] => {
                 let name = rest.join(".");
                 let modules = crate::api::standard_modules();
@@ -328,8 +339,12 @@ impl<'a> Checker<'a> {
                 | StdModule::InternalFs
                 | StdModule::InternalSql
                 | StdModule::InternalImage
+                | StdModule::InternalLibrary
         ) {
             self.types.handle(Handle::Native, Ty::UNIT);
+        }
+        if module == StdModule::InternalFs {
+            self.types.handle(Handle::Owned, Ty::UNIT);
         }
         if matches!(module, StdModule::InternalFs | StdModule::InternalTime | StdModule::InternalImage) {
             self.types.intern(TyKind::Array(Ty::INT));
@@ -477,11 +492,15 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalFs
                     | StdModule::InternalSql
                     | StdModule::InternalImage
+                    | StdModule::InternalLibrary
                     | StdModule::InternalText
                     | StdModule::InternalContext,
                 )),
                 "Native",
             ) => Some(self.types.intern(TyKind::Handle(Handle::Native, Ty::UNIT))),
+            (Some(ModuleName::Module(StdModule::InternalFs)), "Owned") => {
+                Some(self.types.intern(TyKind::Handle(Handle::Owned, Ty::UNIT)))
+            }
             (Some(ModuleName::Module(StdModule::InternalReflect)), "Box") => {
                 Some(self.types.intern(TyKind::Handle(Handle::ReflectBox, Ty::UNIT)))
             }
@@ -585,6 +604,12 @@ impl<'a> Checker<'a> {
             self.type_names.insert(name.name.clone(), value);
         } else if self.type_names.insert(name.name.clone(), value).is_some() {
             let message = format!("type `{}` is declared more than once", name.name);
+            self.diags.error("E1002", name.span, message);
+            self.first_declared(name);
+        } else if self.trait_names.contains_key(&name.name) && self.declared_at.contains_key(&name.name) {
+            // A trait declared by this name, not one of the prelude's,
+            // which every module sees by its own.
+            let message = format!("`{}` is already declared", name.name);
             self.diags.error("E1002", name.span, message);
             self.first_declared(name);
         } else {

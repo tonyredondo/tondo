@@ -6,7 +6,11 @@
 // cycles of a run on each side, which where the code lies does not move as
 // it moves the time.
 //
-//   tondo run bench/compare.to [--time <seconds>] [--output <file>]
+//   tondo run bench/compare.to [--time <seconds>] [--output <file>] [--cpu <level>]
+//
+// `--cpu` builds both sides for a level of processor, as `tondo --cpu` and
+// Go's `GOAMD64` name it: `x86-64-v3` is Go's `v3`; without it each side
+// builds for its own default, Tondo's `baseline` and Go's `v1`.
 //
 // With `--old <tondo>` it compares that `tondo` with this one instead, as a
 // change of the runtime is held to a baseline (docs/refactor.md, 0.7): the
@@ -39,7 +43,8 @@ type Row = {
 }
 
 /// What `tondo test --bench` measured, by `test/benchmark`.
-fn tondoSide(tondo: String, seconds: String): Map[String, Measure] ! String {
+fn tondoSide(tondo: String, seconds: String, cpu: String): Map[String, Measure] ! String {
+    let level = if cpu.isEmpty() { [] } else { ["--cpu", cpu] }
     let ran =
         process
             .command(
@@ -51,6 +56,7 @@ fn tondoSide(tondo: String, seconds: String): Map[String, Measure] ! String {
                 seconds,
                 "--test-format",
                 "json",
+                ...level,
             )
             .output()
             .mapErr((e) { "cannot run {tondo}: {e}" })?
@@ -73,25 +79,35 @@ fn tondoSide(tondo: String, seconds: String): Map[String, Measure] ! String {
     measured
 }
 
+/// Go's `GOAMD64` for a level of Tondo's, or nothing for Go's default.
+fn goLevel(cpu: String): String {
+    match cpu {
+        "baseline" | "x86-64-v2" => "v2"
+        "x86-64-v3" => "v3"
+        "x86-64-v4" => "v4"
+        _ => ""
+    }
+}
+
+/// A command of Go's, for the level `GOAMD64` names, if any.
+fn goCommand(level: String, arguments: Array[String]): Command {
+    let command = process.command("go", ...arguments).directory("bench/go")
+    if level.isEmpty() { command } else { command.env("GOAMD64", level) }
+}
+
 /// What `go test -bench` measured, by the same names: `BenchmarkCalls/fib_25`
 /// is `calls/fib 25`.
-fn goSide(seconds: String): Map[String, Measure] ! String {
+fn goSide(seconds: String, level: String): Map[String, Measure] ! String {
     let ran =
-        process
-            .command(
-                "go",
-                "test",
-                "-run",
-                "^$",
-                "-bench",
-                ".",
-                "-benchmem",
-                "-benchtime",
-                "{seconds}s",
+        goCommand(
+                level,
+                ["test", "-run", "^$", "-bench", ".", "-benchmem", "-benchtime", "{seconds}s"],
             )
-            .directory("bench/go")
             .output()
             .mapErr((e) { "cannot run go: {e}" })?
+    if ran.statuses.isEmpty() or not ran.statuses[0].success {
+        fail "go test failed: {String.fromBytes(ran.stderr) ?? ""}{String.fromBytes(ran.stdout) ?? ""}"
+    }
     let text = ran.text().mapErr((e) { "go's output is not text: {e}" })?
     var measured: Map[String, Measure] = [:]
     for line in text.lines() {
@@ -140,7 +156,7 @@ fn perfCounts(text: String): (Float, Float) {
 /// about a fifth of a second, and twice as many, under `perf stat`, and the
 /// difference leaves out what does not repeat, the start of the program and
 /// Go's first run.
-fn goCounts(measured: Map[String, Measure]): Map[String, Measure] ! String {
+fn goCounts(measured: Map[String, Measure], level: String): Map[String, Measure] ! String {
     let probe = process.command("perf", "stat", "-x", ",", "-e", "instructions:u", "true").output()
     let works = match probe {
         ok(out) => out.statuses.length() > 0 and out.statuses[0].success
@@ -156,9 +172,7 @@ fn goCounts(measured: Map[String, Measure]): Map[String, Measure] ! String {
             .mapErr((e) { "cannot make a directory: {e}" })?
     let binary = "{dir}/bench.test"
     _ =
-        process
-            .command("go", "test", "-c", "-o", binary)
-            .directory("bench/go")
+        goCommand(level, ["test", "-c", "-o", binary])
             .check()
             .mapErr((e) { "cannot build Go's benchmarks: {e}" })?
     var counted: Map[String, Measure] = [:]
@@ -243,6 +257,7 @@ fn againstOld(
     old: String,
     tondo: String,
     seconds: String,
+    cpu: String,
     rounds: Int,
     max: Float,
     output: String,
@@ -251,11 +266,11 @@ fn againstOld(
     for round in 0..rounds {
         // Each goes first in turn.
         if round % 2 == 1 {
-            news.push(tondoSide(tondo, seconds)?)
+            news.push(tondoSide(tondo, seconds, cpu)?)
         }
-        olds.push(tondoSide(old, seconds)?)
+        olds.push(tondoSide(old, seconds, cpu)?)
         if round % 2 == 0 {
-            news.push(tondoSide(tondo, seconds)?)
+            news.push(tondoSide(tondo, seconds, cpu)?)
         }
     }
     let combined = (runs: Array[Map[String, Measure]], name: String) {
@@ -316,6 +331,7 @@ fn main(): !String {
     var seconds = "1"
     var output = ""
     var old = ""
+    var cpu = ""
     var rounds = 4
     var max = 5.0
     let arguments = env.args()
@@ -325,6 +341,7 @@ fn main(): !String {
             "--time" => seconds = value
             "--output" => output = value
             "--old" => old = value
+            "--cpu" => cpu = value
             "--rounds" => rounds = Int.parse(value) ?? 4
             "--max" => max = Float.parse(value) ?? 5.0
             _ => {}
@@ -332,11 +349,12 @@ fn main(): !String {
     }
     let tondo = env.get("TONDO") ?? "tondo"
     if old != "" {
-        againstOld(old, tondo, seconds, rounds, max, output)?
+        againstOld(old, tondo, seconds, cpu, rounds, max, output)?
         return
     }
-    let ours = tondoSide(tondo, seconds)?
-    let theirs = match goCounts(goSide(seconds)?) {
+    let ours = tondoSide(tondo, seconds, cpu)?
+    let level = goLevel(cpu)
+    let theirs = match goCounts(goSide(seconds, level)?, level) {
         ok(counted) => counted
         err(error) => fail error
     }

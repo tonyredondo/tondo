@@ -11,7 +11,8 @@ use std::path::Path;
 /// The thread-locals besides the worker's, by file and name, with why.
 const KNOWN: &[(&str, &str, &str)] = &[
     ("tasks/mod.rs", "WORKER", "what a worker keeps: lent by `worker` alone"),
-    ("tasks/stacks.rs", "GIVE_BACK", "gives the worker's spare stacks back as its thread ends"),
+    ("tasks/threads.rs", "RUNTIME_THREAD", "set as a runtime thread starts, read before a task moves off a host's"),
+    ("tasks/threads.rs", "KEPT", "what the runtime keeps for the thread, read through `kept`, never inlined"),
     ("tasks/mod.rs", "LOOSE_CLEANUPS", "cleanups registered outside any task, as in unit tests"),
     ("contexts.rs", "SHOWING", "outside any task; a task keeps its own"),
     ("cycles.rs", "OWES", "the thread owes the collector until its next safe point, which it reaches as it runs"),
@@ -51,7 +52,6 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("shared.rs", "LOCAL", "a thread's place in the reclamation of shared collections, whichever task runs"),
     ("shared.rs", "DEPTH", "set while a shared collection is read, which never waits"),
     ("trace.rs", "LAST", "where the thread's latest tasks were started, for a fault's report"),
-    ("trace.rs", "SIGNAL", "a signal's handler, which runs on its thread"),
 ];
 
 /// The files of Rust under `dir`, however deep.

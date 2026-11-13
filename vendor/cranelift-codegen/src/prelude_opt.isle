@@ -206,6 +206,8 @@
     (iconst ty (imm64 c_masked)))
 (rule iconst_s_i128 1 (iconst_s $I128 c) (sextend $I128 (iconst_s $I64 c)))
 (rule 2 (iconst_s (ty_vec128 ty) c) (splat ty (iconst_s (lane_type ty) c)))
+;; Tondo: and of 256 bits.
+(rule 3 (iconst_s (ty_vec256 ty) c) (splat ty (iconst_s (lane_type ty) c)))
 (attr rule iconst_s_i128 (tag i128))
 
 ;; Same as `iconst_s`, but used for zero-extending constant values.
@@ -223,6 +225,8 @@
     (iconst ty (imm64 c)))
 (rule iconst_u_i128 1 (iconst_u $I128 c) (uextend $I128 (iconst_u $I64 c)))
 (rule 2 (iconst_u (ty_vec128 ty) c) (splat ty (iconst_u (lane_type ty) c)))
+;; Tondo: and of 256 bits.
+(rule 3 (iconst_u (ty_vec256 ty) c) (splat ty (iconst_u (lane_type ty) c)))
 (attr rule iconst_u_i128 (tag i128))
 
 ;; These take `Value`, rather than going through `inst_data_value_tupled`,

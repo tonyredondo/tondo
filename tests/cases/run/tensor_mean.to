@@ -1,0 +1,32 @@
+// The mean of a tensor of a `Fractional` number (standard library 10.7):
+// its sum divided by how many values it has, NaN for floats with none; along
+// an axis, each sum divided by that axis's size. `Float`, `Float32` and
+// `math.Decimal` are `Fractional`, and a generic function asks for it too.
+
+import std.console
+import std.math
+
+/// The mean of the values, of any number whose division keeps the fraction.
+fn middle[T: Fractional](values: Array[T]): T {
+    values.sum().dividedBy(Number.fromInt[T](values.length()))
+}
+
+fn main() {
+    let readings = math.Tensor([1.0, 2.0, 3.0, 6.0], shape: [2, 2])
+    console.println("{readings.mean()} {readings.meanAlong(0)} {readings.meanAlong(1)}")
+    let small = math.Tensor([0.5f32, 1.5f32, 4.0f32])
+    console.println("{small.mean()}")
+    let empty = math.Tensor[Float].zeros([0])
+    console.println("{empty.mean().isNaN()}")
+    match (math.Decimal.parse("1.10"), math.Decimal.parse("2.25")) {
+        (ok(a), ok(b)) => console.println("{math.Tensor([a, b]).mean()}")
+        _ => console.println("no decimals")
+    }
+    console.println("{middle([2.0, 3.0])} {middle([1.0f32, 2.0f32])}")
+}
+
+// expect-stdout: 3.0 [2.0, 4.0] [1.5, 4.5]
+// expect-stdout: 2.0
+// expect-stdout: true
+// expect-stdout: 1.675
+// expect-stdout: 2.5 1.5

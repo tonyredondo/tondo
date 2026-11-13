@@ -409,6 +409,10 @@ pub(crate) fn emit(
         }
 
         Inst::CallKnown { info: call_info } => {
+            // A patchable call is a `nop` until a debugger patches it.
+            if !call_info.patchable && !call_info.wide_vectors {
+                vzeroupper_if_wide(sink, info, state);
+            }
             let start = sink.cur_offset();
             let stack_map = state.take_stack_map();
 
@@ -494,6 +498,9 @@ pub(crate) fn emit(
         Inst::CallUnknown {
             info: call_info, ..
         } => {
+            if !call_info.wide_vectors {
+                vzeroupper_if_wide(sink, info, state);
+            }
             let stack_map = state.take_stack_map();
 
             let dest = match call_info.dest.clone() {
@@ -2209,5 +2216,16 @@ fn emit_lea<S>(
         }
 
         _ => lea(*dst.as_ref(), addr, sink),
+    }
+}
+
+/// Tondo: in a function with vectors of 256 bits, `vzeroupper` before a call
+/// that passes and returns none, as the code it calls may run SSE
+/// instructions, which pay for upper halves left set (the epilogue has its
+/// own, `gen_wide_vectors_end`). A call that passes one or returns one goes
+/// to code built for AVX2, which leaves the state as it found it.
+fn vzeroupper_if_wide(sink: &mut MachBuffer<Inst>, info: &EmitInfo, state: &mut EmitState) {
+    if state.wide_vectors {
+        asm::inst::vzeroupper_zo::new().emit(sink, info, state);
     }
 }

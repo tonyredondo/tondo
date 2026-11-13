@@ -350,6 +350,59 @@ impl FnCodegen<'_, '_> {
         args: &[Operand],
         result: Option<ir::Value>,
     ) -> Option<ir::Value> {
+        // A C function that fails with the system's error number (16.16):
+        // it gives `T`, and the call `ok(value)`, or `err(os.Errno(number))`
+        // with the number read before anything else runs.
+        if let TyKind::Result(value_ty, _) = *self.e.cg.types().kind(result_ty) {
+            let base = result.expect("a result lives in memory");
+            let (value, error) = self.c_call_with(target, params, value_ty, args, None, true);
+            let (value, error) = (value.expect("a number or a pointer"), error.expect("its error number"));
+            self.write_checked_at(base, result_ty, value, error);
+            return None;
+        }
+        self.c_call_with(target, params, result_ty, args, result, false).0
+    }
+
+    /// The calling thread's error number when `value`, which a C function
+    /// that fails with it gave, is that of failure, -1 or null; -1 when not.
+    fn failure_errno(&mut self, value: ir::Value, ty: Ty) -> ir::Value {
+        let pointer = matches!(self.e.cg.types().kind(self.e.cg.types().repr(ty)), TyKind::Pointer(_));
+        let failed = self.e.fb.ins().icmp_imm_s(IntCC::Equal, value, if pointer { 0 } else { -1 });
+        let (read, join) = (self.e.fb.create_block(), self.e.fb.create_block());
+        let number = self.e.fb.append_block_param(join, types::I32);
+        let none = self.e.fb.ins().iconst(types::I32, -1);
+        self.e.fb.ins().brif(failed, read, &[], join, &[none.into()]);
+        self.e.fb.switch_to_block(read);
+        let mut signature = ir::Signature::new(self.e.cg.isa().default_call_conv());
+        signature.returns.push(AbiParam::new(POINTER));
+        let symbol =
+            if self.e.cg.isa().triple().to_string().contains("apple") { "__error" } else { "__errno_location" };
+        let (id, direct) = self.e.cg.c_function(symbol, &signature);
+        let func = self.e.cg.declare_func_in_func(id, self.e.fb.func);
+        let call = if direct {
+            self.e.fb.ins().call(func, &[])
+        } else {
+            let code = self.e.fb.ins().func_addr(POINTER, func);
+            let signature = self.e.fb.import_signature(signature);
+            self.e.fb.ins().call_indirect(signature, code, &[])
+        };
+        let location = self.e.fb.inst_results(call)[0];
+        let read_number = self.e.fb.ins().load(types::I32, flags(), location, 0);
+        self.e.fb.ins().jump(join, &[read_number.into()]);
+        self.e.fb.switch_to_block(join);
+        number
+    }
+
+    /// A call of C, and with `errno` the error number of its failure.
+    fn c_call_with(
+        &mut self,
+        target: CTarget,
+        params: &[Ty],
+        result_ty: Ty,
+        args: &[Operand],
+        result: Option<ir::Value>,
+        errno: bool,
+    ) -> (Option<ir::Value>, Option<ir::Value>) {
         let mut values = Vec::new();
         let mut types = Vec::new();
         let mut copies = Vec::new();
@@ -438,11 +491,12 @@ impl FnCodegen<'_, '_> {
             };
             self.e.fb.inst_results(call).to_vec()
         };
+        let error = errno.then(|| self.failure_errno(results[0], result_ty));
         self.e.call_rt(Rt::ForeignLeave, &[]);
         for copy in copies {
             self.e.call_rt(Rt::CStringFree, &[copy]);
         }
-        match plan.returned {
+        let value = match plan.returned {
             Returned::Scalar(_) => {
                 let clif = self.e.cg.scalar_type(result_ty);
                 let value = results[0];
@@ -460,7 +514,8 @@ impl FnCodegen<'_, '_> {
                 None
             }
             Returned::Memory | Returned::Nothing => None,
-        }
+        };
+        (value, error)
     }
 
     /// A call of a C function with `...` on x86-64, through the runtime,

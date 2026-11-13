@@ -1763,14 +1763,14 @@ impl<'a> Linker<'a> {
             (DT_FINI_ARRAY, addr(Out::FiniArray)),
             (DT_FINI_ARRAYSZ, self.size[Out::FiniArray as usize]),
         ]);
-        // A library stays loaded: its runtime's threads run its code.
+        // A library holds itself loaded while its runtime runs, until its
+        // `<name>_stop` (toolchain 7.7), and the system may unload it then.
         let static_tls = self.library && self.got.iter().any(|s| matches!(s, Slot::TpOff(_)));
         dynamic.extend(match self.library {
-            true => [
-                (DT_FLAGS, DF_BIND_NOW.0 | if static_tls { DF_STATIC_TLS.0 } else { 0 }),
-                (DT_FLAGS_1, DF_1_NOW.0 | DF_1_NODELETE.0),
-            ]
-            .to_vec(),
+            true => {
+                [(DT_FLAGS, DF_BIND_NOW.0 | if static_tls { DF_STATIC_TLS.0 } else { 0 }), (DT_FLAGS_1, DF_1_NOW.0)]
+                    .to_vec()
+            }
             false => [(DT_DEBUG, 0), (DT_FLAGS, DF_BIND_NOW.0), (DT_FLAGS_1, DF_1_NOW.0 | DF_1_PIE.0)].to_vec(),
         });
         if self.size[Out::Versym as usize] > 0 {

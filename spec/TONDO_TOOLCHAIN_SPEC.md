@@ -44,10 +44,12 @@ app/
 Reglas de descubrimiento, deterministas:
 
 1. Si existe `src/`, el paquete son sus archivos `.to`, recursivamente,
-   excepto `*_test.to` y los de otro sistema que el del build: uno que
+   excepto `*_test.to` y los de otro target que el del build: uno que
    termina en `_linux.to`, `_macos.to` o `_unix.to` es del paquete solo al
-   compilar para Linux, para macOS o para cualquiera de los dos (6.8 del
-   lenguaje).
+   compilar para Linux, para macOS o para cualquiera de los dos, uno que
+   termina en `_x64.to` o `_arm64.to` solo para esa arquitectura, y uno que
+   termina en un sistema seguido de una arquitectura, como
+   `_linux_arm64.to`, solo para ese target (6.8 del lenguaje).
 2. Sin `src/`, el directorio debe contener `tondo.toml` o `main.to`, y el
    paquete son los `.to` de ese nivel, con las mismas excepciones.
 3. Se ignoran symlinks, entradas ocultas y los directorios `target/` y
@@ -72,6 +74,9 @@ dependencias y solo puede importar `std`.
 name = "app"
 version = "1.2.0"
 edition = "0.1"
+
+[build]
+cpu = "x86-64-v3"
 
 [dependencies]
 units = { path = "libs/units" }
@@ -99,8 +104,14 @@ outputs = ["proto.user"]
   valor es `"0.1"`, el que se usa por defecto; y `systems`, los sistemas en
   que corre el paquete, `["linux"]`, `["macos"]` o los dos, que son los que
   admite sin ella (6.8 del lenguaje): compilarlo para otro es un error que
-  los nombra, y `check` lo comprueba solo para ellos. `tondo new` escribe
-  `version = "0.1.0"`.
+  los nombra, y `check` lo comprueba solo para ellos; y `architectures`, las
+  arquitecturas, `["x64"]`, `["arm64"]` o las dos, del mismo modo. `tondo new`
+  escribe `version = "0.1.0"`.
+- `[build]` dice cómo se compila el programa. Su única clave es `cpu`, el
+  nivel de procesador para el que se compila (7.8), que `--cpu` reemplaza.
+  Solo cuenta el `[build]` del paquete raíz: el de una dependencia no se lee,
+  porque decide el programa. `systems` y `architectures` siguen en
+  `[package]`: dicen qué admite el paquete, no cómo se compila.
 - `[dependencies]` asocia a cada alias su fuente (sección 4).
 - `[source]`, con `url`, dice cómo enlazar una línea en un host propio (7.5).
 - `[dev-dependencies]` declara del mismo modo las dependencias que solo usan
@@ -235,7 +246,8 @@ que ningún build ha usado en un día, así que dos versiones a la vez, como la
 del editor y la de la terminal, no se quitan el runtime la una a la otra. Una
 entrada de esos directorios que nadie usa en 30 días se borra, y de un mismo
 programa, o proyecto en `test/`, compilado del mismo modo (debug, live,
-estático o para otro target), un build nuevo deja solo el anterior más
+estático, para otro target o para otro nivel de procesador), un build nuevo
+deja solo el anterior más
 reciente: editar un programa no llena la caché con cada versión suya.
 
 Para descargar, el toolchain usa `git`, `curl`, `tar` y `unzip` del sistema.
@@ -245,17 +257,17 @@ completos no se ejecuta ninguna.
 ## 7. Comandos
 
 ~~~text
-tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch] [--target <target>] [--diagnostic-format human|json] [-- <argument>...]
-tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug | --live] [--target <target>] [--diagnostic-format human|json] [--json]
-tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--json]
+tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch] [--target <target>] [--cpu <level>] [--diagnostic-format human|json] [-- <argument>...]
+tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug | --live] [--target <target>] [--cpu <level>] [--diagnostic-format human|json] [--json]
+tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--cpu <level>] [--json]
 tondo check [<project>|<file.to>] [--library] [--json]
 tondo expand [<project>|<file.to>] [--json]
 tondo fmt [--check | --compact] [--json] <file.to>...
 tondo api [<module>|<module>.<declaration>|<file.to>] [--private] [--list] [--project <dir>] [--json]
 tondo api --search <palabras> [--project <dir>] [--json]
 tondo graph [<project>|<dir>|<file.to>] [--packages | --files] [--module <module> [--reverse]] [--json | --dot | --mermaid]
-tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>] [--against <revision> | --compiler <tondo|revision>] [--json]
-tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--against <revision> | --compiler <tondo|revision>] [--json]
+tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>] [--cpu <level>] [--against <revision> | --compiler <tondo|revision>] [--json]
+tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--cpu <level>] [--against <revision> | --compiler <tondo|revision>] [--json]
 tondo asm --runtime <function> [--compiler <tondo|revision>] [--json]
 tondo compiler <tondo|revision> [--json]
 tondo guide [<topic>] [--list] [--skill] [--json]
@@ -267,8 +279,8 @@ tondo remove <alias> [--project <dir>] [--json]
 tondo fix [<project>|<file.to>] [--library] [--json]
 tondo explain [<code>] [--json]
 tondo clean [--all] [--json]
-tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>] [--json]
-tondo test [<project>] [--static] [--debug] [--library] [--target <target>] [--watch] [--coverage] [--bench [--bench-time <seconds>]] [--fuzz [--fuzz-time <seconds>]] [--test-format human|json|events] [--json] [--diagnostic-format human|json]
+tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [--included] [--fails <file>] [-I <dir>] [-D <name[=value]>] [--json]
+tondo test [<project>] [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--watch] [--coverage] [--bench [--bench-time <seconds>]] [--fuzz [--fuzz-time <seconds>]] [--test-format human|json|events] [--json] [--diagnostic-format human|json]
 tondo doc-test [--edition 0.1] <markdown>
 tondo target pack [<dir>] [--json]
 tondo lsp
@@ -378,7 +390,9 @@ tondo version [--json]
 (`cc -E`, con los `-I` y `-D` dados) y escribe, en formato canónico, un módulo
 del proyecto: `src/<nombre>/<nombre>.to` por el primer header, u `--output`.
 El módulo declara, como `pub`, lo que declaran los headers y los de su
-directorio que incluyen directamente:
+directorio que incluyen directamente; con `--included`, también todos los que
+incluyen, de cualquier directorio, como los de un sistema guardan sus números
+en otros (`bits/`, `asm-generic/`):
 
 | C | Tondo |
 |---|---|
@@ -387,19 +401,30 @@ directorio que incluyen directamente:
 | `union` | `@union extern type` |
 | `struct` con bit fields | `extern type` con cada grupo de bit fields como sus bytes, y un método para leer y otro para escribir cada uno |
 | `typedef` | `alias` |
-| `enum` | `alias` de `ffi.CInt` y una constante por enumerador |
+| `enum` | `alias` de `ffi.CInt`, o de `ffi.CUInt` si un valor pasa de los de `int` y ninguno es negativo, y una constante por enumerador |
 | macro de un número o un texto | `const` |
 | macro de un puntero | `const` de valor `none` si es `NULL`; si no, una función que lo construye |
 | macro con parámetros que llama a una función | una función `unsafe` que la llama, con los tipos de sus parámetros |
 | `va_list` como parámetro | `Pointer[ffi.VaList]` |
 
+`--fails <file>` nombra, una por línea y con `#` para comentarios, las
+funciones que fallan dando -1 o un puntero nulo con el número de error del
+sistema: se declaran `T ! os.Errno` (16.16 del lenguaje), con el puntero ya no
+opcional, porque el nulo es su fallo. Una de la lista que da otro tipo queda
+fuera del módulo, con el porqué.
+
 Los nombres de C se conservan; uno que es palabra reservada o nombre del
-prelude de Tondo recibe `_` al final. Un puntero es opcional, porque C puede
+prelude de Tondo recibe `_` al final, y un parámetro de un nombre que el
+header reserva para sí, `__fd`, se escribe sin `__`, `fd`. Un `typedef` de un nombre que el header
+reserva para sí, como `__pid_t`, no se escribe: donde se usa, se escribe lo que
+nombra. Un puntero es opcional, porque C puede
 pasar `NULL`; `const char*` es `ffi.CString?`. Un tipo de otro header se
 resuelve a lo que nombra, y un struct que solo se alcanza por puntero es
 opaco. Lo que no tiene forma en Tondo, como `long double` o una macro que no es
 un valor ni una llamada, se lista al final del módulo en un comentario.
-El módulo se regenera con el mismo comando que muestra su primera línea.
+El módulo se regenera con el mismo comando que muestra su primera línea, que
+empieza por `// Generated by \`tondo bind`: por ella sus nombres, los de C, no
+se diagnostican (5.4 del lenguaje).
 
 Sin headers, `bind` los busca:
 
@@ -445,6 +470,12 @@ $ tondo api --list
   Un módulo de la stdlib se nombra también sin `std.`, como lo escriben el
   compilador y sus errores (`http.Client`), salvo que el proyecto tenga un
   módulo de ese nombre.
+- Un módulo de la stdlib con declaraciones de C que escribe `tondo bind`, como
+  `std.os.linux` (14.45 de la librería estándar), muestra lo escrito en
+  Tondo: las de C, miles y distintas por target, se muestran por su nombre,
+  `tondo api std.os.linux.epoll_create1`, y `--search` las encuentra. Un
+  módulo de otro sistema, como `std.os.linux` en macOS, muestra lo de ese
+  sistema en la arquitectura de esta máquina.
 - `--search` busca las palabras en los nombres y la documentación de las
   declaraciones de la stdlib, el proyecto y sus dependencias, primero las que
   se llaman así, y da cada una con su módulo, su declaración y la primera
@@ -1562,7 +1593,10 @@ que un programa de C enlaza o carga: escribe en el directorio de `--output`, o
 en el actual, la librería compartida `lib<nombre>.so` (`lib<nombre>.dylib` en
 macOS), la estática `lib<nombre>.a` y su header `<nombre>.h`, con el nombre
 del paquete o del archivo. La librería no tiene `main` ni script; publica las `pub extern fn`
-con cuerpo de su paquete (16.16 del lenguaje), y sin ninguna es `E1807`.
+con cuerpo de su paquete (16.16 del lenguaje), y sin ninguna es `E1807`. Una
+función con `@plugin.Export` la hace un plugin: publica las tres entradas de
+14.48 de la librería estándar, `tondo_plugin_contract`, `tondo_plugin_call`
+y `tondo_plugin_free`, cuyos nombres no se reservan para ella.
 `check --library` y `test --library` la comprueban y la prueban sin pedir
 `main`.
 
@@ -1584,11 +1618,33 @@ volver la llamada. Lo que la librería escribe en la salida estándar se entrega
 al terminar cada llamada, y al terminar el proceso. Un pánico termina el
 proceso, como en un programa; un fallo de memoria, una instrucción ilegal o un
 aborto fuera de sus tareas y de su código va al handler que el proceso tenía.
-Cada librería contiene el runtime. La compartida solo publica sus funciones,
-así que un proceso carga varias de Tondo, cada una con el suyo, y no se
-descarga, porque sus threads siguen ejecutando su código; de la estática, un
-programa enlaza una sola. `--static` y `--link` construyen ejecutables: con
-`--library` son error.
+Cada librería contiene el runtime. La compartida solo publica sus funciones y
+la entrada que termina su runtime, así que un proceso carga varias de Tondo,
+cada una con el suyo, también un programa de Tondo con `ffi.Library` (19.3 de
+la librería estándar); de la estática, un programa enlaza una sola. `--static`
+y `--link` construyen ejecutables: con `--library` son error.
+
+`<nombre>_stop()`, que el header declara, termina el runtime de la librería,
+para que se pueda descargar. Cada tarea suya se cancela y corre sus `defer`
+como al cancelarse, los procesos que lanzó terminan, como al terminar un
+programa, cada thread de su runtime termina, lo que dejó para el
+final del proceso, como la salida pendiente, corre ahora y deja de estar
+registrado, cada handler de señal que instaló se quita y vuelve el que tenía
+el proceso, y lo que guardó para el thread que la llama se libera. De los
+otros threads que la llamaron se libera también lo que guardó, salvo la pila
+de señales que les puso, en la que el sistema aún puede entregarles una
+señal: queda, y una copia de la librería que se cargue después la usa. Una
+llamada de la librería en curso en otro thread termina antes, y una tarea en
+una espera que cancelar no termina, como leer un terminal en el que nadie
+escribe, la deja esperando. Ninguna función
+de la librería se puede llamar mientras corre, ni se puede usar después nada
+que la librería dio, como un texto que devolvió. Una llamada posterior
+arranca el runtime otra vez, como la primera; llamarla dos veces no hace nada
+la segunda. Toda librería de Tondo publica la misma entrada también como
+`tondo_library_stop`, por la que `ffi.Library` la reconoce. Hasta que termina
+su runtime, la librería se mantiene cargada: un `dlclose` sin `<nombre>_stop`
+no la descarga. Una librería compartida de Tondo se descarga con su
+`<nombre>_stop` y la descarga del sistema, en ese orden.
 
 ### 7.8 Targets
 
@@ -1596,7 +1652,9 @@ programa enlaza una sola. `--static` y `--link` construyen ejecutables: con
 x86-64, `x86_64-linux`, o en arm64, `aarch64-linux`, desde cualquier sistema
 donde corre `tondo`. El ejecutable es estático, con musl, como con `--static`:
 no carga librerías del sistema, y las de `[native] libraries` y `--link` son
-estáticas.
+estáticas. Tampoco carga librerías mientras corre: un programa que puede
+llegar a `ffi.Library` (19.3 de la librería estándar) y se compila con
+`--static` o con `--target` es un error que dice cómo compilarlo.
 
 El runtime del target de su propia máquina viene con `tondo`; el de otro, en
 un pack: el directorio `<dir>/<target>` que escribe `tondo target pack [<dir>]`
@@ -1611,6 +1669,93 @@ usuario de qemu: `qemu-<arch>` o `qemu-<arch>-static` de `PATH`, o el que el
 kernel tiene registrado en `binfmt_misc`. Sin ninguno es error, que pide
 instalar qemu-user; en un sistema que no es Linux, también: el programa
 corre en Linux.
+
+Cada build es para un **nivel de procesador** de la arquitectura de su
+target, que dice qué características del procesador puede usar su código,
+por los flags del generador de código:
+
+| Nivel | Arquitectura | Características |
+| --- | --- | --- |
+| `baseline` | x64 | SSE3, SSSE3, SSE4.1, SSE4.2, POPCNT y CMPXCHG16B |
+| `x86-64-v2` | x64 | las mismas: otro nombre del `baseline` de x64 |
+| `x86-64-v3` | x64 | esas, y AVX, AVX2, FMA, BMI1, BMI2 y LZCNT |
+| `x86-64-v4` | x64 | esas, y AVX-512 F, DQ y VL |
+| `baseline` | arm64 | ninguna: ARMv8.0 con NEON, que tiene todo ARM de 64 bits |
+| `native` | las dos | las que tiene el procesador de la máquina que compila |
+
+`x86-64-v4` tal como otros lo definen tiene también BW y CD de AVX-512, para
+las que el generador no tiene flag: no se genera nada con ellas.
+
+- El nivel es `baseline` en `build`, `run`, `test` y `build --library`, con
+  `--target` y sin él. `--cpu <level>` pide otro, y `cpu` en el `[build]` del
+  `tondo.toml` raíz también (sección 3); la opción gana al archivo. `tondo
+  asm` y `tondo optimizations` toman `--cpu` del mismo modo, para ver lo que
+  un build de ese nivel hace del código.
+- Un nombre desconocido es error, que da los niveles de la arquitectura del
+  target; un nivel de la otra arquitectura, también, y dice de cuál es.
+  `native` con un `--target` que no es esta máquina es error: es el
+  procesador de la máquina que compila.
+- El nivel solo cambia las características: lo que el generador pone por las
+  convenciones del sistema, como la firma de las direcciones de retorno en
+  macOS, queda igual en todos.
+- El nivel es parte de la identidad del build (6.8 del lenguaje): dos builds
+  que difieren en él no comparten nada en la caché. `env.build().cpu` lo da,
+  `baseline` y no `x86-64-v2` por defecto (14.3.6 de la librería estándar).
+- Antes de que corra código alguno del programa, el runtime comprueba que el
+  procesador tiene lo que necesita su nivel. Si le falta algo, el programa
+  escribe una línea en la salida de errores y termina con el código de un
+  pánico:
+
+  ~~~text
+  fatal: this program was built for x86-64-v3 and this processor lacks AVX2 and BMI2: build it with --cpu baseline
+  ~~~
+
+  La comprobación corre en cualquier procesador de la arquitectura. Una
+  librería la hace cuando arranca su runtime, en su primera llamada.
+
+Lo que cada función necesita del procesador:
+
+- Las funciones de `std.cpu.x64` y `std.cpu.arm64` (14.47 de la librería
+  estándar) son una instrucción cada una, que necesita una característica.
+  Una función necesita, además del nivel del build, la característica de cada
+  una de esas instrucciones que hay en su cuerpo, esté donde esté, también
+  bajo un `if cpu.has(...)`; y lo que necesitan las funciones que llama, salvo
+  lo que prueba la guarda bajo la que está la llamada. Lo que el nivel tiene
+  no se necesita. El compilador lo calcula sobre todo el programa a partir de
+  los cuerpos: en el código no se escribe nada.
+- Una guarda es el bloque de un `if` cuya condición es `cpu.has(F)` con la
+  variante escrita, o varias unidas con `and`: una llamada dentro de ese
+  bloque está guardada para esas características. No es una guarda el `else`
+  de un `not cpu.has(F)`, ni lo que sigue a un `return` temprano.
+- No pueden necesitar ninguna característica `main`, ni el nivel superior de
+  un script; un test; una `pub extern fn`; un método que implementa un trait;
+  ni una función o closure usada como valor, que arranca `spawn` o que se da a
+  C. Es el error `E1809`, en cada llamada o instrucción que trae la
+  característica sin guarda, y dice cuál es, la cadena de llamadas hasta la
+  instrucción y que se ponga la llamada bajo `if cpu.has(...)`; una
+  instrucción escrita ahí mismo, que se lleve a una función propia.
+- Cada función se compila para lo suyo: las características del nivel y las
+  que necesita. Una función nunca se inlinea en otra que necesita menos, y
+  `tondo asm` y `tondo optimizations` lo dicen de la llamada que queda.
+- `tondo check` toma el nivel del `[build]` del `tondo.toml` raíz, o
+  `baseline`; `build`, `run` y `test`, también el de `--cpu`.
+
+Las versiones de una función por nivel (18.11 del lenguaje):
+
+- Un build de release para un nivel de x64 sin AVX2, `baseline` o
+  `x86-64-v2`, compila además para `x86-64-v3` cada función cuyo código usa
+  vectores de más de 128 bits, salvo la que pasa uno por un valor `fn(...)`, la
+  que lo pasa a una función sin versión y la que llama a C. Esas funciones
+  toman y dan esos vectores en registros de 256 bits.
+- El runtime prueba el procesador una vez, antes que el código del programa.
+  Una llamada a esa función desde código del nivel del build pasa por esa
+  prueba y va a la versión donde el procesador tiene lo que `x86-64-v3`
+  necesita; desde una versión, va directa a la versión de la otra.
+- Un build de depuración, live, de cobertura o de fuzzing no tiene versiones,
+  ni uno para un nivel que ya tiene AVX2. `TONDO_VERSIONS=0` en el entorno del
+  programa corre el código del nivel del build, como en un procesador sin ese
+  nivel. `tondo asm` muestra una versión con su nivel, `nombre (x86-64-v3)`,
+  y un volcado muestra las variables de la versión que corre.
 
 ### 7.9 `tondo mcp`
 
@@ -2142,6 +2287,7 @@ significan lo de siempre.
 | `TONDO_HEAP_RATE` | Quien lo ejecuta | Los bytes entre dos muestras del heap. |
 | `TONDO_LOCK_ORDER` | Quien lo ejecuta | Si mira en qué orden toman las tareas los locks: `fail` falla donde se cierra un ciclo, `off` no mira, otro valor lo dice en stderr. |
 | `TONDO_WAKES` | Quien lo ejecuta | `1` guarda las últimas esperas y despertares de cada tarea para un volcado y `tondo blocked`. |
+| `TONDO_VERSIONS` | Quien lo ejecuta | `0` corre el código del nivel del build y no las versiones de sus funciones para uno mayor (7.8), como en un procesador sin ese nivel. |
 | `TONDO_CACHE_DOMAINS` | Quien lo ejecuta | `0` toma todos los núcleos como un dominio: los workers no se quedan entre los núcleos que comparten una caché. |
 | `TONDO_ZONES` | Quien lo ejecuta | `builtin` usa las zonas horarias que lleva el programa y no las del sistema. |
 | `TONDO_DEBUG` | `tondo debug`, el editor y un programa depurado a los hijos que sigue | `1` espera al depurador antes de `main`. |

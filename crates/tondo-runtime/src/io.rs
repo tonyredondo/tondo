@@ -165,6 +165,12 @@ pub(crate) fn submit(job: Job, long: bool) {
     }
 }
 
+/// Ends the pool's threads once their jobs are done, for a library's end.
+pub(crate) fn stop() {
+    let _pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
+    WORK.notify_all();
+}
+
 fn serve() {
     let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
     loop {
@@ -173,6 +179,10 @@ fn serve() {
             job();
             pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
             continue;
+        }
+        if super::tasks::stopping() {
+            pool.threads -= 1;
+            return;
         }
         pool.idle += 1;
         pool = WORK.wait(pool).unwrap_or_else(|e| e.into_inner());
@@ -796,6 +806,20 @@ thread_local! {
 /// those of the thread it ran on before.
 #[inline(never)]
 fn poll_once<F: std::future::Future>(
+    future: std::pin::Pin<&mut F>,
+    waker: &std::task::Waker,
+    context: bool,
+) -> (std::task::Poll<F::Output>, Vec<usize>) {
+    if context {
+        super::tasks::leave_host_thread();
+    }
+    polled(future, waker, context)
+}
+
+/// The poll of `poll_once`, on the thread the task is on now: never
+/// inlined, so that the thread-locals it reads are this thread's.
+#[inline(never)]
+fn polled<F: std::future::Future>(
     future: std::pin::Pin<&mut F>,
     waker: &std::task::Waker,
     context: bool,

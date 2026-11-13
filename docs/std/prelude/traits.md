@@ -6,12 +6,13 @@
 
 ## Reference
 
-`tondo api Ordered`, `tondo api Additive`, `tondo api Number`, `tondo api Integer` show the same in a terminal.
+`tondo api Ordered`, `tondo api Additive`, `tondo api Number`, `tondo api Integer`, `tondo api Fractional` show the same in a terminal.
 
 - [Ordered](#ordered)
 - [Additive](#additive)
 - [Number](#number)
 - [Integer](#integer)
+- [Fractional](#fractional)
 
 ### Ordered
 
@@ -170,4 +171,28 @@ fn digits[T: Integer](value: T): Int {
 }
 
 console.println("{digits(12345)} {digits(255u8)} {digits(-7i16)}")
+```
+
+### Fractional
+
+```tondo
+pub trait Fractional: Number {
+
+}
+```
+
+A number whose division keeps the fraction: `1.0 / 2.0` is `0.5`, where
+an `Integer` gives 0. `Float`, `Float32` and `math.Decimal` are, and so
+may a program's number be, as an exact fraction. What divides to give a
+part of a whole, as a mean, asks for it.
+
+```tondo
+import std.console
+
+/// The mean of the values, NaN for a float with none.
+fn mean[T: Fractional](values: Array[T]): T {
+    values.sum().dividedBy(Number.fromInt[T](values.length()))
+}
+
+console.println("{mean([1.0, 2.0, 4.0])} {mean([0.5f32, 1.5f32])}")
 ```

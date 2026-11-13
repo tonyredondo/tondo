@@ -1,6 +1,7 @@
 // Where an enum is expected, a pattern names its variant alone, at any
-// depth; and `fail` does in a function that declares the enum as its error,
-// or a union of enums of which one has the variant.
+// depth, also joined with `|`, where it binds nothing; and `fail` does in a
+// function that declares the enum as its error, or a union of enums of which
+// one has the variant.
 
 import std.console
 
@@ -38,6 +39,13 @@ enum Payment {
     Transfer { iban: String, reference: String }
 }
 
+fn kind(payment: Payment): String {
+    match payment {
+        Cash | Card(_) => "at the till"
+        Transfer { .. } => "at the bank"
+    }
+}
+
 fn describe(payment: Payment?): String {
     match payment {
         some(Cash) => "cash"
@@ -70,6 +78,7 @@ fn main() {
         none,
     ]
     console.println("{payments.map(describe)}")
+    console.println("{kind(Payment.Cash)} {kind(Payment.Transfer { iban: "ES1", reference: "r" })}")
 }
 
 // expect-stdout: missing port
@@ -80,3 +89,4 @@ fn main() {
 // expect-stdout: config
 // expect-stdout: 2
 // expect-stdout: [cash, card 4242, transfer ES1 r, nothing]
+// expect-stdout: at the till at the bank

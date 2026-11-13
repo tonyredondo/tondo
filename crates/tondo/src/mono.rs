@@ -56,6 +56,12 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         conversions: Vec::new(),
         unions: HashMap::new(),
         made: Vec::new(),
+        named: functions
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| crate::simd::FLOAT_FORMS.iter().any(|(n, w, s)| [*n, *w, *s].contains(&f.name.as_str())))
+            .map(|(at, f)| (f.name.as_str(), FnId(at as u32)))
+            .collect(),
     };
     // A failing `main` shows its error with `Display` (20.10).
     if let Some(main) = main
@@ -86,6 +92,7 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         })
         .collect();
     mono.drain();
+    mono.types.reveal_definitions();
     // The views the debugger shows the values of a type as, for every type
     // a function holds, when the program implements `debug.View`.
     let view = traits.iter().position(|t| t.name == "debug.View").map(|i| TraitId(i as u32));
@@ -244,11 +251,26 @@ struct Mono<'a> {
     unions: HashMap<(TraitId, Ty, Vec<Ty>), FnId>,
     /// The functions written here whose calls are still to resolve.
     made: Vec<(Function, FnId)>,
+    /// The functions of `simd::FLOAT_FORMS` by name.
+    named: HashMap<&'a str, FnId>,
 }
 
 impl Mono<'_> {
     /// The concrete function for `id` applied to `args`, queued on first use.
     fn instance(&mut self, id: FnId, args: Vec<Ty>) -> FnId {
+        // `sum` and `math.dot` of floats add in the order 18.5 fixes.
+        let name = self.functions[id.0 as usize].name.as_str();
+        let form = crate::simd::FLOAT_FORMS.iter().find(|(n, ..)| *n == name).and_then(|&(_, wide, narrow)| match args
+            .as_slice()
+        {
+            [element] if *element == Ty::F64 => self.named.get(wide),
+            [element] if *element == Ty::F32 => self.named.get(narrow),
+            _ => None,
+        });
+        let (id, args) = match form {
+            Some(&form) => (form, Vec::new()),
+            None => (id, args),
+        };
         if let Some(&instance) = self.instances.get(&(id, args.clone())) {
             return instance;
         }
@@ -273,6 +295,7 @@ impl Mono<'_> {
             body: Block { stmts: Vec::new(), tail: None, ty: Ty::UNIT },
             moves: Default::default(),
             test: false,
+            needs: self.functions[id.0 as usize].needs,
             span: self.functions[id.0 as usize].span,
         };
         if !args.is_empty() {
@@ -710,6 +733,7 @@ impl Mono<'_> {
                 body: Block { stmts: Vec::new(), tail: Some(Box::new(tail)), ty: Ty::UNIT },
                 moves: Default::default(),
                 test: false,
+                needs: 0,
                 span,
             }
         } else {
@@ -842,6 +866,7 @@ impl Mono<'_> {
                 body: Block { stmts, tail: None, ty: Ty::NEVER },
                 moves: Default::default(),
                 test: false,
+                needs: 0,
                 span,
             }
         };

@@ -52,7 +52,21 @@ pub(crate) fn disown(process: i32) {
     }
 }
 
+/// Set while the debugger starts a process it owns: a signal then waits
+/// for it to be owned, and ends it too, rather than leave it running.
+static STARTING: AtomicBool = AtomicBool::new(false);
+static PENDING: AtomicI32 = AtomicI32::new(0);
+
 extern "C" fn ending(signal: libc::c_int) {
+    if STARTING.load(Ordering::SeqCst) {
+        PENDING.store(signal, Ordering::SeqCst);
+        return;
+    }
+    end_owned(signal);
+}
+
+/// Ends what the debugger owns, and then the debugger, by `signal`.
+fn end_owned(signal: libc::c_int) {
     for slot in &OWNED {
         let process = slot.load(Ordering::SeqCst);
         if process != 0 {
@@ -63,6 +77,19 @@ extern "C" fn ending(signal: libc::c_int) {
         libc::signal(signal, libc::SIG_DFL);
         libc::raise(signal);
     }
+}
+
+/// Runs `start`, which starts a process and owns it: a SIGTERM or a SIGHUP
+/// that comes meanwhile ends it too once it is owned.
+fn starting<T>(start: impl FnOnce() -> T) -> T {
+    STARTING.store(true, Ordering::SeqCst);
+    let started = start();
+    STARTING.store(false, Ordering::SeqCst);
+    let pending = PENDING.swap(0, Ordering::SeqCst);
+    if pending != 0 {
+        end_owned(pending);
+    }
+    started
 }
 
 /// SIGTERM and SIGHUP end what the debugger owns, and then the debugger.
@@ -325,19 +352,21 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             use std::os::unix::process::CommandExt;
             let plan = std::env::temp_dir().join(format!("tondo-debug-plan-{}", std::process::id()));
             std::fs::write(&plan, node.to_string()).map_err(|e| format!("cannot write {}: {e}", plan.display()))?;
-            let mut child = std::process::Command::new(&executable)
-                .env("TONDO_DEBUG", "1")
-                .env("TONDO_LIVE_HOLD", "1")
-                .env("TONDO_TEST_PLAN", &plan)
-                .envs(environment)
-                .envs(schedule.iter().flat_map(|order| order_of_tasks(order)))
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .process_group(0)
-                .spawn()
-                .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
-            own(-(child.id() as i32));
+            let mut child = starting(|| {
+                let child = std::process::Command::new(&executable)
+                    .env("TONDO_DEBUG", "1")
+                    .env("TONDO_LIVE_HOLD", "1")
+                    .env("TONDO_TEST_PLAN", &plan)
+                    .envs(environment)
+                    .envs(schedule.iter().flat_map(|order| order_of_tasks(order)))
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .process_group(0)
+                    .spawn();
+                child.inspect(|child| own(-(child.id() as i32)))
+            })
+            .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
             tested(child.stdout.take(), child.stderr.take(), node);
             (observe::started(&executable, child.id())?, Some(child))
         }
@@ -345,15 +374,17 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             use std::os::unix::process::CommandExt;
             // Its own process group, so that Ctrl-C pauses it instead of
             // ending it; and no input, which the debugger reads.
-            let child = std::process::Command::new(&executable)
-                .args(&arguments)
-                .env("TONDO_DEBUG", "1")
-                .env("TONDO_LIVE_HOLD", "1")
-                .stdin(std::process::Stdio::null())
-                .process_group(0)
-                .spawn()
-                .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
-            own(-(child.id() as i32));
+            let child = starting(|| {
+                let child = std::process::Command::new(&executable)
+                    .args(&arguments)
+                    .env("TONDO_DEBUG", "1")
+                    .env("TONDO_LIVE_HOLD", "1")
+                    .stdin(std::process::Stdio::null())
+                    .process_group(0)
+                    .spawn();
+                child.inspect(|child| own(-(child.id() as i32)))
+            })
+            .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
             (observe::started(&executable, child.id())?, Some(child))
         }
         Debugged::Replayed(dir) if held.is_some() => {
@@ -370,12 +401,11 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             if test.is_some() {
                 command.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
             }
-            let mut child = command
-                .stdin(std::process::Stdio::null())
-                .process_group(0)
-                .spawn()
-                .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
-            own(-(child.id() as i32));
+            let mut child = starting(|| {
+                let child = command.stdin(std::process::Stdio::null()).process_group(0).spawn();
+                child.inspect(|child| own(-(child.id() as i32)))
+            })
+            .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
             if let Some(node) = test {
                 tested(child.stdout.take(), child.stderr.take(), node);
             }
@@ -1003,15 +1033,17 @@ impl Replaying {
         let errors = || report_file().map_or_else(output, std::process::Stdio::from);
         let mut running = match from {
             None => Running::Started(
-                command
-                    .env("TONDO_RT_SHOWN_FROM", shown.to_string())
-                    .stdin(std::process::Stdio::null())
-                    .stdout(output())
-                    .stderr(errors())
-                    .process_group(0)
-                    .spawn()
-                    .inspect(|child| own(-(child.id() as i32)))
-                    .map_err(|e| format!("cannot start {}: {e}", executable.display()))?,
+                starting(|| {
+                    command
+                        .env("TONDO_RT_SHOWN_FROM", shown.to_string())
+                        .stdin(std::process::Stdio::null())
+                        .stdout(output())
+                        .stderr(errors())
+                        .process_group(0)
+                        .spawn()
+                        .inspect(|child| own(-(child.id() as i32)))
+                })
+                .map_err(|e| format!("cannot start {}: {e}", executable.display()))?,
             ),
             Some((_, checkpoint)) => resumed(checkpoint, shown, self.piped || self.test.is_some(), report_file())?,
         };

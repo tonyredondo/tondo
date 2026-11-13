@@ -139,8 +139,8 @@ fn preludePages(): Array[Page] {
         Page {
             file: "prelude/traits.md"
             title: "The prelude's traits"
-            about: "`Ordered` gives `<` and its kin, `Additive` gives `+` and `-`, `Number` adds `*` and `/`, and `Integer` is every integer of every width."
-            targets: ["Ordered", "Additive", "Number", "Integer"]
+            about: "`Ordered` gives `<` and its kin, `Additive` gives `+` and `-`, `Number` adds `*` and `/`, `Integer` is every integer of every width, and `Fractional` every number whose division keeps the fraction."
+            targets: ["Ordered", "Additive", "Number", "Integer", "Fractional"]
         },
     ]
 }

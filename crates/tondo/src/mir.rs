@@ -23,8 +23,8 @@ pub enum Proj {
     /// An array element at the index held by the local; out-of-bounds
     /// accesses panic at the span.
     Index(Local, Span),
-    /// An array element at an index that the loop it is read in keeps
-    /// within bounds: `xs[i]` in `for i in 0..xs.length()`.
+    /// An element at an index known to be within bounds: `xs[i]` in
+    /// `for i in 0..xs.length()`, or the entry a map's key found.
     InBounds(Local),
     /// The value a `Ref[T]` identifies, which is only read.
     Deref,
@@ -157,6 +157,10 @@ pub struct Body {
     /// comes from, when it comes from one (`inline`).
     pub inlined: Vec<Inlined>,
     pub scopes: Vec<Option<u32>>,
+    /// The features of `cpu.Feature` it needs beyond the build's level, a
+    /// bit each (toolchain 7.8): it is compiled with them, and never
+    /// inlined into a function that needs fewer.
+    pub needs: u32,
 }
 
 /// A call inlined: the function it called and where that function is,
@@ -306,9 +310,10 @@ pub enum Rvalue {
     Binary(BinOp, Operand, Operand),
     /// Unchecked `+ 1`, used by range iteration after its bound check.
     Increment(Operand),
-    /// A sum, difference or product of `Int`s that `prove` showed cannot
-    /// overflow, without the check; or a quotient or remainder of one it
-    /// showed is not negative by a power of two, without signs.
+    /// A sum, difference or product of `Int`s that cannot overflow, as
+    /// `prove` shows or a length less one is, without the check; or a
+    /// quotient or remainder of one `prove` showed is not negative by a
+    /// power of two, without signs.
     Exact(BinOp, Operand, Operand),
     Call(Callee, Vec<Operand>),
     /// A named function as a `fn(...)` value: a static object.
@@ -515,12 +520,14 @@ pub fn counted_loops(blocks: &[BlockData]) -> Vec<Counted> {
 }
 
 /// Whether an rvalue calls a function: a native the processor does in one
-/// instruction, as a square root, calls nothing.
+/// instruction, as a square root, calls nothing, nor an operation of a
+/// number the code generator writes as instructions, as `leadingZeros`.
 pub fn calls(rvalue: &Rvalue) -> bool {
     match rvalue {
         Rvalue::Call(Callee::Std(hir::StdFn::Native(index)), _) => {
             !hir::IN_ONE_INSTRUCTION.contains(&hir::NATIVES[*index as usize].symbol)
         }
+        Rvalue::Call(Callee::Std(hir::StdFn::Number(op)), _) => op.calls(),
         Rvalue::Call(..) | Rvalue::CallIndirect(..) => true,
         _ => false,
     }

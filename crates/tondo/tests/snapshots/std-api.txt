@@ -154,6 +154,9 @@ pub trait Additive {
 
     fn minus(self, other: Self): Self
 }
+pub trait Fractional: Number {
+
+}
 pub trait Integer: Number + Ordered + Display {
 
 }
@@ -422,6 +425,58 @@ pub fn setOutput(writer: io.Writer)
 pub fn stderr(): io.Writer
 pub fn stdin(): io.Reader
 pub fn stdout(): io.Writer
+== std.cpu
+pub enum Feature {
+    Sse3
+    Ssse3
+    Sse41
+    Sse42
+    Popcnt
+    Avx
+    Avx2
+    Fma
+    Bmi1
+    Bmi2
+    Lzcnt
+    Avx512F
+    Avx512Dq
+    Avx512Vl
+    Avx512Bw
+    Pclmulqdq
+    Sha
+    Neon
+    Lse
+    Crc32
+    Pmull
+    Sha2
+    Aes
+}
+pub fn features(): Array[Feature]
+pub fn has(feature: Feature): Bool
+== std.cpu.arm64
+pub fn aesDecrypt(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]
+pub fn aesEncrypt(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]
+pub fn aesInverseMixColumns(state: simd.Vector128[Byte]): simd.Vector128[Byte]
+pub fn aesMixColumns(state: simd.Vector128[Byte]): simd.Vector128[Byte]
+pub fn crc32cByte(crc: UInt32, value: Byte): UInt32
+pub fn crc32cInt(crc: UInt32, value: UInt): UInt32
+pub fn pause()
+pub fn polynomialMultiply(a: UInt, b: UInt): simd.Vector128[UInt]
+== std.cpu.x64
+pub fn aesDecrypt(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]
+pub fn aesDecryptLast(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]
+pub fn aesEncrypt(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]
+pub fn aesEncryptLast(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): simd.Vector128[Byte]
+pub fn carrylessMultiply(
+    a: simd.Vector128[UInt],
+    b: simd.Vector128[UInt],
+    halves: Int,
+): simd.Vector128[UInt]
+pub fn crc32cByte(crc: UInt32, value: Byte): UInt32
+pub fn crc32cInt(crc: UInt32, value: UInt): UInt32
+pub fn depositBits(value: UInt, mask: UInt): UInt
+pub fn extractBits(value: UInt, mask: UInt): UInt
+pub fn pause()
 == std.crypto
 impl Display for CryptoError
 impl Display for KeyKind
@@ -638,6 +693,9 @@ pub type Build = {
     modified: Bool
     /// The target, as tondo names it: `x86_64-linux-gnu`, `aarch64-macos`.
     target: String
+    /// The level of processor it was built for, as `--cpu` names it:
+    /// `baseline`, `x86-64-v3`, `native`.
+    cpu: String
     /// The compiler that built it: `tondo 0.1.0`.
     compiler: String
     /// The packages it uses, without those only its tests use.
@@ -707,6 +765,8 @@ pub type Pool = {
     // private fields
 }
 == std.ffi
+impl Display for LibraryError
+impl reflect.Reflect for LibraryError
 pub alias CBool = Bool
 pub alias CChar = Byte
 pub alias CDouble = Float
@@ -723,14 +783,46 @@ pub alias CULong = UInt64
 pub alias CULongLong = UInt64
 pub alias CUShort = UInt16
 pub alias Void = memory.Void
+pub enum LibraryError {
+    /// The file is not there, or is not a library this system loads, with
+    /// what the system said.
+    NotLoaded(String)
+    /// The library publishes no such name, which it holds.
+    NoSymbol(String)
+    /// The system refused to unload it, with what it said.
+    NotUnloaded(String)
+    /// The library was closed.
+    Closed
+}
 pub extern type VaList
+pub fn Function[F].raw(self): F
+pub fn Library.has(self, name: String): Bool
+pub fn Library.named(
+    name: String,
+    version: String? = none,
+    global: Bool = false,
+): Library ! LibraryError
+pub fn Library.open(path: String, global: Bool = false): Library ! LibraryError
+pub fn Library.path(self): String
+pub fn Library.program(): Library
 pub fn alignOf[T](): Int
 pub fn allocate[T: ~Copy](count: Int = 1): Pointer[T]
 pub fn context[T: ~Copy](value: T): Pointer[Void]
 pub fn fromCChars(chars: Array[CChar]): String
+pub fn libraryFileName(name: String, version: String? = none): String
 pub fn sizeOf[T](): Int
 pub fn toCChars(text: String, count: Int): Array[CChar]
 pub fn toCString(text: String): CString
+pub type Function[F] = {
+    // private fields
+}
+pub type Library = {
+    // private fields
+}
+pub unsafe fn Library.close(self): !LibraryError
+pub unsafe fn Library.function[F](self, name: String): Function[F] ! LibraryError
+pub unsafe fn Library.openUnloadable(path: String, global: Bool = false): Library ! LibraryError
+pub unsafe fn Library.pointer[T](self, name: String): Pointer[T] ! LibraryError
 pub unsafe fn bytes(from: Pointer[Byte], count: Int): Array[Byte]
 pub unsafe fn copy[T](from: Pointer[T], to: Pointer[T], count: Int = 1)
 pub unsafe fn free(pointer: Pointer[Void]?)
@@ -1872,6 +1964,7 @@ impl Additive for Decimal
 impl Display for BigInt
 impl Display for Decimal
 impl Display for MathError
+impl Fractional for Decimal
 impl Number for BigInt
 impl Number for Decimal
 impl Ordered for BigInt
@@ -1883,6 +1976,9 @@ impl serialization.Decode for BigInt
 impl serialization.Decode for Decimal
 impl serialization.Encode for BigInt
 impl serialization.Encode for Decimal
+impl[T: Number + Display] Display for Tensor[T]
+impl[T: Number + serialization.Decode] serialization.Decode for Tensor[T]
+impl[T: Number + serialization.Encode] serialization.Encode for Tensor[T]
 pub const E: Float = 2.718281828459045
 pub const Pi: Float = 3.141592653589793
 pub enum MathError {
@@ -1913,6 +2009,29 @@ pub fn Decimal.parse(text: String): Decimal ! MathError
 pub fn Decimal.round(self, decimals: Int, mode: Rounding = Rounding.HalfEven): Decimal
 pub fn Decimal.scale(self): Int
 pub fn Decimal.toFloat(self): Float
+pub fn Tensor[T: Fractional].mean(self): T
+pub fn Tensor[T: Fractional].meanAlong(self, axis: Int): Tensor[T]
+pub fn Tensor[T: Number + Ordered].indexOfMax(self): Array[Int]?
+pub fn Tensor[T: Number + Ordered].max(self): T?
+pub fn Tensor[T: Number + Ordered].min(self): T?
+pub fn Tensor[T: Number](values: Array[T], shape: Array[Int]? = none): Tensor[T]
+pub fn Tensor[T: Number].at(self, indexes: ...Int): T
+pub fn Tensor[T: Number].dot(self, other: Tensor[T]): T
+pub fn Tensor[T: Number].filled(shape: Array[Int], value: T): Tensor[T]
+pub fn Tensor[T: Number].fromRows(rows: Array[Array[T]]): Tensor[T]
+pub fn Tensor[T: Number].length(self): Int
+pub fn Tensor[T: Number].map(self, transform: fn(T): T): Tensor[T]
+pub fn Tensor[T: Number].matmul(self, other: Tensor[T]): Tensor[T]
+pub fn Tensor[T: Number].rank(self): Int
+pub fn Tensor[T: Number].reshape(self, shape: Array[Int]): Tensor[T]
+pub fn Tensor[T: Number].set(mut self, value: T, indexes: ...Int)
+pub fn Tensor[T: Number].shape(self): Array[Int]
+pub fn Tensor[T: Number].slice(self, axis: Int, index: Int): Tensor[T]
+pub fn Tensor[T: Number].sum(self): T
+pub fn Tensor[T: Number].sumAlong(self, axis: Int): Tensor[T]
+pub fn Tensor[T: Number].transposed(self, axes: Array[Int]? = none): Tensor[T]
+pub fn Tensor[T: Number].values(self): Array[T]
+pub fn Tensor[T: Number].zeros(shape: Array[Int]): Tensor[T]
 pub fn acos(value: Float): Float
 pub fn asin(value: Float): Float
 pub fn atan(value: Float): Float
@@ -1925,6 +2044,7 @@ pub fn checkedLog10(value: Float): Float ! MathError
 pub fn checkedLog2(value: Float): Float ! MathError
 pub fn checkedSqrt(value: Float): Float ! MathError
 pub fn cos(value: Float): Float
+pub fn dot[T: Number](a: Array[T], b: Array[T]): T
 pub fn exp(value: Float): Float
 pub fn floor(value: Float): Float
 pub fn fma(a: Float, b: Float, c: Float): Float
@@ -1934,6 +2054,7 @@ pub fn lcm[T: Integer](a: T, b: T): T
 pub fn ln(value: Float): Float
 pub fn log10(value: Float): Float
 pub fn log2(value: Float): Float
+pub fn norm(values: Array[Float]): Float
 pub fn pow(base: Float, exponent: Float): Float
 pub fn round(value: Float): Float
 pub fn roundTiesAway(value: Float): Float
@@ -1945,6 +2066,9 @@ pub type BigInt = {
     // private fields
 }
 pub type Decimal = {
+    // private fields
+}
+pub type Tensor[T: Number] = {
     // private fields
 }
 == std.mcp
@@ -2409,6 +2533,54 @@ pub type Tls = {
     clients: String?
     minimumVersion: TlsVersion
 }
+== std.os
+impl Display for Errno
+impl reflect.Reflect for Errno
+pub type Errno = Int32
+== std.os.linux
+pub unsafe fn syscall(number: Int, arguments: ...Int): Int ! os.Errno
+== std.os.macos
+== std.os.unix
+pub fn Fd.close(self): !os.Errno
+pub fn Fd.number(self): Int32
+pub fn Fd.standardError(): Fd
+pub fn Fd.standardInput(): Fd
+pub fn Fd.standardOutput(): Fd
+pub fn Mapping.close(self): !os.Errno
+pub fn Mapping.length(self): Int
+pub fn Mapping.pointer(self): Pointer[Byte]
+pub fn control(on: ref Fd, command: Int32, argument: Int = 0): Int32 ! os.Errno
+pub fn duplicate(of: ref Fd): Fd ! os.Errno
+pub fn isTerminal(on: ref Fd): Bool
+pub fn open(path: String, flags: Int32, mode: Int32 = 0o644): Fd ! os.Errno
+pub fn pipe(): (Fd, Fd) ! os.Errno
+pub fn poll(descriptors: mut Array[pollfd], timeout: time.Duration? = none): Int ! os.Errno
+pub fn read(from: ref Fd, into: mut Array[Byte]): Int ! os.Errno
+pub fn seek(on: ref Fd, offset: Int, from: Int32): Int ! os.Errno
+pub fn setTerminalMode(of: ref Fd, mode: termios, when: Int32): !os.Errno
+pub fn signal(pid: Int32, number: Int32): !os.Errno
+pub fn terminalMode(of: ref Fd): termios ! os.Errno
+pub fn write(to: ref Fd, bytes: Array[Byte]): Int ! os.Errno
+pub type Fd = {
+    // private fields
+}
+pub type Mapping = {
+    // private fields
+}
+pub unsafe fn Fd.adopt(number: Int32): Fd
+pub unsafe fn Mapping.anonymous(length: Int, protection: Int32, flags: Int32): Mapping ! os.Errno
+pub unsafe fn Mapping.of(
+    file: ref Fd,
+    length: Int,
+    protection: Int32,
+    flags: Int32,
+    offset: Int = 0,
+): Mapping ! os.Errno
+pub unsafe fn deviceControl(
+    on: ref Fd,
+    request: UInt,
+    argument: Pointer[ffi.Void],
+): Int32 ! os.Errno
 == std.path
 pub fn clean(path: String): String
 pub fn extension(path: String): String?
@@ -2418,6 +2590,65 @@ pub fn join(base: String, part: String): String
 pub fn matches(pattern: String, path: String): Bool
 pub fn parent(path: String): String?
 pub fn relative(from: String, to: String): String?
+== std.plugin
+impl Display for Error
+impl reflect.Reflect for Error
+impl serialization.Decode for Error
+impl serialization.Encode for Error
+pub annotation Contract = {}
+pub annotation Export = {}
+pub const Broken: Int = 2
+pub const Failed: Int = 1
+pub const Returned: Int = 0
+pub enum Error {
+    /// The library or the program could not be loaded or started, with why.
+    NotLoaded(String)
+    /// The plugin was built against another contract, with what differs.
+    Contract(String)
+    /// The plugin panicked in a call, with the panic's message.
+    Panicked(String)
+    /// What crossed could not be read, with why.
+    Format(String)
+    /// The plugin is gone: unloaded, or its program ended.
+    Closed
+}
+pub fn Link.call(self, method: Int, input: Array[Byte]): (Int, Array[Byte]) ! Error
+pub fn Link.load(path: String, contract: Description): Link ! Error
+pub fn Link.start(command: Command, contract: Description): Link ! Error
+pub fn answered(
+    answer: fn(Int, Array[Byte]): (Int, Array[Byte]),
+    method: Int,
+    given: Array[Byte],
+): (Int, Array[Byte])
+pub fn argument[T: serialization.Decode](given: Array[Byte], index: Int): T ! Error
+pub fn broken(error: Error): (Int, Array[Byte])
+pub fn contractText[P](): String
+pub fn decoded[T: serialization.Decode](bytes: Array[Byte]): T ! Error
+pub fn described(name: String, text: String, methods: Array[String]): Description
+pub fn nothing(): Array[Byte]
+pub fn serve(contract: Description, answer: fn(Int, Array[Byte]): (Int, Array[Byte])): !Error
+pub type Description = {
+    name: String
+    fingerprint: String
+    methods: Array[String]
+}
+pub type Link = {
+    // private fields
+}
+pub unsafe fn offer(
+    contract: Description,
+    answer: fn(Int, Array[Byte]): (Int, Array[Byte]),
+    bytes: Pointer[Pointer[Byte]],
+    length: Pointer[ffi.CSize],
+)
+pub unsafe fn offered(
+    method: UInt32,
+    input: Pointer[Byte],
+    inputLength: ffi.CSize,
+    output: Pointer[Pointer[Byte]],
+    length: Pointer[ffi.CSize],
+): Int32
+pub unsafe fn release(bytes: Pointer[Byte], length: ffi.CSize)
 == std.process
 impl reflect.Reflect for ProcessError
 pub enum Input {
@@ -3522,6 +3753,58 @@ pub type Violation = {
     path: String
     message: String
 }
+== std.simd
+pub fn Mask128.all(self): Bool
+pub fn Mask128.any(self): Bool
+pub fn Mask128.bits(self): UInt
+pub fn Mask128.choose(self, whenTrue: Vector128[T], whenFalse: Vector128[T]): Vector128[T]
+pub fn Mask128.count(self): Int
+pub fn Mask128.lane(self, index: Int): Bool
+pub fn Vector128.abs(self): Vector128[T]
+pub fn Vector128.accelerated(): Bool
+pub fn Vector128.all(value: T): Vector128[T]
+pub fn Vector128.cast[U](self): Vector128[U]
+pub fn Vector128.ceil(self): Vector128[T]
+pub fn Vector128.equal(self, other: Vector128[T]): Mask128[T]
+pub fn Vector128.floor(self): Vector128[T]
+pub fn Vector128.fma(self, factor: Vector128[T], addend: Vector128[T]): Vector128[T]
+pub fn Vector128.greater(self, other: Vector128[T]): Mask128[T]
+pub fn Vector128.greaterOrEqual(self, other: Vector128[T]): Mask128[T]
+pub fn Vector128.lane(self, index: Int): T
+pub fn Vector128.lanes(): Int
+pub fn Vector128.less(self, other: Vector128[T]): Mask128[T]
+pub fn Vector128.lessOrEqual(self, other: Vector128[T]): Mask128[T]
+pub fn Vector128.load(values: ref Array[T], at: Int = 0): Vector128[T]
+pub fn Vector128.max(self, other: Vector128[T]): Vector128[T]
+pub fn Vector128.maxLane(self): T
+pub fn Vector128.min(self, other: Vector128[T]): Vector128[T]
+pub fn Vector128.minLane(self): T
+pub fn Vector128.notEqual(self, other: Vector128[T]): Mask128[T]
+pub fn Vector128.of(values: ...T): Vector128[T]
+pub fn Vector128.reversed(self): Vector128[T]
+pub fn Vector128.round(self): Vector128[T]
+pub fn Vector128.saturatingAdd(self, other: Vector128[T]): Vector128[T]
+pub fn Vector128.saturatingSub(self, other: Vector128[T]): Vector128[T]
+pub fn Vector128.sqrt(self): Vector128[T]
+pub fn Vector128.store(self, into: mut Array[T], at: Int = 0)
+pub fn Vector128.sum(self): T
+pub fn Vector128.swizzle(self, indexes: Vector128[T]): Vector128[T]
+pub fn Vector128.toArray(self): Array[T]
+pub fn Vector128.to[U](self): Vector128[U]
+pub fn Vector128.truncate(self): Vector128[T]
+pub fn Vector128.withLane(self, index: Int, value: T): Vector128[T]
+pub fn Vector128.zero(): Vector128[T]
+pub fn Vector256.joined(lower: Vector128[T], upper: Vector128[T]): Vector256[T]
+pub fn Vector256.lower(self): Vector128[T]
+pub fn Vector256.upper(self): Vector128[T]
+pub type Mask128[T]
+pub type Mask256[T]
+pub type Mask512[T]
+pub type Mask[T]
+pub type Vector128[T]
+pub type Vector256[T]
+pub type Vector512[T]
+pub type Vector[T]
 == std.sql
 impl Display for ErrorKind
 impl Display for Operation

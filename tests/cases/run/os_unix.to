@@ -1,0 +1,90 @@
+// std.os.unix: a file opened, written, read back and closed as its value
+// goes; one that is missing; a pipe written by one task and read by another;
+// poll with nothing ready; a pipe is no terminal; and memory mapped.
+
+import std.console
+import std.fs
+import std.os.unix
+import std.time
+
+fn send(to: unix.Fd, text: String): Int {
+    unix.write(ref to, text.bytes()) ?? -1
+}
+
+/// The local flags of a mode without its line editing and echo: the flags
+/// are of the field's type, `tcflag_t`.
+fn raw(mode: unix.termios): unix.tcflag_t {
+    mode.c_lflag & ~(unix.ICANON | unix.ECHO)
+}
+
+fn main() {
+    match unix.open("/no/such/file", unix.O_RDONLY) {
+        ok(_) => console.println("opened")
+        err(error) => console.println("{error} {error.value == unix.ENOENT}")
+    }
+    let directory = fs.createTemporaryDirectory() ?? "/tmp"
+    let path = "{directory}/os_unix.txt"
+    match unix.open(path, unix.O_WRONLY | unix.O_CREAT | unix.O_TRUNC) {
+        ok(file) => console.println("wrote {unix.write(ref file, "hello, unix".bytes())}")
+        err(error) => console.println("{error}")
+    }
+    match unix.open(path, unix.O_RDONLY) {
+        ok(file) => {
+            var into: Array[Byte] = [0, 0, 0, 0, 0]
+            let count = unix.read(ref file, mut into) ?? -1
+            console.println("read {count}: {String.fromBytes(into.take(count)) ?? "?"}")
+            console.println("at {unix.seek(ref file, 0, unix.SEEK_END)}")
+            console.println("closed {file.close().isOk()}")
+        }
+        err(error) => console.println("{error}")
+    }
+    _ = fs.remove(directory, recursive: true)
+
+    match unix.pipe() {
+        ok((reading, writing)) => {
+            var asked = [
+                unix.pollfd { fd: reading.number(), events: Int16(unix.POLLIN) ?? 0, revents: 0 },
+            ]
+            console.println("ready {unix.poll(mut asked, timeout: time.milliseconds(20))}")
+            console.println("terminal {unix.isTerminal(ref reading)}")
+            match unix.terminalMode(ref reading) {
+                ok(mode) => console.println("a mode, raw {raw(mode)}")
+                err(error) => console.println("no mode {error.value == unix.ENOTTY}")
+            }
+            let sent = spawn send(writing, "ping")
+            var into: Array[Byte] = [0, 0, 0, 0, 0, 0, 0, 0]
+            let count = unix.read(ref reading, mut into) ?? -1
+            console.println(
+                "{sent.wait()} sent, {count} read: {String.fromBytes(into.take(count)) ?? "?"}",
+            )
+            console.println("ready {unix.poll(mut asked, timeout: time.milliseconds(20))}")
+        }
+        err(error) => console.println("{error}")
+    }
+
+    match unsafe {
+        unix.Mapping.anonymous(4096, unix.PROT_READ | unix.PROT_WRITE, unix.MAP_PRIVATE)
+    } {
+        ok(mapping) => {
+            unsafe { mapping.pointer().offset(10).write(42) }
+            console.println(
+                "mapped {mapping.length()}: {unsafe { mapping.pointer().offset(10).read() }}",
+            )
+        }
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-no-replay: a recorded run has one worker, which a task blocked in C's `read` keeps from the task that writes
+// expect-no-schedule: tasks in a given order take turns, which a task blocked in C's `read` keeps from the task that writes
+// expect-stdout: os error 2: No such file or directory true
+// expect-stdout: wrote ok(11)
+// expect-stdout: read 5: hello
+// expect-stdout: at ok(11)
+// expect-stdout: closed true
+// expect-stdout: ready ok(0)
+// expect-stdout: terminal false
+// expect-stdout: no mode true
+// expect-stdout: 4 sent, 4 read: ping
+// expect-stdout: ready ok(1)
+// expect-stdout: mapped 4096: 42

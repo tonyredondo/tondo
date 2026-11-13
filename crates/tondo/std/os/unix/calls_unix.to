@@ -1,0 +1,362 @@
+// std.os.unix: what Linux and macOS have alike. Descriptors and mappings
+// that close as their values go, and the calls on them, each made again
+// when a signal interrupts it; and the constants, types and functions of C
+// that both systems have with one shape, with C's names, for the build's
+// target (standard library 14.45). `tondo api std.os.unix.<name>` shows
+// one of C's declarations, and `tondo api --search <words>` finds them.
+//
+// ```tondo
+// import std.console
+// import std.os.unix
+//
+// fn main() {
+//     match unix.pipe() {
+//         ok((reading, writing)) => {
+//             _ = unix.write(ref writing, "ping".bytes())
+//             var into: Array[Byte] = [0, 0, 0, 0, 0, 0, 0, 0]
+//             let count = unix.read(ref reading, mut into) ?? 0
+//             console.println("{count} bytes: {into.take(count)}")
+//         }
+//         err(error) => console.println("pipe: {error}")
+//     }
+// }
+// ```
+
+import std.ffi
+import std.internal.fs as fsNative
+import std.internal.memory
+import std.os
+import std.time
+
+@symbol("open")
+extern fn cOpen(path: ffi.CString, flags: ffi.CInt, ...): ffi.CInt ! os.Errno
+
+@symbol("read")
+extern fn cRead(fd: ffi.CInt, into: UInt64, count: ffi.CSize): Int ! os.Errno
+
+@symbol("write")
+extern fn cWrite(fd: ffi.CInt, from: UInt64, count: ffi.CSize): Int ! os.Errno
+
+@symbol("lseek")
+extern fn cSeek(fd: ffi.CInt, offset: Int, whence: ffi.CInt): Int ! os.Errno
+
+@symbol("pipe")
+extern fn cPipe(numbers: UInt64): ffi.CInt ! os.Errno
+
+@symbol("dup")
+extern fn cDuplicate(fd: ffi.CInt): ffi.CInt ! os.Errno
+
+@symbol("fcntl")
+extern fn cControl(fd: ffi.CInt, command: ffi.CInt, ...): ffi.CInt ! os.Errno
+
+@symbol("ioctl")
+extern fn cDeviceControl(fd: ffi.CInt, request: ffi.CULong, ...): ffi.CInt ! os.Errno
+
+@symbol("isatty")
+extern fn cIsTerminal(fd: ffi.CInt): ffi.CInt
+
+@symbol("tcgetattr")
+extern fn cTerminalMode(fd: ffi.CInt, mode: UInt64): ffi.CInt ! os.Errno
+
+@symbol("tcsetattr")
+extern fn cSetTerminalMode(fd: ffi.CInt, when: ffi.CInt, mode: UInt64): ffi.CInt ! os.Errno
+
+@symbol("poll")
+extern fn cPoll(descriptors: Pointer[pollfd], count: nfds_t, timeout: ffi.CInt): ffi.CInt ! os.Errno
+
+@symbol("kill")
+extern fn cSignal(pid: ffi.CInt, number: ffi.CInt): ffi.CInt ! os.Errno
+
+@symbol("mmap")
+extern fn cMap(
+    address: UInt64,
+    length: ffi.CSize,
+    protection: ffi.CInt,
+    flags: ffi.CInt,
+    fd: ffi.CInt,
+    offset: Int,
+): Int ! os.Errno
+
+/// A call made again while a signal interrupts it, `EINTR`. What it takes
+/// of C's memory, it takes by address, as a closure that any task may call
+/// holds no raw pointer.
+fn again[T](call: unsafe fn(): T ! os.Errno): T ! os.Errno {
+    for {
+        match unsafe { call() } {
+            err(error) if error.value == EINTR => continue
+            done => return done
+        }
+    }
+}
+
+/// An open descriptor of the system. It is closed when its value goes, but
+/// for the three standard ones, which are never closed; `close` closes it
+/// before, with the error the system gives.
+///
+/// ```tondo
+/// import std.console
+/// import std.os.unix
+///
+/// let output = unix.Fd.standardOutput()
+/// console.println("{output.number()}")
+/// ```
+pub type Fd = {
+    priv native: fsNative.Owned
+}
+
+/// The descriptor `number`, which the program got elsewhere: the `Fd` will
+/// close it, so nothing else may.
+pub unsafe fn Fd.adopt(number: Int32): Fd {
+    Fd { native: fsNative.descriptor(Int(number), true) }
+}
+
+/// Its number, or -1 once it is closed.
+pub fn Fd.number(self): Int32 {
+    Int32(fsNative.descriptorNumber(ref self.native)) ?? -1
+}
+
+/// The standard input, 0, which is never closed.
+pub fn Fd.standardInput(): Fd {
+    Fd { native: fsNative.descriptor(0, false) }
+}
+
+/// The standard output, 1, which is never closed.
+pub fn Fd.standardOutput(): Fd {
+    Fd { native: fsNative.descriptor(1, false) }
+}
+
+/// The standard error, 2, which is never closed.
+pub fn Fd.standardError(): Fd {
+    Fd { native: fsNative.descriptor(2, false) }
+}
+
+/// Closes it now, with the error the system gives; it also closes when its
+/// value goes. A standard one is let go without being closed.
+pub fn Fd.close(self): !os.Errno {
+    let failed = fsNative.descriptorClose(ref self.native)
+    if failed != 0 {
+        fail os.Errno(Int32(failed) ?? 0)
+    }
+}
+
+/// The file at `path`, opened with `flags`, `unix.O_RDONLY` or others
+/// combined with `|`, and created with `mode` when `unix.O_CREAT` is one of
+/// them.
+pub fn open(path: String, flags: Int32, mode: Int32 = 0o644): Fd ! os.Errno {
+    let number = again(unsafe () { cOpen(path, flags, mode) })?
+    Fd { native: fsNative.descriptor(Int(number), true) }
+}
+
+/// Reads at most `into.length()` bytes into `into`, from its start, and
+/// gives how many: 0 at the end of what there is to read.
+pub fn read(from: ref Fd, into: mut Array[Byte]): Int ! os.Errno {
+    let wanted = into.length()
+    let buffer = ffi.allocate[Byte](if wanted > 0 { wanted } else { 1 })
+    defer {
+        unsafe { ffi.free(buffer) }
+    }
+    let number = from.number()
+    let size = UInt64.wrapping(wanted)
+    let at = unsafe { buffer.address() }
+    let count = again(unsafe () { cRead(number, at, size) })?
+    if count > 0 {
+        into[0:count] = unsafe { ffi.bytes(buffer, count) }
+    }
+    count
+}
+
+/// Writes `bytes` and gives how many it wrote, which may be fewer.
+pub fn write(to: ref Fd, bytes: Array[Byte]): Int ! os.Errno {
+    let count = bytes.length()
+    let buffer = ffi.allocate[Byte](if count > 0 { count } else { 1 })
+    defer {
+        unsafe { ffi.free(buffer) }
+    }
+    unsafe { memory.store(bytes, buffer) }
+    let number = to.number()
+    let size = UInt64.wrapping(count)
+    let at = unsafe { buffer.address() }
+    again(unsafe () { cWrite(number, at, size) })
+}
+
+/// Moves where the next read or write is, `offset` bytes from where `from`
+/// says, `unix.SEEK_SET`, `unix.SEEK_CUR` or `unix.SEEK_END`, and gives it.
+pub fn seek(on: ref Fd, offset: Int, from: Int32): Int ! os.Errno {
+    let number = on.number()
+    again(unsafe () { cSeek(number, offset, from) })
+}
+
+/// A pipe: what is written to the second is read from the first.
+pub fn pipe(): (Fd, Fd) ! os.Errno {
+    let numbers = ffi.allocate[ffi.CInt](2)
+    defer {
+        unsafe { ffi.free(numbers) }
+    }
+    let at = unsafe { numbers.address() }
+    _ = again(unsafe () { cPipe(at) })?
+    let reading = unsafe { numbers.read() }
+    let writing = unsafe { numbers.offset(1).read() }
+    (
+        Fd { native: fsNative.descriptor(Int(reading), true) },
+        Fd { native: fsNative.descriptor(Int(writing), true) },
+    )
+}
+
+/// Another descriptor of what `of` is a descriptor of.
+pub fn duplicate(of: ref Fd): Fd ! os.Errno {
+    let number = of.number()
+    let copy = again(unsafe () { cDuplicate(number) })?
+    Fd { native: fsNative.descriptor(Int(copy), true) }
+}
+
+/// C's `fcntl`: `command`, `unix.F_GETFL` or another, with `argument`.
+pub fn control(on: ref Fd, command: Int32, argument: Int = 0): Int32 ! os.Errno {
+    let number = on.number()
+    again(unsafe () { cControl(number, command, argument) })
+}
+
+/// C's `ioctl`: `request`, with `argument`, which it reads or writes as the
+/// request says.
+pub unsafe fn deviceControl(
+    on: ref Fd,
+    request: UInt,
+    argument: Pointer[ffi.Void],
+): Int32 ! os.Errno {
+    let number = on.number()
+    let at = unsafe { argument.address() }
+    again(unsafe () { cDeviceControl(number, request, at) })
+}
+
+/// Whether it is a terminal.
+pub fn isTerminal(on: ref Fd): Bool {
+    unsafe { cIsTerminal(on.number()) } == 1
+}
+
+/// The mode of the terminal it is.
+pub fn terminalMode(of: ref Fd): termios ! os.Errno {
+    let mode = ffi.allocate[termios]()
+    defer {
+        unsafe { ffi.free(mode) }
+    }
+    let number = of.number()
+    let at = unsafe { mode.address() }
+    _ = again(unsafe () { cTerminalMode(number, at) })?
+    unsafe { mode.read() }
+}
+
+/// Sets the mode of the terminal it is, `when` `unix.TCSANOW` or another
+/// says.
+pub fn setTerminalMode(of: ref Fd, mode: termios, when: Int32): !os.Errno {
+    let written = ffi.allocate[termios]()
+    defer {
+        unsafe { ffi.free(written) }
+    }
+    unsafe { written.write(mode) }
+    let number = of.number()
+    let at = unsafe { written.address() }
+    _ = again(unsafe () { cSetTerminalMode(number, when, at) })?
+}
+
+/// Waits until one of `descriptors` is ready as its `events` ask, or for
+/// `timeout` in all, and gives how many are: each one's `revents` says
+/// how.
+pub fn poll(descriptors: mut Array[pollfd], timeout: time.Duration? = none): Int ! os.Errno {
+    let count = descriptors.length()
+    let asked = ffi.allocate[pollfd](if count > 0 { count } else { 1 })
+    defer {
+        unsafe { ffi.free(asked) }
+    }
+    for (index, descriptor) in descriptors.enumerate() {
+        unsafe { asked.offset(index).write(descriptor) }
+    }
+    let started = time.now()
+    var ready = 0
+    for {
+        // What is left of the time, in milliseconds rounded up, or -1.
+        let left = match timeout {
+            some(wait) => {
+                let rest = wait.nanoseconds() - started.elapsed().nanoseconds()
+                if rest > 0 { (rest + 999_999) / 1_000_000 } else { 0 }
+            }
+            none => -1
+        }
+        let milliseconds = Int32(left) ?? Int32.max
+        match unsafe { cPoll(asked, nfds_t.wrapping(count), milliseconds) } {
+            ok(found) => {
+                ready = Int(found)
+                break
+            }
+            err(error) if error.value == EINTR => continue
+            err(error) => fail error
+        }
+    }
+    for index in 0..count {
+        descriptors[index] = unsafe { asked.offset(index).read() }
+    }
+    ready
+}
+
+/// Sends the signal `number`, `unix.SIGTERM` or another, to the process
+/// `pid`.
+pub fn signal(pid: Int32, number: Int32): !os.Errno {
+    _ = again(unsafe () { cSignal(pid, number) })?
+}
+
+/// Memory of the system mapped into the program. It is unmapped when its
+/// value goes; `close` unmaps it before, with the error the system gives.
+///
+/// ```tondo
+/// import std.console
+/// import std.os.unix
+///
+/// match unsafe { unix.Mapping.anonymous(4096, unix.PROT_READ | unix.PROT_WRITE, unix.MAP_PRIVATE) } {
+///     ok(mapping) => console.println("{mapping.length()} bytes")
+///     err(error) => console.println("mmap: {error}")
+/// }
+/// ```
+pub type Mapping = {
+    priv native: fsNative.Owned
+}
+
+/// `length` bytes of `file`, from `offset`, mapped with `protection`,
+/// `unix.PROT_READ` and others, and `flags`, `unix.MAP_SHARED` or
+/// `unix.MAP_PRIVATE` with others.
+pub unsafe fn Mapping.of(
+    file: ref Fd,
+    length: Int,
+    protection: Int32,
+    flags: Int32,
+    offset: Int = 0,
+): Mapping ! os.Errno {
+    let number = file.number()
+    let size = UInt64.wrapping(length)
+    let address = again(unsafe () { cMap(0u64, size, protection, flags, number, offset) })?
+    Mapping { native: fsNative.mapping(address, length) }
+}
+
+/// `length` bytes of memory of no file, mapped with `protection` and
+/// `flags`, to which it adds `unix.MAP_ANON`.
+pub unsafe fn Mapping.anonymous(length: Int, protection: Int32, flags: Int32): Mapping ! os.Errno {
+    let size = UInt64.wrapping(length)
+    let address = again(unsafe () { cMap(0u64, size, protection, flags | MAP_ANON, -1, 0) })?
+    Mapping { native: fsNative.mapping(address, length) }
+}
+
+/// Where its memory starts.
+pub fn Mapping.pointer(self): Pointer[Byte] {
+    unsafe { UInt64.wrapping(fsNative.mappingAddress(ref self.native)).toPointer[Byte]() }
+}
+
+/// How many bytes it maps.
+pub fn Mapping.length(self): Int {
+    fsNative.mappingLength(ref self.native)
+}
+
+/// Unmaps it now, with the error the system gives; it is also unmapped when
+/// its value goes.
+pub fn Mapping.close(self): !os.Errno {
+    let failed = fsNative.mappingClose(ref self.native)
+    if failed != 0 {
+        fail os.Errno(Int32(failed) ?? 0)
+    }
+}

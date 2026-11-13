@@ -255,3 +255,262 @@ fn a_library_publishes_functions_and_is_checked_and_tested_as_one() {
     let tested = tondo(&dir, &["test", "--library"]);
     assert!(tested.status.success(), "{}", String::from_utf8_lossy(&tested.stdout));
 }
+
+const ENDS: &str = r#"import std.console
+import std.net
+import std.time
+
+/// Twice a number.
+pub extern fn ends_twice(n: Int64): Int64 {
+    n * 2
+}
+
+/// Starts tasks that run until the library ends: one sleeps, one waits
+/// for connections, one asks the network.
+pub extern fn ends_start(): Int64 {
+    spawn detached sleeping()
+    match net.listen("127.0.0.1", 0) {
+        ok(listener) => {
+            let port = listener.address().port
+            spawn detached accepting(listener)
+            port
+        }
+        err(_) => 0
+    }
+}
+
+fn sleeping() {
+    defer {
+        console.println("cleaned")
+    }
+    for {
+        time.sleep(time.milliseconds(5))
+    }
+}
+
+fn accepting(listener: net.Listener) {
+    for {
+        match listener.accept() {
+            ok(stream) => _ = stream.close()
+            err(_) => return
+        }
+    }
+}
+"#;
+
+const UNLOADER: &str = r#"#include <dlfcn.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdio.h>
+
+static long long (*twice)(long long);
+
+static void *call(void *argument) {
+    printf("from a thread %lld\n", twice(4));
+    return NULL;
+}
+
+int main(int argc, char **argv) {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    for (int round = 0; round < 2; round++) {
+        void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
+        twice = (long long (*)(long long))dlsym(library, "ends_twice");
+        long long (*start)(void) = (long long (*)(void))dlsym(library, "ends_start");
+        void (*stop)(void) = (void (*)(void))dlsym(library, "ends_stop");
+        printf("round %d: %lld, listening %d\n", round, twice(21), start() > 0);
+        if (round == 1) {
+            pthread_t thread;
+            pthread_create(&thread, NULL, call, NULL);
+            pthread_join(thread, NULL);
+        }
+        stop();
+        struct sigaction fault;
+        sigaction(SIGSEGV, NULL, &fault);
+        printf("stopped, the fault's handler %s\n", fault.sa_handler == SIG_DFL ? "the process's" : "the library's");
+        if (round == 0) {
+            printf("again %lld, listening %d\n", twice(2), start() > 0);
+            stop();
+            stop();
+        }
+        dlclose(library);
+        printf("%s\n", dlopen(argv[1], RTLD_NOW | RTLD_NOLOAD) ? "loaded" : "unloaded");
+    }
+    return 0;
+}
+"#;
+
+/// A library that Tondo built ends with `<name>_stop` (toolchain 7.7):
+/// its tasks run their `defer`s, its threads end, the handlers it
+/// installed give way, and the system unloads it; a later call starts it
+/// again, and a library loaded again starts a new runtime.
+#[test]
+fn a_library_that_tondo_built_ends_and_unloads() {
+    let dir = project("ends", ENDS);
+    let built = tondo(&dir, &["build", "--library", "--output", "out"]);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let header = std::fs::read_to_string(dir.join("out/ends.h")).unwrap();
+    assert!(header.contains("\nvoid ends_stop(void);\n"), "{header}");
+    std::fs::write(dir.join("unload.c"), UNLOADER).unwrap();
+    let compiled =
+        Command::new("cc").args(["unload.c", "-o", "unload", "-lpthread"]).current_dir(&dir).output().unwrap();
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let shared = dir.join(if cfg!(target_os = "macos") { "out/libends.dylib" } else { "out/libends.so" });
+    let run = Command::new(dir.join("unload")).arg(&shared).output().unwrap();
+    // macOS keeps an image with thread-local variables loaded, which the
+    // runtime has, and musl never unloads one: there the library ends,
+    // stays, and starts again.
+    let kept = cfg!(any(target_os = "macos", target_env = "musl"));
+    let unloaded = if kept { "loaded" } else { "unloaded" };
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        format!(
+            "round 0: 42, listening 1\ncleaned\nstopped, the fault's handler the process's\nagain 4, listening 1\ncleaned\n{unloaded}\n\
+             round 1: 42, listening 1\nfrom a thread 8\ncleaned\nstopped, the fault's handler the process's\n{unloaded}\n"
+        ),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(run.status.success());
+    // A program of Tondo ends it before it unloads it, by itself when the
+    // last holder goes or when it closes it.
+    let host = project("endsHost", "");
+    std::fs::remove_file(host.join("src/endsHost.to")).unwrap();
+    std::fs::write(host.join("src/main.to"), ENDS_HOST).unwrap();
+    let built = tondo(&host, &["build", "--output", "host"]);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let no_load = if cfg!(target_os = "macos") { "16" } else { "4" };
+    let run = Command::new(host.join("host")).arg(&shared).arg(no_load).output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        format!(
+            "cleaned\nlistening true, loaded {kept}\ncleaned\nlistening true, loaded {kept}\n10\nclosed, loaded {kept}\n"
+        ),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+const ENDS_HOST: &str = r#"import std.console
+import std.env
+import std.ffi
+
+/// Whether the system has the library loaded.
+fn loaded(path: String, noLoad: Int32): Bool ! ffi.LibraryError {
+    let program = ffi.Library.program()
+    let open = unsafe { program.function[extern fn(ffi.CString, ffi.CInt): Pointer[UInt8]]("dlopen")? }
+    let handle = unsafe { open(path, 2i32 + noLoad) }
+    unsafe { handle.address() } != 0
+}
+
+fn round(path: String): Int64 ! ffi.LibraryError {
+    let ends = ffi.Library.open(path)?
+    let start = unsafe { ends.function[extern fn(): Int64]("ends_start")? }
+    unsafe { start() }
+}
+
+fn main(): !ffi.LibraryError {
+    let (path, noLoad) = (env.args()[0], if env.args()[1] == "16" { 16i32 } else { 4i32 })
+    // The program's output and the library's are two runtimes' own: each
+    // line goes out before the library runs again.
+    console.println("listening {round(path)? > 0}, loaded {loaded(path, noLoad)?}")
+    _ = console.flush()
+    console.println("listening {round(path)? > 0}, loaded {loaded(path, noLoad)?}")
+    _ = console.flush()
+    let ends = ffi.Library.open(path)?
+    let twice = unsafe { ends.function[extern fn(Int64): Int64]("ends_twice")? }
+    console.println("{unsafe { twice(5) }}")
+    unsafe { ends.close()? }
+    console.println("closed, loaded {loaded(path, noLoad)?}")
+}
+"#;
+
+/// A program loads a library as it runs (standard library 19.3): by its
+/// path from the current directory, or by its name where the system looks;
+/// it calls a function of it, asks for what it publishes, closes it, and
+/// is told why when it cannot. A static build loads none.
+#[test]
+fn a_program_loads_a_library_as_it_runs() {
+    let plugin = project(
+        "plugin",
+        "import std.ffi\n\n/// Twice a number.\npub extern fn plugin_twice(n: ffi.CLong): ffi.CLong {\n    n * 2\n}\n",
+    );
+    let built = tondo(&plugin, &["build", "--library", "--output", "out"]);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let host = project("host", "");
+    std::fs::remove_file(host.join("src/host.to")).unwrap();
+    // A value the C library publishes, where it publishes it by this name.
+    let environ = if cfg!(target_os = "linux") {
+        "    let environment = unsafe { program.pointer[UInt64](\"environ\")? }\n    console.println(\"{unsafe { environment.read() } != 0u64}\")\n"
+    } else {
+        "    console.println(\"true\")\n"
+    };
+    let program = format!(
+        r#"import std.console
+import std.ffi
+import std.os
+
+fn asked(found: Bool ! ffi.LibraryError): String {{
+    match found {{
+        ok(_) => "ok"
+        err(ffi.LibraryError.NotLoaded(why)) => "not loaded: {{why.length() > 0}}"
+        err(error) => "{{error}}"
+    }}
+}}
+
+fn main(): !ffi.LibraryError {{
+    let file = "../plugin/out/{{ffi.libraryFileName("plugin")}}"
+    let plugin = ffi.Library.open(file)?
+    let twice = unsafe {{ plugin.function[extern fn(ffi.CLong): ffi.CLong]("plugin_twice")? }}
+    console.println("{{unsafe {{ twice(21) }}}} {{plugin.has("plugin_twice")}} {{plugin.has("plugin_thrice")}}")
+    console.println("{{plugin.path().endsWith(ffi.libraryFileName("plugin"))}} {{unsafe {{ twice.raw()(2) }}}}")
+    let named = ffi.Library.named("plugin")?
+    let found = unsafe {{ named.function[extern fn(ffi.CLong): ffi.CLong]("plugin_twice")? }}
+    console.println("{{unsafe {{ found(4) }}}}")
+    let missing = unsafe {{ plugin.function[extern fn(): ffi.CInt]("plugin_thrice") }}
+    console.println(asked(missing.map((_) {{ true }})))
+    console.println(asked(ffi.Library.open("nowhere.so").map((_) {{ true }})))
+    console.println(asked(ffi.Library.open("src/main.to").map((_) {{ true }})))
+    let program = ffi.Library.program()
+    console.println("{{program.has("strlen")}}")
+    // A C function of it that fails with the system's error number.
+    let change = unsafe {{ program.function[extern fn(ffi.CString): ffi.CInt ! os.Errno]("chdir")? }}
+    console.println("{{unsafe {{ change("/no/such") }}}} {{unsafe {{ change.raw()(".") }}}}")
+    // And as `toFunction` gives it, from its address.
+    let address = unsafe {{ program.pointer[UInt8]("chdir")?.address() }}
+    let fromAddress = unsafe {{ address.toFunction[extern fn(ffi.CString): ffi.CInt ! os.Errno]() }}
+    console.println("{{unsafe {{ fromAddress("/no/such") }}}}")
+{environ}    unsafe {{ plugin.close()? }}
+    console.println("{{plugin.has("plugin_twice")}}")
+    console.println(asked(unsafe {{ plugin.function[extern fn(): ffi.CInt]("plugin_twice") }}.map((_) {{ true }})))
+    console.println(asked(unsafe {{ plugin.close() }}.map((_) {{ true }})))
+    console.println(asked(unsafe {{ program.close() }}.map((_) {{ true }})))
+}}
+"#
+    );
+    std::fs::write(host.join("src/main.to"), program).unwrap();
+    let built = tondo(&host, &["build", "--output", "host"]);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let search = if cfg!(target_os = "macos") { "DYLD_LIBRARY_PATH" } else { "LD_LIBRARY_PATH" };
+    let run = Command::new(host.join("host")).current_dir(&host).env(search, plugin.join("out")).output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "42 true false\ntrue 4\n8\nthe library publishes no `plugin_thrice`\nnot loaded: true\nnot loaded: true\ntrue\nerr(os error 2: No such file or directory) ok(0)\nerr(os error 2: No such file or directory)\ntrue\nfalse\nthe library was closed\nthe library was closed\nthe library was not unloaded: the program itself is never unloaded\n",
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    // `function` takes an `extern fn` type.
+    std::fs::write(host.join("src/main.to"), "import std.ffi\n\nfn main() {\n    let program = ffi.Library.program()\n    _ = unsafe { program.function[Int](\"strlen\") }\n}\n").unwrap();
+    let checked = tondo(&host, &["check"]);
+    let said = String::from_utf8_lossy(&checked.stderr);
+    assert!(said.contains("E1104") && said.contains("its type argument is an `extern fn(...)`"), "{said}");
+    // A static executable loads no library.
+    if cfg!(target_os = "linux") {
+        std::fs::write(host.join("src/main.to"), "import std.ffi\n\nfn main() {\n    _ = ffi.Library.program()\n}\n")
+            .unwrap();
+        let built = tondo(&host, &["build", "--static", "--output", "static"]);
+        assert!(String::from_utf8_lossy(&built.stderr).contains("a static executable loads no library"));
+        let machine = if cfg!(target_arch = "aarch64") { "aarch64-linux" } else { "x86_64-linux" };
+        let built = tondo(&host, &["build", "--target", machine, "--output", "static"]);
+        assert!(String::from_utf8_lossy(&built.stderr).contains("and a build with --target"));
+    }
+}

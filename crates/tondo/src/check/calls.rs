@@ -25,6 +25,9 @@ impl<'a> Checker<'a> {
         if value.ty == Ty::ERROR {
             return Self::error_expr(span);
         }
+        if self.vectored(value.ty).is_some() {
+            return self.simd_converted(value, method, &types, args, span);
+        }
         let key = self.owner_key(value.ty);
         let Some(&id) = self.methods.get(&(key, method.name.clone())) else {
             let message = format!(
@@ -79,6 +82,72 @@ impl<'a> Checker<'a> {
             self.unknown_name(cx, first, segments[0].span);
         }
         Self::error_expr(span)
+    }
+
+    /// A path with type arguments written before `.name(...)`: `Box[Float]`,
+    /// which parses as an index, or `Pair[Int, String]`.
+    fn typed_receiver(receiver: &ast::Expr) -> Option<(&[ast::Ident], Vec<ast::TypeExpr>)> {
+        let (base, written) = match &receiver.kind {
+            ast::ExprKind::Index { base, index } => (base, vec![Self::type_of_expr(index)?]),
+            ast::ExprKind::Generic { base, args } => (base, args.clone()),
+            _ => return None,
+        };
+        let ast::ExprKind::Path(segments) = &base.kind else { return None };
+        Some((segments, written))
+    }
+
+    /// The generic type and its type arguments written before `.name(...)`:
+    /// `Box[Float]`, which parses as an index, or `Pair[Int, String]`.
+    fn explicit_owner(&mut self, cx: &FnCx, receiver: &ast::Expr) -> Option<(crate::types::TemplateId, Vec<Ty>)> {
+        let (base, written) = match &receiver.kind {
+            ast::ExprKind::Index { base, index } => (base, vec![Self::type_of_expr(index)?]),
+            ast::ExprKind::Generic { base, args } => (base, args.clone()),
+            _ => return None,
+        };
+        let ast::ExprKind::Path(segments) = &base.kind else { return None };
+        let first = segments[0].name.as_str();
+        if self.lookup(cx, first).is_some()
+            || self.visible_capture(cx, first)
+            || matches!(self.names.get(first), Some(ModuleName::Const(_)))
+        {
+            return None;
+        }
+        let name = segments.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
+        let Some(&TypeName::Template(template)) = self.type_names.get(&name) else { return None };
+        Some((template, written.iter().map(|t| self.resolve_type(t)).collect()))
+    }
+
+    /// `Box[Float].name(...)`: the function `name` of `Box`, with `T` given.
+    #[allow(clippy::too_many_arguments)]
+    fn owner_call(
+        &mut self,
+        cx: &mut FnCx,
+        template: crate::types::TemplateId,
+        given: Vec<Ty>,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> hir::Expr {
+        let declared = self.types.template(template);
+        let (params, name) = (declared.params.clone(), declared.name.clone());
+        if params.len() != given.len() {
+            let message = format!("`{name}` takes {} type argument(s), and {} are given", params.len(), given.len());
+            self.diags.error("E1104", span, message);
+            return Self::error_expr(span);
+        }
+        let owner = self.types.instantiate(template, params);
+        let Some(id) = self.methods.get(&(owner, method.name.clone())).copied() else {
+            let message = format!("`{name}` has no operation named `{}`", method.name);
+            self.diags.error("E1001", method.span, message);
+            return Self::error_expr(span);
+        };
+        self.index_refer(method, crate::index::Key::Fn(id.0));
+        self.check_method_visible(id, span);
+        let signature = self.signatures[id.0 as usize].clone();
+        let prebound = signature.generics.iter().copied().zip(given).collect();
+        let target = CallTarget { prebound, ..CallTarget::new(Callee::Fn(id), signature, expected) };
+        self.call_signature(cx, target, None, args, span)
     }
 
     /// `Array[T]()` and `Array.withCapacity[T](capacity)`.
@@ -349,7 +418,30 @@ impl<'a> Checker<'a> {
         if let Some(retired) = self.retired_fallback(cx, &value, receiver, method, args, span) {
             return retired;
         }
+        // `function.raw()`: the C function a library's function holds
+        // (standard library 19.3).
+        if method.name == "raw"
+            && args.is_empty()
+            && let Some(function) = self.library_function(value.ty)
+        {
+            return Self::library_raw(value, function, span);
+        }
         self.method_of(cx, value, method, args, expected, span)
+    }
+
+    /// The `extern fn` type `F` of an `ffi.Function[F]`, when `ty` is one.
+    pub(super) fn library_function(&self, ty: Ty) -> Option<Ty> {
+        let (template, args) = self.types.instance_of(ty)?;
+        let declared = self.types.template(template);
+        let ffi = self.types.declaring("std.ffi");
+        let named = declared.name.rsplit('.').next() == Some("Function");
+        (named && ffi.is_some() && declared.module == ffi).then(|| args[0])
+    }
+
+    /// The C function at the address an `ffi.Function[F]` holds, as `F`.
+    fn library_raw(function: hir::Expr, ty: Ty, span: Span) -> hir::Expr {
+        let address = Self::mk(hir::ExprKind::Field(Box::new(function), 0), Ty::int(IntTy::U64), span);
+        Self::mk(hir::ExprKind::Retype(Box::new(address)), ty, span)
     }
 
     /// `unwrapOr`, `orElse` and `getOr`, which `??` replaced (17.13): an
@@ -533,6 +625,9 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> hir::Expr {
         let ty = value.ty;
+        if self.vectored(ty).is_some() {
+            return self.simd_method(cx, value, method, args, expected, span);
+        }
         if self.is_http_route(ty, method, args) {
             return self.http_route(cx, value, method, args, expected, span);
         }
@@ -938,6 +1033,12 @@ impl<'a> Checker<'a> {
     ) -> hir::Expr {
         if callee.ty == Ty::ERROR {
             return Self::error_expr(span);
+        }
+        // A function of a library is called as the C function it holds
+        // (standard library 19.3).
+        if let Some(function) = self.library_function(callee.ty) {
+            let raw = Self::library_raw(callee, function, span);
+            return self.call_value(cx, raw, args, expected, span);
         }
         if let TyKind::CFn(params, result, variadic) = self.types.kind(callee.ty).clone() {
             return self.c_value_call(cx, callee, (params, result, variadic), args, expected, span);
@@ -1516,6 +1617,43 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
+        // `simd.Vector128[Float32].zero()`: a function of a vector type.
+        if let ast::ExprKind::Field(receiver, method) = &callee.kind
+            && let Some((segments, written)) = Self::typed_receiver(receiver)
+            && self.simd_named(segments).is_some()
+        {
+            let ty = ast::TypeExpr {
+                kind: ast::TypeKind::Path { segments: segments.to_vec(), args: written },
+                span: receiver.span,
+            };
+            let owner = self.resolve_type(&ty);
+            if self.types.has_error(owner) {
+                return Self::error_expr(span);
+            }
+            return self.simd_static(cx, owner, method, args, expected, span);
+        }
+        // `simd.Vector128.zero()`, its lanes' type the one expected.
+        if let ast::ExprKind::Path(segments) = &callee.kind
+            && let [module, name, method] = segments.as_slice()
+            && let Some((width, mask)) = self.simd_named(&[module.clone(), name.clone()])
+        {
+            let Some(owner) = self.simd_owner(width, mask, expected) else {
+                let message = format!(
+                    "cannot infer the lanes' type of `simd.{0}`; write it: `simd.{0}[Float32].{1}(...)`",
+                    name.name, method.name
+                );
+                self.diags.error("E1101", span, message);
+                return Self::error_expr(span);
+            };
+            return self.simd_static(cx, owner, method, args, expected, span);
+        }
+        // `Box[Float].name(...)`: a function of a generic type, its type
+        // arguments given where nothing else gives them.
+        if let ast::ExprKind::Field(receiver, method) = &callee.kind
+            && let Some((template, given)) = self.explicit_owner(cx, receiver)
+        {
+            return self.owner_call(cx, template, given, method, args, expected, span);
+        }
         match &callee.kind {
             ast::ExprKind::Field(receiver, method) => {
                 return self.method_call(cx, receiver, method, args, expected, span);
@@ -1962,6 +2100,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalReflect
                     | StdModule::InternalText
                     | StdModule::InternalMath
+                    | StdModule::InternalCpu
+                    | StdModule::InternalLibrary
                     | StdModule::InternalMeta
                     | StdModule::InternalCodec
                     | StdModule::InternalHttp
@@ -1984,6 +2124,30 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalImage),
                 )),
             ) => {
+                // `has(feature)`: what `cpu.has` answers when the build's
+                // level does not say (toolchain 7.8).
+                if module == StdModule::InternalCpu && *member == "has" {
+                    let [arg] = args else { return self.arity_error(span, 1, args.len()) };
+                    let feature = self.expr(cx, &arg.value, None);
+                    return Self::mk(
+                        hir::ExprKind::Call(hir::Callee::Std(StdFn::CpuHas), Vec::new(), vec![feature]),
+                        Ty::BOOL,
+                        span,
+                    );
+                }
+                // `raise(code, message)`: a panic of the language's, as
+                // `P0006` when shapes do not fit, which the standard
+                // library's own code finds (15.9).
+                if module == StdModule::InternalPanic && *member == "raise" {
+                    let [code, message] = args else { return self.arity_error(span, 2, args.len()) };
+                    let ast::ExprKind::Int { value: code, .. } = code.value.kind else {
+                        self.diags.error("E1901", code.value.span, "`raise` takes the number of a panic, as `6`");
+                        return Self::error_expr(span);
+                    };
+                    let message = self.expr(cx, &message.value, Some(Ty::STRING));
+                    let message = self.coerce(message, Ty::STRING);
+                    return Self::mk(hir::ExprKind::Panic(Box::new(message), code as u32), Ty::NEVER, span);
+                }
                 // `built()`: what `env.build()` reports, read now and kept as
                 // a constant (standard library 14.3.6).
                 if module == StdModule::InternalEnv && *member == "built" {
@@ -2048,6 +2212,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalProcess => "process",
                     StdModule::InternalSql => "sql",
                     StdModule::InternalImage => "image",
+                    StdModule::InternalLibrary => "library",
                     _ => "reflect",
                 };
                 let found =
@@ -2059,7 +2224,13 @@ impl<'a> Checker<'a> {
                 };
                 let native = &hir::NATIVES[index];
                 let params = native.params.iter().map(|&t| self.native_ty(t)).collect();
-                let signature = Signature::simple(params, self.native_ty(native.result));
+                let mut signature = Signature::simple(params, self.native_ty(native.result));
+                // A value of one owner is lent to the runtime, which keeps none.
+                for (mode, param) in signature.modes.iter_mut().zip(native.params) {
+                    if matches!(param, hir::NativeTy::Owned) {
+                        *mode = ast::Mode::Ref;
+                    }
+                }
                 let target = CallTarget::new(Callee::Std(StdFn::Native(index as u16)), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }
@@ -2363,7 +2534,9 @@ impl<'a> Checker<'a> {
     /// (11.7): a method with `self`, as `String.toUpper`, a variant with
     /// positional data, a newtype, or `some`, `ok` and `err`; as the closure
     /// that calls it, which compiles as one written out would.
-    pub(super) fn function_form(&mut self, cx: &FnCx, expr: &ast::Expr) -> Option<ast::Expr> {
+    pub(super) fn function_form(&mut self, cx: &FnCx, expr: &ast::Expr, expected: Ty) -> Option<ast::Expr> {
+        // How many values the function expected takes, and how.
+        let wanted = self.expected_modes(expected);
         let ast::ExprKind::Path(segments) = &expr.kind else { return None };
         if self.lookup(cx, &segments[0].name).is_some() || self.visible_capture(cx, &segments[0].name) {
             return None;
@@ -2429,10 +2602,11 @@ impl<'a> Checker<'a> {
                         return None;
                     }
                     (vec![ast::Mode::Value; count], Box::new(Self::calling(path(segments), span)))
-                } else {
-                    // A method with `self`.
-                    let key = self.owner_key(owner_ty);
-                    let id = *self.methods.get(&(key, method.name.clone()))?;
+                } else if let key = self.owner_key(owner_ty)
+                    && let Some(&id) = self.methods.get(&(key, method.name.clone()))
+                {
+                    // A method with `self`, of all its parameters: a
+                    // function value forgets defaults.
                     let signature = &self.signatures[id.0 as usize];
                     let receiver = signature.receiver?;
                     let mut modes = signature.modes.clone();
@@ -2440,7 +2614,49 @@ impl<'a> Checker<'a> {
                         ast::Mode::Mut | ast::Mode::Var => receiver,
                         _ => ast::Mode::Value,
                     };
+                    if let Some(wanted) = wanted.as_ref().filter(|wanted| wanted.len() != modes.len()) {
+                        let name = segments.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
+                        let message = format!(
+                            "`{name}` as a function takes {} values, its defaults forgotten as in any function value, and here one of {} is expected: write a closure, `(value) {{ value.{}() }}`",
+                            modes.len(),
+                            wanted.len(),
+                            method.name
+                        );
+                        self.diags.error("E1102", span, message);
+                        return Some(ast::Expr { kind: ast::ExprKind::Error, span });
+                    }
                     (modes, Box::new(Self::calling(path(segments), span)))
+                } else if let [owner] = owner
+                    && self.intrinsic_function(&owner.name, owner_ty, &method.name)
+                {
+                    // A function of a type the compiler gives, as
+                    // `Int.parse`: called as written, with the values the
+                    // function expected, whose failure it passes on when
+                    // that function fails too.
+                    let called = Self::calling(path(segments), span);
+                    let passes = self.fails_with(expected);
+                    let call = move |values: Vec<ast::Expr>, modes: &[ast::Mode]| match passes {
+                        true => ast::Expr { kind: ast::ExprKind::Try(Box::new(called(values, modes))), span },
+                        false => called(values, modes),
+                    };
+                    (wanted.clone()?, Box::new(call))
+                } else {
+                    // A method the compiler gives, as `String.length` or
+                    // `Float.floor`: called on the first value, with the
+                    // others the function expected.
+                    let modes = wanted.clone().filter(|wanted| !wanted.is_empty())?;
+                    let name = method.clone();
+                    let call = move |mut values: Vec<ast::Expr>, modes: &[ast::Mode]| {
+                        let receiver = values.remove(0);
+                        let callee = ast::Expr { kind: ast::ExprKind::Field(Box::new(receiver), name.clone()), span };
+                        let args = values
+                            .into_iter()
+                            .zip(&modes[1..])
+                            .map(|(value, &mode)| ast::Arg { name: None, value, mode, spread: false, span })
+                            .collect();
+                        ast::Expr { kind: ast::ExprKind::Call { callee: Box::new(callee), args }, span }
+                    };
+                    (modes, Box::new(call))
                 }
             }
             _ => return None,
@@ -2459,6 +2675,25 @@ impl<'a> Checker<'a> {
         Some(ast::Expr { kind: ast::ExprKind::Closure(Box::new(closure)), span })
     }
 
+    /// Whether a function of type `ty` gives `T ! E`, whose body a closure
+    /// writes in terms of `T`.
+    fn fails_with(&self, ty: Ty) -> bool {
+        let ty = match self.types.kind(ty) {
+            TyKind::Option(inner) => *inner,
+            _ => ty,
+        };
+        matches!(self.types.kind(ty), TyKind::Fn(_, result, ..) if matches!(self.types.kind(*result), TyKind::Result(..)))
+    }
+
+    /// Whether `Type.name` is a function of a type the compiler gives, which
+    /// takes no `self`: `Int.parse`, `String.fromBytes`.
+    fn intrinsic_function(&self, owner: &str, owner_ty: Ty, name: &str) -> bool {
+        match self.number_kind(owner_ty) {
+            Some(kind) => crate::numbers::find(kind, name, false).is_some(),
+            None => owner == "String" && matches!(name, "empty" | "fromBytes" | "fromChars"),
+        }
+    }
+
     /// A call of `callee` with the values given, each in its mode.
     fn calling(callee: ast::Expr, span: Span) -> impl Fn(Vec<ast::Expr>, &[ast::Mode]) -> ast::Expr {
         move |values: Vec<ast::Expr>, modes: &[ast::Mode]| {
@@ -2468,6 +2703,23 @@ impl<'a> Checker<'a> {
                 .map(|(value, &mode)| ast::Arg { name: None, value, mode, spread: false, span })
                 .collect();
             ast::Expr { kind: ast::ExprKind::Call { callee: Box::new(callee.clone()), args }, span }
+        }
+    }
+
+    /// How a function that a value of `ty` is takes its values, when `ty`
+    /// says: a function type's, or that of the bound of a type parameter.
+    fn expected_modes(&self, ty: Ty) -> Option<Vec<ast::Mode>> {
+        let ty = match self.types.kind(ty) {
+            TyKind::Option(inner) => *inner,
+            _ => ty,
+        };
+        let ty = self.call_bounds.get(&ty).map_or(ty, |&(_, bound)| bound);
+        match self.types.kind(ty) {
+            TyKind::Fn(params, _, _, modes, _) => {
+                Some(if modes.len() == params.len() { modes.clone() } else { vec![ast::Mode::Value; params.len()] })
+            }
+            TyKind::CFn(params, ..) => Some(vec![ast::Mode::Value; params.len()]),
+            _ => None,
         }
     }
 
@@ -2657,7 +2909,7 @@ impl<'a> Checker<'a> {
             .enumerate()
             .map(|(index, arg)| {
                 let wanted = arg.mode == ast::Mode::Value && !arg.spread && self.wants_function(type_of(index));
-                let value = if wanted { self.function_form(cx, &arg.value)? } else { return None };
+                let value = if wanted { self.function_form(cx, &arg.value, type_of(index))? } else { return None };
                 Some(ast::Arg { value, ..arg.clone() })
             })
             .collect();
@@ -2763,11 +3015,25 @@ impl<'a> Checker<'a> {
             .filter(|g| !inference.map.contains_key(g))
             .map(|&g| format!("`{}`", self.types.display(g)))
             .collect();
+        // An argument that is an error already says why.
+        let failed = values.iter().flatten().any(|value| self.types.has_error(value.ty));
+        if !unknown.is_empty() && failed {
+            return Self::error_expr(span);
+        }
         if !unknown.is_empty() {
-            let message = format!(
-                "cannot infer {} from the arguments; write the type arguments: `name[...](...)`",
-                unknown.join(", ")
-            );
+            // A function of a generic type takes the type's arguments before
+            // its name: `Box[Float].count()`.
+            let form = match signature.name.rsplit_once('.') {
+                Some((owner, name))
+                    if signature.receiver.is_none()
+                        && matches!(self.type_names.get(owner), Some(TypeName::Template(_))) =>
+                {
+                    format!("`{owner}[...].{name}(...)`")
+                }
+                _ => "`name[...](...)`".to_string(),
+            };
+            let message =
+                format!("cannot infer {} from the arguments; write the type arguments: {form}", unknown.join(", "));
             self.diags.error("E1101", span, message);
             return Self::error_expr(span);
         }
@@ -2819,6 +3085,14 @@ impl<'a> Checker<'a> {
                     None if automatic => {
                         "; the compiler implements it for records, enums and newtypes whose parts all implement it"
                             .into()
+                    }
+                    // A tensor of what is not a number (10.7).
+                    None if signature.name.starts_with("math.Tensor") && missing == "`Number`" => {
+                        ": a tensor holds numbers, as `Int`, `Float` or `math.Decimal`".into()
+                    }
+                    // The mean of integers, which would round (10.7).
+                    None if signature.name.starts_with("math.Tensor") && missing == "`Fractional`" => {
+                        ": its mean is of floats; for integers, divide the `sum()` as floats, as in `Float(tensor.sum()) / Float(tensor.length())`".into()
                     }
                     None => String::new(),
                 };
@@ -2894,6 +3168,65 @@ impl<'a> Checker<'a> {
         {
             let result = self.types.subst(signature.result, &inference.map);
             return self.compiled_template(cx, args, result, span);
+        }
+        // `library.function[F](name)` gives a C function: `F` is an
+        // `extern fn` type (standard library 19.3).
+        if let Callee::Fn(id) = callee
+            && signature.name.ends_with("Library.function")
+            && self.fn_scopes.get(id.0 as usize).is_some_and(|scope| {
+                self.module_paths.get(scope.module as usize).is_some_and(|path| path == &["std", "ffi"])
+            })
+            && let Some(&function) = type_args.first()
+            && !matches!(self.types.kind(function), TyKind::CFn(..))
+            && !self.types.has_error(function)
+        {
+            let message = format!(
+                "`function` gives a C function: its type argument is an `extern fn(...)`, as `extern fn(ffi.CString): ffi.CSize`, not {}",
+                self.display(function)
+            );
+            self.diags.error("E1104", span, message);
+            return Self::error_expr(span);
+        }
+        // `cpu.has(feature)`, which the build's level may answer when
+        // compiling (toolchain 7.8).
+        if let Callee::Fn(id) = callee
+            && self.is_std_fn(id, "cpu", "cpu.has")
+            && let &[Some(feature)] = slots.as_slice()
+        {
+            let feature = values[feature].take().unwrap();
+            return Self::mk(
+                hir::ExprKind::Call(hir::Callee::Std(StdFn::CpuHas), Vec::new(), vec![feature]),
+                Ty::BOOL,
+                span,
+            );
+        }
+        // The text of a contract, whose SHA-256 is its fingerprint, which the
+        // declarations a contract makes ask for (standard library 14.48).
+        if let Callee::Fn(id) = callee
+            && self.is_std_fn(id, "plugin", "plugin.contractText")
+            && let Some(&plugin) = type_args.first()
+            && let Some(contract) = self.types.display(plugin).strip_suffix("Plugin").map(str::to_string)
+            && let Some(text) = self.contract_text(&contract)
+        {
+            return Self::mk(hir::ExprKind::Str(text), Ty::STRING, span);
+        }
+        // A function of `std.cpu.x64` or `std.cpu.arm64` is its instruction,
+        // where the call is (standard library 14.47).
+        if let Callee::Fn(id) = callee
+            && let Some(&instruction) = self.instructions.get(&id)
+            && slots.iter().all(Option::is_some)
+        {
+            let args: Vec<hir::Expr> = slots.iter().map(|slot| values[slot.unwrap()].take().unwrap()).collect();
+            if instruction == crate::instructions::Instruction::Pclmulqdq {
+                self.check_halves(&args[2]);
+            }
+            self.instructions_used.insert(instruction);
+            let result = signature.result;
+            return Self::mk(
+                hir::ExprKind::Call(hir::Callee::Std(StdFn::Cpu(instruction)), Vec::new(), args),
+                result,
+                span,
+            );
         }
         // `format.apply` writes an integer or a float as one, as an
         // interpolation does (standard library 10.6).

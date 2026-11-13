@@ -604,6 +604,7 @@ impl Generate<'_> {
             body: empty,
             moves: Default::default(),
             test: false,
+            needs: 0,
             span: Default::default(),
         });
         self.memo.insert((old, new), id);

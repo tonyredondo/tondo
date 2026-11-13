@@ -41,6 +41,7 @@
 //! leaves in a directory of its own what its counters count and their counts
 //! (docs/refactor.md, 0.1). With `TONDO_CASES_SHARD=k/n`, only the k-th of
 //! n shares of the cases runs, so that jobs of CI split a mode between them.
+//! With `TONDO_CASES_CPU=<level>`, builds are for that level of processor.
 //! With `TONDO_CASES_ONLY=<text>`, only the cases whose path holds it, as
 //! `framed_texts`, run: one case in each mode at once is a loop over the
 //! variables of the modes.
@@ -108,7 +109,9 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
+/// Runs one case, built with `extra` beside what the variables of the
+/// modes ask.
+fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String> {
     let mut sources = Vec::new();
     if path.is_dir() {
         collect(path, &mut sources);
@@ -134,6 +137,7 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
         .args(std::env::var_os("TONDO_CASES_STATIC").map(|_| "--static"))
         .args(std::env::var_os("TONDO_CASES_DEBUG").or(std::env::var_os("TONDO_CASES_REPLAY")).map(|_| "--debug"))
         .args(std::env::var_os("TONDO_CASES_LIVE").map(|_| "--live"))
+        .args(extra)
         .env("XDG_CACHE_HOME", scratch.join("cache"));
     let coverage = std::env::var_os("TONDO_CASES_COVERAGE")
         .map(|dir| Path::new(&dir).join(scratch.file_name().unwrap()).join(path.file_stem().unwrap()));
@@ -186,7 +190,10 @@ fn run_case(path: &Path, scratch: &Path) -> Result<(), String> {
     }
     // What a release build makes of it, once, in the modes that build one.
     let release = ["TONDO_CASES_DEBUG", "TONDO_CASES_REPLAY", "TONDO_CASES_LIVE"];
-    if !expect.optimizations.is_empty() && release.iter().all(|mode| std::env::var_os(mode).is_none()) {
+    if !expect.optimizations.is_empty()
+        && release.iter().all(|mode| std::env::var_os(mode).is_none())
+        && extra.is_empty()
+    {
         optimized(path, scratch, &expect.optimizations)?;
     }
 
@@ -394,17 +401,58 @@ fn cases() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/cases");
     let mut paths = Vec::new();
     collect(&root, &mut paths);
-    run_all(paths, "cases");
+    let cpu = std::env::var("TONDO_CASES_CPU").ok().filter(|cpu| !cpu.is_empty());
+    run_all(paths, "cases", &cpu.map(|cpu| vec!["--cpu".to_string(), cpu]).unwrap_or_default());
+}
+
+/// The cases of vectors where the processor has `x86-64-v3`, built for that
+/// level, at which vectors of 256 bits are registers of 256 bits (step 22b
+/// of `std.simd`): in a release, a debug and a live build, as the cases of
+/// every other build run at the baseline.
+#[test]
+fn vectors_at_the_level_of_avx2() {
+    #[cfg(target_arch = "x86_64")]
+    let here = {
+        use std::arch::is_x86_feature_detected as has;
+        has!("avx")
+            && has!("avx2")
+            && has!("bmi1")
+            && has!("bmi2")
+            && has!("fma")
+            && has!("f16c")
+            && has!("lzcnt")
+            && has!("movbe")
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    let here = false;
+    // It builds in its own modes, which a variable of another mode would
+    // give twice.
+    let modes =
+        ["TONDO_CASES_STATIC", "TONDO_CASES_DEBUG", "TONDO_CASES_LIVE", "TONDO_CASES_REPLAY", "TONDO_CASES_CPU"];
+    if !here || modes.iter().any(|mode| std::env::var_os(mode).is_some()) {
+        return;
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/cases/run");
+    let mut paths = Vec::new();
+    collect(&root, &mut paths);
+    let vectors = |name: &str| name.starts_with("simd_") || name.starts_with("tensor_");
+    paths.retain(|path| path.file_name().is_some_and(|name| vectors(&name.to_string_lossy())));
+    for (name, build) in
+        [("vectors-v3", None), ("vectors-v3-debug", Some("--debug")), ("vectors-v3-live", Some("--live"))]
+    {
+        let extra: Vec<String> = ["--cpu", "x86-64-v3"].into_iter().chain(build).map(str::to_string).collect();
+        run_all(paths.clone(), name, &extra);
+    }
 }
 
 #[test]
 fn projects() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/projects");
     let paths = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().path()).filter(|p| p.is_dir()).collect();
-    run_all(paths, "projects");
+    run_all(paths, "projects", &[]);
 }
 
-fn run_all(mut paths: Vec<PathBuf>, name: &str) {
+fn run_all(mut paths: Vec<PathBuf>, name: &str, extra: &[String]) {
     paths.sort();
     assert!(!paths.is_empty(), "no {name} found");
     if let Some(only) = std::env::var("TONDO_CASES_ONLY").ok().filter(|only| !only.is_empty()) {
@@ -441,7 +489,9 @@ fn run_all(mut paths: Vec<PathBuf>, name: &str) {
                 scope.spawn(move || {
                     chunk
                         .iter()
-                        .filter_map(|path| run_case(path, scratch).err().map(|e| format!("{}: {e}", path.display())))
+                        .filter_map(|path| {
+                            run_case(path, scratch, extra).err().map(|e| format!("{}: {e}", path.display()))
+                        })
                         .collect::<Vec<_>>()
                 })
             })

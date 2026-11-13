@@ -51,8 +51,57 @@ with its feature `rules`, counts them by function.
 Only the code of x86-64 and arm64 is kept; the build still compiles every
 target's ISLE, so the `.isle` files of the others stay.
 
+The instructions of `std.cpu.x64` and `std.cpu.arm64` are here too, as
+Cranelift has none of them. `cranelift-codegen-meta/` 0.137.0, which
+defines the generator's instructions and settings, has the CLIF of each in
+`define_tondo` of `src/shared/instructions.rs`: `crc32c8`, `crc32c64` and
+`spin_hint` for both, `x86_pdep`, `x86_pext`, the four `x86_aes*` and
+`x86_pclmulqdq` for x86-64, and the four `aarch64_aes*` and
+`aarch64_pmull64` for arm64; and the settings `has_aes` and `has_pclmulqdq`
+in `src/isa/x86.rs`. `cranelift-assembler-x64-meta/` 0.137.0, from which
+the assembler of x86-64 is made, has their instructions in
+`src/instructions/tondo.rs`, with the features `aes` and `pclmulqdq`, and
+`cranelift-assembler-x64/` is the published crate, kept beside it so that
+it builds from this one. Their lowering is marked `Tondo:` in
+`src/isa/x64/lower.isle` and `src/isa/aarch64/lower.isle`, and arm64's
+instructions, `TondoRRR`, `TondoRRMod`, `TondoRR` and `Isb`, in
+`src/isa/aarch64/inst.isle` and `inst/`, with their encodings from the
+Arm Architecture Reference Manual, as `llvm-mc` gives them too.
+
+Two operands of x86-64 are no longer taken as aligned, as an SSE
+instruction faults on one in memory that is not a multiple of 16: that of
+`cmpps` and `cmppd`, which the assembler's meta crate declared without
+`align`, and an address in a stack slot, which Cranelift took as aligned
+and Tondo aligns to 8, so that a vector in a record's frame could be read
+from where no SSE instruction may read it.
+
+And the vectors of 256 bits on x86-64 with AVX2, which `std.simd` makes
+and Cranelift does not: their VEX.256 instructions, with operands `ymm1`
+to `ymm3`, `ymm_m256` and `m256`, in `src/instructions/wide.rs` of the
+assembler's meta crate; the lowering of each operation in
+`src/isa/x64/wide.isle`, with the type `XmmMem256`, and their constants;
+their loads, stores and moves in `src/isa/x64/inst/mod.rs`, and their
+place among arguments and results; in `src/machinst/abi.rs` and the x64
+emission, marked `Tondo:`, the whole spills of a function that has one
+and its `vzeroupper` before calls and returns that pass none; and the
+extractor `ty_vec256` in `src/prelude.isle`, with which the optimizer
+makes their constants (`src/prelude_opt.isle`, `src/opts/arithmetic.isle`).
+
 This copy is where an optimization that Tondo's code needs and Cranelift
 lacks is written, as a rule marked `Tondo:`. To move to a newer Cranelift:
-copy the published crate here, drop `src/isa/riscv64`, `src/isa/s390x` and
-`src/isa/pulley_shared` but their `.isle` files, and add the rules again,
-but those Cranelift has by then.
+copy the published crates here, drop `src/isa/riscv64`, `src/isa/s390x` and
+`src/isa/pulley_shared` but their `.isle` files, and add the rules and the
+instructions again, but those Cranelift has by then.
+
+`libmimalloc-sys/` is the crate of that name, 0.1.49, from crates.io, with
+mimalloc 3.6.1 in `c_src/mimalloc/v3` in place of the 3.3.2 it carries: its
+`include` and `src` directories and its license, as upstream tags them. From
+3.4.4 on, mimalloc finds a thread's heap on macOS through a key of POSIX
+threads of each copy, read with assembly, rather than through fixed slots of
+the thread's storage, which every copy in a process shares: a library of
+Tondo that a program of Tondo loads then keeps a heap of its own. Two changes,
+marked `Tondo:`: the size of a block, which a string being built asks for
+each time it grows, skips the division that finds where a block starts on a
+page that has no pointer inside a block, as 3.3 did, which made building a
+string of 100 parts 5% slower; and the build script compiles the C again when
+it changes. `c_src/mimalloc/v2` and the rest are as published.

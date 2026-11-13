@@ -540,6 +540,12 @@ pub trait ABIMachineSpec {
         frame_layout: &FrameLayout,
     ) -> SmallInstVec<Self::I>;
 
+    /// Tondo: what ends the use of vectors wider than 128 bits before a
+    /// return, in a function that has one: x86-64's `vzeroupper`.
+    fn gen_wide_vectors_end() -> SmallInstVec<Self::I> {
+        smallvec![]
+    }
+
     /// Generate a probestack call.
     fn gen_probestack(insts: &mut SmallInstVec<Self::I>, frame_size: u32);
 
@@ -657,6 +663,9 @@ pub struct CallInfo<T> {
     pub try_call_info: Option<TryCallInfo>,
     /// Whether this call is patchable.
     pub patchable: bool,
+    /// Tondo: whether an argument or a result of the call is a vector wider
+    /// than 128 bits, whose upper bits a `vzeroupper` before it would clear.
+    pub wide_vectors: bool,
 }
 
 /// Out-of-line information present on `try_call` instructions only:
@@ -697,6 +706,7 @@ impl<T> CallInfo<T> {
             callee_pop_size: 0,
             try_call_info: None,
             patchable: false,
+            wide_vectors: false,
         }
     }
 }
@@ -1161,6 +1171,12 @@ pub struct Callee<M: ABIMachineSpec> {
     sig: Sig,
     /// Defined dynamic types.
     dynamic_type_sizes: HashMap<Type, u32>,
+    /// Tondo: whether a value of the function is a vector wider than 128
+    /// bits, so that its float registers are spilled, reloaded and moved
+    /// whole.
+    wide_vectors: bool,
+    /// Tondo: whether the function returns one, which its return keeps.
+    returns_wide: bool,
     /// Offsets to each dynamic stackslot.
     dynamic_stackslots: PrimaryMap<DynamicStackSlot, u32>,
     /// Offsets to each sized stackslot.
@@ -1315,6 +1331,12 @@ impl<M: ABIMachineSpec> Callee<M> {
             dynamic_type_sizes.insert(ty, size);
         }
 
+        let wide_vectors = f.dfg.values().any(|value| {
+            let ty = f.dfg.value_type(value);
+            ty.is_vector() && ty.bits() > 128
+        });
+        let returns_wide = f.signature.returns.iter().any(|ret| ret.value_type.bits() > 128);
+
         // Figure out what instructions, if any, will be needed to check the
         // stack limit. This can either be specified as a special-purpose
         // argument or as a global value which often calculates the stack limit
@@ -1330,6 +1352,8 @@ impl<M: ABIMachineSpec> Callee<M> {
             sig,
             dynamic_stackslots,
             dynamic_type_sizes,
+            wide_vectors,
+            returns_wide,
             sized_stackslots,
             sized_stackslot_keys,
             stackslots_size,
@@ -2176,6 +2200,14 @@ impl<M: ABIMachineSpec> Callee<M> {
             0
         };
 
+        let wide = |values: &[ABIArg]| {
+            values.iter().any(|value| match value {
+                ABIArg::Slots { slots, .. } => slots.iter().any(|slot| slot.get_type().bits() > 128),
+                _ => false,
+            })
+        };
+        let wide_vectors = wide(sigs.args(sig)) || wide(sigs.rets(sig));
+
         CallInfo {
             dest,
             uses,
@@ -2186,6 +2218,7 @@ impl<M: ABIMachineSpec> Callee<M> {
             callee_pop_size,
             try_call_info,
             patchable,
+            wide_vectors,
         }
     }
 
@@ -2377,6 +2410,9 @@ impl<M: ABIMachineSpec> Callee<M> {
         ));
 
         // And return.
+        if self.wide_vectors && !self.returns_wide {
+            insts.extend(M::gen_wide_vectors_end());
+        }
         insts.extend(M::gen_return(
             self.call_conv,
             &self.isa_flags,
@@ -2425,10 +2461,27 @@ impl<M: ABIMachineSpec> Callee<M> {
         sigs[self.sig].sized_stack_arg_space
     }
 
+    /// Tondo: whether a value of the function is a vector wider than 128
+    /// bits.
+    pub fn wide_vectors(&self) -> bool {
+        self.wide_vectors
+    }
+
+    /// The type that the spills, the reloads and the moves of a register
+    /// of class `rc` are of: all 256 bits of a float register in a function
+    /// that has a vector that wide (Tondo).
+    pub fn canonical_type_for_rc(&self, rc: RegClass) -> Type {
+        if self.wide_vectors && rc == RegClass::Float {
+            ir::types::I8X32
+        } else {
+            M::I::canonical_type_for_rc(rc)
+        }
+    }
+
     /// Get the spill-slot size.
     pub fn get_spillslot_size(&self, rc: RegClass) -> u32 {
         let max = if self.dynamic_type_sizes.len() == 0 {
-            16
+            if self.wide_vectors { 32 } else { 16 }
         } else {
             *self
                 .dynamic_type_sizes
@@ -2447,7 +2500,7 @@ impl<M: ABIMachineSpec> Callee<M> {
 
     /// Generate a spill.
     pub fn gen_spill(&self, to_slot: SpillSlot, from_reg: RealReg) -> M::I {
-        let ty = M::I::canonical_type_for_rc(from_reg.class());
+        let ty = self.canonical_type_for_rc(from_reg.class());
         debug_assert_eq!(<M>::I::rc_for_type(&ty).unwrap().1, &[ty]);
 
         let sp_off = self.get_spillslot_offset(to_slot);
@@ -2459,7 +2512,7 @@ impl<M: ABIMachineSpec> Callee<M> {
 
     /// Generate a reload (fill).
     pub fn gen_reload(&self, to_reg: Writable<RealReg>, from_slot: SpillSlot) -> M::I {
-        let ty = M::I::canonical_type_for_rc(to_reg.to_reg().class());
+        let ty = self.canonical_type_for_rc(to_reg.to_reg().class());
         debug_assert_eq!(<M>::I::rc_for_type(&ty).unwrap().1, &[ty]);
 
         let sp_off = self.get_spillslot_offset(from_slot);

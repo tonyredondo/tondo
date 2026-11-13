@@ -33,7 +33,7 @@ New to Tondo, or a model writing it? Start with `tondo guide`.
 
 usage:
   tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch [--tests]]
-            [--target <target>] [--diagnostic-format human|json] [-- <argument>...]
+            [--target <target>] [--cpu <level>] [--diagnostic-format human|json] [-- <argument>...]
   tondo run --record <recording> [--last <duration> [--hold <duration>]] [<project>|<file.to>]
             [--link <library>]...
             [-- <argument>...]                         compile and run a program (under qemu for another
@@ -41,11 +41,12 @@ usage:
                                                        `tondo reload`, or by itself as its files change;
                                                        recorded, for `tondo debug --replay`)
   tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--no-source-links]
-            [--debug | --live] [--target <target>] [--diagnostic-format human|json] [--json]
+            [--debug | --live] [--target <target>] [--cpu <level>] [--diagnostic-format human|json] [--json]
                                                        compile a native executable (static on Linux;
                                                        without its symbol table; static for a target:
-                                                       x86_64-linux or aarch64-linux)
-  tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--json]
+                                                       x86_64-linux or aarch64-linux; for a level of
+                                                       processor: baseline, x86-64-v3, x86-64-v4, native)
+  tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--cpu <level>] [--json]
                                                        compile a library for C, lib<name>.so (.dylib)
                                                        and lib<name>.a, with its header <name>.h
   tondo check [<project>|<file.to>] [--library] [--unreached] [--docs] [--performance] [--json]
@@ -92,7 +93,7 @@ usage:
             [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>] [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]
             [--models]
             [--diagnostic-format human|json] [--artifacts <dir>] [--update-snapshots]
-            [--static] [--debug] [--library] [--target <target>] [--exec <command>]
+            [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--exec <command>]
                                                        run the tests of a project (of a library); with --watch,
                                                        again as its files change; --bench measures its benchmarks,
                                                        --fuzz searches for inputs that fail its fuzz tests, and
@@ -180,12 +181,12 @@ usage:
                                                        holds, or where its tasks are, in pprof's format; show
                                                        reads one: the functions and lines that take the most
   tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>]
-            [--against <rev> | --compiler <tondo|rev>] [--json]
+            [--cpu <level>] [--against <rev> | --compiler <tondo|rev>] [--json]
                                                        what a release build makes of the code: the calls it
                                                        inlines and those it keeps, the texts and closures made
                                                        without the heap, the checks it drops and those it keeps
   tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--against <rev> | --compiler <tondo|rev>]
-            [--json]
+            [--cpu <level>] [--json]
   tondo asm --runtime <function> [--compiler <tondo|rev>] [--json]
                                                        the machine code a release build makes of a function, by
                                                        the lines of the program, with what the passes did there;
@@ -194,7 +195,7 @@ usage:
                                                        built once in release, as --compiler takes it
   tondo target pack [<dir>] [--json]                   write this machine's target, for a tondo elsewhere
                                                        to build for it (TONDO_TARGETS=<dir>)
-  tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>]
+  tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [--included] [--fails <file>]
             [-I <dir>] [-D <name[=value]>] [--json]    write a module of extern declarations for a C header
   tondo completions bash|zsh|fish                      what a shell completes of tondo's commands
   tondo help [<group> | <command> | --all]             the groups of commands; what a group's commands do;

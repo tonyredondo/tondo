@@ -1,0 +1,34 @@
+// std.os.linux: the calls of Linux, their constants and their types, as the
+// C headers of the standard library's 14.45 declare them, with C's names,
+// for the build's architecture; and `syscall`, the kernel's call by its
+// number. Calling them is `unsafe`, and those that fail with the system's
+// error number give `os.Errno`. `tondo api std.os.linux.<name>` shows one of
+// C's declarations, and `tondo api --search <words>` finds them.
+//
+// ```tondo
+// import std.console
+// import std.os.linux
+//
+// fn main() {
+//     match unsafe { linux.syscall(linux.SYS_getpid) } {
+//         ok(process) => console.println("process {process}")
+//         err(error) => console.println("getpid: {error}")
+//     }
+// }
+// ```
+
+import std.ffi
+import std.os
+
+@symbol("syscall")
+extern fn rawSyscall(number: ffi.CLong, ...): ffi.CLong ! os.Errno
+
+/// The kernel's call of `number`, one of `linux.SYS_...`, with up to six
+/// arguments; more is a panic. It fails with the kernel's error number.
+pub unsafe fn syscall(number: Int, arguments: ...Int): Int ! os.Errno {
+    if arguments.length() > 6 {
+        panic("a system call takes at most six arguments, and this one has {arguments.length()}")
+    }
+    let at = (index: Int) { arguments.get(index) ?? 0 }
+    rawSyscall(number, at(0), at(1), at(2), at(3), at(4), at(5))?
+}

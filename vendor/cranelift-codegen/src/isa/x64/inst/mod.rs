@@ -321,6 +321,11 @@ impl Inst {
                     _ if (ty.is_float() || ty.is_vector()) && ty.bits() == 128 => {
                         asm::inst::movdqu_a::new(to_reg, from_addr).into()
                     }
+                    // Tondo: a vector of 256 bits, as a function that has
+                    // one reloads every float register.
+                    _ if ty.is_vector() && ty.bits() == 256 => {
+                        asm::inst::vmovdqu_ay::new(to_reg, from_addr).into()
+                    }
                     _ => unimplemented!("unable to load type: {}", ty),
                 };
                 Inst::External { inst }
@@ -360,6 +365,10 @@ impl Inst {
                     types::F64X2 => asm::inst::movupd_b::new(to_addr, from_reg).into(),
                     _ if (ty.is_float() || ty.is_vector()) && ty.bits() == 128 => {
                         asm::inst::movdqu_b::new(to_addr, from_reg).into()
+                    }
+                    // Tondo: a vector of 256 bits.
+                    _ if ty.is_vector() && ty.bits() == 256 => {
+                        asm::inst::vmovdqu_by::new(to_addr, from_reg).into()
                     }
                     _ => unimplemented!("unable to store type: {}", ty),
                 }
@@ -1386,6 +1395,11 @@ impl MachInst for Inst {
                     _ if (ty.is_float() || ty.is_vector()) && ty.bits() <= 128 => {
                         asm::inst::movdqa_a::new(dst_reg, src_reg).into()
                     }
+                    // Tondo: all 256 bits, as a function with a vector that
+                    // wide moves every float register.
+                    _ if ty.is_vector() && ty.bits() == 256 => {
+                        asm::inst::vmovaps_ay::new(dst_reg, src_reg).into()
+                    }
                     _ => unimplemented!("unable to move type: {}", ty),
                 }
             }
@@ -1416,8 +1430,15 @@ impl MachInst for Inst {
                 Ok((&[RegClass::Float], core::slice::from_ref(ty)))
             }
             types::I128 => Ok((&[RegClass::Int, RegClass::Int], &[types::I64, types::I64])),
-            _ if ty.is_vector() && ty.bits() <= 128 => {
-                let types = &[types::I8X2, types::I8X4, types::I8X8, types::I8X16];
+            // Tondo: and of 256 bits, in the YMM registers.
+            _ if ty.is_vector() && ty.bits() <= 256 => {
+                let types = &[
+                    types::I8X2,
+                    types::I8X4,
+                    types::I8X8,
+                    types::I8X16,
+                    types::I8X32,
+                ];
                 Ok((
                     &[RegClass::Float],
                     slice::from_ref(&types[ty.bytes().ilog2() as usize - 1]),
@@ -1600,6 +1621,16 @@ impl asm::AvailableFeatures for &EmitInfo {
 
     fn apx(&self) -> bool {
         self.isa_flags.has_apx()
+    }
+
+    // Tondo: the features of `std.cpu.x64`'s AES and carry-less
+    // multiplication.
+    fn aes(&self) -> bool {
+        self.isa_flags.has_aes()
+    }
+
+    fn pclmulqdq(&self) -> bool {
+        self.isa_flags.has_pclmulqdq()
     }
 }
 

@@ -51,6 +51,7 @@ mod live;
 mod operators;
 mod places;
 mod runtime;
+mod simd;
 mod statements;
 mod tables;
 mod tasks;
@@ -176,8 +177,106 @@ fn symbol_name(index: usize, name: &str) -> String {
     format!("tondo_f{index}_{clean}")
 }
 
+/// Memory the program reaches, which never traps. It claims no alignment:
+/// a vector of `std.simd` may lie at an address of 8 bytes, which x64's
+/// instructions of 16 bytes would fault on if it claimed its own.
+/// The generator's vector of 128 bits with lanes of `lane`: a mask's is its
+/// vector's, as a comparison gives all ones or zero in each lane.
+/// Whether code for `isa` does vectors of 256 bits with instructions of that
+/// width: an x64 with AVX2 (step 22b of `std.simd`). There a vector of 256
+/// bits is one register, as one of 128 is everywhere.
+pub(crate) fn wide_vectors(isa: &dyn cranelift_codegen::isa::TargetIsa) -> bool {
+    let has = |name: &str| isa.isa_flags().iter().any(|flag| flag.name == name && flag.as_bool() == Some(true));
+    isa.name() == "x64" && has("has_avx") && has("has_avx2")
+}
+
+/// The bit that marks, among the sets of features of the processor a
+/// function needs, those of a version's generator (rule 19 of `std.simd`).
+const VERSION: u32 = 1 << 31;
+
+/// A function's body for the build's level, its version for a higher one,
+/// and where they pass a vector differently, what calls the version as the
+/// build's level calls: code of the version's level, which converts.
+#[derive(Clone, Copy)]
+struct Versions {
+    base: FuncId,
+    version: FuncId,
+    bridge: Option<FuncId>,
+}
+
+/// Which functions get a version for a level whose vectors are wider (rule
+/// 19 of `std.simd`): those whose code uses vectors of more than 128 bits.
+/// A version passes such a vector as its level does, so a function stays
+/// without one where it passes one through a `fn(...)` value, or to a
+/// function without a version, as those take it as the build's level does;
+/// and where it calls C, as its calls of C are built in their turn.
+fn versioned(types: &Types, bodies: &[Body]) -> Vec<bool> {
+    use crate::simd::{SimdOp, wide};
+    fn rvalues(body: &Body) -> impl Iterator<Item = &Rvalue> {
+        body.blocks.iter().flat_map(|block| &block.stmts).filter_map(|stmt| match stmt {
+            Statement::Assign(_, rvalue, _) => Some(&**rvalue),
+            _ => None,
+        })
+    }
+    let passes_wide = |body: &Body| {
+        wide(types, body.result) || body.params.iter().any(|param| wide(types, body.locals[param.0 as usize]))
+    };
+    let fn_wide = |ty: Ty| match types.kind(types.repr(ty)) {
+        TyKind::Fn(params, result, ..) => params.iter().any(|&param| wide(types, param)) || wide(types, *result),
+        _ => false,
+    };
+    let mut versioned: Vec<bool> = bodies
+        .iter()
+        .map(|body| {
+            let mut uses = body.locals.iter().any(|&ty| wide(types, ty));
+            for rvalue in rvalues(body) {
+                match rvalue {
+                    Rvalue::Call(Callee::Std(StdFn::Simd(SimdOp::Accelerated(width))), _) if width.bits() > 128 => {
+                        uses = true
+                    }
+                    Rvalue::Call(Callee::Extern(_), _) | Rvalue::Callback(..) | Rvalue::ExternFn(_) => return false,
+                    Rvalue::CallIndirect(Operand::Copy(callee), _) if fn_wide(body.place_ty(types, callee)) => {
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+            uses
+        })
+        .collect();
+    loop {
+        let mut changed = false;
+        for (index, body) in bodies.iter().enumerate() {
+            let calls_unversioned = rvalues(body).any(|rvalue| match rvalue {
+                Rvalue::Call(Callee::Fn(id), _) => {
+                    let callee = id.0 as usize;
+                    !versioned[callee] && passes_wide(&bodies[callee])
+                }
+                _ => false,
+            });
+            if versioned[index] && calls_unversioned {
+                versioned[index] = false;
+                changed = true;
+            }
+        }
+        if !changed {
+            return versioned;
+        }
+    }
+}
+
+pub(crate) fn vector_type(types: &Types, lane: Ty) -> ir::Type {
+    let lane = match types.kind(types.repr(lane)) {
+        TyKind::Int(int) => int_type(*int),
+        TyKind::Float(FloatTy::F32) => types::F32,
+        TyKind::Float(FloatTy::F64) => types::F64,
+        _ => types::I8,
+    };
+    lane.by(128 / lane.bits()).expect("a vector of 128 bits")
+}
+
 fn flags() -> MemFlagsData {
-    MemFlagsData::trusted()
+    MemFlagsData::new().with_notrap()
 }
 
 /// How an object is built: `meta` counts a step at each call and each turn
@@ -188,6 +287,8 @@ pub struct Options<'o> {
     pub meta: bool,
     pub debug: bool,
     pub target: Option<&'o str>,
+    /// The level of processor the code is for (toolchain 7.8).
+    pub cpu: &'o crate::target::Cpu,
     pub live: Option<&'o mut crate::live::Build>,
     pub coverage: Option<&'o mut Vec<Counted>>,
     /// The build `tondo test --fuzz` searches with (testing 10.6): it counts
@@ -201,7 +302,7 @@ pub struct Options<'o> {
 /// Compiles the program to an object file.
 pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options: Options) -> Result<Vec<u8>, String> {
     let building = crate::times::part("IR");
-    let Options { meta, debug, target, mut live, coverage, fuzz, roots } = options;
+    let Options { meta, debug, target, cpu, mut live, coverage, fuzz, roots } = options;
     let mut flags = settings::builder();
     // A debug build keeps the code as written, statement after statement.
     flags.set("opt_level", if debug { "none" } else { "speed" }).map_err(|e| e.to_string())?;
@@ -212,17 +313,58 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     // once: the debug build of tondo, which the tests run, keeps checking,
     // and the one that ships compiles without it (docs/speed.md, B1).
     flags.set("enable_verifier", if cfg!(debug_assertions) { "true" } else { "false" }).map_err(|e| e.to_string())?;
-    // Code for the machine, with what its processor has, or for a target.
-    let builder = match target {
-        Some(triple) => cranelift_codegen::isa::lookup_by_name(triple).map_err(|e| format!("{triple}: {e}"))?,
-        None => cranelift_native::builder().map_err(|e| format!("unsupported host: {e}"))?,
+    // Code for this machine's system or for a target's, with the features
+    // of the processor its level has (toolchain 7.8): what the system's
+    // conventions ask of the code, as macOS signing return addresses, stays
+    // as cranelift-native sets it.
+    // A function that needs features beyond the level is compiled with
+    // them: a generator for each set of them the program's functions need.
+    let flags = settings::Flags::new(flags);
+    let isa_at = |cpu: &crate::target::Cpu, needs: u32| -> Result<cranelift_codegen::isa::OwnedTargetIsa, String> {
+        let mut builder = match target {
+            Some(triple) => cranelift_codegen::isa::lookup_by_name(triple).map_err(|e| format!("{triple}: {e}"))?,
+            None => cranelift_native::builder().map_err(|e| format!("unsupported host: {e}"))?,
+        };
+        for (flag, on) in cpu.settings_with(needs) {
+            builder.set(flag, if on { "true" } else { "false" }).map_err(|e| format!("{flag}: {e}"))?;
+        }
+        builder.finish(flags.clone()).map_err(|e| e.to_string())
     };
-    let isa = builder.finish(settings::Flags::new(flags)).map_err(|e| e.to_string())?;
+    let isa = isa_at(cpu, 0)?;
+    let mut isas = HashMap::new();
+    for body in bodies.iter().filter(|body| body.needs != 0) {
+        if let std::collections::hash_map::Entry::Vacant(entry) = isas.entry(body.needs) {
+            entry.insert(isa_at(cpu, body.needs)?);
+        }
+    }
+    // The versions of rule 19 of `std.simd`: a release build for an x64
+    // level without AVX2 compiles the functions that use wider vectors once
+    // more, for `x86-64-v3`, which the processor picks as the program runs.
+    let x64 = isa.name() == "x64";
+    let versioned = match x64 && !wide_vectors(&*isa) && !debug && live.is_none() && coverage.is_none() && !fuzz {
+        true => versioned(&program.types, bodies),
+        false => vec![false; bodies.len()],
+    };
+    let level = match versioned.contains(&true) {
+        true => Some(crate::target::Cpu::parse("x86-64-v3", cpu.arch, None)?),
+        false => None,
+    };
+    if let Some(level) = &level {
+        for (body, _) in bodies.iter().zip(&versioned).filter(|(_, versioned)| **versioned) {
+            if let std::collections::hash_map::Entry::Vacant(entry) = isas.entry(body.needs | VERSION) {
+                entry.insert(isa_at(level, body.needs)?);
+            }
+        }
+    }
     let shapes = Shapes::new(&program.types, &*isa);
     let builder =
         ObjectBuilder::new(isa, "tondo", cranelift_module::default_libcall_names()).map_err(|e| e.to_string())?;
     let mut cg = Codegen {
+        isas,
+        versions: Vec::new(),
+        versions_level: level.as_ref().map(crate::target::Cpu::needed),
         roots,
+        cpu: cpu.needed(),
         module: ObjectModule::new(builder),
         types: &program.types,
         sources,
@@ -255,6 +397,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         debug_sites: Vec::new(),
         dump: None,
         dump_bindings: HashMap::new(),
+        building_version: false,
         live: None,
         current: 0,
         takes_osr: bodies.iter().map(|body| body.osr.is_some()).collect(),
@@ -286,11 +429,30 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     }
     for (index, body) in bodies.iter().enumerate() {
         let signature = cg.signature(body);
-        let id = cg
-            .module
-            .declare_function(&symbol_name(index, &body.name), Linkage::Local, &signature)
-            .map_err(|e| e.to_string())?;
+        let name = symbol_name(index, &body.name);
+        let id = cg.module.declare_function(&name, Linkage::Local, &signature).map_err(|e| e.to_string())?;
         cg.functions.push(id);
+        // A function with a version: `id` calls the body of the build's
+        // level, or the version, by the processor.
+        let version = match versioned[index] {
+            false => None,
+            true => {
+                let isa = &cg.isas[&(body.needs | VERSION)];
+                let wide = Shapes::new(cg.types, &**isa).signature(body);
+                let declare = |cg: &mut Codegen, suffix: &str, signature: &ir::Signature| {
+                    let named = format!("{name}{suffix}");
+                    cg.module.declare_function(&named, Linkage::Local, signature).map_err(|e| e.to_string())
+                };
+                let base = declare(&mut cg, "_base", &signature)?;
+                let version = declare(&mut cg, "_avx2", &wide)?;
+                let bridge = match wide == signature {
+                    true => None,
+                    false => Some(declare(&mut cg, "_bridge", &signature)?),
+                };
+                Some(Versions { base, version, bridge })
+            }
+        };
+        cg.versions.push(version);
     }
     if let Some(build) = live.as_deref_mut() {
         cg.live = Some(LiveCodegen::new(&mut cg.module, build, bodies, &program.types)?);
@@ -304,51 +466,95 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     // to declare is declared in the functions' order (see `worker`);
     // `compile_all` compiles them on every core.
     let mut jobs = Vec::new();
-    let mut job = |id: FuncId, context: &mut cranelift_codegen::Context, traced: Option<&str>, sites, inlined, body| {
-        let func = std::mem::replace(&mut context.func, ir::Function::new());
-        jobs.push(Job { id, func, traced: traced.map(str::to_string), sites, inlined, body });
-    };
+    let mut job =
+        |id: FuncId, context: &mut cranelift_codegen::Context, traced: Option<&str>, sites, inlined, body, needs| {
+            let func = std::mem::replace(&mut context.func, ir::Function::new());
+            jobs.push(Job { id, func, traced: traced.map(str::to_string), sites, inlined, body, needs });
+        };
+    // Each function, then the versions of those that have one.
     let built = {
         let shared = worker::Shared::new(&cg);
-        let indices: Vec<usize> = (0..bodies.len()).collect();
-        crate::parallel::map(&indices, 1, |&index| worker::build(&shared, bodies, index))
+        let mut work: Vec<(usize, bool)> = (0..bodies.len()).map(|index| (index, false)).collect();
+        work.extend((0..bodies.len()).filter(|&index| cg.versions[index].is_some()).map(|index| (index, true)));
+        crate::parallel::map(&work, 1, |&(index, version)| {
+            (index, version, worker::build(&shared, bodies, index, version))
+        })
     };
-    for (index, (body, mut built)) in bodies.iter().zip(built).enumerate() {
+    for (index, version, mut built) in built {
+        let body = &bodies[index];
         cg.current = index;
+        cg.building_version = version;
         // The runner that calls the tests is not the program's; a test's
         // suites are, and a debugger shows their frames.
         let runner = !program.tests.is_empty() && program.main.is_some_and(|main| index == main.0 as usize);
         let traced = (!runner).then_some(body.name.as_str());
+        let (id, needs) = match cg.versions[index] {
+            Some(versions) if version => (versions.version, body.needs | VERSION),
+            Some(versions) => (versions.base, body.needs),
+            None => (cg.functions[index], body.needs),
+        };
         if built.serial {
+            // A function that calls C has no version.
             context.func.signature = cg.signature(body);
             context.func.name = UserFuncName::user(0, index as u32);
             let sites = FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
-            job(cg.functions[index], &mut context, traced, sites, body.inlined.clone(), index);
+            job(id, &mut context, traced, sites, body.inlined.clone(), index, needs);
         } else {
             worker::replay(&mut cg, bodies, &mut built);
             context.func = built.func;
-            job(cg.functions[index], &mut context, traced, built.sites, body.inlined.clone(), index);
+            job(id, &mut context, traced, built.sites, body.inlined.clone(), index, needs);
         }
         cg.module.clear_context(&mut context);
     }
+    cg.building_version = false;
+    // What calls a function with a version: the version, where the
+    // processor has its level.
+    for (index, body) in bodies.iter().enumerate() {
+        let Some(versions) = cg.versions[index] else { continue };
+        let id = cg.functions[index];
+        context.func.signature = cg.module.declarations().get_function_decl(id).signature.clone();
+        context.func.name = UserFuncName::user(0, index as u32);
+        define_dispatcher(&mut cg, versions, &mut context.func, &mut builder_context);
+        job(id, &mut context, Some(""), Vec::new(), Vec::new(), 0, 0);
+        cg.module.clear_context(&mut context);
+        if let Some(bridge) = versions.bridge {
+            context.func.signature = cg.module.declarations().get_function_decl(bridge).signature.clone();
+            context.func.name = UserFuncName::user(0, index as u32);
+            define_bridge(&mut cg, body, versions.version, &mut context.func, &mut builder_context);
+            job(bridge, &mut context, Some(""), Vec::new(), Vec::new(), 0, body.needs | VERSION);
+            cg.module.clear_context(&mut context);
+        }
+    }
     let trace = cg.module.declare_data("tondo_trace", Linkage::Local, false, false).map_err(|e| e.to_string())?;
     let patch = cg.live.as_ref().is_some_and(|live| live.patch.is_some());
-    match program.main {
+    // A library for C, whose package may have a `main` of its own, which
+    // it does not run.
+    let main = program.main.filter(|_| program.c_api.name.is_none());
+    match main {
         // A patch starts nothing: the running program calls into it.
         _ if patch => {}
         Some(main) => {
             let main = main.0 as usize;
             let entry =
                 cg.entry_point(main, bodies[main].result, &program.tests, trace, &mut context, &mut builder_context)?;
-            job(entry, &mut context, None, Vec::new(), Vec::new(), 0);
+            job(entry, &mut context, None, Vec::new(), Vec::new(), 0, 0);
             cg.module.clear_context(&mut context);
             let start = cg.process_main(entry, &mut context, &mut builder_context)?;
-            job(start, &mut context, None, Vec::new(), Vec::new(), 0);
+            job(start, &mut context, None, Vec::new(), Vec::new(), 0, 0);
         }
         None => {
             let init = cg.library_start(trace, &mut context, &mut builder_context)?;
-            job(init, &mut context, None, Vec::new(), Vec::new(), 0);
+            job(init, &mut context, None, Vec::new(), Vec::new(), 0, 0);
             cg.library = Some(init);
+            // `<name>_stop`, and the same under a name every library of
+            // Tondo has, by which `ffi.Library` knows one (toolchain 7.7).
+            if let Some(name) = &program.c_api.name {
+                for symbol in [format!("{name}_stop"), crate::header::STOP.to_string()] {
+                    cg.module.clear_context(&mut context);
+                    let stop = cg.library_stop(&symbol, &mut context, &mut builder_context)?;
+                    job(stop, &mut context, None, Vec::new(), Vec::new(), 0, 0);
+                }
+            }
         }
     }
     cg.module.clear_context(&mut context);
@@ -357,26 +563,26 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.name = UserFuncName::user(3, thunk.as_u32());
         define_thunk(&mut cg, &bodies[target.0 as usize], target, &mut context.func, &mut builder_context);
         // In the table of the trace, without lines, for its handler.
-        job(thunk, &mut context, Some(""), Vec::new(), Vec::new(), 0);
+        job(thunk, &mut context, Some(""), Vec::new(), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
     }
     while let Some((target, forward)) = cg.pending_forwarders.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(forward).signature.clone();
         context.func.name = UserFuncName::user(6, forward.as_u32());
         define_forwarder(&mut cg, target, &mut context.func, &mut builder_context);
-        job(forward, &mut context, Some(""), Vec::new(), Vec::new(), 0);
+        job(forward, &mut context, Some(""), Vec::new(), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
     }
     while let Some(callback) = cg.pending_callbacks.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(callback.adapter).signature.clone();
         context.func.name = UserFuncName::user(4, callback.adapter.as_u32());
         define_adapter(&mut cg, &callback, &mut context.func, &mut builder_context);
-        job(callback.adapter, &mut context, None, Vec::new(), Vec::new(), 0);
+        job(callback.adapter, &mut context, None, Vec::new(), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
         context.func.signature = cg.module.declarations().get_function_decl(callback.inner).signature.clone();
         context.func.name = UserFuncName::user(5, callback.inner.as_u32());
         define_inner(&mut cg, &bodies[callback.target.0 as usize], &callback, &mut context.func, &mut builder_context);
-        job(callback.inner, &mut context, Some(&bodies[callback.target.0 as usize].name), Vec::new(), Vec::new(), 0);
+        job(callback.inner, &mut context, Some(&bodies[callback.target.0 as usize].name), Vec::new(), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
     }
     // A patch's conversions of the running program's values, which the
@@ -392,7 +598,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.signature = signature;
         context.func.name = UserFuncName::user(7, id.as_u32());
         define_conversion(&mut cg, body, function, &mut context.func, &mut builder_context);
-        job(id, &mut context, None, Vec::new(), Vec::new(), 0);
+        job(id, &mut context, None, Vec::new(), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
         let TyKind::Option(new) = *cg.types.kind(body.result) else { unreachable!("a conversion gives `T?`") };
         let old = body.locals[body.params[0].0 as usize];
@@ -412,7 +618,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.signature = cg.glue_signature(kind);
         context.func.name = UserFuncName::user(2, id.as_u32());
         define_glue(&mut cg, kind, ty, &mut context.func, &mut builder_context);
-        job(id, &mut context, None, Vec::new(), Vec::new(), 0);
+        job(id, &mut context, None, Vec::new(), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
     }
     drop(building);
@@ -461,8 +667,21 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
 }
 
 struct Codegen<'a> {
+    /// The generator of each set of features of the processor some
+    /// function needs beyond the level (toolchain 7.8); the module's is the
+    /// level's. With `VERSION` set, of the level of the versions.
+    isas: HashMap<u32, cranelift_codegen::isa::OwnedTargetIsa>,
+    /// The functions with a version for a higher level (rule 19 of
+    /// `std.simd`): where `functions` holds what calls the one the
+    /// processor runs.
+    versions: Vec<Option<Versions>>,
+    /// That level and what it needs, a line each, for the runtime.
+    versions_level: Option<String>,
     /// Where the program comes from, which the runtime gives to tools.
     roots: &'a str,
+    /// The level of processor the program is for and what it needs, a
+    /// line each, which the runtime checks before the program's code.
+    cpu: String,
     module: ObjectModule,
     types: &'a Types,
     /// Each context's functions and the type of its record (11.16).
@@ -523,7 +742,10 @@ struct Codegen<'a> {
     /// A build without probes: the table of what its dumps show, and the
     /// bindings of each function, by its number.
     dump: Option<DataId>,
-    dump_bindings: HashMap<usize, Vec<DumpBinding>>,
+    /// By the function's number, and whether of its version.
+    dump_bindings: HashMap<(usize, bool), Vec<DumpBinding>>,
+    /// Whether what is built now is a function's version.
+    building_version: bool,
     live: Option<LiveCodegen>,
     /// The body whose IR is being built.
     current: usize,
@@ -570,7 +792,7 @@ fn call_body_with<'t, G: Gen<'t> + ?Sized>(
         args.push(state.unwrap_or_else(|| fb.ins().iconst(types::I64, 0)));
     }
     let args = &args[..];
-    let func = cg.function(id);
+    let func = cg.direct(id);
     let Some((table, slot)) = cg.slot_of(id) else {
         let callee = cg.declare_func_in_func(func, fb.func);
         return fb.ins().call(callee, args);
@@ -588,26 +810,6 @@ fn call_body_with<'t, G: Gen<'t> + ?Sized>(
     let signature = cg.function_signature(func);
     let signature = fb.import_signature(signature);
     fb.ins().call_indirect(signature, code, args)
-}
-
-/// For each block, the block before it when only one jumps to it.
-fn only_before(blocks: &[crate::mir::BlockData]) -> Vec<Option<usize>> {
-    let mut before: Vec<(usize, Option<usize>)> = vec![(0, None); blocks.len()];
-    let mut jump = |from: usize, to: &crate::mir::BlockId| {
-        let target = &mut before[to.0 as usize];
-        *target = (target.0 + 1, Some(from));
-    };
-    for (index, block) in blocks.iter().enumerate() {
-        match &block.terminator {
-            Terminator::Goto(next) => jump(index, next),
-            Terminator::Branch(_, then, otherwise) => {
-                jump(index, then);
-                jump(index, otherwise);
-            }
-            _ => {}
-        }
-    }
-    before.into_iter().map(|(count, from)| from.filter(|_| count == 1)).collect()
 }
 
 /// The line of the last logpoint site in a function and in each inlined
@@ -653,6 +855,9 @@ struct Traced {
     saved: Vec<(u16, i64)>,
     /// Its latent sites: where each starts, how long it is, and its site.
     latent: Vec<(u32, u32, u32)>,
+    /// Whether it is a function's version (rule 19 of `std.simd`), whose
+    /// bindings are its own, as its code keeps them elsewhere.
+    version: bool,
 }
 
 /// Where a statement's code is in the source, the type of the local it
@@ -672,6 +877,9 @@ struct Job {
     inlined: Vec<crate::mir::Inlined>,
     /// The body it is of.
     body: usize,
+    /// The features of the processor it needs beyond the level, which pick
+    /// the generator it is compiled with (toolchain 7.8).
+    needs: u32,
 }
 
 /// A function's machine code, its relocations, and its size and calls for
@@ -936,6 +1144,8 @@ struct Shapes<'t> {
     layouts: HashMap<Ty, Layout>,
     call_conv: cranelift_codegen::isa::CallConv,
     abi: cabi::Abi,
+    /// Whether a vector of 256 bits is one register (`wide_vectors`).
+    wide: bool,
 }
 
 impl<'t> Shapes<'t> {
@@ -946,7 +1156,8 @@ impl<'t> Shapes<'t> {
             }
             _ => cabi::Abi::X64,
         };
-        Shapes { types, layouts: HashMap::new(), call_conv: isa.default_call_conv(), abi }
+        let wide = wide_vectors(isa);
+        Shapes { types, layouts: HashMap::new(), call_conv: isa.default_call_conv(), abi, wide }
     }
 
     fn make_signature(&self) -> ir::Signature {
@@ -976,6 +1187,20 @@ impl<'t> Shapes<'t> {
             | TyKind::Handle(..)
             | TyKind::Pointer(_) => Class::Scalar(POINTER),
             TyKind::CArray(..) => Class::Memory,
+            // A vector of 128 bits is one register, and one of 256 where the
+            // processor has instructions of that width; a wider one, its
+            // parts in memory.
+            TyKind::Vector(width, lane) => match width.bits() {
+                128 => Class::Scalar(vector_type(self.types, *lane)),
+                256 if self.wide => Class::Scalar(vector_type(self.types, *lane).by(2).expect("256 bits")),
+                _ => Class::Memory,
+            },
+            // A mask's lanes are integers as wide as its vector's.
+            TyKind::Mask(width, lane) => match width.bits() {
+                128 => Class::Scalar(vector_type(self.types, *lane).as_int()),
+                256 if self.wide => Class::Scalar(vector_type(self.types, *lane).as_int().by(2).expect("256 bits")),
+                _ => Class::Memory,
+            },
             TyKind::Tuple(_) | TyKind::Adt(_) | TyKind::Option(_) | TyKind::Result(..) | TyKind::Union(_) => {
                 let layout = self.layout(repr);
                 match layout.shape {
@@ -1016,6 +1241,8 @@ impl<'t> Shapes<'t> {
             && self.types.is_address(inner)
         {
             Layout { size: 8, align: 8, shape: Shape::Niche }
+        } else if let TyKind::Vector(width, _) | TyKind::Mask(width, _) = *self.types.kind(ty) {
+            Layout { size: width.bits() / 8, align: 8, shape: Shape::Scalar }
         } else if let TyKind::CArray(element, count) = *self.types.kind(ty) {
             let element = self.layout(element);
             Layout { size: element.size * count, align: element.align, shape: Shape::Scalar }
@@ -1209,6 +1436,11 @@ trait Gen<'t> {
     /// A function of the program, and whether it takes a live build's
     /// hidden parameter.
     fn function(&self, id: FnId) -> FuncId;
+    /// What a direct call of the function calls: in a version, the
+    /// callee's version when it has one (rule 19 of `std.simd`).
+    fn direct(&self, id: FnId) -> FuncId {
+        self.function(id)
+    }
     fn takes_osr(&self, id: FnId) -> bool;
     fn function_signature(&self, id: FuncId) -> ir::Signature;
     /// In a live build, the table of slots and a function's slot.
@@ -1258,6 +1490,8 @@ trait Gen<'t> {
     fn function_sites(&mut self) -> Option<(DataId, usize)>;
     /// A probe of the function `function` at `start`: its site's number.
     fn debug_site(&mut self, start: u32, function: u32, goes_on: bool) -> usize;
+    /// The site `index` goes on in the line of the code before it.
+    fn site_goes_on(&mut self, index: usize);
     /// The number of the site `index`, as an instruction's constant.
     fn site_constant(&mut self, fb: &mut FunctionBuilder, index: usize) -> ir::Value;
     /// In a live build, the site of the probe of a point of the function.
@@ -1426,7 +1660,7 @@ impl<'t> Gen<'t> for Codegen<'t> {
         self.dump.is_some()
     }
     fn dump_bindings(&mut self, described: Vec<DumpBinding>) {
-        self.dump_bindings.insert(self.current, described);
+        self.dump_bindings.insert((self.current, self.building_version), described);
     }
     fn function_sites(&mut self) -> Option<(DataId, usize)> {
         self.live.as_ref()?;
@@ -1439,6 +1673,9 @@ impl<'t> Gen<'t> for Codegen<'t> {
     fn debug_site(&mut self, start: u32, function: u32, goes_on: bool) -> usize {
         self.debug_sites.push((start, function, goes_on));
         self.debug_sites.len() - 1
+    }
+    fn site_goes_on(&mut self, index: usize) {
+        self.debug_sites[index].2 = true;
     }
     fn site_constant(&mut self, fb: &mut FunctionBuilder, index: usize) -> ir::Value {
         fb.ins().iconst(types::I64, index as i64)
@@ -1533,7 +1770,7 @@ impl Codegen<'_> {
         };
         // Each function goes to the thread that compiles it, which says
         // which it compiles when the rules it gets are counted.
-        type Compiling = (FuncId, std::sync::Mutex<Option<ir::Function>>, bool, Option<String>);
+        type Compiling = (FuncId, std::sync::Mutex<Option<ir::Function>>, bool, Option<String>, u32);
         let functions: Vec<Compiling> = jobs
             .iter_mut()
             .map(|job| {
@@ -1541,10 +1778,11 @@ impl Codegen<'_> {
                 let counted =
                     asked.as_ref().filter(|asked| asked.rules && wanted(job).is_some()).and(job.traced.clone());
                 let function = std::sync::Mutex::new(Some(std::mem::replace(&mut job.func, ir::Function::new())));
-                (job.id, function, ir, counted)
+                (job.id, function, ir, counted, job.needs)
             })
             .collect();
-        let compiled = crate::parallel::map(&functions, 1, |(id, function, ir, _counted)| {
+        let isas = &self.isas;
+        let compiled = crate::parallel::map(&functions, 1, |(id, function, ir, _counted, needs)| {
             thread_local! {
                 static CONTEXT: std::cell::RefCell<cranelift_codegen::Context> =
                     std::cell::RefCell::new(cranelift_codegen::Context::new());
@@ -1552,6 +1790,7 @@ impl Codegen<'_> {
             let function = function.lock().unwrap_or_else(|e| e.into_inner()).take().expect("a function");
             #[cfg(feature = "rules")]
             crate::rules::compiling(_counted.as_deref());
+            let isa = isas.get(needs).map_or(isa, |isa| &**isa);
             let compiled = CONTEXT.with(|context| compile_one(isa, &mut context.borrow_mut(), *id, function, *ir));
             #[cfg(feature = "rules")]
             crate::rules::compiling(None);
@@ -1589,8 +1828,11 @@ impl Codegen<'_> {
                     _ => None,
                 };
                 let site = |site: u32| job.sites.get((site as usize).checked_sub(1)?).map(|site| site.0);
+                // A function's version is shown with its level.
+                let name = job.traced.clone().unwrap_or_default();
+                let name = if job.needs & VERSION != 0 { format!("{name} (x86-64-v3)") } else { name };
                 KEPT.lock().unwrap_or_else(|e| e.into_inner()).push(Kept {
-                    name: job.traced.clone().unwrap_or_default(),
+                    name,
                     bytes: code.bytes.clone(),
                     code_end: code.code_end as usize,
                     targets: code.relocs.iter().filter_map(|reloc| Some((reloc.offset, target(reloc)?))).collect(),
@@ -1617,6 +1859,7 @@ impl Codegen<'_> {
                 let (handlers, labelled, slots, body) = (code.handlers, code.labelled, code.slots, job.body);
                 let (saved, latent) = (code.saved, code.latent);
                 self.traced.push(Traced {
+                    version: job.needs & VERSION != 0,
                     latent,
                     id: job.id,
                     name,
@@ -1717,6 +1960,20 @@ enum Called {
 }
 
 impl Emit<'_, Codegen<'_>> {
+    /// Hands the runtime the level of processor the program was built for
+    /// and what that needs, which it checks before any of the program's
+    /// code runs (toolchain 7.8).
+    fn check_cpu(&mut self) {
+        let needed = self.cg.cpu.clone();
+        let text = self.string_ptr(&needed);
+        self.call_rt(Rt::Cpu, &[text]);
+        // And whether the versions of functions run (rule 19 of `std.simd`).
+        if let Some(level) = self.cg.versions_level.clone() {
+            let text = self.string_ptr(&level);
+            self.call_rt(Rt::CpuVersions, &[text]);
+        }
+    }
+
     /// Hands the runtime each context's functions, the maker of its
     /// initial value and those that show its fields, and the release of its
     /// record (11.16).
@@ -1851,6 +2108,17 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
 
     /// An integer constant of type `ty`, from its bits.
     fn int_const(&mut self, ty: ir::Type, value: i128) -> ir::Value {
+        // A vector of `std.simd`, which only the zero of a value is made as:
+        // zero in every lane.
+        if ty.is_vector() {
+            debug_assert_eq!(value, 0, "a vector constant is all zeros");
+            let zero = match ty.lane_type() {
+                types::F32 => self.fb.ins().f32const(0.0),
+                types::F64 => self.fb.ins().f64const(0.0),
+                lane => self.fb.ins().iconst(lane, 0),
+            };
+            return self.fb.ins().splat(ty, zero);
+        }
         // Narrow immediates are zero-extended bit patterns; one of 128 bits
         // is made of its two halves.
         match ty.bits() {
@@ -2160,6 +2428,45 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
             self.fb.switch_to_block(done);
             return;
         }
+        // A vector of `std.simd`, `<1.0, 2.0>`, and a mask, `<true, false>`.
+        if let TyKind::Vector(width, lane) | TyKind::Mask(width, lane) = *types.kind(types.repr(ty)) {
+            let mask = matches!(types.kind(types.repr(ty)), TyKind::Mask(..));
+            let lanes = crate::simd::Lanes::of(types, lane).expect("a vector's lanes");
+            let count = crate::simd::count(width, lanes);
+            let clif = vector_type(types, lane).lane_type();
+            let clif = if mask { clif.as_int() } else { clif };
+            let address = match value {
+                Val::Memory(address) => address,
+                Val::Scalar(vector) => {
+                    let bytes = self.fb.func.dfg.value_type(vector).bytes();
+                    let data = StackSlotData::new(StackSlotKind::ExplicitSlot, bytes, 4);
+                    let slot = self.fb.create_sized_stack_slot(data);
+                    let address = self.fb.ins().stack_addr(POINTER, slot, 0);
+                    self.fb.ins().store(flags(), vector, address, 0);
+                    address
+                }
+                Val::Zero => unreachable!("a vector has bits"),
+            };
+            let open = self.string_ptr("<");
+            self.call_rt(Rt::SbStr, &[builder, open]);
+            for index in 0..count {
+                if index > 0 {
+                    let comma = self.string_ptr(", ");
+                    self.call_rt(Rt::SbStr, &[builder, comma]);
+                }
+                let read = self.fb.ins().load(clif, flags(), address, (index * lanes.bits() / 8) as i32);
+                match mask {
+                    true => {
+                        let set = self.fb.ins().icmp_imm_s(IntCC::NotEqual, read, 0);
+                        self.append_display(builder, Ty::BOOL, Val::Scalar(set));
+                    }
+                    false => self.append_display(builder, lane, Val::Scalar(read)),
+                }
+            }
+            let close = self.string_ptr(">");
+            self.call_rt(Rt::SbStr, &[builder, close]);
+            return;
+        }
         // A tuple: `(a, b)`, each part with its own `Display`.
         if let TyKind::Tuple(items) = types.kind(types.repr(ty)).clone() {
             let open = self.string_ptr("(");
@@ -2377,7 +2684,9 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
                 self.append_display(builder, ty, value);
                 text(self, "'");
             }
-            TyKind::Bool | TyKind::Int(_) | TyKind::Float(_) | TyKind::Byte => self.append_display(builder, ty, value),
+            TyKind::Bool | TyKind::Int(_) | TyKind::Float(_) | TyKind::Byte | TyKind::Vector(..) | TyKind::Mask(..) => {
+                self.append_display(builder, ty, value)
+            }
             TyKind::Unit => text(self, "()"),
             TyKind::Tuple(items) => {
                 text(self, "(");
@@ -2771,7 +3080,7 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
                         Handle::JsonWriter => Rt::JsonWriterRelease,
                         Handle::Clock => Rt::ClockRelease,
                         Handle::Regex => Rt::RegexRelease,
-                        Handle::Native => Rt::NativeRelease,
+                        Handle::Native | Handle::Owned => Rt::NativeRelease,
                         Handle::ReflectBox => Rt::ReflectRelease,
                         _ => Rt::SyncRelease,
                     };
@@ -2921,6 +3230,34 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
 
     /// Structural equality (8.11): 1 when equal, 0 otherwise.
     fn equal(&mut self, ty: Ty, a: Val, b: Val) -> ir::Value {
+        // A vector of `std.simd`: every lane equal by its type's `==`.
+        let types = self.cg.types();
+        if let TyKind::Vector(width, lane) | TyKind::Mask(width, lane) = *types.kind(types.repr(ty)) {
+            let mask = matches!(types.kind(types.repr(ty)), TyKind::Mask(..));
+            // In one register, or in parts of 128 bits in memory.
+            let part = match self.cg.class(ty) {
+                Class::Scalar(whole) => whole,
+                _ => vector_type(types, lane),
+            };
+            let part = if mask { part.as_int() } else { part };
+            let mut result = self.fb.ins().iconst(types::I8, 1);
+            for index in 0..(width.bits() / part.bits()) as i32 {
+                let bytes = part.bytes() as i32;
+                let mut read = |value: Val| match value {
+                    Val::Scalar(v) => v,
+                    Val::Memory(address) => self.fb.ins().load(part, flags(), address, index * bytes),
+                    Val::Zero => unreachable!("a vector has bits"),
+                };
+                let (x, y) = (read(a), read(b));
+                let same = match part.lane_type().is_float() {
+                    true => self.fb.ins().fcmp(FloatCC::Equal, x, y),
+                    false => self.fb.ins().icmp(IntCC::Equal, x, y),
+                };
+                let every = self.fb.ins().vall_true(same);
+                result = self.fb.ins().band(result, every);
+            }
+            return result;
+        }
         match (a, b) {
             (Val::Scalar(a), Val::Scalar(b)) => match *self.cg.types().kind(self.cg.types().repr(ty)) {
                 TyKind::String => self.call_rt(Rt::StrEq, &[a, b]).unwrap(),
@@ -3086,8 +3423,8 @@ struct DebugFrame {
     alive: ir::StackSlot,
     addresses: ir::StackSlot,
     line: Option<(String, usize)>,
-    /// The line the only block that leads to this one ended in.
-    before: Option<(String, usize)>,
+    /// The first site of each block that starts a line, with the line.
+    opened: Vec<(usize, usize, (String, usize))>,
     /// The site of the last probe.
     site: usize,
 }
@@ -3147,6 +3484,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             for (index, name, scope) in own.chain(inlined) {
                 let place = match storage[index] {
                     Storage::Zero => continue,
+                    // A register of more than 128 bits is more than a dump
+                    // reads of one.
+                    Storage::Var(_) if matches!(cg.class(body.locals[index]), Class::Scalar(t) if t.bytes() > 16) => {
+                        continue;
+                    }
                     Storage::Var(var) => {
                         labels.insert(var.as_u32(), index as u32);
                         DumpPlace::Value(index as u32)
@@ -3239,7 +3581,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             let alive = fb.create_sized_stack_slot(slot(words * 8, 0));
             let addresses = fb.create_sized_stack_slot(slot((count.max(1) * 8) as u32, 1));
             let first = cg.function_sites();
-            DebugFrame { function, first, shown, captured, alive, addresses, line: None, before: None, site: 0 }
+            DebugFrame { function, first, shown, captured, alive, addresses, line: None, opened: Vec::new(), site: 0 }
         });
         FnCodegen {
             e: Emit::new(cg, fb),
@@ -3346,19 +3688,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         // A value that comes into a block is a value of its own, which says
         // whose it is: only those it reads, so no code changes for it.
         let live = (!self.labels.is_empty()).then(|| crate::mir::live_in(&self.body.blocks, self.body.locals.len()));
-        // The block that alone leads to each, and the line each ended in.
-        let from = only_before(&self.body.blocks);
-        let mut ended: Vec<Option<(String, usize)>> = vec![None; self.body.blocks.len()];
-        // With logpoint sites, the blocks that lead to each, and the lines
-        // of the last sites each ended in.
+        // With probes or logpoint sites, the blocks that lead to each, and
+        // the line each ended in, or the lines of the last sites.
         let latent = self.debug.is_none() && self.e.cg.dumps() && crate::driver::logpoint_sites();
-        let mut leading = vec![Vec::new(); if latent { self.body.blocks.len() } else { 0 }];
-        for (index, block) in self.body.blocks.iter().enumerate().filter(|_| latent) {
+        let lines = latent || self.debug.is_some();
+        let mut leading = vec![Vec::new(); if lines { self.body.blocks.len() } else { 0 }];
+        for (index, block) in self.body.blocks.iter().enumerate().filter(|_| lines) {
             for next in crate::mir::successors(&block.terminator) {
                 leading[next].push(index);
             }
         }
-        let mut latent_ended: Vec<Option<LatentLines>> = vec![None; leading.len()];
+        let mut ended: Vec<Option<(String, usize)>> = vec![None; self.body.blocks.len()];
+        let mut latent_ended: Vec<Option<LatentLines>> = vec![None; if latent { leading.len() } else { 0 }];
         for (index, block) in self.body.blocks.iter().enumerate() {
             self.scope = self.body.scopes.get(index).copied().flatten();
             if index > 0 {
@@ -3396,10 +3737,6 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 // the statement goes on in only takes it.
                 self.carrying =
                     debug.line.is_some() && !self.body.points.iter().any(|p| p.continues.0 as usize == index);
-                // Code that only follows the one before goes on in its line,
-                // as after a call that may panic: its probe sees the line
-                // go on, for what it changed, and stops nobody there.
-                debug.before = from[index].and_then(|before| ended[before].clone());
             }
             let returns = matches!(block.terminator, Terminator::Return(_));
             let last_resume = block.stmts.iter().rposition(resumes);
@@ -3464,6 +3801,19 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             ended[index] = self.debug.as_ref().and_then(|debug| debug.line.clone());
             if latent {
                 latent_ended[index] = Some(self.latent_lines.clone());
+            }
+        }
+        // Code that only follows code that ended in its line goes on in
+        // it, as after a call that may panic, where the ways of a `??` meet
+        // or a loop's step goes back to its test: its probe sees the line
+        // go on, for what it changed, and stops nobody there. Which blocks
+        // lead to one is known once all are built.
+        for (block, site, line) in
+            self.debug.as_mut().map(|debug| std::mem::take(&mut debug.opened)).unwrap_or_default()
+        {
+            let before = &leading[block];
+            if !before.is_empty() && before.iter().all(|&other| ended[other].as_ref() == Some(&line)) {
+                self.e.cg.site_goes_on(site);
             }
         }
         self.e.fb.seal_all_blocks();

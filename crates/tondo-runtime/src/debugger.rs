@@ -454,7 +454,7 @@ fn why(table: &Table, text: &str) -> Result<String, String> {
         let state = state();
         let (task, mine, at) = shown_lines(&state)?;
         let history = HISTORY.lock().unwrap_or_else(|e| e.into_inner());
-        let found = origin(&history, &mine, at, text).map_err(|e| e.replace("{task}", &task.to_string()))?;
+        let found = origin(table, &history, &mine, at, text).map_err(|e| e.replace("{task}", &task.to_string()))?;
         (found, at)
     };
     let count = (at - changed).to_string();
@@ -476,8 +476,11 @@ fn shown_lines(state: &State) -> Result<(u64, Vec<usize>, usize), String> {
 
 /// Of the task's lines `mine`, the one before line `at` that gave the
 /// expression the value it has as line `at` starts: the last that started
-/// with another value. Gives that line and the value.
+/// with another value. Gives that line and the value. A probe where a line
+/// goes on, as after an entry of a map was added, is of the line it is in:
+/// what the line did by then is the line's.
 fn origin(
+    table: &Table,
     history: &std::collections::VecDeque<Moment>,
     mine: &[usize],
     at: usize,
@@ -492,7 +495,8 @@ fn origin(
         Evaluator::new(&read).evaluate(&expr).ok().map(|e| e.text)
     };
     let now = shown(&history[mine[at]]).ok_or(format!("`{text}` has no value here"))?;
-    match mine[..at].iter().rposition(|&i| shown(&history[i]).as_ref() != Some(&now)) {
+    let starts = |moment: &Moment| !table.sites.get(moment.site).is_some_and(|site| site.goes_on);
+    match mine[..at].iter().rposition(|&i| starts(&history[i]) && shown(&history[i]).as_ref() != Some(&now)) {
         Some(changed) => Ok((changed, now)),
         None => Err(format!(
             "`{text}` has been {} since the first line of task {{task}}'s history: `record` keeps more of it",
@@ -618,7 +622,7 @@ fn causes(table: &Table, rest: &str) -> Result<String, String> {
     let history = HISTORY.lock().unwrap_or_else(|e| e.into_inner());
     let mut found = Vec::new();
     for text in rest.split_whitespace() {
-        let Ok((changed, now)) = origin(&history, &mine, at, text) else { continue };
+        let Ok((changed, now)) = origin(table, &history, &mine, at, text) else { continue };
         let moment = &history[mine[changed]];
         found.push(format!(
             "{{\"name\":{},\"value\":{},\"at\":{},\"back\":{},\"tick\":{}}}",

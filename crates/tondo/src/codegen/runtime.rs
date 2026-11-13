@@ -80,6 +80,16 @@ pub(super) enum Rt {
     DumpTable,
     Site,
     SourceRoots,
+    /// Before the program's code, the level of processor it was built for
+    /// and what that needs, which the runtime checks (toolchain 7.8).
+    Cpu,
+    /// `cpu.has(feature)` when the level does not say.
+    CpuHas,
+    /// The level of the program's versions of functions, and what it
+    /// needs (rule 19 of `std.simd`).
+    CpuVersions,
+    /// `<name>_stop` of a library, which ends its runtime.
+    LibraryStop,
     /// Before a panic, the registers its dump reads.
     KeepRegisters,
     /// Before a panic the program wrote, the numbers its dump shows.
@@ -397,6 +407,10 @@ impl Rt {
             Rt::DebugTable => ("tondo_rt_debug_table", &[I64], &[]),
             Rt::DumpTable => ("tondo_rt_dump_table", &[I64], &[]),
             Rt::SourceRoots => ("tondo_rt_source_roots", &[I64], &[]),
+            Rt::Cpu => ("tondo_rt_cpu", &[I64], &[]),
+            Rt::CpuHas => ("tondo_rt_cpu_has", &[I64], &[I8]),
+            Rt::CpuVersions => ("tondo_rt_cpu_versions", &[I64], &[]),
+            Rt::LibraryStop => ("tondo_rt_library_stop", &[], &[]),
             Rt::Site => ("tondo_rt_site", &[], &[]),
             Rt::KeepRegisters => ("tondo_rt_keep_registers", &[], &[]),
             Rt::KeepNumbers => ("tondo_rt_keep_numbers", &[I64], &[]),

@@ -31,6 +31,24 @@ impl<'a> Checker<'a> {
             })
     }
 
+    /// That the `halves` of `x64.carrylessMultiply` is a constant of 0, 1,
+    /// 16 or 17, which the instruction holds in itself (standard library
+    /// 14.47).
+    pub(super) fn check_halves(&mut self, halves: &hir::Expr) {
+        if let hir::ExprKind::Int(value) = halves.kind
+            && crate::instructions::HALVES.iter().any(|(allowed, _)| *allowed == value)
+        {
+            return;
+        }
+        let values: Vec<String> =
+            crate::instructions::HALVES.iter().map(|(value, takes)| format!("{value} takes {takes}")).collect();
+        let message = format!(
+            "`halves` is a constant written in the call, one of four: {}; write the one you mean, as `x64.carrylessMultiply(a, b, 0)`",
+            values.join(", ")
+        );
+        self.diags.error("E1901", halves.span, message);
+    }
+
     /// The function of `std.format` that applies a format to a value of
     /// `ty` as an integer or a float, as `formatted` does.
     pub(super) fn typed_apply(&mut self, ty: Ty) -> Option<FnId> {
@@ -104,7 +122,7 @@ impl<'a> Checker<'a> {
                 _ => continue,
             };
             let file = self.sources.file_of(span.start);
-            let Some(systems) = crate::project::systems_of(&file.path) else { continue };
+            let Some(targets) = crate::project::targets_of(&file.path) else { continue };
             let text = self.sources.slice(Span::new(span.start, end.unwrap_or(span.end).max(span.start)));
             let head = text.lines().next().unwrap_or_default().trim().trim_end_matches('{').trim_end().to_string();
             let Some(other) = self
@@ -114,14 +132,10 @@ impl<'a> Checker<'a> {
             else {
                 continue;
             };
-            let here: Vec<&str> = systems.iter().map(|s| s.shown()).collect();
+            let here = crate::project::shown_targets(&targets, &crate::project::Target::ALL);
             let message = format!(
-                "`{}` is `{head}` here, for {}, and `{}` in `{}`, for {}: give it one signature for every system, which common code calls",
-                name.name,
-                here.join(" and "),
-                other.head,
-                other.file,
-                other.systems
+                "`{}` is `{head}` here, for {}, and `{}` in `{}`, for {}: give it one signature for every target, which common code calls",
+                name.name, here, other.head, other.file, other.systems
             );
             self.diags.error("E1808", name.span, message);
         }

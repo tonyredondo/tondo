@@ -17,6 +17,15 @@ std.embed      files of the package kept in the executable, read when it compile
 std.model      a design checked in every order of its steps, before any code
 std.path       join, parent, fileName, extension, clean, relative, glob patterns
 std.env        args, environment, directories, processors, hostname, what was built
+std.cpu        what the processor has beyond the build's level (`cpu.has`)
+std.plugin     a trait with `@plugin.Contract` loads from a library or a program: `NamePlugin.load`, `.start`, `serveName`
+std.cpu.x64    one instruction each: CRC32C, `pdep`, `pext`, AES, `pclmulqdq`, from an `_x64.to` file
+std.cpu.arm64  one instruction each: CRC32C, AES, `pmull`, from an `_arm64.to` file
+std.simd       vectors: `simd.Vector[Float32].load(ref values, at: i)`, `+ - *` per lane, `sum`
+std.os         the system's error number, `os.Errno`, which a C function fails with
+std.os.linux   Linux's calls with C's names, and `syscall`, from a `_linux.to` file
+std.os.macos   macOS's calls with C's names, from a `_macos.to` file
+std.os.unix    descriptors that close as they go, read, write, poll, terminals, mappings
 std.process    run programs and pipelines, capture output, signals
 std.time       Duration, sleep, now, dates and their calendar, time zones, strftime formats
 std.json       encode and decode any type, navigate dynamic JSON
@@ -639,6 +648,43 @@ clock's time, a month later than January 31 being the end of February;
 `add(time.hours(3))` adds exact time and `later.since(earlier)` gives the
 `Duration` between. `weekday()`, `dayOfYear()` and `isoWeek()` say where in
 the calendar it is, and `"%G-W%V"` writes the week.
+
+## Vectors
+
+`std.simd` computes many numbers at once: a `simd.Vector128[Float32]` has
+four lanes, and `+`, `-`, `*` and `/` work on each, with a number on either
+side standing for every lane. `simd.Vector[T]` is the widest the processor
+does well where the code runs:
+
+```tondo
+import std.console
+import std.simd
+
+fn main() {
+    let values: Array[Float32] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+    let lanes = simd.Vector[Float32].lanes()
+    var total = simd.Vector[Float32].zero()
+    var at = 0
+    for at + lanes <= values.length() {
+        total = total + simd.Vector[Float32].load(ref values, at: at) * 2.0
+        at += lanes
+    }
+    console.println("{total.sum()} {total}")                    // 72.0 <12.0, 16.0, 20.0, 24.0>
+    let big = total.greater(simd.Vector[Float32].all(15.0))     // a mask: `<` gives one Bool
+    console.println("{big.count()} {big.choose(total, -total)}")
+}
+```
+
+Lanes are `Int8` to `Int`, `UInt8` to `UInt`, `Byte`, `Float32` and
+`Float`; integer lanes wrap. `simd.Vector128[Int32].of(1, 2, 3, 4)` writes
+each lane of a vector of a fixed width; a `Vector[T]` has no `of`, as it can
+have more lanes in a version for wider vectors: `all` and `load` make one. Comparisons are methods, `less` and the others,
+that give a mask; `store(mut into, at: i)` writes the lanes back, and
+`sum`, `minLane` and `maxLane` combine them. `Vector256` and `Vector512`
+work everywhere with the same results. On an x64 with AVX2 a `Vector256`
+uses the processor's instructions of 256 bits, which
+`simd.Vector256[T].accelerated()` tells: a release build compiles the
+functions that use one for that level too, and the processor picks.
 
 ## Time, logging and CSV
 

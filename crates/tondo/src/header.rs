@@ -5,6 +5,10 @@
 use crate::hir::{CApi, CType};
 use std::fmt::Write;
 
+/// The name of `<name>_stop` that every library of Tondo publishes too, by
+/// which `ffi.Library` knows one and ends it before it unloads it.
+pub const STOP: &str = "tondo_library_stop";
+
 /// The header of the library `name`.
 pub fn header(name: &str, api: &CApi, linking: &str) -> String {
     let guard = format!("{}_H", name.to_uppercase());
@@ -58,6 +62,10 @@ pub fn header(name: &str, api: &CApi, linking: &str) -> String {
             declare(&function.result, &format!("{}({})", function.symbol, params(&function.params)))
         );
     }
+    let _ = write!(
+        out,
+        "\n/* Ends the library's runtime, for it to be unloaded: its tasks stop at their\n * next wait and run their `defer`s, the processes they started end, every\n * thread it started ends, the handlers of signals it installed give way to\n * those the process had, and what it left for the end of the process runs now.\n * A call of the library in progress on another thread finishes first, and a\n * task in a wait that cancelling does not end, as reading a terminal nobody\n * writes to, keeps it waiting. No function of the library may be called while\n * it runs, and nothing the library gave, as a text it returned, may be used\n * after it. A later call of a function of the library starts its runtime\n * again. Calling it twice does nothing the second time. */\nvoid {name}_stop(void);\n"
+    );
     let _ = write!(out, "\n#ifdef __cplusplus\n}}\n#endif\n\n#endif\n");
     out
 }

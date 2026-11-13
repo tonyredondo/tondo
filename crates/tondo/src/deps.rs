@@ -2,7 +2,7 @@
 //! and archives into the cache, and `tondo.lock`, which pins the exact
 //! commit or content of each fetched dependency.
 
-use crate::project::{System, is_identifier};
+use crate::project::{Arch, System, is_identifier};
 use crate::toml::{self, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -37,6 +37,12 @@ pub struct Package {
     /// The systems it runs on (`[package] systems`), all of them when it
     /// names none (language 6.8).
     pub systems: Vec<System>,
+    /// The architectures it runs on (`[package] architectures`), both when
+    /// it names none.
+    pub architectures: Vec<Arch>,
+    /// The level of processor its programs are built for (`[build] cpu`),
+    /// and where its manifest says it, for an error about it.
+    pub cpu: Option<(String, String)>,
 }
 
 /// A generator (27.5 of the language): a program that writes modules of
@@ -98,6 +104,8 @@ struct Manifest {
     providers: Vec<(String, PathBuf)>,
     generators: Vec<Generator>,
     systems: Vec<System>,
+    architectures: Vec<Arch>,
+    cpu: Option<(String, String)>,
 }
 
 /// Reads `tondo.toml` in `dir`; a missing file declares nothing.
@@ -113,6 +121,8 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
         providers: Vec::new(),
         generators: Vec::new(),
         systems: Vec::new(),
+        architectures: Vec::new(),
+        cpu: None,
     };
     if !path.is_file() {
         return Ok(manifest);
@@ -138,6 +148,21 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
                             let system = item.as_str().and_then(System::parse).ok_or_else(|| at(line, usage.into()))?;
                             if !manifest.systems.contains(&system) {
                                 manifest.systems.push(system);
+                            }
+                        }
+                        continue;
+                    }
+                    if key == "architectures" {
+                        let usage =
+                            "`architectures = [\"x64\"]` names the architectures the package runs on: `x64`, `arm64`";
+                        let items = match &value {
+                            Value::Array(items) if !items.is_empty() => items,
+                            _ => return Err(at(line, usage.into())),
+                        };
+                        for item in items {
+                            let arch = item.as_str().and_then(Arch::parse).ok_or_else(|| at(line, usage.into()))?;
+                            if !manifest.architectures.contains(&arch) {
+                                manifest.architectures.push(arch);
                             }
                         }
                         continue;
@@ -184,6 +209,20 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
                     }
                 }
             }
+            ("build", false) => {
+                for (key, value, line) in table.entries {
+                    match (key.as_str(), value.as_str()) {
+                        ("cpu", Some(level)) => {
+                            manifest.cpu = Some((level.to_string(), format!("{}:{line}", path.display())));
+                        }
+                        ("cpu", _) => {
+                            let usage = "`cpu = \"x86-64-v3\"` names the level of processor the program is built for";
+                            return Err(at(line, usage.into()));
+                        }
+                        _ => return Err(at(line, format!("unknown key `{key}` in `[build]`, which has `cpu`"))),
+                    }
+                }
+            }
             ("native", false) => {
                 for (key, value, line) in table.entries {
                     let usage = "`libraries = [\"sqlite3\", \"static:z\", \"vendor/libpng.a\"]` lists libraries by name or file";
@@ -221,7 +260,7 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
             }
             (name, _) => {
                 let message = format!(
-                    "unknown table `[{name}]`: tondo.toml has `[package]`, `[source]`, `[dependencies]`, `[dev-dependencies]`, `[native]`, `[derive]` and `[generators.<name>]`"
+                    "unknown table `[{name}]`: tondo.toml has `[package]`, `[build]`, `[source]`, `[dependencies]`, `[dev-dependencies]`, `[native]`, `[derive]` and `[generators.<name>]`"
                 );
                 return Err(at(table.line, message));
             }
@@ -438,6 +477,8 @@ impl Resolver<'_> {
             providers: manifest.providers,
             generators: manifest.generators,
             systems: manifest.systems,
+            architectures: manifest.architectures,
+            cpu: manifest.cpu,
         });
         self.visiting.push(dir.clone());
         for (dependency, source) in manifest.dependencies {

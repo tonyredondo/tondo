@@ -826,21 +826,36 @@ export function kindMark(node: { bench?: boolean; fuzz?: boolean; system?: strin
   return node.fuzz ? '🔎 fuzz' : node.bench ? '⏱ benchmark' : '';
 }
 
-/** The badge of a file of a system (language 6.8): `watch_linux.to`,
- *  `watch_macos.to` or `signals_unix.to`, and the same before `_test.to`;
- *  none for a common file. */
+/** The badge of a file of a target (language 6.8): `watch_linux.to`,
+ *  `watch_macos.to` or `signals_unix.to`, `crc_arm64.to`, `poll_linux_x64.to`,
+ *  and the same before `_test.to`; none for a common file. */
 export function systemBadge(file: string): { badge: string; tooltip: string } | undefined {
-  const found = /_(linux|macos|unix)(_test)?\.to$/.exec(file);
-  switch (found?.[1]) {
-    case 'linux':
-      return { badge: 'L', tooltip: 'Linux only: tondo checks it, and builds it for Linux' };
-    case 'macos':
-      return { badge: 'M', tooltip: 'macOS only: tondo checks it, and builds it for macOS' };
-    case 'unix':
-      return { badge: 'LM', tooltip: 'Linux and macOS: tondo checks it, and builds it for both' };
-    default:
+  const name = file.replace(/(_test)?\.to$/, '');
+  const arch = /_(x64|arm64)$/.exec(name)?.[1];
+  const rest = arch ? name.slice(0, name.length - arch.length - 1) : name;
+  const system = /_(linux|macos|unix)$/.exec(rest)?.[1];
+  const systems: Record<string, [string, string, string]> = {
+    linux: ['L', 'Linux', 'Linux only'],
+    macos: ['M', 'macOS', 'macOS only'],
+    unix: ['LM', 'Linux and macOS', 'Linux and macOS'],
+  };
+  if (!arch) {
+    if (!system) {
       return undefined;
+    }
+    const [badge, named, only] = systems[system];
+    const both = system === 'unix' ? 'both' : named;
+    return { badge, tooltip: `${only}: tondo checks it, and builds it for ${both}` };
   }
+  if (!system) {
+    return { badge: arch === 'x64' ? 'X' : 'A', tooltip: `${arch} only, on every system: tondo checks it, and builds it for ${arch}` };
+  }
+  const letter = system === 'unix' ? 'U' : systems[system][0];
+  const named = systems[system][1];
+  return {
+    badge: letter + (arch === 'x64' ? 'x' : 'a'),
+    tooltip: `${named} on ${arch} only: tondo checks it, and builds it for ${named} on ${arch}`,
+  };
 }
 
 /** Of the options of a build, those a build to debug takes: what a program

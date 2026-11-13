@@ -376,6 +376,8 @@ newtype_of_reg!(
               XmmMem32         size:32,
               XmmMem64         size:64,
               XmmMem128        size:128,
+              // Tondo: an operand of 256 bits, a YMM register or memory.
+              XmmMem256        size:256,
               XmmMemAligned                    aligned:true,
               XmmMemAligned8   size:8          aligned:true,
               XmmMemAligned16  size:16         aligned:true,
@@ -632,9 +634,12 @@ impl SyntheticAmode {
     pub(crate) fn aligned(&self) -> bool {
         match self {
             SyntheticAmode::Real(addr) => addr.aligned(),
-            &SyntheticAmode::IncomingArg { .. }
-            | SyntheticAmode::SlotOffset { .. }
-            | SyntheticAmode::ConstantOffset { .. } => true,
+            // Tondo: a stack slot is aligned as its data asks, which for a
+            // record of Tondo is 8: a vector in it may be at an address that
+            // is no multiple of 16, which an SSE instruction's operand must
+            // be.
+            SyntheticAmode::SlotOffset { .. } => false,
+            &SyntheticAmode::IncomingArg { .. } | SyntheticAmode::ConstantOffset { .. } => true,
         }
     }
 

@@ -1160,6 +1160,7 @@ impl ABIMachineSpec for AArch64MachineDeps {
                 callee_pop_size: 0,
                 try_call_info: None,
                 patchable: false,
+            wide_vectors: false,
             }),
         });
         insts

@@ -8,6 +8,7 @@ mod calls;
 mod contexts;
 mod declarations;
 mod expressions;
+mod features;
 mod foreign;
 mod functions;
 mod indexing;
@@ -16,9 +17,11 @@ mod natives;
 mod operators;
 mod owners;
 mod patterns;
+mod plugins;
 mod program;
 mod reach;
 mod routes;
+mod simd;
 mod statements;
 mod std_checks;
 mod traits;
@@ -111,6 +114,7 @@ fn check_with<'a>(
         additive: None,
         number: None,
         integer: None,
+        fractional: None,
         ordered: None,
         instant: None,
         datetime: None,
@@ -135,6 +139,8 @@ fn check_with<'a>(
         datetime_module: None,
         pacing_module: None,
         unrepeatable: HashMap::new(),
+        instructions: HashMap::new(),
+        instructions_used: HashSet::new(),
         checks_models: HashSet::new(),
         calling: None,
         calls: HashMap::new(),
@@ -279,6 +285,8 @@ struct AliasEntry {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum StdModule {
     Console,
+    /// `std.simd`: vectors (standard library 14.46).
+    Simd,
     Collections,
     Text,
     Time,
@@ -303,6 +311,10 @@ enum StdModule {
     /// scalar math, for the prelude and `std.math`.
     InternalText,
     InternalMath,
+    /// `std.internal.cpu`: the processor, for `std.cpu`.
+    InternalCpu,
+    /// `std.internal.library`: shared libraries, for `std.ffi`.
+    InternalLibrary,
     /// `std.internal.meta`: the request and response of a provider.
     InternalMeta,
     /// `std.internal.codec`: encodings, digests, entropy and the program's
@@ -464,6 +476,7 @@ enum Annotated {
     Function(FnId),
     /// A function's parameter, by its index.
     Parameter(FnId, u32),
+    Trait(TraitId),
 }
 
 /// What a call invokes: the callee, its signature, explicit type arguments
@@ -939,6 +952,11 @@ struct Checker<'a> {
     /// The standard functions whose values depend on the moment or the
     /// machine, which the `meta` profile cannot call, with their names.
     unrepeatable: HashMap<FnId, &'static str>,
+    /// The functions of `std.cpu.x64` and `std.cpu.arm64` (standard library
+    /// 14.47), each the instruction its calls become.
+    instructions: HashMap<FnId, crate::instructions::Instruction>,
+    /// The instructions the checked code uses, for `features.rs`.
+    instructions_used: HashSet<crate::instructions::Instruction>,
     /// The functions of `std.model` that make a test that calls them one
     /// that checks a model.
     checks_models: HashSet<FnId>,
@@ -1016,6 +1034,7 @@ struct Checker<'a> {
     additive: Option<TraitId>,
     number: Option<TraitId>,
     integer: Option<TraitId>,
+    fractional: Option<TraitId>,
     /// The prelude's `Ordered`, which the relational operators use (17.8).
     ordered: Option<TraitId>,
     /// `time.Instant`: nanoseconds of the monotonic clock.
@@ -1216,6 +1235,10 @@ struct FnCx {
     /// The closure itself, the first parameter of its body.
     env: Option<LocalId>,
     captures: Vec<Capture>,
+    /// For a `defer` block: the `ref` parameters of its function it uses,
+    /// each by the capture that holds it and the binding of the body that
+    /// lends it, as a `ref` parameter (13.7).
+    loans_kept: Vec<(u32, LocalId)>,
     /// Whether the body changes a capture (`CallMut`).
     mutates: bool,
     /// A closure without a declared result infers it from its body.

@@ -1,0 +1,17 @@
+// A record whose vectors lie at addresses that are no multiple of 16 in
+// its frame: comparing it reads them without asking that they be aligned.
+
+import std.console
+import std.simd
+
+type Pair = { left: simd.Vector256[Int32], right: simd.Vector256[Float], count: Int }
+
+type Small = { count: Int, values: simd.Vector128[Float] }
+
+fn main() {
+    let pair = Pair { left: simd.Vector256[Int32].all(1), right: simd.Vector256[Float].all(0.5), count: 0 }
+    let small = Small { count: 1, values: simd.Vector128[Float].of(1.0, 2.0) }
+    console.println("{pair == pair} {small == small}")
+}
+
+// expect-stdout: true true

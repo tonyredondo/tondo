@@ -273,6 +273,11 @@ impl<'a> Checker<'a> {
                     {
                         return self.sync_type(name, &args, t.span);
                     }
+                    if let [module, name] = segments.as_slice()
+                        && let Some(ModuleName::Module(StdModule::Simd)) = self.names.get(&module.name)
+                    {
+                        return self.simd_type(name, &args, t.span);
+                    }
                     if let [name] = segments.as_slice()
                         && let Some(&TypeName::Template(template)) = self.type_names.get(&name.name)
                     {
@@ -427,7 +432,9 @@ impl<'a> Checker<'a> {
                 let result = match result {
                     Some(written) => {
                         let ty = self.resolve_type(written);
-                        if ty != Ty::UNIT && ty != Ty::NEVER {
+                        if let TyKind::Result(value, error) = *self.types.kind(ty) {
+                            self.c_failure(value, error, false, written.span);
+                        } else if ty != Ty::UNIT && ty != Ty::NEVER {
                             self.require_c_type(ty, written.span);
                         }
                         ty

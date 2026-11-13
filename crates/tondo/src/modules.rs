@@ -761,6 +761,7 @@ impl Linker<'_> {
             }
             Item::Trait(t) => {
                 t.module = module;
+                self.uses(&mut t.uses);
                 self.convention(&t.name, Case::Pascal);
                 self.declared(&mut t.name);
                 self.generics(&mut t.generics);

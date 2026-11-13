@@ -47,7 +47,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let state = self.osr_arg.take();
                 match self.unwind_to.filter(|_| state.is_none() && self.e.cg.slot_of(id).is_none()) {
                     Some(unwind) => {
-                        let func = self.e.cg.function(id);
+                        let func = self.e.cg.direct(id);
                         let callee = self.e.cg.declare_func_in_func(func, self.e.fb.func);
                         self.try_call(Called::Direct(callee), &values, unwind, &spilled)
                     }
@@ -64,9 +64,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.call_rt(Rt::ConsoleSet, &[index, values[0]])
             }
             Callee::Std(StdFn::Number(_)) => unreachable!("assigned by `number`"),
+            Callee::Std(StdFn::Simd(_)) => unreachable!("assigned by `simd`"),
             Callee::Std(StdFn::Native(index)) => {
                 // Arithmetic the processor does in one instruction, as
-                // `hir::IN_ONE_INSTRUCTION` lists it.
+                // `hir::IN_ONE_INSTRUCTION` lists it, and a fused multiply
+                // and add where the level has it (toolchain 7.8).
+                let fused = fused_multiply_add(self.e.cg.isa());
                 let ins = self.e.fb.ins();
                 match crate::hir::NATIVES[index as usize].symbol {
                     "tondo_rt_math_sqrt" => Some(ins.sqrt(values[0])),
@@ -74,6 +77,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     "tondo_rt_math_ceil" => Some(ins.ceil(values[0])),
                     "tondo_rt_math_trunc" => Some(ins.trunc(values[0])),
                     "tondo_rt_math_round" => Some(ins.nearest(values[0])),
+                    "tondo_rt_math_fma" if fused => Some(ins.fma(values[0], values[1], values[2])),
                     // What a model's marks need, only in a build of tests.
                     "tondo_rt_model_recording" => Some(ins.iconst(types::I8, self.e.cg.testing() as i64)),
                     _ => self.e.call_rt(Rt::Native(index), &values),
@@ -89,6 +93,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let tag = self.e.fb.ins().uextend(types::I64, tag);
                 self.e.call_rt(Rt::Process(ProcessFn::Signal), &[values[0], tag])
             }
+            Callee::Std(StdFn::CpuHas) => {
+                // The variant of `cpu.Feature`.
+                let feature = self.operand_ty(&args[0]);
+                let value = self.operand(&args[0]);
+                let tag = self.e.tag(feature, value);
+                let tag = self.e.fb.ins().uextend(types::I64, tag);
+                self.e.call_rt(Rt::CpuHas, &[tag])
+            }
+            Callee::Std(StdFn::Cpu(instruction)) => self.instruction(instruction, args, &values),
             Callee::Std(StdFn::ConsoleEprint) => self.e.call_rt(Rt::ConsoleEprint, &values),
             Callee::Std(StdFn::ConsoleEprintln) => self.e.call_rt(Rt::ConsoleEprintln, &values),
             Callee::Std(StdFn::Io(IoFn::BufferClear)) => self.e.call_rt(Rt::Io(IoFn::BufferClear), &values),
@@ -343,4 +356,48 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
         self.pointer_to(place, true)
     }
+
+    /// A function of `std.cpu.x64` or `std.cpu.arm64`, the instruction it
+    /// is (standard library 14.47); the checker let it be only where its
+    /// feature is sure, and the function is compiled with that feature.
+    fn instruction(
+        &mut self,
+        instruction: crate::instructions::Instruction,
+        args: &[Operand],
+        values: &[ir::Value],
+    ) -> Option<ir::Value> {
+        use crate::instructions::Instruction as I;
+        let ins = self.e.fb.ins();
+        Some(match instruction {
+            I::Crc32cByte => ins.crc32c8(values[0], values[1]),
+            I::Crc32cInt => ins.crc32c64(values[0], values[1]),
+            I::Pdep => ins.x86_pdep(values[0], values[1]),
+            I::Pext => ins.x86_pext(values[0], values[1]),
+            I::AesEnc => ins.x86_aesenc(values[0], values[1]),
+            I::AesEncLast => ins.x86_aesenclast(values[0], values[1]),
+            I::AesDec => ins.x86_aesdec(values[0], values[1]),
+            I::AesDecLast => ins.x86_aesdeclast(values[0], values[1]),
+            I::Pclmulqdq => {
+                let Operand::Const(Const::Int(halves, _)) = args[2] else {
+                    unreachable!("the checker asks for a constant `halves`")
+                };
+                ins.x86_pclmulqdq(values[0], values[1], halves as u8)
+            }
+            I::Aese => ins.aarch64_aese(values[0], values[1]),
+            I::Aesd => ins.aarch64_aesd(values[0], values[1]),
+            I::Aesmc => ins.aarch64_aesmc(values[0]),
+            I::Aesimc => ins.aarch64_aesimc(values[0]),
+            I::Pmull => ins.aarch64_pmull64(values[0], values[1]),
+            I::Pause => {
+                ins.spin_hint();
+                return None;
+            }
+        })
+    }
+}
+
+/// Whether the code's processor multiplies and adds in one instruction:
+/// every arm64, and an x64 with FMA.
+pub(super) fn fused_multiply_add(isa: &dyn cranelift_codegen::isa::TargetIsa) -> bool {
+    isa.name() == "aarch64" || isa.isa_flags().iter().any(|flag| flag.name == "has_fma" && flag.as_bool() == Some(true))
 }

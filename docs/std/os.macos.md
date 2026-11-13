@@ -1,0 +1,21 @@
+# std.os.macos
+
+the calls of macOS, their constants and their types, as the C headers of the standard library's 14.45 declare them, with C's names, for the build's architecture. Calling them is `unsafe`, and those that fail with the system's error number give `os.Errno`. macOS has no call by number: a program calls the system's library, as these do. `tondo api std.os.macos.<name>` shows one of C's declarations, and `tondo api --search <words>` finds them.
+
+```tondo
+import std.console
+import std.os.macos
+
+fn main() {
+    match unsafe { macos.kqueue() } {
+        ok(queue) => console.println("a queue of events: {queue >= 0}")
+        err(error) => console.println("kqueue: {error}")
+    }
+}
+```
+
+<!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
+
+## Reference
+
+`tondo api std.os.macos` shows the same in a terminal.

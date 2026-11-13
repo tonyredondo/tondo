@@ -559,9 +559,10 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--library" => library = true,
             "--target" => {
                 let parsed = Target::parse(&value()?)?;
-                driver::set_system(parsed.system());
+                driver::set_target(parsed.project());
                 target = Some(parsed);
             }
+            "--cpu" => driver::set_cpu(&value()?),
             "--deny-skips" => options.deny_skips = true,
             "--allow-flaky" => options.allow_flaky = true,
             "--lock-order" => options.lock_order = true,
@@ -1691,6 +1692,7 @@ fn update_command(args: &[OsString]) -> Result<ExitCode, String> {
 fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (mut headers, mut libraries, mut arguments) = (Vec::new(), Vec::new(), Vec::new());
     let (mut project, mut output, mut package, mut json) = (PathBuf::from("."), None, None, false);
+    let (mut included, mut fails) = (false, Vec::new());
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         let text = arg.to_string_lossy();
@@ -1701,6 +1703,14 @@ fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--package" => package = Some(value("--package")?.to_string_lossy().into_owned()),
             "--output" | "-o" => output = Some(PathBuf::from(value("--output")?)),
             "--json" => json = true,
+            "--included" => included = true,
+            "--fails" => {
+                let list = PathBuf::from(value("--fails")?);
+                let text =
+                    std::fs::read_to_string(&list).map_err(|e| format!("cannot read {}: {e}", list.display()))?;
+                let names = text.lines().map(|line| line.split('#').next().unwrap_or_default().trim());
+                fails.extend(names.filter(|name| !name.is_empty()).map(String::from));
+            }
             "-I" | "-D" => arguments.push(format!("{text}{}", value(&text)?.to_string_lossy())),
             flag if flag.starts_with("-I") || flag.starts_with("-D") => arguments.push(flag.to_string()),
             flag if flag.starts_with('-') => return Err(format!("unknown option {flag}\n{USAGE}")),
@@ -1733,7 +1743,7 @@ fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     let module = match &library_file {
         Some(library) if headers.is_empty() => tondo::bind::generate_from_library(library, &command)?,
-        _ => tondo::bind::generate(&headers, &arguments, &command)?,
+        _ => tondo::bind::generate(&headers, &arguments, &command, included, &fails)?,
     };
     let mut sources = tondo::source::SourceMap::default();
     let index = sources.add(Path::new("bound.to"), module.clone());
@@ -2075,6 +2085,9 @@ fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
     };
     let (function, kind, against) = (valued("--function")?, valued("--kind")?, valued("--against")?);
     let compiler = valued("--compiler")?;
+    if let Some(level) = valued("--cpu")? {
+        driver::set_cpu(&level);
+    }
     if against.is_some() && compiler.is_some() {
         return Err(format!("--against compares with a revision, --compiler with another tondo: choose one\n{USAGE}"));
     }
@@ -2221,6 +2234,9 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
         Ok(Some(value))
     };
     let (against, compiler) = (valued("--against")?, valued("--compiler")?);
+    if let Some(level) = valued("--cpu")? {
+        driver::set_cpu(&level);
+    }
     if let Some(flag) = args.iter().find(|a| a.to_string_lossy().starts_with('-')) {
         return Err(format!("asm does not take {}\n{USAGE}", flag.display()));
     }
@@ -2461,7 +2477,7 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
         let packages = tondo::deps::resolve(&project, None)?;
         let mut modules: Vec<(String, Vec<PathBuf>, bool)> = Vec::new();
         for (index, package) in packages.iter().enumerate() {
-            let (files, _) = tondo::project::sources(&package.dir, &package.name, Some(tondo::driver::system()))?;
+            let (files, _) = tondo::project::sources(&package.dir, &package.name, Some(tondo::driver::target()))?;
             let visible = |file: &tondo::project::ProjectFile| {
                 index == 0 || !file.module[1..].iter().any(|part| part == "internal")
             };
@@ -2548,7 +2564,7 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
     // What is shown: the module or file named, or each module of the
     // project.
     let (key, shown) = match target {
-        Some(name) if let Some(text) = tondo::api::standard(&name) => ("module", vec![(name, text)]),
+        Some(name) if let Some(text) = tondo::api::shown(&name) => ("module", vec![(name, text)]),
         Some(file) if file.ends_with(".to") => ("file", vec![(file.clone(), render(&[PathBuf::from(file)])?)]),
         Some(name) => {
             let modules = modules().unwrap_or_default();
@@ -2679,8 +2695,11 @@ fn link_options(args: &[OsString]) -> Result<(BuildOptions, Vec<OsString>), Stri
                 .next()
                 .ok_or_else(|| format!("--target needs a target: x86_64-linux or aarch64-linux\n{USAGE}"))?;
             let parsed = Target::parse(&name.to_string_lossy())?;
-            driver::set_system(parsed.system());
+            driver::set_target(parsed.project());
             target = Some(parsed);
+        } else if arg == "--cpu" {
+            let name = args.next().ok_or_else(|| format!("--cpu needs a level of processor, as baseline\n{USAGE}"))?;
+            driver::set_cpu(&name.to_string_lossy());
         } else if arg == "--static" && !statically {
             statically = true;
         } else if arg == "--debug" && !debug {
@@ -2788,6 +2807,10 @@ fn library_command(args: &[OsString]) -> Result<ExitCode, String> {
                 None => return Err(format!("--output needs a directory\n{USAGE}")),
             },
             Some("--debug") if !debug => debug = true,
+            Some("--cpu") => match rest.next() {
+                Some(level) => driver::set_cpu(&level.to_string_lossy()),
+                None => return Err(format!("--cpu needs a level of processor, as baseline\n{USAGE}")),
+            },
             Some("--static") => {
                 return Err("--static builds executables; a library is linked into its host, as the host is".into());
             }
@@ -2802,10 +2825,7 @@ fn library_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     let path = source.unwrap_or_else(|| PathBuf::from("."));
     // A library is named after its package, or its file.
-    let name = match path.is_dir() {
-        true => tondo::deps::resolve(&path, None)?[0].name.clone(),
-        false => program_name(&path)?.to_string_lossy().into_owned(),
-    };
+    let name = driver::library_name(&path)?;
     let analysis = driver::analyze_library(&path)?;
     let diagnostics = analysis.diags.json(&analysis.sources, &analysis.source_id);
     if !json {
@@ -2965,6 +2985,7 @@ fn record_run(
         "tondo": driver::VERSION,
     });
     std::fs::write(dir.join("run.json"), serde_json::to_vec_pretty(&run).unwrap_or_default()).map_err(cannot)?;
+    catch_endings();
     let mut child = std::process::Command::new(&program)
         .args(program_args)
         .env("TONDO_RT_RECORD", dir.join("calls"))
@@ -3017,11 +3038,22 @@ extern "C" fn pass_on(signal: libc::c_int) {
     }
 }
 
-/// SIGTERM and SIGHUP of `tondo` reach the program it runs, `child`.
-fn pass_endings_on(child: &std::process::Child) {
-    RUNNING.store(child.id() as i32, std::sync::atomic::Ordering::SeqCst);
+/// Handles SIGTERM and SIGHUP from now on, before the program starts: one
+/// that came while it started reaches it too, rather than end `tondo` and
+/// leave it running.
+fn catch_endings() {
     for signal in [libc::SIGTERM, libc::SIGHUP] {
         unsafe { libc::signal(signal, pass_on as *const () as libc::sighandler_t) };
+    }
+}
+
+/// SIGTERM and SIGHUP of `tondo` reach the program it runs, `child`, and
+/// one that came before it was known reaches it now.
+fn pass_endings_on(child: &std::process::Child) {
+    RUNNING.store(child.id() as i32, std::sync::atomic::Ordering::SeqCst);
+    let ending = ENDING.load(std::sync::atomic::Ordering::SeqCst);
+    if ending != 0 {
+        unsafe { libc::kill(child.id() as i32, ending) };
     }
 }
 
@@ -3053,6 +3085,7 @@ fn watch(path: &Path, program_args: &[OsString], options: &BuildOptions) -> Resu
         pass_endings_on(&child);
         Ok(Some(child))
     };
+    catch_endings();
     // Read first: a change while it starts is a change.
     let mut seen = stamps();
     let mut child = start()?;
@@ -3142,11 +3175,12 @@ fn cached_executable(path: &Path, options: &BuildOptions) -> Result<Option<PathB
     let BuildOptions { libraries, statically, debug, live, target, .. } = options;
     let identity = driver::compiler_identity();
     let linking = format!(
-        "{}{}{}{}",
+        "{}{}{}{}{}",
         if *statically { "static" } else { "" },
         if *debug { "debug" } else { "" },
         if *live { "live" } else { "" },
-        target.map_or("", Target::name)
+        target.map_or("", Target::name),
+        driver::asked_cpu(),
     );
     let mut parts = vec![identity.into_bytes(), libraries.join("\n").into_bytes(), linking.into_bytes()];
     // A live build is of the files where they are: its manifest says where

@@ -1,0 +1,23 @@
+// A `defer` block may use a `ref` parameter, which it only reads, but not a
+// `mut` one, and another closure, which may outlive the call, neither.
+
+import std.console
+
+fn changing(count: mut Int) {
+    defer {
+        console.println("{count}")
+    }
+}
+
+fn kept(name: ref String): fn(): Int {
+    () { name.length() }
+}
+
+fn main() {
+    var n = 1
+    changing(mut n)
+    console.println("{kept(ref "a")()}")
+}
+
+// expect-error: E1402 a closure cannot capture `count`, a loan
+// expect-error: E1402 a closure cannot capture `name`, a loan

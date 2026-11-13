@@ -97,10 +97,12 @@ impl<'a> Checker<'a> {
 
     /// Declares the traits of the module: names and parameters first, so
     /// that bounds can mention any of them, then their bounds (12.3).
-    pub(super) fn declare_traits(&mut self, traits: &[&ast::TraitDecl]) {
+    /// Names the traits, before the types are declared, whose generic
+    /// parameters a trait may bound.
+    pub(super) fn name_traits(&mut self, traits: &[&ast::TraitDecl]) {
         for decl in traits {
             let name = &decl.name;
-            if self.trait_names.contains_key(&name.name) || self.type_names.contains_key(&name.name) {
+            if self.trait_names.contains_key(&name.name) {
                 let message = format!("`{}` is already declared", name.name);
                 self.diags.error("E1002", name.span, message);
                 self.first_declared(name);
@@ -126,7 +128,12 @@ impl<'a> Checker<'a> {
         self.additive = self.trait_names.get("Additive").copied();
         self.number = self.trait_names.get("Number").copied();
         self.integer = self.trait_names.get("Integer").copied();
+        self.fractional = self.trait_names.get("Fractional").copied();
         self.ordered = self.trait_names.get("Ordered").copied();
+    }
+
+    /// Declares the methods of the traits `name_traits` named.
+    pub(super) fn declare_traits(&mut self, traits: &[&ast::TraitDecl]) {
         for (index, decl) in traits.iter().enumerate() {
             let id = TraitId(index as u32 + PRELUDE_TRAITS);
             self.index_trait(id.0, decl);
@@ -176,12 +183,16 @@ impl<'a> Checker<'a> {
 
     /// Whether a language type implements a trait of the prelude's
     /// arithmetic, which the compiler gives it (18.10): every number is
-    /// `Additive` and `Number`, every integer `Integer`, and a duration
-    /// `Additive`. `None` for other traits and types.
+    /// `Additive` and `Number`, every integer `Integer`, every float
+    /// `Fractional`, and a duration `Additive`. `None` for other traits and
+    /// types.
     pub(super) fn arithmetic_impl(&self, ty: Ty, trait_id: TraitId) -> Option<bool> {
         let number = matches!(self.types.kind(ty), TyKind::Int(_) | TyKind::Float(_));
         if Some(trait_id) == self.integer {
             return Some(matches!(self.types.kind(ty), TyKind::Int(_)));
+        }
+        if Some(trait_id) == self.fractional && number {
+            return Some(matches!(self.types.kind(ty), TyKind::Float(_)));
         }
         if Some(trait_id) == self.number && number {
             return Some(true);
@@ -817,9 +828,14 @@ impl<'a> Checker<'a> {
         }
         if trait_id == DISPLAY {
             let parts: Option<Vec<Ty>> = match self.types.kind(ty) {
-                TyKind::Int(_) | TyKind::Float(_) | TyKind::Char | TyKind::Byte | TyKind::Bool | TyKind::String => {
-                    Some(Vec::new())
-                }
+                TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Char
+                | TyKind::Byte
+                | TyKind::Bool
+                | TyKind::String
+                | TyKind::Vector(..)
+                | TyKind::Mask(..) => Some(Vec::new()),
                 TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) | TyKind::Option(element) => {
                     Some(vec![*element])
                 }

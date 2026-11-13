@@ -157,32 +157,28 @@ pub(super) const BATCH: usize = 16;
 
 /// This worker's spare stacks, made when it first keeps one. They are not a
 /// field that drops with the thread, which would make every read of `Worker`
-/// check whether the thread ends: a thread-local of their own gives them
-/// back then.
+/// check whether the thread ends: what the runtime keeps for the thread
+/// gives them back then (`Kept`).
 pub(super) fn own_stacks() -> &'static mut Vec<Stack> {
-    struct GiveBack(Cell<*mut Vec<Stack>>);
-    impl Drop for GiveBack {
-        fn drop(&mut self) {
-            let stacks = self.0.get();
-            if !stacks.is_null() {
-                let stacks = unsafe { Box::from_raw(stacks) };
-                let mut spare = SPARE_STACKS.lock().unwrap_or_else(|e| e.into_inner());
-                let room = SPARE_LIMIT.saturating_sub(spare.len());
-                spare.extend(stacks.into_iter().take(room));
-            }
-        }
-    }
-    thread_local! {
-        static GIVE_BACK: GiveBack = const { GiveBack(Cell::new(std::ptr::null_mut())) };
-    }
     let mut stacks = worker(|w| w.stacks.get());
     if stacks.is_null() {
         stacks = Box::into_raw(Box::new(Vec::new()));
-        GIVE_BACK.with(|give_back| give_back.0.set(stacks));
+        kept().stacks.set(stacks);
         worker(|w| w.stacks.set(stacks));
     }
     // Neither caller is entered again while it holds them.
     unsafe { &mut *stacks }
+}
+
+/// A thread's spare stacks, as it ends, to the shared ones.
+pub(super) fn give_back_stacks(stacks: *mut Vec<Stack>) {
+    if stacks.is_null() {
+        return;
+    }
+    let stacks = unsafe { Box::from_raw(stacks) };
+    let mut spare = SPARE_STACKS.lock().unwrap_or_else(|e| e.into_inner());
+    let room = SPARE_LIMIT.saturating_sub(spare.len());
+    spare.extend(stacks.into_iter().take(room));
 }
 
 pub(super) fn task_stack() -> Stack {

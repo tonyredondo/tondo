@@ -105,6 +105,24 @@ pub enum NumOp {
 }
 
 impl NumOp {
+    /// Whether the code generator calls the runtime for it, rather than
+    /// write the processor's instructions: a power, conversions to and from
+    /// bytes and text, rounding half away from zero, and a saturation, which
+    /// of a float into 128 bits calls it.
+    pub fn calls(self) -> bool {
+        matches!(
+            self,
+            NumOp::Pow
+                | NumOp::ToBytes
+                | NumOp::FromBytes
+                | NumOp::Saturating
+                | NumOp::Parse
+                | NumOp::ToString
+                | NumOp::RoundTiesAway
+                | NumOp::ToFixed
+        )
+    }
+
     /// Whether it can panic: a negative exponent, a result that does not
     /// fit where it panics, a radix out of range, bytes that are not there.
     pub fn may_panic(self) -> bool {
@@ -677,11 +695,13 @@ pub fn declarations() -> &'static str {
             }
         }
         // The arithmetic the compiler gives them (18.10).
-        text.push_str("\n// Every number is `Additive` and `Number`, and every integer `Integer` (language 18.10).\n");
+        text.push_str(
+            "\n// Every number is `Additive` and `Number`, every integer `Integer` and every float `Fractional` (language 18.10).\n",
+        );
         for kind in Kind::ALL.iter().filter(|k| !matches!(k, Kind::Byte)) {
             let traits: &[&str] = match kind {
                 Kind::Int(_) => &["Additive", "Number", "Integer"],
-                _ => &["Additive", "Number"],
+                _ => &["Additive", "Number", "Fractional"],
             };
             for name in traits {
                 text.push_str(&format!("impl {name} for {}\n", kind.name()));

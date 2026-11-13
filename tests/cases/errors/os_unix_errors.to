@@ -1,0 +1,13 @@
+// A descriptor and a mapping of std.os.unix have one owner: they are not
+// `Copy`, so they move, and the old binding cannot be used.
+
+import std.console
+import std.os.unix
+
+fn main() {
+    let output = unix.Fd.standardOutput()
+    let moved = output
+    console.println("{output.number()} {moved.number()}")
+}
+
+// expect-error: E1401 `output` was moved before this use, since its type `os.unix.Fd` is not `Copy`; use it before passing it on

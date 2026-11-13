@@ -1,0 +1,19 @@
+// `@plugin.Export` (standard library 14.48) goes on one function of a
+// library, with no parameters, that gives an implementation of a contract.
+
+import std.plugin
+
+@plugin.Export
+fn first(value: Int): Int {
+    value
+}
+
+@plugin.Export
+fn second(): Int {
+    0
+}
+
+fn main() {}
+
+// expect-error: E1119 `@plugin.Export` goes on a function with no parameters that gives an implementation of a contract, as `fn exporter(): impl api.Exporter { Csv {} }`
+// expect-error: E1119 a library offers one plugin, and `@plugin.Export` is on another function, on line 7: keep one

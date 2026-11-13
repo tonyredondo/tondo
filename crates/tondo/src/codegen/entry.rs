@@ -156,6 +156,7 @@ impl Codegen<'_> {
         let mut e = Emit::new(self, fb);
         let block = e.fb.create_block();
         e.fb.switch_to_block(block);
+        e.check_cpu();
         let trace = e.cg.module.declare_data_in_func(trace, e.fb.func);
         let trace = e.fb.ins().symbol_value(POINTER, trace);
         e.call_rt(Rt::Trace, &[trace]);
@@ -174,6 +175,29 @@ impl Codegen<'_> {
             let text = e.string_ptr(e.cg.roots);
             e.call_rt(Rt::SourceRoots, &[text]);
         }
+        e.fb.ins().return_(&[]);
+        e.fb.seal_all_blocks();
+        let config = e.cg.module.isa().frontend_config();
+        e.fb.finalize(config);
+        Ok(id)
+    }
+
+    /// An exported function that ends a library's runtime.
+    pub(super) fn library_stop(
+        &mut self,
+        symbol: &str,
+        context: &mut cranelift_codegen::Context,
+        fbc: &mut FunctionBuilderContext,
+    ) -> Result<FuncId, String> {
+        let signature = self.module.make_signature();
+        let id = self.module.declare_function(symbol, Linkage::Export, &signature).map_err(|e| e.to_string())?;
+        context.func.signature = signature;
+        context.func.name = UserFuncName::user(1, 3 + id.as_u32());
+        let fb = FunctionBuilder::new(&mut context.func, fbc);
+        let mut e = Emit::new(self, fb);
+        let block = e.fb.create_block();
+        e.fb.switch_to_block(block);
+        e.call_rt(Rt::LibraryStop, &[]);
         e.fb.ins().return_(&[]);
         e.fb.seal_all_blocks();
         let config = e.cg.module.isa().frontend_config();
@@ -200,6 +224,7 @@ impl Codegen<'_> {
         let block = e.fb.create_block();
         e.fb.append_block_params_for_function_params(block);
         e.fb.switch_to_block(block);
+        e.check_cpu();
         // A live build's tables, and then a debug build's, before a
         // debugger can ask for them.
         if let Some(info) = e.cg.live.as_ref().map(|live| live.info) {

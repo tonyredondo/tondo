@@ -109,13 +109,21 @@ fn check(tondo: &str, job: &Job) -> Outcome {
         std::fs::write(job.case.join("tondo.toml"), "[package]\nname = \"guide\"\n").unwrap();
         std::fs::write(job.case.join("src/main.to"), "fn main() {}\n").unwrap();
         std::fs::write(job.case.join("src/main_test.to"), &job.code).unwrap();
-    } else {
-        std::fs::write(job.case.join("main.to"), &job.code).unwrap();
+    }
+    // One that imports a module of one system, as `std.os.linux`, or of one
+    // architecture, as `std.cpu.x64`, is a file of it, which `tondo check`
+    // checks for it on any machine.
+    let system = ["linux", "macos"].into_iter().find(|s| job.code.contains(&format!("import std.os.{s}\n")));
+    let arch = ["x64", "arm64"].into_iter().find(|a| job.code.contains(&format!("import std.cpu.{a}\n")));
+    let suffix = |name: Option<&str>| name.map(|name| format!("_{name}")).unwrap_or_default();
+    let main = format!("main{}{}.to", suffix(system), suffix(arch));
+    if !test {
+        std::fs::write(job.case.join(&main), &job.code).unwrap();
     }
     let run = |args: &[&str]| {
         Command::new(tondo).args(args).current_dir(&job.case).env("TONDO_DUMP", "off").output().unwrap()
     };
-    let checks: &[&str] = if test { &["test", "--list"] } else { &["check", "main.to"] };
+    let checks: &[&str] = if test { &["test", "--list"] } else { &["check", &main] };
     let mut args = checks.to_vec();
     if job.info.ends_with(" library") {
         args.push("--library");
@@ -142,7 +150,13 @@ fn check(tondo: &str, job: &Job) -> Outcome {
         return Outcome::Fine;
     }
     let Some((_, says)) = &job.output else { return Outcome::Fine };
-    let ran = run(&["run", "main.to"]);
+    // What it prints, where it runs.
+    let here = if cfg!(target_os = "macos") { "macos" } else { "linux" };
+    let here_arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" };
+    if system.is_some_and(|system| system != here) || arch.is_some_and(|arch| arch != here_arch) {
+        return Outcome::Fine;
+    }
+    let ran = run(&["run", &main]);
     let printed = String::from_utf8_lossy(&ran.stdout).into_owned();
     if !ran.status.success() {
         let stderr = String::from_utf8_lossy(&ran.stderr);

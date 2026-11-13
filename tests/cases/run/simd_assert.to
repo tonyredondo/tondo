@@ -1,0 +1,14 @@
+// An `assert` that compares vectors of std.simd shows both, lane by lane,
+// when it fails, as it shows the sides of any comparison.
+
+import std.simd
+
+fn main() {
+    let v = simd.Vector128[Int32].of(1, 2, 3, 4)
+    assert(v != v + 1)
+    assert(v == v + 1)
+}
+
+// expect-panic: P0007
+// expect-stderr:   left:  <1, 2, 3, 4>
+// expect-stderr:   right: <2, 3, 4, 5>

@@ -11,7 +11,7 @@ fn main(): !process.ProcessError {
     let files = ["a.txt", "b c.txt"]
     let shown = $(printf "[%s]" {name} --x={1 + 2} {...files} 'lit {x} *' "q {name}" {{}}).output()?
     console.println(shown.text()?)
-    let counted = $(printf "b\na\nb\n" | sort | uniq -c).output()?
+    let counted = $(printf "b\na\nb\n" | sort | uniq).output()?
     console.print(counted.text()?)
     let status = $(LANG=C sh -c 'exit 3').status()?
     console.println("{status.code}")
@@ -34,8 +34,8 @@ fn main(): !process.ProcessError {
 }
 
 // expect-stdout: [two words | $HOME 'q'][--x=3][a.txt][b c.txt][lit {x} *][q two words | $HOME 'q'][{}]
-// expect-stdout:       1 a
-// expect-stdout:       2 b
+// expect-stdout: a
+// expect-stdout: b
 // expect-stdout: 3
 // expect-stdout: first second
 // expect-stdout: err

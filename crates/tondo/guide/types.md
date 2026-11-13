@@ -239,6 +239,10 @@ A trait may require others, `trait Shape: Display { ... }`: implementing it
 needs an `impl Display` too, and a bound `S: Shape` gives `Display`'s methods
 as well.
 
+A function without `self` of a generic type, `fn Box[T].empty(): Box[T]`,
+takes `T` from its arguments or from the type expected; when neither gives
+it, write it after the type: `Box[Int].empty()`.
+
 The prelude's traits: `Display`, `Ordered` (`compare`), `Iterator[T]`
 (`next`), and the arithmetic. A type that implements `Ordered`, and a
 `T: Ordered`, gets `<`, `<=`, `>` and `>=`, which compare by it. `Copy`, `Equatable`, `Key`, `Send` and `Share`
@@ -251,10 +255,13 @@ A type that adds, as an amount or a vector, implements `Additive` (`zero`,
 multiplies and divides, as a fraction or a decimal, implements `Number`
 (`one`, `fromInt`, `times`, `dividedBy`), which requires `Additive`, and gets
 `*`, `/` and integer literals: `price * 2`. No other operator is opened to
-your types. Every number is both; a duration is `Additive`.
+your types. Every number is both; a duration is `Additive`. A number whose
+division keeps the fraction, as every float, `math.Decimal` or your exact
+fraction, is also `Fractional`, which asks for nothing more: what divides to
+give a part of a whole, as a mean, asks for it, since an `Int` would round.
 
 ```tondo
-fn mean[T: Number](values: Array[T]): T {
+fn mean[T: Fractional](values: Array[T]): T {
     values.sum() / Number.fromInt[T](values.length())
 }
 

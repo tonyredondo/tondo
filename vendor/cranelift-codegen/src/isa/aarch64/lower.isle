@@ -3421,3 +3421,30 @@
 (attr rule sdiv_safe_divisor_fits_in_32 (tag solver_z3))
 (attr rule sdiv_safe_divisor_i64 (tag solver_z3))
 (attr fsub (tag solver_z3))
+
+;; Tondo: the instructions of `std.cpu.arm64` (Tondo's change 23), one
+;; each. The checker allows them only where their feature is sure.
+
+(rule (lower (crc32c8 _ crc x))
+      (tondo_gpr (TondoOp.Crc32cb) crc x))
+
+(rule (lower (crc32c64 _ crc x))
+      (tondo_gpr (TondoOp.Crc32cx) crc x))
+
+(rule (lower (aarch64_pmull64 _ x y))
+      (tondo_vec (TondoOp.Pmull64) (mov_to_fpu x (ScalarSize.Size64)) (mov_to_fpu y (ScalarSize.Size64))))
+
+(rule (lower (aarch64_aese _ state key))
+      (tondo_vec_mod (TondoOp.Aese) state key))
+
+(rule (lower (aarch64_aesd _ state key))
+      (tondo_vec_mod (TondoOp.Aesd) state key))
+
+(rule (lower (aarch64_aesmc _ state))
+      (tondo_vec_unary (TondoOp.Aesmc) state))
+
+(rule (lower (aarch64_aesimc _ state))
+      (tondo_vec_unary (TondoOp.Aesimc) state))
+
+(rule (lower (spin_hint))
+      (side_effect (isb)))

@@ -9,7 +9,7 @@
 
 use std::fmt::Write;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 /// The table the compiler writes: one entry per function of the program,
 /// whose `meta` offset in `blob` holds its name's length, its number of
@@ -815,36 +815,44 @@ impl Write for Stderr {
 /// that is full.
 const SIGNAL_STACK: usize = 128 * 1024;
 
-struct SignalStack(*mut libc::c_void);
-
-impl Drop for SignalStack {
-    fn drop(&mut self) {
-        unsafe {
-            // The thread ends, or the process, whose `exit` on macOS drops
-            // it before a trace stops: the profiler's signal, which goes on
-            // coming meanwhile, must not come for a stack that is gone.
-            let mut profiler: libc::sigset_t = std::mem::zeroed();
-            libc::sigemptyset(&mut profiler);
-            libc::sigaddset(&mut profiler, libc::SIGPROF);
-            libc::pthread_sigmask(libc::SIG_BLOCK, &profiler, std::ptr::null_mut());
-            let disabled = libc::stack_t { ss_sp: std::ptr::null_mut(), ss_flags: libc::SS_DISABLE, ss_size: 0 };
-            // A stack the kernel may still deliver a signal on stays.
-            if libc::sigaltstack(&disabled, std::ptr::null_mut()) == 0 {
-                libc::munmap(self.0, SIGNAL_STACK);
-            }
+/// Frees a thread's signal stack, as it ends or as a library ends.
+pub(crate) fn free_signal_stack(stack: *mut libc::c_void) {
+    if stack.is_null() {
+        return;
+    }
+    unsafe {
+        // The thread ends, or the process, whose `exit` on macOS drops it
+        // before a trace stops: the profiler's signal, which goes on coming
+        // meanwhile, must not come for a stack that is gone.
+        let mut profiler: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut profiler);
+        libc::sigaddset(&mut profiler, libc::SIGPROF);
+        libc::pthread_sigmask(libc::SIG_BLOCK, &profiler, std::ptr::null_mut());
+        let mut current: libc::stack_t = std::mem::zeroed();
+        libc::sigaltstack(std::ptr::null(), &mut current);
+        if current.ss_sp != stack {
+            return;
+        }
+        let disabled = libc::stack_t { ss_sp: std::ptr::null_mut(), ss_flags: libc::SS_DISABLE, ss_size: 0 };
+        // A stack the kernel may still deliver a signal on stays.
+        if libc::sigaltstack(&disabled, std::ptr::null_mut()) == 0 {
+            libc::munmap(stack, SIGNAL_STACK);
         }
     }
-}
-
-thread_local! {
-    static SIGNAL: std::cell::RefCell<Option<SignalStack>> = const { std::cell::RefCell::new(None) };
 }
 
 const FAULTS: [i32; 5] = [libc::SIGSEGV, libc::SIGBUS, libc::SIGABRT, libc::SIGILL, libc::SIGFPE];
 
 /// The handlers there were before, which in a library get the faults that
-/// are not its own.
-static PREVIOUS: std::sync::OnceLock<[libc::sigaction; 5]> = std::sync::OnceLock::new();
+/// are not its own: written while `INSTALLED` is not set, under `INSTALLING`,
+/// and read by the handler once it is.
+struct Previous(std::cell::UnsafeCell<[libc::sigaction; 5]>);
+
+unsafe impl Sync for Previous {}
+
+static PREVIOUS: Previous = Previous(std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }));
+static INSTALLED: AtomicBool = AtomicBool::new(false);
+static INSTALLING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Prepares the running thread, which runs tasks, to report a fault of the
 /// program: a task's stack that overflows, memory C touched that it should
@@ -855,47 +863,73 @@ pub(crate) fn guard_thread(runtime: bool) {
     // The handler reads the format of reports, which reading the
     // environment there could not.
     crate::panics::json_reports();
-    static INSTALLED: std::sync::Once = std::sync::Once::new();
-    INSTALLED.call_once(|| unsafe {
-        let mut action: libc::sigaction = std::mem::zeroed();
-        action.sa_sigaction = fault as *const () as usize;
-        action.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK;
-        libc::sigemptyset(&mut action.sa_mask);
-        let mut previous: [libc::sigaction; 5] = std::mem::zeroed();
-        for (signal, previous) in FAULTS.into_iter().zip(&mut previous) {
-            libc::sigaction(signal, &action, previous);
-        }
-        let _ = PREVIOUS.set(previous);
-    });
-    SIGNAL.with_borrow_mut(|signal| {
-        if signal.is_some() {
-            return;
-        }
-        unsafe {
-            if !runtime {
-                let mut current: libc::stack_t = std::mem::zeroed();
-                libc::sigaltstack(std::ptr::null(), &mut current);
-                if current.ss_flags & libc::SS_DISABLE == 0 {
-                    return;
+    if !INSTALLED.load(Ordering::Acquire) {
+        let _installing = INSTALLING.lock().unwrap_or_else(|e| e.into_inner());
+        if !INSTALLED.load(Ordering::Acquire) {
+            unsafe {
+                let mut action: libc::sigaction = std::mem::zeroed();
+                action.sa_sigaction = fault as *const () as usize;
+                action.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK;
+                libc::sigemptyset(&mut action.sa_mask);
+                let previous = &mut *PREVIOUS.0.get();
+                for (signal, previous) in FAULTS.into_iter().zip(previous) {
+                    libc::sigaction(signal, &action, previous);
                 }
             }
-            let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
-            let stack =
-                libc::mmap(std::ptr::null_mut(), SIGNAL_STACK, libc::PROT_READ | libc::PROT_WRITE, flags, -1, 0);
-            if stack == libc::MAP_FAILED {
+            INSTALLED.store(true, Ordering::Release);
+        }
+    }
+    let kept = crate::tasks::kept();
+    if kept.guarded.get() {
+        return;
+    }
+    kept.guarded.set(true);
+    unsafe {
+        if !runtime {
+            let mut current: libc::stack_t = std::mem::zeroed();
+            libc::sigaltstack(std::ptr::null(), &mut current);
+            if current.ss_flags & libc::SS_DISABLE == 0 {
                 return;
             }
-            let alternate = libc::stack_t { ss_sp: stack, ss_flags: 0, ss_size: SIGNAL_STACK };
-            libc::sigaltstack(&alternate, std::ptr::null_mut());
-            *signal = Some(SignalStack(stack));
         }
-    });
+        let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
+        let stack = libc::mmap(std::ptr::null_mut(), SIGNAL_STACK, libc::PROT_READ | libc::PROT_WRITE, flags, -1, 0);
+        if stack == libc::MAP_FAILED {
+            return;
+        }
+        let alternate = libc::stack_t { ss_sp: stack, ss_flags: 0, ss_size: SIGNAL_STACK };
+        libc::sigaltstack(&alternate, std::ptr::null_mut());
+        kept.signal.set(stack);
+    }
+}
+
+/// At a library's end: the handlers there were before come back, where the
+/// runtime's are still those installed.
+pub(crate) fn give_back_handlers() {
+    let _installing = INSTALLING.lock().unwrap_or_else(|e| e.into_inner());
+    if !INSTALLED.load(Ordering::Acquire) {
+        return;
+    }
+    unsafe {
+        let previous = &*PREVIOUS.0.get();
+        for (signal, previous) in FAULTS.into_iter().zip(previous) {
+            let mut current: libc::sigaction = std::mem::zeroed();
+            libc::sigaction(signal, std::ptr::null(), &mut current);
+            if current.sa_sigaction == fault as *const () as usize {
+                libc::sigaction(signal, previous, std::ptr::null_mut());
+            }
+        }
+    }
+    INSTALLED.store(false, Ordering::Release);
 }
 
 /// Hands a fault to the handler there was before, as if it had come to it.
 unsafe fn forward(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void) {
     let Some(index) = FAULTS.iter().position(|&s| s == signal) else { return };
-    let Some(previous) = PREVIOUS.get().map(|p| p[index]) else { return };
+    if !INSTALLED.load(Ordering::Acquire) {
+        return;
+    }
+    let previous = unsafe { (*PREVIOUS.0.get())[index] };
     unsafe {
         match previous.sa_sigaction {
             libc::SIG_IGN => {}

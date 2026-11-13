@@ -62,34 +62,7 @@ pub(crate) fn start() {
         unsafe { std::env::remove_var("TONDO_DEBUG") };
         crate::debugger::WAIT.store(true, Ordering::Relaxed);
     }
-    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
-    let directory = directory();
-    let _ = std::fs::DirBuilder::new().mode(0o700).create(&directory);
-    let private = std::fs::symlink_metadata(&directory)
-        .is_ok_and(|m| m.is_dir() && m.uid() == unsafe { libc::geteuid() } && m.mode() & 0o077 == 0);
-    if !private {
-        return;
-    }
-    let path = directory.join(std::process::id().to_string());
-    let _ = std::fs::remove_file(&path);
-    let Ok(listener) = UnixListener::bind(&path) else { return };
-    *SOCKET.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
-    // `atexit` is not a symbol of glibc's shared library.
-    unsafe extern "C" {
-        fn __cxa_atexit(function: extern "C" fn(*mut u8), argument: *mut u8, object: *mut u8) -> i32;
-    }
-    extern "C" fn remove(_: *mut u8) {
-        // The tools' business, which a replay does again.
-        let _outside = crate::replay::Outside::enter();
-        end_trace(&mut SESSION.lock().unwrap_or_else(|e| e.into_inner()), "exit");
-        crate::debugger::exited();
-        if let Some(path) = socket() {
-            let _ = std::fs::remove_file(path);
-        }
-    }
-    unsafe { __cxa_atexit(remove, std::ptr::null_mut(), std::ptr::null_mut()) };
-    // A runtime thread, which a deadlock does not take for one of C.
-    if crate::tasks::try_spawn_thread(Some(128 * 1024), move || serve(listener)).is_err() {
+    if !listen() {
         return;
     }
     // `tondo trace -- program` traces from the start: the program waits
@@ -100,6 +73,58 @@ pub(crate) fn start() {
         let session = SESSION.lock().unwrap_or_else(|e| e.into_inner());
         let waited = TRACED.wait_timeout_while(session, std::time::Duration::from_secs(5), |s| s.is_none());
         drop(waited);
+    }
+}
+
+/// Whether the program listened for the tools, which a library that ended
+/// and is called again does again.
+static LISTENED: AtomicBool = AtomicBool::new(false);
+
+/// After a library's end, at its next call: the threads of the tools that
+/// its first start started.
+pub(crate) fn start_again() {
+    if !crate::replay::on() {
+        schedule_dumps();
+    }
+    if LISTENED.load(Ordering::Relaxed) {
+        listen();
+    }
+}
+
+/// Listens on the program's socket, from a thread of its own.
+fn listen() -> bool {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+    let directory = directory();
+    let _ = std::fs::DirBuilder::new().mode(0o700).create(&directory);
+    let private = std::fs::symlink_metadata(&directory)
+        .is_ok_and(|m| m.is_dir() && m.uid() == unsafe { libc::geteuid() } && m.mode() & 0o077 == 0);
+    if !private {
+        return false;
+    }
+    let path = directory.join(std::process::id().to_string());
+    let _ = std::fs::remove_file(&path);
+    let Ok(listener) = UnixListener::bind(&path) else { return false };
+    *SOCKET.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
+    extern "C" fn remove(_: *mut u8) {
+        // The tools' business, which a replay does again.
+        let _outside = crate::replay::Outside::enter();
+        end_trace(&mut SESSION.lock().unwrap_or_else(|e| e.into_inner()), "exit");
+        crate::debugger::exited();
+        if let Some(path) = socket() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+    crate::at_exit(remove);
+    // A runtime thread, which a deadlock does not take for one of C.
+    let served = crate::tasks::try_spawn_thread(Some(128 * 1024), move || serve(listener)).is_ok();
+    LISTENED.store(served, Ordering::Relaxed);
+    served
+}
+
+/// At a library's end: the thread that answers the tools, woken, ends.
+pub(crate) fn stop() {
+    if let Some(path) = socket() {
+        let _ = std::os::unix::net::UnixStream::connect(path);
     }
 }
 
@@ -142,6 +167,10 @@ pub(super) fn serve(listener: UnixListener) {
         let timeout = if tracing { 100 } else { -1 };
         if unsafe { libc::poll(polled.as_mut_ptr(), polled.len() as libc::nfds_t, timeout) } < 0 {
             continue;
+        }
+        // A library's end, which connects to wake it.
+        if crate::tasks::stopping() {
+            return;
         }
         let mut ready = polled[1..].iter().map(|p| p.revents != 0);
         clients.retain_mut(|(client, pending)| {

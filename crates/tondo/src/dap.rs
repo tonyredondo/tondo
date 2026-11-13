@@ -1265,14 +1265,19 @@ fn handle(
             let mut ids = Vec::new();
             // A file of another system has no code in this program
             // (language 6.8).
-            let host = crate::project::System::host();
-            let elsewhere = crate::project::systems_of(Path::new(&path)).filter(|systems| !systems.contains(&host));
+            let host = crate::project::Target::host();
+            let elsewhere = crate::project::targets_of(Path::new(&path)).filter(|targets| !targets.contains(&host));
+            // This machine's system alone, unless the file names an
+            // architecture.
+            let here = match crate::project::suffixes(Path::new(&path)).1 {
+                Some(_) => host.shown(),
+                None => host.system.shown().to_string(),
+            };
             for wanted in arguments["breakpoints"].as_array().into_iter().flatten() {
                 let line = wanted["line"].as_u64().unwrap_or(0);
-                if let Some(systems) = elsewhere {
-                    let named: Vec<&str> = systems.iter().map(|s| s.shown()).collect();
-                    let message =
-                        format!("this file is for {}; the program runs on {}", named.join(" and "), host.shown());
+                if let Some(targets) = &elsewhere {
+                    let named = crate::project::shown_targets(targets, &crate::project::Target::ALL);
+                    let message = format!("this file is for {named}; the program runs on {here}");
                     set.push(json!({ "verified": false, "line": line, "message": message }));
                     continue;
                 }

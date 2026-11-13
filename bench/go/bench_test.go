@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ var (
 	sinkBool   bool
 	sinkString string
 	sinkInts   []int
+	sinkFloats []float64
 	sinkAny    any
 	sinkItem   item
 )
@@ -134,6 +136,43 @@ func BenchmarkFloats(b *testing.B) {
 			sinkFloat = roots(100_000)
 		}
 	})
+	values, others := floatsOf(100_000), floatsOf(100_000)
+	slices.Reverse(others)
+	b.Run("sum 100000", func(b *testing.B) {
+		for b.Loop() {
+			total := 0.0
+			for _, value := range values {
+				total += value
+			}
+			sinkFloat = total
+		}
+	})
+	b.Run("dot 100000", func(b *testing.B) {
+		for b.Loop() {
+			total := 0.0
+			for i, value := range values {
+				total += value * others[i]
+			}
+			sinkFloat = total
+		}
+	})
+	b.Run("add 100000", func(b *testing.B) {
+		for b.Loop() {
+			sum := make([]float64, len(values))
+			for i, value := range values {
+				sum[i] = value + others[i]
+			}
+			sinkFloats = sum
+		}
+	})
+}
+
+func floatsOf(count int) []float64 {
+	values := make([]float64, count)
+	for i := range values {
+		values[i] = float64(i%97) * 0.5
+	}
+	return values
 }
 
 func joined(count int) string {
@@ -151,6 +190,38 @@ func ints(count int) int {
 		total += len(strconv.Itoa(i))
 	}
 	return total
+}
+
+func BenchmarkTensors(b *testing.B) {
+	square, other := floatsOf(64*64), floatsOf(64*64)
+	slices.Reverse(other)
+	b.Run("matmul 64", func(b *testing.B) {
+		for b.Loop() {
+			product := make([]float64, 64*64)
+			for i := 0; i < 64; i++ {
+				for j := 0; j < 64; j++ {
+					total := 0.0
+					for k := 0; k < 64; k++ {
+						total += square[i*64+k] * other[k*64+j]
+					}
+					product[i*64+j] = total
+				}
+			}
+			sinkFloats = product
+		}
+	})
+	wide, row := floatsOf(256*256), floatsOf(256)
+	b.Run("broadcast 256", func(b *testing.B) {
+		for b.Loop() {
+			sum := make([]float64, len(wide))
+			for i := 0; i < 256; i++ {
+				for j := 0; j < 256; j++ {
+					sum[i*256+j] = wide[i*256+j] + row[j]
+				}
+			}
+			sinkFloats = sum
+		}
+	})
 }
 
 func BenchmarkStrings(b *testing.B) {

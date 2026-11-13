@@ -55,6 +55,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "invalid-format",
         "The format of an interpolation does not read, or has an option its value's type does not take.",
     ),
+    (
+        "E1119",
+        "invalid-plugin",
+        "A plugin's contract holds what cannot cross, or `@plugin.Export` is not on the one function that gives its implementation.",
+    ),
     ("E1201", "refutable-binding-pattern", "A pattern that can fail is used where one that cannot is required."),
     ("E1202", "invalid-pattern", "A pattern's form does not fit the value matched or its place."),
     ("E1203", "unreachable-match-arm", "An arm of `match` is covered by the arms before it."),
@@ -145,7 +150,16 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "system-signature-mismatch",
         "A declaration of a file of one system differs from the one of the same name for another system.",
     ),
-    ("E1901", "nonconstant-expression", "A `const` uses an operation that cannot run while compiling."),
+    (
+        "E1809",
+        "unguarded-processor-feature",
+        "`main`, a test, a `pub extern fn`, a trait's method or a function used as a value needs a feature of the processor.",
+    ),
+    (
+        "E1901",
+        "nonconstant-expression",
+        "A `const`, or an argument that must be a constant, uses what cannot be known while compiling.",
+    ),
     ("E1902", "constant-cycle", "Constants depend on each other in a cycle."),
     ("E1903", "constant-panic", "Evaluating a constant would panic."),
     (
