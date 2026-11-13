@@ -431,8 +431,9 @@ A generic function becomes a value once its types are known,
 `identity[Int]`, or when what is expected leaves one answer.
 
 What builds a value is a function too, and is given by its name where a
-function is expected: a method by its type, a variant with data, a newtype,
-and `some`, `ok` and `err`. No closure is needed only to wrap or to forward:
+function is expected: a method by its type, a function of a type as
+`Int.parse`, a variant with data, a newtype, and `some`, `ok` and `err`. No
+closure is needed only to wrap or to forward:
 
 ```tondo
 import std.console
@@ -454,6 +455,7 @@ fn main() {
     let ids = [7, 8].map(UserId)
     let found: Array[Int?] = [1, 2].map(some)
     console.println("{names} {lengths} {ids.map((id) { id.value })} {found}")
+    console.println("{["4", "x"].map(Int.parse)}")
     match userId("x") {
         ok(id) => console.println("{id.value}")
         err(error) => console.println("{error}")
@@ -463,6 +465,7 @@ fn main() {
 
 ```text output
 [ADA, BO] [3, 2] [7, 8] [some(1), some(2)]
+[ok(4), err(invalid data)]
 BadNumber(invalid data)
 ```
 
