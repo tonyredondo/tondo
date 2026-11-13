@@ -2135,6 +2135,19 @@ impl<'a> Checker<'a> {
                         span,
                     );
                 }
+                // `raise(code, message)`: a panic of the language's, as
+                // `P0006` when shapes do not fit, which the standard
+                // library's own code finds (15.9).
+                if module == StdModule::InternalPanic && *member == "raise" {
+                    let [code, message] = args else { return self.arity_error(span, 2, args.len()) };
+                    let ast::ExprKind::Int { value: code, .. } = code.value.kind else {
+                        self.diags.error("E1901", code.value.span, "`raise` takes the number of a panic, as `6`");
+                        return Self::error_expr(span);
+                    };
+                    let message = self.expr(cx, &message.value, Some(Ty::STRING));
+                    let message = self.coerce(message, Ty::STRING);
+                    return Self::mk(hir::ExprKind::Panic(Box::new(message), code as u32), Ty::NEVER, span);
+                }
                 // `built()`: what `env.build()` reports, read now and kept as
                 // a constant (standard library 14.3.6).
                 if module == StdModule::InternalEnv && *member == "built" {
@@ -3072,6 +3085,10 @@ impl<'a> Checker<'a> {
                     None if automatic => {
                         "; the compiler implements it for records, enums and newtypes whose parts all implement it"
                             .into()
+                    }
+                    // A tensor of what is not a number (10.7).
+                    None if signature.name.starts_with("math.Tensor") && missing == "`Number`" => {
+                        ": a tensor holds numbers, as `Int`, `Float` or `math.Decimal`".into()
                     }
                     None => String::new(),
                 };

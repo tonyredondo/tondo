@@ -2983,6 +2983,7 @@ pub fn roundTiesAway(value: Float): Float           // la mitad se aleja de cero
 pub fn truncate(value: Float): Float
 pub fn fma(a: Float, b: Float, c: Float): Float     // redondea una vez
 pub fn dot[T: Number](a: Array[T], b: Array[T]): T  // producto escalar
+pub fn norm(values: Array[Float]): Float               // longitud: la raíz de dot(values, values)
 pub fn gcd[T: Integer](a: T, b: T): T
 pub fn lcm[T: Integer](a: T, b: T): T
 ~~~
@@ -3034,6 +3035,76 @@ pub fn Decimal.toFloat(self): Float
   `let price: math.Decimal = 19.99`.
 - Se escriben como números en JSON, YAML, TOML y los demás formatos, con
   todos sus dígitos, y se leen de un número o de un texto.
+
+`Tensor` son números en varias dimensiones: una forma, el tamaño de cada eje,
+cero o más, y sus valores en un bloque en orden de filas, el último índice el
+que cambia más deprisa. Su rango es la longitud de la forma; el rango 0 es un
+solo valor. Es un valor, que se copia como un array, y es `Send` y `Share`
+cuando `T` lo es. No es un marco de aprendizaje: sin gradientes, sin otros
+dispositivos, solo números.
+
+~~~tondo pseudocode
+pub type Tensor[T: Number]
+pub fn Tensor[T: Number](values: Array[T], shape: Array[Int]? = none): Tensor[T]
+pub fn Tensor[T: Number].fromRows(rows: Array[Array[T]]): Tensor[T]
+pub fn Tensor[T: Number].zeros(shape: Array[Int]): Tensor[T]
+pub fn Tensor[T: Number].filled(shape: Array[Int], value: T): Tensor[T]
+pub fn Tensor[T].shape(self): Array[Int]
+pub fn Tensor[T].rank(self): Int
+pub fn Tensor[T].length(self): Int
+pub fn Tensor[T].values(self): Array[T]
+pub fn Tensor[T].at(self, indexes: ...Int): T
+pub fn Tensor[T].set(mut self, value: T, indexes: ...Int)
+pub fn Tensor[T].slice(self, axis: Int, index: Int): Tensor[T]
+pub fn Tensor[T].reshape(self, shape: Array[Int]): Tensor[T]
+pub fn Tensor[T].transposed(self, axes: Array[Int]? = none): Tensor[T]
+pub fn Tensor[T].map(self, transform: fn(T): T): Tensor[T]
+pub fn Tensor[T].sum(self): T
+pub fn Tensor[T].sumAlong(self, axis: Int): Tensor[T]
+pub fn Tensor[T: Ordered].min(self): T?
+pub fn Tensor[T: Ordered].max(self): T?
+pub fn Tensor[T: Ordered].indexOfMax(self): Array[Int]?
+pub fn Tensor[T].dot(self, other: Tensor[T]): T
+pub fn Tensor[T].matmul(self, other: Tensor[T]): Tensor[T]
+~~~
+
+- `math.Tensor(values)` tiene rango 1 y la longitud del array; con `shape`, el
+  producto de sus tamaños debe ser esa longitud. `fromRows` da rango 2 y pide
+  filas de una longitud. Lo que no encaja, y un tamaño negativo, son `P0006`.
+  Se llaman `math.Tensor(values)`, `math.Tensor.fromRows(rows)` y
+  `math.Tensor.filled(shape, 0.0)`, donde los argumentos dan `T`, y
+  `math.Tensor[Float].zeros([2, 3])` donde no (11.5 del lenguaje).
+- `length` es la cuenta de todos los valores y `values` los da en orden.
+  `at` y `set` toman tantos índices como el rango; otra cuenta, o un índice
+  fuera de su tamaño, es `P0001`. Un índice negativo cuenta desde el final,
+  como en un array. `set` cambia un valor en su sitio y conserva la forma.
+- `slice` fija un índice de un eje y da un tensor de un rango menos.
+  `reshape` conserva los valores y su orden; el producto de los tamaños debe
+  ser el mismo, o es `P0006`. `transposed` sin `axes` invierte el orden de los
+  ejes, que en rango 2 cambia filas por columnas; con `axes`, una permutación
+  de `0 .. rank-1`, el eje `i` del resultado es el eje `axes[i]` del tensor, y
+  otra cosa es `P0006`.
+- `+`, `-`, `*` y `/` van elemento a elemento, entre tensores con
+  broadcasting y con un número a cualquier lado (10.7 del lenguaje).
+- `sum` es el `sum` de `values()`: de floats, en el orden de 18.5 del
+  lenguaje. `sumAlong` da un tensor de un rango menos, cada valor el `sum` de
+  los valores a lo largo de ese eje, en el orden de su índice. `min`, `max` e
+  `indexOfMax` son `none` en un tensor sin valores; `indexOfMax` da los
+  índices del primero de los mayores.
+- `dot` toma dos tensores de rango 1 y una longitud y es `math.dot` de sus
+  valores. `matmul` multiplica matrices: con rangos 2 y 2, una `n × k` por una
+  `k × m` da una `n × m`; un rango 1 a la izquierda es una fila y a la
+  derecha una columna, y el resultado tiene un rango menos. Cada valor del
+  resultado es el `math.dot` de una fila de la izquierda y una columna de la
+  derecha. Otros rangos, o tamaños que no encajan, son `P0006`.
+- Se muestra como arrays anidados: `[[1.0, 2.0], [3.0, 4.0]]`. Dos tensores
+  son iguales cuando sus formas y sus valores lo son. Todo formato de
+  `std.serialization` lo escribe y lo lee como un registro de `shape` y
+  `values`, y lo que lee debe encajar como al hacerlo.
+- Un `T` que no es un `Number` es `E1105`, cuyo mensaje dice que un tensor
+  guarda números.
+- Los resultados de floats son los de estas definiciones en toda máquina
+  (18.5 del lenguaje).
 
 ### 14.6 Arquitectura común de serialización
 

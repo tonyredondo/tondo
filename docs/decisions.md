@@ -6502,3 +6502,26 @@ generator, with the instructions and the settings `has_aes` and `has_pclmulqdq` 
 manual says, which `llvm-mc` confirms. A test runs each function against a definition written
 plainly, FIPS 197's rounds among them, on this machine's architecture in a release and a debug
 build, and finds its instruction in `tondo asm`.
+
+## Tensors, written in Tondo
+
+`math.Tensor` is a record of Tondo over two arrays, its sizes and its values, always in one block
+in row-major order: no view shares another's values, which leaves nothing for a program to see
+change. Its operators are the language's one part, a closed rule as arrays have: the checker
+makes `a + b` with a tensor on either side a call of the library, a tensor with a tensor or with a
+number, and the library broadcasts.
+
+Its speed comes from the rest of the library. Where both operands have one shape, floats go through
+the arithmetic of arrays and their vector loops; where one operand's shape is the end of the other's,
+as a row with a matrix, a loop of the runtime repeats it along the other without copying it; any
+other broadcasting reads both by their steps, a row at a time. `matmul` reads a row and a column in
+place, the column by its step, through a `math.dot` of the runtime that takes where each starts, so
+that each value is the `math.dot` of its row and column in the order of `sum`, and allocates only
+its result. Copying an array that repeats, as `repeat` does, now copies the whole array at once
+instead of an element at a time.
+
+The library raises the language's panics of shapes and indexes, `P0006` and `P0001`, with
+`std.internal.panic.raise`. The fields are named apart from the methods that give them, `shape()`
+and `values()`, and written with those names by an `Encode` and a `Decode` of its own, as the
+library's types do.
+

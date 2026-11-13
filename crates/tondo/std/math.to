@@ -232,12 +232,59 @@ pub fn dot[T: Number](a: Array[T], b: Array[T]): T {
     total
 }
 
+/// The length of a vector: the square root of the sum of its squares,
+/// `math.dot(values, values)`.
+///
+/// ```tondo
+/// import std.console
+/// import std.math
+///
+/// console.println("{math.norm([3.0, 4.0])}")
+/// ```
+pub fn norm(values: Array[Float]): Float {
+    sqrt(dot(values, values))
+}
+
 /// `dot` of `Array[Float32]`s: the products' sum in the order of `sum`.
 fn dotFloat32(a: Array[Float32], b: Array[Float32]): Float32 {
     if a.length() != b.length() {
         _ = a * b
     }
     Float32.fromBits(UInt32.wrapping(mathNative.dotFloat32(a, b)))
+}
+
+/// `dot` of `count` values of `a` from `aStart` and of `b` from `bStart` by
+/// `bStep`, which a tensor's product takes from a row and a column without
+/// copying them; the caller keeps to the arrays. Of `Float` and `Float32`,
+/// in the order of `dot`.
+fn dotAt[T: Number](a: Array[T], aStart: Int, b: Array[T], bStart: Int, bStep: Int, count: Int): T {
+    var total = Additive.zero[T]()
+    for index in 0..count {
+        total = total + a[aStart + index] * b[bStart + index * bStep]
+    }
+    total
+}
+
+fn dotAtFloat(
+    a: Array[Float],
+    aStart: Int,
+    b: Array[Float],
+    bStart: Int,
+    bStep: Int,
+    count: Int,
+): Float {
+    mathNative.dotAtFloat(a, aStart, b, bStart, bStep, count)
+}
+
+fn dotAtFloat32(
+    a: Array[Float32],
+    aStart: Int,
+    b: Array[Float32],
+    bStart: Int,
+    bStep: Int,
+    count: Int,
+): Float32 {
+    Float32.fromBits(UInt32.wrapping(mathNative.dotAtFloat32(a, aStart, b, bStart, bStep, count)))
 }
 
 /// `dot` of `Array[Float]`s: the products' sum in the order of `sum`.

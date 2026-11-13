@@ -2787,14 +2787,24 @@ observables.
 La aritmética de arrays de `Float` y `Float32` da, elemento a elemento, el
 resultado del operador escalar, aunque se haga con instrucciones vectoriales.
 
-Producto escalar, producto matricial y broadcasting multidimensional pertenecen a módulos matemáticos; `math.dot` es el producto escalar (librería estándar 14.5):
+Producto escalar, producto matricial y broadcasting multidimensional pertenecen a `std.math`: `math.dot` y `math.norm` sobre arrays, y el tipo `math.Tensor`, con su `matmul` (librería estándar 14.5):
 
 ~~~tondo
 math.dot(a, b)
-matrix.matmul(left, right)
+math.Tensor.fromRows(rows).matmul(math.Tensor(values))
 ~~~
 
 Esto evita que `*` cambie de significado según forma o dimensionalidad.
+
+Un `math.Tensor[T]` tiene `+`, `-`, `*` y `/` por una regla cerrada del
+lenguaje, como los arrays: entre dos tensores del mismo `T`, y entre un
+tensor y un `T` a cualquier lado, elemento a elemento. Cada elemento sigue al
+operador escalar, de modo que un entero que desborda es `P0005`. Dos formas
+encajan cuando, leídas desde sus últimos tamaños hacia atrás, cada par es
+igual o tiene un 1, y la más corta cuenta con 1 delante; el resultado tiene
+el mayor de cada par, y un tamaño 1 se repite a lo largo del otro. Formas que
+no encajan son `P0006`, con las dos formas. Otro operador, otro `T` o un `op=`
+sobre un tensor son `E1102`, cuyo mensaje dice lo que el tensor tiene.
 
 ### 10.8 Igualdad y comparación de arrays
 

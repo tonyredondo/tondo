@@ -1016,6 +1016,14 @@ impl<'a> Checker<'a> {
     ) -> hir::Expr {
         let expected = self.arithmetic_expected(value, target).or(Some(target));
         let value = self.expr(cx, value, expected);
+        if self.tensor_of(target).is_some() {
+            let message = format!(
+                "`{0}=` does not change a tensor in place: write `target = target {0} value`, which makes another",
+                op.as_str()
+            );
+            self.diags.error("E1102", span, message);
+            return value;
+        }
         let value = if self.number_leaf(target).1 == 0 && self.number_leaf(value.ty).1 == 0 {
             self.coerce(value, target)
         } else {

@@ -103,6 +103,8 @@ impl<'a> Checker<'a> {
             // A literal with a vector stands for each lane (rule 8 of
             // std.simd).
             TyKind::Vector(_, lane) => (lane, 1),
+            // And with a tensor, for each of its values (10.6).
+            _ if let Some(number) = self.tensor_of(ty) => (number, 1),
             _ => (ty, 0),
         }
     }
@@ -167,6 +169,64 @@ impl<'a> Checker<'a> {
         }
         let ty = left.ty;
         (left, self.coerce(right, ty))
+    }
+
+    /// The numbers of a `math.Tensor[T]`, `T`.
+    pub(super) fn tensor_of(&self, ty: Ty) -> Option<Ty> {
+        let (template, args) = self.types.instance_of(ty)?;
+        let template = self.types.template(template);
+        let std_math = template.module.is_some() && template.module == self.types.declaring("std.math");
+        (std_math && template.name == "math.Tensor").then(|| args[0])
+    }
+
+    /// `left op right` with a tensor on one side or both (10.6): a call of
+    /// the standard library's, element by element.
+    fn tensor_binary(&mut self, op: BinOp, left: hir::Expr, right: hir::Expr, span: Span) -> hir::Expr {
+        let (of_left, of_right) = (self.tensor_of(left.ty), self.tensor_of(right.ty));
+        let code = match op {
+            BinOp::Add => 0,
+            BinOp::Sub => 1,
+            BinOp::Mul => 2,
+            BinOp::Div => 3,
+            _ => {
+                let message = format!(
+                    "operator `{}` cannot be applied to tensors: a tensor has `+`, `-`, `*` and `/`, element by element",
+                    op.as_str()
+                );
+                self.diags.error("E1102", span, message);
+                return Self::error_expr(span);
+            }
+        };
+        let number = of_left.or(of_right).expect("a tensor");
+        let other = if of_left.is_some() { right.ty } else { left.ty };
+        let fits = match (of_left, of_right) {
+            (Some(a), Some(b)) => a == b,
+            _ => other == number || self.types.has_error(other),
+        };
+        if !fits {
+            let message = format!(
+                "operator `{}` cannot combine {} and {}: a tensor combines with a tensor of its numbers, or with one of them",
+                op.as_str(),
+                self.display(left.ty),
+                self.display(right.ty)
+            );
+            self.diags.error("E1102", span, message);
+            return Self::error_expr(span);
+        }
+        let ty = if of_left.is_some() { left.ty } else { right.ty };
+        let int = |value: i128| Self::mk(hir::ExprKind::Int(value), Ty::INT, span);
+        let (name, args) = match (of_left, of_right) {
+            (Some(_), Some(_)) => ("math.combined", vec![left, right, int(code)]),
+            (Some(_), None) => (
+                "math.combinedWith",
+                vec![left, right, int(code), Self::mk(hir::ExprKind::Bool(false), Ty::BOOL, span)],
+            ),
+            _ => {
+                ("math.combinedWith", vec![right, left, int(code), Self::mk(hir::ExprKind::Bool(true), Ty::BOOL, span)])
+            }
+        };
+        let Some(&ModuleName::Fn(id)) = self.names.get(name) else { unreachable!("std.math has `{name}`") };
+        Self::mk(hir::ExprKind::Call(Callee::Fn(id), vec![number], args), ty, span)
     }
 
     /// The type of `left op right` for `+ - * / %`, lifted over arrays
@@ -341,6 +401,9 @@ impl<'a> Checker<'a> {
                 let (left, right) = self.arithmetic_operands(cx, left, right, expected);
                 if self.vectored(left.ty).is_some() || self.vectored(right.ty).is_some() {
                     return self.simd_binary(op, left, right, span);
+                }
+                if self.tensor_of(left.ty).is_some() || self.tensor_of(right.ty).is_some() {
+                    return self.tensor_binary(op, left, right, span);
                 }
                 // The trait's method, on a type that takes the operator by one (18.10).
                 if let Some((trait_id, index)) = self.operator_trait(op, left.ty) {

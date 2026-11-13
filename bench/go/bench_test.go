@@ -192,6 +192,38 @@ func ints(count int) int {
 	return total
 }
 
+func BenchmarkTensors(b *testing.B) {
+	square, other := floatsOf(64*64), floatsOf(64*64)
+	slices.Reverse(other)
+	b.Run("matmul 64", func(b *testing.B) {
+		for b.Loop() {
+			product := make([]float64, 64*64)
+			for i := 0; i < 64; i++ {
+				for j := 0; j < 64; j++ {
+					total := 0.0
+					for k := 0; k < 64; k++ {
+						total += square[i*64+k] * other[k*64+j]
+					}
+					product[i*64+j] = total
+				}
+			}
+			sinkFloats = product
+		}
+	})
+	wide, row := floatsOf(256*256), floatsOf(256)
+	b.Run("broadcast 256", func(b *testing.B) {
+		for b.Loop() {
+			sum := make([]float64, len(wide))
+			for i := 0; i < 256; i++ {
+				for j := 0; j < 256; j++ {
+					sum[i*256+j] = wide[i*256+j] + row[j]
+				}
+			}
+			sinkFloats = sum
+		}
+	})
+}
+
 func BenchmarkStrings(b *testing.B) {
 	name, place := "ada", "london"
 	b.Run("interpolate", func(b *testing.B) {

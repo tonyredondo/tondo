@@ -53,7 +53,7 @@ const SOURCES: &[(&str, &[(&str, &str)])] = &[
     ("reflect", &[file!("reflect")]),
     ("prelude", &[file!("prelude")]),
     ("panics", &[file!("panics")]),
-    ("math", &[file!("math")]),
+    ("math", &[file!("math"), file!("math/tensor")]),
     ("meta", &[file!("meta")]),
     ("debug", &[file!("debug")]),
     ("encoding", &[file!("encoding")]),

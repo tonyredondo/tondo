@@ -1972,6 +1972,9 @@ impl serialization.Decode for BigInt
 impl serialization.Decode for Decimal
 impl serialization.Encode for BigInt
 impl serialization.Encode for Decimal
+impl[T: Number + Display] Display for Tensor[T]
+impl[T: Number + serialization.Decode] serialization.Decode for Tensor[T]
+impl[T: Number + serialization.Encode] serialization.Encode for Tensor[T]
 pub const E: Float = 2.718281828459045
 pub const Pi: Float = 3.141592653589793
 pub enum MathError {
@@ -2002,6 +2005,27 @@ pub fn Decimal.parse(text: String): Decimal ! MathError
 pub fn Decimal.round(self, decimals: Int, mode: Rounding = Rounding.HalfEven): Decimal
 pub fn Decimal.scale(self): Int
 pub fn Decimal.toFloat(self): Float
+pub fn Tensor[T: Number + Ordered].indexOfMax(self): Array[Int]?
+pub fn Tensor[T: Number + Ordered].max(self): T?
+pub fn Tensor[T: Number + Ordered].min(self): T?
+pub fn Tensor[T: Number](values: Array[T], shape: Array[Int]? = none): Tensor[T]
+pub fn Tensor[T: Number].at(self, indexes: ...Int): T
+pub fn Tensor[T: Number].dot(self, other: Tensor[T]): T
+pub fn Tensor[T: Number].filled(shape: Array[Int], value: T): Tensor[T]
+pub fn Tensor[T: Number].fromRows(rows: Array[Array[T]]): Tensor[T]
+pub fn Tensor[T: Number].length(self): Int
+pub fn Tensor[T: Number].map(self, transform: fn(T): T): Tensor[T]
+pub fn Tensor[T: Number].matmul(self, other: Tensor[T]): Tensor[T]
+pub fn Tensor[T: Number].rank(self): Int
+pub fn Tensor[T: Number].reshape(self, shape: Array[Int]): Tensor[T]
+pub fn Tensor[T: Number].set(mut self, value: T, indexes: ...Int)
+pub fn Tensor[T: Number].shape(self): Array[Int]
+pub fn Tensor[T: Number].slice(self, axis: Int, index: Int): Tensor[T]
+pub fn Tensor[T: Number].sum(self): T
+pub fn Tensor[T: Number].sumAlong(self, axis: Int): Tensor[T]
+pub fn Tensor[T: Number].transposed(self, axes: Array[Int]? = none): Tensor[T]
+pub fn Tensor[T: Number].values(self): Array[T]
+pub fn Tensor[T: Number].zeros(shape: Array[Int]): Tensor[T]
 pub fn acos(value: Float): Float
 pub fn asin(value: Float): Float
 pub fn atan(value: Float): Float
@@ -2024,6 +2048,7 @@ pub fn lcm[T: Integer](a: T, b: T): T
 pub fn ln(value: Float): Float
 pub fn log10(value: Float): Float
 pub fn log2(value: Float): Float
+pub fn norm(values: Array[Float]): Float
 pub fn pow(base: Float, exponent: Float): Float
 pub fn round(value: Float): Float
 pub fn roundTiesAway(value: Float): Float
@@ -2035,6 +2060,9 @@ pub type BigInt = {
     // private fields
 }
 pub type Decimal = {
+    // private fields
+}
+pub type Tensor[T: Number] = {
     // private fields
 }
 == std.mcp

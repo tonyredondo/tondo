@@ -1,0 +1,619 @@
+import std.internal.math as mathNative
+import std.internal.panic as panicNative
+import std.serialization as __serialization
+
+/// Numbers in several dimensions: a shape, the size of each, and the values
+/// in one block in row-major order, the last index changing fastest. Its
+/// rank is the length of its shape; rank 0 is a single value. `+`, `-`, `*`
+/// and `/` work element by element between two tensors, broadcasting a size
+/// of 1, and between a tensor and a number.
+///
+/// ```tondo
+/// import std.console
+/// import std.math
+///
+/// let weights = math.Tensor.fromRows([[0.5, 0.25], [0.125, 1.0]])
+/// let input = math.Tensor([1.0, 2.0])
+/// console.println("{weights.matmul(input) + 1.0}")
+/// ```
+pub type Tensor[T: Number] = {
+    @name("shape")
+    priv sizes: Array[Int]
+    @name("values")
+    priv items: Array[T]
+}
+
+/// A tensor of `values`, of `shape`, whose sizes' product must be their
+/// length, or else of rank 1; what does not fit panics (`P0006`).
+pub fn Tensor[T: Number](values: Array[T], shape: Array[Int]? = none): Tensor[T] {
+    let sizes = shape ?? [values.length()]
+    if counted(sizes) != values.length() {
+        panicNative.raise(
+            6,
+            "a tensor of shape {sizes} holds {counted(sizes)} values, and {values.length()} are given",
+        )
+    }
+    Tensor { sizes, items: values }
+}
+
+/// A tensor of rank 2 whose rows are `rows`, all of one length (`P0006`).
+pub fn Tensor[T: Number].fromRows(rows: Array[Array[T]]): Tensor[T] {
+    let columns = rows.get(0).map((row) { row.length() }) ?? 0
+    var values: Array[T] = []
+    for row in rows {
+        if row.length() != columns {
+            panicNative.raise(
+                6,
+                "the rows of a tensor are of one length, and these are of {columns} and {row.length()}",
+            )
+        }
+        for value in row {
+            values.push(value)
+        }
+    }
+    Tensor { sizes: [rows.length(), columns], items: values }
+}
+
+/// A tensor of `shape` whose values are zero.
+pub fn Tensor[T: Number].zeros(shape: Array[Int]): Tensor[T] {
+    Tensor { sizes: shape, items: [Additive.zero[T]()].repeat(counted(shape)) }
+}
+
+/// A tensor of `shape` whose values are all `value`.
+pub fn Tensor[T: Number].filled(shape: Array[Int], value: T): Tensor[T] {
+    Tensor { sizes: shape, items: [value].repeat(counted(shape)) }
+}
+
+/// The size of each axis.
+pub fn Tensor[T: Number].shape(self): Array[Int] {
+    self.sizes
+}
+
+/// How many axes it has: the length of its shape.
+pub fn Tensor[T: Number].rank(self): Int {
+    self.sizes.length()
+}
+
+/// How many values it has, of all its axes.
+pub fn Tensor[T: Number].length(self): Int {
+    self.items.length()
+}
+
+/// Its values, in row-major order.
+pub fn Tensor[T: Number].values(self): Array[T] {
+    self.items
+}
+
+/// The value at `indexes`, one for each axis; a negative one counts from
+/// the end of its axis. Another count, or one out of its size, panics
+/// (`P0001`).
+pub fn Tensor[T: Number].at(self, indexes: ...Int): T {
+    self.items[self.offset(indexes)]
+}
+
+/// Changes the value at `indexes`, as `at` reads it.
+pub fn Tensor[T: Number].set(mut self, value: T, indexes: ...Int) {
+    let at = self.offset(indexes)
+    self.items[at] = value
+}
+
+/// The tensor of one rank less that `index` of `axis` holds.
+pub fn Tensor[T: Number].slice(self, axis: Int, index: Int): Tensor[T] {
+    let rank = self.sizes.length()
+    if axis < 0 or axis >= rank {
+        panicNative.raise(1, "axis {axis} is not one of a tensor of rank {rank}")
+    }
+    let size = self.sizes[axis]
+    let at = if index < 0 { index + size } else { index }
+    if at < 0 or at >= size {
+        panicNative.raise(1, "index {index} is out of axis {axis}, of size {size}")
+    }
+    let inner = counted(self.sizes[axis + 1:])
+    var values: Array[T] = []
+    for outer in 0..counted(self.sizes[:axis]) {
+        let start = (outer * size + at) * inner
+        for value in self.items[start:start + inner] {
+            values.push(value)
+        }
+    }
+    Tensor { sizes: self.sizes[:axis].concat(self.sizes[axis + 1:]), items: values }
+}
+
+/// The same values, in the same order, in `shape`, whose sizes' product
+/// must be the same (`P0006`).
+pub fn Tensor[T: Number].reshape(self, shape: Array[Int]): Tensor[T] {
+    if counted(shape) != self.items.length() {
+        panicNative.raise(
+            6,
+            "a tensor of shape {self.sizes} cannot be of shape {shape}: they hold {self.items.length()} and {counted(shape)} values",
+        )
+    }
+    Tensor { sizes: shape, items: self.items }
+}
+
+/// The tensor whose axis `i` is axis `axes[i]` of this one, a permutation
+/// of its axes (`P0006`); without `axes`, its axes in reverse order, which
+/// swaps the rows and columns of a matrix.
+pub fn Tensor[T: Number].transposed(self, axes: Array[Int]? = none): Tensor[T] {
+    let rank = self.sizes.length()
+    let order = axes ?? (0..rank).map((axis) { rank - 1 - axis }).collect()
+    var seen = [false].repeat(rank)
+    for axis in order {
+        if order.length() != rank or axis < 0 or axis >= rank or seen[axis] {
+            panicNative.raise(6, "{order} is not an order of the axes of a tensor of rank {rank}")
+        }
+        seen[axis] = true
+    }
+    if order.length() != rank {
+        panicNative.raise(6, "{order} is not an order of the axes of a tensor of rank {rank}")
+    }
+    let sizes = self.sizes
+    let strides = strided(sizes)
+    let shape = order.map((axis) { sizes[axis] })
+    let steps = order.map((axis) { strides[axis] })
+    Tensor { sizes: shape, items: gathered(self.items, shape, steps, 0) }
+}
+
+/// Each value through `transform`, in the same shape.
+pub fn Tensor[T: Number].map(self, transform: fn(T): T): Tensor[T] {
+    Tensor { sizes: self.sizes, items: self.items.map(transform) }
+}
+
+/// The sum of its values, as `sum` of `values()` gives it.
+pub fn Tensor[T: Number].sum(self): T {
+    self.items.sum()
+}
+
+/// The tensor of one rank less whose each value is the `sum` of the values
+/// along `axis`, in the order of its index.
+pub fn Tensor[T: Number].sumAlong(self, axis: Int): Tensor[T] {
+    let rank = self.sizes.length()
+    if axis < 0 or axis >= rank {
+        panicNative.raise(1, "axis {axis} is not one of a tensor of rank {rank}")
+    }
+    let size = self.sizes[axis]
+    let inner = counted(self.sizes[axis + 1:])
+    var values: Array[T] = []
+    for outer in 0..counted(self.sizes[:axis]) {
+        for offset in 0..inner {
+            var along: Array[T] = []
+            for index in 0..size {
+                along.push(self.items[(outer * size + index) * inner + offset])
+            }
+            values.push(along.sum())
+        }
+    }
+    Tensor { sizes: self.sizes[:axis].concat(self.sizes[axis + 1:]), items: values }
+}
+
+/// The smallest value, the first of equal ones, or `none` when it has none.
+pub fn Tensor[T: Number + Ordered].min(self): T? {
+    self.items.min()
+}
+
+/// The greatest value, the first of equal ones, or `none` when it has none.
+pub fn Tensor[T: Number + Ordered].max(self): T? {
+    self.items.max()
+}
+
+/// The indexes of the first of the greatest values, or `none` when it has
+/// none.
+pub fn Tensor[T: Number + Ordered].indexOfMax(self): Array[Int]? {
+    if self.items.isEmpty() {
+        return none
+    }
+    var best = 0
+    for (index, value) in self.items.enumerate() {
+        if value > self.items[best] {
+            best = index
+        }
+    }
+    var indexes = [0].repeat(self.sizes.length())
+    var rest = best
+    for back in 0..self.sizes.length() {
+        let axis = self.sizes.length() - 1 - back
+        indexes[axis] = rest % self.sizes[axis]
+        rest = rest / self.sizes[axis]
+    }
+    indexes
+}
+
+/// The `math.dot` of two tensors of rank 1 and one length (`P0006`).
+pub fn Tensor[T: Number].dot(self, other: Tensor[T]): T {
+    if self.sizes.length() != 1 or other.sizes.length() != 1 or self.sizes != other.sizes {
+        panicNative.raise(
+            6,
+            "`dot` takes two tensors of rank 1 and one length, and these are of shapes {self.sizes} and {other.sizes}",
+        )
+    }
+    dot(self.items, other.items)
+}
+
+/// The product of matrices: an `n × k` by a `k × m` gives an `n × m`, each
+/// value the `math.dot` of a row of this one and a column of `other`. A
+/// tensor of rank 1 is a row on the left and a column on the right, and the
+/// result has one rank less; other ranks or sizes panic (`P0006`).
+pub fn Tensor[T: Number].matmul(self, other: Tensor[T]): Tensor[T] {
+    let (left, right) = (self.sizes.length(), other.sizes.length())
+    let rows = if left == 2 { self.sizes[0] } else { 1 }
+    let inner = self.sizes.last() ?? 0
+    let columns = if right == 2 { other.sizes[1] } else { 1 }
+    let fits = (left == 1 or left == 2) and (right == 1 or right == 2) and inner == other.sizes[0]
+    if not fits {
+        panicNative.raise(
+            6,
+            "`matmul` multiplies an n × k by a k × m, and these are of shapes {self.sizes} and {other.sizes}",
+        )
+    }
+    // Each row of this one with each column of `other`, read in place.
+    var values: Array[T] = []
+    for at in 0..rows * columns {
+        let (row, column) = (at / columns, at % columns)
+        values.push(dotAt(self.items, row * inner, other.items, column, columns, inner))
+    }
+    let shape = match (left, right) {
+        (2, 2) => [rows, columns]
+        (2, _) => [rows]
+        (_, 2) => [columns]
+        _ => []
+    }
+    Tensor { sizes: shape, items: values }
+}
+
+/// As a record of `shape` and `values`, in every format; what it reads must
+/// fit, as a tensor made of them (`P0006`).
+impl[T: Number + __serialization.Encode] __serialization.Encode for Tensor[T] {
+    fn encode[S: __serialization.Sink](self, out: S) {
+        out.beginRecord(__serialization.Record { name: "Tensor", count: 2, notes: [] })
+        out.key("shape")
+        __serialization.Encode.encode(self.sizes, out)
+        out.key("values")
+        __serialization.Encode.encode(self.items, out)
+        out.endMap()
+    }
+}
+
+impl[T: Number + __serialization.Decode] __serialization.Decode for Tensor[T] {
+    fn decode[S: __serialization.Source](
+        input: S,
+        first: __serialization.Event,
+    ): Tensor[T] ! __serialization.Error {
+        input.beginMap(first, "Tensor")?
+        var shape: Array[Int]? = none
+        var values: Array[T]? = none
+        let names: Array[String] = ["shape", "values"]
+        for {
+            match input.nextField(names)? {
+                some(0) => {
+                    shape = some(__serialization.Decode.decode[Array[Int]](input, input.value()?)?)
+                }
+                some(1) => {
+                    values = some(__serialization.Decode.decode[Array[T]](input, input.value()?)?)
+                }
+                some(_) => {}
+                none => break
+            }
+        }
+        Tensor(input.required(values, "values")?, input.required(shape, "shape")?)
+    }
+}
+
+impl[T: Number + Display] Display for Tensor[T] {
+    fn display(self): String {
+        shown(self.items, self.sizes, 0, 0)
+    }
+}
+
+/// The values of `shape` from `start`, as nested arrays: `[[1, 2], [3, 4]]`.
+fn shown[T: Number + Display](values: Array[T], shape: Array[Int], axis: Int, start: Int): String {
+    if axis == shape.length() {
+        return "{values[start]}"
+    }
+    let inner = counted(shape[axis + 1:])
+    let parts = (0..shape[axis])
+        .map((index) { shown(values, shape, axis + 1, start + index * inner) })
+        .collect()
+    "[{parts.join(", ")}]"
+}
+
+/// How many values a shape holds; a negative size panics (`P0006`).
+fn counted(shape: Array[Int]): Int {
+    var product = 1
+    for size in shape {
+        if size < 0 {
+            panicNative.raise(6, "the sizes of a tensor are zero or more, and its shape is {shape}")
+        }
+        product *= size
+    }
+    product
+}
+
+/// How far apart the values one index apart on each axis are.
+fn strided(shape: Array[Int]): Array[Int] {
+    var strides = [1].repeat(shape.length())
+    for back in 1..shape.length() {
+        let axis = shape.length() - 1 - back
+        strides[axis] = strides[axis + 1] * shape[axis + 1]
+    }
+    strides
+}
+
+/// The values at each index of `shape`, in row-major order, the one at an
+/// index being `values[start + sum of index[i] * steps[i]]`.
+fn gathered[T](values: Array[T], shape: Array[Int], steps: Array[Int], start: Int): Array[T] {
+    var out: Array[T] = []
+    let rank = shape.length()
+    if counted(shape) == 0 {
+        return out
+    }
+    var index = [0].repeat(rank)
+    var offset = start
+    for _ in 0..counted(shape) {
+        out.push(values[offset])
+        // The next index, the last axis fastest.
+        var axis = rank - 1
+        for axis >= 0 {
+            index[axis] += 1
+            offset += steps[axis]
+            if index[axis] < shape[axis] {
+                break
+            }
+            offset -= steps[axis] * shape[axis]
+            index[axis] = 0
+            axis -= 1
+        }
+    }
+    out
+}
+
+/// `left op right` element by element (10.6): `op` is 0 for `+`, 1 for
+/// `-`, 2 for `*` and 3 for `/`. A size of 1, or an axis one shape lacks in
+/// front, is repeated along the other's; shapes that do not fit panic
+/// (`P0006`).
+fn combined[T: Number](left: Tensor[T], right: Tensor[T], op: Int): Tensor[T] {
+    if left.sizes == right.sizes {
+        return Tensor { sizes: left.sizes, items: applied(left.items, right.items, op) }
+    }
+    let rank = if left.sizes.length() > right.sizes.length() {
+        left.sizes.length()
+    } else {
+        right.sizes.length()
+    }
+    // The result's shape, which is one of theirs when that one's sizes
+    // cover the other's.
+    var (leftCovers, rightCovers) = (left.sizes.length() == rank, right.sizes.length() == rank)
+    for axis in 0..rank {
+        let (a, b) = (sizeAt(left.sizes, rank, axis), sizeAt(right.sizes, rank, axis))
+        if a != b and a != 1 and b != 1 {
+            panicNative.raise(
+                6,
+                "tensors of shapes {left.sizes} and {right.sizes} cannot go element by element: sizes {a} and {b} of axis {axis} differ, and neither is 1",
+            )
+        }
+        leftCovers = leftCovers and (a == b or b == 1)
+        rightCovers = rightCovers and (a == b or a == 1)
+    }
+    let shape = if leftCovers {
+        left.sizes
+    } else if rightCovers {
+        right.sizes
+    } else {
+        (0..rank)
+            .map(
+                (axis) {
+                    if sizeAt(left.sizes, rank, axis) == 1 {
+                        sizeAt(right.sizes, rank, axis)
+                    } else {
+                        sizeAt(left.sizes, rank, axis)
+                    }
+                },
+            )
+            .collect()
+    }
+    // An operand whose shape is the end of the result's, as a row with a
+    // matrix, is its values repeated along the other's.
+    if leftCovers and ends(shape, right.sizes) {
+        return Tensor { sizes: shape, items: cycled(left.items, right.items, op, false) }
+    }
+    if rightCovers and ends(shape, left.sizes) {
+        return Tensor { sizes: shape, items: cycled(right.items, left.items, op, true) }
+    }
+    let (leftSteps, rightSteps) = (broadcast(left.sizes, shape), broadcast(right.sizes, shape))
+    Tensor {
+        sizes: shape
+        items: stepped(left.items, leftSteps, right.items, rightSteps, shape, op)
+    }
+}
+
+/// The size of `axis` of a shape read with `rank` axes, sizes of 1 in front.
+fn sizeAt(shape: Array[Int], rank: Int, axis: Int): Int {
+    let at = axis - (rank - shape.length())
+    if at < 0 { 1 } else { shape[at] }
+}
+
+/// Whether `shape` ends with the sizes of `end`.
+fn ends(shape: Array[Int], end: Array[Int]): Bool {
+    let offset = shape.length() - end.length()
+    for (index, size) in end.enumerate() {
+        if shape[offset + index] != size {
+            return false
+        }
+    }
+    true
+}
+
+/// `left op right` at each index of `shape`, each read by its steps, in one
+/// run: the last axis by its step, the others when it wraps. The shape has
+/// an axis or more.
+fn stepped[T: Number](
+    left: Array[T],
+    leftSteps: Array[Int],
+    right: Array[T],
+    rightSteps: Array[Int],
+    shape: Array[Int],
+    op: Int,
+): Array[T] {
+    let rank = shape.length()
+    let last = shape[rank - 1]
+    let (leftStep, rightStep) = (leftSteps[rank - 1], rightSteps[rank - 1])
+    var out: Array[T] = []
+    var index = [0].repeat(rank)
+    var (leftAt, rightAt, column) = (0, 0, 0)
+    for _ in 0..counted(shape) {
+        let (a, b) = (left[leftAt], right[rightAt])
+        out.push(
+            match op {
+                0 => a + b
+                1 => a - b
+                2 => a * b
+                _ => a / b
+            },
+        )
+        leftAt += leftStep
+        rightAt += rightStep
+        column += 1
+        if column == last {
+            // The next row: back along the last axis, on along the others.
+            leftAt -= leftStep * last
+            rightAt -= rightStep * last
+            column = 0
+            var axis = rank - 2
+            for axis >= 0 {
+                index[axis] += 1
+                leftAt += leftSteps[axis]
+                rightAt += rightSteps[axis]
+                if index[axis] < shape[axis] {
+                    break
+                }
+                leftAt -= leftSteps[axis] * shape[axis]
+                rightAt -= rightSteps[axis] * shape[axis]
+                index[axis] = 0
+                axis -= 1
+            }
+        }
+    }
+    out
+}
+
+/// `left op right` of a tensor and a number, on either side.
+fn combinedWith[T: Number](tensor: Tensor[T], number: T, op: Int, numberFirst: Bool): Tensor[T] {
+    let numbers = [number].repeat(tensor.items.length())
+    let values = if numberFirst {
+        applied(numbers, tensor.items, op)
+    } else {
+        applied(tensor.items, numbers, op)
+    }
+    Tensor { sizes: tensor.sizes, items: values }
+}
+
+/// The steps of a tensor of `own` shape read in `shape`, sizes of 1 in front
+/// of it: 0 along an axis it repeats.
+fn broadcast(own: Array[Int], shape: Array[Int]): Array[Int] {
+    let padded = [1].repeat(shape.length() - own.length()).concat(own)
+    let strides = strided(padded)
+    (0..padded.length())
+        .map((axis) { if padded[axis] == 1 and shape[axis] != 1 { 0 } else { strides[axis] } })
+        .collect()
+}
+
+/// `left[i] op right[i]` for each `i`, the arrays of one length.
+fn applied[T: Number](left: Array[T], right: Array[T], op: Int): Array[T] {
+    var out: Array[T] = []
+    match op {
+        0 => {
+            for (index, value) in left.enumerate() {
+                out.push(value + right[index])
+            }
+        }
+        1 => {
+            for (index, value) in left.enumerate() {
+                out.push(value - right[index])
+            }
+        }
+        2 => {
+            for (index, value) in left.enumerate() {
+                out.push(value * right[index])
+            }
+        }
+        _ => {
+            for (index, value) in left.enumerate() {
+                out.push(value / right[index])
+            }
+        }
+    }
+    out
+}
+
+/// `long op short` element by element, `short` repeated along `long`, whose
+/// length is a multiple of its own; with `shortFirst`, `short op long`.
+fn cycled[T: Number](long: Array[T], short: Array[T], op: Int, shortFirst: Bool): Array[T] {
+    var out: Array[T] = []
+    let width = short.length()
+    for (index, x) in long.enumerate() {
+        let y = short[index % width]
+        let (a, b) = if shortFirst { (y, x) } else { (x, y) }
+        out.push(
+            match op {
+                0 => a + b
+                1 => a - b
+                2 => a * b
+                _ => a / b
+            },
+        )
+    }
+    out
+}
+
+fn cycledFloat(long: Array[Float], short: Array[Float], op: Int, shortFirst: Bool): Array[Float] {
+    mathNative.cycledFloat(long, short, op, shortFirst)
+}
+
+fn cycledFloat32(
+    long: Array[Float32],
+    short: Array[Float32],
+    op: Int,
+    shortFirst: Bool,
+): Array[Float32] {
+    mathNative.cycledFloat32(long, short, op, shortFirst)
+}
+
+/// `applied` of `Array[Float]`s and `Array[Float32]`s: their arithmetic
+/// element by element, which vectors do (10.6).
+fn appliedFloat(left: Array[Float], right: Array[Float], op: Int): Array[Float] {
+    match op {
+        0 => left + right
+        1 => left - right
+        2 => left * right
+        _ => left / right
+    }
+}
+
+fn appliedFloat32(left: Array[Float32], right: Array[Float32], op: Int): Array[Float32] {
+    match op {
+        0 => left + right
+        1 => left - right
+        2 => left * right
+        _ => left / right
+    }
+}
+
+/// The private offset of the value at `indexes`.
+fn Tensor[T: Number].offset(self, indexes: Array[Int]): Int {
+    let rank = self.sizes.length()
+    if indexes.length() != rank {
+        panicNative.raise(
+            1,
+            "a tensor of rank {rank} takes {rank} indexes, and {indexes.length()} are given",
+        )
+    }
+    var offset = 0
+    for (axis, given) in indexes.enumerate() {
+        let size = self.sizes[axis]
+        let index = if given < 0 { given + size } else { given }
+        if index < 0 or index >= size {
+            panicNative.raise(1, "index {given} is out of axis {axis}, of size {size}")
+        }
+        offset = offset * size + index
+    }
+    offset
+}

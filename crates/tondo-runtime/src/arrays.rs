@@ -1008,9 +1008,12 @@ pub unsafe extern "C" fn tondo_rt_array_repeat(
         }
         let total = total as usize;
         let new = array_alloc(size, total, total);
-        for k in 0..total {
-            std::ptr::copy_nonoverlapping(element(a, size, k % len.max(1)), element(new, size, k), size);
-            if let Some(retain) = retain {
+        // The whole array at a time, then each element retained once.
+        for copy in 0..count as usize {
+            std::ptr::copy_nonoverlapping(element(a, size, 0), element(new, size, copy * len), len * size);
+        }
+        if let Some(retain) = retain {
+            for k in 0..total {
                 retain(element(new, size, k));
             }
         }

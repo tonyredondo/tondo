@@ -69,6 +69,13 @@ an order every machine gives alike and vectors compute fast: it can differ
 in the last bits from adding left to right. `math.dot(a, b)` adds products the
 same way, and `a + b`, `a * 2.0` and the like go element by element.
 
+For numbers in several dimensions, `math.Tensor` keeps a shape and its values
+in one block: `math.Tensor.fromRows([[1.0, 2.0], [3.0, 4.0]])`,
+`math.Tensor(values, [2, 3])`, `math.Tensor[Float].zeros([4])`. `+ - * /` go
+element by element, a size of 1 repeated along the other's (a row with a
+matrix), and a number on either side; `matmul`, `transposed`, `sumAlong`,
+`at(i, j)` and `slice` do the rest. It shows as nested arrays.
+
 ## Ranges and iterators
 
 `0..10` and `0..=10` are `Range[Int]` values; `'a'..='z'` a `Range[Char]`.

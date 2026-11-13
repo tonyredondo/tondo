@@ -48,3 +48,12 @@ test floats {
     testing.bench("dot 100000", () { math.dot(values, others) })
     testing.bench("add 100000", () { values + others })
 }
+
+test tensors {
+    let left = math.Tensor(floatsOf(64 * 64), [64, 64])
+    let other = math.Tensor(floatsOf(64 * 64).reversed(), [64, 64])
+    testing.bench("matmul 64", () { left.matmul(other) })
+    let wide = math.Tensor(floatsOf(256 * 256), [256, 256])
+    let row = math.Tensor(floatsOf(256), [256])
+    testing.bench("broadcast 256", () { wide + row })
+}
