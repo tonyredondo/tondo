@@ -528,7 +528,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Path(_)
                 if let Some(expected) = expected
                     && self.wants_function(expected)
-                    && let Some(form) = self.function_form(cx, e) =>
+                    && let Some(form) = self.function_form(cx, e, expected) =>
             {
                 self.expr_kind(cx, &form, Some(expected))
             }

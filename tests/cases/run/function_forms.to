@@ -1,7 +1,8 @@
 // Where a function is expected, a method with `self`, a variant with
 // positional data, a newtype, `some`, `ok` and `err` are given by their
 // names, as the closures that call them; a method of a trait takes the
-// type the function expected gives it.
+// type the function expected gives it; and so do the methods the compiler
+// gives, as `String.length` and `Float.floor`.
 
 import std.console
 import std.text
@@ -59,8 +60,13 @@ fn main() {
     )
     let results: Array[Int ! NoteError] = [1].map(ok)
     console.println("{[Point { x: 1 }].map(Display.display)} {results.length()}")
+    // One the compiler gives, as a number's or a collection's.
+    console.println(
+        "{["xy"].map(String.length)} {[[1], [2, 3]].map(Array.length)} {[3.5].map(Float.floor)}",
+    )
 }
 
 // expect-stdout: [ADA, BO] true 2 [some(1), some(2)]
 // expect-stdout: [hi x] 6 p3 A
 // expect-stdout: [p1] 1
+// expect-stdout: [2] [1, 2] [3.0]

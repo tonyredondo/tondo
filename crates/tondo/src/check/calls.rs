@@ -2363,7 +2363,9 @@ impl<'a> Checker<'a> {
     /// (11.7): a method with `self`, as `String.toUpper`, a variant with
     /// positional data, a newtype, or `some`, `ok` and `err`; as the closure
     /// that calls it, which compiles as one written out would.
-    pub(super) fn function_form(&mut self, cx: &FnCx, expr: &ast::Expr) -> Option<ast::Expr> {
+    pub(super) fn function_form(&mut self, cx: &FnCx, expr: &ast::Expr, expected: Ty) -> Option<ast::Expr> {
+        // How many values the function expected takes, and how.
+        let wanted = self.expected_modes(expected);
         let ast::ExprKind::Path(segments) = &expr.kind else { return None };
         if self.lookup(cx, &segments[0].name).is_some() || self.visible_capture(cx, &segments[0].name) {
             return None;
@@ -2429,10 +2431,11 @@ impl<'a> Checker<'a> {
                         return None;
                     }
                     (vec![ast::Mode::Value; count], Box::new(Self::calling(path(segments), span)))
-                } else {
-                    // A method with `self`.
-                    let key = self.owner_key(owner_ty);
-                    let id = *self.methods.get(&(key, method.name.clone()))?;
+                } else if let key = self.owner_key(owner_ty)
+                    && let Some(&id) = self.methods.get(&(key, method.name.clone()))
+                {
+                    // A method with `self`, of all its parameters: a
+                    // function value forgets defaults.
                     let signature = &self.signatures[id.0 as usize];
                     let receiver = signature.receiver?;
                     let mut modes = signature.modes.clone();
@@ -2440,7 +2443,35 @@ impl<'a> Checker<'a> {
                         ast::Mode::Mut | ast::Mode::Var => receiver,
                         _ => ast::Mode::Value,
                     };
+                    if let Some(wanted) = wanted.as_ref().filter(|wanted| wanted.len() != modes.len()) {
+                        let name = segments.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
+                        let message = format!(
+                            "`{name}` as a function takes {} values, its defaults forgotten as in any function value, and here one of {} is expected: write a closure, `(value) {{ value.{}() }}`",
+                            modes.len(),
+                            wanted.len(),
+                            method.name
+                        );
+                        self.diags.error("E1102", span, message);
+                        return Some(ast::Expr { kind: ast::ExprKind::Error, span });
+                    }
                     (modes, Box::new(Self::calling(path(segments), span)))
+                } else {
+                    // One the compiler gives, as `String.length` or
+                    // `Float.floor`: called on the first value, with the
+                    // others the function expected.
+                    let modes = wanted.clone().filter(|wanted| !wanted.is_empty())?;
+                    let name = method.clone();
+                    let call = move |mut values: Vec<ast::Expr>, modes: &[ast::Mode]| {
+                        let receiver = values.remove(0);
+                        let callee = ast::Expr { kind: ast::ExprKind::Field(Box::new(receiver), name.clone()), span };
+                        let args = values
+                            .into_iter()
+                            .zip(&modes[1..])
+                            .map(|(value, &mode)| ast::Arg { name: None, value, mode, spread: false, span })
+                            .collect();
+                        ast::Expr { kind: ast::ExprKind::Call { callee: Box::new(callee), args }, span }
+                    };
+                    (modes, Box::new(call))
                 }
             }
             _ => return None,
@@ -2468,6 +2499,23 @@ impl<'a> Checker<'a> {
                 .map(|(value, &mode)| ast::Arg { name: None, value, mode, spread: false, span })
                 .collect();
             ast::Expr { kind: ast::ExprKind::Call { callee: Box::new(callee.clone()), args }, span }
+        }
+    }
+
+    /// How a function that a value of `ty` is takes its values, when `ty`
+    /// says: a function type's, or that of the bound of a type parameter.
+    fn expected_modes(&self, ty: Ty) -> Option<Vec<ast::Mode>> {
+        let ty = match self.types.kind(ty) {
+            TyKind::Option(inner) => *inner,
+            _ => ty,
+        };
+        let ty = self.call_bounds.get(&ty).map_or(ty, |&(_, bound)| bound);
+        match self.types.kind(ty) {
+            TyKind::Fn(params, _, _, modes, _) => {
+                Some(if modes.len() == params.len() { modes.clone() } else { vec![ast::Mode::Value; params.len()] })
+            }
+            TyKind::CFn(params, ..) => Some(vec![ast::Mode::Value; params.len()]),
+            _ => None,
         }
     }
 
@@ -2657,7 +2705,7 @@ impl<'a> Checker<'a> {
             .enumerate()
             .map(|(index, arg)| {
                 let wanted = arg.mode == ast::Mode::Value && !arg.spread && self.wants_function(type_of(index));
-                let value = if wanted { self.function_form(cx, &arg.value)? } else { return None };
+                let value = if wanted { self.function_form(cx, &arg.value, type_of(index))? } else { return None };
                 Some(ast::Arg { value, ..arg.clone() })
             })
             .collect();
@@ -2763,6 +2811,11 @@ impl<'a> Checker<'a> {
             .filter(|g| !inference.map.contains_key(g))
             .map(|&g| format!("`{}`", self.types.display(g)))
             .collect();
+        // An argument that is an error already says why.
+        let failed = values.iter().flatten().any(|value| self.types.has_error(value.ty));
+        if !unknown.is_empty() && failed {
+            return Self::error_expr(span);
+        }
         if !unknown.is_empty() {
             let message = format!(
                 "cannot infer {} from the arguments; write the type arguments: `name[...](...)`",

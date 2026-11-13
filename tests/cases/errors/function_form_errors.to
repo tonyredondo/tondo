@@ -1,0 +1,9 @@
+// A method given by its name takes all its values, its defaults forgotten
+// as in any function value: where a function of fewer is expected, the
+// error says to write the closure.
+
+fn main() {
+    _ = ["a b"].map(String.trim)
+}
+
+// expect-error: E1102 `String.trim` as a function takes 2 values, its defaults forgotten as in any function value, and here one of 1 is expected: write a closure, `(value) { value.trim() }`
