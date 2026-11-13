@@ -606,7 +606,9 @@ impl<'a> Checker<'a> {
             let message = format!("type `{}` is declared more than once", name.name);
             self.diags.error("E1002", name.span, message);
             self.first_declared(name);
-        } else if self.trait_names.contains_key(&name.name) {
+        } else if self.trait_names.contains_key(&name.name) && self.declared_at.contains_key(&name.name) {
+            // A trait declared by this name, not one of the prelude's,
+            // which every module sees by its own.
             let message = format!("`{}` is already declared", name.name);
             self.diags.error("E1002", name.span, message);
             self.first_declared(name);
