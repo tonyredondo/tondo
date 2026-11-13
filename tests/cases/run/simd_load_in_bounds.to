@@ -1,0 +1,49 @@
+// The lanes a loop reads or writes within an array, as its condition says,
+// need no bounds check (prove); one it does not bound keeps it, and panics.
+
+import std.console
+import std.simd
+
+fn dot(a: Array[Float32], b: Array[Float32]): Float32 {
+    var total = simd.Vector256[Float32].zero()
+    var at = 0
+    for at + 8 <= a.length() and at + 8 <= b.length() {
+        total = total + simd.Vector256[Float32].load(ref a, at: at) * simd.Vector256[Float32].load(ref b, at: at)
+        at += 8
+    }
+    total.sum()
+}
+
+fn doubled(values: mut Array[Int32]) {
+    var at = 0
+    for at + 4 <= values.length() {
+        let lanes = simd.Vector128[Int32].load(ref values, at: at)
+        (lanes * 2).store(mut values, at: at)
+        at += 4
+    }
+}
+
+fn past(values: Array[Int32], at: Int): Int32 {
+    simd.Vector128[Int32].load(ref values, at: at).sum()
+}
+
+fn main() {
+    let one: Float32 = 1.0
+    let a = [one].repeat(40)
+    let b = [one].repeat(24)
+    console.println("{dot(a, b)}")
+    var values: Array[Int32] = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    doubled(mut values)
+    console.println("{values}")
+    console.println("{past(values, 4)}")
+    console.println("{past(values, 6)}")
+}
+
+// expect-stdout: 24.0
+// expect-stdout: [2, 4, 6, 8, 10, 12, 14, 16, 9]
+// expect-stdout: 52
+// expect-panic: P0001
+// expect-optimization: 11:25 unchecked stays within its array
+// expect-optimization: 11:71 unchecked stays within its array
+// expect-optimization: 20:21 unchecked stays within its array
+// expect-optimization: 21:9 unchecked stays within its array

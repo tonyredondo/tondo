@@ -63,6 +63,13 @@ pub fn wide(types: &Types, ty: Ty) -> bool {
     matches!(*types.kind(types.repr(ty)), TyKind::Vector(width, _) | TyKind::Mask(width, _) if width.bits() > 128)
 }
 
+/// The lanes a vector of `ty` has, as `lanes()` gives them: a
+/// `Vector[T]`'s too, as it is as wide in every version of a function.
+pub fn lane_count(types: &Types, ty: Ty) -> Option<u32> {
+    let TyKind::Vector(width, lane) = *types.kind(types.repr(ty)) else { return None };
+    Some(count(width, Lanes::of(types, lane)?))
+}
+
 /// How many lanes a vector of `width` with lanes of `lanes` has.
 pub fn count(width: Width, lanes: Lanes) -> u32 {
     width.bits() / lanes.bits()
@@ -87,10 +94,14 @@ pub enum SimdOp {
     Splat,
     Of,
     Load,
+    /// `load` of lanes that `prove` showed are within the array.
+    LoadInBounds,
     Lane,
     WithLane,
     ToArray,
     Store,
+    /// `store` of lanes that `prove` showed are within the array.
+    StoreInBounds,
     // Lane by lane (rules 8 to 11).
     Add,
     Sub,

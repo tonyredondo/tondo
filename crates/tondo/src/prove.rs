@@ -10,8 +10,9 @@
 //! them, anything that may change a length forgets it, and at the head of
 //! a loop those that do not hold on every turn are dropped.
 
-use crate::hir::Callee;
+use crate::hir::{Callee, StdFn};
 use crate::mir::*;
+use crate::simd::SimdOp;
 use crate::source::Span;
 use crate::types::{Ty, TyKind, Types};
 use std::collections::HashMap;
@@ -99,6 +100,18 @@ fn relevant(body: &mut Body, types: &Types) -> Option<Vec<bool>> {
                     any = true;
                 }
             });
+            // The lanes `std.simd` reads from an array or writes to it.
+            if let Statement::Assign(_, rvalue, _) = statement
+                && let Rvalue::Call(Callee::Std(StdFn::Simd(op @ (SimdOp::Load | SimdOp::Store))), args) = &**rvalue
+                && let [array, at] = if *op == SimdOp::Load { &args[0..2] } else { &args[1..3] }
+                && let Some(array) = local(array).filter(|&array| arrays[array])
+            {
+                relevant[array] = true;
+                if let Some(at) = local(at).filter(|&at| ints[at]) {
+                    relevant[at] = true;
+                }
+                any = true;
+            }
             // An `Int` tested against a constant, which the facts may decide
             // when it is a copy of one they follow.
             if let Statement::Assign(_, rvalue, _) = statement
@@ -171,6 +184,14 @@ fn relevant(body: &mut Body, types: &Types) -> Option<Vec<bool>> {
                         && local(o).is_some_and(|source| relevant[source] || counters[source]) =>
                 {
                     [Some(place.local.0 as usize), local(o)].into_iter().flatten().collect()
+                }
+                // A local followed plus or minus a constant, as `at + 8` that
+                // a loop tests against a length.
+                Rvalue::Binary(BinOp::Add | BinOp::Sub, o, Operand::Const(_))
+                | Rvalue::Exact(BinOp::Add | BinOp::Sub, o, Operand::Const(_))
+                    if !target && ints[place.local.0 as usize] && local(o).is_some_and(|source| relevant[source]) =>
+                {
+                    vec![place.local.0 as usize]
                 }
                 Rvalue::Binary(_, a, b) | Rvalue::Exact(_, a, b) if target => {
                     [a, b].into_iter().filter_map(local).filter(|&l| ints[l]).collect()
@@ -861,6 +882,31 @@ impl Prover<'_> {
             Statement::Assign(_, _, span) => *span,
             _ => Span::default(),
         };
+        // The lanes of a `load` or a `store` from `at` to `at + lanes`,
+        // within the array.
+        if let Statement::Assign(place, rvalue, _) = statement
+            && let Rvalue::Call(Callee::Std(StdFn::Simd(op @ (SimdOp::Load | SimdOp::Store))), args) = &mut **rvalue
+        {
+            let load = *op == SimdOp::Load;
+            let (vector, array, at) = match load {
+                true => (self.body.place_ty(self.types, place), &args[0], &args[1]),
+                false => {
+                    let Operand::Copy(vector) = &args[0] else { return };
+                    (self.body.place_ty(self.types, vector), &args[1], &args[2])
+                }
+            };
+            if let Some(lanes) = crate::simd::lane_count(self.types, vector)
+                && let Operand::Copy(Place { local: array, path }) = array
+                && path.is_empty()
+                && self.array(*array)
+                && let Some((node, offset)) = self.value(at)
+                && facts.bound(Node::Zero, node).is_some_and(|k| k <= offset)
+                && facts.bound(node, Node::Len(*array)).is_some_and(|k| k <= -(lanes as i128) - offset)
+            {
+                *op = if load { SimdOp::LoadInBounds } else { SimdOp::StoreInBounds };
+                remarks.push((span, "unchecked", "stays within its array: no bounds check"));
+            }
+        }
         if let Statement::Assign(place, rvalue, _) = statement
             && place.path.is_empty()
             && self.typed_int(place.local)
@@ -992,6 +1038,8 @@ impl Prover<'_> {
                 Some(Callee::Fn(id)) => {
                     self.loans.get(id.0 as usize).and_then(|loans| loans.get(index)).copied().unwrap_or(true)
                 }
+                // A vector's lanes, read or written, leave the length.
+                Some(Callee::Std(StdFn::Simd(_))) => false,
                 _ => self.array(*local),
             };
             if lent {

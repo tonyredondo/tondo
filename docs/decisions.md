@@ -2568,6 +2568,13 @@ names, and reads each element without a check but in live builds. Summing
 passed to the runtime in memory rather than in the registers of a call,
 which a loop's own values had been moved around for.
 
+A `load` or a `store` of `std.simd` is proved the same, for all its lanes: `at` not below zero and
+`at + lanes` not past the length, with the lanes `lanes()` gives; neither forgets the length, as
+no lane changes it. A local that is one the
+pass follows plus or minus a constant is followed too, so that `for at + 8 <= xs.length()`, as a
+loop over lanes is written, bounds `at`: a dot product of two arrays of floats with `Vector256` took
+12% fewer instructions, without the check of its loads and of the counter's sum.
+
 ## 2026-10-27 — Short counted loops run four turns at a time
 
 A loop over a range of `Int`s whose body is short, 24 statements or

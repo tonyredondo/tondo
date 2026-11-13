@@ -157,8 +157,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         // The vector the operation is of: its first argument's, or what it
         // makes.
         let own = match op {
-            Zero | Splat | Of | Load | Joined => ty,
-            Store => self.operand_ty(&args[0]),
+            Zero | Splat | Of | Load | LoadInBounds | Joined => ty,
+            Store | StoreInBounds => self.operand_ty(&args[0]),
             _ => self.operand_ty(&args[0]),
         };
         let shape = self.simd_shape(own);
@@ -183,18 +183,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.assembled(vec![splat; shape.parts()], ty)
             }
             Of => self.simd_of(args, shape, ty, span),
-            Load => {
+            Load | LoadInBounds => {
                 let array = self.scalar(&args[0]);
                 let at = self.scalar(&args[1]);
                 let array_ty = self.operand_ty(&args[0]);
-                let address = self.lanes_address(array, array_ty, at, shape, span);
+                let address = self.lanes_address(array, array_ty, at, shape, op == Load, span);
                 let bytes = shape.part_bytes();
                 let parts = (0..shape.parts())
                     .map(|p| self.e.fb.ins().load(part, flags(), address, p as i32 * bytes))
                     .collect();
                 self.assembled(parts, ty)
             }
-            Store => {
+            Store | StoreInBounds => {
                 let parts = self.parts_of(&args[0], shape);
                 let Operand::Copy(target) = &args[1] else { unreachable!("an array is lent as its place") };
                 let array_ty = self.place_ty(target);
@@ -206,7 +206,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     self.unspill(var, slot);
                 }
                 let at = self.scalar(&args[2]);
-                let address = self.lanes_address(array, array_ty, at, shape, span);
+                let address = self.lanes_address(array, array_ty, at, shape, op == Store, span);
                 let bytes = shape.part_bytes();
                 for (p, part) in parts.into_iter().enumerate() {
                     self.e.fb.ins().store(flags(), part, address, p as i32 * bytes);
@@ -472,8 +472,20 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     }
 
     /// The address of the elements `at` to `at + lanes` of an array,
-    /// panicking with `P0001` when they are not all inside it.
-    fn lanes_address(&mut self, array: ir::Value, array_ty: Ty, at: ir::Value, shape: Shape, span: Span) -> ir::Value {
+    /// panicking with `P0001` when they are not all inside it, unless
+    /// `prove` showed they are.
+    fn lanes_address(
+        &mut self,
+        array: ir::Value,
+        array_ty: Ty,
+        at: ir::Value,
+        shape: Shape,
+        checked: bool,
+        span: Span,
+    ) -> ir::Value {
+        if !checked {
+            return self.element_at(array, array_ty, at);
+        }
         let length = self.e.fb.ins().load(types::I64, flags(), array, 8);
         let last = self.e.fb.ins().iadd_imm_s(at, shape.count() as i64);
         // `at` not negative and `at + lanes` not past the end.
