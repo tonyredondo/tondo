@@ -6678,3 +6678,14 @@ what a mean needs, a division that does not round, rather than how a number is s
 of integers that asks for its mean is E1105, which says the mean is of floats and how to divide
 the sum as floats.
 
+## A terminal's flags are of their field's type
+
+C's headers write the flags of a terminal's mode as plain numbers, which `tondo bind` takes for
+`ffi.CInt`, while the fields of `termios` they go in are `tcflag_t`, an unsigned number of 32 bits
+on Linux and of 64 on macOS: clearing two flags of `c_lflag` needed a conversion that can fail,
+`UInt32(unix.ICANON | unix.ECHO) ?? 0`. The generator of `std.os` writes the flags of the four
+fields as `tcflag_t`, from a list of their names in it, rather than teaching `tondo bind` which
+macro goes in which field, which C does not say. `std.os.unix` shares a constant written with the
+same alias on every target, as it shares the alias, so `ICANON` stays common although `tcflag_t`
+names a different number on each system; `CRTSCTS` and `NOFLSH`, whose types differed, are now
+common too.

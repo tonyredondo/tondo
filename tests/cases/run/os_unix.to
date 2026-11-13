@@ -11,6 +11,12 @@ fn send(to: unix.Fd, text: String): Int {
     unix.write(ref to, text.bytes()) ?? -1
 }
 
+/// The local flags of a mode without its line editing and echo: the flags
+/// are of the field's type, `tcflag_t`.
+fn raw(mode: unix.termios): unix.tcflag_t {
+    mode.c_lflag & ~(unix.ICANON | unix.ECHO)
+}
+
 fn main() {
     match unix.open("/no/such/file", unix.O_RDONLY) {
         ok(_) => console.println("opened")
@@ -42,7 +48,7 @@ fn main() {
             console.println("ready {unix.poll(mut asked, timeout: time.milliseconds(20))}")
             console.println("terminal {unix.isTerminal(ref reading)}")
             match unix.terminalMode(ref reading) {
-                ok(_) => console.println("a mode")
+                ok(mode) => console.println("a mode, raw {raw(mode)}")
                 err(error) => console.println("no mode {error.value == unix.ENOTTY}")
             }
             let sent = spawn send(writing, "ping")

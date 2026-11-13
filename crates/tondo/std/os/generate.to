@@ -68,6 +68,45 @@ fn includes(target: String): String ! String {
     "{path.trim()}/usr/include"
 }
 
+/// The constants of the flags of a terminal's mode, by the field of
+/// `termios` they go in, `c_iflag`, `c_oflag`, `c_cflag` and `c_lflag`: the
+/// headers write them as plain numbers, which `tondo bind` takes for
+/// `ffi.CInt`, while the field is a `tcflag_t`. Typed as the field, they
+/// combine with it, as `mode.c_lflag & ~(unix.ICANON | unix.ECHO)`.
+fn terminalFlags(): Set[String] {
+    let input =
+        "IGNBRK BRKINT IGNPAR PARMRK INPCK ISTRIP INLCR IGNCR ICRNL IUCLC IXON IXANY IXOFF IMAXBEL IUTF8"
+    let output =
+        "OPOST OLCUC ONLCR OCRNL ONOCR ONLRET OFILL OFDEL NLDLY NL0 NL1 NL2 NL3 CRDLY CR0 CR1 CR2 CR3 TABDLY TAB0 TAB1 TAB2 TAB3 BSDLY BS0 BS1 FFDLY FF0 FF1 VTDLY VT0 VT1 XTABS OXTABS ONOEOT"
+    let control =
+        "CIGNORE CSIZE CS5 CS6 CS7 CS8 CSTOPB CREAD PARENB PARODD HUPCL CLOCAL ADDRB CMSPAR CRTSCTS CBAUD CBAUDEX CIBAUD BOTHER CCTS_OFLOW CRTS_IFLOW CDTR_IFLOW CDSR_OFLOW CCAR_OFLOW MDMBUF"
+    let local =
+        "ISIG ICANON XCASE ECHO ECHOE ECHOK ECHONL NOFLSH TOSTOP ECHOCTL ECHOPRT ECHOKE FLUSHO PENDIN IEXTEN EXTPROC ALTWERASE NOKERNINFO"
+    var flags = Set[String]()
+    for name in [input, output, control, local].join(" ").split(" ") {
+        flags.insert(name)
+    }
+    flags
+}
+
+/// `text` with each constant of `terminalFlags` as a `tcflag_t`.
+fn typedFlags(text: String): String {
+    let flags = terminalFlags()
+    let lines = text
+        .lines()
+        .map(
+            (line) {
+                let rest = line.removePrefix("pub const ")
+                let (name, typed) = rest.splitOnce(": ") ?? ("", "")
+                match (rest != line and flags.contains(name), typed.splitOnce(" = ")) {
+                    (true, some((_, value))) => "pub const {name}: tcflag_t = {value}"
+                    _ => line
+                }
+            },
+        )
+    "{lines.join("\n")}\n"
+}
+
 /// The declarations of a target, bound from the system's headers.
 fn bound(target: String, headers: Array[String]): !String {
     let tondo = env.get("TONDO") ?? "tondo"
@@ -85,7 +124,7 @@ fn bound(target: String, headers: Array[String]): !String {
     // still that `tondo bind` wrote it, which keeps C's names.
     let lines = text.lines()
     let rest = (lines.slice(1, lines.length()) ?? []).join("\n")
-    text = "{generated(target)}\n{rest}\n"
+    text = typedFlags("{generated(target)}\n{rest}")
     // `syscall` is the module's own, which takes the arguments as `Int`.
     if target.startsWith("linux") {
         let kept = text.lines().filter((line) { not line.startsWith("pub extern fn syscall(") })
@@ -218,6 +257,7 @@ fn shared(): !String {
     let parameter = regex.Regex.compile(r"([(,])[A-Za-z_][A-Za-z0-9_]*: ").mapErr((e) { "{e}" })?
     var all: Array[Array[Declaration]] = []
     var shapes: Array[Map[String, String]] = []
+    var written: Array[Map[String, String]] = []
     for target in targets() {
         let file = calls(target)
         let text = fs.readText(file).mapErr((e) { "cannot read {file}: {e}" })?
@@ -227,12 +267,16 @@ fn shared(): !String {
             let definition = (declaration.text.lines().last() ?? "").splitOnce(" = ")
             aliases[declaration.name] = (definition ?? ("", "")).1.trim()
         }
-        var shape: Map[String, String] = [:]
+        var (shape, writes): (Map[String, String], Map[String, String]) = ([:], [:])
         for declaration in found {
             shape[declaration.name] = resolved(declaration.shape, aliases)
+            if declaration.text.contains("pub const ") {
+                writes[declaration.name] = declaration.shape
+            }
         }
         all.push(found)
         shapes.push(shape)
+        written.push(writes)
     }
     let own = "crates/tondo/std/os/unix/calls_unix.to"
     let ownText = fs.readText(own).mapErr((e) { "cannot read {own}: {e}" })?
@@ -240,8 +284,17 @@ fn shared(): !String {
         declarations(ownText, parameter)?.map((d) { (d.name.splitOnce(".") ?? (d.name, "")).0 })
     var kept: Set[String] = Set[]
     for declaration in all[0] {
-        let first = shapes[0].get(declaration.name)
-        let everywhere = shapes.all((shape) { shape.get(declaration.name) == first })
+        // One shape, or for a constant one alias of each target's own, as
+        // `tcflag_t`.
+        let (first, firstWritten) = (
+            shapes[0].get(declaration.name),
+            written[0].get(declaration.name),
+        )
+        let sameAlias = match firstWritten {
+            some(_) => written.all((shape) { shape.get(declaration.name) == firstWritten })
+            none => false
+        }
+        let everywhere = shapes.all((shape) { shape.get(declaration.name) == first }) or sameAlias
         if everywhere and not taken.contains(declaration.name) {
             kept.insert(declaration.name)
         }

@@ -7248,7 +7248,10 @@ pub unsafe fn syscall(number: Int, arguments: ...Int): Int ! os.Errno
 --included` escribe de los headers comunes y de `sys/event.h`, una vez por
 arquitectura y desde un mismo SDK. Una macro que no es un número que una
 constante pueda guardar, como `FIONREAD`, que es `_IOR('f', 127, int)`, no
-se declara.
+se declara. Las flags del modo de un terminal, las de los campos `c_iflag`,
+`c_oflag`, `c_cflag` y `c_lflag` de `termios`, son constantes del tipo de
+esos campos, `tcflag_t`, y se combinan con ellos sin conversión:
+`mode.c_lflag & ~(unix.ICANON | unix.ECHO)`.
 
 #### `std.os.unix`
 
@@ -7256,7 +7259,8 @@ se declara.
 Tiene:
 
 - Las declaraciones de C que los cuatro targets tienen con una forma: una
-  constante con su tipo, aunque su valor cambie; una función con su firma,
+  constante con su tipo, aunque su valor cambie, o con un alias del mismo
+  nombre, que cada target define a su modo, como `tcflag_t`; una función con su firma,
   sin contar los nombres de sus parámetros y con cada alias escrito como lo
   que nombra; un tipo o un alias por su nombre, aunque su disposición cambie,
   como `termios`. Cada target tiene además lo que esas declaraciones nombran

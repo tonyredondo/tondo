@@ -1499,141 +1499,145 @@ pub const VLNEXT: ffi.CInt = 15
 
 pub const VEOL2: ffi.CInt = 16
 
-pub const IGNBRK: ffi.CInt = 1
+pub const IGNBRK: tcflag_t = 1
 
-pub const BRKINT: ffi.CInt = 2
+pub const BRKINT: tcflag_t = 2
 
-pub const IGNPAR: ffi.CInt = 4
+pub const IGNPAR: tcflag_t = 4
 
-pub const PARMRK: ffi.CInt = 8
+pub const PARMRK: tcflag_t = 8
 
-pub const INPCK: ffi.CInt = 16
+pub const INPCK: tcflag_t = 16
 
-pub const ISTRIP: ffi.CInt = 32
+pub const ISTRIP: tcflag_t = 32
 
-pub const INLCR: ffi.CInt = 64
+pub const INLCR: tcflag_t = 64
 
-pub const IGNCR: ffi.CInt = 128
+pub const IGNCR: tcflag_t = 128
 
-pub const ICRNL: ffi.CInt = 256
+pub const ICRNL: tcflag_t = 256
 
-pub const IXON: ffi.CInt = 1024
+pub const IXON: tcflag_t = 1024
 
-pub const IXANY: ffi.CInt = 2048
+pub const IXANY: tcflag_t = 2048
 
-pub const IXOFF: ffi.CInt = 4096
+pub const IXOFF: tcflag_t = 4096
 
-pub const IMAXBEL: ffi.CInt = 8192
+pub const IMAXBEL: tcflag_t = 8192
 
-pub const IUTF8: ffi.CInt = 16384
+pub const IUTF8: tcflag_t = 16384
 
-pub const OPOST: ffi.CInt = 1
+pub const OPOST: tcflag_t = 1
 
-pub const ONLCR: ffi.CInt = 4
+pub const ONLCR: tcflag_t = 4
 
-pub const OCRNL: ffi.CInt = 8
+pub const OCRNL: tcflag_t = 8
 
-pub const ONOCR: ffi.CInt = 16
+pub const ONOCR: tcflag_t = 16
 
-pub const ONLRET: ffi.CInt = 32
+pub const ONLRET: tcflag_t = 32
 
-pub const OFILL: ffi.CInt = 64
+pub const OFILL: tcflag_t = 64
 
-pub const OFDEL: ffi.CInt = 128
+pub const OFDEL: tcflag_t = 128
 
-pub const NLDLY: ffi.CInt = 256
+pub const NLDLY: tcflag_t = 256
 
-pub const NL0: ffi.CInt = 0
+pub const NL0: tcflag_t = 0
 
-pub const NL1: ffi.CInt = 256
+pub const NL1: tcflag_t = 256
 
-pub const CRDLY: ffi.CInt = 1536
+pub const CRDLY: tcflag_t = 1536
 
-pub const CR0: ffi.CInt = 0
+pub const CR0: tcflag_t = 0
 
-pub const CR1: ffi.CInt = 512
+pub const CR1: tcflag_t = 512
 
-pub const CR2: ffi.CInt = 1024
+pub const CR2: tcflag_t = 1024
 
-pub const CR3: ffi.CInt = 1536
+pub const CR3: tcflag_t = 1536
 
-pub const TABDLY: ffi.CInt = 6144
+pub const TABDLY: tcflag_t = 6144
 
-pub const TAB0: ffi.CInt = 0
+pub const TAB0: tcflag_t = 0
 
-pub const TAB1: ffi.CInt = 2048
+pub const TAB1: tcflag_t = 2048
 
-pub const TAB2: ffi.CInt = 4096
+pub const TAB2: tcflag_t = 4096
 
-pub const TAB3: ffi.CInt = 6144
+pub const TAB3: tcflag_t = 6144
 
-pub const BSDLY: ffi.CInt = 8192
+pub const BSDLY: tcflag_t = 8192
 
-pub const BS0: ffi.CInt = 0
+pub const BS0: tcflag_t = 0
 
-pub const BS1: ffi.CInt = 8192
+pub const BS1: tcflag_t = 8192
 
-pub const FFDLY: ffi.CInt = 32768
+pub const FFDLY: tcflag_t = 32768
 
-pub const FF0: ffi.CInt = 0
+pub const FF0: tcflag_t = 0
 
-pub const FF1: ffi.CInt = 32768
+pub const FF1: tcflag_t = 32768
 
-pub const VTDLY: ffi.CInt = 16384
+pub const VTDLY: tcflag_t = 16384
 
-pub const VT0: ffi.CInt = 0
+pub const VT0: tcflag_t = 0
 
-pub const VT1: ffi.CInt = 16384
+pub const VT1: tcflag_t = 16384
 
-pub const CSIZE: ffi.CInt = 48
+pub const CRTSCTS: tcflag_t = 2147483648
 
-pub const CS5: ffi.CInt = 0
+pub const CSIZE: tcflag_t = 48
 
-pub const CS6: ffi.CInt = 16
+pub const CS5: tcflag_t = 0
 
-pub const CS7: ffi.CInt = 32
+pub const CS6: tcflag_t = 16
 
-pub const CS8: ffi.CInt = 48
+pub const CS7: tcflag_t = 32
 
-pub const CSTOPB: ffi.CInt = 64
+pub const CS8: tcflag_t = 48
 
-pub const CREAD: ffi.CInt = 128
+pub const CSTOPB: tcflag_t = 64
 
-pub const PARENB: ffi.CInt = 256
+pub const CREAD: tcflag_t = 128
 
-pub const PARODD: ffi.CInt = 512
+pub const PARENB: tcflag_t = 256
 
-pub const HUPCL: ffi.CInt = 1024
+pub const PARODD: tcflag_t = 512
 
-pub const CLOCAL: ffi.CInt = 2048
+pub const HUPCL: tcflag_t = 1024
 
-pub const ISIG: ffi.CInt = 1
+pub const CLOCAL: tcflag_t = 2048
 
-pub const ICANON: ffi.CInt = 2
+pub const ISIG: tcflag_t = 1
 
-pub const ECHO: ffi.CInt = 8
+pub const ICANON: tcflag_t = 2
 
-pub const ECHOE: ffi.CInt = 16
+pub const ECHO: tcflag_t = 8
 
-pub const ECHOK: ffi.CInt = 32
+pub const ECHOE: tcflag_t = 16
 
-pub const ECHONL: ffi.CInt = 64
+pub const ECHOK: tcflag_t = 32
 
-pub const TOSTOP: ffi.CInt = 256
+pub const ECHONL: tcflag_t = 64
 
-pub const ECHOCTL: ffi.CInt = 512
+pub const NOFLSH: tcflag_t = 128
 
-pub const ECHOPRT: ffi.CInt = 1024
+pub const TOSTOP: tcflag_t = 256
 
-pub const ECHOKE: ffi.CInt = 2048
+pub const ECHOCTL: tcflag_t = 512
 
-pub const FLUSHO: ffi.CInt = 4096
+pub const ECHOPRT: tcflag_t = 1024
 
-pub const PENDIN: ffi.CInt = 16384
+pub const ECHOKE: tcflag_t = 2048
 
-pub const IEXTEN: ffi.CInt = 32768
+pub const FLUSHO: tcflag_t = 4096
 
-pub const EXTPROC: ffi.CInt = 65536
+pub const PENDIN: tcflag_t = 16384
+
+pub const IEXTEN: tcflag_t = 32768
+
+pub const EXTPROC: tcflag_t = 65536
 
 pub const TCOOFF: ffi.CInt = 0
 
