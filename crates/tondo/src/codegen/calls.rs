@@ -64,6 +64,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.call_rt(Rt::ConsoleSet, &[index, values[0]])
             }
             Callee::Std(StdFn::Number(_)) => unreachable!("assigned by `number`"),
+            Callee::Std(StdFn::Simd(_)) => unreachable!("assigned by `simd`"),
             Callee::Std(StdFn::Native(index)) => {
                 // Arithmetic the processor does in one instruction, as
                 // `hir::IN_ONE_INSTRUCTION` lists it, and a fused multiply
@@ -358,6 +359,6 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
 
 /// Whether the code's processor multiplies and adds in one instruction:
 /// every arm64, and an x64 with FMA.
-fn fused_multiply_add(isa: &dyn cranelift_codegen::isa::TargetIsa) -> bool {
+pub(super) fn fused_multiply_add(isa: &dyn cranelift_codegen::isa::TargetIsa) -> bool {
     isa.name() == "aarch64" || isa.isa_flags().iter().any(|flag| flag.name == "has_fma" && flag.as_bool() == Some(true))
 }

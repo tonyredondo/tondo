@@ -51,6 +51,7 @@ mod live;
 mod operators;
 mod places;
 mod runtime;
+mod simd;
 mod statements;
 mod tables;
 mod tasks;
@@ -176,8 +177,23 @@ fn symbol_name(index: usize, name: &str) -> String {
     format!("tondo_f{index}_{clean}")
 }
 
+/// Memory the program reaches, which never traps. It claims no alignment:
+/// a vector of `std.simd` may lie at an address of 8 bytes, which x64's
+/// instructions of 16 bytes would fault on if it claimed its own.
+/// The generator's vector of 128 bits with lanes of `lane`: a mask's is its
+/// vector's, as a comparison gives all ones or zero in each lane.
+pub(crate) fn vector_type(types: &Types, lane: Ty) -> ir::Type {
+    let lane = match types.kind(types.repr(lane)) {
+        TyKind::Int(int) => int_type(*int),
+        TyKind::Float(FloatTy::F32) => types::F32,
+        TyKind::Float(FloatTy::F64) => types::F64,
+        _ => types::I8,
+    };
+    lane.by(128 / lane.bits()).expect("a vector of 128 bits")
+}
+
 fn flags() -> MemFlagsData {
-    MemFlagsData::trusted()
+    MemFlagsData::new().with_notrap()
 }
 
 /// How an object is built: `meta` counts a step at each call and each turn
@@ -968,6 +984,17 @@ impl<'t> Shapes<'t> {
             | TyKind::Handle(..)
             | TyKind::Pointer(_) => Class::Scalar(POINTER),
             TyKind::CArray(..) => Class::Memory,
+            // A vector of 128 bits is one register; a wider one, its halves
+            // in memory.
+            TyKind::Vector(width, lane) => match width.bits() {
+                128 => Class::Scalar(vector_type(self.types, *lane)),
+                _ => Class::Memory,
+            },
+            // A mask's lanes are integers as wide as its vector's.
+            TyKind::Mask(width, lane) => match width.bits() {
+                128 => Class::Scalar(vector_type(self.types, *lane).as_int()),
+                _ => Class::Memory,
+            },
             TyKind::Tuple(_) | TyKind::Adt(_) | TyKind::Option(_) | TyKind::Result(..) | TyKind::Union(_) => {
                 let layout = self.layout(repr);
                 match layout.shape {
@@ -1008,6 +1035,8 @@ impl<'t> Shapes<'t> {
             && self.types.is_address(inner)
         {
             Layout { size: 8, align: 8, shape: Shape::Niche }
+        } else if let TyKind::Vector(width, _) | TyKind::Mask(width, _) = *self.types.kind(ty) {
+            Layout { size: width.bits() / 8, align: 8, shape: Shape::Scalar }
         } else if let TyKind::CArray(element, count) = *self.types.kind(ty) {
             let element = self.layout(element);
             Layout { size: element.size * count, align: element.align, shape: Shape::Scalar }
@@ -2166,6 +2195,44 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
             self.fb.switch_to_block(done);
             return;
         }
+        // A vector of `std.simd`, `<1.0, 2.0>`, and a mask, `<true, false>`.
+        if let TyKind::Vector(width, lane) | TyKind::Mask(width, lane) = *types.kind(types.repr(ty)) {
+            let mask = matches!(types.kind(types.repr(ty)), TyKind::Mask(..));
+            let lanes = crate::simd::Lanes::of(types, lane).expect("a vector's lanes");
+            let count = crate::simd::count(width, lanes);
+            let clif = vector_type(types, lane).lane_type();
+            let clif = if mask { clif.as_int() } else { clif };
+            let address = match value {
+                Val::Memory(address) => address,
+                Val::Scalar(vector) => {
+                    let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 4);
+                    let slot = self.fb.create_sized_stack_slot(data);
+                    let address = self.fb.ins().stack_addr(POINTER, slot, 0);
+                    self.fb.ins().store(flags(), vector, address, 0);
+                    address
+                }
+                Val::Zero => unreachable!("a vector has bits"),
+            };
+            let open = self.string_ptr("<");
+            self.call_rt(Rt::SbStr, &[builder, open]);
+            for index in 0..count {
+                if index > 0 {
+                    let comma = self.string_ptr(", ");
+                    self.call_rt(Rt::SbStr, &[builder, comma]);
+                }
+                let read = self.fb.ins().load(clif, flags(), address, (index * lanes.bits() / 8) as i32);
+                match mask {
+                    true => {
+                        let set = self.fb.ins().icmp_imm_s(IntCC::NotEqual, read, 0);
+                        self.append_display(builder, Ty::BOOL, Val::Scalar(set));
+                    }
+                    false => self.append_display(builder, lane, Val::Scalar(read)),
+                }
+            }
+            let close = self.string_ptr(">");
+            self.call_rt(Rt::SbStr, &[builder, close]);
+            return;
+        }
         // A tuple: `(a, b)`, each part with its own `Display`.
         if let TyKind::Tuple(items) = types.kind(types.repr(ty)).clone() {
             let open = self.string_ptr("(");
@@ -2383,7 +2450,9 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
                 self.append_display(builder, ty, value);
                 text(self, "'");
             }
-            TyKind::Bool | TyKind::Int(_) | TyKind::Float(_) | TyKind::Byte => self.append_display(builder, ty, value),
+            TyKind::Bool | TyKind::Int(_) | TyKind::Float(_) | TyKind::Byte | TyKind::Vector(..) | TyKind::Mask(..) => {
+                self.append_display(builder, ty, value)
+            }
             TyKind::Unit => text(self, "()"),
             TyKind::Tuple(items) => {
                 text(self, "(");
@@ -2927,6 +2996,29 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
 
     /// Structural equality (8.11): 1 when equal, 0 otherwise.
     fn equal(&mut self, ty: Ty, a: Val, b: Val) -> ir::Value {
+        // A vector of `std.simd`: every lane equal by its type's `==`.
+        let types = self.cg.types();
+        if let TyKind::Vector(width, lane) | TyKind::Mask(width, lane) = *types.kind(types.repr(ty)) {
+            let mask = matches!(types.kind(types.repr(ty)), TyKind::Mask(..));
+            let part = vector_type(types, lane);
+            let part = if mask { part.as_int() } else { part };
+            let mut result = self.fb.ins().iconst(types::I8, 1);
+            for index in 0..(width.bits() / 128) as i32 {
+                let mut read = |value: Val| match value {
+                    Val::Scalar(v) => v,
+                    Val::Memory(address) => self.fb.ins().load(part, flags(), address, index * 16),
+                    Val::Zero => unreachable!("a vector has bits"),
+                };
+                let (x, y) = (read(a), read(b));
+                let same = match part.lane_type().is_float() {
+                    true => self.fb.ins().fcmp(FloatCC::Equal, x, y),
+                    false => self.fb.ins().icmp(IntCC::Equal, x, y),
+                };
+                let every = self.fb.ins().vall_true(same);
+                result = self.fb.ins().band(result, every);
+            }
+            return result;
+        }
         match (a, b) {
             (Val::Scalar(a), Val::Scalar(b)) => match *self.cg.types().kind(self.cg.types().repr(ty)) {
                 TyKind::String => self.call_rt(Rt::StrEq, &[a, b]).unwrap(),

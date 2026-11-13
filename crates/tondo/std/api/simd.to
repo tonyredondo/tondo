@@ -1,0 +1,269 @@
+// std.simd: vectors of numbers, each lane computed at once by the
+// processor's vector instructions (standard library 14.46). Vectors of 128,
+// 256 and 512 bits, and `Vector[T]`, the widest that is accelerated where
+// the code runs, give the same results everywhere: a width the processor
+// does not do is computed on halves of 128 bits.
+//
+// ```tondo
+// import std.console
+// import std.simd
+//
+// fn sumOfSquares(values: Array[Float32]): Float32 {
+//     let lanes = simd.Vector[Float32].lanes()
+//     var total = simd.Vector[Float32].zero()
+//     var at = 0
+//     for at + lanes <= values.length() {
+//         let chunk = simd.Vector[Float32].load(ref values, at: at)
+//         total = total + chunk * chunk
+//         at += lanes
+//     }
+//     var rest = total.sum()
+//     for value in values[at:] {
+//         rest += value * value
+//     }
+//     rest
+// }
+//
+// fn main() {
+//     console.println("{sumOfSquares([1.0, 2.0, 3.0, 4.0, 5.0])}")
+// }
+// ```
+
+/// A vector of 128 bits: as many lanes of `T` as fit, `Int8`, `Int16`,
+/// `Int32`, `Int`, `UInt8`, `UInt16`, `UInt32`, `UInt`, `Byte`, `Float32` or
+/// `Float`. It is a value, shown as its lanes: `<1.0, 2.0, 3.0, 4.0>`.
+/// `+`, `-` and `*` work lane by lane, with a `T` on either side for every
+/// lane, `/` on floats, and `&`, `|`, `^`, `~`, `<<` and `>>` on integers and
+/// bytes. An integer lane that overflows wraps.
+///
+/// ```tondo
+/// import std.console
+/// import std.simd
+///
+/// let a = simd.Vector128[Float32].of(1.0, 2.0, 3.0, 4.0)
+/// console.println("{a * 2.0 + 1.0} {a.sum()} {simd.Vector128[Float32].lanes()}")
+/// ```
+pub type Vector128[T]
+
+/// A vector of 256 bits, with the functions and methods of `Vector128` at its
+/// width, and `joined`, `lower` and `upper`. It is computed on halves of 128
+/// bits until the code generator makes vectors of 256 bits.
+///
+/// ```tondo
+/// import std.console
+/// import std.simd
+///
+/// let a = simd.Vector256[Int32].all(3)
+/// console.println("{a.lower() + a.upper()} {simd.Vector256[Int32].accelerated()}")
+/// ```
+pub type Vector256[T]
+
+/// A vector of 512 bits, with the functions and methods of `Vector128` at its
+/// width, and `joined`, `lower` and `upper`.
+///
+/// ```tondo
+/// import std.console
+/// import std.simd
+///
+/// console.println("{simd.Vector512[Byte].lanes()}")
+/// ```
+pub type Vector512[T]
+
+/// The widest vector that is accelerated where the code runs, 128 bits until
+/// wider ones are, with the functions and methods of `Vector128`. Its result
+/// can differ by its width, as `sum` groups the lanes by it.
+///
+/// ```tondo
+/// import std.console
+/// import std.simd
+///
+/// console.println("{simd.Vector[Float32].lanes() >= 4}")
+/// ```
+pub type Vector[T]
+
+/// A `Bool` for each lane of a `Vector128[T]`, as a comparison gives it;
+/// shown as `<true, false, ...>`. Masks have `&`, `|`, `^` and `~`.
+///
+/// ```tondo
+/// import std.console
+/// import std.simd
+///
+/// let a = simd.Vector128[Int32].of(1, 5, 2, 8)
+/// let big = a.greater(simd.Vector128[Int32].all(3))
+/// console.println("{big} {big.count()} {big.choose(a, -a)}")
+/// ```
+pub type Mask128[T]
+
+/// The mask of a `Vector256[T]`.
+///
+/// ```tondo
+/// import std.console
+/// import std.simd
+///
+/// let a = simd.Vector256[Int32].all(1)
+/// console.println("{a.equal(a).all()}")
+/// ```
+pub type Mask256[T]
+
+/// The mask of a `Vector512[T]`.
+///
+/// ```tondo
+/// import std.console
+/// import std.simd
+///
+/// let a = simd.Vector512[Int32].all(1)
+/// console.println("{a.less(a).any()}")
+/// ```
+pub type Mask512[T]
+
+/// The mask of a `Vector[T]`.
+///
+/// ```tondo
+/// import std.console
+/// import std.simd
+///
+/// let a = simd.Vector[Float].all(1.0)
+/// console.println("{a.lessOrEqual(a).bits() > 0}")
+/// ```
+pub type Mask[T]
+
+/// A vector of zeros.
+pub fn Vector128.zero(): Vector128[T]
+
+/// A vector with `value` in every lane.
+pub fn Vector128.all(value: T): Vector128[T]
+
+/// A vector of these values, one for each lane; another count is an error
+/// where the values are written, and a panic for an array spread.
+pub fn Vector128.of(values: ...T): Vector128[T]
+
+/// The lanes from `values[at]` on; past the end of the array, a panic of an
+/// index out of range (`P0001`).
+pub fn Vector128.load(values: ref Array[T], at: Int = 0): Vector128[T]
+
+/// How many lanes it has, known when compiling.
+pub fn Vector128.lanes(): Int
+
+/// Whether its operations are done with instructions of its width where the
+/// code runs, known when compiling.
+pub fn Vector128.accelerated(): Bool
+
+/// The vector of 256 bits whose lanes are `lower`'s, then `upper`'s.
+pub fn Vector256.joined(lower: Vector128[T], upper: Vector128[T]): Vector256[T]
+
+/// The lane `index`; one that is not a lane panics (`P0001`).
+pub fn Vector128.lane(self, index: Int): T
+
+/// A copy with `value` in lane `index`.
+pub fn Vector128.withLane(self, index: Int, value: T): Vector128[T]
+
+/// Its lanes, in order.
+pub fn Vector128.toArray(self): Array[T]
+
+/// Writes its lanes into `into` from `at`; past the end, a panic (`P0001`).
+pub fn Vector128.store(self, into: mut Array[T], at: Int = 0)
+
+/// The lesser of each pair of lanes; of floats, NaN when either is, and
+/// `-0.0` below `+0.0`.
+pub fn Vector128.min(self, other: Vector128[T]): Vector128[T]
+
+/// The greater of each pair of lanes; of floats, NaN when either is.
+pub fn Vector128.max(self, other: Vector128[T]): Vector128[T]
+
+/// Each lane's magnitude; the least integer wraps to itself.
+pub fn Vector128.abs(self): Vector128[T]
+
+/// The sums of integer lanes, held at the least or the greatest value.
+pub fn Vector128.saturatingAdd(self, other: Vector128[T]): Vector128[T]
+
+/// The differences of integer lanes, held at the least or the greatest
+/// value.
+pub fn Vector128.saturatingSub(self, other: Vector128[T]): Vector128[T]
+
+/// Each float lane's square root; NaN for a negative one.
+pub fn Vector128.sqrt(self): Vector128[T]
+
+/// Each float lane rounded down.
+pub fn Vector128.floor(self): Vector128[T]
+
+/// Each float lane rounded up.
+pub fn Vector128.ceil(self): Vector128[T]
+
+/// Each float lane to the nearest whole number, ties to even.
+pub fn Vector128.round(self): Vector128[T]
+
+/// Each float lane toward zero.
+pub fn Vector128.truncate(self): Vector128[T]
+
+/// `self * factor + addend` of float lanes, rounded once.
+pub fn Vector128.fma(self, factor: Vector128[T], addend: Vector128[T]): Vector128[T]
+
+/// Where the lanes are equal.
+pub fn Vector128.equal(self, other: Vector128[T]): Mask128[T]
+
+/// Where the lanes differ; a NaN lane differs.
+pub fn Vector128.notEqual(self, other: Vector128[T]): Mask128[T]
+
+/// Where `self`'s lane is less; a NaN lane is not.
+pub fn Vector128.less(self, other: Vector128[T]): Mask128[T]
+
+/// Where `self`'s lane is less or equal.
+pub fn Vector128.lessOrEqual(self, other: Vector128[T]): Mask128[T]
+
+/// Where `self`'s lane is greater.
+pub fn Vector128.greater(self, other: Vector128[T]): Mask128[T]
+
+/// Where `self`'s lane is greater or equal.
+pub fn Vector128.greaterOrEqual(self, other: Vector128[T]): Mask128[T]
+
+/// The sum of its lanes, by halves: lane `j` with lane `j + lanes / 2`,
+/// until one is left. Integers wrap.
+pub fn Vector128.sum(self): T
+
+/// The least of its lanes.
+pub fn Vector128.minLane(self): T
+
+/// The greatest of its lanes.
+pub fn Vector128.maxLane(self): T
+
+/// Its lanes in the opposite order.
+pub fn Vector128.reversed(self): Vector128[T]
+
+/// Of a vector of bytes, `Byte`, `UInt8` or `Int8`: in each lane, the lane
+/// of `self` that `indexes` names there, and zero for an index of 16 or more.
+pub fn Vector128.swizzle(self, indexes: Vector128[T]): Vector128[T]
+
+/// Its lanes from 0 to half of them.
+pub fn Vector256.lower(self): Vector128[T]
+
+/// Its lanes from half of them on.
+pub fn Vector256.upper(self): Vector128[T]
+
+/// Each lane's value as a `U` as wide: between `Int32`, `UInt32` and
+/// `Float32`, and between `Int`, `UInt` and `Float`. A float becomes the
+/// nearest integer toward zero, the greatest or the least when it does not
+/// fit, and zero for NaN; an integer that does not fit, the greatest or the
+/// least.
+pub fn Vector128.to[U](self): Vector128[U]
+
+/// The same bits, as lanes of `U`.
+pub fn Vector128.cast[U](self): Vector128[U]
+
+/// In each lane, `whenTrue`'s where the mask is `true`, and `whenFalse`'s
+/// where it is not.
+pub fn Mask128.choose(self, whenTrue: Vector128[T], whenFalse: Vector128[T]): Vector128[T]
+
+/// Whether any lane is `true`.
+pub fn Mask128.any(self): Bool
+
+/// Whether every lane is `true`.
+pub fn Mask128.all(self): Bool
+
+/// How many lanes are `true`.
+pub fn Mask128.count(self): Int
+
+/// Bit `i` set where lane `i` is `true`.
+pub fn Mask128.bits(self): UInt
+
+/// The lane `index`.
+pub fn Mask128.lane(self, index: Int): Bool

@@ -325,6 +325,10 @@ impl<'a> Checker<'a> {
             TyKind::Array(element) => format!("pass a `Pointer[{}]` to its elements", self.types.display(*element)),
             TyKind::Char => "a character crosses as `UInt32`".into(),
             TyKind::Fn(..) => "a function crosses as `extern fn(...)`".into(),
+            TyKind::Vector(..) | TyKind::Mask(..) => {
+                "vectors do not cross to C: pass a `Pointer` to an array of their lanes, from `toArray()` or `store`"
+                    .into()
+            }
             TyKind::Option(_) => {
                 "only an option of a pointer or of an `extern fn(...)` crosses, as a null address for `none`".into()
             }

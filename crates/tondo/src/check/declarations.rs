@@ -181,6 +181,7 @@ impl<'a> Checker<'a> {
             ["std", "text"] => StdModule::Text,
             ["std", "time"] => StdModule::Time,
             ["std", "sync"] => StdModule::Sync,
+            ["std", "simd"] => StdModule::Simd,
             ["std", "fs"] => StdModule::Fs,
             ["std", "path"] => StdModule::Path,
             ["std", "io"] => StdModule::Io,

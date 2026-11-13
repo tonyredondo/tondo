@@ -28,6 +28,9 @@ impl<'a> Checker<'a> {
                     return self.big_literal(&format!("-{digits}"), expected, span);
                 }
                 let value = self.expr(cx, operand, expected);
+                if self.vectored(value.ty).is_some() {
+                    return self.simd_unary(op, value, span);
+                }
                 let negatable = match self.types.kind(value.ty) {
                     TyKind::Int(int) => int.signed(),
                     TyKind::Float(_) | TyKind::Error | TyKind::Never => true,
@@ -53,6 +56,9 @@ impl<'a> Checker<'a> {
             }
             UnaryOp::BitNot => {
                 let value = self.expr(cx, operand, expected);
+                if self.vectored(value.ty).is_some() {
+                    return self.simd_unary(op, value, span);
+                }
                 if value.ty != Ty::BYTE && !self.bound_by(value.ty, self.integer) {
                     self.require_int(&value);
                 }
@@ -94,6 +100,9 @@ impl<'a> Checker<'a> {
                 let (leaf, depth) = self.number_leaf(element);
                 (leaf, depth + 1)
             }
+            // A literal with a vector stands for each lane (rule 8 of
+            // std.simd).
+            TyKind::Vector(_, lane) => (lane, 1),
             _ => (ty, 0),
         }
     }
@@ -256,17 +265,23 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         comparison: bool,
     ) -> (hir::Expr, hir::Expr) {
+        // A literal beside a vector stands for each lane.
+        let lane = |this: &Self, ty: Ty| this.vectored(ty).filter(|v| !v.mask).map_or(ty, |v| v.lane);
         if Self::is_untyped_literal(left) && !Self::is_untyped_literal(right) {
             let right = self.expr(cx, right, expected);
-            let left = self.expr(cx, left, Some(right.ty));
+            let left = self.expr(cx, left, Some(lane(self, right.ty)));
+            if self.vectored(right.ty).is_some() {
+                return (left, right);
+            }
             let outer = std::mem::replace(&mut self.comparing, comparison.then_some(true));
             let left = self.coerce(left, right.ty);
             self.comparing = outer;
             (left, right)
         } else {
             let left = self.expr(cx, left, expected);
-            let right = self.expr(cx, right, Some(left.ty));
-            if left.ty == Ty::NEVER {
+            let hint = if Self::is_untyped_literal(right) { lane(self, left.ty) } else { left.ty };
+            let right = self.expr(cx, right, Some(hint));
+            if left.ty == Ty::NEVER || self.vectored(left.ty).is_some() || self.vectored(right.ty).is_some() {
                 return (left, right);
             }
             let outer = std::mem::replace(&mut self.comparing, comparison.then_some(false));
@@ -310,6 +325,10 @@ impl<'a> Checker<'a> {
             }
             BinOp::Shl | BinOp::Shr => {
                 let left = self.expr(cx, left, expected);
+                if self.vectored(left.ty).is_some() {
+                    let right = self.expr(cx, right, Some(Ty::INT));
+                    return self.simd_binary(op, left, right, span);
+                }
                 if left.ty != Ty::BYTE && !self.bound_by(left.ty, self.integer) {
                     self.require_int(&left);
                 }
@@ -320,6 +339,9 @@ impl<'a> Checker<'a> {
             }
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
                 let (left, right) = self.arithmetic_operands(cx, left, right, expected);
+                if self.vectored(left.ty).is_some() || self.vectored(right.ty).is_some() {
+                    return self.simd_binary(op, left, right, span);
+                }
                 // The trait's method, on a type that takes the operator by one (18.10).
                 if let Some((trait_id, index)) = self.operator_trait(op, left.ty) {
                     let ty = left.ty;
@@ -350,6 +372,11 @@ impl<'a> Checker<'a> {
                     let callee = Callee::Std(StdFn::Process(hir::ProcessFn::Pipe));
                     return Self::mk(hir::ExprKind::Call(callee, Vec::new(), vec![left, right]), pipeline, span);
                 }
+                if let Some(own) = self.vectored(left.ty) {
+                    let hint = if Self::is_untyped_literal(right) && !own.mask { own.lane } else { left.ty };
+                    let right = self.expr(cx, right, Some(hint));
+                    return self.simd_binary(op, left, right, span);
+                }
                 let right = self.expr(cx, right, Some(left.ty));
                 let (left, right) = if left.ty == Ty::NEVER { (left, right) } else { self.common(left, right) };
                 let allowed =
@@ -363,6 +390,9 @@ impl<'a> Checker<'a> {
             }
             BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
                 let (left, right) = self.operands(cx, left, right, expected, false);
+                if self.vectored(left.ty).is_some() || self.vectored(right.ty).is_some() {
+                    return self.simd_binary(op, left, right, span);
+                }
                 let allowed =
                     matches!(self.types.kind(left.ty), TyKind::Int(_) | TyKind::Byte | TyKind::Error | TyKind::Never)
                         || self.bound_by(left.ty, self.integer);
@@ -374,6 +404,9 @@ impl<'a> Checker<'a> {
             }
             BinOp::Eq | BinOp::Ne => {
                 let (left, right) = self.operands(cx, left, right, None, true);
+                if self.vectored(left.ty).is_some() || self.vectored(right.ty).is_some() {
+                    return self.simd_binary(op, left, right, span);
+                }
                 if matches!(self.types.kind(left.ty), TyKind::Pointer(_)) {
                     let message =
                         "raw pointers have no `==`: compare `left.address() == right.address()` inside `unsafe`";
@@ -386,6 +419,9 @@ impl<'a> Checker<'a> {
             }
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                 let (left, right) = self.operands(cx, left, right, None, true);
+                if self.vectored(left.ty).is_some() || self.vectored(right.ty).is_some() {
+                    return self.simd_binary(op, left, right, span);
+                }
                 let ordered = matches!(
                     self.types.kind(left.ty),
                     TyKind::Int(_)

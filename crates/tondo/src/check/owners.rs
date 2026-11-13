@@ -273,6 +273,11 @@ impl<'a> Checker<'a> {
                     {
                         return self.sync_type(name, &args, t.span);
                     }
+                    if let [module, name] = segments.as_slice()
+                        && let Some(ModuleName::Module(StdModule::Simd)) = self.names.get(&module.name)
+                    {
+                        return self.simd_type(name, &args, t.span);
+                    }
                     if let [name] = segments.as_slice()
                         && let Some(&TypeName::Template(template)) = self.type_names.get(&name.name)
                     {

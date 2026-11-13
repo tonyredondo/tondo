@@ -107,6 +107,7 @@ uses them: the same record is read from JSON and written as YAML.
 | [std.process](process.md) | running programs and pipelines, their input and output, signals |
 | [std.env](env.md) | arguments, environment, directories, processors, what the program was built from |
 | [std.cpu](cpu.md) | what the processor has beyond the level the program was built for |
+| [std.simd](simd.md) | vectors of numbers computed a lane at a time by the processor's vector instructions |
 | [std.os](os.md) | what is of each system: its error number, `os.Errno` |
 | [std.os.linux](os.linux.md) | Linux's calls, constants and types with C's names, and `syscall` |
 | [std.os.macos](os.macos.md) | macOS's calls, constants and types with C's names |

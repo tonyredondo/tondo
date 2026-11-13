@@ -6430,3 +6430,27 @@ any task may call holds no raw pointer.
 Both architectures of macOS come from one SDK, the x86-64 one through `cc -arch x86_64`: the two
 runners GitHub has carry SDKs of different versions, whose declarations differ by more than the
 architecture.
+
+## Vectors in the language, computed on halves where they are wide
+
+`std.simd`'s vectors are types the compiler knows, as numbers are, so that each operation is the
+processor's instruction for every lane rather than a call: a vector of 128 bits lives in one
+register, and the operations of `+`, `-`, `*`, `min`, the comparisons and the others are the code
+generator's vector instructions, which x64 and arm64 both have. A vector of 256 or 512 bits is
+kept in memory and computed on its parts of 128 bits, which gives the same lanes as the
+definition, so a program that uses one is right everywhere before the generator learns those
+widths, and `accelerated()` says which it is.
+
+What the processor has no instruction for is made of others: the product of lanes of 8 bits on
+x64, from lanes widened to 16; the saturating sums of lanes of 32 and 64 bits, from the wrapped
+sum and the signs that tell an overflow; `fma` lane by lane through C's `fma` where the level has
+no fused multiply. `to[U]` between a signed and an unsigned type holds a value that does not fit
+at the least or the greatest, as it does a float, rather than wrapping.
+
+The generator was told that memory it reads and writes is aligned: x64's vector instructions fault
+on an address that is not a multiple of 16, and a vector can lie at one of 8, so that claim was
+dropped, which changes no code made before, as nothing else read it.
+
+A test makes a program for every type of lanes with every operation at each width, and holds what
+it prints to each operation's definition worked out a lane at a time, any NaN being equal to
+another, since their payloads differ between processors.

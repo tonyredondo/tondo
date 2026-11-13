@@ -3635,6 +3635,58 @@ pub type Violation = {
     path: String
     message: String
 }
+== std.simd
+pub fn Mask128.all(self): Bool
+pub fn Mask128.any(self): Bool
+pub fn Mask128.bits(self): UInt
+pub fn Mask128.choose(self, whenTrue: Vector128[T], whenFalse: Vector128[T]): Vector128[T]
+pub fn Mask128.count(self): Int
+pub fn Mask128.lane(self, index: Int): Bool
+pub fn Vector128.abs(self): Vector128[T]
+pub fn Vector128.accelerated(): Bool
+pub fn Vector128.all(value: T): Vector128[T]
+pub fn Vector128.cast[U](self): Vector128[U]
+pub fn Vector128.ceil(self): Vector128[T]
+pub fn Vector128.equal(self, other: Vector128[T]): Mask128[T]
+pub fn Vector128.floor(self): Vector128[T]
+pub fn Vector128.fma(self, factor: Vector128[T], addend: Vector128[T]): Vector128[T]
+pub fn Vector128.greater(self, other: Vector128[T]): Mask128[T]
+pub fn Vector128.greaterOrEqual(self, other: Vector128[T]): Mask128[T]
+pub fn Vector128.lane(self, index: Int): T
+pub fn Vector128.lanes(): Int
+pub fn Vector128.less(self, other: Vector128[T]): Mask128[T]
+pub fn Vector128.lessOrEqual(self, other: Vector128[T]): Mask128[T]
+pub fn Vector128.load(values: ref Array[T], at: Int = 0): Vector128[T]
+pub fn Vector128.max(self, other: Vector128[T]): Vector128[T]
+pub fn Vector128.maxLane(self): T
+pub fn Vector128.min(self, other: Vector128[T]): Vector128[T]
+pub fn Vector128.minLane(self): T
+pub fn Vector128.notEqual(self, other: Vector128[T]): Mask128[T]
+pub fn Vector128.of(values: ...T): Vector128[T]
+pub fn Vector128.reversed(self): Vector128[T]
+pub fn Vector128.round(self): Vector128[T]
+pub fn Vector128.saturatingAdd(self, other: Vector128[T]): Vector128[T]
+pub fn Vector128.saturatingSub(self, other: Vector128[T]): Vector128[T]
+pub fn Vector128.sqrt(self): Vector128[T]
+pub fn Vector128.store(self, into: mut Array[T], at: Int = 0)
+pub fn Vector128.sum(self): T
+pub fn Vector128.swizzle(self, indexes: Vector128[T]): Vector128[T]
+pub fn Vector128.toArray(self): Array[T]
+pub fn Vector128.to[U](self): Vector128[U]
+pub fn Vector128.truncate(self): Vector128[T]
+pub fn Vector128.withLane(self, index: Int, value: T): Vector128[T]
+pub fn Vector128.zero(): Vector128[T]
+pub fn Vector256.joined(lower: Vector128[T], upper: Vector128[T]): Vector256[T]
+pub fn Vector256.lower(self): Vector128[T]
+pub fn Vector256.upper(self): Vector128[T]
+pub type Mask128[T]
+pub type Mask256[T]
+pub type Mask512[T]
+pub type Mask[T]
+pub type Vector128[T]
+pub type Vector256[T]
+pub type Vector512[T]
+pub type Vector[T]
 == std.sql
 impl Display for ErrorKind
 impl Display for Operation

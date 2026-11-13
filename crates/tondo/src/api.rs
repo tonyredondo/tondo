@@ -17,6 +17,7 @@ const INTRINSIC: &[(&str, &str)] = &[
     ("io", include_str!("../std/api/io.to")),
     ("path", include_str!("../std/api/path.to")),
     ("process", include_str!("../std/api/process.to")),
+    ("simd", include_str!("../std/api/simd.to")),
     ("sync", include_str!("../std/api/sync.to")),
     ("testing", include_str!("../std/api/testing.to")),
     ("text", include_str!("../std/api/text.to")),

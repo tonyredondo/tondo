@@ -7228,6 +7228,101 @@ pub fn Mapping.close(self): !os.Errno
 - `std.fs`, `std.net` y `std.process` no cambian: son lo que un programa usa
   primero, igual en cada sistema, y `std.os` es lo que hay debajo.
 
+### 14.46 `std.simd`
+
+`std.simd` tiene los vectores de 18.11 del lenguaje. Estas son las funciones y
+métodos de cada ancho, escritos aquí para `Vector128` y `Mask128`; `V` es un
+vector de cualquier ancho con su `T`, y `M` su máscara:
+
+~~~tondo pseudocode
+pub fn Vector128[T].zero(): Vector128[T]
+pub fn Vector128[T].all(value: T): Vector128[T]
+pub fn Vector128[T].of(values: ...T): Vector128[T]
+pub fn Vector128[T].load(values: ref Array[T], at: Int = 0): Vector128[T]
+pub fn Vector128[T].lanes(): Int
+pub fn Vector128[T].accelerated(): Bool
+
+pub fn Vector128[T].lane(self, index: Int): T
+pub fn Vector128[T].withLane(self, index: Int, value: T): Vector128[T]
+pub fn Vector128[T].toArray(self): Array[T]
+pub fn Vector128[T].store(self, into: mut Array[T], at: Int = 0)
+
+pub fn V.min(self, other: V): V
+pub fn V.max(self, other: V): V
+pub fn V.abs(self): V
+pub fn V.saturatingAdd(self, other: V): V      // enteros
+pub fn V.saturatingSub(self, other: V): V      // enteros
+pub fn V.sqrt(self): V                         // floats
+pub fn V.floor(self): V                        // floats
+pub fn V.ceil(self): V                         // floats
+pub fn V.round(self): V                        // floats: al más cercano, empates al par
+pub fn V.truncate(self): V                     // floats
+pub fn V.fma(self, factor: V, addend: V): V    // floats: self * factor + addend, redondeado una vez
+
+pub fn V.equal(self, other: V): M
+pub fn V.notEqual(self, other: V): M
+pub fn V.less(self, other: V): M
+pub fn V.lessOrEqual(self, other: V): M
+pub fn V.greater(self, other: V): M
+pub fn V.greaterOrEqual(self, other: V): M
+
+pub fn M.choose(self, whenTrue: V, whenFalse: V): V
+pub fn M.any(self): Bool
+pub fn M.all(self): Bool
+pub fn M.count(self): Int
+pub fn M.bits(self): UInt
+pub fn M.lane(self, index: Int): Bool
+
+pub fn V.sum(self): T
+pub fn V.minLane(self): T
+pub fn V.maxLane(self): T
+
+pub fn V.reversed(self): V
+pub fn Vector128[Byte].swizzle(self, indexes: Vector128[Byte]): Vector128[Byte]
+pub fn Vector256[T].joined(lower: Vector128[T], upper: Vector128[T]): Vector256[T]
+pub fn Vector512[T].joined(lower: Vector256[T], upper: Vector256[T]): Vector512[T]
+pub fn Vector256[T].lower(self): Vector128[T]
+pub fn Vector256[T].upper(self): Vector128[T]
+pub fn Vector512[T].lower(self): Vector256[T]
+pub fn Vector512[T].upper(self): Vector256[T]
+pub fn Vector128[T].to[U](self): Vector128[U]
+pub fn Vector128[T].cast[U](self): Vector128[U]
+~~~
+
+- Las funciones sin `self` se llaman con el tipo de los carriles escrito,
+  `simd.Vector128[Float32].zero()` (11.5 del lenguaje), o sin él donde se
+  espera un vector de ese ancho. `lanes()` y `accelerated()` se conocen al
+  compilar; `accelerated()` es `true` para 128 bits en x64 y arm64, a cada
+  nivel, y `false` para 256 y 512 bits hasta que el generador de código haga
+  vectores de esos anchos. `Vector[T]` es entonces `Vector128[T]`.
+- `of` recibe exactamente `lanes()` valores; otra cantidad es un error donde
+  los valores se escriben en la llamada, y `P0006` con un array esparcido.
+- `load` lee `lanes()` elementos desde `at` y `store` los escribe. Si el array
+  tiene menos de `at + lanes()` elementos, o `at` es negativo, entran en pánico
+  como un índice fuera de rango (`P0001`). `lane`, `withLane` y el `lane` de una
+  máscara lo hacen con un índice que no es un carril.
+- `min` y `max` de floats dan NaN cuando cualquiera de los carriles lo es, y
+  toman `-0.0` por menor que `+0.0`, en cada procesador. `sqrt` de un carril
+  negativo es NaN. `abs` del menor entero da él mismo. `saturatingAdd` y
+  `saturatingSub` se quedan en el menor o el mayor valor del tipo.
+- Una comparación con un carril NaN es `false`, y `notEqual` es `true`.
+  `choose` da en cada carril el de `whenTrue` donde la máscara es `true` y el
+  de `whenFalse` donde no; no se llama `select`, que es palabra reservada.
+  `bits` tiene el bit `i` puesto cuando el carril `i` es `true`.
+- `sum`, `minLane` y `maxLane` combinan por mitades: el carril `j` con el
+  carril `j + lanes / 2`, hasta que queda uno. Los enteros se envuelven. El
+  resultado de `sum` con floats depende así del ancho, por cómo agrupa.
+- `swizzle` da en cada carril el byte de `self` en el índice que `indexes`
+  tiene ahí, y cero para un índice de 16 o más; existe también en
+  `Vector128[UInt8]` y `Vector128[Int8]`, con índices de su tipo.
+- `lower` tiene los carriles desde el 0 y `upper` el resto; `joined` los une.
+- `to[U]` convierte el valor de cada carril a un `U` del mismo ancho: entre
+  `Int32`, `UInt32` y `Float32`, y entre `Int`, `UInt` y `Float`. Un float pasa
+  al entero más cercano hacia cero, al mayor o al menor cuando no cabe, y a
+  cero si es NaN; un entero que no cabe, al mayor o al menor. `cast[U]` lee los
+  mismos bits como carriles de cualquier `U`. Otro `U` en `to` es un error que
+  nombra los que hay y `cast`.
+
 ## 15. Contrato exigido a cada módulo
 
 Antes de considerarse especificado, cada módulo debe incluir:

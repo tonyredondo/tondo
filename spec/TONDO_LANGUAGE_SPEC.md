@@ -7298,7 +7298,8 @@ Los enteros con y sin signo admiten `+`, `-`, `*`, `/` y `%`. Los floats admiten
 
 Un parámetro `T: Integer` admite los operadores de los enteros; uno `T: Number` o un tipo que implementa `Number`, `+`, `-`, `*` y `/`; uno `T: Additive` o un tipo que implementa `Additive`, `+` y `-` (18.10).
 
-También se elevan sobre arrays como se define en 10.6.
+También se elevan sobre arrays como se define en 10.6, y sobre los vectores de
+`std.simd`, carril a carril, como se define en 18.11.
 
 `+` no concatena strings, arrays ni maps.
 
@@ -7862,6 +7863,51 @@ fn hex[T: Integer](value: T): String {
 ~~~
 
 `Array.sum()` exige `T: Additive`: `[price, tax].sum()` es un `Money`.
+
+### 18.11 Vectores
+
+Los tipos de `std.simd` (librería estándar 14.46) son vectores de números que
+el compilador conoce: `Vector128[T]`, `Vector256[T]` y `Vector512[T]`, de ese
+ancho en bits, y `Vector[T]`, el más ancho de los tres que está acelerado donde
+corre el código. Cada uno tiene su máscara, `Mask128[T]` y las demás, con un
+`Bool` por carril.
+
+- `T` es `Int8`, `Int16`, `Int32`, `Int`, `UInt8`, `UInt16`, `UInt32`, `UInt`,
+  `Byte`, `Float32` o `Float`; otro es un error de compilación que los nombra.
+  Un vector tiene tantos carriles como valores de `T` caben en su ancho:
+  `Vector128[Float32]` tiene 4 y `Vector512[Byte]` 64. El carril 0 es el
+  primero.
+- Son valores: `Copy`, `Send`, `Share` y `Equatable`. Dos vectores son iguales
+  cuando lo es cada carril, por el `==` de `T`. Se muestran como sus carriles,
+  `<1.0, 2.0, 3.0, 4.0>`, y una máscara como `<true, false, true, true>`.
+- `Vector[T]` y `Mask[T]` no se convierten solos a un ancho fijo ni al revés.
+- No cruzan a C: uno en la firma de un `extern fn` es `E1703`.
+- `+`, `-` y `*` operan carril a carril entre dos vectores de un tipo, y entre
+  un vector y un `T` a cualquier lado, que vale por todos los carriles; `/`
+  solo con floats, y el `-` unario con enteros con signo y floats. Los enteros
+  y `Byte` tienen además `&`, `|`, `^`, `~`, y `<<` y `>>` por un `Int` que
+  desplaza cada carril y que fuera de rango es `P0010`, como el de un escalar.
+  Un vector de `Byte` no tiene aritmética. Las máscaras tienen `&`, `|`, `^` y
+  `~`.
+- Un carril entero que se desborda conserva los bits bajos, donde un escalar
+  entraría en pánico: ninguna operación de vectores entra en pánico por el
+  valor de un carril. Los floats siguen IEEE 754 en cada carril (18.5).
+- `<`, `<=`, `>` y `>=` dan un `Bool`, y entre vectores son un error que
+  nombra el método que compara carril a carril y da una máscara: `less`,
+  `lessOrEqual`, `greater` y `greaterOrEqual`.
+- Cada tipo funciona en cada procesador con los mismos resultados: una
+  operación de un ancho que no está acelerado se hace sobre sus dos mitades,
+  por su definición carril a carril. `accelerated()` dice si las de un tipo se
+  hacen con instrucciones de su ancho donde corre el código, y se conoce al
+  compilar, en cada versión compilada.
+- Cuando un ancho mayor que 128 bits esté acelerado, una función cuyo código
+  usa `Vector[T]`, `Vector256[T]` o `Vector512[T]`, en su cuerpo o en lo que
+  se le incorpora, se compila una vez para cada nivel en el que más de lo que
+  usa está acelerado, junto a su versión del nivel del build. Una llamada
+  desde código de un nivel menor pasa por una prueba del procesador, hecha una
+  vez y recordada, que elige la versión más alta que el procesador puede
+  ejecutar; desde una versión, la llamada a otra función con versiones va
+  directa a la del mismo nivel. Nada se escribe en el código.
 
 ---
 

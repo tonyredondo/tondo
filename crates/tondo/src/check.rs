@@ -19,6 +19,7 @@ mod patterns;
 mod program;
 mod reach;
 mod routes;
+mod simd;
 mod statements;
 mod std_checks;
 mod traits;
@@ -279,6 +280,8 @@ struct AliasEntry {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum StdModule {
     Console,
+    /// `std.simd`: vectors (standard library 14.46).
+    Simd,
     Collections,
     Text,
     Time,

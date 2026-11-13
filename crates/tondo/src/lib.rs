@@ -65,6 +65,7 @@ pub mod prove;
 pub mod reserve;
 #[cfg(feature = "rules")]
 pub mod rules;
+pub mod simd;
 pub mod stack;
 pub mod verify;
 // Its kinds of error are the runtime's; the compiler reads only their names.

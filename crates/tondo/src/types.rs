@@ -192,6 +192,42 @@ pub enum TyKind {
     /// function's type arguments. Callers only know its bounds;
     /// monomorphization replaces it with the witness its body returns.
     Opaque(u32, Vec<Ty>),
+    /// A vector of `std.simd` of a width, with lanes of a number type.
+    Vector(Width, Ty),
+    /// The mask of a vector of `std.simd`: a `Bool` for each lane.
+    Mask(Width, Ty),
+}
+
+/// The width of a vector of `std.simd`: `Widest` is the widest of the
+/// others that is accelerated where the code runs.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Width {
+    W128,
+    W256,
+    W512,
+    Widest,
+}
+
+impl Width {
+    /// Its bits, as the code is made: `Widest` is 128 until the generator
+    /// makes wider vectors.
+    pub fn bits(self) -> u32 {
+        match self {
+            Width::W128 | Width::Widest => 128,
+            Width::W256 => 256,
+            Width::W512 => 512,
+        }
+    }
+
+    /// The name of its vector type, and of its mask's.
+    pub fn names(self) -> (&'static str, &'static str) {
+        match self {
+            Width::W128 => ("Vector128", "Mask128"),
+            Width::W256 => ("Vector256", "Mask256"),
+            Width::W512 => ("Vector512", "Mask512"),
+            Width::Widest => ("Vector", "Mask"),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -1816,7 +1852,9 @@ impl Types {
             | TyKind::String
             | TyKind::Unit
             | TyKind::Never
-            | TyKind::Error => true,
+            | TyKind::Error
+            | TyKind::Vector(..)
+            | TyKind::Mask(..) => true,
             TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => {
                 self.equatable_in(*element, visiting)
             }
@@ -1921,6 +1959,8 @@ impl Types {
             TyKind::Array(element) => format!("Array[{}]", self.display(*element)),
             TyKind::Pointer(element) => format!("Pointer[{}]", self.display(*element)),
             TyKind::CArray(element, count) => format!("{}[{count}]", self.display(*element)),
+            TyKind::Vector(width, lane) => format!("simd.{}[{}]", width.names().0, self.display(*lane)),
+            TyKind::Mask(width, lane) => format!("simd.{}[{}]", width.names().1, self.display(*lane)),
             TyKind::Deque(element) => format!("Deque[{}]", self.display(*element)),
             TyKind::Map(key, value) => format!("Map[{}, {}]", self.display(*key), self.display(*value)),
             TyKind::Set(element) => format!("Set[{}]", self.display(*element)),

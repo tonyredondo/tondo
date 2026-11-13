@@ -960,6 +960,8 @@ pub enum StdFn {
     CpuHas,
     /// A named operation of a number (18.9).
     Number(crate::numbers::NumOp),
+    /// An operation of `std.simd` (standard library 14.46).
+    Simd(crate::simd::SimdOp),
     /// `time.sleep(delay)`: waits without blocking the thread (14.3.3).
     TimeSleep,
     /// `time.now()`, `unixTime()`, `utcNow()` and `utc(sinceEpoch)` (14.3).

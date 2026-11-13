@@ -87,6 +87,10 @@ impl<'a> Checker<'a> {
         args: &[ast::Arg],
         span: Span,
     ) -> hir::Expr {
+        // `vector.cast[U]()` of std.simd.
+        if self.vectored(receiver.ty).is_some() {
+            return self.simd_converted(receiver, method, &types, args, span);
+        }
         let address = Ty::int(IntTy::U64);
         let target = match *self.types.kind(receiver.ty) {
             TyKind::Pointer(target) => Some(target),

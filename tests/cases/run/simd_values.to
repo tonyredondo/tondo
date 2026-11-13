@@ -1,0 +1,52 @@
+// The vectors of std.simd are values: in a record, an array and a task,
+// passed and given back, compared with `==`, and shown as their lanes.
+
+import std.console
+import std.simd
+
+type Particle = {
+    position: simd.Vector128[Float32]
+    wide: simd.Vector256[Int32]
+}
+
+fn moved(particle: Particle, by: simd.Vector128[Float32]): Particle {
+    Particle { position: particle.position + by, wide: particle.wide * 2 }
+}
+
+fn total(values: Array[Float32]): Float32 {
+    let lanes = simd.Vector[Float32].lanes()
+    var sum = simd.Vector[Float32].zero()
+    var at = 0
+    for at + lanes <= values.length() {
+        sum = sum + simd.Vector[Float32].load(ref values, at: at)
+        at += lanes
+    }
+    var rest = sum.sum()
+    for value in values[at:] {
+        rest += value
+    }
+    rest
+}
+
+fn main() {
+    let start = Particle {
+        position: simd.Vector128[Float32].of(1.0, 2.0, 3.0, 4.0)
+        wide: simd.Vector256[Int32].all(3)
+    }
+    let next = moved(start, simd.Vector128[Float32].all(0.5))
+    console.println("{next.position} {next.wide.sum()}")
+    let many = [start.position, next.position]
+    console.println("{many == [start.position, next.position]} {many[1] == start.position}")
+    let task = spawn moved(next, next.position)
+    console.println("{task.wait().position}")
+    let values: Array[Float32] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+    console.println("{total(values)} {simd.Vector[Float32].accelerated()} {simd.Vector512[Byte].lanes()}")
+    let mask = start.position.greater(simd.Vector128[Float32].all(2.0))
+    console.println("{mask} {mask.choose(start.position, -start.position)} {~mask}")
+}
+
+// expect-stdout: <1.5, 2.5, 3.5, 4.5> 48
+// expect-stdout: true false
+// expect-stdout: <3.0, 5.0, 7.0, 9.0>
+// expect-stdout: 55.0 true 64
+// expect-stdout: <false, false, true, true> <-1.0, -2.0, 3.0, 4.0> <true, true, false, false>

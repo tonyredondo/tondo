@@ -129,6 +129,7 @@ pub(crate) fn may_panic(statement: &Statement) -> bool {
                     | Rvalue::Transfer(_)
                     | Rvalue::OsrPoint => false,
                     Rvalue::Call(hir::Callee::Std(hir::StdFn::Number(op)), _) => op.may_panic(),
+                    Rvalue::Call(hir::Callee::Std(hir::StdFn::Simd(op)), _) => op.may_panic(),
                     Rvalue::Call(hir::Callee::Std(function), _) => !matches!(
                         function,
                         hir::StdFn::RecoverEnter

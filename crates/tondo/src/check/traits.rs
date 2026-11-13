@@ -817,9 +817,14 @@ impl<'a> Checker<'a> {
         }
         if trait_id == DISPLAY {
             let parts: Option<Vec<Ty>> = match self.types.kind(ty) {
-                TyKind::Int(_) | TyKind::Float(_) | TyKind::Char | TyKind::Byte | TyKind::Bool | TyKind::String => {
-                    Some(Vec::new())
-                }
+                TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Char
+                | TyKind::Byte
+                | TyKind::Bool
+                | TyKind::String
+                | TyKind::Vector(..)
+                | TyKind::Mask(..) => Some(Vec::new()),
                 TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) | TyKind::Option(element) => {
                     Some(vec![*element])
                 }

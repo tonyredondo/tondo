@@ -25,6 +25,9 @@ impl<'a> Checker<'a> {
         if value.ty == Ty::ERROR {
             return Self::error_expr(span);
         }
+        if self.vectored(value.ty).is_some() {
+            return self.simd_converted(value, method, &types, args, span);
+        }
         let key = self.owner_key(value.ty);
         let Some(&id) = self.methods.get(&(key, method.name.clone())) else {
             let message = format!(
@@ -79,6 +82,18 @@ impl<'a> Checker<'a> {
             self.unknown_name(cx, first, segments[0].span);
         }
         Self::error_expr(span)
+    }
+
+    /// A path with type arguments written before `.name(...)`: `Box[Float]`,
+    /// which parses as an index, or `Pair[Int, String]`.
+    fn typed_receiver(receiver: &ast::Expr) -> Option<(&[ast::Ident], Vec<ast::TypeExpr>)> {
+        let (base, written) = match &receiver.kind {
+            ast::ExprKind::Index { base, index } => (base, vec![Self::type_of_expr(index)?]),
+            ast::ExprKind::Generic { base, args } => (base, args.clone()),
+            _ => return None,
+        };
+        let ast::ExprKind::Path(segments) = &base.kind else { return None };
+        Some((segments, written))
     }
 
     /// The generic type and its type arguments written before `.name(...)`:
@@ -610,6 +625,9 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> hir::Expr {
         let ty = value.ty;
+        if self.vectored(ty).is_some() {
+            return self.simd_method(cx, value, method, args, expected, span);
+        }
         if self.is_http_route(ty, method, args) {
             return self.http_route(cx, value, method, args, expected, span);
         }
@@ -1599,6 +1617,36 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
+        // `simd.Vector128[Float32].zero()`: a function of a vector type.
+        if let ast::ExprKind::Field(receiver, method) = &callee.kind
+            && let Some((segments, written)) = Self::typed_receiver(receiver)
+            && self.simd_named(segments).is_some()
+        {
+            let ty = ast::TypeExpr {
+                kind: ast::TypeKind::Path { segments: segments.to_vec(), args: written },
+                span: receiver.span,
+            };
+            let owner = self.resolve_type(&ty);
+            if self.types.has_error(owner) {
+                return Self::error_expr(span);
+            }
+            return self.simd_static(cx, owner, method, args, expected, span);
+        }
+        // `simd.Vector128.zero()`, its lanes' type the one expected.
+        if let ast::ExprKind::Path(segments) = &callee.kind
+            && let [module, name, method] = segments.as_slice()
+            && let Some((width, mask)) = self.simd_named(&[module.clone(), name.clone()])
+        {
+            let Some(owner) = self.simd_owner(width, mask, expected) else {
+                let message = format!(
+                    "cannot infer the lanes' type of `simd.{0}`; write it: `simd.{0}[Float32].{1}(...)`",
+                    name.name, method.name
+                );
+                self.diags.error("E1101", span, message);
+                return Self::error_expr(span);
+            };
+            return self.simd_static(cx, owner, method, args, expected, span);
+        }
         // `Box[Float].name(...)`: a function of a generic type, its type
         // arguments given where nothing else gives them.
         if let ast::ExprKind::Field(receiver, method) = &callee.kind

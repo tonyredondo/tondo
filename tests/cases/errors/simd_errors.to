@@ -1,0 +1,29 @@
+// The diagnostics of std.simd: a type of lanes no vector has, an operator a
+// vector does not have, `of` with another count of values than lanes,
+// `to[U]` to another width, a vector in a signature of C, and `<` between
+// vectors, which compare lane by lane with `less`.
+
+import std.simd
+
+extern fn sum(values: simd.Vector128[Float32]): Float32
+
+fn main() {
+    _ = simd.Vector128[String].zero()
+    let ints = simd.Vector128[Int32].all(4)
+    let bytes = simd.Vector128[Byte].all(1)
+    _ = ints / ints
+    _ = bytes + bytes
+    _ = simd.Vector128[Int32].of(1, 2, 3)
+    _ = ints.to[Int]()
+    _ = ints < ints
+    _ = ints.sqrt()
+}
+
+// expect-error: E1703 `simd.Vector128[Float32]` cannot cross to C: vectors do not cross to C: pass a `Pointer` to an array of their lanes, from `toArray()` or `store`
+// expect-error: E1102 the lanes of a vector are `Int8`, `Int16`, `Int32`, `Int`, `UInt8`, `UInt16`, `UInt32`, `UInt`, `Byte`, `Float32` and `Float`, not `String`
+// expect-error: E1102 operator `/` cannot be applied to `simd.Vector128[Int32]`: a vector of integers has `+`, `-`, `*`, unary `-`, `&`, `|`, `^`, `~` and the shifts by an `Int`
+// expect-error: E1102 operator `+` cannot be applied to `simd.Vector128[Byte]`: a vector of `Byte` has `&`, `|`, `^`, `~` and the shifts, and no arithmetic
+// expect-error: E1102 `of` takes 4 values, one for each lane of `simd.Vector128[Int32]`, and 3 are given
+// expect-error: E1102 `to` converts each lane to a type as wide: of `simd.Vector128[Int32]`, `Int32`, `UInt32`, `Float32`; `cast[U]()` reads the bits as lanes of any `U`
+// expect-error: E1102 `<` gives one `Bool`, and vectors compare lane by lane: `a.less(b)` gives a mask
+// expect-error: E1102 `simd.Vector128[Int32]` has no `sqrt`, which vectors of `Float32` and `Float` have
