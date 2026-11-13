@@ -357,8 +357,10 @@ fn a_library_that_tondo_built_ends_and_unloads() {
     let shared = dir.join(if cfg!(target_os = "macos") { "out/libends.dylib" } else { "out/libends.so" });
     let run = Command::new(dir.join("unload")).arg(&shared).output().unwrap();
     // macOS keeps an image with thread-local variables loaded, which the
-    // runtime has: there the library ends, stays, and starts again.
-    let unloaded = if cfg!(target_os = "macos") { "loaded" } else { "unloaded" };
+    // runtime has, and musl never unloads one: there the library ends,
+    // stays, and starts again.
+    let kept = cfg!(any(target_os = "macos", target_env = "musl"));
+    let unloaded = if kept { "loaded" } else { "unloaded" };
     assert_eq!(
         String::from_utf8_lossy(&run.stdout),
         format!(
@@ -378,11 +380,10 @@ fn a_library_that_tondo_built_ends_and_unloads() {
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let no_load = if cfg!(target_os = "macos") { "16" } else { "4" };
     let run = Command::new(host.join("host")).arg(&shared).arg(no_load).output().unwrap();
-    let loaded = cfg!(target_os = "macos");
     assert_eq!(
         String::from_utf8_lossy(&run.stdout),
         format!(
-            "cleaned\nlistening true, loaded {loaded}\ncleaned\nlistening true, loaded {loaded}\n10\nclosed, loaded {loaded}\n"
+            "cleaned\nlistening true, loaded {kept}\ncleaned\nlistening true, loaded {kept}\n10\nclosed, loaded {kept}\n"
         ),
         "{}",
         String::from_utf8_lossy(&run.stderr)

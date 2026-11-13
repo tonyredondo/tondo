@@ -6660,6 +6660,8 @@ of the library loaded later keeps the signal stack it finds. A task that never w
 waits where a cancellation does not reach, as for a terminal nobody writes to, keeps the stop
 waiting; the processes the library started are ended, as at a program's end. Calling it again after a stop starts the
 runtime again, its threads and its handlers, as a first call does. macOS never unloads an image
-with thread-local variables, as the runtime's: there a library ends, stays, and a later call or
-load starts it again, which its tests check there.
+with thread-local variables, as the runtime's, and musl's `dlclose` unloads nothing: there a
+library ends, stays, and a later call or load starts it again, which its tests check there. As
+musl's `__cxa_finalize` runs nothing either, the runtime keeps what it registered for the end of
+the process and runs it itself at the stop, once.
 

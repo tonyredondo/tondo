@@ -163,8 +163,9 @@ fn a_contract_crosses_to_a_library_and_to_a_program_alike() {
     let calls = "ok(good morning, Ada)\nok([HI, HI])\nerr(Rude(too many))\nerr(the plugin panicked: a negative count)\n\
                  16 answers, the last good morning, caller 15\n";
     let no_load = if cfg!(target_os = "macos") { "16" } else { "4" };
-    // macOS keeps an image with thread-local variables loaded.
-    let loaded = cfg!(target_os = "macos");
+    // macOS keeps an image with thread-local variables loaded, and musl
+    // never unloads one.
+    let loaded = cfg!(any(target_os = "macos", target_env = "musl"));
     assert_eq!(run(&app, &["--library", library.to_str().unwrap(), no_load]), format!("{calls}loaded {loaded}\n"));
     let marker = dir.join("ended");
     let started = run(&app, &["--program", app.to_str().unwrap(), marker.to_str().unwrap()]);

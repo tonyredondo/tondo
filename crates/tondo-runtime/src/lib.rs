@@ -153,13 +153,43 @@ pub(crate) fn image() -> *mut u8 {
     &LIBRARY as *const AtomicBool as *mut u8
 }
 
+/// What runs when the process ends, once: registered with the C library,
+/// and kept here too, as a library's end runs it itself, where musl's
+/// `__cxa_finalize` runs nothing.
+struct AtExit {
+    function: extern "C" fn(*mut u8),
+    done: AtomicBool,
+}
+
+static AT_EXIT: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
 /// Runs `function` when the process ends, or when a library ends before.
 pub(crate) fn at_exit(function: extern "C" fn(*mut u8)) {
     // `atexit` is not a symbol of glibc's shared library.
     unsafe extern "C" {
         fn __cxa_atexit(function: extern "C" fn(*mut u8), argument: *mut u8, image: *mut u8) -> i32;
     }
-    unsafe { __cxa_atexit(function, std::ptr::null_mut(), image()) };
+    extern "C" fn once(entry: *mut u8) {
+        let entry = unsafe { &*(entry as *const AtExit) };
+        if !entry.done.swap(true, Ordering::AcqRel) {
+            (entry.function)(std::ptr::null_mut());
+        }
+    }
+    let entry = Box::into_raw(Box::new(AtExit { function, done: AtomicBool::new(false) }));
+    AT_EXIT.lock().unwrap_or_else(|e| e.into_inner()).push(entry as usize);
+    unsafe { __cxa_atexit(once, entry as *mut u8, image()) };
+}
+
+/// At a library's end: what it registered for the end of the process runs
+/// now, last first, and not again.
+pub(crate) fn run_at_exit() {
+    let entries = std::mem::take(&mut *AT_EXIT.lock().unwrap_or_else(|e| e.into_inner()));
+    for &entry in entries.iter().rev() {
+        let entry = unsafe { &*(entry as *const AtExit) };
+        if !entry.done.swap(true, Ordering::AcqRel) {
+            (entry.function)(std::ptr::null_mut());
+        }
+    }
 }
 
 /// Runs a program: the `main` the compiler generates for an executable

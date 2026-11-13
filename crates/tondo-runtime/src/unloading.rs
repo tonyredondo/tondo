@@ -80,7 +80,9 @@ pub extern "C" fn tondo_rt_library_stop() {
     crate::tasks::stop_runtime();
     crate::trace::give_back_handlers();
     crate::shared::flush();
-    // What it registered for the end of the process, which runs now.
+    // What it registered for the end of the process runs now; glibc and
+    // macOS then forget it, which musl does not need, as it never unloads.
+    crate::run_at_exit();
     unsafe extern "C" {
         fn __cxa_finalize(image: *mut u8);
     }
