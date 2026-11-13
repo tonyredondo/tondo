@@ -29,7 +29,7 @@ fn main(): !process.ProcessError {
     console.println("{counted.map((line) { line.trim() })}")
 
     // `text` gives what it printed, without the line's end; `run` shows it and fails when the command fails.
-    console.println($(LANG=C date -u -d @0 +%Y).text()?)
+    console.println($(NAME=tondo printenv NAME).text()?)
     match $(false).run() {
         ok(_) => console.println("it worked")
         err(error) => console.println("{error}")
@@ -44,7 +44,7 @@ fn main(): !process.ProcessError {
 ```text output
 [tea, a file with spaces, $HOME]
 [3 tea, 1 pot, 1 cup]
-1970
+tondo
 exited with code 1
 from a string
 ```
