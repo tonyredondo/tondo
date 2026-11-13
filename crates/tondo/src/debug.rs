@@ -1589,7 +1589,7 @@ impl Replaying {
                 let count = rest.trim().parse::<usize>().unwrap_or(1).max(1);
                 let lines = ticks("lines");
                 let back = lines.len().checked_sub(count).map(|at| lines[at]);
-                back.map(|to| (to, format!("{count} lines back"), Value::Null))
+                back.map(|to| (to, lines_back(count as u64), Value::Null))
                     .ok_or(format!("task {task} has no line that many lines back"))
             }
             "reverse" => match ticks("hits").last() {
@@ -2269,7 +2269,7 @@ impl Session {
                 "history" => match stop["back"].as_u64().unwrap_or(0) {
                     0 => println!("back in the present, at {at}"),
                     back => {
-                        println!("{back} lines back in task {}'s history, at {at}", stop["task"]);
+                        println!("{} in task {}'s history, at {at}", lines_back(back), stop["task"]);
                         if let Some(because) = stop["because"].as_str() {
                             println!("{because}");
                         }
@@ -2339,7 +2339,7 @@ impl Session {
                 println!("no line of the history gave it a value");
             }
             for change in timeline {
-                let back = change["back"].as_u64().map_or(String::new(), |back| format!(", {back} lines back"));
+                let back = change["back"].as_u64().map_or(String::new(), |back| format!(", {}", lines_back(back)));
                 println!(
                     "{}  at {}{back}{}",
                     change["value"].as_str().unwrap_or_default(),
@@ -2524,4 +2524,12 @@ pub(crate) fn order_of_tasks(order: &str) -> [(&'static str, String); 2] {
         None => ("TONDO_RT_SCHEDULE", order.to_string()),
     };
     [("TONDO_RACE", "1".to_string()), chosen]
+}
+
+/// How far back in a task's history: "1 line back", "3 lines back".
+fn lines_back(count: u64) -> String {
+    match count {
+        1 => "1 line back".into(),
+        count => format!("{count} lines back"),
+    }
 }

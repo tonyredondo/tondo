@@ -2246,6 +2246,7 @@ fn a_replay_holds_the_threads_of_c_to_their_order() {
     let output = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
     assert!(output.contains("racing.to:21"), "{output}");
     assert!(output.contains("next: Int = 2"), "{output}");
+    assert!(output.contains("(1 line back)"), "{output}");
     assert!(output.matches("stopped at").count() >= 3, "{output}");
     assert!(output.contains("the first time `next > 40` holds"), "{output}");
 }
