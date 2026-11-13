@@ -91,7 +91,7 @@ pub fn find_package(name: &str) -> Result<Package, String> {
 }
 
 /// Writes the module for `headers` and returns its text.
-pub fn generate(headers: &[PathBuf], arguments: &[String], command: &str) -> Result<String, String> {
+pub fn generate(headers: &[PathBuf], arguments: &[String], command: &str, included: bool) -> Result<String, String> {
     let compiler = std::env::var("TONDO_CC").unwrap_or_else(|_| "cc".into());
     let mut source = String::new();
     for header in headers {
@@ -116,7 +116,7 @@ pub fn generate(headers: &[PathBuf], arguments: &[String], command: &str) -> Res
     }
     let text = String::from_utf8_lossy(&output.stdout);
     let roots: Vec<PathBuf> = headers.iter().filter_map(|h| std::fs::canonicalize(h).ok()).collect();
-    let tokens = lex(&text, &roots);
+    let tokens = lex(&text, &roots, included);
     let mut parser = Parser { tokens: &tokens.tokens, pos: 0, c: C::default() };
     parser.c.macros = tokens.macros;
     parser.program();
@@ -170,7 +170,7 @@ const PUNCTUATORS: [&str; 47] = [
 
 /// The tokens of preprocessed C, with the file of each from the line
 /// markers, and the object-like macros `-dD` leaves in place.
-fn lex(text: &str, roots: &[PathBuf]) -> Lexed {
+fn lex(text: &str, roots: &[PathBuf], included: bool) -> Lexed {
     let mut files: Vec<PathBuf> = Vec::new();
     let file_index = |files: &mut Vec<PathBuf>, path: &str| {
         let path = PathBuf::from(path);
@@ -225,7 +225,8 @@ fn lex(text: &str, roots: &[PathBuf]) -> Lexed {
                     && roots.contains(&files[current])
                     && files[next].parent().is_some()
                     && files[next].parent() == files[current].parent();
-                if root || sibling {
+                // With `included`, every header a bound one includes is too.
+                if root || sibling || (included && entering && targets.contains(&current)) {
                     targets.insert(next);
                 }
                 current = next;
@@ -1654,7 +1655,9 @@ impl<'c> Emitter<'c> {
             return Err(format!("it uses an unknown type `{name}`"));
         };
         let typedef = &self.c.typedefs[index];
-        if self.target(typedef.file) {
+        // A name a header keeps for itself, `__pid_t`, is not written: its
+        // uses take what it names.
+        if self.target(typedef.file) && !name.starts_with("__") {
             // Validate what it names, so an alias that cannot exist is not used.
             match &typedef.ty {
                 CType::Record(_) | CType::Enum(_) => {}
@@ -2070,15 +2073,20 @@ impl<'c> Emitter<'c> {
             return None;
         }
         let mut out = Vec::new();
+        // An enum with a value past `int`'s, and none negative, is an
+        // `unsigned int`, as C makes it.
+        let values = e.items.iter().filter_map(|(_, value)| value.as_ref());
+        let unsigned = values.clone().any(|&v| v > i128::from(i32::MAX)) && !values.clone().any(|&v| v < 0);
+        let base = if unsigned { "ffi.CUInt" } else { "ffi.CInt" };
         let ty = match self.enum_names.get(&id) {
             Some(name) => {
                 let name = tondo_name(name);
                 if self.used_types.insert(name.clone()) {
-                    out.push(format!("pub alias {name} = ffi.CInt"));
+                    out.push(format!("pub alias {name} = {base}"));
                 }
                 name
             }
-            None => "ffi.CInt".into(),
+            None => base.into(),
         };
         for (item, value) in &e.items {
             let Some(value) = value else {

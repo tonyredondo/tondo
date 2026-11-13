@@ -106,3 +106,32 @@ fn static_and_shared() {
     std::fs::copy(dir.join("libsample.a"), debug_dir.join("libsample.a")).unwrap();
     assert_eq!(program(&debug_dir, "libsample.a", "dwarf.to", false), "42 2 1 30\n99 42 6 -2.5\n");
 }
+
+/// `--included` binds what a header includes too, as a system's headers keep
+/// their numbers in others; a name a header keeps for itself, `__size_t`,
+/// is written as what it names; and an enum with a value past `int`'s is
+/// unsigned, as C makes it.
+#[test]
+fn included_headers() {
+    let dir = scratch("bind-included");
+    std::fs::create_dir_all(dir.join("bits")).unwrap();
+    std::fs::write(dir.join("bits/inner.h"), "typedef unsigned int __inner_size_t;\n#define INNER_LIMIT 7\n").unwrap();
+    let top = "#include \"bits/inner.h\"\n__inner_size_t measure(const char *text);\nenum bits { BIT_LOW = 1, BIT_HIGH = 2147483648u };\n";
+    std::fs::write(dir.join("top.h"), top).unwrap();
+    let compiler = env!("CARGO_BIN_EXE_tondo");
+    run(Command::new(compiler).args(["bind", "top.h", "--output", "plain.to"]).current_dir(&dir));
+    run(Command::new(compiler).args(["bind", "top.h", "--included", "--output", "deep.to"]).current_dir(&dir));
+    let plain = std::fs::read_to_string(dir.join("plain.to")).unwrap();
+    let deep = std::fs::read_to_string(dir.join("deep.to")).unwrap();
+    assert!(!plain.contains("INNER_LIMIT") && deep.contains("pub const INNER_LIMIT: ffi.CInt = 7"), "{deep}");
+    for module in [&plain, &deep] {
+        assert!(module.contains("pub extern fn measure(text: ffi.CString?): ffi.CUInt"), "{module}");
+        assert!(module.contains("pub alias bits = ffi.CUInt"), "{module}");
+        assert!(!module.contains("__inner_size_t"), "{module}");
+    }
+    // It checks as it is written.
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"deep\"\n").unwrap();
+    std::fs::write(dir.join("src/main.to"), format!("{deep}\nfn main() {{}}\n")).unwrap();
+    run(Command::new(compiler).args(["check"]).current_dir(&dir));
+}

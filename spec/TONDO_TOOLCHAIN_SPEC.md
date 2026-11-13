@@ -279,7 +279,7 @@ tondo remove <alias> [--project <dir>] [--json]
 tondo fix [<project>|<file.to>] [--library] [--json]
 tondo explain [<code>] [--json]
 tondo clean [--all] [--json]
-tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>] [--json]
+tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [--included] [-I <dir>] [-D <name[=value]>] [--json]
 tondo test [<project>] [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--watch] [--coverage] [--bench [--bench-time <seconds>]] [--fuzz [--fuzz-time <seconds>]] [--test-format human|json|events] [--json] [--diagnostic-format human|json]
 tondo doc-test [--edition 0.1] <markdown>
 tondo target pack [<dir>] [--json]
@@ -390,7 +390,9 @@ tondo version [--json]
 (`cc -E`, con los `-I` y `-D` dados) y escribe, en formato canónico, un módulo
 del proyecto: `src/<nombre>/<nombre>.to` por el primer header, u `--output`.
 El módulo declara, como `pub`, lo que declaran los headers y los de su
-directorio que incluyen directamente:
+directorio que incluyen directamente; con `--included`, también todos los que
+incluyen, de cualquier directorio, como los de un sistema guardan sus números
+en otros (`bits/`, `asm-generic/`):
 
 | C | Tondo |
 |---|---|
@@ -399,14 +401,16 @@ directorio que incluyen directamente:
 | `union` | `@union extern type` |
 | `struct` con bit fields | `extern type` con cada grupo de bit fields como sus bytes, y un método para leer y otro para escribir cada uno |
 | `typedef` | `alias` |
-| `enum` | `alias` de `ffi.CInt` y una constante por enumerador |
+| `enum` | `alias` de `ffi.CInt`, o de `ffi.CUInt` si un valor pasa de los de `int` y ninguno es negativo, y una constante por enumerador |
 | macro de un número o un texto | `const` |
 | macro de un puntero | `const` de valor `none` si es `NULL`; si no, una función que lo construye |
 | macro con parámetros que llama a una función | una función `unsafe` que la llama, con los tipos de sus parámetros |
 | `va_list` como parámetro | `Pointer[ffi.VaList]` |
 
 Los nombres de C se conservan; uno que es palabra reservada o nombre del
-prelude de Tondo recibe `_` al final. Un puntero es opcional, porque C puede
+prelude de Tondo recibe `_` al final. Un `typedef` de un nombre que el header
+reserva para sí, como `__pid_t`, no se escribe: donde se usa, se escribe lo que
+nombra. Un puntero es opcional, porque C puede
 pasar `NULL`; `const char*` es `ffi.CString?`. Un tipo de otro header se
 resuelve a lo que nombra, y un struct que solo se alcanza por puntero es
 opaco. Lo que no tiene forma en Tondo, como `long double` o una macro que no es

@@ -1692,6 +1692,7 @@ fn update_command(args: &[OsString]) -> Result<ExitCode, String> {
 fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (mut headers, mut libraries, mut arguments) = (Vec::new(), Vec::new(), Vec::new());
     let (mut project, mut output, mut package, mut json) = (PathBuf::from("."), None, None, false);
+    let mut included = false;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         let text = arg.to_string_lossy();
@@ -1702,6 +1703,7 @@ fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--package" => package = Some(value("--package")?.to_string_lossy().into_owned()),
             "--output" | "-o" => output = Some(PathBuf::from(value("--output")?)),
             "--json" => json = true,
+            "--included" => included = true,
             "-I" | "-D" => arguments.push(format!("{text}{}", value(&text)?.to_string_lossy())),
             flag if flag.starts_with("-I") || flag.starts_with("-D") => arguments.push(flag.to_string()),
             flag if flag.starts_with('-') => return Err(format!("unknown option {flag}\n{USAGE}")),
@@ -1734,7 +1736,7 @@ fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     let module = match &library_file {
         Some(library) if headers.is_empty() => tondo::bind::generate_from_library(library, &command)?,
-        _ => tondo::bind::generate(&headers, &arguments, &command)?,
+        _ => tondo::bind::generate(&headers, &arguments, &command, included)?,
     };
     let mut sources = tondo::source::SourceMap::default();
     let index = sources.add(Path::new("bound.to"), module.clone());
