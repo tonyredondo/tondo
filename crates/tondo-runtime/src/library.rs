@@ -21,6 +21,9 @@ struct Opened {
     unloadable: bool,
     /// The program itself, which is never unloaded.
     program: bool,
+    /// What ends the runtime of a library that Tondo built, which is
+    /// unloadable (rule 21).
+    stop: Option<extern "C" fn()>,
 }
 
 impl Drop for Library {
@@ -29,10 +32,58 @@ impl Drop for Library {
             && opened.unloadable
             && let Some(handle) = opened.handle.get_mut().unwrap_or_else(|e| e.into_inner()).take()
         {
+            if let Some(stop) = opened.stop {
+                stop();
+            }
             // An error here has no one to tell: the library stays loaded.
             unsafe { libc::dlclose(handle as *mut c_void) };
         }
     }
+}
+
+/// The entry that ends the runtime of a library that Tondo built, which
+/// every one publishes under this name (toolchain 7.7): its own, and not
+/// that of a library of Tondo it depends on, which `dlsym` finds too.
+#[cfg(target_os = "linux")]
+fn tondo_stop(handle: usize, _: &CStr) -> Option<extern "C" fn()> {
+    unsafe extern "C" {
+        fn dlinfo(handle: *mut c_void, request: i32, info: *mut c_void) -> i32;
+    }
+    const RTLD_DI_LINKMAP: i32 = 2;
+    unsafe {
+        let address = libc::dlsym(handle as *mut c_void, c"tondo_library_stop".as_ptr());
+        let mut map: *const [usize; 2] = std::ptr::null();
+        let mut found: libc::Dl_info = std::mem::zeroed();
+        if address.is_null()
+            || dlinfo(handle as *mut c_void, RTLD_DI_LINKMAP, (&raw mut map).cast()) != 0
+            || libc::dladdr(address, &mut found) == 0
+            // `l_name`, after `l_addr`, which `dladdr` gives as the file.
+            || map.is_null()
+            || found.dli_fname as usize != (*map)[1]
+        {
+            return None;
+        }
+        Some(std::mem::transmute::<*mut c_void, extern "C" fn()>(address))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn tondo_stop(_: usize, path: &CStr) -> Option<extern "C" fn()> {
+    unsafe {
+        // The image alone, not those it depends on.
+        let own = libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD | libc::RTLD_FIRST);
+        if own.is_null() {
+            return None;
+        }
+        let address = libc::dlsym(own, c"tondo_library_stop".as_ptr());
+        libc::dlclose(own);
+        (!address.is_null()).then(|| std::mem::transmute::<*mut c_void, extern "C" fn()>(address))
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn tondo_stop(_: usize, _: &CStr) -> Option<extern "C" fn()> {
+    None
 }
 
 /// What the system said of the last thing that failed on this thread.
@@ -60,10 +111,13 @@ pub unsafe extern "C" fn tondo_rt_library_open(path: *const Str, global: bool, u
     let scope = if global { libc::RTLD_GLOBAL } else { libc::RTLD_LOCAL };
     let opened = crate::io::host(true, move || {
         let handle = unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_NOW | scope) };
-        if handle.is_null() { Err(said()) } else { Ok(handle as usize) }
+        if handle.is_null() { Err(said()) } else { Ok((handle as usize, tondo_stop(handle as usize, &name))) }
     });
     native::new(match opened {
-        Ok(handle) => Library::Open(Opened { handle: Mutex::new(Some(handle)), path, unloadable, program: false }),
+        Ok((handle, stop)) => {
+            let unloadable = unloadable || stop.is_some();
+            Library::Open(Opened { handle: Mutex::new(Some(handle)), path, unloadable, program: false, stop })
+        }
         Err(why) => Library::Failed(why),
     })
 }
@@ -73,7 +127,8 @@ pub unsafe extern "C" fn tondo_rt_library_open(path: *const Str, global: bool, u
 pub extern "C" fn tondo_rt_library_program() -> *mut NativeObject {
     let handle = unsafe { libc::dlopen(std::ptr::null(), libc::RTLD_NOW) };
     let path = std::env::current_exe().map(|path| path.display().to_string()).unwrap_or_default();
-    let opened = Opened { handle: Mutex::new(Some(handle as usize)), path, unloadable: false, program: true };
+    let opened =
+        Opened { handle: Mutex::new(Some(handle as usize)), path, unloadable: false, program: true, stop: None };
     native::new(Library::Open(opened))
 }
 
@@ -126,7 +181,11 @@ pub extern "C" fn tondo_rt_library_close(object: *mut NativeObject) -> *mut Str 
     }
     let mut held = opened.handle.lock().unwrap_or_else(|e| e.into_inner());
     let Some(handle) = *held else { return str_new(b"") };
+    let stop = opened.stop;
     let refused = crate::io::host(true, move || {
+        if let Some(stop) = stop {
+            stop();
+        }
         let status = unsafe { libc::dlclose(handle as *mut c_void) };
         (status != 0).then(said)
     });

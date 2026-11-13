@@ -1618,12 +1618,33 @@ volver la llamada. Lo que la librería escribe en la salida estándar se entrega
 al terminar cada llamada, y al terminar el proceso. Un pánico termina el
 proceso, como en un programa; un fallo de memoria, una instrucción ilegal o un
 aborto fuera de sus tareas y de su código va al handler que el proceso tenía.
-Cada librería contiene el runtime. La compartida solo publica sus funciones,
-así que un proceso carga varias de Tondo, cada una con el suyo, también un
-programa de Tondo con `ffi.Library` (19.3 de la librería estándar), y no se
-descarga, porque sus threads siguen ejecutando su código; de la estática, un
-programa enlaza una sola. `--static` y `--link` construyen ejecutables: con
-`--library` son error.
+Cada librería contiene el runtime. La compartida solo publica sus funciones y
+la entrada que termina su runtime, así que un proceso carga varias de Tondo,
+cada una con el suyo, también un programa de Tondo con `ffi.Library` (19.3 de
+la librería estándar); de la estática, un programa enlaza una sola. `--static`
+y `--link` construyen ejecutables: con `--library` son error.
+
+`<nombre>_stop()`, que el header declara, termina el runtime de la librería,
+para que se pueda descargar. Cada tarea suya se cancela y corre sus `defer`
+como al cancelarse, los procesos que lanzó terminan, como al terminar un
+programa, cada thread de su runtime termina, lo que dejó para el
+final del proceso, como la salida pendiente, corre ahora y deja de estar
+registrado, cada handler de señal que instaló se quita y vuelve el que tenía
+el proceso, y lo que guardó para el thread que la llama se libera. De los
+otros threads que la llamaron se libera también lo que guardó, salvo la pila
+de señales que les puso, en la que el sistema aún puede entregarles una
+señal: queda, y una copia de la librería que se cargue después la usa. Una
+llamada de la librería en curso en otro thread termina antes, y una tarea en
+una espera que cancelar no termina, como leer un terminal en el que nadie
+escribe, la deja esperando. Ninguna función
+de la librería se puede llamar mientras corre, ni se puede usar después nada
+que la librería dio, como un texto que devolvió. Una llamada posterior
+arranca el runtime otra vez, como la primera; llamarla dos veces no hace nada
+la segunda. Toda librería de Tondo publica la misma entrada también como
+`tondo_library_stop`, por la que `ffi.Library` la reconoce. Hasta que termina
+su runtime, la librería se mantiene cargada: un `dlclose` sin `<nombre>_stop`
+no la descarga. Una librería compartida de Tondo se descarga con su
+`<nombre>_stop` y la descarga del sistema, en ese orden.
 
 ### 7.8 Targets
 

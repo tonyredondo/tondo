@@ -7515,8 +7515,8 @@ impl serialization.Decode for Error
   llamar desde varias tareas a la vez: cada llamada escribe sus argumentos,
   hace la llamada y lee el resultado o el error. Cuando se va su última
   copia, se va el plugin: un programa recibe el fin de su entrada y se le
-  espera, como a un `Process` (14.13); una librería queda cargada, pues una
-  librería que Tondo construyó todavía no se descarga.
+  espera, como a un `Process` (14.13); una librería termina su runtime y se
+  descarga (19.3).
 
 #### Un plugin
 
@@ -8302,15 +8302,18 @@ pub fn libraryFileName(name: String, version: String? = none): String
   librería publica ese nombre.
 - Preguntar a una librería cerrada por una función, un puntero o un nombre es
   `LibraryError.Closed`, y `has` es `false`.
-- Una librería es *descargable* cuando se abrió con `openUnloadable`: cuando
-  se va su último dueño, la última copia de su `Library` y el último
-  `Function` tomado de ella, se descarga como lo hace `close()`, y un error
-  entonces se descarta. Una librería que no es descargable sigue cargada hasta
-  que el programa termina. `openUnloadable` es `unsafe` porque el programa
+- Una librería es *descargable* cuando se abrió con `openUnloadable` o cuando
+  la construyó Tondo, que `Library` reconoce por la entrada que termina su
+  runtime, `tondo_library_stop` (7.7 del toolchain): cuando se va su último
+  dueño, la última copia de su `Library` y el último `Function` tomado de
+  ella, se descarga como lo hace `close()`, y un error entonces se descarta.
+  Una librería que no es descargable sigue cargada hasta que el programa
+  termina. `openUnloadable` es `unsafe` porque el programa
   promete lo que Tondo no ve: que cuando se van sus dueños la librería no
   tiene ningún thread corriendo, ningún callback dejado al sistema o a otra
   librería y nada que correr al terminar el programa.
-- `close()` descarga ahora, sea cual sea la librería y como se abriera. Es
+- `close()` descarga ahora, sea cual sea la librería y como se abriera. A una
+  que construyó Tondo le termina antes su runtime, con esa entrada. Es
   `unsafe`: el programa promete que nada tomado de ella se usa después y que
   ningún código suyo está corriendo. Si el sistema se niega, es
   `LibraryError.NotUnloaded` y la librería sigue abierta; cerrar dos veces es

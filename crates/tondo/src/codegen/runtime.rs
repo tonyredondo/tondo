@@ -88,6 +88,8 @@ pub(super) enum Rt {
     /// The level of the program's versions of functions, and what it
     /// needs (rule 19 of `std.simd`).
     CpuVersions,
+    /// `<name>_stop` of a library, which ends its runtime.
+    LibraryStop,
     /// Before a panic, the registers its dump reads.
     KeepRegisters,
     /// Before a panic the program wrote, the numbers its dump shows.
@@ -408,6 +410,7 @@ impl Rt {
             Rt::Cpu => ("tondo_rt_cpu", &[I64], &[]),
             Rt::CpuHas => ("tondo_rt_cpu_has", &[I64], &[I8]),
             Rt::CpuVersions => ("tondo_rt_cpu_versions", &[I64], &[]),
+            Rt::LibraryStop => ("tondo_rt_library_stop", &[], &[]),
             Rt::Site => ("tondo_rt_site", &[], &[]),
             Rt::KeepRegisters => ("tondo_rt_keep_registers", &[], &[]),
             Rt::KeepNumbers => ("tondo_rt_keep_numbers", &[I64], &[]),

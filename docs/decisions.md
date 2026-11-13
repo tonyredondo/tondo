@@ -1745,7 +1745,8 @@ Tondo libraries, each with its own runtime and none in another's way. The
 library reaches its thread-local variables through the loader, with
 `__tls_get_addr` on x86-64 and TLS descriptors on arm64, rather than in
 the block a program reserves when it starts, so `dlopen` loads it at any
-time. It is never unloaded: the runtime's threads run its code. On macOS
+time. It holds itself loaded while its runtime runs, until its `<name>_stop` ends it (see "A
+library that Tondo built ends, and is unloaded"). On macOS
 it is a `MH_DYLIB` whose install name is `@rpath/lib<name>.dylib`, with an
 export trie of what it publishes. The shared library of the example
 program takes 1.2 MB, as its executable does.
@@ -6608,7 +6609,7 @@ list of numbers, and a plugin in another language reads values more easily.
 
 A plugin that is a program ends when the last copy of its `NamePlugin` goes, as a `Process` does:
 its input is released before the process, so that it sees the end of its input before it is waited
-for. A library stays loaded until 18b lets a library Tondo built be unloaded.
+for. A library ends its runtime and is unloaded then too (see the next entry).
 
 Building it showed three things. A closure that captures a value of an `impl Trait` result did not
 compile: the record of its captures kept the opaque type after monomorphization, which now puts
@@ -6624,3 +6625,41 @@ a process reads: the library allocated from the program's heap with its own book
 it wrote read back as zeros, while from a C program, with one copy, it worked. The runtime takes
 mimalloc 2 on macOS, which keeps the heap in a thread-local of each copy, as mimalloc 3 does on
 Linux.
+
+## A library that Tondo built ends, and is unloaded
+
+A library's runtime leaves four things in the process that point into its code: its threads, what
+it registered for the process's end, its handlers of signals, and the destructors of thread-locals
+it registered in the threads of its host that called it. The linker marked it never to be unloaded.
+`<name>_stop` now ends all four, and `ffi.Library` knows a library of Tondo by the same entry under
+a name every one has, `tondo_library_stop`, and ends it before it unloads it, so a plugin's library
+goes with its last copy.
+
+The runtime starts its threads with POSIX's `pthread_create` and keeps each to join it: std's
+`spawn` registers a thread-local that drops in the thread that calls it, often one of the host, and
+a join is the only way to know that a thread's last steps, which run the library's code, are done.
+What it keeps for a thread, the signal stack, spare task stacks and blocks, the readers and writers
+of JSON, sits behind a key of POSIX threads, which a library's end deletes, rather than in
+thread-locals that drop: glibc holds a library loaded while one of those destructors is due, so a
+host's thread that called it, as every worker of a Tondo program that loads a plugin does, would
+have kept it loaded for good. For the same reason a call from C moves its task onto a worker before
+it enters tokio, and the runtime builds tokio and drops it on a thread of its own. A library holds
+itself loaded, with `dlopen` of itself, from its first call until `<name>_stop`, so a `dlclose`
+without it leaves the library where its threads and handlers still run, as the mark did. What
+it registered for the process's end is registered under its own image, and `__cxa_finalize` of
+that image runs it at the stop and forgets it.
+
+Each copy of a library that was loaded keeps, after it is unloaded, the memory its mimalloc took:
+about 4 MB and a reservation of a gigabyte of addresses. mimalloc can give it all back as its copy
+ends (`mi_option_destroy_on_exit`), but 3.3 does it safely only on the thread that loaded the
+library, and a host may unload from another; done elsewhere, it faults in mimalloc itself.
+
+The other threads of the host that called the library keep the signal stack it gave them, since
+the system may still deliver a signal there; their other values are freed at the stop, and a copy
+of the library loaded later keeps the signal stack it finds. A task that never waits again, or
+waits where a cancellation does not reach, as for a terminal nobody writes to, keeps the stop
+waiting; the processes the library started are ended, as at a program's end. Calling it again after a stop starts the
+runtime again, its threads and its handlers, as a first call does. macOS never unloads an image
+with thread-local variables, as the runtime's: there a library ends, stays, and a later call or
+load starts it again, which its tests check there.
+

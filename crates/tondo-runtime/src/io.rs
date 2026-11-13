@@ -165,6 +165,12 @@ pub(crate) fn submit(job: Job, long: bool) {
     }
 }
 
+/// Ends the pool's threads once their jobs are done, for a library's end.
+pub(crate) fn stop() {
+    let _pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
+    WORK.notify_all();
+}
+
 fn serve() {
     let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
     loop {
@@ -173,6 +179,10 @@ fn serve() {
             job();
             pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
             continue;
+        }
+        if super::tasks::stopping() {
+            pool.threads -= 1;
+            return;
         }
         pool.idle += 1;
         pool = WORK.wait(pool).unwrap_or_else(|e| e.into_inner());
@@ -800,6 +810,9 @@ fn poll_once<F: std::future::Future>(
     waker: &std::task::Waker,
     context: bool,
 ) -> (std::task::Poll<F::Output>, Vec<usize>) {
+    if context {
+        super::tasks::leave_host_thread();
+    }
     let _context = context.then(|| super::http::runtime().enter());
     holding(|| future.poll(&mut std::task::Context::from_waker(waker)))
 }

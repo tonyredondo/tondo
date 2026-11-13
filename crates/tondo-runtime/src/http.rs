@@ -15,46 +15,89 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
-static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+/// The runtime, once a call needs it, until a library's end.
+static RUNTIME: std::sync::atomic::AtomicPtr<tokio::runtime::Runtime> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+/// What `SIGPIPE` did before the runtime ignored it.
+static PIPE_BEFORE: Mutex<Option<usize>> = Mutex::new(None);
+
+unsafe extern "C" {
+    fn signal(signal: i32, handler: usize) -> usize;
+}
+const SIGPIPE: i32 = 13;
+const SIG_IGN: usize = 1;
 
 pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
-    RUNTIME.get_or_init(|| {
-        // A write to a connection the other side closed, which `writev`
-        // makes without `MSG_NOSIGNAL`, fails instead of ending the program,
-        // as in Rust programs; console programs keep the default.
-        unsafe extern "C" {
-            fn signal(signal: i32, handler: usize) -> usize;
+    if let Some(runtime) = unsafe { RUNTIME.load(Ordering::Acquire).as_ref() } {
+        return runtime;
+    }
+    static STARTING: Mutex<()> = Mutex::new(());
+    let _starting = STARTING.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(runtime) = unsafe { RUNTIME.load(Ordering::Acquire).as_ref() } {
+        return runtime;
+    }
+    // A write to a connection the other side closed, which `writev`
+    // makes without `MSG_NOSIGNAL`, fails instead of ending the program,
+    // as in Rust programs; console programs keep the default.
+    *PIPE_BEFORE.lock().unwrap_or_else(|e| e.into_inner()) = Some(unsafe { signal(SIGPIPE, SIG_IGN) });
+    // A recorded run, and its replay, call the system from one thread:
+    // its worker drives this runtime between tasks, and waits in it,
+    // with the workers' poller among what it waits for.
+    let mut builder = match super::replay::on() {
+        true => {
+            super::poll::started();
+            tokio::runtime::Builder::new_current_thread()
         }
-        const SIGPIPE: i32 = 13;
-        const SIG_IGN: usize = 1;
-        unsafe { signal(SIGPIPE, SIG_IGN) };
-        // A recorded run, and its replay, call the system from one thread:
-        // its worker drives this runtime between tasks, and waits in it,
-        // with the workers' poller among what it waits for.
-        let mut builder = match super::replay::on() {
-            true => {
-                super::poll::started();
-                tokio::runtime::Builder::new_current_thread()
-            }
-            // Half the cores, two at least: with 64 clients at once on 32
-            // threads, two took 160 ms for 6,400 requests, half 90 and all
-            // of them 89, the same as half, which leaves the rest to the
-            // program's workers; one client is as quick with any.
-            false => {
-                let workers = std::thread::available_parallelism().map_or(2, |n| (n.get() / 2).max(2));
-                let mut builder = tokio::runtime::Builder::new_multi_thread();
-                builder.worker_threads(workers).thread_name("tondo-http");
-                builder
-            }
-        };
-        builder.enable_all().build().expect("the HTTP runtime starts")
+        // Half the cores, two at least: with 64 clients at once on 32
+        // threads, two took 160 ms for 6,400 requests, half 90 and all
+        // of them 89, the same as half, which leaves the rest to the
+        // program's workers; one client is as quick with any.
+        false => {
+            let workers = std::thread::available_parallelism().map_or(2, |n| (n.get() / 2).max(2));
+            let mut builder = tokio::runtime::Builder::new_multi_thread();
+            builder.worker_threads(workers).thread_name("tondo-http");
+            builder
+        }
+    };
+    builder.enable_all();
+    // Built on a thread of the runtime: tokio starts its threads with std's
+    // `spawn`, which in a library would keep it loaded while the thread of
+    // its host that asked first lives.
+    let built = Arc::new(Mutex::new(None));
+    let given = built.clone();
+    super::tasks::spawn_thread(None, move || {
+        *given.lock().unwrap_or_else(|e| e.into_inner()) = Some(builder.build().expect("the HTTP runtime starts"));
     })
+    .join();
+    let runtime = built.lock().unwrap_or_else(|e| e.into_inner()).take().expect("the HTTP runtime starts");
+    let runtime = Box::into_raw(Box::new(runtime));
+    RUNTIME.store(runtime, Ordering::Release);
+    unsafe { &*runtime }
 }
 
 /// The runtime the worker of a recorded run or of its replay drives, once
 /// the program has one.
 pub(crate) fn driven() -> Option<&'static tokio::runtime::Runtime> {
-    RUNTIME.get().filter(|_| super::replay::on())
+    unsafe { RUNTIME.load(Ordering::Acquire).as_ref() }.filter(|_| super::replay::on())
+}
+
+/// At a library's end, once nothing of the program uses the runtime: it
+/// ends, its threads with it, and `SIGPIPE` does what it did before.
+pub(crate) fn stop() {
+    let runtime = RUNTIME.swap(std::ptr::null_mut(), Ordering::AcqRel);
+    if runtime.is_null() {
+        return;
+    }
+    // Dropping it waits for every thread of it to end; on a thread of the
+    // runtime, as it keeps thread-locals that drop where it waits.
+    let runtime = unsafe { Box::from_raw(runtime) };
+    super::tasks::spawn_thread(None, move || drop(runtime)).join();
+    if let Some(before) = PIPE_BEFORE.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        let current = unsafe { signal(SIGPIPE, before) };
+        if current != SIG_IGN {
+            unsafe { signal(SIGPIPE, current) };
+        }
+    }
 }
 
 /// Runs what the driven runtime has to do now, on this thread; with

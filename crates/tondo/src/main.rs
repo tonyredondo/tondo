@@ -2825,10 +2825,7 @@ fn library_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     let path = source.unwrap_or_else(|| PathBuf::from("."));
     // A library is named after its package, or its file.
-    let name = match path.is_dir() {
-        true => tondo::deps::resolve(&path, None)?[0].name.clone(),
-        false => program_name(&path)?.to_string_lossy().into_owned(),
-    };
+    let name = driver::library_name(&path)?;
     let analysis = driver::analyze_library(&path)?;
     let diagnostics = analysis.diags.json(&analysis.sources, &analysis.source_id);
     if !json {

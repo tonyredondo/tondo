@@ -24,7 +24,7 @@ pub(super) struct InC {
 
 /// Every worker that has called C, which the monitor watches.
 pub(super) static CALLERS: Mutex<Vec<&'static InC>> = Mutex::new(Vec::new());
-pub(super) static MONITOR: std::sync::OnceLock<std::thread::Thread> = std::sync::OnceLock::new();
+pub(super) static MONITOR: ThreadSlot = ThreadSlot::new();
 pub(super) static MONITOR_ASLEEP: AtomicBool = AtomicBool::new(false);
 /// How often the monitor looks: a call still in C after one look and the
 /// next is long, and blocks its worker.
@@ -82,9 +82,9 @@ pub extern "C" fn tondo_rt_foreign_enter() {
         crate::replay::calls_c();
         return;
     }
-    let monitor = MONITOR.get_or_init(|| spawn_thread(Some(64 * 1024), monitor).thread().clone());
+    MONITOR.start_once(|| spawn_thread(Some(64 * 1024), monitor));
     if MONITOR_ASLEEP.load(Ordering::SeqCst) && MONITOR_ASLEEP.swap(false, Ordering::SeqCst) {
-        monitor.unpark();
+        MONITOR.unpark();
     }
 }
 
@@ -158,6 +158,9 @@ pub(super) fn monitor() {
     let mut last: HashMap<usize, usize> = HashMap::new();
     loop {
         std::thread::sleep(MONITOR_PERIOD);
+        if stopping() {
+            return;
+        }
         let callers: Vec<&'static InC> = CALLERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let mut busy = false;
         for state in callers {
@@ -200,8 +203,8 @@ pub(super) fn monitor() {
         if !busy {
             MONITOR_ASLEEP.store(true, Ordering::SeqCst);
             let callers = CALLERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
-            if callers.iter().all(|state| state.depth.load(Ordering::SeqCst) == 0) {
-                std::thread::park();
+            if callers.iter().all(|state| state.depth.load(Ordering::SeqCst) == 0) && !stopping() {
+                MONITOR.park();
             }
             MONITOR_ASLEEP.store(false, Ordering::SeqCst);
         }

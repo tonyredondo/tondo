@@ -73,6 +73,16 @@ fn greeter(): impl api.Greeter {
     Polite {}
 }
 
+/// Whether the system has the library at `path` loaded, as `dlopen` with
+/// `RTLD_NOLOAD`, which is `noLoad`, says.
+fn loaded(path: String, noLoad: String): Bool {
+    let program = ffi.Library.program()
+    match unsafe { program.function[extern fn(ffi.CString, ffi.CInt): Pointer[UInt8]]("dlopen") } {
+        ok(open) => unsafe { open(path, if noLoad == "16" { 18i32 } else { 6i32 }).address() } != 0
+        err(_) => true
+    }
+}
+
 /// Every method, and many calls at once, of a plugin however loaded.
 fn calls(plugged: api.GreeterPlugin) {
     console.println("{plugged.greet("Ada")}")
@@ -97,9 +107,15 @@ fn main() {
             // Only once the other side has closed.
             _ = fs.writeText(args[1], "ended")
         }
-        "--library" => match api.GreeterPlugin.load(args[1]) {
-            ok(loaded) => calls(loaded)
-            err(error) => console.println("{error}")
+        "--library" => {
+            match api.GreeterPlugin.load(args[1]) {
+                ok(plugged) => calls(plugged)
+                err(error) => console.println("{error}")
+            }
+            // The library went with the last copy of its plugin.
+            if args.length() > 2 {
+                console.println("loaded {loaded(args[1], args[2])}")
+            }
         }
         "--program" => {
             let program = process.command(args[1], "--serve", args[2])
@@ -146,7 +162,10 @@ fn a_contract_crosses_to_a_library_and_to_a_program_alike() {
     let (app, library) = built(&dir, CONTRACT);
     let calls = "ok(good morning, Ada)\nok([HI, HI])\nerr(Rude(too many))\nerr(the plugin panicked: a negative count)\n\
                  16 answers, the last good morning, caller 15\n";
-    assert_eq!(run(&app, &["--library", library.to_str().unwrap()]), calls);
+    let no_load = if cfg!(target_os = "macos") { "16" } else { "4" };
+    // macOS keeps an image with thread-local variables loaded.
+    let loaded = cfg!(target_os = "macos");
+    assert_eq!(run(&app, &["--library", library.to_str().unwrap(), no_load]), format!("{calls}loaded {loaded}\n"));
     let marker = dir.join("ended");
     let started = run(&app, &["--program", app.to_str().unwrap(), marker.to_str().unwrap()]);
     assert_eq!(started, format!("{calls}the plugin is gone\nrunning\n"), "the plugin that quits mid-call");

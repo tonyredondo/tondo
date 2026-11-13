@@ -94,6 +94,8 @@ mod text;
 mod time;
 mod toml;
 mod trace;
+mod unloading;
+pub(crate) use unloading::start_library;
 mod yaml;
 mod zones;
 pub(crate) use arrays::*;
@@ -145,26 +147,19 @@ pub(crate) fn library() -> bool {
     LIBRARY.load(Ordering::Relaxed)
 }
 
-/// Starts a library at the first call from C: the runtime reads its
-/// settings and the compiled code hands it its tables. What the library
-/// wrote and did not deliver yet goes out when the process ends.
-pub(crate) fn start_library(start: unsafe extern "C" fn()) {
-    static STARTED: std::sync::Once = std::sync::Once::new();
-    STARTED.call_once(|| {
-        LIBRARY.store(true, Ordering::Relaxed);
-        config::config();
-        #[cfg(tondo_staticlib)]
-        meta::start();
-        diagnostics::start();
-        unsafe { start() };
-        unsafe extern "C" {
-            fn __cxa_atexit(function: extern "C" fn(*mut u8), argument: *mut u8, object: *mut u8) -> i32;
-        }
-        extern "C" fn flush(_: *mut u8) {
-            flush_stdout();
-        }
-        unsafe { __cxa_atexit(flush, std::ptr::null_mut(), std::ptr::null_mut()) };
-    });
+/// An address in this runtime's image, which names it to `__cxa_atexit`:
+/// a library's end runs and forgets what it registered, which is its own.
+pub(crate) fn image() -> *mut u8 {
+    &LIBRARY as *const AtomicBool as *mut u8
+}
+
+/// Runs `function` when the process ends, or when a library ends before.
+pub(crate) fn at_exit(function: extern "C" fn(*mut u8)) {
+    // `atexit` is not a symbol of glibc's shared library.
+    unsafe extern "C" {
+        fn __cxa_atexit(function: extern "C" fn(*mut u8), argument: *mut u8, image: *mut u8) -> i32;
+    }
+    unsafe { __cxa_atexit(function, std::ptr::null_mut(), image()) };
 }
 
 /// Runs a program: the `main` the compiler generates for an executable

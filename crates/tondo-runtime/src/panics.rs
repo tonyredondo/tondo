@@ -70,7 +70,10 @@ pub(crate) fn language_data(data: Vec<(&str, Datum)>) {
 }
 
 thread_local! {
-    static STAGED: RefCell<Staged> = RefCell::new(Staged::default());
+    /// Not dropped as the thread ends, which in a library would keep it
+    /// loaded while the thread of its host lives: it is empty but between
+    /// a panic's staging and its raising.
+    static STAGED: std::mem::ManuallyDrop<RefCell<Staged>> = std::mem::ManuallyDrop::new(RefCell::new(Staged::default()));
 }
 
 fn text(s: *const Str) -> String {

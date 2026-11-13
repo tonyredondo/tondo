@@ -177,8 +177,36 @@ struct Spare {
 }
 
 thread_local! {
-    static SPARE: std::cell::RefCell<Spare> =
-        const { std::cell::RefCell::new(Spare { readers: Vec::new(), writers: Vec::new() }) };
+    /// Made when the thread first keeps one; it goes as the thread ends
+    /// (`keep_until_end`), not with a destructor of the thread-local's own.
+    static SPARE: std::cell::Cell<*mut Spare> = const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
+
+/// This thread's spare readers and writers, lent to `f`.
+fn spare<R>(f: impl FnOnce(&mut Spare) -> R) -> R {
+    let mut kept = SPARE.with(std::cell::Cell::get);
+    if kept.is_null() {
+        kept = Box::into_raw(Box::new(Spare { readers: Vec::new(), writers: Vec::new() }));
+        SPARE.with(|cell| cell.set(kept));
+        unsafe fn free(kept: *mut u8, own: bool) {
+            let kept = kept as *mut Spare;
+            if !own {
+                let spare = unsafe { &mut *kept };
+                spare.readers.clear();
+                spare.writers.clear();
+                return;
+            }
+            SPARE.with(|cell| {
+                if cell.get() == kept {
+                    cell.set(std::ptr::null_mut());
+                }
+            });
+            drop(unsafe { Box::from_raw(kept) });
+        }
+        crate::tasks::keep_until_end(free, kept as *mut u8);
+    }
+    // Nothing `f` does comes back here.
+    f(unsafe { &mut *kept })
 }
 
 /// How many of each a thread keeps, and the most room a kept buffer has.
@@ -678,7 +706,7 @@ fn reader<'a>(object: *mut ReaderObject) -> std::sync::MutexGuard<'a, Reader> {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_reader(text: *const Str, duplicates: u8) -> *mut ReaderObject {
     let input = Input::held(text as *mut Str);
-    if let Some(mut spare) = SPARE.try_with(|spare| spare.borrow_mut().readers.pop()).ok().flatten() {
+    if let Some(mut spare) = spare(|spare| spare.readers.pop()) {
         spare.reader.get_mut().unwrap_or_else(|e| e.into_inner()).renew(input, duplicates != 0);
         *spare.rc.get_mut() = 1;
         LIVE_OBJECTS.made();
@@ -849,9 +877,7 @@ pub unsafe extern "C" fn tondo_rt_json_reader_release(object: *mut ReaderObject)
         LIVE_OBJECTS.gone();
         let mut object = Box::from_raw(object);
         if object.reader.get_mut().unwrap_or_else(|e| e.into_inner()).spare() {
-            // A thread that ends lets go of it as before.
-            let _ = SPARE.try_with(|spare| {
-                let mut spare = spare.borrow_mut();
+            spare(|spare| {
                 if spare.readers.len() < SPARES {
                     spare.readers.push(object);
                 }
@@ -1194,7 +1220,7 @@ fn writer_object(pretty: u8, canonical: u8, html: u8, sink: Option<Source>) -> *
 /// `jsonnative.writer(pretty, canonical, htmlSafe)`
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_json_writer(pretty: u8, canonical: u8, html: u8) -> *mut WriterObject {
-    if let Some(mut spare) = SPARE.try_with(|spare| spare.borrow_mut().writers.pop()).ok().flatten() {
+    if let Some(mut spare) = spare(|spare| spare.writers.pop()) {
         let writer = spare.writer.get_mut().unwrap_or_else(|e| e.into_inner());
         writer.pretty = pretty != 0 && canonical == 0;
         writer.canonical = canonical != 0;
@@ -1359,8 +1385,7 @@ pub unsafe extern "C" fn tondo_rt_json_writer_release(object: *mut WriterObject)
             writer.open.clear();
             writer.stack.clear();
             (writer.root, writer.pending_key, writer.failed) = (None, None, None);
-            let _ = SPARE.try_with(|spare| {
-                let mut spare = spare.borrow_mut();
+            spare(|spare| {
                 if spare.writers.len() < SPARES {
                     spare.writers.push(object);
                 }

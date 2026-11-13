@@ -282,16 +282,40 @@ pub(crate) fn take_samples() -> (Vec<Sample>, u64) {
 // Starting and stopping
 // ---------------------------------------------------------------------------
 
-/// Installs the handler of `SIGPROF`, once.
+/// The handler of `SIGPROF` there was before, while this one is installed.
+static BEFORE: Mutex<Option<libc::sigaction>> = Mutex::new(None);
+
+/// Installs the handler of `SIGPROF`, once until a library's end.
 pub(crate) fn install() {
-    static INSTALLED: std::sync::Once = std::sync::Once::new();
-    INSTALLED.call_once(|| unsafe {
+    let mut before = BEFORE.lock().unwrap_or_else(|e| e.into_inner());
+    if before.is_some() {
+        return;
+    }
+    unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = sample as *const () as usize;
         action.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_ONSTACK;
         libc::sigemptyset(&mut action.sa_mask);
-        libc::sigaction(libc::SIGPROF, &action, std::ptr::null_mut());
-    });
+        let mut previous: libc::sigaction = std::mem::zeroed();
+        libc::sigaction(libc::SIGPROF, &action, &mut previous);
+        *before = Some(previous);
+    }
+}
+
+/// At a library's end: sampling stops, and the handler of `SIGPROF` there
+/// was before comes back, where this one is still installed.
+pub(crate) fn give_back() {
+    if SAMPLING.load(Ordering::SeqCst) {
+        stop();
+    }
+    let Some(previous) = BEFORE.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
+    unsafe {
+        let mut current: libc::sigaction = std::mem::zeroed();
+        libc::sigaction(libc::SIGPROF, std::ptr::null(), &mut current);
+        if current.sa_sigaction == sample as *const () as usize {
+            libc::sigaction(libc::SIGPROF, &previous, std::ptr::null_mut());
+        }
+    }
 }
 
 pub(crate) fn start() {

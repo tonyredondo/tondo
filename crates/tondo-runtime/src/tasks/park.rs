@@ -109,7 +109,7 @@ pub(super) fn wait_pinned(task: *mut Task) {
     }
     if let Some(thread) = standing_in {
         // It reads the task's state, which is this thread's again.
-        let _ = thread.join();
+        thread.join();
         crate::replay::waited();
     }
     drop(outside);
@@ -120,7 +120,7 @@ pub(super) fn wait_pinned(task: *mut Task) {
 /// Starts a thread that runs the program, with the baton, for a worker
 /// that waits with C's frames on its task's stack, until the task's `state`
 /// says it goes on, which comes at the same place of the program in a replay.
-pub(super) fn stand_in(state: &AtomicU8) -> std::thread::JoinHandle<()> {
+pub(super) fn stand_in(state: &AtomicU8) -> RuntimeThread {
     let state = state as *const AtomicU8 as usize;
     let outside = crate::replay::Outside::enter();
     let thread = spawn_thread(Some(256 * 1024), move || {

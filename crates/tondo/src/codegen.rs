@@ -527,7 +527,10 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     }
     let trace = cg.module.declare_data("tondo_trace", Linkage::Local, false, false).map_err(|e| e.to_string())?;
     let patch = cg.live.as_ref().is_some_and(|live| live.patch.is_some());
-    match program.main {
+    // A library for C, whose package may have a `main` of its own, which
+    // it does not run.
+    let main = program.main.filter(|_| program.c_api.name.is_none());
+    match main {
         // A patch starts nothing: the running program calls into it.
         _ if patch => {}
         Some(main) => {
@@ -543,6 +546,15 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
             let init = cg.library_start(trace, &mut context, &mut builder_context)?;
             job(init, &mut context, None, Vec::new(), Vec::new(), 0, 0);
             cg.library = Some(init);
+            // `<name>_stop`, and the same under a name every library of
+            // Tondo has, by which `ffi.Library` knows one (toolchain 7.7).
+            if let Some(name) = &program.c_api.name {
+                for symbol in [format!("{name}_stop"), crate::header::STOP.to_string()] {
+                    cg.module.clear_context(&mut context);
+                    let stop = cg.library_stop(&symbol, &mut context, &mut builder_context)?;
+                    job(stop, &mut context, None, Vec::new(), Vec::new(), 0, 0);
+                }
+            }
         }
     }
     cg.module.clear_context(&mut context);

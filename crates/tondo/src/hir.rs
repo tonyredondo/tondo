@@ -153,6 +153,9 @@ pub struct TestNodeInfo {
 pub struct CApi {
     pub functions: Vec<CFunction>,
     pub structs: Vec<CStruct>,
+    /// The library's name, in a build of one, whose `<name>_stop` ends
+    /// its runtime (toolchain 7.7).
+    pub name: Option<String>,
 }
 
 #[derive(Clone)]

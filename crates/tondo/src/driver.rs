@@ -541,7 +541,21 @@ fn moved(
 /// Reads, parses and checks a library for C (toolchain 7): without `main`,
 /// it publishes `pub extern fn`s.
 pub fn analyze_library(path: &Path) -> Result<Analysis, String> {
-    analyze_with(path, false, false, false, Root::CLibrary)
+    let name = library_name(path)?;
+    let mut analysis = analyze_with(path, false, false, false, Root::CLibrary)?;
+    if let Some(program) = analysis.program.as_mut() {
+        program.c_api.name = Some(name);
+    }
+    Ok(analysis)
+}
+
+/// A library's name: its package's, or its file's.
+pub fn library_name(path: &Path) -> Result<String, String> {
+    if path.is_dir() {
+        return Ok(crate::deps::resolve(path, None)?[0].name.clone());
+    }
+    let stem = path.file_stem().ok_or_else(|| format!("cannot name a library after {}", path.display()))?;
+    Ok(stem.to_string_lossy().into_owned())
 }
 
 /// Reads, parses and checks the test build of a project (testing 5): its
@@ -1220,7 +1234,8 @@ pub fn library(analysis: &Analysis, object: &[u8], dir: &Path, name: &str) -> Re
         archives.push(carried("libunwind", UNWIND)?);
     }
     // The shared library, which publishes the functions alone.
-    let exports: Vec<String> = program.c_api.functions.iter().map(|f| f.symbol.clone()).collect();
+    let mut exports: Vec<String> = program.c_api.functions.iter().map(|f| f.symbol.clone()).collect();
+    exports.extend([format!("{name}_stop"), crate::header::STOP.to_string()]);
     let product = crate::link::Product::Library { exports: &exports };
     crate::link::link(object, &archives, &runtime_args, &analysis.libraries, &dir.join(&shared), product)?;
     // The static one, whose host links what it needs.

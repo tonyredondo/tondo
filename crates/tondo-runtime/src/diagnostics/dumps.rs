@@ -543,6 +543,9 @@ pub(super) fn dumps_on_schedule(schedule: Schedule, dir: PathBuf) {
     let (mut turns, mut still_from, mut slow_seen) = (crate::tasks::turns(), Instant::now(), None::<u64>);
     loop {
         std::thread::sleep(tick);
+        if crate::tasks::stopping() {
+            return;
+        }
         let now = Instant::now();
         // Nothing moved while there was work: tasks that wait for a worker,
         // or requests no task answers.

@@ -256,6 +256,169 @@ fn a_library_publishes_functions_and_is_checked_and_tested_as_one() {
     assert!(tested.status.success(), "{}", String::from_utf8_lossy(&tested.stdout));
 }
 
+const ENDS: &str = r#"import std.console
+import std.net
+import std.time
+
+/// Twice a number.
+pub extern fn ends_twice(n: Int64): Int64 {
+    n * 2
+}
+
+/// Starts tasks that run until the library ends: one sleeps, one waits
+/// for connections, one asks the network.
+pub extern fn ends_start(): Int64 {
+    spawn detached sleeping()
+    match net.listen("127.0.0.1", 0) {
+        ok(listener) => {
+            let port = listener.address().port
+            spawn detached accepting(listener)
+            port
+        }
+        err(_) => 0
+    }
+}
+
+fn sleeping() {
+    defer {
+        console.println("cleaned")
+    }
+    for {
+        time.sleep(time.milliseconds(5))
+    }
+}
+
+fn accepting(listener: net.Listener) {
+    for {
+        match listener.accept() {
+            ok(stream) => _ = stream.close()
+            err(_) => return
+        }
+    }
+}
+"#;
+
+const UNLOADER: &str = r#"#include <dlfcn.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdio.h>
+
+static long long (*twice)(long long);
+
+static void *call(void *argument) {
+    printf("from a thread %lld\n", twice(4));
+    return NULL;
+}
+
+int main(int argc, char **argv) {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    for (int round = 0; round < 2; round++) {
+        void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
+        twice = (long long (*)(long long))dlsym(library, "ends_twice");
+        long long (*start)(void) = (long long (*)(void))dlsym(library, "ends_start");
+        void (*stop)(void) = (void (*)(void))dlsym(library, "ends_stop");
+        printf("round %d: %lld, listening %d\n", round, twice(21), start() > 0);
+        if (round == 1) {
+            pthread_t thread;
+            pthread_create(&thread, NULL, call, NULL);
+            pthread_join(thread, NULL);
+        }
+        stop();
+        struct sigaction fault;
+        sigaction(SIGSEGV, NULL, &fault);
+        printf("stopped, the fault's handler %s\n", fault.sa_handler == SIG_DFL ? "the process's" : "the library's");
+        if (round == 0) {
+            printf("again %lld, listening %d\n", twice(2), start() > 0);
+            stop();
+            stop();
+        }
+        dlclose(library);
+        printf("%s\n", dlopen(argv[1], RTLD_NOW | RTLD_NOLOAD) ? "loaded" : "unloaded");
+    }
+    return 0;
+}
+"#;
+
+/// A library that Tondo built ends with `<name>_stop` (toolchain 7.7):
+/// its tasks run their `defer`s, its threads end, the handlers it
+/// installed give way, and the system unloads it; a later call starts it
+/// again, and a library loaded again starts a new runtime.
+#[test]
+fn a_library_that_tondo_built_ends_and_unloads() {
+    let dir = project("ends", ENDS);
+    let built = tondo(&dir, &["build", "--library", "--output", "out"]);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let header = std::fs::read_to_string(dir.join("out/ends.h")).unwrap();
+    assert!(header.contains("\nvoid ends_stop(void);\n"), "{header}");
+    std::fs::write(dir.join("unload.c"), UNLOADER).unwrap();
+    let compiled =
+        Command::new("cc").args(["unload.c", "-o", "unload", "-lpthread"]).current_dir(&dir).output().unwrap();
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let shared = dir.join(if cfg!(target_os = "macos") { "out/libends.dylib" } else { "out/libends.so" });
+    let run = Command::new(dir.join("unload")).arg(&shared).output().unwrap();
+    // macOS keeps an image with thread-local variables loaded, which the
+    // runtime has: there the library ends, stays, and starts again.
+    let unloaded = if cfg!(target_os = "macos") { "loaded" } else { "unloaded" };
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        format!(
+            "round 0: 42, listening 1\ncleaned\nstopped, the fault's handler the process's\nagain 4, listening 1\ncleaned\n{unloaded}\n\
+             round 1: 42, listening 1\nfrom a thread 8\ncleaned\nstopped, the fault's handler the process's\n{unloaded}\n"
+        ),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(run.status.success());
+    // A program of Tondo ends it before it unloads it, by itself when the
+    // last holder goes or when it closes it.
+    let host = project("endsHost", "");
+    std::fs::remove_file(host.join("src/endsHost.to")).unwrap();
+    std::fs::write(host.join("src/main.to"), ENDS_HOST).unwrap();
+    let built = tondo(&host, &["build", "--output", "host"]);
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let no_load = if cfg!(target_os = "macos") { "16" } else { "4" };
+    let run = Command::new(host.join("host")).arg(&shared).arg(no_load).output().unwrap();
+    let loaded = cfg!(target_os = "macos");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        format!(
+            "cleaned\nlistening true, loaded {loaded}\ncleaned\nlistening true, loaded {loaded}\n10\nclosed, loaded {loaded}\n"
+        ),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+const ENDS_HOST: &str = r#"import std.console
+import std.env
+import std.ffi
+
+/// Whether the system has the library loaded.
+fn loaded(path: String, noLoad: Int32): Bool ! ffi.LibraryError {
+    let program = ffi.Library.program()
+    let open = unsafe { program.function[extern fn(ffi.CString, ffi.CInt): Pointer[UInt8]]("dlopen")? }
+    let handle = unsafe { open(path, 2i32 + noLoad) }
+    unsafe { handle.address() } != 0
+}
+
+fn round(path: String): Int64 ! ffi.LibraryError {
+    let ends = ffi.Library.open(path)?
+    let start = unsafe { ends.function[extern fn(): Int64]("ends_start")? }
+    unsafe { start() }
+}
+
+fn main(): !ffi.LibraryError {
+    let (path, noLoad) = (env.args()[0], if env.args()[1] == "16" { 16i32 } else { 4i32 })
+    console.println("listening {round(path)? > 0}, loaded {loaded(path, noLoad)?}")
+    console.println("listening {round(path)? > 0}, loaded {loaded(path, noLoad)?}")
+    let ends = ffi.Library.open(path)?
+    let twice = unsafe { ends.function[extern fn(Int64): Int64]("ends_twice")? }
+    console.println("{unsafe { twice(5) }}")
+    unsafe { ends.close()? }
+    console.println("closed, loaded {loaded(path, noLoad)?}")
+}
+"#;
+
 /// A program loads a library as it runs (standard library 19.3): by its
 /// path from the current directory, or by its name where the system looks;
 /// it calls a function of it, asks for what it publishes, closes it, and

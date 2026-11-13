@@ -182,6 +182,29 @@ impl Codegen<'_> {
         Ok(id)
     }
 
+    /// An exported function that ends a library's runtime.
+    pub(super) fn library_stop(
+        &mut self,
+        symbol: &str,
+        context: &mut cranelift_codegen::Context,
+        fbc: &mut FunctionBuilderContext,
+    ) -> Result<FuncId, String> {
+        let signature = self.module.make_signature();
+        let id = self.module.declare_function(symbol, Linkage::Export, &signature).map_err(|e| e.to_string())?;
+        context.func.signature = signature;
+        context.func.name = UserFuncName::user(1, 3 + id.as_u32());
+        let fb = FunctionBuilder::new(&mut context.func, fbc);
+        let mut e = Emit::new(self, fb);
+        let block = e.fb.create_block();
+        e.fb.switch_to_block(block);
+        e.call_rt(Rt::LibraryStop, &[]);
+        e.fb.ins().return_(&[]);
+        e.fb.seal_all_blocks();
+        let config = e.cg.module.isa().frontend_config();
+        e.fb.finalize(config);
+        Ok(id)
+    }
+
     /// The process's `main`, which C's start calls: the runtime runs
     /// `tondo_main` and gives its status.
     pub(super) fn process_main(

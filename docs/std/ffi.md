@@ -589,9 +589,10 @@ pub type Library = {
 
 A shared library loaded while the program runs: its functions and the
 values it publishes. A copy names the same library. One that `open` or
-`named` loaded stays loaded until the program ends; one of
-`openUnloadable` is unloaded when its last copy goes, and the last
-`Function` taken from it; `close` unloads any now.
+`named` loaded stays loaded until the program ends, unless Tondo built
+it; one that Tondo built, or of `openUnloadable`, is unloaded when its
+last copy goes, and the last `Function` taken from it; `close` unloads
+any now. A library that Tondo built ends its runtime first.
 
 ```tondo
 import std.console
@@ -610,7 +611,8 @@ pub fn Library.open(path: String, global: Bool = false): Library ! LibraryError
 The library in the file at `path`, taken from the current directory when
 it is not absolute, without searching. Its symbols are bound as it loads,
 and offered to the libraries loaded after it with `global`. It stays
-loaded until the program ends.
+loaded until the program ends, unless Tondo built it: then its runtime
+ends and it is unloaded when its last holder goes.
 
 #### Library.openUnloadable
 
@@ -685,9 +687,10 @@ The file the library was loaded from; the executable for `program`.
 pub unsafe fn Library.close(self): !LibraryError
 ```
 
-Unloads the library now, whatever holds it: the program promises that
-nothing taken from it is used afterwards, and that none of its code is
-running. Whether its memory goes is the system's.
+Unloads the library now, whatever holds it, after ending its runtime
+when Tondo built it: the program promises that nothing taken from it is
+used afterwards, and that none of its code is running. Whether its
+memory goes is the system's.
 
 ### Function
 

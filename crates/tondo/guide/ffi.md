@@ -55,9 +55,10 @@ fn main(): !ffi.LibraryError {
   `Library.named("z")` searches as the system does for `libz.so`
   (`ffi.libraryFileName`).
 - A function keeps its library loaded. A library of `open` stays loaded until
-  the program ends; one of `unsafe { Library.openUnloadable(...) }` is
-  unloaded when nothing holds it, and `unsafe { library.close() }` unloads
-  any now.
+  the program ends, unless Tondo built it; one that Tondo built, or of
+  `unsafe { Library.openUnloadable(...) }`, is unloaded when nothing holds
+  it, and `unsafe { library.close() }` unloads any now. A library that Tondo
+  built ends its runtime first, with the `<name>_stop` its header declares.
 - `function[F]` takes an `extern fn` type, and `has(name)` asks whether the
   library publishes a name. A `--static` or `--target` build cannot load
   libraries, and says so.
@@ -129,4 +130,7 @@ pub extern fn words_count(text: ffi.CString): ffi.CSize {
   `dlopen`.
 - Each call runs as a task on the thread that calls; it may wait, and the
   tasks it spawns go on after it returns.
+- `<name>_stop()`, in the header, ends its runtime so that `dlclose` can
+  unload it: its tasks are cancelled and run their `defer`s, its threads
+  end. Without it the library stays loaded; `ffi.Library` calls it for you.
 - `tondo check --library` and `tondo test --library` check and test it.
