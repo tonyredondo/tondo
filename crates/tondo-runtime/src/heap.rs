@@ -307,6 +307,13 @@ fn shard(address: usize) -> std::sync::MutexGuard<'static, Shard> {
 /// a fork waits. In an array, as an allocation while a shard is held could
 /// want to track itself in it.
 pub(crate) fn objects_held() -> Option<[std::sync::MutexGuard<'static, Shard>; SHARDS]> {
+    // On some systems, as macOS, a `Mutex` makes its lock the first time it
+    // is taken, which allocates: each shard is taken alone first, as an
+    // allocation while another is held would track itself in it, and wait
+    // for it forever.
+    for shard in &OBJECTS {
+        drop(shard.try_lock());
+    }
     let mut held: [Option<std::sync::MutexGuard<'static, Shard>>; SHARDS] = [const { None }; SHARDS];
     for (slot, shard) in held.iter_mut().zip(&OBJECTS) {
         *slot = Some(super::tasks::soon(shard)?);
