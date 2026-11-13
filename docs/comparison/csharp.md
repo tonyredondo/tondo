@@ -1005,9 +1005,10 @@ Hello, Ada! (3)
 - **Its ecosystem and its age.** NuGet has a library for anything a
   business needs, and the language has more than twenty years of tooling,
   people and answers behind it. Tondo is in early development and can still change.
-- **A program that changes as it runs.** Loading plugins, emitting code and
-  reflecting over anything need a runtime with a JIT. A Tondo program is
-  compiled whole.
+- **A program that changes as it runs.** Loading assemblies, emitting code
+  and reflecting over anything need a runtime with a JIT. A Tondo program is
+  compiled whole, and what it loads as it runs is a shared library, by its
+  C functions (`ffi.Library`).
 - **Object models that are really hierarchies.** A UI toolkit is one.
 
 What Tondo offers against that is in the programs above: failures that a

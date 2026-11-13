@@ -14,6 +14,7 @@ building a Tondo library that C calls.
 - [Pointers and raw memory](#pointers-and-raw-memory)
 - [Callbacks](#callbacks)
 - [Linking a library](#linking-a-library)
+- [A library loaded as the program runs](#a-library-loaded-as-the-program-runs)
 - [Bindings written for you](#bindings-written-for-you)
 - [A library for C](#a-library-for-c)
 - [C and tasks](#c-and-tasks)
@@ -311,6 +312,66 @@ static.
 
 `tondo` links executables itself and needs no C compiler for that. It needs
 the library to be there, as any program that uses it does.
+
+## A library loaded as the program runs
+
+A library named in `[native]` is part of the program from its start. One
+that is only known when the program runs, as a plugin is, is loaded with
+`ffi.Library`, which gives its functions by their names:
+
+```tondo
+import std.console
+import std.ffi
+
+fn main(): !ffi.LibraryError {
+    let program = ffi.Library.program()
+    let length = unsafe { program.function[extern fn(ffi.CString): ffi.CSize]("strlen")? }
+    console.println("{unsafe { length("tondo") }}")
+    console.println("{program.has("strlen")} {program.has("no_such_function")}")
+}
+```
+
+```text output
+5
+true false
+```
+
+| | |
+| --- | --- |
+| `ffi.Library.open("plugins/libkit.so")` | loads that file, from the current directory unless the path is absolute, and never searches |
+| `ffi.Library.named("z")` | searches as the system does, for `libz.so` on Linux and `libz.dylib` on macOS, the name `ffi.libraryFileName("z")` gives |
+| `ffi.Library.program()` | the program itself with the libraries it started with, C's among them |
+
+- `function[F](name)` takes the type of an `extern fn` and gives an
+  `ffi.Function[F]`, which is called as that function is, inside `unsafe`.
+  Asking for it is `unsafe` too, since nothing checks that the function has
+  that type. `pointer[T](name)` gives the address of a value the library
+  publishes, and `has(name)` says whether it publishes a name.
+- A `Function` keeps its library loaded, so it can be kept and called for as
+  long as the program likes. Its `raw()` is the bare `extern fn`, to give to
+  C as a callback, and keeps nothing.
+- A library stays loaded until the program ends. `unsafe { library.close() }`
+  unloads it now, and what is asked of it afterwards is
+  `LibraryError.Closed`: the program promises that nothing it took from the
+  library is used again and that none of its code is running. One opened
+  with `unsafe { ffi.Library.openUnloadable(path) }` is unloaded when the
+  last `Library` and `Function` of it go. Whether the memory is given back
+  is the system's decision, and it keeps a library that says it must stay,
+  as one built by Tondo does today.
+- A static executable loads no library, so a build with `--static` or
+  `--target` of a program that reaches `ffi.Library` is refused, and says
+  to build it without.
+
+What fails is an `ffi.LibraryError`, which says why, in the system's words
+when they are the system's:
+
+```text
+the library did not load: libkit.so: cannot open shared object file: No such file or directory
+the library publishes no `kit_start`
+```
+
+The [`textkit`](../../examples/textkit) example is loaded this way by a
+Tondo program.
 
 ## Bindings written for you
 
