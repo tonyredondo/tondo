@@ -15,6 +15,7 @@ size, and how a type of the program gets arithmetic.
 - [Mixing numbers](#mixing-numbers)
 - [Mathematics](#mathematics)
 - [Vectors](#vectors)
+- [Tensors](#tensors)
 - [Exact decimals and big integers](#exact-decimals-and-big-integers)
 - [Arithmetic for your types](#arithmetic-for-your-types)
 - [Code for any number](#code-for-any-number)
@@ -368,6 +369,51 @@ Most code needs none of this: the arithmetic of arrays, their `sum` and
 ([Collections](08-collections.md#arithmetic-on-arrays)). `std.simd` is for
 the loop those do not express, and [`std.simd`](../std/simd.md) lists every
 operation.
+
+## Tensors
+
+`math.Tensor` holds numbers in several dimensions: a shape, and the values
+in one block. A matrix is a tensor of two dimensions:
+
+```tondo
+import std.console
+import std.math
+
+fn main() {
+    let weights = math.Tensor.fromRows([[0.5, 0.25], [0.125, 1.0]])
+    let input = math.Tensor([1.0, 2.0])
+    console.println("{weights.shape()} {weights.at(1, 0)} {weights.matmul(input)}")
+
+    let table = math.Tensor.fromRows([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    let scale = math.Tensor([10.0, 100.0, 1000.0])
+    console.println("{table * scale}")
+    console.println("{table * 2.0 + 1.0} {table.sumAlong(0)} {table.sumAlong(1)}")
+    console.println("{table.max()} {table.indexOfMax()} {table.transposed()}")
+}
+```
+
+```text output
+[2, 2] 0.125 [1.0, 2.125]
+[[10.0, 200.0, 3000.0], [40.0, 500.0, 6000.0]]
+[[3.0, 5.0, 7.0], [9.0, 11.0, 13.0]] [5.0, 7.0, 9.0] [6.0, 15.0]
+some(6.0) some([1, 2]) [[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]]
+```
+
+- `math.Tensor(values, shape)` makes one of an array and a shape, a vector
+  when no shape is given; `fromRows` of arrays in arrays; `zeros` and
+  `filled` of a shape alone. A tensor shows as arrays in arrays.
+- `+`, `-`, `*` and `/` go element by element, between two tensors and with
+  a number on either side. A dimension of size 1, or one the smaller tensor
+  lacks, is repeated along the other's, as the row `scale` is for each row
+  of `table`. Shapes that do not fit are a panic (`P0006`), as two arrays
+  of different lengths are.
+- `matmul` is the product of matrices, and `dot` that of two vectors;
+  `transposed`, `reshape` and `slice(axis, index)` give the same values in
+  another shape or a part of them; `sum` adds everything and
+  `sumAlong(axis)` along one dimension.
+- `at(1, 0)` reads an element and `set(value, 1, 0)` writes one; an index
+  out of range is a panic (`P0001`). `min`, `max` and `indexOfMax` give
+  options, since a tensor may have no elements.
 
 ## Exact decimals and big integers
 
