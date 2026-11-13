@@ -111,7 +111,18 @@ fn main(): !String {
         write(path.join(root, "src/part{modules}/start.to"), start)?
         modules += 1
     }
-    var program = ""
+    // One function as long as the project has modules, each line of it a
+    // loop once its closure is inlined: what grows with a function's length
+    // grows here.
+    var long = "pub fn long(seed: Int): Int {{\n    var total = 0\n"
+    for module in 0..modules {
+        long =
+            "{long}    total += [seed, {module}, seed + {module}].map((x) {{ x.leadingZeros() }}).length()\n"
+    }
+    long = "{long}    total\n}}\n"
+    lines += long.lines().length()
+    write(path.join(root, "src/long/long.to"), long)?
+    var program = "import generated.long\n"
     for module in 0..modules {
         program = "{program}import generated.part{module}\n"
     }
@@ -120,6 +131,7 @@ fn main(): !String {
     for module in 0..modules {
         program = "{program}    total += part{module}.start({module})?\n"
     }
+    program = "{program}    total += long.long(1)\n"
     program = "{program}    console.println(\"{{total}}\")\n}}\n"
     lines += program.lines().length()
     write(path.join(root, "src/main.to"), program)?

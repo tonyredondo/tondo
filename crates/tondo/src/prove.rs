@@ -22,7 +22,7 @@ pub fn prove(bodies: &mut [Body], types: &Types) {
     let loans: Vec<Vec<bool>> = bodies.iter().map(|body| body.loans.clone()).collect();
     crate::parallel::each_mut(bodies, |body| {
         if let Some(relevant) = relevant(body, types) {
-            Prover { body, types, loans: &loans, relevant }.run();
+            Prover { body, types, loans: &loans, relevant, live: Vec::new() }.run();
         }
         if crate::mir_text::remarking() {
             kept(body, types);
@@ -250,6 +250,17 @@ impl Facts {
         true
     }
 
+    /// Forgets what holds of the locals that no code after this point
+    /// reads, which would otherwise go along to the end of the function and
+    /// make each block's facts grow with all the loops before it.
+    fn keep_live(&mut self, live: &[bool]) {
+        let alive = |node: Node| match node {
+            Node::Zero => true,
+            Node::Int(local) | Node::Len(local) => live[local.0 as usize],
+        };
+        self.0.retain(|&(a, b), _| alive(a) && alive(b));
+    }
+
     fn forget(&mut self, node: Node) {
         self.0.retain(|&(a, b), _| a != node && b != node);
     }
@@ -306,6 +317,8 @@ struct Prover<'a> {
     loans: &'a [Vec<bool>],
     /// The locals the facts follow (`relevant`).
     relevant: Vec<bool>,
+    /// The locals read on some way from each block's start.
+    live: Vec<Vec<bool>>,
 }
 
 /// A comparison a local holds, of two integers as `node + offset`.
@@ -344,6 +357,15 @@ impl Prover<'_> {
         }
         let successors: Vec<Vec<usize>> = self.body.blocks.iter().map(|block| successors(&block.terminator)).collect();
         let (order, heads) = order(&successors);
+        let locals = self.body.locals.len();
+        self.live = crate::mir::live_in(&self.body.blocks, locals)
+            .into_iter()
+            .map(|alive| {
+                let mut live = vec![false; locals];
+                alive.into_iter().for_each(|local| live[local.0 as usize] = true);
+                live
+            })
+            .collect();
         let Some((mut entry, reaching)) = self.fixpoint(&order, &heads, &HashMap::new()) else { return };
         // What a loop's counter bounds of the locals it only adds to, which
         // a second round holds at the loop's head.
@@ -400,6 +422,9 @@ impl Prover<'_> {
                         for &(a, b, k) in pinned {
                             facts.add(a, b, k);
                         }
+                    }
+                    if let Some(facts) = &mut joined {
+                        facts.keep_live(&self.live[block]);
                     }
                     if joined == entry[block] && turns[block] > 0 {
                         continue;
