@@ -4551,6 +4551,58 @@ fn a_line_stops_once_however_many_blocks_it_takes() {
     let text = debug("record\nbreak joined.to:8 if word == \"be\"\ncontinue\nnext\nwhy other\nquit\n");
     assert!(text.contains("`other` became [\"to\": 1, \"be\": 1] on this line"), "{text}");
     assert!(!text.contains("\"be\": 0"), "{text}");
+    // And so in a replay of the run.
+    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "--record", "joined.rec", "joined.to"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(recorded.status.success(), "{}", String::from_utf8_lossy(&recorded.stderr));
+    let mut replay = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--replay", "joined.rec"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let commands = "break joined.to:8 if word == \"be\"\ncontinue\nnext\nwhy other\nquit\n";
+    std::io::Write::write_all(&mut replay.stdin.take().unwrap(), commands.as_bytes()).unwrap();
+    let text = String::from_utf8(replay.wait_with_output().unwrap().stdout).unwrap();
+    assert!(text.contains("`other` became [\"to\": 1, \"be\": 1] on this line"), "{text}");
+    assert!(!text.contains("\"be\": 0"), "{text}");
+    // A value a call gave comes from the line of the function that made
+    // it, which its causes go on from.
+    let program = "import std.console\n\nfn shout(text: String): String {\n    text.toUpper()\n}\n\nfn main() {\n    var counts: Map[String, Int] = [:]\n    for each in [\"to\", \"be\"] {\n        let word = shout(each)\n        counts[word, default: 0] += 1\n    }\n    console.println(\"{counts}\")\n}\n";
+    std::fs::write(dir.join("shouted.to"), program).unwrap();
+    let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "shouted.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let commands = "record\nbreak shouted.to:11 if word == \"BE\"\ncontinue\nnext\nwhy counts\nquit\n";
+    std::io::Write::write_all(&mut debugger.stdin.take().unwrap(), commands.as_bytes()).unwrap();
+    let text = String::from_utf8(debugger.wait_with_output().unwrap().stdout).unwrap();
+    assert!(text.contains("`word` was \"BE\", from shouted.to:4 in shout"), "{text}");
+    // And so in a replay.
+    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "--record", "shouted.rec", "shouted.to"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(recorded.status.success(), "{}", String::from_utf8_lossy(&recorded.stderr));
+    let mut replay = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--replay", "shouted.rec"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let commands = "break shouted.to:11 if word == \"BE\"\ncontinue\nnext\nwhy counts\nquit\n";
+    std::io::Write::write_all(&mut replay.stdin.take().unwrap(), commands.as_bytes()).unwrap();
+    let text = String::from_utf8(replay.wait_with_output().unwrap().stdout).unwrap();
+    assert!(text.contains("`word` was \"BE\", from shouted.to:4 in shout"), "{text}");
 }
 
 /// The processes of these process groups, from /proc, as each says it in

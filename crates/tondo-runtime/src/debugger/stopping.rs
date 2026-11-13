@@ -1702,6 +1702,13 @@ pub(super) fn tracking(table: &Table, here: Stop, tick: u64) {
             tracked.trail_failed = Some(wrong.to_string());
         }
     }
+    // A probe where a line goes on is of that line: what it did by then and
+    // does next is one change of the line, as the next line's start tells.
+    // Not after another task ran, as after a wait: the changes that task
+    // made since its own last probe are its line's.
+    if table.sites.get(site).is_some_and(|site| site.goes_on) && tracked.lines.get(&task).copied() == tracked.before {
+        return;
+    }
     let before = tracked.before.replace((tick, site));
     tracked.lines.insert(task, (tick, site));
     for followed in tracked.followed.iter_mut() {
