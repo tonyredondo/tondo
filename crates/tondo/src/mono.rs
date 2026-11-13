@@ -40,7 +40,9 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         ..
     } = program;
     let index = ImplIndex::new(&types, &impls);
-    let (widths, clones) = widths(&mut types);
+    // A program without `Vector[T]` has nothing to give a width.
+    let vectors = types.widest;
+    let (widths, clones) = if vectors { widths(&mut types) } else { Default::default() };
     let mut mono = Mono {
         types: &mut types,
         functions: &functions,
@@ -59,6 +61,7 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         widest: Vec::new(),
         holds: HashMap::new(),
         widths,
+        vectors,
         level: 0,
         clones,
         uses: HashMap::new(),
@@ -315,6 +318,7 @@ struct Mono<'a> {
     /// (18.11): the level's widest, or 256 bits in a clone for a version;
     /// as types to put in their place.
     widths: [HashMap<Ty, Ty>; 2],
+    vectors: bool,
     level: usize,
     /// Whether a function that uses `Vector[T]` gets a clone of 256 bits
     /// for its version, as x64 below `x86-64-v3` has; which functions use
@@ -406,6 +410,9 @@ impl Mono<'_> {
     /// Whether the code of a function, before its type arguments, has a
     /// `Vector[T]` or a `Mask[T]`.
     fn uses(&mut self, id: FnId) -> bool {
+        if !self.vectors {
+            return false;
+        }
         if let Some(&known) = self.uses.get(&id) {
             return known;
         }
@@ -436,7 +443,7 @@ impl Mono<'_> {
     /// The type with `Vector[T]` and `Mask[T]` of the width of the code
     /// being made (18.11).
     fn fixed(&mut self, ty: Ty) -> Ty {
-        match self.mentions(ty) {
+        match self.vectors && self.mentions(ty) {
             true => self.types.subst(ty, &self.widths[self.level]),
             false => ty,
         }
@@ -474,7 +481,7 @@ impl Mono<'_> {
     /// The first place of the function being made that keeps a `Vector[T]`
     /// or a `Mask[T]` where it may not be (18.11).
     fn note_held(&mut self, ty: Ty, span: Span) {
-        if span == Span::default() || self.held.is_some_and(|(at, ..)| at.start <= span.start) {
+        if !self.vectors || span == Span::default() || self.held.is_some_and(|(at, ..)| at.start <= span.start) {
             return;
         }
         let types = &*self.types;

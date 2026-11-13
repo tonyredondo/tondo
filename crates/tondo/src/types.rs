@@ -595,6 +595,9 @@ pub struct Types {
     reaches: RwLock<HashMap<(Ty, Ty), bool>>,
     needs_drop: RwLock<HashMap<Ty, bool>>,
     can_cycle: RwLock<HashMap<Ty, bool>>,
+    /// Whether the program has a `Vector[T]` or a `Mask[T]`, without which
+    /// nothing gives one a width or checks where it is kept (18.11).
+    pub widest: bool,
     /// Standard library types with an intrinsic `Display`.
     pub shown: HashMap<Ty, Shown>,
     /// The `extern type`s, laid out as C lays out their structs.
@@ -671,6 +674,7 @@ impl Default for Types {
             reaches: RwLock::default(),
             needs_drop: RwLock::default(),
             can_cycle: RwLock::default(),
+            widest: false,
             shown: HashMap::new(),
             foreign: HashMap::new(),
             modules: Vec::new(),
@@ -697,6 +701,7 @@ impl Types {
             return ty;
         }
         let ty = Ty(self.kinds.len() as u32);
+        self.widest |= matches!(kind, TyKind::Vector(Width::Widest, _) | TyKind::Mask(Width::Widest, _));
         self.kinds.push(kind.clone());
         self.map.insert(kind, ty);
         ty

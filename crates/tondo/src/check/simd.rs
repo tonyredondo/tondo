@@ -35,6 +35,9 @@ impl<'a> Checker<'a> {
     /// `Mask[T]` where it may not be: only locals, parameters and results
     /// hold one (18.11).
     pub(super) fn vector_places(&mut self, functions: &[hir::Function]) {
+        if !self.types.widest {
+            return;
+        }
         let types = &self.types;
         let mut holds: HashMap<Ty, Option<Ty>> = HashMap::new();
         let mut found = Vec::new();
