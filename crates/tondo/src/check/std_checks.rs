@@ -104,7 +104,7 @@ impl<'a> Checker<'a> {
                 _ => continue,
             };
             let file = self.sources.file_of(span.start);
-            let Some(systems) = crate::project::systems_of(&file.path) else { continue };
+            let Some(targets) = crate::project::targets_of(&file.path) else { continue };
             let text = self.sources.slice(Span::new(span.start, end.unwrap_or(span.end).max(span.start)));
             let head = text.lines().next().unwrap_or_default().trim().trim_end_matches('{').trim_end().to_string();
             let Some(other) = self
@@ -114,14 +114,10 @@ impl<'a> Checker<'a> {
             else {
                 continue;
             };
-            let here: Vec<&str> = systems.iter().map(|s| s.shown()).collect();
+            let here = crate::project::shown_targets(&targets, &crate::project::Target::ALL);
             let message = format!(
-                "`{}` is `{head}` here, for {}, and `{}` in `{}`, for {}: give it one signature for every system, which common code calls",
-                name.name,
-                here.join(" and "),
-                other.head,
-                other.file,
-                other.systems
+                "`{}` is `{head}` here, for {}, and `{}` in `{}`, for {}: give it one signature for every target, which common code calls",
+                name.name, here, other.head, other.file, other.systems
             );
             self.diags.error("E1808", name.span, message);
         }

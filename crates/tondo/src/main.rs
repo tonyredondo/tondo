@@ -559,7 +559,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--library" => library = true,
             "--target" => {
                 let parsed = Target::parse(&value()?)?;
-                driver::set_system(parsed.system());
+                driver::set_target(parsed.project());
                 target = Some(parsed);
             }
             "--deny-skips" => options.deny_skips = true,
@@ -2461,7 +2461,7 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
         let packages = tondo::deps::resolve(&project, None)?;
         let mut modules: Vec<(String, Vec<PathBuf>, bool)> = Vec::new();
         for (index, package) in packages.iter().enumerate() {
-            let (files, _) = tondo::project::sources(&package.dir, &package.name, Some(tondo::driver::system()))?;
+            let (files, _) = tondo::project::sources(&package.dir, &package.name, Some(tondo::driver::target()))?;
             let visible = |file: &tondo::project::ProjectFile| {
                 index == 0 || !file.module[1..].iter().any(|part| part == "internal")
             };
@@ -2679,7 +2679,7 @@ fn link_options(args: &[OsString]) -> Result<(BuildOptions, Vec<OsString>), Stri
                 .next()
                 .ok_or_else(|| format!("--target needs a target: x86_64-linux or aarch64-linux\n{USAGE}"))?;
             let parsed = Target::parse(&name.to_string_lossy())?;
-            driver::set_system(parsed.system());
+            driver::set_target(parsed.project());
             target = Some(parsed);
         } else if arg == "--static" && !statically {
             statically = true;

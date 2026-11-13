@@ -2,7 +2,7 @@
 //! and archives into the cache, and `tondo.lock`, which pins the exact
 //! commit or content of each fetched dependency.
 
-use crate::project::{System, is_identifier};
+use crate::project::{Arch, System, is_identifier};
 use crate::toml::{self, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -37,6 +37,9 @@ pub struct Package {
     /// The systems it runs on (`[package] systems`), all of them when it
     /// names none (language 6.8).
     pub systems: Vec<System>,
+    /// The architectures it runs on (`[package] architectures`), both when
+    /// it names none.
+    pub architectures: Vec<Arch>,
 }
 
 /// A generator (27.5 of the language): a program that writes modules of
@@ -98,6 +101,7 @@ struct Manifest {
     providers: Vec<(String, PathBuf)>,
     generators: Vec<Generator>,
     systems: Vec<System>,
+    architectures: Vec<Arch>,
 }
 
 /// Reads `tondo.toml` in `dir`; a missing file declares nothing.
@@ -113,6 +117,7 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
         providers: Vec::new(),
         generators: Vec::new(),
         systems: Vec::new(),
+        architectures: Vec::new(),
     };
     if !path.is_file() {
         return Ok(manifest);
@@ -138,6 +143,21 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
                             let system = item.as_str().and_then(System::parse).ok_or_else(|| at(line, usage.into()))?;
                             if !manifest.systems.contains(&system) {
                                 manifest.systems.push(system);
+                            }
+                        }
+                        continue;
+                    }
+                    if key == "architectures" {
+                        let usage =
+                            "`architectures = [\"x64\"]` names the architectures the package runs on: `x64`, `arm64`";
+                        let items = match &value {
+                            Value::Array(items) if !items.is_empty() => items,
+                            _ => return Err(at(line, usage.into())),
+                        };
+                        for item in items {
+                            let arch = item.as_str().and_then(Arch::parse).ok_or_else(|| at(line, usage.into()))?;
+                            if !manifest.architectures.contains(&arch) {
+                                manifest.architectures.push(arch);
                             }
                         }
                         continue;
@@ -438,6 +458,7 @@ impl Resolver<'_> {
             providers: manifest.providers,
             generators: manifest.generators,
             systems: manifest.systems,
+            architectures: manifest.architectures,
         });
         self.visiting.push(dir.clone());
         for (dependency, source) in manifest.dependencies {

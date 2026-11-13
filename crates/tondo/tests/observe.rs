@@ -717,6 +717,14 @@ fn debug_adapter_runs_a_test() {
         set["body"]["breakpoints"],
         json!([{ "verified": false, "line": 1, "message": format!("this file is for {shown}; the program runs on {here}") }])
     );
+    // One of another architecture, on this machine's system: both named.
+    let (arch, other_arch) = if cfg!(target_arch = "aarch64") { ("arm64", "x64") } else { ("x64", "arm64") };
+    let elsewhere = dir.join(format!("src/only_{}_{other_arch}.to", here.to_lowercase()));
+    std::fs::write(&elsewhere, "fn only() {}\n").unwrap();
+    send("setBreakpoints", json!({ "source": { "path": elsewhere }, "breakpoints": [{ "line": 1 }] }));
+    let set = response(&mut output, "setBreakpoints", &mut events);
+    let message = format!("this file is for {here} {other_arch}; the program runs on {here} {arch}");
+    assert_eq!(set["body"]["breakpoints"], json!([{ "verified": false, "line": 1, "message": message }]));
     send("configurationDone", json!({}));
     response(&mut output, "configurationDone", &mut events);
     let stopped = loop {

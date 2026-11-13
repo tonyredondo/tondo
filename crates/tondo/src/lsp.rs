@@ -1152,26 +1152,38 @@ impl Server {
     fn analyze(&mut self, root: &Path) {
         let open: HashMap<PathBuf, String> =
             self.open.iter().map(|(path, document)| (path.clone(), document.text.clone())).collect();
-        // A project with files of a system is read for each one it runs on,
+        // A project with files of a target is read for each one it runs on,
         // this machine's first: the errors of each go with the first's, and
-        // the files of another system are read with that system's analysis.
-        let host = crate::project::System::host();
-        let systems = driver::checked_systems(root).unwrap_or_else(|_| vec![host]);
-        let main = systems.first().copied().unwrap_or(host);
-        let Some(mut analyzed) = driver::for_system(main, || self.analyzed(root, open.clone())) else { return };
+        // the files of another target are read with that target's analysis.
+        let host = crate::project::Target::host();
+        let targets = driver::checked_targets(root).unwrap_or_else(|_| vec![(host, vec![host])]);
+        let main = targets.first().map_or(host, |(target, _)| *target);
+        let Some(mut analyzed) = driver::for_target(main, || self.analyzed(root, open.clone())) else { return };
         let mut others = Vec::new();
-        for &system in systems.iter().filter(|&&system| system != host) {
-            let Some(other) = driver::for_system(system, || self.analyzed(root, open.clone())) else { continue };
-            if system != main {
-                driver::merge_system(&mut analyzed.analysis, &other.analysis, system);
-            }
-            others.push((system, other));
+        for (target, _) in targets.iter().filter(|(target, _)| *target != host) {
+            let Some(other) = driver::for_target(*target, || self.analyzed(root, open.clone())) else { continue };
+            others.push((*target, other));
         }
+        let stands = |target: crate::project::Target| {
+            targets.iter().find(|(t, _)| *t == target).map_or(&[][..], |(_, stands)| stands.as_slice())
+        };
+        let merged: Vec<(&[crate::project::Target], &driver::Analysis)> = others
+            .iter()
+            .filter(|(target, _)| *target != main)
+            .map(|(target, other)| (stands(*target), &other.analysis))
+            .collect();
+        driver::merge_targets(&mut analyzed.analysis, &merged, &targets);
         analyzed.paths = self.paths(&analyzed.analysis);
         self.publish(root, &analyzed);
-        self.publish_tests(root, &analyzed, &others);
-        for (system, other) in others {
-            self.analyses.insert(root.join(format!("#{}", system.name())), other);
+        // Each other analysis named by what it stands for, as `macOS`.
+        let checked: Vec<crate::project::Target> = targets.iter().flat_map(|(_, s)| s.iter().copied()).collect();
+        let labeled: Vec<(String, &Analyzed)> = others
+            .iter()
+            .map(|(target, other)| (crate::project::shown_targets(stands(*target), &checked), other))
+            .collect();
+        self.publish_tests(root, &analyzed, &labeled);
+        for (target, other) in others {
+            self.analyses.insert(root.join(target_key(target)), other);
         }
         if let Some(previous) = self.analyses.insert(root.to_path_buf(), analyzed) {
             let earlier = self.earlier.entry(root.to_path_buf()).or_default();
@@ -1206,13 +1218,14 @@ impl Server {
     /// Sends a project's suites and tests when they change, as the editor
     /// asked: each with its id, its parent's, its name, where it is, and
     /// whether it is a benchmark.
-    fn publish_tests(&mut self, root: &Path, analyzed: &Analyzed, others: &[(crate::project::System, Analyzed)]) {
+    fn publish_tests(&mut self, root: &Path, analyzed: &Analyzed, others: &[(String, &Analyzed)]) {
         let Some(nodes) = analyzed.tests.as_ref().filter(|_| self.tests && !self.quiet) else { return };
         let mut tests = Vec::new();
         let mut ids = HashSet::new();
         // Those of another system's files go too, with the system, which
         // this machine does not run (language 6.8).
-        let others = others.iter().filter_map(|(system, other)| Some((Some(*system), other, other.tests.as_ref()?)));
+        let others =
+            others.iter().filter_map(|(label, other)| Some((Some(label.as_str()), *other, other.tests.as_ref()?)));
         for (system, from, nodes) in std::iter::once((None, analyzed, nodes)).chain(others) {
             for node in nodes.iter().skip(1) {
                 if !ids.insert(node.id.clone()) {
@@ -1224,7 +1237,7 @@ impl Server {
                 let mut test = json!({ "id": node.id, "parent": parent, "name": name, "suite": node.suite,
                     "bench": node.bench, "fuzz": node.fuzz, "location": location });
                 if let Some(system) = system {
-                    test["system"] = json!(system.shown());
+                    test["system"] = json!(system);
                 }
                 tests.push(test);
             }
@@ -1977,9 +1990,9 @@ impl Server {
             .into_iter()
             .filter_map(|(other, found)| {
                 let there = other.analysis.sources.file_of(found.start);
-                let systems = crate::project::systems_of(&there.path)?;
-                let named: Vec<&str> = systems.iter().map(|s| s.shown()).collect();
-                Some(format!("for {} in `{}`", named.join(" and "), there.logical))
+                let targets = crate::project::targets_of(&there.path)?;
+                let named = crate::project::shown_targets(&targets, &crate::project::Target::ALL);
+                Some(format!("for {named} in `{}`", there.logical))
             })
             .collect();
         if places.len() > 1 {
@@ -2476,12 +2489,11 @@ impl Server {
     /// files of every system, its own included, each with its analysis.
     fn for_systems<'s>(&'s self, analyzed: &'s Analyzed, def: &crate::index::Def) -> Vec<(&'s Analyzed, Span)> {
         let file = analyzed.analysis.sources.file_of(def.name_span.start);
-        if crate::project::systems_of(&file.path).is_none() {
+        if crate::project::targets_of(&file.path).is_none() {
             return Vec::new();
         }
         let (root, _) = root_of(&file.path);
-        let keys = std::iter::once(root.clone())
-            .chain(crate::project::System::ALL.map(|system| root.join(format!("#{}", system.name()))));
+        let keys = std::iter::once(root.clone()).chain(crate::project::Target::ALL.map(|t| root.join(target_key(t))));
         let mut found = Vec::new();
         let mut seen = HashSet::new();
         for other in keys.filter_map(|key| self.analyses.get(&key)) {
@@ -2489,7 +2501,7 @@ impl Server {
             for candidate in index.defs.iter().filter(|d| d.name == def.name && d.kind == def.kind) {
                 let there = other.analysis.sources.file_of(candidate.name_span.start);
                 if there.module == file.module
-                    && crate::project::systems_of(&there.path).is_some()
+                    && crate::project::targets_of(&there.path).is_some()
                     && seen.insert((there.path.clone(), candidate.name_span.start - there.base))
                 {
                     found.push((other, candidate.name_span));
@@ -4749,11 +4761,20 @@ const KEYWORDS: [&str; 29] = [
 /// names (language 6.8).
 fn key_of(path: &Path) -> PathBuf {
     let (root, project) = root_of(path);
-    let host = crate::project::System::host();
-    match crate::project::systems_of(path) {
-        Some(systems) if project && !systems.contains(&host) => root.join(format!("#{}", systems[0].name())),
+    let host = crate::project::Target::host();
+    match crate::project::targets_of(path) {
+        Some(mut targets) if project && !targets.contains(&host) => {
+            // The one `checked_targets` reads: nearest this machine's.
+            targets.sort_by_key(|t| (t.system != host.system, t.arch != host.arch));
+            root.join(target_key(targets[0]))
+        }
         _ => root,
     }
+}
+
+/// The key of a project's analysis for another target than this machine's.
+fn target_key(target: crate::project::Target) -> String {
+    format!("#{}-{}", target.system.name(), target.arch.name())
 }
 
 fn root_of(path: &Path) -> (PathBuf, bool) {

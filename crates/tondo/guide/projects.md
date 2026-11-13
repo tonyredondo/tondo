@@ -37,13 +37,16 @@ fn main() {
   breaking them. No annotation says so: where it lives does.
 - `import std.x` brings a standard module; there is nothing to install.
 - Modules cannot import each other in a cycle.
-- Code for one system goes in its own files, which their names mark:
-  `watch_linux.to`, `watch_macos.to`, and `signals_unix.to` for both, also
-  before `_test.to`. A build takes those of its system; common code calls
-  what each of them declares with the same signature, and `tondo check`
-  checks every system, so an error of macOS shows on Linux as `on macOS:`.
-  There is no `#if`: `env.build().target` tells a program where it runs.
-  `systems = ["linux"]` in `[package]` limits a package to some systems.
+- Code for one system or one architecture goes in its own files, which
+  their names mark: `watch_linux.to`, `watch_macos.to`, and
+  `signals_unix.to` for both; `crc_x64.to` and `crc_arm64.to`; and a system
+  then an architecture, `poll_linux_arm64.to`, also before `_test.to`. A
+  build takes those of its target; common code calls what each of them
+  declares with the same signature, and `tondo check` checks every target,
+  so an error of macOS shows on Linux as `on macOS:`, and one of arm64 as
+  `on arm64:` or `on Linux arm64:`. There is no `#if`: `env.build().target`
+  tells a program where it runs. `systems = ["linux"]` and
+  `architectures = ["x64"]` in `[package]` limit a package.
 
 ## tondo.toml
 

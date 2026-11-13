@@ -1260,14 +1260,18 @@ impl<'a> Checker<'a> {
                 format!("`{name}` is a standard module: add `import std.{name}` at the top of the file")
             }
             _ if let Some(found) = self.elsewhere.iter().find(|e| e.name == name && e.module == here) => {
-                let system = crate::driver::system();
+                let target = crate::driver::target();
+                // The suffix of a file for this target, as precise as the
+                // file that has it.
+                let (systems, archs) = crate::project::suffixes(std::path::Path::new(&found.file));
+                let (shown, suffix) = match (systems.is_some(), archs.is_some()) {
+                    (true, true) => (target.shown(), format!("{}_{}", target.system.name(), target.arch.name())),
+                    (false, true) => (target.arch.name().to_string(), target.arch.name().to_string()),
+                    _ => (target.system.shown().to_string(), target.system.name().to_string()),
+                };
                 format!(
-                    "`{name}` is in `{}`, for {}: write it for {} too, in a file `*_{}.to` or a common one, as `{}`",
-                    found.file,
-                    found.systems,
-                    system.shown(),
-                    system.name(),
-                    found.head
+                    "`{name}` is in `{}`, for {}: write it for {shown} too, in a file `*_{suffix}.to` or a common one, as `{}`",
+                    found.file, found.systems, found.head
                 )
             }
             // A variant written alone where its enum is not known.

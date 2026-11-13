@@ -17,7 +17,7 @@ struct Public {
 fn public(dir: &Path) -> Result<BTreeMap<(String, String, String), Public>, String> {
     let packages = crate::deps::resolve(dir, None)?;
     let package = packages.first().ok_or("the project has no package")?;
-    let (files, _) = crate::project::sources(&package.dir, &package.name, Some(crate::driver::system()))?;
+    let (files, _) = crate::project::sources(&package.dir, &package.name, Some(crate::driver::target()))?;
     let mut found = BTreeMap::new();
     // What is internal is the package's own, to change at will.
     for file in files.into_iter().filter(|file| !file.module.iter().skip(1).any(|part| part == "internal")) {

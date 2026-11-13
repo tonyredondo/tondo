@@ -455,6 +455,77 @@ fn builds_the_files_of_its_system() {
     assert!(err.contains(&refused), "{err}");
 }
 
+/// Files for one architecture, and for a system and an architecture
+/// (language 6.8): each build has its target's, `tondo check` checks every
+/// target, an error says where, and a name with the architecture first is
+/// refused.
+#[test]
+fn builds_the_files_of_its_architecture() {
+    let (here, other) = if cfg!(target_arch = "aarch64") { ("arm64", "x64") } else { ("x64", "arm64") };
+    let system = if cfg!(target_os = "macos") { "macos" } else { "linux" };
+    let dir = scratch("architectures");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\n").unwrap();
+    std::fs::write(dir.join("src/main.to"), "import std.console\n\nfn main() {\n    console.println(crc())\n}\n")
+        .unwrap();
+    let crc = |arch: &str| format!("fn crc(): String {{\n    \"{arch}\"\n}}\n");
+    std::fs::write(dir.join(format!("src/crc_{here}.to")), crc(here)).unwrap();
+    std::fs::write(
+        dir.join(format!("src/crc_{system}_{here}_test.to")),
+        format!("test crcIsHere {{\n    assert(crc() == \"{here}\")\n}}\n"),
+    )
+    .unwrap();
+    // Missing for the other architecture, on every system: named alone.
+    let (_, err, code) = tondo(&dir, &["check"]);
+    assert_eq!(code, 1, "{err}");
+    let hint = format!(
+        "on {other}: unknown name `crc`; `crc` is in `src/crc_{here}.to`, for {here}: write it for {other} too, in a file `*_{other}.to` or a common one, as `fn crc(): String`"
+    );
+    assert!(err.contains(&hint), "{err}");
+    // Both: it checks, and runs and tests this machine's.
+    std::fs::write(dir.join(format!("src/crc_{other}.to")), crc(other)).unwrap();
+    let (out, err, code) = tondo(&dir, &["check"]);
+    assert_eq!((out.as_str(), code), ("", 0), "{err}");
+    let (out, err, code) = tondo(&dir, &["run"]);
+    assert_eq!((out.as_str(), code), (format!("{here}\n").as_str(), 0), "{err}");
+    let (out, err, code) = tondo(&dir, &["test"]);
+    assert!(code == 0 && out.contains("1 passed"), "{out}{err}");
+    // A file of a system and an architecture, missing on the others.
+    std::fs::remove_file(dir.join(format!("src/crc_{other}.to"))).unwrap();
+    std::fs::rename(dir.join(format!("src/crc_{here}.to")), dir.join(format!("src/crc_{system}_{here}.to"))).unwrap();
+    let (_, err, code) = tondo(&dir, &["check"]);
+    assert_eq!(code, 1, "{err}");
+    // Each target that lacks it, with the file to write for it.
+    let (shown, elsewhere, named) =
+        if system == "linux" { ("Linux", "macOS", "macos") } else { ("macOS", "Linux", "linux") };
+    let lacking = [
+        format!("on {shown} {other}: unknown name `crc`"),
+        format!(
+            "on {elsewhere} {here}: unknown name `crc`; `crc` is in `src/crc_{system}_{here}.to`, for {shown} {here}: write it for {elsewhere} {here} too, in a file `*_{named}_{here}.to`"
+        ),
+    ];
+    assert!(lacking.iter().all(|line| err.contains(line.as_str())), "{err}");
+    // The architecture before the system: the name to write.
+    std::fs::rename(dir.join(format!("src/crc_{system}_{here}.to")), dir.join(format!("src/crc_{here}_{system}.to")))
+        .unwrap();
+    let (_, err, code) = tondo(&dir, &["check"]);
+    assert_ne!(code, 0, "{err}");
+    assert!(err.contains(&format!("the system goes before the architecture, as `crc_{system}_{here}.to`")), "{err}");
+    std::fs::rename(dir.join(format!("src/crc_{here}_{system}.to")), dir.join(format!("src/crc_{here}.to"))).unwrap();
+    // A package of the other architecture only; and an unknown one.
+    std::fs::write(dir.join("tondo.toml"), format!("[package]\nname = \"app\"\narchitectures = [\"{other}\"]\n"))
+        .unwrap();
+    let (_, err, code) = tondo(&dir, &["run"]);
+    assert_ne!(code, 0);
+    let refused = format!(
+        "the package `app` runs on {other}, as `architectures` in its tondo.toml says: it is not built for {here}"
+    );
+    assert!(err.contains(&refused), "{err}");
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\narchitectures = [\"riscv\"]\n").unwrap();
+    let (_, err, _) = tondo(&dir, &["check"]);
+    assert!(err.contains("names the architectures the package runs on: `x64`, `arm64`"), "{err}");
+}
+
 /// A write made from an earlier read has a repair: one `update`, unless what
 /// was read goes on being used.
 #[test]

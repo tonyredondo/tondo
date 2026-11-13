@@ -6311,3 +6311,17 @@ the standard library. It always gives a `Pipeline`, of one stage when there is o
 does not depend on the text. What it refuses is `ProcessError.InvalidCommand`, a new variant with the
 reason, as `InvalidData` would have said nothing of why. A file that writes a `$( )` uses
 `std.process`, which runs it, so its import is not reported unused.
+
+## Files for an architecture, and for a system and an architecture
+
+Code for one processor, as a checksum with an instruction of x86-64 and another of AArch64, had
+nowhere to go but behind a test of `env.build()` at run time. A file's name now says its
+architecture as it says its system, `crc_arm64.to`, and both, the system first,
+`poll_linux_arm64.to`; a target is a system and an architecture, and everything files of a system
+had holds for targets. The other order, `crc_arm64_linux.to`, is refused with the name to write, as
+it would otherwise be a file of Linux named `crc_arm64`. `tondo check` checks a package for each
+target it admits, but one whose files name no architecture is the same on both, and one with no
+file of a system the same on each, so it checks one target for those it stands for. An error says
+where it happens by what it covers: a system alone when all of its architectures have it, as before,
+an architecture alone when all of its systems do, `on arm64:`, and otherwise the target,
+`on Linux arm64:`.

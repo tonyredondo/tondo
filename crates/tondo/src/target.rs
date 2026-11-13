@@ -32,6 +32,15 @@ impl Target {
         crate::project::System::Linux
     }
 
+    /// The target of language 6.8 it is: which files a build for it has.
+    pub fn project(self) -> crate::project::Target {
+        let arch = match self {
+            Target::X86_64 => crate::project::Arch::X64,
+            Target::Aarch64 => crate::project::Arch::Arm64,
+        };
+        crate::project::Target { system: self.system(), arch }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Target::X86_64 => "x86_64-linux",

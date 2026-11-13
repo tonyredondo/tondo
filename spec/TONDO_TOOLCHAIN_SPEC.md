@@ -44,10 +44,12 @@ app/
 Reglas de descubrimiento, deterministas:
 
 1. Si existe `src/`, el paquete son sus archivos `.to`, recursivamente,
-   excepto `*_test.to` y los de otro sistema que el del build: uno que
+   excepto `*_test.to` y los de otro target que el del build: uno que
    termina en `_linux.to`, `_macos.to` o `_unix.to` es del paquete solo al
-   compilar para Linux, para macOS o para cualquiera de los dos (6.8 del
-   lenguaje).
+   compilar para Linux, para macOS o para cualquiera de los dos, uno que
+   termina en `_x64.to` o `_arm64.to` solo para esa arquitectura, y uno que
+   termina en un sistema seguido de una arquitectura, como
+   `_linux_arm64.to`, solo para ese target (6.8 del lenguaje).
 2. Sin `src/`, el directorio debe contener `tondo.toml` o `main.to`, y el
    paquete son los `.to` de ese nivel, con las mismas excepciones.
 3. Se ignoran symlinks, entradas ocultas y los directorios `target/` y
@@ -99,8 +101,9 @@ outputs = ["proto.user"]
   valor es `"0.1"`, el que se usa por defecto; y `systems`, los sistemas en
   que corre el paquete, `["linux"]`, `["macos"]` o los dos, que son los que
   admite sin ella (6.8 del lenguaje): compilarlo para otro es un error que
-  los nombra, y `check` lo comprueba solo para ellos. `tondo new` escribe
-  `version = "0.1.0"`.
+  los nombra, y `check` lo comprueba solo para ellos; y `architectures`, las
+  arquitecturas, `["x64"]`, `["arm64"]` o las dos, del mismo modo. `tondo new`
+  escribe `version = "0.1.0"`.
 - `[dependencies]` asocia a cada alias su fuente (sección 4).
 - `[source]`, con `url`, dice cómo enlazar una línea en un host propio (7.5).
 - `[dev-dependencies]` declara del mismo modo las dependencias que solo usan

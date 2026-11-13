@@ -1105,42 +1105,66 @@ mismo manifiesto, lockfile, fuentes, edición, target, perfil, capacidades,
 features y toolchain, la resolución produce el mismo grafo o el mismo error, sin
 consultar red durante la compilación.
 
-### 6.8 Archivos por sistema, targets y generación
+### 6.8 Archivos por sistema y arquitectura, targets y generación
 
-El código que solo existe en un sistema operativo va en archivos propios, que
-su nombre señala: `watch_linux.to` es de Linux, `watch_macos.to` de macOS y
-`signals_unix.to` de los dos. Dentro de un `.to` no hay `#if`, imports
-condicionales ni constantes ambientales: antes de lexear, el toolchain elige
-los archivos del sistema para el que compila y asigna a cada uno un único path
-lógico conforme a 22.6.
+El código que solo existe en un sistema operativo o en una arquitectura va en
+archivos propios, que su nombre señala: `watch_linux.to` es de Linux,
+`watch_macos.to` de macOS y `signals_unix.to` de los dos; `crc_arm64.to` es de
+AArch64 y `poll_linux_x64.to` de Linux en x86-64. Dentro de un `.to` no hay
+`#if`, imports condicionales ni constantes ambientales: antes de lexear, el
+toolchain elige los archivos del target para el que compila y asigna a cada uno
+un único path lógico conforme a 22.6.
 
 ~~~text
 src/watch/
   watch.to          // común: llama a watchFiles(...)
   watch_linux.to    // fn watchFiles(...) con inotify
   watch_macos.to    // fn watchFiles(...) con FSEvents
+src/checksum/
+  checksum.to       // común: pub fn crc(...) llama a crcOf(...)
+  checksum_x64.to   // fn crcOf(...) con la instrucción de x86-64
+  checksum_arm64.to // fn crcOf(...) con la de AArch64
 ~~~
 
 Reglas:
 
-- Un archivo cuyo nombre termina en `_linux.to`, `_macos.to` o `_unix.to`
-  pertenece al paquete solo al compilar para Linux, para macOS o para
-  cualquiera de los dos; uno de test lleva el sistema antes de `_test`:
-  `watch_linux_test.to`. Los demás archivos son comunes y pertenecen al
-  paquete para todos los sistemas.
+- Las arquitecturas son dos: `x64` nombra x86-64 y `arm64` AArch64, en el
+  nombre de un archivo, en `tondo.toml` y en los diagnósticos. Un **target**
+  es un sistema y una arquitectura: Linux x64, Linux arm64, macOS x64 y macOS
+  arm64. `--target` y `env.build().target` conservan sus nombres.
+- Quitado `.to`, y después un `_test` final si lo hay, el nombre puede acabar
+  en un sistema, en una arquitectura, o en un sistema seguido de una
+  arquitectura: `watch_linux.to`, `crc_arm64.to`, `poll_linux_arm64.to`,
+  `poll_unix_x64.to`, `poll_macos_x64_test.to`. El sistema va primero; los
+  sistemas son `linux`, `macos` y `unix`, y las arquitecturas `x64` y `arm64`.
+  Un nombre con la arquitectura antes del sistema, como `crc_arm64_linux.to`,
+  es un error que da el nombre que escribir, `crc_linux_arm64.to`: si no, se
+  leería como un archivo de Linux llamado `crc_arm64`.
+- Un archivo pertenece al paquete al compilar para un target cuando los
+  sistemas de su nombre tienen el del target y sus arquitecturas la del
+  target. Un nombre sin sistema es de todos los sistemas, y uno sin
+  arquitectura, de todas las arquitecturas. Los demás archivos son comunes.
 - Un paquete admite Linux y macOS, o los sistemas que nombra `systems` en su
-  manifiesto. Compilar para otro es un error que dice cuáles admite.
-- Lo que el código común usa de un archivo de sistema debe existir para cada
-  sistema que el paquete admite, con la misma firma: en un archivo común o en
-  uno de cada sistema. Si falta para uno, el error nombra el sistema, el
-  archivo donde está para los otros y la firma que escribir.
-- `tondo check` y el language server comprueban el paquete para cada sistema
-  que admite: un error que solo ocurre en uno lleva su nombre (`on macOS:`).
-  `build`, `run` y `test` compilan los archivos del sistema de destino.
+  manifiesto, y las dos arquitecturas, o las que nombra `architectures`.
+  Compilar para otro es un error que dice cuáles admite.
+- Lo que el código común usa de un archivo de algunos targets debe existir
+  para cada target que el paquete admite, con la misma firma: en un archivo
+  común o en archivos que entre todos los cubran. Si falta para uno, el error
+  nombra el target, el archivo donde está para los otros y la firma que
+  escribir. Una declaración tiene una definición por target: una función en
+  `crc.to` y otra vez en `crc_arm64.to` está definida dos veces para arm64.
+- `tondo check` y el language server comprueban el paquete para cada target
+  que admite: un error que solo ocurre en algunos los nombra, el sistema y
+  después la arquitectura (`on Linux arm64:`); el sistema solo, como
+  `on macOS:`, cuando ocurre en todas sus arquitecturas, y la arquitectura
+  sola, `on arm64:`, cuando ocurre en todos sus sistemas. Un paquete en el
+  que ningún archivo, ni los de lo que usa, nombra una arquitectura da lo
+  mismo en las dos, y el toolchain puede comprobar una por sistema. `build`,
+  `run` y `test` compilan los archivos del target de destino.
 - Para decidir al ejecutar, con código que compila en todos, `env.build()`
   dice el target (biblioteca estándar 14.4).
-- Target, edición, features y sistema son entradas declaradas del build y
-  forman parte de su identidad.
+- Target, edición, features, sistema y arquitectura son entradas declaradas
+  del build y forman parte de su identidad.
 - Dos archivos activos no pueden producir el mismo path lógico.
 - Un import que no exista para el target resuelto produce `E1008`; el compilador
   no busca una variante alternativa implícita.
@@ -9442,8 +9466,9 @@ capacidades, features, source sets, flags semánticos y lockfile:
 El **module path canónico** une con `.` los identificadores NFC que derivan del
 path de módulo. El **file path lógico canónico** es relativo a la raíz del
 paquete, utiliza `/`, no contiene componentes vacíos, `.` ni `..`, y normaliza
-cada componente Unicode a NFC. El grafo de build rechaza dos entradas físicas que
-produzcan el mismo path lógico. Fuera de un paquete, la invocación declara una
+cada componente Unicode a NFC. El grafo de build rechaza dos entradas físicas de
+un mismo build que produzcan el mismo path lógico: dos archivos de targets que no
+comparten ninguno (6.8) no están nunca en el mismo build. Fuera de un paquete, la invocación declara una
 raíz lógica y aplica la misma regla. `source_id`, módulo y archivo lógicos, no los
 paths físicos dependientes de plataforma, aparecen en diagnósticos, orden e IDs.
 
