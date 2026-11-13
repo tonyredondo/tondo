@@ -214,6 +214,7 @@ const OWN_REFLECTION: &[&str] = &[
     "archive",
     "crypto",
     "csv",
+    "ffi",
     "datetime",
     "encoding",
     "environment",

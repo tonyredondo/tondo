@@ -22,6 +22,34 @@ fn main() {
   header for you.
 - `Pointer[T]` and raw memory exist only inside `unsafe`.
 
+## Loading a library as the program runs
+
+`ffi.Library` loads a shared library, a plugin, while the program runs, and
+gives its functions as `ffi.Function[F]`, called as the `extern fn` `F`:
+
+```tondo
+import std.console
+import std.ffi
+
+fn main(): !ffi.LibraryError {
+    let program = ffi.Library.program()
+    let length = unsafe { program.function[extern fn(ffi.CString): ffi.CSize]("strlen")? }
+    console.println("{unsafe { length("tondo") }}")
+}
+```
+
+- `Library.open("plugins/libkit.so")` loads a file, from the current
+  directory unless the path is absolute, and never searches;
+  `Library.named("z")` searches as the system does for `libz.so`
+  (`ffi.libraryFileName`).
+- A function keeps its library loaded. A library of `open` stays loaded until
+  the program ends; one of `unsafe { Library.openUnloadable(...) }` is
+  unloaded when nothing holds it, and `unsafe { library.close() }` unloads
+  any now.
+- `function[F]` takes an `extern fn` type, and `has(name)` asks whether the
+  library publishes a name. A `--static` or `--target` build cannot load
+  libraries, and says so.
+
 ## Libraries for C
 
 `tondo build --library` compiles a project without `main` into a shared

@@ -6820,7 +6820,9 @@ address.toFunction[F](): F         // `F` es un `extern fn(...)` (16.16)
 Las siete operaciones son unsafe. `cast`, `toPointer` y `toFunction` exigen
 exactamente un argumento de tipo explícito; las restantes no aceptan
 argumentos de tipo. `toFunction` da la función de C de una dirección, como el
-valor centinela `(fn)-1` de algunas APIs de C.
+valor centinela `(fn)-1` de algunas APIs de C; la de una librería cargada
+mientras el programa corre la da `ffi.Library.function` (librería estándar
+19.3), que mantiene la librería cargada.
 `write` exige exactamente un valor `T`, `offset` exactamente un `Int`, y las
 demás ningún argumento ordinario. Como en todo método, la forma calificada
 escribe primero el receptor y deduce `T` desde él:
@@ -6960,8 +6962,9 @@ La librería estándar deberá definir el orden de memoria concreto de sus atomi
 ### 16.16 Funciones y tipos de C
 
 Un programa llama a C declarando sus funciones con `extern fn` y sus structs
-con `extern type`; `std.ffi` nombra los tipos de C y da memoria y strings que C
-puede usar (librería estándar 19.3):
+con `extern type`; `std.ffi` nombra los tipos de C, da memoria y strings que C
+puede usar y carga librerías compartidas mientras el programa corre, cuyas
+funciones se llaman con estas mismas reglas (librería estándar 19.3):
 
 ~~~tondo
 import std.ffi

@@ -7771,6 +7771,77 @@ pub unsafe fn freeContext[T: ~Copy](data: Pointer[Void])
   `fromContext[T]` lee el valor, que debe ser un `T`, y `freeContext[T]` lo
   suelta y devuelve la memoria.
 
+#### Librerías compartidas
+
+`Library` carga una librería compartida mientras el programa corre, da sus
+funciones y sus valores, y la descarga:
+
+~~~tondo pseudocode
+pub type Library
+pub type Function[F]
+pub enum LibraryError { NotLoaded(String), NoSymbol(String), NotUnloaded(String), Closed }
+pub fn Library.open(path: String, global: Bool = false): Library ! LibraryError
+pub unsafe fn Library.openUnloadable(path: String, global: Bool = false): Library ! LibraryError
+pub fn Library.named(name: String, version: String? = none, global: Bool = false): Library ! LibraryError
+pub fn Library.program(): Library
+pub unsafe fn Library.function[F](self, name: String): Function[F] ! LibraryError
+pub unsafe fn Library.pointer[T](self, name: String): Pointer[T] ! LibraryError
+pub fn Library.has(self, name: String): Bool
+pub fn Library.path(self): String
+pub unsafe fn Library.close(self): !LibraryError
+pub fn Function[F].raw(self): F
+pub fn libraryFileName(name: String, version: String? = none): String
+~~~
+
+- `Library` es un handle (16.11 del lenguaje): una copia nombra la misma
+  librería cargada. Es `Copy`, `Send` y `Share`. `LibraryError` tiene
+  `Display`, con su mensaje.
+- `open(path)` carga el archivo de esa ruta, que si no es absoluta se toma del
+  directorio actual aunque no tenga `/`: `open` nunca busca. Los símbolos se
+  resuelven al cargarla, y quedan privados de la librería salvo con `global`,
+  que los ofrece a las que se carguen después.
+- `named(name, version)` carga por nombre, y busca como el sistema: el archivo
+  es `libraryFileName(name, version)`, que en Linux es `lib<name>.so` y, con
+  versión, `lib<name>.so.<version>`, y en macOS `lib<name>.dylib` y
+  `lib<name>.<version>.dylib`.
+- `program()` es el propio programa con las librerías con que arrancó. No se
+  descarga nunca: `close()` sobre ella es `LibraryError.NotUnloaded`, y su
+  `path()` es el del ejecutable.
+- `function[F](name)` da una función como `Function[F]`. `F` es un tipo
+  `extern fn`, también uno variádico; otro `F` es un error de compilación. Es
+  `unsafe` porque nada comprueba que la función tenga ese tipo.
+- Un `Function[F]` se llama como el `extern fn` que guarda: `f(argumentos)`,
+  dentro de `unsafe`, con las reglas de una llamada a C (16.16 del lenguaje).
+  Es un valor `Copy`, `Send` y `Share`, y mantiene cargada su librería. `raw()`
+  da el `extern fn` sin más, para dárselo a C como callback o guardarlo donde
+  un `Function` no cabe: no mantiene nada cargado.
+- `pointer[T](name)` da la dirección de un valor que la librería publica, que
+  no mantiene nada cargado, como cualquier puntero; `has(name)` dice si la
+  librería publica ese nombre.
+- Preguntar a una librería cerrada por una función, un puntero o un nombre es
+  `LibraryError.Closed`, y `has` es `false`.
+- Una librería es *descargable* cuando se abrió con `openUnloadable`: cuando
+  se va su último dueño, la última copia de su `Library` y el último
+  `Function` tomado de ella, se descarga como lo hace `close()`, y un error
+  entonces se descarta. Una librería que no es descargable sigue cargada hasta
+  que el programa termina. `openUnloadable` es `unsafe` porque el programa
+  promete lo que Tondo no ve: que cuando se van sus dueños la librería no
+  tiene ningún thread corriendo, ningún callback dejado al sistema o a otra
+  librería y nada que correr al terminar el programa.
+- `close()` descarga ahora, sea cual sea la librería y como se abriera. Es
+  `unsafe`: el programa promete que nada tomado de ella se usa después y que
+  ningún código suyo está corriendo. Si el sistema se niega, es
+  `LibraryError.NotUnloaded` y la librería sigue abierta; cerrar dos veces es
+  `LibraryError.Closed`. Si la memoria se va lo decide el sistema, que puede
+  quedarse con una librería que se le pidió descargar: Tondo solo dice lo que
+  el sistema dice.
+- Un programa que puede llegar a `Library.open`, `openUnloadable`, `named` o
+  `program` y se compila con `--static` o con `--target` es un error de
+  compilación: un ejecutable estático no carga librerías (7.8 del toolchain).
+- Son llamadas de C y pueden tardar, como leer un archivo: siguen la regla de
+  cualquier llamada de C, y otro worker ocupa el sitio del que se queda en
+  ella.
+
 ### 19.4 Una sola implementación vigente
 
 El compilador, la VM y los adapters pueden usar detalles internos distintos,

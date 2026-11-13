@@ -1370,6 +1370,14 @@ pub const NATIVES: &[Native] = {
     const fn image(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "image", name, receiver: None, params, result, symbol }
     }
+    const fn library(
+        name: &'static str,
+        params: &'static [NativeTy],
+        result: NativeTy,
+        symbol: &'static str,
+    ) -> Native {
+        Native { module: "library", name, receiver: None, params, result, symbol }
+    }
     const fn env(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "env", name, receiver: None, params, result, symbol }
     }
@@ -1525,6 +1533,15 @@ pub const NATIVES: &[Native] = {
         image("pixel", &[Object, Int, Int], Int, "tondo_rt_image_pixel"),
         image("encode", &[Object, Int, Int], Bytes, "tondo_rt_image_encode"),
         env("target", &[], String, "tondo_rt_env_target"),
+        // `std.internal.library`: shared libraries, for `std.ffi`.
+        library("open", &[String, Bool, Bool], Object, "tondo_rt_library_open"),
+        library("program", &[], Object, "tondo_rt_library_program"),
+        library("failure", &[Object], String, "tondo_rt_library_failure"),
+        library("closed", &[Object], Bool, "tondo_rt_library_closed"),
+        library("symbol", &[Object, String], Int, "tondo_rt_library_symbol"),
+        library("path", &[Object], String, "tondo_rt_library_path"),
+        library("close", &[Object], String, "tondo_rt_library_close"),
+        library("fileName", &[String, String], String, "tondo_rt_library_file_name"),
         env("cpu", &[], String, "tondo_rt_env_cpu"),
         codec("base64Encode", &[Bytes, Bool], String, "tondo_rt_base64_encode"),
         codec("base64Check", &[String, Bool], Int, "tondo_rt_base64_check"),

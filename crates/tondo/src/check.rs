@@ -305,6 +305,8 @@ enum StdModule {
     InternalMath,
     /// `std.internal.cpu`: the processor, for `std.cpu`.
     InternalCpu,
+    /// `std.internal.library`: shared libraries, for `std.ffi`.
+    InternalLibrary,
     /// `std.internal.meta`: the request and response of a provider.
     InternalMeta,
     /// `std.internal.codec`: encodings, digests, entropy and the program's

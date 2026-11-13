@@ -194,6 +194,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "text"] => StdModule::InternalText,
             ["std", "internal", "math"] => StdModule::InternalMath,
             ["std", "internal", "cpu"] => StdModule::InternalCpu,
+            ["std", "internal", "library"] => StdModule::InternalLibrary,
             ["std", "internal", "meta"] => StdModule::InternalMeta,
             ["std", "internal", "codec"] => StdModule::InternalCodec,
             ["std", "internal", "http"] => StdModule::InternalHttp,
@@ -329,6 +330,7 @@ impl<'a> Checker<'a> {
                 | StdModule::InternalFs
                 | StdModule::InternalSql
                 | StdModule::InternalImage
+                | StdModule::InternalLibrary
         ) {
             self.types.handle(Handle::Native, Ty::UNIT);
         }
@@ -478,6 +480,7 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalFs
                     | StdModule::InternalSql
                     | StdModule::InternalImage
+                    | StdModule::InternalLibrary
                     | StdModule::InternalText
                     | StdModule::InternalContext,
                 )),

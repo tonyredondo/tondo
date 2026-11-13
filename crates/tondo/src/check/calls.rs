@@ -349,7 +349,30 @@ impl<'a> Checker<'a> {
         if let Some(retired) = self.retired_fallback(cx, &value, receiver, method, args, span) {
             return retired;
         }
+        // `function.raw()`: the C function a library's function holds
+        // (standard library 19.3).
+        if method.name == "raw"
+            && args.is_empty()
+            && let Some(function) = self.library_function(value.ty)
+        {
+            return Self::library_raw(value, function, span);
+        }
         self.method_of(cx, value, method, args, expected, span)
+    }
+
+    /// The `extern fn` type `F` of an `ffi.Function[F]`, when `ty` is one.
+    pub(super) fn library_function(&self, ty: Ty) -> Option<Ty> {
+        let (template, args) = self.types.instance_of(ty)?;
+        let declared = self.types.template(template);
+        let ffi = self.types.declaring("std.ffi");
+        let named = declared.name.rsplit('.').next() == Some("Function");
+        (named && ffi.is_some() && declared.module == ffi).then(|| args[0])
+    }
+
+    /// The C function at the address an `ffi.Function[F]` holds, as `F`.
+    fn library_raw(function: hir::Expr, ty: Ty, span: Span) -> hir::Expr {
+        let address = Self::mk(hir::ExprKind::Field(Box::new(function), 0), Ty::int(IntTy::U64), span);
+        Self::mk(hir::ExprKind::Retype(Box::new(address)), ty, span)
     }
 
     /// `unwrapOr`, `orElse` and `getOr`, which `??` replaced (17.13): an
@@ -938,6 +961,12 @@ impl<'a> Checker<'a> {
     ) -> hir::Expr {
         if callee.ty == Ty::ERROR {
             return Self::error_expr(span);
+        }
+        // A function of a library is called as the C function it holds
+        // (standard library 19.3).
+        if let Some(function) = self.library_function(callee.ty) {
+            let raw = Self::library_raw(callee, function, span);
+            return self.call_value(cx, raw, args, expected, span);
         }
         if let TyKind::CFn(params, result, variadic) = self.types.kind(callee.ty).clone() {
             return self.c_value_call(cx, callee, (params, result, variadic), args, expected, span);
@@ -1963,6 +1992,7 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalText
                     | StdModule::InternalMath
                     | StdModule::InternalCpu
+                    | StdModule::InternalLibrary
                     | StdModule::InternalMeta
                     | StdModule::InternalCodec
                     | StdModule::InternalHttp
@@ -2060,6 +2090,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalProcess => "process",
                     StdModule::InternalSql => "sql",
                     StdModule::InternalImage => "image",
+                    StdModule::InternalLibrary => "library",
                     _ => "reflect",
                 };
                 let found =
@@ -2992,6 +3023,24 @@ impl<'a> Checker<'a> {
         {
             let result = self.types.subst(signature.result, &inference.map);
             return self.compiled_template(cx, args, result, span);
+        }
+        // `library.function[F](name)` gives a C function: `F` is an
+        // `extern fn` type (standard library 19.3).
+        if let Callee::Fn(id) = callee
+            && signature.name.ends_with("Library.function")
+            && self.fn_scopes.get(id.0 as usize).is_some_and(|scope| {
+                self.module_paths.get(scope.module as usize).is_some_and(|path| path == &["std", "ffi"])
+            })
+            && let Some(&function) = type_args.first()
+            && !matches!(self.types.kind(function), TyKind::CFn(..))
+            && !self.types.has_error(function)
+        {
+            let message = format!(
+                "`function` gives a C function: its type argument is an `extern fn(...)`, as `extern fn(ffi.CString): ffi.CSize`, not {}",
+                self.display(function)
+            );
+            self.diags.error("E1104", span, message);
+            return Self::error_expr(span);
         }
         // `cpu.has(feature)`, which the build's level may answer when
         // compiling (toolchain 7.8).

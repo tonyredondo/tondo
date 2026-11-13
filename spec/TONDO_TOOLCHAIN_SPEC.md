@@ -1597,7 +1597,8 @@ al terminar cada llamada, y al terminar el proceso. Un pánico termina el
 proceso, como en un programa; un fallo de memoria, una instrucción ilegal o un
 aborto fuera de sus tareas y de su código va al handler que el proceso tenía.
 Cada librería contiene el runtime. La compartida solo publica sus funciones,
-así que un proceso carga varias de Tondo, cada una con el suyo, y no se
+así que un proceso carga varias de Tondo, cada una con el suyo, también un
+programa de Tondo con `ffi.Library` (19.3 de la librería estándar), y no se
 descarga, porque sus threads siguen ejecutando su código; de la estática, un
 programa enlaza una sola. `--static` y `--link` construyen ejecutables: con
 `--library` son error.
@@ -1608,7 +1609,9 @@ programa enlaza una sola. `--static` y `--link` construyen ejecutables: con
 x86-64, `x86_64-linux`, o en arm64, `aarch64-linux`, desde cualquier sistema
 donde corre `tondo`. El ejecutable es estático, con musl, como con `--static`:
 no carga librerías del sistema, y las de `[native] libraries` y `--link` son
-estáticas.
+estáticas. Tampoco carga librerías mientras corre: un programa que puede
+llegar a `ffi.Library` (19.3 de la librería estándar) y se compila con
+`--static` o con `--target` es un error que dice cómo compilarlo.
 
 El runtime del target de su propia máquina viene con `tondo`; el de otro, en
 un pack: el directorio `<dir>/<target>` que escribe `tondo target pack [<dir>]`

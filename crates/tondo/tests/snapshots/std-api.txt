@@ -738,6 +738,8 @@ pub type Pool = {
     // private fields
 }
 == std.ffi
+impl Display for LibraryError
+impl reflect.Reflect for LibraryError
 pub alias CBool = Bool
 pub alias CChar = Byte
 pub alias CDouble = Float
@@ -754,14 +756,46 @@ pub alias CULong = UInt64
 pub alias CULongLong = UInt64
 pub alias CUShort = UInt16
 pub alias Void = memory.Void
+pub enum LibraryError {
+    /// The file is not there, or is not a library this system loads, with
+    /// what the system said.
+    NotLoaded(String)
+    /// The library publishes no such name, which it holds.
+    NoSymbol(String)
+    /// The system refused to unload it, with what it said.
+    NotUnloaded(String)
+    /// The library was closed.
+    Closed
+}
 pub extern type VaList
+pub fn Function[F].raw(self): F
+pub fn Library.has(self, name: String): Bool
+pub fn Library.named(
+    name: String,
+    version: String? = none,
+    global: Bool = false,
+): Library ! LibraryError
+pub fn Library.open(path: String, global: Bool = false): Library ! LibraryError
+pub fn Library.path(self): String
+pub fn Library.program(): Library
 pub fn alignOf[T](): Int
 pub fn allocate[T: ~Copy](count: Int = 1): Pointer[T]
 pub fn context[T: ~Copy](value: T): Pointer[Void]
 pub fn fromCChars(chars: Array[CChar]): String
+pub fn libraryFileName(name: String, version: String? = none): String
 pub fn sizeOf[T](): Int
 pub fn toCChars(text: String, count: Int): Array[CChar]
 pub fn toCString(text: String): CString
+pub type Function[F] = {
+    // private fields
+}
+pub type Library = {
+    // private fields
+}
+pub unsafe fn Library.close(self): !LibraryError
+pub unsafe fn Library.function[F](self, name: String): Function[F] ! LibraryError
+pub unsafe fn Library.openUnloadable(path: String, global: Bool = false): Library ! LibraryError
+pub unsafe fn Library.pointer[T](self, name: String): Pointer[T] ! LibraryError
 pub unsafe fn bytes(from: Pointer[Byte], count: Int): Array[Byte]
 pub unsafe fn copy[T](from: Pointer[T], to: Pointer[T], count: Int = 1)
 pub unsafe fn free(pointer: Pointer[Void]?)

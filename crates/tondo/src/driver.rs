@@ -2374,6 +2374,17 @@ fn link_arguments(linker: &str, library: &str) -> Result<Vec<String>, String> {
 /// `statically` links the C library into it, a `target` makes it for
 /// another machine, statically, and a debug build's runs can be recorded
 /// (toolchain 7.6).
+/// Whether an object calls the runtime's loading of shared libraries.
+fn loads_libraries(object: &[u8]) -> bool {
+    use object::{Object, ObjectSymbol};
+    let Ok(file) = object::File::parse(object) else { return false };
+    file.symbols().filter(|symbol| symbol.is_undefined()).any(|symbol| {
+        let name = symbol.name().unwrap_or_default();
+        let name = name.strip_prefix('_').filter(|_| file.format() == object::BinaryFormat::MachO).unwrap_or(name);
+        matches!(name, "tondo_rt_library_open" | "tondo_rt_library_program")
+    })
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct Linking {
     pub strip: bool,
@@ -2430,6 +2441,17 @@ pub fn runtime_functions(statically: bool, target: Option<Target>) -> Result<Vec
 
 pub fn link(object: &[u8], output: &Path, libraries: &[String], linking: Linking) -> Result<(), String> {
     let _linking = crate::times::part("link");
+    // A static executable loads no library (standard library 19.3): the
+    // object calls the runtime's loading when the program reaches it.
+    if (linking.statically || linking.target.is_some()) && loads_libraries(object) {
+        return Err(match linking.target {
+            Some(target) => format!(
+                "a static executable loads no library, and a build with --target {} is static: this program loads libraries with `ffi.Library`; build it on the machine it runs on, without --target",
+                target.name()
+            ),
+            None => "a static executable loads no library: this program loads libraries with `ffi.Library`; build it without --static".into(),
+        });
+    }
     if let Some(target) = linking.target.filter(|t| !t.native()) {
         let archives = target.pack(RUNTIME_IDENTITY.trim())?;
         let product = crate::link::Product::Executable {

@@ -6341,3 +6341,18 @@ run time, as .NET's `IsSupported`; with a variant written in the call the level 
 compiling, so code for the other architecture under an `if` is never generated, and the test that
 needs the processor is a bit the runtime read once. `[build]` is a table of its own because it says
 how the program is built, which only the program decides: a dependency's is not read.
+
+## Shared libraries loaded as the program runs
+
+A program could load a plugin only by declaring `dlopen` and `dlsym` itself and turning an address
+into a function with `toFunction`, which keeps nothing loaded. `ffi.Library` opens a library by its
+path or its name, gives its functions as `ffi.Function[F]`, called as the `extern fn` `F` is, and its
+values as pointers, and closes it. A function holds its library, so a library that may be unloaded
+goes when the last of its copies and of the functions taken from it goes, as any value Tondo
+counts; `open` keeps one loaded until the program ends, since Tondo cannot see whether the library
+left a thread or a callback behind, and `openUnloadable` is the `unsafe` promise that it did not.
+`close` unloads now, also `unsafe`. `function[F]` is checked to be an `extern fn` where it is
+written, and a function is called through its address as `F`, which the compiler gives where `F`
+is known, so a library's function costs what a call of C costs. A static executable, as `--static`
+and every `--target` build make, loads nothing, so a program that reaches the loading is refused
+when it links, by what its code calls, rather than failing when it runs.

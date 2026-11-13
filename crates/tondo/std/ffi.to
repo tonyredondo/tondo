@@ -11,7 +11,10 @@
 // console.println("{unsafe { abs(-42) }}")
 // ```
 
+import std.env
+import std.internal.library as libraryNative
 import std.internal.memory
+import std.reflect as __reflect
 
 // C's types, as the Tondo types of the same size and sign on the targets
 // Tondo supports. They are aliases, so their values are ordinary numbers.
@@ -414,4 +417,189 @@ pub unsafe fn freeContext[T: ~Copy](data: Pointer[Void]) {
 /// A copy of `count` bytes at an address.
 pub unsafe fn bytes(from: Pointer[Byte], count: Int): Array[Byte] {
     memory.bytes(from, count)
+}
+
+/// Why a shared library could not be loaded, read or unloaded.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// match ffi.Library.open("plugins/missing.so") {
+///     ok(_) => console.println("loaded")
+///     err(ffi.LibraryError.NotLoaded(why)) => console.println("not loaded: {why.length() > 0}")
+///     err(other) => console.println("{other}")
+/// }
+/// ```
+pub enum LibraryError {
+    /// The file is not there, or is not a library this system loads, with
+    /// what the system said.
+    NotLoaded(String)
+    /// The library publishes no such name, which it holds.
+    NoSymbol(String)
+    /// The system refused to unload it, with what it said.
+    NotUnloaded(String)
+    /// The library was closed.
+    Closed
+}
+
+impl Display for LibraryError {
+    fn display(self): String {
+        match self {
+            NotLoaded(why) => "the library did not load: {why}"
+            NoSymbol(name) => "the library publishes no `{name}`"
+            NotUnloaded(why) => "the library was not unloaded: {why}"
+            Closed => "the library was closed"
+        }
+    }
+}
+
+impl __reflect.Reflect for LibraryError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
+}
+
+/// A shared library loaded while the program runs: its functions and the
+/// values it publishes. A copy names the same library. One that `open` or
+/// `named` loaded stays loaded until the program ends; one of
+/// `openUnloadable` is unloaded when its last copy goes, and the last
+/// `Function` taken from it; `close` unloads any now.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// let program = ffi.Library.program()
+/// console.println("{program.has("malloc")} {program.has("no_such_function")}")
+/// ```
+pub type Library = {
+    priv native: libraryNative.Native
+}
+
+/// A function of a library, as the `extern fn` type `F`: called as one,
+/// inside `unsafe`, and keeping its library loaded while it is there.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// let program = ffi.Library.program()
+/// match unsafe { program.function[extern fn(ffi.CString): ffi.CSize]("strlen") } {
+///     ok(length) => console.println("{unsafe { length("tondo") }}")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
+pub type Function[F] = {
+    priv address: UInt64
+    priv library: Library
+}
+
+/// The library in the file at `path`, taken from the current directory when
+/// it is not absolute, without searching. Its symbols are bound as it loads,
+/// and offered to the libraries loaded after it with `global`. It stays
+/// loaded until the program ends.
+pub fn Library.open(path: String, global: Bool = false): Library ! LibraryError {
+    loaded(absolute(path), global, false)
+}
+
+/// As `open`, a library that is unloaded when its last holder goes: the
+/// program promises that by then it has no thread running, no callback
+/// left with the system or another library, and nothing to run when the
+/// program ends.
+pub unsafe fn Library.openUnloadable(path: String, global: Bool = false): Library ! LibraryError {
+    loaded(absolute(path), global, true)
+}
+
+/// The library `name`, as `libraryFileName` names its file, where the
+/// system's loader looks for libraries.
+pub fn Library.named(
+    name: String,
+    version: String? = none,
+    global: Bool = false,
+): Library ! LibraryError {
+    loaded(libraryFileName(name, version), global, false)
+}
+
+/// The program itself and the libraries it started with, which are never
+/// unloaded.
+pub fn Library.program(): Library {
+    Library { native: libraryNative.program() }
+}
+
+/// The function the library publishes as `name`, as the `extern fn` type
+/// `F`, which nothing checks it has.
+pub unsafe fn Library.function[F](self, name: String): Function[F] ! LibraryError {
+    Function { address: self.address(name)?, library: self }
+}
+
+/// The address of the value the library publishes as `name`, which holds
+/// nothing loaded.
+pub unsafe fn Library.pointer[T](self, name: String): Pointer[T] ! LibraryError {
+    let address = self.address(name)?
+    address.toPointer[T]()
+}
+
+/// Whether the library publishes `name`; `false` once it is closed.
+pub fn Library.has(self, name: String): Bool {
+    libraryNative.symbol(self.native, name) != 0
+}
+
+/// The file the library was loaded from; the executable for `program`.
+pub fn Library.path(self): String {
+    libraryNative.path(self.native)
+}
+
+/// Unloads the library now, whatever holds it: the program promises that
+/// nothing taken from it is used afterwards, and that none of its code is
+/// running. Whether its memory goes is the system's.
+pub unsafe fn Library.close(self): !LibraryError {
+    if libraryNative.closed(self.native) {
+        fail LibraryError.Closed
+    }
+    let refused = libraryNative.close(self.native)
+    if not refused.isEmpty() {
+        fail LibraryError.NotUnloaded(refused)
+    }
+}
+
+/// The plain `extern fn`, to hand to C or keep where a `Function` cannot
+/// go. It holds nothing: keeping the library loaded while it is used is the
+/// program's.
+pub fn Function[F].raw(self): F {
+    // The compiler gives each call the function at the address, as `F`.
+    self.raw()
+}
+
+/// The file name of the library `name`, as this system names it:
+/// `lib<name>.so` or `lib<name>.so.<version>` on Linux, `lib<name>.dylib`
+/// or `lib<name>.<version>.dylib` on macOS.
+pub fn libraryFileName(name: String, version: String? = none): String {
+    libraryNative.fileName(name, version ?? "")
+}
+
+/// The address of `name` in an open library.
+fn Library.address(self, name: String): UInt64 ! LibraryError {
+    if libraryNative.closed(self.native) {
+        fail LibraryError.Closed
+    }
+    let found = libraryNative.symbol(self.native, name)
+    if found == 0 {
+        fail LibraryError.NoSymbol(name)
+    }
+    UInt64.wrapping(found)
+}
+
+fn loaded(path: String, global: Bool, unloadable: Bool): Library ! LibraryError {
+    let native = libraryNative.open(path, global, unloadable)
+    let why = libraryNative.failure(native)
+    if not why.isEmpty() {
+        fail LibraryError.NotLoaded(why)
+    }
+    Library { native: native }
+}
+
+/// A path from the current directory, when it is not absolute.
+fn absolute(path: String): String {
+    if path.startsWith("/") { path } else { "{env.currentDirectory()}/{path}" }
 }

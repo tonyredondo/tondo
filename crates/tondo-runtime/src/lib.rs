@@ -44,6 +44,7 @@ mod image;
 mod io;
 mod json;
 mod labels;
+mod library;
 mod live;
 mod locales;
 mod lockorder;

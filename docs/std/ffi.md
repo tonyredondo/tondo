@@ -17,7 +17,7 @@ console.println("{unsafe { abs(-42) }}")
 
 `tondo api std.ffi` shows the same in a terminal.
 
-- [Functions](#functions): [`sizeOf`](#sizeof), [`alignOf`](#alignof), [`allocate`](#allocate), [`free`](#free), [`copy`](#copy), [`toCString`](#tocstring), [`fromCString`](#fromcstring), [`fromCChars`](#fromcchars), [`toCChars`](#tocchars), [`context`](#context), [`fromContext`](#fromcontext), [`freeContext`](#freecontext), [`bytes`](#bytes)
+- [Functions](#functions): [`sizeOf`](#sizeof), [`alignOf`](#alignof), [`allocate`](#allocate), [`free`](#free), [`copy`](#copy), [`toCString`](#tocstring), [`fromCString`](#fromcstring), [`fromCChars`](#fromcchars), [`toCChars`](#tocchars), [`context`](#context), [`fromContext`](#fromcontext), [`freeContext`](#freecontext), [`bytes`](#bytes), [`libraryFileName`](#libraryfilename)
 - [CChar](#cchar)
 - [CShort](#cshort)
 - [CUShort](#cushort)
@@ -35,6 +35,9 @@ console.println("{unsafe { abs(-42) }}")
 - [CString](#cstring)
 - [Void](#void)
 - [VaList](#valist)
+- [LibraryError](#libraryerror)
+- [Library](#library): [`Library.open`](#libraryopen), [`Library.openUnloadable`](#libraryopenunloadable), [`Library.named`](#librarynamed), [`Library.program`](#libraryprogram), [`Library.function`](#libraryfunction), [`Library.pointer`](#librarypointer), [`Library.has`](#libraryhas), [`Library.path`](#librarypath), [`Library.close`](#libraryclose)
+- [Function](#function): [`Function.raw`](#functionraw)
 
 ### Functions
 
@@ -151,6 +154,16 @@ pub unsafe fn bytes(from: Pointer[Byte], count: Int): Array[Byte]
 ```
 
 A copy of `count` bytes at an address.
+
+#### libraryFileName
+
+```tondo
+pub fn libraryFileName(name: String, version: String? = none): String
+```
+
+The file name of the library `name`, as this system names it:
+`lib<name>.so` or `lib<name>.so.<version>` on Linux, `lib<name>.dylib`
+or `lib<name>.<version>.dylib` on macOS.
 
 ### CChar
 
@@ -534,3 +547,176 @@ extern fn library_set_log(callback: extern fn(ffi.CInt, ffi.CString, Pointer[ffi
 
 unsafe { library_set_log(logged) }
 ```
+
+### LibraryError
+
+```tondo
+pub enum LibraryError {
+    /// The file is not there, or is not a library this system loads, with
+    /// what the system said.
+    NotLoaded(String)
+    /// The library publishes no such name, which it holds.
+    NoSymbol(String)
+    /// The system refused to unload it, with what it said.
+    NotUnloaded(String)
+    /// The library was closed.
+    Closed
+}
+```
+
+Why a shared library could not be loaded, read or unloaded.
+
+```tondo
+import std.console
+import std.ffi
+
+match ffi.Library.open("plugins/missing.so") {
+    ok(_) => console.println("loaded")
+    err(ffi.LibraryError.NotLoaded(why)) => console.println("not loaded: {why.length() > 0}")
+    err(other) => console.println("{other}")
+}
+```
+
+Implements `Display`, `reflect.Reflect`.
+
+### Library
+
+```tondo
+pub type Library = {
+    // private fields
+}
+```
+
+A shared library loaded while the program runs: its functions and the
+values it publishes. A copy names the same library. One that `open` or
+`named` loaded stays loaded until the program ends; one of
+`openUnloadable` is unloaded when its last copy goes, and the last
+`Function` taken from it; `close` unloads any now.
+
+```tondo
+import std.console
+import std.ffi
+
+let program = ffi.Library.program()
+console.println("{program.has("malloc")} {program.has("no_such_function")}")
+```
+
+#### Library.open
+
+```tondo
+pub fn Library.open(path: String, global: Bool = false): Library ! LibraryError
+```
+
+The library in the file at `path`, taken from the current directory when
+it is not absolute, without searching. Its symbols are bound as it loads,
+and offered to the libraries loaded after it with `global`. It stays
+loaded until the program ends.
+
+#### Library.openUnloadable
+
+```tondo
+pub unsafe fn Library.openUnloadable(path: String, global: Bool = false): Library ! LibraryError
+```
+
+As `open`, a library that is unloaded when its last holder goes: the
+program promises that by then it has no thread running, no callback
+left with the system or another library, and nothing to run when the
+program ends.
+
+#### Library.named
+
+```tondo
+pub fn Library.named(
+    name: String,
+    version: String? = none,
+    global: Bool = false,
+): Library ! LibraryError
+```
+
+The library `name`, as `libraryFileName` names its file, where the
+system's loader looks for libraries.
+
+#### Library.program
+
+```tondo
+pub fn Library.program(): Library
+```
+
+The program itself and the libraries it started with, which are never
+unloaded.
+
+#### Library.function
+
+```tondo
+pub unsafe fn Library.function[F](self, name: String): Function[F] ! LibraryError
+```
+
+The function the library publishes as `name`, as the `extern fn` type
+`F`, which nothing checks it has.
+
+#### Library.pointer
+
+```tondo
+pub unsafe fn Library.pointer[T](self, name: String): Pointer[T] ! LibraryError
+```
+
+The address of the value the library publishes as `name`, which holds
+nothing loaded.
+
+#### Library.has
+
+```tondo
+pub fn Library.has(self, name: String): Bool
+```
+
+Whether the library publishes `name`; `false` once it is closed.
+
+#### Library.path
+
+```tondo
+pub fn Library.path(self): String
+```
+
+The file the library was loaded from; the executable for `program`.
+
+#### Library.close
+
+```tondo
+pub unsafe fn Library.close(self): !LibraryError
+```
+
+Unloads the library now, whatever holds it: the program promises that
+nothing taken from it is used afterwards, and that none of its code is
+running. Whether its memory goes is the system's.
+
+### Function
+
+```tondo
+pub type Function[F] = {
+    // private fields
+}
+```
+
+A function of a library, as the `extern fn` type `F`: called as one,
+inside `unsafe`, and keeping its library loaded while it is there.
+
+```tondo
+import std.console
+import std.ffi
+
+let program = ffi.Library.program()
+match unsafe { program.function[extern fn(ffi.CString): ffi.CSize]("strlen") } {
+    ok(length) => console.println("{unsafe { length("tondo") }}")
+    err(error) => console.println("{error}")
+}
+```
+
+#### Function.raw
+
+```tondo
+pub fn Function[F].raw(self): F
+```
+
+The plain `extern fn`, to hand to C or keep where a `Function` cannot
+go. It holds nothing: keeping the library loaded while it is used is the
+program's.

@@ -2343,7 +2343,16 @@ impl Builder<'_> {
                 Operand::Const(_) => unreachable!("aggregates are places"),
             },
             // Newtypes share their value's representation.
-            hir::ExprKind::Retype(inner) => self.expr(inner),
+            hir::ExprKind::Retype(inner) => {
+                let value = self.expr(inner);
+                // A C function from an address is called through a value of
+                // its type, as a function of a library is (standard library
+                // 19.3).
+                match self.types.kind(e.ty) {
+                    TyKind::CFn(..) if inner.ty != e.ty => self.temp(e.ty, Rvalue::Use(value), e.span),
+                    _ => value,
+                }
+            }
             // The task's value of the context, read in place: the task's
             // contexts hold its `Ref` while the code runs (11.16).
             hir::ExprKind::ContextRead(context, reference) => {
