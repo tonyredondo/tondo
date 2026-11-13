@@ -622,6 +622,13 @@ progress on another thread finishes first, and a later call starts the
 runtime again. A C program calls it before it unloads the library, which
 `dlclose` alone does not do.
 
+Two limits are worth knowing. A task of the library in a wait that
+cancelling does not end, as reading a terminal or a pipe that nobody writes
+to, keeps `words_stop` waiting, and so the unloading: end that wait first.
+And each copy of a library that is loaded and unloaded leaves the memory its
+allocator took, about 4 MB, so a program that loads a plugin again on every
+change of it grows by that much each time.
+
 ## C and tasks
 
 - A call into C runs on the task's thread and holds it for as long as it
