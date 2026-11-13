@@ -26,6 +26,7 @@ mod config;
 mod console;
 mod contexts;
 mod counters;
+mod cpu;
 mod crypto;
 mod cycles;
 mod debugger;

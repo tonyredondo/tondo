@@ -188,6 +188,8 @@ pub struct Options<'o> {
     pub meta: bool,
     pub debug: bool,
     pub target: Option<&'o str>,
+    /// The level of processor the code is for (toolchain 7.8).
+    pub cpu: &'o crate::target::Cpu,
     pub live: Option<&'o mut crate::live::Build>,
     pub coverage: Option<&'o mut Vec<Counted>>,
     /// The build `tondo test --fuzz` searches with (testing 10.6): it counts
@@ -201,7 +203,7 @@ pub struct Options<'o> {
 /// Compiles the program to an object file.
 pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options: Options) -> Result<Vec<u8>, String> {
     let building = crate::times::part("IR");
-    let Options { meta, debug, target, mut live, coverage, fuzz, roots } = options;
+    let Options { meta, debug, target, cpu, mut live, coverage, fuzz, roots } = options;
     let mut flags = settings::builder();
     // A debug build keeps the code as written, statement after statement.
     flags.set("opt_level", if debug { "none" } else { "speed" }).map_err(|e| e.to_string())?;
@@ -212,17 +214,24 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     // once: the debug build of tondo, which the tests run, keeps checking,
     // and the one that ships compiles without it (docs/speed.md, B1).
     flags.set("enable_verifier", if cfg!(debug_assertions) { "true" } else { "false" }).map_err(|e| e.to_string())?;
-    // Code for the machine, with what its processor has, or for a target.
-    let builder = match target {
+    // Code for this machine's system or for a target's, with the features
+    // of the processor its level has (toolchain 7.8): what the system's
+    // conventions ask of the code, as macOS signing return addresses, stays
+    // as cranelift-native sets it.
+    let mut builder = match target {
         Some(triple) => cranelift_codegen::isa::lookup_by_name(triple).map_err(|e| format!("{triple}: {e}"))?,
         None => cranelift_native::builder().map_err(|e| format!("unsupported host: {e}"))?,
     };
+    for (flag, on) in cpu.settings() {
+        builder.set(flag, if on { "true" } else { "false" }).map_err(|e| format!("{flag}: {e}"))?;
+    }
     let isa = builder.finish(settings::Flags::new(flags)).map_err(|e| e.to_string())?;
     let shapes = Shapes::new(&program.types, &*isa);
     let builder =
         ObjectBuilder::new(isa, "tondo", cranelift_module::default_libcall_names()).map_err(|e| e.to_string())?;
     let mut cg = Codegen {
         roots,
+        cpu: cpu.needed(),
         module: ObjectModule::new(builder),
         types: &program.types,
         sources,
@@ -463,6 +472,9 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
 struct Codegen<'a> {
     /// Where the program comes from, which the runtime gives to tools.
     roots: &'a str,
+    /// The level of processor the program is for and what it needs, a
+    /// line each, which the runtime checks before the program's code.
+    cpu: String,
     module: ObjectModule,
     types: &'a Types,
     /// Each context's functions and the type of its record (11.16).
@@ -1702,6 +1714,15 @@ enum Called {
 }
 
 impl Emit<'_, Codegen<'_>> {
+    /// Hands the runtime the level of processor the program was built for
+    /// and what that needs, which it checks before any of the program's
+    /// code runs (toolchain 7.8).
+    fn check_cpu(&mut self) {
+        let needed = self.cg.cpu.clone();
+        let text = self.string_ptr(&needed);
+        self.call_rt(Rt::Cpu, &[text]);
+    }
+
     /// Hands the runtime each context's functions, the maker of its
     /// initial value and those that show its fields, and the release of its
     /// record (11.16).

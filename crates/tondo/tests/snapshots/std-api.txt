@@ -422,6 +422,34 @@ pub fn setOutput(writer: io.Writer)
 pub fn stderr(): io.Writer
 pub fn stdin(): io.Reader
 pub fn stdout(): io.Writer
+== std.cpu
+pub enum Feature {
+    Sse3
+    Ssse3
+    Sse41
+    Sse42
+    Popcnt
+    Avx
+    Avx2
+    Fma
+    Bmi1
+    Bmi2
+    Lzcnt
+    Avx512F
+    Avx512Dq
+    Avx512Vl
+    Avx512Bw
+    Pclmulqdq
+    Sha
+    Neon
+    Lse
+    Crc32
+    Pmull
+    Sha2
+    Aes
+}
+pub fn features(): Array[Feature]
+pub fn has(feature: Feature): Bool
 == std.crypto
 impl Display for CryptoError
 impl Display for KeyKind
@@ -638,6 +666,9 @@ pub type Build = {
     modified: Bool
     /// The target, as tondo names it: `x86_64-linux-gnu`, `aarch64-macos`.
     target: String
+    /// The level of processor it was built for, as `--cpu` names it:
+    /// `baseline`, `x86-64-v3`, `native`.
+    cpu: String
     /// The compiler that built it: `tondo 0.1.0`.
     compiler: String
     /// The packages it uses, without those only its tests use.

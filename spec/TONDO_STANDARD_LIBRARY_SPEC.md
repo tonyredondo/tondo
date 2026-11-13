@@ -2284,6 +2284,7 @@ pub type Build = {
     commit: String?
     modified: Bool
     target: String
+    cpu: String
     compiler: String
     dependencies: Array[Dependency]
 }
@@ -2317,7 +2318,9 @@ pub type System = { name: String, release: String, machine: String }
   de su paquete, o el de su archivo sin `.to`; su `version` de `tondo.toml`,
   o `0.0.0`; el commit del repositorio git que lo contiene, si lo hay, y si
   sus archivos versionados tenían cambios sin confirmar; el target, como
-  tondo lo nombra (`x86_64-linux-gnu`, `aarch64-macos`); el compilador
+  tondo lo nombra (`x86_64-linux-gnu`, `aarch64-macos`); el nivel de
+  procesador, como lo nombra `--cpu` (`baseline`, `x86-64-v3`, `native`;
+  7.8 del toolchain); el compilador
   (`tondo 0.1.0`); y el nombre y la versión de cada paquete del que depende,
   sin los que solo usan sus pruebas. No lleva la hora de la compilación, que
   la haría irreproducible (13).
@@ -7068,6 +7071,36 @@ que se rompió, y es `none` para un estado sin pasos, un paso que falló o un
 código que se salió del modelo. `Checked.vacuous` nombra las propiedades que se
 cumplieron sin decir nada, porque lo que las empieza no se dio en ningún estado,
 como un `leadsTo` cuyo `when` no se cumple nunca. Cada comprobación dice a `tondo test` lo que encontró (testing 8.12).
+
+### 14.44 `std.cpu`
+
+`std.cpu` dice qué tiene el procesador en que corre el programa además de lo
+que da el nivel para el que se compiló (7.8 del toolchain).
+
+~~~tondo
+pub enum Feature {
+    Sse3, Ssse3, Sse41, Sse42, Popcnt, Avx, Avx2, Fma, Bmi1, Bmi2, Lzcnt,
+    Avx512F, Avx512Dq, Avx512Vl, Avx512Bw, Pclmulqdq, Sha,
+    Neon, Lse, Crc32, Pmull, Sha2,
+    Aes
+}
+pub fn has(feature: Feature): Bool
+pub fn features(): Array[Feature]
+~~~
+
+- `Feature` tiene una variante por característica: las de x64, desde `Sse3`
+  hasta `Sha`; las de arm64, `Neon`, `Lse`, `Crc32`, `Pmull` y `Sha2`; y
+  `Aes`, que tienen las dos.
+- `has` dice si el procesador tiene la característica; `features`, todas las
+  que tiene, en el orden de `Feature`.
+- Con una variante escrita en la llamada, `has` se sabe al compilar: es
+  `true` sin prueba alguna cuando el nivel del build tiene la característica,
+  y `false` cuando es de la otra arquitectura. Un `if` cuya condición es esa
+  llamada, o varias unidas con `and`, compila solo el camino que corre, así
+  que el código de la otra arquitectura no entra en el programa. Esto no es
+  compilación condicional (20.11 del lenguaje): el código de los dos caminos
+  se comprueba en todos los targets. En otro caso `has` lee lo que el runtime
+  encontró una vez, al arrancar.
 
 ## 15. Contrato exigido a cada módulo
 

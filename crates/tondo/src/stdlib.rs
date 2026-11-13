@@ -62,6 +62,7 @@ const SOURCES: &[(&str, &[(&str, &str)])] = &[
     ("random", &[file!("random")]),
     ("format", &[file!("format")]),
     ("uuid", &[file!("uuid")]),
+    ("cpu", &[file!("cpu")]),
     ("datetime", &[file!("datetime")]),
     ("csv", &[file!("csv")]),
     ("log", &[file!("log")]),

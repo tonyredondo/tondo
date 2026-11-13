@@ -15,7 +15,7 @@ pub const COMMANDS: &[Command] = &[
         name: "run",
         usage: &[
             "tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch [--tests]]",
-            "          [--target <target>] [--diagnostic-format human|json] [-- <argument>...]",
+            "          [--target <target>] [--cpu <level>] [--diagnostic-format human|json] [-- <argument>...]",
             "tondo run --record <recording> [--last <duration> [--hold <duration>]] [<project>|<file.to>]",
             "          [--link <library>]...",
             "          [-- <argument>...]",
@@ -31,17 +31,18 @@ pub const COMMANDS: &[Command] = &[
         name: "build",
         usage: &[
             "tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--no-source-links]",
-            "          [--debug | --live] [--target <target>] [--diagnostic-format human|json] [--json]",
+            "          [--debug | --live] [--target <target>] [--cpu <level>] [--diagnostic-format human|json] [--json]",
         ],
         summary: &[
             "compile a native executable (static on Linux;",
             "without its symbol table; static for a target:",
-            "x86_64-linux or aarch64-linux)",
+            "x86_64-linux or aarch64-linux; for a level of",
+            "processor: baseline, x86-64-v3, x86-64-v4, native)",
         ],
     },
     Command {
         name: "build",
-        usage: &["tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--json]"],
+        usage: &["tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--cpu <level>] [--json]"],
         summary: &["compile a library for C, lib<name>.so (.dylib)", "and lib<name>.a, with its header <name>.h"],
     },
     Command {
@@ -153,7 +154,7 @@ pub const COMMANDS: &[Command] = &[
             "          [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>] [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]",
             "          [--models]",
             "          [--diagnostic-format human|json] [--artifacts <dir>] [--update-snapshots]",
-            "          [--static] [--debug] [--library] [--target <target>] [--exec <command>]",
+            "          [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--exec <command>]",
         ],
         summary: &[
             "run the tests of a project (of a library); with --watch,",

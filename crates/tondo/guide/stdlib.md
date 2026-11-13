@@ -17,6 +17,7 @@ std.embed      files of the package kept in the executable, read when it compile
 std.model      a design checked in every order of its steps, before any code
 std.path       join, parent, fileName, extension, clean, relative, glob patterns
 std.env        args, environment, directories, processors, hostname, what was built
+std.cpu        what the processor has beyond the build's level (`cpu.has`)
 std.process    run programs and pipelines, capture output, signals
 std.time       Duration, sleep, now, dates and their calendar, time zones, strftime formats
 std.json       encode and decode any type, navigate dynamic JSON

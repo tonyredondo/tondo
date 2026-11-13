@@ -156,6 +156,7 @@ impl Codegen<'_> {
         let mut e = Emit::new(self, fb);
         let block = e.fb.create_block();
         e.fb.switch_to_block(block);
+        e.check_cpu();
         let trace = e.cg.module.declare_data_in_func(trace, e.fb.func);
         let trace = e.fb.ins().symbol_value(POINTER, trace);
         e.call_rt(Rt::Trace, &[trace]);
@@ -200,6 +201,7 @@ impl Codegen<'_> {
         let block = e.fb.create_block();
         e.fb.append_block_params_for_function_params(block);
         e.fb.switch_to_block(block);
+        e.check_cpu();
         // A live build's tables, and then a debug build's, before a
         // debugger can ask for them.
         if let Some(info) = e.cg.live.as_ref().map(|live| live.info) {

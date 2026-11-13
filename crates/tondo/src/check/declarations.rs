@@ -193,6 +193,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "reflect"] => StdModule::InternalReflect,
             ["std", "internal", "text"] => StdModule::InternalText,
             ["std", "internal", "math"] => StdModule::InternalMath,
+            ["std", "internal", "cpu"] => StdModule::InternalCpu,
             ["std", "internal", "meta"] => StdModule::InternalMeta,
             ["std", "internal", "codec"] => StdModule::InternalCodec,
             ["std", "internal", "http"] => StdModule::InternalHttp,

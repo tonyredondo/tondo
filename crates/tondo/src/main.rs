@@ -562,6 +562,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
                 driver::set_target(parsed.project());
                 target = Some(parsed);
             }
+            "--cpu" => driver::set_cpu(&value()?),
             "--deny-skips" => options.deny_skips = true,
             "--allow-flaky" => options.allow_flaky = true,
             "--lock-order" => options.lock_order = true,
@@ -2681,6 +2682,9 @@ fn link_options(args: &[OsString]) -> Result<(BuildOptions, Vec<OsString>), Stri
             let parsed = Target::parse(&name.to_string_lossy())?;
             driver::set_target(parsed.project());
             target = Some(parsed);
+        } else if arg == "--cpu" {
+            let name = args.next().ok_or_else(|| format!("--cpu needs a level of processor, as baseline\n{USAGE}"))?;
+            driver::set_cpu(&name.to_string_lossy());
         } else if arg == "--static" && !statically {
             statically = true;
         } else if arg == "--debug" && !debug {
@@ -2788,6 +2792,10 @@ fn library_command(args: &[OsString]) -> Result<ExitCode, String> {
                 None => return Err(format!("--output needs a directory\n{USAGE}")),
             },
             Some("--debug") if !debug => debug = true,
+            Some("--cpu") => match rest.next() {
+                Some(level) => driver::set_cpu(&level.to_string_lossy()),
+                None => return Err(format!("--cpu needs a level of processor, as baseline\n{USAGE}")),
+            },
             Some("--static") => {
                 return Err("--static builds executables; a library is linked into its host, as the host is".into());
             }
@@ -3142,11 +3150,12 @@ fn cached_executable(path: &Path, options: &BuildOptions) -> Result<Option<PathB
     let BuildOptions { libraries, statically, debug, live, target, .. } = options;
     let identity = driver::compiler_identity();
     let linking = format!(
-        "{}{}{}{}",
+        "{}{}{}{}{}",
         if *statically { "static" } else { "" },
         if *debug { "debug" } else { "" },
         if *live { "live" } else { "" },
-        target.map_or("", Target::name)
+        target.map_or("", Target::name),
+        driver::asked_cpu(),
     );
     let mut parts = vec![identity.into_bytes(), libraries.join("\n").into_bytes(), linking.into_bytes()];
     // A live build is of the files where they are: its manifest says where

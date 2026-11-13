@@ -303,6 +303,8 @@ enum StdModule {
     /// scalar math, for the prelude and `std.math`.
     InternalText,
     InternalMath,
+    /// `std.internal.cpu`: the processor, for `std.cpu`.
+    InternalCpu,
     /// `std.internal.meta`: the request and response of a provider.
     InternalMeta,
     /// `std.internal.codec`: encodings, digests, entropy and the program's

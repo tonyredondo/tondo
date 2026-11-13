@@ -6325,3 +6325,19 @@ file of a system the same on each, so it checks one target for those it stands f
 where it happens by what it covers: a system alone when all of its architectures have it, as before,
 an architecture alone when all of its systems do, `on arm64:`, and otherwise the target,
 `on Linux arm64:`.
+
+## A build is for a level of processor
+
+A build without `--target` took every feature of the machine that compiled it, so an executable
+made on a new machine could hold an instruction an older one lacks and fail on it with an illegal
+instruction, far from its cause. A build is now for a declared level, `baseline` unless `--cpu` or
+`[build] cpu` asks for more: on x64 the level of x86-64-v2, SSE4.2 and POPCNT, one above Go's
+default, and on arm64 ARMv8.0. `native` keeps the old behaviour for those who want it. Only the
+processor's features change with the level; what the system asks of the code, as macOS signing
+return addresses, stays as cranelift-native sets it. The program checks at its start that the
+processor has what its level needs, before any of its code, and names what it lacks and the level
+to build for, so the failure is a sentence instead of a signal. `cpu.has(feature)` asks for more at
+run time, as .NET's `IsSupported`; with a variant written in the call the level answers it when
+compiling, so code for the other architecture under an `if` is never generated, and the test that
+needs the processor is a bit the runtime read once. `[build]` is a table of its own because it says
+how the program is built, which only the program decides: a dependency's is not read.

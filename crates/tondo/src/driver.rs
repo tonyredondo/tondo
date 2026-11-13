@@ -142,6 +142,9 @@ pub struct Analysis {
     /// Where the program comes from, which its executable keeps; none with
     /// `--no-source-links`.
     pub project: Option<crate::roots::Project>,
+    /// The level of processor the root package's `[build] cpu` asks for,
+    /// and where it says it.
+    pub cpu: Option<(String, String)>,
 }
 
 thread_local! {
@@ -152,6 +155,47 @@ thread_local! {
     /// The target a build is for, when it is not this machine's
     /// (language 6.8).
     static TARGET: std::cell::Cell<Option<project::Target>> = const { std::cell::Cell::new(None) };
+    /// The level of processor `--cpu` asks for (toolchain 7.8).
+    static CPU: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// The level the build of this thread lowers its code for.
+    static LEVEL: std::cell::RefCell<Option<crate::target::Cpu>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Makes the builds of this thread for the level of processor `--cpu`
+/// names.
+pub fn set_cpu(name: &str) {
+    CPU.with(|cpu| *cpu.borrow_mut() = Some(name.to_string()));
+}
+
+/// The level `--cpu` asked for, for a cache key: empty when none did.
+pub fn asked_cpu() -> String {
+    CPU.with(|cpu| cpu.borrow().clone().unwrap_or_default())
+}
+
+/// The level of processor a build of `analysis` is for (toolchain 7.8):
+/// `--cpu`'s, or else its `[build] cpu`, or else `baseline`; the lowering
+/// of this thread's builds takes it from here on.
+pub fn cpu(analysis: &Analysis, target: Option<Target>) -> Result<crate::target::Cpu, String> {
+    let foreign = target.filter(|target| !target.native()).map(Target::name);
+    let arch = self::target().arch;
+    let level = match (CPU.with(|cpu| cpu.borrow().clone()), &analysis.cpu) {
+        (Some(name), _) => crate::target::Cpu::parse(&name, arch, foreign)?,
+        (None, Some((name, place))) => {
+            crate::target::Cpu::parse(name, arch, foreign).map_err(|e| format!("{place}: {e}"))?
+        }
+        (None, None) => crate::target::Cpu::parse("baseline", arch, None)?,
+    };
+    LEVEL.with(|cell| *cell.borrow_mut() = Some(level.clone()));
+    Ok(level)
+}
+
+/// The level the code of this thread's build is lowered for: the last
+/// `cpu` resolved, or `baseline`.
+pub fn level() -> crate::target::Cpu {
+    let set = LEVEL.with(|cell| cell.borrow().clone());
+    set.unwrap_or_else(|| {
+        crate::target::Cpu::parse("baseline", target().arch, None).expect("every architecture has a baseline")
+    })
 }
 
 /// The target the builds of this thread are for: this machine's, or the
@@ -517,6 +561,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
     let mut source_id = format!("root:{}", path.file_name().unwrap_or_default().to_string_lossy());
     let mut libraries: Vec<String> = Vec::new();
     let mut elsewhere = Vec::new();
+    let mut cpu = None;
     // The dependencies, whose warnings their authors see, not this program's.
     let mut dependencies: Vec<String> = Vec::new();
     // A file alone is a program of its name, at version 0.0.0.
@@ -559,6 +604,8 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         project.template = packages[0].source_url.clone();
         elsewhere = packages.iter().flat_map(|package| declared_elsewhere(package, target)).collect();
         dependencies = packages[1..].iter().map(|p| p.name.clone()).collect();
+        // The program's own `[build]` decides, not a dependency's.
+        cpu = packages[0].cpu.clone();
         built = ast::Built {
             name: packages[0].name.clone(),
             version: packages[0].version.clone(),
@@ -706,6 +753,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                 expansions,
                 index,
                 project: Some(project.clone()),
+                cpu: cpu.clone(),
             });
         }
         let mut providers: Vec<Vec<(String, PathBuf)>> = packages.iter().map(|p| p.providers.clone()).collect();
@@ -754,6 +802,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                     expansions,
                     index,
                     project: Some(project.clone()),
+                    cpu: cpu.clone(),
                 });
             }
         };
@@ -818,6 +867,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             expansions,
             index,
             project: Some(project.clone()),
+            cpu: cpu.clone(),
         });
     }
     let checking = crate::times::part("check");
@@ -853,6 +903,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         expansions,
         index: None,
         project: Some(project.clone()),
+        cpu: cpu.clone(),
     })
 }
 
@@ -1222,6 +1273,7 @@ pub fn object_counting(
     fuzz: bool,
 ) -> Result<(Vec<u8>, Vec<codegen::Counted>), String> {
     let program = analysis.program.as_ref().expect("object_counting() requires a checked program");
+    let cpu = cpu(analysis, target)?;
     let bodies = lower::lower(program, false, debug, None);
     let mut counted = Vec::new();
     let triple = target.map(Target::triple);
@@ -1229,6 +1281,7 @@ pub fn object_counting(
         meta: analysis.meta,
         debug,
         target: triple,
+        cpu: &cpu,
         live: None,
         roots: "",
         coverage: Some(&mut counted),
@@ -1247,6 +1300,7 @@ pub fn compile(
 ) -> Result<Vec<u8>, String> {
     let program = analysis.program.as_ref().expect("object() requires a checked program");
     let debug = debug || live.is_some();
+    let cpu = cpu(analysis, target)?;
     let lowering = crate::times::part("lower");
     let mut bodies = lower::lower(program, live.is_some(), debug, live.as_ref().map(|build| &build.catch_ups));
     drop(lowering);
@@ -1262,6 +1316,7 @@ pub fn compile(
         meta: analysis.meta,
         debug,
         target: triple,
+        cpu: &cpu,
         live,
         coverage: None,
         fuzz: false,
@@ -1469,6 +1524,7 @@ pub fn optimizations(
     let program = analysis.program.as_ref().expect("optimizations() requires a checked program");
     let sources = &analysis.sources;
     crate::mir_text::ask_remarks(true);
+    cpu(analysis, None)?;
     let mut bodies = lower::lower(program, false, false, None);
     if !analysis.meta {
         optimize(&mut bodies, &program.types, sources);
@@ -1826,6 +1882,7 @@ pub fn assembly_with(
         let file = sources.file_of(body.span.start);
         body.span != crate::source::Span::default() && !file.dependency && !file.logical.starts_with("<std>/")
     };
+    cpu(analysis, None)?;
     let bodies = lower::lower(program, false, false, None);
     let mut names: std::collections::HashSet<String> = match function {
         Some(name) if bodies.iter().any(|body| body.name == name) => std::iter::once(name.to_string()).collect(),

@@ -955,6 +955,9 @@ pub enum StdFn {
     Process(ProcessFn),
     /// A function of an internal standard module, by its index in `NATIVES`.
     Native(u16),
+    /// `cpu.has(feature)` (toolchain 7.8): what the runtime found at the
+    /// start, when the build's level does not say.
+    CpuHas,
     /// A named operation of a number (18.9).
     Number(crate::numbers::NumOp),
     /// `time.sleep(delay)`: waits without blocking the thread (14.3.3).
@@ -1522,6 +1525,7 @@ pub const NATIVES: &[Native] = {
         image("pixel", &[Object, Int, Int], Int, "tondo_rt_image_pixel"),
         image("encode", &[Object, Int, Int], Bytes, "tondo_rt_image_encode"),
         env("target", &[], String, "tondo_rt_env_target"),
+        env("cpu", &[], String, "tondo_rt_env_cpu"),
         codec("base64Encode", &[Bytes, Bool], String, "tondo_rt_base64_encode"),
         codec("base64Check", &[String, Bool], Int, "tondo_rt_base64_check"),
         codec("base64Decode", &[String, Bool], Bytes, "tondo_rt_base64_decode"),

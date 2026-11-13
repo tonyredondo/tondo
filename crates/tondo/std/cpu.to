@@ -1,0 +1,104 @@
+// std.cpu (standard library 14.44): what the processor the program runs on
+// has beyond the level it was built for (toolchain 7.8). A test of a
+// feature the level has, or one of the other architecture, is known when
+// compiling: the code under `if cpu.has(...)` that cannot run is left out.
+//
+// ```tondo
+// import std.console
+// import std.cpu
+//
+// if cpu.has(cpu.Feature.Avx2) {
+//     console.println("AVX2")
+// } else {
+//     console.println("no AVX2")
+// }
+// ```
+
+import std.internal.cpu as cpuNative
+
+/// What a processor may have, each a variant of its own: those of x64, then
+/// those of arm64, then `Aes`, which both have.
+///
+/// ```tondo
+/// import std.console
+/// import std.cpu
+///
+/// console.println("{cpu.Feature.Sse42}")
+/// ```
+pub enum Feature {
+    Sse3
+    Ssse3
+    Sse41
+    Sse42
+    Popcnt
+    Avx
+    Avx2
+    Fma
+    Bmi1
+    Bmi2
+    Lzcnt
+    Avx512F
+    Avx512Dq
+    Avx512Vl
+    Avx512Bw
+    Pclmulqdq
+    Sha
+    Neon
+    Lse
+    Crc32
+    Pmull
+    Sha2
+    Aes
+}
+
+/// Whether the processor the program runs on has it. With a variant written
+/// in the call, a feature of the build's level is `true` and one of the
+/// other architecture `false`, with no test; any other reads what the
+/// runtime found when the program started.
+///
+/// ```tondo
+/// import std.console
+/// import std.cpu
+///
+/// console.println("{cpu.has(cpu.Feature.Sse42)}")
+/// ```
+pub fn has(feature: Feature): Bool {
+    cpuNative.has(feature)
+}
+
+/// Everything of `Feature` that it has, in the order of `Feature`.
+///
+/// ```tondo
+/// import std.console
+/// import std.cpu
+///
+/// console.println("{cpu.features().contains(cpu.Feature.Sse42)}")
+/// ```
+pub fn features(): Array[Feature] {
+    let all = [
+        Feature.Sse3,
+        Feature.Ssse3,
+        Feature.Sse41,
+        Feature.Sse42,
+        Feature.Popcnt,
+        Feature.Avx,
+        Feature.Avx2,
+        Feature.Fma,
+        Feature.Bmi1,
+        Feature.Bmi2,
+        Feature.Lzcnt,
+        Feature.Avx512F,
+        Feature.Avx512Dq,
+        Feature.Avx512Vl,
+        Feature.Avx512Bw,
+        Feature.Pclmulqdq,
+        Feature.Sha,
+        Feature.Neon,
+        Feature.Lse,
+        Feature.Crc32,
+        Feature.Pmull,
+        Feature.Sha2,
+        Feature.Aes,
+    ]
+    all.filter(has)
+}

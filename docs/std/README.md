@@ -106,6 +106,7 @@ uses them: the same record is read from JSON and written as YAML.
 | [std.image](image.md) | PNG, JPEG, GIF and WebP: resize, crop, rotate, colors, EXIF |
 | [std.process](process.md) | running programs and pipelines, their input and output, signals |
 | [std.env](env.md) | arguments, environment, directories, processors, what the program was built from |
+| [std.cpu](cpu.md) | what the processor has beyond the level the program was built for |
 
 ## Text, numbers and time
 

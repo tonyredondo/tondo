@@ -33,7 +33,7 @@ New to Tondo, or a model writing it? Start with `tondo guide`.
 
 usage:
   tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch [--tests]]
-            [--target <target>] [--diagnostic-format human|json] [-- <argument>...]
+            [--target <target>] [--cpu <level>] [--diagnostic-format human|json] [-- <argument>...]
   tondo run --record <recording> [--last <duration> [--hold <duration>]] [<project>|<file.to>]
             [--link <library>]...
             [-- <argument>...]                         compile and run a program (under qemu for another
@@ -41,11 +41,12 @@ usage:
                                                        `tondo reload`, or by itself as its files change;
                                                        recorded, for `tondo debug --replay`)
   tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--no-source-links]
-            [--debug | --live] [--target <target>] [--diagnostic-format human|json] [--json]
+            [--debug | --live] [--target <target>] [--cpu <level>] [--diagnostic-format human|json] [--json]
                                                        compile a native executable (static on Linux;
                                                        without its symbol table; static for a target:
-                                                       x86_64-linux or aarch64-linux)
-  tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--json]
+                                                       x86_64-linux or aarch64-linux; for a level of
+                                                       processor: baseline, x86-64-v3, x86-64-v4, native)
+  tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--cpu <level>] [--json]
                                                        compile a library for C, lib<name>.so (.dylib)
                                                        and lib<name>.a, with its header <name>.h
   tondo check [<project>|<file.to>] [--library] [--unreached] [--docs] [--performance] [--json]
@@ -92,7 +93,7 @@ usage:
             [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>] [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]
             [--models]
             [--diagnostic-format human|json] [--artifacts <dir>] [--update-snapshots]
-            [--static] [--debug] [--library] [--target <target>] [--exec <command>]
+            [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--exec <command>]
                                                        run the tests of a project (of a library); with --watch,
                                                        again as its files change; --bench measures its benchmarks,
                                                        --fuzz searches for inputs that fail its fuzz tests, and

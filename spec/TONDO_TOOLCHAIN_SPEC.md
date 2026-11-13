@@ -75,6 +75,9 @@ name = "app"
 version = "1.2.0"
 edition = "0.1"
 
+[build]
+cpu = "x86-64-v3"
+
 [dependencies]
 units = { path = "libs/units" }
 http = { git = "https://github.com/acme/http", tag = "v1.2.0" }
@@ -104,6 +107,11 @@ outputs = ["proto.user"]
   los nombra, y `check` lo comprueba solo para ellos; y `architectures`, las
   arquitecturas, `["x64"]`, `["arm64"]` o las dos, del mismo modo. `tondo new`
   escribe `version = "0.1.0"`.
+- `[build]` dice cómo se compila el programa. Su única clave es `cpu`, el
+  nivel de procesador para el que se compila (7.8), que `--cpu` reemplaza.
+  Solo cuenta el `[build]` del paquete raíz: el de una dependencia no se lee,
+  porque decide el programa. `systems` y `architectures` siguen en
+  `[package]`: dicen qué admite el paquete, no cómo se compila.
 - `[dependencies]` asocia a cada alias su fuente (sección 4).
 - `[source]`, con `url`, dice cómo enlazar una línea en un host propio (7.5).
 - `[dev-dependencies]` declara del mismo modo las dependencias que solo usan
@@ -238,7 +246,8 @@ que ningún build ha usado en un día, así que dos versiones a la vez, como la
 del editor y la de la terminal, no se quitan el runtime la una a la otra. Una
 entrada de esos directorios que nadie usa en 30 días se borra, y de un mismo
 programa, o proyecto en `test/`, compilado del mismo modo (debug, live,
-estático o para otro target), un build nuevo deja solo el anterior más
+estático, para otro target o para otro nivel de procesador), un build nuevo
+deja solo el anterior más
 reciente: editar un programa no llena la caché con cada versión suya.
 
 Para descargar, el toolchain usa `git`, `curl`, `tar` y `unzip` del sistema.
@@ -248,9 +257,9 @@ completos no se ejecuta ninguna.
 ## 7. Comandos
 
 ~~~text
-tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch] [--target <target>] [--diagnostic-format human|json] [-- <argument>...]
-tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug | --live] [--target <target>] [--diagnostic-format human|json] [--json]
-tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--json]
+tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch] [--target <target>] [--cpu <level>] [--diagnostic-format human|json] [-- <argument>...]
+tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug | --live] [--target <target>] [--cpu <level>] [--diagnostic-format human|json] [--json]
+tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--cpu <level>] [--json]
 tondo check [<project>|<file.to>] [--library] [--json]
 tondo expand [<project>|<file.to>] [--json]
 tondo fmt [--check | --compact] [--json] <file.to>...
@@ -271,7 +280,7 @@ tondo fix [<project>|<file.to>] [--library] [--json]
 tondo explain [<code>] [--json]
 tondo clean [--all] [--json]
 tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [-I <dir>] [-D <name[=value]>] [--json]
-tondo test [<project>] [--static] [--debug] [--library] [--target <target>] [--watch] [--coverage] [--bench [--bench-time <seconds>]] [--fuzz [--fuzz-time <seconds>]] [--test-format human|json|events] [--json] [--diagnostic-format human|json]
+tondo test [<project>] [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--watch] [--coverage] [--bench [--bench-time <seconds>]] [--fuzz [--fuzz-time <seconds>]] [--test-format human|json|events] [--json] [--diagnostic-format human|json]
 tondo doc-test [--edition 0.1] <markdown>
 tondo target pack [<dir>] [--json]
 tondo lsp
@@ -1614,6 +1623,47 @@ usuario de qemu: `qemu-<arch>` o `qemu-<arch>-static` de `PATH`, o el que el
 kernel tiene registrado en `binfmt_misc`. Sin ninguno es error, que pide
 instalar qemu-user; en un sistema que no es Linux, también: el programa
 corre en Linux.
+
+Cada build es para un **nivel de procesador** de la arquitectura de su
+target, que dice qué características del procesador puede usar su código,
+por los flags del generador de código:
+
+| Nivel | Arquitectura | Características |
+| --- | --- | --- |
+| `baseline` | x64 | SSE3, SSSE3, SSE4.1, SSE4.2, POPCNT y CMPXCHG16B |
+| `x86-64-v2` | x64 | las mismas: otro nombre del `baseline` de x64 |
+| `x86-64-v3` | x64 | esas, y AVX, AVX2, FMA, BMI1, BMI2 y LZCNT |
+| `x86-64-v4` | x64 | esas, y AVX-512 F, DQ y VL |
+| `baseline` | arm64 | ninguna: ARMv8.0 con NEON, que tiene todo ARM de 64 bits |
+| `native` | las dos | las que tiene el procesador de la máquina que compila |
+
+`x86-64-v4` tal como otros lo definen tiene también BW y CD de AVX-512, para
+las que el generador no tiene flag: no se genera nada con ellas.
+
+- El nivel es `baseline` en `build`, `run`, `test` y `build --library`, con
+  `--target` y sin él. `--cpu <level>` pide otro, y `cpu` en el `[build]` del
+  `tondo.toml` raíz también (sección 3); la opción gana al archivo.
+- Un nombre desconocido es error, que da los niveles de la arquitectura del
+  target; un nivel de la otra arquitectura, también, y dice de cuál es.
+  `native` con un `--target` que no es esta máquina es error: es el
+  procesador de la máquina que compila.
+- El nivel solo cambia las características: lo que el generador pone por las
+  convenciones del sistema, como la firma de las direcciones de retorno en
+  macOS, queda igual en todos.
+- El nivel es parte de la identidad del build (6.8 del lenguaje): dos builds
+  que difieren en él no comparten nada en la caché. `env.build().cpu` lo da,
+  `baseline` y no `x86-64-v2` por defecto (14.3.6 de la librería estándar).
+- Antes de que corra código alguno del programa, el runtime comprueba que el
+  procesador tiene lo que necesita su nivel. Si le falta algo, el programa
+  escribe una línea en la salida de errores y termina con el código de un
+  pánico:
+
+  ~~~text
+  fatal: this program was built for x86-64-v3 and this processor lacks AVX2 and BMI2: build it with --cpu baseline
+  ~~~
+
+  La comprobación corre en cualquier procesador de la arquitectura. Una
+  librería la hace cuando arranca su runtime, en su primera llamada.
 
 ### 7.9 `tondo mcp`
 

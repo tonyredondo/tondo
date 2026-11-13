@@ -89,6 +89,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let tag = self.e.fb.ins().uextend(types::I64, tag);
                 self.e.call_rt(Rt::Process(ProcessFn::Signal), &[values[0], tag])
             }
+            Callee::Std(StdFn::CpuHas) => {
+                // The variant of `cpu.Feature`.
+                let feature = self.operand_ty(&args[0]);
+                let value = self.operand(&args[0]);
+                let tag = self.e.tag(feature, value);
+                let tag = self.e.fb.ins().uextend(types::I64, tag);
+                self.e.call_rt(Rt::CpuHas, &[tag])
+            }
             Callee::Std(StdFn::ConsoleEprint) => self.e.call_rt(Rt::ConsoleEprint, &values),
             Callee::Std(StdFn::ConsoleEprintln) => self.e.call_rt(Rt::ConsoleEprintln, &values),
             Callee::Std(StdFn::Io(IoFn::BufferClear)) => self.e.call_rt(Rt::Io(IoFn::BufferClear), &values),

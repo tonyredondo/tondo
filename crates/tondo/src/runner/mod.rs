@@ -1582,13 +1582,14 @@ pub fn build_dir(
     // Each layout's build is kept beside the others (`--layouts`).
     let layout = crate::driver::layout_seed().map_or(String::new(), |seed| format!("layout{seed}"));
     let linking = format!(
-        "{}{}{}{}{}{}{layout}",
+        "{}{}{}{}{}{}{}{layout}",
         if statically { "static" } else { "" },
         if debug { "debug" } else { "" },
         if live { "live" } else { "" },
         if counting { "coverage" } else { "" },
         if fuzz { "fuzz" } else { "" },
-        target.map_or("", crate::target::Target::name)
+        target.map_or("", crate::target::Target::name),
+        crate::driver::asked_cpu(),
     );
     let mut parts = vec![identity.into_bytes(), linking.as_bytes().to_vec()];
     for input in crate::driver::test_inputs(path)? {

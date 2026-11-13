@@ -53,3 +53,45 @@ fn programs_build_and_run_for_targets() {
         assert_eq!(String::from_utf8_lossy(&ran.stdout), "built for 42\n", "{}", String::from_utf8_lossy(&ran.stderr));
     }
 }
+
+/// A program checks at its start that the processor has what its level
+/// needs (toolchain 7.8): under qemu, told to be a processor without AVX2,
+/// one built for x86-64-v3 ends with the line that says so. Where nothing
+/// runs x86-64 code under qemu here, there is nothing to tell.
+#[test]
+fn a_program_checks_its_processor() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("levels");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("built.to"), PROGRAM).unwrap();
+    let qemu = ["qemu-x86_64", "qemu-x86_64-static"].into_iter().find_map(|name| {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        std::env::split_paths(&path).map(|dir| dir.join(name)).find(|path| path.is_file())
+    });
+    // This machine's x86-64 code, or another's, which binfmt hands to qemu.
+    let emulated = cfg!(target_arch = "aarch64") && std::env::var_os("TONDO_TARGETS").is_some();
+    if qemu.is_none() && !emulated {
+        return;
+    }
+    let mut built = Command::new(env!("CARGO_BIN_EXE_tondo"));
+    built.args(["build", "built.to", "--cpu", "x86-64-v3", "--output", "v3"]).current_dir(&dir);
+    if emulated {
+        built.args(["--target", "x86_64-linux"]);
+    }
+    let built = built.output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let mut run = match &qemu {
+        Some(qemu) if !emulated => Command::new(qemu),
+        _ => Command::new(dir.join("v3")),
+    };
+    if !emulated {
+        run.arg(dir.join("v3"));
+    }
+    let ran = run.env("QEMU_CPU", "Nehalem").output().unwrap();
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert_eq!(ran.status.code(), Some(101), "{said}");
+    assert_eq!(
+        said,
+        "fatal: this program was built for x86-64-v3 and this processor lacks AVX, AVX2, FMA, BMI1, BMI2 and LZCNT: build it with --cpu baseline\n"
+    );
+    assert!(ran.stdout.is_empty());
+}

@@ -526,6 +526,120 @@ fn builds_the_files_of_its_architecture() {
     assert!(err.contains("names the architectures the package runs on: `x64`, `arm64`"), "{err}");
 }
 
+/// The level of processor a build is for (toolchain 7.8): `baseline`,
+/// another with `--cpu` or the root package's `[build] cpu`, each a build of
+/// its own, and a level that does not exist named with those that do.
+#[test]
+fn builds_for_a_level_of_processor() {
+    let dir = scratch("levels");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("dep/src")).unwrap();
+    std::fs::write(dir.join("src/main.to"), "import std.console\nimport std.env\nimport dep\n\nfn main() {\n    console.println(\"{env.build().cpu} {dep.answer()}\")\n}\n").unwrap();
+    // A dependency's `[build]` is not read: the program decides.
+    std::fs::write(dir.join("dep/tondo.toml"), "[package]\nname = \"dep\"\n\n[build]\ncpu = \"x86-64-v4\"\n").unwrap();
+    std::fs::write(dir.join("dep/src/dep.to"), "pub fn answer(): Int {\n    42\n}\n").unwrap();
+    let manifest =
+        |build: &str| format!("[package]\nname = \"app\"\n{build}\n[dependencies]\ndep = {{ path = \"dep\" }}\n");
+    std::fs::write(dir.join("tondo.toml"), manifest("")).unwrap();
+    let run = |args: &[&str]| tondo(&dir, &[&["run"][..], args].concat());
+    assert_eq!(run(&[]), ("baseline 42\n".into(), String::new(), 0));
+    assert_eq!(run(&["--cpu", "native"]).0, "native 42\n");
+    assert_eq!(run(&[]).0, "baseline 42\n");
+    std::fs::write(dir.join("tondo.toml"), manifest("\n[build]\ncpu = \"native\"\n")).unwrap();
+    assert_eq!(run(&[]).0, "native 42\n");
+    assert_eq!(run(&["--cpu", "baseline"]).0, "baseline 42\n");
+    // On x64, the next level, which this processor may lack.
+    #[cfg(target_arch = "x86_64")]
+    {
+        let (out, err, code) = run(&["--cpu", "x86-64-v3"]);
+        match std::is_x86_feature_detected!("avx2") {
+            true => assert_eq!((out.as_str(), code), ("x86-64-v3 42\n", 0), "{err}"),
+            false => assert!(code == 101 && err.contains("built for x86-64-v3 and this processor lacks"), "{err}"),
+        }
+    }
+    // A level that does not exist, and a key `[build]` does not have.
+    let (_, err, code) = run(&["--cpu", "fast"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("unknown processor level `fast`:") && err.contains("`baseline`"), "{err}");
+    std::fs::write(dir.join("tondo.toml"), manifest("\n[build]\nopt = \"3\"\n")).unwrap();
+    let (_, err, _) = run(&[]);
+    assert!(err.contains("tondo.toml:5: unknown key `opt` in `[build]`, which has `cpu`"), "{err}");
+}
+
+/// `cpu.has` (standard library 14.44): a feature of the build's level and
+/// one of the other architecture are known when compiling, with no test
+/// and nothing of the way that does not run; one above the level asks
+/// what the runtime found, which `cpu.features()` lists as the system does.
+#[test]
+fn cpu_has_answers_from_the_level_or_the_processor() {
+    let dir = scratch("cpu-has");
+    let (level, above, other) = match cfg!(target_arch = "aarch64") {
+        true => ("Neon", "Lse", "Avx2"),
+        false => ("Sse42", "Avx2", "Neon"),
+    };
+    let program = format!(
+        "import std.console\nimport std.cpu\n\nfn level(): String {{\n    if cpu.has(cpu.Feature.{level}) {{ \"level\" }} else {{ \"lacking\" }}\n}}\n\nfn above(): String {{\n    if cpu.has(cpu.Feature.{above}) {{ \"above\" }} else {{ \"not above\" }}\n}}\n\nfn other(): String {{\n    if cpu.has(cpu.Feature.{other}) {{ \"other\" }} else {{ \"not other\" }}\n}}\n\nfn main() {{\n    console.println(\"{{level()}} {{other()}} {{above()}} {{cpu.features()}}\")\n}}\n"
+    );
+    std::fs::write(dir.join("has.to"), program).unwrap();
+    let asked = |function: &str| {
+        let (out, err, code) = tondo(&dir, &["asm", "has.to", function]);
+        assert_eq!(code, 0, "{err}");
+        (out.contains("tondo_rt_cpu_has"), out)
+    };
+    // One text of the two: the way that runs.
+    for function in ["level", "other"] {
+        let (tested, code) = asked(function);
+        assert!(!tested && code.matches("tondo_str").count() == 1, "{code}");
+    }
+    let (tested, code) = asked("above");
+    assert!(tested && code.matches("tondo_str").count() == 2, "{code}");
+    let (out, err, code) = tondo(&dir, &["run", "has.to"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.starts_with("level not other "), "{out}");
+    // What the system says the processor has, by the names it gives them.
+    #[cfg(target_os = "linux")]
+    {
+        let info = std::fs::read_to_string("/proc/cpuinfo").unwrap();
+        let line = info.lines().find(|line| line.starts_with("flags") || line.starts_with("Features")).unwrap();
+        let flags: Vec<&str> = line.split_once(':').unwrap().1.split_whitespace().collect();
+        let names: &[(&str, &str)] = match cfg!(target_arch = "aarch64") {
+            true => &[
+                ("Neon", "asimd"),
+                ("Lse", "atomics"),
+                ("Crc32", "crc32"),
+                ("Pmull", "pmull"),
+                ("Sha2", "sha2"),
+                ("Aes", "aes"),
+            ],
+            false => &[
+                ("Sse3", "pni"),
+                ("Ssse3", "ssse3"),
+                ("Sse41", "sse4_1"),
+                ("Sse42", "sse4_2"),
+                ("Popcnt", "popcnt"),
+                ("Avx", "avx"),
+                ("Avx2", "avx2"),
+                ("Fma", "fma"),
+                ("Bmi1", "bmi1"),
+                ("Bmi2", "bmi2"),
+                ("Lzcnt", "abm"),
+                ("Avx512F", "avx512f"),
+                ("Avx512Dq", "avx512dq"),
+                ("Avx512Vl", "avx512vl"),
+                ("Avx512Bw", "avx512bw"),
+                ("Pclmulqdq", "pclmulqdq"),
+                ("Sha", "sha_ni"),
+                ("Aes", "aes"),
+            ],
+        };
+        let listed = out.trim_end().rsplit_once('[').unwrap().1.trim_end_matches(']');
+        let found: Vec<&str> = listed.split(", ").filter(|name| !name.is_empty()).collect();
+        let expected: Vec<&str> =
+            names.iter().filter(|(_, flag)| flags.contains(flag)).map(|(name, _)| *name).collect();
+        assert_eq!(found, expected, "{line}");
+    }
+}
+
 /// A write made from an earlier read has a repair: one `update`, unless what
 /// was read goes on being used.
 #[test]

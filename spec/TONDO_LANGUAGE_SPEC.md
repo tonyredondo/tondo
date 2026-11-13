@@ -1163,8 +1163,9 @@ Reglas:
   `run` y `test` compilan los archivos del target de destino.
 - Para decidir al ejecutar, con código que compila en todos, `env.build()`
   dice el target (biblioteca estándar 14.4).
-- Target, edición, features, sistema y arquitectura son entradas declaradas
-  del build y forman parte de su identidad.
+- Target, edición, features, sistema, arquitectura y nivel de procesador
+  (7.8 del toolchain) son entradas declaradas del build y forman parte de su
+  identidad.
 - Dos archivos activos no pueden producir el mismo path lógico.
 - Un import que no exista para el target resuelto produce `E1008`; el compilador
   no busca una variante alternativa implícita.
@@ -8357,8 +8358,9 @@ capacidad; no recibe un fallback tardío ni una emulación shell implícita.
 
 No existe compilación condicional dentro de un archivo `.to`. Un paquete aporta
 implementaciones distintas en archivos de cada sistema (6.8). El target,
-perfil, capacidades, features y sistema seleccionados son entradas declaradas
-del build y forman parte de la identidad de interfaces y artefactos compilados.
+perfil, capacidades, features, sistema y nivel de procesador seleccionados son
+entradas declaradas del build y forman parte de la identidad de interfaces y
+artefactos compilados.
 Cambiarlos obliga a resolver y comprobar de nuevo el grafo.
 
 ---

@@ -42,6 +42,9 @@ pub fn lower(program: &hir::Program, live: bool, debug: bool, catch_ups: Option<
         .iter()
         .map(|c| c.computed.iter().fold(0, |set, &(field, ..)| set | 1 << field.min(63)))
         .collect();
+    // The level of processor the code is for, which answers some tests of
+    // it (toolchain 7.8).
+    let level = crate::driver::level();
     // Each function on its own, on every core.
     let lower_all = |waits: Option<&[bool]>, recovering: bool| -> Vec<Body> {
         let restart = |index: usize, f: &hir::Function| (live && !f.test).then_some(hir::FnId(index as u32));
@@ -50,7 +53,7 @@ pub fn lower(program: &hir::Program, live: bool, debug: bool, catch_ups: Option<
             let f = &program.functions[i];
             let functions = debug.then_some(&program.functions[..]);
             let entries = catch_ups.and_then(|plan| plan.get(&(f.name.clone(), f.span.start)));
-            lower_function(&program.types, f, functions, waits, restart(i, f), recovering, &computed, entries)
+            lower_function(&program.types, f, functions, waits, restart(i, f), recovering, &computed, entries, &level)
         })
     };
     let plain = lower_all(None, false);
@@ -286,6 +289,8 @@ struct Builder<'a> {
     functions: Option<&'a [hir::Function]>,
     /// The fields of each context whose initial values are computed.
     computed: &'a [u64],
+    /// The level of processor the code is for.
+    level: &'a crate::target::Cpu,
     locals: Vec<Ty>,
     names: Vec<Option<String>>,
     blocks: Vec<(Vec<Statement>, Option<Terminator>)>,
@@ -352,6 +357,7 @@ fn lower_function(
     recovering: bool,
     computed: &[u64],
     entries: Option<&crate::live::Entries>,
+    level: &crate::target::Cpu,
 ) -> Body {
     let mut b = Builder {
         types,
@@ -360,6 +366,7 @@ fn lower_function(
         lets: HashMap::new(),
         functions,
         computed,
+        level,
         locals: Vec::new(),
         names: Vec::new(),
         blocks: Vec::new(),
@@ -2539,6 +2546,9 @@ impl Builder<'_> {
                 result
             }
             hir::ExprKind::Call(callee, _, args) => {
+                if let Some(known) = known_cpu(e, self.level) {
+                    return Operand::Const(Const::Bool(known));
+                }
                 let (operands, regions) = self.call_operands(args, e.span);
                 let result = self.temp(e.ty, Rvalue::Call(*callee, operands), e.span);
                 self.finish_call(e.ty, regions);
@@ -2765,9 +2775,30 @@ impl Builder<'_> {
         then: &hir::Block,
         otherwise: Option<&hir::Expr>,
     ) -> Operand {
-        let condition = self.expr(condition);
         let has_value = e.ty != Ty::UNIT && e.ty != Ty::NEVER;
         let result = has_value.then(|| self.new_local(e.ty));
+        // A test of the processor its level answers: only the way that
+        // runs is compiled (toolchain 7.8).
+        if let Some(known) = known_cpu(condition, self.level) {
+            self.in_frame(|b| {
+                let (value, ty) = match (known, otherwise) {
+                    (true, _) => (b.block(then), then.ty),
+                    (false, Some(otherwise)) => (b.expr(otherwise), otherwise.ty),
+                    (false, None) => return,
+                };
+                if let Some(result) = result.filter(|_| ty != Ty::NEVER) {
+                    b.store(Place::local(result), value, e.span);
+                }
+            });
+            return match result {
+                Some(result) => {
+                    self.own(result);
+                    Operand::local(result)
+                }
+                None => Operand::Const(Const::Unit),
+            };
+        }
+        let condition = self.expr(condition);
         let (then_block, else_block, join) = (self.new_block(), self.new_block(), self.new_block());
         let first = then.tail.as_ref().map(|tail| tail.span).filter(|_| then.stmts.is_empty());
         self.way(Some(then_block), e.span, first.unwrap_or(e.span), "then");
@@ -2868,4 +2899,36 @@ fn later_written(exprs: &[&hir::Expr]) -> Vec<Vec<hir::LocalId>> {
         later[at] = changed;
     }
     later
+}
+
+/// What a test of the processor gives when the build's level says
+/// (toolchain 7.8): `cpu.has` of a variant written there, or several joined
+/// with `and`; none for any other condition, or one that needs the test.
+fn known_cpu(e: &hir::Expr, level: &crate::target::Cpu) -> Option<bool> {
+    match &e.kind {
+        hir::ExprKind::Call(hir::Callee::Std(hir::StdFn::CpuHas), _, args) => match &args[0].kind {
+            hir::ExprKind::Variant(feature, fields) if fields.is_empty() => level.has(*feature),
+            _ => None,
+        },
+        // A side that is false makes the whole false, as long as the other
+        // is a test of the processor too, which does nothing else.
+        hir::ExprKind::Binary(BinOp::And, left, right) => match (known_cpu(left, level), known_cpu(right, level)) {
+            (Some(false), _) => Some(false),
+            (_, Some(false)) if is_cpu_test(left) => Some(false),
+            (Some(true), right) => right,
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether a condition only tests the processor.
+fn is_cpu_test(e: &hir::Expr) -> bool {
+    match &e.kind {
+        hir::ExprKind::Call(hir::Callee::Std(hir::StdFn::CpuHas), _, args) => {
+            matches!(args[0].kind, hir::ExprKind::Variant(_, ref fields) if fields.is_empty())
+        }
+        hir::ExprKind::Binary(BinOp::And, left, right) => is_cpu_test(left) && is_cpu_test(right),
+        _ => false,
+    }
 }

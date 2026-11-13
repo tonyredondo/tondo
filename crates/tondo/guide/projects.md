@@ -93,6 +93,17 @@ runtime comes in a pack that `tondo target pack <dir>` writes on a machine
 of it; `TONDO_TARGETS=<dir>` finds it. `tondo run` and `tondo test` run
 such a program under qemu-user.
 
+A build is for a level of processor: `baseline` unless `--cpu` asks for
+another, or `cpu` in the `[build]` of `tondo.toml`. On x64, `baseline` is
+x86-64-v2, up to SSE4.2 and POPCNT; `x86-64-v3` adds AVX2, BMI2 and FMA,
+`x86-64-v4` some of AVX-512, and `native` takes what the machine that
+builds has. A program checks at its start that its processor
+has what its level needs, and says which level to build it for when not.
+`env.build().cpu` names its level. Beyond it, `cpu.has(cpu.Feature.Avx2)`
+asks the processor; a feature the level has, or one of the other
+architecture, is known when compiling, and only the way of the `if` that
+runs is compiled.
+
 ## Editors
 
 In VS Code, and Cursor, VSCodium and Windsurf, the Tondo extension

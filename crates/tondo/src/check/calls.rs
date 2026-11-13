@@ -1962,6 +1962,7 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalReflect
                     | StdModule::InternalText
                     | StdModule::InternalMath
+                    | StdModule::InternalCpu
                     | StdModule::InternalMeta
                     | StdModule::InternalCodec
                     | StdModule::InternalHttp
@@ -1984,6 +1985,17 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalImage),
                 )),
             ) => {
+                // `has(feature)`: what `cpu.has` answers when the build's
+                // level does not say (toolchain 7.8).
+                if module == StdModule::InternalCpu && *member == "has" {
+                    let [arg] = args else { return self.arity_error(span, 1, args.len()) };
+                    let feature = self.expr(cx, &arg.value, None);
+                    return Self::mk(
+                        hir::ExprKind::Call(hir::Callee::Std(StdFn::CpuHas), Vec::new(), vec![feature]),
+                        Ty::BOOL,
+                        span,
+                    );
+                }
                 // `built()`: what `env.build()` reports, read now and kept as
                 // a constant (standard library 14.3.6).
                 if module == StdModule::InternalEnv && *member == "built" {
@@ -2947,6 +2959,19 @@ impl<'a> Checker<'a> {
         {
             let result = self.types.subst(signature.result, &inference.map);
             return self.compiled_template(cx, args, result, span);
+        }
+        // `cpu.has(feature)`, which the build's level may answer when
+        // compiling (toolchain 7.8).
+        if let Callee::Fn(id) = callee
+            && self.is_std_fn(id, "cpu", "cpu.has")
+            && let &[Some(feature)] = slots.as_slice()
+        {
+            let feature = values[feature].take().unwrap();
+            return Self::mk(
+                hir::ExprKind::Call(hir::Callee::Std(StdFn::CpuHas), Vec::new(), vec![feature]),
+                Ty::BOOL,
+                span,
+            );
         }
         // `format.apply` writes an integer or a float as one, as an
         // interpolation does (standard library 10.6).

@@ -1264,6 +1264,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         switch(argv, "--static", "static");
         switch(argv, "--debug", "debug");
         option(argv, "--target", "target");
+        option(argv, "--cpu", "cpu");
         for library in args.list("link") {
             argv.extend(["--link".to_string(), library]);
         }
@@ -2155,6 +2156,11 @@ const STATIC: (&str, &str, &str) = ("static", "boolean", "A static executable, w
 const DEBUG: (&str, &str, &str) = ("debug", "boolean", "A debug build, which `debug_start` can debug (`--debug`).");
 const TARGET: (&str, &str, &str) =
     ("target", "string", "Build for another machine: x86_64-linux or aarch64-linux, static (`--target`).");
+const CPU: (&str, &str, &str) = (
+    "cpu",
+    "string",
+    "The level of processor to build for: baseline (the default), x86-64-v3, x86-64-v4 or native (`--cpu`).",
+);
 const LINK: (&str, &str, &str) = ("link", "strings", "Native libraries to link, by name (-l) or file (`--link`).");
 const PROGRAM: (&str, &str, &str) =
     ("program", "string!", "A running program's process ID or name, as `ps` lists them.");
@@ -2481,6 +2487,7 @@ and the header <name>.h.",
             ("strip", "boolean", "Without its symbol table (`--strip`)."),
             DEBUG,
             TARGET,
+            CPU,
             LINK,
         ],
     },
@@ -2510,6 +2517,7 @@ message, data, source and stack, as data.",
             STATIC,
             DEBUG,
             TARGET,
+            CPU,
             LINK,
         ],
     },
@@ -2576,6 +2584,7 @@ is reduced and kept in the project's `fuzz/` store, which every run of the tests
             STATIC,
             DEBUG,
             TARGET,
+            CPU,
             ("flags", "strings", "Other options, as `tondo test` takes them: --seed, --timeout, --repeat..."),
         ],
     },

@@ -40,6 +40,9 @@ pub struct Package {
     /// The architectures it runs on (`[package] architectures`), both when
     /// it names none.
     pub architectures: Vec<Arch>,
+    /// The level of processor its programs are built for (`[build] cpu`),
+    /// and where its manifest says it, for an error about it.
+    pub cpu: Option<(String, String)>,
 }
 
 /// A generator (27.5 of the language): a program that writes modules of
@@ -102,6 +105,7 @@ struct Manifest {
     generators: Vec<Generator>,
     systems: Vec<System>,
     architectures: Vec<Arch>,
+    cpu: Option<(String, String)>,
 }
 
 /// Reads `tondo.toml` in `dir`; a missing file declares nothing.
@@ -118,6 +122,7 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
         generators: Vec::new(),
         systems: Vec::new(),
         architectures: Vec::new(),
+        cpu: None,
     };
     if !path.is_file() {
         return Ok(manifest);
@@ -204,6 +209,20 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
                     }
                 }
             }
+            ("build", false) => {
+                for (key, value, line) in table.entries {
+                    match (key.as_str(), value.as_str()) {
+                        ("cpu", Some(level)) => {
+                            manifest.cpu = Some((level.to_string(), format!("{}:{line}", path.display())));
+                        }
+                        ("cpu", _) => {
+                            let usage = "`cpu = \"x86-64-v3\"` names the level of processor the program is built for";
+                            return Err(at(line, usage.into()));
+                        }
+                        _ => return Err(at(line, format!("unknown key `{key}` in `[build]`, which has `cpu`"))),
+                    }
+                }
+            }
             ("native", false) => {
                 for (key, value, line) in table.entries {
                     let usage = "`libraries = [\"sqlite3\", \"static:z\", \"vendor/libpng.a\"]` lists libraries by name or file";
@@ -241,7 +260,7 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
             }
             (name, _) => {
                 let message = format!(
-                    "unknown table `[{name}]`: tondo.toml has `[package]`, `[source]`, `[dependencies]`, `[dev-dependencies]`, `[native]`, `[derive]` and `[generators.<name>]`"
+                    "unknown table `[{name}]`: tondo.toml has `[package]`, `[build]`, `[source]`, `[dependencies]`, `[dev-dependencies]`, `[native]`, `[derive]` and `[generators.<name>]`"
                 );
                 return Err(at(table.line, message));
             }
@@ -459,6 +478,7 @@ impl Resolver<'_> {
             generators: manifest.generators,
             systems: manifest.systems,
             architectures: manifest.architectures,
+            cpu: manifest.cpu,
         });
         self.visiting.push(dir.clone());
         for (dependency, source) in manifest.dependencies {
