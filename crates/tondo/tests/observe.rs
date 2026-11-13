@@ -4546,6 +4546,11 @@ fn a_line_stops_once_however_many_blocks_it_takes() {
     // The loop's line once a turn, and once more for the test that ends it.
     let text = debug("break joined.to:6\ncontinue\ncontinue\ncontinue\ncontinue\ncontinue\n");
     assert_eq!(text.matches("stopped at joined.to:6").count(), 3, "{text}");
+    // What the line did by its probe that goes on is the line's: `why`
+    // gives the line, with the entry's value whole.
+    let text = debug("record\nbreak joined.to:8 if word == \"be\"\ncontinue\nnext\nwhy other\nquit\n");
+    assert!(text.contains("`other` became [\"to\": 1, \"be\": 1] on this line"), "{text}");
+    assert!(!text.contains("\"be\": 0"), "{text}");
 }
 
 /// The processes of these process groups, from /proc, as each says it in
