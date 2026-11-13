@@ -68,13 +68,23 @@ fn code(error: FsError) -> i64 {
 pub unsafe extern "C" fn tondo_rt_sb_os_error(b: *mut super::Builder, number: i64) {
     let text = match number {
         0 => "host".to_string(),
-        number => {
-            let shown = std::io::Error::from_raw_os_error(number as i32).to_string();
-            let suffix = format!(" (os error {number})");
-            format!("os error {number}: {}", shown.strip_suffix(&suffix).unwrap_or(&shown))
-        }
+        number => os_error(number),
     };
     unsafe { (*b).extend(text.as_bytes()) }
+}
+
+/// A number of the system with its text: `os error 2: No such file or
+/// directory`.
+fn os_error(number: i64) -> String {
+    let shown = std::io::Error::from_raw_os_error(number as i32).to_string();
+    let suffix = format!(" (os error {number})");
+    format!("os error {number}: {}", shown.strip_suffix(&suffix).unwrap_or(&shown))
+}
+
+/// `os.Errno` as it shows (standard library 14.45).
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_os_error_text(number: i64) -> *mut super::Str {
+    super::str_new(os_error(number).as_bytes())
 }
 
 /// The system's number of the last `FsError.Host` of this thread.

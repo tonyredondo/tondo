@@ -427,7 +427,9 @@ impl<'a> Checker<'a> {
                 let result = match result {
                     Some(written) => {
                         let ty = self.resolve_type(written);
-                        if ty != Ty::UNIT && ty != Ty::NEVER {
+                        if let TyKind::Result(value, error) = *self.types.kind(ty) {
+                            self.c_failure(value, error, false, written.span);
+                        } else if ty != Ty::UNIT && ty != Ty::NEVER {
                             self.require_c_type(ty, written.span);
                         }
                         ty

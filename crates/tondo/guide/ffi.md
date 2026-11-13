@@ -21,6 +21,9 @@ fn main() {
   library. `tondo bind header.h` writes the `extern` declarations of a
   header for you.
 - `Pointer[T]` and raw memory exist only inside `unsafe`.
+- `extern fn chdir(path: ffi.CString): ffi.CInt ! os.Errno` fails with the
+  system's error number when it gives -1, or null for a pointer: the call
+  gives `err(os.Errno(2))`, shown `os error 2: No such file or directory`.
 
 ## Loading a library as the program runs
 

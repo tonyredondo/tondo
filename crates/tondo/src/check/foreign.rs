@@ -257,7 +257,9 @@ impl<'a> Checker<'a> {
         let result = match &f.result {
             Some(written) => {
                 let ty = self.resolve_type(written);
-                if ty != Ty::UNIT && ty != Ty::NEVER {
+                if let TyKind::Result(value, error) = *self.types.kind(ty) {
+                    self.c_failure(value, error, f.body.is_some(), written.span);
+                } else if ty != Ty::UNIT && ty != Ty::NEVER {
                     self.require_c_type(ty, written.span);
                 }
                 ty
@@ -265,6 +267,31 @@ impl<'a> Checker<'a> {
             None => Ty::UNIT,
         };
         Some((params, result))
+    }
+
+    /// A C function's result that fails, `T ! os.Errno` (16.16): only a C
+    /// function, not one Tondo writes, of a signed integer or a pointer, with
+    /// the system's error number.
+    pub(super) fn c_failure(&mut self, value: Ty, error: Ty, written: bool, span: Span) {
+        let message = if written {
+            "a function that C calls has no error number to give: its result is a C type, without `!`"
+        } else if !self.is_errno(error) {
+            "a C function fails only with the system's error number, `T ! os.Errno`, where `T` is a signed integer or a `Pointer` that is -1 or null when it fails"
+        } else if !matches!(self.types.kind(self.types.repr(value)), TyKind::Int(int) if int.signed())
+            && !matches!(self.types.kind(self.types.repr(value)), TyKind::Pointer(_))
+        {
+            "`T ! os.Errno` fails when `T` is -1 or null: `T` is a signed integer, as `ffi.CInt`, or a `Pointer`"
+        } else {
+            return;
+        };
+        self.diags.error("E1703", span, message);
+    }
+
+    /// Whether `ty` is `std.os.Errno`.
+    pub(super) fn is_errno(&self, ty: Ty) -> bool {
+        let os = self.types.declaring("std.os");
+        matches!(self.types.kind(ty), TyKind::Adt(id)
+            if os.is_some() && self.types.adt(*id).module == os && self.types.adt(*id).name.rsplit('.').next() == Some("Errno"))
     }
 
     /// Reports a type that cannot cross to C (`E1703`): C's numbers,

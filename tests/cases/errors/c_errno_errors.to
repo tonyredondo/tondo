@@ -1,0 +1,27 @@
+// A C function fails only with the system's error number, of a signed
+// integer or a pointer; a function of Tondo that C calls has none to give,
+// nor does one given where such a C function is expected.
+
+import std.ffi
+import std.os
+
+extern fn unsigned(path: ffi.CString): UInt32 ! os.Errno
+
+extern fn texted(path: ffi.CString): ffi.CInt ! String
+
+extern fn written(n: ffi.CInt): ffi.CInt ! os.Errno {
+    n
+}
+
+extern fn plain(n: ffi.CInt): ffi.CInt {
+    n
+}
+
+fn main() {
+    let f: extern fn(ffi.CInt): ffi.CInt ! os.Errno = plain
+}
+
+// expect-error: E1703 `T ! os.Errno` fails when `T` is -1 or null: `T` is a signed integer, as `ffi.CInt`, or a `Pointer`
+// expect-error: E1703 a C function fails only with the system's error number, `T ! os.Errno`, where `T` is a signed integer or a `Pointer` that is -1 or null when it fails
+// expect-error: E1703 a function that C calls has no error number to give: its result is a C type, without `!`
+// expect-error: E1705 `extern fn(Int32): Int32 ! os.Errno` is a C function's, which fails with the system's error number: a function of Tondo has none to give; take it from `toFunction` or `ffi.Library`

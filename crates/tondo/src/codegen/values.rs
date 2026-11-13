@@ -1199,6 +1199,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// Writes `ok(value)` or `err(NumericConversionError)` into `place`.
     pub(super) fn write_checked(&mut self, place: &Place, ty: Ty, value: ir::Value, error: ir::Value) {
         let base = self.pointer_to(place, true);
+        self.write_checked_at(base, ty, value, error);
+    }
+
+    /// `write_checked` at the address of the place.
+    pub(super) fn write_checked_at(&mut self, base: ir::Value, ty: Ty, value: ir::Value, error: ir::Value) {
         let failed = self.e.fb.ins().icmp_imm_s(IntCC::NotEqual, error, -1);
         self.e.fb.ins().store(flags(), failed, base, 0);
         // Both payloads share the same storage: write only the active one.

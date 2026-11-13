@@ -1,0 +1,40 @@
+// A C function declared `T ! os.Errno` fails with the system's error number
+// when it gives -1, for an integer, or null, for a pointer: the call reads
+// it at once, and gives `ok` with the result otherwise.
+
+import std.console
+import std.ffi
+import std.os
+
+extern fn chdir(path: ffi.CString): ffi.CInt ! os.Errno
+
+extern fn getcwd(buffer: Pointer[ffi.CChar], size: ffi.CSize): Pointer[ffi.CChar] ! os.Errno
+
+fn main() {
+    match unsafe { chdir("/no/such/directory") } {
+        ok(_) => console.println("changed")
+        err(error) => console.println("{error} {error.value == 2}")
+    }
+    console.println("{unsafe { chdir("/") }}")
+    let buffer = ffi.allocate[ffi.CChar](2)
+    match unsafe { getcwd(buffer, 1u64) } {
+        ok(_) => console.println("fits")
+        err(error) => console.println("{error.value}")
+    }
+    let wide = ffi.allocate[ffi.CChar](64)
+    match unsafe { getcwd(wide, 64u64) } {
+        ok(path) => console.println("{unsafe { ffi.fromCString(path) }}")
+        err(error) => console.println("{error}")
+    }
+    unsafe {
+        ffi.free(buffer)
+        ffi.free(wide)
+    }
+    console.println("{os.Errno(2)}")
+}
+
+// expect-stdout: os error 2: No such file or directory true
+// expect-stdout: ok(0)
+// expect-stdout: 34
+// expect-stdout: /
+// expect-stdout: os error 2: No such file or directory

@@ -260,6 +260,16 @@ impl<'a> Checker<'a> {
             self.diags.error("E1705", span, message);
             return Self::error_expr(span);
         };
+        // A function of Tondo that C calls has no error number to give
+        // (16.16).
+        if matches!(self.types.kind(result), TyKind::Result(..)) {
+            let message = format!(
+                "{} is a C function's, which fails with the system's error number: a function of Tondo has none to give; take it from `toFunction` or `ffi.Library`",
+                self.display(expected)
+            );
+            self.diags.error("E1705", span, message);
+            return Self::error_expr(span);
+        }
         let found = self.types.intern(TyKind::Fn(p.clone(), r, v, modes.clone(), false));
         if variadic || v || p != params || r != result || modes.iter().any(|&m| m != ast::Mode::Value) {
             let message = format!(

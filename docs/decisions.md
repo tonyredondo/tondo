@@ -6364,3 +6364,14 @@ A `??` decides between its value and its default, and a `?.` between going on an
 untried the code that is most often wrong. Coverage gives each of them two ways, `value` and `none`
 (`error` on a result), at the value it looks at; before, the match the compiler writes for them
 counted as one way, covered whichever ran.
+
+## A C function fails with the system's error number
+
+A program that called C could not read `errno`: by the time Tondo code ran after the call, the
+runtime had run, and its calls may change it. A C function is now declared `T ! os.Errno`, and the
+compiled call reads the number at once when the function gives -1 or null, inside the call, before
+anything else runs, and gives `err(os.Errno(number))`, so the error is a value as any other.
+Only those two ways of failing are known: a function that reports a failure another way is
+declared without it and checked by hand. A function of Tondo that C calls has no number to give,
+so it cannot be one. `std.os` holds the number, for every system, and is where the parts of the
+library that are of one system go.

@@ -279,6 +279,7 @@ fn a_program_loads_a_library_as_it_runs() {
     let program = format!(
         r#"import std.console
 import std.ffi
+import std.os
 
 fn asked(found: Bool ! ffi.LibraryError): String {{
     match found {{
@@ -303,6 +304,9 @@ fn main(): !ffi.LibraryError {{
     console.println(asked(ffi.Library.open("src/main.to").map((_) {{ true }})))
     let program = ffi.Library.program()
     console.println("{{program.has("strlen")}}")
+    // A C function of it that fails with the system's error number.
+    let change = unsafe {{ program.function[extern fn(ffi.CString): ffi.CInt ! os.Errno]("chdir")? }}
+    console.println("{{unsafe {{ change("/no/such") }}}} {{unsafe {{ change.raw()(".") }}}}")
 {environ}    unsafe {{ plugin.close()? }}
     console.println("{{plugin.has("plugin_twice")}}")
     console.println(asked(unsafe {{ plugin.function[extern fn(): ffi.CInt]("plugin_twice") }}.map((_) {{ true }})))
@@ -318,7 +322,7 @@ fn main(): !ffi.LibraryError {{
     let run = Command::new(host.join("host")).current_dir(&host).env(search, plugin.join("out")).output().unwrap();
     assert_eq!(
         String::from_utf8_lossy(&run.stdout),
-        "42 true false\ntrue 4\n8\nthe library publishes no `plugin_thrice`\nnot loaded: true\nnot loaded: true\ntrue\ntrue\nfalse\nthe library was closed\nthe library was closed\nthe library was not unloaded: the program itself is never unloaded\n",
+        "42 true false\ntrue 4\n8\nthe library publishes no `plugin_thrice`\nnot loaded: true\nnot loaded: true\ntrue\nerr(os error 2: No such file or directory) ok(0)\ntrue\nfalse\nthe library was closed\nthe library was closed\nthe library was not unloaded: the program itself is never unloaded\n",
         "{}",
         String::from_utf8_lossy(&run.stderr)
     );

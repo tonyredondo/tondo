@@ -2474,6 +2474,10 @@ pub type Tls = {
     clients: String?
     minimumVersion: TlsVersion
 }
+== std.os
+impl Display for Errno
+impl reflect.Reflect for Errno
+pub type Errno = Int32
 == std.path
 pub fn clean(path: String): String
 pub fn extension(path: String): String?

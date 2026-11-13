@@ -7030,6 +7030,32 @@ cero y vive lo que dura la llamada; un texto con un byte cero dentro produce
 texto, con las promociones de C: los enteros de menos de 32 bits pasan como
 `int` y `Float32` como `double`.
 
+#### Funciones que fallan con el error del sistema
+
+Una `extern fn` sin cuerpo puede dar `T ! os.Errno`, el número de error del
+sistema (librería estándar 14.45), cuando `T` es un entero con signo o un
+`Pointer[U]`:
+
+~~~tondo
+extern fn open(path: ffi.CString, flags: ffi.CInt, mode: ffi.CUInt): ffi.CInt ! os.Errno
+extern fn getcwd(buffer: Pointer[ffi.CChar], size: ffi.CSize): Pointer[ffi.CChar] ! os.Errno
+~~~
+
+- Falla cuando da -1, si `T` es un entero, o un puntero nulo; nada más es
+  un fallo, y una función que lo dice de otro modo se declara sin `! os.Errno`
+  y se comprueba a mano.
+- Al fallar, la llamada lee el número de error del thread enseguida, después
+  de que la función de C vuelve y antes de que corra nada más, y da
+  `err(os.Errno(número))`; si no, `ok(resultado)`. El número no se borra antes
+  de la llamada.
+- `extern fn(ffi.CInt): ffi.CInt ! os.Errno` es un tipo `extern fn`, y un
+  valor suyo, de `toFunction` o de `ffi.Library` (librería estándar 19.3), se
+  llama recogiendo el error del mismo modo. Una función de Tondo no tiene
+  número de error que dar: una `extern fn` con cuerpo no da `! os.Errno`, y una
+  función de Tondo no se convierte en un valor de ese tipo.
+- Otro `T`, u otro tipo de error en una `extern fn` sin cuerpo, es `E1703`, con
+  las formas que hay.
+
 #### `extern type`
 
 `extern type Name = { campo: Tipo, ... }` es un struct de C: sus campos, de

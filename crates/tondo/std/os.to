@@ -1,0 +1,43 @@
+// std.os (standard library 14.45): what is of each system. This module,
+// for every system, holds the error number of the system, which a C
+// function declared `T ! os.Errno` fails with (language 16.16).
+//
+// ```tondo
+// import std.console
+// import std.ffi
+// import std.os
+//
+// extern fn chdir(path: ffi.CString): ffi.CInt ! os.Errno
+//
+// match unsafe { chdir("/no/such/directory") } {
+//     ok(_) => console.println("changed")
+//     err(error) => console.println("{error.value == 2}")
+// }
+// ```
+
+import std.internal.fs as fsNative
+import std.reflect as __reflect
+
+/// An error number of the system, as C's `errno` holds it: its `value` is
+/// the number. It shows as the system writes it, `os error 2: No such file
+/// or directory`.
+///
+/// ```tondo
+/// import std.console
+/// import std.os
+///
+/// console.println("{os.Errno(2)}")
+/// ```
+pub type Errno = Int32
+
+impl Display for Errno {
+    fn display(self): String {
+        fsNative.osErrorText(Int(self.value))
+    }
+}
+
+impl __reflect.Reflect for Errno {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
+}

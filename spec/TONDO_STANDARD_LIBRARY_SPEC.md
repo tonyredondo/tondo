@@ -7102,6 +7102,23 @@ pub fn features(): Array[Feature]
   se comprueba en todos los targets. En otro caso `has` lee lo que el runtime
   encontró una vez, al arrancar.
 
+### 14.45 `std.os`
+
+`std.os` es la parte de la librería que es de cada sistema. Existe para todos
+los sistemas y tiene el número de error del sistema, con el que falla una
+función de C declarada `T ! os.Errno` (16.16 del lenguaje):
+
+~~~tondo pseudocode
+pub type Errno = Int32
+impl Display for Errno
+~~~
+
+- `Errno` es un newtype: `error.value` es el número, y `os.Errno(2)` hace uno.
+  Se muestra como el sistema lo escribe, `os error 2: No such file or
+  directory`, igual que `fs.FsError.Host` muestra el mismo número.
+- 7.3 sigue valiendo: estos números son de un sistema, y `std.os` es la parte
+  de la librería que es por sistema.
+
 ## 15. Contrato exigido a cada módulo
 
 Antes de considerarse especificado, cada módulo debe incluir:
