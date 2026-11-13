@@ -401,6 +401,48 @@ then: built with `--cpu x86-64-v3`, the program above has neither the test
 nor the second message in it. Any other feature is read from what the
 program found when it started, and `cpu.features()` gives all of them.
 
+`std.cpu.x64` and `std.cpu.arm64` have functions that are one instruction
+each, for the files of their architecture
+([Modules](../language/15-modules.md#code-for-one-system-or-architecture)):
+CRC32C, the rounds of AES, carry-less multiplication, and BMI2's `pdep` and
+`pext`. A function that uses one needs its feature. The compiler works that
+out from the bodies, for the whole program, and nothing is written for it:
+the call goes under a test of the processor, with the plain way beside it.
+
+```text
+// src/bits/bits_x64.to
+import std.cpu
+import std.cpu.x64
+
+fn deposit(value: UInt, mask: UInt): UInt {
+    if cpu.has(cpu.Feature.Bmi2) { byInstruction(value, mask) } else { byLoop(value, mask) }
+}
+
+/// BMI2's `pdep`, one instruction.
+fn byInstruction(value: UInt, mask: UInt): UInt {
+    x64.depositBits(value, mask)
+}
+```
+
+`byInstruction` is compiled for BMI2 and the rest for the build's level, so
+the instruction runs only where the processor has it. `tondo optimizations`
+says why that call is kept:
+
+```text
+src/bits/bits_x64.to:5:36: `byInstruction(value, mask)` stays a call of `bits.byInstruction`: it needs features of the processor this function does not (toolchain 7.8) (in bits.deposit, bits.spread, main)
+```
+
+Without the test, every function up to `main` would need BMI2, and `main`
+cannot need a feature; nor can a test, a `pub extern fn`, a trait's method
+or a function used as a value. The error names the calls that bring it:
+
+```text
+error[E1809]: this call needs `Bmi2` of the processor, and `main`, or the top level of a script, cannot need one: `main` calls `bits.spread`, which calls `bits.deposit`, which uses `x64.depositBits`; put the call under `if cpu.has(cpu.Feature.Bmi2) { ... }`
+```
+
+Built with `--cpu x86-64-v3`, whose level has BMI2, the test is answered
+when compiling and only the instruction's way is in the program.
+
 ## Many numbers at once: vectors
 
 The arithmetic of float arrays, their `sum` and `math.dot` are computed with
