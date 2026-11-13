@@ -7401,8 +7401,11 @@ pub fn Vector128[T].cast[U](self): Vector128[U]
   256 bits; y `false` para 512
   bits hasta que el generador de código haga vectores de ese ancho. Un ancho
   que no está acelerado se calcula por mitades del mayor que lo está.
-  `Vector[T]` es por ahora `Vector128[T]` en todo nivel, también en las
-  versiones de una función por nivel (18.11 del lenguaje).
+  `Vector[T]` es `Vector256[T]` en el código para un nivel de x64 con AVX2
+  y en las versiones para `x86-64-v3` de un build de release para un nivel
+  menor, y `Vector128[T]` en el resto: en arm64, en x64 sin AVX2, y en los
+  builds de depuración, en vivo, de cobertura y de fuzzing, que no tienen
+  versiones (18.11 del lenguaje).
 - `of` recibe exactamente `lanes()` valores; otra cantidad es un error donde
   los valores se escriben en la llamada, y `P0006` con un array esparcido.
   `Vector[T]` no tiene `of`, que es un error de compilación que da `all`,

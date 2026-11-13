@@ -40,6 +40,7 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         ..
     } = program;
     let index = ImplIndex::new(&types, &impls);
+    let (widths, clones) = widths(&mut types);
     let mut mono = Mono {
         types: &mut types,
         functions: &functions,
@@ -57,6 +58,12 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         held: None,
         widest: Vec::new(),
         holds: HashMap::new(),
+        widths,
+        level: 0,
+        clones,
+        uses: HashMap::new(),
+        mentions: HashMap::new(),
+        clone_of: HashMap::new(),
         unions: HashMap::new(),
         made: Vec::new(),
         named: functions
@@ -151,6 +158,7 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         .into_iter()
         .map(|(ty, view)| (ty, (view, mono.out[view.0 as usize].as_ref().expect("a view's instance").result)))
         .collect();
+    let clones = std::mem::take(&mut mono.clone_of);
     let functions = mono.out.into_iter().map(|f| f.expect("every instance is generated")).collect();
     Some(Program {
         types,
@@ -167,7 +175,40 @@ pub fn monomorphize_with(program: Program, roots: &[FnId], diags: &mut Diagnosti
         contexts,
         field_defaults,
         unchecked: HashSet::new(),
+        clones,
     })
+}
+
+/// The types that take the place of `Vector[T]` and `Mask[T]` (18.11): in
+/// the code of the build's level, its widest accelerated width, and in the
+/// clones for versions, 256 bits; and whether there are clones, as on x64
+/// below `x86-64-v3`, where a version has vectors of 256 bits.
+fn widths(types: &mut Types) -> ([HashMap<Ty, Ty>; 2], bool) {
+    use crate::types::{FloatTy, IntTy, Width};
+    let level = crate::driver::checked_level();
+    let x64 = level.arch == crate::project::Arch::X64;
+    let wide = x64 && level.flags.contains(&"has_avx") && level.flags.contains(&"has_avx2");
+    let base = if wide { Width::W256 } else { Width::W128 };
+    let mut lanes: Vec<TyKind> = [IntTy::I8, IntTy::I16, IntTy::I32, IntTy::I64, IntTy::U8, IntTy::U16, IntTy::U32]
+        .into_iter()
+        .chain([IntTy::U64])
+        .map(TyKind::Int)
+        .collect();
+    lanes.extend([TyKind::Byte, TyKind::Float(FloatTy::F32), TyKind::Float(FloatTy::F64)]);
+    let mut maps = [HashMap::new(), HashMap::new()];
+    for lane in lanes {
+        let lane = types.intern(lane);
+        for (map, width) in maps.iter_mut().zip([base, Width::W256]) {
+            for (from, to) in [
+                (TyKind::Vector(Width::Widest, lane), TyKind::Vector(width, lane)),
+                (TyKind::Mask(Width::Widest, lane), TyKind::Mask(width, lane)),
+            ] {
+                let (from, to) = (types.intern(from), types.intern(to));
+                map.insert(from, to);
+            }
+        }
+    }
+    (maps, x64 && !wide)
 }
 
 /// The trait whose method interpolation uses (see the checker).
@@ -258,7 +299,7 @@ struct Mono<'a> {
     /// The records and enums that show their parts, whose parts' `Display`
     /// is collected.
     shown_parts: HashSet<Ty>,
-    queue: VecDeque<(FnId, Vec<Ty>, FnId)>,
+    queue: VecDeque<(FnId, Vec<Ty>, FnId, usize)>,
     out: Vec<Option<Function>>,
     runaway: Option<String>,
     /// The calls of `reflect.convert`, from and to which type, checked once
@@ -270,6 +311,18 @@ struct Mono<'a> {
     held: Option<(Span, Ty, Ty)>,
     widest: Vec<(Span, Ty, Ty)>,
     holds: HashMap<Ty, Option<Ty>>,
+    /// The width `Vector[T]` and `Mask[T]` take in the code being made
+    /// (18.11): the level's widest, or 256 bits in a clone for a version;
+    /// as types to put in their place.
+    widths: [HashMap<Ty, Ty>; 2],
+    level: usize,
+    /// Whether a function that uses `Vector[T]` gets a clone of 256 bits
+    /// for its version, as x64 below `x86-64-v3` has; which functions use
+    /// one; which types hold one; and the clone of each instance.
+    clones: bool,
+    uses: HashMap<FnId, bool>,
+    mentions: HashMap<Ty, bool>,
+    clone_of: HashMap<FnId, FnId>,
     /// The `Encode` or `Decode` written for a union, by trait, union and
     /// the format's type.
     unions: HashMap<(TraitId, Ty, Vec<Ty>), FnId>,
@@ -328,13 +381,71 @@ impl Mono<'_> {
         }
         self.out.push(None);
         self.instances.insert((id, args.clone()), instance);
-        self.queue.push_back((id, args, instance));
+        // A function that uses `Vector[T]`, or is given one, copied with 256
+        // bits of it for its version (18.11), right after it.
+        if self.clones && (self.uses(id) || args.iter().any(|&arg| self.mentions(arg))) {
+            let clone = FnId(self.out.len() as u32);
+            self.out.push(None);
+            self.clone_of.insert(instance, clone);
+            self.queue.push_back((id, args.clone(), clone, 1));
+        }
+        self.queue.push_back((id, args, instance, 0));
         instance
     }
 
+    /// The instance a direct call goes to: in a clone of 256 bits, the
+    /// callee's clone, when it has one, as a version calls versions.
+    fn direct(&mut self, id: FnId, args: Vec<Ty>) -> FnId {
+        let instance = self.instance(id, args);
+        match self.level {
+            1 => self.clone_of.get(&instance).copied().unwrap_or(instance),
+            _ => instance,
+        }
+    }
+
+    /// Whether the code of a function, before its type arguments, has a
+    /// `Vector[T]` or a `Mask[T]`.
+    fn uses(&mut self, id: FnId) -> bool {
+        if let Some(&known) = self.uses.get(&id) {
+            return known;
+        }
+        let function = &self.functions[id.0 as usize];
+        let types = &*self.types;
+        let has = |ty: Ty| types.reaches_widest(ty).is_some();
+        let mut found = function.locals.iter().any(|local| has(local.ty)) || has(function.result);
+        if !found {
+            crate::check::each_expr(&function.body, &mut |e| {
+                found |= has(e.ty) || matches!(e.kind, ExprKind::Lanes(ty) if has(ty));
+            });
+        }
+        self.uses.insert(id, found);
+        found
+    }
+
     fn ty(&mut self, ty: Ty, map: &HashMap<Ty, Ty>) -> Ty {
+        let ty = self.unfixed(ty, map);
+        self.fixed(ty)
+    }
+
+    /// The type with the type arguments, before `Vector[T]` has a width.
+    fn unfixed(&mut self, ty: Ty, map: &HashMap<Ty, Ty>) -> Ty {
         let ty = self.types.subst(ty, map);
         self.types.reveal(ty)
+    }
+
+    /// The type with `Vector[T]` and `Mask[T]` of the width of the code
+    /// being made (18.11).
+    fn fixed(&mut self, ty: Ty) -> Ty {
+        match self.mentions(ty) {
+            true => self.types.subst(ty, &self.widths[self.level]),
+            false => ty,
+        }
+    }
+
+    /// Whether a type is or has a `Vector[T]` or a `Mask[T]`.
+    fn mentions(&mut self, ty: Ty) -> bool {
+        let types = &*self.types;
+        *self.mentions.entry(ty).or_insert_with(|| types.reaches_widest(ty).is_some())
     }
 
     fn function(&mut self, f: &mut Function, map: &HashMap<Ty, Ty>) {
@@ -347,16 +458,17 @@ impl Mono<'_> {
         let instance = !f.generics.is_empty();
         f.generics.clear();
         for local in &mut f.locals {
-            local.ty = self.ty(local.ty, map);
+            let ty = self.unfixed(local.ty, map);
             // A closure's body holds the closure: where it is made says it.
-            if !self.types.is_closure(local.ty) {
-                self.note_held(local.ty, local.span);
+            if !self.types.is_closure(ty) {
+                self.note_held(ty, local.span);
             }
+            local.ty = self.fixed(ty);
         }
         f.result = self.ty(f.result, map);
         self.block(&mut f.body, map);
         let held = self.held.take();
-        self.widest.extend(held.filter(|_| instance));
+        self.widest.extend(held.filter(|_| instance && self.level == 0));
     }
 
     /// The first place of the function being made that keeps a `Vector[T]`
@@ -454,10 +566,11 @@ impl Mono<'_> {
     }
 
     fn expr(&mut self, e: &mut Expr, map: &HashMap<Ty, Ty>) {
-        e.ty = self.ty(e.ty, map);
-        if !matches!(e.kind, ExprKind::Local(_)) || !self.types.is_closure(e.ty) {
-            self.note_held(e.ty, e.span);
+        let ty = self.unfixed(e.ty, map);
+        if !matches!(e.kind, ExprKind::Local(_)) || !self.types.is_closure(ty) {
+            self.note_held(ty, e.span);
         }
+        e.ty = self.fixed(ty);
         match &mut e.kind {
             ExprKind::Int(_)
             | ExprKind::Float(_)
@@ -470,7 +583,7 @@ impl Mono<'_> {
             | ExprKind::ExternFn(_)
             | ExprKind::ContextRead(..)
             | ExprKind::Error => {}
-            ExprKind::Layout(ty, _) => *ty = self.ty(*ty, map),
+            ExprKind::Layout(ty, _) | ExprKind::Lanes(ty) => *ty = self.ty(*ty, map),
             ExprKind::Reflect(op, ty, values) => {
                 *ty = self.ty(*ty, map);
                 self.exprs(values, map);
@@ -567,17 +680,18 @@ impl Mono<'_> {
             }
             ExprKind::Call(callee, type_args, args) => {
                 self.exprs(args, map);
-                let types: Vec<Ty> = type_args.iter().map(|&t| self.ty(t, map)).collect();
+                // A `Vector[T]` among them takes its width in the instance.
+                let types: Vec<Ty> = type_args.iter().map(|&t| self.unfixed(t, map)).collect();
                 type_args.clear();
                 match *callee {
                     Callee::Fn(id) => {
                         if self.functions[id.0 as usize].name == "reflect.convert" {
                             self.conversions.push((e.span, types[1], types[0]));
                         }
-                        *callee = Callee::Fn(self.instance(id, types))
+                        *callee = Callee::Fn(self.direct(id, types))
                     }
                     Callee::Trait(trait_id, method) => match self.resolve(trait_id, method, &types) {
-                        Resolved::Fn(id, types) => *callee = Callee::Fn(self.instance(id, types)),
+                        Resolved::Fn(id, types) => *callee = Callee::Fn(self.direct(id, types)),
                         // A built-in value displays itself.
                         Resolved::Display => {
                             let value = args.pop().expect("`display` has a receiver");
@@ -600,7 +714,7 @@ impl Mono<'_> {
                 }
             }
             ExprKind::FnValue(id, type_args) => {
-                let types: Vec<Ty> = type_args.iter().map(|&t| self.ty(t, map)).collect();
+                let types: Vec<Ty> = type_args.iter().map(|&t| self.unfixed(t, map)).collect();
                 type_args.clear();
                 *id = self.instance(*id, types);
             }
@@ -609,7 +723,7 @@ impl Mono<'_> {
                 self.exprs(args, map);
                 // A closure is called directly; its body borrows the closure.
                 if let Some((body, types, _)) = self.types.closure(callee.ty) {
-                    let body = self.instance(FnId(body), types);
+                    let body = self.direct(FnId(body), types);
                     let callee =
                         std::mem::replace(&mut **callee, Expr { kind: ExprKind::Unit, ty: Ty::UNIT, span: e.span });
                     let (ty, span) = (callee.ty, callee.span);
@@ -961,11 +1075,13 @@ impl Mono<'_> {
     /// Makes the instances the queue asks for, until none is left.
     fn drain(&mut self) {
         loop {
-            if let Some((id, args, instance)) = self.queue.pop_front() {
+            if let Some((id, args, instance, level)) = self.queue.pop_front() {
                 let generic = &self.functions[id.0 as usize];
                 let map: HashMap<Ty, Ty> = generic.generics.iter().copied().zip(args).collect();
                 let mut function = generic.clone();
+                self.level = level;
                 self.function(&mut function, &map);
+                self.level = 0;
                 self.out[instance.0 as usize] = Some(function);
             } else if let Some((mut function, instance)) = self.made.pop() {
                 self.function(&mut function, &HashMap::new());

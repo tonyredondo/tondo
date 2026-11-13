@@ -161,6 +161,10 @@ pub struct Body {
     /// bit each (toolchain 7.8): it is compiled with them, and never
     /// inlined into a function that needs fewer.
     pub needs: u32,
+    /// Whether its `Vector[T]` takes the width of its code (18.11): a
+    /// function with a clone of 256 bits for its version, or the clone,
+    /// which only such functions inline, as the others have one width.
+    pub widest: bool,
 }
 
 /// A call inlined: the function it called and where that function is,

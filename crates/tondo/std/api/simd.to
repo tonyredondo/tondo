@@ -72,12 +72,13 @@ pub type Vector256[T]
 /// ```
 pub type Vector512[T]
 
-/// The vector meant to be the widest that is accelerated where the code
-/// runs, with the functions and methods of `Vector128` but `of`: for now of
-/// 128 bits at every level, in the versions of a function for a higher level
-/// too. Its result can differ by its width, as `sum` groups the lanes by it,
-/// and `all` or `load` make one, as the values written for one width would
-/// not fill another.
+/// The widest vector that is accelerated where the code runs, with the
+/// functions and methods of `Vector128` but `of`: of 256 bits in code for an
+/// x64 with AVX2, as the versions for `x86-64-v3` of a release build are,
+/// and of 128 bits elsewhere. Its result can differ by its width, as `sum`
+/// groups the lanes by it; `all` or `load` make one, as the values written
+/// for one width would not fill another; and it lives only in locals,
+/// parameters and results.
 ///
 /// ```tondo
 /// import std.console

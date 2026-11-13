@@ -180,7 +180,7 @@ impl<'a> Checker<'a> {
 }
 
 /// Calls `f` on every expression of `block`, however deep.
-pub(super) fn each_expr(block: &hir::Block, f: &mut impl FnMut(&hir::Expr)) {
+pub(crate) fn each_expr(block: &hir::Block, f: &mut impl FnMut(&hir::Expr)) {
     for stmt in &block.stmts {
         match stmt {
             hir::Stmt::Let(_, value)
@@ -252,6 +252,7 @@ fn expr(e: &hir::Expr, f: &mut impl FnMut(&hir::Expr)) {
         | E::FnValue(..)
         | E::ExternFn(_)
         | E::Layout(..)
+        | E::Lanes(_)
         | E::ContextRead(..)
         | E::Error => {}
         E::Aggregate(items)

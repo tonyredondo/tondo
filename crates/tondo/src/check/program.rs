@@ -327,6 +327,7 @@ impl<'a> Checker<'a> {
         let c_api =
             hir::CApi { structs: self.c_structs(), functions: std::mem::take(&mut self.c_functions), name: None };
         Some(hir::Program {
+            clones: HashMap::new(),
             views: HashMap::new(),
             types: std::mem::take(&mut self.types),
             functions,

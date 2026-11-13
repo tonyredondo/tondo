@@ -20,6 +20,7 @@ mod patterns;
 mod plugins;
 mod program;
 mod reach;
+pub(crate) use reach::each_expr;
 mod routes;
 mod simd;
 mod statements;

@@ -64,11 +64,15 @@ pub fn lower(program: &hir::Program, live: bool, debug: bool, catch_ups: Option<
             if matches!(**r, Rvalue::Call(hir::Callee::Std(hir::StdFn::RecoverEnter | hir::StdFn::WithinEnter), _)))
     });
     let recovering = recovering || live;
-    if !waits.contains(&true) && !recovering {
-        return plain;
+    let mut bodies = match !waits.contains(&true) && !recovering {
+        true => plain,
+        false => lower_all(waits.contains(&true).then_some(&waits[..]), recovering),
+    };
+    for (base, clone) in &program.clones {
+        bodies[base.0 as usize].widest = true;
+        bodies[clone.0 as usize].widest = true;
     }
-    let waits = waits.contains(&true).then_some(&waits[..]);
-    lower_all(waits, recovering)
+    bodies
 }
 
 /// Drops the checks for a panic after statements the optimizations made
@@ -481,6 +485,7 @@ fn lower_function(
         inlined: Vec::new(),
         scopes: Vec::new(),
         needs: function.needs,
+        widest: false,
     }
 }
 
@@ -2512,6 +2517,10 @@ impl Builder<'_> {
                 self.temp(e.ty, Rvalue::Callback(*id, closure), e.span)
             }
             hir::ExprKind::Layout(ty, align) => self.temp(Ty::INT, Rvalue::Layout(*ty, *align), e.span),
+            hir::ExprKind::Lanes(ty) => {
+                let lanes = crate::simd::lane_count(self.types, *ty).expect("a vector") as i128;
+                Operand::Const(Const::Int(lanes, Ty::INT))
+            }
             hir::ExprKind::Reflect(op, ty, values) => {
                 let operands: Vec<Operand> = self.in_order(values);
                 // A boxed value moves into the box, or is retained there.

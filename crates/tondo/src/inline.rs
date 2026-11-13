@@ -59,6 +59,9 @@ fn note_calls(bodies: &mut [Body]) {
             let callee = callee.0 as usize;
             let why = match callee == index {
                 true => "it is this one".to_string(),
+                false if bodies[callee].widest && !bodies[index].widest => {
+                    "its `Vector[T]` has the width of the code it runs in, and this function has one width".to_string()
+                }
                 false if !fits(&bodies[callee], &bodies[index]) => {
                     "it needs features of the processor this function does not (toolchain 7.8)".to_string()
                 }
@@ -288,7 +291,7 @@ fn warm(body: &Body) -> Vec<bool> {
 /// of the processor the caller does not, as the caller is compiled for its
 /// own (toolchain 7.8).
 fn fits(callee: &Body, caller: &Body) -> bool {
-    callee.needs & !caller.needs == 0
+    callee.needs & !caller.needs == 0 && (!callee.widest || caller.widest)
 }
 
 /// Whether a function is worth inlining and can be: it is small,

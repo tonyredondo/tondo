@@ -64,6 +64,7 @@ pub(super) struct Shared<'s, 't> {
     /// The functions with a version (rule 19 of `std.simd`), and the
     /// generators of their level.
     versions: &'s [Option<Versions>],
+    version_body: &'s [usize],
     isas: &'s HashMap<u32, cranelift_codegen::isa::OwnedTargetIsa>,
 }
 
@@ -96,6 +97,7 @@ impl<'s, 't> Shared<'s, 't> {
             fuzz: Gen::fuzzing(cg),
             testing: Gen::testing(cg),
             versions: &cg.versions,
+            version_body: &cg.version_body,
             isas: &cg.isas,
         }
     }
@@ -173,7 +175,8 @@ pub(super) fn build(shared: &Shared, bodies: &[Body], index: usize, version: boo
         counters: 0,
         serial: false,
     };
-    let body = &bodies[index];
+    // A version's body may be a clone where `Vector[T]` has 256 bits.
+    let body = &bodies[if version { shared.version_body[index] } else { index }];
     let signature = worker.shapes.signature(body);
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, index as u32), signature);
     let sites =

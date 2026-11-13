@@ -202,6 +202,10 @@ struct Versions {
     base: FuncId,
     version: FuncId,
     bridge: Option<FuncId>,
+    /// Whether the function's name is a dispatcher: not where a `Vector[T]`
+    /// in its signature has another width in the version (18.11), which
+    /// only code of its level calls, as the build's level calls the body.
+    dispatch: bool,
 }
 
 /// Which functions get a version for a level whose vectors are wider (rule
@@ -209,8 +213,12 @@ struct Versions {
 /// A version passes such a vector as its level does, so a function stays
 /// without one where it passes one through a `fn(...)` value, or to a
 /// function without a version, as those take it as the build's level does;
-/// and where it calls C, as its calls of C are built in their turn.
-fn versioned(types: &Types, bodies: &[Body]) -> Vec<bool> {
+/// and where it calls C, as its calls of C are built in their turn. A
+/// function whose `Vector[T]` is the widest of its code has a clone of 256
+/// bits (18.11), the body of its version, which `version_body` gives; a
+/// clone is no function of its own, and calls clones, whose functions then
+/// need a version.
+fn versioned(types: &Types, bodies: &[Body], version_body: &[usize], base_of: &[Option<usize>]) -> Vec<bool> {
     use crate::simd::{SimdOp, wide};
     fn rvalues(body: &Body) -> impl Iterator<Item = &Rvalue> {
         body.blocks.iter().flat_map(|block| &block.stmts).filter_map(|stmt| match stmt {
@@ -225,10 +233,15 @@ fn versioned(types: &Types, bodies: &[Body]) -> Vec<bool> {
         TyKind::Fn(params, result, ..) => params.iter().any(|&param| wide(types, param)) || wide(types, *result),
         _ => false,
     };
-    let mut versioned: Vec<bool> = bodies
-        .iter()
-        .map(|body| {
-            let mut uses = body.locals.iter().any(|&ty| wide(types, ty));
+    let mut versioned: Vec<bool> = (0..bodies.len())
+        .map(|index| {
+            if base_of[index].is_some() {
+                return false;
+            }
+            let body = &bodies[version_body[index]];
+            // A clone differs from the body as `Vector[T]` does, as its
+            // `lanes()` does too.
+            let mut uses = version_body[index] != index || body.locals.iter().any(|&ty| wide(types, ty));
             for rvalue in rvalues(body) {
                 match rvalue {
                     Rvalue::Call(Callee::Std(StdFn::Simd(SimdOp::Accelerated(width))), _) if width.bits() > 128 => {
@@ -246,12 +259,13 @@ fn versioned(types: &Types, bodies: &[Body]) -> Vec<bool> {
         .collect();
     loop {
         let mut changed = false;
-        for (index, body) in bodies.iter().enumerate() {
+        for index in 0..bodies.len() {
+            let body = &bodies[version_body[index]];
             let calls_unversioned = rvalues(body).any(|rvalue| match rvalue {
-                Rvalue::Call(Callee::Fn(id), _) => {
-                    let callee = id.0 as usize;
-                    !versioned[callee] && passes_wide(&bodies[callee])
-                }
+                Rvalue::Call(Callee::Fn(id), _) => match base_of[id.0 as usize] {
+                    Some(base) => !versioned[base],
+                    None => !versioned[id.0 as usize] && passes_wide(&bodies[id.0 as usize]),
+                },
                 _ => false,
             });
             if versioned[index] && calls_unversioned {
@@ -341,10 +355,22 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     // level without AVX2 compiles the functions that use wider vectors once
     // more, for `x86-64-v3`, which the processor picks as the program runs.
     let x64 = isa.name() == "x64";
+    let mut version_body: Vec<usize> = (0..bodies.len()).collect();
+    let mut base_of = vec![None; bodies.len()];
+    for (&base, &clone) in &program.clones {
+        version_body[base.0 as usize] = clone.0 as usize;
+        base_of[clone.0 as usize] = Some(base.0 as usize);
+    }
     let versioned = match x64 && !wide_vectors(&*isa) && !debug && live.is_none() && coverage.is_none() && !fuzz {
-        true => versioned(&program.types, bodies),
+        true => versioned(&program.types, bodies, &version_body, &base_of),
         false => vec![false; bodies.len()],
     };
+    // Without versions a clone is a function of its own, which nothing
+    // calls, as tables of every function in order, a debugger's, want.
+    if !versioned.contains(&true) {
+        version_body = (0..bodies.len()).collect();
+        base_of = vec![None; bodies.len()];
+    }
     let level = match versioned.contains(&true) {
         true => Some(crate::target::Cpu::parse("x86-64-v3", cpu.arch, None)?),
         false => None,
@@ -362,6 +388,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     let mut cg = Codegen {
         isas,
         versions: Vec::new(),
+        version_body: version_body.clone(),
         versions_level: level.as_ref().map(crate::target::Cpu::needed),
         roots,
         cpu: cpu.needed(),
@@ -428,6 +455,14 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         cg.dump = Some(table);
     }
     for (index, body) in bodies.iter().enumerate() {
+        // A clone is compiled as its function's version, which the clones
+        // that call it call.
+        if let Some(base) = base_of[index] {
+            let id = cg.versions[base].map_or(cg.functions[base], |versions| versions.version);
+            cg.functions.push(id);
+            cg.versions.push(None);
+            continue;
+        }
         let signature = cg.signature(body);
         let name = symbol_name(index, &body.name);
         let id = cg.module.declare_function(&name, Linkage::Local, &signature).map_err(|e| e.to_string())?;
@@ -438,18 +473,27 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
             false => None,
             true => {
                 let isa = &cg.isas[&(body.needs | VERSION)];
-                let wide = Shapes::new(cg.types, &**isa).signature(body);
+                let compiled = &bodies[version_body[index]];
+                let wide = Shapes::new(cg.types, &**isa).signature(compiled);
                 let declare = |cg: &mut Codegen, suffix: &str, signature: &ir::Signature| {
                     let named = format!("{name}{suffix}");
                     cg.module.declare_function(&named, Linkage::Local, signature).map_err(|e| e.to_string())
                 };
-                let base = declare(&mut cg, "_base", &signature)?;
-                let version = declare(&mut cg, "_avx2", &wide)?;
-                let bridge = match wide == signature {
-                    true => None,
-                    false => Some(declare(&mut cg, "_bridge", &signature)?),
+                // A `Vector[T]` in the signature has 256 bits in the version.
+                let typed = |body: &Body| {
+                    (body.params.iter().map(|p| body.locals[p.0 as usize]).collect::<Vec<_>>(), body.result)
                 };
-                Some(Versions { base, version, bridge })
+                let dispatch = typed(body) == typed(compiled);
+                let base = match dispatch {
+                    true => declare(&mut cg, "_base", &signature)?,
+                    false => id,
+                };
+                let version = declare(&mut cg, "_avx2", &wide)?;
+                let bridge = match dispatch && wide != signature {
+                    false => None,
+                    true => Some(declare(&mut cg, "_bridge", &signature)?),
+                };
+                Some(Versions { base, version, bridge, dispatch })
             }
         };
         cg.versions.push(version);
@@ -474,14 +518,15 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     // Each function, then the versions of those that have one.
     let built = {
         let shared = worker::Shared::new(&cg);
-        let mut work: Vec<(usize, bool)> = (0..bodies.len()).map(|index| (index, false)).collect();
+        let mut work: Vec<(usize, bool)> =
+            (0..bodies.len()).filter(|&index| base_of[index].is_none()).map(|index| (index, false)).collect();
         work.extend((0..bodies.len()).filter(|&index| cg.versions[index].is_some()).map(|index| (index, true)));
         crate::parallel::map(&work, 1, |&(index, version)| {
             (index, version, worker::build(&shared, bodies, index, version))
         })
     };
     for (index, version, mut built) in built {
-        let body = &bodies[index];
+        let body = &bodies[if version { cg.version_body[index] } else { index }];
         cg.current = index;
         cg.building_version = version;
         // The runner that calls the tests is not the program's; a test's
@@ -510,7 +555,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     // What calls a function with a version: the version, where the
     // processor has its level.
     for (index, body) in bodies.iter().enumerate() {
-        let Some(versions) = cg.versions[index] else { continue };
+        let Some(versions) = cg.versions[index].filter(|versions| versions.dispatch) else { continue };
         let id = cg.functions[index];
         context.func.signature = cg.module.declarations().get_function_decl(id).signature.clone();
         context.func.name = UserFuncName::user(0, index as u32);
@@ -675,6 +720,9 @@ struct Codegen<'a> {
     /// `std.simd`): where `functions` holds what calls the one the
     /// processor runs.
     versions: Vec<Option<Versions>>,
+    /// The body each function's version is compiled from: its own, or its
+    /// clone where `Vector[T]` has 256 bits (18.11).
+    version_body: Vec<usize>,
     /// That level and what it needs, a line each, for the runtime.
     versions_level: Option<String>,
     /// Where the program comes from, which the runtime gives to tools.

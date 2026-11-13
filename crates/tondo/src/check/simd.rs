@@ -187,6 +187,8 @@ impl<'a> Checker<'a> {
                     return self.arity_error(span, 0, args.len());
                 }
                 return match method.name.as_str() {
+                    // `Vector[T]`'s are known once the code's width is.
+                    "lanes" if own.width == Width::Widest => Self::mk(hir::ExprKind::Lanes(owner), Ty::INT, span),
                     "lanes" => Self::mk(hir::ExprKind::Int(count as i128), Ty::INT, span),
                     _ => Self::simd_call(SimdOp::Accelerated(own.width), Vec::new(), Ty::BOOL, span),
                 };

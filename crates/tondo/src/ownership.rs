@@ -569,6 +569,7 @@ impl Checker<'_> {
             | ExprKind::ExternFn(_)
             | ExprKind::ContextRead(..)
             | ExprKind::Layout(..)
+            | ExprKind::Lanes(_)
             | ExprKind::Callback(..)
             | ExprKind::Error => Some(flow),
             ExprKind::Aggregate(items) | ExprKind::Array(items) | ExprKind::Set(items) => self.all(items, flow, true),

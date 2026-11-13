@@ -6756,3 +6756,17 @@ is `E1120`, which names `Vector128[T]`, `Vector256[T]` and an array of the lanes
 what the code writes, and monomorphization what a generic function's instance keeps, where the
 generic function keeps it. Showing one, `==` and passing one to a function stay, as the compiler
 makes them in each version.
+
+## `Vector[T]` takes the width of each version
+
+Monomorphization gives `Vector[T]` and `Mask[T]` the width of the code they are in: the widest the
+build's level accelerates, 256 bits at a level of x64 with AVX2 and 128 bits elsewhere; and on x64
+below `x86-64-v3` it makes, of each function that uses one or is given one, a clone where it has 256
+bits, which is the body of its version. After it nothing has a width that varies, so the MIR passes
+prove a loop's loads within their array by `lanes()`, which is a constant in each body, and the code
+generator makes `Vector256[T]` of the clones as of any. In a clone a direct call goes to the callee's
+clone, as a version's calls go to versions; a function with a clone is inlined only into one that
+has one too, as the code of one width would otherwise be in the other; and one with a `Vector[T]` in
+its signature has no dispatcher, as its version takes more lanes, so code of the build's level calls
+its body directly, and only versions call its version. A build without versions, debug, live, of
+coverage or of fuzzing, compiles the clones as functions that nothing calls.

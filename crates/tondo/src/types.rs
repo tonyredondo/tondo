@@ -1205,7 +1205,8 @@ impl Types {
         }
         let each = |types: &mut Self, items: &[Ty]| -> Vec<Ty> { items.iter().map(|&t| types.subst(t, map)).collect() };
         match self.kind(ty).clone() {
-            TyKind::Param(_) => map.get(&ty).copied().unwrap_or(ty),
+            // And `Vector[T]` given its width (18.11).
+            TyKind::Param(_) | TyKind::Vector(..) | TyKind::Mask(..) => map.get(&ty).copied().unwrap_or(ty),
             TyKind::Tuple(items) => {
                 let items = each(self, &items);
                 self.intern(TyKind::Tuple(items))

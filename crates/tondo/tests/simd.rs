@@ -662,6 +662,86 @@ fn main() {
 
 const WIDE_PRINTS: &str = "<-928616459, -1671509226, 1880565303, 1137672536, 394779769, -348112998, -1091005765, -1833898532> <1996.0, 1996.0, 1996.0, 1996.0> 1000\nmiddle <-71955, -71955, -71955, -71955, -71955, -71955, -71955, -71955>\n<-148911, -148911, -148911, -148911, -148911, -148911, -148911, -148911>\n<false, false, true, true, true, false, false, false> 3 28 696225996\n44 true <1996.0, 1996.0>\n<-744669701, 190539604, 1125748909, 2060958214, -1298799777, -363590472, 571618833, 1506828138>\n627170232 [1834841924, -625283440]\n";
 
+/// `Vector[T]` as wide as each version of the code it is in (18.11): 128
+/// bits at the baseline, and 256 bits in the versions for `x86-64-v3` where
+/// the processor runs them, or at that level; in a debug or live build, the
+/// build's level. Its lanes, a loop over an array, a vector passed to a
+/// function that is not inlined and to a generic one, a mask, showing one
+/// and `==`, each the same at every width but for the lanes.
+#[test]
+fn the_widest_vector_widens_in_each_version() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("simd-widest");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("widest.to");
+    std::fs::write(&file, WIDEST).unwrap();
+    let (level, wide) = wide_level();
+    let lanes = |wide: bool| if wide { 8 } else { 4 };
+    let mut runs =
+        vec![("baseline", "0", None, 4), ("baseline", "1", None, lanes(wide)), (level, "1", None, lanes(wide))];
+    runs.extend([("baseline", "1", Some("--debug"), 4), ("baseline", "1", Some("--live"), 4)]);
+    for (cpu, versions, build, lanes) in runs {
+        let run = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(["run", &file.to_string_lossy(), "--cpu", cpu])
+            .args(build)
+            .env("TONDO_VERSIONS", versions)
+            .output()
+            .unwrap();
+        assert!(run.status.success(), "{cpu} {build:?}: {}", String::from_utf8_lossy(&run.stderr));
+        let shown = vec!["4"; lanes].join(", ");
+        let wanted = format!("lanes {lanes}\ntotal 231\n<{shown}> {lanes} true\n");
+        assert_eq!(String::from_utf8_lossy(&run.stdout), wanted, "at {cpu}, {build:?}, versions {versions}");
+    }
+}
+
+const WIDEST: &str = r#"import std.console
+import std.simd
+
+fn lanes(): Int {
+    simd.Vector[Int32].lanes()
+}
+
+fn total(values: Array[Int32]): Int32 {
+    let width = simd.Vector[Int32].lanes()
+    var sum = simd.Vector[Int32].zero()
+    var at = 0
+    for at + width <= values.length() {
+        sum = sum + simd.Vector[Int32].load(ref values, at: at)
+        at += width
+    }
+    var rest = sum.sum()
+    for value in values[at:] {
+        rest += value
+    }
+    rest
+}
+
+/// Not inlined: it calls itself.
+fn deep(value: simd.Vector[Int32], depth: Int): simd.Vector[Int32] {
+    if depth == 0 {
+        return value
+    }
+    deep(value + 1, depth - 1)
+}
+
+fn same[T](value: T): T {
+    value
+}
+
+fn shown(): String {
+    let start = simd.Vector[Int32].all(1)
+    let end = same(deep(start, 3))
+    let mask = end.greater(start)
+    "{end} {mask.count()} {end == start + 3}"
+}
+
+fn main() {
+    let values: Array[Int32] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+    console.println("lanes {lanes()}")
+    console.println("total {total(values)}")
+    console.println(shown())
+}
+"#;
+
 /// The sum of floats in the order the language fixes (18.5): element `i`
 /// into partial sum `i mod lanes`, then the partial sums by halves.
 fn fixed_sum(lane: Lane, values: &[u64]) -> u64 {

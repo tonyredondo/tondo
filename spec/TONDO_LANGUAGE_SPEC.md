@@ -7962,7 +7962,10 @@ corre el código. Cada uno tiene su máscara, `Mask128[T]` y las demás, con un
   desde código de un nivel menor pasa por una prueba del procesador, hecha una
   vez y recordada, que elige la versión más alta que el procesador puede
   ejecutar; desde una versión, la llamada a otra función con versiones va
-  directa a la del mismo nivel. Nada se escribe en el código.
+  directa a la del mismo nivel. Nada se escribe en el código. En cada
+  versión `Vector[T]` es el más ancho acelerado de su nivel, y una función
+  con un `Vector[T]` en su firma no pasa por la prueba: la llama directa el
+  código de su mismo nivel.
 
 ---
 

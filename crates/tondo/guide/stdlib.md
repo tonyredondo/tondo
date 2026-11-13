@@ -654,7 +654,8 @@ the calendar it is, and `"%G-W%V"` writes the week.
 `std.simd` computes many numbers at once: a `simd.Vector128[Float32]` has
 four lanes, and `+`, `-`, `*` and `/` work on each, with a number on either
 side standing for every lane. `simd.Vector[T]` is the widest the processor
-does well where the code runs:
+does well where the code runs, 4 `Float32` or 8 where it has AVX2, so a
+loop steps by its `lanes()`:
 
 ```tondo
 import std.console
@@ -669,9 +670,8 @@ fn main() {
         total = total + simd.Vector[Float32].load(ref values, at: at) * 2.0
         at += lanes
     }
-    console.println("{total.sum()} {total}")                    // 72.0 <12.0, 16.0, 20.0, 24.0>
-    let big = total.greater(simd.Vector[Float32].all(15.0))     // a mask: `<` gives one Bool
-    console.println("{big.count()} {big.choose(total, -total)}")
+    let big = total.greater(simd.Vector[Float32].all(0.0))      // a mask: `<` gives one Bool
+    console.println("{total.sum()} {big.count() == lanes}")     // 72.0 true
 }
 ```
 
@@ -681,13 +681,15 @@ each lane of a vector of a fixed width; a `Vector[T]` has no `of`, as it can
 have more lanes in a version for wider vectors: `all` and `load` make one.
 For the same reason a `Vector[T]` lives only in locals, parameters and
 results: a field, an array, an option or a closure keeps a `Vector128[T]`
-or a `Vector256[T]`, or the lanes in an array (`E1120`). Comparisons are methods, `less` and the others,
+or a `Vector256[T]`, or the lanes in an array (`E1120`). Comparisons are
+methods, `less` and the others,
 that give a mask; `store(mut into, at: i)` writes the lanes back, and
 `sum`, `minLane` and `maxLane` combine them. `Vector256` and `Vector512`
 work everywhere with the same results. On an x64 with AVX2 a `Vector256`
 uses the processor's instructions of 256 bits, which
 `simd.Vector256[T].accelerated()` tells: a release build compiles the
-functions that use one for that level too, and the processor picks.
+functions that use one, or a `Vector[T]`, for that level too, and the
+processor picks.
 
 ## Time, logging and CSV
 

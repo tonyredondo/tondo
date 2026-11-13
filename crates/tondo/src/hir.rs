@@ -42,6 +42,10 @@ pub struct Program {
     /// Before monomorphization: the functions of the standard library that
     /// nothing reaches, whose bodies were not checked (docs/speed.md, E).
     pub unchecked: HashSet<FnId>,
+    /// After monomorphization: of each function whose `Vector[T]` is the
+    /// widest of its code (18.11), the copy where it has 256 bits, which is
+    /// the body of its version for `x86-64-v3` (rule 19 of `std.simd`).
+    pub clones: HashMap<FnId, FnId>,
 }
 
 /// The default of each field of a record, by its type, or by its template
@@ -474,6 +478,9 @@ pub enum ExprKind {
     /// The size in bytes, or with the flag the alignment, of values of a
     /// type in memory (`std.ffi`).
     Layout(Ty, bool),
+    /// `lanes()` of a `Vector[T]` or a `Mask[T]`, a constant once
+    /// monomorphization gives it the width of the code it is in (18.11).
+    Lanes(Ty),
     /// Boxes a value of the type for a `reflect.Value`, takes one out of a
     /// box, or tells whether a box holds one (`std.internal.reflect`).
     Reflect(ReflectOp, Ty, Vec<Expr>),
@@ -2074,6 +2081,7 @@ pub fn written(e: &Expr, out: &mut Vec<LocalId>) {
         | ExprKind::FnValue(..)
         | ExprKind::ExternFn(_)
         | ExprKind::Layout(..)
+        | ExprKind::Lanes(_)
         | ExprKind::ContextRead(..)
         | ExprKind::Error => {}
         ExprKind::Aggregate(items)
