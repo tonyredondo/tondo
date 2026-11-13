@@ -1702,6 +1702,11 @@ pub(super) fn tracking(table: &Table, here: Stop, tick: u64) {
             tracked.trail_failed = Some(wrong.to_string());
         }
     }
+    // A probe where a line goes on is of that line: what the line did by
+    // then, the line gave, as the next line's start tells.
+    if table.sites.get(site).is_some_and(|site| site.goes_on) {
+        return;
+    }
     let before = tracked.before.replace((tick, site));
     tracked.lines.insert(task, (tick, site));
     for followed in tracked.followed.iter_mut() {
