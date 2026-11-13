@@ -1091,9 +1091,10 @@ impl<'a> Checker<'a> {
             }
             return value;
         }
-        // `Type.operation` as a value: an associated operation (11.7).
+        // `Type.operation` as a value: an associated operation (11.7), of a
+        // record, an enum or a newtype.
         if let [type_name, operation] = segments
-            && matches!(self.names.get(&type_name.name), None | Some(ModuleName::Fn(_)))
+            && matches!(self.names.get(&type_name.name), None | Some(ModuleName::Fn(_) | ModuleName::Newtype(_)))
             && let Some(owner) = self.type_named(&type_name.name)
             && let Some(&id) = self.methods.get(&(owner, operation.name.clone()))
         {

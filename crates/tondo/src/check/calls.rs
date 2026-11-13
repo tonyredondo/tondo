@@ -2467,8 +2467,22 @@ impl<'a> Checker<'a> {
                         return Some(ast::Expr { kind: ast::ExprKind::Error, span });
                     }
                     (modes, Box::new(Self::calling(path(segments), span)))
+                } else if let [owner] = owner
+                    && self.intrinsic_function(&owner.name, owner_ty, &method.name)
+                {
+                    // A function of a type the compiler gives, as
+                    // `Int.parse`: called as written, with the values the
+                    // function expected, whose failure it passes on when
+                    // that function fails too.
+                    let called = Self::calling(path(segments), span);
+                    let passes = self.fails_with(expected);
+                    let call = move |values: Vec<ast::Expr>, modes: &[ast::Mode]| match passes {
+                        true => ast::Expr { kind: ast::ExprKind::Try(Box::new(called(values, modes))), span },
+                        false => called(values, modes),
+                    };
+                    (wanted.clone()?, Box::new(call))
                 } else {
-                    // One the compiler gives, as `String.length` or
+                    // A method the compiler gives, as `String.length` or
                     // `Float.floor`: called on the first value, with the
                     // others the function expected.
                     let modes = wanted.clone().filter(|wanted| !wanted.is_empty())?;
@@ -2500,6 +2514,25 @@ impl<'a> Checker<'a> {
         let body = ast::Block { stmts: Vec::new(), tail: Some(Box::new(call(values, &modes))), span };
         let closure = ast::Closure { is_unsafe: false, params, result: None, body };
         Some(ast::Expr { kind: ast::ExprKind::Closure(Box::new(closure)), span })
+    }
+
+    /// Whether a function of type `ty` gives `T ! E`, whose body a closure
+    /// writes in terms of `T`.
+    fn fails_with(&self, ty: Ty) -> bool {
+        let ty = match self.types.kind(ty) {
+            TyKind::Option(inner) => *inner,
+            _ => ty,
+        };
+        matches!(self.types.kind(ty), TyKind::Fn(_, result, ..) if matches!(self.types.kind(*result), TyKind::Result(..)))
+    }
+
+    /// Whether `Type.name` is a function of a type the compiler gives, which
+    /// takes no `self`: `Int.parse`, `String.fromBytes`.
+    fn intrinsic_function(&self, owner: &str, owner_ty: Ty, name: &str) -> bool {
+        match self.number_kind(owner_ty) {
+            Some(kind) => crate::numbers::find(kind, name, false).is_some(),
+            None => owner == "String" && matches!(name, "empty" | "fromBytes" | "fromChars"),
+        }
     }
 
     /// A call of `callee` with the values given, each in its mode.

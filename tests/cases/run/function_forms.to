@@ -2,12 +2,21 @@
 // positional data, a newtype, `some`, `ok` and `err` are given by their
 // names, as the closures that call them; a method of a trait takes the
 // type the function expected gives it; and so do the methods the compiler
-// gives, as `String.length` and `Float.floor`.
+// gives, as `String.length` and `Float.floor`, the functions of a type
+// without `self`, a newtype's as a record's, and those the compiler gives,
+// as `Int.parse`, which pass their failure on where the function expected
+// fails too.
 
 import std.console
 import std.text
 
 type UserId = Int
+
+type Celsius = Float
+
+fn Celsius.parse(written: String): Celsius {
+    Celsius(Float.parse(written) ?? 0.0)
+}
 
 enum NoteError {
     Files(text.TextError)
@@ -64,9 +73,16 @@ fn main() {
     console.println(
         "{["xy"].map(String.length)} {[[1], [2, 3]].map(Array.length)} {[3.5].map(Float.floor)}",
     )
+    // Functions of a type, without `self`.
+    let parse: fn(String): Float ! text.TextError = Float.parse
+    let bytes: Array[Array[Byte]] = [[104, 105]]
+    console.println(
+        "{["21.5"].map(Celsius.parse).map((c) { c.value })} {["4", "x"].map(Int.parse)} {parse("1.5")} {bytes.map(String.fromBytes)}",
+    )
 }
 
 // expect-stdout: [ADA, BO] true 2 [some(1), some(2)]
 // expect-stdout: [hi x] 6 p3 A
 // expect-stdout: [p1] 1
 // expect-stdout: [2] [1, 2] [3.0]
+// expect-stdout: [21.5] [ok(4), err(invalid data)] ok(1.5) [ok(hi)]
