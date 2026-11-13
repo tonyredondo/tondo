@@ -464,6 +464,9 @@ impl<'a> Checker<'a> {
         cx: &mut FnCx,
         condition: hir::Expr,
     ) -> (Vec<hir::Stmt>, hir::Expr, Option<Box<hir::Expr>>) {
+        if let Some(compared) = self.compared_vectors(cx, &condition) {
+            return compared;
+        }
         let hir::ExprKind::Binary(op, left, right) = &condition.kind else {
             return (Vec::new(), condition, None);
         };
@@ -524,6 +527,40 @@ impl<'a> Checker<'a> {
         let condition = Self::mk(hir::ExprKind::Binary(op, Box::new(left), Box::new(right)), ty, span);
         let detail = Self::mk(hir::ExprKind::Interpolate(segments), Ty::STRING, span);
         (sides, condition, Some(Box::new(detail)))
+    }
+
+    /// `assert(a == b)` of two vectors of `std.simd`, a call that compares
+    /// every lane: the same, with both sides shown when it fails.
+    fn compared_vectors(
+        &mut self,
+        cx: &mut FnCx,
+        condition: &hir::Expr,
+    ) -> Option<(Vec<hir::Stmt>, hir::Expr, Option<Box<hir::Expr>>)> {
+        let (negated, inner) = match &condition.kind {
+            hir::ExprKind::Unary(UnaryOp::Not, inner) => (true, &**inner),
+            _ => (false, condition),
+        };
+        let same = Callee::Std(StdFn::Simd(crate::simd::SimdOp::Same));
+        let hir::ExprKind::Call(callee, _, args) = &inner.kind else { return None };
+        if *callee != same || args.len() != 2 {
+            return None;
+        }
+        let (mut sides, mut reads, mut segments) = (Vec::new(), Vec::new(), Vec::new());
+        for (label, side) in [("\n  left:  ", &args[0]), ("\n  right: ", &args[1])] {
+            let local = self.hidden_local(cx, side.ty);
+            sides.push(hir::Stmt::Let(local, side.clone()));
+            let read = Self::mk(hir::ExprKind::Local(local), side.ty, side.span);
+            reads.push(read.clone());
+            segments.push(hir::Segment::Text(label.into()));
+            segments.push(hir::Segment::Value(self.displayed(read)));
+        }
+        let call = Self::mk(hir::ExprKind::Call(same, Vec::new(), reads), Ty::BOOL, inner.span);
+        let condition = match negated {
+            true => Self::mk(hir::ExprKind::Unary(UnaryOp::Not, Box::new(call)), Ty::BOOL, condition.span),
+            false => call,
+        };
+        let detail = Self::mk(hir::ExprKind::Interpolate(segments), Ty::STRING, condition.span);
+        Some((sides, condition, Some(Box::new(detail))))
     }
 
     /// The field of a template's data that a name which is no binding
