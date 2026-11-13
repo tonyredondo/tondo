@@ -27,7 +27,7 @@ the program waits before main: set breakpoints, then `continue`
 breakpoint 1 at src/main.to:11
 > continue
 task 1 stopped at src/main.to:11 in count (breakpoint 1)
-   11 |         counts[word] = counts.get(word).unwrapOr(0) + 1
+   11 |         counts[word] = (counts[word] ?? 0) + 1
 > locals
 text: String = "To be, or not to be: that is the question.\n"
 counts: Map[String, Int] = ["to": 1, "be": 1, "or": 1]
@@ -38,11 +38,6 @@ counts.length(): Int = 3
 > stack
 #0 src/main.to:11 in count
 #1 src/main.to:19 in main
-> next
-task 1 stopped at src/main.to:9 in count (step)
-    9 |     for each in text.words() {
-> print counts
-counts: Map[String, Int] = ["to": 1, "be": 1, "or": 1, "not": 1]
 ```
 
 - `tondo debug` takes a file, a project, an executable built with
@@ -140,9 +135,9 @@ task 1 stopped at src/main.to:13 in count (breakpoint 1)
 counts: Map[String, Int] = ["to": 2, "be": 2, "or": 1, "not": 1, "that": 1, "is": 1, "the": 1, "question": 1]
 > why counts
 task 1 stopped at src/main.to:11 in count (`counts` became ["to": 2, "be": 2, "or": 1, "not": 1, "that": 1, "is": 1, "the": 1, "question": 1] on this line)
-  `counts` was ["to": 2, "be": 2, "or": 1, "not": 1, "that": 1, "is": 1, "the": 1], from src/main.to:11 in count (probe 1114)
-  `word` was "question", from src/main.to:10 in count (probe 1398)
-   11 |         counts[word] = counts.get(word).unwrapOr(0) + 1
+  `counts` was ["to": 2, "be": 2, "or": 1, "not": 1, "that": 1, "is": 1, "the": 1], from src/main.to:11 in count (probe 1074)
+  `word` was "question", from src/main.to:10 in count (probe 1358)
+   11 |         counts[word] = (counts[word] ?? 0) + 1
 ```
 
 `why counts` went back to the line that gave `counts` its value, and its
@@ -153,26 +148,26 @@ moment, so `locals` and `print` work there:
 ```text
 > back 2
 task 1 stopped at src/main.to:11 in count (2 lines back)
-   11 |         counts[word] = counts.get(word).unwrapOr(0) + 1
+   11 |         counts[word] = (counts[word] ?? 0) + 1
 > locals
 text: String = "To be, or not to be: that is the question.\n"
 counts: Map[String, Int] = ["to": 2, "be": 2, "or": 1, "not": 1, "that": 1, "is": 1, "the": 1]
 each: String = "question."
 word: String = "question"
 > timeline word
-"to"  at src/main.to:10 in count (probe 112)
-"be"  at src/main.to:10 in count (probe 238)
-"or"  at src/main.to:10 in count (probe 343)
-"not"  at src/main.to:10 in count (probe 476)
-"to"  at src/main.to:10 in count (probe 581)
-"be"  at src/main.to:10 in count (probe 706)
-"that"  at src/main.to:10 in count (probe 866)
-"is"  at src/main.to:10 in count (probe 971)
-"the"  at src/main.to:10 in count (probe 1104)
-"question"  at src/main.to:10 in count (probe 1398)
+"to"  at src/main.to:10 in count (probe 108)
+"be"  at src/main.to:10 in count (probe 230)
+"or"  at src/main.to:10 in count (probe 331)
+"not"  at src/main.to:10 in count (probe 460)
+"to"  at src/main.to:10 in count (probe 561)
+"be"  at src/main.to:10 in count (probe 682)
+"that"  at src/main.to:10 in count (probe 838)
+"is"  at src/main.to:10 in count (probe 939)
+"the"  at src/main.to:10 in count (probe 1068)
+"question"  at src/main.to:10 in count (probe 1358)
 > first counts.length() > 2
 task 1 stopped at src/main.to:11 in count (the first time `counts.length() > 2` holds, after this line)
-   11 |         counts[word] = counts.get(word).unwrapOr(0) + 1
+   11 |         counts[word] = (counts[word] ?? 0) + 1
 ```
 
 | | |

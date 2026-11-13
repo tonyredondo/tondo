@@ -161,29 +161,33 @@ Linux.
 
 ```text
 $ tondo profile todo --cpu --duration 2 --output cpu.pb.gz
-tondo: 89 samples of 1 ms of processor time: cpu.pb.gz; `tondo profile show cpu.pb.gz` shows where
+tondo: 94 samples of 1 ms of processor time: cpu.pb.gz; `tondo profile show cpu.pb.gz` shows where
 
-$ tondo profile show cpu.pb.gz
-cpu of cpu.pb.gz, 89ms in all over 2.08s
+$ tondo profile show cpu.pb.gz --top 300
+cpu of cpu.pb.gz, 94ms in all over 2.03s
      flat  flat%       cum   cum%  function
-     21ms  23.6%      21ms  23.6%  libc.so.6+0xa08f2
-      5ms   5.6%       5ms   5.6%  _mi_theap_malloc_zero
-      5ms   5.6%       5ms   5.6%  shutdown
-      4ms   4.5%       4ms   4.5%  syscall
-      3ms   3.4%       3ms   3.4%  tondo_runtime::diagnostics::freed
-      2ms   2.2%       2ms   2.2%  Option.unwrapOr[sql.Value]  <std>/prelude.to
-      2ms   2.2%       2ms   2.2%  epoll_ctl
-      2ms   2.2%       2ms   2.2%  mi_free
-      2ms   2.2%       2ms   2.2%  tondo_rt_str_retain
-      1ms   1.1%      48ms  53.9%  http.converse  <std>/http/server.to
-      1ms   1.1%      34ms  38.2%  closure in http.App.pipeline  <std>/http/app.to
-      1ms   1.1%      31ms  34.8%  api.traced  src/api/api.to
+     20ms  21.3%      20ms  21.3%  libc.so.6+0xa08f2
+      7ms   7.4%       7ms   7.4%  shutdown
+      6ms   6.4%       6ms   6.4%  syscall
+      4ms   4.3%       4ms   4.3%  _mi_theap_malloc_zero
+      2ms   2.1%       4ms   4.3%  tondo_rt_array_release
+      2ms   2.1%       2ms   2.1%  sqlite3VdbeExec
+      2ms   2.1%       2ms   2.1%  tondo_rt_str_release
+      1ms   1.1%       3ms   3.2%  sql.readValue  <std>/sql/sqlite.to
+      1ms   1.1%       2ms   2.1%  closure in sql.Row.next  <std>/sql/databases.to
+      ...
+      0ns   0.0%      51ms  54.3%  http.converse  <std>/http/server.to
+      0ns   0.0%      30ms  31.9%  closure in http.App.pipeline  <std>/http/app.to
+      0ns   0.0%      29ms  30.9%  api.traced  src/api/api.to
+      0ns   0.0%      15ms  16.0%  closure in api.routes  src/api/api.to
+      0ns   0.0%       8ms   8.5%  store.find  src/store/store.to
 ```
 
-Two seconds of a server answering a few hundred requests: 89 ms of
-processor in all, most of it in the system and in SQLite, and the
-program's own code, `api.traced`, with what it called under it in the
-`cum` column.
+Two seconds of a server answering a few hundred requests: 94 ms of
+processor in all, most of it in the system and in SQLite. The program's own
+code took no sample by itself, so it is far down the list, which `--top`
+lengthens: `api.traced` and the handlers have what they called under them
+in the `cum` column.
 
 | | |
 | --- | --- |

@@ -72,12 +72,12 @@ fn main() {
 
 ```text
 $ tondo check
-error[E1102]: expected `String`, found `String?`, which may be `none`: give a fallback with `.unwrapOr(value)`, handle it with `match`, or pass it on with `?` in a function that returns an option
+error[E1102]: expected `String`, found `String?`, which may be `none`: give a fallback with `value ?? fallback`, handle it with `match`, or pass it on with `?` in a function that returns an option
   --> src/main.to:16:28
    |
 16 |     let text = fs.readText(path)
    |                            ^^^^
-error[E1102]: expected `String`, found `String ! fs.FsError`: add `?` to pass the failure on, give a fallback with `.unwrapOr(value)`, or handle it with `match`
+error[E1102]: expected `String`, found `String ! fs.FsError`: add `?` to pass the failure on, give a fallback with `value ?? fallback`, or handle it with `match`
   --> src/main.to:17:32
    |
 17 |     for (word, times) in count(text) {
