@@ -1612,6 +1612,11 @@ Pueden ser privilegiadas:
 - Construcción de tipos opacos nativos.
 - Operaciones intrínsecas ya declaradas por el lenguaje.
 
+Con las llamadas del sistema de `std.os` (14.45), el acceso a host deja de
+necesitar el runtime: lo que hoy hace en Rust, abrir y leer un descriptor o
+esperar con `epoll`, puede escribirse en Tondo sobre ellas. Moverlo es un
+cambio de cada módulo, con su propia prueba de coste.
+
 ### 12.2 Unidades privilegiadas
 
 Una unidad privilegiada:
@@ -7118,6 +7123,38 @@ impl Display for Errno
   directory`, igual que `fs.FsError.Host` muestra el mismo número.
 - 7.3 sigue valiendo: estos números son de un sistema, y `std.os` es la parte
   de la librería que es por sistema.
+
+#### `std.os.linux`
+
+`std.os.linux` es de Linux (6.8 del lenguaje). Importarlo desde un archivo que
+también es de otro sistema es `E1008`, cuyo mensaje dice que se importe desde
+un archivo de Linux, `name_linux.to`, o que se limite el paquete con
+`systems = ["linux"]`; `tondo check` lo encuentra en cualquier máquina, con
+`on macOS:` en Linux.
+
+- Declara lo que `tondo bind --included` (7.1 del toolchain) escribe de los
+  headers `errno.h`, `fcntl.h`, `poll.h`, `signal.h`, `termios.h`,
+  `unistd.h`, `sys/file.h`, `sys/ioctl.h`, `sys/mman.h`, `sys/resource.h`,
+  `sys/socket.h`, `sys/stat.h`, `sys/epoll.h`, `sys/eventfd.h`,
+  `sys/inotify.h` y `sys/syscall.h`, una vez por arquitectura, porque los
+  números y las disposiciones cambian con ella. Conserva los nombres de C:
+  `linux.O_RDONLY`, `linux.epoll_create1`, `linux.SYS_openat`.
+- Las funciones que fallan dando -1 o un puntero nulo con el número de error
+  del sistema, nombradas en una lista que se guarda junto a los archivos
+  generados, se declaran `T ! os.Errno`; las demás, como `tondo bind` las
+  declara. Llamar a cualquiera es `unsafe`, como toda llamada a C.
+- `syscall` es la llamada del núcleo por su número:
+
+~~~tondo pseudocode
+pub unsafe fn syscall(number: Int, arguments: ...Int): Int ! os.Errno
+~~~
+
+- `number` es uno de `linux.SYS_...`, de la arquitectura del build. Toma hasta
+  seis argumentos; más es un pánico. Falla con el número de error del núcleo.
+  Es la función `syscall` de la librería de C, que da -1 y deja el número.
+- macOS no tiene llamada por número: Apple no mantiene estable la interfaz de
+  su núcleo, y un programa llama a la librería del sistema, con `extern fn`
+  o con las declaraciones de su módulo.
 
 ## 15. Contrato exigido a cada módulo
 

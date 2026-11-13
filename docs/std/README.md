@@ -108,6 +108,7 @@ uses them: the same record is read from JSON and written as YAML.
 | [std.env](env.md) | arguments, environment, directories, processors, what the program was built from |
 | [std.cpu](cpu.md) | what the processor has beyond the level the program was built for |
 | [std.os](os.md) | what is of each system: its error number, `os.Errno` |
+| [std.os.linux](os.linux.md) | Linux's calls, constants and types with C's names, and `syscall` |
 
 ## Text, numbers and time
 

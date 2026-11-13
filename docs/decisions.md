@@ -6375,3 +6375,27 @@ Only those two ways of failing are known: a function that reports a failure anot
 declared without it and checked by hand. A function of Tondo that C calls has no number to give,
 so it cannot be one. `std.os` holds the number, for every system, and is where the parts of the
 library that are of one system go.
+
+## Linux's calls in the standard library, written by `tondo bind`
+
+`std.os.linux` declares what Linux's headers declare, with C's names, so that a program that needs
+a call the library does not wrap can make it without writing the declaration, and get it right:
+the numbers and the layouts differ by architecture, so there is a set for x64 and one for arm64,
+each written by `tondo bind` from that architecture's headers and kept in the repository. Writing
+them by hand would have been thousands of lines to keep right. `crates/tondo/std/os/generate.to`
+writes them again, the arm64 set with the preprocessor of a container
+(`container-cpp.sh`), and `crates/tondo/std/os/fails.txt` names the functions that fail with the
+error number, which `tondo bind --fails` declares so; a function that marks its failure another
+way, as `mmap` with `MAP_FAILED`, is left out of the list and checked by hand.
+
+The thousands of C names would drown what is written in Tondo: `tondo api std.os.linux` shows the
+module's own declarations, and a C one by its name or with `--search`; the suggestions for an
+unknown name do not offer them. A module of one system is still listed and shown on any machine,
+with its system's files for this machine's architecture, so that `docs/std` is the same wherever it
+is written. A file of one system checked alone, as `tondo check watch_linux.to`, is checked for
+that system, which is how its examples are checked on macOS too.
+
+`syscall` takes its arguments as `Int` and calls the C library's `syscall`, which gives -1 and
+sets the number, rather than running the kernel's instruction itself: the C library already knows
+each architecture's convention. macOS has no such call, as Apple does not keep its kernel's
+interface stable.

@@ -216,6 +216,14 @@ impl<'a> Checker<'a> {
             ["std", "internal", "image"] => StdModule::InternalImage,
             ["std", "internal", "context"] => StdModule::InternalContext,
             ["std", "internal", "channel"] => StdModule::InternalChannel,
+            ["std", rest @ ..] if let Some((systems, suffix)) = crate::stdlib::elsewhere(&path) => {
+                let message = format!(
+                    "`std.{}` is of {systems} only: import it from a file of {systems}, as `name_{suffix}.to`, or limit the package with `systems = [\"{suffix}\"]` in tondo.toml",
+                    rest.join(".")
+                );
+                self.diags.error("E1008", import.span, message);
+                return;
+            }
             ["std", rest @ ..] => {
                 let name = rest.join(".");
                 let modules = crate::api::standard_modules();

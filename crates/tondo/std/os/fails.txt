@@ -1,0 +1,198 @@
+# The functions of the headers of std.os that fail by giving -1, or null
+# for a pointer, with the system's error number (language 16.16), which
+# `tondo bind --fails` declares `T ! os.Errno`. Left out: those that give the
+# error number itself (pthread_*, posix_fallocate, posix_madvise, sigwait,
+# ttyname_r, getlogin_r), those whose failure is another value (mmap's
+# MAP_FAILED, signal's SIG_ERR, sbrk's -1 pointer, isatty's 0), and those
+# for which -1 is also a result (nice, getpriority, sysconf, pathconf,
+# fpathconf).
+
+# fcntl.h
+fcntl
+open
+openat
+creat
+lockf
+
+# poll.h
+poll
+
+# signal.h
+kill
+killpg
+sigemptyset
+sigfillset
+sigaddset
+sigdelset
+sigismember
+sigprocmask
+sigsuspend
+sigaction
+sigpending
+sigwaitinfo
+sigtimedwait
+sigqueue
+siginterrupt
+sigaltstack
+
+# termios.h
+cfsetospeed
+cfsetispeed
+cfsetspeed
+tcgetattr
+tcsetattr
+tcsendbreak
+tcdrain
+tcflush
+tcflow
+tcgetsid
+
+# unistd.h
+access
+faccessat
+lseek
+close
+read
+write
+pread
+pwrite
+pipe
+usleep
+pause
+chown
+fchown
+lchown
+fchownat
+chdir
+fchdir
+getcwd
+dup
+dup2
+execve
+fexecve
+execv
+execvp
+getpgid
+setpgid
+setsid
+getsid
+getgroups
+setuid
+setreuid
+seteuid
+setgid
+setregid
+setegid
+fork
+ttyname
+link
+linkat
+symlink
+symlinkat
+readlink
+readlinkat
+unlink
+unlinkat
+rmdir
+tcgetpgrp
+tcsetpgrp
+getlogin
+gethostname
+sethostname
+getdomainname
+setdomainname
+daemon
+chroot
+fsync
+fdatasync
+truncate
+ftruncate
+getentropy
+brk
+syscall
+
+# sys/file.h
+flock
+
+# sys/ioctl.h
+ioctl
+
+# sys/mman.h
+munmap
+mprotect
+msync
+madvise
+mlock
+munlock
+mlockall
+munlockall
+mincore
+shm_open
+shm_unlink
+
+# sys/resource.h
+getrlimit
+setrlimit
+getrusage
+setpriority
+
+# sys/socket.h
+socket
+socketpair
+bind
+getsockname
+connect
+getpeername
+send
+recv
+sendto
+recvfrom
+sendmsg
+recvmsg
+getsockopt
+setsockopt
+listen
+accept
+shutdown
+sockatmark
+
+# sys/stat.h
+stat
+fstat
+fstatat
+lstat
+chmod
+lchmod
+fchmod
+fchmodat
+mkdir
+mkdirat
+mknod
+mknodat
+mkfifo
+mkfifoat
+utimensat
+futimens
+
+# sys/epoll.h
+epoll_create
+epoll_create1
+epoll_ctl
+epoll_wait
+epoll_pwait
+epoll_pwait2
+
+# sys/eventfd.h
+eventfd
+eventfd_read
+eventfd_write
+
+# sys/inotify.h
+inotify_init
+inotify_init1
+inotify_add_watch
+inotify_rm_watch
+
+# sys/event.h
+kqueue
+kevent

@@ -24,6 +24,11 @@ fn main() {
 - `extern fn chdir(path: ffi.CString): ffi.CInt ! os.Errno` fails with the
   system's error number when it gives -1, or null for a pointer: the call
   gives `err(os.Errno(2))`, shown `os error 2: No such file or directory`.
+- `std.os.linux` already declares Linux's calls, constants and types, with
+  C's names, for the build's architecture: `linux.epoll_create1(0)`,
+  `linux.O_RDONLY`, and `linux.syscall(linux.SYS_getpid)` by number. Import
+  it from a file of Linux, `name_linux.to`; `tondo api std.os.linux.<name>`
+  shows one declaration.
 
 ## Loading a library as the program runs
 

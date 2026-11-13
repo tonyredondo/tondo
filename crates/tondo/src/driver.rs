@@ -363,7 +363,11 @@ fn joined(handle: std::thread::ScopedJoinHandle<'_, Result<Analysis, String>>) -
 pub fn checked_targets(path: &Path) -> Result<Vec<(project::Target, Vec<project::Target>)>, String> {
     let here = target();
     if !path.is_dir() {
-        return Ok(vec![(here, vec![here])]);
+        // A file of some targets, as `watch_linux.to`, is checked for one of
+        // them, this machine's or the nearest (language 6.8).
+        let of = project::targets_of(path).unwrap_or_default();
+        let nearest = of.into_iter().min_by_key(|t| (t.system != here.system, t.arch != here.arch)).unwrap_or(here);
+        return Ok(vec![(nearest, vec![nearest])]);
     }
     let packages = deps::resolve(path, None)?;
     let runs = |t: &project::Target| {
@@ -379,6 +383,17 @@ pub fn checked_targets(path: &Path) -> Result<Vec<(project::Target, Vec<project:
             let (systems, archs) = project::suffixes(&file.path);
             by_system |= systems.is_some();
             by_arch |= archs.is_some();
+            // A module of the standard library of some targets, as
+            // `std.os.linux`, makes the targets differ too.
+            let text = std::fs::read_to_string(&file.path).unwrap_or_default();
+            let imported =
+                text.lines().filter_map(|line| line.trim().strip_prefix("import std.")?.split_whitespace().next());
+            if let Some((systems, archs)) =
+                imported.filter_map(stdlib::targeted).reduce(|a, b| (a.0 || b.0, a.1 || b.1))
+            {
+                by_system |= systems;
+                by_arch |= archs;
+            }
         }
     }
     let mut kept: Vec<(project::Target, Vec<project::Target>)> = Vec::new();

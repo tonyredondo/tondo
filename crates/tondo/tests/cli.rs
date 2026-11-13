@@ -526,6 +526,47 @@ fn builds_the_files_of_its_architecture() {
     assert!(err.contains("names the architectures the package runs on: `x64`, `arm64`"), "{err}");
 }
 
+/// A module of the standard library of one system (standard library
+/// 14.45): from a common file, the error says where it is missing and what
+/// to write; from a file of Linux, of a project or alone, it checks on any
+/// machine, and on Linux its calls run, `syscall` with up to six arguments.
+#[test]
+fn imports_a_module_of_one_system() {
+    let dir = scratch("system-modules");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\n").unwrap();
+    let linux = "import std.console\nimport std.env\nimport std.os.linux\n\nfn main() {\n    \
+                 let process = unsafe { linux.syscall(linux.SYS_getpid) }\n    \
+                 console.println(\"{process == ok(env.processId())}\")\n    \
+                 console.println(\"{unsafe { linux.chdir(\"/no/such/directory\") }}\")\n    \
+                 _ = unsafe { linux.syscall(linux.SYS_getpid, 1, 2, 3, 4, 5, 6, 7) }\n}\n";
+    std::fs::write(dir.join("src/main.to"), linux).unwrap();
+    let (_, err, code) = tondo(&dir, &["check"]);
+    assert_eq!(code, 1, "{err}");
+    let missing = "`std.os.linux` is of Linux only: import it from a file of Linux, as `name_linux.to`, or limit the \
+                   package with `systems = [\"linux\"]` in tondo.toml";
+    assert!(err.contains(missing), "{err}");
+    assert!(cfg!(target_os = "macos") || err.contains(&format!("on macOS: {missing}")), "{err}");
+    std::fs::remove_file(dir.join("src/main.to")).unwrap();
+    std::fs::write(dir.join("src/main_linux.to"), linux).unwrap();
+    std::fs::write(dir.join("src/main_macos.to"), "fn main() {}\n").unwrap();
+    let (out, err, code) = tondo(&dir, &["check"]);
+    assert_eq!((out.as_str(), code), ("", 0), "{err}");
+    // A file alone is checked for the system its name says, on any machine.
+    std::fs::write(dir.join("alone_linux.to"), linux).unwrap();
+    std::fs::write(dir.join("alone_macos.to"), linux).unwrap();
+    let (_, err, code) = tondo(&dir, &["check", "alone_linux.to"]);
+    assert_eq!(code, 0, "{err}");
+    let (_, err, code) = tondo(&dir, &["check", "alone_macos.to"]);
+    assert!(code == 1 && err.contains(missing), "{err}");
+    if cfg!(target_os = "linux") {
+        let (out, err, code) = tondo(&dir, &["run"]);
+        assert_eq!(out, "true\nerr(os error 2: No such file or directory)\n", "{err}");
+        assert_ne!(code, 0);
+        assert!(err.contains("a system call takes at most six arguments, and this one has 7"), "{err}");
+    }
+}
+
 /// The level of processor a build is for (toolchain 7.8): `baseline`,
 /// another with `--cpu` or the root package's `[build] cpu`, each a build of
 /// its own, and a level that does not exist named with those that do.

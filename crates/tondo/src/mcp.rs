@@ -2127,7 +2127,7 @@ fn resource(uri: &str) -> Option<(&'static str, String)> {
     if let Some(topic) = uri.strip_prefix("tondo://guide/") {
         return crate::guide::topic(topic).map(|text| ("text/markdown", text.to_string()));
     }
-    crate::api::standard(uri.strip_prefix("tondo://api/")?).map(|text| ("text/plain", text))
+    crate::api::shown(uri.strip_prefix("tondo://api/")?).map(|text| ("text/plain", text))
 }
 
 /// How a tool acts on the world, as its annotations say.

@@ -2564,7 +2564,7 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
     // What is shown: the module or file named, or each module of the
     // project.
     let (key, shown) = match target {
-        Some(name) if let Some(text) = tondo::api::standard(&name) => ("module", vec![(name, text)]),
+        Some(name) if let Some(text) = tondo::api::shown(&name) => ("module", vec![(name, text)]),
         Some(file) if file.ends_with(".to") => ("file", vec![(file.clone(), render(&[PathBuf::from(file)])?)]),
         Some(name) => {
             let modules = modules().unwrap_or_default();

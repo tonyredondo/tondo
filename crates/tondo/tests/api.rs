@@ -1,5 +1,6 @@
 //! `tondo api` (toolchain 7.2) and `tondo fmt --compact` (7).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -205,8 +206,9 @@ fn standard_examples() -> Vec<(String, usize, String)> {
 #[test]
 fn every_standard_type_has_an_example() {
     let mut missing = Vec::new();
+    // C's types, which `tondo bind` writes, are C's to explain.
     for module in tondo::api::standard_modules() {
-        let Some(text) = tondo::api::standard(&module) else { continue };
+        let Some(text) = tondo::api::shown(&module) else { continue };
         for declaration in tondo::api::declarations(&text) {
             let kind = declaration["kind"].as_str().unwrap_or_default();
             let doc = declaration["doc"].as_str().unwrap_or_default();
@@ -273,9 +275,12 @@ fn standard_examples_compile() {
                                 write(case.join("src/main_test.to"), code);
                                 tondo(&case, &["test", "--list"])
                             }
+                            // One of a module of one system, in a file of it.
                             false => {
-                                write(case.join("main.to"), code);
-                                tondo(&case, &["check", "main.to"])
+                                let system = ["linux", "macos"].into_iter().find(|s| file.ends_with(&format!("_{s}")));
+                                let main = format!("main{}.to", system.map(|s| format!("_{s}")).unwrap_or_default());
+                                write(case.join(&main), code);
+                                tondo(&case, &["check", &main])
                             }
                         };
                         if status != 0 {
@@ -301,18 +306,27 @@ fn standard_examples_compile() {
 #[test]
 fn the_standard_library_has_no_warnings() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("std-warnings");
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let (modules, stderr, status) = tondo(&dir, &["api", "--list"]);
     assert_eq!(status, 0, "{stderr}");
     let names = modules.lines().filter_map(|line| line.split_whitespace().next());
-    let imports: String = names
-        .map(|name| name.trim_start_matches("std."))
-        .filter(|name| !matches!(*name, "prelude" | "testing"))
-        .map(|name| format!("import std.{name}\n"))
-        .collect();
-    std::fs::write(dir.join("all.to"), format!("{imports}\nfn main() {{}}\n")).unwrap();
+    // Those of one system, as `std.os.linux`, from a file of it.
+    let mut files: HashMap<&str, String> = HashMap::new();
+    for name in names.map(|name| name.trim_start_matches("std.")).filter(|n| !matches!(*n, "prelude" | "testing")) {
+        let file = name.rsplit('.').next().filter(|last| matches!(*last, "linux" | "macos")).unwrap_or_default();
+        files.entry(file).or_default().push_str(&format!("import std.{name}\n"));
+    }
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"all\"\n").unwrap();
+    for (system, imports) in &files {
+        let (file, main) = match *system {
+            "" => ("main.to".to_string(), "\nfn main() {}\n"),
+            system => (format!("main_{system}.to"), ""),
+        };
+        std::fs::write(dir.join(file), format!("{imports}{main}")).unwrap();
+    }
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
-        .args(["check", "all.to", "--json"])
+        .args(["check", "--json"])
         .env("TONDO_STD_WARNINGS", "1")
         .current_dir(&dir)
         .output()

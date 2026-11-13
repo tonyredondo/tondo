@@ -286,8 +286,23 @@ pub fn search<'a>(query: &str, modules: impl IntoIterator<Item = (String, &'a st
     found.into_iter().map(|(_, found)| found).collect()
 }
 
-/// The API of a standard module: `std.http`, `std.fs` or `prelude`.
+/// The API of a standard module: `std.http`, `std.fs` or `prelude`, with
+/// the declarations of C that `tondo bind` writes for one, as
+/// `std.os.linux`'s, which `shown` leaves out.
 pub fn standard(name: &str) -> Option<String> {
+    let shown = shown(name)?;
+    let Some(bound) = name.strip_prefix("std.").and_then(crate::stdlib::bound_text) else { return Some(shown) };
+    // Without the comment at its top, which says how it was written.
+    let rendered = render(&bound, false);
+    let declarations = rendered.lines().skip_while(|line| line.is_empty() || line.starts_with("// "));
+    Some(format!("{}\n\n{}\n", shown.trim_end(), declarations.collect::<Vec<_>>().join("\n").trim_end()))
+}
+
+/// What `tondo api` shows of a standard module: its API, but the
+/// declarations of C that `tondo bind` writes for it, thousands of names
+/// that differ by target, which `tondo api <module>.<name>` and `tondo api
+/// --search` find.
+pub fn shown(name: &str) -> Option<String> {
     if name == "prelude" {
         let source = crate::stdlib::text("prelude")?;
         // `Panic` is the prelude's, from a module of the toolchain: its
@@ -561,13 +576,14 @@ pub struct Declared {
 }
 
 /// What the standard modules declare that a program names once it imports
-/// them, gathered once.
+/// them, gathered once: not C's, of `tondo bind`, which a program asks of
+/// its module by name.
 pub fn standard_declarations() -> &'static [Declared] {
     static FOUND: std::sync::OnceLock<Vec<Declared>> = std::sync::OnceLock::new();
     FOUND.get_or_init(|| {
         let mut found = Vec::new();
         for module in standard_modules().into_iter().filter(|m| m != "prelude") {
-            let Some(text) = standard(&module) else { continue };
+            let Some(text) = shown(&module) else { continue };
             for declaration in declarations(&text) {
                 let kind = declaration["kind"].as_str().unwrap_or_default();
                 let name = declaration["name"].as_str().unwrap_or_default();
@@ -599,12 +615,13 @@ mod tests {
     use super::*;
 
     /// Every public declaration of the standard library says what it does,
-    /// which `tondo api` and an editor's completion show.
+    /// which `tondo api` and an editor's completion show; but C's, which
+    /// `tondo bind` writes.
     #[test]
     fn every_standard_declaration_is_documented() {
         let mut missing = Vec::new();
         for module in standard_modules() {
-            let text = standard(&module).expect("a standard module");
+            let text = shown(&module).expect("a standard module");
             for declared in declarations(&text) {
                 let kind = declared["kind"].as_str().unwrap_or_default();
                 let documented = !declared["doc"].as_str().unwrap_or_default().is_empty();

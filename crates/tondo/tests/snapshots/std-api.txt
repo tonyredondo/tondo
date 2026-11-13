@@ -2478,6 +2478,8 @@ pub type Tls = {
 impl Display for Errno
 impl reflect.Reflect for Errno
 pub type Errno = Int32
+== std.os.linux
+pub unsafe fn syscall(number: Int, arguments: ...Int): Int ! os.Errno
 == std.path
 pub fn clean(path: String): String
 pub fn extension(path: String): String?
