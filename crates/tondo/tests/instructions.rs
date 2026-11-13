@@ -49,6 +49,7 @@ fn crc32c(mut crc: u32, bytes: &[u8]) -> u32 {
     crc
 }
 
+#[cfg(target_arch = "x86_64")]
 fn deposit(value: u64, mask: u64) -> u64 {
     let (mut out, mut taken) = (0, 0);
     for bit in (0..64).filter(|bit| mask >> bit & 1 == 1) {
@@ -58,6 +59,7 @@ fn deposit(value: u64, mask: u64) -> u64 {
     out
 }
 
+#[cfg(target_arch = "x86_64")]
 fn extract(value: u64, mask: u64) -> u64 {
     let (mut out, mut put) = (0, 0);
     for bit in (0..64).filter(|bit| mask >> bit & 1 == 1) {
