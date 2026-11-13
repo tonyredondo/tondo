@@ -6618,3 +6618,9 @@ not close its channel when dropped: the plugin's reader closes them, and the run
 a question of its own. And an annotation before a trait, which the parser dropped, is checked and
 kept; one before any declaration that reads none is an error.
 
+A library plugin is a second runtime in the program's process, with its own mimalloc. On macOS
+mimalloc 3 keeps each thread's heap in a fixed slot of the thread's storage, which every copy in
+a process reads: the library allocated from the program's heap with its own bookkeeping, and what
+it wrote read back as zeros, while from a C program, with one copy, it worked. The runtime takes
+mimalloc 2 on macOS, which keeps the heap in a thread-local of each copy, as mimalloc 3 does on
+Linux.
