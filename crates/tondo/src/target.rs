@@ -380,10 +380,21 @@ mod tests {
         // Every feature of its architecture is set, on or off, and no other.
         let v3 = Cpu::parse("x86-64-v3", Arch::X64, None).unwrap();
         let settings: Vec<_> = v3.settings().collect();
-        assert_eq!(settings.len(), 19);
+        assert_eq!(settings.len(), 21);
         assert!(settings.contains(&("has_avx2", true)) && settings.contains(&("has_avx512f", false)));
         assert_eq!(v3.needed().lines().next(), Some("x86-64-v3"));
         assert!(v3.needed().lines().any(|line| line == "avx2"));
+        // A function that needs `Bmi2` and `Aes` beyond the baseline gets
+        // their flags, and only those; on arm64 they have none.
+        let baseline = Cpu::parse("baseline", Arch::X64, None).unwrap();
+        let feature = |name| 1 << super::FEATURE_NAMES.iter().position(|n| *n == name).unwrap();
+        let on =
+            |cpu: &Cpu, needs| cpu.settings_with(needs).filter(|(_, on)| *on).map(|(flag, _)| flag).collect::<Vec<_>>();
+        let more = on(&baseline, feature("Bmi2") | feature("Aes"));
+        assert_eq!(more.len(), baseline.flags.len() + 2, "{more:?}");
+        assert!(more.contains(&"has_bmi2") && more.contains(&"has_aes"));
+        let arm = Cpu::parse("baseline", Arch::Arm64, None).unwrap();
+        assert!(on(&arm, feature("Aes") | feature("Crc32")).is_empty());
     }
 
     #[test]

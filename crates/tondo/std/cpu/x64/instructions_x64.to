@@ -76,7 +76,11 @@ pub fn aesDecryptLast(state: simd.Vector128[Byte], key: simd.Vector128[Byte]): s
 /// of both, 1 the high half of `a` and the low half of `b`, 16 the low half
 /// of `a` and the high half of `b`, 17 the high halves of both. Needs
 /// `Pclmulqdq`.
-pub fn carrylessMultiply(a: simd.Vector128[UInt], b: simd.Vector128[UInt], halves: Int): simd.Vector128[UInt] {
+pub fn carrylessMultiply(
+    a: simd.Vector128[UInt],
+    b: simd.Vector128[UInt],
+    halves: Int,
+): simd.Vector128[UInt] {
     match halves {
         0 => carrylessMultiply(a, b, 0)
         1 => carrylessMultiply(a, b, 1)

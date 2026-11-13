@@ -1,0 +1,16 @@
+// E1809: `main` may need no feature of the processor beyond the build's
+// level, and it calls, outside a guard, a function that uses an instruction
+// of std.cpu.x64 (toolchain 7.8).
+// expect-platform: x86_64
+
+import std.cpu.x64
+
+fn spread(value: UInt): UInt {
+    x64.depositBits(value, 0xF0)
+}
+
+fn main() {
+    _ = spread(1)
+}
+
+// expect-error: E1809 this call needs `Bmi2` of the processor, and `main`, or the top level of a script, cannot need one: `main` calls `spread`, which uses `x64.depositBits`; put the call under `if cpu.has(cpu.Feature.Bmi2) { ... }`
