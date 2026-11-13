@@ -634,9 +634,12 @@ impl SyntheticAmode {
     pub(crate) fn aligned(&self) -> bool {
         match self {
             SyntheticAmode::Real(addr) => addr.aligned(),
-            &SyntheticAmode::IncomingArg { .. }
-            | SyntheticAmode::SlotOffset { .. }
-            | SyntheticAmode::ConstantOffset { .. } => true,
+            // Tondo: a stack slot is aligned as its data asks, which for a
+            // record of Tondo is 8: a vector in it may be at an address that
+            // is no multiple of 16, which an SSE instruction's operand must
+            // be.
+            SyntheticAmode::SlotOffset { .. } => false,
+            &SyntheticAmode::IncomingArg { .. } | SyntheticAmode::ConstantOffset { .. } => true,
         }
     }
 

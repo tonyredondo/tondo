@@ -68,6 +68,13 @@ instructions, `TondoRRR`, `TondoRRMod`, `TondoRR` and `Isb`, in
 `src/isa/aarch64/inst.isle` and `inst/`, with their encodings from the
 Arm Architecture Reference Manual, as `llvm-mc` gives them too.
 
+Two operands of x86-64 are no longer taken as aligned, as an SSE
+instruction faults on one in memory that is not a multiple of 16: that of
+`cmpps` and `cmppd`, which the assembler's meta crate declared without
+`align`, and an address in a stack slot, which Cranelift took as aligned
+and Tondo aligns to 8, so that a vector in a record's frame could be read
+from where no SSE instruction may read it.
+
 And the vectors of 256 bits on x86-64 with AVX2, which `std.simd` makes
 and Cranelift does not: their VEX.256 instructions, with operands `ymm1`
 to `ymm3`, `ymm_m256` and `m256`, in `src/instructions/wide.rs` of the
