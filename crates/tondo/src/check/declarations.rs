@@ -342,6 +342,9 @@ impl<'a> Checker<'a> {
         ) {
             self.types.handle(Handle::Native, Ty::UNIT);
         }
+        if module == StdModule::InternalFs {
+            self.types.handle(Handle::Owned, Ty::UNIT);
+        }
         if matches!(module, StdModule::InternalFs | StdModule::InternalTime | StdModule::InternalImage) {
             self.types.intern(TyKind::Array(Ty::INT));
             self.types.intern(TyKind::Array(Ty::STRING));
@@ -494,6 +497,9 @@ impl<'a> Checker<'a> {
                 )),
                 "Native",
             ) => Some(self.types.intern(TyKind::Handle(Handle::Native, Ty::UNIT))),
+            (Some(ModuleName::Module(StdModule::InternalFs)), "Owned") => {
+                Some(self.types.intern(TyKind::Handle(Handle::Owned, Ty::UNIT)))
+            }
             (Some(ModuleName::Module(StdModule::InternalReflect)), "Box") => {
                 Some(self.types.intern(TyKind::Handle(Handle::ReflectBox, Ty::UNIT)))
             }

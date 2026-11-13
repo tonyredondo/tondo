@@ -7156,6 +7156,78 @@ pub unsafe fn syscall(number: Int, arguments: ...Int): Int ! os.Errno
   su núcleo, y un programa llama a la librería del sistema, con `extern fn`
   o con las declaraciones de su módulo.
 
+#### `std.os.macos`
+
+`std.os.macos` es de macOS y declara, como `std.os.linux`, lo que `tondo bind
+--included` escribe de los headers comunes y de `sys/event.h`, una vez por
+arquitectura y desde un mismo SDK. Una macro que no es un número que una
+constante pueda guardar, como `FIONREAD`, que es `_IOR('f', 127, int)`, no
+se declara.
+
+#### `std.os.unix`
+
+`std.os.unix` es de Linux y de macOS, y se importa desde un archivo común.
+Tiene:
+
+- Las declaraciones de C que los cuatro targets tienen con una forma: una
+  constante con su tipo, aunque su valor cambie; una función con su firma,
+  sin contar los nombres de sus parámetros y con cada alias escrito como lo
+  que nombra; un tipo o un alias por su nombre, aunque su disposición cambie,
+  como `termios`. Cada target tiene además lo que esas declaraciones nombran
+  y solo él declara, como la unión que glibc pone en `termios`. Las funciones
+  que toman los nombres de las llamadas seguras, como `open` o `read`, se
+  quedan en `std.os.linux` y `std.os.macos`.
+- Las llamadas seguras, que hacen lo que la función de C del mismo propósito
+  (`open`, `read`, `write`, `lseek`, `pipe`, `dup`, `fcntl`, `ioctl`,
+  `isatty`, `tcgetattr`, `tcsetattr`, `poll`, `kill`, y `mmap` con `munmap`):
+
+~~~tondo pseudocode
+pub type Fd
+pub unsafe fn Fd.adopt(number: Int32): Fd
+pub fn Fd.number(self): Int32
+pub fn Fd.standardInput(): Fd
+pub fn Fd.standardOutput(): Fd
+pub fn Fd.standardError(): Fd
+pub fn Fd.close(self): !os.Errno
+
+pub fn open(path: String, flags: Int32, mode: Int32 = 0o644): Fd ! os.Errno
+pub fn read(from: ref Fd, into: mut Array[Byte]): Int ! os.Errno
+pub fn write(to: ref Fd, bytes: Array[Byte]): Int ! os.Errno
+pub fn seek(on: ref Fd, offset: Int, from: Int32): Int ! os.Errno
+pub fn pipe(): (Fd, Fd) ! os.Errno
+pub fn duplicate(of: ref Fd): Fd ! os.Errno
+pub fn control(on: ref Fd, command: Int32, argument: Int = 0): Int32 ! os.Errno
+pub unsafe fn deviceControl(on: ref Fd, request: UInt, argument: Pointer[ffi.Void]): Int32 ! os.Errno
+pub fn isTerminal(on: ref Fd): Bool
+pub fn terminalMode(of: ref Fd): termios ! os.Errno
+pub fn setTerminalMode(of: ref Fd, mode: termios, when: Int32): !os.Errno
+pub fn poll(descriptors: mut Array[pollfd], timeout: time.Duration? = none): Int ! os.Errno
+pub fn signal(pid: Int32, number: Int32): !os.Errno
+
+pub type Mapping
+pub unsafe fn Mapping.of(file: ref Fd, length: Int, protection: Int32, flags: Int32, offset: Int = 0): Mapping ! os.Errno
+pub unsafe fn Mapping.anonymous(length: Int, protection: Int32, flags: Int32): Mapping ! os.Errno
+pub fn Mapping.pointer(self): Pointer[Byte]
+pub fn Mapping.length(self): Int
+pub fn Mapping.close(self): !os.Errno
+~~~
+
+- `Fd` y `Mapping` no son `Copy` (8.10 del lenguaje): tienen un dueño, que
+  cierra el descriptor o desmapea la memoria cuando su valor se va, como
+  acción de salida; `close` lo hace antes y da el error del sistema. Los tres
+  descriptores estándar nunca se cierran. `Fd.adopt` es `unsafe` porque el
+  `Fd` cerrará un número que el programa obtuvo en otro sitio.
+- `read` pone en `into`, desde su inicio, como mucho `into.length()` bytes y
+  da cuántos: 0 al final de lo que hay que leer. `write` da cuántos escribió,
+  que pueden ser menos.
+- Los flags son números que se combinan con `|`, por los nombres de C:
+  `unix.open(path, unix.O_WRONLY | unix.O_CREAT)`. `Mapping.anonymous` añade
+  `MAP_ANON` a los suyos.
+- Una llamada que una señal interrumpe se hace de nuevo mientras falle con
+  `EINTR`; `poll` con `timeout` espera, en total, no más que ese tiempo.
+- `std.fs`, `std.net` y `std.process` no cambian: son lo que un programa usa
+  primero, igual en cada sistema, y `std.os` es lo que hay debajo.
+
 ## 15. Contrato exigido a cada módulo
 
 Antes de considerarse especificado, cada módulo debe incluir:

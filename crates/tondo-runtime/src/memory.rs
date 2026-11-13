@@ -72,6 +72,13 @@ pub unsafe extern "C" fn tondo_rt_memory_bytes(from: *const u8, count: i64) -> *
     byte_array(unsafe { std::slice::from_raw_parts(from, count.max(0) as usize) })
 }
 
+/// `store`: the bytes of `bytes` written at `to`, which has room for them.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_memory_store(bytes: *mut ArrayHeader, to: *mut u8) {
+    let bytes = unsafe { array_items::<u8>(bytes) };
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), to, bytes.len()) };
+}
+
 /// Calls the C function at `target` with the arguments of `frame`: six
 /// integer registers, eight vector registers, the number of stack words
 /// and of vector registers used, then the stack words. The results come

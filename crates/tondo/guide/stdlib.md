@@ -20,6 +20,8 @@ std.env        args, environment, directories, processors, hostname, what was bu
 std.cpu        what the processor has beyond the build's level (`cpu.has`)
 std.os         the system's error number, `os.Errno`, which a C function fails with
 std.os.linux   Linux's calls with C's names, and `syscall`, from a `_linux.to` file
+std.os.macos   macOS's calls with C's names, from a `_macos.to` file
+std.os.unix    descriptors that close as they go, read, write, poll, terminals, mappings
 std.process    run programs and pipelines, capture output, signals
 std.time       Duration, sleep, now, dates and their calendar, time zones, strftime formats
 std.json       encode and decode any type, navigate dynamic JSON

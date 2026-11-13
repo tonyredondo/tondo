@@ -109,6 +109,8 @@ uses them: the same record is read from JSON and written as YAML.
 | [std.cpu](cpu.md) | what the processor has beyond the level the program was built for |
 | [std.os](os.md) | what is of each system: its error number, `os.Errno` |
 | [std.os.linux](os.linux.md) | Linux's calls, constants and types with C's names, and `syscall` |
+| [std.os.macos](os.macos.md) | macOS's calls, constants and types with C's names |
+| [std.os.unix](os.unix.md) | what Linux and macOS share: descriptors, `read`, `write`, `poll`, terminals, mappings |
 
 ## Text, numbers and time
 

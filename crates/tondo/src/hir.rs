@@ -1225,6 +1225,12 @@ impl StdFn {
             // They observe the process; the others take it.
             StdFn::Process(ProcessFn::Stream(_) | ProcessFn::Id) => vec![Mode::Ref],
             StdFn::Process(ProcessFn::Signal) => vec![Mode::Ref, Mode::Value],
+            // A value of one owner is lent to the runtime, which keeps none.
+            StdFn::Native(index) => NATIVES[index as usize]
+                .params
+                .iter()
+                .map(|param| if *param == NativeTy::Owned { Mode::Ref } else { Mode::Value })
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -1259,6 +1265,8 @@ pub enum NativeTy {
     Char,
     /// A value of the runtime (`std.internal.http`).
     Object,
+    /// A value of the runtime with one owner (`std.os.unix`'s descriptors).
+    Owned,
     /// A plan of `std.process`.
     Command,
     Pipeline,
@@ -1440,6 +1448,7 @@ pub const NATIVES: &[Native] = {
         memory("cString", &[String], BytePointer, "tondo_rt_memory_c_string"),
         memory("fromCString", &[BytePointer], String, "tondo_rt_memory_from_c_string"),
         memory("bytes", &[BytePointer, Int], Bytes, "tondo_rt_memory_bytes"),
+        memory("store", &[Bytes, BytePointer], Unit, "tondo_rt_memory_store"),
         memory("fromCChars", &[Bytes], String, "tondo_rt_memory_from_c_chars"),
         model("recording", &[], Bool, "tondo_rt_model_recording"),
         model("report", &[String], Unit, "tondo_rt_model_report"),
@@ -1575,6 +1584,14 @@ pub const NATIVES: &[Native] = {
         fs("walk", &[String, Int, Bool], Object, "tondo_rt_files_walk"),
         fs("hostError", &[Object], Int, "tondo_rt_files_host_error"),
         fs("osErrorText", &[Int], String, "tondo_rt_os_error_text"),
+        // The descriptors and mappings of `std.os.unix`.
+        fs("descriptor", &[Int, Bool], Owned, "tondo_rt_os_descriptor"),
+        fs("descriptorNumber", &[Owned], Int, "tondo_rt_os_descriptor_number"),
+        fs("descriptorClose", &[Owned], Int, "tondo_rt_os_descriptor_close"),
+        fs("mapping", &[Int, Int], Owned, "tondo_rt_os_mapping"),
+        fs("mappingAddress", &[Owned], Int, "tondo_rt_os_mapping_address"),
+        fs("mappingLength", &[Owned], Int, "tondo_rt_os_mapping_length"),
+        fs("mappingClose", &[Owned], Int, "tondo_rt_os_mapping_close"),
         fs("temporary", &[Bool, String, String], Object, "tondo_rt_files_temporary"),
         fs("setPermissions", &[String, Int], Object, "tondo_rt_files_set_permissions"),
         fs("symlink", &[String, String], Object, "tondo_rt_files_symlink"),

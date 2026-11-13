@@ -6407,3 +6407,26 @@ which must be `unsafe` so that whoever calls it later keeps the pointer valid. A
 no value that leaves its scope, and the fix the error offered, an `unsafe` closure, was not one a
 `defer` can take, so the memory could not be freed there at all. It now uses the pointer as a
 block does, with its raw operations inside `unsafe { ... }`.
+
+## What Linux and macOS share, and the safe calls on descriptors
+
+`std.os.unix` is what a program that runs on both systems imports from a common file. Its C
+declarations are those the four targets have with one shape, which the generator finds by
+comparing them: a constant by its type, as its value may differ; a function by its signature
+without its parameters' names and with every alias written as what it names, since macOS writes
+`Int` where Linux writes `off_t`; a type or an alias by its name alone, as `termios` holds other
+fields on each system. What a shared declaration names that only one target declares, as the
+union glibc puts in `termios`, goes in that target's file too, and a declaration that names what
+its target lacks is left out: the generator checks each target's file with `tondo check` until all
+four check, rather than reading C's types itself.
+
+The safe calls are written in Tondo over the C library, each made again on `EINTR`. `Fd` and
+`Mapping` have one owner, through a handle of the runtime that is not `Copy`, as the language lets
+the library declare one: a handle that every copy shares would close the descriptor when its last
+copy went, not when its owner did. `close` gives the error of closing, which the value's going
+cannot. The calls take C's memory by address in the closures that retry them, as a closure that
+any task may call holds no raw pointer.
+
+Both architectures of macOS come from one SDK, the x86-64 one through `cc -arch x86_64`: the two
+runners GitHub has carry SDKs of different versions, whose declarations differ by more than the
+architecture.

@@ -30,6 +30,7 @@ mod cpu;
 mod crypto;
 mod cycles;
 mod debugger;
+mod descriptors;
 mod diagnostics;
 mod env;
 mod events;

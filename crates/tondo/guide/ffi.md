@@ -29,6 +29,10 @@ fn main() {
   `linux.O_RDONLY`, and `linux.syscall(linux.SYS_getpid)` by number. Import
   it from a file of Linux, `name_linux.to`; `tondo api std.os.linux.<name>`
   shows one declaration.
+- `std.os.unix`, from any file, has what Linux and macOS share, and safe
+  calls on descriptors: `unix.open(path, unix.O_RDONLY)` gives a `unix.Fd`,
+  which closes when its value goes; `unix.read(ref fd, mut into)`,
+  `unix.write`, `unix.poll`, `unix.pipe()`, terminals and `unix.Mapping`.
 
 ## Loading a library as the program runs
 

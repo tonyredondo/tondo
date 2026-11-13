@@ -2102,7 +2102,13 @@ impl<'a> Checker<'a> {
                 };
                 let native = &hir::NATIVES[index];
                 let params = native.params.iter().map(|&t| self.native_ty(t)).collect();
-                let signature = Signature::simple(params, self.native_ty(native.result));
+                let mut signature = Signature::simple(params, self.native_ty(native.result));
+                // A value of one owner is lent to the runtime, which keeps none.
+                for (mode, param) in signature.modes.iter_mut().zip(native.params) {
+                    if matches!(param, hir::NativeTy::Owned) {
+                        *mode = ast::Mode::Ref;
+                    }
+                }
                 let target = CallTarget::new(Callee::Std(StdFn::Native(index as u16)), signature, expected);
                 self.call_signature(cx, target, None, args, span)
             }

@@ -242,6 +242,9 @@ pub enum Handle {
     /// A value of the runtime, such as an HTTP client or response
     /// (`std.internal.http`).
     Native,
+    /// A value of the runtime with one owner, which is not `Copy` (8.10):
+    /// a descriptor or a mapping of `std.os.unix`.
+    Owned,
     /// `Ref[T]` (16.10): a value with an identity, shared by its copies,
     /// which compare and hash by that identity.
     Ref,
@@ -296,6 +299,7 @@ impl Handle {
             Handle::Regex => "regex.NativeRegex",
             Handle::ReflectBox => "reflect.Box",
             Handle::Native => "internal.Native",
+            Handle::Owned => "internal.Owned",
             Handle::Ref => "Ref",
             Handle::Weak => "WeakRef",
         }
@@ -313,6 +317,7 @@ impl Handle {
                 | Handle::Guard
                 | Handle::File
                 | Handle::Process
+                | Handle::Owned
         )
     }
 
@@ -1938,7 +1943,8 @@ impl Types {
                         | Handle::Clock
                         | Handle::Regex
                         | Handle::ReflectBox
-                        | Handle::Native,
+                        | Handle::Native
+                        | Handle::Owned,
                         _,
                     ) => {
                         return handle.name().to_string();

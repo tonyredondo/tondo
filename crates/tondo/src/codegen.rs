@@ -2777,7 +2777,7 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
                         Handle::JsonWriter => Rt::JsonWriterRelease,
                         Handle::Clock => Rt::ClockRelease,
                         Handle::Regex => Rt::RegexRelease,
-                        Handle::Native => Rt::NativeRelease,
+                        Handle::Native | Handle::Owned => Rt::NativeRelease,
                         Handle::ReflectBox => Rt::ReflectRelease,
                         _ => Rt::SyncRelease,
                     };

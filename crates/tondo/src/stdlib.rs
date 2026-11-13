@@ -68,6 +68,20 @@ const SOURCES: &[(&str, &[(&str, &str)])] = &[
         "os.linux",
         &[file!("os/linux/syscall_linux"), file!("os/linux/calls_linux_x64"), file!("os/linux/calls_linux_arm64")],
     ),
+    (
+        "os.macos",
+        &[file!("os/macos/about_macos"), file!("os/macos/calls_macos_x64"), file!("os/macos/calls_macos_arm64")],
+    ),
+    (
+        "os.unix",
+        &[
+            file!("os/unix/calls_unix"),
+            file!("os/unix/shared_linux_x64"),
+            file!("os/unix/shared_linux_arm64"),
+            file!("os/unix/shared_macos_x64"),
+            file!("os/unix/shared_macos_arm64"),
+        ],
+    ),
     ("datetime", &[file!("datetime")]),
     ("csv", &[file!("csv")]),
     ("log", &[file!("log")]),
