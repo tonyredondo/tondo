@@ -92,3 +92,16 @@ lacks is written, as a rule marked `Tondo:`. To move to a newer Cranelift:
 copy the published crates here, drop `src/isa/riscv64`, `src/isa/s390x` and
 `src/isa/pulley_shared` but their `.isle` files, and add the rules and the
 instructions again, but those Cranelift has by then.
+
+`libmimalloc-sys/` is the crate of that name, 0.1.49, from crates.io, with
+mimalloc 3.6.1 in `c_src/mimalloc/v3` in place of the 3.3.2 it carries: its
+`include` and `src` directories and its license, as upstream tags them. From
+3.4.4 on, mimalloc finds a thread's heap on macOS through a key of POSIX
+threads of each copy, read with assembly, rather than through fixed slots of
+the thread's storage, which every copy in a process shares: a library of
+Tondo that a program of Tondo loads then keeps a heap of its own. Two changes,
+marked `Tondo:`: the size of a block, which a string being built asks for
+each time it grows, skips the division that finds where a block starts on a
+page that has no pointer inside a block, as 3.3 did, which made building a
+string of 100 parts 5% slower; and the build script compiles the C again when
+it changes. `c_src/mimalloc/v2` and the rest are as published.

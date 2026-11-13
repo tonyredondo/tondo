@@ -20,3 +20,4 @@ cranelift-codegen = { path = "vendor/cranelift-codegen" }
 cranelift-codegen-meta = { path = "vendor/cranelift-codegen-meta" }
 cranelift-assembler-x64 = { path = "vendor/cranelift-assembler-x64" }
 cranelift-assembler-x64-meta = { path = "vendor/cranelift-assembler-x64-meta" }
+libmimalloc-sys = { path = "vendor/libmimalloc-sys" }

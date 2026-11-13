@@ -6710,3 +6710,19 @@ in the call cannot fill both: the count that one version takes is an error in th
 as it runs, as with an array spread. `Vector[T]` gives `of` up, as a build error that names `all`,
 `load` and the `of` of `Vector128[T]`, where the count is known when the code is written. Keeping
 `of` would have kept `Vector[T]` at 128 bits in every version.
+
+## mimalloc 3.6.1, carried in `vendor/`, on every system
+
+mimalloc 3.3 found a thread's heap on macOS in fixed slots of the thread's storage, which every copy
+in a process shares, so the runtime took mimalloc 2 there for a library of Tondo that a program of
+Tondo loads. mimalloc 2 was 6 to 11% slower than 3 on an M2 in the benchmarks that allocate most:
+building and interpolating strings, parsing numbers, records of strings. From 3.4.4 on, mimalloc
+finds the heap on macOS through a key of POSIX threads of each copy, read with assembly. The crate
+`libmimalloc-sys` still carries 3.3.2, so the workspace carries it in `vendor/` with 3.6.1, which
+every system takes. 3.6.1 asks where a block starts each time a string being built asks the size
+of its block, a division that 3.3 skipped on a page with no pointer inside a block; the copy skips
+it again, marked `Tondo:`, as it made building a string of 100 parts 5% slower. Against mimalloc 2
+on the M2, the benchmarks that allocate most are 6 to 11% faster, and two others 2 to 3% slower:
+the sum of two arrays of floats into a third, and a channel; against 3.3 on Linux, every benchmark
+runs within 1.5% of the instructions it took. The key of the runtime's build holds the vendored
+crate, so a change to its C builds the runtime again.

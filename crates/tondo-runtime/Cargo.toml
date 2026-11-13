@@ -76,11 +76,3 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tondo_staticlib)"] }
 # holds thread-local storage of the initial-exec model, mimalloc's default.
 [target.'cfg(target_env = "musl")'.dependencies]
 mimalloc = { version = "0.1", default-features = false, features = ["local_dynamic_tls"] }
-
-# On macOS, mimalloc 3 keeps each thread's heap in a fixed slot of the
-# thread's own storage, which every copy of mimalloc in a process shares: a
-# library of Tondo that a program of Tondo loads, two runtimes and two
-# mimallocs, allocated from the other's heap, and its writes were lost.
-# mimalloc 2 keeps the heap in a thread-local of each copy's own.
-[target.'cfg(target_os = "macos")'.dependencies]
-mimalloc = { version = "0.1", default-features = false, features = ["v2"] }
