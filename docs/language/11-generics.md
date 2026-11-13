@@ -443,6 +443,7 @@ These need no import:
 | `Iterator[T]` | writes `next(mut self): T?` | `for`, and every adapter |
 | `Additive` | writes `zero`, `plus`, `minus` | `+`, `-`, `sum()` |
 | `Number` | adds `one`, `fromInt`, `times`, `dividedBy` | `*`, `/`, integer literals |
+| `Fractional` | adds nothing: it says that the division keeps the fraction | a bound for code that divides, as a mean |
 
 ```tondo
 import std.console

@@ -392,6 +392,7 @@ fn main() {
     console.println("{table * scale}")
     console.println("{table * 2.0 + 1.0} {table.sumAlong(0)} {table.sumAlong(1)}")
     console.println("{table.max()} {table.indexOfMax()} {table.transposed()}")
+    console.println("{table.mean()} {table.meanAlong(0)} {table.meanAlong(1)}")
 }
 ```
 
@@ -400,6 +401,7 @@ fn main() {
 [[10.0, 200.0, 3000.0], [40.0, 500.0, 6000.0]]
 [[3.0, 5.0, 7.0], [9.0, 11.0, 13.0]] [5.0, 7.0, 9.0] [6.0, 15.0]
 some(6.0) some([1, 2]) [[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]]
+3.5 [2.5, 3.5, 4.5] [2.0, 5.0]
 ```
 
 - `math.Tensor(values, shape)` makes one of an array and a shape, a vector
@@ -413,7 +415,9 @@ some(6.0) some([1, 2]) [[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]]
 - `matmul` is the product of matrices, and `dot` that of two vectors;
   `transposed`, `reshape` and `slice(axis, index)` give the same values in
   another shape or a part of them; `sum` adds everything and
-  `sumAlong(axis)` along one dimension.
+  `sumAlong(axis)` along one dimension, and `mean` and `meanAlong(axis)` are
+  their means, for a tensor of floats: on one of integers they do not
+  compile, and the error says to divide the `sum()` as floats.
 - `at(1, 0)` reads an element and `set(value, 1, 0)` writes one; an index
   out of range is a panic (`P0001`). `min`, `max` and `indexOfMax` give
   options, since a tensor may have no elements.
@@ -518,7 +522,7 @@ much it needs:
 import std.console
 import std.math
 
-fn mean[T: Number](values: Array[T]): T {
+fn mean[T: Fractional](values: Array[T]): T {
     values.sum() / Number.fromInt[T](values.length())
 }
 
@@ -529,13 +533,13 @@ fn hex[T: Integer](value: T): String {
 
 fn main() {
     let prices: Array[math.Decimal] = [19.99, 5.01, 10]
-    console.println("{mean([1, 2, 6])} {mean([1.5, 2.5])} {mean(prices)}")
+    console.println("{mean([1.5, 2.5])} {mean(prices)}")
     console.println("{hex(255u8)} {hex(255u16)} {hex(255)}")
 }
 ```
 
 ```text output
-3 2.0 11.66666666666666666666666666666667
+2.0 11.66666666666666666666666666666667
 ff 00ff 00000000000000ff
 ```
 
@@ -544,6 +548,12 @@ ff 00ff 00000000000000ff
 | `T: Additive` | anything that adds | `+`, `-`, `sum()` |
 | `T: Number` | anything that also multiplies | `*`, `/`, integer literals |
 | `T: Integer` | every integer of the language | all an integer has: `%`, bits, `T.max`, `T.bits`, `T.parse` |
+| `T: Fractional` | a number whose division keeps the fraction: every float, `math.Decimal` | a `/` that does not cut: `1.0 / 2.0` is `0.5` |
+
+`mean` asks for a `Fractional` and not for any `Number`, since the division
+of integers cuts: with `T: Number` the mean of `[1, 2]` would be 1. With the
+bound, `mean([1, 2])` does not compile, and the error says what the function
+asks.
 
 There is no unary minus for a generic `T`: write `Number.fromInt[T](0) - x`.
 
