@@ -1118,7 +1118,12 @@ impl Builder<'_> {
                 self.goto(next);
                 self.switch_to(body);
             }
-            self.way(None, e.span, arm.pattern.span, "arm");
+            // A branch is each arm of a match the program wrote (testing
+            // 10.3): one the compiler wrote, as for `??`, whose patterns are
+            // the whole expression, has none.
+            if arm.pattern.span != e.span {
+                self.way(None, e.span, arm.pattern.span, "arm");
+            }
             self.start(arm.body.span);
             self.in_frame(|b| {
                 let value = b.expr(&arm.body);

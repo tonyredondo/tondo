@@ -1634,6 +1634,16 @@ test logic {
         .map(|l| (l["line"].as_u64().unwrap(), l["count"].as_u64().unwrap()))
         .collect();
     assert_eq!(lines, [(2, 1), (3, 4), (4, 3), (6, 1), (7, 3), (8, 2), (10, 1)]);
+    // A `??` is no branch: the match the compiler writes for it has no
+    // ways, which would count as run whichever ran.
+    let defaulted = project("coverage-default", "test one {\n    assert(first([4]) == 4)\n}\n");
+    let source = "pub fn first(values: Array[Int]): Int {\n    values.first() ?? 0\n}\n\nfn main() {}\n";
+    std::fs::write(defaulted.join("src/main.to"), source).unwrap();
+    let report = defaulted.join("coverage.json");
+    let (_, stderr, status) = tondo(&defaulted, &["test", "--report", &format!("coverage={}", report.display())]);
+    assert_eq!(status, 0, "{stderr}");
+    let covered: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&report).unwrap()).unwrap();
+    assert_eq!(covered["files"][0]["branches"], serde_json::json!([]), "{covered}");
     // Without coverage the build counts nothing, and says nothing of it.
     let (stdout, _, _) = tondo(&dir, &["test"]);
     assert!(!stdout.contains("coverage"), "{stdout}");
