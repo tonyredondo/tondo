@@ -107,7 +107,9 @@ reads its state back with `ffi.fromContext`.
 
 **The runtime comes along.** The library carries Tondo's runtime, which
 starts at the first call. An exported function may use tasks, channels and
-the standard library, and C may call it from any thread.
+the standard library, and C may call it from any thread. The header also
+declares `textkit_stop()`, which ends that runtime, for a program that
+unloads the library or wants its tasks and threads gone before it goes on.
 
 ## Going further
 

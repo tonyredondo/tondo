@@ -90,5 +90,5 @@ table arrives as it was sent.
   calls a function and reads the answer. A program plugin is another
   process, slower to call, and a crash or a leak in it stays there.
   `plugin.Error` says what happened: `Panicked`, `Closed`.
-- A `RendererPlugin` is shared by tasks, and the program it started ends
-  when its last copy goes.
+- A `RendererPlugin` is shared by tasks. When its last copy goes, the
+  program it started ends, and the library it loaded is ended and unloaded.

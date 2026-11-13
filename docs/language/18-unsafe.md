@@ -452,14 +452,19 @@ true false
 - A `Function` keeps its library loaded, so it can be kept and called for as
   long as the program likes. Its `raw()` is the bare `extern fn`, to give to
   C as a callback, and keeps nothing.
-- A library stays loaded until the program ends. `unsafe { library.close() }`
+- A C library stays loaded until the program ends. `unsafe { library.close() }`
   unloads it now, and what is asked of it afterwards is
   `LibraryError.Closed`: the program promises that nothing it took from the
   library is used again and that none of its code is running. One opened
   with `unsafe { ffi.Library.openUnloadable(path) }` is unloaded when the
-  last `Library` and `Function` of it go. Whether the memory is given back
-  is the system's decision, and it keeps a library that says it must stay,
-  as one built by Tondo does today.
+  last `Library` and `Function` of it go.
+- A library that Tondo built is known for what it is, and needs no
+  `openUnloadable`: when its last holder goes, or at `close()`, its runtime
+  is ended first, its tasks cancelled and its threads finished, and then it
+  is unloaded. Whether the memory is given back is the system's decision:
+  Linux unloads the library, and macOS keeps one that has variables of its
+  threads, as Tondo's runtime does, so there it ends, stays, and starts
+  again when it is next loaded.
 - A static executable loads no library, so a build with `--static` or
   `--target` of a program that reaches `ffi.Library` is refused, and says
   to build it without.
@@ -534,8 +539,8 @@ no plugin is installed
   its methods and every type they reach, and a plugin built against another
   is `plugin.Error.Contract`. A panic in the plugin comes back as
   `Panicked`, and a program that ended as `Closed`.
-- A `GreeterPlugin` is shared by tasks, and the program it started ends
-  when its last copy goes.
+- A `GreeterPlugin` is shared by tasks. When its last copy goes, the program
+  it started ends, and the library it loaded is ended and unloaded.
 
 The [`tabulate`](../../examples/tabulate) example is a program with a
 plugin of each kind, each a package of its own.
@@ -609,6 +614,13 @@ The library carries Tondo's runtime, which starts at the first call. Inside
 an exported function everything of the language is there: tasks, channels,
 the standard library. `tondo check --library` and `tondo test --library`
 check and test such a project.
+
+The header also declares `void words_stop(void)`, which ends that runtime:
+its tasks are cancelled and run their `defer`s, the processes and threads it
+started end, and the output it had still to write is written. A call in
+progress on another thread finishes first, and a later call starts the
+runtime again. A C program calls it before it unloads the library, which
+`dlclose` alone does not do.
 
 ## C and tasks
 
