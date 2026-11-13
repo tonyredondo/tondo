@@ -17,7 +17,7 @@ fn tried(line: String) {
 
 fn main(): !process.ProcessError {
     tried("printf '%s|' a 'b c' \"d {{e}}\" {{x}}")
-    tried("printf 'b\\na\\nb\\n' | sort | uniq -c")
+    tried("printf 'b\\na\\nb\\n' | sort | uniq")
     tried("LANG=C sh -c 'echo $LANG'")
     tried("sh -c 'echo err >&2' 2>&1")
     tried("printf '\"\\\\n\"'")
@@ -37,8 +37,8 @@ fn main(): !process.ProcessError {
 }
 
 // expect-stdout: [a|b c|d {e}|{x}|]
-// expect-stdout: [      1 a
-// expect-stdout:       2 b]
+// expect-stdout: [a
+// expect-stdout: b]
 // expect-stdout: [C]
 // expect-stdout: [err]
 // expect-stdout: ["\n"]
