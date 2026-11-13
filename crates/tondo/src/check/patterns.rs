@@ -475,8 +475,13 @@ impl<'a> Checker<'a> {
                     })
                     .collect();
                 // What they bind, as wrong, so that the body's uses add no
-                // errors of their own.
-                alternatives.iter().for_each(|a| self.declare_failed(cx, a));
+                // errors of their own: of those that bind, as a variant named
+                // alone binds nothing.
+                for (written, alternative) in alternatives.iter().zip(&checked) {
+                    if Self::first_binding(alternative).is_some() {
+                        self.declare_failed(cx, written);
+                    }
+                }
                 for alternative in &checked {
                     if let Some(local) = Self::first_binding(alternative) {
                         let name = cx.locals[local.0 as usize].name.clone();
