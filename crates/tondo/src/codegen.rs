@@ -182,6 +182,14 @@ fn symbol_name(index: usize, name: &str) -> String {
 /// instructions of 16 bytes would fault on if it claimed its own.
 /// The generator's vector of 128 bits with lanes of `lane`: a mask's is its
 /// vector's, as a comparison gives all ones or zero in each lane.
+/// Whether code for `isa` does vectors of 256 bits with instructions of that
+/// width: an x64 with AVX2 (step 22b of `std.simd`). There a vector of 256
+/// bits is one register, as one of 128 is everywhere.
+pub(crate) fn wide_vectors(isa: &dyn cranelift_codegen::isa::TargetIsa) -> bool {
+    let has = |name: &str| isa.isa_flags().iter().any(|flag| flag.name == name && flag.as_bool() == Some(true));
+    isa.name() == "x64" && has("has_avx") && has("has_avx2")
+}
+
 pub(crate) fn vector_type(types: &Types, lane: Ty) -> ir::Type {
     let lane = match types.kind(types.repr(lane)) {
         TyKind::Int(int) => int_type(*int),
@@ -965,6 +973,8 @@ struct Shapes<'t> {
     layouts: HashMap<Ty, Layout>,
     call_conv: cranelift_codegen::isa::CallConv,
     abi: cabi::Abi,
+    /// Whether a vector of 256 bits is one register (`wide_vectors`).
+    wide: bool,
 }
 
 impl<'t> Shapes<'t> {
@@ -975,7 +985,8 @@ impl<'t> Shapes<'t> {
             }
             _ => cabi::Abi::X64,
         };
-        Shapes { types, layouts: HashMap::new(), call_conv: isa.default_call_conv(), abi }
+        let wide = wide_vectors(isa);
+        Shapes { types, layouts: HashMap::new(), call_conv: isa.default_call_conv(), abi, wide }
     }
 
     fn make_signature(&self) -> ir::Signature {
@@ -1005,15 +1016,18 @@ impl<'t> Shapes<'t> {
             | TyKind::Handle(..)
             | TyKind::Pointer(_) => Class::Scalar(POINTER),
             TyKind::CArray(..) => Class::Memory,
-            // A vector of 128 bits is one register; a wider one, its halves
-            // in memory.
+            // A vector of 128 bits is one register, and one of 256 where the
+            // processor has instructions of that width; a wider one, its
+            // parts in memory.
             TyKind::Vector(width, lane) => match width.bits() {
                 128 => Class::Scalar(vector_type(self.types, *lane)),
+                256 if self.wide => Class::Scalar(vector_type(self.types, *lane).by(2).expect("256 bits")),
                 _ => Class::Memory,
             },
             // A mask's lanes are integers as wide as its vector's.
             TyKind::Mask(width, lane) => match width.bits() {
                 128 => Class::Scalar(vector_type(self.types, *lane).as_int()),
+                256 if self.wide => Class::Scalar(vector_type(self.types, *lane).as_int().by(2).expect("256 bits")),
                 _ => Class::Memory,
             },
             TyKind::Tuple(_) | TyKind::Adt(_) | TyKind::Option(_) | TyKind::Result(..) | TyKind::Union(_) => {
@@ -2239,7 +2253,8 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
             let address = match value {
                 Val::Memory(address) => address,
                 Val::Scalar(vector) => {
-                    let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 4);
+                    let bytes = self.fb.func.dfg.value_type(vector).bytes();
+                    let data = StackSlotData::new(StackSlotKind::ExplicitSlot, bytes, 4);
                     let slot = self.fb.create_sized_stack_slot(data);
                     let address = self.fb.ins().stack_addr(POINTER, slot, 0);
                     self.fb.ins().store(flags(), vector, address, 0);
@@ -3034,13 +3049,18 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
         let types = self.cg.types();
         if let TyKind::Vector(width, lane) | TyKind::Mask(width, lane) = *types.kind(types.repr(ty)) {
             let mask = matches!(types.kind(types.repr(ty)), TyKind::Mask(..));
-            let part = vector_type(types, lane);
+            // In one register, or in parts of 128 bits in memory.
+            let part = match self.cg.class(ty) {
+                Class::Scalar(whole) => whole,
+                _ => vector_type(types, lane),
+            };
             let part = if mask { part.as_int() } else { part };
             let mut result = self.fb.ins().iconst(types::I8, 1);
-            for index in 0..(width.bits() / 128) as i32 {
+            for index in 0..(width.bits() / part.bits()) as i32 {
+                let bytes = part.bytes() as i32;
                 let mut read = |value: Val| match value {
                     Val::Scalar(v) => v,
-                    Val::Memory(address) => self.fb.ins().load(part, flags(), address, index * 16),
+                    Val::Memory(address) => self.fb.ins().load(part, flags(), address, index * bytes),
                     Val::Zero => unreachable!("a vector has bits"),
                 };
                 let (x, y) = (read(a), read(b));
@@ -3279,6 +3299,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             for (index, name, scope) in own.chain(inlined) {
                 let place = match storage[index] {
                     Storage::Zero => continue,
+                    // A register of more than 128 bits is more than a dump
+                    // reads of one.
+                    Storage::Var(_) if matches!(cg.class(body.locals[index]), Class::Scalar(t) if t.bytes() > 16) => {
+                        continue;
+                    }
                     Storage::Var(var) => {
                         labels.insert(var.as_u32(), index as u32);
                         DumpPlace::Value(index as u32)

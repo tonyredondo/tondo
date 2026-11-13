@@ -663,6 +663,9 @@ pub struct CallInfo<T> {
     pub try_call_info: Option<TryCallInfo>,
     /// Whether this call is patchable.
     pub patchable: bool,
+    /// Tondo: whether an argument or a result of the call is a vector wider
+    /// than 128 bits, whose upper bits a `vzeroupper` before it would clear.
+    pub wide_vectors: bool,
 }
 
 /// Out-of-line information present on `try_call` instructions only:
@@ -703,6 +706,7 @@ impl<T> CallInfo<T> {
             callee_pop_size: 0,
             try_call_info: None,
             patchable: false,
+            wide_vectors: false,
         }
     }
 }
@@ -1171,6 +1175,8 @@ pub struct Callee<M: ABIMachineSpec> {
     /// bits, so that its float registers are spilled, reloaded and moved
     /// whole.
     wide_vectors: bool,
+    /// Tondo: whether the function returns one, which its return keeps.
+    returns_wide: bool,
     /// Offsets to each dynamic stackslot.
     dynamic_stackslots: PrimaryMap<DynamicStackSlot, u32>,
     /// Offsets to each sized stackslot.
@@ -1329,6 +1335,7 @@ impl<M: ABIMachineSpec> Callee<M> {
             let ty = f.dfg.value_type(value);
             ty.is_vector() && ty.bits() > 128
         });
+        let returns_wide = f.signature.returns.iter().any(|ret| ret.value_type.bits() > 128);
 
         // Figure out what instructions, if any, will be needed to check the
         // stack limit. This can either be specified as a special-purpose
@@ -1346,6 +1353,7 @@ impl<M: ABIMachineSpec> Callee<M> {
             dynamic_stackslots,
             dynamic_type_sizes,
             wide_vectors,
+            returns_wide,
             sized_stackslots,
             sized_stackslot_keys,
             stackslots_size,
@@ -2192,6 +2200,14 @@ impl<M: ABIMachineSpec> Callee<M> {
             0
         };
 
+        let wide = |values: &[ABIArg]| {
+            values.iter().any(|value| match value {
+                ABIArg::Slots { slots, .. } => slots.iter().any(|slot| slot.get_type().bits() > 128),
+                _ => false,
+            })
+        };
+        let wide_vectors = wide(sigs.args(sig)) || wide(sigs.rets(sig));
+
         CallInfo {
             dest,
             uses,
@@ -2202,6 +2218,7 @@ impl<M: ABIMachineSpec> Callee<M> {
             callee_pop_size,
             try_call_info,
             patchable,
+            wide_vectors,
         }
     }
 
@@ -2393,7 +2410,7 @@ impl<M: ABIMachineSpec> Callee<M> {
         ));
 
         // And return.
-        if self.wide_vectors {
+        if self.wide_vectors && !self.returns_wide {
             insts.extend(M::gen_wide_vectors_end());
         }
         insts.extend(M::gen_return(

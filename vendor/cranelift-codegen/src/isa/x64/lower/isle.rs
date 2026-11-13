@@ -469,8 +469,10 @@ impl Context for IsleContext<'_, '_, MInst, X64Backend> {
 
     // Tondo: the helpers of `wide.isle`, vectors of 256 bits.
 
-    fn ty_vec256(&mut self, ty: Type) -> Option<Type> {
-        (ty.is_vector() && ty.bits() == 256).then_some(ty)
+    fn wide_constant_byte(&mut self, constant: Constant) -> Option<u8> {
+        let bytes = self.lower_ctx.get_constant_data(constant).as_slice();
+        let first = *bytes.first()?;
+        bytes.iter().all(|&b| b == first).then_some(first)
     }
 
     fn put_in_xmm_mem_256(&mut self, val: Value) -> XmmMem256 {

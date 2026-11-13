@@ -6459,12 +6459,16 @@ another, since their payloads differ between processors.
 
 Our copy of Cranelift makes the vectors of 256 bits where the code's level has AVX2: the
 assembler has the VEX.256 forms of the instructions `std.simd` needs, and `wide.isle` lowers
-each operation it emits on the six types of 256 bits, and no other. A value of 256 bits is one
-YMM register, of the class of floats: a function that has one spills, reloads and moves its float
-registers whole, and runs `vzeroupper` before its calls and its return, as the runtime and C run
-SSE instructions, which pay for upper halves left set. Arguments and results stay within 128 bits:
-a vector wider than that crosses a call in memory at every level, so code built for one level
-calls code built for another without converting.
+each operation it emits on the six types of 256 bits, and no other. At such a level a vector of
+256 bits is a value in a register as one of 128 is, in a function's locals and in its arguments and
+results, which pass in YMM registers; elsewhere it is in memory and computed by halves. A function
+that has one spills, reloads and moves its float registers whole, and runs `vzeroupper` before a
+call and a return, as the runtime and C run SSE instructions, which pay for upper halves left set:
+but not before a call that passes or returns one, nor before returning one, as the code on the
+other side is of the same level and its arguments would lose their upper halves. The code of one
+build is all of one level. The optimizer knew the constants of vectors of 128 bits: one of 256 is a
+splat of its lane, zeros and ones are made by a register from itself, and others are read from the
+pool. A dump leaves out a binding held in a YMM register, as it reads 128 bits of one.
 
 What AVX2 has no instruction for is made of others: the product of bytes from the products of
 words, the product of 64 bits from those of its halves of 32, a shift with sign of bytes or of

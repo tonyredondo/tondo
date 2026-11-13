@@ -69,11 +69,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// bits on an x64 with AVX2 (rules 16 to 18 of the standard library's
     /// 14.46).
     fn accelerated(&self, width: Width) -> bool {
-        let isa = self.e.cg.isa();
-        let has = |name: &str| isa.isa_flags().iter().any(|flag| flag.name == name && flag.as_bool() == Some(true));
         match width.bits() {
             128 => true,
-            256 => isa.name() == "x64" && has("has_avx") && has("has_avx2"),
+            256 => wide_vectors(self.e.cg.isa()),
             _ => false,
         }
     }
@@ -90,10 +88,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.part_type(shape).lane_type()
     }
 
-    /// The parts of 128 bits of a vector's value.
+    /// The parts of a vector's value.
     fn parts_of(&mut self, operand: &Operand, shape: Shape) -> Vec<ir::Value> {
         let part = self.part_type(shape);
         match self.operand(operand) {
+            // A register of 256 bits, by its halves.
+            Val::Scalar(value) if self.e.fb.func.dfg.value_type(value).bits() > shape.part => {
+                self.halves(value, shape).to_vec()
+            }
             Val::Scalar(value) => vec![value],
             Val::Memory(address) => {
                 let bytes = shape.part_bytes();
@@ -103,22 +105,27 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
     }
 
-    /// A vector's value from its parts: one register of 128 bits, or a
-    /// wider vector in memory.
-    fn assembled(&mut self, parts: Vec<ir::Value>) -> Val {
-        let bytes = self.e.fb.func.dfg.value_type(parts[0]).bytes();
-        if let [one] = parts.as_slice()
-            && bytes == 16
+    /// A value of the vector type `ty` from its parts: one register where
+    /// the type is one, and else in memory.
+    fn assembled(&mut self, parts: Vec<ir::Value>, ty: Ty) -> Val {
+        let class = self.e.cg.class(ty);
+        let part = self.e.fb.func.dfg.value_type(parts[0]);
+        if let ([one], Class::Scalar(whole)) = (parts.as_slice(), class)
+            && part == whole
         {
             return Val::Scalar(*one);
         }
+        let bytes = part.bytes();
         let data = StackSlotData::new(StackSlotKind::ExplicitSlot, parts.len() as u32 * bytes, 4);
         let slot = self.e.fb.create_sized_stack_slot(data);
         let address = self.e.fb.ins().stack_addr(POINTER, slot, 0);
         for (at, part) in parts.into_iter().enumerate() {
             self.e.fb.ins().store(flags(), part, address, at as i32 * bytes as i32);
         }
-        Val::Memory(address)
+        match class {
+            Class::Scalar(whole) => Val::Scalar(self.e.fb.ins().load(whole, flags(), address, 0)),
+            _ => Val::Memory(address),
+        }
     }
 
     /// A vector's value in memory, where its lanes can be reached by index.
@@ -126,7 +133,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         match self.operand(operand) {
             Val::Memory(address) => address,
             Val::Scalar(value) => {
-                let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 4);
+                let bytes = self.e.fb.func.dfg.value_type(value).bytes();
+                let data = StackSlotData::new(StackSlotKind::ExplicitSlot, bytes, 4);
                 let slot = self.e.fb.create_sized_stack_slot(data);
                 let address = self.e.fb.ins().stack_addr(POINTER, slot, 0);
                 self.e.fb.ins().store(flags(), value, address, 0);
@@ -167,14 +175,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Zero => {
                 let zero = self.lane_zero(lane);
                 let splat = self.e.fb.ins().splat(part, zero);
-                self.assembled(vec![splat; shape.parts()])
+                self.assembled(vec![splat; shape.parts()], ty)
             }
             Splat => {
                 let value = self.scalar(&args[0]);
                 let splat = self.e.fb.ins().splat(part, value);
-                self.assembled(vec![splat; shape.parts()])
+                self.assembled(vec![splat; shape.parts()], ty)
             }
-            Of => self.simd_of(args, shape, span),
+            Of => self.simd_of(args, shape, ty, span),
             Load => {
                 let array = self.scalar(&args[0]);
                 let at = self.scalar(&args[1]);
@@ -184,7 +192,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let parts = (0..shape.parts())
                     .map(|p| self.e.fb.ins().load(part, flags(), address, p as i32 * bytes))
                     .collect();
-                self.assembled(parts)
+                self.assembled(parts, ty)
             }
             Store => {
                 let parts = self.parts_of(&args[0], shape);
@@ -231,11 +239,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let value = self.scalar(&args[2]);
                 // A copy, changed in one lane.
                 let parts = self.parts_of(&args[0], shape);
-                let copy = self.assembled(parts);
+                let copy = self.assembled(parts, ty);
                 let address = match copy {
                     Val::Memory(address) => address,
                     Val::Scalar(vector) => {
-                        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 4);
+                        let bytes = self.e.fb.func.dfg.value_type(vector).bytes();
+                        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, bytes, 4);
                         let slot = self.e.fb.create_sized_stack_slot(data);
                         let address = self.e.fb.ins().stack_addr(POINTER, slot, 0);
                         self.e.fb.ins().store(flags(), vector, address, 0);
@@ -247,18 +256,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.fb.ins().store(flags(), value, at, 0);
                 let parts =
                     (0..shape.parts()).map(|p| self.e.fb.ins().load(part, flags(), address, p as i32 * 16)).collect();
-                self.assembled(parts)
+                self.assembled(parts, ty)
             }
             Add | Sub | Mul | Div | And | Or | Xor | Min | Max | SaturatingAdd | SaturatingSub => {
                 let left = self.parts_of(&args[0], shape);
                 let right = self.parts_of(&args[1], shape);
                 let parts = left.into_iter().zip(right).map(|(a, b)| self.lanewise(op, shape, a, b)).collect();
-                self.assembled(parts)
+                self.assembled(parts, ty)
             }
             Neg | Not | Abs | Sqrt | Floor | Ceil | Round | Truncate => {
                 let parts = self.parts_of(&args[0], shape);
                 let parts = parts.into_iter().map(|a| self.lane_unary(op, shape, a)).collect();
-                self.assembled(parts)
+                self.assembled(parts, ty)
             }
             Shl | Shr => {
                 let parts = self.parts_of(&args[0], shape);
@@ -278,7 +287,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         _ => self.e.fb.ins().ushr(a, count),
                     })
                     .collect();
-                self.assembled(parts)
+                self.assembled(parts, ty)
             }
             Fma => {
                 let a = self.parts_of(&args[0], shape);
@@ -303,13 +312,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         }
                     })
                     .collect();
-                self.assembled(parts)
+                self.assembled(parts, ty)
             }
             Equal | NotEqual | Less | LessOrEqual | Greater | GreaterOrEqual => {
                 let left = self.parts_of(&args[0], shape);
                 let right = self.parts_of(&args[1], shape);
                 let parts = left.into_iter().zip(right).map(|(a, b)| self.compare(op, shape, a, b)).collect();
-                self.assembled(parts)
+                self.assembled(parts, ty)
             }
             Choose => {
                 let mask = self.parts_of(&args[0], shape);
@@ -326,7 +335,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         self.e.fb.ins().bitselect(mask, yes[p], no[p])
                     })
                     .collect();
-                self.assembled(parts)
+                self.assembled(parts, ty)
             }
             Any | All => {
                 let parts = self.parts_of(&args[0], shape);
@@ -362,7 +371,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let mut parts = self.parts_of(&args[0], shape);
                 parts.reverse();
                 let parts = parts.into_iter().map(|p| self.reverse_lanes(p, shape)).collect();
-                self.assembled(parts)
+                self.assembled(parts, ty)
             }
             Swizzle => {
                 let value = self.parts_of(&args[0], shape)[0];
@@ -373,13 +382,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let half = Shape { width: if shape.width == Width::W512 { Width::W256 } else { Width::W128 }, ..shape };
                 let mut parts = self.parts_of(&args[0], half);
                 parts.extend(self.parts_of(&args[1], half));
-                self.assembled(parts)
+                self.assembled(parts, ty)
             }
             Lower | Upper => {
                 let parts = self.parts_of(&args[0], shape);
                 let half = parts.len() / 2;
                 let kept = if op == Lower { parts[..half].to_vec() } else { parts[half..].to_vec() };
-                self.assembled(kept)
+                self.assembled(kept, ty)
             }
             Cast => {
                 let target = Shape { part: shape.part, ..self.simd_shape(ty) };
@@ -389,13 +398,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     .into_iter()
                     .map(|p| if target_part == part { p } else { self.e.fb.ins().bitcast(target_part, little(), p) })
                     .collect();
-                self.assembled(parts)
+                self.assembled(parts, ty)
             }
             To => {
                 let target = Shape { part: shape.part, ..self.simd_shape(ty) };
                 let parts = self.parts_of(&args[0], shape);
                 let parts = parts.into_iter().map(|p| self.convert(p, shape, target)).collect();
-                self.assembled(parts)
+                self.assembled(parts, ty)
             }
             Same => {
                 let left = self.parts_of(&args[0], shape);
@@ -430,7 +439,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
 
     /// `of(values...)`: the values in order, or one array of them whose
     /// length must be the lanes' count (P0006).
-    fn simd_of(&mut self, args: &[Operand], shape: Shape, span: Span) -> Val {
+    fn simd_of(&mut self, args: &[Operand], shape: Shape, ty: Ty, span: Span) -> Val {
         let part = self.part_type(shape);
         let lane = self.lane_type(shape);
         let values: Vec<ir::Value> = match args {
@@ -459,7 +468,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 vector
             })
             .collect();
-        self.assembled(parts)
+        self.assembled(parts, ty)
     }
 
     /// The address of the elements `at` to `at + lanes` of an array,

@@ -547,6 +547,10 @@
 (decl ty_vec128 (Type) Type)
 (extern extractor ty_vec128 ty_vec128)
 
+;; Tondo: an extractor that only matches vector types of 256 bits.
+(decl ty_vec256 (Type) Type)
+(extern extractor ty_vec256 ty_vec256)
+
 ;; An extractor that matches types that support iconst_s/iconst_u construction.
 (decl ty_int_vec128 (Type) Type)
 (extern extractor ty_int_vec128 ty_int_vec128)

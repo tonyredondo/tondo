@@ -17,10 +17,6 @@
 (extern const $F32X8 Type)
 (extern const $F64X4 Type)
 
-;; Any vector type of 256 bits.
-(decl ty_vec256 (Type) Type)
-(extern extractor ty_vec256 ty_vec256)
-
 (decl put_in_xmm_mem_256 (Value) XmmMem256)
 (extern constructor put_in_xmm_mem_256 put_in_xmm_mem_256)
 (decl xmm_to_xmm_mem_256 (Xmm) XmmMem256)
@@ -70,6 +66,26 @@
 (rule 100 (lower (bitcast (ty_vec256 _) _ x @ (value_type (ty_vec256 _))))
       (if-let true (use_avx2))
       x)
+
+;;;; Constants ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Read from the constant pool, but zeros and ones, which a register makes
+;; from itself.
+(rule 100 (lower (vconst (ty_vec256 _) const))
+      (if-let true (use_avx2))
+      (x64_vmovdqu_ay (amode_to_xmm_mem_256 (const_to_synthetic_amode (const_to_vconst const)))))
+(rule 101 (lower (vconst (ty_vec256 _) const))
+      (if-let true (use_avx2))
+      (if-let 0x00 (wide_constant_byte const))
+      (let ((tmp Xmm (xmm_uninit_value))) (x64_vpxor_by tmp tmp)))
+(rule 102 (lower (vconst (ty_vec256 _) const))
+      (if-let true (use_avx2))
+      (if-let 0xff (wide_constant_byte const))
+      (let ((tmp Xmm (xmm_uninit_value))) (x64_vpcmpeqd_by tmp tmp)))
+
+;; The byte a constant has in every byte, if it is one.
+(decl pure partial wide_constant_byte (Constant) u8)
+(extern constructor wide_constant_byte wide_constant_byte)
 
 ;;;; One value in every lane ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

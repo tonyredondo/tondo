@@ -861,6 +861,7 @@ impl ABIMachineSpec for X64ABIMachineSpec {
             caller_conv: call_conv,
             try_call_info: None,
             patchable: false,
+            wide_vectors: false,
         })));
         insts
     }

@@ -533,6 +533,110 @@ fn every_operation_of_every_lane_is_its_definition() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Vectors of 256 bits held in registers where the processor has AVX2:
+/// many alive at once and across calls, which spills them whole; passed to
+/// and returned from a function that is not inlined; in records, arrays and
+/// loops. Each build and level gives what the baseline's halves give.
+#[test]
+fn wide_vectors_spill_and_cross_calls() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("simd-wide");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("wide.to");
+    std::fs::write(&file, WIDE).unwrap();
+    for cpu in ["baseline", "native"] {
+        for build in [None, Some("--debug"), Some("--live")] {
+            let run = Command::new(env!("CARGO_BIN_EXE_tondo"))
+                .args(["run", &file.to_string_lossy(), "--cpu", cpu])
+                .args(build)
+                .output()
+                .unwrap();
+            let printed = String::from_utf8_lossy(&run.stdout);
+            assert!(run.status.success(), "{cpu} {build:?}: {}", String::from_utf8_lossy(&run.stderr));
+            assert_eq!(printed, WIDE_PRINTS, "at {cpu}, {build:?}");
+        }
+    }
+}
+
+const WIDE: &str = r#"import std.console
+import std.simd
+
+type Pair = {
+    left: simd.Vector256[Int32]
+    right: simd.Vector256[Float]
+    count: Int
+}
+
+fn noisy(label: String, value: simd.Vector256[Int32]): simd.Vector256[Int32] {
+    console.println("{label} {value}")
+    value + 1
+}
+
+fn many(seed: Int32): simd.Vector256[Int32] {
+    var vs: Array[simd.Vector256[Int32]] = []
+    let v0 = simd.Vector256[Int32].all(seed)
+    let v1 = v0 * 3 + 1
+    let v2 = v1 ^ v0
+    let v3 = v2 - v1
+    let v4 = v3 * v3
+    let v5 = v4.max(v0)
+    let v6 = v5.min(v1)
+    let v7 = v6 + v2
+    let v8 = v7 << 2
+    let v9 = v8 >> 1
+    let v10 = v9.abs()
+    let v11 = v10 + v0
+    let v12 = v11 * v1
+    let v13 = v12 ^ v3
+    let v14 = v13 + v4
+    let v15 = v14 - v5
+    let v16 = v15 + v6
+    let v17 = v16 * v7
+    // Everything is live across this call.
+    let w = noisy("middle", v17)
+    vs.push(v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8)
+    vs.push(v9 + v10 + v11 + v12 + v13 + v14 + v15 + v16 + v17 + w)
+    var total = simd.Vector256[Int32].zero()
+    for v in vs {
+        total = total + v
+    }
+    total
+}
+
+// Calls that pass and return vectors of 256 bits, as a recursion keeps them
+// from being inlined.
+fn deep(value: simd.Vector256[Int32], depth: Int): simd.Vector256[Int32] {
+    if depth == 0 {
+        return value
+    }
+    deep(value * 3 + 1, depth - 1) + value
+}
+
+fn main() {
+    var pair = Pair {
+        left: simd.Vector256[Int32].of(1, 2, 3, 4, 5, 6, 7, 8)
+        right: simd.Vector256[Float].all(0.5)
+        count: 0
+    }
+    var acc = simd.Vector256[Float].zero()
+    for i in 0..1000 {
+        pair.left = pair.left * 3 + Int32(i)?
+        acc = acc.fma(pair.right, simd.Vector256[Float].all(Float(i)))
+        pair.count += 1
+    }
+    console.println("{pair.left} {acc} {pair.count}")
+    console.println("{many(7)}")
+    let mask = pair.left.greater(simd.Vector256[Int32].zero())
+    console.println(
+        "{mask} {mask.count()} {mask.bits()} {mask.choose(pair.left, -pair.left).sum()}",
+    )
+    let bytes = simd.Vector256[UInt8].all(200) + simd.Vector256[UInt8].all(100)
+    console.println("{bytes.lane(31)} {pair == pair} {acc.reversed().lower()}")
+    console.println("{deep(simd.Vector256[Int32].of(1, 2, 3, 4, 5, 6, 7, 8), 20)}")
+}
+"#;
+
+const WIDE_PRINTS: &str = "<-928616459, -1671509226, 1880565303, 1137672536, 394779769, -348112998, -1091005765, -1833898532> <1996.0, 1996.0, 1996.0, 1996.0> 1000\nmiddle <-71955, -71955, -71955, -71955, -71955, -71955, -71955, -71955>\n<-148911, -148911, -148911, -148911, -148911, -148911, -148911, -148911>\n<false, false, true, true, true, false, false, false> 3 28 696225996\n44 true <1996.0, 1996.0>\n<-744669701, 190539604, 1125748909, 2060958214, -1298799777, -363590472, 571618833, 1506828138>\n";
+
 /// The sum of floats in the order the language fixes (18.5): element `i`
 /// into partial sum `i mod lanes`, then the partial sums by halves.
 fn fixed_sum(lane: Lane, values: &[u64]) -> u64 {
