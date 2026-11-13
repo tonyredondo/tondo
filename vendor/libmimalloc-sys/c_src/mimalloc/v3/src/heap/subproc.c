@@ -465,11 +465,12 @@ void _mi_fork_child(void) {
   mi_atomic_store_release(&_mi_process.fork.pending, 1);
 }
 
-#if defined(__GLIBC__)
+#if defined(MI_TONDO_GLIBC)
 // Tondo: glibc's libc.so.6 does not have `pthread_atfork`, which its
 // libc_nonshared.a, installed with C's development files, defines as this
 // call: a program that Tondo links without a C compiler has none. The
 // handler goes with this image, whose end removes it (`<name>_stop`).
+// `MI_TONDO_GLIBC` comes from the build script, for glibc's targets only.
 extern int __register_atfork(void (*prepare)(void), void (*parent)(void), void (*child)(void), void* dso);
 extern char __dso_handle __attribute__((weak, visibility("hidden")));
 #define mi_pthread_atfork(prepare, parent, child) __register_atfork(prepare, parent, child, &__dso_handle)

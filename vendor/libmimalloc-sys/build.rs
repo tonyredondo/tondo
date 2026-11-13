@@ -48,6 +48,12 @@ fn main() {
         build.flag("-Wno-error=date-time");
     }
 
+    // Tondo: glibc's C library, which `__GLIBC__` does not tell, as the C
+    // for musl may be compiled with glibc's headers (`src/heap/subproc.c`).
+    if target_os == "linux" && target_env == "gnu" {
+        build.define("MI_TONDO_GLIBC", "1");
+    }
+
     if target_env == "msvc" {
         // Mimalloc expects the MSVC/clang-cl build to use the C++ atomics path.
         build.cpp(true);
