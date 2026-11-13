@@ -69,6 +69,7 @@ fn main() {
     }
 }
 
+// expect-no-replay: a recorded run has one worker, which a task blocked in C's `read` keeps from the task that writes
 // expect-stdout: os error 2: No such file or directory true
 // expect-stdout: wrote ok(11)
 // expect-stdout: read 5: hello
