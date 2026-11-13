@@ -66,6 +66,16 @@ impl All {
         self.0.iter().flat_map(|shard| shard.iter())
     }
 
+    /// The tasks in the order they started, which the shards, picked by
+    /// addresses that change from run to run, do not keep: what goes
+    /// through them all to wake them goes so, the same in a replay as in
+    /// its recording.
+    pub(super) fn in_start_order(&self) -> Vec<*mut Task> {
+        let mut all: Vec<*mut Task> = self.iter().map(|&task| task as *mut Task).collect();
+        all.sort_by_key(|&task| unsafe { (*task).id });
+        all
+    }
+
     pub(super) fn len(&self) -> usize {
         self.0.iter().map(|shard| shard.len()).sum()
     }

@@ -93,9 +93,10 @@ pub(crate) fn abandon(status: i32) {
         });
     });
     let me = current();
-    for &task in tasks().iter() {
-        if task as *mut Task != me {
-            unsafe { cancel_task(task as *mut Task) };
+    let all = tasks();
+    for task in all.in_start_order() {
+        if task != me {
+            unsafe { cancel_task(task) };
         }
     }
 }

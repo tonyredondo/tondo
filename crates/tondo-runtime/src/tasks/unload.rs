@@ -18,9 +18,11 @@ pub(crate) fn stop_runtime() {
         std::thread::sleep(Duration::from_millis(1));
     }
     // Each task stops at its next wait, as a cancelled one does.
-    for &task in tasks().iter() {
-        unsafe { cancel_task(task as *mut Task) };
+    let all = tasks();
+    for task in all.in_start_order() {
+        unsafe { cancel_task(task) };
     }
+    drop(all);
     // And the processes they started end, as when a program ends.
     crate::process::cancel_live();
     while live_tasks() > 0 {

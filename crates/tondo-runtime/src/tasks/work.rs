@@ -487,8 +487,8 @@ pub(super) fn deadlock() -> ! {
     }
     // Where each task waits, the same place once, with the main task first.
     let mut waits: Vec<(String, usize)> = Vec::new();
-    let mut all: Vec<*mut Task> = tasks().iter().map(|&t| t as *mut Task).collect();
-    all.sort_by_key(|&t| unsafe { (!(*t).main, t as usize) });
+    let mut all = tasks().in_start_order();
+    all.sort_by_key(|&t| unsafe { !(*t).main });
     for task in all {
         let text = unsafe { waiting_at(task) };
         match waits.iter_mut().find(|(t, _)| *t == text) {
