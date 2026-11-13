@@ -313,10 +313,19 @@ fn main() {
 ```
 
 - The types are `Vector128[T]`, `Vector256[T]` and `Vector512[T]`, of that
-  many bits, and `Vector[T]`, for code that does not choose a width, which
-  is of 128 bits today. `T` is an integer of any size, `Byte`, `Float32` or
-  `Float`, and a vector has as many lanes as fit: `Vector128[Float]` has
-  two.
+  many bits, and `Vector[T]`, for code that does not choose a width. `T` is
+  an integer of any size, `Byte`, `Float32` or `Float`, and a vector has as
+  many lanes as fit: `Vector128[Float]` has two.
+- A `Vector[T]` has the width of the code it is in: 256 bits where that
+  code is for an x64 processor with AVX2, and 128 bits elsewhere, as on
+  arm64 and in a debug build. So the same loop takes eight `Float32` at a
+  time on one machine and four on another, which is why it steps by
+  `lanes()`.
+- A `Vector[T]` lives in locals, parameters and results, since its width is
+  that of the code that holds it. In a field, an element, an option, a
+  tuple, a channel or a closure's capture it does not build, and the error
+  says what to keep there: a `Vector128[T]` or a `Vector256[T]`, or the
+  lanes in an array, with `toArray` or `store`.
 - Every type works on every processor and gives the same results. A width
   the processor has no instructions for is computed by its halves, and
   `accelerated()` says which case it is where the code runs. The 128-bit

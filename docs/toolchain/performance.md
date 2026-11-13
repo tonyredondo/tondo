@@ -615,6 +615,11 @@ the same, and the wider type is then slower than the narrower. Vectors of
 is where the code runs, and `TONDO_VERSIONS=0` in a program's environment
 keeps it to the level it was built for.
 
+`simd.Vector[T]` takes the width for the code: the same function has it of
+256 bits in its version for AVX2 and of 128 bits in the other, so a loop
+written with it and `lanes()` uses the widest the processor does well with
+nothing chosen in the source.
+
 ## Memory
 
 | | |
