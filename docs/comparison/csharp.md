@@ -150,7 +150,7 @@ fn main() {
     ]
     for name in ["ada", "alan", "grace"] {
         // A user that may not be there, with an email that may not be there.
-        let email = find(users, name).andThen((user) { user.email }) ?? "no email"
+        let email = find(users, name)?.email ?? "no email"
         console.println("{name}: {email}")
     }
 }
@@ -165,9 +165,11 @@ grace: no email
 - A forgotten check is a compile error, where C# gives a warning that can
   be silenced with `!`, and code compiled without the annotations gives
   nothing.
-- `andThen`, `map` and `unwrapOr` are `?.` and `??` as methods. `match`
-  opens an option when both cases need code, and `?` passes a `none` on
-  from a function that itself returns an option.
+- `?.` and `??` are the same two operators, with the same meaning:
+  `user?.Email ?? "none"` is `user?.email ?? "none"`. `??` also takes a
+  `return` or a `fail` on its right, as `?? throw` does. `match` opens an
+  option when both cases need code, and `?` passes a `none` on from a
+  function that itself returns an option.
 - A map lookup gives an option, `ages.get("cy")`, where a `Dictionary`
   throws from its indexer or needs `TryGetValue` with an `out`.
 - A field with no default has to be given. There is no `default(T)`, and
@@ -227,21 +229,18 @@ enum ConfigError {
 impl Display for ConfigError {
     fn display(self): String {
         match self {
-            ConfigError.Missing(key) => "{key} is missing"
-            ConfigError.NotANumber(key, text) => "{key}: \"{text}\" is not a number"
-            ConfigError.OutOfRange(key, value) => "{key}: {value} is out of range"
+            Missing(key) => "{key} is missing"
+            NotANumber(key, text) => "{key}: \"{text}\" is not a number"
+            OutOfRange(key, value) => "{key}: {value} is out of range"
         }
     }
 }
 
 fn port(settings: Map[String, String], key: String): Int ! ConfigError {
-    let text = match settings.get(key) {
-        some(found) => found
-        none => fail ConfigError.Missing(key)
-    }
+    let text = settings.get(key) ?? fail Missing(key)
     let value = Int.parse(text).mapErr((_) { ConfigError.NotANumber(key, text) })?
     if value < 1 or value > 65535 {
-        fail ConfigError.OutOfRange(key, value)
+        fail OutOfRange(key, value)
     }
     value
 }
@@ -333,11 +332,11 @@ enum Shape {
 
 fn area(shape: Shape): Float {
     match shape {
-        Shape.Circle(radius) => math.Pi * radius * radius
-        Shape.Rectangle(width, height) => width * height
-        Shape.Triangle(a, b, c) => {
+        Circle(radius) => math.Pi * radius * radius
+        Rectangle(width, height) => width * height
+        Triangle(a, b, c) => {
             let s = (a + b + c) / 2.0
-            math.checkedSqrt(s * (s - a) * (s - b) * (s - c)) ?? 0.0
+            math.sqrt(s * (s - a) * (s - b) * (s - c))
         }
     }
 }
@@ -364,9 +363,9 @@ fn main() {
 - There are no classes and no inheritance. Behaviour is functions and
   traits, and what would be a base class with virtual methods is an enum,
   or a trait with several `impl`s.
-- `math.sqrt` returns a result, since the root of a negative number is not
-  a number: the failure is in the type, where `Math.Sqrt` gives a `NaN` to
-  find later.
+- `math.sqrt` of a negative number is `NaN`, as `Math.Sqrt` is.
+  `math.checkedSqrt` fails instead, for code that would rather have the
+  failure in the type.
 
 ## Interfaces, traits and generics
 
@@ -515,7 +514,7 @@ fn main() {
     let text = "to be or not to be that is the question to be"
     var counts: Map[String, Int] = [:]
     for word in text.split(" ") {
-        counts[word] = (counts.get(word) ?? 0) + 1
+        counts[word, default: 0] += 1
     }
     // The three most frequent; those that tie stay in the order they came.
     let top = counts.entries().collect().sortedBy((entry) { -entry.1 }).take(3)
@@ -716,7 +715,7 @@ import std.sync
 
 fn work(hits: sync.Mutex[Map[String, Int]], page: String) {
     for _ in 0..100 {
-        hits.update((counts) { counts[page] = (counts.get(page) ?? 0) + 1 })
+        hits.update((counts) { counts[page, default: 0] += 1 })
     }
 }
 
@@ -727,7 +726,7 @@ fn main() {
     for n in 0..50 {
         group.add(spawn work(hits, if n % 2 == 0 { "/home" } else { "/about" }))
     }
-    _ = group.wait()
+    group.wait()
     let counts = hits.get()
     console.println("{counts.get("/home") ?? 0} {counts.get("/about") ?? 0}")
 }
@@ -926,7 +925,7 @@ fn main(): !http.HttpError {
     let greeting: Greeting = http.get("{server.url()}/hello/Ada")?.json()?
     console.println("{greeting.message} ({greeting.length})")
     match http.get("{server.url()}/nothing") {
-        err(http.HttpError.Status(response)) => console.println("{response.status()}")
+        err(Status(response)) => console.println("{response.status()}")
         _ => console.println("unexpected")
     }
 }
@@ -971,7 +970,7 @@ Hello, Ada! (3)
 | --- | --- |
 | `var x = 1;` then `x = 2;` | `var x = 1`; a `let` cannot change |
 | `string? name = null` | `let name: String? = none` |
-| `user?.Email ?? "none"` | `user.andThen((u) { u.email }).unwrapOr("none")` |
+| `user?.Email ?? "none"` | `user?.email ?? "none"` |
 | `throw new InvalidOperationException(...)` | `fail error`, in a function that returns `T ! E` |
 | `try { } catch (E e) { }` | `match` on the result |
 | `try { } finally { }`, `using` | `defer` |

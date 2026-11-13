@@ -159,7 +159,7 @@ fn main() {
     ]
     for name in ["ada", "alan", "grace"] {
         // A user that may not be there, with an email that may not be there.
-        let email = find(users, name).andThen((user) { user.email }) ?? "no email"
+        let email = find(users, name)?.email ?? "no email"
         console.println("{name}: {email}")
     }
 }
@@ -172,7 +172,10 @@ grace: no email
 ```
 
 - `T?` is `Option<T>`, and `some` and `none` are lowercase. `map`,
-  `andThen`, `unwrapOr`, `filter` and `?` are there under those names.
+  `andThen`, `filter` and `?` are there under those names. `unwrap_or` is
+  the operator `??`, whose right side may also `return` or `fail`, which is
+  what `let ... else` is for, and `?.` goes on along a chain of options
+  with no closure.
 - `find` returns a `User?`, a user, where Rust returns an
   `Option<&'a User>`, a borrow tied to the slice by a lifetime. Since a
   Tondo value is cheap to copy, the function hands one over and there is no
@@ -251,21 +254,18 @@ enum ConfigError {
 impl Display for ConfigError {
     fn display(self): String {
         match self {
-            ConfigError.Missing(key) => "{key} is missing"
-            ConfigError.NotANumber(key, text) => "{key}: \"{text}\" is not a number"
-            ConfigError.OutOfRange(key, value) => "{key}: {value} is out of range"
+            Missing(key) => "{key} is missing"
+            NotANumber(key, text) => "{key}: \"{text}\" is not a number"
+            OutOfRange(key, value) => "{key}: {value} is out of range"
         }
     }
 }
 
 fn port(settings: Map[String, String], key: String): Int ! ConfigError {
-    let text = match settings.get(key) {
-        some(found) => found
-        none => fail ConfigError.Missing(key)
-    }
+    let text = settings.get(key) ?? fail Missing(key)
     let value = Int.parse(text).mapErr((_) { ConfigError.NotANumber(key, text) })?
     if value < 1 or value > 65535 {
-        fail ConfigError.OutOfRange(key, value)
+        fail OutOfRange(key, value)
     }
     value
 }
@@ -349,11 +349,11 @@ enum Shape {
 
 fn area(shape: Shape): Float {
     match shape {
-        Shape.Circle(radius) => math.Pi * radius * radius
-        Shape.Rectangle(width, height) => width * height
-        Shape.Triangle(a, b, c) => {
+        Circle(radius) => math.Pi * radius * radius
+        Rectangle(width, height) => width * height
+        Triangle(a, b, c) => {
             let s = (a + b + c) / 2.0
-            math.checkedSqrt(s * (s - a) * (s - b) * (s - c)) ?? 0.0
+            math.sqrt(s * (s - a) * (s - b) * (s - c))
         }
     }
 }
@@ -378,8 +378,8 @@ fn main() {
 - A record is `type Point = { x: Float, y: Float }`, with defaults for its
   fields and `point with { x: 0.0 }` for a changed copy. A newtype is
   `type Meters = Float`.
-- `math.sqrt` returns a result here, since the root of a negative number is
-  not a number.
+- `math.sqrt` of a negative number is `NaN`, as `f64::sqrt` is.
+  `math.checkedSqrt` fails instead.
 
 ## Traits and generics
 
@@ -546,7 +546,7 @@ fn main() {
     let text = "to be or not to be that is the question to be"
     var counts: Map[String, Int] = [:]
     for word in text.split(" ") {
-        counts[word] = (counts.get(word) ?? 0) + 1
+        counts[word, default: 0] += 1
     }
     // The three most frequent; those that tie stay in the order they came.
     let top = counts.entries().collect().sortedBy((entry) { -entry.1 }).take(3)
@@ -754,7 +754,7 @@ import std.sync
 
 fn work(hits: sync.Mutex[Map[String, Int]], page: String) {
     for _ in 0..100 {
-        hits.update((counts) { counts[page] = (counts.get(page) ?? 0) + 1 })
+        hits.update((counts) { counts[page, default: 0] += 1 })
     }
 }
 
@@ -765,7 +765,7 @@ fn main() {
     for n in 0..50 {
         group.add(spawn work(hits, if n % 2 == 0 { "/home" } else { "/about" }))
     }
-    _ = group.wait()
+    group.wait()
     let counts = hits.get()
     console.println("{counts.get("/home") ?? 0} {counts.get("/about") ?? 0}")
 }
@@ -990,7 +990,7 @@ fn main(): !http.HttpError {
     let greeting: Greeting = http.get("{server.url()}/hello/Ada")?.json()?
     console.println("{greeting.message} ({greeting.length})")
     match http.get("{server.url()}/nothing") {
-        err(http.HttpError.Status(response)) => console.println("{response.status()}")
+        err(Status(response)) => console.println("{response.status()}")
         _ => console.println("unexpected")
     }
 }

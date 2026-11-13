@@ -149,7 +149,7 @@ fn main() {
     ]
     for name in ["ada", "alan", "grace"] {
         // A user that may not be there, with an email that may not be there.
-        let email = find(users, name).andThen((user) { user.email }) ?? "no email"
+        let email = find(users, name)?.email ?? "no email"
         console.println("{name}: {email}")
     }
 }
@@ -161,8 +161,8 @@ alan: no email
 grace: no email
 ```
 
-- `?.` and `??` are `andThen`, `map` and `unwrapOr`. `match` is `if let`
-  with its `else`, and an arm can `return`, as a `guard` does.
+- `?.` and `??` are `?.` and `??`. `match` is `if let` with its `else`,
+  and `?? return` does what a `guard let ... else { return }` does.
 - There is no `!`. `expect("why it must be there")` panics with the reason.
 - `none` and `some(x)` are what `nil` and `.some(x)` are. A plain value
   becomes an optional where one is expected, as in Swift.
@@ -225,21 +225,18 @@ enum ConfigError {
 impl Display for ConfigError {
     fn display(self): String {
         match self {
-            ConfigError.Missing(key) => "{key} is missing"
-            ConfigError.NotANumber(key, text) => "{key}: \"{text}\" is not a number"
-            ConfigError.OutOfRange(key, value) => "{key}: {value} is out of range"
+            Missing(key) => "{key} is missing"
+            NotANumber(key, text) => "{key}: \"{text}\" is not a number"
+            OutOfRange(key, value) => "{key}: {value} is out of range"
         }
     }
 }
 
 fn port(settings: Map[String, String], key: String): Int ! ConfigError {
-    let text = match settings.get(key) {
-        some(found) => found
-        none => fail ConfigError.Missing(key)
-    }
+    let text = settings.get(key) ?? fail Missing(key)
     let value = Int.parse(text).mapErr((_) { ConfigError.NotANumber(key, text) })?
     if value < 1 or value > 65535 {
-        fail ConfigError.OutOfRange(key, value)
+        fail OutOfRange(key, value)
     }
     value
 }
@@ -317,11 +314,11 @@ enum Shape {
 
 fn area(shape: Shape): Float {
     match shape {
-        Shape.Circle(radius) => math.Pi * radius * radius
-        Shape.Rectangle(width, height) => width * height
-        Shape.Triangle(a, b, c) => {
+        Circle(radius) => math.Pi * radius * radius
+        Rectangle(width, height) => width * height
+        Triangle(a, b, c) => {
             let s = (a + b + c) / 2.0
-            math.checkedSqrt(s * (s - a) * (s - b) * (s - c)) ?? 0.0
+            math.sqrt(s * (s - a) * (s - b) * (s - c))
         }
     }
 }
@@ -344,9 +341,9 @@ fn main() {
 - `match` is an expression, and so is `if`. A function's last expression is
   its value.
 - A recursive enum needs no `indirect`.
-- `math.sqrt` returns a result, since the root of a negative number is not
-  a number: the failure is in the type, where `squareRoot()` gives a `NaN`
-  to find later.
+- `math.sqrt` of a negative number is `NaN`, as `squareRoot()` is.
+  `math.checkedSqrt` fails instead, for code that would rather have the
+  failure in the type.
 
 ## Protocols, traits and generics
 
@@ -503,7 +500,7 @@ fn main() {
     let text = "to be or not to be that is the question to be"
     var counts: Map[String, Int] = [:]
     for word in text.split(" ") {
-        counts[word] = (counts.get(word) ?? 0) + 1
+        counts[word, default: 0] += 1
     }
     // The three most frequent; those that tie stay in the order they came.
     let top = counts.entries().collect().sortedBy((entry) { -entry.1 }).take(3)
@@ -707,7 +704,7 @@ import std.sync
 
 fn work(hits: sync.Mutex[Map[String, Int]], page: String) {
     for _ in 0..100 {
-        hits.update((counts) { counts[page] = (counts.get(page) ?? 0) + 1 })
+        hits.update((counts) { counts[page, default: 0] += 1 })
     }
 }
 
@@ -718,7 +715,7 @@ fn main() {
     for n in 0..50 {
         group.add(spawn work(hits, if n % 2 == 0 { "/home" } else { "/about" }))
     }
-    _ = group.wait()
+    group.wait()
     let counts = hits.get()
     console.println("{counts.get("/home") ?? 0} {counts.get("/about") ?? 0}")
 }
@@ -887,7 +884,7 @@ fn main(): !http.HttpError {
     let greeting: Greeting = http.get("{server.url()}/hello/Ada")?.json()?
     console.println("{greeting.message} ({greeting.length})")
     match http.get("{server.url()}/nothing") {
-        err(http.HttpError.Status(response)) => console.println("{response.status()}")
+        err(Status(response)) => console.println("{response.status()}")
         _ => console.println("unexpected")
     }
 }
@@ -925,7 +922,7 @@ Hello, Ada! (3)
 | --- | --- |
 | `func f(_ a: Int) -> String` | `fn f(a: Int): String` |
 | `f(a, label: b)` required | `f(a, b)`, or `f(a, name: b)` when it helps |
-| `nil`, `x ?? y`, `x?.y`, `x!` | `none`, `x.unwrapOr(y)`, `x.map(...)`, `x.expect("...")` |
+| `nil`, `x ?? y`, `x?.y`, `x!` | `none`, `x ?? y`, `x?.y`, `x.expect("...")` |
 | `if let x = y { }`, `guard let` | `match y { some(x) => ..., none => ... }` |
 | `throws`, `try`, `do`, `catch` | `T ! E`, `?`, `match` |
 | `switch`, `case .circle(let r):` | `match`, `Shape.Circle(r) =>` |
