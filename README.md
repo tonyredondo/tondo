@@ -467,7 +467,6 @@ What is under way and what is planned:
 | Every row of [`bench/`](bench/README.md) at or under Go's, in time and in memory, and the servers in latency | Under way: that page has the rows still behind, each with its reason |
 | A chain of an iterator compiled as one loop, a chain of arrays without the arrays between, short texts without the heap | Next in the optimizer |
 | A call from a thread of C into Tondo at the cost of Go's | Under way |
-| Dumps that name a task that ended with an error nobody read | Under way |
 | `tondo test --schedules` over the moments the operating system leaves open: between `bind` and `listen`, the delivery of a signal, a file made and not yet written | Accepted, not started |
 | `Server.wait`: a server started with `start` drains when the program is asked to end, as `listen` does | Accepted, not started |
 | A terminal a program takes over: its size as it changes, and giving it back and taking it again around Ctrl-Z and `fg` | Accepted, its design first |
