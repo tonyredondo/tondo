@@ -1,0 +1,45 @@
+#!/usr/bin/env tondo
+
+// Asks a question and takes one key as the answer, without waiting for
+// Enter, as a shell's `read -n 1` does. Its status is 0 for yes:
+//
+//     tondo ask.to "Remove the build?" && rm -rf target
+
+import std.console
+import std.env
+import std.os
+import std.os.unix
+import std.process
+
+/// One key of a terminal: for the length of the read it gives each key as
+/// it is pressed and does not show it, and then it is as it was.
+fn key(input: ref unix.Fd): Byte ! os.Errno {
+    let before = unix.terminalMode(ref input)?
+    var quiet = before
+    quiet.c_lflag = quiet.c_lflag & ~(unix.ICANON | unix.ECHO)
+    unix.setTerminalMode(ref input, quiet, unix.TCSANOW)?
+    defer {
+        _ = unix.setTerminalMode(ref input, before, unix.TCSANOW)
+    }
+    let zero: Byte = 0
+    var one = [zero]
+    _ = unix.read(ref input, mut one)?
+    one[0]
+}
+
+let question = env.args().get(0) ?? "Go on?"
+let input = unix.Fd.standardInput()
+console.print("{question} [y/n] ")
+let answer = if unix.isTerminal(ref input) {
+    match key(ref input) {
+        ok(pressed) => String.fromBytes([pressed]) ?? ""
+        err(error) => {
+            console.eprintln("the terminal did not answer: {error}")
+            process.exit(2)
+        }
+    }
+} else {
+    console.readLine() ?? ""
+}
+console.println(answer.trim())
+process.exit(if answer.trim().toLower().startsWith("y") { 0 } else { 1 })

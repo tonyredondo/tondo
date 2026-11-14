@@ -22,7 +22,7 @@ the repository, so what a page says a program prints is what it prints.
 | [The standard library](std/README.md) | A page for each of its modules and for each type of the prelude, written from the library's own documentation, with an introduction to the modules a program meets first |
 | [The toolchain, chapter by chapter](toolchain.md) | The daily loop, testing, debugging, a running program, performance, editors and agents, and every command with its options |
 | [Tondo for someone who writes another language](comparison.md#a-page-for-each-language) | The same twelve programs in Go, Rust, C#, Python, TypeScript, Java, Kotlin or Swift, and in Tondo |
-| [The examples](../examples/README.md) | Ten projects with their tests: an HTTP API over SQLite, a command-line tool, a TCP server, a site generator, a link checker, a chat, a gRPC service, a library for C, an MCP server, and scripts |
+| [The examples](../examples/README.md) | Eleven projects with their tests: an HTTP API over SQLite, a command-line tool, a TCP server, a site generator, a link checker, a chat, a gRPC service, a library for C, a program with plugins, an MCP server, and scripts |
 
 ## The guide
 

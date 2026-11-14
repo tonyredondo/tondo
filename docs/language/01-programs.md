@@ -100,9 +100,9 @@ generic and not a method, and nothing calls it.
 | calls `process.exit(code)` | that code | nothing |
 | is interrupted with Ctrl-C or `SIGTERM` | 130 or 143 | nothing |
 
-An error is shown by its `Display` when it has one, and by its variant's name
-when it is an enum without it. This program ends with `error: Stop.Missing`
-and status 1:
+An error is shown by its `Display`: the one its type writes, or else the
+variant and its data, as any enum is shown. This program ends with
+`error: Missing(config)` and status 1:
 
 ```tondo
 enum Stop {
@@ -209,12 +209,9 @@ fn main() {
 3 ONE LINE; SEVERAL CALLS [first, second]
 ```
 
-A trailing comma is allowed in every list. `else` goes on the line of the
-`}` before it, since a new line there would end the `if`:
-
-```text
-error[E0004]: `else` goes on the line of the `}` before it: `} else {`
-```
+A trailing comma is allowed in every list. `else` may begin a line of its
+own, since nothing else begins with it, and continues the `if` whose block
+closed just before.
 
 None of this is a matter of taste for long: `tondo fmt` rewrites a file in
 the one canonical layout, with four spaces of indentation, and has no
@@ -250,9 +247,10 @@ small and negative
 ```
 
 A statement whose value nobody uses must do something. A bare value such as
-`3 + 4` on a line of its own is an error (`E1306`), and so is a result or an
-option that is dropped, since it may hold a failure (`E1303`). To evaluate
-something and discard it on purpose, assign it to `_`:
+`3 + 4` on a line of its own is an error (`E1306`), and so is a result that
+is dropped, since it holds a failure when there is one (`E1303`). An option
+that nobody reads is no failure: `seen.remove(key)` stands alone. To
+evaluate something and discard it on purpose, assign it to `_`:
 
 ```tondo
 import std.console
@@ -263,7 +261,7 @@ fn log(message: String): Bool {
 }
 
 fn main() {
-    _ = log("started")
+    log("started")
 }
 ```
 

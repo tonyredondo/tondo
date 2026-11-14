@@ -13,9 +13,7 @@ test aPageNeedsItsFrontMatter {
     assert("{parse("bare.md", "just text").err()}".contains("bare.md: a page starts with"))
     assert(parse("open.md", "---\ntitle: Open\n").isErr())
     match parse("untitled.md", "---\ndate: 2026-01-01\n---\ntext") {
-        err(ContentError.BadFrontMatter(name, why)) => assert(
-            name == "untitled.md" and why.contains("title"),
-        )
+        err(BadFrontMatter(name, why)) => assert(name == "untitled.md" and why.contains("title"))
         other => assert(other.isErr(), "a page with no title was read")
     }
 }

@@ -1,0 +1,115 @@
+import renderer.api
+import std.console
+import std.csv
+import std.env
+import std.fs
+import std.path
+import std.plugin
+import std.process
+
+/// The renderer every `tabulate` has: columns side by side.
+pub type Plain = {}
+
+impl api.Renderer for Plain {
+    fn name(self): String ! plugin.Error {
+        "plain"
+    }
+
+    fn render(self, table: api.Table): String ! plugin.Error {
+        var widths = table.columns.map((column) { column.length() })
+        for cells in table.rows {
+            for (index, cell) in cells.enumerate() {
+                if index < widths.length() {
+                    widths[index] = widths[index].max(cell.length())
+                }
+            }
+        }
+        var lines = [table.title, line(table.columns, widths)]
+        for cells in table.rows {
+            lines.push(line(cells, widths))
+        }
+        lines.join("\n")
+    }
+}
+
+fn line(cells: Array[String], widths: Array[Int]): String {
+    var padded: Array[String] = []
+    for (index, cell) in cells.enumerate() {
+        padded.push(cell.padEnd(widths.get(index) ?? 0))
+    }
+    padded.join("  ").trimEnd()
+}
+
+/// The table of a CSV text, whose first line names the columns.
+pub fn tableOf(title: String, text: String): api.Table ! csv.CsvError {
+    let lines = csv.parse(text)?
+    api.Table {
+        title
+        columns: lines.first() ?? []
+        rows: if lines.isEmpty() { [] } else { lines[1:] }
+    }
+}
+
+/// The plugins of a directory: a shared library is loaded, and anything
+/// else is started as a program.
+fn plugins(directory: String): Array[api.RendererPlugin] {
+    var found: Array[api.RendererPlugin] = []
+    for name in fs.list(directory) ?? [] {
+        let file = path.join(directory, name)
+        let opened = if name.endsWith(".so") or name.endsWith(".dylib") {
+            api.RendererPlugin.load(file)
+        } else {
+            api.RendererPlugin.start(process.command(file))
+        }
+        match opened {
+            ok(loaded) => found.push(loaded)
+            err(error) => console.eprintln("{name}: {error}")
+        }
+    }
+    found
+}
+
+/// What one renderer makes of a table, whether it is part of this program
+/// or a plugin: both are an `api.Renderer`.
+fn shown[R: api.Renderer](renderer: R, data: api.Table): String ! plugin.Error {
+    renderer.render(data)
+}
+
+fn main() {
+    let arguments = env.args()
+    if arguments.length() < 2 {
+        console.eprintln("usage: tabulate <file.csv> <renderer> [<directory of plugins>]")
+        process.exit(2)
+    }
+    let (file, wanted) = (arguments[0], arguments[1])
+    let text =
+        fs.readText(file) ??
+            {
+                console.eprintln("{file} cannot be read")
+                process.exit(1)
+            }
+    let data =
+        tableOf(path.fileName(file) ?? file, text) ??
+            {
+                console.eprintln("{file} is not CSV")
+                process.exit(1)
+            }
+    if wanted == "plain" {
+        console.println(shown(Plain {}, data) ?? "")
+        return
+    }
+    var names = ["plain"]
+    for loaded in plugins(arguments.get(2) ?? "plugins") {
+        let name = loaded.name() ?? "?"
+        if name == wanted {
+            match shown(loaded, data) {
+                ok(rendered) => console.println(rendered)
+                err(error) => console.eprintln("{name}: {error}")
+            }
+            return
+        }
+        names.push(name)
+    }
+    console.eprintln("no renderer is named {wanted}: there are {names.join(", ")}")
+    process.exit(1)
+}

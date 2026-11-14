@@ -127,8 +127,7 @@ to happen without being written.
 | Exceptions | a function fails in ways its signature does not show | `T ! E`, `?`, `match` |
 | Overloaded functions | which one is called depends on conversions | one name, one function; generics, defaults, another name |
 | Overloaded operators | `a + b` could run anything | `Additive` and `Number` for arithmetic; named methods |
-| A ternary operator, an Elvis operator | a second conditional | `if` as an expression, `unwrapOr` |
-| Safe navigation (`?.`) | absence decided inside a chain | `?` in a `try` block, `map`, `andThen` |
+| A ternary operator | a second conditional | `if` as an expression |
 | `+` for joining strings and lists | one operator, three meanings | interpolation, `concat`, `join` |
 
 ### Programs

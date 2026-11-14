@@ -38,7 +38,7 @@ fn main(): !fs.FsError {
 
     match fs.readText("{directory}/tomorrow.md") {
         ok(_) => console.println("there is a tomorrow")
-        err(fs.FsError.NotFound) => console.println("no tomorrow yet")
+        err(NotFound) => console.println("no tomorrow yet")
         err(error) => fail error
     }
 }

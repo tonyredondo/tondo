@@ -21,6 +21,7 @@ examples/scripts/cal.to 2026 11          # each starts with #!/usr/bin/env tondo
 | [`rerun.to`](rerun.to) | runs a command again when files change | watching a directory, a loop that never ends |
 | [`cal.to`](cal.to) | the calendar of a month | dates |
 | [`serve.to`](serve.to) | serves a directory over HTTP | a web server in four lines |
+| [`ask.to`](ask.to) | asks a question and takes one key as the answer | the system's calls: a terminal's mode, a descriptor read |
 
 ## What they print
 
@@ -94,6 +95,10 @@ Mo Tu We Th Fr Sa Su
 16 17 18 19 20 21 22
 23 24 25 26 27 28 29
 30
+
+$ tondo ask.to "Remove the build?" && echo removed
+Remove the build? [y/n] y
+removed
 ```
 
 ## What to look at
@@ -112,11 +117,22 @@ needs for a file that is not there. Where a failure deserves its own words,
 as `git` not being run in a repository in `authors.to`, a `match` gives
 them.
 
-**No shell in between.** `process.command("git", "log", "-n", wanted, ...)`
-runs a program with its arguments, each one on its own. Nothing is split at
-spaces, expanded or quoted, so a file name with a space or a `$` in it is
-only a file name. `rerun.to` passes on a whole command line the same way,
-with `...command[1:]`.
+**A command is written as in a shell, and no shell runs it.**
+`$(git log -n {wanted} --date=short)` in `authors.to` is split into a
+program and its arguments when the script is compiled, and `wanted` is one
+argument whatever it holds: nothing is expanded or split again, so a file
+name with a space or a `$` in it is only a file name. A command that fails
+is an error, as a function's is. `rerun.to` has its command as values, not
+as text, so it uses the other form, `process.command(command[0],
+...command[1:])`, and reads the exit code of a command that failed from the
+error.
+
+**The system is within reach.** `ask.to` takes one key without waiting for
+Enter, which is a setting of the terminal: `unix.terminalMode` reads it,
+the script clears two of its flags for the length of one `unix.read`, and
+a `defer` sets it back, whether the read gave a key or failed. The calls are those of C by their names, in `std.os.unix`,
+safe to call and failing with the system's error. When its input is not a
+terminal the script reads a line instead, so it works in a pipe too.
 
 **The library a script needs is there.** JSON, CSV, hashes, dates, tables,
 watching files and a web server are in the standard library, so a script is

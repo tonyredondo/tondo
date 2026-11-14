@@ -206,7 +206,7 @@ context Shared = {
 }
 
 fn isWord(text: String): Bool {
-    _ = Shared.hits.add(1)
+    Shared.hits.add(1)
     Shared.words.isFullMatch(text) ?? false
 }
 

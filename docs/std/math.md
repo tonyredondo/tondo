@@ -10,6 +10,10 @@ let side = math.sqrt(3.0 * 3.0 + 4.0 * 4.0)
 console.println("{side} {math.round(2.5)} {math.pow(2.0, 10.0)}")
 ```
 
+`math.Tensor` holds numbers in several dimensions, with arithmetic element by
+element and the product of matrices:
+[Numbers](../language/10-numbers.md#tensors) presents it.
+
 <!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
 
 ## Reference

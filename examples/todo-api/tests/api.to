@@ -29,9 +29,9 @@ test listsAndFilters {
     let server = serve()?
     defer server.stop()
     let client = http.Client(baseUrl: server.url())
-    _ = client.post("/tasks", body: http.Body.json(store.NewTask { title: "one" }))?
-    _ = client.post("/tasks", body: http.Body.json(store.NewTask { title: "two" }))?
-    _ = client.patch("/tasks/2", body: http.Body.json(store.TaskChange { done: some(true) }))?
+    client.post("/tasks", body: http.Body.json(store.NewTask { title: "one" }))?
+    client.post("/tasks", body: http.Body.json(store.NewTask { title: "two" }))?
+    client.patch("/tasks/2", body: http.Body.json(store.TaskChange { done: some(true) }))?
 
     let all: Array[store.Task] = client.get("/tasks")?.json()?
     let done: Array[store.Task] = client.get("/tasks", query: ["done": "true"])?.json()?
@@ -45,14 +45,12 @@ test aMissingTaskIsA404 {
     let client = http.Client(baseUrl: server.url())
     for path in ["/tasks/9", "/tasks/x"] {
         match client.get(path) {
-            err(http.HttpError.Status(response)) => assert(
-                response.status() == 404 or response.status() == 400,
-            )
+            err(Status(response)) => assert(response.status() == 404 or response.status() == 400)
             other => assert(other.isErr(), "{path} answered")
         }
     }
     match client.delete("/tasks/9") {
-        err(http.HttpError.Status(response)) => assert(response.status() == 404)
+        err(Status(response)) => assert(response.status() == 404)
         other => assert(other.isErr(), "it deleted nothing and said so")
     }
 }
@@ -62,7 +60,7 @@ test anEmptyTitleIsRefused {
     defer server.stop()
     let client = http.Client(baseUrl: server.url())
     match client.post("/tasks", body: http.Body.json(store.NewTask { title: "" })) {
-        err(http.HttpError.Status(response)) => {
+        err(Status(response)) => {
             assert(response.status() == 422)
             assert(response.text()?.contains("title"))
         }
@@ -74,7 +72,7 @@ test removesATask {
     let server = serve()?
     defer server.stop()
     let client = http.Client(baseUrl: server.url())
-    _ = client.post("/tasks", body: http.Body.json(store.NewTask { title: "temporary" }))?
+    client.post("/tasks", body: http.Body.json(store.NewTask { title: "temporary" }))?
     assert(client.delete("/tasks/1")?.status() == 204)
     let left: Array[store.Task] = client.get("/tasks")?.json()?
     assert(left.isEmpty())

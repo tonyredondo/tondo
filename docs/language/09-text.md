@@ -81,9 +81,11 @@ Hello, Ada!
 ```
 
 Numbers, booleans, characters and strings have `Display`. So do options,
-results, tuples and collections of things that have it, and an enum whose
-variants hold no data, which shows its variant's name. A record or an enum
-with data has it when the program writes it: `impl Display for T`.
+results, tuples and collections of things that have it. A record and an
+enum have it too, with nothing to write: a record is shown as its name and
+its fields, `Point { x: 3, y: 4 }`, and a variant as its name and its data.
+A type writes `impl Display for T` when it wants another text, as `Point`
+above does.
 
 `+` does not join strings. Interpolation does, and reads better:
 `"{first} {last}"`. To join two strings held in variables without a

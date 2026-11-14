@@ -1,0 +1,13 @@
+import std.messagepack
+
+// What a program and its plugin say to each other is MessagePack: a table
+// arrives as it was sent.
+test aTableCrossesAsItIs {
+    let table = Table {
+        title: "Sales"
+        columns: ["region", "amount"]
+        rows: [["north", "120.50"], []]
+    }
+    let arrived = messagepack.decode[Table](messagepack.encode(table))?
+    assert(arrived == table)
+}

@@ -36,7 +36,7 @@ test anyLineIsACommandOrAnError {
         ["SET a 1", "GET a", "INCR a 99999999999999999999", "", "KEYS now"],
         (line: String) {
             match parse(line) {
-                ok(Command.Set { key, .. }) => assert(not key.isEmpty())
+                ok(Set { key, .. }) => assert(not key.isEmpty())
                 ok(_) => {}
                 err(error) => assert(not "{error}".isEmpty())
             }

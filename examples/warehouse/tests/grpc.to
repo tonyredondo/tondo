@@ -109,15 +109,15 @@ test changesArriveAsTheyHappen {
     var changes = client.watch(stock.WatchItems { skus: ["CUP-007"] })
     assert(following(var changes)? == "CUP-007 2 0")
 
-    _ = client.reserve(stock.Units { sku: "TEA-001", quantity: 1 }, metadata: signed())?
-    _ = client.reserve(stock.Units { sku: "CUP-007", quantity: 2 }, metadata: signed())?
+    client.reserve(stock.Units { sku: "TEA-001", quantity: 1 }, metadata: signed())?
+    client.reserve(stock.Units { sku: "CUP-007", quantity: 2 }, metadata: signed())?
     assert(following(var changes)? == "CUP-007 0 -2")
 }
 
 fn countChanges(client: stock.StockServiceClient): Int ! grpc.Status {
     var count = 0
     for each in client.watch(stock.WatchItems {}) {
-        _ = each?
+        each?
         count += 1
     }
     count

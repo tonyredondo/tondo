@@ -24,9 +24,9 @@ pub enum ParseError {
 impl Display for ParseError {
     fn display(self): String {
         match self {
-            ParseError.Shape(words) => "it has {words} words, and an entry has 5"
-            ParseError.Status(text) => "`{text}` is not a status"
-            ParseError.Took(text) => "`{text}` is not a time, as `12ms`"
+            Shape(words) => "it has {words} words, and an entry has 5"
+            Status(text) => "`{text}` is not a status"
+            Took(text) => "`{text}` is not a time, as `12ms`"
         }
     }
 }
@@ -40,17 +40,17 @@ context Patterns = {
 pub fn parse(line: String): Entry ! ParseError {
     let words = line.words()
     if words.length() != 5 {
-        fail ParseError.Shape(words.length())
+        fail Shape(words.length())
     }
     let status = match Int.parse(words[3]) {
         ok(code) if code >= 100 and code <= 599 => code
-        _ => fail ParseError.Status(words[3])
+        _ => fail Status(words[3])
     }
     let took = match Int.parse(words[4].removeSuffix("ms")) {
         ok(milliseconds) if words[4].endsWith("ms") and milliseconds >= 0 => time.milliseconds(
             milliseconds,
         )
-        _ => fail ParseError.Took(words[4])
+        _ => fail Took(words[4])
     }
     Entry { at: words[0], method: words[1], path: words[2], status, took }
 }

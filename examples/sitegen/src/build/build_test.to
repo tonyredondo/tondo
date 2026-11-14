@@ -38,13 +38,13 @@ test buildsEveryPageThatIsNotADraft {
 
 test pagesAreEscapedAndTheirBodyIsNot {
     let out = fs.memory()
-    _ = build(sample()?, out, "Test")?
+    build(sample()?, out, "Test")?
     assert(out.readText("posts/new.html")? == "<h1>New &amp; shiny</h1><h2>Hi</h2><p>tea,news</p>")
 }
 
 test listsAreNewestFirst {
     let out = fs.memory()
-    _ = build(sample()?, out, "Test")?
+    build(sample()?, out, "Test")?
     assert(
         out.readText("index.html")? ==
             "<h1>Posts</h1>[New &amp; shiny|/posts/new.html][Old|/posts/old.html]",
@@ -58,7 +58,7 @@ test aPageThatIsNotOneStopsTheBuild {
     let files = sample()?
     files.writeText("content/broken.md", "no front matter")?
     match build(files, fs.memory(), "Test") {
-        err(BuildError.Content(error)) => assert("{error}".startsWith("broken.md"))
+        err(Content(error)) => assert("{error}".startsWith("broken.md"))
         other => assert(other.isErr(), "a broken page was built")
     }
 }

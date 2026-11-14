@@ -36,10 +36,10 @@ pub enum ProtocolError {
 impl Display for ProtocolError {
     fn display(self): String {
         match self {
-            ProtocolError.Empty => "an empty line"
-            ProtocolError.Unknown(name) => "unknown command `{name}`"
-            ProtocolError.Usage(name, usage) => "`{name}` is written `{usage}`"
-            ProtocolError.NotANumber(text) => "`{text}` is not a number"
+            Empty => "an empty line"
+            Unknown(name) => "unknown command `{name}`"
+            Usage(name, usage) => "`{name}` is written `{usage}`"
+            NotANumber(text) => "`{text}` is not a number"
         }
     }
 }
@@ -49,7 +49,7 @@ impl Display for ProtocolError {
 pub fn parse(line: String): Command ! ProtocolError {
     let trimmed = line.trim()
     if trimmed.isEmpty() {
-        fail ProtocolError.Empty
+        fail Empty
     }
     let (name, rest) = match trimmed.splitOnce(" ") {
         some((first, after)) => (first.toUpper(), after.trim())
@@ -58,7 +58,7 @@ pub fn parse(line: String): Command ! ProtocolError {
     match name {
         "SET" => match rest.splitOnce(" ") {
             some((key, value)) => Command.Set { key, value: value.trim() }
-            none => fail ProtocolError.Usage("SET", "SET key value")
+            none => fail Usage("SET", "SET key value")
         }
         "GET" => Command.Get(one(name, rest)?)
         "DEL" => Command.Delete(one(name, rest)?)
@@ -66,15 +66,15 @@ pub fn parse(line: String): Command ! ProtocolError {
             [key] => Command.Increment { key, by: 1 }
             [key, amount] => match Int.parse(amount) {
                 ok(by) => Command.Increment { key, by }
-                err(_) => fail ProtocolError.NotANumber(amount)
+                err(_) => fail NotANumber(amount)
             }
-            _ => fail ProtocolError.Usage("INCR", "INCR key [amount]")
+            _ => fail Usage("INCR", "INCR key [amount]")
         }
         "KEYS" if rest.isEmpty() => Command.Keys
         "QUIT" if rest.isEmpty() => Command.Quit
-        "KEYS" => fail ProtocolError.Usage("KEYS", "KEYS")
-        "QUIT" => fail ProtocolError.Usage("QUIT", "QUIT")
-        _ => fail ProtocolError.Unknown(name)
+        "KEYS" => fail Usage("KEYS", "KEYS")
+        "QUIT" => fail Usage("QUIT", "QUIT")
+        _ => fail Unknown(name)
     }
 }
 
@@ -82,7 +82,7 @@ pub fn parse(line: String): Command ! ProtocolError {
 fn one(name: String, rest: String): String ! ProtocolError {
     match rest.words() {
         [key] => key
-        _ => fail ProtocolError.Usage(name, "{name} key")
+        _ => fail Usage(name, "{name} key")
     }
 }
 
@@ -90,10 +90,10 @@ fn one(name: String, rest: String): String ! ProtocolError {
 pub fn format(reply: Reply): String {
     match reply {
         Reply.Ok => "OK"
-        Reply.Value(value) => "VALUE {value}"
-        Reply.Missing => "NONE"
-        Reply.Keys(keys) => "KEYS {keys.join(" ")}".trim()
-        Reply.Bye => "BYE"
-        Reply.Error(message) => "ERROR {message}"
+        Value(value) => "VALUE {value}"
+        Missing => "NONE"
+        Keys(keys) => "KEYS {keys.join(" ")}".trim()
+        Bye => "BYE"
+        Error(message) => "ERROR {message}"
     }
 }

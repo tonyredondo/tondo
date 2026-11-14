@@ -11,13 +11,13 @@ import std.time
 /// The column of a day of the week, in a week that starts on Monday.
 fn column(day: time.Weekday): Int {
     match day {
-        time.Weekday.Monday => 0
-        time.Weekday.Tuesday => 1
-        time.Weekday.Wednesday => 2
-        time.Weekday.Thursday => 3
-        time.Weekday.Friday => 4
-        time.Weekday.Saturday => 5
-        time.Weekday.Sunday => 6
+        Monday => 0
+        Tuesday => 1
+        Wednesday => 2
+        Thursday => 3
+        Friday => 4
+        Saturday => 5
+        Sunday => 6
     }
 }
 

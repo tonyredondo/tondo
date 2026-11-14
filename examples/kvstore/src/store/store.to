@@ -20,18 +20,18 @@ pub type Applied = {
 /// go through every state it can reach.
 pub fn apply(store: Store, command: protocol.Command): Applied {
     match command {
-        protocol.Command.Set { key, value } => {
+        Set { key, value } => {
             Applied { store: put(store, key, value), reply: protocol.Reply.Ok }
         }
-        protocol.Command.Get(key) => match store.values[key] {
+        Get(key) => match store.values[key] {
             some(value) => Applied { store, reply: protocol.Reply.Value(value) }
             none => Applied { store, reply: protocol.Reply.Missing }
         }
-        protocol.Command.Delete(key) => match store.values[key] {
+        Delete(key) => match store.values[key] {
             some(_) => Applied { store: without(store, key), reply: protocol.Reply.Ok }
             none => Applied { store, reply: protocol.Reply.Missing }
         }
-        protocol.Command.Increment { key, by } => {
+        Increment { key, by } => {
             let current = match store.values[key] {
                 some(text) => match Int.parse(text) {
                     ok(number) => number
@@ -50,11 +50,8 @@ pub fn apply(store: Store, command: protocol.Command): Applied {
                 none => Applied { store, reply: protocol.Reply.Error("`{key}` would overflow") }
             }
         }
-        protocol.Command.Keys => Applied {
-            store
-            reply: protocol.Reply.Keys(store.values.keys().collect())
-        }
-        protocol.Command.Quit => Applied { store, reply: protocol.Reply.Bye }
+        Keys => Applied { store, reply: protocol.Reply.Keys(store.values.keys().collect()) }
+        Quit => Applied { store, reply: protocol.Reply.Bye }
     }
 }
 

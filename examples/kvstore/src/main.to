@@ -10,5 +10,5 @@ fn main(): !net.NetError {
     let running = server.start("127.0.0.1", port)?
     console.println("kvstore on 127.0.0.1:{running.port()}; Ctrl-C stops it")
     // Ctrl-C cancels `main`: the wait ends, and the program with it.
-    _ = process.signals().receive()
+    process.signals().receive()
 }

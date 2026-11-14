@@ -72,12 +72,12 @@ fn main() {
 
 ```text
 $ tondo check
-error[E1102]: expected `String`, found `String?`, which may be `none`: give a fallback with `.unwrapOr(value)`, handle it with `match`, or pass it on with `?` in a function that returns an option
+error[E1102]: expected `String`, found `String?`, which may be `none`: give a fallback with `value ?? fallback`, handle it with `match`, or pass it on with `?` in a function that returns an option
   --> src/main.to:16:28
    |
 16 |     let text = fs.readText(path)
    |                            ^^^^
-error[E1102]: expected `String`, found `String ! fs.FsError`: add `?` to pass the failure on, give a fallback with `.unwrapOr(value)`, or handle it with `match`
+error[E1102]: expected `String`, found `String ! fs.FsError`: add `?` to pass the failure on, give a fallback with `value ?? fallback`, or handle it with `match`
   --> src/main.to:17:32
    |
 17 |     for (word, times) in count(text) {
@@ -96,6 +96,11 @@ only says what is wrong leaves the reader, or the model, to guess the fix.
   the code`.
 - `tondo check --docs` lists what is public and has no documentation, and
   `--performance` a copy that a loop makes on every turn.
+- A project with files for one system or one architecture, as
+  `watch_macos.to` or `checksum_arm64.to`, is checked for every target it
+  is for, on any machine: an error that another target would have shows as
+  `on macOS: ...` or `on arm64: ...`
+  ([Modules](../language/15-modules.md#code-for-one-system-or-architecture)).
 - Warnings are few and each means something: an unused import, a result
   that is dropped, a `spawn` in a loop that waits for each task.
 
@@ -285,6 +290,7 @@ library, which makes it the content of a container image from `scratch`.
 | `--strip` | without its symbol table |
 | `--debug` | with what the debugger needs |
 | `--target aarch64-linux` | for another architecture |
+| `--cpu x86-64-v3` | for a level of processor above the baseline |
 | `--link <library>` | a C library to link, for `extern fn` |
 | `--library` | a library for C instead: `lib<name>.so`, `lib<name>.a` and a header |
 
@@ -295,6 +301,12 @@ Building for another architecture needs that architecture's runtime. A
 $ tondo build --target aarch64-linux
 tondo: building for aarch64-linux needs its runtime, which this tondo does not carry: write it with `tondo target pack <dir>` of a tondo for aarch64-linux, and set TONDO_TARGETS to <dir>
 ```
+
+A build is for a level of processor, and for the same one wherever it is
+made: `baseline`, which is x86-64-v2 or ARMv8.0. `--cpu x86-64-v3`, or `cpu`
+in the `[build]` of `tondo.toml`, lets the code use more, and the program
+then checks its processor when it starts
+([Performance](performance.md#the-processor-a-build-is-for)).
 
 Tondo links its own executables, so a build needs no C compiler and no
 linker on the machine. The [`textkit`](../../examples/textkit) example

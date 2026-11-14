@@ -520,7 +520,7 @@ fn main() {
     for _ in 0..1000 {
         group.add(spawn hits.add(1))
     }
-    _ = group.wait()
+    group.wait()
     console.println("{hits.load()} {hits.swap(0)} {hits.load()}")
 }
 ```
@@ -570,7 +570,7 @@ import std.sync
 fn count(words: Array[String], seen: sync.Set[String], lengths: sync.Map[Int, Int]) {
     for word in words {
         if seen.insert(word) {
-            _ = lengths.insert(word.length(), 1)
+            lengths.insert(word.length(), 1)
         }
     }
 }
@@ -594,6 +594,34 @@ Each operation is atomic by itself, and `snapshot()` gives an ordinary
 collection of what there is at that moment. Use them when many tasks touch
 one collection often; for state that changes as a whole, a `Mutex` around a
 plain record is simpler and says more.
+
+What is taken out of one of them is let go of as a local value is, before
+the operation returns, when it holds something whose end shows: an end of a
+channel, a task, a process, a file. A `Sender` taken out and dropped closes
+its channel, if it was the last one:
+
+```tondo
+import std.console
+import std.sync
+
+fn main() {
+    let waiting: sync.Map[Int, Sender[String]] = sync.Map()
+    let receive = {
+        let (send, receive) = channel[String](1)
+        _ = waiting.insert(1, send)
+        receive
+    }
+    _ = waiting.remove(1)
+    console.println("{receive.receive()}")
+}
+```
+
+```text output
+none
+```
+
+A value that only holds memory, as a `String`, is freed a little later,
+which a program cannot see: that is what lets a read take no lock.
 
 ## The other tools of std.sync
 

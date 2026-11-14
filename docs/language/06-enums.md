@@ -42,13 +42,16 @@ fn main() {
 3 payments, true
 ```
 
-A variant has no data, data by position, or data by name. It is always
-written with its enum, `Payment.Card("4242")`: there is nothing to import to
-shorten it, and so a variant is never confused with a type or a function.
+A variant has no data, data by position, or data by name. To make a value
+it is written with its enum, `Payment.Card("4242")`: there is nothing to
+import to shorten it, and so a variant is never confused with a type or a
+function. Where the enum is already known, in a pattern and after `fail`, it
+is written alone, as the next section shows.
 
 An enum is a value like any other: it is copied, compared with `==`, used as
-a map's key when its data can be, and it has methods. One whose variants
-hold no data also prints its variant's name, with no `Display` to write:
+a map's key when its data can be, and it has methods. It is also shown with
+no `Display` to write: a variant by its name, and with its data when it has
+any, `Card(4242)`.
 
 ```tondo
 import std.console
@@ -67,7 +70,7 @@ fn Level.isSerious(self): Bool {
 fn main() {
     let level = Level.Warning
     var counts: Map[Level, Int] = [:]
-    counts[level] = (counts[level] ?? 0) + 1
+    counts[level, default: 0] += 1
     console.println("{level} {level.isSerious()} {counts}")
 }
 ```
@@ -92,20 +95,20 @@ pub enum Payment {
 
 fn describe(payment: Payment): String {
     match payment {
-        Payment.Cash => "cash"
-        Payment.Card(number) => "card ending in {number}"
-        Payment.Transfer { iban, reference } => "transfer from {iban} ({reference})"
+        Cash => "cash"
+        Card(number) => "card ending in {number}"
+        Transfer { iban, reference } => "transfer from {iban} ({reference})"
     }
 }
 
 fn fee(payment: Payment, amount: Int): Int {
     match payment {
-        Payment.Cash => 0
-        Payment.Card(_) => {
+        Cash => 0
+        Card(_) => {
             let percent = amount * 2 / 100
             percent.max(30)
         }
-        Payment.Transfer { .. } => 25
+        Transfer { .. } => 25
     }
 }
 
@@ -117,6 +120,49 @@ fn main() {
 
 ```text output
 card ending in 4242, fee 30
+```
+
+A pattern names a variant alone, `Card(number)`: the value being matched is
+a `Payment`, so there is nothing else `Card` could be. `Payment.Card(number)`
+says the same and is also accepted. This holds at any depth, as in
+`some(Card(number))`.
+
+Several patterns share an arm with `|`, when none of them binds a name:
+
+```tondo
+import std.console
+
+enum Token {
+    Plus
+    Minus
+    Star
+    Number(Int)
+    Word(String)
+}
+
+fn kind(token: Token): String {
+    match token {
+        Plus | Minus | Star => "an operator"
+        Number(_) | Word(_) => "an operand"
+    }
+}
+
+fn main() {
+    console.println("{kind(Token.Star)}, {kind(Token.Number(4))}")
+    console.println("{Token.Number(4)} {Token.Plus} {[Token.Word("tea"), Token.Minus]}")
+}
+```
+
+```text output
+an operator, an operand
+Number(4) Plus [Word(tea), Minus]
+```
+
+A pattern that binds a name takes an arm of its own, so that the name always
+has a value:
+
+```text
+error[E1202]: the patterns that `|` joins bind nothing, and this one binds `n`: write an arm of its own for it
 ```
 
 `match` is an expression, and its arms give the same type. An arm is one
@@ -159,8 +205,8 @@ enum Light {
 
 fn next(light: Light): Light {
     match light {
-        Light.Red => Light.Green
-        Light.Green => Light.Amber
+        Red => Light.Green
+        Green => Light.Amber
     }
 }
 
@@ -196,8 +242,9 @@ error[E1203]: this arm is covered by earlier arms
 | `(a, b)` | a tuple, part by part | what its parts bind |
 | `User { name, age }` | a record | its fields, by their names |
 | `User { name: who, .. }` | a record | `name` as `who`; `..` skips the rest |
-| `Shape.Circle(radius)` | that variant | its data |
-| `Shape.Rect { width, height }` | that variant | its fields |
+| `Circle(radius)`, `Shape.Circle(radius)` | that variant | its data |
+| `Rect { width, height }` | that variant | its fields |
+| `Red \| Amber` | either pattern, when neither binds a name | nothing |
 | `some(value)`, `none` | an option | the value |
 | `ok(value)`, `err(error)` | a result | the value, or the error |
 | `Int(number)`, `String(text)` | that member of a union | the value, with that type |
@@ -219,11 +266,11 @@ enum Event {
 
 fn summary(event: Event): String {
     match event {
-        Event.SignedUp(User { name, address: some(Address { city, .. }) }) => "{name} joined from {city}"
-        Event.SignedUp(User { name, address: none }) => "{name} joined"
-        Event.Moved { user, to: Address { country: "ES", city } } => "{user.name} moved to {city}, in Spain"
-        Event.Moved { user, to } => "{user.name} moved to {to.city}"
-        Event.Left(name) => "{name} left"
+        SignedUp(User { name, address: some(Address { city, .. }) }) => "{name} joined from {city}"
+        SignedUp(User { name, address: none }) => "{name} joined"
+        Moved { user, to: Address { country: "ES", city } } => "{user.name} moved to {city}, in Spain"
+        Moved { user, to } => "{user.name} moved to {to.city}"
+        Left(name) => "{name} left"
     }
 }
 
@@ -350,19 +397,19 @@ enum Expr {
 
 fn evaluate(expr: Expr): Float {
     match expr {
-        Expr.Number(value) => value
-        Expr.Add(left, right) => evaluate(left) + evaluate(right)
-        Expr.Multiply(left, right) => evaluate(left) * evaluate(right)
-        Expr.Negate(inner) => -evaluate(inner)
+        Number(value) => value
+        Add(left, right) => evaluate(left) + evaluate(right)
+        Multiply(left, right) => evaluate(left) * evaluate(right)
+        Negate(inner) => -evaluate(inner)
     }
 }
 
 fn show(expr: Expr): String {
     match expr {
-        Expr.Number(value) => "{value}"
-        Expr.Add(left, right) => "({show(left)} + {show(right)})"
-        Expr.Multiply(left, right) => "{show(left)} * {show(right)}"
-        Expr.Negate(inner) => "-{show(inner)}"
+        Number(value) => "{value}"
+        Add(left, right) => "({show(left)} + {show(right)})"
+        Multiply(left, right) => "{show(left)} * {show(right)}"
+        Negate(inner) => "-{show(inner)}"
     }
 }
 
@@ -457,8 +504,8 @@ enum Document {
 
 fn lineCount(document: Document): Int {
     match document {
-        Document.Draft(ref lines) => lines.length()
-        Document.Published { ref lines, .. } => lines.length()
+        Draft(ref lines) => lines.length()
+        Published { ref lines, .. } => lines.length()
     }
 }
 
@@ -507,18 +554,18 @@ enum Connection {
 
 fn next(connection: Connection): Connection {
     match connection {
-        Connection.Idle => Connection.Connected { socket: 3 }
-        Connection.Connected { .. } => connection
-        Connection.Failed { retries, .. } if retries < 3 => Connection.Idle
-        Connection.Failed { .. } => connection
+        Idle => Connection.Connected { socket: 3 }
+        Connected { .. } => connection
+        Failed { retries, .. } if retries < 3 => Connection.Idle
+        Failed { .. } => connection
     }
 }
 
 fn describe(connection: Connection): String {
     match connection {
-        Connection.Idle => "idle"
-        Connection.Connected { socket } => "connected on {socket}"
-        Connection.Failed { error, retries } => "failed {retries} times: {error}"
+        Idle => "idle"
+        Connected { socket } => "connected on {socket}"
+        Failed { error, retries } => "failed {retries} times: {error}"
     }
 }
 

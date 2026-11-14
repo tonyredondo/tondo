@@ -161,6 +161,35 @@ of their type: integers still panic on overflow, and nothing is converted.
 `+` never joins two arrays and `*` never repeats one. Those are
 `a.concat(b)` and `a.repeat(3)`.
 
+The arithmetic of float arrays is done several elements at a time where the
+processor can, and gives for each element what the operator gives for two
+numbers. Their `sum` is the one place where the order is not that of a
+loop: it keeps eight partial sums, sixteen for `Float32`, adds each element
+to the one of its place, and adds those at the end. Every machine adds in
+that order, so every machine gives the same number, and it is an order that
+is fast to compute. It can differ from a loop's result in the last bits, or
+by more when numbers of very different sizes cancel:
+
+```tondo
+import std.console
+
+fn main() {
+    let values = [1e16, 1.0, -1e16, 1.0]
+    var inOrder = 0.0
+    for value in values {
+        inOrder += value
+    }
+    console.println("{values.sum()} {inOrder}")
+}
+```
+
+```text output
+2.0 1.0
+```
+
+`math.dot(a, b)`, the sum of the products of two arrays, adds in the same
+order.
+
 ## The methods of an array
 
 `tondo api Array` lists them all, with what each gives. By what they are
@@ -249,10 +278,13 @@ zoe is 41
 
 - Reading `map[key]` gives a `V?`, because a key that is not there is
   normal. A missing key is `none`, never a zero that looks like a value.
-  `getOr(key, fallback)` gives the value or the fallback.
-- Writing `map[key] = value` adds or replaces. There is no `map[key] += 1`,
-  since the key may not be there: write `counts[word] = counts.getOr(word,
-  0) + 1`.
+  `map[key] ?? fallback` gives the value or the fallback.
+- Writing `map[key] = value` adds or replaces.
+- `map[key, default: value]` is the entry to change in place: when the key
+  is missing it is put there first with that value, which is evaluated only
+  then. So `counts[word, default: 0] += 1` counts, and
+  `groups[key, default: []].push(item)` groups. A plain `map[key] += 1` is
+  an error, since the key may not be there and nothing says what then.
 - `remove(key)` takes an entry out and gives its value. Assigning `none`
   does not remove anything.
 - Order is the order of adding. Replacing a value keeps the key's place;
@@ -268,12 +300,16 @@ import std.console
 type Point = { x: Int, y: Int }
 
 fn main() {
-    // Counting words.
+    // Counting words, and grouping them by their length.
     var counts: Map[String, Int] = [:]
+    var byLength: Map[Int, Array[String]] = [:]
     for word in "to be or not to be".words() {
-        counts[word] = (counts[word] ?? 0) + 1
+        counts[word, default: 0] += 1
+        if counts[word] == 1 {
+            byLength[word.length(), default: []].push(word)
+        }
     }
-    console.println("{counts}")
+    console.println("{counts} {byLength}")
 
     // A record as a key, and a map built from others.
     var visited: Map[Point, String] = [:]
@@ -286,7 +322,7 @@ fn main() {
 ```
 
 ```text output
-[to: 2, be: 2, or: 1, not: 1]
+[to: 2, be: 2, or: 1, not: 1] [2: [to, be, or], 3: [not]]
 1 [to: 2, be: 2] 4 [to: 2, be: 2, and: 1]
 ```
 
@@ -308,7 +344,7 @@ fn main() {
     console.println("{Set["leo"].isSubset(admins)} {editors == Set["leo", "ana"]}")
 
     var empty = Set[Int]()
-    _ = empty.insert(1)
+    empty.insert(1)
     console.println("{[3, 1, 3, 2, 1].unique()} {empty}")
 }
 ```

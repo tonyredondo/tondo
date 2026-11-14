@@ -33,9 +33,9 @@ fn main() {
     var group = Group[Unit]()
     for amount in 1..=100 {
         group.add(spawn deposit(account, amount))
-        _ = visits.add(1)
+        visits.add(1)
     }
-    _ = group.wait()
+    group.wait()
     let end = account.get()
     console.println("{end.balance} in {end.moves} moves, {visits.load()} visits")
 

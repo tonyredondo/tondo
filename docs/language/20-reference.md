@@ -224,10 +224,10 @@ enum Shape {
 fn describe(value: Shape | Int | Point | String): String {
     match value {
         Shape(shape) => match shape {
-            Shape.Dot => "a dot"
-            Shape.Circle(radius) if radius > 10 => "a big circle"
-            Shape.Circle(radius) => "a circle of {radius}"
-            Shape.Box { width, .. } => "a box {width} wide"
+            Dot => "a dot"
+            Circle(radius) if radius > 10 => "a big circle"
+            Circle(radius) => "a circle of {radius}"
+            Box { width, .. } => "a box {width} wide"
         }
         Int(0) => "zero"
         Int(number) => "the number {number}"
@@ -252,13 +252,17 @@ fn main() {
         some(value) => value
         none => 0
     }
-    console.println("{list} | {pair} | {maybe}")
+    let size = match 2 {
+        0 | 1 => "small"            // several patterns, when none binds a name
+        _ => "large"
+    }
+    console.println("{list} | {pair} | {maybe} | {size}")
 }
 ```
 
 ```text output
 a circle of 3 | zero | on the axis at 4
-1 and 2 more | one | 3
+1 and 2 more | one | 3 | large
 ```
 
 [Enums, unions and match](06-enums.md)
@@ -286,9 +290,9 @@ fn main() {
     }
     console.println("{lines("/missing") ?? 0} {describe("/missing")}")
     let caught = recover { [1, 2][5] }      // stop a panic
-    let missing: Int? = none
-    let found: Int? = missing.map((n) { n + 1 })  // a chain of an option
-    console.println("{caught.isErr()} {found} {some(2).map((n) { n * 2 })}")
+    let missing: String? = none
+    let length = missing?.length() ?? 0     // go on while there is a value, or else this
+    console.println("{caught.isErr()} {length} {some(2).map((n) { n * 2 })}")
     assert(1 + 1 == 2, "arithmetic holds")
 }
 ```
@@ -296,7 +300,7 @@ fn main() {
 ```text output
 failed: not found
 0 err(counting /missing: not found)
-true none some(4)
+true 0 some(4)
 ```
 
 [Errors](07-errors.md)
@@ -312,8 +316,9 @@ fn main() {
     list.sort()
     var ages = ["ada": 36]
     ages["bo"] = 20
+    ages["bo", default: 0] += 1             // the entry, put there first if it is missing
     var seen = Set[1, 2]
-    _ = seen.insert(3)
+    seen.insert(3)
 
     console.println("{list} {list[0]} {list[-1]} {list[1:3]} {list.get(9)} {list * 2}")
     console.println("{ages["ada"]} {ages["cy"] ?? 0} {"bo" in ages} {seen} {(1..=3).collect()}")
@@ -412,7 +417,7 @@ fn main() {
 
     let counter = sync.Atomic(0)
     let state = sync.Mutex([0])
-    _ = counter.add(1)
+    counter.add(1)
     state.update((values) { values.push(1) })
 
     let hurried = within time.milliseconds(50) { work(4) }
@@ -489,8 +494,9 @@ suite edges {
 | `len(x)`, `x.len()`, `x.Length`, `x.size()` | `x.length()` |
 | `` `${x}` ``, `f"{x}"`, `$"{x}"`, `"{}".format(x)` | `"{x}"` |
 | `a + b` on strings | `"{a}{b}"`, or `a.concat(b)` |
-| `x ?? y`, `x ?: y` | `x.unwrapOr(y)` |
-| `a?.b` | `try { a?.b }`, or `a.map((v) { v.b })` |
+| `x ?: y`, `x or y`, `x || y` for a missing value | `x ?? y` |
+| `a?.b` | `a?.b` on an option |
+| `subprocess.run([...])`, `exec.Command(...)`, backquotes | `$(git log -n {count} \| head -5).run()?` |
 | `cond ? a : b` | `if cond { a } else { b }` |
 | `x++` | `x += 1` |
 

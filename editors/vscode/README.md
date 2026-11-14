@@ -30,12 +30,15 @@ project, running, debugging and testing it.
   over `main` or a script; and formatting, of a selection too, on save by
   default, when the imports a file lacks are added and those it does not use
   removed.
-- **Files of each system**: `watch_linux.to`, `watch_macos.to` and
-  `signals_unix.to` carry a badge with their system, never greyed out,
-  since tondo checks every system: an error of the other one shows as
-  `on macOS: ...`, its files are read as that system reads them, and go to
-  definition offers each system's declaration. Their breakpoints stay
-  unverified with the reason, and their tests show without a run button.
+- **Files of each system and architecture**: `watch_linux.to`,
+  `watch_macos.to`, `signals_unix.to`, `checksum_arm64.to` and
+  `poll_linux_x64.to` carry a badge with their target (`L`, `M`, `LM`, `X`,
+  `A`, and a system with an architecture as `Lx` or `Ma`), never greyed
+  out, since tondo checks every target: an error of another one shows as
+  `on macOS: ...` or `on arm64: ...`, its files are read as that target
+  reads them, and go to definition offers each target's declaration. Their
+  breakpoints stay unverified with the reason, and their tests show without
+  a run button.
 - **Running and debugging**, from `tondo dap`: *Run* and *Debug* over
   `fn main`, in the editor's title bar, or with F5 on any Tondo file, which
   runs its project or the file alone as a script. Breakpoints with

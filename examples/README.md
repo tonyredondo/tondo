@@ -16,7 +16,8 @@ warning and passes its own tests on each change to the compiler.
 | [`warehouse`](warehouse) | a gRPC service and its client | a `.proto` as a module, the four kinds of call, interceptors, deadlines, health and reflection |
 | [`textkit`](textkit) | a library for C | `pub extern fn`, a struct by value, C's conventions for buffers and callbacks, the header the build writes, a C program that links it |
 | [`notes`](notes) | an MCP server | tools from the methods of a type, schemas from records, validated arguments, resources and prompts |
-| [`scripts`](scripts) | nine programs of one file | scripts with no `main`: files, JSON, CSV, processes, hashing in tasks, dates, a web server |
+| [`tabulate`](tabulate) | a program and its plugins | a trait as a contract, a plugin that is a library and one that is a program, loading both while it runs, four packages |
+| [`scripts`](scripts) | ten programs of one file | scripts with no `main`: files, JSON, CSV, processes, hashing in tasks, dates, a web server, the terminal's keys |
 
 ## Running them
 

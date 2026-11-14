@@ -162,10 +162,40 @@ fn main() {
 3.0x3.0 has area 9.0
 ```
 
-A record cannot be interpolated until it has a `Display`: the compiler does
-not guess how a `User` should look to a person. For looking at one while
-programming, `tondo debug` and the dumps show every field, and
-`json.encode(value)` writes any record.
+A record that writes no `Display` is still shown, by its name and its
+fields, which is what a log or a test wants. The `Display` a type writes
+itself, as `Rectangle`'s above, is the one for people:
+
+```tondo
+import std.console
+
+type Address = { city: String, country: String }
+
+type User = {
+    name: String
+    age: Int
+    address: Address?
+    @secret token: String
+}
+
+fn main() {
+    let ada = User { name: "Ada", age: 36, address: Address { city: "London", country: "UK" }, token: "s3cret" }
+    let bo = User { name: "Bo", age: 20, address: none, token: "t0ken" }
+    console.println("{ada}")
+    console.println("{bo}")
+    console.println("{[ada.address, bo.address]} {(ada.name, bo.age)}")
+}
+```
+
+```text output
+User { name: Ada, age: 36, address: some(Address { city: London, country: UK }), token: <secret> }
+User { name: Bo, age: 20, address: none, token: <secret> }
+[some(Address { city: London, country: UK }), none] (Ada, 20)
+```
+
+Each field is shown as it would be on its own, as the elements of an array
+are. A field marked `@secret` is `<secret>`, and a `priv` field is shown
+only to its own module: from another, `Account { owner: ada, balance: … }`.
 
 ## Private fields
 
@@ -378,11 +408,12 @@ fn main() {
 | `@name("text")` | a field, a variant | its name outside the program, in every format |
 | `@ignore` | a field | it is neither written nor read; it has a default or is optional |
 | `@omitNone` | a field, a type | it is left out when it is `none` |
-| `@secret` | a field, a type | the debugger and the dumps show `<secret>` for it |
+| `@secret` | a field, a type | the debugger, the dumps and the record's own text show `<secret>` for it |
 | `@deprecated("use X")` | a function, a method, a type | every use warns, with the text |
 
-`@secret` hides a value from the tools, not from the program: `Display`,
-JSON and `==` still see it. A program declares annotations of its own,
+`@secret` hides a value from the tools and from the text the compiler
+writes for a record. The program still sees it: a `Display` the type writes
+itself, JSON and `==`. A program declares annotations of its own,
 `@Check(min: 3)`, and reads them through reflection
 ([Metaprogramming](17-meta.md)).
 

@@ -394,7 +394,7 @@ tondo setup
 ```text
 tondo run program.to -- args      compile (cached) and run
 tondo program.to args             the same for a script: #!/usr/bin/env tondo works
-tondo build --output app          a native executable; --static, --target aarch64-linux
+tondo build --output app          a native executable; --static, --target aarch64-linux, --cpu x86-64-v3
 tondo check                       diagnostics only; --json for tools
 tondo fix                         apply the compiler's safe repairs
 tondo fmt program.to              the canonical format; --check to verify

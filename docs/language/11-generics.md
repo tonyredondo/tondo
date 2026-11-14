@@ -90,8 +90,8 @@ enum Tree[T] {
 
 fn Tree[T].size(self): Int {
     match self {
-        Tree.Leaf => 0
-        Tree.Node(left, _, right) => left.size() + 1 + right.size()
+        Leaf => 0
+        Node(left, _, right) => left.size() + 1 + right.size()
     }
 }
 
@@ -116,6 +116,30 @@ some(2) [1] [#1, #2]
 Type parameters do not vary: an `Array[Int]` is never an `Array[Int |
 String]`, even though an `Int` can become that union. Turning one into the
 other is a `map`, so that what it costs can be seen.
+
+A function of a generic type that takes no `self` gets the type's parameters
+from its arguments, or from the type that is expected of its result. When
+neither gives them, they are written after the type's name:
+
+```tondo
+import std.console
+import std.ffi
+
+type Buffer[T] = { items: Array[T] }
+
+/// How many bytes one item takes.
+fn Buffer[T].itemSize(): Int {
+    ffi.sizeOf[T]()
+}
+
+fn main() {
+    console.println("{Buffer[Int32].itemSize()} {Buffer[Float].itemSize()}")
+}
+```
+
+```text output
+4 8
+```
 
 ## Traits
 
@@ -414,11 +438,12 @@ These need no import:
 
 | Trait | A type that implements it | Gives |
 | --- | --- | --- |
-| `Display` | writes `display(self): String` | `"{value}"`, `join`, being printed |
+| `Display` | writes `display(self): String`, or nothing: a record and an enum are shown as they are | `"{value}"`, `join`, being printed |
 | `Ordered` | writes `compare(self, other: Self): Int` | `<` `<=` `>` `>=`, `sorted()`, `min()`, `max()` |
 | `Iterator[T]` | writes `next(mut self): T?` | `for`, and every adapter |
 | `Additive` | writes `zero`, `plus`, `minus` | `+`, `-`, `sum()` |
 | `Number` | adds `one`, `fromInt`, `times`, `dividedBy` | `*`, `/`, integer literals |
+| `Fractional` | adds nothing: it says that the division keeps the fraction | a bound for code that divides, as a mean |
 
 ```tondo
 import std.console
@@ -560,8 +585,8 @@ enum Shape {
 
 fn area(shape: Shape): Float {
     match shape {
-        Shape.Round(circle) => 3.14159 * circle.radius * circle.radius
-        Shape.Boxy(square) => square.side * square.side
+        Round(circle) => 3.14159 * circle.radius * circle.radius
+        Boxy(square) => square.side * square.side
     }
 }
 

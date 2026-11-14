@@ -47,7 +47,7 @@ it on a few pages.
 
 | Chapter | What it covers |
 | --- | --- |
-| 15. [Modules, packages and projects](15-modules.md) | modules and imports, `pub`, `internal`, `tondo.toml`, dependencies, files for one system, embedded files |
+| 15. [Modules, packages and projects](15-modules.md) | modules and imports, `pub`, `internal`, `tondo.toml`, dependencies, files for one system or architecture, embedded files |
 | 16. [Testing](16-testing.md) | `test`, `suite`, `assert`, snapshots, virtual time, tests of tasks, benchmarks, fuzzing, models |
 | 17. [Metaprogramming](17-meta.md) | what the compiler writes, annotations, reflection, `derive`, generators |
 | 18. [Unsafe and C](18-unsafe.md) | `unsafe`, `extern fn`, C's types, pointers, callbacks, bindings, a library for C |

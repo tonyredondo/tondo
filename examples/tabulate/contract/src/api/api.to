@@ -1,0 +1,19 @@
+import std.plugin
+
+/// A table to show: its title, the names of its columns and its rows.
+pub type Table = {
+    title: String
+    columns: Array[String]
+    rows: Array[Array[String]]
+}
+
+/// What shows a table as text. A plugin implements it, and `tabulate` loads
+/// the plugins it finds and asks each for its name.
+@plugin.Contract
+pub trait Renderer {
+    /// The name it is asked for by, as `markdown`.
+    fn name(self): String ! plugin.Error
+
+    /// The table as text.
+    fn render(self, table: Table): String ! plugin.Error
+}

@@ -32,7 +32,7 @@ fn main(): !http.HttpError {
     let greeting: Greeting = http.get("{server.url()}/hello/Ada")?.json()?
     console.println("{greeting.message} ({greeting.length})")
     match http.get("{server.url()}/nothing") {
-        err(http.HttpError.Status(response)) => console.println("{response.status()}")
+        err(Status(response)) => console.println("{response.status()}")
         _ => console.println("unexpected")
     }
 }
@@ -89,12 +89,12 @@ fn main(): !http.HttpError {
     console.println("{client.post("/tasks", body: http.Body.json(NewTask { title: "test it" }))?.status()}")
     for request in ["/tasks/7", "/tasks/seven"] {
         match client.get(request) {
-            err(http.HttpError.Status(response)) => console.println("{response.status()}")
+            err(Status(response)) => console.println("{response.status()}")
             _ => console.println("unexpected")
         }
     }
     match client.post("/tasks", body: http.Body.json(NewTask { title: "" })) {
-        err(http.HttpError.Status(response)) => console.println("{response.status()} {response.text()?}")
+        err(Status(response)) => console.println("{response.status()} {response.text()?}")
         _ => console.println("unexpected")
     }
 }
@@ -136,7 +136,7 @@ fn main(): !http.HttpError {
     let answer = http.get(server.url(), headers: ["Authorization": "Bearer secret"])?
     console.println("{answer.text()?} {answer.header("X-Served-By")}")
     match http.get(server.url()) {
-        err(http.HttpError.Status(response)) => console.println("{response.status()}")
+        err(Status(response)) => console.println("{response.status()}")
         _ => console.println("unexpected")
     }
 }

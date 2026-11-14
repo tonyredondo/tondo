@@ -25,12 +25,12 @@ type Gate = { paid: Bool, open: Bool }
 
 fn apply(gate: Gate, event: Event): Gate ! String {
     match event {
-        Event.Insert if gate.open => fail "already open"
-        Event.Insert => gate with { paid: true }
-        Event.Turn if gate.paid => gate with { open: true, paid: false }
-        Event.Turn => fail "not paid"
-        Event.Push if gate.open => gate with { open: false }
-        Event.Push => fail "closed"
+        Insert if gate.open => fail "already open"
+        Insert => gate with { paid: true }
+        Turn if gate.paid => gate with { open: true, paid: false }
+        Turn => fail "not paid"
+        Push if gate.open => gate with { open: false }
+        Push => fail "closed"
     }
 }
 

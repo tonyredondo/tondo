@@ -1,94 +1,153 @@
 # std.process
 
-Running other programs, and what this one is to the system. A
-[`Command`](#command) is a program and its arguments, each on its own, so
-nothing is split at spaces, expanded or quoted, and a file name with a
-space or a `$` in it is only a file name. Commands join into pipelines with
-`|`, with no shell in between, and running one waits without holding a
-thread.
+Running other programs, and what this one is to the system. A command is
+written as in a shell, `$(git log -n {count} | head -5)`, and no shell runs
+it: the compiler splits the line into a program and its arguments when it
+compiles, so a value put in it is always one argument, whatever it holds, and
+a file name with a space or a `$` in it is only a file name. Running one
+waits without holding a thread.
 
-- [Running a program](#running-a-program)
-- [Pipelines, input and where it runs](#pipelines-input-and-where-it-runs)
+- [Writing a command](#writing-a-command)
+- [How it ended, input and output](#how-it-ended-input-and-output)
 - [What to reach for](#what-to-reach-for)
 
-## Running a program
+## Writing a command
 
 ```tondo
 import std.console
 import std.process
 
 fn main(): !process.ProcessError {
-    let listing = process.command("printf", "%s\n", "tea", "a file with spaces", "$HOME").output()?
-    console.println("{listing.text()?.lines()}")
+    // The words of a command, written as in a shell. A value is always one argument.
+    let name = "a file with spaces"
+    let listing = $(printf '%s\n' tea {name} '$HOME').lines()?
+    console.println("{listing}")
 
-    // `status` gives how it ended; `check` fails when it did not end well.
-    let found = process.command("test", "-d", "/").status()?
-    let missing = process.command("test", "-d", "/no/such/place").status()?
-    console.println("{found.success} {missing.success} {missing.code}")
-    match process.command("false").check() {
+    // A pipeline, with no shell in between.
+    let words = ["tea", "cup", "tea", "pot", "tea"]
+    let counted = $(printf '%s\n' {...words} | sort | uniq -c | sort -rn).lines()?
+    console.println("{counted.map((line) { line.trim() })}")
+
+    // `text` gives what it printed, without the line's end; `run` shows it and fails when the command fails.
+    console.println($(NAME=tondo printenv NAME).text()?)
+    match $(false).run() {
         ok(_) => console.println("it worked")
         err(error) => console.println("{error}")
     }
-    match process.command("no-such-program").status() {
-        ok(_) => console.println("it ran")
-        err(_) => console.println("there is no such program")
-    }
+
+    // A command that arrives as text while the program runs.
+    let line = "printf 'from a %s\n' string"
+    console.println(process.parse(line)?.text()?)
 }
 ```
 
 ```text output
 [tea, a file with spaces, $HOME]
-true false 1
+[3 tea, 1 pot, 1 cup]
+tondo
 exited with code 1
-there is no such program
+from a string
 ```
 
-| | |
-| --- | --- |
-| [`run`](#run) | with this program's input and output: what the user sees |
-| [`status`](#status) | without input, discarding output: only how it ended |
-| [`output`](#output) | captures what it printed |
-| [`check`](#check) | as `output`, failing when the program failed |
-| [`start`](#start) | starts it and gives a [`Process`](#process) to write to, read from, wait for or stop |
+What the text between `$(` and `)` holds:
 
-## Pipelines, input and where it runs
+| | Example | Meaning |
+| --- | --- | --- |
+| A word | `-la`, `--date=short` | one argument |
+| `'...'` | `'*.to'` | text as it is, with nothing looked at inside |
+| `"..."` | `"fix: {title}"` | one argument, with interpolation |
+| `{value}` | `{dir}`, `--out={path}` | one argument or a part of one, never split again |
+| `{...values}` | `{...files}` | an argument for each element |
+| `\|` | `sort \| uniq -c` | what a stage writes is what the next reads |
+| `<`, `>`, `>>` | `< {input}`, `>> out.txt` | the first stage reads a file; the last writes one, or adds to it |
+| `2>`, `2>>`, `2>&1` | `2> errors.log` | a stage's errors, to a file or to where its output goes |
+| `NAME=value` first | `LANG=C sort` | a variable of that stage's environment |
+
+It is not a shell, and says so where a shell's habits are written, with what
+to write instead:
+
+```text
+error[E0008]: `$HOME` reads a variable of the shell, which runs none: write `{env.get("HOME") ?? ""}`, or quote the `$`
+error[E0008]: `*` matches files in a shell, which runs none: write `{...fs.glob("*.md")?}`, or quote it when the character is meant: `'*'`
+error[E0008]: `&&` runs a command when another succeeds, which a shell does: write `.run()?` for each
+```
+
+A command comes from one of three places, and all three give the same
+value, which joins others with `|`:
+
+| The command | Written |
+| --- | --- |
+| is known when the program is written | `$(git log -n {count} \| head -5)` |
+| arrives as text while the program runs | [`process.parse(line)?`](#parse) |
+| is a program and its arguments, as values | [`process.command(program, ...arguments)`](#command) |
+
+## How it ended, input and output
 
 ```tondo
 import std.console
 import std.process
 
 fn main(): !process.ProcessError {
-    // `sort | uniq -c`, with no shell: each stage is a program and its arguments.
-    let words = process.command("printf", "%s\n", "tea", "cup", "tea", "pot", "tea")
-    let counted = (words | process.command("sort") | process.command("uniq", "-c")).output()?
-    console.println("{counted.text()?.lines().map((line) { line.trim() })}")
+    // `status` gives how it ended and never fails for that; `run`, `text`, `lines` and `check` fail.
+    let found = $(test -d /).status()?
+    let missing = $(test -d /no/such/place).status()?
+    console.println("{found.success} {missing.success} {missing.code}")
+    match $(no-such-program).status() {
+        ok(_) => console.println("it ran")
+        err(_) => console.println("there is no such program")
+    }
 
-    let here = process.command("pwd").directory("/").env("LANG", "C").output()?
-    console.println(here.text()?.trim())
+    // Where it reads from and writes to, as a shell writes it.
+    let folder = "/tmp"
+    $(printf 'b\na\n' > {folder}/letters.txt).run()?
+    console.println("{$(sort < {folder}/letters.txt).lines()?}")
+
+    // A program and its arguments as values, for when they are not known while writing.
+    let program = "printf"
+    let arguments = ["%s-%s\n", "left", "right"]
+    console.println(process.command(program, ...arguments).text()?)
+    let here = $(pwd).directory("/").env("LANG", "C").text()?
+    console.println(here)
 }
 ```
 
 ```text output
-[1 cup, 1 pot, 3 tea]
+true false 1
+there is no such program
+[a, b]
+left-right
 /
 ```
 
+| | |
+| --- | --- |
+| [`run`](#run) | with this program's input and output: what the user sees. Fails when the command fails |
+| [`text`](#text), [`lines`](#lines) | what it printed, as text without the line's end, or by lines. Fail when the command fails |
+| [`status`](#status) | without input, discarding output: only how it ended, which is never a failure |
+| [`output`](#output) | captures what it printed, and how each stage ended |
+| [`check`](#check) | as `output`, failing when the command failed |
+| [`start`](#start) | starts it and gives a [`Process`](#process) to write to, read from, wait for or stop |
+
+- A command that fails is `ProcessError.Failed`, with how each stage ended,
+  so a script stops at the first command that goes wrong and a program that
+  wants the exit code matches that error.
 - [`Command.directory`](#commanddirectory), [`Command.env`](#commandenv)
   and [`Command.stdin`](#commandstdin) say where it runs, with what
-  environment and what input.
+  environment and what input, for what a line cannot say.
 - Cancelling the task that waits for a command, as a `within` does, ends
   the command. [`Command.grace`](#commandgrace) asks it to end first and
   stops it only after a while, as `docker stop` does, and
   [`Command.group`](#commandgroup) makes that reach everything it started.
-- [`shell`](#shell) runs a line through the system's shell, for when that
-  is what is wanted.
+- [`shell`](#shell) runs a line through the system's shell, for when a real
+  shell is what is wanted.
 
 ## What to reach for
 
 | To | Use |
 | --- | --- |
-| Run a program | [`command`](#command), then [`run`](#run), [`status`](#status), [`output`](#output) or [`check`](#check) |
-| Join programs | `first \| second`, a [`Pipeline`](#pipeline) |
+| Run a program | `$(...)`, then [`run`](#run), [`text`](#text), [`lines`](#lines), [`status`](#status), [`output`](#output) or [`check`](#check) |
+| Join programs | `\|` inside `$(...)`, or `first \| second` between two commands |
+| Run a line that came from a file or from the user | [`parse`](#parse) |
 | Talk to a program as it runs | [`start`](#start), [`Process.stdin`](#processstdin), [`Process.stdout`](#processstdout), [`Process.wait`](#processwait) |
 | Find a program | [`which`](#which) |
 | End this program | [`exit`](#exit) |

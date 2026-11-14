@@ -1,0 +1,30 @@
+import renderer.api
+import std.json
+import std.plugin
+
+/// A table as a JSON array, an object for each row.
+pub type Objects = {}
+
+impl api.Renderer for Objects {
+    fn name(self): String ! plugin.Error {
+        "json"
+    }
+
+    fn render(self, table: api.Table): String ! plugin.Error {
+        var rows: Array[Map[String, String]] = []
+        for cells in table.rows {
+            var row: Map[String, String] = [:]
+            for (index, column) in table.columns.enumerate() {
+                row[column] = cells.get(index) ?? ""
+            }
+            rows.push(row)
+        }
+        json.encode(rows, pretty: true)
+    }
+}
+
+/// A plugin that is a program serves its contract until the other side
+/// closes.
+fn main(): !plugin.Error {
+    api.serveRenderer(Objects {})?
+}

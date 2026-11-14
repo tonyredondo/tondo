@@ -69,21 +69,21 @@ fn run(options: Warehouse): !(http.HttpError | grpc.Status | time.TimedOut) {
     // What says who calls: the calls that change the shelves need it.
     let signed = ["authorization": "Bearer {options.key}"]
     match options.command {
-        Command.Serve { port } => {
+        Serve { port } => {
             console.println("the warehouse is at http://localhost:{port}")
             server.app(shelves.Shelves(opening()), options.key).listen(port: port)?
         }
-        Command.Get { sku } => {
+        Get { sku } => {
             let client = stock.StockServiceClient.connect(options.server)?
             // A call made inside `within` carries its deadline to the
             // server, which stops working on it when the time passes.
             show(within time.seconds(5) { client.get(stock.GetItem { sku }) }?)
         }
-        Command.Reserve { sku, quantity } => {
+        Reserve { sku, quantity } => {
             let client = stock.StockServiceClient.connect(options.server)?
             show(client.reserve(stock.Units { sku, quantity }, metadata: signed)?)
         }
-        Command.Restock { lines } => {
+        Restock { lines } => {
             let client = stock.StockServiceClient.connect(options.server)?
             let upload = client.restock(metadata: signed)
             for text in lines {
@@ -99,7 +99,7 @@ fn run(options: Warehouse): !(http.HttpError | grpc.Status | time.TimedOut) {
             let done = upload.finish()?
             console.println("restocked {done.items} items with {done.units} units")
         }
-        Command.Watch { skus } => {
+        Watch { skus } => {
             let client = stock.StockServiceClient.connect(options.server)?
             for each in client.watch(stock.WatchItems { skus }) {
                 let change = each?

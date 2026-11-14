@@ -114,7 +114,7 @@ test onlyAsksWhetherAnotherSiteIsThere {
     let server = small(other.url())?
     defer server.stop()
 
-    _ = crawl.crawl("{server.url()}/")?
+    crawl.crawl("{server.url()}/")?
     assert(asked.snapshot().sorted() == ["HEAD /gone", "HEAD /there"])
 }
 

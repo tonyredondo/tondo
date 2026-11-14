@@ -216,15 +216,16 @@ themselves, and [`std.model`](../std/model.md) every part of them.
 $ tondo test examples/kvstore --coverage
 ...
 coverage:
-  src/main.to               lines 0.0% (0/4)        functions 0.0% (0/2)      branches -
+  src/main.to               lines 0.0% (0/4)        functions 0.0% (0/2)      branches 0.0% (0/2)
   src/protocol/protocol.to  lines 94.7% (36/38)     functions 100.0% (4/4)    branches 93.8% (30/32)
-  src/server/server.to      lines 92.3% (24/26)     functions 100.0% (11/11)  branches 77.8% (7/9)
+  src/server/server.to      lines 95.8% (23/24)     functions 100.0% (11/11)  branches 77.8% (7/9)
   src/store/store.to        lines 100.0% (31/31)    functions 100.0% (4/4)    branches 100.0% (20/20)
-  total                     lines 91.9% (91/99)     functions 90.5% (19/21)   branches 93.4% (57/61)
+  total                     lines 92.8% (90/97)     functions 90.5% (19/21)   branches 90.5% (57/63)
 ```
 
 Lines, functions, and branches: each way of an `if`, a `match`, an `and`
-and an `or`. The counts are exact, since the compiler places the counters
+and an `or`, and the two of a `??` and of a `?.`, whose value was there or
+was not. The counts are exact, since the compiler places the counters
 where a sampler would guess. `--report lcov=<path>` writes LCOV for the
 tools that read it, `--report coverage=<path>` JSON, and the editor shows
 the lines in the margin.

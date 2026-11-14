@@ -14,6 +14,8 @@ size, and how a type of the program gets arithmetic.
 - [Floats](#floats)
 - [Mixing numbers](#mixing-numbers)
 - [Mathematics](#mathematics)
+- [Vectors](#vectors)
+- [Tensors](#tensors)
 - [Exact decimals and big integers](#exact-decimals-and-big-integers)
 - [Arithmetic for your types](#arithmetic-for-your-types)
 - [Code for any number](#code-for-any-number)
@@ -199,7 +201,7 @@ fn main() {
     console.println("{infinite} {-infinite} {undefined} {undefined == undefined} {undefined.isNaN()}")
     console.println("{2.5.round()} {3.5.round()} {2.5.roundTiesAway()} {2.7.floor()} {2.2.ceil()} {(-2.7).truncate()}")
     console.println("{2.0.pow(10.0)} {(-3.5).abs()} {3.14159.toFixed(2)} {7.5.clamp(0.0, 5.0)} {1.5.min(2.5)}")
-    console.println("{2.0.checkedSqrt()} {(-1.0).checkedSqrt().isErr()}")
+    console.println("{2.0.sqrt()} {(-1.0).sqrt()} {(-1.0).checkedSqrt().isErr()}")
 }
 ```
 
@@ -208,14 +210,15 @@ fn main() {
 inf -inf NaN false true
 2.0 4.0 3.0 2.0 3.0 -2.0
 1024.0 3.5 3.14 5.0 1.5
-ok(1.4142135623730951) true
+1.4142135623730951 NaN true
 ```
 
 - Floats are approximate. `0.1 + 0.2` is not `0.3`: compare with a
   tolerance, `(a - b).abs() < 0.000001`, or use a `Decimal` when the number
   is money.
 - Dividing by zero gives infinity or NaN, and NaN is equal to nothing, not
-  even itself: test it with `isNaN()`.
+  even itself: test it with `isNaN()`. The square root of a negative number
+  is NaN in the same way.
 - `round()` rounds halves to the even neighbour, as IEEE does, and
   `roundTiesAway()` away from zero, as school does.
 - A float is not a key of a map and has no `%`.
@@ -261,20 +264,176 @@ import std.math
 fn main() {
     console.println("{math.hypot(3.0, 4.0)} {math.pow(2.0, 0.5):.4} {math.exp(1.0):.4}")
     console.println("{math.sin(0.0)} {math.cos(0.0)} {math.atan2(1.0, 1.0):.4}")
-    console.println("{math.checkedSqrt(2.0)} {math.checkedLn(-1.0).isErr()} {math.checkedLog10(1000.0)}")
-    console.println("{math.gcd(12, 18)} {math.lcm(4, 6)}")
+    console.println("{math.sqrt(2.0)} {math.ln(-1.0)} {math.ln(0.0)} {math.log10(1000.0)} {math.checkedLn(-1.0).isErr()}")
+    console.println("{math.gcd(12, 18)} {math.lcm(4, 6)} {math.dot([10.0, 20.0], [3.0, 1.0])}")
 }
 ```
 
 ```text output
 5.0 1.4142 2.7183
 0.0 1.0 0.7854
-ok(1.4142135623730951) true ok(3.0)
-6 12
+1.4142135623730951 NaN -inf 3.0 true
+6 12 50.0
 ```
 
 A function that is not defined for every input, as `sqrt`, `ln` and `asin`,
-gives a result rather than a NaN to find later.
+follows the rest of the floats: outside its domain it gives NaN, or an
+infinity where that is the limit, as `ln(0.0)`. Each has a twin that fails
+with `math.MathError` instead, for code that would rather not find a NaN
+later: `checkedSqrt`, `checkedLn`, `checkedLog10`, `checkedLog2`,
+`checkedAsin` and `checkedAcos`.
+
+`math.dot` is the sum of the products of two arrays of numbers. For floats
+it adds as an array's `sum` does, in an order that is the same on every
+machine ([Collections](08-collections.md#arithmetic-on-arrays)).
+
+## Vectors
+
+`std.simd` computes several numbers at once, with the processor's vector
+instructions. A `simd.Vector128[Int32]` holds four `Int32`, its lanes, and
+an operator works on each lane, with a number on either side standing for
+every lane:
+
+```tondo
+import std.console
+import std.simd
+
+fn main() {
+    let a = simd.Vector128[Int32].of(1, 2, 3, 4)
+    let b = simd.Vector128[Int32].all(10)
+    console.println("{a + b} {a * 2} {a.sum()} {a.maxLane()}")
+    let big = a.greater(simd.Vector128[Int32].all(2))
+    console.println("{big} {big.count()} {big.choose(a, -a)}")
+}
+```
+
+```text output
+<11, 12, 13, 14> <2, 4, 6, 8> 10 4
+<false, false, true, true> 2 <-1, -2, 3, 4>
+```
+
+- The types are `Vector128[T]`, `Vector256[T]` and `Vector512[T]`, of that
+  many bits, and `Vector[T]`, for code that does not choose a width. `T` is
+  an integer of any size, `Byte`, `Float32` or `Float`, and a vector has as
+  many lanes as fit: `Vector128[Float]` has two.
+- A `Vector[T]` has the width of the code it is in: 256 bits where that
+  code is for an x64 processor with AVX2, and 128 bits elsewhere, as on
+  arm64 and in a debug build. So the same loop takes eight `Float32` at a
+  time on one machine and four on another, which is why it steps by
+  `lanes()`.
+- A `Vector[T]` lives in locals, parameters and results, since its width is
+  that of the code that holds it. In a field, an element, an option, a
+  tuple, a channel or a closure's capture it does not build, and the error
+  says what to keep there: a `Vector128[T]` or a `Vector256[T]`, or the
+  lanes in an array, with `toArray` or `store`.
+- Every type works on every processor and gives the same results. A width
+  the processor has no instructions for is computed by its halves, and
+  `accelerated()` says which case it is where the code runs. The 128-bit
+  types are accelerated on both architectures, and the 256-bit ones on an
+  x64 processor with AVX2, in a build for any level
+  ([Performance](../toolchain/performance.md#many-numbers-at-once-vectors)).
+- An integer lane that overflows wraps, where a number alone would panic:
+  no operation on vectors panics for what a lane holds. Float lanes follow
+  IEEE 754, each on its own.
+- Between vectors, `<` and the like would give one `Bool`, so comparing is
+  a method, `less`, `lessOrEqual`, `greater`, `greaterOrEqual` and `equal`,
+  that gives a mask: a `Bool` for each lane. A mask has `any`, `all` and
+  `count`, and `choose(a, b)` takes each lane from `a` where it is true and
+  from `b` where it is not.
+- `load(ref values, at: i)` takes its lanes from an array, and `store(mut
+  into, at: i)` writes them back; `sum`, `minLane` and `maxLane` make one
+  number of the lanes.
+- `of` gives each lane its value, so it is of the types whose width is
+  written, as `Vector128[Int32].of(1, 2, 3, 4)`. `Vector[T]` has none, since
+  how many lanes it has is not for the code to know: `all(value)`, `zero()`
+  and `load` make one.
+
+A loop over an array takes a vector at a time, and what is left one by one:
+
+```tondo
+import std.console
+import std.simd
+
+/// The sum of each value doubled.
+fn doubled(values: Array[Float32]): Float32 {
+    let lanes = simd.Vector[Float32].lanes()
+    var total = simd.Vector[Float32].zero()
+    var at = 0
+    for at + lanes <= values.length() {
+        total = total + simd.Vector[Float32].load(ref values, at: at) * 2.0
+        at += lanes
+    }
+    var rest = total.sum()
+    for value in values[at:] {
+        rest += value * 2.0
+    }
+    rest
+}
+
+fn main() {
+    let values: Array[Float32] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+    console.println("{doubled(values)}")
+}
+```
+
+```text output
+90.0
+```
+
+Most code needs none of this: the arithmetic of arrays, their `sum` and
+`math.dot` already compute with vectors
+([Collections](08-collections.md#arithmetic-on-arrays)). `std.simd` is for
+the loop those do not express, and [`std.simd`](../std/simd.md) lists every
+operation.
+
+## Tensors
+
+`math.Tensor` holds numbers in several dimensions: a shape, and the values
+in one block. A matrix is a tensor of two dimensions:
+
+```tondo
+import std.console
+import std.math
+
+fn main() {
+    let weights = math.Tensor.fromRows([[0.5, 0.25], [0.125, 1.0]])
+    let input = math.Tensor([1.0, 2.0])
+    console.println("{weights.shape()} {weights.at(1, 0)} {weights.matmul(input)}")
+
+    let table = math.Tensor.fromRows([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    let scale = math.Tensor([10.0, 100.0, 1000.0])
+    console.println("{table * scale}")
+    console.println("{table * 2.0 + 1.0} {table.sumAlong(0)} {table.sumAlong(1)}")
+    console.println("{table.max()} {table.indexOfMax()} {table.transposed()}")
+    console.println("{table.mean()} {table.meanAlong(0)} {table.meanAlong(1)}")
+}
+```
+
+```text output
+[2, 2] 0.125 [1.0, 2.125]
+[[10.0, 200.0, 3000.0], [40.0, 500.0, 6000.0]]
+[[3.0, 5.0, 7.0], [9.0, 11.0, 13.0]] [5.0, 7.0, 9.0] [6.0, 15.0]
+some(6.0) some([1, 2]) [[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]]
+3.5 [2.5, 3.5, 4.5] [2.0, 5.0]
+```
+
+- `math.Tensor(values, shape)` makes one of an array and a shape, a vector
+  when no shape is given; `fromRows` of arrays in arrays; `zeros` and
+  `filled` of a shape alone. A tensor shows as arrays in arrays.
+- `+`, `-`, `*` and `/` go element by element, between two tensors and with
+  a number on either side. A dimension of size 1, or one the smaller tensor
+  lacks, is repeated along the other's, as the row `scale` is for each row
+  of `table`. Shapes that do not fit are a panic (`P0006`), as two arrays
+  of different lengths are.
+- `matmul` is the product of matrices, and `dot` that of two vectors;
+  `transposed`, `reshape` and `slice(axis, index)` give the same values in
+  another shape or a part of them; `sum` adds everything and
+  `sumAlong(axis)` along one dimension, and `mean` and `meanAlong(axis)` are
+  their means, for a tensor of floats: on one of integers they do not
+  compile, and the error says to divide the `sum()` as floats.
+- `at(1, 0)` reads an element and `set(value, 1, 0)` writes one; an index
+  out of range is a panic (`P0001`). `min`, `max` and `indexOfMax` give
+  options, since a tensor may have no elements.
 
 ## Exact decimals and big integers
 
@@ -376,7 +535,7 @@ much it needs:
 import std.console
 import std.math
 
-fn mean[T: Number](values: Array[T]): T {
+fn mean[T: Fractional](values: Array[T]): T {
     values.sum() / Number.fromInt[T](values.length())
 }
 
@@ -387,13 +546,13 @@ fn hex[T: Integer](value: T): String {
 
 fn main() {
     let prices: Array[math.Decimal] = [19.99, 5.01, 10]
-    console.println("{mean([1, 2, 6])} {mean([1.5, 2.5])} {mean(prices)}")
+    console.println("{mean([1.5, 2.5])} {mean(prices)}")
     console.println("{hex(255u8)} {hex(255u16)} {hex(255)}")
 }
 ```
 
 ```text output
-3 2.0 11.66666666666666666666666666666667
+2.0 11.66666666666666666666666666666667
 ff 00ff 00000000000000ff
 ```
 
@@ -402,6 +561,12 @@ ff 00ff 00000000000000ff
 | `T: Additive` | anything that adds | `+`, `-`, `sum()` |
 | `T: Number` | anything that also multiplies | `*`, `/`, integer literals |
 | `T: Integer` | every integer of the language | all an integer has: `%`, bits, `T.max`, `T.bits`, `T.parse` |
+| `T: Fractional` | a number whose division keeps the fraction: every float, `math.Decimal` | a `/` that does not cut: `1.0 / 2.0` is `0.5` |
+
+`mean` asks for a `Fractional` and not for any `Number`, since the division
+of integers cuts: with `T: Number` the mean of `[1, 2]` would be 1. With the
+bound, `mean([1, 2])` does not compile, and the error says what the function
+asks.
 
 There is no unary minus for a generic `T`: write `Number.fromInt[T](0) - x`.
 

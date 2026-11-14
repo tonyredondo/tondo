@@ -107,7 +107,9 @@ reads its state back with `ffi.fromContext`.
 
 **The runtime comes along.** The library carries Tondo's runtime, which
 starts at the first call. An exported function may use tasks, channels and
-the standard library, and C may call it from any thread.
+the standard library, and C may call it from any thread. The header also
+declares `textkit_stop()`, which ends that runtime, for a program that
+unloads the library or wants its tasks and threads gone before it goes on.
 
 ## Going further
 
@@ -118,3 +120,25 @@ the standard library, and C may call it from any thread.
   to install beside it; the build prints the line that does it.
 - Anything that calls C can use it: Python's `ctypes`, Go's `cgo`, Rust's
   `extern "C"`, the FFI of Node or Ruby.
+
+A Tondo program loads the shared library as it runs, with `ffi.Library`, as
+it would a plugin. From this directory, after `tondo build --library
+--output demo/out`:
+
+```tondo
+import std.console
+import std.ffi
+
+fn main(): !ffi.LibraryError {
+    let textkit = ffi.Library.open("demo/out/{ffi.libraryFileName("textkit")}")?
+    let distance =
+        unsafe {
+            textkit.function[extern fn(ffi.CString, ffi.CString): ffi.CLong]("textkit_distance")?
+        }
+    console.println("{unsafe { distance("kitten", "sitting") }}")
+}
+```
+
+```text
+3
+```

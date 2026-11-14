@@ -90,5 +90,5 @@ fn traced(
             "ms": "{started.elapsed().milliseconds()}",
         ],
     )
-    reply.map((answer) { answer.header("X-Request-Id", Request.id) })
+    reply?.header("X-Request-Id", Request.id)
 }

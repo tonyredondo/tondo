@@ -11,6 +11,8 @@ heap and why, and which checks a loop keeps. Everything shown was run.
 - [What the compiler made: optimizations](#what-the-compiler-made-optimizations)
 - [The machine code: asm](#the-machine-code-asm)
 - [Against another version](#against-another-version)
+- [The processor a build is for](#the-processor-a-build-is-for)
+- [Many numbers at once: vectors](#many-numbers-at-once-vectors)
 - [Memory](#memory)
 - [What not to be fooled by](#what-not-to-be-fooled-by)
 
@@ -212,7 +214,7 @@ line beside it:
 
 ```text
 $ tondo asm stats.to mean
-mean (1192 bytes, 12 of them constants)
+mean (1224 bytes, 12 of them constants)
       0  push rbp
       1  mov rbp, rsp
       4  sub rsp, 0x90
@@ -233,7 +235,7 @@ stats.to:10  if reading.sensor == sensor {
      ac  jz $+0x19
      b2  movdqu xmm0, xmmword [rsp + 0x40]
 stats.to:11  total += reading.value
-     b8  vaddsd xmm0, xmm0, qword [r14 + 0x8]
+     b8  addsd xmm0, qword [r14 + 0x8]
      be  movdqu xmmword [rsp + 0x40], xmm0
 ```
 
@@ -249,6 +251,7 @@ source.
 | `tondo asm <function>` | one function of the project |
 | `tondo asm --all` | every function |
 | `--clif` | Cranelift's intermediate code as well, before and after it optimizes |
+| `--cpu <level>` | the code of a [level of processor](#the-processor-a-build-is-for) |
 | `--tests` | a function of the tests or benchmarks |
 | `--against <rev>` | the difference with a revision's code |
 | `tondo profile show <profile> --asm` | the same listing, with the share of the samples on each instruction |
@@ -270,6 +273,352 @@ do more work.
 `--compiler <tondo|rev>` in the same three commands compares what two
 versions of Tondo itself make of the same program, which is how a change to
 the compiler is judged.
+
+## The processor a build is for
+
+A build is for a level of processor, which says which instructions its code
+may use. The default is `baseline`, x86-64-v2 on x64 and ARMv8.0 on arm64,
+whichever machine builds, so an executable made on a new machine runs on an
+older one. `--cpu` asks for another level in `build`, `run` and `test`, and
+so does `cpu` in the `[build]` of the program's `tondo.toml`:
+
+| Level | For | Its code may use |
+| --- | --- | --- |
+| `baseline` | x64 | SSE3, SSSE3, SSE4.1, SSE4.2, POPCNT and CMPXCHG16B, which is x86-64-v2 |
+| `x86-64-v3` | x64 | those, and AVX, AVX2, FMA, BMI1, BMI2 and LZCNT |
+| `x86-64-v4` | x64 | those, and AVX-512 F, DQ and VL |
+| `baseline` | arm64 | ARMv8.0 with NEON, which every 64-bit ARM has |
+| `native` | both | what the processor of the machine that builds has |
+
+What a level gains is measured as anything else is: the benchmarks at one
+level, kept, and again at the other. This function asks for the leading
+zeros of each word, which x86-64-v3 has an instruction for:
+
+```tondo
+import std.console
+
+/// How many bits the largest of the words needs.
+pub fn widest(words: Array[Int]): Int {
+    var most = 0
+    for word in words {
+        most = most.max(64 - word.leadingZeros())
+    }
+    most
+}
+
+fn main() {
+    console.println("{widest([5, 300])}")
+}
+```
+
+```text output
+9
+```
+
+```text
+$ tondo test --bench --save-baseline level
+test sizes::unit::sizes::widestOf10000 ... ok
+  widest     11.18 µs/op  ±0.2%  0 allocs/op  0 B/op  125.1k ins/op
+$ tondo test --bench --cpu x86-64-v3 --baseline level
+test sizes::unit::sizes::widestOf10000 ... ok
+  widest     4.103 µs/op  ±0.1%  0 allocs/op  0 B/op  85.1k ins/op  -63.3% faster, -32.0% ins, cycles -63.7%
+```
+
+`tondo asm widest` shows why, under each turn of the loop. At `baseline`
+the line is a `bsr` and what makes it right for a word of zero:
+
+```text
+src/main.to:7  most = most.max(64 - word.leadingZeros())
+        ; `64 - word.leadingZeros()` keeps its overflow check, in a loop
+     6f  mov r9, -0x1
+     76  bsr rsi, rdx
+     7a  cmovz rsi, r9
+     7e  mov edx, 0x3f
+     83  sub rdx, rsi
+     86  sub r11, rdx
+     89  jo $+0x382
+     8f  lea rdx, qword [rcx + 0x1]
+```
+
+`tondo asm widest --cpu x86-64-v3` has one `lzcnt` there. `tondo
+optimizations` takes the option too:
+
+```text
+src/main.to:7  most = most.max(64 - word.leadingZeros())
+        ; `64 - word.leadingZeros()` keeps its overflow check, in a loop
+     76  lzcnt r8, r8
+     7b  sub rsi, r8
+     7e  jo $+0x2f9
+     84  lea r8, qword [rdx + 0x1]
+```
+
+Code that uses nothing the level adds is the same at both, and that is
+most code: [`bench/README.md`](../../bench/README.md) has every benchmark
+of Tondo at the two levels.
+
+A program checks its processor when it starts, before any of its own code
+runs. On one that lacks what the level needs it says so, and which build
+runs there, where it would otherwise stop at the first instruction the
+processor does not have:
+
+```text
+$ tondo build --cpu x86-64-v4
+$ ./sizes
+fatal: this program was built for x86-64-v4 and this processor lacks AVX-512F, AVX-512DQ and AVX-512VL: build it with --cpu baseline
+$ echo $?
+101
+```
+
+`env.build().cpu` gives the level a program was built for, and
+[`std.cpu`](../std/cpu.md) what its processor has beyond it:
+
+```tondo
+import std.console
+import std.cpu
+import std.env
+
+fn main() {
+    console.println("built for {env.build().cpu}")
+    if cpu.has(cpu.Feature.Avx2) {
+        console.println("this processor has AVX2")
+    } else {
+        console.println("this processor has no AVX2")
+    }
+}
+```
+
+Built with no option, on the machine of this page:
+
+```text
+built for baseline
+this processor has AVX2
+```
+
+With the variant written in the call, the compiler answers `cpu.has` when
+it can: `true` for a feature of the build's level, and `false` for one of
+the other architecture. Only the way of the `if` that runs is compiled
+then: built with `--cpu x86-64-v3`, the program above has neither the test
+nor the second message in it. Any other feature is read from what the
+program found when it started, and `cpu.features()` gives all of them.
+
+### One instruction of a processor
+
+`std.cpu.x64` and `std.cpu.arm64` have functions that are one instruction
+each, as the intrinsics of other languages are, for the files of their
+architecture
+([Modules](../language/15-modules.md#code-for-one-system-or-architecture)).
+
+| | `std.cpu.x64` | `std.cpu.arm64` | Needs |
+| --- | --- | --- | --- |
+| CRC-32C | `crc32cByte`, `crc32cInt` | `crc32cByte`, `crc32cInt` | SSE4.2, which the baseline has; `Crc32` on arm64 |
+| Bits put or gathered by a mask | `depositBits`, `extractBits` | | BMI2 |
+| A round of AES | `aesEncrypt`, `aesEncryptLast`, `aesDecrypt`, `aesDecryptLast` | `aesEncrypt`, `aesDecrypt`, `aesMixColumns`, `aesInverseMixColumns` | AES |
+| A product without carries | `carrylessMultiply` | `polynomialMultiply` | PCLMULQDQ; PMULL on arm64 |
+| A turn of a loop that waits | `pause` | `pause` | nothing |
+
+Those of AES and of the product take and give `simd.Vector128` values, so
+they work with the vectors' own operations
+([Numbers](../language/10-numbers.md#vectors)).
+
+A function that uses one needs its feature. The compiler works that out
+from the bodies, for the whole program, and nothing is written for it. A
+checksum with the instruction of each architecture is three files, the
+common one with the way that every processor can run:
+
+```text
+// src/checksum/checksum.to
+/// The CRC-32C of the bytes, the checksum of iSCSI and ext4.
+pub fn crc32c(bytes: Array[Byte]): UInt32 {
+    ~update(0xFFFF_FFFF, bytes)
+}
+
+/// A bit at a time, for a processor without the instruction.
+fn byBits(crc: UInt32, bytes: Array[Byte]): UInt32 {
+    var value = crc
+    for byte in bytes {
+        value = value ^ UInt32(byte)
+        for _ in 0..8 {
+            value = if value & 1 == 1 { (value >> 1) ^ 0x82F6_3B78 } else { value >> 1 }
+        }
+    }
+    value
+}
+```
+
+```text
+// src/checksum/checksum_x64.to
+import std.cpu.x64
+
+/// SSE4.2's `crc32`, which every x64 processor of the baseline has.
+fn update(crc: UInt32, bytes: Array[Byte]): UInt32 {
+    var value = crc
+    for byte in bytes {
+        value = x64.crc32cByte(value, byte)
+    }
+    value
+}
+```
+
+```text
+// src/checksum/checksum_arm64.to
+import std.cpu
+import std.cpu.arm64
+
+fn update(crc: UInt32, bytes: Array[Byte]): UInt32 {
+    if cpu.has(cpu.Feature.Crc32) { byInstruction(crc, bytes) } else { byBits(crc, bytes) }
+}
+
+/// `crc32cb`, where the processor has it.
+fn byInstruction(crc: UInt32, bytes: Array[Byte]): UInt32 {
+    var value = crc
+    for byte in bytes {
+        value = arm64.crc32cByte(value, byte)
+    }
+    value
+}
+```
+
+On x64 the instruction is of the baseline, so nothing is tested. On arm64
+it is beyond it, so the call goes under a test of the processor, with the
+plain way beside it. Over a page of a thousand lines, on x64:
+
+```text
+$ tondo test --bench
+test crc::unit::checksum::theInstructionAndTheBitsAgree ... ok
+  by the instruction     25.37 µs/op  ±0.4%  0 allocs/op  0 B/op  294.1k ins/op
+  a bit at a time        213.1 µs/op  ±0.2%  0 allocs/op  0 B/op  4.07M ins/op
+```
+
+On x64 a feature beyond the baseline takes the same test. This function
+uses BMI2's `pdep`:
+
+```text
+// src/bits/bits_x64.to
+import std.cpu
+import std.cpu.x64
+
+fn deposit(value: UInt, mask: UInt): UInt {
+    if cpu.has(cpu.Feature.Bmi2) { byInstruction(value, mask) } else { byLoop(value, mask) }
+}
+
+/// BMI2's `pdep`, one instruction.
+fn byInstruction(value: UInt, mask: UInt): UInt {
+    x64.depositBits(value, mask)
+}
+```
+
+`byInstruction` is compiled for BMI2 and the rest for the build's level, so
+the instruction runs only where the processor has it. `tondo optimizations`
+says why that call is kept:
+
+```text
+src/bits/bits_x64.to:5:36: `byInstruction(value, mask)` stays a call of `bits.byInstruction`: it needs features of the processor this function does not (toolchain 7.8) (in bits.deposit, bits.spread, main)
+```
+
+Without the test, every function up to `main` would need BMI2, and `main`
+cannot need a feature; nor can a test, a `pub extern fn`, a trait's method
+or a function used as a value. The error names the calls that bring it:
+
+```text
+error[E1809]: this call needs `Bmi2` of the processor, and `main`, or the top level of a script, cannot need one: `main` calls `bits.spread`, which calls `bits.deposit`, which uses `x64.depositBits`; put the call under `if cpu.has(cpu.Feature.Bmi2) { ... }`
+```
+
+Built with `--cpu x86-64-v3`, whose level has BMI2, the test is answered
+when compiling and only the instruction's way is in the program.
+
+## Many numbers at once: vectors
+
+The arithmetic of float arrays, their `sum` and `math.dot` are computed with
+the processor's vector instructions, with nothing to write. A loop of
+another shape is written with
+[`std.simd`](../language/10-numbers.md#vectors). This one counts the lines
+of a text, a byte at a time, sixteen at a time and thirty-two at a time:
+
+```tondo
+import std.console
+import std.simd
+
+/// How many lines a text has: its line feeds, one byte at a time.
+pub fn count(bytes: Array[Byte]): Int {
+    var lines = 0
+    for byte in bytes {
+        if byte == 10 {
+            lines += 1
+        }
+    }
+    lines
+}
+
+/// The same, sixteen bytes at a time.
+pub fn countByVectors(bytes: Array[Byte]): Int {
+    let feed = simd.Vector128[Byte].all(10)
+    var lines = 0
+    var at = 0
+    for at + 16 <= bytes.length() {
+        lines += simd.Vector128[Byte].load(ref bytes, at: at).equal(feed).count()
+        at += 16
+    }
+    lines + count(bytes[at:])
+}
+
+/// The same, thirty-two bytes at a time.
+pub fn countByWideVectors(bytes: Array[Byte]): Int {
+    let feed = simd.Vector256[Byte].all(10)
+    var lines = 0
+    var at = 0
+    for at + 32 <= bytes.length() {
+        lines += simd.Vector256[Byte].load(ref bytes, at: at).equal(feed).count()
+        at += 32
+    }
+    lines + count(bytes[at:])
+}
+
+fn main() {
+    let text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\n".bytes()
+    console.println("{count(text)} {countByVectors(text)} {countByWideVectors(text)}")
+}
+```
+
+```text output
+7 7 7
+```
+
+Over a page of a thousand lines:
+
+```text
+$ tondo test --bench
+test lines::unit::lines::aPage ... ok
+  a byte at a time     17.11 µs/op  ±0.2%  0 allocs/op  0 B/op  231.1k ins/op
+  by vectors           1.655 µs/op  ±0.3%  1 allocs/op  32 B/op  50.2k ins/op
+  by wide vectors      912.9 ns/op  ±0.1%  1 allocs/op  48 B/op  25.9k ins/op
+```
+
+The vectors of 128 bits are accelerated on both architectures. Those of 256
+bits are on an x64 processor with AVX2, and a build need not be for it: a
+release build compiles a function that uses them a second time, for
+x86-64-v3, and the program picks the version its processor runs when it
+starts. `tondo asm countByWideVectors` shows both, the second with AVX2's
+comparison of thirty-two bytes:
+
+```text
+countByWideVectors (x86-64-v3) (1088 bytes, 8 of them constants)
+    ...
+    26b  vmovdqu ymm1, ymmword [rdi + rcx * 1 + 0x20]
+    271  vpcmpeqb ymm1, ymm1, ymm0
+    275  vpmovmskb edx, ymm1
+```
+
+Where the processor lacks the instructions of a width, as an arm64 one
+lacks those of 256 bits, a vector is computed by its halves: the results are
+the same, and the wider type is then slower than the narrower. Vectors of
+512 bits are computed so everywhere today. `accelerated()` says which a type
+is where the code runs, and `TONDO_VERSIONS=0` in a program's environment
+keeps it to the level it was built for.
+
+`simd.Vector[T]` takes the width for the code: the same function has it of
+256 bits in its version for AVX2 and of 128 bits in the other, so a loop
+written with it and `lanes()` uses the widest the processor does well with
+nothing chosen in the source.
 
 ## Memory
 

@@ -66,7 +66,7 @@ pub fn frequencies(words: String): Array[(String, Int)] {
     for word in words.words() {
         let key = slug(word)
         if not key.isEmpty() {
-            counts[key] = (counts.get(key) ?? 0) + 1
+            counts[key, default: 0] += 1
         }
     }
     var pairs: Array[(String, Int)] = []

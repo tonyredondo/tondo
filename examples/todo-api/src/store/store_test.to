@@ -16,8 +16,8 @@ test addsAndLists {
 test filtersByDone {
     let db = fresh()?
     let task = add(db, NewTask { title: "ship" })?
-    _ = add(db, NewTask { title: "rest" })?
-    _ = change(db, task.id, TaskChange { done: true })?
+    add(db, NewTask { title: "rest" })?
+    change(db, task.id, TaskChange { done: true })?
     assert(list(db, done: true)?.map((item) { item.title }) == ["ship"])
     assert(list(db, done: false)?.map((item) { item.title }) == ["rest"])
 }

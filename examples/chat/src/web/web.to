@@ -65,8 +65,8 @@ fn talk(
     // This task reads what the browser sends, and tells the hub.
     for message in socket {
         match message? {
-            http.Message.Text(text) => hub.send(rooms.Told.Say(id, text))?
-            http.Message.Binary(_) => {}
+            Text(text) => hub.send(rooms.Told.Say(id, text))?
+            Binary(_) => {}
         }
     }
 }

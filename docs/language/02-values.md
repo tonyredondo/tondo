@@ -312,7 +312,7 @@ fn main() {
 - `Float(n)` is exact up to 2⁵³ and rounds beyond.
 - `Int(x)`, `Int8(n)`, `Byte(n)` and every narrowing give a
   `T ! NumericConversionError`, whose variants are `OutOfRange`,
-  `NotFinite` and `NotIntegral`. Use `?`, `match` or `unwrapOr`.
+  `NotFinite` and `NotIntegral`. Use `?`, `match` or `??`.
 - To keep the low bits or the nearest value on purpose, say so:
   `UInt8.wrapping(n)`, `UInt8.saturating(n)`.
 - Nothing converts between `Bool` and numbers, between a number and its

@@ -366,8 +366,8 @@ import std.meta
 pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Error {
     let input = request.input("colors.txt")?
     var lines: Array[String] = []
-    for line in input.text().unwrapOr("").lines() {
-        let (name, hex) = line.splitOnce(" ").unwrapOr(("", ""))
+    for line in (input.text() ?? "").lines() {
+        let (name, hex) = line.splitOnce(" ") ?? ("", "")
         let constant = "{name[:1].toUpper()}{name[1:]}"
         lines.push(meta.code(r"pub const $name: String = $hex", ["name": constant, "hex": "\"{hex}\""]))
     }

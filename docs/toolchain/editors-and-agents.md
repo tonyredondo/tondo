@@ -45,7 +45,7 @@ output.
 | Refactors | change a signature, move a declaration to another module, inline a call, extract a trait, group parameters into a type, make a function a method and back |
 | Formatting | of a file or a selection, with the imports a file lacks added and those it does not use removed |
 | Tests | each test and suite with a lens to run or debug it, and how many tests reach each function |
-| Files of one system | `name_linux.to` and `name_macos.to` are both checked, wherever the editor runs |
+| Files of one system or architecture | `name_linux.to`, `name_macos.to` and `name_arm64.to` are all checked, wherever the editor runs |
 
 The refactors are checked by compiling: one that would leave the program
 with an error is not offered as done.
@@ -218,12 +218,12 @@ more than one version. A diagnostic, in `tondo check --json`:
 {
   "code": "E1102",
   "file": "src/main.to",
-  "id": "diag:905139dc15cc97049e75e8950b4a1d9f66ad03740c3d575800bf8af32a387eec",
-  "message": "expected `String`, found `String?`, which may be `none`: give a fallback with `.unwrapOr(value)`, handle it with `match`, or pass it on with `?` in a function that returns an option",
+  "id": "diag:ec96ed2eb23f70347d75b3722df485a8d4848d69671737078bc8ba0dabd8fca3",
+  "message": "expected `String`, found `String?`, which may be `none`: give a fallback with `value ?? fallback`, handle it with `match`, or pass it on with `?` in a function that returns an option",
   "module": "words",
   "range": {
-    "start": { "byte": 365, "column": 27, "line": 15 },
-    "end": { "byte": 369, "column": 31, "line": 15 }
+    "start": { "byte": 344, "column": 27, "line": 15 },
+    "end": { "byte": 348, "column": 31, "line": 15 }
   },
   "fixes": [],
   "related": [],

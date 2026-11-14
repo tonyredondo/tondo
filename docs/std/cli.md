@@ -93,8 +93,8 @@ fn main() {
     for line in [["add", "buy tea"], ["list", "-n", "3", "-d", "work"]] {
         match cli.parseArgs[Notes](line) {
             ok(notes) => match notes.command {
-                Command.Add { text } => console.println("add `{text}` to {notes.directory}")
-                Command.List { limit } => console.println("list {limit} of {notes.directory}")
+                Add { text } => console.println("add `{text}` to {notes.directory}")
+                List { limit } => console.println("list {limit} of {notes.directory}")
             }
             err(error) => console.println("{error}")
         }
