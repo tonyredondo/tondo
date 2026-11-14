@@ -1211,12 +1211,32 @@ impl Acceptor {
 /// A listener whose queue of connections not accepted yet is as long as
 /// the system allows, so a burst of them waits instead of being dropped.
 fn bind(address: SocketAddr) -> std::io::Result<Registered<mio::net::TcpListener>> {
+    Registered::new(tcp_listener(address, 65_535)?)
+}
+
+/// A listener on `address`, bound and then listening. Between the two the
+/// address is taken and a connection to it refused: a window of
+/// `--schedules` (testing 8.10).
+pub(crate) fn tcp_listener(address: SocketAddr, backlog: i32) -> std::io::Result<mio::net::TcpListener> {
     let socket = socket2::Socket::new(socket2::Domain::for_address(address), socket2::Type::STREAM, None)?;
     socket.set_reuse_address(true)?;
     socket.set_nonblocking(true)?;
     socket.bind(&address.into())?;
-    socket.listen(65_535)?;
-    Registered::new(mio::net::TcpListener::from_std(socket.into()))
+    crate::tasks::window();
+    socket.listen(backlog)?;
+    Ok(mio::net::TcpListener::from_std(socket.into()))
+}
+
+/// A listener on the Unix socket at `path`, bound and then listening.
+/// Between the two its file is there and a connection to it refused: a
+/// window of `--schedules` (testing 8.10).
+pub(crate) fn unix_listener(path: &str) -> std::io::Result<mio::net::UnixListener> {
+    let socket = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)?;
+    socket.set_nonblocking(true)?;
+    socket.bind(&socket2::SockAddr::unix(path)?)?;
+    crate::tasks::window();
+    socket.listen(1024)?;
+    Ok(mio::net::UnixListener::from_std(socket.into()))
 }
 
 /// `listen`: a listener on `host:port`, `0` for any free port, over TLS
@@ -1265,7 +1285,7 @@ pub unsafe extern "C" fn tondo_rt_net_listen(
 pub unsafe extern "C" fn tondo_rt_net_listen_unix(path: *const Str) -> *mut NativeObject {
     let path = text(path);
     let listening = make_room(&path, false).and_then(|()| {
-        let listener = Registered::new(mio::net::UnixListener::bind(&path)?)?;
+        let listener = Registered::new(unix_listener(&path)?)?;
         let closed = Arc::new(tokio::sync::watch::channel(false).0);
         let listener = Mutex::new(Some(Acceptor::Unix(Arc::new(listener))));
         Ok(Net::Listener(Listener { listener, tls: None, local: Endpoint::Path(path), closed }))

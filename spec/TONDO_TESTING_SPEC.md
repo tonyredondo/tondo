@@ -1737,7 +1737,15 @@ las tareas corren en otro orden:
   generador también elige entre las operaciones listas de un `select`;
 - cada tarea cede el paso tras cada llamada que puede esperar (11.10 del
   lenguaje), tras lanzar otra tarea, al soltar un lock y antes de escribir un
-  `Atomic`, donde el orden entre tareas puede cambiar aunque nadie espere.
+  `Atomic`, donde el orden entre tareas puede cambiar aunque nadie espere;
+- y en las ventanas que el sistema deja entre dos pasos que otra tarea puede
+  ver: entre dar a un socket su dirección y escuchar en él, cuando su archivo
+  ya está y una conexión se rechaza, y entre enviar una señal al propio
+  programa y que llegue. Ahí la seed decide si la ventana dura, con una pausa
+  de unos milisegundos, o en un orden dado por sus elecciones, el reloj hasta
+  el siguiente temporizador como una elección más, y si dura, las demás tareas
+  corren antes: lo que en una ejecución normal pasa en microsegundos aparece en
+  las primeras seeds, y la seed que lo muestra lo muestra otra vez.
 
 La iteración `1` usa la seed de la invocación y cada iteración `i > 1` una seed
 derivada (`pct-single-worker-v1`: SplitMix64 de `seed + i·0x9e3779b97f4a7c15`).

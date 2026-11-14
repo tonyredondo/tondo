@@ -6884,3 +6884,17 @@ stops the server, and lets the signals go then, in the same task, so that a sign
 does what it does without a server. No `ready:` parameter, which would have been a second way to
 say what `start` returning says. A signal between `start` and `wait` acts as it would without
 them; `start` keeps not taking the signals, as tests want Ctrl-C to end them. Tony accepted it.
+
+## Orders that widen the windows the system leaves
+
+main's musl job once hung on a case that called a server as soon as its socket's file was there:
+the file appears when the socket is bound, a moment before it listens, and a call in that moment is
+refused. `--schedules` explored the order of tasks, but that moment is inside one call of the
+runtime, so no order had it. Tony asked that `--schedules` reach such windows. A listener is now
+bound and then listens with a point between, and a signal the program sends itself is one too: by
+the seed the window lasts, a pause of a few milliseconds, or, in an order given by its choices, the
+clock moved to the next timer as one more choice, and the other tasks run first. The case as it was
+fails in seven seeds of twenty, and each of those seeds fails again. Writing a whole file needs no
+such point: it goes through a temporary file and a rename, so the file is never seen half written,
+and a file made and then written by the program is two calls, between which an order already
+changes. Programs outside `--schedules` pay a test of a flag at those points.

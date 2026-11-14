@@ -1013,6 +1013,11 @@ pub extern "C" fn tondo_rt_process_kill(pid: i64, tag: i64) -> i64 {
     let Some(&signal) = super::signals::SIGNALS.get(tag as usize) else { return 1 };
     let Ok(pid) = i32::try_from(pid) else { return 1 };
     if pid <= 0 || unsafe { libc::kill(pid, signal) } == 0 {
+        // To the program itself, the signal arrives while it goes on: a
+        // window of `--schedules` (testing 8.10).
+        if pid == std::process::id() as i32 {
+            crate::tasks::window();
+        }
         return (pid <= 0) as i64;
     }
     match std::io::Error::last_os_error().raw_os_error() {

@@ -2380,6 +2380,56 @@ test orders {
     }
 }
 
+/// `--schedules` widens the windows the system leaves between two steps
+/// another task sees: a client that calls a Unix socket once its file is
+/// there, which happens a moment before the server listens, is refused in
+/// some seeds, and the seed that shows it shows it again. In real time the
+/// window lasts microseconds, as main's musl job once met.
+#[test]
+fn orders_widen_the_windows_the_system_leaves() {
+    let tests = "import std.fs
+import std.http
+import std.time
+
+fn ask(socket: String, began: Receiver[Unit]): Bool {
+    for not fs.exists(socket) {
+        time.sleep(time.milliseconds(5))
+    }
+    let web = http.Client(baseUrl: \"http://app\", socket: socket)
+    let slow = spawn web.get(\"/slow\")
+    match began.receive(timeout: time.milliseconds(500)) {
+        some(_) => {
+            _ = slow.wait()
+            true
+        }
+        none => false
+    }
+}
+
+test listens {
+    let socket = \"{fs.createTemporaryDirectory()?}/app.socket\"
+    let (started, began) = channel[Unit](1)
+    var app = http.App()
+    app.get(\"/slow\", (_) {
+        started.send(())
+        http.Reply.text(\"finished\")
+    })
+    let asker = spawn ask(socket, began)
+    let server = app.start(socket: socket)?
+    let answered = asker.wait()
+    server.stop()
+    assert(answered, \"refused\")
+}
+";
+    let dir = project("orders-windows", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--schedules", "20", "--seed", "1"]);
+    assert_eq!(status, 1, "no seed showed the window: {stdout}{stderr}");
+    let again = stdout.lines().find_map(|line| line.strip_prefix("again in that order: tondo "));
+    let again: Vec<&str> = again.unwrap_or_else(|| panic!("{stdout}")).split_whitespace().collect();
+    let (stdout, stderr, status) = tondo(&dir, &again);
+    assert_eq!(status, 1, "its seed did not show it again: {stdout}{stderr}");
+}
+
 /// `--schedules all` tries every order of a test, and one that fails is
 /// repeated by its choices, every time.
 #[test]

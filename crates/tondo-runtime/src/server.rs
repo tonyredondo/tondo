@@ -715,7 +715,7 @@ pub unsafe extern "C" fn tondo_rt_http_listen(
 fn bind(address: &str) -> std::io::Result<mio::net::TcpListener> {
     let mut last = None;
     for at in std::net::ToSocketAddrs::to_socket_addrs(address)? {
-        match mio::net::TcpListener::bind(at) {
+        match super::net::tcp_listener(at, 1024) {
             Ok(listener) => return Ok(listener),
             Err(error) => last = Some(error),
         }
@@ -744,7 +744,7 @@ pub unsafe extern "C" fn tondo_rt_http_listen_unix(
     if let Err(problem) = super::net::make_room(&path, false) {
         return failed(problem.to_string());
     }
-    match mio::net::UnixListener::bind(&path).and_then(Registered::new) {
+    match super::net::unix_listener(&path).and_then(Registered::new) {
         Ok(listener) => started(Listening::Unix(listener), None, path.clone(), Some(path), limits),
         Err(error) => failed(error.to_string()),
     }

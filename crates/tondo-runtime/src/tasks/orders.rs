@@ -207,6 +207,38 @@ pub(crate) fn may_lose_update() {
     }
 }
 
+/// Where the system leaves a window between two steps another task can see,
+/// while exploring orders: a socket bound and not yet listening, or a signal
+/// sent to the program and not yet arrived. By the seed, the window lasts:
+/// a pause of a few milliseconds, or, given its choices, the clock moved to
+/// the next timer, as one more choice; and the other tasks run first. So a
+/// window of microseconds is as wide as a task that polls needs, and the
+/// seed that shows it shows it again (testing 8.10).
+pub(crate) fn window() {
+    let Some(seed) = exploring() else { return };
+    let lasts = match script() {
+        Some(_) => scripted(2, &[]) == Some(1),
+        None => seeded(seed).is_multiple_of(2),
+    };
+    if !lasts {
+        return;
+    }
+    match script() {
+        Some(_) => {
+            let queue = queue();
+            if let Some(at) = queue.timers.peek().map(|timer| timer.at) {
+                let left = at.saturating_duration_since(clock_now());
+                AHEAD.fetch_add(left.as_nanos() as u64, Ordering::Relaxed);
+            }
+        }
+        None => std::thread::sleep(Duration::from_millis(1 + seeded(seed) % 20)),
+    }
+    if let Some(task) = unsafe { current().as_mut() } {
+        task.priority = 1;
+    }
+    give_way();
+}
+
 /// Where the order of two tasks can change without a wait, while exploring
 /// orders: a lock let go, a write of an `Atomic`, a task spawned.
 pub(crate) fn may_switch() {
