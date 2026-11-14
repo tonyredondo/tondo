@@ -467,8 +467,7 @@ What is under way and what is planned:
 | Every row of [`bench/`](bench/README.md) at or under Go's, in time and in memory, and the servers in latency | Under way: that page has the rows still behind, each with its reason |
 | A chain of an iterator compiled as one loop, a chain of arrays without the arrays between, short texts without the heap | Next in the optimizer |
 | A call from a thread of C into Tondo at the cost of Go's | Under way |
-| A terminal a program takes over: its size as it changes, its keys, giving it back and taking it again around Ctrl-Z and `fg`, and the prompts of `std.cli` over it, `choose` with the arrows | Under way |
-| The rest of what Spectre draws, in `std.cli`: panels, rules, trees, columns, charts, a region redrawn in place | Accepted, its design first |
+| The rest of what Spectre draws, in `std.cli`: panels, rules, trees, columns, charts, a selection of several, a region redrawn in place; then large letters, a calendar, panes that split the screen, a selection with search and JSON in colors | Accepted, not started |
 | Interfaces of C++ that are tables of functions, as a trait with `@ffi.Interface` | Accepted, not started |
 | A heap for each task | Research |
 | Vectors of 512 bits with AVX-512; today they are computed by halves | Waits for a machine to test on |

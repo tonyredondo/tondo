@@ -21,7 +21,7 @@ examples/scripts/cal.to 2026 11          # each starts with #!/usr/bin/env tondo
 | [`rerun.to`](rerun.to) | runs a command again when files change | watching a directory, a loop that never ends |
 | [`cal.to`](cal.to) | the calendar of a month | dates |
 | [`serve.to`](serve.to) | serves a directory over HTTP | a web server in four lines |
-| [`ask.to`](ask.to) | asks a question and takes one key as the answer | the system's calls: a terminal's mode, a descriptor read |
+| [`ask.to`](ask.to) | asks a question and takes one key as the answer | the terminal taken for one key, and given back |
 
 ## What they print
 
@@ -127,12 +127,13 @@ as text, so it uses the other form, `process.command(command[0],
 ...command[1:])`, and reads the exit code of a command that failed from the
 error.
 
-**The system is within reach.** `ask.to` takes one key without waiting for
-Enter, which is a setting of the terminal: `unix.terminalMode` reads it,
-the script clears two of its flags for the length of one `unix.read`, and
-a `defer` sets it back, whether the read gave a key or failed. The calls are those of C by their names, in `std.os.unix`,
-safe to call and failing with the system's error. When its input is not a
-terminal the script reads a line instead, so it works in a pipe too.
+**A terminal is taken and given back.** `ask.to` takes one key without
+waiting for Enter. `cli.Terminal()` takes the terminal, so that keys come
+as they are pressed and are not shown, `keys()` gives the one pressed, and
+the terminal is as it was when the function ends, also if the script is
+cancelled or suspended meanwhile. When its input is not a terminal there
+is none to take, and the script reads a line instead, so it works in a
+pipe too.
 
 **The library a script needs is there.** JSON, CSV, hashes, dates, tables,
 watching files and a web server are in the standard library, so a script is

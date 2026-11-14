@@ -5,41 +5,25 @@
 //
 //     tondo ask.to "Remove the build?" && rm -rf target
 
+import std.cli
 import std.console
 import std.env
-import std.os
-import std.os.unix
 import std.process
 
-/// One key of a terminal: for the length of the read it gives each key as
-/// it is pressed and does not show it, and then it is as it was.
-fn key(input: ref unix.Fd): Byte ! os.Errno {
-    let before = unix.terminalMode(ref input)?
-    var quiet = before
-    quiet.c_lflag = quiet.c_lflag & ~(unix.ICANON | unix.ECHO)
-    unix.setTerminalMode(ref input, quiet, unix.TCSANOW)?
-    defer {
-        _ = unix.setTerminalMode(ref input, before, unix.TCSANOW)
+/// One key of the terminal, which is taken for the length of the read: the
+/// key comes as it is pressed and is not shown, and the terminal is given
+/// back as it was.
+fn key(): String ! cli.TerminalError {
+    let terminal = cli.Terminal()?
+    match terminal.keys().receive() {
+        some(cli.Key.Char(letter)) => "{letter}"
+        _ => ""
     }
-    let zero: Byte = 0
-    var one = [zero]
-    _ = unix.read(ref input, mut one)?
-    one[0]
 }
 
 let question = env.args().get(0) ?? "Go on?"
-let input = unix.Fd.standardInput()
 console.print("{question} [y/n] ")
-let answer = if unix.isTerminal(ref input) {
-    match key(ref input) {
-        ok(pressed) => String.fromBytes([pressed]) ?? ""
-        err(error) => {
-            console.eprintln("the terminal did not answer: {error}")
-            process.exit(2)
-        }
-    }
-} else {
-    console.readLine() ?? ""
-}
+// Without a terminal, as in a pipe, the answer is a line.
+let answer = key() ?? (console.readLine() ?? "")
 console.println(answer.trim())
 process.exit(if answer.trim().toLower().startsWith("y") { 0 } else { 1 })
