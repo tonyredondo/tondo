@@ -103,7 +103,11 @@ fn a_panic_and_its_dump_keep_their_formats() {
     // The report as text, with where the dump went.
     let (_, said) = tondo(&dir, &["run", "falls.to"], &[("TONDO_DUMP", dumps.to_str().unwrap())]);
     let dump = std::fs::read_dir(&dumps).unwrap().next().unwrap().unwrap().path();
+    // In a container, as some CI jobs run, a line more says how the dump
+    // leaves it.
     let said = said.replace(dump.to_str().unwrap(), "<dump>");
+    let lines = said.lines().filter(|line| !line.starts_with("tondo runtime: it leaves the container"));
+    let said: String = lines.map(|line| format!("{line}\n")).collect();
     recorded("panic.txt", &said);
     // As JSON.
     let (_, said) = tondo(&dir, &["run", "falls.to"], &[("TONDO_DUMP", "off"), ("TONDO_PANIC_FORMAT", "json")]);
