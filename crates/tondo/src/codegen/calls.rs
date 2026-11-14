@@ -65,6 +65,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Callee::Std(StdFn::Number(_)) => unreachable!("assigned by `number`"),
             Callee::Std(StdFn::Simd(_)) => unreachable!("assigned by `simd`"),
+            // A character of a text, read in place when it is ASCII.
+            Callee::Std(StdFn::Native(index))
+                if crate::hir::NATIVES[index as usize].symbol == "tondo_rt_text_scalar_at" =>
+            {
+                Some(self.decoded(values[0], values[1], Rt::Native(index), true))
+            }
             Callee::Std(StdFn::Native(index)) => {
                 // Arithmetic the processor does in one instruction, as
                 // `hir::IN_ONE_INSTRUCTION` lists it, and a fused multiply
@@ -72,6 +78,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let fused = fused_multiply_add(self.e.cg.isa());
                 let ins = self.e.fb.ins();
                 match crate::hir::NATIVES[index as usize].symbol {
+                    // A character's code is its scalar, made an `Int`.
+                    "tondo_rt_char_code" => Some(ins.uextend(types::I64, values[0])),
                     "tondo_rt_math_sqrt" => Some(ins.sqrt(values[0])),
                     "tondo_rt_math_floor" => Some(ins.floor(values[0])),
                     "tondo_rt_math_ceil" => Some(ins.ceil(values[0])),

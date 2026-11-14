@@ -484,8 +484,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     }
                     StrOp::ByteLength => Val::Scalar(self.e.fb.ins().load(types::I64, flags(), values[0], 8)),
                     StrOp::Concat => Val::Scalar(self.e.call_rt(Rt::StrConcat, &values).unwrap()),
-                    StrOp::Decode => Val::Scalar(self.e.call_rt(Rt::StrDecode, &values).unwrap()),
-                    StrOp::Next => Val::Scalar(self.e.call_rt(Rt::StrNext, &values).unwrap()),
+                    StrOp::Decode => Val::Scalar(self.decoded(values[0], values[1], Rt::StrDecode, false)),
+                    StrOp::Next => Val::Scalar(self.stepped(values[0], values[1])),
                 }
             }
             Rvalue::MapOp(op, operands, _) => match op {
@@ -829,6 +829,59 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// unsigned value needs one (Granlund and Montgomery): with
     /// `s = ceil(log2(divisor)) - 1` and `m = ceil(2^(bits + s) / divisor)`,
     /// `umulhi(a, m) >> s` is the quotient of every `a` below `2^(bits - 1)`.
+    /// The scalar at a byte offset of a text, read in place when it is
+    /// ASCII, as most are; `slow` decodes the others. With `guard`, an
+    /// offset outside the text goes to `slow` too, which says what it is.
+    pub(super) fn decoded(&mut self, text: ir::Value, offset: ir::Value, slow: Rt, guard: bool) -> ir::Value {
+        let (read, ascii, other, done) =
+            (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
+        self.e.fb.append_block_param(done, types::I32);
+        if guard {
+            let length = self.e.fb.ins().load(types::I64, flags(), text, STRING_LENGTH);
+            let inside = self.e.fb.ins().icmp(IntCC::UnsignedLessThan, offset, length);
+            self.e.fb.ins().brif(inside, read, &[], other, &[]);
+        } else {
+            self.e.fb.ins().jump(read, &[]);
+        }
+        self.e.fb.switch_to_block(read);
+        let address = self.e.fb.ins().iadd(text, offset);
+        let byte = self.e.fb.ins().uload8(types::I32, flags(), address, STRING_BYTES as i32);
+        let below = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedLessThan, byte, 0x80);
+        self.e.fb.ins().brif(below, ascii, &[], other, &[]);
+        self.e.fb.switch_to_block(ascii);
+        self.e.fb.ins().jump(done, &[byte.into()]);
+        self.e.fb.switch_to_block(other);
+        let decoded = self.e.call_rt(slow, &[text, offset]).unwrap();
+        self.e.fb.ins().jump(done, &[decoded.into()]);
+        self.e.fb.switch_to_block(done);
+        self.e.fb.block_params(done)[0]
+    }
+
+    /// The byte offset after the scalar at a byte offset of a text, from
+    /// its first byte: one byte below 0x80, two below 0xE0, three below
+    /// 0xF0, else four. Iteration only visits offsets inside the text.
+    /// ASCII takes a branch, which the processor predicts, so that the next
+    /// offset does not wait for this byte as arithmetic on it would.
+    fn stepped(&mut self, text: ir::Value, offset: ir::Value) -> ir::Value {
+        let (other, done) = (self.e.fb.create_block(), self.e.fb.create_block());
+        self.e.fb.append_block_param(done, types::I64);
+        let address = self.e.fb.ins().iadd(text, offset);
+        let lead = self.e.fb.ins().uload8(types::I64, flags(), address, STRING_BYTES as i32);
+        let one = self.e.fb.ins().iadd_imm_s(offset, 1);
+        let ascii = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedLessThan, lead, 0x80);
+        self.e.fb.ins().brif(ascii, done, &[one.into()], other, &[]);
+        self.e.fb.switch_to_block(other);
+        let mut next = self.e.fb.ins().iadd_imm_s(offset, 2);
+        for bound in [0xE0, 0xF0] {
+            let past = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, lead, bound);
+            let past = self.e.fb.ins().uextend(types::I64, past);
+            next = self.e.fb.ins().iadd(next, past);
+        }
+        self.e.fb.ins().jump(done, &[next.into()]);
+        self.e.fb.switch_to_block(done);
+        self.e.fb.block_params(done)[0]
+    }
+
     fn divided_unsigned(&mut self, op: BinOp, a: ir::Value, divisor: u64) -> ir::Value {
         let ty = self.e.fb.func.dfg.value_type(a);
         let bits = ty.bits();

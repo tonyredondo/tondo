@@ -1312,7 +1312,8 @@ pub struct Native {
 /// The natives the processor does in one instruction, which codegen writes
 /// in place of a call (`codegen/calls.rs`): a loop that calls only these
 /// calls nothing.
-pub const IN_ONE_INSTRUCTION: [&str; 6] = [
+pub const IN_ONE_INSTRUCTION: [&str; 7] = [
+    "tondo_rt_char_code",
     "tondo_rt_math_sqrt",
     "tondo_rt_math_floor",
     "tondo_rt_math_ceil",

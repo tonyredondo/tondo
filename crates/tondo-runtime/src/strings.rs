@@ -689,16 +689,3 @@ pub unsafe extern "C" fn tondo_rt_str_from_chars(chars: *mut ArrayHeader) -> *mu
 pub unsafe extern "C" fn tondo_rt_str_decode(s: *const Str, offset: i64) -> u32 {
     unsafe { str_text(s).get_unchecked(offset as usize..) }.chars().next().map_or(0, |c| c as u32)
 }
-
-/// The byte offset of the scalar after the one at `offset`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_str_next(s: *const Str, offset: i64) -> i64 {
-    let lead = unsafe { str_bytes(s) }[offset as usize];
-    let width = match lead {
-        0x00..0x80 => 1,
-        0x80..0xE0 => 2,
-        0xE0..0xF0 => 3,
-        _ => 4,
-    };
-    offset + width
-}
