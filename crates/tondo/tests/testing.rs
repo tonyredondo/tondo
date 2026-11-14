@@ -2097,7 +2097,7 @@ fn the_comparison_with_go_builds() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let (stdout, stderr, status) = tondo(&root, &["test", "bench/tondo"]);
     assert_eq!(status, 0, "{stdout}{stderr}");
-    for program in ["bench/compare.to", "bench/compile.to", "bench/compile/generate.to"] {
+    for program in ["bench/compare.to", "bench/compile.to", "bench/compile/generate.to", "bench/latency/latency.to"] {
         let (stdout, stderr, status) = tondo(&root, &["check", program]);
         assert_eq!(status, 0, "{program}: {stdout}{stderr}");
     }

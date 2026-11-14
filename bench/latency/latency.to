@@ -1,0 +1,103 @@
+// The latency of the servers of bench/tondo's `http` rows at a fixed rate
+// of requests, as bench/go/latency measures Go's: each request is sent at
+// its time whether or not those before it came back, and its latency runs
+// from that time until its answer, so that a server that falls behind pays
+// for the requests that wait as well (no coordinated omission). It writes
+// a line of JSON for each server: `{"name", "p50_us", "p99_us"}`.
+//
+//   tondo run bench/latency/latency.to -- [--rate 20000] [--seconds 2]
+//
+// It runs from the repository's root, which holds the certificate.
+
+import std.console
+import std.env
+import std.fs
+import std.http
+import std.net
+import std.time
+
+type Payload = {
+    name: String
+    count: Int
+    tags: Array[String]
+}
+
+fn app(): http.App {
+    var routes = http.App()
+    routes.get("/hello", () { "hello" })
+    routes.post("/json", (input: Payload) { input with { count: input.count + 1 } })
+    routes
+}
+
+/// One request, sent when it is due: its latency, in microseconds.
+fn timed(client: http.Client, due: time.Instant, json: Bool): Int ! http.HttpError {
+    if json {
+        let record = Payload { name: "item", count: 1, tags: ["a", "b"] }
+        let _: Payload = client.post("/json", body: http.Body.json(record))?.json()?
+    } else {
+        _ = client.get("/hello")?.text()?
+    }
+    time.now().since(due).microseconds()
+}
+
+/// `rate` requests a second for `seconds`, each in a task of its own, after
+/// half a second that opens the connections and is not counted: the median
+/// latency and the 99th percentile, in microseconds.
+fn measured(client: http.Client, rate: Int, seconds: Int, json: Bool): (Int, Int) ! http.HttpError {
+    _ = sent(client, rate, rate / 2, json)?
+    var latencies = sent(client, rate, rate * seconds, json)?
+    latencies.sortBy((latency) { latency })
+    let at = (share: Int) { latencies[latencies.length() * share / 100] }
+    (at(50), at(99))
+}
+
+/// `count` requests at `rate` a second: the latency of each.
+fn sent(client: http.Client, rate: Int, count: Int, json: Bool): Array[Int] ! http.HttpError {
+    let gap = 1_000_000_000 / rate
+    let start = time.now()
+    var group = Group[Int ! http.HttpError]()
+    for i in 0..count {
+        let due = start.add(time.nanoseconds(i * gap))
+        let early = due.since(time.now())
+        if not early.isNegative() and not early.isZero() {
+            time.sleep(early)
+        }
+        group.add(spawn timed(client, due, json))
+    }
+    group.wait()
+}
+
+fn written(name: String, rate: Int, latencies: (Int, Int)) {
+    console.println(
+        "{{\"name\":\"{name} {rate}/s\",\"p50_us\":{latencies.0},\"p99_us\":{latencies.1}}}",
+    )
+}
+
+fn main(): !String {
+    var (rate, seconds) = (20_000, 2)
+    let arguments = env.args()
+    for i in 0..arguments.length() {
+        let value = Int.parse(if i + 1 < arguments.length() { arguments[i + 1] } else { "" })
+        match arguments[i] {
+            "--rate" => rate = value ?? rate
+            "--seconds" => seconds = value ?? seconds
+            _ => {}
+        }
+    }
+    let failed = (e: http.HttpError) { "{e}" }
+    let plain = app().start().mapErr((e) { "{e}" })?
+    let client = http.Client(baseUrl: plain.url())
+    written("http/hello", rate, measured(client, rate, seconds, false).mapErr(failed)?)
+    written("http/json", rate, measured(client, rate, seconds, true).mapErr(failed)?)
+    plain.stop()
+    let read = (path: String) { fs.readText(path).mapErr((e) { "cannot read {path}: {e}" }) }
+    let (certificate, key, authority) = (
+        read("bench/tondo/src/tls/cert.pem")?,
+        read("bench/tondo/src/tls/key.pem")?,
+        read("bench/tondo/src/tls/ca.pem")?,
+    )
+    let secure = app().start(tls: net.Tls.pem(certificate, key)).mapErr((e) { "{e}" })?
+    let trusting = http.Client(baseUrl: secure.url(), trust: authority)
+    written("http/tls hello", rate, measured(trusting, rate, seconds, false).mapErr(failed)?)
+    secure.stop()
+}

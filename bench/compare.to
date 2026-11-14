@@ -1,10 +1,14 @@
 // Compares Tondo with Go: runs the benchmarks of bench/tondo with
 // `tondo test --bench` and those of bench/go with `go test -bench`, and
 // writes a Markdown table: for each benchmark, the time a run takes on each
-// side, Tondo's time over Go's, and the allocations of a run, the slowest
-// against Go first; and, where `perf` counts them, the instructions and
-// cycles of a run on each side, which where the code lies does not move as
-// it moves the time.
+// side, Tondo's time over Go's, and the allocations and bytes of a run, the
+// slowest against Go first; and, where `perf` counts them, the instructions
+// and cycles of a run on each side, which where the code lies does not move
+// as it moves the time. A second table gives the latency of the servers of
+// the `http` rows at a fixed rate of requests, the median and the 99th
+// percentile, as bench/latency and bench/go/latency measure it; and where
+// `dotnet` runs, a third holds the rows that bench/csharp has too, against
+// C#.
 //
 //   tondo run bench/compare.to [--time <seconds>] [--output <file>] [--cpu <level>]
 //
@@ -32,6 +36,7 @@ import std.process
 type Measure = {
     nanoseconds: Float
     allocations: Float
+    bytes: Float
     instructions: Float?
     cycles: Float?
 }
@@ -70,9 +75,10 @@ fn tondoSide(tondo: String, seconds: String, cpu: String): Map[String, Measure] 
                 let key = "{name}/{benchmark.field("name").asText() ?? ""}"
                 let nanoseconds = benchmark.field("ns_per_op").field("median").asFloat() ?? 0.0
                 let allocations = benchmark.field("allocations_per_op").asFloat() ?? 0.0
+                let bytes = benchmark.field("bytes_per_op").asFloat() ?? 0.0
                 let instructions = benchmark.field("instructions_per_op").asFloat()
                 let cycles = benchmark.field("cycles_per_op").asFloat()
-                measured[key] = Measure { nanoseconds, allocations, instructions, cycles }
+                measured[key] = Measure { nanoseconds, allocations, bytes, instructions, cycles }
             }
         }
     }
@@ -108,28 +114,81 @@ fn goSide(seconds: String, level: String): Map[String, Measure] ! String {
     if ran.statuses.isEmpty() or not ran.statuses[0].success {
         fail "go test failed: {String.fromBytes(ran.stderr) ?? ""}{String.fromBytes(ran.stdout) ?? ""}"
     }
-    let text = ran.text().mapErr((e) { "go's output is not text: {e}" })?
+    benchmarked(ran.text().mapErr((e) { "go's output is not text: {e}" })?)
+}
+
+/// The lines `go test -bench` writes, as bench/csharp writes them too:
+/// `BenchmarkCalls/fib_25-32  N  t ns/op  b B/op  a allocs/op`, the
+/// processors after the last `-` and the allocations where counted.
+fn benchmarked(text: String): Map[String, Measure] {
     var measured: Map[String, Measure] = [:]
     for line in text.lines() {
         let words = line.words()
-        if words.length() < 8 or not words[0].startsWith("Benchmark") or words[3] != "ns/op" {
+        if words.length() < 6 or not words[0].startsWith("Benchmark") or words[3] != "ns/op" {
             continue
         }
-        // `BenchmarkCalls/fib_25-32`: the test, the benchmark, and the
-        // processors after the last `-`.
         let full = words[0].removePrefix("Benchmark")
         let parts = full.split("/")
         if parts.length() != 2 {
             continue
         }
         let suffix = parts[1].split("-")
-        let benchmark = (suffix.slice(0, suffix.length() - 1) ?? []).join("-").replace("_", " ")
-        let key = "{parts[0].toLower()}/{benchmark}"
+        let named = if suffix.length() > 1 {
+            (suffix.slice(0, suffix.length() - 1) ?? []).join("-")
+        } else {
+            parts[1]
+        }
+        let key = "{parts[0].toLower()}/{named.replace("_", " ")}"
         let nanoseconds = Float.parse(words[2]) ?? 0.0
-        let allocations = Float.parse(words[6]) ?? 0.0
-        measured[key] = Measure { nanoseconds, allocations, instructions: none, cycles: none }
+        let bytes = Float.parse(words[4]) ?? 0.0
+        let allocations = if words.length() >= 8 { Float.parse(words[6]) ?? 0.0 } else { 0.0 }
+        measured[key] = Measure {
+            nanoseconds
+            allocations
+            bytes
+            instructions: none
+            cycles: none
+        }
     }
     measured
+}
+
+/// The latencies a program of bench/latency writes, a line of JSON for each
+/// server: the median and the 99th percentile, in microseconds, by name.
+fn latencies(command: Command): Map[String, (Int, Int)] ! String {
+    let ran = command.output().mapErr((e) { "cannot measure latency: {e}" })?
+    if ran.statuses.isEmpty() or not ran.statuses[0].success {
+        fail "measuring latency failed: {String.fromBytes(ran.stderr) ?? ""}"
+    }
+    var measured: Map[String, (Int, Int)] = [:]
+    for line in (ran.text() ?? "").lines() {
+        let read = json.parse(line)
+        match read {
+            ok(value) => {
+                let name = value.field("name").asText() ?? ""
+                let (middle, tail) = (
+                    value.field("p50_us").asInt() ?? 0,
+                    value.field("p99_us").asInt() ?? 0,
+                )
+                measured[name] = (middle, tail)
+            }
+            err(_) => {}
+        }
+    }
+    measured
+}
+
+/// What bench/csharp measured, where `dotnet` runs, by the same names.
+fn csharpSide(seconds: String): Map[String, Measure] {
+    let ran = process
+        .command("dotnet", "run", "-c", "Release", "--project", "bench/csharp", "--", seconds)
+        .output()
+    match ran {
+        ok(out) if not out.statuses.isEmpty() and out.statuses[0].success => benchmarked(
+            out.text() ?? "",
+        )
+        _ => [:]
+    }
 }
 
 /// What `perf stat` counted of a program's instructions and cycles outside
@@ -215,6 +274,7 @@ fn goCounts(measured: Map[String, Measure], level: String): Map[String, Measure]
         counted[key] = Measure {
             nanoseconds: measure.nanoseconds
             allocations: measure.allocations
+            bytes: measure.bytes
             instructions: if instructions > 0.0 { instructions } else { none }
             cycles: if cycles > 0.0 { cycles } else { none }
         }
@@ -231,6 +291,17 @@ fn many(value: Float?): String {
         some(v) => v.toFixed(0)
         none => "—"
     }
+}
+
+/// Bytes, in the unit that reads best.
+fn sized(count: Float): String {
+    if count < 1024.0 {
+        return count.toFixed(0)
+    }
+    if count < 1024.0 * 1024.0 {
+        return "{(count / 1024.0).toFixed(1)}k"
+    }
+    "{(count / 1024.0 / 1024.0).toFixed(2)}M"
 }
 
 /// A time, in the unit that reads best.
@@ -287,6 +358,7 @@ fn againstOld(
         Measure {
             nanoseconds: median(times)
             allocations: median(allocations)
+            bytes: 0.0
             instructions: none
             cycles: none
         }
@@ -368,10 +440,10 @@ fn main(): !String {
     // The slowest against Go first.
     rows.sortBy((row) { -row.tondo.nanoseconds / row.go.nanoseconds })
     var lines: Array[String] = [
-        "| Benchmark | Tondo | Go | Tondo/Go | Allocs/op Tondo | Allocs/op Go | Ins/op Tondo | Ins/op Go | Cycles/op Tondo | Cycles/op Go |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Benchmark | Tondo | Go | Tondo/Go | Allocs/op Tondo | Allocs/op Go | B/op Tondo | B/op Go | Ins/op Tondo | Ins/op Go | Cycles/op Tondo | Cycles/op Go |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
-    var (slower, more) = (0, 0)
+    var (slower, more, heavier) = (0, 0, 0)
     for row in rows {
         let ratio = row.tondo.nanoseconds / row.go.nanoseconds
         if ratio > 1.0 {
@@ -381,17 +453,67 @@ fn main(): !String {
             (some(own), some(go)) if own > go => more += 1
             _ => {}
         }
+        // Memory is judged as time is: what a run allocates, in number
+        // and in bytes, against Go's.
+        let memory =
+            row.tondo.allocations > row.go.allocations + 0.5 or row.tondo.bytes > row.go.bytes + 0.5
+        if memory {
+            heavier += 1
+        }
         let mark = if ratio > 1.0 { " ⚠" } else { "" }
+        let marked = if memory { " ⚠" } else { "" }
         let counts =
             "{many(row.tondo.instructions)} | {many(row.go.instructions)} | {many(row.tondo.cycles)} | {many(row.go.cycles)}"
         lines.push(
-            "| {row.name} | {time(row.tondo.nanoseconds)} | {time(row.go.nanoseconds)} | {ratio.toFixed(2)}×{mark} | {row.tondo.allocations.toFixed(0)} | {row.go.allocations.toFixed(0)} | {counts} |",
+            "| {row.name} | {time(row.tondo.nanoseconds)} | {time(row.go.nanoseconds)} | {ratio.toFixed(2)}×{mark} | {row.tondo.allocations.toFixed(0)}{marked} | {row.go.allocations.toFixed(0)} | {sized(row.tondo.bytes)} | {sized(row.go.bytes)} | {counts} |",
         )
     }
     lines.push("")
     lines.push(
-        "{slower} of {rows.length()} benchmarks are slower than Go; {more} run more instructions than Go.",
+        "{slower} of {rows.length()} benchmarks are slower than Go; {heavier} allocate more; {more} run more instructions than Go.",
     )
+    // The servers at a fixed rate, each side with its own program.
+    let tondoLatency = latencies(process.command(tondo, "run", "bench/latency/latency.to"))?
+    let goLatency = latencies(goCommand(level, ["run", "./latency"]))?
+    lines.push("")
+    lines.push("| Server | p50 Tondo | p50 Go | p99 Tondo | p99 Go |")
+    lines.push("|---|---:|---:|---:|---:|")
+    for (name, (middle, tail)) in tondoLatency {
+        match goLatency.get(name) {
+            some((goMedian, goTail)) => {
+                let (slow, slowTail) = (
+                    if middle > goMedian { " ⚠" } else { "" },
+                    if tail > goTail { " ⚠" } else { "" },
+                )
+                lines.push(
+                    "| {name} | {middle} µs{slow} | {goMedian} µs | {tail} µs{slowTail} | {goTail} µs |",
+                )
+            }
+            none => console.eprintln("no Go latency for {name}")
+        }
+    }
+    // The rows C# has too, where `dotnet` runs: its allocations are not
+    // counted, only their bytes.
+    let csharp = csharpSide(seconds)
+    var against: Array[(String, Measure, Measure)] = []
+    for row in rows {
+        match csharp.get(row.name) {
+            some(other) => against.push((row.name, row.tondo, other))
+            none => {}
+        }
+    }
+    if not against.isEmpty() {
+        lines.push("")
+        lines.push("| Benchmark | Tondo | C# | Tondo/C# | B/op Tondo | B/op C# |")
+        lines.push("|---|---:|---:|---:|---:|---:|")
+        for (name, own, other) in against {
+            let ratio = own.nanoseconds / other.nanoseconds
+            let mark = if ratio > 1.0 { " ⚠" } else { "" }
+            lines.push(
+                "| {name} | {time(own.nanoseconds)} | {time(other.nanoseconds)} | {ratio.toFixed(2)}×{mark} | {sized(own.bytes)} | {sized(other.bytes)} |",
+            )
+        }
+    }
     let table = lines.join("\n")
     console.println(table)
     if output != "" {
