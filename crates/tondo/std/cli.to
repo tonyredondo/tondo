@@ -25,6 +25,7 @@ import std.console as __console
 import std.env as __env
 import std.internal.fs as fsNative
 import std.internal.text as textNative
+import std.math as __math
 import std.path as __path
 import std.process as __process
 import std.reflect as __reflect
@@ -1001,10 +1002,10 @@ pub fn isTerminal(): Bool {
 /// import std.cli
 /// import std.console
 ///
-/// console.println("─".repeat(cli.width()))
+/// console.println("─".repeat(cli.terminalWidth()))
 /// ```
-pub fn width(): Int {
-    size().map((found) { found.columns }) ?? 80
+pub fn terminalWidth(): Int {
+    terminalSize().map((found) { found.columns }) ?? 80
 }
 
 /// The size of a terminal, in characters.
@@ -1013,7 +1014,7 @@ pub fn width(): Int {
 /// import std.cli
 /// import std.console
 ///
-/// let size = cli.size() ?? cli.Size { columns: 80, rows: 24 }
+/// let size = cli.terminalSize() ?? cli.Size { columns: 80, rows: 24 }
 /// console.println("{size.columns} columns, {size.rows} rows")
 /// ```
 pub type Size = {
@@ -1028,12 +1029,12 @@ pub type Size = {
 /// import std.cli
 /// import std.console
 ///
-/// match cli.size() {
+/// match cli.terminalSize() {
 ///     some(size) => console.println("{size.columns}×{size.rows}")
 ///     none => console.println("no terminal")
 /// }
 /// ```
-pub fn size(): Size? {
+pub fn terminalSize(): Size? {
     let found = fsNative.terminalSize()
     if found.isEmpty() {
         return none
@@ -1397,7 +1398,10 @@ fn colorCode(word: String, background: Bool): String? {
     none
 }
 
-/// How many characters of a text show, without the codes of its styles.
+/// How many columns of a terminal a text takes, without the codes of its
+/// styles: two for a character East Asian text writes wide, as `漢` or most
+/// emoji, none for a mark that goes on the character before it or a format
+/// character, as a joiner, and one for any other.
 fn visible(text: String): Int {
     var count = 0
     var escaping = false
@@ -1407,10 +1411,286 @@ fn visible(text: String): Int {
         } else if c == '\u{1b}' {
             escaping = true
         } else {
-            count += 1
+            count += columnsOf(c)
         }
     }
     count
+}
+
+/// The columns a character takes.
+fn columnsOf(c: Char): Int {
+    let code = c.code()
+    if code < 0x300 {
+        return 1
+    }
+    // The ranges of East Asian Width W and F, from Unicode 16, in order.
+    let wide = wideRanges()
+    var low = 0
+    var high = wide.length() / 2
+    for low < high {
+        let middle = (low + high) / 2
+        if code > wide[middle * 2 + 1] {
+            low = middle + 1
+        } else if code < wide[middle * 2] {
+            high = middle
+        } else {
+            return 2
+        }
+    }
+    // Nonspacing and enclosing marks, and format characters.
+    match textNative.category(c) {
+        5 | 7 | 26 => 0
+        _ => 1
+    }
+}
+
+fn wideRanges(): Array[Int] {
+    [
+        0x1100,
+        0x115F,
+        0x231A,
+        0x231B,
+        0x2329,
+        0x232A,
+        0x23E9,
+        0x23EC,
+        0x23F0,
+        0x23F0,
+        0x23F3,
+        0x23F3,
+        0x25FD,
+        0x25FE,
+        0x2614,
+        0x2615,
+        0x2630,
+        0x2637,
+        0x2648,
+        0x2653,
+        0x267F,
+        0x267F,
+        0x268A,
+        0x268F,
+        0x2693,
+        0x2693,
+        0x26A1,
+        0x26A1,
+        0x26AA,
+        0x26AB,
+        0x26BD,
+        0x26BE,
+        0x26C4,
+        0x26C5,
+        0x26CE,
+        0x26CE,
+        0x26D4,
+        0x26D4,
+        0x26EA,
+        0x26EA,
+        0x26F2,
+        0x26F3,
+        0x26F5,
+        0x26F5,
+        0x26FA,
+        0x26FA,
+        0x26FD,
+        0x26FD,
+        0x2705,
+        0x2705,
+        0x270A,
+        0x270B,
+        0x2728,
+        0x2728,
+        0x274C,
+        0x274C,
+        0x274E,
+        0x274E,
+        0x2753,
+        0x2755,
+        0x2757,
+        0x2757,
+        0x2795,
+        0x2797,
+        0x27B0,
+        0x27B0,
+        0x27BF,
+        0x27BF,
+        0x2B1B,
+        0x2B1C,
+        0x2B50,
+        0x2B50,
+        0x2B55,
+        0x2B55,
+        0x2E80,
+        0x2E99,
+        0x2E9B,
+        0x2EF3,
+        0x2F00,
+        0x2FD5,
+        0x2FF0,
+        0x303E,
+        0x3041,
+        0x3096,
+        0x3099,
+        0x30FF,
+        0x3105,
+        0x312F,
+        0x3131,
+        0x318E,
+        0x3190,
+        0x31E5,
+        0x31EF,
+        0x321E,
+        0x3220,
+        0x3247,
+        0x3250,
+        0xA48C,
+        0xA490,
+        0xA4C6,
+        0xA960,
+        0xA97C,
+        0xAC00,
+        0xD7A3,
+        0xF900,
+        0xFAFF,
+        0xFE10,
+        0xFE19,
+        0xFE30,
+        0xFE52,
+        0xFE54,
+        0xFE66,
+        0xFE68,
+        0xFE6B,
+        0xFF01,
+        0xFF60,
+        0xFFE0,
+        0xFFE6,
+        0x16FE0,
+        0x16FE4,
+        0x16FF0,
+        0x16FF1,
+        0x17000,
+        0x187F7,
+        0x18800,
+        0x18CD5,
+        0x18CFF,
+        0x18D08,
+        0x1AFF0,
+        0x1AFF3,
+        0x1AFF5,
+        0x1AFFB,
+        0x1AFFD,
+        0x1AFFE,
+        0x1B000,
+        0x1B122,
+        0x1B132,
+        0x1B132,
+        0x1B150,
+        0x1B152,
+        0x1B155,
+        0x1B155,
+        0x1B164,
+        0x1B167,
+        0x1B170,
+        0x1B2FB,
+        0x1D300,
+        0x1D356,
+        0x1D360,
+        0x1D376,
+        0x1F004,
+        0x1F004,
+        0x1F0CF,
+        0x1F0CF,
+        0x1F18E,
+        0x1F18E,
+        0x1F191,
+        0x1F19A,
+        0x1F200,
+        0x1F202,
+        0x1F210,
+        0x1F23B,
+        0x1F240,
+        0x1F248,
+        0x1F250,
+        0x1F251,
+        0x1F260,
+        0x1F265,
+        0x1F300,
+        0x1F320,
+        0x1F32D,
+        0x1F335,
+        0x1F337,
+        0x1F37C,
+        0x1F37E,
+        0x1F393,
+        0x1F3A0,
+        0x1F3CA,
+        0x1F3CF,
+        0x1F3D3,
+        0x1F3E0,
+        0x1F3F0,
+        0x1F3F4,
+        0x1F3F4,
+        0x1F3F8,
+        0x1F43E,
+        0x1F440,
+        0x1F440,
+        0x1F442,
+        0x1F4FC,
+        0x1F4FF,
+        0x1F53D,
+        0x1F54B,
+        0x1F54E,
+        0x1F550,
+        0x1F567,
+        0x1F57A,
+        0x1F57A,
+        0x1F595,
+        0x1F596,
+        0x1F5A4,
+        0x1F5A4,
+        0x1F5FB,
+        0x1F64F,
+        0x1F680,
+        0x1F6C5,
+        0x1F6CC,
+        0x1F6CC,
+        0x1F6D0,
+        0x1F6D2,
+        0x1F6D5,
+        0x1F6D7,
+        0x1F6DC,
+        0x1F6DF,
+        0x1F6EB,
+        0x1F6EC,
+        0x1F6F4,
+        0x1F6FC,
+        0x1F7E0,
+        0x1F7EB,
+        0x1F7F0,
+        0x1F7F0,
+        0x1F90C,
+        0x1F93A,
+        0x1F93C,
+        0x1F945,
+        0x1F947,
+        0x1F9FF,
+        0x1FA70,
+        0x1FA7C,
+        0x1FA80,
+        0x1FA89,
+        0x1FA8F,
+        0x1FAC6,
+        0x1FACE,
+        0x1FADC,
+        0x1FADF,
+        0x1FAE9,
+        0x1FAF0,
+        0x1FAF8,
+        0x20000,
+        0x2FFFD,
+        0x30000,
+        0x3FFFD,
+    ]
 }
 
 /// A table with a border, to print, with the numbers to the right. Its rows
@@ -1455,10 +1735,15 @@ fn visible(text: String): Int {
 /// let down = cli.markup("[red]down[/]")
 /// console.print(cli.table([["api", up], ["db", down]], columns: ["Service", "State"]))
 /// ```
-pub fn table[T: __reflect.Reflect](rows: Array[T], columns: Array[String] = []): String {
+pub fn table[T: __reflect.Reflect](
+    rows: Array[T],
+    columns: Array[String] = [],
+    title: String = "",
+    border: Border = Border.Square,
+): String {
     let info = __reflect.typeInfo[T]()
     if info.kind() == __reflect.TypeKind.Applied(__reflect.AppliedKind.Array) {
-        return tableOfArrays(rows, columns)
+        return tableOfArrays(rows, columns, title, border)
     }
     let fields = info.fields()
     let names = if columns.isEmpty() { fields.map((field) { field.name() }) } else { columns }
@@ -1473,20 +1758,30 @@ pub fn table[T: __reflect.Reflect](rows: Array[T], columns: Array[String] = []):
     var right: Array[Bool] = names.map((_) { false })
     for row in rows {
         let value = __reflect.valueOf(row)
+        let secrets = secretFields(value)
         var line: Array[String] = []
         for index in 0..names.length() {
             let found = value.get(names[index]).expect("a field of the record")
+            if hiddenPart(secrets, names[index], found) {
+                line.push("<secret>")
+                continue
+            }
             line.push(cellOf(found))
             right[index] = right[index] or __shapes.numeric(found)
         }
         cells.push(line)
     }
-    bordered(names, cells, right)
+    bordered(names, cells, right, title, border)
 }
 
 /// The table of rows that are arrays: as wide as the widest, and a column
 /// to the right when all it has are numbers, written or not as text.
-fn tableOfArrays[T: __reflect.Reflect](rows: Array[T], headers: Array[String]): String {
+fn tableOfArrays[T: __reflect.Reflect](
+    rows: Array[T],
+    headers: Array[String],
+    title: String,
+    border: Border,
+): String {
     let values = rows.map((row) { __reflect.valueOf(row).elements() })
     var wide = headers.length()
     for line in values {
@@ -1522,50 +1817,578 @@ fn tableOfArrays[T: __reflect.Reflect](rows: Array[T], headers: Array[String]): 
     for index in 0..wide {
         right[index] = right[index] and not words[index]
     }
-    bordered(names, cells, right)
+    bordered(names, cells, right, title, border)
 }
 
-/// Headers over cells, in a border; no line of headers when they are empty.
-fn bordered(names: Array[String], cells: Array[Array[String]], right: Array[Bool]): String {
-    var widths = names.map((name) { visible(name) })
+/// Headers over cells, in a border, under a title; no line of headers when
+/// they are empty. A cell of several lines makes its row as tall, and a
+/// table with `Border.None` is a grid, its columns two spaces apart.
+fn bordered(
+    names: Array[String],
+    cells: Array[Array[String]],
+    right: Array[Bool],
+    title: String,
+    border: Border,
+): String {
+    var widths = names.map((name) { widest(name) })
     for line in cells {
         for index in 0..line.length() {
-            widths[index] = widths[index].max(visible(line[index]))
+            widths[index] = widths[index].max(widest(line[index]))
         }
     }
-    let rule = (left: String, middle: String, end: String) {
-        "{left}{widths.map((wide) { "─".repeat(wide + 2) }).join(middle)}{end}\n"
-    }
+    let grid = border == Border.None
+    let edge = edges(border)
+    // The lines of a row, as tall as its tallest cell.
     let row = (line: Array[String]) {
-        var written = "│"
-        for index in 0..line.length() {
-            let padding = " ".repeat(widths[index] - visible(line[index]))
-            written = if right[index] {
-                "{written} {padding}{line[index]} │"
-            } else {
-                "{written} {line[index]}{padding} │"
-            }
+        let parts = line.map((cell) { linesOf(cell) })
+        var tall = 1
+        for part in parts {
+            tall = tall.max(part.length())
         }
-        "{written}\n"
+        var written = ""
+        for at in 0..tall {
+            var text = if grid { "" } else { edge.down }
+            for index in 0..parts.length() {
+                let piece = parts[index].get(at) ?? ""
+                let padding = " ".repeat(widths[index] - visible(piece))
+                let cell = if right[index] { "{padding}{piece}" } else { "{piece}{padding}" }
+                text = match (grid, index) {
+                    (true, 0) => cell
+                    (true, _) => "{text}  {cell}"
+                    _ => "{text} {cell} {edge.down}"
+                }
+            }
+            let shown = if grid { text.trimEnd() } else { text }
+            written = "{written}{shown}\n"
+        }
+        written
     }
-    var written = rule("┌", "┬", "┐")
+    let across = (left: String, middle: String, end: String) {
+        "{left}{widths.map((wide) { edge.across.repeat(wide + 2) }).join(middle)}{end}\n"
+    }
+    var written = ""
+    let total = if grid {
+        widths.sum() + 2 * (widths.length() - 1).max(0)
+    } else {
+        widths.sum() + 3 * widths.length() + 1
+    }
+    if not title.isEmpty() {
+        written = "{centered(title, total).trimEnd()}\n"
+    }
+    if not grid {
+        written = "{written}{across(edge.topLeft, edge.topJoin, edge.topRight)}"
+    }
     if names.any((name) { not name.isEmpty() }) {
-        written = "{written}{row(names)}{rule("├", "┼", "┤")}"
+        written = "{written}{row(names)}"
+        if not grid {
+            written = "{written}{across(edge.leftJoin, edge.cross, edge.rightJoin)}"
+        }
     }
     for line in cells {
         written = "{written}{row(line)}"
     }
-    "{written}{rule("└", "┴", "┘")}"
+    if not grid {
+        written = "{written}{across(edge.bottomLeft, edge.bottomJoin, edge.bottomRight)}"
+    }
+    written
 }
 
 fn cellOf(value: __reflect.Value): String {
+    if value.typeInfo().secret() {
+        return "<secret>"
+    }
     if value.typeName().endsWith("?") {
         return match value.elements().first() {
             some(inner) => cellOf(inner)
             none => ""
         }
     }
-    "{value}"
+    if keepsSecrets(value) { masked(value, false) } else { "{value}" }
+}
+
+/// Whether a value has a part, at any depth, that shows as `<secret>`.
+fn keepsSecrets(value: __reflect.Value): Bool {
+    let secrets = secretFields(value)
+    partsOf(value).any((part) { hiddenPart(secrets, part.0, part.1) or keepsSecrets(part.1) })
+}
+
+/// A value as the tools show it, with `<secret>` for what is secret; a text
+/// inside another quoted.
+fn masked(value: __reflect.Value, nested: Bool): String {
+    if value.typeInfo().secret() {
+        return "<secret>"
+    }
+    let parts = partsOf(value)
+    if parts.isEmpty() {
+        return if nested { leafText(value) } else { "{value}" }
+    }
+    let secrets = secretFields(value)
+    let shown = parts.map(
+        (part) {
+            let text = if hiddenPart(secrets, part.0, part.1) {
+                "<secret>"
+            } else {
+                masked(part.1, true)
+            }
+            if part.0.isEmpty() { text } else { "{part.0}: {text}" }
+        },
+    )
+    if not value.fields().isEmpty() {
+        let name = match value.variant() {
+            some(variant) => "{value.typeName()}.{variant}"
+            none => value.typeName()
+        }
+        return "{name} {{ {shown.join(", ")} }}"
+    }
+    match value.variant() {
+        some(variant) => "{value.typeName()}.{variant}({shown.join(", ")})"
+        none => "[{shown.join(", ")}]"
+    }
+}
+
+/// How a box or a table is drawn. A table with `None` is a grid, its
+/// columns aligned and nothing between them but spaces.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// console.println(cli.panel("ready", border: cli.Border.Double))
+/// console.print(cli.table([["a", "1"], ["b", "2"]], border: cli.Border.None))
+/// ```
+pub enum Border {
+    Square
+    Rounded
+    Double
+    Heavy
+    Ascii
+    None
+}
+
+/// The characters of a border: its corners, its lines, and where a line
+/// inside meets it or another.
+type Edges = {
+    topLeft: String
+    topRight: String
+    bottomLeft: String
+    bottomRight: String
+    across: String
+    down: String
+    topJoin: String
+    bottomJoin: String
+    leftJoin: String
+    rightJoin: String
+    cross: String
+}
+
+fn edges(border: Border): Edges {
+    let drawn = (corners: String, lines: String, joins: String) {
+        let corner: Array[String] = corners.chars().map((one) { "{one}" }).collect()
+        let line: Array[String] = lines.chars().map((one) { "{one}" }).collect()
+        let join: Array[String] = joins.chars().map((one) { "{one}" }).collect()
+        Edges {
+            topLeft: corner[0]
+            topRight: corner[1]
+            bottomLeft: corner[2]
+            bottomRight: corner[3]
+            across: line[0]
+            down: line[1]
+            topJoin: join[0]
+            bottomJoin: join[1]
+            leftJoin: join[2]
+            rightJoin: join[3]
+            cross: join[4]
+        }
+    }
+    match border {
+        Border.Square => drawn("┌┐└┘", "─│", "┬┴├┤┼")
+        Border.Rounded => drawn("╭╮╰╯", "─│", "┬┴├┤┼")
+        Border.Double => drawn("╔╗╚╝", "═║", "╦╩╠╣╬")
+        Border.Heavy => drawn("┏┓┗┛", "━┃", "┳┻┣┫╋")
+        Border.Ascii => drawn("++++", "-|", "+++++")
+        Border.None => drawn("    ", "  ", "     ")
+    }
+}
+
+/// The lines of a text: none of its own after a last `\n`, and one, empty,
+/// for an empty text.
+fn linesOf(text: String): Array[String] {
+    let lines = text.lines()
+    if lines.isEmpty() { [""] } else { lines }
+}
+
+/// The columns of a text's widest line.
+fn widest(text: String): Int {
+    linesOf(text).map((line) { visible(line) }).max() ?? 0
+}
+
+/// A line of `text` in the middle of `room` columns.
+fn centered(text: String, room: Int): String {
+    let shown = clipped(text, room)
+    let left = (room - visible(shown)) / 2
+    "{" ".repeat(left.max(0))}{shown}{" ".repeat((room - left - visible(shown)).max(0))}"
+}
+
+/// A line padded with spaces to `room` columns, or clipped to them.
+fn padded(line: String, room: Int): String {
+    let shown = clipped(line, room)
+    "{shown}{" ".repeat((room - visible(shown)).max(0))}"
+}
+
+/// The text in a box, with a title on its top line. The box is as wide as
+/// the text and its padding, or `width` columns, which clips longer lines.
+/// It is text, so a table, a tree or other panels go inside one.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// console.println(cli.panel("3 tests passed\n1 failed", title: "Results"))
+/// // ╭─ Results ──────╮
+/// // │ 3 tests passed │
+/// // │ 1 failed       │
+/// // ╰────────────────╯
+/// ```
+pub fn panel(
+    text: String,
+    title: String = "",
+    border: Border = Border.Rounded,
+    padding: Int = 1,
+    width: Int? = none,
+): String {
+    let lines = linesOf(text)
+    let space = padding.max(0)
+    let edge = edges(border)
+    // Between its two sides.
+    let inside = match width {
+        some(columns) => (columns - 2).max(1)
+        none => (widest(text) + 2 * space).max(if title.isEmpty() { 0 } else { visible(title) + 4 })
+    }
+    let room = (inside - 2 * space).max(0)
+    let top = if title.isEmpty() {
+        "{edge.topLeft}{edge.across.repeat(inside)}{edge.topRight}"
+    } else {
+        let shown = clipped(title, (inside - 4).max(1))
+        let rest = (inside - visible(shown) - 3).max(0)
+        "{edge.topLeft}{edge.across} {shown} {edge.across.repeat(rest)}{edge.topRight}"
+    }
+    var written = [top]
+    for line in lines {
+        written.push(
+            "{edge.down}{" ".repeat(space)}{padded(line, room)}{" ".repeat(space)}{edge.down}",
+        )
+    }
+    written.push("{edge.bottomLeft}{edge.across.repeat(inside)}{edge.bottomRight}")
+    if border == Border.None {
+        written = written.map((line) { line.trimEnd() })
+    }
+    written.join("\n")
+}
+
+/// A line across the terminal, or `width` columns, with a title in its
+/// middle.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// console.println(cli.rule("Details", width: 24))
+/// // ─────── Details ────────
+/// ```
+pub fn rule(title: String = "", width: Int? = none): String {
+    let columns = width ?? terminalWidth()
+    if title.isEmpty() {
+        return "─".repeat(columns.max(0))
+    }
+    let shown = clipped(title, (columns - 4).max(1))
+    let left = ((columns - visible(shown) - 2) / 2).max(0)
+    let right = (columns - visible(shown) - 2 - left).max(0)
+    "{"─".repeat(left)} {shown} {"─".repeat(right)}"
+}
+
+/// Texts side by side, `gap` columns apart, as many on a row as fit the
+/// terminal, or `width` columns, and the rest on the rows below; each is
+/// as wide as its widest line, and its lines start together.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// let left = cli.panel("api\ndb", title: "Up")
+/// let right = cli.panel("cache", title: "Down")
+/// console.println(cli.beside([left, right]))
+/// ```
+pub fn beside(texts: Array[String], gap: Int = 2, width: Int? = none): String {
+    let columns = width ?? terminalWidth()
+    let space = gap.max(0)
+    var rows: Array[Array[String]] = []
+    var current: Array[String] = []
+    var used = 0
+    for text in texts {
+        let wide = widest(text)
+        let needed = if current.isEmpty() { wide } else { used + space + wide }
+        if not current.isEmpty() and needed > columns {
+            rows.push(current)
+            current = []
+            used = 0
+        }
+        used = if current.isEmpty() { wide } else { used + space + wide }
+        current.push(text)
+    }
+    if not current.isEmpty() {
+        rows.push(current)
+    }
+    var written: Array[String] = []
+    for row in rows {
+        let blocks = row.map((text) { linesOf(text) })
+        let widths = row.map((text) { widest(text) })
+        let tall = blocks.map((block) { block.length() }).max() ?? 0
+        for at in 0..tall {
+            var line = ""
+            for index in 0..blocks.length() {
+                let piece = blocks[index].get(at) ?? ""
+                line = if index == 0 {
+                    padded(piece, widths[index])
+                } else {
+                    "{line}{" ".repeat(space)}{padded(piece, widths[index])}"
+                }
+            }
+            written.push(line.trimEnd())
+        }
+    }
+    written.join("\n")
+}
+
+/// Any value as a tree, as the debugger shows it: a record's fields, an
+/// array's elements, a map's entries and an enum's payload are its
+/// branches, and what has no parts ends one. What is `@secret` shows as
+/// `<secret>`.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// type Limits = { memory: Int, cpus: Int }
+/// type Service = { name: String, hosts: Array[String], limits: Limits }
+///
+/// let service = Service { name: "web", hosts: ["a", "b"], limits: Limits { memory: 512, cpus: 2 } }
+/// console.println(cli.tree(service))
+/// // Service
+/// // ├── name: "web"
+/// // ├── hosts
+/// // │   ├── "a"
+/// // │   └── "b"
+/// // └── limits
+/// //     ├── memory: 512
+/// //     └── cpus: 2
+/// ```
+pub fn tree[T: __reflect.Reflect](value: T): String {
+    let root = __reflect.valueOf(value)
+    if root.typeInfo().secret() {
+        return "<secret>"
+    }
+    var written = [nodeText(root)]
+    branches(root, "", var written)
+    written.join("\n")
+}
+
+/// The fields of a value the tools show as `<secret>`: those `@secret` of
+/// its record, or of its variant's.
+fn secretFields(value: __reflect.Value): Array[String] {
+    let info = value.typeInfo()
+    let fields = match value.variant() {
+        some(name) =>
+            info
+                .variants()
+                .find((variant) { variant.name() == name })
+                .map((variant) { variant.fields() }) ??
+                []
+        none => info.fields()
+    }
+    fields.filter((field) { field.secret() }).map((field) { field.name() })
+}
+
+/// Whether a part shows as `<secret>`: a field `@secret`, or a value of a
+/// secret type.
+fn hiddenPart(secrets: Array[String], name: String, part: __reflect.Value): Bool {
+    part.typeInfo().secret() or (not name.isEmpty() and secrets.contains(name))
+}
+
+/// The branches of a value, each a name and a value, none when it has no
+/// parts.
+fn partsOf(value: __reflect.Value): Array[(String, __reflect.Value)] {
+    if value.typeName().endsWith("?") {
+        return match value.elements().first() {
+            some(inner) => partsOf(inner)
+            none => []
+        }
+    }
+    let fields = value.fields()
+    if not fields.isEmpty() {
+        return fields.map((field) { (field.name, field.value) })
+    }
+    let entries = value.entries()
+    if not entries.isEmpty() {
+        return entries.map((entry) { ("{entry.0}", entry.1) })
+    }
+    value.elements().map((item) { ("", item) })
+}
+
+/// The text of a node: its value when it has no parts, else its type, or
+/// its variant.
+fn nodeText(value: __reflect.Value): String {
+    if partsOf(value).isEmpty() {
+        return leafText(value)
+    }
+    match value.variant() {
+        some(variant) => "{value.typeName()}.{variant}"
+        none => value.typeName()
+    }
+}
+
+/// A value without parts, as the debugger shows it: a text and a character
+/// quoted.
+fn leafText(value: __reflect.Value): String {
+    let text = "{value}"
+    match value.typeName() {
+        "String" => {
+            var quoted = "\""
+            for c in text.chars() {
+                quoted = match c {
+                    '"' => "{quoted}\\\""
+                    '\\' => "{quoted}\\\\"
+                    '\n' => "{quoted}\\n"
+                    '\t' => "{quoted}\\t"
+                    _ => "{quoted}{c}"
+                }
+            }
+            "{quoted}\""
+        }
+        "Char" => "'{text}'"
+        _ => text
+    }
+}
+
+fn branches(value: __reflect.Value, indent: String, written: var Array[String]) {
+    let parts = partsOf(value)
+    let secrets = secretFields(value)
+    for index in 0..parts.length() {
+        let (name, part) = parts[index]
+        let last = index == parts.length() - 1
+        let mark = if last { "└── " } else { "├── " }
+        if hiddenPart(secrets, name, part) {
+            written.push(
+                if name.isEmpty() {
+                    "{indent}{mark}<secret>"
+                } else {
+                    "{indent}{mark}{name}: <secret>"
+                },
+            )
+            continue
+        }
+        let inner = partsOf(part)
+        let text = match (name.isEmpty(), inner.isEmpty()) {
+            (true, true) => leafText(part)
+            (true, false) => nodeText(part)
+            (false, true) => "{name}: {leafText(part)}"
+            (false, false) => name
+        }
+        written.push("{indent}{mark}{text}")
+        if not inner.isEmpty() {
+            branches(part, "{indent}{if last { "    " } else { "│   " }}", var written)
+        }
+    }
+}
+
+/// A bar for each value, as long as its share of the largest, with its
+/// label to the left and its value to the right, across the terminal or
+/// `width` columns.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// console.println(cli.bars([("tea", 12.0), ("coffee", 30.0)], width: 30))
+/// // tea     ████████▏         12
+/// // coffee  ████████████████████ 30
+/// ```
+pub fn bars(values: Array[(String, Float)], width: Int? = none): String {
+    let columns = width ?? terminalWidth()
+    let labels = values.map((entry) { visible(entry.0) }).max() ?? 0
+    let numbers = values.map((entry) { numeral(entry.1) })
+    let digits = numbers.map((text) { visible(text) }).max() ?? 0
+    let room = (columns - labels - digits - 3).max(1)
+    let largest = values.map((entry) { entry.1.max(0.0) }).max() ?? 0.0
+    var written: Array[String] = []
+    for index in 0..values.length() {
+        let (name, value) = values[index]
+        let share = if largest > 0.0 { value.max(0.0) / largest } else { 0.0 }
+        let bar = eighths(share * Float(room))
+        written.push(
+            "{padded(name, labels)}  {padded(bar, room)} {numbers[index].padStart(digits)}".trimEnd(),
+        )
+    }
+    written.join("\n")
+}
+
+/// A bar `length` columns long, to an eighth of one.
+fn eighths(length: Float): String {
+    let whole = Int(__math.floor(length)) ?? 0
+    let part = Int(__math.floor((length - Float(whole)) * 8.0)) ?? 0
+    let parts = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]
+    "{"█".repeat(whole.max(0))}{parts[part.max(0).min(7)]}"
+}
+
+/// A number as a person writes it: no `.0` when it is whole.
+fn numeral(value: Float): String {
+    if __math.floor(value) == value and value.abs() < 1e15 {
+        return "{Int(value) ?? 0}"
+    }
+    "{__math.round(value * 100.0) / 100.0}"
+}
+
+/// One bar across the terminal, or `width` columns, split into a part for
+/// each value, as large as its share of the total, and under it each
+/// part's name and share. On a terminal each part has a color; off one,
+/// a shade of its own.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// console.println(cli.breakdown([("used", 61.0), ("free", 39.0)], width: 20))
+/// // ████████████▓▓▓▓▓▓▓▓
+/// // █ used 61%  ▓ free 39%
+/// ```
+pub fn breakdown(parts: Array[(String, Float)], width: Int? = none): String {
+    let columns = (width ?? terminalWidth()).max(1)
+    let total = parts.map((part) { part.1.max(0.0) }).sum()
+    let paint = painting()
+    let colors = ["34", "32", "33", "35", "36", "31", "94", "92"]
+    let shades = ["█", "▓", "▒", "░"]
+    let mark = (index: Int) {
+        if paint {
+            "\u{1b}[{colors[index % colors.length()]}m█\u{1b}[0m"
+        } else {
+            shades[index % shades.length()]
+        }
+    }
+    var bar = ""
+    var legend: Array[String] = []
+    var used = 0
+    var reached = 0.0
+    for index in 0..parts.length() {
+        let (name, value) = parts[index]
+        let share = if total > 0.0 { value.max(0.0) / total } else { 0.0 }
+        reached += share
+        // Each part ends where its sum so far ends, so the parts fill the bar.
+        let end = Int(__math.round(reached * Float(columns))) ?? used
+        let length = (end - used).max(0)
+        used += length
+        bar = "{bar}{mark(index).repeat(length)}"
+        legend.push("{mark(index)} {name} {numeral(__math.round(share * 100.0))}%")
+    }
+    "{bar}\n{legend.join("  ")}"
 }
 
 /// A bar of the progress of some work, or a spinner when it has no total,
@@ -1655,7 +2478,7 @@ fn drawBar(bar: Bar) {
         return
     }
     // At the width of now, so that a terminal made narrower does not wrap it.
-    let columns = width()
+    let columns = terminalWidth()
     let line = match bar.total {
         some(total) => {
             let count = " {bar.done}/{total}"
@@ -1731,8 +2554,8 @@ pub fn confirm(question: String, default: Bool = false): Bool {
 /// ```
 pub fn choose(question: String, options: Array[String]): Int {
     if options.length() > 1 and isTerminal() {
-        match selected(question, options) {
-            some(index) => return index
+        match selected(question, options, none) {
+            some(chosen) => return chosen.first() ?? 0
             none => {}
         }
     }
@@ -1752,9 +2575,60 @@ pub fn choose(question: String, options: Array[String]): Int {
     }
 }
 
-/// The option chosen with the arrows and Enter, or `none` when the input is
-/// not a terminal.
-fn selected(question: String, options: Array[String]): Int? {
+/// The indices in `options` of those chosen, in order. On a terminal the
+/// arrows move a mark over them, Space marks one or takes its mark away,
+/// and Enter ends, with those of `chosen` marked at first; elsewhere, as
+/// from a pipe, they are chosen by their numbers on one line, from 1 as
+/// they are shown, `1,3` or `1 3`: an empty line, or the input's end,
+/// keeps `chosen`, and anything else asks again.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// let parts = ["docs", "tests", "examples"]
+/// let picked = cli.chooseMany("Install", parts, chosen: [0])
+/// console.println(picked.map((index) { parts[index] }).join(", "))
+/// ```
+pub fn chooseMany(question: String, options: Array[String], chosen: Array[Int] = []): Array[Int] {
+    let first = chosen.filter((index) { index >= 0 and index < options.length() })
+    if not options.isEmpty() and isTerminal() {
+        match selected(question, options, first) {
+            some(marked) => return marked
+            none => {}
+        }
+    }
+    __console.println(question)
+    for index in 0..options.length() {
+        let mark = if first.contains(index) { "*" } else { " " }
+        __console.println(" {mark}{index + 1}. {options[index]}")
+    }
+    for {
+        let text = match answer("Choose from 1-{options.length()}, as 1,3: ") {
+            some(text) if not text.trim().isEmpty() => text
+            _ => return first
+        }
+        var picked: Array[Int] = []
+        var valid = true
+        for word in text.replace(",", " ").words() {
+            match Int.parse(word) {
+                ok(number) if number >= 1 and number <= options.length() => {
+                    if not picked.contains(number - 1) {
+                        picked.push(number - 1)
+                    }
+                }
+                _ => valid = false
+            }
+        }
+        if valid {
+            return picked.sorted()
+        }
+    }
+}
+
+/// The options chosen with the arrows and Enter, or `none` when the input
+/// is not a terminal: one, or with `marked` those Space marks.
+fn selected(question: String, options: Array[String], marked: Array[Int]?): Array[Int]? {
     let mode = fsNative.terminalTake(false, false, false, -1, false)
     if fsNative.terminalStatus(ref mode) != 0 {
         return none
@@ -1764,8 +2638,20 @@ fn selected(question: String, options: Array[String]): Int? {
     // A channel of sizes that closes, as when the output stops being a
     // terminal, is no longer waited for.
     var watching = true
-    var choice = Choice { question, options, chosen: 0, first: 0, drawn: 0 }
-    choice.draw(size() ?? Size { columns: 80, rows: 24 })
+    let many = marked.isSome()
+    let initial = marked ?? []
+    var marks: Array[Bool] = (0..options.length())
+        .map((index) { initial.contains(index) })
+        .collect()
+    var choice = Choice {
+        question
+        options
+        chosen: 0
+        first: 0
+        drawn: 0
+        marked: if many { marks } else { none }
+    }
+    choice.draw(terminalSize() ?? Size { columns: 80, rows: 24 })
     for {
         let key = if watching {
             select {
@@ -1789,16 +2675,25 @@ fn selected(question: String, options: Array[String]): Int? {
                 (choice.chosen + 1) % count
             some(Key.Home) | some(Key.PageUp) => choice.chosen = 0
             some(Key.End) | some(Key.PageDown) => choice.chosen = count - 1
+            some(Key.Char(' ')) if many => {
+                marks[choice.chosen] = not marks[choice.chosen]
+                choice.marked = marks
+            }
             some(Key.Enter) | none => break
             _ => {}
         }
-        choice.draw(size() ?? Size { columns: 80, rows: 24 })
+        choice.draw(terminalSize() ?? Size { columns: 80, rows: 24 })
     }
     fsNative.terminalRelease(ref mode)
     choice.clear()
-    __console.println("{question}: {options[choice.chosen]}")
+    let picked: Array[Int] = if many {
+        (0..options.length()).filter((index) { marks[index] }).collect()
+    } else {
+        [choice.chosen]
+    }
+    __console.println("{question}: {picked.map((index) { options[index] }).join(", ")}")
     _ = __console.flush()
-    choice.chosen
+    picked
 }
 
 /// A list being chosen from, as it is drawn: the options from `first` that
@@ -1809,6 +2704,8 @@ type Choice = {
     chosen: Int
     first: Int
     drawn: Int
+    /// Which are marked, when several are chosen.
+    marked: Array[Bool]?
 }
 
 /// Draws it again in place, at the size of the terminal.
@@ -1823,7 +2720,11 @@ fn Choice.draw(mut self, at: Size) {
     let room = (at.columns - 3).max(1)
     var lines = [clipped(self.question, at.columns - 1)]
     for index in self.first..self.first + shown {
-        let text = clipped(self.options[index], room)
+        let box = match self.marked {
+            some(marks) => if marks[index] { "◉ " } else { "○ " }
+            none => ""
+        }
+        let text = clipped("{box}{self.options[index]}", room)
         lines.push(if index == self.chosen { markup("[bold cyan]❯ {text}[/]") } else { "  {text}" })
     }
     __console.print(lines.join("\n"))
@@ -1841,14 +2742,33 @@ fn Choice.clear(self) {
     }
 }
 
-/// The text, cut to `room` characters with `…`.
+/// The text, or as much of it as fits `room` columns and `…`; the codes of
+/// its styles are kept, and a style left open is closed.
 fn clipped(text: String, room: Int): String {
     if visible(text) <= room {
         return text
     }
     var kept = ""
-    for character in text.chars().take((room - 1).max(0)) {
-        kept = "{kept}{character}"
+    var used = 0
+    var escaping = false
+    var styled = false
+    for c in text.chars() {
+        if escaping {
+            escaping = c != 'm'
+        } else if c == '\u{1b}' {
+            escaping = true
+            styled = true
+        } else {
+            let wide = columnsOf(c)
+            if used + wide > room - 1 {
+                break
+            }
+            used += wide
+        }
+        kept = "{kept}{c}"
+    }
+    if styled {
+        kept = "{kept}\u{1b}[0m"
     }
     "{kept}…"
 }

@@ -36,8 +36,8 @@ console.println(reflect.get[String, User](ada, "name")?)
 - [VariantPayloadKind](#variantpayloadkind)
 - [ParameterMode](#parametermode)
 - [TypeDescription](#typedescription): [`TypeDescription.of`](#typedescriptionof)
-- [TypeInfo](#typeinfo-1): [`TypeInfo.id`](#typeinfoid), [`TypeInfo.qualifiedName`](#typeinfoqualifiedname), [`TypeInfo.kind`](#typeinfokind), [`TypeInfo.genericArguments`](#typeinfogenericarguments), [`TypeInfo.capabilities`](#typeinfocapabilities), [`TypeInfo.fields`](#typeinfofields), [`TypeInfo.variants`](#typeinfovariants), [`TypeInfo.methods`](#typeinfomethods), [`TypeInfo.tupleElements`](#typeinfotupleelements), [`TypeInfo.underlying`](#typeinfounderlying), [`TypeInfo.annotation`](#typeinfoannotation), [`TypeInfo.annotations`](#typeinfoannotations), [`TypeInfo.docs`](#typeinfodocs)
-- [FieldInfo](#fieldinfo): [`FieldInfo.of`](#fieldinfoof), [`FieldInfo.annotated`](#fieldinfoannotated), [`FieldInfo.externallyNamed`](#fieldinfoexternallynamed), [`FieldInfo.externalName`](#fieldinfoexternalname), [`FieldInfo.defaulted`](#fieldinfodefaulted), [`FieldInfo.default`](#fieldinfodefault), [`FieldInfo.annotation`](#fieldinfoannotation), [`FieldInfo.annotations`](#fieldinfoannotations), [`FieldInfo.name`](#fieldinfoname), [`FieldInfo.ordinal`](#fieldinfoordinal), [`FieldInfo.docs`](#fieldinfodocs), [`FieldInfo.typeInfo`](#fieldinfotypeinfo)
+- [TypeInfo](#typeinfo-1): [`TypeInfo.id`](#typeinfoid), [`TypeInfo.qualifiedName`](#typeinfoqualifiedname), [`TypeInfo.kind`](#typeinfokind), [`TypeInfo.genericArguments`](#typeinfogenericarguments), [`TypeInfo.secret`](#typeinfosecret), [`TypeInfo.capabilities`](#typeinfocapabilities), [`TypeInfo.fields`](#typeinfofields), [`TypeInfo.variants`](#typeinfovariants), [`TypeInfo.methods`](#typeinfomethods), [`TypeInfo.tupleElements`](#typeinfotupleelements), [`TypeInfo.underlying`](#typeinfounderlying), [`TypeInfo.annotation`](#typeinfoannotation), [`TypeInfo.annotations`](#typeinfoannotations), [`TypeInfo.docs`](#typeinfodocs)
+- [FieldInfo](#fieldinfo): [`FieldInfo.of`](#fieldinfoof), [`FieldInfo.annotated`](#fieldinfoannotated), [`FieldInfo.hidden`](#fieldinfohidden), [`FieldInfo.secret`](#fieldinfosecret), [`FieldInfo.externallyNamed`](#fieldinfoexternallynamed), [`FieldInfo.externalName`](#fieldinfoexternalname), [`FieldInfo.defaulted`](#fieldinfodefaulted), [`FieldInfo.default`](#fieldinfodefault), [`FieldInfo.annotation`](#fieldinfoannotation), [`FieldInfo.annotations`](#fieldinfoannotations), [`FieldInfo.name`](#fieldinfoname), [`FieldInfo.ordinal`](#fieldinfoordinal), [`FieldInfo.docs`](#fieldinfodocs), [`FieldInfo.typeInfo`](#fieldinfotypeinfo)
 - [VariantInfo](#variantinfo): [`VariantInfo.of`](#variantinfoof), [`VariantInfo.externallyNamed`](#variantinfoexternallynamed), [`VariantInfo.externalName`](#variantinfoexternalname), [`VariantInfo.annotated`](#variantinfoannotated), [`VariantInfo.documented`](#variantinfodocumented), [`VariantInfo.docs`](#variantinfodocs), [`VariantInfo.annotation`](#variantinfoannotation), [`VariantInfo.annotations`](#variantinfoannotations), [`VariantInfo.name`](#variantinfoname), [`VariantInfo.ordinal`](#variantinfoordinal), [`VariantInfo.payloadKind`](#variantinfopayloadkind), [`VariantInfo.tupleElements`](#variantinfotupleelements), [`VariantInfo.fields`](#variantinfofields)
 - [MethodInfo](#methodinfo): [`MethodInfo.of`](#methodinfoof), [`MethodInfo.annotated`](#methodinfoannotated), [`MethodInfo.documented`](#methodinfodocumented), [`MethodInfo.docs`](#methodinfodocs), [`MethodInfo.annotation`](#methodinfoannotation), [`MethodInfo.annotations`](#methodinfoannotations), [`MethodInfo.name`](#methodinfoname), [`MethodInfo.receiver`](#methodinforeceiver), [`MethodInfo.function`](#methodinfofunction)
 - [ParameterInfo](#parameterinfo): [`ParameterInfo.of`](#parameterinfoof), [`ParameterInfo.annotated`](#parameterinfoannotated), [`ParameterInfo.name`](#parameterinfoname), [`ParameterInfo.annotation`](#parameterinfoannotation), [`ParameterInfo.annotations`](#parameterinfoannotations), [`ParameterInfo.position`](#parameterinfoposition), [`ParameterInfo.typeInfo`](#parameterinfotypeinfo), [`ParameterInfo.mode`](#parameterinfomode)
@@ -915,6 +915,15 @@ pub fn TypeInfo.genericArguments(self): Array[TypeInfo]
 The type arguments of a generic type, in order: `[Int]` for
 `Array[Int]`.
 
+#### TypeInfo.secret
+
+```tondo
+pub fn TypeInfo.secret(self): Bool
+```
+
+Whether the tools show `<secret>` for a value of the type rather than
+the value: it is `@secret`, or a newtype of one.
+
 #### TypeInfo.capabilities
 
 ```tondo
@@ -1035,6 +1044,24 @@ pub fn FieldInfo.annotated(self, annotations: Array[Value]): FieldInfo
 
 The description with the field's annotations, as the code the compiler
 writes for a type gives them.
+
+#### FieldInfo.hidden
+
+```tondo
+pub fn FieldInfo.hidden(self): FieldInfo
+```
+
+The description of a `@secret` field, as the code the compiler writes
+for a type gives it.
+
+#### FieldInfo.secret
+
+```tondo
+pub fn FieldInfo.secret(self): Bool
+```
+
+Whether the tools show `<secret>` for the field rather than its value:
+it is `@secret`, or of a secret type.
 
 #### FieldInfo.externallyNamed
 

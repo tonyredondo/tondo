@@ -235,7 +235,7 @@ fn main(): !cli.TerminalError {
     let keys = terminal.keys()
     let redraws = cli.redraws()
     var chosen = 0
-    var size = cli.size() ?? cli.Size { columns: 80, rows: 24 }
+    var size = cli.terminalSize() ?? cli.Size { columns: 80, rows: 24 }
     draw(options, chosen, size)
     for {
         select {
@@ -291,10 +291,11 @@ started.
 | Say how a field is written | [`Argument`](#argument), [`Option`](#option), [`Rest`](#rest) |
 | Print the help, or a shell's completions | [`help`](#help), [`completions`](#completions) |
 | Show rows | [`table`](#table) |
+| Draw boxes, rules, trees and charts | [`panel`](#panel), [`rule`](#rule), [`beside`](#beside), [`tree`](#tree), [`bars`](#bars), [`breakdown`](#breakdown), [`Border`](#border) |
 | Style text | [`markup`](#markup) |
 | Show progress | [`progress`](#progress) |
-| Ask | [`ask`](#ask), [`confirm`](#confirm), [`choose`](#choose), [`secret`](#secret) |
-| Know the terminal | [`isTerminal`](#isterminal), [`width`](#width), [`size`](#size) |
+| Ask | [`ask`](#ask), [`confirm`](#confirm), [`choose`](#choose), [`chooseMany`](#choosemany), [`secret`](#secret) |
+| Know the terminal | [`isTerminal`](#isterminal), [`terminalWidth`](#terminalwidth), [`terminalSize`](#terminalsize) |
 | Take the terminal over, key by key | [`Terminal`](#terminal), [`keys`](#terminalkeys), [`Key`](#key) |
 | Draw again when the terminal changes | [`redraws`](#redraws) |
 
@@ -308,16 +309,17 @@ subcommands.
 
 `tondo api std.cli` shows the same in a terminal.
 
-- [Functions](#functions): [`parse`](#parse), [`parseArgs`](#parseargs), [`help`](#help), [`completions`](#completions), [`isTerminal`](#isterminal), [`width`](#width), [`size`](#size), [`redraws`](#redraws), [`markup`](#markup), [`table`](#table), [`progress`](#progress), [`ask`](#ask), [`confirm`](#confirm), [`choose`](#choose), [`secret`](#secret)
+- [Functions](#functions): [`parse`](#parse), [`parseArgs`](#parseargs), [`help`](#help), [`completions`](#completions), [`isTerminal`](#isterminal), [`terminalWidth`](#terminalwidth), [`terminalSize`](#terminalsize), [`redraws`](#redraws), [`markup`](#markup), [`table`](#table), [`panel`](#panel), [`rule`](#rule), [`beside`](#beside), [`tree`](#tree), [`bars`](#bars), [`breakdown`](#breakdown), [`progress`](#progress), [`ask`](#ask), [`confirm`](#confirm), [`choose`](#choose), [`chooseMany`](#choosemany), [`secret`](#secret)
 - [Argument](#argument)
 - [Option](#option)
 - [Rest](#rest)
 - [CliError](#clierror)
 - [Shell](#shell)
-- [Size](#size-1)
+- [Size](#size)
 - [TerminalError](#terminalerror)
 - [Terminal](#terminal): [`Terminal`](#terminal-1), [`Terminal.release`](#terminalrelease), [`Terminal.keys`](#terminalkeys)
 - [Key](#key)
+- [Border](#border)
 - [Progress](#progress-1): [`Progress.advance`](#progressadvance), [`Progress.finish`](#progressfinish)
 
 ### Functions
@@ -442,10 +444,10 @@ if cli.isTerminal() {
 }
 ```
 
-#### width
+#### terminalWidth
 
 ```tondo
-pub fn width(): Int
+pub fn terminalWidth(): Int
 ```
 
 The columns of the terminal of the console's output, or 80 without one.
@@ -454,13 +456,13 @@ The columns of the terminal of the console's output, or 80 without one.
 import std.cli
 import std.console
 
-console.println("─".repeat(cli.width()))
+console.println("─".repeat(cli.terminalWidth()))
 ```
 
-#### size
+#### terminalSize
 
 ```tondo
-pub fn size(): Size?
+pub fn terminalSize(): Size?
 ```
 
 The size of the terminal of the console's output, or `none` without one,
@@ -470,7 +472,7 @@ or while it reports no size, 0 by 0, as some do before one is set.
 import std.cli
 import std.console
 
-match cli.size() {
+match cli.terminalSize() {
     some(size) => console.println("{size.columns}×{size.rows}")
     none => console.println("no terminal")
 }
@@ -531,7 +533,12 @@ console.println(cli.markup("[black on #ffcc00] note [/] use [[brackets]] so"))
 #### table
 
 ```tondo
-pub fn table[T: reflect.Reflect](rows: Array[T], columns: Array[String] = []): String
+pub fn table[T: reflect.Reflect](
+    rows: Array[T],
+    columns: Array[String] = [],
+    title: String = "",
+    border: Border = Border.Square,
+): String
 ```
 
 A table with a border, to print, with the numbers to the right. Its rows
@@ -575,6 +582,138 @@ import std.console
 let up = cli.markup("[green]up[/]")
 let down = cli.markup("[red]down[/]")
 console.print(cli.table([["api", up], ["db", down]], columns: ["Service", "State"]))
+```
+
+#### panel
+
+```tondo
+pub fn panel(
+    text: String,
+    title: String = "",
+    border: Border = Border.Rounded,
+    padding: Int = 1,
+    width: Int? = none,
+): String
+```
+
+The text in a box, with a title on its top line. The box is as wide as
+the text and its padding, or `width` columns, which clips longer lines.
+It is text, so a table, a tree or other panels go inside one.
+
+```tondo
+import std.cli
+import std.console
+
+console.println(cli.panel("3 tests passed\n1 failed", title: "Results"))
+// ╭─ Results ──────╮
+// │ 3 tests passed │
+// │ 1 failed       │
+// ╰────────────────╯
+```
+
+#### rule
+
+```tondo
+pub fn rule(title: String = "", width: Int? = none): String
+```
+
+A line across the terminal, or `width` columns, with a title in its
+middle.
+
+```tondo
+import std.cli
+import std.console
+
+console.println(cli.rule("Details", width: 24))
+// ─────── Details ────────
+```
+
+#### beside
+
+```tondo
+pub fn beside(texts: Array[String], gap: Int = 2, width: Int? = none): String
+```
+
+Texts side by side, `gap` columns apart, as many on a row as fit the
+terminal, or `width` columns, and the rest on the rows below; each is
+as wide as its widest line, and its lines start together.
+
+```tondo
+import std.cli
+import std.console
+
+let left = cli.panel("api\ndb", title: "Up")
+let right = cli.panel("cache", title: "Down")
+console.println(cli.beside([left, right]))
+```
+
+#### tree
+
+```tondo
+pub fn tree[T: reflect.Reflect](value: T): String
+```
+
+Any value as a tree, as the debugger shows it: a record's fields, an
+array's elements, a map's entries and an enum's payload are its
+branches, and what has no parts ends one. What is `@secret` shows as
+`<secret>`.
+
+```tondo
+import std.cli
+import std.console
+
+type Limits = { memory: Int, cpus: Int }
+type Service = { name: String, hosts: Array[String], limits: Limits }
+
+let service = Service { name: "web", hosts: ["a", "b"], limits: Limits { memory: 512, cpus: 2 } }
+console.println(cli.tree(service))
+// Service
+// ├── name: "web"
+// ├── hosts
+// │   ├── "a"
+// │   └── "b"
+// └── limits
+//     ├── memory: 512
+//     └── cpus: 2
+```
+
+#### bars
+
+```tondo
+pub fn bars(values: Array[(String, Float)], width: Int? = none): String
+```
+
+A bar for each value, as long as its share of the largest, with its
+label to the left and its value to the right, across the terminal or
+`width` columns.
+
+```tondo
+import std.cli
+import std.console
+
+console.println(cli.bars([("tea", 12.0), ("coffee", 30.0)], width: 30))
+// tea     ████████▏         12
+// coffee  ████████████████████ 30
+```
+
+#### breakdown
+
+```tondo
+pub fn breakdown(parts: Array[(String, Float)], width: Int? = none): String
+```
+
+One bar across the terminal, or `width` columns, split into a part for
+each value, as large as its share of the total, and under it each
+part's name and share. On a terminal each part has a color; off one,
+a shade of its own.
+
+```tondo
+import std.cli
+import std.console
+
+console.println(cli.breakdown([("used", 61.0), ("free", 39.0)], width: 20))
+// ████████████▓▓▓▓▓▓▓▓
+// █ used 61%  ▓ free 39%
 ```
 
 #### progress
@@ -653,6 +792,28 @@ import std.console
 let drinks = ["tea", "coffee"]
 let chosen = cli.choose("Pick one", drinks)
 console.println("a {drinks[chosen]}")
+```
+
+#### chooseMany
+
+```tondo
+pub fn chooseMany(question: String, options: Array[String], chosen: Array[Int] = []): Array[Int]
+```
+
+The indices in `options` of those chosen, in order. On a terminal the
+arrows move a mark over them, Space marks one or takes its mark away,
+and Enter ends, with those of `chosen` marked at first; elsewhere, as
+from a pipe, they are chosen by their numbers on one line, from 1 as
+they are shown, `1,3` or `1 3`: an empty line, or the input's end,
+keeps `chosen`, and anything else asks again.
+
+```tondo
+import std.cli
+import std.console
+
+let parts = ["docs", "tests", "examples"]
+let picked = cli.chooseMany("Install", parts, chosen: [0])
+console.println(picked.map((index) { parts[index] }).join(", "))
 ```
 
 #### secret
@@ -779,7 +940,7 @@ The size of a terminal, in characters.
 import std.cli
 import std.console
 
-let size = cli.size() ?? cli.Size { columns: 80, rows: 24 }
+let size = cli.terminalSize() ?? cli.Size { columns: 80, rows: 24 }
 console.println("{size.columns} columns, {size.rows} rows")
 ```
 
@@ -923,6 +1084,30 @@ fn moved(key: cli.Key, at: Int): Int {
 }
 
 assert(moved(cli.Key.Down, 3) == 4)
+```
+
+### Border
+
+```tondo
+pub enum Border {
+    Square
+    Rounded
+    Double
+    Heavy
+    Ascii
+    None
+}
+```
+
+How a box or a table is drawn. A table with `None` is a grid, its
+columns aligned and nothing between them but spaces.
+
+```tondo
+import std.cli
+import std.console
+
+console.println(cli.panel("ready", border: cli.Border.Double))
+console.print(cli.table([["a", "1"], ["b", "2"]], border: cli.Border.None))
 ```
 
 ### Progress

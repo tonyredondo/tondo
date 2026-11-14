@@ -1,7 +1,9 @@
 import std.console
 import std.reflect
 
-pub type Address = { city: String }
+pub type Address = {
+    city: String
+}
 
 /// Someone who uses the program.
 pub type User = {
@@ -13,7 +15,13 @@ pub type User = {
     nick: String?
     priv password: String
 }
-pub type UserView = { name: String, address: Address, nick: String? }
+
+pub type UserView = {
+    name: String
+    address: Address
+    nick: String?
+}
+
 pub type UserId = Int
 
 pub enum Shape {
@@ -22,9 +30,23 @@ pub enum Shape {
     Empty
 }
 
-pub type Square = { side: Float }
+pub type Square = {
+    side: Float
+}
 
-pub type Inventory = { counts: Map[String, Int] }
+pub type Inventory = {
+    counts: Map[String, Int]
+}
+
+@secret
+pub type Pin = Int
+
+pub type Login = {
+    user: String
+    @secret
+    code: Int
+    pin: Pin
+}
 
 pub fn User.greet(self, greeting: String): String {
     "{greeting}, {self.name}"
@@ -41,7 +63,7 @@ fn report(result: String ! reflect.ReflectError) {
     }
 }
 
-fn main(): Unit ! reflect.ReflectError {
+fn main(): !reflect.ReflectError {
     var user = User {
         name: "Ada"
         age: 36
@@ -95,14 +117,27 @@ fn main(): Unit ! reflect.ReflectError {
     }
     for method in info.methods() {
         let function = method.function()
-        console.println("  {method.name()} {method.receiver()} {function.parameters().length()} -> {function.outcome()}")
+        console.println(
+            "  {method.name()} {method.receiver()} {function.parameters().length()} -> {function.outcome()}",
+        )
     }
     for variant in reflect.typeInfo[Shape]().variants() {
-        console.println("  {variant.name()} {variant.payloadKind()} {variant.tupleElements()} {variant.fields().length()}")
+        console.println(
+            "  {variant.name()} {variant.payloadKind()} {variant.tupleElements()} {variant.fields().length()}",
+        )
     }
     let id = reflect.typeInfo[UserId]()
-    console.println("{id.kind()} {id.underlying()} {reflect.typeInfo[Map[String, Int]]().genericArguments()}")
+    console.println(
+        "{id.kind()} {id.underlying()} {reflect.typeInfo[Map[String, Int]]().genericArguments()}",
+    )
     console.println("{value.typeInfo().id() == info.id()} {reflect.typeOf(1).id() == info.id()}")
+    // What the tools show as `<secret>`: a `@secret` field, and a value of a
+    // secret type.
+    let login = reflect.typeInfo[Login]()
+    let secrets = login.fields().map((field) { "{field.name()} {field.secret()}" })
+    console.println(
+        "{secrets} {reflect.typeInfo[Pin]().secret()} {reflect.typeInfo[Int]().secret()}",
+    )
 
     // What fails when the program runs, and the fix it names; written as
     // literals, these paths and methods are compile errors.
@@ -156,6 +191,7 @@ fn main(): Unit ! reflect.ReflectError {
 // expect-stdout:   Empty Unit [] 0
 // expect-stdout: Newtype some(Int) [String, Int]
 // expect-stdout: true false
+// expect-stdout: [user false, code true, pin true] true false
 // expect-stdout: `User` has no field `nme`; its fields are `name`, `age`, `address`, `tags` and `nick`
 // expect-stdout: `5` is not an index of this `Array[String]`, which has 2 element(s)
 // expect-stdout: this `String?` is `none`, so it has no `first`

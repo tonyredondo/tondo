@@ -440,6 +440,14 @@ pub annotation Rest = {
     /// What the help calls them.
     name: String = "args"
 }
+pub enum Border {
+    Square
+    Rounded
+    Double
+    Heavy
+    Ascii
+    None
+}
 pub enum Key {
     /// A character, as it was typed.
     Char(Char)
@@ -488,20 +496,38 @@ pub fn Terminal(
 pub fn Terminal.keys(self): Receiver[Key]
 pub fn Terminal.release(self)
 pub fn ask(question: String, default: String = ""): String
+pub fn bars(values: Array[(String, Float)], width: Int? = none): String
+pub fn beside(texts: Array[String], gap: Int = 2, width: Int? = none): String
+pub fn breakdown(parts: Array[(String, Float)], width: Int? = none): String
 pub fn choose(question: String, options: Array[String]): Int
+pub fn chooseMany(question: String, options: Array[String], chosen: Array[Int] = []): Array[Int]
 pub fn completions[T: reflect.Reflect](shell: Shell): String
 pub fn confirm(question: String, default: Bool = false): Bool
 pub fn help[T: reflect.Reflect](): String
 pub fn isTerminal(): Bool
 pub fn markup(text: String): String
+pub fn panel(
+    text: String,
+    title: String = "",
+    border: Border = Border.Rounded,
+    padding: Int = 1,
+    width: Int? = none,
+): String
 pub fn parseArgs[T: reflect.Reflect](args: Array[String]): T ! CliError
 pub fn parse[T: reflect.Reflect](): T
 pub fn progress(label: String, total: Int? = none): Progress
 pub fn redraws(): Receiver[Size]
+pub fn rule(title: String = "", width: Int? = none): String
 pub fn secret(question: String): String
-pub fn size(): Size?
-pub fn table[T: reflect.Reflect](rows: Array[T], columns: Array[String] = []): String
-pub fn width(): Int
+pub fn table[T: reflect.Reflect](
+    rows: Array[T],
+    columns: Array[String] = [],
+    title: String = "",
+    border: Border = Border.Square,
+): String
+pub fn terminalSize(): Size?
+pub fn terminalWidth(): Int
+pub fn tree[T: reflect.Reflect](value: T): String
 pub type CliError = {
     message: String
     help: Bool
@@ -3256,9 +3282,11 @@ pub fn FieldInfo.defaulted(self, value: Value): FieldInfo
 pub fn FieldInfo.docs(self): String?
 pub fn FieldInfo.externalName(self): String
 pub fn FieldInfo.externallyNamed(self, name: String): FieldInfo
+pub fn FieldInfo.hidden(self): FieldInfo
 pub fn FieldInfo.name(self): String
 pub fn FieldInfo.of(name: String, ordinal: Int, docs: String?, info: TypeInfo): FieldInfo
 pub fn FieldInfo.ordinal(self): Int
+pub fn FieldInfo.secret(self): Bool
 pub fn FieldInfo.typeInfo(self): TypeInfo
 pub fn FunctionInfo.isUnsafe(self): Bool
 pub fn FunctionInfo.of(
@@ -3317,6 +3345,7 @@ pub fn TypeInfo.id(self): TypeId
 pub fn TypeInfo.kind(self): TypeKind
 pub fn TypeInfo.methods(self): Array[MethodInfo]
 pub fn TypeInfo.qualifiedName(self): String
+pub fn TypeInfo.secret(self): Bool
 pub fn TypeInfo.tupleElements(self): Array[TypeInfo]
 pub fn TypeInfo.underlying(self): TypeInfo?
 pub fn TypeInfo.variants(self): Array[VariantInfo]

@@ -1283,8 +1283,9 @@ impl Generator<'_> {
                         });
                     let named =
                         named(&f.annotations).map_or(String::new(), |name| format!(".externallyNamed({name:?})"));
+                    let hidden = if f.annotations.iter().any(|a| a.name.name == "secret") { ".hidden()" } else { "" };
                     format!(
-                        "{r}.FieldInfo.of({:?}, {ordinal}, {docs}, {}){annotated}{defaulted}{named}",
+                        "{r}.FieldInfo.of({:?}, {ordinal}, {docs}, {}){annotated}{defaulted}{named}{hidden}",
                         f.name.name,
                         self.info_of(&f.ty)
                     )

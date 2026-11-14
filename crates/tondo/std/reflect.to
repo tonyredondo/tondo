@@ -1562,6 +1562,12 @@ pub fn TypeInfo.genericArguments(self): Array[TypeInfo] {
     self.describe().generics
 }
 
+/// Whether the tools show `<secret>` for a value of the type rather than
+/// the value: it is `@secret`, or a newtype of one.
+pub fn TypeInfo.secret(self): Bool {
+    self.bits / 32 % 2 == 1
+}
+
 /// The capabilities the compiler demonstrates of the type.
 pub fn TypeInfo.capabilities(self): Set[TypeCapability] {
     var found: Set[TypeCapability] = Set[]
@@ -1659,6 +1665,7 @@ pub type FieldInfo = {
     priv notes: Array[Value]
     priv fallback: Value? = none
     priv external: String? = none
+    priv hiddenField: Bool = false
 }
 
 /// A field's description, as the code the compiler writes for a type
@@ -1671,6 +1678,18 @@ pub fn FieldInfo.of(name: String, ordinal: Int, docs: String?, info: TypeInfo): 
 /// writes for a type gives them.
 pub fn FieldInfo.annotated(self, annotations: Array[Value]): FieldInfo {
     self with { notes: annotations }
+}
+
+/// The description of a `@secret` field, as the code the compiler writes
+/// for a type gives it.
+pub fn FieldInfo.hidden(self): FieldInfo {
+    self with { hiddenField: true }
+}
+
+/// Whether the tools show `<secret>` for the field rather than its value:
+/// it is `@secret`, or of a secret type.
+pub fn FieldInfo.secret(self): Bool {
+    self.hiddenField or self.info.secret()
 }
 
 /// The description with the field's `@name` (language 9.2), as the code

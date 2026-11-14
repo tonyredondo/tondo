@@ -33,7 +33,7 @@ fn main(): !cli.TerminalError {
 }
 
 fn pressing(): !cli.TerminalError {
-    console.println("size {cli.size()}")
+    console.println("size {cli.terminalSize()}")
     let terminal = cli.Terminal()?
     match cli.Terminal() {
         ok(_) => console.println("two")
@@ -54,6 +54,7 @@ fn pressing(): !cli.TerminalError {
     terminal.release()
     console.println("name {cli.ask("Name")}")
     console.println("chose {cli.choose("Pick", ["tea", "coffee", "water"])}")
+    console.println("picked {cli.chooseMany("Parts", ["docs", "tests", "examples"], chosen: [0])}")
 }
 
 fn drawing(): !cli.TerminalError {
@@ -284,6 +285,14 @@ fn a_taken_terminal_gives_keys_sizes_and_questions() {
     terminal.expect("❯ coffee");
     terminal.send("\x1b[B\x1b[B\x1b[A\r");
     terminal.expect("Pick: water\nchose 2\n");
+    // Several, Space marking each, with the first marked from the start.
+    terminal.expect("❯ ◉ docs");
+    terminal.send("\x1b[B");
+    terminal.expect("❯ ○ tests");
+    terminal.send(" ");
+    terminal.expect("❯ ◉ tests");
+    terminal.send("\x1b[B \x1b[A\r");
+    terminal.expect("Parts: docs, tests, examples\npicked [0, 1, 2]\n");
     assert_eq!(terminal.status(), 0);
     assert_eq!(terminal.mode(), (true, true));
 }
@@ -309,6 +318,9 @@ fn ctrl_z_gives_the_terminal_back_until_fg() {
     terminal.expect("❯ tea");
     terminal.send("\r");
     terminal.expect("chose 0\n");
+    terminal.expect("❯ ◉ docs");
+    terminal.send("\r");
+    terminal.expect("picked [0]\n");
     assert_eq!(terminal.status(), 0);
 }
 
@@ -402,5 +414,8 @@ fn a_terminal_without_a_size_gives_none_until_it_has_one() {
     assert_eq!(terminal.text().matches("❯ tea").count(), 1, "{}", terminal.text());
     terminal.send("\r");
     terminal.expect("chose 0\n");
+    terminal.expect("❯ ◉ docs");
+    terminal.send("\r");
+    terminal.expect("picked [0]\n");
     assert_eq!(terminal.status(), 0);
 }

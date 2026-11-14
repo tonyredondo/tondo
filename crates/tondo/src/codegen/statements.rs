@@ -645,7 +645,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                             | (types.is_equatable(*ty) as i64) << 1
                             | (types.is_key(*ty) as i64) << 2
                             | (types.is_send(*ty) as i64) << 3
-                            | (types.is_share(*ty) as i64) << 4;
+                            | (types.is_share(*ty) as i64) << 4
+                            | (types.secret(*ty) as i64) << 5;
                         Val::Scalar(self.e.fb.ins().iconst(types::I64, bits))
                     }
                 }

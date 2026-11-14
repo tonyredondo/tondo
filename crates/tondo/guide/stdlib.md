@@ -343,11 +343,18 @@ fn main() {
   and no type to declare; of records, `cli.table(users)` makes a column of
   each field, and `columns` picks and orders them. Columns of numbers go to
   the right, and a cell can come from `cli.markup`.
+- Everything that draws is text, which nests: `cli.panel(text, title:)`,
+  `cli.rule("Details")`, `cli.beside([a, b])` side by side,
+  `cli.tree(value)` of any value, `cli.bars(pairs)`, `cli.breakdown(pairs)`,
+  and `cli.table(rows, title:, border: cli.Border.Rounded)`, whose cells can
+  have several lines; `cli.Border.None` makes a table a grid. Widths count
+  the columns a character takes, and `@secret` shows as `<secret>`:
+  `console.println(cli.panel(cli.table(rows), title: "Today"))`.
 - `cli.progress("Building", total: n)`,
-  `cli.ask`, `cli.confirm`, `cli.choose`, `cli.secret`,
+  `cli.ask`, `cli.confirm`, `cli.choose`, `cli.chooseMany`, `cli.secret`,
   `cli.completions[Site](cli.Shell.Bash)`. On a terminal `choose` moves a
-  mark with the arrows; from a pipe each question reads a line, so a script
-  can answer it.
+  mark with the arrows, and `chooseMany` marks each with Space; from a pipe
+  each question reads a line, `1,3` for several, so a script can answer it.
 
 A program that draws the screen itself takes the terminal: keys as they are
 pressed, not shown, and the terminal given back as it was when the value
@@ -367,7 +374,7 @@ fn main(): !cli.TerminalError {
     let keys = terminal.keys()
     let sizes = cli.redraws()                    // a new size, or back from `fg`
     var at = 0
-    var size = cli.size() ?? cli.Size { columns: 80, rows: 24 }
+    var size = cli.terminalSize() ?? cli.Size { columns: 80, rows: 24 }
     draw(size, at)
     for {
         select {

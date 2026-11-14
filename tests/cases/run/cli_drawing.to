@@ -1,0 +1,138 @@
+// What std.cli draws is text: panels, rules, texts side by side, trees,
+// bars, a breakdown and tables with a title and a border, which nest, as a
+// table in a panel. Widths count the columns a character takes, two for
+// `漢`, and what is `@secret` shows as `<secret>`. Off a terminal, as here,
+// the width is 80 and a breakdown's parts have shades, not colors.
+
+import std.cli
+import std.console
+
+@secret
+type Key = String
+
+type Limits = {
+    memory: Int
+    cpus: Int
+}
+
+type Service = {
+    name: String
+    hosts: Array[String]
+    limits: Limits
+    @secret
+    pin: Int
+    key: Key
+}
+
+type Account = {
+    user: String
+    @secret
+    password: String
+}
+
+enum Mode {
+    Fast
+    Slow { delay: Int }
+}
+
+fn main() {
+    console.println(cli.panel("3 tests passed\n1 failed", title: "Results"))
+    console.println(cli.panel("a line longer than its box", title: "Clipped", width: 16))
+    console.println(cli.panel("ready", border: cli.Border.Double, padding: 2))
+    console.println(cli.rule("Details", width: 24))
+    console.println(cli.rule(width: 12))
+    let up = cli.panel("api\ndb", title: "Up")
+    let down = cli.panel("cache", title: "Down")
+    console.println(cli.beside([up, down]))
+    console.println(cli.beside([up, down, up], width: 20))
+    let service = Service {
+        name: "web"
+        hosts: ["a", "b"]
+        limits: Limits { memory: 512, cpus: 2 }
+        pin: 1234
+        key: Key("k3y")
+    }
+    console.println(cli.tree(service))
+    console.println(cli.tree(Mode.Slow { delay: 3 }))
+    console.println(cli.tree(Key("top")))
+    console.println(cli.bars([("tea", 12.0), ("coffee", 30.0), ("漢字", 7.5)], width: 30))
+    console.println(cli.breakdown([("used", 61.0), ("free", 39.0)], width: 20))
+    let rows = [["a", "1"], ["bb", "22\n333"]]
+    console.print(
+        cli.table(rows, columns: ["Name", "N"], title: "Orders", border: cli.Border.Rounded),
+    )
+    console.print(cli.table(rows, columns: ["Name", "N"], border: cli.Border.None))
+    console.print(cli.table([["漢字", "1"]], border: cli.Border.Ascii))
+    console.print(
+        cli.table([Account { user: "ada", password: "hunter2" }], border: cli.Border.Heavy),
+    )
+    console.println(cli.panel(cli.table([["x", "1"]]), title: "Nested"))
+}
+
+// expect-stdout: ╭─ Results ──────╮
+// expect-stdout: │ 3 tests passed │
+// expect-stdout: │ 1 failed       │
+// expect-stdout: ╰────────────────╯
+// expect-stdout: ╭─ Clipped ────╮
+// expect-stdout: │ a line long… │
+// expect-stdout: ╰──────────────╯
+// expect-stdout: ╔═════════╗
+// expect-stdout: ║  ready  ║
+// expect-stdout: ╚═════════╝
+// expect-stdout: ─────── Details ────────
+// expect-stdout: ────────────
+// expect-stdout: ╭─ Up ─╮  ╭─ Down ─╮
+// expect-stdout: │ api  │  │ cache  │
+// expect-stdout: │ db   │  ╰────────╯
+// expect-stdout: ╰──────╯
+// expect-stdout: ╭─ Up ─╮  ╭─ Down ─╮
+// expect-stdout: │ api  │  │ cache  │
+// expect-stdout: │ db   │  ╰────────╯
+// expect-stdout: ╰──────╯
+// expect-stdout: ╭─ Up ─╮
+// expect-stdout: │ api  │
+// expect-stdout: │ db   │
+// expect-stdout: ╰──────╯
+// expect-stdout: Service
+// expect-stdout: ├── name: "web"
+// expect-stdout: ├── hosts
+// expect-stdout: │   ├── "a"
+// expect-stdout: │   └── "b"
+// expect-stdout: ├── limits
+// expect-stdout: │   ├── memory: 512
+// expect-stdout: │   └── cpus: 2
+// expect-stdout: ├── pin: <secret>
+// expect-stdout: └── key: <secret>
+// expect-stdout: Mode.Slow
+// expect-stdout: └── delay: 3
+// expect-stdout: <secret>
+// expect-stdout: tea     ███████▏            12
+// expect-stdout: coffee  ██████████████████  30
+// expect-stdout: 漢字    ████▌              7.5
+// expect-stdout: ████████████▓▓▓▓▓▓▓▓
+// expect-stdout: █ used 61%  ▓ free 39%
+// expect-stdout:     Orders
+// expect-stdout: ╭──────┬─────╮
+// expect-stdout: │ Name │ N   │
+// expect-stdout: ├──────┼─────┤
+// expect-stdout: │ a    │ 1   │
+// expect-stdout: │ bb   │ 22  │
+// expect-stdout: │      │ 333 │
+// expect-stdout: ╰──────┴─────╯
+// expect-stdout: Name  N
+// expect-stdout: a     1
+// expect-stdout: bb    22
+// expect-stdout:       333
+// expect-stdout: +------+---+
+// expect-stdout: | 漢字 | 1 |
+// expect-stdout: +------+---+
+// expect-stdout: ┏━━━━━━┳━━━━━━━━━━┓
+// expect-stdout: ┃ user ┃ password ┃
+// expect-stdout: ┣━━━━━━╋━━━━━━━━━━┫
+// expect-stdout: ┃ ada  ┃ <secret> ┃
+// expect-stdout: ┗━━━━━━┻━━━━━━━━━━┛
+// expect-stdout: ╭─ Nested ──╮
+// expect-stdout: │ ┌───┬───┐ │
+// expect-stdout: │ │ x │ 1 │ │
+// expect-stdout: │ └───┴───┘ │
+// expect-stdout: ╰───────────╯

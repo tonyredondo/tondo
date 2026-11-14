@@ -7012,3 +7012,31 @@ same, takes 213–296 µs over eight orders of the functions, against 217–267 
 where the code lies. Building the generated programs takes 1.9 to 2.1% more instructions, for
 the locals each record now has; checking takes the same. Tony accepted the two sentences of the
 toolchain's specification that say what such a dump shows.
+
+## What std.cli draws is text
+
+Tony accepted Spectre's drawing in std.cli on two ideas: everything that draws gives a `String`
+to print, which nests with nothing to learn, a table in a panel or panels side by side; and what
+moves is a live region at the bottom of the output, which comes later. The first part is
+`panel`, `rule`, `beside`, `tree`, `bars`, `breakdown`, `Border`, and `table` with a title, a
+border and cells of several lines. Widths count the columns a character takes, as a terminal
+draws it: two for one East Asian text writes wide, from Unicode's own table, none for a mark on
+the character before or a format character. A grid of fixed columns is `table(border:
+Border.None)`, and a tree of the program's own labels is a value of its own type, so there is no
+`grid` and no tree builder.
+
+The parameters keep their accepted names, `width:` and, for a pane later, `size:`, which Tondo
+does not let shadow a function of the module: the terminal's two are renamed `terminalWidth()`
+and `terminalSize()`, which also say what they measure beside the widths of panels and tables,
+and the function that puts texts side by side is `beside`, as `columns` is `table`'s parameter.
+Tony accepted the three.
+
+`chooseMany` is `choose`'s other half: on a terminal Space marks, and from a pipe it reads the
+numbers on one line, `1,3`, an empty line keeping what was marked at first, so a script answers
+it as it answers the other questions.
+
+`tree` hides what is `@secret`, as dumps do, and reflection did not say what is: a `@secret`
+field and a value of a secret type showed through `reflect.Value` as any other. `TypeInfo.secret()`
+and `FieldInfo.secret()` now say so, from a bit of the type's capabilities and a mark the
+derived description writes; `tree` and `table`, which showed a `@secret` column's values, show
+`<secret>`.

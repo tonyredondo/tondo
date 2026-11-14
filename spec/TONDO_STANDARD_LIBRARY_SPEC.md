@@ -3593,6 +3593,8 @@ variante. Expone:
 - `genericArguments(): Array[TypeInfo]` en orden de declaración;
 - `capabilities(): Set[TypeCapability]` con solo capacidades que el compilador
   demuestra: `Copy`, `Equatable`, `Key`, `Send` y `Share`;
+- `secret(): Bool`, si las herramientas muestran `<secret>` en lugar de un
+  valor del tipo: es `@secret` o un newtype de uno;
 - `underlying(): TypeInfo?`, el tipo que envuelve un newtype;
 - `fields(): Array[FieldInfo]` de un record;
 - `variants(): Array[VariantInfo]` de un enum;
@@ -3604,8 +3606,10 @@ variante. Expone:
 Los descriptores secundarios exponen consultas, sin campos públicos:
 
 - `FieldInfo`: `name(): String`, `externalName(): String`, `typeInfo():
-  TypeInfo`, `ordinal(): Int`, `docs(): String?` y `default(): Value?`, el
-  valor por defecto del campo (9.2 del lenguaje). `externalName()` es el
+  TypeInfo`, `ordinal(): Int`, `docs(): String?`, `default(): Value?`, el
+  valor por defecto del campo (9.2 del lenguaje), y `secret(): Bool`, si el
+  campo es `@secret` o de un tipo secreto, que el código que genera el
+  compilador marca con `hidden()`. `externalName()` es el
   nombre fuera del programa, el de `@name("texto")` o el suyo, que también da
   `VariantInfo.externalName()` (9.4 del lenguaje); `name()` es siempre el del
   programa. `reflectFrom` de un record da su valor por defecto a un campo
@@ -6106,9 +6110,9 @@ pub fn help[T: reflect.Reflect](): String
 pub fn completions[T: reflect.Reflect](shell: Shell): String
 
 pub fn isTerminal(): Bool
-pub fn width(): Int
+pub fn terminalWidth(): Int
 pub type Size = { columns: Int, rows: Int }
-pub fn size(): Size?
+pub fn terminalSize(): Size?
 pub fn redraws(): Receiver[Size]
 pub enum TerminalError { NotATerminal, Taken }
 pub type Terminal
@@ -6120,7 +6124,16 @@ pub enum Key {
     Escape, Up, Down, Left, Right, Home, End, PageUp, PageDown, F(Int)
 }
 pub fn markup(text: String): String
-pub fn table[T: reflect.Reflect](rows: Array[T], columns: Array[String] = []): String
+pub enum Border { Square, Rounded, Double, Heavy, Ascii, None }
+pub fn table[T: reflect.Reflect](
+    rows: Array[T], columns: Array[String] = [], title: String = "", border: Border = Border.Square,
+): String
+pub fn panel(text: String, title: String = "", border: Border = Border.Rounded, padding: Int = 1, width: Int? = none): String
+pub fn rule(title: String = "", width: Int? = none): String
+pub fn beside(texts: Array[String], gap: Int = 2, width: Int? = none): String
+pub fn tree[T: reflect.Reflect](value: T): String
+pub fn bars(values: Array[(String, Float)], width: Int? = none): String
+pub fn breakdown(parts: Array[(String, Float)], width: Int? = none): String
 pub type Progress
 pub fn progress(label: String, total: Int? = none): Progress
 pub fn Progress.advance(self, by: Int = 1)
@@ -6128,6 +6141,7 @@ pub fn Progress.finish(self)
 pub fn ask(question: String, default: String = ""): String
 pub fn confirm(question: String, default: Bool = false): Bool
 pub fn choose(question: String, options: Array[String]): Int
+pub fn chooseMany(question: String, options: Array[String], chosen: Array[Int] = []): Array[Int]
 pub fn secret(question: String): String
 ~~~
 
@@ -6185,15 +6199,15 @@ pub fn secret(question: String): String
 
 **La terminal**
 
-- `isTerminal` dice si la salida de `console` es una terminal, y `width` da su
-  ancho, 80 si no lo es. `size` da sus columnas y filas, o `none` sin ella o
-  mientras no dice su tamaño.
+- `isTerminal` dice si la salida de `console` es una terminal, y
+  `terminalWidth` da su ancho, 80 si no lo es. `terminalSize` da sus columnas
+  y filas, o `none` sin ella o mientras no dice su tamaño.
 - `redraws` da los tamaños a los que dibujar la pantalla: uno cuando la
   terminal cambia de tamaño y otro cuando el programa vuelve tras Ctrl-Z y
   `fg`, porque las dos cosas piden dibujar de nuevo. Dos que el canal aún no
   ha dado son uno, el último. Una terminal que aún no dice su tamaño, 0 por
   0, como `script` desde una tubería o una consola serie, no da ninguno hasta
-  tenerlo, y `size` es `none` mientras. Cuando la salida no es una terminal
+  tenerlo, y `terminalSize` es `none` mientras. Cuando la salida no es una terminal
   el canal está cerrado, así que un `for` sobre él termina enseguida, y en un
   `select` su `receive()` da `none` enseguida. Una tarea que espera en él no
   es un deadlock.
@@ -6230,8 +6244,11 @@ pub fn secret(question: String): String
   leen de su entrada. `progress` dibuja una barra, o un spinner sin `total`, que
   `advance` avanza y `finish` termina; fuera de una terminal solo escribe una
   línea al terminar. `ask` da la respuesta, o el defecto si se deja vacía;
-  `confirm` lee `y` o `n` y Enter; `choose` da el índice elegido; `secret` lee
-  sin eco cuando la entrada es una terminal. Fuera de una terminal las
+  `confirm` lee `y` o `n` y Enter; `choose` da el índice elegido;
+  `chooseMany`, los índices elegidos, en orden, con los de `chosen` marcados
+  al empezar: fuera de una terminal los muestra con `*` y lee los números en
+  una línea, `1,3` o `1 3`, y una línea vacía o el fin de la entrada deja
+  `chosen`; `secret` lee sin eco cuando la entrada es una terminal. Fuera de una terminal las
   preguntas se escriben igual y leen una línea, así que un script puede
   contestarlas. Cada una, según dónde corre:
 
@@ -6241,11 +6258,14 @@ pub fn secret(question: String): String
 | `confirm` | `y` o `n` y Enter | igual | igual, en líneas mientras pregunta | — |
 | `secret` | lee una línea | sin eco, devuelto también si se cancela o se suspende | igual | — |
 | `choose` | numera las opciones y lee un número y Enter | las flechas mueven una marca y Enter elige | igual | redibuja su lista |
+| `chooseMany` | numera las opciones y lee sus números en una línea | las flechas mueven una marca, Espacio marca o desmarca y Enter termina | igual | redibuja su lista |
 | `progress` | una línea al terminar | se redibuja en su sitio, al ancho de ahora | igual | su siguiente dibujo toma el ancho nuevo |
 | `table` | texto | texto del ancho de sus celdas | igual | nada: es texto ya escrito |
+| `panel`, `rule`, `beside`, `tree`, `bars`, `breakdown` | texto de 80 columnas, sin colores | texto del ancho de la terminal | igual | nada: es texto ya escrito |
 | `markup` | texto | texto | texto | — |
 
-  `choose` usa las flechas cuando su entrada y su salida son una terminal.
+  `choose` y `chooseMany` usan las flechas cuando su entrada y su salida son
+  una terminal.
 - `markup` devuelve un texto con estilos, que no escribe por sí misma:
   `[estilo]texto[/]` aplica el estilo a ese bloque y vuelve al de antes, y los
   bloques se anidan. Un estilo combina un
@@ -6262,7 +6282,39 @@ pub fn secret(question: String): String
   que falta, y una columna va a la derecha si todo lo que tiene son números,
   escritos como texto o no. Con registros, una columna por campo, o las que
   nombra `columns` en su orden; la cabecera es el nombre del campo, y los números
-  van a la derecha. Una celda puede llevar estilos de `markup`.
+  van a la derecha. Una celda puede llevar estilos de `markup` y tener varias
+  líneas, que hacen su fila tan alta. `title` va centrado encima, y `border`
+  elige sus líneas, `Square` si no.
+- Todo lo que dibuja `std.cli` es un texto que el programa escribe: `markup`,
+  `table`, `panel`, `rule`, `beside`, `tree`, `bars` y `breakdown`. Cada uno
+  toma texto de varias líneas donde toma texto, así que se anidan sin un tipo
+  más: una tabla dentro de un panel, dos paneles uno al lado de otro, un árbol
+  en una celda. Los anchos cuentan las columnas que ocupa cada carácter en la
+  terminal, dos uno que la escritura de Asia oriental hace ancho, como `漢` o
+  casi todos los emoji, y ninguna una marca que va sobre el carácter anterior
+  o un carácter de formato, y no cuentan los códigos de los estilos. Lo que
+  llena el ancho toma `terminalWidth()`, o `width` columnas, y una línea que
+  no cabe se corta con `…`. Fuera de una terminal o con `NO_COLOR` no hay
+  códigos, como en `markup`. Lo `@secret`, un campo o un valor de un tipo
+  secreto, se muestra `<secret>`, como en los volcados, también en `table`.
+- `Border` elige las líneas de una caja o una tabla: `Square`, `Rounded`,
+  `Double`, `Heavy`, `Ascii` o `None`, que en una tabla es una rejilla: sus
+  columnas alineadas a dos espacios, sin líneas.
+- `panel` pone el texto en una caja con un título en su borde de arriba, tan
+  ancha como el texto y su `padding`, o de `width` columnas. `rule` es una
+  línea de lado a lado con un título en medio. `beside` pone textos uno al
+  lado de otro, a `gap` columnas, tantos por fila como caben, y los demás en
+  las filas de abajo; cada uno es tan ancho como su línea más ancha y sus
+  líneas empiezan a la vez.
+- `tree` muestra cualquier valor como un árbol, como lo muestra el depurador:
+  los campos de un record, los elementos de un array, las entradas de un mapa
+  y los datos de una variante son ramas, y lo que no tiene partes acaba una,
+  un texto entre comillas.
+- `bars` da una barra por valor, larga según su parte del mayor, con su
+  etiqueta a la izquierda y su valor a la derecha. `breakdown` da una barra
+  partida según la parte de cada valor en el total y, debajo, el nombre y el
+  porcentaje de cada parte; en una terminal cada parte tiene un color, y fuera
+  de ella un sombreado.
 
 ### 14.33 `std.mcp`
 
