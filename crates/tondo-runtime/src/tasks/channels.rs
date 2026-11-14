@@ -616,6 +616,24 @@ pub(crate) unsafe fn offer_new(sender: *mut SenderObject, value: *mut u8) {
     }
 }
 
+/// Sends a value without waiting, from outside any task, in place of the
+/// one the channel holds and no receiver took yet: a channel of one value
+/// of plain data then gives the latest, as `terminal`'s sizes.
+pub(crate) unsafe fn offer_latest(sender: *mut SenderObject, value: *mut u8) {
+    unsafe {
+        let c = &mut *(*sender).channel;
+        lock(&c.lock);
+        if c.count > 0 && c.release.is_none() {
+            let mut older = vec![0u8; c.size];
+            c.buffer.pop(older.as_mut_ptr(), c.size);
+            c.count -= 1;
+        }
+        let woken = if c.closed { None } else { try_send(c, value) };
+        unlock(&c.lock);
+        woken.flatten().into_iter().for_each(notify);
+    }
+}
+
 /// A value a cancelled task did not send: it was the channel's to release.
 pub(super) unsafe fn drop_unsent(c: &ChannelObject, value: *mut u8) {
     if let Some(release) = c.release {

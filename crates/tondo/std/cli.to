@@ -23,6 +23,7 @@
 
 import std.console as __console
 import std.env as __env
+import std.internal.fs as fsNative
 import std.internal.text as textNative
 import std.path as __path
 import std.process as __process
@@ -1003,8 +1004,255 @@ pub fn isTerminal(): Bool {
 /// console.println("─".repeat(cli.width()))
 /// ```
 pub fn width(): Int {
-    let found = if isTerminal() { textNative.terminalWidth() } else { 0 }
-    if found > 0 { found } else { 80 }
+    size().map((found) { found.columns }) ?? 80
+}
+
+/// The size of a terminal, in characters.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// let size = cli.size() ?? cli.Size { columns: 80, rows: 24 }
+/// console.println("{size.columns} columns, {size.rows} rows")
+/// ```
+pub type Size = {
+    columns: Int
+    rows: Int
+}
+
+/// The size of the terminal of the console's output, or `none` without one.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// match cli.size() {
+///     some(size) => console.println("{size.columns}×{size.rows}")
+///     none => console.println("no terminal")
+/// }
+/// ```
+pub fn size(): Size? {
+    let found = fsNative.terminalSize()
+    if found.isEmpty() {
+        return none
+    }
+    Size { columns: found[0], rows: found[1] }
+}
+
+/// The sizes to draw the screen at: one when the terminal changes its
+/// size, and one when the program comes back after Ctrl-Z and `fg`, as both
+/// mean drawing again. Two the channel has not given yet are one, the last.
+/// Without a terminal the channel is closed, so a `for` over it ends at
+/// once.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// fn draw(size: cli.Size) {
+///     console.print("\u{1b}[2J\u{1b}[H{"─".repeat(size.columns)}")
+/// }
+///
+/// fn redrawing() {
+///     for size in cli.redraws() {
+///         draw(size)
+///     }
+/// }
+///
+/// spawn detached redrawing()
+/// ```
+pub fn redraws(): Receiver[Size] {
+    fsNative.terminalRedraws()
+}
+
+/// Why `cli.Terminal()` could not take the terminal.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// match cli.Terminal() {
+///     ok(terminal) => terminal.release()
+///     err(cli.TerminalError.NotATerminal) => console.println("no terminal to take")
+///     err(cli.TerminalError.Taken) => console.println("taken already")
+/// }
+/// ```
+pub enum TerminalError {
+    /// The program's input is not a terminal, but a pipe or a file.
+    NotATerminal
+    /// Another `cli.Terminal` holds it.
+    Taken
+}
+
+impl Display for TerminalError {
+    fn display(self): String {
+        match self {
+            TerminalError.NotATerminal => "the program's input is not a terminal"
+            TerminalError.Taken => "another cli.Terminal holds the terminal"
+        }
+    }
+}
+
+/// An error, which reflection shows as its message, so a method that fails
+/// with one is a tool of `std.mcp` or a field of `std.graphql`.
+impl __reflect.Reflect for TerminalError {
+    fn reflectShow(self, _nested: Bool): String {
+        "{self}"
+    }
+}
+
+/// The terminal, taken over by the program. Keys arrive as they are pressed
+/// rather than in lines, unless `lines`, and are not shown, unless `echo`;
+/// `screen` draws on the alternate screen, as editors do, and the terminal
+/// shows what it had when it is given back; with `signals: false` Ctrl-C
+/// and Ctrl-Z are keys rather than cancelling and suspending the program.
+///
+/// It is given back as it was when its value ends, also through a panic or
+/// a cancellation, and while the program is suspended by Ctrl-Z, until `fg`
+/// takes it again and `redraws()` gives the size to draw at. `release`
+/// gives it back before. The questions of this module ask in the mode each
+/// needs while it is held, and then leave it as it was.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// fn main(): !cli.TerminalError {
+///     let terminal = cli.Terminal()?
+///     console.println("press q to end")
+///     for key in terminal.keys() {
+///         if key == cli.Key.Char('q') {
+///             break
+///         }
+///     }
+/// }
+/// ```
+pub type Terminal = {
+    priv native: fsNative.Owned
+}
+
+/// The terminal, taken in the mode asked: fails without one, or while
+/// another `cli.Terminal` holds it.
+pub fn Terminal(
+    echo: Bool = false,
+    lines: Bool = false,
+    screen: Bool = false,
+    signals: Bool = true,
+): Terminal ! TerminalError {
+    let native = fsNative.terminalTake(echo, lines, screen, if signals { 1 } else { 0 }, true)
+    match fsNative.terminalStatus(ref native) {
+        0 => Terminal { native }
+        1 => fail TerminalError.NotATerminal
+        _ => fail TerminalError.Taken
+    }
+}
+
+/// Gives the terminal back now, as it was; its keys end.
+pub fn Terminal.release(self) {
+    fsNative.terminalRelease(ref self.native)
+}
+
+/// The keys pressed from now on: arrows, Enter and the rest as their own
+/// variants, a key with Ctrl or Alt as one with that letter, and a lone
+/// Escape told from the start of a sequence by the pause after it. While a
+/// question of this module asks, the keys are its own. The channel closes
+/// when the terminal is given back.
+pub fn Terminal.keys(self): Receiver[Key] {
+    keysOf(fsNative.terminalKeys(ref self.native))
+}
+
+/// A key pressed on a taken terminal.
+///
+/// ```tondo
+/// import std.cli
+///
+/// fn moved(key: cli.Key, at: Int): Int {
+///     match key {
+///         cli.Key.Up | cli.Key.Char('k') => at - 1
+///         cli.Key.Down | cli.Key.Char('j') => at + 1
+///         _ => at
+///     }
+/// }
+///
+/// assert(moved(cli.Key.Down, 3) == 4)
+/// ```
+pub enum Key {
+    /// A character, as it was typed.
+    Char(Char)
+    /// Ctrl with a letter, in lowercase, or with a space or a sign.
+    Ctrl(Char)
+    /// Alt with a character.
+    Alt(Char)
+    Enter
+    Tab
+    /// Shift and Tab.
+    BackTab
+    Backspace
+    Delete
+    Insert
+    Escape
+    Up
+    Down
+    Left
+    Right
+    Home
+    End
+    PageUp
+    PageDown
+    /// A function key, from F1.
+    F(Int)
+}
+
+/// The keys of the runtime's reader, as a channel.
+fn keysOf(reader: fsNative.Native): Receiver[Key] {
+    let (sender, receiver) = channel[Key](discardWhenAbandoned: true)
+    spawn detached forwardKeys(reader, sender)
+    receiver
+}
+
+fn forwardKeys(reader: fsNative.Native, sender: Sender[Key]) {
+    for {
+        let code = fsNative.terminalKey(reader)
+        if code < 0 or sender.isAbandoned() {
+            break
+        }
+        sender.send(keyOf(code))
+    }
+}
+
+/// A key as the runtime gives it: its variant above 32 bits, and below its
+/// character or number.
+fn keyOf(code: Int): Key {
+    let value = code & 0xffffffff
+    let character = textNative.charFrom(value)
+    match code >> 32 {
+        0 => Key.Char(character)
+        1 => Key.Ctrl(character)
+        2 => Key.Alt(character)
+        3 => Key.Enter
+        4 => Key.Tab
+        5 => Key.BackTab
+        6 => Key.Backspace
+        7 => Key.Delete
+        8 => Key.Insert
+        9 => Key.Escape
+        10 => Key.Up
+        11 => Key.Down
+        12 => Key.Left
+        13 => Key.Right
+        14 => Key.Home
+        15 => Key.End
+        16 => Key.PageUp
+        17 => Key.PageDown
+        _ => Key.F(value)
+    }
+}
+
+/// The terminal in lines, `echo` or not, while a question asks: it is
+/// given back however the question ends.
+fn asking(echo: Bool): fsNative.Owned {
+    fsNative.terminalTake(echo, true, false, -1, false)
 }
 
 /// Whether styles write their codes: on a terminal without `NO_COLOR`, or
@@ -1404,11 +1652,14 @@ fn drawBar(bar: Bar) {
     if not bar.terminal {
         return
     }
+    // At the width of now, so that a terminal made narrower does not wrap it.
+    let columns = width()
     let line = match bar.total {
         some(total) => {
-            let size = 30
-            let filled = if total > 0 { (bar.done.min(total) * size) / total } else { size }
-            "{bar.label} {"█".repeat(filled)}{"░".repeat(size - filled)} {bar.done}/{total}"
+            let count = " {bar.done}/{total}"
+            let cells = (columns - 1 - visible(bar.label) - 1 - count.length()).min(30).max(5)
+            let filled = if total > 0 { (bar.done.min(total) * cells) / total } else { cells }
+            "{bar.label} {"█".repeat(filled)}{"░".repeat(cells - filled)}{count}"
         }
         none => {
             let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -1416,7 +1667,7 @@ fn drawBar(bar: Bar) {
             "{mark} {bar.label} {bar.done}"
         }
     }
-    __console.print("\r{line}\u{1b}[K")
+    __console.print("\r{clipped(line, columns - 1)}\u{1b}[K")
     _ = __console.flush()
 }
 
@@ -1463,9 +1714,10 @@ pub fn confirm(question: String, default: Bool = false): Bool {
     }
 }
 
-/// The index in `options` of the one chosen by its number, from 1 as they
-/// are shown; anything else asks again, and the first is taken when the
-/// input has ended.
+/// The index in `options` of the one chosen. On a terminal the arrows move
+/// a mark over them and Enter chooses; elsewhere, as from a pipe, it is
+/// chosen by its number, from 1 as they are shown, anything else asks
+/// again, and the first is taken when the input has ended.
 ///
 /// ```tondo
 /// import std.cli
@@ -1476,6 +1728,12 @@ pub fn confirm(question: String, default: Bool = false): Bool {
 /// console.println("a {drinks[chosen]}")
 /// ```
 pub fn choose(question: String, options: Array[String]): Int {
+    if options.length() > 1 and isTerminal() {
+        match selected(question, options) {
+            some(index) => return index
+            none => {}
+        }
+    }
     __console.println(question)
     for index in 0..options.length() {
         __console.println("  {index + 1}. {options[index]}")
@@ -1492,6 +1750,97 @@ pub fn choose(question: String, options: Array[String]): Int {
     }
 }
 
+/// The option chosen with the arrows and Enter, or `none` when the input is
+/// not a terminal.
+fn selected(question: String, options: Array[String]): Int? {
+    let mode = fsNative.terminalTake(false, false, false, -1, false)
+    if fsNative.terminalStatus(ref mode) != 0 {
+        return none
+    }
+    let keys = keysOf(fsNative.terminalKeys(ref mode))
+    let sizes = redraws()
+    var choice = Choice { question, options, chosen: 0, first: 0, drawn: 0 }
+    choice.draw(size() ?? Size { columns: 80, rows: 24 })
+    for {
+        let key = select {
+            let key = keys.receive() => key
+            let resized = sizes.receive() => {
+                choice.draw(resized ?? Size { columns: 80, rows: 24 })
+                continue
+            }
+        }
+        let count = options.length()
+        match key {
+            some(Key.Up) | some(Key.Char('k')) => choice.chosen =
+                (choice.chosen + count - 1) % count
+            some(Key.Down) | some(Key.Char('j')) | some(Key.Tab) => choice.chosen =
+                (choice.chosen + 1) % count
+            some(Key.Home) | some(Key.PageUp) => choice.chosen = 0
+            some(Key.End) | some(Key.PageDown) => choice.chosen = count - 1
+            some(Key.Enter) | none => break
+            _ => {}
+        }
+        choice.draw(size() ?? Size { columns: 80, rows: 24 })
+    }
+    fsNative.terminalRelease(ref mode)
+    choice.clear()
+    __console.println("{question}: {options[choice.chosen]}")
+    _ = __console.flush()
+    choice.chosen
+}
+
+/// A list being chosen from, as it is drawn: the options from `first` that
+/// fit, below the question, and the lines it took.
+type Choice = {
+    question: String
+    options: Array[String]
+    chosen: Int
+    first: Int
+    drawn: Int
+}
+
+/// Draws it again in place, at the size of the terminal.
+fn Choice.draw(mut self, at: Size) {
+    let shown = self.options.length().min((at.rows - 2).max(1))
+    if self.chosen < self.first {
+        self.first = self.chosen
+    } else if self.chosen >= self.first + shown {
+        self.first = self.chosen - shown + 1
+    }
+    self.clear()
+    let room = (at.columns - 3).max(1)
+    var lines = [clipped(self.question, at.columns - 1)]
+    for index in self.first..self.first + shown {
+        let text = clipped(self.options[index], room)
+        lines.push(if index == self.chosen { markup("[bold cyan]❯ {text}[/]") } else { "  {text}" })
+    }
+    __console.print(lines.join("\n"))
+    _ = __console.flush()
+    self.drawn = lines.length()
+}
+
+/// Takes away what it drew, leaving the cursor where it started.
+fn Choice.clear(self) {
+    if self.drawn > 1 {
+        __console.print("\u{1b}[{self.drawn - 1}A")
+    }
+    if self.drawn > 0 {
+        __console.print("\r\u{1b}[J")
+    }
+}
+
+/// The text, cut to `room` characters with `…`.
+fn clipped(text: String, room: Int): String {
+    if visible(text) <= room {
+        return text
+    }
+    var kept = ""
+    for character in text.chars().take((room - 1).max(0)) {
+        kept = "{kept}{character}"
+    }
+    "{kept}…"
+}
+
 /// An answer read without showing it, when the input is a terminal.
 ///
 /// ```tondo
@@ -1501,10 +1850,13 @@ pub fn choose(question: String, options: Array[String]): Int {
 /// _ = password
 /// ```
 pub fn secret(question: String): String {
-    let hidden = textNative.terminal(2) and textNative.terminalEcho(false)
-    let text = answer("{question}: ")
+    __console.print("{question}: ")
+    _ = __console.flush()
+    let mode = asking(false)
+    let text = __console.readLine().map((text) { text.trim() })
+    let hidden = fsNative.terminalStatus(ref mode) == 0
+    fsNative.terminalRelease(ref mode)
     if hidden {
-        _ = textNative.terminalEcho(true)
         __console.println("")
     }
     text ?? ""
@@ -1513,7 +1865,10 @@ pub fn secret(question: String): String {
 fn answer(prompt: String): String? {
     __console.print(prompt)
     _ = __console.flush()
-    __console.readLine().map((text) { text.trim() })
+    let mode = asking(true)
+    let line = __console.readLine().map((text) { text.trim() })
+    fsNative.terminalRelease(ref mode)
+    line
 }
 
 /// An error, which reflection shows as its message, so a method that fails

@@ -2,7 +2,8 @@
 //! cancel a program as `job.cancel()` does, and a second one ends it at
 //! once; `process.signals` delivers those it names to a channel instead. A
 //! handler only writes the signal's number to a pipe, which a thread of its
-//! own reads.
+//! own reads. Those of the terminal, a change of its size and Ctrl-Z, go to
+//! `terminal`.
 
 use super::tasks::{ChannelObject, SenderObject, tondo_rt_channel_new, tondo_rt_sender_new, tondo_rt_sender_release};
 use super::{ArrayHeader, element};
@@ -39,10 +40,16 @@ static PENDING: Mutex<Vec<i32>> = Mutex::new(Vec::new());
 /// What a signal does: goes to the channels that take it, or cancels the
 /// program, or ends it.
 fn handle(signal: i32) {
+    // The terminal changed its size, or the program is back from a stop.
+    if signal == libc::SIGWINCH || signal == libc::SIGCONT {
+        super::terminal::redraw();
+        return;
+    }
     if routed(signal) {
         deliver(signal);
     } else if ENDING.swap(true, Ordering::SeqCst) {
         super::replay::ending();
+        super::terminal::give_back();
         unsafe { libc::_exit(128 + signal) };
     } else {
         super::tasks::abandon(128 + signal);
@@ -76,7 +83,7 @@ extern "C" fn caught(signal: i32) {
     unsafe { libc::write(PIPE.load(Ordering::Relaxed), (&raw const byte).cast(), 1) };
 }
 
-fn catch(signal: i32) {
+pub(crate) fn catch(signal: i32) {
     unsafe { libc::signal(signal, caught as *const () as libc::sighandler_t) };
 }
 
@@ -105,6 +112,15 @@ pub(crate) fn start() {
                     _ => return,
                 }
                 let signal = byte as i32;
+                // Ctrl-Z, and `fg`: the terminal goes back as it was and is
+                // taken again, here, whether the run is recorded or not.
+                if signal == libc::SIGTSTP {
+                    super::terminal::suspend();
+                    continue;
+                }
+                if signal == libc::SIGCONT {
+                    super::terminal::resume();
+                }
                 // `kill -QUIT` asks a program that dumps for one, and it
                 // goes on; another says where its tasks are, and ends.
                 if signal == libc::SIGQUIT && !routed(signal) {
@@ -113,6 +129,7 @@ pub(crate) fn start() {
                         continue;
                     }
                     super::diagnostics::tasks_to_stderr();
+                    super::terminal::give_back();
                     unsafe {
                         libc::signal(libc::SIGQUIT, libc::SIG_DFL);
                         libc::raise(libc::SIGQUIT);

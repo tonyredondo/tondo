@@ -2298,7 +2298,16 @@ impl<'a> Checker<'a> {
                 };
                 let native = &hir::NATIVES[index];
                 let params = native.params.iter().map(|&t| self.native_ty(t)).collect();
-                let mut signature = Signature::simple(params, self.native_ty(native.result));
+                // A channel's values are of the type the caller expects.
+                let result = match (native.result, expected) {
+                    (hir::NativeTy::Receiver, Some(expected))
+                        if matches!(self.types.kind(expected), TyKind::Handle(Handle::Receiver, _)) =>
+                    {
+                        expected
+                    }
+                    (result, _) => self.native_ty(result),
+                };
+                let mut signature = Signature::simple(params, result);
                 // A value of one owner is lent to the runtime, which keeps none.
                 for (mode, param) in signature.modes.iter_mut().zip(native.params) {
                     if matches!(param, hir::NativeTy::Owned) {

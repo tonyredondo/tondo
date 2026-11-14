@@ -1,7 +1,7 @@
 // What std.cli writes to a terminal: styles in a markup, whose values are
 // text, codes only on a terminal or with `FORCE_COLOR`; tables of records;
-// progress, which off a terminal writes one line; and questions, answered
-// from the console's input.
+// progress, which off a terminal writes one line; questions, answered from
+// the console's input; and no terminal to take.
 
 import std.cli
 import std.console
@@ -26,6 +26,15 @@ fn main() {
     console.println(cli.markup(written).replace("\u{1b}", "^"))
     env.remove("FORCE_COLOR")
     console.println("{cli.isTerminal()} {cli.width()}")
+    // Without a terminal there is none to take, nor sizes to draw at.
+    match cli.Terminal() {
+        ok(_) => console.println("taken")
+        err(error) => console.println("{error}")
+    }
+    console.println("{cli.size()}")
+    for size in cli.redraws() {
+        console.println("{size}")
+    }
     let users = [
         User { name: "Ada", age: 36, email: "ada@example.com" },
         User { name: "Grace", age: 120, email: none },
@@ -61,6 +70,8 @@ fn main() {
 // expect-stdout: ^[1;31;43mwarn^[0m ^[38;2;255;136;0ma [b] c^[0m ^[1ma ^[3mb^[0m^[1m c^[0m ^[90;44mg^[0m
 // expect-stdout: ^[34mplain^[0m [unknown]x
 // expect-stdout: false 80
+// expect-stdout: the program's input is not a terminal
+// expect-stdout: none
 // expect-stdout: ┌───────┬─────┬─────────────────┐
 // expect-stdout: │ name  │ age │ email           │
 // expect-stdout: ├───────┼─────┼─────────────────┤

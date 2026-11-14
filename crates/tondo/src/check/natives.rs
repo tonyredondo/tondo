@@ -228,6 +228,7 @@ impl<'a> Checker<'a> {
             hir::NativeTy::Owned => self.types.handle(Handle::Owned, Ty::UNIT),
             hir::NativeTy::Command => self.types.handle(Handle::Command, Ty::UNIT),
             hir::NativeTy::Pipeline => self.types.handle(Handle::Pipeline, Ty::UNIT),
+            hir::NativeTy::Receiver => self.types.handle(Handle::Receiver, Ty::UNIT),
         }
     }
 

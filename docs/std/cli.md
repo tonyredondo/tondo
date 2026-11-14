@@ -171,12 +171,16 @@ subcommands.
 
 `tondo api std.cli` shows the same in a terminal.
 
-- [Functions](#functions): [`parse`](#parse), [`parseArgs`](#parseargs), [`help`](#help), [`completions`](#completions), [`isTerminal`](#isterminal), [`width`](#width), [`markup`](#markup), [`table`](#table), [`progress`](#progress), [`ask`](#ask), [`confirm`](#confirm), [`choose`](#choose), [`secret`](#secret)
+- [Functions](#functions): [`parse`](#parse), [`parseArgs`](#parseargs), [`help`](#help), [`completions`](#completions), [`isTerminal`](#isterminal), [`width`](#width), [`size`](#size), [`redraws`](#redraws), [`markup`](#markup), [`table`](#table), [`progress`](#progress), [`ask`](#ask), [`confirm`](#confirm), [`choose`](#choose), [`secret`](#secret)
 - [Argument](#argument)
 - [Option](#option)
 - [Rest](#rest)
 - [CliError](#clierror)
 - [Shell](#shell)
+- [Size](#size-1)
+- [TerminalError](#terminalerror)
+- [Terminal](#terminal): [`Terminal`](#terminal-1), [`Terminal.release`](#terminalrelease), [`Terminal.keys`](#terminalkeys)
+- [Key](#key)
 - [Progress](#progress-1): [`Progress.advance`](#progressadvance), [`Progress.finish`](#progressfinish)
 
 ### Functions
@@ -316,6 +320,53 @@ import std.console
 console.println("─".repeat(cli.width()))
 ```
 
+#### size
+
+```tondo
+pub fn size(): Size?
+```
+
+The size of the terminal of the console's output, or `none` without one.
+
+```tondo
+import std.cli
+import std.console
+
+match cli.size() {
+    some(size) => console.println("{size.columns}×{size.rows}")
+    none => console.println("no terminal")
+}
+```
+
+#### redraws
+
+```tondo
+pub fn redraws(): Receiver[Size]
+```
+
+The sizes to draw the screen at: one when the terminal changes its
+size, and one when the program comes back after Ctrl-Z and `fg`, as both
+mean drawing again. Two the channel has not given yet are one, the last.
+Without a terminal the channel is closed, so a `for` over it ends at
+once.
+
+```tondo
+import std.cli
+import std.console
+
+fn draw(size: cli.Size) {
+    console.print("\u{1b}[2J\u{1b}[H{"─".repeat(size.columns)}")
+}
+
+fn redrawing() {
+    for size in cli.redraws() {
+        draw(size)
+    }
+}
+
+spawn detached redrawing()
+```
+
 #### markup
 
 ```tondo
@@ -451,9 +502,10 @@ if not cli.confirm("Start the server?") {
 pub fn choose(question: String, options: Array[String]): Int
 ```
 
-The index in `options` of the one chosen by its number, from 1 as they
-are shown; anything else asks again, and the first is taken when the
-input has ended.
+The index in `options` of the one chosen. On a terminal the arrows move
+a mark over them and Enter chooses; elsewhere, as from a pipe, it is
+chosen by its number, from 1 as they are shown, anything else asks
+again, and the first is taken when the input has ended.
 
 ```tondo
 import std.cli
@@ -571,6 +623,167 @@ type Options = { verbose: Bool = false }
 
 // What `myapp completions zsh` prints, for the shell to load.
 console.print(cli.completions[Options](cli.Shell.Zsh))
+```
+
+### Size
+
+```tondo
+pub type Size = {
+    columns: Int
+    rows: Int
+}
+```
+
+The size of a terminal, in characters.
+
+```tondo
+import std.cli
+import std.console
+
+let size = cli.size() ?? cli.Size { columns: 80, rows: 24 }
+console.println("{size.columns} columns, {size.rows} rows")
+```
+
+### TerminalError
+
+```tondo
+pub enum TerminalError {
+    /// The program's input is not a terminal, but a pipe or a file.
+    NotATerminal
+    /// Another `cli.Terminal` holds it.
+    Taken
+}
+```
+
+Why `cli.Terminal()` could not take the terminal.
+
+```tondo
+import std.cli
+import std.console
+
+match cli.Terminal() {
+    ok(terminal) => terminal.release()
+    err(cli.TerminalError.NotATerminal) => console.println("no terminal to take")
+    err(cli.TerminalError.Taken) => console.println("taken already")
+}
+```
+
+Implements `Display`, `reflect.Reflect`.
+
+### Terminal
+
+```tondo
+pub type Terminal = {
+    // private fields
+}
+```
+
+The terminal, taken over by the program. Keys arrive as they are pressed
+rather than in lines, unless `lines`, and are not shown, unless `echo`;
+`screen` draws on the alternate screen, as editors do, and the terminal
+shows what it had when it is given back; with `signals: false` Ctrl-C
+and Ctrl-Z are keys rather than cancelling and suspending the program.
+
+It is given back as it was when its value ends, also through a panic or
+a cancellation, and while the program is suspended by Ctrl-Z, until `fg`
+takes it again and `redraws()` gives the size to draw at. `release`
+gives it back before. The questions of this module ask in the mode each
+needs while it is held, and then leave it as it was.
+
+```tondo
+import std.cli
+import std.console
+
+fn main(): !cli.TerminalError {
+    let terminal = cli.Terminal()?
+    console.println("press q to end")
+    for key in terminal.keys() {
+        if key == cli.Key.Char('q') {
+            break
+        }
+    }
+}
+```
+
+#### Terminal
+
+```tondo
+pub fn Terminal(
+    echo: Bool = false,
+    lines: Bool = false,
+    screen: Bool = false,
+    signals: Bool = true,
+): Terminal ! TerminalError
+```
+
+The terminal, taken in the mode asked: fails without one, or while
+another `cli.Terminal` holds it.
+
+#### Terminal.release
+
+```tondo
+pub fn Terminal.release(self)
+```
+
+Gives the terminal back now, as it was; its keys end.
+
+#### Terminal.keys
+
+```tondo
+pub fn Terminal.keys(self): Receiver[Key]
+```
+
+The keys pressed from now on: arrows, Enter and the rest as their own
+variants, a key with Ctrl or Alt as one with that letter, and a lone
+Escape told from the start of a sequence by the pause after it. While a
+question of this module asks, the keys are its own. The channel closes
+when the terminal is given back.
+
+### Key
+
+```tondo
+pub enum Key {
+    /// A character, as it was typed.
+    Char(Char)
+    /// Ctrl with a letter, in lowercase, or with a space or a sign.
+    Ctrl(Char)
+    /// Alt with a character.
+    Alt(Char)
+    Enter
+    Tab
+    /// Shift and Tab.
+    BackTab
+    Backspace
+    Delete
+    Insert
+    Escape
+    Up
+    Down
+    Left
+    Right
+    Home
+    End
+    PageUp
+    PageDown
+    /// A function key, from F1.
+    F(Int)
+}
+```
+
+A key pressed on a taken terminal.
+
+```tondo
+import std.cli
+
+fn moved(key: cli.Key, at: Int): Int {
+    match key {
+        cli.Key.Up | cli.Key.Char('k') => at - 1
+        cli.Key.Down | cli.Key.Char('j') => at + 1
+        _ => at
+    }
+}
+
+assert(moved(cli.Key.Down, 3) == 4)
 ```
 
 ### Progress

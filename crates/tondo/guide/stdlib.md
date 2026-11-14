@@ -345,7 +345,44 @@ fn main() {
   the right, and a cell can come from `cli.markup`.
 - `cli.progress("Building", total: n)`,
   `cli.ask`, `cli.confirm`, `cli.choose`, `cli.secret`,
-  `cli.completions[Site](cli.Shell.Bash)`.
+  `cli.completions[Site](cli.Shell.Bash)`. On a terminal `choose` moves a
+  mark with the arrows; from a pipe each question reads a line, so a script
+  can answer it.
+
+A program that draws the screen itself takes the terminal: keys as they are
+pressed, not shown, and the terminal given back as it was when the value
+ends, through a panic too, and while Ctrl-Z suspends the program. The
+questions work the same while it is held: nothing to switch or restore.
+
+```tondo
+import std.cli
+import std.console
+
+fn draw(size: cli.Size, at: Int) {
+    console.print("\u{1b}[2J\u{1b}[H{"─".repeat(size.columns)}\nitem {at}\n")
+}
+
+fn main(): !cli.TerminalError {
+    let terminal = cli.Terminal(screen: true)?   // fails without a terminal
+    let keys = terminal.keys()
+    let sizes = cli.redraws()                    // a new size, or back from `fg`
+    var at = 0
+    var size = cli.size() ?? cli.Size { columns: 80, rows: 24 }
+    draw(size, at)
+    for {
+        select {
+            let key = keys.receive() => match key {
+                some(cli.Key.Up) => at -= 1
+                some(cli.Key.Down) => at += 1
+                some(cli.Key.Char('q')) | some(cli.Key.Escape) | none => break
+                _ => {}
+            }
+            let resized = sizes.receive() => size = resized ?? size
+        }
+        draw(size, at)
+    }
+}
+```
 
 ## MCP servers
 

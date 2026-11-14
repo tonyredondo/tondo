@@ -420,10 +420,12 @@ pub fn encode[T: serialization.Encode](value: T, deterministic: Bool = false): A
 pub fn parse(input: Array[Byte]): Value ! CborError
 == std.cli
 impl Display for CliError
+impl Display for TerminalError
 impl reflect.Reflect for Argument
 impl reflect.Reflect for CliError
 impl reflect.Reflect for Option
 impl reflect.Reflect for Rest
+impl reflect.Reflect for TerminalError
 pub annotation Argument = {
     /// The value when it is missing, written as on the command line.
     default: String? = none
@@ -438,13 +440,53 @@ pub annotation Rest = {
     /// What the help calls them.
     name: String = "args"
 }
+pub enum Key {
+    /// A character, as it was typed.
+    Char(Char)
+    /// Ctrl with a letter, in lowercase, or with a space or a sign.
+    Ctrl(Char)
+    /// Alt with a character.
+    Alt(Char)
+    Enter
+    Tab
+    /// Shift and Tab.
+    BackTab
+    Backspace
+    Delete
+    Insert
+    Escape
+    Up
+    Down
+    Left
+    Right
+    Home
+    End
+    PageUp
+    PageDown
+    /// A function key, from F1.
+    F(Int)
+}
 pub enum Shell {
     Bash
     Zsh
     Fish
 }
+pub enum TerminalError {
+    /// The program's input is not a terminal, but a pipe or a file.
+    NotATerminal
+    /// Another `cli.Terminal` holds it.
+    Taken
+}
 pub fn Progress.advance(self, by: Int = 1)
 pub fn Progress.finish(self)
+pub fn Terminal(
+    echo: Bool = false,
+    lines: Bool = false,
+    screen: Bool = false,
+    signals: Bool = true,
+): Terminal ! TerminalError
+pub fn Terminal.keys(self): Receiver[Key]
+pub fn Terminal.release(self)
 pub fn ask(question: String, default: String = ""): String
 pub fn choose(question: String, options: Array[String]): Int
 pub fn completions[T: reflect.Reflect](shell: Shell): String
@@ -455,7 +497,9 @@ pub fn markup(text: String): String
 pub fn parseArgs[T: reflect.Reflect](args: Array[String]): T ! CliError
 pub fn parse[T: reflect.Reflect](): T
 pub fn progress(label: String, total: Int? = none): Progress
+pub fn redraws(): Receiver[Size]
 pub fn secret(question: String): String
+pub fn size(): Size?
 pub fn table[T: reflect.Reflect](rows: Array[T], columns: Array[String] = []): String
 pub fn width(): Int
 pub type CliError = {
@@ -463,6 +507,13 @@ pub type CliError = {
     help: Bool
 }
 pub type Progress = {
+    // private fields
+}
+pub type Size = {
+    columns: Int
+    rows: Int
+}
+pub type Terminal = {
     // private fields
 }
 == std.collections

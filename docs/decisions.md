@@ -6915,3 +6915,24 @@ of bench/tondo do the same instructions. The table of where each value is grew, 
 smaller than before. Two faults came out on the way: a range that ended in a cold block covered
 them all, and a logpoint read the registers of x86-64 by DWARF's numbers where the table uses the
 code generator's. Tony accepted it with the compact table.
+
+## One owner of the terminal's mode
+
+A program that drew the screen set the terminal's mode itself with `std.os.unix`, and a `defer`
+put it back; a cancellation, a Ctrl-Z or another part of `std.cli` that touched the mode, as
+`secret` turning the echo off, left the shell in a mode nobody chose. Tony accepted `cli.Terminal`,
+its keys and the questions over it as one design, with nothing for a program to coordinate. The
+runtime keeps the mode as a stack whose bottom is what the program started with: `cli.Terminal`
+pushes its mode and each question the one it needs while it asks; ending a level, by a return, a
+cancellation or a panic, puts back the one below. Ctrl-Z puts back the bottom before the program
+stops, and `fg` the top. A program that ends with the terminal taken gives it back before writing
+its panic, which would otherwise be lost with the alternate screen.
+
+The sizes reach `cli.redraws()` the way signals reach `process.signals`: the runtime holds the
+channel and replaces a size the program has not read with the newer one, so two are one; a native
+of the standard library can now give a `Receiver` of the type its caller expects for that. The
+keys are read by a task of the host's runtime, not a thread of their own, because a recorded run
+drives that runtime from its own thread: the keys and the sizes are in the recording, and a replay
+gives them again. Keys are read only while the top level wants them, under the stack's lock, so a
+question that comes after them takes what is typed after it; what was typed before it, while the
+program still read keys, is the program's, as in other programs that switch from keys to lines.

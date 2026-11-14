@@ -40,6 +40,8 @@ pub(super) fn stalled(queue: &Queue) -> Stalled {
         || crate::live::barrier()
         // A signal the program waits for.
         || crate::signals::listening()
+        // A change of the terminal's size.
+        || crate::terminal::listening()
         // A program being ended: its tasks wait for the cancellation to
         // reach them, and that is no deadlock.
         || ENDING.load(Ordering::SeqCst) != usize::MAX

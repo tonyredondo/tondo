@@ -6107,6 +6107,18 @@ pub fn completions[T: reflect.Reflect](shell: Shell): String
 
 pub fn isTerminal(): Bool
 pub fn width(): Int
+pub type Size = { columns: Int, rows: Int }
+pub fn size(): Size?
+pub fn redraws(): Receiver[Size]
+pub enum TerminalError { NotATerminal, Taken }
+pub type Terminal
+pub fn Terminal(echo: Bool = false, lines: Bool = false, screen: Bool = false, signals: Bool = true): Terminal ! TerminalError
+pub fn Terminal.release(self)
+pub fn Terminal.keys(self): Receiver[Key]
+pub enum Key {
+    Char(Char), Ctrl(Char), Alt(Char), Enter, Tab, BackTab, Backspace, Delete, Insert,
+    Escape, Up, Down, Left, Right, Home, End, PageUp, PageDown, F(Int)
+}
 pub fn markup(text: String): String
 pub fn table[T: reflect.Reflect](rows: Array[T], columns: Array[String] = []): String
 pub type Progress
@@ -6174,7 +6186,62 @@ pub fn secret(question: String): String
 **La terminal**
 
 - `isTerminal` dice si la salida de `console` es una terminal, y `width` da su
-  ancho, 80 si no lo es.
+  ancho, 80 si no lo es. `size` da sus columnas y filas, o `none` sin ella.
+- `redraws` da los tamaños a los que dibujar la pantalla: uno cuando la
+  terminal cambia de tamaño y otro cuando el programa vuelve tras Ctrl-Z y
+  `fg`, porque las dos cosas piden dibujar de nuevo. Dos que el canal aún no
+  ha dado son uno, el último. Sin terminal el canal está cerrado, así que un
+  `for` sobre él termina enseguida. Una tarea que espera en él no es un
+  deadlock.
+- `cli.Terminal()` toma la terminal de la entrada del programa: las teclas
+  llegan según se pulsan, no en líneas, salvo con `lines: true`, y no se
+  muestran, salvo con `echo: true`. `screen: true` dibuja en la pantalla
+  alternativa, como los editores, y al devolverla la terminal muestra lo que
+  tenía; con `signals: false`, Ctrl-C y Ctrl-Z son teclas en lugar de
+  cancelar y suspender el programa. Sin terminal falla con
+  `TerminalError.NotATerminal`, y mientras otro `cli.Terminal` la tiene, con
+  `TerminalError.Taken`: hay uno a la vez. La devuelve como estaba su acción de
+  salida (8.10 del lenguaje), también en un pánico o una cancelación, y
+  `release` antes. Mientras el programa está suspendido por Ctrl-Z la
+  terminal está como estaba, y `fg` la toma de nuevo y `redraws` da el tamaño
+  al que dibujar. Un programa que termina con la terminal tomada la devuelve
+  antes de escribir su pánico, que se lee en la pantalla principal; uno que
+  nunca la toma conserva el Ctrl-Z del sistema.
+- Un solo dueño lleva el modo de la terminal: una pila cuyo fondo es el modo
+  con el que empezó el programa. `cli.Terminal` pone el suyo, y cada pregunta
+  pone el que necesita mientras pregunta; lo que termina un nivel, un return,
+  una cancelación o un pánico, deja el de debajo. Las preguntas conservan la
+  pantalla alternativa y las señales que eligió el programa. Así las preguntas
+  funcionan igual con un `cli.Terminal` tomado o sin él, y nada que el
+  programa tenga que coordinar.
+- `terminal.keys()` da las teclas pulsadas desde entonces: las flechas, Enter
+  y las demás como variantes propias, una tecla con Ctrl o Alt como
+  `Key.Ctrl` o `Key.Alt` con esa letra, en minúscula, y un Escape solo,
+  distinguido del principio de una secuencia por la pausa que le sigue. Ctrl
+  con una flecha es la flecha. Mientras una pregunta de este módulo pregunta,
+  las teclas son suyas, y `keys()` no da ninguna hasta que termina; lo
+  tecleado antes de que pregunte puede no llegar a ella. El canal se cierra
+  cuando se devuelve la terminal.
+- `table`, `progress` y las preguntas escriben en la salida de `console`, y
+  leen de su entrada. `progress` dibuja una barra, o un spinner sin `total`, que
+  `advance` avanza y `finish` termina; fuera de una terminal solo escribe una
+  línea al terminar. `ask` da la respuesta, o el defecto si se deja vacía;
+  `confirm` lee `y` o `n` y Enter; `choose` da el índice elegido; `secret` lee
+  sin eco cuando la entrada es una terminal. Fuera de una terminal las
+  preguntas se escriben igual y leen una línea, así que un script puede
+  contestarlas. Cada una, según dónde corre:
+
+| | sin terminal (una tubería, CI) | con una, sin tomar | con un `cli.Terminal` tomado | al cambiar el tamaño |
+|---|---|---|---|---|
+| `ask` | lee una línea | igual | líneas y eco mientras pregunta, y luego el modo del programa | nada que redibujar |
+| `confirm` | `y` o `n` y Enter | igual | igual, en líneas mientras pregunta | — |
+| `secret` | lee una línea | sin eco, devuelto también si se cancela o se suspende | igual | — |
+| `choose` | numera las opciones y lee un número y Enter | las flechas mueven una marca y Enter elige | igual | redibuja su lista |
+| `progress` | una línea al terminar | se redibuja en su sitio, al ancho de ahora | igual | su siguiente dibujo toma el ancho nuevo |
+| `table` | texto | texto del ancho de sus celdas | igual | nada: es texto ya escrito |
+| `markup` | texto | texto | texto | — |
+
+  `choose` usa las flechas cuando su entrada y su salida son una terminal.
 - `markup` devuelve un texto con estilos, que no escribe por sí misma:
   `[estilo]texto[/]` aplica el estilo a ese bloque y vuelve al de antes, y los
   bloques se anidan. Un estilo combina un
@@ -6192,14 +6259,6 @@ pub fn secret(question: String): String
   escritos como texto o no. Con registros, una columna por campo, o las que
   nombra `columns` en su orden; la cabecera es el nombre del campo, y los números
   van a la derecha. Una celda puede llevar estilos de `markup`.
-- `table`, `progress` y las preguntas escriben en la salida de `console`, y
-  leen de su entrada. `progress` dibuja una barra, o un spinner sin `total`, que
-  `advance` avanza y `finish` termina; fuera de una terminal solo escribe una
-  línea al terminar. `ask` da la respuesta, o el defecto si se deja vacía;
-  `confirm` lee `y` o `n`; `choose` numera las opciones y da el índice elegido;
-  `secret` lee sin eco cuando la entrada es una terminal. Fuera de una terminal
-  las preguntas se escriben igual y leen una línea, así que un script puede
-  contestarlas.
 
 ### 14.33 `std.mcp`
 

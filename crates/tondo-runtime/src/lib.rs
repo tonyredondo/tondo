@@ -84,6 +84,7 @@ mod strings;
 mod symbols;
 mod sync;
 mod tasks;
+mod terminal;
 mod unwinding;
 // The compiler reads templates with the same syntax, and uses the rest.
 #[allow(dead_code)]

@@ -1771,6 +1771,8 @@ definen además una **acción de salida**, que se ejecuta entonces:
 - Un handle de proceso cierra la entrada de sus procesos y espera a que terminen
   (20.9).
 - Un guard de `std.sync` libera su lock.
+- Un `cli.Terminal` devuelve la terminal como estaba (14.32 de la librería
+  estándar).
 
 Un compuesto ejecuta las acciones de sus componentes; las de un scope se
 ejecutan en orden inverso al de declaración de sus bindings, intercaladas con

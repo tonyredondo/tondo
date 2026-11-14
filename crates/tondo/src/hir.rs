@@ -1290,6 +1290,9 @@ pub enum NativeTy {
     Object,
     /// A value of the runtime with one owner (`std.os.unix`'s descriptors).
     Owned,
+    /// A channel the runtime sends to, given as a result: its values are of
+    /// the type the call is expected to give, which the runtime writes.
+    Receiver,
     /// A plan of `std.process`.
     Command,
     Pipeline,
@@ -1528,8 +1531,6 @@ pub const NATIVES: &[Native] = {
         text("findIn", &[String, String, Int, Int], Int, "tondo_rt_text_find_in"),
         text("template", &[String, Bool], String, "tondo_rt_template_parse"),
         text("terminal", &[Int], Bool, "tondo_rt_console_terminal"),
-        text("terminalWidth", &[], Int, "tondo_rt_console_width"),
-        text("terminalEcho", &[Bool], Bool, "tondo_rt_console_echo"),
         text("numberSymbols", &[String], Strings, "tondo_rt_text_number_symbols"),
         text("currencySymbol", &[String, String], String, "tondo_rt_text_currency_symbol"),
         text("currencyDigits", &[String], Int, "tondo_rt_text_currency_digits"),
@@ -1629,6 +1630,14 @@ pub const NATIVES: &[Native] = {
         fs("watch", &[Strings, Int], Object, "tondo_rt_files_watch"),
         fs("watchNext", &[Object], Strings, "tondo_rt_files_watch_next"),
         fs("watchStop", &[Object], Unit, "tondo_rt_files_watch_stop"),
+        // `std.cli`'s terminal.
+        fs("terminalSize", &[], Ints, "tondo_rt_terminal_size"),
+        fs("terminalRedraws", &[], Receiver, "tondo_rt_terminal_redraws"),
+        fs("terminalTake", &[Bool, Bool, Bool, Int, Bool], Owned, "tondo_rt_terminal_take"),
+        fs("terminalStatus", &[Owned], Int, "tondo_rt_terminal_status"),
+        fs("terminalRelease", &[Owned], Unit, "tondo_rt_terminal_release"),
+        fs("terminalKeys", &[Owned], Object, "tondo_rt_terminal_keys"),
+        fs("terminalKey", &[Object], Int, "tondo_rt_terminal_key"),
         codec("digest", &[Int, Bytes, Bytes, Bool], Bytes, "tondo_rt_hash_digest"),
         codec("seal", &[Int, Bytes, Bytes, Bytes, Bytes], Bytes, "tondo_rt_crypto_seal"),
         codec("open", &[Int, Bytes, Bytes, Bytes, Bytes], Bytes, "tondo_rt_crypto_open"),

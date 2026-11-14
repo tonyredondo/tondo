@@ -1000,6 +1000,7 @@ pub(crate) unsafe fn end_in_panic(mut code: u32, message: *const Str, location: 
         code = 7;
     }
     flush_stdout();
+    terminal::give_back();
     let message = (!message.is_null()).then(|| String::from_utf8_lossy(unsafe { str_bytes(message) }).into_owned());
     let mut location = String::from_utf8_lossy(unsafe { str_bytes(location) }).into_owned();
     // A panic inside the standard library points at the program's call.
@@ -1214,6 +1215,7 @@ pub(crate) fn runtime_fault(message: &str) -> ! {
     flush_stdout();
     let _ = writeln!(std::io::stderr(), "tondo runtime fault: {message}{}", trace::report());
     diagnostics::crash_dump("fault", message, Vec::new(), false);
+    terminal::give_back();
     std::process::abort()
 }
 
@@ -1232,6 +1234,7 @@ pub fn check_leaks() -> Option<usize> {
     // the channels of signals.
     contexts::end();
     signals::end();
+    terminal::end();
     // Garbage cycles are not leaks: the collector frees them. A thread of
     // the runtime may still be letting go of an object, as a read of a
     // stream that a reply had and a client closed: it gets a second.
