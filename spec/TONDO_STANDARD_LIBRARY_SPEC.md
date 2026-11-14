@@ -6345,8 +6345,9 @@ pub fn secret(question: String): String
 - Lo que se mueve es una región viva: líneas al final de lo que escribe el
   programa, que se redibujan en su sitio. Mientras una está viva, lo que
   escriben la salida y el error de `console` va encima y la región sigue
-  debajo, en una sola escritura a la terminal, así que nada parpadea; una
-  pregunta pregunta debajo, y la región vuelve tras la respuesta. Sus partes,
+  debajo, en una sola escritura a la terminal, así que nada parpadea;
+  mientras una pregunta pregunta, la región le deja sitio, y vuelve tras la
+  respuesta. Sus partes,
   dos `progress` o uno y un `Live`, van una debajo de otra. Al cambiar el
   tamaño de la terminal se redibuja, cada línea cortada a su ancho. Fuera de
   una terminal no escribe nada hasta que una parte termina, y entonces su

@@ -7072,3 +7072,15 @@ secret is, and the encoded JSON gets `"<secret>"` there. It needs both `Reflect`
 its type, where the accepted signature named only `Reflect`, which cannot give the JSON
 `json.encode` gives. `search: true` on `choose` and `chooseMany` keeps the options that have
 what is typed in order, as fzf matches; in `chooseMany` Tab marks, as Space is typed.
+
+A function of a standard module can share a name with a standard module, as `cli.json` with
+`std.json`: a name used as `json.encode` with neither imported is the module, so `tondo fix`
+imports `std.json` there, as its message already said, rather than writing `cli.json.encode`.
+
+## A question takes the live region's place
+
+The accepted design had a question asked while a region is live ask below it; what was built
+makes the region give the question its place and come back after the answer. It works the same
+for every question, the choices too, whose lists draw themselves in place; nothing moves twice on
+the screen; and nothing typed has to be written again, which a secret must not be. Tony kept it,
+and the specification's sentence says so now.

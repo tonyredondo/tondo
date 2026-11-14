@@ -1398,8 +1398,16 @@ impl<'a> Checker<'a> {
                 .map(|near| (false, near.to_string())),
         };
         let owners = self.declaring(span, name);
+        // A module of that name comes first, as in the hint: `json.encode`
+        // wants `std.json` even where `cli.json` is a function.
+        let standard = module
+            .clone()
+            .or_else(|| crate::api::standard_modules().contains(&format!("std.{name}")).then(|| format!("std.{name}")));
         if let Some((safe, replacement)) = replacement {
             self.diags.fix(format!("write `{replacement}`"), safe, vec![(span, replacement)]);
+        } else if let Some(path) = standard {
+            let place = self.import_place(span, &path);
+            self.diags.fix(format!("add `import {path}`"), true, vec![(place, format!("import {path}\n"))]);
         } else if !owners.is_empty() {
             // Each module that declares it, with its import when the file
             // lacks it; the one meaning there is when only one does.
@@ -1411,11 +1419,6 @@ impl<'a> Checker<'a> {
                 }
                 self.diags.fix(format!("write `{written}`"), owners.len() == 1, edits);
             }
-        } else if let Some(path) = module
-            .or_else(|| crate::api::standard_modules().contains(&format!("std.{name}")).then(|| format!("std.{name}")))
-        {
-            let place = self.import_place(span, &path);
-            self.diags.fix(format!("add `import {path}`"), true, vec![(place, format!("import {path}\n"))]);
         }
     }
 }
