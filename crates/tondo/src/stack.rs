@@ -209,8 +209,7 @@ fn borrowing(bodies: &[Body], types: &Types) -> Vec<Vec<bool>> {
     };
     let mut borrows: Vec<Vec<bool>> = bodies
         .iter()
-        .enumerate()
-        .map(|(_, body)| {
+        .map(|body| {
             body.params
                 .iter()
                 .enumerate()
