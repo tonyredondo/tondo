@@ -1185,11 +1185,15 @@ test fails {
 }
 ";
     let dir = project("records-failures", tests);
-    let (stdout, stderr, status) = tondo(&dir, &["test", "--record", "target/recordings"]);
+    let (stdout, stderr, status) =
+        tondo(&dir, &["test", "--record", "target/recordings", "--report", "markdown=target/summary.md"]);
     assert_eq!(status, 1, "{stdout}{stderr}");
     let rolled = stdout.split("rolled ").nth(1).and_then(|r| r.split_whitespace().next()).expect(&stdout).to_string();
     let replay = "tondo debug --replay target/recordings/app.unit.app.fails";
     assert!(stdout.contains(replay), "{stdout}");
+    // A report read in CI, as a job's summary, says it under the failure.
+    let summary = std::fs::read_to_string(dir.join("target/summary.md")).unwrap();
+    assert!(summary.contains(&format!("rolled {rolled}")) && summary.contains(replay), "{summary}");
     assert!(!dir.join("target/recordings/app.unit.app.passes").exists());
     let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "--replay", "target/recordings/app.unit.app.fails"])

@@ -4395,7 +4395,8 @@ resultado y los tests que pasaron, fallaron, se omitieron o quedaron
 bloqueados, y el tiempo; después, cuando las hay:
 
 - `Failures`: cada test o suite que falló o quedó bloqueado, con lo que dice
-  la salida para personas;
+  la salida para personas, y con `--record`, la orden que depura su grabación
+  y dónde se separan sus ejecuciones que pasaron y fallaron (8.11);
 - `Skipped`: cada test omitido, con su razón;
 - `Benchmarks`: dónde se midieron y con qué se comparan, y por benchmark su
   test, su nombre, su tiempo por ejecución, su dispersión, sus asignaciones y

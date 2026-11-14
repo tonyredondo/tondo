@@ -800,7 +800,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         .then(|| format!("Not built on {shown}, so not counted: {}.", elsewhere.join(", ")));
     if options.json {
         say!("{}", json::reported(&report, options));
-        for recording in &recordings {
+        for (_, recording) in &recordings {
             eprintln!("tondo: recorded: tondo debug --replay {}", recording.display());
         }
         for (test, text) in &parted {
@@ -810,7 +810,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         human::report(tree, &printer, &aggregates, &owners, options, failed, started.elapsed());
         if !recordings.is_empty() {
             say!("\nthe runs that failed, recorded, to debug the same again:");
-            for recording in &recordings {
+            for (_, recording) in &recordings {
                 say!("  tondo debug --replay {}", recording.display());
             }
         }
@@ -840,7 +840,20 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
             .filter(|a| a.status.failed() || matches!(a.status, Status::Blocked(_, false)))
             .map(|a| {
                 let kind = if tree.suite(a.node) { "suite " } else { "" };
-                (format!("{kind}{}", tree.id(a.node)), human::detail(tree, &a.attempts[a.decisive], options.timeout))
+                let mut detail = human::detail(tree, &a.attempts[a.decisive], options.timeout);
+                // What the console says after the summary of this test, as
+                // a report read in CI has no other way to say it.
+                for (_, recording) in recordings.iter().filter(|(node, _)| *node == a.node) {
+                    detail = format!(
+                        "{}\nrecorded, to debug the same again:\n  tondo debug --replay {}\n",
+                        detail.trim_end(),
+                        recording.display()
+                    );
+                }
+                for (_, text) in parted.iter().filter(|(test, _)| test == tree.id(a.node)) {
+                    detail = format!("{}\npassed and failed:\n{text}", detail.trim_end());
+                }
+                (format!("{kind}{}", tree.id(a.node)), detail)
             })
             .collect(),
         skipped: aggregates
@@ -1485,9 +1498,9 @@ fn explore(
     attempts
 }
 
-/// The recordings of the runs that failed, and where a test that passed and
-/// failed parted: its id, and that in words.
-type Recorded = (Vec<PathBuf>, Vec<(String, String)>);
+/// The recordings of the runs that failed, each with its test, and where a
+/// test that passed and failed parted: its id, and that in words.
+type Recorded = (Vec<(u32, PathBuf)>, Vec<(String, String)>);
 
 /// The recordings of the attempts that failed, made a whole with the tests'
 /// executable; those of the attempts that did not fail go, but for one of a
@@ -1510,7 +1523,7 @@ fn recorded(recordings: &Path, executable: &Path, tree: &Tree, attempts: &[Attem
             continue;
         }
         kept_up(&dir)?;
-        kept.push(dir.clone());
+        kept.push((attempt.node, dir.clone()));
         let passed = tests().find(|a| a.node == attempt.node && matches!(a.status, Status::Passed));
         if let Some(passed) = passed.filter(|_| !compared.contains(&attempt.node)) {
             let good = dir_of(passed);
