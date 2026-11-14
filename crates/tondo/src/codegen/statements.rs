@@ -489,11 +489,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             }
             Rvalue::MapOp(op, operands, _) => match op {
+                // The runtime's empty map, which a first entry copies.
                 MapOp::New => {
-                    let (size, offset) = self.e.cg.entry_layout(ty);
-                    let size = self.e.fb.ins().iconst(POINTER, size as i64);
-                    let offset = self.e.fb.ins().iconst(POINTER, offset as i64);
-                    Val::Scalar(self.e.call_rt(Rt::MapNew, &[size, offset]).unwrap())
+                    let id = self.e.cg.empty_map();
+                    let empty = self.e.global(id);
+                    Val::Scalar(self.e.fb.ins().symbol_value(POINTER, empty))
                 }
                 // The position of the key's entry, from where its value is,
                 // or -1.

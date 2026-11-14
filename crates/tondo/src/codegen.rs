@@ -1525,6 +1525,8 @@ trait Gen<'t> {
     fn declare_data_in_func(&mut self, id: DataId, func: &mut ir::Function) -> ir::GlobalValue;
     /// The runtime's count of reasons to check for cancellation.
     fn attention(&mut self) -> DataId;
+    /// The runtime's empty map, which every new map is.
+    fn empty_map(&mut self) -> DataId;
 
     /// A debug build's function, whether it takes a loan, and the bindings
     /// it shows: its number.
@@ -1699,6 +1701,9 @@ impl<'t> Gen<'t> for Codegen<'t> {
     }
     fn attention(&mut self) -> DataId {
         self.module.declare_data("tondo_rt_attention", Linkage::Import, true, false).expect("the runtime's attention")
+    }
+    fn empty_map(&mut self) -> DataId {
+        self.module.declare_data("tondo_rt_map_empty", Linkage::Import, true, false).expect("the runtime's empty map")
     }
     fn debug_function(&mut self, name: String, lends: bool, described: Vec<DebugBinding>) -> u32 {
         self.debug_functions.push((name, lends, described));

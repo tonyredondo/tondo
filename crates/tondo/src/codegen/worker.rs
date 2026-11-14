@@ -31,6 +31,7 @@ enum Asked {
     DumpBindings(Vec<super::DumpBinding>),
     FunctionSites,
     Attention,
+    EmptyMap,
     DebugSite(u32, u32, bool),
     PointSite(u32, u32),
     PointLayout(u32, StateLayout),
@@ -136,6 +137,7 @@ struct Worker<'w, 's, 't> {
     /// the same data, declared once in the function, has one address.
     strings: HashMap<String, u32>,
     attention: Option<u32>,
+    empty_map: Option<u32>,
     func_refs: Vec<(ir::FuncRef, usize)>,
     data_refs: Vec<(ir::GlobalValue, usize)>,
     site_constants: Vec<(ir::Inst, usize)>,
@@ -166,6 +168,7 @@ pub(super) fn build(shared: &Shared, bodies: &[Body], index: usize, version: boo
         asked: Vec::new(),
         strings: HashMap::new(),
         attention: None,
+        empty_map: None,
         func_refs: Vec::new(),
         data_refs: Vec::new(),
         site_constants: Vec::new(),
@@ -310,6 +313,14 @@ impl<'t> Gen<'t> for Worker<'_, '_, 't> {
             None => self.ask(Asked::Attention),
         };
         self.attention = Some(id);
+        DataId::from_u32(id)
+    }
+    fn empty_map(&mut self) -> DataId {
+        let id = match self.empty_map {
+            Some(id) => id,
+            None => self.ask(Asked::EmptyMap),
+        };
+        self.empty_map = Some(id);
         DataId::from_u32(id)
     }
     fn closure_code(&mut self, body: FnId) -> FuncId {
@@ -467,6 +478,7 @@ pub(super) fn replay(cg: &mut Codegen, bodies: &[Body], built: &mut Built) {
             }
             Asked::FunctionSites => Gen::function_sites(cg).expect("a live build").0.as_u32(),
             Asked::Attention => Gen::attention(cg).as_u32(),
+            Asked::EmptyMap => Gen::empty_map(cg).as_u32(),
             Asked::DebugSite(start, function, goes_on) => {
                 let index = Gen::debug_site(cg, start, function, goes_on);
                 first_site.get_or_insert(index);

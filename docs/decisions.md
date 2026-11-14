@@ -6861,3 +6861,14 @@ type that wants another declares an inherent method, which its values call first
 in the same order, by `sumBy` and `averageBy` with the element itself. Their errors write the call
 to make instead, `sumBy((user) { user.age })` with a record's first field that qualifies. Tony
 accepted it as proposed.
+
+## A new map takes memory with its first entry
+
+A server's request made five maps that stayed empty, as the default `query:` and `headers:` of a
+client's call and a route's params: each was an allocation of its own. Tony asked that empty maps
+be made on demand. Every `[:]` and `Set[]` is now the runtime's one empty map, which never goes and
+which reference counting leaves alone, as it does constant strings; the first write copies it, as it
+copies any map another holds, with the size of an entry from the map's glue. Reading takes no test
+more: a null map was the other way, and every lookup paid a branch for it, 2 to 4% more instructions
+in the rows of bench/tondo that look maps up. bench/tondo's http rows make five allocations fewer a
+request, and its map rows do the same instructions.

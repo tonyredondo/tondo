@@ -559,9 +559,13 @@ impl Codegen<'_> {
         let id = self.module.declare_data(&name, Linkage::Local, false, false).expect("glue table");
         let mut data = DataDescription::new();
         // Eight functions, then whether the runtime lets go of a removed
-        // key or value as soon as no reader can see it.
-        let mut bytes = vec![0u8; 72];
+        // key or value as soon as no reader can see it, and the size of an
+        // entry and where its value starts, for a map that is still empty.
+        let mut bytes = vec![0u8; 88];
         bytes[64] = (self.types.holds_outside(key) || self.types.holds_outside(value)) as u8;
+        let (size, offset) = self.entry_layout(ty);
+        bytes[72..80].copy_from_slice(&(size as u64).to_le_bytes());
+        bytes[80..88].copy_from_slice(&(offset as u64).to_le_bytes());
         data.define(bytes.into_boxed_slice());
         data.set_align(8);
         let entries = [

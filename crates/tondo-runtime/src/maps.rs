@@ -55,7 +55,24 @@ pub struct MapGlue {
     /// as closing a channel's end: a shared map lets go of one it removed
     /// as soon as no reader can see it, rather than in a batch.
     pub(crate) prompt: u8,
+    /// The size of an entry and where its value starts, for the first entry
+    /// of a map that is still `EMPTY`.
+    pub(crate) entry_size: usize,
+    pub(crate) value_offset: usize,
 }
+
+/// The map every `[:]` and `Set[]` is until its first entry: shared, never
+/// freed, and copied by the first write, as a map shared by others is. A
+/// map made with a default most often stays empty.
+#[unsafe(export_name = "tondo_rt_map_empty")]
+pub static EMPTY: MapObject = MapObject {
+    rc: AtomicUsize::new(IMMORTAL),
+    entry_size: 0,
+    value_offset: 0,
+    entries: Vec::new(),
+    hashes: Vec::new(),
+    table: Vec::new(),
+};
 
 impl MapObject {
     pub(crate) fn len(&self) -> usize {
@@ -120,7 +137,7 @@ pub extern "C" fn tondo_rt_map_new(entry_size: usize, value_offset: usize) -> *m
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_map_retain(m: *mut MapObject) {
-    if !m.is_null() {
+    if !m.is_null() && unsafe { (*m).rc.load(Ordering::Relaxed) } != IMMORTAL {
         unsafe { (*m).rc.fetch_add(1, Ordering::Relaxed) };
     }
 }
@@ -141,7 +158,7 @@ pub(crate) unsafe fn release_entries(m: &mut MapObject, glue: &MapGlue) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_map_release(m: *mut MapObject, glue: *const MapGlue) {
-    if m.is_null() {
+    if m.is_null() || unsafe { (*m).rc.load(Ordering::Relaxed) } == IMMORTAL {
         return;
     }
     match dropped(unsafe { &(*m).rc }) {
@@ -164,6 +181,10 @@ pub(crate) unsafe fn map_unique(slot: *mut *mut MapObject, glue: &MapGlue) -> &'
     unsafe {
         let m = *slot;
         if (*m).rc.load(Ordering::Acquire) != 1 {
+            if std::ptr::eq(m, &EMPTY) {
+                *slot = tondo_rt_map_new(glue.entry_size, glue.value_offset);
+                return &mut **slot;
+            }
             let copy = tondo_rt_map_new((*m).entry_size, (*m).value_offset);
             (*copy).entries = (*m).entries.clone();
             (*copy).hashes = (*m).hashes.clone();
@@ -289,7 +310,7 @@ pub unsafe extern "C" fn tondo_rt_map_clear(slot: *mut *mut MapObject, glue: *co
     unsafe {
         let m = *slot;
         if (*m).rc.load(Ordering::Acquire) != 1 {
-            *slot = tondo_rt_map_new((*m).entry_size, (*m).value_offset);
+            *slot = (&raw const EMPTY).cast_mut();
             tondo_rt_map_release(m, glue);
             return;
         }

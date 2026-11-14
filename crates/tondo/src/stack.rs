@@ -141,8 +141,8 @@ fn allocations(body: &Body, types: &Types) -> Vec<(crate::source::Span, String)>
                 "is made on the heap: an array whose values are not all constants".to_string()
             }
             Rvalue::MapOp(crate::hir::MapOp::New, ..) => match types.kind(types.repr(ty)) {
-                crate::types::TyKind::Set(_) => "is made on the heap: a set".to_string(),
-                _ => "is made on the heap: a map".to_string(),
+                crate::types::TyKind::Set(_) => "is made on the heap with its first element: a set".to_string(),
+                _ => "is made on the heap with its first entry: a map".to_string(),
             },
             Rvalue::Slice(..) => "is made on the heap: a slice copies its part".to_string(),
             Rvalue::Aggregate(operands) | Rvalue::Variant(_, operands) => {

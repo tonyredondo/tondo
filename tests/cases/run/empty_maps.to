@@ -1,0 +1,34 @@
+// A new map or set takes no memory until its first entry, and behaves as
+// ever: two empty ones are equal, a copy of one stays empty when the other
+// gains an entry, and a map cleared while another holds it lets the other
+// keep its entries.
+
+import std.console
+
+fn tagged(tags: Map[String, Int] = [:]): Int {
+    tags.length()
+}
+
+fn main() {
+    var first: Map[String, Int] = [:]
+    let second: Map[String, Int] = [:]
+    console.println("{first == second} {tagged()} {tagged(["a": 1])}")
+    var copy = first
+    first["a"] = 1
+    copy["b"] = 2
+    console.println("{first} {copy} {second}")
+    let held = first
+    first.clear()
+    first["c"] = 3
+    console.println("{first} {held}")
+    var seen: Set[Int] = Set[]
+    let before = seen
+    seen.insert(7)
+    console.println("{seen} {before} {before.contains(7)}")
+}
+
+// expect-stdout: true 0 1
+// expect-stdout: [a: 1] [b: 2] [:]
+// expect-stdout: [c: 3] [a: 1]
+// expect-stdout: Set[7] Set[] false
+// expect-optimization: 13:35 heap is made on the heap with its first entry: a map

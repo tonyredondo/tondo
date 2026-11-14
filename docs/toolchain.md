@@ -463,7 +463,7 @@ tondo graph --mermaid                the modules and what each imports
 ```
 
 ```text
-src/main.to:5:36: `[:]` is made on the heap: a map (in count, main)
+src/main.to:5:36: `[:]` is made on the heap with its first entry: a map (in count, main)
 src/main.to:6:17: `text.split(" ")` stays a call of `String.split`: its body costs 74, more than the 30 inlining takes (in count, main)
 src/main.to:10:9: `counts[word, default: 0] += 1` keeps its overflow check, in a loop (in count, main)
 src/main.to:16:23: `count("to be or not to be")` is inlined: the body of `count` is copied here (in main)
