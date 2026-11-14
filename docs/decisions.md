@@ -6780,7 +6780,8 @@ array names `dropWhile` what an iterator names `skipWhile`, beside `drop`; `toMa
 pairs each element gives and `keyedBy` one of the elements by a key; `joinBy` pairs two arrays by
 their keys, as `join` already gives the elements as text. There is no `flatten`, which would be a
 method of `Array[Array[T]]` alone, one instance of a generic type; `flatMap((inner) { inner })` is
-it. `sumBy` sums the values `map` gives, so floats add in the fixed order of `sum`. `Iterator[T]`
+it. `sumBy` adds floats in the fixed order of `sum`, without an array of the values:
+monomorphization takes a form of it for `Float` and `Float32`, as it does of `sum`. `Iterator[T]`
 gets the chain-ending ones whose bounds are their own parameters', `minBy`, `maxBy`, `countBy`,
 `sumBy`, `toMap` and `keyedBy`; `sum`, `min`, `max`, `average` and `toSet` ask more of `T` than the
 trait does, which a trait's method cannot, and stay the array's, after `collect()`.

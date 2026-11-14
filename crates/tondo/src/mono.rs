@@ -339,19 +339,17 @@ struct Mono<'a> {
 impl Mono<'_> {
     /// The concrete function for `id` applied to `args`, queued on first use.
     fn instance(&mut self, id: FnId, args: Vec<Ty>) -> FnId {
-        // `sum` and `math.dot` of floats add in the order 18.5 fixes.
+        // `sum`, `sumBy` and `math.dot` of floats add in the order 18.5
+        // fixes.
         let name = self.functions[id.0 as usize].name.as_str();
         let form = crate::simd::FLOAT_FORMS.iter().find(|(n, ..)| *n == name).and_then(|&(_, wide, narrow)| match args
-            .as_slice()
+            .split_last()
         {
-            [element] if *element == Ty::F64 => self.named.get(wide),
-            [element] if *element == Ty::F32 => self.named.get(narrow),
+            Some((last, rest)) if *last == Ty::F64 => self.named.get(wide).map(|&form| (form, rest.to_vec())),
+            Some((last, rest)) if *last == Ty::F32 => self.named.get(narrow).map(|&form| (form, rest.to_vec())),
             _ => None,
         });
-        let (id, args) = match form {
-            Some(&form) => (form, Vec::new()),
-            None => (id, args),
-        };
+        let (id, args) = form.unwrap_or((id, args));
         if let Some(&instance) = self.instances.get(&(id, args.clone())) {
             return instance;
         }

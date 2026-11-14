@@ -90,10 +90,13 @@ pub fn count(width: Width, lanes: Lanes) -> u32 {
 }
 
 /// The functions of the standard library that a program's call reaches in
-/// another form for an `Array[Float]` or an `Array[Float32]`: one that adds
-/// in the order the language fixes (18.5), with vectors.
-pub const FLOAT_FORMS: [(&str, &str, &str); 5] = [
+/// another form when its last type argument is `Float` or `Float32`: one
+/// that adds in the order the language fixes (18.5), with vectors where it
+/// can, and takes the other type arguments.
+pub const FLOAT_FORMS: [(&str, &str, &str); 7] = [
     ("Array.sum", "prelude.sumFloat", "prelude.sumFloat32"),
+    ("Array.sumBy", "prelude.sumByFloat", "prelude.sumByFloat32"),
+    ("Iterator.sumBy", "prelude.iterSumByFloat", "prelude.iterSumByFloat32"),
     ("math.dot", "math.dotFloat", "math.dotFloat32"),
     ("math.dotAt", "math.dotAtFloat", "math.dotAtFloat32"),
     ("math.applied", "math.appliedFloat", "math.appliedFloat32"),

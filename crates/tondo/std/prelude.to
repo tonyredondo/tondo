@@ -1134,36 +1134,38 @@ pub fn Array[T].partition(self, predicate: fn(T): Bool): (Array[T], Array[T]) {
 /// empty; `key` is called once for each element:
 /// `users.minBy((user) { user.age })` is the youngest.
 pub fn Array[T].minBy[K: Ordered](self, key: fn(T): K): T? {
-    var found: (T, K)? = none
-    for item in self {
-        let k = key(item)
-        found = match found {
-            some((best, least)) if least.compare(k) <= 0 => (best, least)
-            _ => (item, k)
+    // The index of the best and its key, so that no element is copied
+    // until the end.
+    if self.isEmpty() {
+        return none
+    }
+    var (at, least) = (0, key(self[0]))
+    for i in 1..self.length() {
+        let k = key(self[i])
+        if k.compare(least) < 0 {
+            at = i
+            least = k
         }
     }
-    match found {
-        some((best, _)) => best
-        none => none
-    }
+    self[at]
 }
 
 /// The first element of the largest key, or `none` when the array is
 /// empty; `key` is called once for each element:
 /// `users.maxBy((user) { user.age })` is the oldest.
 pub fn Array[T].maxBy[K: Ordered](self, key: fn(T): K): T? {
-    var found: (T, K)? = none
-    for item in self {
-        let k = key(item)
-        found = match found {
-            some((best, most)) if most.compare(k) >= 0 => (best, most)
-            _ => (item, k)
+    if self.isEmpty() {
+        return none
+    }
+    var (at, most) = (0, key(self[0]))
+    for i in 1..self.length() {
+        let k = key(self[i])
+        if k.compare(most) > 0 {
+            at = i
+            most = k
         }
     }
-    match found {
-        some((best, _)) => best
-        none => none
-    }
+    self[at]
 }
 
 /// The first element of each key, in order, as `unique` keeps the first of
@@ -1227,7 +1229,175 @@ pub fn Array[T].countBy[K: Key](self, key: fn(T): K): Map[K, Int] {
 /// The sum of `value` of each element, zero for an empty array; floats add
 /// in the order 18.5 fixes, as `sum`: `orders.sumBy((o) { o.total })`.
 pub fn Array[T].sumBy[N: Additive](self, value: fn(T): N): N {
-    self.map(value).sum()
+    // Of `Float` and `Float32`, `sumByFloat` and `sumByFloat32`.
+    var total = Additive.zero[N]()
+    for item in self {
+        total = total + value(item)
+    }
+    total
+}
+
+/// `sumBy` of an array whose values are `Float`: in the order 18.5 fixes,
+/// as `sum` of them, element `i` into partial sum `i mod 8`, then the
+/// partial sums by halves; without an array of the values.
+fn sumByFloat[T](items: Array[T], value: fn(T): Float): Float {
+    // Eight at a time, each into its partial sum, then the rest in turn.
+    var partial = Lanes8 {}
+    let whole = items.length() - items.length() % 8
+    var i = 0
+    for i < whole {
+        partial.p0 += value(items[i])
+        partial.p1 += value(items[i + 1])
+        partial.p2 += value(items[i + 2])
+        partial.p3 += value(items[i + 3])
+        partial.p4 += value(items[i + 4])
+        partial.p5 += value(items[i + 5])
+        partial.p6 += value(items[i + 6])
+        partial.p7 += value(items[i + 7])
+        i += 8
+    }
+    for at in whole..items.length() {
+        partial.add(value(items[at]))
+    }
+    partial.halved()
+}
+
+/// `sumBy` of an array whose values are `Float32`, in the order of 18.5:
+/// sixteen partial sums.
+fn sumByFloat32[T](items: Array[T], value: fn(T): Float32): Float32 {
+    var partial = Lanes16 {}
+    let whole = items.length() - items.length() % 16
+    var i = 0
+    for i < whole {
+        partial.p0 += value(items[i])
+        partial.p1 += value(items[i + 1])
+        partial.p2 += value(items[i + 2])
+        partial.p3 += value(items[i + 3])
+        partial.p4 += value(items[i + 4])
+        partial.p5 += value(items[i + 5])
+        partial.p6 += value(items[i + 6])
+        partial.p7 += value(items[i + 7])
+        partial.p8 += value(items[i + 8])
+        partial.p9 += value(items[i + 9])
+        partial.p10 += value(items[i + 10])
+        partial.p11 += value(items[i + 11])
+        partial.p12 += value(items[i + 12])
+        partial.p13 += value(items[i + 13])
+        partial.p14 += value(items[i + 14])
+        partial.p15 += value(items[i + 15])
+        i += 16
+    }
+    for at in whole..items.length() {
+        partial.add(value(items[at]))
+    }
+    partial.halved()
+}
+
+/// The eight partial sums of `Float` that 18.5 adds into, in turn.
+type Lanes8 = {
+    p0: Float = 0.0
+    p1: Float = 0.0
+    p2: Float = 0.0
+    p3: Float = 0.0
+    p4: Float = 0.0
+    p5: Float = 0.0
+    p6: Float = 0.0
+    p7: Float = 0.0
+    lane: Int = 0
+}
+
+fn Lanes8.add(var self, v: Float) {
+    match self.lane {
+        0 => self.p0 += v
+        1 => self.p1 += v
+        2 => self.p2 += v
+        3 => self.p3 += v
+        4 => self.p4 += v
+        5 => self.p5 += v
+        6 => self.p6 += v
+        _ => self.p7 += v
+    }
+    self.lane = if self.lane == 7 { 0 } else { self.lane + 1 }
+}
+
+/// The partial sums by halves, as 18.5 adds them.
+fn Lanes8.halved(self): Float {
+    let (a0, a1, a2, a3) = (self.p0 + self.p4, self.p1 + self.p5, self.p2 + self.p6, self.p3 + self.p7)
+    let (b0, b1) = (a0 + a2, a1 + a3)
+    b0 + b1
+}
+
+/// The sixteen partial sums of `Float32` that 18.5 adds into, in turn.
+type Lanes16 = {
+    p0: Float32 = 0.0
+    p1: Float32 = 0.0
+    p2: Float32 = 0.0
+    p3: Float32 = 0.0
+    p4: Float32 = 0.0
+    p5: Float32 = 0.0
+    p6: Float32 = 0.0
+    p7: Float32 = 0.0
+    p8: Float32 = 0.0
+    p9: Float32 = 0.0
+    p10: Float32 = 0.0
+    p11: Float32 = 0.0
+    p12: Float32 = 0.0
+    p13: Float32 = 0.0
+    p14: Float32 = 0.0
+    p15: Float32 = 0.0
+    lane: Int = 0
+}
+
+fn Lanes16.add(var self, v: Float32) {
+    match self.lane {
+        0 => self.p0 += v
+        1 => self.p1 += v
+        2 => self.p2 += v
+        3 => self.p3 += v
+        4 => self.p4 += v
+        5 => self.p5 += v
+        6 => self.p6 += v
+        7 => self.p7 += v
+        8 => self.p8 += v
+        9 => self.p9 += v
+        10 => self.p10 += v
+        11 => self.p11 += v
+        12 => self.p12 += v
+        13 => self.p13 += v
+        14 => self.p14 += v
+        _ => self.p15 += v
+    }
+    self.lane = if self.lane == 15 { 0 } else { self.lane + 1 }
+}
+
+/// The partial sums by halves, as 18.5 adds them.
+fn Lanes16.halved(self): Float32 {
+    let (a0, a1, a2, a3) = (self.p0 + self.p8, self.p1 + self.p9, self.p2 + self.p10, self.p3 + self.p11)
+    let (a4, a5, a6, a7) = (self.p4 + self.p12, self.p5 + self.p13, self.p6 + self.p14, self.p7 + self.p15)
+    let (b0, b1, b2, b3) = (a0 + a4, a1 + a5, a2 + a6, a3 + a7)
+    let (c0, c1) = (b0 + b2, b1 + b3)
+    c0 + c1
+}
+
+/// `Iterator.sumBy` of `Float` values, in the order of 18.5, as
+/// `sumByFloat`.
+fn iterSumByFloat[I: Iterator[T], T](items: I, value: fn(T): Float): Float {
+    let cursor = items
+    var partial = Lanes8 {}
+    for item in cursor {
+        partial.add(value(item))
+    }
+    partial.halved()
+}
+
+/// `Iterator.sumBy` of `Float32` values, in the order of 18.5.
+fn iterSumByFloat32[I: Iterator[T], T](items: I, value: fn(T): Float32): Float32 {
+    let cursor = items
+    var partial = Lanes16 {}
+    for item in cursor {
+        partial.add(value(item))
+    }
+    partial.halved()
 }
 
 /// The sum divided by the length, or `none` when the array is empty:
@@ -1243,7 +1413,10 @@ pub fn Array[T: Fractional].average(self): T? {
 /// The average of `value` of each element, or `none` when the array is
 /// empty: `readings.averageBy((r) { r.celsius })`.
 pub fn Array[T].averageBy[N: Fractional](self, value: fn(T): N): N? {
-    self.map(value).average()
+    if self.isEmpty() {
+        return none
+    }
+    self.sumBy(value) / Number.fromInt[N](self.length())
 }
 
 /// The value `combine` builds after each element, from `initial`: as many
@@ -1653,37 +1826,40 @@ pub trait Iterator[T] {
     /// The first element of the smallest key, or `none` when there is none,
     /// as `Array.minBy`.
     fn minBy[K: Ordered](self, key: fn(T): K): T? {
+        // The best is copied only when it changes.
         let cursor = self
-        var found: (T, K)? = none
+        var (best, least): (T?, K?) = (none, none)
         for item in cursor {
             let k = key(item)
-            found = match found {
-                some((best, least)) if least.compare(k) <= 0 => (best, least)
-                _ => (item, k)
+            let better = match least {
+                some(known) => k.compare(known) < 0
+                none => true
+            }
+            if better {
+                best = item
+                least = k
             }
         }
-        match found {
-            some((best, _)) => best
-            none => none
-        }
+        best
     }
 
     /// The first element of the largest key, or `none` when there is none,
     /// as `Array.maxBy`.
     fn maxBy[K: Ordered](self, key: fn(T): K): T? {
         let cursor = self
-        var found: (T, K)? = none
+        var (best, most): (T?, K?) = (none, none)
         for item in cursor {
             let k = key(item)
-            found = match found {
-                some((best, most)) if most.compare(k) >= 0 => (best, most)
-                _ => (item, k)
+            let better = match most {
+                some(known) => k.compare(known) > 0
+                none => true
+            }
+            if better {
+                best = item
+                most = k
             }
         }
-        match found {
-            some((best, _)) => best
-            none => none
-        }
+        best
     }
 
     /// How many elements have each key, as `Array.countBy`.
@@ -1700,7 +1876,13 @@ pub trait Iterator[T] {
     /// smallest, largest and average of the elements themselves, which ask
     /// more of `T`, are the array's: `collect()` first.
     fn sumBy[N: Additive](self, value: fn(T): N): N {
-        self.map(value).collect().sum()
+        // Of `Float` and `Float32`, `iterSumByFloat` and `iterSumByFloat32`.
+        let cursor = self
+        var total = Additive.zero[N]()
+        for item in cursor {
+            total = total + value(item)
+        }
+        total
     }
 
     /// A map of the pair each element gives, as `Array.toMap`.

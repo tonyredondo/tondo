@@ -1,0 +1,41 @@
+// `sumBy` adds floats in the order 18.5 fixes, as `sum` of the values
+// does, on an array and on an iterator, with no array of the values
+// between; of any other type, from left to right (standard library 14.5).
+
+import std.console
+
+type Reading = {
+    value: Float
+    small: Float32
+}
+
+fn main() {
+    // Where the order of the additions changes the result.
+    var readings: Array[Reading] = []
+    for i in 0..37 {
+        let value = if i % 2 == 0 { 1.0 } else if i % 4 == 1 { 1.0e16 } else { -1.0e16 }
+        let small: Float32 = if i % 2 == 0 { 1.0 } else if i % 4 == 1 { 1.0e8 } else { -1.0e8 }
+        readings.push(Reading { value, small })
+    }
+    let values = readings.map((r) { r.value })
+    let smalls = readings.map((r) { r.small })
+    let wide = readings.sumBy((r) { r.value })
+    let narrow = readings.sumBy((r) { r.small })
+    console.println("{wide == values.sum()} {narrow == smalls.sum()}")
+    console.println("{readings.iter().sumBy((r) { r.value }) == values.sum()}")
+    console.println("{readings.iter().sumBy((r) { r.small }) == smalls.sum()}")
+    console.println("{readings.averageBy((r) { r.value }) == values.average()}")
+    // From left to right, of integers.
+    console.println(
+        "{(1..=100).map((n) { n * n }).sumBy((n) { n })} {[1, 2, 3].sumBy((n) { n * 10 })}",
+    )
+    let empty: Array[Reading] = []
+    console.println("{empty.sumBy((r) { r.value })} {empty.iter().sumBy((r) { r.small })}")
+}
+
+// expect-stdout: true true
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: 338350 60
+// expect-stdout: 0.0 0.0

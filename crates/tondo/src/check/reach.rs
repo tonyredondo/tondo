@@ -78,19 +78,7 @@ impl<'a> Checker<'a> {
 
     fn reach_expr(&mut self, e: &hir::Expr, reach: &mut Reach) {
         match &e.kind {
-            hir::ExprKind::Call(Callee::Fn(id), ..) | hir::ExprKind::FnValue(id, _) => {
-                reach.add(*id);
-                // `sum` of an array of floats is another function (18.5), as
-                // `mono.rs` makes it.
-                let name = &self.signatures[id.0 as usize].name;
-                if let Some(&(_, wide, narrow)) = crate::simd::FLOAT_FORMS.iter().find(|(n, ..)| n == name) {
-                    for form in [wide, narrow] {
-                        if let Some(at) = self.signatures.iter().position(|s| s.name == form) {
-                            reach.add(FnId(at as u32));
-                        }
-                    }
-                }
-            }
+            hir::ExprKind::Call(Callee::Fn(id), ..) | hir::ExprKind::FnValue(id, _) => self.reach_fn(*id, reach),
             hir::ExprKind::Call(Callee::Trait(trait_id, method), types, _) => {
                 let receiver = types.first().copied().unwrap_or(Ty::ERROR);
                 // What is not a nominal type displays itself, what it holds by theirs.
@@ -111,6 +99,20 @@ impl<'a> Checker<'a> {
             hir::ExprKind::Reflect(hir::ReflectOp::Describe, ty, _) => self.reach_display(*ty, reach),
             hir::ExprKind::ArrayOp(hir::ArrayOp::Join, operands) => self.reach_display(operands[0].ty, reach),
             _ => {}
+        }
+    }
+
+    /// A function, and the forms `mono.rs` makes of it for floats: `sum` of
+    /// an array of floats is another function (18.5).
+    fn reach_fn(&self, id: FnId, reach: &mut Reach) {
+        reach.add(id);
+        let name = &self.signatures[id.0 as usize].name;
+        if let Some(&(_, wide, narrow)) = crate::simd::FLOAT_FORMS.iter().find(|(n, ..)| n == name) {
+            for form in [wide, narrow] {
+                if let Some(at) = self.signatures.iter().position(|s| s.name == form) {
+                    reach.add(FnId(at as u32));
+                }
+            }
         }
     }
 
@@ -136,7 +138,7 @@ impl<'a> Checker<'a> {
         }
         let methods = &self.traits[trait_id.0 as usize].methods;
         if let Some(default) = methods.get(method as usize).and_then(|m| m.default) {
-            reach.add(default);
+            self.reach_fn(default, reach);
         }
         // A union decodes through these, which monomorphization calls by name.
         if self.traits[trait_id.0 as usize].name == "serialization.Decode" {
