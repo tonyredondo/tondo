@@ -1,0 +1,70 @@
+import std.testing
+
+type Order = {
+    id: Int
+    customer: Int
+    cents: Int
+    region: String
+}
+
+type Customer = {
+    id: Int
+    name: String
+}
+
+/// `count` orders from a linear congruential generator, as the Go side
+/// makes them.
+fn orders(count: Int): Array[Order] {
+    let regions = ["north", "south", "east", "west"]
+    var all: Array[Order] = []
+    var seed = 42
+    for id in 0..count {
+        seed = (seed * 1_103_515_245 + 12345) % 2_147_483_648
+        all.push(
+            Order { id, customer: seed % 1000, cents: seed % 100_000, region: regions[seed % 4] },
+        )
+    }
+    all
+}
+
+fn customers(count: Int): Array[Customer] {
+    var all: Array[Customer] = []
+    for id in 0..count {
+        all.push(Customer { id, name: "customer {id}" })
+    }
+    all
+}
+
+test queries {
+    let all = orders(10_000)
+    let amounts = all.map((order) { order.cents })
+    testing.bench(
+        "numbers map filter sum 10000",
+        () { amounts.map((n) { n * 2 }).filter((n) { n % 3 == 0 }).sum() },
+    )
+    testing.bench(
+        "numbers iter map filter sum 10000",
+        () { amounts.iter().map((n) { n * 2 }).filter((n) { n % 3 == 0 }).sumBy((n) { n }) },
+    )
+    testing.bench(
+        "filter sumBy 10000",
+        () { all.filter((order) { order.cents > 50_000 }).sumBy((order) { order.cents }) },
+    )
+    testing.bench(
+        "iter filter sumBy 10000",
+        () { all.iter().filter((order) { order.cents > 50_000 }).sumBy((order) { order.cents }) },
+    )
+    testing.bench("groupBy 10000", () { all.groupBy((order) { order.customer }).length() })
+    testing.bench("sortedBy 10000", () { all.sortedBy((order) { order.cents }) })
+    testing.bench("countBy 10000", () { all.countBy((order) { order.region }) })
+    testing.bench("maxBy 10000", () { all.maxBy((order) { order.cents }) })
+    testing.bench("keyedBy 10000", () { all.keyedBy((order) { order.id }) })
+    testing.bench("uniqueBy 10000", () { all.uniqueBy((order) { order.customer }) })
+    testing.bench("averageBy 10000", () { all.averageBy((order) { Float(order.cents) }) })
+    testing.bench("toSet 10000", () { amounts.toSet() })
+    let people = customers(1000)
+    testing.bench(
+        "joinBy 10000x1000",
+        () { all.joinBy(people, (order) { order.customer }, (person) { person.id }).length() },
+    )
+}

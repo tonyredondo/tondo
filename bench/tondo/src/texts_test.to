@@ -1,0 +1,42 @@
+import std.testing
+
+/// Words of ASCII alone.
+const Ascii: String = "the quick brown fox jumps over the lazy dog "
+
+/// Words in other scripts: Spanish with its accents, Greek and Japanese,
+/// which take two and three bytes a character.
+const Other: String = "el ñandú comió más piñones αβγ δέλτα 日本語の文章 "
+
+fn parsed(texts: Array[String]): Int {
+    var total = 0
+    for text in texts {
+        total += Int.parse(text) ?? 0
+    }
+    total
+}
+
+fn counted(text: String): Int {
+    var count = 0
+    for _ in text.chars() {
+        count += 1
+    }
+    count
+}
+
+test texts {
+    let (ascii, other) = (Ascii.repeat(25), Other.repeat(25))
+    testing.bench("replace ascii", () { ascii.replace("the", "a") })
+    testing.bench("replace other", () { other.replace("más", "menos") })
+    let padded = "   {Ascii}\t\n"
+    testing.bench("trim", () { padded.trim() })
+    testing.bench("toUpper ascii", () { ascii.toUpper() })
+    testing.bench("toUpper other", () { other.toUpper() })
+    let words = Ascii.split(" ").repeat(10)
+    testing.bench("join 100", () { words.join(", ") })
+    testing.bench("split other", () { other.split(" ").length() })
+    testing.bench("contains other", () { other.contains("文章 x") })
+    let written = (0..1000).map((n) { "{n * 7919}" }).collect()
+    testing.bench("parse ints 1000", () { parsed(written) })
+    testing.bench("chars ascii", () { counted(ascii) })
+    testing.bench("chars other", () { counted(other) })
+}
