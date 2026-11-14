@@ -120,6 +120,28 @@ pub trait Iterator[T] {
     fn reduce[A](self, initial: A, combine: fn(A, T): A): A
 
     fn forEach(self, action: fn(T))
+
+    /// The first element of the smallest key, or `none` when there is none,
+    /// as `Array.minBy`.
+    fn minBy[K: Ordered](self, key: fn(T): K): T?
+
+    /// The first element of the largest key, or `none` when there is none,
+    /// as `Array.maxBy`.
+    fn maxBy[K: Ordered](self, key: fn(T): K): T?
+
+    /// How many elements have each key, as `Array.countBy`.
+    fn countBy[K: Key](self, key: fn(T): K): Map[K, Int]
+
+    /// The sum of `value` of each element, as `Array.sumBy`. The sum,
+    /// smallest, largest and average of the elements themselves, which ask
+    /// more of `T`, are the array's: `collect()` first.
+    fn sumBy[N: Additive](self, value: fn(T): N): N
+
+    /// A map of the pair each element gives, as `Array.toMap`.
+    fn toMap[K: Key, V](self, entry: fn(T): (K, V)): Map[K, V]
+
+    /// The elements by a key of each, as `Array.keyedBy`.
+    fn keyedBy[K: Key](self, key: fn(T): K): Map[K, T]
 }
 ```
 

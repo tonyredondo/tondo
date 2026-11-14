@@ -1,0 +1,13 @@
+// The average of integers, which would round, is an error that says how to
+// divide their sum as floats (standard library 14.5).
+
+import std.console
+
+fn main() {
+    let numbers = [1, 2, 6]
+    console.println("{numbers.average()}")
+    console.println("{numbers.averageBy((n) { n * 2 })}")
+}
+
+// expect-error: E1105 `Int` does not implement `Fractional`, which `Array.average` requires of `T`: an average is of floats; for integers, divide the `sum()` as floats, as in `Float(values.sum()) / Float(values.length())`
+// expect-error: E1105 `Int` does not implement `Fractional`, which `Array.averageBy` requires of `N`: an average is of floats; give `value` as a float, as in `averageBy((item) { Float(item.count) })`

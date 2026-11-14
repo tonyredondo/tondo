@@ -6770,3 +6770,17 @@ has one too, as the code of one width would otherwise be in the other; and one w
 its signature has no dispatcher, as its version takes more lanes, so code of the build's level calls
 its body directly, and only versions call its version. A build without versions, debug, live, of
 coverage or of fuzzing, compiles the clones as functions that nothing calls.
+
+## The query methods of an array
+
+`Array[T]` gains what LINQ and its like have and it lacked: `minBy`, `maxBy`, `uniqueBy`,
+`takeWhile`, `dropWhile`, `toMap`, `keyedBy`, `countBy`, `sumBy`, `average`, `averageBy`, `scan`,
+`findLast`, `findLastIndex`, `indexOf`, `joinBy` and `toSet`, written in Tondo in the prelude. An
+array names `dropWhile` what an iterator names `skipWhile`, beside `drop`; `toMap` is a map of the
+pairs each element gives and `keyedBy` one of the elements by a key; `joinBy` pairs two arrays by
+their keys, as `join` already gives the elements as text. There is no `flatten`, which would be a
+method of `Array[Array[T]]` alone, one instance of a generic type; `flatMap((inner) { inner })` is
+it. `sumBy` sums the values `map` gives, so floats add in the fixed order of `sum`. `Iterator[T]`
+gets the chain-ending ones whose bounds are their own parameters', `minBy`, `maxBy`, `countBy`,
+`sumBy`, `toMap` and `keyedBy`; `sum`, `min`, `max`, `average` and `toSet` ask more of `T` than the
+trait does, which a trait's method cannot, and stay the array's, after `collect()`.

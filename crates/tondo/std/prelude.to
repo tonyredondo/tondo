@@ -801,7 +801,8 @@ pub fn Array[T].filter(self, keep: fn(T): Bool): Array[T] {
 }
 
 /// The elements of the arrays the function gives for each element, in
-/// order.
+/// order. It flattens an array of arrays, which has no `flatten` of its own:
+/// `[[1, 2], [3]].flatMap((inner) { inner })` is `[1, 2, 3]`.
 pub fn Array[T].flatMap[U](self, transform: fn(T): Array[U]): Array[U] {
     var out: Array[U] = []
     for item in self {
@@ -1129,6 +1130,195 @@ pub fn Array[T].partition(self, predicate: fn(T): Bool): (Array[T], Array[T]) {
     (passed, failed)
 }
 
+/// The first element of the smallest key, or `none` when the array is
+/// empty; `key` is called once for each element:
+/// `users.minBy((user) { user.age })` is the youngest.
+pub fn Array[T].minBy[K: Ordered](self, key: fn(T): K): T? {
+    var found: (T, K)? = none
+    for item in self {
+        let k = key(item)
+        found = match found {
+            some((best, least)) if least.compare(k) <= 0 => (best, least)
+            _ => (item, k)
+        }
+    }
+    match found {
+        some((best, _)) => best
+        none => none
+    }
+}
+
+/// The first element of the largest key, or `none` when the array is
+/// empty; `key` is called once for each element:
+/// `users.maxBy((user) { user.age })` is the oldest.
+pub fn Array[T].maxBy[K: Ordered](self, key: fn(T): K): T? {
+    var found: (T, K)? = none
+    for item in self {
+        let k = key(item)
+        found = match found {
+            some((best, most)) if most.compare(k) >= 0 => (best, most)
+            _ => (item, k)
+        }
+    }
+    match found {
+        some((best, _)) => best
+        none => none
+    }
+}
+
+/// The first element of each key, in order, as `unique` keeps the first of
+/// equal elements: `["ab", "ac", "b"].uniqueBy((w) { w[0] })` is
+/// `["ab", "b"]`.
+pub fn Array[T].uniqueBy[K: Key](self, key: fn(T): K): Array[T] {
+    var seen: Set[K] = Set[]
+    var out: Array[T] = []
+    for item in self {
+        if seen.insert(key(item)) {
+            out.push(item)
+        }
+    }
+    out
+}
+
+/// The elements before the first that fails the test:
+/// `[1, 2, 5, 1].takeWhile((n) { n < 3 })` is `[1, 2]`.
+pub fn Array[T].takeWhile(self, predicate: fn(T): Bool): Array[T] {
+    self[:self.findIndex((item) { not predicate(item) }) ?? self.length()]
+}
+
+/// The first element that fails the test and all after it, what
+/// `takeWhile` leaves: `[1, 2, 5, 1].dropWhile((n) { n < 3 })` is `[5, 1]`.
+pub fn Array[T].dropWhile(self, predicate: fn(T): Bool): Array[T] {
+    self[self.findIndex((item) { not predicate(item) }) ?? self.length():]
+}
+
+/// A map of the pair each element gives, in the order the keys first
+/// appear; of a key given twice, the last value:
+/// `users.toMap((user) { (user.id, user.name) })`.
+pub fn Array[T].toMap[K: Key, V](self, entry: fn(T): (K, V)): Map[K, V] {
+    var out: Map[K, V] = [:]
+    for item in self {
+        let (k, v) = entry(item)
+        out[k] = v
+    }
+    out
+}
+
+/// The elements by a key of each, in the order the keys first appear; of a
+/// key given twice, the last element: `users.keyedBy((user) { user.id })`.
+pub fn Array[T].keyedBy[K: Key](self, key: fn(T): K): Map[K, T] {
+    var out: Map[K, T] = [:]
+    for item in self {
+        out[key(item)] = item
+    }
+    out
+}
+
+/// How many elements have each key, in the order the keys first appear:
+/// `["a", "bb", "c"].countBy((w) { w.length() })` is `[1: 2, 2: 1]`.
+pub fn Array[T].countBy[K: Key](self, key: fn(T): K): Map[K, Int] {
+    var out: Map[K, Int] = [:]
+    for item in self {
+        out[key(item), default: 0] += 1
+    }
+    out
+}
+
+/// The sum of `value` of each element, zero for an empty array; floats add
+/// in the order 18.5 fixes, as `sum`: `orders.sumBy((o) { o.total })`.
+pub fn Array[T].sumBy[N: Additive](self, value: fn(T): N): N {
+    self.map(value).sum()
+}
+
+/// The sum divided by the length, or `none` when the array is empty:
+/// `[1.0, 2.0, 6.0].average()` is `3.0`. Of integers, which it would
+/// round, divide the `sum()` as floats.
+pub fn Array[T: Fractional].average(self): T? {
+    if self.isEmpty() {
+        return none
+    }
+    self.sum() / Number.fromInt[T](self.length())
+}
+
+/// The average of `value` of each element, or `none` when the array is
+/// empty: `readings.averageBy((r) { r.celsius })`.
+pub fn Array[T].averageBy[N: Fractional](self, value: fn(T): N): N? {
+    self.map(value).average()
+}
+
+/// The value `combine` builds after each element, from `initial`: as many
+/// values as elements, `initial` not among them.
+/// `[1, 2, 3].scan(0, (total, n) { total + n })` is `[1, 3, 6]`.
+pub fn Array[T].scan[A](self, initial: A, combine: fn(A, T): A): Array[A] {
+    var out: Array[A] = []
+    var total = initial
+    for item in self {
+        total = combine(total, item)
+        out.push(total)
+    }
+    out
+}
+
+/// The last element that passes the test.
+pub fn Array[T].findLast(self, predicate: fn(T): Bool): T? {
+    var index = self.length() - 1
+    for index >= 0 {
+        if predicate(self[index]) {
+            return self[index]
+        }
+        index -= 1
+    }
+    none
+}
+
+/// The index of the last element that passes the test.
+pub fn Array[T].findLastIndex(self, predicate: fn(T): Bool): Int? {
+    var index = self.length() - 1
+    for index >= 0 {
+        if predicate(self[index]) {
+            return index
+        }
+        index -= 1
+    }
+    none
+}
+
+/// The index of the first element equal to `value`:
+/// `["a", "b", "a"].indexOf("a")` is `0`.
+pub fn Array[T: Equatable].indexOf(self, value: T): Int? {
+    for index in 0..self.length() {
+        if self[index] == value {
+            return index
+        }
+    }
+    none
+}
+
+/// Each element paired with each of `other` that has the same key, in the
+/// order of the array and then of `other`, as the inner join of two
+/// tables; an element with no pair is left out:
+/// `orders.joinBy(users, (order) { order.user }, (user) { user.id })`.
+pub fn Array[T].joinBy[U, K: Key](self, other: Array[U], key: fn(T): K, otherKey: fn(U): K): Array[(T, U)] {
+    let byKey = other.groupBy(otherKey)
+    var out: Array[(T, U)] = []
+    for item in self {
+        for paired in byKey[key(item)] ?? [] {
+            out.push((item, paired))
+        }
+    }
+    out
+}
+
+/// The set of the elements, in the order they first appear:
+/// `["b", "a", "b"].toSet()` is `Set["b", "a"]`.
+pub fn Array[T: Key].toSet(self): Set[T] {
+    var out: Set[T] = Set[]
+    for item in self {
+        out.insert(item)
+    }
+    out
+}
+
 /// The elements as text, with `separator` between them.
 pub fn Array[T: Display].join(self, separator: String): String {
     textNative.joined(self, separator)
@@ -1384,6 +1574,80 @@ pub trait Iterator[T] {
         for item in cursor {
             action(item)
         }
+    }
+
+    /// The first element of the smallest key, or `none` when there is none,
+    /// as `Array.minBy`.
+    fn minBy[K: Ordered](self, key: fn(T): K): T? {
+        let cursor = self
+        var found: (T, K)? = none
+        for item in cursor {
+            let k = key(item)
+            found = match found {
+                some((best, least)) if least.compare(k) <= 0 => (best, least)
+                _ => (item, k)
+            }
+        }
+        match found {
+            some((best, _)) => best
+            none => none
+        }
+    }
+
+    /// The first element of the largest key, or `none` when there is none,
+    /// as `Array.maxBy`.
+    fn maxBy[K: Ordered](self, key: fn(T): K): T? {
+        let cursor = self
+        var found: (T, K)? = none
+        for item in cursor {
+            let k = key(item)
+            found = match found {
+                some((best, most)) if most.compare(k) >= 0 => (best, most)
+                _ => (item, k)
+            }
+        }
+        match found {
+            some((best, _)) => best
+            none => none
+        }
+    }
+
+    /// How many elements have each key, as `Array.countBy`.
+    fn countBy[K: Key](self, key: fn(T): K): Map[K, Int] {
+        let cursor = self
+        var out: Map[K, Int] = [:]
+        for item in cursor {
+            out[key(item), default: 0] += 1
+        }
+        out
+    }
+
+    /// The sum of `value` of each element, as `Array.sumBy`. The sum,
+    /// smallest, largest and average of the elements themselves, which ask
+    /// more of `T`, are the array's: `collect()` first.
+    fn sumBy[N: Additive](self, value: fn(T): N): N {
+        self.map(value).collect().sum()
+    }
+
+    /// A map of the pair each element gives, as `Array.toMap`.
+    fn toMap[K: Key, V](self, entry: fn(T): (K, V)): Map[K, V] {
+        let cursor = self
+        var out: Map[K, V] = [:]
+        for item in cursor {
+            let (k, v) = entry(item)
+            out[k] = v
+        }
+        out
+    }
+
+    /// The elements by a key of each, as `Array.keyedBy`.
+    fn keyedBy[K: Key](self, key: fn(T): K): Map[K, T] {
+        let cursor = self
+        var out: Map[K, T] = [:]
+        for item in cursor {
+            out[key(item)] = item
+        }
+        out
     }
 }
 

@@ -8,7 +8,7 @@
 
 `tondo api Array` shows the same in a terminal.
 
-- [Array](#array): [`Array.first`](#arrayfirst), [`Array.last`](#arraylast), [`Array.map`](#arraymap), [`Array.filter`](#arrayfilter), [`Array.flatMap`](#arrayflatmap), [`Array.reduce`](#arrayreduce), [`Array.contains`](#arraycontains), [`Array.any`](#arrayany), [`Array.all`](#arrayall), [`Array.find`](#arrayfind), [`Array.findIndex`](#arrayfindindex), [`Array.count`](#arraycount), [`Array.sum`](#arraysum), [`Array.min`](#arraymin), [`Array.max`](#arraymax), [`Array.sorted`](#arraysorted), [`Array.sortedBy`](#arraysortedby), [`Array.sortedWith`](#arraysortedwith), [`Array.reversed`](#arrayreversed), [`Array.replaced`](#arrayreplaced), [`Array.unique`](#arrayunique), [`Array.take`](#arraytake), [`Array.drop`](#arraydrop), [`Array.zip`](#arrayzip), [`Array.enumerate`](#arrayenumerate), [`Array.chunks`](#arraychunks), [`Array.windows`](#arraywindows), [`Array.groupBy`](#arraygroupby), [`Array.partition`](#arraypartition), [`Array.join`](#arrayjoin), [`Array.sort`](#arraysort), [`Array.sortBy`](#arraysortby), [`Array.reverse`](#arrayreverse), [`Array.swap`](#arrayswap), [`Array.retain`](#arrayretain), [`Array.extend`](#arrayextend), [`Array.iter`](#arrayiter), [`Array.length`](#arraylength), [`Array.isEmpty`](#arrayisempty), [`Array.get`](#arrayget), [`Array.slice`](#arrayslice), [`Array.concat`](#arrayconcat), [`Array.repeat`](#arrayrepeat), [`Array.push`](#arraypush), [`Array.pop`](#arraypop), [`Array.insert`](#arrayinsert), [`Array.removeAt`](#arrayremoveat), [`Array.clear`](#arrayclear)
+- [Array](#array): [`Array.first`](#arrayfirst), [`Array.last`](#arraylast), [`Array.map`](#arraymap), [`Array.filter`](#arrayfilter), [`Array.flatMap`](#arrayflatmap), [`Array.reduce`](#arrayreduce), [`Array.contains`](#arraycontains), [`Array.any`](#arrayany), [`Array.all`](#arrayall), [`Array.find`](#arrayfind), [`Array.findIndex`](#arrayfindindex), [`Array.count`](#arraycount), [`Array.sum`](#arraysum), [`Array.min`](#arraymin), [`Array.max`](#arraymax), [`Array.sorted`](#arraysorted), [`Array.sortedBy`](#arraysortedby), [`Array.sortedWith`](#arraysortedwith), [`Array.reversed`](#arrayreversed), [`Array.replaced`](#arrayreplaced), [`Array.unique`](#arrayunique), [`Array.take`](#arraytake), [`Array.drop`](#arraydrop), [`Array.zip`](#arrayzip), [`Array.enumerate`](#arrayenumerate), [`Array.chunks`](#arraychunks), [`Array.windows`](#arraywindows), [`Array.groupBy`](#arraygroupby), [`Array.partition`](#arraypartition), [`Array.minBy`](#arrayminby), [`Array.maxBy`](#arraymaxby), [`Array.uniqueBy`](#arrayuniqueby), [`Array.takeWhile`](#arraytakewhile), [`Array.dropWhile`](#arraydropwhile), [`Array.toMap`](#arraytomap), [`Array.keyedBy`](#arraykeyedby), [`Array.countBy`](#arraycountby), [`Array.sumBy`](#arraysumby), [`Array.average`](#arrayaverage), [`Array.averageBy`](#arrayaverageby), [`Array.scan`](#arrayscan), [`Array.findLast`](#arrayfindlast), [`Array.findLastIndex`](#arrayfindlastindex), [`Array.indexOf`](#arrayindexof), [`Array.joinBy`](#arrayjoinby), [`Array.toSet`](#arraytoset), [`Array.join`](#arrayjoin), [`Array.sort`](#arraysort), [`Array.sortBy`](#arraysortby), [`Array.reverse`](#arrayreverse), [`Array.swap`](#arrayswap), [`Array.retain`](#arrayretain), [`Array.extend`](#arrayextend), [`Array.iter`](#arrayiter), [`Array.length`](#arraylength), [`Array.isEmpty`](#arrayisempty), [`Array.get`](#arrayget), [`Array.slice`](#arrayslice), [`Array.concat`](#arrayconcat), [`Array.repeat`](#arrayrepeat), [`Array.push`](#arraypush), [`Array.pop`](#arraypop), [`Array.insert`](#arrayinsert), [`Array.removeAt`](#arrayremoveat), [`Array.clear`](#arrayclear)
 
 ### Array
 
@@ -51,7 +51,8 @@ pub fn Array[T].flatMap[U](self, transform: fn(T): Array[U]): Array[U]
 ```
 
 The elements of the arrays the function gives for each element, in
-order.
+order. It flattens an array of arrays, which has no `flatten` of its own:
+`[[1, 2], [3]].flatMap((inner) { inner })` is `[1, 2, 3]`.
 
 #### Array.reduce
 
@@ -255,6 +256,170 @@ pub fn Array[T].partition(self, predicate: fn(T): Bool): (Array[T], Array[T])
 ```
 
 The elements that pass the test, and those that do not.
+
+#### Array.minBy
+
+```tondo
+pub fn Array[T].minBy[K: Ordered](self, key: fn(T): K): T?
+```
+
+The first element of the smallest key, or `none` when the array is
+empty; `key` is called once for each element:
+`users.minBy((user) { user.age })` is the youngest.
+
+#### Array.maxBy
+
+```tondo
+pub fn Array[T].maxBy[K: Ordered](self, key: fn(T): K): T?
+```
+
+The first element of the largest key, or `none` when the array is
+empty; `key` is called once for each element:
+`users.maxBy((user) { user.age })` is the oldest.
+
+#### Array.uniqueBy
+
+```tondo
+pub fn Array[T].uniqueBy[K: Key](self, key: fn(T): K): Array[T]
+```
+
+The first element of each key, in order, as `unique` keeps the first of
+equal elements: `["ab", "ac", "b"].uniqueBy((w) { w[0] })` is
+`["ab", "b"]`.
+
+#### Array.takeWhile
+
+```tondo
+pub fn Array[T].takeWhile(self, predicate: fn(T): Bool): Array[T]
+```
+
+The elements before the first that fails the test:
+`[1, 2, 5, 1].takeWhile((n) { n < 3 })` is `[1, 2]`.
+
+#### Array.dropWhile
+
+```tondo
+pub fn Array[T].dropWhile(self, predicate: fn(T): Bool): Array[T]
+```
+
+The first element that fails the test and all after it, what
+`takeWhile` leaves: `[1, 2, 5, 1].dropWhile((n) { n < 3 })` is `[5, 1]`.
+
+#### Array.toMap
+
+```tondo
+pub fn Array[T].toMap[K: Key, V](self, entry: fn(T): (K, V)): Map[K, V]
+```
+
+A map of the pair each element gives, in the order the keys first
+appear; of a key given twice, the last value:
+`users.toMap((user) { (user.id, user.name) })`.
+
+#### Array.keyedBy
+
+```tondo
+pub fn Array[T].keyedBy[K: Key](self, key: fn(T): K): Map[K, T]
+```
+
+The elements by a key of each, in the order the keys first appear; of a
+key given twice, the last element: `users.keyedBy((user) { user.id })`.
+
+#### Array.countBy
+
+```tondo
+pub fn Array[T].countBy[K: Key](self, key: fn(T): K): Map[K, Int]
+```
+
+How many elements have each key, in the order the keys first appear:
+`["a", "bb", "c"].countBy((w) { w.length() })` is `[1: 2, 2: 1]`.
+
+#### Array.sumBy
+
+```tondo
+pub fn Array[T].sumBy[N: Additive](self, value: fn(T): N): N
+```
+
+The sum of `value` of each element, zero for an empty array; floats add
+in the order 18.5 fixes, as `sum`: `orders.sumBy((o) { o.total })`.
+
+#### Array.average
+
+```tondo
+pub fn Array[T: Fractional].average(self): T?
+```
+
+The sum divided by the length, or `none` when the array is empty:
+`[1.0, 2.0, 6.0].average()` is `3.0`. Of integers, which it would
+round, divide the `sum()` as floats.
+
+#### Array.averageBy
+
+```tondo
+pub fn Array[T].averageBy[N: Fractional](self, value: fn(T): N): N?
+```
+
+The average of `value` of each element, or `none` when the array is
+empty: `readings.averageBy((r) { r.celsius })`.
+
+#### Array.scan
+
+```tondo
+pub fn Array[T].scan[A](self, initial: A, combine: fn(A, T): A): Array[A]
+```
+
+The value `combine` builds after each element, from `initial`: as many
+values as elements, `initial` not among them.
+`[1, 2, 3].scan(0, (total, n) { total + n })` is `[1, 3, 6]`.
+
+#### Array.findLast
+
+```tondo
+pub fn Array[T].findLast(self, predicate: fn(T): Bool): T?
+```
+
+The last element that passes the test.
+
+#### Array.findLastIndex
+
+```tondo
+pub fn Array[T].findLastIndex(self, predicate: fn(T): Bool): Int?
+```
+
+The index of the last element that passes the test.
+
+#### Array.indexOf
+
+```tondo
+pub fn Array[T: Equatable].indexOf(self, value: T): Int?
+```
+
+The index of the first element equal to `value`:
+`["a", "b", "a"].indexOf("a")` is `0`.
+
+#### Array.joinBy
+
+```tondo
+pub fn Array[T].joinBy[U, K: Key](
+    self,
+    other: Array[U],
+    key: fn(T): K,
+    otherKey: fn(U): K,
+): Array[(T, U)]
+```
+
+Each element paired with each of `other` that has the same key, in the
+order of the array and then of `other`, as the inner join of two
+tables; an element with no pair is left out:
+`orders.joinBy(users, (order) { order.user }, (user) { user.id })`.
+
+#### Array.toSet
+
+```tondo
+pub fn Array[T: Key].toSet(self): Set[T]
+```
+
+The set of the elements, in the order they first appear:
+`["b", "a", "b"].toSet()` is `Set["b", "a"]`.
 
 #### Array.join
 

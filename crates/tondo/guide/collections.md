@@ -64,6 +64,27 @@ fn main() {
 }
 ```
 
+By a key of each element, as LINQ and the like ask it: `minBy`, `maxBy`,
+`uniqueBy`, `countBy`, `sumBy`, `averageBy`, `keyedBy`, `toMap`, and
+`joinBy`, which pairs two arrays by their keys as a database joins tables;
+then `takeWhile`, `dropWhile`, `scan`, `findLast`, `indexOf`, `toSet` and
+`average`. There is no `flatten`: `flatMap((inner) { inner })` is it.
+
+```tondo
+import std.console
+
+pub type Sale = { product: String, amount: Float }
+
+fn main() {
+    let sales = [Sale { product: "pen", amount: 3.0 }, Sale { product: "ink", amount: 5.0 }, Sale { product: "pen", amount: 4.5 }]
+    console.println("{sales.countBy((sale) { sale.product })} {sales.sumBy((sale) { sale.amount })}")   // [pen: 2, ink: 1] 12.5
+    let prices = [Sale { product: "pen", amount: 1.5 }]
+    for (sale, price) in sales.joinBy(prices, (sale) { sale.product }, (price) { price.product }) {
+        console.println("{sale.amount / price.amount} pens")                                        // 2.0 pens, then 3.0 pens
+    }
+}
+```
+
 `sum` of floats adds in partial sums, each element into the one of its place,
 an order every machine gives alike and vectors compute fast: it can differ
 in the last bits from adding left to right. `math.dot(a, b)` adds products the

@@ -1,0 +1,99 @@
+// The query methods of an array (standard library 14.5): by a key, while a
+// test holds, into maps and sets, sums and averages, running totals, from
+// the end, and the join of two arrays; the ones that end a chain on an
+// iterator too. Each empty array gives what it should.
+
+import std.console
+
+type Order = {
+    user: Int
+    total: Float
+}
+
+type User = {
+    id: Int
+    name: String
+}
+
+fn main() {
+    let words = ["apple", "bee", "cat", "avocado", "be"]
+    console.println("{words.minBy((w) { w.length() })} {words.maxBy((w) { w.length() })}")
+    console.println("{words.uniqueBy((w) { w[0] })}")
+    let numbers = [1, 2, 5, 1]
+    console.println("{numbers.takeWhile((n) { n < 3 })} {numbers.dropWhile((n) { n < 3 })}")
+    console.println(
+        "{numbers.takeWhile((n) { n < 3 }).concat(numbers.dropWhile((n) { n < 3 })) == numbers}",
+    )
+    // Of a key given twice, the last.
+    console.println("{words.toMap((w) { (w[0], w) })} {words.keyedBy((w) { w.length() })}")
+    console.println("{words.countBy((w) { w[0] })} {numbers.sumBy((n) { n * 10 })}")
+    console.println("{[1.0, 2.0, 6.0].average()} {[1.5].averageBy((x) { x * 2.0 })}")
+    console.println("{[1, 2, 3].scan(0, (total, n) { total + n })}")
+    console.println(
+        "{numbers.findLast((n) { n < 3 })} {numbers.findLastIndex((n) { n < 3 })} {numbers.indexOf(5)}",
+    )
+    console.println("{["b", "a", "b"].toSet()} {[[1, 2], [3]].flatMap((inner) { inner })}")
+
+    let users = [User { id: 1, name: "ana" }, User { id: 2, name: "bo" }]
+    let orders = [
+        Order { user: 2, total: 3.5 },
+        Order { user: 1, total: 1.0 },
+        Order { user: 2, total: 2.0 },
+        Order { user: 3, total: 9.0 },
+    ]
+    for (order, user) in orders.joinBy(users, (o) { o.user }, (u) { u.id }) {
+        console.println("{user.name} {order.total}")
+    }
+    let nobody: Array[User] = []
+    console.println(
+        "{orders.joinBy(nobody, (o) { o.user }, (u) { u.id }).length()} {orders.sumBy((o) { o.total })}",
+    )
+
+    // Ending a chain without collecting it.
+    let evens = [3, 1, 4, 1, 5, 9, 2, 6].iter().filter((n) { n % 2 == 0 })
+    console.println(
+        "{evens.minBy((n) { n })} {evens.maxBy((n) { n })} {evens.countBy((n) { n > 3 })}",
+    )
+    console.println(
+        "{evens.sumBy((n) { n })} {evens.toMap((n) { (n, n * n) })} {evens.keyedBy((n) { n % 4 })}",
+    )
+
+    let empty: Array[Float] = []
+    console.println(
+        "{empty.minBy((x) { x })} {empty.maxBy((x) { x })} {empty.uniqueBy((x) { x > 0.0 })}",
+    )
+    console.println(
+        "{empty.takeWhile((x) { x > 0.0 })} {empty.dropWhile((x) { x > 0.0 })} {empty.toMap((x) { (1, x) })}",
+    )
+    console.println(
+        "{empty.keyedBy((_) { 1 })} {empty.countBy((_) { 1 })} {empty.sumBy((x) { x })} {empty.average()}",
+    )
+    console.println(
+        "{empty.averageBy((x) { x })} {empty.scan(0.0, (a, x) { a + x })} {empty.findLast((_) { true })}",
+    )
+    console.println(
+        "{empty.findLastIndex((_) { true })} {empty.indexOf(1.0)} {empty.iter().minBy((x) { x })}",
+    )
+}
+
+// expect-stdout: some(be) some(avocado)
+// expect-stdout: [apple, bee, cat]
+// expect-stdout: [1, 2] [5, 1]
+// expect-stdout: true
+// expect-stdout: [a: avocado, b: be, c: cat] [5: apple, 3: cat, 7: avocado, 2: be]
+// expect-stdout: [a: 2, b: 2, c: 1] 90
+// expect-stdout: some(3.0) some(3.0)
+// expect-stdout: [1, 3, 6]
+// expect-stdout: some(1) some(3) some(2)
+// expect-stdout: Set[b, a] [1, 2, 3]
+// expect-stdout: bo 3.5
+// expect-stdout: ana 1.0
+// expect-stdout: bo 2.0
+// expect-stdout: 0 15.5
+// expect-stdout: some(2) some(6) [true: 2, false: 1]
+// expect-stdout: 12 [4: 16, 2: 4, 6: 36] [0: 4, 2: 6]
+// expect-stdout: none none []
+// expect-stdout: [] [] [:]
+// expect-stdout: [:] [:] 0.0 none
+// expect-stdout: none [] none
+// expect-stdout: none none none

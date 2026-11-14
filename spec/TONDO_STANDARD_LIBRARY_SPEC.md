@@ -2921,6 +2921,23 @@ fn chunks(self, size: Int): Array[Array[T]]
 fn windows(self, size: Int): Array[Array[T]]
 fn groupBy[K: Key](self, key: fn(T): K): Map[K, Array[T]]
 fn partition(self, predicate: fn(T): Bool): (Array[T], Array[T])
+fn minBy[K: Ordered](self, key: fn(T): K): T?
+fn maxBy[K: Ordered](self, key: fn(T): K): T?
+fn uniqueBy[K: Key](self, key: fn(T): K): Array[T]
+fn takeWhile(self, predicate: fn(T): Bool): Array[T]
+fn dropWhile(self, predicate: fn(T): Bool): Array[T]
+fn toMap[K: Key, V](self, entry: fn(T): (K, V)): Map[K, V]
+fn keyedBy[K: Key](self, key: fn(T): K): Map[K, T]
+fn countBy[K: Key](self, key: fn(T): K): Map[K, Int]
+fn sumBy[N: Additive](self, value: fn(T): N): N
+fn average(self): T?                                // T: Fractional
+fn averageBy[N: Fractional](self, value: fn(T): N): N?
+fn scan[A](self, initial: A, combine: fn(A, T): A): Array[A]
+fn findLast(self, predicate: fn(T): Bool): T?
+fn findLastIndex(self, predicate: fn(T): Bool): Int?
+fn indexOf(self, value: T): Int?                    // T: Equatable
+fn joinBy[U, K: Key](self, other: Array[U], key: fn(T): K, otherKey: fn(U): K): Array[(T, U)]
+fn toSet(self): Set[T]                              // T: Key
 fn join(self, separator: String): String            // T: Display
 fn sort(mut self)                                   // T: Ordered
 fn sortBy[K: Ordered](mut self, key: fn(T): K)
@@ -2930,6 +2947,32 @@ fn retain(var self, keep: fn(T): Bool)
 fn extend(var self, other: Array[T])
 fn iter(self): ArrayIterator[T]                     // Iterator[T], perezoso
 ~~~
+
+- `minBy` y `maxBy` dan el primer elemento de la clave menor o mayor, `none`
+  con un array vacío, y llaman a `key` una vez por elemento. `uniqueBy`
+  conserva el primer elemento de cada clave, en orden, como `unique` con los
+  elementos.
+- `takeWhile` da los elementos antes del primero que no pasa la prueba, y
+  `dropWhile` ese y todos los siguientes: `a.takeWhile(p).concat(a.dropWhile(p))`
+  es `a`.
+- `toMap` y `keyedBy` hacen un map en el orden en que aparece cada clave por
+  primera vez; de una clave repetida gana la última, como en `Map.merge`.
+  `countBy` da cuántos elementos tiene cada clave.
+- `sumBy` es la suma de `value` de cada elemento, el cero de `N` con un array
+  vacío; los floats se suman en el orden de 18.5 del lenguaje, como `sum`.
+  `average` es la suma entre la longitud, `none` con un array vacío; con
+  enteros es el error `E1105`, que dice cómo dividir su `sum()` como floats, y
+  `averageBy` igual.
+- `scan` da el valor acumulado tras cada elemento, tantos como elementos, sin
+  `initial`: `[1, 2, 3].scan(0, (a, x) { a + x })` es `[1, 3, 6]`.
+- `findLast` y `findLastIndex` buscan desde el final; `indexOf` da el primer
+  índice de un elemento igual a `value`.
+- `joinBy` empareja cada elemento con cada uno de `other` de la misma clave,
+  en el orden del array y luego de `other`: la unión interna de dos tablas.
+  Un elemento sin pareja queda fuera.
+- `toSet` da el set de los elementos, en el orden en que aparecen.
+- No hay `flatten`, que sería un método de una sola instancia, `Array[Array[T]]`:
+  `flatMap((inner) { inner })` aplana.
 
 `Map[K, V]`: `mapValues(fn(V): W): Map[K, W]`,
 `filter(fn(K, V): Bool): Map[K, V]` y `merge(other): Map[K, V]`, donde gana
@@ -2949,8 +2992,11 @@ programa que lo implementan:
 - adaptadores perezosos, que solo piden elementos a su fuente cuando se les
   piden los suyos: `map`, `filter`, `take`, `skip`, `takeWhile`, `skipWhile`,
   `enumerate`, `zip`, `chain` y `flatMap`;
-- consumidores: `collect(): Array[T]`, `count`, `any`, `all`, `find`, `reduce` y
-  `forEach`. Para sumar, ordenar o unir se usa `collect()` y el método del array.
+- consumidores: `collect(): Array[T]`, `count`, `any`, `all`, `find`, `reduce`,
+  `forEach`, y `minBy`, `maxBy`, `countBy`, `sumBy`, `toMap` y `keyedBy`, como
+  los del array, que leen el iterador una vez. Para sumar, ordenar, unir o
+  hacer un set de los elementos mismos, que piden más de `T` de lo que pide el
+  trait, se usa `collect()` y el método del array.
 
 Estos métodos trabajan sobre una copia del iterador, así que su tipo es `Copy`;
 con uno afín, el error dice que se recorra con `for`.

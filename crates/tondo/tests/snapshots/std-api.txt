@@ -48,6 +48,9 @@ pub enum ByteOrder {
 pub fn Array[T: Additive].sum(self): T
 pub fn Array[T: Display].join(self, separator: String): String
 pub fn Array[T: Equatable].contains(self, value: T): Bool
+pub fn Array[T: Equatable].indexOf(self, value: T): Int?
+pub fn Array[T: Fractional].average(self): T?
+pub fn Array[T: Key].toSet(self): Set[T]
 pub fn Array[T: Key].unique(self): Array[T]
 pub fn Array[T: Ordered].max(self): T?
 pub fn Array[T: Ordered].min(self): T?
@@ -55,31 +58,50 @@ pub fn Array[T: Ordered].sort(mut self)
 pub fn Array[T: Ordered].sorted(self): Array[T]
 pub fn Array[T].all(self, predicate: fn(T): Bool): Bool
 pub fn Array[T].any(self, predicate: fn(T): Bool): Bool
+pub fn Array[T].averageBy[N: Fractional](self, value: fn(T): N): N?
 pub fn Array[T].chunks(self, size: Int): Array[Array[T]]
 pub fn Array[T].count(self, predicate: fn(T): Bool): Int
+pub fn Array[T].countBy[K: Key](self, key: fn(T): K): Map[K, Int]
 pub fn Array[T].drop(self, count: Int): Array[T]
+pub fn Array[T].dropWhile(self, predicate: fn(T): Bool): Array[T]
 pub fn Array[T].enumerate(self): Array[(Int, T)]
 pub fn Array[T].extend(var self, other: Array[T])
 pub fn Array[T].filter(self, keep: fn(T): Bool): Array[T]
 pub fn Array[T].find(self, predicate: fn(T): Bool): T?
 pub fn Array[T].findIndex(self, predicate: fn(T): Bool): Int?
+pub fn Array[T].findLast(self, predicate: fn(T): Bool): T?
+pub fn Array[T].findLastIndex(self, predicate: fn(T): Bool): Int?
 pub fn Array[T].first(self): T?
 pub fn Array[T].flatMap[U](self, transform: fn(T): Array[U]): Array[U]
 pub fn Array[T].groupBy[K: Key](self, key: fn(T): K): Map[K, Array[T]]
 pub fn Array[T].iter(self): ArrayIterator[T]
+pub fn Array[T].joinBy[U, K: Key](
+    self,
+    other: Array[U],
+    key: fn(T): K,
+    otherKey: fn(U): K,
+): Array[(T, U)]
+pub fn Array[T].keyedBy[K: Key](self, key: fn(T): K): Map[K, T]
 pub fn Array[T].last(self): T?
 pub fn Array[T].map[U](self, transform: fn(T): U): Array[U]
+pub fn Array[T].maxBy[K: Ordered](self, key: fn(T): K): T?
+pub fn Array[T].minBy[K: Ordered](self, key: fn(T): K): T?
 pub fn Array[T].partition(self, predicate: fn(T): Bool): (Array[T], Array[T])
 pub fn Array[T].reduce[A](self, initial: A, combine: fn(A, T): A): A
 pub fn Array[T].replaced(self, index: Int, item: T): Array[T]
 pub fn Array[T].retain(var self, keep: fn(T): Bool)
 pub fn Array[T].reverse(mut self)
 pub fn Array[T].reversed(self): Array[T]
+pub fn Array[T].scan[A](self, initial: A, combine: fn(A, T): A): Array[A]
 pub fn Array[T].sortBy[K: Ordered](mut self, key: fn(T): K)
 pub fn Array[T].sortedBy[K: Ordered](self, key: fn(T): K): Array[T]
 pub fn Array[T].sortedWith(self, compare: fn(T, T): Int): Array[T]
+pub fn Array[T].sumBy[N: Additive](self, value: fn(T): N): N
 pub fn Array[T].swap(mut self, i: Int, j: Int)
 pub fn Array[T].take(self, count: Int): Array[T]
+pub fn Array[T].takeWhile(self, predicate: fn(T): Bool): Array[T]
+pub fn Array[T].toMap[K: Key, V](self, entry: fn(T): (K, V)): Map[K, V]
+pub fn Array[T].uniqueBy[K: Key](self, key: fn(T): K): Array[T]
 pub fn Array[T].windows(self, size: Int): Array[Array[T]]
 pub fn Array[T].zip[U](self, other: Array[U]): Array[(T, U)]
 pub fn Char.code(self): Int
@@ -202,6 +224,28 @@ pub trait Iterator[T] {
     fn reduce[A](self, initial: A, combine: fn(A, T): A): A
 
     fn forEach(self, action: fn(T))
+
+    /// The first element of the smallest key, or `none` when there is none,
+    /// as `Array.minBy`.
+    fn minBy[K: Ordered](self, key: fn(T): K): T?
+
+    /// The first element of the largest key, or `none` when there is none,
+    /// as `Array.maxBy`.
+    fn maxBy[K: Ordered](self, key: fn(T): K): T?
+
+    /// How many elements have each key, as `Array.countBy`.
+    fn countBy[K: Key](self, key: fn(T): K): Map[K, Int]
+
+    /// The sum of `value` of each element, as `Array.sumBy`. The sum,
+    /// smallest, largest and average of the elements themselves, which ask
+    /// more of `T`, are the array's: `collect()` first.
+    fn sumBy[N: Additive](self, value: fn(T): N): N
+
+    /// A map of the pair each element gives, as `Array.toMap`.
+    fn toMap[K: Key, V](self, entry: fn(T): (K, V)): Map[K, V]
+
+    /// The elements by a key of each, as `Array.keyedBy`.
+    fn keyedBy[K: Key](self, key: fn(T): K): Map[K, T]
 }
 pub trait Number: Additive {
     fn one(): Self

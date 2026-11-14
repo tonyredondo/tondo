@@ -3094,6 +3094,13 @@ impl<'a> Checker<'a> {
                     None if signature.name.starts_with("math.Tensor") && missing == "`Fractional`" => {
                         ": its mean is of floats; for integers, divide the `sum()` as floats, as in `Float(tensor.sum()) / Float(tensor.length())`".into()
                     }
+                    // And their average (14.5).
+                    None if signature.name == "Array.average" && missing == "`Fractional`" => {
+                        ": an average is of floats; for integers, divide the `sum()` as floats, as in `Float(values.sum()) / Float(values.length())`".into()
+                    }
+                    None if signature.name == "Array.averageBy" && missing == "`Fractional`" => {
+                        ": an average is of floats; give `value` as a float, as in `averageBy((item) { Float(item.count) })`".into()
+                    }
                     None => String::new(),
                 };
                 let message = format!(
