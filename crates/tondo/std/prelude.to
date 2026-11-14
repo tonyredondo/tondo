@@ -1320,7 +1320,12 @@ fn Lanes8.add(var self, v: Float) {
 
 /// The partial sums by halves, as 18.5 adds them.
 fn Lanes8.halved(self): Float {
-    let (a0, a1, a2, a3) = (self.p0 + self.p4, self.p1 + self.p5, self.p2 + self.p6, self.p3 + self.p7)
+    let (a0, a1, a2, a3) = (
+        self.p0 + self.p4,
+        self.p1 + self.p5,
+        self.p2 + self.p6,
+        self.p3 + self.p7,
+    )
     let (b0, b1) = (a0 + a2, a1 + a3)
     b0 + b1
 }
@@ -1370,8 +1375,18 @@ fn Lanes16.add(var self, v: Float32) {
 
 /// The partial sums by halves, as 18.5 adds them.
 fn Lanes16.halved(self): Float32 {
-    let (a0, a1, a2, a3) = (self.p0 + self.p8, self.p1 + self.p9, self.p2 + self.p10, self.p3 + self.p11)
-    let (a4, a5, a6, a7) = (self.p4 + self.p12, self.p5 + self.p13, self.p6 + self.p14, self.p7 + self.p15)
+    let (a0, a1, a2, a3) = (
+        self.p0 + self.p8,
+        self.p1 + self.p9,
+        self.p2 + self.p10,
+        self.p3 + self.p11,
+    )
+    let (a4, a5, a6, a7) = (
+        self.p4 + self.p12,
+        self.p5 + self.p13,
+        self.p6 + self.p14,
+        self.p7 + self.p15,
+    )
     let (b0, b1, b2, b3) = (a0 + a4, a1 + a5, a2 + a6, a3 + a7)
     let (c0, c1) = (b0 + b2, b1 + b3)
     c0 + c1
@@ -2381,13 +2396,7 @@ impl Iterator[Char] for CharIterator {
             self.offset += 1
             return c
         }
-        self.offset += if code < 0x800 {
-            2
-        } else if code < 0x10000 {
-            3
-        } else {
-            4
-        }
+        self.offset += if code < 0x800 { 2 } else if code < 0x10000 { 3 } else { 4 }
         c
     }
 }
