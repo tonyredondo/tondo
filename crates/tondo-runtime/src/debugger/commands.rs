@@ -99,10 +99,13 @@ pub(crate) fn command(line: &str) -> Option<String> {
         "delete" => {
             let id: u32 = rest.parse().unwrap_or(0);
             let mut state = state();
+            // One that is gone, as a watch whose frame returned, is no
+            // error to a client that removes what it set.
+            let missing = !state.breakpoints.iter().any(|b| b.id == id) && !state.watches.iter().any(|w| w.id == id);
             state.breakpoints.retain(|b| b.id != id);
             unwatch(&mut state, |w| w.id == id);
             remark(table, &state);
-            format!("{{\"deleted\":{id}}}")
+            format!("{{\"deleted\":{id},\"missing\":{missing}}}")
         }
         // A program that runs goes on as it is: a stop that comes as this
         // is answered is new, and nothing asked it to go on from that one.

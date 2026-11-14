@@ -533,7 +533,7 @@ fn debugger_session() {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    let script = "break debugged.to:14\ncontinue\nlocals\nstep\nstack\nprint user\ncontext\nframe 1\nprint ada.name\nchildren names\nframe 0\nfinish\ndelete 1\ncontinue\n";
+    let script = "break debugged.to:14\ncontinue\nlocals\nstep\nstack\nprint user\ncontext\nframe 1\nprint ada.name\nchildren names\nframe 0\nfinish\ndelete 1\ndelete 1\ncontinue\n";
     std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
     drop(child.stdin.take());
     let output = child.wait_with_output().unwrap();
@@ -578,6 +578,9 @@ fn debugger_session() {
     let parts: Vec<(&str, &str)> =
         parts.iter().map(|p| (p["path"].as_str().unwrap(), p["value"].as_str().unwrap())).collect();
     assert_eq!(parts, [("names[0]", "\"a\""), ("names[1]", "\"b\"")]);
+    // A breakpoint deleted twice: the second time, there was none.
+    let deleted: Vec<&Value> = lines.iter().filter(|l| l.get("deleted").is_some()).collect();
+    assert_eq!(deleted, [&json!({ "deleted": 1, "missing": false }), &json!({ "deleted": 1, "missing": true })]);
     assert!(lines.iter().any(|l| l.get("exited").is_some()));
 }
 

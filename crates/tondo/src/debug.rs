@@ -2475,7 +2475,10 @@ impl Session {
         } else if let Some(id) = value.get("unwatched") {
             println!("watch {id} ended: {}", value["why"].as_str().unwrap_or_default());
         } else if let Some(id) = value.get("deleted") {
-            println!("breakpoint {id} removed");
+            match value["missing"].as_bool() {
+                Some(true) => println!("no breakpoint or watch has the number {id}"),
+                _ => println!("breakpoint {id} removed"),
+            }
         } else if let Some(parts) = value["children"].as_array() {
             for part in parts {
                 println!(
