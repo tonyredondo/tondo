@@ -40,6 +40,27 @@ fn long(n: Int): Int {
     padded + grown
 }
 
+/// More texts than a frame keeps, sixteen: the last goes on the heap.
+fn many(n: Int): Int {
+    "{n}a".length() +
+        "{n}b".length() +
+        "{n}c".length() +
+        "{n}d".length() +
+        "{n}e".length() +
+        "{n}f".length() +
+        "{n}g".length() +
+        "{n}h".length() +
+        "{n}i".length() +
+        "{n}j".length() +
+        "{n}k".length() +
+        "{n}l".length() +
+        "{n}m".length() +
+        "{n}n".length() +
+        "{n}o".length() +
+        "{n}p".length() +
+        "{n}q".length()
+}
+
 fn returned(n: Int): String {
     let text = "n is {n}"
     text
@@ -67,7 +88,7 @@ fn measure(text: String): Int {
 }
 
 fn main() {
-    console.println("{digits(50)} {compared(12, 345)} {long(70)}")
+    console.println("{digits(50)} {compared(12, 345)} {long(70)} {many(4)}")
     let p = Point { x: 1_000, y: -2_000 }
     console.println("{"{p.x},{p.y}".length()} {"{[p.x, p.y]}" == "[1000, -2000]"}")
     let (out, inbox) = channel[String](1)
@@ -83,10 +104,11 @@ fn main() {
     )
 }
 
-// expect-stdout: 528 equal less 152
+// expect-stdout: 528 equal less 152 34
 // expect-stdout: 10 true
 // expect-stdout: n is 123456 [item 0, item 1000, item 2000] captured 5000 some(sent 7000) a010002000 11
 // expect-optimization: 20:18 frame
-// expect-optimization: 70:21 frame
-// expect-optimization: 39:17 heap the frame holds as many as it keeps
-// expect-optimization: 44:16 heap it is returned
+// expect-optimization: 91:21 frame
+// expect-optimization: 39:17 frame
+// expect-optimization: 61:9 heap the frame holds as many as it keeps
+// expect-optimization: 65:16 heap it is returned
