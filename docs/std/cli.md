@@ -142,11 +142,72 @@ fn main() {
 ```
 
 A table's columns are a record's fields, with numbers to the right.
-[`markup`](#markup) styles text, `cli.markup("[bold red]failed[/]")`, and
-writes plain text when the output is not a terminal.
-[`progress`](#progress) shows work as it advances, and [`ask`](#ask),
-[`confirm`](#confirm), [`choose`](#choose) and [`secret`](#secret) put a
-question to whoever is at the keyboard.
+[`markup`](#markup) styles text, and a cell of a table can have styles too.
+On a terminal they are colors; in a pipe, or with `NO_COLOR`, the same
+program writes the text alone:
+
+```tondo
+import std.cli
+import std.console
+
+fn main() {
+    let up = cli.markup("[green]up[/]")
+    let down = cli.markup("[bold red]down[/]")
+    console.println(cli.markup("[bold]Services[/] [dim]at 10:42[/]"))
+    console.print(
+        cli.table(
+            [["api", up, "18204"], ["worker", up, "932"], ["mail", down, "0"]],
+            columns: ["Service", "State", "Requests"],
+        ),
+    )
+    console.println(cli.markup("[black on yellow] note [/] [yellow]mail[/] has been down for [bold]3 min[/]"))
+}
+```
+
+<img src="images/cli-styles.png" width="464" alt="A title in bold, a table with a border whose State column is green for up and red for down, and a note on a yellow ground">
+
+[`ask`](#ask), [`confirm`](#confirm) and [`secret`](#secret) put a question
+to whoever is at the keyboard, each with what an empty answer means, and
+`secret` does not show what is typed:
+
+```tondo
+import std.cli
+import std.console
+
+fn main() {
+    let name = cli.ask("Project name", default: "demo")
+    let port = cli.ask("Port", default: "8080")
+    let token = cli.secret("Token")
+    if cli.confirm("Create {name} on port {port}?") {
+        console.println(cli.markup("[green]✓[/] created [bold]{name}[/], token of {token.length()} characters kept"))
+    }
+}
+```
+
+<img src="images/cli-questions.png" width="549" alt="Four questions and their answers: a project name answered shop, a port left at its default, a token that is not shown, and a confirmation answered y">
+
+[`choose`](#choose) gives the index of one of several. On a terminal the
+arrows move and Enter takes the one marked; in a pipe the answer is its
+number and a line, so a script answers it too:
+
+```tondo
+import std.cli
+import std.console
+
+fn main() {
+    let drinks = ["tea", "coffee", "water"]
+    let chosen = cli.choose("Pick one", drinks)
+    console.println("a {drinks[chosen]}")
+}
+```
+
+<img src="images/cli-choose.png" width="396" alt="The question Pick one over tea, coffee and water, with coffee marked in bold cyan">
+
+[`progress`](#progress) shows work as it advances, a bar when the total is
+known and a spinner when it is not. `cli.progress("Copying", total: 8)`
+after five steps:
+
+<img src="images/cli-progress.png" width="464" alt="Copying, a bar filled to five eighths, and 5/8">
 
 ## Taking the terminal over
 
@@ -184,7 +245,11 @@ fn main(): !cli.TerminalError {
                 some(cli.Key.Enter) | none => break
                 _ => {}
             }
-            let next = redraws.receive() => size = next ?? size
+            let next = redraws.receive() => match next {
+                some(now) => size = now
+                // The output is no terminal: there is nothing to draw on.
+                none => break
+            }
         }
         draw(options, chosen, size)
     }
@@ -193,8 +258,11 @@ fn main(): !cli.TerminalError {
 }
 ```
 
-Down twice, Up and Enter leave `a coffee` on the terminal, under what it
-showed before the program started.
+<img src="images/cli-menu.png" width="396" alt="The three options on the alternate screen, with a mark before coffee and a rule under them">
+
+That is the screen after one Down. Down twice, Up and Enter leave
+`a coffee` on the terminal, under what it showed before the program
+started.
 
 - [`cli.Terminal()`](#terminal) takes the terminal, and fails where there is
   none, as in a pipe. With `screen: true` the program draws on the alternate
@@ -203,7 +271,9 @@ showed before the program started.
 - [`keys()`](#terminalkeys) and [`redraws()`](#redraws) are channels, so one
   `select` waits for both: a [key](#key), or a size to draw again at, which
   comes when the terminal changes its size and when the program comes back
-  from Ctrl-Z and `fg`.
+  from Ctrl-Z and `fg`. Where the output is not a terminal, as when it goes
+  to a file, there are no sizes: `redraws()` is closed and gives `none`,
+  which ends this program.
 - The terminal is given back when its value ends, by a return, a panic or a
   cancellation, and for as long as the program is suspended. None of that
   is the program's to write.
