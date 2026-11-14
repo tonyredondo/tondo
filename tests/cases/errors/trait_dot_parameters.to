@@ -1,0 +1,28 @@
+// A type that implements a trait with parameters twice, with other
+// arguments, does not choose between them by a dot: a bound names them.
+
+trait Pile[T] {
+    fn items(self): Array[T]
+}
+
+type Both = {
+    n: Int
+}
+
+impl Pile[Int] for Both {
+    fn items(self): Array[Int] {
+        [self.n]
+    }
+}
+
+impl Pile[String] for Both {
+    fn items(self): Array[String] {
+        ["{self.n}"]
+    }
+}
+
+fn main() {
+    let _ = Both { n: 1 }.items()
+}
+
+// expect-error: E1004 `items` comes from `Pile[Int]` and `Pile[String]`, which `Both` implements each: call it through a bound that names one, as `fn f[P: Pile[Int]](value: P)`

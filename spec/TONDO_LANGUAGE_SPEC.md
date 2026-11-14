@@ -3546,8 +3546,13 @@ No hay dispatch dinámico oculto. La resolución de `value.method(...)` consider
 3. Dentro del cuerpo de un `impl`, los métodos del trait que implementa, sobre
    valores de tipo `Self`.
 4. Los métodos de `Iterator[T]` sobre cualquier tipo que lo implemente.
+5. Sobre un valor concreto, los del único trait implementado que da ese
+   nombre, con los argumentos de su implementación (12.7).
 
-Una implementación de trait sobre un tipo concreto no añade sus métodos a una búsqueda abierta por punto. Fuera de esos casos, se utiliza la forma calificada `Trait.method(value, ...)` o `module.Trait.method(value, ...)`. Así, importar un módulo nuevo no puede volver ambigua una llamada existente. Las dos excepciones tampoco pueden hacerlo: dentro de un `impl` el trait implementado ya está fijado, e `Iterator` es un trait del prelude del que cada tipo tiene como máximo una implementación (10.17), de modo que `cursor.next()` siempre designa la misma operación. Una colisión entre constraints exige también la forma calificada.
+Si dos traits implementados dan el nombre, o el mismo trait con argumentos
+distintos, como `Pile[Int]` y `Pile[String]`, es `E1004`: se usa la forma
+calificada `Trait.method(value, ...)` o `module.Trait.method(value, ...)`, o un
+bound que nombre los argumentos. Dentro de un `impl` el trait implementado ya está fijado, e `Iterator` es un trait del prelude del que cada tipo tiene como máximo una implementación (10.17), de modo que `cursor.next()` siempre designa la misma operación. Una colisión entre constraints exige también la forma calificada.
 
 Una operación de trait sin receptor hace explícito el tipo implementador como primer argumento genérico de la llamada: `Decode.decode[User](bytes)`. Si el trait es genérico, sus argumentos permanecen junto a su nombre, como en `Codec[Json].decode[User](bytes)`. Los argumentos genéricos declarados por el propio método aparecen después de `Self`. El implementador nunca se infiere solo desde el resultado esperado.
 
@@ -4765,7 +4770,7 @@ trait Summary {
 fn consumeDynamic(value: Summary) {} // error: un trait no es un tipo de valor
 ~~~
 
-Sobre un parámetro `T: Summary`, `value.summarize()` resuelve por el constraint. Sobre un valor concreto, `value.summarize()` resuelve al método del propio tipo si lo tiene, de los que declara o del lenguaje, y si no al del único trait implementado que lo da; si son varios, es `E1004`, y se escribe `Summary.summarize(value)` o `module.Summary.summarize(value)`. Dentro de `impl Summary for User`, `self.summarize()` resuelve siempre al trait implementado, y `cursor.next()` a `Iterator` en cualquier tipo que lo implemente. Las implementaciones no participan en una búsqueda global de métodos por nombre.
+Sobre un parámetro `T: Summary`, `value.summarize()` resuelve por el constraint. Sobre un valor concreto, `value.summarize()` resuelve al método del propio tipo si lo tiene, de los que declara o del lenguaje, y si no al del único trait implementado que lo da, con los argumentos de su implementación si el trait tiene parámetros; si son varios, o el mismo con argumentos distintos, es `E1004`, y se escribe `Summary.summarize(value)` o `module.Summary.summarize(value)`, o se llama a través de un bound que nombre los argumentos. Dentro de `impl Summary for User`, `self.summarize()` resuelve siempre al trait implementado, y `cursor.next()` a `Iterator` en cualquier tipo que lo implemente. Las implementaciones no participan en una búsqueda global de métodos por nombre.
 
 Una colección heterogénea de comportamientos se expresa mediante:
 

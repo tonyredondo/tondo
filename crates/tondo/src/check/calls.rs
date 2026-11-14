@@ -697,14 +697,39 @@ impl<'a> Checker<'a> {
             let givers = self.traits_with(ty, &method.name);
             match givers.as_slice() {
                 [] => {}
-                [giver] => {
+                [(giver, trait_args)] => {
                     let index = self.traits[giver.0 as usize].methods.iter().position(|m| m.name == method.name);
                     let index = index.expect("a trait that has the method");
-                    return self.trait_dot_call(cx, *giver, Vec::new(), index, value, method, args, expected, span);
+                    let trait_args = trait_args.clone();
+                    return self.trait_dot_call(cx, *giver, trait_args, index, value, method, args, expected, span);
                 }
                 _ => {
-                    let name = |t: &TraitId| format!("`{}.{}(value)`", self.traits[t.0 as usize].name, method.name);
-                    let names: Vec<String> = givers.iter().map(name).collect();
+                    // The same trait more than once, with other arguments,
+                    // goes by a bound that names them.
+                    if givers.iter().all(|(t, _)| *t == givers[0].0) {
+                        let trait_name = self.traits[givers[0].0.0 as usize].name.clone();
+                        let named: Vec<String> = givers
+                            .iter()
+                            .map(|(_, a)| {
+                                let a: Vec<String> = a.iter().map(|&a| self.types.display(a)).collect();
+                                format!("`{trait_name}[{}]`", a.join(", "))
+                            })
+                            .collect();
+                        let message = format!(
+                            "`{}` comes from {}, which {} implements each: call it through a bound that names one, as `fn f[P: {}](value: P)`",
+                            method.name,
+                            named.join(" and "),
+                            self.display(ty),
+                            named[0].trim_matches('`')
+                        );
+                        self.diags.error("E1004", method.span, message);
+                        return Self::error_expr(span);
+                    }
+                    let name = |(t, _): &(TraitId, Vec<Ty>)| {
+                        format!("`{}.{}(value)`", self.traits[t.0 as usize].name, method.name)
+                    };
+                    let mut names: Vec<String> = givers.iter().map(name).collect();
+                    names.dedup();
                     let message =
                         format!("`{}` comes from more than one trait; write {}", method.name, names.join(" or "));
                     self.diags.error("E1004", method.span, message);
@@ -1520,13 +1545,49 @@ impl<'a> Checker<'a> {
     }
 
     /// The traits without parameters that give `ty` a method `name`.
-    pub(super) fn traits_with(&mut self, ty: Ty, name: &str) -> Vec<TraitId> {
+    pub(super) fn traits_with(&mut self, ty: Ty, name: &str) -> Vec<(TraitId, Vec<Ty>)> {
         let candidates: Vec<TraitId> = (0..self.traits.len() as u32)
             .map(TraitId)
-            .filter(|t| self.traits[t.0 as usize].params.is_empty())
             .filter(|t| self.traits[t.0 as usize].methods.iter().any(|m| m.name == name))
             .collect();
-        candidates.into_iter().filter(|&t| self.satisfies(ty, t, &[])).collect()
+        let mut out = Vec::new();
+        for t in candidates {
+            match self.traits[t.0 as usize].params.is_empty() {
+                true if self.satisfies(ty, t, &[]) => out.push((t, Vec::new())),
+                true => {}
+                // A trait with parameters, by the arguments of each of its
+                // implementations for the type.
+                false => out.extend(self.implemented_args(t, ty).into_iter().map(|args| (t, args))),
+            }
+        }
+        out
+    }
+
+    /// The arguments of `trait_id` that `ty`'s implementations of it give,
+    /// one list for each that holds: `[[Int]]` for `impl Pile[Int] for
+    /// Scores`.
+    fn implemented_args(&mut self, trait_id: TraitId, ty: Ty) -> Vec<Vec<Ty>> {
+        let mut found: Vec<Vec<Ty>> = Vec::new();
+        for index in self.impl_candidates(trait_id, ty) {
+            let (target, trait_args, generics) =
+                (self.impls[index].target, self.impls[index].trait_args.clone(), self.impls[index].generics.clone());
+            let mut map = HashMap::new();
+            if !self.types.matches(target, ty, &generics, &mut map) {
+                continue;
+            }
+            // Arguments the target does not fix, as `impl[T] Pile[T] for
+            // Box`, are none that a call could take.
+            let args: Vec<Ty> = trait_args.iter().map(|&a| self.types.subst(a, &map)).collect();
+            let mut left = Vec::new();
+            args.iter().for_each(|&a| self.types.params_in(a, &mut left));
+            if left.iter().any(|g| generics.contains(g)) {
+                continue;
+            }
+            if self.satisfies(ty, trait_id, &args) && !found.contains(&args) {
+                found.push(args);
+            }
+        }
+        found
     }
 
     /// Whether the language gives a type of its own a method `name`. Of the

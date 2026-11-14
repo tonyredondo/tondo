@@ -1,0 +1,30 @@
+// A value calls with a dot the method of a trait with parameters that its
+// type implements once, with the arguments of that implementation (11.5,
+// 12.7): what the trait declares and what its module declares outside it.
+
+import std.console
+
+trait Pile[T] {
+    fn items(self): Array[T]
+}
+
+fn Pile[T: Ordered].largest(self): T? {
+    self.items().max()
+}
+
+type Scores = {
+    values: Array[Int]
+}
+
+impl Pile[Int] for Scores {
+    fn items(self): Array[Int] {
+        self.values
+    }
+}
+
+fn main() {
+    let scores = Scores { values: [3, 9, 4] }
+    console.println("{scores.items()} {scores.largest()} {Pile.largest(scores)}")
+}
+
+// expect-stdout: [3, 9, 4] some(9) some(9)
