@@ -1298,7 +1298,12 @@ pub fn Array[T: Equatable].indexOf(self, value: T): Int? {
 /// order of the array and then of `other`, as the inner join of two
 /// tables; an element with no pair is left out:
 /// `orders.joinBy(users, (order) { order.user }, (user) { user.id })`.
-pub fn Array[T].joinBy[U, K: Key](self, other: Array[U], key: fn(T): K, otherKey: fn(U): K): Array[(T, U)] {
+pub fn Array[T].joinBy[U, K: Key](
+    self,
+    other: Array[U],
+    key: fn(T): K,
+    otherKey: fn(U): K,
+): Array[(T, U)] {
     let byKey = other.groupBy(otherKey)
     var out: Array[(T, U)] = []
     for item in self {
