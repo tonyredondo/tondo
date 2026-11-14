@@ -24,8 +24,18 @@ pub(super) fn stalled(queue: &Queue) -> Stalled {
     if !queue.runnable.is_empty()
         || queue.timers.peek().is_some()
         || queue.idle + pinned.count() + usize::from(queue.polling) < queue.workers
-        || HOST_WORK.load(Ordering::SeqCst) != 0
-        || MAIN_DONE.load(Ordering::SeqCst)
+    {
+        return Stalled::No;
+    }
+    // Work on the host, which may be about to end, having made its task
+    // runnable: the last to end looks again (`host_work_ended`).
+    if HOST_WORK.load(Ordering::SeqCst) != 0 {
+        HOST_WATCHED.store(true, Ordering::SeqCst);
+        if HOST_WORK.load(Ordering::SeqCst) != 0 {
+            return Stalled::No;
+        }
+    }
+    if MAIN_DONE.load(Ordering::SeqCst)
         // A reload's barrier, which the tool that holds it lets go.
         || crate::live::barrier()
         // A signal the program waits for.

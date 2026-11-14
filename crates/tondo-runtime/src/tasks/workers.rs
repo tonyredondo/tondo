@@ -317,13 +317,20 @@ pub(super) fn looks_next() -> bool {
     worker(|w| w.looks_next.replace(false))
 }
 
+/// Whether a worker found nothing but work on the host keeping the program
+/// from standing still, and sleeps on it.
+pub(super) static HOST_WATCHED: AtomicBool = AtomicBool::new(false);
+
 /// The end of work on the host, which counts down after the task it ran
 /// for is runnable, so that no worker sees a moment with neither and reports
 /// a deadlock: a worker that went to sleep meanwhile saw the work and
 /// reported none, and nothing woke it when the program came to stand still.
-/// The last work to end has a worker look again.
+/// When one sleeps on it, the last work to end has a worker look again.
 pub(crate) fn host_work_ended() {
-    if HOST_WORK.fetch_sub(1, Ordering::SeqCst) != 1 || IDLE.load(Ordering::SeqCst) == 0 {
+    if HOST_WORK.fetch_sub(1, Ordering::SeqCst) != 1
+        || !HOST_WATCHED.load(Ordering::SeqCst)
+        || !HOST_WATCHED.swap(false, Ordering::SeqCst)
+    {
         return;
     }
     let queue = queue();
