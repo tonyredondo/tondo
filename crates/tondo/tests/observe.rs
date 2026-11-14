@@ -5885,7 +5885,10 @@ fn debug_adapter_stops_at_panics_and_opens_dumps() {
     let frames = trace["stackFrames"].as_array().unwrap();
     let pick = frames.iter().find(|f| f["name"] == "pick").unwrap_or_else(|| panic!("{trace}"));
     assert_eq!((pick["line"].as_u64(), pick["source"]["name"].as_str()), (Some(4), Some("stopping.to")));
-    // What the failed check's code still held, and its task.
+    // What the failed check's code still held, each with its value, and
+    // its task. The index is always there, as the check reads it; the
+    // array only where the code that reports the panic left its register
+    // alone, as on x86-64 and not on aarch64.
     let scopes = adapter.ask("scopes", json!({ "frameId": pick["id"] }));
     let scope = |name: &str| {
         let scope = scopes["scopes"].as_array().unwrap().iter().find(|s| s["name"] == name);
@@ -5894,8 +5897,11 @@ fn debug_adapter_stops_at_panics_and_opens_dumps() {
     let bindings = adapter.ask("variables", json!({ "variablesReference": scope("Bindings") }));
     let shown: Vec<_> =
         bindings["variables"].as_array().unwrap().iter().map(|v| format!("{} = {}", v["name"], v["value"])).collect();
-    assert!(shown.contains(&"\"values\" = \"[1, 2]\"".to_string()), "{bindings}");
     assert!(shown.contains(&"\"at\" = \"6\"".to_string()), "{bindings}");
+    assert!(shown.iter().all(|s| ["\"at\" = \"6\"", "\"values\" = \"[1, 2]\""].contains(&s.as_str())), "{bindings}");
+    if cfg!(target_arch = "x86_64") {
+        assert!(shown.contains(&"\"values\" = \"[1, 2]\"".to_string()), "{bindings}");
+    }
     let task = adapter.ask("variables", json!({ "variablesReference": scope("Task") }));
     assert_eq!(task["variables"][0]["name"], "state");
     adapter.stop();
