@@ -223,8 +223,9 @@ its environment a program writes the report as JSON, for a log pipeline.
 The last line of that report matters when the program is not on the
 developer's machine. A program that panics, faults or deadlocks leaves a
 dump, with the values each task held when it ended. `TONDO_DUMP` says
-where; `~/.cache/tondo/dumps` keeps the latest by default. The dump is a
-file to attach to an issue.
+where, a directory or `stderr` for the logs of a
+[container](observing.md#in-a-container) or of CI; `~/.cache/tondo/dumps`
+keeps the latest by default. The dump is a file to attach to an issue.
 
 ```text
 $ tondo dump read dumps/orders-3573589.dump.json why
@@ -276,6 +277,10 @@ $ tondo dump group dumps
 | `tondo dump trend <dir>` | what keeps growing over dumps: a leak, by its line |
 | `tondo dump issue <dir> <id>` | a failure written as an issue |
 | `tondo dump <pid>` | a dump of a program that is running, without stopping it |
+
+`why` and `tasks` also name a task that ended with an error nobody had
+read, which is often what the tasks that wait were waiting for
+([Deadlocks](../language/13-tasks.md#deadlocks)).
 
 A field marked `@secret` shows as `<secret>` in dumps and in the debugger.
 

@@ -717,6 +717,43 @@ every task waits and nothing can wake any of them, the program panics
 (`P0013`) and lists where each one waits. A task that takes a lock it
 already holds panics at once (`P0014`).
 
+The cause is often not among the tasks that wait: the one that was to wake
+them ended with an error, and nobody had read its result yet. The report
+names it, with where it was spawned:
+
+```tondo
+import std.console
+import std.fs
+
+/// The report's lines, read by a task of its own.
+fn load(path: String): Array[String] ! fs.FsError {
+    fs.readText(path)?.lines()
+}
+
+fn main() {
+    let (ready, started) = channel[Unit](1)
+    let lines = spawn load("report.txt")
+    // Waits for a word that only a load that went well would send.
+    _ = started.receive()
+    ready.send(())
+    console.println("{lines.wait() ?? []}")
+}
+```
+
+```text
+panic[P0013]: deadlock: every task waits and none of them can wake the others
+the main task waits at:
+  main  report.to:13:9
+task 2 ended with an error nobody read: err(fs.FsError.NotFound)
+it was spawned at:
+  main  report.to:11:17
+```
+
+A program that stands still without being a deadlock, as a server that
+still listens, says the same in a dump taken while it runs: `tondo dump
+<program>` and then `tondo dump read <dump> why`
+([Debugging](../toolchain/debugging.md#a-failure-somewhere-else-dumps)).
+
 A deadlock that has not happened yet can be found too: with
 `tondo test --lock-order`, a test fails when its tasks take two locks in
 both orders, even if this run got away with it. `tondo blocked <program>`

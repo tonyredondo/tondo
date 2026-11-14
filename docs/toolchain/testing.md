@@ -376,6 +376,8 @@ recorded, to debug the same again:
 
 A program of the job that fails outside a test leaves a dump instead:
 `TONDO_DUMP=<dir>` in the job's environment, and that directory uploaded
-the same way ([A running program](observing.md#in-a-container)).
+the same way; or `TONDO_DUMP=stderr`, which writes the dump into the job's
+log, where `tondo dump read <log>` reads it
+([A running program](observing.md#in-a-container)).
 
 Next: [Debugging](debugging.md).
