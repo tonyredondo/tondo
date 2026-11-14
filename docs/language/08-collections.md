@@ -506,6 +506,10 @@ fn main() {
     let total = (1..=10).reduce(0, (sum, n) { sum + n })
     let firstBig = (1..=100).find((n) { n * n > 50 })
     console.println("{total} {firstBig} {(1..=10).count()} {(0..5).chain(10..12).collect()}")
+
+    let evenSquares = (1..=10).filter((n) { n % 2 == 0 }).sumBy((n) { n * n })
+    let longest = ["pen", "paper", "ink"].iter().maxBy((word) { word.length() })
+    console.println("{evenSquares} {longest} {(1..=7).countBy((n) { n % 3 })}")
 }
 ```
 
@@ -513,6 +517,7 @@ fn main() {
 [1, 4, 16, 25]
 [H, W] [(0, a), (1, b)] [(0, a), (1, b), (2, c)]
 55 some(8) 10 [0, 1, 2, 3, 4, 10, 11]
+220 some(paper) [1: 3, 2: 2, 0: 2]
 ```
 
 Only four squares were computed above, not a million.
@@ -522,6 +527,8 @@ Only four squares were computed above, not a million.
 | `map`, `filter`, `flatMap` | `collect()`: an array |
 | `take`, `skip`, `takeWhile`, `skipWhile` | `count()`, `reduce`, `find` |
 | `enumerate`, `zip`, `chain` | `any`, `all`, `forEach` |
+| | `sumBy`, `minBy`, `maxBy`, `countBy` |
+| | `toMap`, `keyedBy`: a map |
 
 An array's own `map` and `filter` give arrays at once, which is what is
 wanted most of the time. Reach for `iter()` when the chain is long and its
