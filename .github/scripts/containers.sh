@@ -83,6 +83,11 @@ image() {
   { echo 'FROM scratch'; echo 'COPY program /program'; [ -n "${3:-}" ] && echo "ENV $3"; echo 'ENTRYPOINT ["/program"]'; } > "img-$1/Dockerfile"
   docker build -q ${4:+--platform "$4"} -t "tondo-scenario-$1" "img-$1" > /dev/null
 }
+# Whether a command succeeds within 20 seconds, as a program that starts.
+within() {
+  for _ in $(seq 40); do "$@" > /dev/null 2>&1 && return 0; sleep 0.5; done
+  return 1
+}
 # The dump a container's program says it left, taken out: taken <container> <file>.
 taken() {
   where=$(docker logs "$1" 2>&1 | sed -n 's/^tondo runtime: a dump of the program is in //p')
@@ -127,6 +132,7 @@ reach() {
   box=$1
   via="docker exec -i -e PATH=/ $box"
   docker cp "$T" "$box:/tondo" || return 1
+  within $T counters program --via "$via" --count 1 || { echo "never reached"; return 1; }
   out=$($T counters program --via "$via" --count 1 --json 2>&1) && echo "$out" | grep -q '"tasks.live"' || { echo "counters: $out"; return 1; }
   out=$($T dump program --via "$via" --output "$box.dump.json" 2>&1) && $T dump read "$box.dump.json" | grep -q ticker.to || { echo "dump: $out"; return 1; }
   out=$($T blocked program --via "$via" 2>&1) || { echo "blocked: $out"; return 1; }
@@ -135,21 +141,19 @@ reach() {
   echo "$out" | grep -q '"value":"true"' || { echo "debug: $out"; return 1; }
 }
 docker run -d --name tondo-scenario-3 --tmpfs /tmp tondo-scenario-ticker > /dev/null
-sleep 1
 if why=$(reach tondo-scenario-3); then
   pass "3. no tondo inside: counters, dump, blocked, profile and debug through --via"
 else
   fail "3. no tondo inside: a tool fails through --via" "$why"
 fi
 docker run -d --name tondo-scenario-3b --read-only tondo-scenario-ticker > /dev/null
-sleep 1
-if docker logs tondo-scenario-3b 2>&1 | grep -q 'the tools cannot reach this program:.*TMPDIR'; then
+said() { docker logs "$1" 2>&1 | grep -q "$2"; }
+if within said tondo-scenario-3b 'the tools cannot reach this program:.*TMPDIR'; then
   pass "3. no TMPDIR to write: the program says the tools cannot reach it, and why"
 else
   fail "3. no TMPDIR to write: nothing said" "$(docker logs tondo-scenario-3b 2>&1)"
 fi
 docker run -d --name tondo-scenario-4 --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges tondo-scenario-ticker > /dev/null
-sleep 1
 if why=$(reach tondo-scenario-4); then
   pass "4. no ptrace, no capabilities: the same tools work"
 else
