@@ -490,6 +490,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Rvalue::MapOp(op, operands, _) => match op {
                 // The runtime's empty map, which a first entry copies.
+                MapOp::New if self.e.cg.live() => Val::Scalar(self.e.call_rt(Rt::MapEmpty, &[]).unwrap()),
                 MapOp::New => {
                     let id = self.e.cg.empty_map();
                     let empty = self.e.global(id);

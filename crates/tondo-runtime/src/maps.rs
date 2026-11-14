@@ -74,6 +74,13 @@ pub static EMPTY: MapObject = MapObject {
     table: Vec::new(),
 };
 
+/// `EMPTY`, for a live build's patches, which link only the runtime's
+/// functions.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_map_empty_one() -> *mut MapObject {
+    (&raw const EMPTY).cast_mut()
+}
+
 impl MapObject {
     pub(crate) fn len(&self) -> usize {
         self.hashes.len()
