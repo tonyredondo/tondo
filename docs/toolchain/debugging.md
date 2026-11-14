@@ -301,7 +301,10 @@ count: Int = 2
 ```
 
 `discount`, `index` and `line` are not there: by that point the code had
-let go of them. Built with `--debug`, the same failure leaves them all:
+let go of them. Which values it still holds is a matter of the machine
+code, so an arm64 build of this program may keep others than this one, of
+x86-64; what a dump shows is right on both. Built with `--debug`, the same
+failure leaves them all:
 
 ```text
 $ tondo build bill.to --debug -o bill
