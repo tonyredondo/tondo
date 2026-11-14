@@ -14,6 +14,7 @@ fn main(): !(http.HttpError | fs.FsError) {
     let (started, began) = channel[Unit](1)
     let (release, released) = channel[Unit](1)
     var app = http.App()
+    app.get("/ready", (_) { http.Reply.text("ready") })
     app.get(
         "/slow",
         (_) {
@@ -30,10 +31,13 @@ fn main(): !(http.HttpError | fs.FsError) {
 
 /// Calls the server, and asks the program to end while it answers.
 fn ask(socket: String, began: Receiver[Unit], release: Sender[Unit]) {
-    for not fs.exists(socket) {
+    let web = http.Client(baseUrl: "http://app", socket: socket)
+    // The socket's file is there once it is bound, a moment before the
+    // server listens on it, when a call is refused: the server is ready
+    // when it answers.
+    for web.get("/ready").isErr() {
         time.sleep(time.milliseconds(5))
     }
-    let web = http.Client(baseUrl: "http://app", socket: socket)
     let slow = spawn web.get("/slow")
     _ = began.receive()
     _ = process.signal(env.processId(), process.Signal.Terminate)
