@@ -858,10 +858,11 @@ en `TONDO_DUMP=<dir>` si se da, que crea si falta, y si no en la caché de
 Tondo, `$XDG_CACHE_HOME/tondo/dumps` o `~/.cache/tondo/dumps`, un directorio
 que solo su usuario puede abrir, donde quedan los 20 últimos. Si no puede
 crearlo, como con un sistema de archivos de solo lectura, lo dice una vez,
-con qué dar en `TONDO_DUMP`, y termina igual. En un contenedor, que se
-reconoce por `/.dockerenv`, `/run/.containerenv` o `KUBERNETES_SERVICE_HOST`,
-dice también cómo sale de él: con `docker cp`, con `TONDO_DUMP` en un volumen
-o en los logs. Con `TONDO_DUMP=stderr` el volcado no va a un archivo sino a
+con qué dar en `TONDO_DUMP`, `stderr` primero, y termina igual. En un
+contenedor, que se reconoce por `/.dockerenv`, `/run/.containerenv` o
+`KUBERNETES_SERVICE_HOST`, dice también cómo sale de él: con `docker cp`, con
+`TONDO_DUMP` en un volumen o en los logs; de un tmpfs, al que `docker cp` no
+llega y que se va con el contenedor, dice cómo guardar el siguiente. Con `TONDO_DUMP=stderr` el volcado no va a un archivo sino a
 la salida de error, que los logs de un contenedor o de CI guardan aunque sus
 archivos se pierdan: comprimido, en base64, entre las líneas
 `-----BEGIN TONDO DUMP-----` y `-----END TONDO DUMP-----`, en una sola

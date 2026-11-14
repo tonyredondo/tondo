@@ -136,6 +136,8 @@ if [ "$code2" != "$code" ] || [ "$(echo "$said" | grep -c '^tondo runtime: no du
   fail "2. read-only: not said once and why, or another exit ($code2, not $code)" "$said"
 elif ! docker logs tondo-scenario-2b 2>&1 | grep -q 'a dump of the program is in /dumps/'; then
   fail "2. read-only: TONDO_DUMP on a tmpfs takes no dump" "$(docker logs tondo-scenario-2b 2>&1)"
+elif ! docker logs tondo-scenario-2b 2>&1 | grep -q 'on a tmpfs, which `docker cp` does not reach'; then
+  fail "2. read-only: the dump on a tmpfs is said to leave with docker cp" "$(docker logs tondo-scenario-2b 2>&1)"
 else
   pass "2. read-only: said once, with what to set; the exit is the same"
 fi

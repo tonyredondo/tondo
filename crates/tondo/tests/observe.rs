@@ -563,12 +563,24 @@ fn a_crash_leaves_a_dump_by_itself() {
     let mut command = Command::new(dir.join("falls"));
     command.env("XDG_CACHE_HOME", dir.join("not-a-directory")).env_remove("TONDO_DUMP");
     let said = String::from_utf8_lossy(&command.output().unwrap().stderr).into_owned();
-    assert!(said.contains("cannot be made") && said.contains("give TONDO_DUMP a directory"), "{said}");
+    assert!(said.contains("cannot be made") && said.contains("give TONDO_DUMP `stderr`"), "{said}");
     // In a container, how the dump leaves it.
     let mut command = Command::new(dir.join("falls"));
     command.env("TONDO_DUMP", dir.join("contained")).env("KUBERNETES_SERVICE_HOST", "10.0.0.1");
     let said = String::from_utf8_lossy(&command.output().unwrap().stderr).into_owned();
     assert!(said.contains("it leaves the container with `docker cp <container>:"), "{said}");
+    // Which does not reach a tmpfs, as Linux's /dev/shm is.
+    if cfg!(target_os = "linux") && Path::new("/dev/shm").is_dir() {
+        let shm = Path::new("/dev/shm").join(format!("tondo-observe-{}", std::process::id()));
+        let mut command = Command::new(dir.join("falls"));
+        command.env("TONDO_DUMP", &shm).env("KUBERNETES_SERVICE_HOST", "10.0.0.1");
+        let said = String::from_utf8_lossy(&command.output().unwrap().stderr).into_owned();
+        let _ = std::fs::remove_dir_all(&shm);
+        assert!(
+            said.contains("it is on a tmpfs, which `docker cp` does not reach") && !said.contains("docker cp <"),
+            "{said}"
+        );
+    }
 }
 
 /// A dump names a task that ended with an error nobody read, what another

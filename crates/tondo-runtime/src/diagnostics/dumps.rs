@@ -231,10 +231,16 @@ fn contained() -> bool {
         || std::env::var_os("KUBERNETES_SERVICE_HOST").is_some()
 }
 
-/// Says where a dump is, and in a container how it leaves it.
+/// Says where a dump is, and in a container how it leaves it: `docker cp`
+/// does not reach a tmpfs, which goes with the container.
 fn announced(path: &std::path::Path) {
     let mut said = format!("tondo runtime: a dump of the program is in {}\n", path.display());
-    if contained() {
+    if contained() && on_tmpfs(path) {
+        said.push_str(
+            "tondo runtime: it is on a tmpfs, which `docker cp` does not reach and which goes with the container; \
+             TONDO_DUMP on a volume, or TONDO_DUMP=stderr into the logs, keeps the next one\n",
+        );
+    } else if contained() {
         said.push_str(&format!(
             "tondo runtime: it leaves the container with `docker cp <container>:{} .`, or as it is written with \
              TONDO_DUMP on a volume, or in the logs with TONDO_DUMP=stderr\n",
@@ -242,6 +248,22 @@ fn announced(path: &std::path::Path) {
         ));
     }
     let _ = std::io::stderr().write_all(said.as_bytes());
+}
+
+/// Whether a file is on a tmpfs, a file system in memory.
+fn on_tmpfs(path: &std::path::Path) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else { return false };
+        let mut found: libc::statfs = unsafe { std::mem::zeroed() };
+        unsafe { libc::statfs(path.as_ptr(), &mut found) == 0 && found.f_type as i64 == libc::TMPFS_MAGIC as i64 }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        false
+    }
 }
 
 /// How many dumps of crashes the cache keeps, the latest.
@@ -274,7 +296,7 @@ pub(super) fn crash_dir() -> Option<(PathBuf, bool)> {
         // container's file system that is read-only.
         let why = match made {
             Err(error) if !dir.is_dir() => format!(
-                "no dump: {} cannot be made ({error}); give TONDO_DUMP a directory the program can write, as a volume or a tmpfs of its container, or `off`",
+                "no dump: {} cannot be made ({error}); give TONDO_DUMP `stderr`, which writes it into the logs, a directory the program can write, as a volume of its container, or `off`",
                 dir.display()
             ),
             _ => format!(
