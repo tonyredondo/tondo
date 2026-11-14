@@ -50,7 +50,10 @@ Hello, Ada! (3)
   or more, so a reply that is read is one that succeeded.
 - `app.start()` serves in the background and gives a [`Server`](#server) to
   stop, which is how tests use it; `app.listen()` serves until the process
-  is asked to end, and then drains the requests in flight.
+  is asked to end, and then drains the requests in flight. `listen` is
+  `start` and then [`server.wait()`](#serverwait): a program that needs to
+  know its port, as with `port: 0`, or that it listens already, calls the
+  two itself.
 
 ## Typed handlers, bodies and problems
 
