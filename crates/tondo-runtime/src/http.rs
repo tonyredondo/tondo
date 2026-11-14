@@ -721,6 +721,17 @@ impl Host for Chunks {
         self.chunk.advance(count);
         Ok(count)
     }
+
+    fn left(&self) -> Option<usize> {
+        if self.windows_1252 || self.taken {
+            return None;
+        }
+        let rest = match &self.body {
+            Some(body) => body.left()?,
+            None => 0,
+        };
+        Some(self.chunk.len() + rest)
+    }
 }
 
 /// The body as a stream of `std.io`, read as the program asks, in UTF-8

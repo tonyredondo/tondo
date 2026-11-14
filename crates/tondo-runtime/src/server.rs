@@ -1409,6 +1409,21 @@ impl Host for RequestBody {
         Ok(count)
     }
 
+    fn left(&self) -> Option<usize> {
+        let came = match &*lock(&self.came) {
+            Some(Some(Ok(frame))) => frame.data_ref().map_or(0, Bytes::len),
+            _ => 0,
+        };
+        // Past its limit, the body says it has as much left as the limit
+        // lets in, and none once read: known only at its end.
+        let rest = match &*lock(&self.body) {
+            Some(body) if hyper::body::Body::is_end_stream(body) => 0,
+            Some(body) => hyper::body::Body::size_hint(body).exact().filter(|&rest| rest > 0)?,
+            None => 0,
+        };
+        Some(self.chunk.len() + came + usize::try_from(rest).ok()?)
+    }
+
     fn blocked(&mut self) -> Option<crate::io::Ready> {
         if !std::mem::take(&mut self.waiting) {
             return None;

@@ -231,6 +231,11 @@ pub(crate) trait Host: Send {
     fn other_end_gone(&mut self) -> Option<Gone> {
         None
     }
+    /// How many bytes are left to read, when the host knows, as of a body
+    /// of a known length.
+    fn left(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// What `Host::other_end_gone` waits for.
@@ -504,6 +509,9 @@ pub(crate) struct StreamState {
     buffered: bool,
     /// The first failure of a console write nobody observed yet.
     failed: Option<std::io::ErrorKind>,
+    /// Whether the host knows how much is left, which it says as the
+    /// stream is made, so that others are not asked at each read.
+    sized: bool,
 }
 
 const WRITE_BUFFER: usize = 64 * 1024;
@@ -552,10 +560,13 @@ impl StreamState {
             self.filled = 0;
         }
         let (start, chunk) = (self.filled, self.chunk);
-        if self.ahead.len() < start + chunk {
-            self.ahead.resize(start + chunk, 0);
+        // No more room than what is left, when the host knows, and a byte
+        // to see the end: a small body takes a small buffer.
+        let room = self.left().map_or(chunk, |left| chunk.min(left + 1));
+        if self.ahead.len() < start + room {
+            self.ahead.resize(start + room, 0);
         }
-        let read = self.host.as_mut().ok_or_else(closed).and_then(|h| h.read(&mut self.ahead[start..start + chunk]));
+        let read = self.host.as_mut().ok_or_else(closed).and_then(|h| h.read(&mut self.ahead[start..start + room]));
         let count = *read.as_ref().unwrap_or(&0);
         if count == chunk {
             self.chunk = (chunk * 2).min(READ_CHUNK);
@@ -586,13 +597,28 @@ impl StreamState {
     }
 
     pub(crate) fn read(&mut self, max: usize) -> std::io::Result<Option<Vec<u8>>> {
+        let mut bytes = Vec::new();
+        Ok(self.read_into(&mut bytes, max)?.then_some(bytes))
+    }
+
+    /// Whether nothing is left to read, as the host knows without reading.
+    pub(crate) fn ended(&self) -> bool {
+        self.position == self.filled && self.left() == Some(0)
+    }
+
+    fn left(&self) -> Option<usize> {
+        self.host.as_ref().filter(|_| self.sized).and_then(|h| h.left())
+    }
+
+    /// As `read`, at the end of `out`; false at the end of the data.
+    pub(crate) fn read_into(&mut self, out: &mut Vec<u8>, max: usize) -> std::io::Result<bool> {
         if self.position == self.filled && !self.fill()? {
-            return Ok(None);
+            return Ok(false);
         }
         let end = (self.position + max).min(self.filled);
-        let bytes = self.ahead[self.position..end].to_vec();
+        out.extend_from_slice(&self.ahead[self.position..end]);
         self.position = end;
-        Ok(Some(bytes))
+        Ok(true)
     }
 
     pub(crate) fn read_rest(&mut self) -> std::io::Result<Vec<u8>> {
@@ -635,6 +661,7 @@ impl StreamState {
 /// A new stream over `host`, with one reference.
 pub(crate) fn stream(host: Box<dyn Host>, mode: Mode, buffered: bool) -> *mut StreamObject {
     LIVE_OBJECTS.made();
+    let sized = host.left().is_some();
     let state = StreamState {
         host: Some(host),
         ahead: Vec::new(),
@@ -644,6 +671,7 @@ pub(crate) fn stream(host: Box<dyn Host>, mode: Mode, buffered: bool) -> *mut St
         pending: Vec::new(),
         buffered,
         failed: None,
+        sized,
     };
     Box::into_raw(Box::new(StreamObject { rc: AtomicUsize::new(1), mode, state: Mutex::new(state) }))
 }

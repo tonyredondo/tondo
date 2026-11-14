@@ -1,5 +1,6 @@
 // What a server needs in production: a body larger than its limit is
-// `413`, which a route raises with `limitBody`; the query and a form read
+// `413`, which a route raises with `limitBody`, and so is a JSON body read
+// into a type; the query and a form read
 // into a type, with `422` for a value that breaks its rules; a middleware
 // reads a reply's headers; `compress` writes zstd or gzip as the client
 // takes it; a WebSocket's handler gets its request inside the middleware's
@@ -47,6 +48,7 @@ fn main(): !http.HttpError {
         },
     )
     app.post("/search", (request) { http.Reply.text("{request.formAs[Search]()?.text}") })
+    app.post("/json", (search: Search) { http.Reply.text("got {search.text.length()}") })
     app.get("/page", (_) { http.Reply.text("words ".repeat(500)) })
     app.websocket(
         "/chat",
@@ -72,6 +74,10 @@ fn main(): !http.HttpError {
         console.println(
             "{path} {size}: {shown(client.post(path, body: http.Body.text("x".repeat(size))))}",
         )
+    }
+    for size in [500, 2000] {
+        let search = Search { text: "x".repeat(size), page: 1, pageSize: none, tags: none }
+        console.println("/json {size}: {shown(client.post("/json", body: http.Body.json(search)))}")
     }
     console.println(
         shown(
@@ -103,6 +109,8 @@ fn main(): !http.HttpError {
 // expect-stdout: /small 2000: 413
 // expect-stdout: /large 2000: 200 got 2000
 // expect-stdout: /large 6000: 413
+// expect-stdout: /json 500: 200 got 500
+// expect-stdout: /json 2000: 413
 // expect-stdout: 200 tea cake 2 some(10) some([a, b]) [z]
 // expect-stdout: 422
 // expect-stdout: 400

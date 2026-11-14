@@ -91,12 +91,6 @@ impl Input {
         (self.at, self.len) = (self.owned.as_ptr(), self.owned.len());
     }
 
-    /// More of a stream.
-    fn extend(&mut self, chunk: &[u8]) {
-        self.owned.extend_from_slice(chunk);
-        self.point();
-    }
-
     /// The first `count` bytes of a stream, consumed.
     fn drop_first(&mut self, count: usize) {
         self.owned.drain(..count);
@@ -252,8 +246,18 @@ impl Reader {
         }
     }
 
-    /// As `new`, in a reader let go before, whose buffers keep their room.
-    fn renew(&mut self, input: Input, duplicates: bool) {
+    /// As `new`, in a reader let go before, whose buffers keep their room:
+    /// of a text, `held`; of a stream, the bytes its last stream left room
+    /// for.
+    fn renew(&mut self, held: Option<*mut Str>, source: Option<Source>, duplicates: bool) {
+        let input = match held {
+            Some(text) => Input::held(text),
+            None => {
+                let mut room = std::mem::take(&mut self.input.owned);
+                room.clear();
+                Input::owned(room)
+            }
+        };
         let (mut frames, mut text, mut keys, mut key_ends) = (
             std::mem::take(&mut self.frames),
             std::mem::take(&mut self.text),
@@ -264,17 +268,17 @@ impl Reader {
         text.clear();
         keys.clear();
         key_ends.clear();
-        *self = Reader::with(input, None, duplicates, (frames, text, keys, key_ends));
+        *self = Reader::with(input, source, duplicates, (frames, text, keys, key_ends));
     }
 
     /// What a reader let go of keeps: its buffers, if they did not grow
     /// past what is worth keeping, and nothing it read.
     fn spare(&mut self) -> bool {
-        self.input = Input::owned(Vec::new());
+        self.input = Input::owned(std::mem::take(&mut self.input.owned));
         self.pieces = None;
         self.source = None;
         self.error = None;
-        self.text.capacity() + self.keys.capacity() <= KEPT_ROOM
+        self.text.capacity() + self.keys.capacity() + self.input.owned.capacity() <= KEPT_ROOM
     }
 
     fn fail(&mut self, message: impl Into<String>) -> i64 {
@@ -305,9 +309,14 @@ impl Reader {
                 self.exhausted = true;
                 break;
             };
-            match run(source.0, |s| s.read(CHUNK)) {
-                Ok(Some(chunk)) => self.input.extend(&chunk),
-                Ok(None) => self.exhausted = true,
+            let owned = &mut self.input.owned;
+            // A body of a known length says where it ends without another
+            // read, and the texts of a short document take a short block.
+            let read = run(source.0, |s| s.read_into(owned, CHUNK).map(|more| more && !s.ended()));
+            self.input.point();
+            match read {
+                Ok(true) => {}
+                Ok(false) => self.exhausted = true,
                 Err(error) => {
                     self.exhausted = true;
                     self.fail(format!("cannot read the stream: {error}"));
@@ -705,21 +714,26 @@ fn reader<'a>(object: *mut ReaderObject) -> std::sync::MutexGuard<'a, Reader> {
 /// `jsonnative.reader(text, duplicates)`
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_reader(text: *const Str, duplicates: u8) -> *mut ReaderObject {
-    let input = Input::held(text as *mut Str);
-    if let Some(mut spare) = spare(|spare| spare.readers.pop()) {
-        spare.reader.get_mut().unwrap_or_else(|e| e.into_inner()).renew(input, duplicates != 0);
-        *spare.rc.get_mut() = 1;
-        LIVE_OBJECTS.made();
-        return Box::into_raw(spare);
-    }
-    reader_object(Reader::new(input, None, duplicates != 0))
+    made(Some(text as *mut Str), None, duplicates != 0)
 }
 
 /// `jsonnative.streamReader(stream, duplicates)`: reads the stream as the
 /// document needs it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_stream_reader(stream: *mut StreamObject, duplicates: u8) -> *mut ReaderObject {
-    reader_object(Reader::new(Input::owned(Vec::new()), Some(Source(retain(stream))), duplicates != 0))
+    made(None, Some(Source(retain(stream))), duplicates != 0)
+}
+
+/// A reader of a text or a stream, one of this thread's spares if it has one.
+fn made(held: Option<*mut Str>, source: Option<Source>, duplicates: bool) -> *mut ReaderObject {
+    if let Some(mut spare) = spare(|spare| spare.readers.pop()) {
+        spare.reader.get_mut().unwrap_or_else(|e| e.into_inner()).renew(held, source, duplicates);
+        *spare.rc.get_mut() = 1;
+        LIVE_OBJECTS.made();
+        return Box::into_raw(spare);
+    }
+    let input = held.map_or_else(|| Input::owned(Vec::new()), Input::held);
+    reader_object(Reader::new(input, source, duplicates))
 }
 
 /// Lets values follow the first one, with or without space between them.

@@ -677,6 +677,16 @@ impl Received {
         }
     }
 
+    /// How many bytes of the body are still to come, when its length is
+    /// known and nothing decodes it.
+    pub(crate) fn left(&self) -> Option<usize> {
+        match (&self.incoming, &self.decoder) {
+            (_, Some(_)) => None,
+            (Some(incoming), None) => usize::try_from(hyper::body::Body::size_hint(incoming).exact()?).ok(),
+            (None, None) => Some(0),
+        }
+    }
+
     /// The whole body.
     pub(crate) async fn all(mut self) -> Result<Bytes, Failure> {
         let mut whole = bytes::BytesMut::new();
