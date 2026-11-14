@@ -278,6 +278,10 @@ $ tondo dump group dumps
 | `tondo dump issue <dir> <id>` | a failure written as an issue |
 | `tondo dump <pid>` | a dump of a program that is running, without stopping it |
 
+`why` and `tasks` also name a task that ended with an error nobody had
+read, which is often what the tasks that wait were waiting for
+([Deadlocks](../language/13-tasks.md#deadlocks)).
+
 A field marked `@secret` shows as `<secret>` in dumps and in the debugger.
 
 ## A program that is running

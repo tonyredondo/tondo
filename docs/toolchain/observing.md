@@ -285,7 +285,7 @@ A container removed as it ends takes its dump with it, and one whose file
 system is read-only cannot write it, which the program says once:
 
 ```text
-tondo runtime: no dump: /.cache/tondo/dumps cannot be made (Read-only file system (os error 30)); give TONDO_DUMP a directory the program can write, as a volume or a tmpfs of its container, or `off`
+tondo runtime: no dump: /.cache/tondo/dumps cannot be made (Read-only file system (os error 30)); give TONDO_DUMP `stderr`, which writes it into the logs, a directory the program can write, as a volume of its container, or `off`
 ```
 
 So a service's container gets a volume for its dumps:
@@ -294,12 +294,11 @@ So a service's container gets a volume for its dumps:
 $ docker run --read-only --tmpfs /dumps -e TONDO_DUMP=/dumps orders
 ...
 tondo runtime: a dump of the program is in /dumps/orders-1.dump.json
-tondo runtime: it leaves the container with `docker cp <container>:/dumps/orders-1.dump.json .`, or as it is written with TONDO_DUMP on a volume, or in the logs with TONDO_DUMP=stderr
+tondo runtime: it is on a tmpfs, which `docker cp` does not reach and which goes with the container; TONDO_DUMP on a volume, or TONDO_DUMP=stderr into the logs, keeps the next one
 ```
 
-A tmpfs, as here, goes with the container, and `docker cp` does not reach
-it, which the program cannot know when it names that way; a named volume or
-a mounted directory stays.
+A tmpfs, as here, goes with the container, as the program says; a named
+volume or a mounted directory stays.
 
 Or the dump goes where the container's output goes. With
 `TONDO_DUMP=stderr` the program writes it into its error output, compressed
@@ -314,7 +313,7 @@ stack:
   main   orders.to:12:23
 tondo runtime: a dump of the program follows; `tondo dump read <log>` reads it from the log
 -----BEGIN TONDO DUMP-----
-H4sIAAAAAAAE/+VYy5LqNhD9FZXWHuIXz0V+IdlPpqaELYOCkRxJnkdR/HuOZBk8jJnLcFOVxd0h
+H4sIAAAAAAAE/+VY3XLqNhB+FY2uHWpjGwMXfYX2Ps1kFFsGFSO5kpyfYXj3fpJlcIiTQzid6cW5
 ...
 -----END TONDO DUMP-----
 $ docker logs orders-2 > orders.log 2>&1
