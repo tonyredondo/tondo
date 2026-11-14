@@ -470,6 +470,7 @@ What is under way and what is planned:
 | Dumps that name a task that ended with an error nobody read | Under way |
 | `tondo test --schedules` over the moments the operating system leaves open: between `bind` and `listen`, the delivery of a signal, a file made and not yet written | Accepted, not started |
 | `Server.wait`: a server started with `start` drains when the program is asked to end, as `listen` does | Accepted, not started |
+| A terminal a program takes over: its size as it changes, and giving it back and taking it again around Ctrl-Z and `fg` | Accepted, its design first |
 | Interfaces of C++ that are tables of functions, as a trait with `@ffi.Interface` | Accepted, not started |
 | A heap for each task | Research |
 | A function's values in a Release dump after a failed check, at no cost while it runs | Measuring first |
