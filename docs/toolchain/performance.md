@@ -206,6 +206,74 @@ stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in 
 `tondo check --performance` reports one thing from this view as a warning
 while writing: a copy that a loop makes on every turn.
 
+### The closures of a chain
+
+The adapters of an [iterator](../language/08-collections.md#iterators) keep
+the closures they are given, and the method that ends the chain calls them
+for every element. This program adds the squares of the even numbers twice:
+with the array's own methods, and with a chain that starts at `iter()`.
+
+```tondo
+import std.console
+
+/// The sum of the squares of the even numbers, with an array at each step.
+fn byArrays(numbers: Array[Int]): Int {
+    numbers.filter((n) { n % 2 == 0 }).map((n) { n * n }).sum()
+}
+
+/// The same, a number at a time.
+fn byChain(numbers: Array[Int]): Int {
+    numbers.iter().filter((n) { n % 2 == 0 }).map((n) { n * n }).sumBy((n) { n })
+}
+
+fn main() {
+    let numbers = (1..=1000).collect()
+    console.println("{byArrays(numbers)} {byChain(numbers)}")
+}
+```
+
+```text output
+167167000 167167000
+```
+
+```text
+$ tondo optimizations squares.to --kind call
+squares.to:10:5: `numbers.iter().filter((n) { n % 2 == 0 }).map((n) { n * n }…` stays a call of `Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int]`: its body costs 52, more than the 30 inlining takes (in byChain, main)
+squares.to:10:27: `(n) { n % 2 == 0 }` is called by its body where a record holds it, as an iterator's adapter does (in prelude.FilterIterator.next[prelude.ArrayIterator[Int], Int])
+squares.to:10:51: `(n) { n * n }` is called by its body where a record holds it, as an iterator's adapter does (in Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int])
+```
+
+`sumBy` runs the chain, and it is too large to be copied into `byChain`, so
+it stays a call. A release build makes a copy of it for this chain in which
+it knows the closure that each adapter holds: asking the filter and the map
+for the next number calls the body of each closure, and no longer a value
+that could be any function. The lines name functions of the standard
+library, since the calls are in its code.
+
+The closures themselves are still allocated, one each time `byChain` runs:
+
+```text
+$ tondo optimizations squares.to --kind heap
+squares.to:10:27: `(n) { n % 2 == 0 }` is made on the heap: a value holds it (in byChain, main)
+squares.to:10:51: `(n) { n * n }` is made on the heap: a value holds it (in byChain, main)
+squares.to:10:72: `(n) { n }` is made on the heap: it is passed to a call that may keep it (in byChain, main)
+```
+
+Those of `byArrays` are made in the frame, as `--kind frame` says, but each
+of its steps makes an array. A benchmark of the two over a thousand numbers
+shows both costs:
+
+```text
+$ tondo test --bench
+test squares::unit::squares::aThousand ... ok
+  arrays     1.248 µs/op  ±0.3%  9 allocs/op  12448 B/op  25.1k ins/op
+  chain      2.117 µs/op  ±0.3%  3 allocs/op  120 B/op  51.0k ins/op
+```
+
+The chain allocates its three closures and nothing else, however long the
+array is: a hundredth of the memory here. The arrays' form is the faster of
+the two, with half the instructions.
+
 ## The machine code: asm
 
 `tondo asm` gives the instructions a release build makes of a function,
