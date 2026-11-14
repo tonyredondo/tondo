@@ -203,11 +203,98 @@ fn main() {
 
 <img src="images/cli-choose.png" width="396" alt="The question Pick one over tea, coffee and water, with coffee marked in bold cyan">
 
+[`chooseMany`](#choosemany) gives the indices of those chosen. On a terminal
+Space marks the one under the arrow and Enter ends; in a pipe the answer is
+their numbers on a line, as `1,3`:
+
+```tondo
+import std.cli
+import std.console
+
+fn main() {
+    let parts = ["docs", "tests", "examples"]
+    let picked = cli.chooseMany("Install", parts, chosen: [0])
+    console.println(picked.map((index) { parts[index] }).join(", "))
+}
+```
+
+<img src="images/cli-choose-many.png" width="396" alt="The question Install over docs, tests and examples: docs marked from the start, tests not, and examples marked and under the arrow">
+
 [`progress`](#progress) shows work as it advances, a bar when the total is
 known and a spinner when it is not. `cli.progress("Copying", total: 8)`
 after five steps:
 
 <img src="images/cli-progress.png" width="464" alt="Copying, a bar filled to five eighths, and 5/8">
+
+## Drawing with text
+
+What draws gives a text, as `table` does, and takes a text of several lines
+wherever it takes a text. So the pieces go inside each other with nothing
+to learn but each one's name: a table and a panel of bars side by side,
+under a rule and over a breakdown.
+
+```tondo
+import std.cli
+import std.console
+
+fn main() {
+    let up = cli.markup("[green]up[/]")
+    let down = cli.markup("[bold red]down[/]")
+    let services = cli.table(
+        [["api", up, "18204"], ["worker", up, "932"], ["mail", down, "0"]],
+        columns: ["Service", "State", "Requests"],
+        title: "Services",
+        border: cli.Border.Rounded,
+    )
+    let load = cli.bars([("api", 18204.0), ("worker", 932.0), ("mail", 0.0)], width: 28)
+    console.println(cli.rule("Status at 10:42", width: 70))
+    console.println(cli.beside([services, cli.panel(load, title: "Requests")]))
+    console.println(cli.breakdown([("used", 61.0), ("free", 39.0)], width: 70))
+}
+```
+
+<img src="images/cli-board.png" width="634" alt="A rule with the title Status at 10:42; under it, a table titled Services with rounded corners beside a panel titled Requests with a bar for each service; and under both, a bar in two colors with its legend, used 61% and free 39%">
+
+- [`panel`](#panel) puts a text in a box with a title, [`rule`](#rule)
+  draws a line with one, and [`beside`](#beside) puts texts side by side,
+  as many as fit the width.
+- [`bars`](#bars) draws a bar for each value, by its share of the largest,
+  and [`breakdown`](#breakdown) one bar of the parts of a whole.
+- [`table`](#table) takes a `title:` and a [`border:`](#border), and its
+  cells may have several lines.
+- Widths count what shows, so a text with styles or with characters two
+  columns wide lines up. Off a terminal the same program writes the same
+  shapes without colors.
+
+[`tree`](#tree) draws any value as the debugger shows it, a branch for each
+field, element or entry, with what is `@secret` hidden:
+
+```tondo
+import std.cli
+import std.console
+
+type Limits = { memory: Int, cpus: Int }
+
+type Service = {
+    name: String
+    hosts: Array[String]
+    limits: Limits
+    @secret
+    token: String
+}
+
+fn main() {
+    let service = Service {
+        name: "web",
+        hosts: ["a.example", "b.example"],
+        limits: Limits { memory: 512, cpus: 2 },
+        token: "s3cret",
+    }
+    console.println(cli.panel(cli.tree(service), title: "Service"))
+}
+```
+
+<img src="images/cli-tree.png" width="362" alt="A panel titled Service with the value as a tree: name, hosts with its two elements, limits with memory and cpus, and token shown as secret">
 
 ## Taking the terminal over
 
