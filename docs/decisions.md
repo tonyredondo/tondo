@@ -6836,3 +6836,12 @@ use of which borrows. A closure passed to such a parameter is made in the frame.
 such values rather than eight, as a function into which many calls are inlined, as a test of
 benchmarks, has that many. maxBy and averageBy over an array make no allocation, as Go's loops make
 none; the instructions do not change.
+
+## A dump in the logs, and how one leaves a container
+
+A container's files go with it, and its logs stay: `TONDO_DUMP=stderr` writes each dump into the
+error output instead of a file, compressed, in base64, between marks, in one write, and `tondo dump
+read <log>` takes the last of a log, past the time a container's runtime writes before each line. A
+dump written to a file in a container, which the program tells by the marks Docker, Podman and
+Kubernetes leave, says how it leaves: `docker cp`, `TONDO_DUMP` on a volume, or the logs. Tony
+approved both (P1 and P4 of change 29); a published image of `tondo` for `kubectl debug` waits.

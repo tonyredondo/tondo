@@ -858,7 +858,16 @@ en `TONDO_DUMP=<dir>` si se da, que crea si falta, y si no en la caché de
 Tondo, `$XDG_CACHE_HOME/tondo/dumps` o `~/.cache/tondo/dumps`, un directorio
 que solo su usuario puede abrir, donde quedan los 20 últimos. Si no puede
 crearlo, como con un sistema de archivos de solo lectura, lo dice una vez,
-con qué dar en `TONDO_DUMP`, y termina igual. No cuesta nada mientras
+con qué dar en `TONDO_DUMP`, y termina igual. En un contenedor, que se
+reconoce por `/.dockerenv`, `/run/.containerenv` o `KUBERNETES_SERVICE_HOST`,
+dice también cómo sale de él: con `docker cp`, con `TONDO_DUMP` en un volumen
+o en los logs. Con `TONDO_DUMP=stderr` el volcado no va a un archivo sino a
+la salida de error, que los logs de un contenedor o de CI guardan aunque sus
+archivos se pierdan: comprimido, en base64, entre las líneas
+`-----BEGIN TONDO DUMP-----` y `-----END TONDO DUMP-----`, en una sola
+escritura; `tondo dump read <log>` lee el último de un log, también con el
+prefijo que un runtime de contenedores pone a cada línea. Vale igual para
+los volcados de `kill -QUIT` y de `TONDO_DUMP_WHEN`. No cuesta nada mientras
 el programa corre: se escribe al fallar. `TONDO_DUMP=off` no deja ninguno, y
 solo un `TONDO_DUMP` dado pone en marcha lo que un volcado de un programa en
 marcha muestra, como los eventos y el orden de los locks. Un pánico que
@@ -2290,7 +2299,7 @@ significan lo de siempre.
 | Variable | La pone | Qué hace |
 | --- | --- | --- |
 | `TONDO_DIAGNOSTICS` | Quien lo ejecuta | `1` atiende a las herramientas en un socket y cuenta para ellas (7.5); `0` no, ni en un build vivo. |
-| `TONDO_DUMP` | Quien lo ejecuta | El directorio de los volcados, y con ella un volcado con `kill -QUIT` y los eventos que guarda; `off` o `0`, ningún volcado de un fallo; sin ella, el de un fallo en la caché del usuario. |
+| `TONDO_DUMP` | Quien lo ejecuta | El directorio de los volcados, y con ella un volcado con `kill -QUIT` y los eventos que guarda; `stderr`, los volcados en la salida de error, para los logs; `off` o `0`, ningún volcado de un fallo; sin ella, el de un fallo en la caché del usuario. |
 | `TONDO_DUMP_WHEN` | Quien lo ejecuta | Con `TONDO_DUMP`, cuándo se vuelca solo y sigue, como `every=5m` o `memory=90%`. |
 | `TONDO_DUMP_VALUES` | Quien lo ejecuta | `off`, o lo que no sea `on`, deja los valores fuera de un volcado. |
 | `TONDO_DUMP_COMMAND` | Quien lo ejecuta | Un comando de `sh` que recibe cada volcado escrito, con su ruta en `TONDO_DUMP_FILE`. |

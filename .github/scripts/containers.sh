@@ -10,8 +10,9 @@
 # second runs 8 with two such. Each scenario prints its result; a failure says
 # what it saw. Its containers and images are named tondo-scenario-*.
 #
-#  1. An image from scratch: a panic leaves its dump, which `docker cp` takes
-#     out and `tondo dump read` reads here.
+#  1. An image from scratch: a panic leaves its dump, says how it leaves the
+#     container, `docker cp` takes it out and `tondo dump read` reads it
+#     here; with TONDO_DUMP=stderr, from the container's log.
 #  2. A read-only file system: said once, and why; the exit is the same; a
 #     TONDO_DUMP on a tmpfs takes the dump.
 #  3. No tondo inside: the tools reach the program with --via through a
@@ -108,9 +109,22 @@ if taken tondo-scenario-1 s1.dump.json; then
     *P0001*crash.to:6*order*42*) pass "1. scratch: the dump leaves with docker cp and reads here" ;;
     *) fail "1. scratch: the dump lacks the panic, its line or the bindings" "$read" ;;
   esac
+  if docker logs tondo-scenario-1 2>&1 | grep -q 'it leaves the container with `docker cp'; then
+    pass "1. scratch: the program says how its dump leaves the container"
+  else
+    fail "1. scratch: nothing says how the dump leaves the container" "$(docker logs tondo-scenario-1 2>&1)"
+  fi
 else
   fail "1. scratch: no dump to take out (exit $code)" "$(docker logs tondo-scenario-1 2>&1)"
 fi
+
+docker run --name tondo-scenario-1b -e TONDO_DUMP=stderr tondo-scenario-crash > /dev/null 2>&1
+docker logs tondo-scenario-1b > s1b.log 2>&1
+read=$($T dump read s1b.log 2>&1; $T dump read s1b.log locals 2>&1)
+case $read in
+  *P0001*crash.to:6*order*42*) pass "1. TONDO_DUMP=stderr: the dump reads from the container's log" ;;
+  *) fail "1. TONDO_DUMP=stderr: no dump read from the log" "$read" ;;
+esac
 
 # 2
 docker run --name tondo-scenario-2 --read-only tondo-scenario-crash > /dev/null 2>&1

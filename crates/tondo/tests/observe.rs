@@ -540,6 +540,15 @@ fn a_crash_leaves_a_dump_by_itself() {
     let before = std::fs::read_dir(&dumps).unwrap().count();
     assert!(!run(Some("off")).contains("a dump of the program"));
     assert_eq!(std::fs::read_dir(&dumps).unwrap().count(), before);
+    // In the error output, which the logs of a container or of CI keep:
+    // read back from the log, as one prefixes each line with its time.
+    let said = run(Some("stderr"));
+    assert!(said.contains("-----BEGIN TONDO DUMP-----") && !said.contains("a dump of the program is in"), "{said}");
+    let log = dir.join("program.log");
+    let prefixed: String = said.lines().map(|line| format!("2026-11-14T10:00:00Z stderr F {line}\n")).collect();
+    std::fs::write(&log, prefixed).unwrap();
+    let locals = tondo(&["dump", "read", log.to_str().unwrap(), "locals", "--json"]);
+    assert!(locals.to_string().contains("42"), "{locals}");
     // A directory given that is not there yet is made, for its user alone.
     let given = dir.join("volume/dumps");
     assert!(run(given.to_str()).contains(&format!("a dump of the program is in {}", given.display())));
@@ -555,6 +564,11 @@ fn a_crash_leaves_a_dump_by_itself() {
     command.env("XDG_CACHE_HOME", dir.join("not-a-directory")).env_remove("TONDO_DUMP");
     let said = String::from_utf8_lossy(&command.output().unwrap().stderr).into_owned();
     assert!(said.contains("cannot be made") && said.contains("give TONDO_DUMP a directory"), "{said}");
+    // In a container, how the dump leaves it.
+    let mut command = Command::new(dir.join("falls"));
+    command.env("TONDO_DUMP", dir.join("contained")).env("KUBERNETES_SERVICE_HOST", "10.0.0.1");
+    let said = String::from_utf8_lossy(&command.output().unwrap().stderr).into_owned();
+    assert!(said.contains("it leaves the container with `docker cp <container>:"), "{said}");
 }
 
 /// A program asked to serve the tools that cannot, as one whose `TMPDIR`

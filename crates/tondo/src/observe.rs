@@ -1055,9 +1055,67 @@ fn raw(path: &std::path::Path, bytes: &[u8]) -> Result<Value, String> {
     serde_json::from_slice(bytes).map_err(|e| format!("{} is not a dump: {e}", path.display()))
 }
 
-/// A dump from its file, compressed or not, with every frame named.
+/// The last dump a log holds, as `TONDO_DUMP=stderr` writes one into the
+/// error output: compressed, in base64, between marks; none in a file of
+/// another kind.
+fn from_log(bytes: &[u8]) -> Option<Result<Vec<u8>, String>> {
+    const BEGIN: &[u8] = b"-----BEGIN TONDO DUMP-----";
+    const END: &[u8] = b"-----END TONDO DUMP-----";
+    let find = |from: usize, mark: &[u8]| bytes[from..].windows(mark.len()).position(|w| w == mark).map(|at| at + from);
+    let mut start = None;
+    let mut at = 0;
+    while let Some(found) = find(at, BEGIN) {
+        start = Some(found + BEGIN.len());
+        at = found + BEGIN.len();
+    }
+    let start = start?;
+    let Some(end) = find(start, END) else {
+        return Some(Err("the log's last dump is cut short: its end is missing".to_string()));
+    };
+    // Each line of the log, as a container's runtime may prefix one with
+    // its time, gives what follows its last space.
+    let mut encoded = Vec::new();
+    for line in bytes[start..end].split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let word = line.rsplit(|&b| b == b' ').next().unwrap_or(line);
+        encoded.extend_from_slice(word);
+    }
+    Some(base64_decoded(&encoded).ok_or_else(|| "the log's last dump is damaged".to_string()))
+}
+
+/// Base64 of RFC 4648 with its padding, or none when it is not.
+fn base64_decoded(text: &[u8]) -> Option<Vec<u8>> {
+    let value = |c: u8| match c {
+        b'A'..=b'Z' => Some(c - b'A'),
+        b'a'..=b'z' => Some(c - b'a' + 26),
+        b'0'..=b'9' => Some(c - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    };
+    let text = text.strip_suffix(b"==").or_else(|| text.strip_suffix(b"=")).unwrap_or(text);
+    let mut out = Vec::with_capacity(text.len() * 3 / 4);
+    let (mut bits, mut held) = (0u32, 0u32);
+    for &c in text {
+        bits = (bits << 6) | u32::from(value(c)?);
+        held += 6;
+        if held >= 8 {
+            held -= 8;
+            out.push((bits >> held) as u8);
+            bits &= (1 << held) - 1;
+        }
+    }
+    Some(out)
+}
+
+/// A dump from its file, compressed or not, or from a log, with every frame
+/// named.
 pub fn load(path: &std::path::Path) -> Result<Value, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let bytes = match from_log(&bytes) {
+        Some(found) => found.map_err(|e| format!("{}: {e}", path.display()))?,
+        None => bytes,
+    };
     let mut dump = match bytes.starts_with(b"\x7fELF") || bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
         true => crate::cores::read(path, None)?,
         false => raw(path, &bytes)?,

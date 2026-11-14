@@ -146,7 +146,8 @@ usage:
                          | print <path> [<task> [<frame>]] | find <text>
                          | heap | objects | object <address>] [--json]
                                                        show a dump, as a crash leaves in ~/.cache/tondo/dumps
-                                                       or TONDO_DUMP=<dir>
+                                                       or TONDO_DUMP=<dir>, or the last in a log, as TONDO_DUMP=stderr
+                                                       writes it
   tondo dump diff <file> <file> [--json]               what changed from one dump of a program to a later
                                                        one: memory by place, tasks, bindings, counters
   tondo dump group <dir> [--since <commit>] [--json]   the dumps of a directory by the failure they are,

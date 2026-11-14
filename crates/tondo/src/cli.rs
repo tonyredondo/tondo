@@ -276,7 +276,11 @@ pub const COMMANDS: &[Command] = &[
             "                       | print <path> [<task> [<frame>]] | find <text>",
             "                       | heap | objects | object <address>] [--json]",
         ],
-        summary: &["show a dump, as a crash leaves in ~/.cache/tondo/dumps", "or TONDO_DUMP=<dir>"],
+        summary: &[
+            "show a dump, as a crash leaves in ~/.cache/tondo/dumps",
+            "or TONDO_DUMP=<dir>, or the last in a log, as TONDO_DUMP=stderr",
+            "writes it",
+        ],
     },
     Command {
         name: "dump",

@@ -51,7 +51,8 @@ dump_read {"file": "shared.dump.json", "view": "why"}
 
 In a container a dump goes where the program can write: give `TONDO_DUMP` a
 volume or a tmpfs, or take the file its error output names out with `docker cp`;
-it reads on any machine. The tools reach a program in a container, started with
+it reads on any machine. `TONDO_DUMP=stderr` writes it into the error output,
+which the container's logs keep, and `tondo dump read <log>` reads it there. The tools reach a program in a container, started with
 `TONDO_DIAGNOSTICS=1` and a `TMPDIR` it can write, through
 `--via "docker exec -i <box>"` and a static `tondo` there, or by its process ID
 from a container that shares its processes, as `kubectl debug` makes. In CI,

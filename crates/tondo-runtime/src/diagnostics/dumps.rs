@@ -193,6 +193,47 @@ pub(crate) fn asked_dump() -> Option<std::ffi::OsString> {
     config().dump.clone().filter(|dir| dir != "off" && dir != "0")
 }
 
+/// Whether `TONDO_DUMP=stderr` asks for dumps in the error output, which
+/// the logs of a container or of CI keep when its files are gone.
+pub(crate) fn to_log() -> bool {
+    config().dump.as_deref().is_some_and(|dir| dir == "stderr")
+}
+
+/// A dump written to the error output whole, in one write: compressed, in
+/// base64, between marks `tondo dump read` finds in a log.
+pub(super) fn logged(text: &str) {
+    let encoded = crate::codec::base64_encode(&compressed(text), false);
+    let mut out =
+        String::from("tondo runtime: a dump of the program follows; `tondo dump read <log>` reads it from the log\n");
+    out.push_str("-----BEGIN TONDO DUMP-----\n");
+    for line in encoded.chunks(76) {
+        out.push_str(std::str::from_utf8(line).unwrap_or_default());
+        out.push('\n');
+    }
+    out.push_str("-----END TONDO DUMP-----\n");
+    let _ = std::io::stderr().write_all(out.as_bytes());
+}
+
+/// Whether the program runs in a container, whose files go with it: as
+/// Docker, Podman and Kubernetes mark it.
+fn contained() -> bool {
+    ["/.dockerenv", "/run/.containerenv"].iter().any(|mark| std::path::Path::new(mark).exists())
+        || std::env::var_os("KUBERNETES_SERVICE_HOST").is_some()
+}
+
+/// Says where a dump is, and in a container how it leaves it.
+fn announced(path: &std::path::Path) {
+    let mut said = format!("tondo runtime: a dump of the program is in {}\n", path.display());
+    if contained() {
+        said.push_str(&format!(
+            "tondo runtime: it leaves the container with `docker cp <container>:{} .`, or as it is written with \
+             TONDO_DUMP on a volume, or in the logs with TONDO_DUMP=stderr\n",
+            path.display()
+        ));
+    }
+    let _ = std::io::stderr().write_all(said.as_bytes());
+}
+
 /// How many dumps of crashes the cache keeps, the latest.
 pub(super) const KEPT_DUMPS: usize = 20;
 
@@ -201,7 +242,7 @@ pub(super) const KEPT_DUMPS: usize = 20;
 /// dump holds the program's values; and whether it is that cache.
 pub(super) fn crash_dir() -> Option<(PathBuf, bool)> {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt};
-    if let Some(dir) = asked_dump() {
+    if let Some(dir) = asked_dump().filter(|_| !to_log()) {
         // Made when it is missing, as the cache is, as only its user reads.
         let dir = PathBuf::from(dir);
         let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir);
@@ -257,6 +298,15 @@ pub(crate) fn crash_dump(reason: &str, message: &str, here: Vec<usize>, stop: bo
     if crate::debugger::rendering() {
         return;
     }
+    if to_log() {
+        let paused = crate::tasks::pause_here();
+        let text = dump(reason, message, Some(here), stop.then_some(std::time::Duration::from_millis(100)));
+        if paused {
+            crate::tasks::enter_tondo();
+        }
+        logged(&text);
+        return;
+    }
     let Some((dir, cache)) = crash_dir() else { return };
     let program = std::env::current_exe().ok().and_then(|p| Some(p.file_name()?.to_string_lossy().into_owned()));
     let name = format!("{}-{}.dump.json", program.unwrap_or_else(|| "tondo".into()), std::process::id());
@@ -267,10 +317,12 @@ pub(crate) fn crash_dump(reason: &str, message: &str, here: Vec<usize>, stop: bo
     if paused {
         crate::tasks::enter_tondo();
     }
-    let _ = match std::fs::write(&path, text) {
-        Ok(()) => writeln!(std::io::stderr(), "tondo runtime: a dump of the program is in {}", path.display()),
-        Err(e) => writeln!(std::io::stderr(), "tondo runtime: cannot write a dump to {}: {e}", path.display()),
-    };
+    match std::fs::write(&path, text) {
+        Ok(()) => announced(&path),
+        Err(e) => {
+            let _ = writeln!(std::io::stderr(), "tondo runtime: cannot write a dump to {}: {e}", path.display());
+        }
+    }
     if cache {
         prune_dumps(&dir);
     }
@@ -518,8 +570,10 @@ pub(crate) fn dump_on_signal() {
         let program = program.unwrap_or_else(|| "tondo".into());
         let path = PathBuf::from(dir).join(format!("{program}-{}-quit-{number}.dump.json.gz", std::process::id()));
         let text = dump("signal", "SIGQUIT", None, Some(std::time::Duration::from_millis(100)));
-        if write_whole(&path, &compressed(&text)).is_ok() {
-            let _ = writeln!(std::io::stderr(), "tondo runtime: a dump of the program is in {}", path.display());
+        if to_log() {
+            logged(&text);
+        } else if write_whole(&path, &compressed(&text)).is_ok() {
+            announced(&path);
             dumped(&path);
         }
     });
@@ -595,6 +649,10 @@ pub(super) fn dumps_on_schedule(schedule: Schedule, dir: PathBuf) {
             last_timed = now;
         }
         number += 1;
+        if to_log() {
+            logged(&dump("schedule", &why, None, Some(std::time::Duration::from_millis(100))));
+            continue;
+        }
         let path = dir.join(format!("{program}-{}-{number}.dump.json.gz", std::process::id()));
         let text = compressed(&dump("schedule", &why, None, Some(std::time::Duration::from_millis(100))));
         let length = text.len() as u64;
