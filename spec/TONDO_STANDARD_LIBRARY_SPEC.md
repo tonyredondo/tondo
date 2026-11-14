@@ -2976,7 +2976,14 @@ fn iter(self): ArrayIterator[T]                     // Iterator[T], perezoso
 
 `Map[K, V]`: `mapValues(fn(V): W): Map[K, W]`,
 `filter(fn(K, V): Bool): Map[K, V]` y `merge(other): Map[K, V]`, donde gana
-`other`. `Set[T]`: `union`, `intersection`, `difference` e `isSubset`.
+`other`. `Set[T]` da sets nuevos con `union`, `intersection`, `difference`,
+`symmetricDifference` (lo que está en uno y no en los dos, primero lo de
+`self`), `filter(fn(T): Bool)` y `map[U: Key](fn(T): U)`, que puede dar menos
+elementos; responde `isSubset`, `isSuperset` e `isDisjoint` (que ningún
+elemento esté en ambos); y cambia el suyo, con `var self`, con `extend`,
+`intersect`, `subtract` y `retain(fn(T): Bool)`, tras los que es lo que darían
+`union`, `intersection`, `difference` y `filter`. Un set de un array es
+`array.toSet()`.
 `Deque[T]`: `contains(value: T): Bool`, con `T: Equatable`, como `Array`.
 
 `Range[T]` (10.16 del lenguaje) es el valor de `start..end` y `start..=end`,

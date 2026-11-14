@@ -6784,3 +6784,11 @@ it. `sumBy` sums the values `map` gives, so floats add in the fixed order of `su
 gets the chain-ending ones whose bounds are their own parameters', `minBy`, `maxBy`, `countBy`,
 `sumBy`, `toMap` and `keyedBy`; `sum`, `min`, `max`, `average` and `toSet` ask more of `T` than the
 trait does, which a trait's method cannot, and stay the array's, after `collect()`.
+
+## The rest of a set's operations
+
+`Set[T]` gains `symmetricDifference`, `isSuperset`, `isDisjoint`, `filter` and `map`, giving new
+values, and `extend`, `intersect`, `subtract` and `retain`, which change it in place with `var self`
+and leave it what `union`, `intersection`, `difference` and `filter` give. The names keep the
+prelude's rule: a noun or a participle for what gives a new value, a verb for what changes it, and
+`extend` and `retain` are the array's names for the same.

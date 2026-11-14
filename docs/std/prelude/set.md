@@ -8,7 +8,7 @@
 
 `tondo api Set`, `tondo api Deque` show the same in a terminal.
 
-- [Set](#set): [`Set.union`](#setunion), [`Set.intersection`](#setintersection), [`Set.difference`](#setdifference), [`Set.isSubset`](#setissubset), [`Set.length`](#setlength), [`Set.contains`](#setcontains), [`Set.insert`](#setinsert), [`Set.remove`](#setremove), [`Set.values`](#setvalues)
+- [Set](#set): [`Set.union`](#setunion), [`Set.intersection`](#setintersection), [`Set.difference`](#setdifference), [`Set.isSubset`](#setissubset), [`Set.symmetricDifference`](#setsymmetricdifference), [`Set.isSuperset`](#setissuperset), [`Set.isDisjoint`](#setisdisjoint), [`Set.filter`](#setfilter), [`Set.map`](#setmap), [`Set.extend`](#setextend), [`Set.intersect`](#setintersect), [`Set.subtract`](#setsubtract), [`Set.retain`](#setretain), [`Set.length`](#setlength), [`Set.contains`](#setcontains), [`Set.insert`](#setinsert), [`Set.remove`](#setremove), [`Set.values`](#setvalues)
 - [Deque](#deque): [`Deque.contains`](#dequecontains), [`Deque.length`](#dequelength), [`Deque.get`](#dequeget), [`Deque.push`](#dequepush), [`Deque.pushFront`](#dequepushfront), [`Deque.pop`](#dequepop), [`Deque.popFront`](#dequepopfront)
 
 ### Set
@@ -44,6 +44,83 @@ pub fn Set[T: Key].isSubset(self, other: Set[T]): Bool
 ```
 
 Whether every element is also in `other`.
+
+#### Set.symmetricDifference
+
+```tondo
+pub fn Set[T: Key].symmetricDifference(self, other: Set[T]): Set[T]
+```
+
+The values in one of the sets and not in both, those of this set first:
+`Set[1, 2, 3].symmetricDifference(Set[3, 4])` is `Set[1, 2, 4]`.
+
+#### Set.isSuperset
+
+```tondo
+pub fn Set[T: Key].isSuperset(self, other: Set[T]): Bool
+```
+
+Whether every element of `other` is also in this set, as
+`other.isSubset(self)`.
+
+#### Set.isDisjoint
+
+```tondo
+pub fn Set[T: Key].isDisjoint(self, other: Set[T]): Bool
+```
+
+Whether no element is in both sets.
+
+#### Set.filter
+
+```tondo
+pub fn Set[T: Key].filter(self, keep: fn(T): Bool): Set[T]
+```
+
+The elements that pass the test.
+
+#### Set.map
+
+```tondo
+pub fn Set[T: Key].map[U: Key](self, transform: fn(T): U): Set[U]
+```
+
+The set of what the function gives for each element, which may be
+fewer: `Set[1, 2, 3].map((n) { n % 2 })` is `Set[1, 0]`.
+
+#### Set.extend
+
+```tondo
+pub fn Set[T: Key].extend(var self, other: Set[T])
+```
+
+Adds the elements of `other`: the set becomes what `union` gives.
+
+#### Set.intersect
+
+```tondo
+pub fn Set[T: Key].intersect(var self, other: Set[T])
+```
+
+Keeps the elements also in `other`: the set becomes what
+`intersection` gives.
+
+#### Set.subtract
+
+```tondo
+pub fn Set[T: Key].subtract(var self, other: Set[T])
+```
+
+Removes the elements of `other`: the set becomes what `difference`
+gives.
+
+#### Set.retain
+
+```tondo
+pub fn Set[T: Key].retain(var self, keep: fn(T): Bool)
+```
+
+Keeps the elements that pass the test, as `filter` gives them.
 
 #### Set.length
 

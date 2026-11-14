@@ -34,7 +34,9 @@ fn main() {
 
     var seen = Set[1, 2]
     seen.insert(3)
-    console.println("{seen.contains(2)} {seen}")
+    console.println("{seen.contains(2)} {seen} {seen.symmetricDifference(Set[3, 4])}")
+    seen.subtract(Set[1])                       // in place: also extend, intersect, retain
+    console.println("{seen} {seen.isDisjoint(Set[5])} {[2, 2, 7].toSet()}")
 
     var queue = Deque[String]()
     queue.push("b")

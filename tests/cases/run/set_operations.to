@@ -1,0 +1,53 @@
+// The operations of a set (standard library 14.5): giving a new set, and
+// changing one in place, which leaves a copy made before as it was; each
+// with the empty set on either side.
+
+import std.console
+
+fn main() {
+    let a = Set[1, 2, 3]
+    let b = Set[3, 4]
+    let empty: Set[Int] = Set[]
+    console.println(
+        "{a.symmetricDifference(b)} {b.symmetricDifference(a)} {a.symmetricDifference(empty)} {empty.symmetricDifference(a)}",
+    )
+    console.println(
+        "{a.isSuperset(Set[1, 3])} {a.isSuperset(b)} {a.isSuperset(empty)} {empty.isSuperset(a)}",
+    )
+    console.println(
+        "{a.isDisjoint(b)} {a.isDisjoint(Set[7])} {a.isDisjoint(empty)} {empty.isDisjoint(empty)}",
+    )
+    console.println("{a.filter((n) { n > 1 })} {empty.filter((n) { n > 1 })}")
+    // What `map` gives may repeat: the set keeps it once.
+    console.println("{a.map((n) { n % 2 })} {a.map((n) { "#{n}" })} {empty.map((n) { n * 2 })}")
+
+    var grown = a
+    let before = grown
+    grown.extend(b)
+    console.println("{grown} {grown == a.union(b)} {before}")
+    var kept = a
+    kept.intersect(b)
+    console.println("{kept} {kept == a.intersection(b)}")
+    var less = a
+    less.subtract(b)
+    console.println("{less} {less == a.difference(b)}")
+    var evens = a
+    evens.retain((n) { n % 2 == 0 })
+    console.println("{evens} {a}")
+    var nothing = empty
+    nothing.extend(empty)
+    nothing.intersect(a)
+    nothing.subtract(a)
+    console.println("{nothing} {nothing.isEmpty()}")
+}
+
+// expect-stdout: Set[1, 2, 4] Set[4, 1, 2] Set[1, 2, 3] Set[1, 2, 3]
+// expect-stdout: true false true false
+// expect-stdout: false true true true
+// expect-stdout: Set[2, 3] Set[]
+// expect-stdout: Set[1, 0] Set[#1, #2, #3] Set[]
+// expect-stdout: Set[1, 2, 3, 4] true Set[1, 2, 3]
+// expect-stdout: Set[3] true
+// expect-stdout: Set[1, 2] true
+// expect-stdout: Set[2] Set[1, 2, 3]
+// expect-stdout: Set[] true

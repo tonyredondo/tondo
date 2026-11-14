@@ -1436,6 +1436,75 @@ pub fn Set[T: Key].isSubset(self, other: Set[T]): Bool {
     true
 }
 
+/// The values in one of the sets and not in both, those of this set first:
+/// `Set[1, 2, 3].symmetricDifference(Set[3, 4])` is `Set[1, 2, 4]`.
+pub fn Set[T: Key].symmetricDifference(self, other: Set[T]): Set[T] {
+    self.difference(other).union(other.difference(self))
+}
+
+/// Whether every element of `other` is also in this set, as
+/// `other.isSubset(self)`.
+pub fn Set[T: Key].isSuperset(self, other: Set[T]): Bool {
+    other.isSubset(self)
+}
+
+/// Whether no element is in both sets.
+pub fn Set[T: Key].isDisjoint(self, other: Set[T]): Bool {
+    for item in self {
+        if other.contains(item) {
+            return false
+        }
+    }
+    true
+}
+
+/// The elements that pass the test.
+pub fn Set[T: Key].filter(self, keep: fn(T): Bool): Set[T] {
+    var out: Set[T] = Set[]
+    for item in self {
+        if keep(item) {
+            out.insert(item)
+        }
+    }
+    out
+}
+
+/// The set of what the function gives for each element, which may be
+/// fewer: `Set[1, 2, 3].map((n) { n % 2 })` is `Set[1, 0]`.
+pub fn Set[T: Key].map[U: Key](self, transform: fn(T): U): Set[U] {
+    var out: Set[U] = Set[]
+    for item in self {
+        out.insert(transform(item))
+    }
+    out
+}
+
+/// Adds the elements of `other`: the set becomes what `union` gives.
+pub fn Set[T: Key].extend(var self, other: Set[T]) {
+    for item in other {
+        self.insert(item)
+    }
+}
+
+/// Keeps the elements also in `other`: the set becomes what
+/// `intersection` gives.
+pub fn Set[T: Key].intersect(var self, other: Set[T]) {
+    self = self.intersection(other)
+}
+
+/// Removes the elements of `other`: the set becomes what `difference`
+/// gives.
+pub fn Set[T: Key].subtract(var self, other: Set[T]) {
+    for item in other {
+        self.remove(item)
+    }
+}
+
+/// Keeps the elements that pass the test, as `filter` gives them.
+pub fn Set[T: Key].retain(var self, keep: fn(T): Bool) {
+    self = self.filter(keep)
+}
+
 // ---------------------------------------------------------------------------
 // Iterator
 // ---------------------------------------------------------------------------

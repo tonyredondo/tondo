@@ -147,8 +147,17 @@ pub fn Result[T, E].mapErr[F](self, transform: fn(E): F): T ! F
 pub fn Result[T, E].map[U](self, transform: fn(T): U): U ! E
 pub fn Result[T, E].ok(self): T?
 pub fn Set[T: Key].difference(self, other: Set[T]): Set[T]
+pub fn Set[T: Key].extend(var self, other: Set[T])
+pub fn Set[T: Key].filter(self, keep: fn(T): Bool): Set[T]
+pub fn Set[T: Key].intersect(var self, other: Set[T])
 pub fn Set[T: Key].intersection(self, other: Set[T]): Set[T]
+pub fn Set[T: Key].isDisjoint(self, other: Set[T]): Bool
 pub fn Set[T: Key].isSubset(self, other: Set[T]): Bool
+pub fn Set[T: Key].isSuperset(self, other: Set[T]): Bool
+pub fn Set[T: Key].map[U: Key](self, transform: fn(T): U): Set[U]
+pub fn Set[T: Key].retain(var self, keep: fn(T): Bool)
+pub fn Set[T: Key].subtract(var self, other: Set[T])
+pub fn Set[T: Key].symmetricDifference(self, other: Set[T]): Set[T]
 pub fn Set[T: Key].union(self, other: Set[T]): Set[T]
 pub fn String.chars(self): CharIterator
 pub fn String.compare(self, other: String): Int
