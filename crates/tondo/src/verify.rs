@@ -11,7 +11,7 @@ use crate::types::{Ty, TyKind, Types};
 /// Whether the only value of a type is zeros: what holds nothing, and a
 /// result that cannot fail of it, which a function that gives nothing
 /// gives where one is expected.
-fn nothing(types: &Types, ty: Ty) -> bool {
+pub(crate) fn nothing(types: &Types, ty: Ty) -> bool {
     match types.kind(types.repr(ty)) {
         TyKind::Unit | TyKind::Never | TyKind::Error => true,
         TyKind::Result(ok, error) => nothing(types, *ok) && types.repr(*error) == Ty::NEVER,

@@ -1487,6 +1487,10 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, types: &crate::types::Types, sou
     after("lends", bodies, types, sources);
     crate::moves::moves(bodies, types, sources);
     after("moves", bodies, types, sources);
+    crate::split::split(bodies, types, sources);
+    after("split", bodies, types, sources);
+    crate::borrowed::borrowed(bodies, types);
+    after("borrowed", bodies, types, sources);
     crate::reserve::reserve(bodies, types);
     after("reserve", bodies, types, sources);
     crate::unroll::unroll(bodies, types);

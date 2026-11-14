@@ -1,0 +1,66 @@
+// Records, tuples and options a function only takes apart are kept in
+// registers, a local for each field: a lazy chain hands each element
+// through `some(item)` at every step, in the standard library's code, and
+// moves it between registers. The program's own bindings stay whole, as a
+// debugger shows them, and so does a value read whole or lent: each gives
+// the same results either way.
+
+import std.console
+
+type Order = {
+    id: Int
+    cents: Int
+    region: String
+}
+
+fn orders(): Array[Order] {
+    var all: Array[Order] = []
+    for id in 0..10 {
+        all.push(
+            Order { id, cents: id * 1000, region: if id % 2 == 0 { "north" } else { "south" } },
+        )
+    }
+    all
+}
+
+fn lazy(all: Array[Order]): Int {
+    all
+        .iter()
+        .filter((order) { order.cents > 4000 })
+        .sumBy((order) { order.cents + order.region.length() })
+}
+
+fn kept(all: Array[Order]): Array[Order] {
+    var out: Array[Order] = []
+    for order in all {
+        if order.region == "north" {
+            out.push(order)
+        }
+    }
+    out
+}
+
+fn swapped(): Int {
+    var (low, high) = (3, 9)
+    if low > high {
+        (low, high) = (high, low)
+    }
+    high - low
+}
+
+fn moved(order: var Order) {
+    order.cents += 1
+}
+
+fn lent(): Int {
+    var order = Order { id: 1, cents: 2, region: "west" }
+    moved(var order)
+    order.cents
+}
+
+fn main() {
+    let all = orders()
+    console.println("{lazy(all)} {kept(all).length()} {swapped()} {lent()}")
+}
+
+// expect-stdout: 35025 5 6 3

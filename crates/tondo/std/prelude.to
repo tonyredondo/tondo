@@ -2522,7 +2522,10 @@ pub type ArrayIterator[T] = {
 
 impl[T] Iterator[T] for ArrayIterator[T] {
     fn next(mut self): T? {
-        let item = self.items.get(self.position)?
+        if self.position >= self.items.length() {
+            return none
+        }
+        let item = self.items[self.position]
         self.position += 1
         item
     }

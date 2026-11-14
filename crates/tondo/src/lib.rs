@@ -6,6 +6,7 @@ pub mod apidiff;
 pub mod ast;
 pub mod bind;
 pub mod bisect;
+pub mod borrowed;
 pub mod built;
 pub mod captured;
 pub mod check;
@@ -68,6 +69,7 @@ pub mod reserve;
 #[cfg(feature = "rules")]
 pub mod rules;
 pub mod simd;
+pub mod split;
 pub mod stack;
 pub mod verify;
 // Its kinds of error are the runtime's; the compiler reads only their names.

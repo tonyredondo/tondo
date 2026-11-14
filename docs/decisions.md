@@ -6936,3 +6936,41 @@ drives that runtime from its own thread: the keys and the sizes are in the recor
 gives them again. Keys are read only while the top level wants them, under the stack's lock, so a
 question that comes after them takes what is typed after it; what was typed before it, while the
 program still read keys, is the program's, as in other programs that switch from keys to lines.
+
+## A lazy chain's elements in registers, and borrowed
+
+A lazy chain, inlined, made `some(item)` in each adapter's `next` and took it apart in its
+caller, and Cranelift keeps what lives in the frame's memory there: each element was copied whole
+through the frame three or four times, five words each, retained by `get` and released at every
+step, so `all.iter().filter(...).sumBy(...)` over records with a text took 380 instructions an
+element, four times the eager chain.
+
+A pass after `moves`, `split`, keeps a local for each field of a record, a tuple or an option
+that a function only makes, copies and takes apart, which Cranelift keeps in registers. A local
+stays whole where splitting would not pay or could not be right: lent, as a `var` argument is,
+even through a `fn` value; read whole as an argument or a part of another value, which would put
+it together again in memory; only read field by field, where memory costs the same; an enum with
+a field that is not a word, whose every variant's fields a copy would copy; a closure's captures,
+which are only read; C's layouts, a union's fields sharing their memory; a value a statement
+that may panic gives, whose check follows it at once; and the program's own bindings, which a
+debugger, a breakpoint's condition and a dump show whole, by name, with their secrets kept, in a
+Release build too. An enum keeps its tag as a local, and zero in the fields of the variants it
+does not hold, so releasing it releases each field, and a release of a field every path left
+zero goes. The first version split every candidate: a giant function, as a test that runs many
+benchmarks, spilled the pointer of a loop's array for the registers the captures took, 28% more
+instructions in `index sum`, and Release builds' dumps and breakpoints lost the program's records,
+so captures, what is only read and the program's bindings stay in memory.
+
+`ArrayIterator.next` now reads the element by its index, a copy whose retain is a statement of its
+own, and a second pass, `borrowed`, drops that retain and every release of the locals the element
+reaches when its array is a local given its value once that nothing changes, lends or lets go but
+where the function returns, and the element is only copied between locals and read where nothing
+keeps it: an operation, a comparison, or a call, which borrows its arguments, unless it takes a
+loan. An element pushed, kept in a map, given back or lent keeps its count.
+
+Together, `iter().filter(...).sumBy(...)` over records with a text does 73% fewer instructions
+and takes 68 µs where the eager chain takes 74; over records of numbers it does 16% fewer and
+over numbers 38%. The closure's parameter is a binding of the program, which keeps the element
+in memory: split too, the chain takes 19 µs, which needs the tools to show a record from its
+fields first. Building takes 2 to 3% more instructions; `reserve`, which looked at every function
+on one thread, now does so on every core.

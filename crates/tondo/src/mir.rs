@@ -38,8 +38,7 @@ pub enum Proj {
 #[derive(Clone, Debug)]
 pub struct Remark {
     pub span: Span,
-    /// `inlined` or `call`, `frame` or `heap`, `unchecked` or `checked`,
-    /// or `arithmetic`.
+    /// One of `driver::OPTIMIZATION_KINDS`.
     pub kind: &'static str,
     pub text: String,
 }

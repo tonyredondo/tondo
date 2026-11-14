@@ -1,0 +1,63 @@
+// A lazy chain reads each element of the array it walks without a count
+// of its own, as the array holds it, when it only reads it; one it keeps,
+// in an array, a map or as a result, is counted, and outlives the array.
+
+import std.console
+
+type Order = {
+    id: Int
+    cents: Int
+    region: String
+}
+
+fn orders(): Array[Order] {
+    var all: Array[Order] = []
+    for id in 0..12 {
+        let region = ["north", "south", "east"][id % 3]
+        all.push(Order { id, cents: id * 1000, region: "{region}-{id}" })
+    }
+    all
+}
+
+// Only read: borrowed.
+fn total(all: Array[Order]): Int {
+    all.iter().filter((order) { order.cents > 4000 }).sumBy((order) { order.region.length() })
+}
+
+// Kept in an array, which outlives `all`.
+fn kept(all: Array[Order]): Array[Order] {
+    all.iter().filter((order) { order.region.startsWith("east") }).collect()
+}
+
+// Kept as a map's keys.
+fn regions(all: Array[Order]): Map[String, Int] {
+    var counts: Map[String, Int] = [:]
+    for order in all.iter() {
+        counts[order.region] = order.cents
+    }
+    counts
+}
+
+// Given back.
+fn last(all: Array[Order]): Order? {
+    all.iter().filter((order) { order.cents < 3000 }).reduce(none, (_, order) { some(order) })
+}
+
+fn main() {
+    var east: Array[Order] = []
+    var map: Map[String, Int] = [:]
+    var found: Order? = none
+    var sum = 0
+    for _ in 0..3 {
+        let all = orders()
+        sum += total(all)
+        east = kept(all)
+        map = regions(all)
+        found = last(all)
+    }
+    console.println(
+        "{sum} {east.map((o) { o.region }).join(",")} {map.length()} {found.map((o) { o.region })}",
+    )
+}
+
+// expect-stdout: 144 east-2,east-5,east-8,east-11 12 some(east-2)

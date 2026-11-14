@@ -15,7 +15,7 @@ use crate::source::Span;
 use crate::types::{Ty, TyKind, Types};
 
 pub fn reserve(bodies: &mut [Body], types: &Types) {
-    for body in bodies {
+    crate::parallel::each_mut(bodies, |body| {
         let noting = crate::mir_text::noting(&body.name);
         let (found, grown) = loops(body, types);
         for (span, why) in grown {
@@ -33,7 +33,7 @@ pub fn reserve(bodies: &mut [Body], types: &Types) {
                 Rvalue::Mutate(Mutation::Reserve, Place::local(array), vec![Operand::local(last)], vec![false], span);
             body.blocks[before].stmts.push(Statement::Assign(Place::local(done), Box::new(room), span));
         }
-    }
+    });
 }
 
 /// Where a block goes when its task unwinds a panic or is cancelled, as the
