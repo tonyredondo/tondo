@@ -234,18 +234,15 @@ fn release(id: u64) {
     WANTED.notify_waiters();
 }
 
-/// Once: the signals that change the terminal are caught, and the terminal
-/// is given back however the program ends.
+/// Once: the signals that change the terminal are caught. The runtime gives
+/// the terminal back wherever the program ends (`give_back`), not from
+/// `atexit`, which a program linked without a C compiler does not have.
 fn started() {
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
         super::signals::start();
         super::signals::catch(libc::SIGWINCH);
         super::signals::catch(libc::SIGCONT);
-        extern "C" fn at_exit() {
-            give_back();
-        }
-        unsafe { libc::atexit(at_exit) };
     });
 }
 
@@ -257,6 +254,18 @@ pub(crate) fn give_back() {
         stack.restore();
         stack.ended = true;
     }
+}
+
+/// Runs `f`, as `exec`, with the terminal as the program found it, and
+/// takes it again if `f` returns.
+pub(crate) fn around<T>(f: impl FnOnce() -> T) -> T {
+    stack().restore();
+    let result = f();
+    let mut stack = stack();
+    if !stack.levels.is_empty() {
+        stack.apply();
+    }
+    result
 }
 
 /// On Ctrl-Z, from the thread of the signals: gives the terminal back and

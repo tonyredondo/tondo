@@ -31,6 +31,7 @@ pub(crate) fn end_all(status: i32) -> ! {
     let me = current();
     if me.is_null() {
         flush_stdout();
+        crate::terminal::give_back();
         crate::process::cancel_live();
         std::process::exit(status)
     }
@@ -84,6 +85,7 @@ pub(crate) fn abandon(status: i32) {
                 std::thread::sleep(cleaned_by(from).saturating_duration_since(Instant::now()));
             }
             flush_stdout();
+            crate::terminal::give_back();
             crate::process::cancel_live();
             std::process::exit(ENDING.load(Ordering::SeqCst) as i32)
         });

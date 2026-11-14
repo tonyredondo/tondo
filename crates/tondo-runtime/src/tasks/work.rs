@@ -488,6 +488,7 @@ pub(super) fn deadlock() -> ! {
         }
     }
     flush_stdout();
+    crate::terminal::give_back();
     let headline = "panic[P0013]: deadlock: every task waits and none of them can wake the others";
     // A debugger shows where every task waits first.
     crate::debugger::deadlocked(headline);

@@ -212,6 +212,8 @@ pub unsafe extern "C" fn tondo_rt_main(
     debugger::start_stopped();
     replay::begin();
     let mut status = tasks::run_main(tondo_main);
+    // A terminal still taken, as by a task main did not wait for.
+    terminal::give_back();
     if let Some(status) = tasks::ending() {
         process::cancel_live();
         flush_stdout();

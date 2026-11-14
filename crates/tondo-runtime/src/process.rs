@@ -1210,12 +1210,14 @@ pub unsafe extern "C" fn tondo_rt_process_exec(plan: *mut PlanObject, _out: *mut
         return error_status(&error);
     }
     let _ = super::finish_stdout();
-    super::terminal::give_back();
-    error_status(&command.exec())
+    // The program that takes the process's place finds the terminal as this
+    // one did; when it cannot start, this one goes on with it taken again.
+    error_status(&super::terminal::around(|| command.exec()))
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_process_exit(code: i64) -> ! {
+    super::terminal::give_back();
     let _ = super::finish_stdout();
     std::process::exit(code as i32)
 }
