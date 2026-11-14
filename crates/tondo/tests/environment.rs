@@ -11,6 +11,11 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("zones.rs", "\"TZ\"", "the system's zone, read once as the program first asks"),
     ("diagnostics/dumps.rs", "\"XDG_CACHE_HOME\"", "the user's cache, where a crash's dump goes"),
     ("diagnostics/dumps.rs", "\"HOME\"", "the user's cache, where a crash's dump goes"),
+    (
+        "diagnostics/dumps.rs",
+        "\"KUBERNETES_SERVICE_HOST\"",
+        "Kubernetes's, not Tondo's: whether the program runs in a pod, read as a dump is written to say how it leaves",
+    ),
     ("testing.rs", "(name)", "the environment a test changed, given back before the next"),
     ("client.rs", "(name)", "the proxies, by curl's names, read as a client is made, which a program may set first"),
 ];

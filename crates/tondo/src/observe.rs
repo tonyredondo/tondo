@@ -1112,11 +1112,13 @@ fn base64_decoded(text: &[u8]) -> Option<Vec<u8>> {
 /// named.
 pub fn load(path: &std::path::Path) -> Result<Value, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let bytes = match from_log(&bytes) {
+    // A core holds the program's memory, where the marks of a log may be.
+    let core = bytes.starts_with(b"\x7fELF") || bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]);
+    let bytes = match (!core).then(|| from_log(&bytes)).flatten() {
         Some(found) => found.map_err(|e| format!("{}: {e}", path.display()))?,
         None => bytes,
     };
-    let mut dump = match bytes.starts_with(b"\x7fELF") || bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+    let mut dump = match core {
         true => crate::cores::read(path, None)?,
         false => raw(path, &bytes)?,
     };
