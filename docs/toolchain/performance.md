@@ -266,13 +266,13 @@ though. A benchmark of the two over a thousand numbers shows both costs:
 ```text
 $ tondo test --bench
 test squares::unit::squares::aThousand ... ok
-  arrays     1.230 µs/op  ±0.1%  9 allocs/op  12448 B/op  25.1k ins/op
-  chain      2.076 µs/op  ±0.4%  2 allocs/op  80 B/op  50.9k ins/op
+  arrays     1.286 µs/op  ±0.1%  9 allocs/op  12448 B/op  25.1k ins/op
+  chain      1.659 µs/op  ±0.1%  2 allocs/op  80 B/op  36.7k ins/op
 ```
 
 The chain allocates its two closures and nothing else, however long the
-array is: less than a hundredth of the memory here. The arrays' form is the
-faster of the two, with half the instructions.
+array is: less than a hundredth of the memory here. The arrays' form is
+still the faster of the two, with two thirds of the instructions.
 
 ## The machine code: asm
 
