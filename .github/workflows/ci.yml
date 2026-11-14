@@ -57,6 +57,11 @@ jobs:
       - uses: ./.github/actions/runtime
         with:
           label: ${{ matrix.os }}-${{ matrix.target }}
+      # Where a test or a case that hangs leaves its dump, for every step,
+      # which a failure uploads.
+      - run: |
+          mkdir -p "$RUNNER_TEMP/dumps"
+          echo "TONDO_CI_DUMPS=$RUNNER_TEMP/dumps" >> "$GITHUB_ENV"
       # The servers the tests of std.sql and std.acme speak to, which start
       # while the tests build: Pebble checks names on port 5001 of the host.
       - if: matrix.target == 'x86_64-linux-gnu' && contains(matrix.run, 'workspace')
@@ -82,8 +87,6 @@ jobs:
       # What `cargo test --workspace` runs, two test binaries at a time.
       - if: contains(matrix.run, 'workspace')
         run: .github/scripts/tests.sh 2
-        env:
-          TONDO_CI_DUMPS: ${{ runner.temp }}/dumps
       # Linking with the system's C compiler, as `TONDO_CC` asks.
       - if: contains(matrix.run, 'system-cc')
         run: cargo test --workspace --test cases cases
@@ -115,7 +118,7 @@ jobs:
       - if: contains(matrix.run, 'no-cc')
         run: |
           cases=$(cargo test --workspace --test cases --no-run 2>&1 | grep -o 'target/debug/deps/cases-[0-9a-f]*')
-          run="docker run --rm -u $(id -u):$(id -g) -e HOME=/tmp -v $PWD:$PWD -w $PWD"
+          run="docker run --rm -u $(id -u):$(id -g) -e HOME=/tmp -v $PWD:$PWD -w $PWD -e TONDO_CI_DUMPS -v $TONDO_CI_DUMPS:$TONDO_CI_DUMPS"
           $run debian:stable-slim sh -c "! command -v cc && $cases cases projects"
           $run -e TONDO_CASES_STATIC=1 debian:stable-slim sh -c "! command -v cc && $cases cases"
       # What hung says so by Tondo's own tools: the failures in the summary of
@@ -263,7 +266,7 @@ jobs:
       # tests.sh asks for jq, and for an xargs that runs two at a time.
       - run: >
           mkdir -p ~/.cargo/registry ~/.cargo/git &&
-          docker run --rm -v "$PWD:/work" -w /work -e CARGO_INCREMENTAL=0
+          docker run --rm -v "$PWD:/work" -w /work -e CARGO_INCREMENTAL=0 -e TONDO_CI_DUMPS=/work/target/ci-dumps
           -v "$HOME/.cargo/registry:/usr/local/cargo/registry" -v "$HOME/.cargo/git:/usr/local/cargo/git"
           rust:alpine sh -c
           "apk add --no-cache musl-dev zlib-dev zlib-static git curl tar jq findutils &&
@@ -274,12 +277,25 @@ jobs:
       # static.
       - if: contains(matrix.run, 'no-cc')
         run: |
-          run="docker run --rm -v $PWD:/work -w /work"
+          run="docker run --rm -v $PWD:/work -w /work -e TONDO_CI_DUMPS=/work/target/ci-dumps"
           $run alpine sh -c "! command -v cc && $(cat target/cases) cases projects"
           $run -e TONDO_CASES_STATIC=1 alpine sh -c "! command -v cc && $(cat target/cases) cases"
       # What the containers wrote as root, for the cache to clean and keep.
       - if: ${{ !cancelled() }}
         run: sudo chown -R "$(id -u):$(id -g)" target ~/.cargo
+      # What hung, as the other test jobs say it, by the musl tondo in its
+      # container.
+      - if: failure()
+        run: >
+          touch "$GITHUB_STEP_SUMMARY" &&
+          docker run --rm -v "$PWD:/work" -w /work -v "$GITHUB_STEP_SUMMARY:/summary" -e GITHUB_STEP_SUMMARY=/summary
+          alpine sh .github/scripts/diagnose.sh target/ci-dumps
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dumps-${{ matrix.target }}-musl-${{ strategy.job-index }}
+          path: target/ci-dumps
+          if-no-files-found: ignore
       - if: ${{ !cancelled() }}
         uses: ./.github/actions/runtime
         with:
