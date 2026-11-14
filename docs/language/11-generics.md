@@ -392,7 +392,8 @@ and each `impl` writes its own trait's.
 A method inside a trait asks of the trait's parameters only what the trait
 asks. One declared after it can ask more: it has the form of a type's
 method, with the trait as its owner and a bound on its parameter, and it is
-a method of every implementation whose parameter meets the bound.
+a method of every implementation whose parameter meets the bound, called as
+the trait's own are.
 
 ```tondo
 import std.console
@@ -429,7 +430,7 @@ fn last[P: Pile[String]](pile: P): String {
 
 fn main() {
     let scores = Scores { values: [3, 9, 4] }
-    console.println("{Pile.largest(scores)} {last(Words { text: "pear fig plum" })}")
+    console.println("{scores.largest()} {last(Words { text: "pear fig plum" })}")
 }
 ```
 
