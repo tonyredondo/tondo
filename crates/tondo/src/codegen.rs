@@ -399,6 +399,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         functions: Vec::new(),
         runtime: HashMap::new(),
         strings: HashMap::new(),
+        text_count: 0,
         arrays: 0,
         empty_array: None,
         byte_arrays: HashMap::new(),
@@ -740,6 +741,8 @@ struct Codegen<'a> {
     functions: Vec<FuncId>,
     runtime: HashMap<Rt, FuncId>,
     strings: HashMap<String, DataId>,
+    /// The texts made, which number their data.
+    text_count: usize,
     /// How many static arrays there are, which names the next.
     arrays: usize,
     /// The one empty array, of any element type, that `[]` and `Array[T]()` are.

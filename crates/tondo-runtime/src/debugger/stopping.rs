@@ -797,7 +797,7 @@ pub(crate) fn latent_sites() -> Vec<(usize, usize, String, u32, usize)> {
     if raw.is_null() {
         return Vec::new();
     }
-    let text = String::from_utf8_lossy(unsafe { str_bytes((*raw).text) }).into_owned();
+    let text = table_text(unsafe { str_bytes((*raw).text) });
     let (mut sites, mut function) = (Vec::new(), None);
     for line in text.lines() {
         match line.split('\t').collect::<Vec<_>>()[..] {
@@ -959,15 +959,18 @@ pub(super) fn render(
             if let Some((saved, address)) = switched {
                 registers = crate::unwinding::restored(address, frame, &saved, bounds);
             }
-            let (kept_at, kept) = PANIC_REGISTERS.get();
+            let (kept_at, kept_pc, kept) = PANIC_REGISTERS.get();
             for (fp, address) in top.into_iter().chain(crate::trace::callers(frame, bounds)) {
                 // The runtime's frames saved what the program's code had.
                 let Some((function, start)) = crate::trace::function_at(address) else {
                     registers = crate::unwinding::restored(address, fp, &registers, bounds);
                     continue;
                 };
+                // The frame that panicked is read where it kept its
+                // registers, all of them.
+                let address = if fp == kept_at && kept_pc > start { kept_pc } else { address };
                 if fp == kept_at {
-                    for (&register, &value) in CALLEE_SAVED.iter().zip(&kept) {
+                    for (register, &value) in kept.iter().enumerate() {
                         registers[register] = Some(value);
                     }
                 }
@@ -1062,8 +1065,8 @@ pub(super) const CALLEE_SAVED: &[usize] = &[3, 12, 13, 14, 15];
 pub(super) const CALLEE_SAVED: &[usize] = &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28];
 
 thread_local! {
-    /// The frame pointer and callee-saved registers before a panic.
-    pub(super) static PANIC_REGISTERS: std::cell::Cell<(usize, [usize; 10])> = const { std::cell::Cell::new((0, [0; 10])) };
+    /// The frame pointer, the place and every register before a panic.
+    pub(super) static PANIC_REGISTERS: std::cell::Cell<(usize, usize, [usize; 32])> = const { std::cell::Cell::new((0, 0, [0; 32])) };
 }
 
 thread_local! {
@@ -1077,58 +1080,21 @@ pub extern "C" fn tondo_rt_keep_numbers(kept: *const u64) {
     PANIC_NUMBERS.set(kept);
 }
 
-/// Called by what keeps the registers: the frame pointer of the code that
-/// panics, then the callee-saved registers.
-pub(super) extern "C" fn registers_kept(registers: *const usize) {
-    let mut kept = [0; 10];
-    let fp = unsafe { *registers };
-    for (index, slot) in kept.iter_mut().enumerate().take(CALLEE_SAVED.len()) {
-        *slot = unsafe { *registers.add(index + 1) };
-    }
-    PANIC_REGISTERS.set((fp, kept));
+/// Called by what keeps the registers, with where it saved them.
+extern "C" fn registers_kept(saved: *const usize) {
+    let (registers, _, pc, fp) = unsafe { crate::logpoints::registers_of(saved) };
+    PANIC_REGISTERS.set((fp, pc, registers));
 }
 
-/// Keeps the registers of the code that is about to panic, which the
-/// runtime's own frames would overwrite on the way to a dump.
-#[cfg(target_arch = "x86_64")]
+/// Keeps every register of the code that is about to panic, which the
+/// runtime's own frames would overwrite on the way to a dump, and where it
+/// was: the values a failed check leaves in them, whose code keeps them
+/// there as the call says it keeps every register.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[unsafe(no_mangle)]
 #[unsafe(naked)]
 pub unsafe extern "C" fn tondo_rt_keep_registers() {
-    std::arch::naked_asm!(
-        "sub rsp, 56",
-        "mov [rsp], rbp",
-        "mov [rsp + 8], rbx",
-        "mov [rsp + 16], r12",
-        "mov [rsp + 24], r13",
-        "mov [rsp + 32], r14",
-        "mov [rsp + 40], r15",
-        "mov rdi, rsp",
-        "call {kept}",
-        "add rsp, 56",
-        "ret",
-        kept = sym registers_kept,
-    )
-}
-
-#[cfg(target_arch = "aarch64")]
-#[unsafe(no_mangle)]
-#[unsafe(naked)]
-pub unsafe extern "C" fn tondo_rt_keep_registers() {
-    std::arch::naked_asm!(
-        "sub sp, sp, #112",
-        "stp x29, x19, [sp]",
-        "stp x20, x21, [sp, #16]",
-        "stp x22, x23, [sp, #32]",
-        "stp x24, x25, [sp, #48]",
-        "stp x26, x27, [sp, #64]",
-        "stp x28, x30, [sp, #80]",
-        "mov x0, sp",
-        "bl {kept}",
-        "ldr x30, [sp, #88]",
-        "add sp, sp, #112",
-        "ret",
-        kept = sym registers_kept,
-    )
+    crate::logpoints::keeping_every_register!(registers_kept)
 }
 
 impl DumpBinding {
@@ -1180,6 +1146,19 @@ pub(super) fn caller_registers(registers: &Registers, fp: usize, saved: &[(usize
 /// The table of what the dumps of a build without probes show.
 pub(super) static DUMP_TABLE: AtomicPtr<Raw> = AtomicPtr::new(std::ptr::null_mut());
 
+/// Its text, which a build deflates after a mark as only a dump reads it.
+fn table_text(bytes: &[u8]) -> String {
+    match bytes.strip_prefix(b"TONDOBINDINGS2\n") {
+        Some(deflated) => {
+            use std::io::Read;
+            let mut text = String::new();
+            let _ = flate2::read::DeflateDecoder::new(deflated).read_to_string(&mut text);
+            text
+        }
+        None => String::from_utf8_lossy(bytes).into_owned(),
+    }
+}
+
 /// Called by a program without probes before anything else.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_dump_table(raw: *mut Raw) {
@@ -1195,7 +1174,7 @@ pub(super) fn dump_functions() -> std::collections::HashMap<usize, DumpFunction>
         return functions;
     }
     let raw = unsafe { &*raw };
-    let text = String::from_utf8_lossy(unsafe { str_bytes(raw.text) }).into_owned();
+    let text = table_text(unsafe { str_bytes(raw.text) });
     let glues = unsafe { std::slice::from_raw_parts(raw.glues, raw.count as usize) };
     let (mut current, mut next) = (0, 0);
     for line in text.lines() {

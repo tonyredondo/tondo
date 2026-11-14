@@ -87,6 +87,15 @@ and its `vzeroupper` before calls and returns that pass none; and the
 extractor `ty_vec256` in `src/prelude.isle`, with which the optimizer
 makes their constants (`src/prelude_opt.isle`, `src/opts/arithmetic.isle`).
 
+And where a debugger finds a value, `value_labels_ranges`, in
+`src/machinst/vcode.rs`, marked `Tondo:`: a range that ends in a cold block
+ends where the cold blocks start, not at the end of the function, which
+covered them with places the values had left; and a cold block that only
+its branch reaches, as the panic of a failed check, gets the places the
+values had at the branch, until an instruction or a move of the block
+writes over them or a call clobbers them, with no instruction more, so that
+a dump there shows them.
+
 This copy is where an optimization that Tondo's code needs and Cranelift
 lacks is written, as a rule marked `Tondo:`. To move to a newer Cranelift:
 copy the published crates here, drop `src/isa/riscv64`, `src/isa/s390x` and

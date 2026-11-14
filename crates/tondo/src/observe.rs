@@ -981,12 +981,12 @@ pub enum View {
 /// The frame of a dump's task that a view names.
 fn dump_frame<'a>(dump: &Value, tasks: &'a [Value], task: Option<u64>, frame: usize) -> Result<&'a Value, String> {
     // A build without probes keeps a value only where it still is as the
-    // task stops, which a check that failed leaves none of.
+    // task stops, as what a failed check had not let go of.
     let none = match dump["info"]["probes"] == false {
         true => {
             "this dump has no bindings of that task: a build without `--debug` keeps a value only where it \
-                 still is when the task stops, which a check that fails, as of bounds, leaves none of; a build \
-                 with `--debug` keeps them all"
+                 still is when the task stops, and at a check that fails, as of bounds, those its code still \
+                 held; a build with `--debug` keeps them all"
         }
         false => "this dump has no bindings of that task: a task must have reached a line of the program",
     };

@@ -121,6 +121,23 @@ const EVENTS: usize = 1 << 16;
 /// (`codegen::dump_table`), in a string of the runtime: its length is two
 /// words before, and what is shown of a string is at most `SHOWN` long.
 pub const BINDINGS: &str = "TONDOBINDINGS1\n";
+/// What starts the same text deflated, as a build writes it now: the mark,
+/// then the rest of the text compressed, which only a dump reads.
+pub const DEFLATED: &str = "TONDOBINDINGS2\n";
+
+/// The text of a table of bindings, from its bytes: as it is, or inflated
+/// after `DEFLATED`.
+pub fn table_text(bytes: &[u8]) -> String {
+    match bytes.strip_prefix(DEFLATED.as_bytes()) {
+        Some(deflated) => {
+            use std::io::Read;
+            let mut text = String::from(BINDINGS);
+            let _ = flate2::read::DeflateDecoder::new(deflated).read_to_string(&mut text);
+            text
+        }
+        None => String::from_utf8_lossy(bytes).into_owned(),
+    }
+}
 const STRING_HEADER: u64 = 24;
 const ARRAY_HEADER: u64 = 32;
 /// Where a `MapObject` has its entries.
@@ -518,13 +535,14 @@ struct Bindings {
 /// without probes keeps, and how values show (`codegen::shape`).
 fn bindings(program: &[u8]) -> (HashMap<usize, Bindings>, Vec<String>) {
     let (mut functions, mut shapes): (HashMap<usize, Bindings>, Vec<String>) = Default::default();
-    let mark = BINDINGS.as_bytes();
-    let Some(start) = program.windows(mark.len()).position(|window| window == mark) else {
-        return (functions, shapes);
-    };
+    let found = [DEFLATED, BINDINGS].iter().find_map(|mark| {
+        let mark = mark.as_bytes();
+        program.windows(mark.len()).position(|window| window == mark)
+    });
+    let Some(start) = found else { return (functions, shapes) };
     let length = start.checked_sub(16).and_then(|at| u64_at(program, at)).unwrap_or(0) as usize;
     let Some(text) = program.get(start..start + length) else { return (functions, shapes) };
-    let (text, mut current) = (String::from_utf8_lossy(text), 0);
+    let (text, mut current) = (table_text(text), 0);
     for line in text.lines() {
         let fields: Vec<&str> = line.split('\t').collect();
         let function = functions.entry(current).or_default();

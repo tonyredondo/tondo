@@ -120,18 +120,25 @@ impl Codegen<'_> {
         if let Some(&id) = self.strings.get(text) {
             return id;
         }
+        let id = self.text_bytes(text.as_bytes());
+        self.strings.insert(text.to_string(), id);
+        id
+    }
+
+    /// Bytes as a string of the runtime, which reads them as they are.
+    pub(super) fn text_bytes(&mut self, text: &[u8]) -> DataId {
         let mut bytes = Vec::with_capacity(24 + text.len());
         bytes.extend_from_slice(&IMMORTAL.to_le_bytes());
         bytes.extend_from_slice(&(text.len() as u64).to_le_bytes());
         bytes.extend_from_slice(&(text.len() as u64).to_le_bytes());
-        bytes.extend_from_slice(text.as_bytes());
-        let name = format!("tondo_str{}", self.strings.len());
+        bytes.extend_from_slice(text);
+        let name = format!("tondo_str{}", self.text_count);
+        self.text_count += 1;
         let id = self.module.declare_data(&name, Linkage::Local, false, false).expect("string declaration");
         let mut data = DataDescription::new();
         data.define(bytes.into_boxed_slice());
         data.set_align(8);
         self.module.define_data(id, &data).expect("string definition");
-        self.strings.insert(text.to_string(), id);
         id
     }
 

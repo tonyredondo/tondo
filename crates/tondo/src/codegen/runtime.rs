@@ -752,5 +752,10 @@ pub(super) fn runtime_signature(rt: Rt, mut signature: ir::Signature) -> (&'stat
         params.iter().map(|&t| if t.is_int() && t.bits() < 32 { AbiParam::new(t).uext() } else { AbiParam::new(t) }),
     );
     signature.returns.extend(returns.iter().map(|&t| AbiParam::new(t)));
+    // It keeps every register, so the values the code before a panic left
+    // in them stay there for the dump to read, at no cost to that code.
+    if rt == Rt::KeepRegisters {
+        signature.call_conv = cranelift_codegen::isa::CallConv::PreserveAll;
+    }
     (name, signature)
 }

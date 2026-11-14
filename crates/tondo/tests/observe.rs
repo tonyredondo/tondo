@@ -3177,6 +3177,31 @@ fn a_dump_of_a_build_without_probes_has_its_bindings() {
     assert!(said.contains("a build with `--debug` keeps them all"), "{said}");
 }
 
+/// A Release dump at a check that fails shows the values its code still
+/// held, where the code left them, which keeping costs it nothing.
+#[test]
+fn a_release_dump_keeps_what_a_failed_check_held() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("release-check");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "fn total(values: Array[Int], picks: Array[Int]): Int {\n    var sum = 0\n    var scale = 3\n    \
+        for pick in picks {\n        sum += values[pick] * scale\n        scale += 1\n    }\n    sum\n}\n\n\
+        fn main() {\n    let values = [4, 8, 15, 16, 23, 42]\n    let picks = [0, 2, 5, 9, 1]\n    \
+        _ = total(values, picks)\n}\n";
+    std::fs::write(dir.join("picks.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(tondo_bin).args(["build", "picks.to", "--output", "picks"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let ran = Command::new(dir.join("picks")).env("TONDO_DUMP", &dir).current_dir(&dir).output().unwrap();
+    assert!(!ran.status.success());
+    let dump = dumps_in(&dir).pop().expect("a dump");
+    let locals = tondo(&["dump", "read", dump.to_str().unwrap(), "locals", "--json"]);
+    let bindings = locals["locals"]["bindings"].as_array().cloned().unwrap_or_default();
+    let value = |name: &str| bindings.iter().find(|b| b["name"] == name).map(|b| b["value"].clone());
+    assert_eq!((value("sum"), value("pick")), (Some(json!("282")), Some(json!("9"))), "{locals}");
+}
+
 /// Runs git in `dir`, which must work.
 fn git(dir: &Path, args: &[&str]) {
     let output = Command::new("git")
@@ -5860,8 +5885,18 @@ fn debug_adapter_stops_at_panics_and_opens_dumps() {
     let frames = trace["stackFrames"].as_array().unwrap();
     let pick = frames.iter().find(|f| f["name"] == "pick").unwrap_or_else(|| panic!("{trace}"));
     assert_eq!((pick["line"].as_u64(), pick["source"]["name"].as_str()), (Some(4), Some("stopping.to")));
+    // What the failed check's code still held, and its task.
     let scopes = adapter.ask("scopes", json!({ "frameId": pick["id"] }));
-    let task = adapter.ask("variables", json!({ "variablesReference": scopes["scopes"][0]["variablesReference"] }));
+    let scope = |name: &str| {
+        let scope = scopes["scopes"].as_array().unwrap().iter().find(|s| s["name"] == name);
+        scope.unwrap_or_else(|| panic!("{scopes}"))["variablesReference"].clone()
+    };
+    let bindings = adapter.ask("variables", json!({ "variablesReference": scope("Bindings") }));
+    let shown: Vec<_> =
+        bindings["variables"].as_array().unwrap().iter().map(|v| format!("{} = {}", v["name"], v["value"])).collect();
+    assert!(shown.contains(&"\"values\" = \"[1, 2]\"".to_string()), "{bindings}");
+    assert!(shown.contains(&"\"at\" = \"6\"".to_string()), "{bindings}");
+    let task = adapter.ask("variables", json!({ "variablesReference": scope("Task") }));
     assert_eq!(task["variables"][0]["name"], "state");
     adapter.stop();
 }

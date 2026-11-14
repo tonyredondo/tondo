@@ -214,7 +214,12 @@ impl Codegen<'_> {
         for shape in shapes {
             text.push_str(&format!("Y\t{shape}\n"));
         }
-        let text = self.string(&text);
+        // Deflated, as only a dump reads it: about a seventh of its size.
+        let mut table = crate::cores::DEFLATED.as_bytes().to_vec();
+        let mut deflating = flate2::write::DeflateEncoder::new(&mut table, flate2::Compression::default());
+        std::io::Write::write_all(&mut deflating, &text.as_bytes()[crate::cores::BINDINGS.len()..]).expect("in memory");
+        deflating.finish().expect("in memory");
+        let text = self.text_bytes(&table);
         let array = self.module.declare_data("tondo_dump_glue", Linkage::Local, false, false).expect("dump glue");
         let mut data = DataDescription::new();
         data.define(vec![0u8; glues.len().max(1) * 8].into_boxed_slice());

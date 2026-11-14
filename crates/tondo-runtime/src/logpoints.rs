@@ -462,26 +462,50 @@ fn forget(id: u64) {
     let _ = super::tasks::try_spawn_thread(None, move || remove(id));
 }
 
-/// The registers `tondo_rt_site` saved, by their DWARF numbers; those of
-/// numbers, by theirs; where the code goes on; and the frame pointer.
+/// The registers `tondo_rt_site` saved, by the numbers the code generator
+/// gives them, as a fault keeps them and as the table of bindings says
+/// where a value is; those of numbers, by theirs; where the code goes on;
+/// and the frame pointer.
 #[cfg(target_arch = "x86_64")]
-unsafe fn registers_of(saved: *const usize) -> ([usize; 32], [usize; 32], usize, usize) {
-    // As it pushed them: the last first.
-    const ORDER: [usize; 15] = [15, 14, 13, 12, 11, 10, 9, 8, 5, 4, 3, 2, 1, 0, 6];
+pub(crate) unsafe fn registers_of(saved: *const usize) -> ([usize; 32], [usize; 32], usize, usize) {
+    // As it pushed them, the last first: r15 to r8, rdi, rsi, rbx, rcx,
+    // rdx, rax and rbp.
+    const ORDER: [usize; 15] = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 3, 1, 2, 0, 5];
     let mut registers = [0; 32];
     for (slot, &register) in ORDER.iter().enumerate() {
         registers[register] = unsafe { *saved.add(slot) };
     }
-    registers[7] = saved as usize + 16 * 8;
+    registers[4] = saved as usize + 16 * 8;
     let mut floats = [0; 32];
     for (number, float) in floats.iter_mut().enumerate().take(16) {
         *float = unsafe { *saved.sub(32).add(number * 2) };
     }
-    (registers, floats, unsafe { *saved.add(15) }, registers[6])
+    (registers, floats, unsafe { *saved.add(15) }, registers[5])
+}
+
+/// The registers come out by the code generator's numbers, which the
+/// table of bindings uses: rax 0, rcx 1, rdx 2, rbx 3, rsp 4, rbp 5, rsi 6,
+/// rdi 7, then r8 to r15.
+#[cfg(all(test, target_arch = "x86_64"))]
+#[test]
+fn saved_registers_go_by_the_code_generators_numbers() {
+    // As `tondo_rt_site` pushes them, from the last: r15 to r8, rdi, rsi,
+    // rbx, rcx, rdx, rax and rbp, then the return address; each holds
+    // 100 more than its number, rbp 105.
+    let mut saved = [0usize; 48];
+    let pushed = [115, 114, 113, 112, 111, 110, 109, 108, 107, 106, 103, 101, 102, 100, 105];
+    let at = 32;
+    saved[at..at + 15].copy_from_slice(&pushed);
+    saved[at + 15] = 0xc0de;
+    let (registers, _, address, fp) = unsafe { registers_of(saved.as_ptr().add(at)) };
+    for number in (0..16).filter(|&n| n != 4) {
+        assert_eq!(registers[number], 100 + number, "register {number}");
+    }
+    assert_eq!((address, fp), (0xc0de, 105));
 }
 
 #[cfg(target_arch = "aarch64")]
-unsafe fn registers_of(saved: *const usize) -> ([usize; 32], [usize; 32], usize, usize) {
+pub(crate) unsafe fn registers_of(saved: *const usize) -> ([usize; 32], [usize; 32], usize, usize) {
     let mut registers = [0; 32];
     for (register, slot) in registers.iter_mut().enumerate().take(31) {
         *slot = unsafe { *saved.add(register) };
@@ -494,13 +518,13 @@ unsafe fn registers_of(saved: *const usize) -> ([usize; 32], [usize; 32], usize,
     (registers, floats, registers[30], registers[29])
 }
 
-/// What a site's call goes to. It keeps every register, those of numbers
-/// too, as the call says it does.
+/// The body of a function the program calls keeping every register, those
+/// of numbers too, as its call says it does: it gives `callee` where they
+/// are saved, as `registers_of` reads them.
 #[cfg(target_arch = "x86_64")]
-#[unsafe(no_mangle)]
-#[unsafe(naked)]
-pub unsafe extern "C" fn tondo_rt_site() {
-    std::arch::naked_asm!(
+macro_rules! keeping_every_register {
+    ($callee:path) => {
+        std::arch::naked_asm!(
         "push rbp",
         "push rax",
         "push rdx",
@@ -534,7 +558,7 @@ pub unsafe extern "C" fn tondo_rt_site() {
         "movups [rsp + 208], xmm13",
         "movups [rsp + 224], xmm14",
         "movups [rsp + 240], xmm15",
-        "call {hit}",
+        "call {callee}",
         "movups xmm0, [rsp]",
         "movups xmm1, [rsp + 16]",
         "movups xmm2, [rsp + 32]",
@@ -568,15 +592,15 @@ pub unsafe extern "C" fn tondo_rt_site() {
         "pop rax",
         "pop rbp",
         "ret",
-        hit = sym hit,
-    )
+            callee = sym $callee,
+        )
+    };
 }
 
 #[cfg(target_arch = "aarch64")]
-#[unsafe(no_mangle)]
-#[unsafe(naked)]
-pub unsafe extern "C" fn tondo_rt_site() {
-    std::arch::naked_asm!(
+macro_rules! keeping_every_register {
+    ($callee:path) => {
+        std::arch::naked_asm!(
         "sub sp, sp, #768",
         "stp x0, x1, [sp]",
         "stp x2, x3, [sp, #16]",
@@ -611,7 +635,7 @@ pub unsafe extern "C" fn tondo_rt_site() {
         "stp q28, q29, [sp, #704]",
         "stp q30, q31, [sp, #736]",
         "mov x0, sp",
-        "bl {hit}",
+        "bl {callee}",
         "ldp q0, q1, [sp, #256]",
         "ldp q2, q3, [sp, #288]",
         "ldp q4, q5, [sp, #320]",
@@ -646,6 +670,16 @@ pub unsafe extern "C" fn tondo_rt_site() {
         "ldr x30, [sp, #240]",
         "add sp, sp, #768",
         "ret",
-        hit = sym hit,
-    )
+            callee = sym $callee,
+        )
+    };
+}
+pub(crate) use keeping_every_register;
+
+/// What a site's call goes to.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn tondo_rt_site() {
+    keeping_every_register!(hit)
 }

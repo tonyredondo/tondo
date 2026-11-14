@@ -819,6 +819,10 @@ impl<I: VCodeInst> VCode<I> {
             n => vec![0; 1 << (n - 1)],
         };
         let mut total_bb_padding = 0;
+        let mut cold_blocks: Vec<(BlockIndex, Vec<CodeOffset>, CodeOffset)> = Vec::new();
+        // Where the cold blocks start, after every other: a range that ends
+        // in one ends there, not at the end of the function.
+        let mut cold_start: Option<CodeOffset> = None;
 
         for &block in final_order.iter() {
             trace!("emitting block {:?}", block);
@@ -898,7 +902,18 @@ impl<I: VCodeInst> VCode<I> {
                 do_emit(&block_start, &mut disasm, &mut buffer, &mut state);
             }
 
+            // Tondo: where each instruction and move of a cold block is, so
+            // that the values a branch to it leaves in place can be found
+            // there (`extend_into_cold_blocks`).
+            let cold_here = !self.debug_value_labels.is_empty() && self.block_order.is_cold(block);
+            if cold_here && cold_start.is_none() {
+                cold_start = Some(buffer.cur_offset());
+            }
+            let mut cold_items = Vec::new();
             for inst_or_edit in regalloc.block_insts_and_edits(&self, block) {
+                if cold_here {
+                    cold_items.push(buffer.cur_offset());
+                }
                 match inst_or_edit {
                     InstOrEdit::Inst(iix) => {
                         if !self.debug_value_labels.is_empty() {
@@ -1087,6 +1102,9 @@ impl<I: VCodeInst> VCode<I> {
                     }
                 }
             }
+            if cold_here {
+                cold_blocks.push((block, cold_items, buffer.cur_offset()));
+            }
 
             if cur_srcloc.is_some() {
                 buffer.end_srcloc();
@@ -1160,8 +1178,9 @@ impl<I: VCodeInst> VCode<I> {
         }
 
         self.monotonize_inst_offsets(&mut inst_offsets[..], func_body_len);
-        let value_labels_ranges =
-            self.compute_value_labels_ranges(regalloc, &inst_offsets[..], func_body_len);
+        let mut value_labels_ranges =
+            self.compute_value_labels_ranges(regalloc, &inst_offsets[..], cold_start.unwrap_or(func_body_len));
+        self.extend_into_cold_blocks(regalloc, &cold_blocks, &mut value_labels_ranges);
 
         // Store metadata about frame layout in the MachBuffer.
         buffer.set_frame_layout(self.abi.frame_slot_metadata());
@@ -1258,25 +1277,7 @@ impl<I: VCodeInst> VCode<I> {
                 continue;
             }
 
-            let loc = if let Some(preg) = alloc.as_reg() {
-                LabelValueLoc::Reg(Reg::from(preg))
-            } else {
-                #[cfg(not(feature = "unwind"))]
-                continue;
-
-                #[cfg(feature = "unwind")]
-                {
-                    let slot = alloc.as_stack().unwrap();
-                    let slot_offset = self.abi.get_spillslot_offset(slot);
-                    let slot_base_to_caller_sp_offset = self.abi.slot_base_to_caller_sp_offset();
-                    let caller_sp_to_cfa_offset =
-                        crate::isa::unwind::systemv::caller_sp_to_cfa_offset();
-                    // NOTE: this is a negative offset because it's relative to the caller's SP
-                    let cfa_to_sp_offset =
-                        -((slot_base_to_caller_sp_offset + caller_sp_to_cfa_offset) as i64);
-                    LabelValueLoc::CFAOffset(cfa_to_sp_offset + slot_offset)
-                }
-            };
+            let Some(loc) = self.label_location(alloc) else { continue };
 
             // Coalesce adjacent ranges that for the same location
             // to minimize output size here and for the consumers.
@@ -1304,6 +1305,85 @@ impl<I: VCodeInst> VCode<I> {
         }
 
         value_labels_ranges
+    }
+
+    /// Where a value the register allocator put in `alloc` is, for a
+    /// debugger.
+    fn label_location(&self, alloc: regalloc2::Allocation) -> Option<LabelValueLoc> {
+        if let Some(preg) = alloc.as_reg() {
+            return Some(LabelValueLoc::Reg(Reg::from(preg)));
+        }
+        #[cfg(not(feature = "unwind"))]
+        return None;
+
+        #[cfg(feature = "unwind")]
+        {
+            let slot = alloc.as_stack()?;
+            let slot_offset = self.abi.get_spillslot_offset(slot);
+            let slot_base_to_caller_sp_offset = self.abi.slot_base_to_caller_sp_offset();
+            let caller_sp_to_cfa_offset = crate::isa::unwind::systemv::caller_sp_to_cfa_offset();
+            // NOTE: this is a negative offset because it's relative to the caller's SP
+            let cfa_to_sp_offset = -((slot_base_to_caller_sp_offset + caller_sp_to_cfa_offset) as i64);
+            Some(LabelValueLoc::CFAOffset(cfa_to_sp_offset + slot_offset))
+        }
+    }
+
+    /// Tondo: the values a cold block can still find where its branch left
+    /// them. Such a block, as the panic of a failed check, comes only from
+    /// its branch, and the values live there stay where they are until an
+    /// instruction or a move of the block writes over them or a call
+    /// clobbers them, although nothing of the block reads them: their
+    /// ranges go on into it, so that a dump at the panic shows them, with
+    /// no instruction more.
+    fn extend_into_cold_blocks(
+        &self,
+        regalloc: &regalloc2::Output,
+        cold_blocks: &[(BlockIndex, Vec<CodeOffset>, CodeOffset)],
+        ranges: &mut ValueLabelsRanges,
+    ) {
+        for (block, items, end) in cold_blocks {
+            let &[pred] = self.block_preds(*block) else { continue };
+            let range = self.block_ranges.get(pred.index());
+            let (Some(&start), true) = (items.first(), range.end > range.start) else { continue };
+            let at = ProgPoint::before(InsnIndex::new(range.end - 1));
+            // What the checked operation gave, just before the branch, as
+            // the product that overflowed, is no value the program has.
+            let checked = match range.end - range.start {
+                0 | 1 => at,
+                _ => ProgPoint::after(InsnIndex::new(range.end - 2)),
+            };
+            let mut live: Vec<(u32, regalloc2::Allocation)> = regalloc
+                .debug_locations
+                .iter()
+                .filter(|&&(_, from, to, _)| from < checked && at < to)
+                .map(|&(label, _, _, alloc)| (label, alloc))
+                .collect();
+            let mut found: Vec<(u32, regalloc2::Allocation, CodeOffset)> = Vec::new();
+            for (item, &offset) in regalloc.block_insts_and_edits(self, *block).zip(items) {
+                let written: Vec<regalloc2::Allocation> = match item {
+                    InstOrEdit::Edit(Edit::Move { to, .. }) => vec![*to],
+                    InstOrEdit::Inst(inst) => {
+                        let operands = self.inst_operands(inst).iter().zip(regalloc.inst_allocs(inst));
+                        let defs = operands.filter(|(op, _)| op.kind() == OperandKind::Def).map(|(_, a)| *a);
+                        let clobbered = self.inst_clobbers(inst).into_iter().map(regalloc2::Allocation::reg);
+                        defs.chain(clobbered).collect()
+                    }
+                };
+                live.retain(|&(label, alloc)| {
+                    let kept = !written.contains(&alloc);
+                    if !kept {
+                        found.push((label, alloc, offset));
+                    }
+                    kept
+                });
+            }
+            found.extend(live.into_iter().map(|(label, alloc)| (label, alloc, *end)));
+            for (label, alloc, stop) in found {
+                let Some(loc) = self.label_location(alloc).filter(|_| stop > start) else { continue };
+                let label = ValueLabel::from_u32(label);
+                ranges.entry(label).or_insert_with(Vec::new).push(ValueLocRange { loc, start, end: stop });
+            }
+        }
     }
 
     fn log_value_labels_ranges(&self, regalloc: &regalloc2::Output, inst_offsets: &[CodeOffset]) {

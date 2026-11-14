@@ -6898,3 +6898,20 @@ fails in seven seeds of twenty, and each of those seeds fails again. Writing a w
 such point: it goes through a temporary file and a rename, so the file is never seen half written,
 and a file made and then written by the program is two calls, between which an order already
 changes. Programs outside `--schedules` pay a test of a flag at those points.
+
+## A Release dump at a failed check keeps what its code still held
+
+A dump of a Release build at a check that failed, of bounds, of an overflow or a division by zero,
+showed no locals: the values were dead on the path of the panic, and the place each one had
+before it did not reach that cold block. Keeping them live there, as an explicit `panic` does,
+cost up to 22% more instructions in loops with checks, and Tony chose to measure a way that costs
+nothing at run time. In the vendored Cranelift, a cold block that only its branch reaches gets the
+places the values had at the branch, until something of the block writes over them; the call that
+keeps the registers for a dump is declared to keep every register, so that the values stay where
+they are across it, and saves them all; and the dump reads the frame that panicked there. Four
+programs with real panics went from 1 local of 21 to 11, each the debug build's value; the rows
+of bench/tondo do the same instructions. The table of where each value is grew, as text, by up to
+9% of an executable, so it is now deflated, which only a dump undoes: the examples are 1% to 11%
+smaller than before. Two faults came out on the way: a range that ended in a cold block covered
+them all, and a logpoint read the registers of x86-64 by DWARF's numbers where the table uses the
+code generator's. Tony accepted it with the compact table.

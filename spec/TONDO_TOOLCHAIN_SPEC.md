@@ -917,7 +917,12 @@ salen de los que dejó al cambiar de pila y de las tablas de unwind del ejecutab
 `.eh_frame` en Linux y `__unwind_info` en macOS. Cada frame inlineado tiene las
 suyas. En ese build una variable que el código ya no usa no existe y no aparece,
 salvo los números de un `panic` escrito en el programa, que ese pánico conserva en
-código que solo él ejecuta.
+código que solo él ejecuta. En una comprobación que falla, de límites, de
+desbordamiento o una división por cero, tiene las variables que siguen donde las
+dejó el código que comprobaba, mientras nada del camino del pánico las pisa: el
+programa guarda todos sus registros al entrar en él, con una llamada que no cambia
+ninguno, y el código que comprueba es el mismo que sin ellas. La tabla de dónde
+está cada variable va comprimida en el ejecutable, y solo un volcado la lee.
 `dump read` las da con `locals [<tarea> [<frame>]]`, por defecto el primer frame
 de la primera tarea con variables, y con `print <ruta>`, como `user.name` o
 `items[2]`; `tondo dap` las abre en el ámbito `Bindings` y en `evaluate`.
