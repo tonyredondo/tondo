@@ -1113,10 +1113,8 @@ pub fn Array[T].windows(self, size: Int): Array[Array[T]] {
 pub fn Array[T].groupBy[K: Key](self, key: fn(T): K): Map[K, Array[T]] {
     var groups: Map[K, Array[T]] = [:]
     for item in self {
-        let k = key(item)
-        var group = groups[k] ?? []
-        group.push(item)
-        groups[k] = group
+        // In the map's own array, which a copy out of it would share.
+        groups[key(item), default: []].push(item)
     }
     groups
 }
