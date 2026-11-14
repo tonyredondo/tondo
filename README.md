@@ -471,7 +471,7 @@ What is under way and what is planned:
 | The rest of what Spectre draws, in `std.cli`: panels, rules, trees, columns, charts, a region redrawn in place | Accepted, its design first |
 | Interfaces of C++ that are tables of functions, as a trait with `@ffi.Interface` | Accepted, not started |
 | A heap for each task | Research |
-| A function's values in a Release dump after a failed check, at no cost while it runs | Measuring first |
+| A function's values in a Release dump after a failed check, at no cost while it runs | Under way |
 | Vectors of 512 bits with AVX-512; today they are computed by halves | Waits for a machine to test on |
 | Profile-guided optimization while a program runs | Research |
 | Windows | Not started, after the work above |
