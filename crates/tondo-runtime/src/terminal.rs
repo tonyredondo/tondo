@@ -329,12 +329,13 @@ struct Sender(*mut SenderObject);
 unsafe impl Send for Sender {}
 
 /// `terminalRedraws`: a channel of the sizes to draw at, a `cli.Size` each,
-/// two `Int`s; closed at once without a terminal.
+/// two `Int`s; closed at once when the output is not a terminal. A terminal
+/// that reports no size yet, as 0 by 0, gives one when it has one.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_terminal_redraws() -> *mut ChannelObject {
     let channel = unsafe { tondo_rt_channel_new(1, 1, 16, 8, None, None, std::ptr::null(), 0) };
     let sender = unsafe { tondo_rt_sender_new(channel) };
-    if size().is_none() {
+    if super::io::tondo_rt_console_terminal(0) == 0 {
         unsafe { tondo_rt_sender_release(sender) };
         return channel;
     }
@@ -345,7 +346,8 @@ pub extern "C" fn tondo_rt_terminal_redraws() -> *mut ChannelObject {
 }
 
 /// A change of size, or the program back from a stop: each channel gets
-/// the size of now, in place of one it has not given yet.
+/// the size of now, in place of one it has not given yet; none while the
+/// terminal reports no size.
 pub(crate) fn redraw() {
     let Some((columns, rows)) = size() else { return };
     let mut value = [columns, rows];

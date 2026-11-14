@@ -326,7 +326,8 @@ console.println("─".repeat(cli.width()))
 pub fn size(): Size?
 ```
 
-The size of the terminal of the console's output, or `none` without one.
+The size of the terminal of the console's output, or `none` without one,
+or while it reports no size, 0 by 0, as some do before one is set.
 
 ```tondo
 import std.cli
@@ -347,8 +348,9 @@ pub fn redraws(): Receiver[Size]
 The sizes to draw the screen at: one when the terminal changes its
 size, and one when the program comes back after Ctrl-Z and `fg`, as both
 mean drawing again. Two the channel has not given yet are one, the last.
-Without a terminal the channel is closed, so a `for` over it ends at
-once.
+A terminal that reports no size gives none until it has one. When the
+output is not a terminal the channel is closed, so a `for` over it ends
+at once, and in a `select` its `receive()` gives `none` at once.
 
 ```tondo
 import std.cli

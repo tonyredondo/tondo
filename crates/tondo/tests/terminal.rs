@@ -114,8 +114,15 @@ impl Terminal {
     /// of a shell that controls jobs and brings it back with `fg` after
     /// Ctrl-Z stops it.
     fn start(argument: &str, shell: bool) -> Terminal {
+        Terminal::start_at(argument, shell, 100, 30)
+    }
+
+    /// As `start`, on a terminal of that size.
+    fn start_at(argument: &str, shell: bool, columns: u16, rows: u16) -> Terminal {
         let program = program();
         let (master, slave) = open();
+        let size = libc::winsize { ws_row: rows, ws_col: columns, ws_xpixel: 0, ws_ypixel: 0 };
+        unsafe { libc::ioctl(master.as_raw_fd(), libc::TIOCSWINSZ, &size) };
         let mut command = if shell {
             // Interactive, as `set -m` alone does not bring a job back on
             // macOS; with no file of the environment's to read.
@@ -373,4 +380,27 @@ fn is_terminal_asks_of_the_output() {
     let count = std::fs::File::from(master).read(&mut written).unwrap();
     drop(slave);
     assert_eq!(String::from_utf8_lossy(&written[..count]), "output is a terminal: true\r\n");
+}
+
+#[test]
+fn a_terminal_without_a_size_gives_none_until_it_has_one() {
+    // 0 by 0, as `script` from a pipe or a serial console reports.
+    let mut terminal = Terminal::start_at("keys", false, 0, 0);
+    terminal.expect("size none\n");
+    terminal.expect("taken\n");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!terminal.text().contains("drawn at"), "{}", terminal.text());
+    terminal.resize(90, 20);
+    terminal.expect("drawn at some(Size { columns: 90, rows: 20 })\n");
+    terminal.resize(0, 0);
+    terminal.send("q");
+    terminal.expect("Name: ");
+    terminal.send("Ada\r");
+    // A choice draws once, at the size it supposes, and waits.
+    terminal.expect("❯ tea");
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(terminal.text().matches("❯ tea").count(), 1, "{}", terminal.text());
+    terminal.send("\r");
+    terminal.expect("chose 0\n");
+    assert_eq!(terminal.status(), 0);
 }

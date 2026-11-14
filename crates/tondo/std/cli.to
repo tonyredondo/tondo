@@ -1021,7 +1021,8 @@ pub type Size = {
     rows: Int
 }
 
-/// The size of the terminal of the console's output, or `none` without one.
+/// The size of the terminal of the console's output, or `none` without one,
+/// or while it reports no size, 0 by 0, as some do before one is set.
 ///
 /// ```tondo
 /// import std.cli
@@ -1043,8 +1044,9 @@ pub fn size(): Size? {
 /// The sizes to draw the screen at: one when the terminal changes its
 /// size, and one when the program comes back after Ctrl-Z and `fg`, as both
 /// mean drawing again. Two the channel has not given yet are one, the last.
-/// Without a terminal the channel is closed, so a `for` over it ends at
-/// once.
+/// A terminal that reports no size gives none until it has one. When the
+/// output is not a terminal the channel is closed, so a `for` over it ends
+/// at once, and in a `select` its `receive()` gives `none` at once.
 ///
 /// ```tondo
 /// import std.cli
@@ -1759,15 +1761,25 @@ fn selected(question: String, options: Array[String]): Int? {
     }
     let keys = keysOf(fsNative.terminalKeys(ref mode))
     let sizes = redraws()
+    // A channel of sizes that closes, as when the output stops being a
+    // terminal, is no longer waited for.
+    var watching = true
     var choice = Choice { question, options, chosen: 0, first: 0, drawn: 0 }
     choice.draw(size() ?? Size { columns: 80, rows: 24 })
     for {
-        let key = select {
-            let key = keys.receive() => key
-            let resized = sizes.receive() => {
-                choice.draw(resized ?? Size { columns: 80, rows: 24 })
-                continue
+        let key = if watching {
+            select {
+                let key = keys.receive() => key
+                let resized = sizes.receive() => {
+                    match resized {
+                        some(at) => choice.draw(at)
+                        none => watching = false
+                    }
+                    continue
+                }
             }
+        } else {
+            keys.receive()
         }
         let count = options.length()
         match key {

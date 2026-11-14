@@ -377,7 +377,10 @@ fn main(): !cli.TerminalError {
                 some(cli.Key.Char('q')) | some(cli.Key.Escape) | none => break
                 _ => {}
             }
-            let resized = sizes.receive() => size = resized ?? size
+            let resized = sizes.receive() => match resized {
+                some(new) => size = new
+                none => break                    // the output is no terminal
+            }
         }
         draw(size, at)
     }

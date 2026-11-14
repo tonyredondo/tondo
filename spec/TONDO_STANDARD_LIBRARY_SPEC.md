@@ -6186,13 +6186,17 @@ pub fn secret(question: String): String
 **La terminal**
 
 - `isTerminal` dice si la salida de `console` es una terminal, y `width` da su
-  ancho, 80 si no lo es. `size` da sus columnas y filas, o `none` sin ella.
+  ancho, 80 si no lo es. `size` da sus columnas y filas, o `none` sin ella o
+  mientras no dice su tamaño.
 - `redraws` da los tamaños a los que dibujar la pantalla: uno cuando la
   terminal cambia de tamaño y otro cuando el programa vuelve tras Ctrl-Z y
   `fg`, porque las dos cosas piden dibujar de nuevo. Dos que el canal aún no
-  ha dado son uno, el último. Sin terminal el canal está cerrado, así que un
-  `for` sobre él termina enseguida. Una tarea que espera en él no es un
-  deadlock.
+  ha dado son uno, el último. Una terminal que aún no dice su tamaño, 0 por
+  0, como `script` desde una tubería o una consola serie, no da ninguno hasta
+  tenerlo, y `size` es `none` mientras. Cuando la salida no es una terminal
+  el canal está cerrado, así que un `for` sobre él termina enseguida, y en un
+  `select` su `receive()` da `none` enseguida. Una tarea que espera en él no
+  es un deadlock.
 - `cli.Terminal()` toma la terminal de la entrada del programa: las teclas
   llegan según se pulsan, no en líneas, salvo con `lines: true`, y no se
   muestran, salvo con `echo: true`. `screen: true` dibuja en la pantalla
