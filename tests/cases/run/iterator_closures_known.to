@@ -1,0 +1,35 @@
+// The closures an iterator's adapters keep in their records are called by
+// their bodies where the chain is consumed: a release build follows each
+// `fn` value from the record it made into the copy of the code that calls
+// it, through the adapters' `next`, so the calls are direct and inlined.
+
+import std.console
+
+type Order = {
+    id: Int
+    cents: Int
+}
+
+fn total(amounts: Array[Int]): Int {
+    amounts.iter().map((n) { n * 2 }).filter((n) { n % 3 == 0 }).sumBy((n) { n })
+}
+
+fn large(orders: Array[Order]): Int {
+    orders.iter().filter((order) { order.cents > 500 }).count()
+}
+
+fn main() {
+    console.println("{total([1, 2, 3, 4, 5, 6])}")
+    console.println(
+        "{large([Order { id: 1, cents: 900 }, Order { id: 2, cents: 10 }, Order { id: 3, cents: 600 }])}",
+    )
+    let empty: Array[Int] = []
+    console.println("{total(empty)}")
+}
+
+// expect-stdout: 18
+// expect-stdout: 2
+// expect-stdout: 0
+// expect-optimization: 14:24 call is called by its body where a record holds it
+// expect-optimization: 14:46 call is called by its body where a record holds it
+// expect-optimization: 18:26 call is called by its body where a record holds it

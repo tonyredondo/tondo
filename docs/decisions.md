@@ -6808,3 +6808,19 @@ added to the program's image; a socket two containers share through a common `/t
 by the process ID the tools see. A `--via` that reaches no `tondo` says how to put one there, and a
 report that a job's summary shows says under each failure how to replay its recording, as the
 console does. A test's panic leaves no dump, as `tondo test` reports it.
+
+## The closures an iterator's adapters hold are called directly
+
+A lazy chain, `values.iter().filter(keep).map(change).sumBy(value)`, keeps each closure in the record
+of its adapter, and the function that ends the chain is too large to inline into its caller, so each
+element made a call through a `fn` value for each step. The inliner already copied a function too
+large to inline for a closure its caller passes it, with the calls of that closure made direct, as
+Go's generics make `slices.Sort` of a comparison. It now follows a `fn` value into a field of a
+record or a tuple made of it, through copies of that record, and through a part of it lent to a
+call, as an adapter lends its source to the source's `next`: each function says what it may change
+of what it is lent, and only that is forgotten. A call that passes such a record gets a copy of its
+callee told, for every parameter, which function each path holds, and the copy keeps knowing it in
+later rounds, so code inlined into it later is resolved too. `tondo optimizations` says so where
+the program wrote the closure. The lazy chain of numbers of bench/tondo goes from 68 to 46 µs;
+compiling the generated program of 3,584 lines costs 4% more instructions, and that of 192,953
+lines the same.

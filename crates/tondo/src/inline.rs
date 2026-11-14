@@ -87,11 +87,15 @@ fn note_calls(bodies: &mut [Body]) {
 
 fn inline_small(bodies: &mut Vec<Body>) {
     let mut copies = HashMap::new();
+    // What each copy knows of its parameters, which code inlined into it
+    // later calls through too.
+    let mut seeds: Vec<Made> = vec![Made::new(); bodies.len()];
     for _ in 0..ROUNDS {
-        specialize(bodies, &mut copies);
+        let mut written: Vec<Writes> = bodies.iter().map(writes).collect();
+        specialize(bodies, &mut copies, &mut seeds, &mut written);
         let shapes: Vec<Shape> = bodies.iter().map(Shape::of).collect();
-        for body in bodies.iter_mut() {
-            let made = made(body);
+        for (body, seed) in bodies.iter_mut().zip(&seeds) {
+            let made = made(body, &written, seed);
             call_bodies(body, &made, &shapes);
         }
         let small: Vec<Option<Body>> = bodies.iter().map(|body| small(body).then(|| body.clone())).collect();
@@ -119,37 +123,91 @@ fn inline_small(bodies: &mut Vec<Body>) {
 struct Shape {
     params: usize,
     captures: Option<crate::types::Ty>,
+    /// Where the function is written, as a closure in the program.
+    span: Span,
 }
 
 impl Shape {
     fn of(body: &Body) -> Shape {
         let first = body.params.first();
-        Shape { params: body.params.len(), captures: first.map(|param| body.locals[param.0 as usize]) }
+        let captures = first.map(|param| body.locals[param.0 as usize]);
+        Shape { params: body.params.len(), captures, span: body.span }
     }
 }
 
-/// A `fn` value a local holds: the function, and whether it is a
-/// closure's body, which takes its captures first.
-type Made = HashMap<Local, (crate::hir::FnId, bool)>;
+/// A `fn` value a local holds, whole or at a path of fields of a record
+/// or a tuple: the function, and whether it is a closure's body, which
+/// takes its captures first.
+type Made = HashMap<(Local, Vec<u32>), (crate::hir::FnId, bool)>;
 
-/// The locals the function assigns a `fn` value it makes, of a closure or
-/// of a named function, once, and never another.
-fn made(body: &Body) -> Made {
-    let mut definitions: HashMap<Local, usize> = HashMap::new();
-    let mut made: HashMap<Local, (crate::hir::FnId, bool)> = HashMap::new();
+/// The fields a path names, as far as it names fields.
+fn fields(path: &[Proj]) -> Vec<u32> {
+    path.iter().map_while(|projection| if let Proj::Field(index) = projection { Some(*index) } else { None }).collect()
+}
+
+/// What a function may change of each place lent to it, by parameter: for
+/// a loan, the paths of fields its statements write, move or lend on, a
+/// call it lends a part to changing all of that part; none for a parameter
+/// passed by value.
+type Writes = Vec<Option<Vec<Vec<u32>>>>;
+
+fn writes(body: &Body) -> Writes {
+    let mut written: Vec<Option<Vec<Vec<u32>>>> = body.loans.iter().map(|&lent| lent.then(Vec::new)).collect();
+    let mut add = |place: &Place| {
+        if let Some(at) = body.params.iter().position(|param| *param == place.local)
+            && let Some(Some(paths)) = written.get_mut(at)
+        {
+            paths.push(fields(&place.path));
+        }
+    };
     for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
         match statement {
-            Statement::Assign(place, rvalue, _) if place.path.is_empty() => {
-                *definitions.entry(place.local).or_default() += 1;
+            Statement::Assign(place, rvalue, _) => {
+                add(place);
                 match &**rvalue {
-                    Rvalue::Erase(_, id, _) => {
-                        made.insert(place.local, (*id, true));
-                    }
-                    Rvalue::FnValue(id) => {
-                        made.insert(place.local, (*id, false));
+                    Rvalue::Mutate(_, target, ..) | Rvalue::AssignSlice(target, ..) => add(target),
+                    Rvalue::Call(_, arguments) | Rvalue::CallIndirect(_, arguments) => {
+                        // What a call is lent it may change whole.
+                        for argument in arguments {
+                            if let Operand::Copy(place) = argument
+                                && !place.path.is_empty()
+                            {
+                                add(place);
+                            }
+                        }
                     }
                     _ => {}
                 }
+            }
+            Statement::Moved(place) | Statement::Lend(_, place) | Statement::LendAt(_, Operand::Copy(place)) => {
+                add(place)
+            }
+            Statement::Clear(local) => add(&Place::local(*local)),
+            _ => {}
+        }
+    }
+    written
+}
+
+/// The `fn` values the function's locals hold: a value it makes, of a
+/// closure or of a named function, in a local it assigns once and never
+/// another; and one in a field of a record or a tuple made of such a local,
+/// or of a copy of one, whose field nothing changes, moves or lends, as
+/// the closures of an iterator's adapters. `seed` is what a copy of a
+/// function knows of its parameters, which it never assigns; `writes`
+/// what each function may change of what it is lent.
+fn made(body: &Body, writes: &[Writes], seed: &Made) -> Made {
+    let statements = || body.blocks.iter().flat_map(|block| &block.stmts);
+    // Most functions make no `fn` value, and are told of none.
+    let makes = |statement: &Statement| matches!(statement, Statement::Assign(_, rvalue, _) if matches!(&**rvalue, Rvalue::Erase(..) | Rvalue::FnValue(_)));
+    if seed.is_empty() && !statements().any(makes) {
+        return Made::new();
+    }
+    let mut definitions: HashMap<Local, usize> = HashMap::new();
+    for statement in statements() {
+        match statement {
+            Statement::Assign(place, ..) if place.path.is_empty() => {
+                *definitions.entry(place.local).or_default() += 1;
             }
             Statement::Clear(local) | Statement::Lend(local, _) | Statement::LendAt(local, _) => {
                 *definitions.entry(*local).or_default() += 2;
@@ -157,45 +215,182 @@ fn made(body: &Body) -> Made {
             _ => {}
         }
     }
-    made.retain(|local, _| definitions.get(local) == Some(&1));
+    // By local, what each holds, as copies find it; then by local and path.
+    let mut held: HashMap<Local, Vec<(Vec<u32>, (crate::hir::FnId, bool))>> = HashMap::new();
+    for ((local, path), value) in seed {
+        held.entry(*local).or_default().push((path.clone(), *value));
+    }
+    // Until nothing more is found: a copy may come before, in the blocks,
+    // what it copies.
+    loop {
+        let mut grew = false;
+        for statement in statements() {
+            let Statement::Assign(place, rvalue, _) = statement else { continue };
+            if !place.path.is_empty() {
+                continue;
+            }
+            let found: Vec<(Vec<u32>, (crate::hir::FnId, bool))> = match &**rvalue {
+                Rvalue::Erase(_, id, _) => vec![(Vec::new(), (*id, true))],
+                Rvalue::FnValue(id) => vec![(Vec::new(), (*id, false))],
+                Rvalue::Use(Operand::Copy(from)) if fields(&from.path).len() == from.path.len() => {
+                    let prefix = fields(&from.path);
+                    let inside = held.get(&from.local).into_iter().flatten();
+                    let inside = inside.filter(|(path, _)| path.starts_with(&prefix));
+                    inside.map(|(path, value)| (path[prefix.len()..].to_vec(), *value)).collect()
+                }
+                Rvalue::Aggregate(operands) => operands
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(at, operand)| match operand {
+                        Operand::Copy(from) if from.path.is_empty() => Some((at as u32, held.get(&from.local)?)),
+                        _ => None,
+                    })
+                    .flat_map(|(at, inside)| {
+                        inside.iter().map(move |(path, value)| ([vec![at], path.clone()].concat(), *value))
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            for (path, value) in found {
+                let list = held.entry(place.local).or_default();
+                if !list.iter().any(|(known, _)| *known == path) {
+                    list.push((path, value));
+                    grew = true;
+                }
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    let mut made: Made = held
+        .into_iter()
+        .flat_map(|(local, list)| list.into_iter().map(move |(path, value)| ((local, path), value)))
+        .collect();
+    // A local assigned again, or a parameter assigned at all, holds what
+    // it was last given; a field changed, moved or lent holds anything.
+    let seeded: HashSet<Local> = seed.keys().map(|(local, _)| *local).collect();
+    made.retain(|(local, _), _| match definitions.get(local) {
+        None => seeded.contains(local),
+        Some(&1) => !seeded.contains(local),
+        Some(_) => false,
+    });
+    let holders: HashSet<Local> = made.keys().map(|(local, _)| *local).collect();
+    let mut changed: Vec<(Local, Vec<u32>)> = Vec::new();
+    let mut change = |local: Local, path: Vec<u32>| {
+        if holders.contains(&local) {
+            changed.push((local, path));
+        }
+    };
+    for statement in statements() {
+        match statement {
+            Statement::Assign(place, rvalue, _) => {
+                if !place.path.is_empty() {
+                    change(place.local, fields(&place.path));
+                }
+                match &**rvalue {
+                    Rvalue::Mutate(_, target, ..) | Rvalue::AssignSlice(target, ..) => {
+                        change(target.local, fields(&target.path));
+                    }
+                    Rvalue::Call(Callee::Fn(id), arguments) => {
+                        let lends = writes.get(id.0 as usize).map_or(&[][..], Vec::as_slice);
+                        for (argument, lent) in arguments.iter().zip(lends) {
+                            let (Operand::Copy(lent_place), Some(paths)) = (argument, lent) else { continue };
+                            let prefix = fields(&lent_place.path);
+                            // The whole place when it is more than fields.
+                            if prefix.len() != lent_place.path.len() {
+                                change(lent_place.local, prefix);
+                                continue;
+                            }
+                            for path in paths {
+                                change(lent_place.local, [prefix.clone(), path.clone()].concat());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Statement::Moved(place) | Statement::Lend(_, place) | Statement::LendAt(_, Operand::Copy(place)) => {
+                change(place.local, fields(&place.path));
+            }
+            _ => {}
+        }
+    }
+    made.retain(|(local, path), _| {
+        path.is_empty()
+            || !changed.iter().any(|(at, prefix)| at == local && (path.starts_with(prefix) || prefix.starts_with(path)))
+    });
     made
 }
 
 /// Calls through the `fn` values of `made` as calls of their bodies, which
 /// can be inlined: a closure's takes its captures, which the value holds.
-fn call_bodies(body: &mut Body, made: &Made, shapes: &[Shape]) {
+/// How many calls it made so.
+fn call_bodies(body: &mut Body, made: &Made, shapes: &[Shape]) -> usize {
     if made.is_empty() {
-        return;
+        return 0;
     }
+    let (mut resolved, mut held) = (0, Vec::new());
     for statement in body.blocks.iter_mut().flat_map(|block| &mut block.stmts) {
         let Statement::Assign(_, rvalue, _) = statement else { continue };
         let Rvalue::CallIndirect(Operand::Copy(callee), arguments) = &**rvalue else { continue };
-        let Some(&(id, closure)) = made.get(&callee.local).filter(|_| callee.path.is_empty()) else { continue };
+        let path = fields(&callee.path);
+        if path.len() != callee.path.len() {
+            continue;
+        }
+        let Some(&(id, closure)) = made.get(&(callee.local, path)) else { continue };
         let shape = &shapes[id.0 as usize];
         let mut direct = Vec::with_capacity(arguments.len() + 1);
         match (closure, shape.captures) {
             (true, Some(captures)) if shape.params == arguments.len() + 1 => {
-                let held = Place { local: callee.local, path: vec![Proj::Captures(captures)] };
+                let mut held = callee.clone();
+                held.path.push(Proj::Captures(captures));
                 direct.push(Operand::Copy(held));
             }
             (false, _) if shape.params == arguments.len() => {}
             _ => continue,
         }
         direct.extend(arguments.iter().cloned());
+        if !callee.path.is_empty() {
+            held.push(shape.span);
+        }
         **rvalue = Rvalue::Call(Callee::Fn(id), direct);
+        resolved += 1;
     }
+    // Said where the program wrote the function: its record, as an
+    // iterator's adapter, no longer hides it from the call.
+    for span in held {
+        crate::mir_text::remark(body, span, "call", || {
+            "is called by its body where a record holds it, as an iterator's adapter does".to_string()
+        });
+    }
+    resolved
 }
 
+/// What a copy of a function is made for: the function, and each `fn`
+/// value its arguments hold, by parameter and path of fields, with the
+/// value's function and whether it is a closure's body.
+type Copied = (usize, Vec<(usize, Vec<u32>, u32, bool)>);
+
 /// Calls that pass a `fn` value the caller made to a function too large
-/// to inline, which calls it: calls of a copy of the function where those
+/// to inline, which calls it, or a record that holds one, as an iterator
+/// its adapters' closures: calls of a copy of the function where those
 /// calls are of the value's body, as Go's generics make `slices.Sort` of
-/// `cmp.Less` for a type. `copies` keeps each copy, by the function, the
-/// parameter and the value's function, for the calls that pass the same.
-fn specialize(bodies: &mut Vec<Body>, copies: &mut HashMap<(usize, usize, u32, bool), u32>) {
+/// `cmp.Less` for a type. `copies` keeps each copy, by what it is made
+/// for, for the calls that pass the same, and none where a copy would
+/// call nothing more directly.
+fn specialize(
+    bodies: &mut Vec<Body>,
+    copies: &mut HashMap<Copied, Option<u32>>,
+    seeds: &mut Vec<Made>,
+    written: &mut Vec<Writes>,
+) {
     let count = bodies.len();
+    // The locals each function assigns whole, as they are asked for.
+    let mut assigned: HashMap<usize, HashSet<Local>> = HashMap::new();
     for index in 0..count {
-        let made = made(&bodies[index]);
-        if made.is_empty() {
+        let held = made(&bodies[index], written, &seeds[index]);
+        if held.is_empty() {
             continue;
         }
         let mut changes = Vec::new();
@@ -207,44 +402,73 @@ fn specialize(bodies: &mut Vec<Body>, copies: &mut HashMap<(usize, usize, u32, b
                 if small(target) || cost(target) > SPECIALIZED {
                     continue;
                 }
-                let passed = arguments.iter().enumerate().find_map(|(param, argument)| match argument {
-                    Operand::Copy(place) if place.path.is_empty() => Some((param, *made.get(&place.local)?)),
-                    _ => None,
-                });
-                let Some((param, (value, closure))) = passed else { continue };
-                let local = target.params[param];
-                if loan(target, param) || defined(target).contains(&local) || !calls(target, local) {
-                    continue;
+                // Each argument that holds one, and each path in it, in
+                // order, so that every build makes the same copies: the
+                // first that calls something more directly is taken.
+                let mut candidates = Vec::new();
+                for (param, argument) in arguments.iter().enumerate() {
+                    let Operand::Copy(place) = argument else { continue };
+                    let prefix = fields(&place.path);
+                    if prefix.len() != place.path.len() {
+                        continue;
+                    }
+                    // Of a part of a local, as a loan of an adapter's
+                    // source, the paths inside that part.
+                    let mut inside: Vec<(Vec<u32>, (crate::hir::FnId, bool))> = held
+                        .iter()
+                        .filter(|((local, path), _)| *local == place.local && path.starts_with(&prefix))
+                        .map(|((_, path), value)| (path[prefix.len()..].to_vec(), *value))
+                        .collect();
+                    if inside.is_empty() {
+                        continue;
+                    }
+                    let whole = assigned.entry(callee.0 as usize).or_insert_with(|| defined(target));
+                    if whole.contains(&target.params[param]) {
+                        continue;
+                    }
+                    inside.sort_by(|a, b| a.0.cmp(&b.0));
+                    candidates.extend(inside.into_iter().map(|(path, value)| (param, path, value)));
                 }
-                changes.push((block, at, callee.0 as usize, param, value, closure));
+                if !candidates.is_empty() {
+                    changes.push((block, at, callee.0 as usize, candidates));
+                }
             }
         }
-        for (block, at, callee, param, value, closure) in changes {
-            let key = (callee, param, value.0, closure);
-            if !copies.contains_key(&key) && copies.len() == COPIES {
-                continue;
-            }
-            let copy = *copies.entry(key).or_insert_with(|| {
-                let mut copy = bodies[callee].clone();
-                let shapes: Vec<Shape> = bodies.iter().map(Shape::of).collect();
-                let made = HashMap::from([(copy.params[param], (value, closure))]);
-                call_bodies(&mut copy, &made, &shapes);
-                bodies.push(copy);
-                bodies.len() as u32 - 1
-            });
+        for (block, at, callee, candidates) in changes {
+            // Everything the arguments hold, at once, so that one copy
+            // calls them all directly.
+            let known: Vec<(usize, Vec<u32>, u32, bool)> = candidates
+                .iter()
+                .map(|(param, path, (value, closure))| (*param, path.clone(), value.0, *closure))
+                .collect();
+            let key = (callee, known);
+            let copy = match copies.get(&key) {
+                Some(&copy) => copy,
+                None if copies.len() == COPIES => None,
+                None => {
+                    let mut made_copy = bodies[callee].clone();
+                    let shapes: Vec<Shape> = bodies.iter().map(Shape::of).collect();
+                    let seed: Made = candidates
+                        .into_iter()
+                        .map(|(param, path, value)| ((made_copy.params[param], path), value))
+                        .collect();
+                    let known = made(&made_copy, written, &seed);
+                    let kept = (call_bodies(&mut made_copy, &known, &shapes) > 0).then(|| {
+                        written.push(writes(&made_copy));
+                        bodies.push(made_copy);
+                        seeds.push(seed);
+                        bodies.len() as u32 - 1
+                    });
+                    copies.insert(key, kept);
+                    kept
+                }
+            };
+            let Some(copy) = copy else { continue };
             let Statement::Assign(_, rvalue, _) = &mut bodies[index].blocks[block].stmts[at] else { unreachable!() };
             let Rvalue::Call(callee, _) = &mut **rvalue else { unreachable!() };
             *callee = Callee::Fn(crate::hir::FnId(copy));
         }
     }
-}
-
-/// Whether a function calls the `fn` value a local holds.
-fn calls(body: &Body, local: Local) -> bool {
-    body.blocks.iter().flat_map(|block| &block.stmts).any(|statement| {
-        matches!(statement, Statement::Assign(_, rvalue, _)
-            if matches!(&**rvalue, Rvalue::CallIndirect(Operand::Copy(place), _) if place.local == local && place.path.is_empty()))
-    })
 }
 
 /// A function's statements and branches, but the way a panic unwinds:
