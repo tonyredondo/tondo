@@ -14,6 +14,7 @@ cancelling, sharing state, and pools and actors.
 - [Cancelling](#cancelling)
 - [Channels](#channels)
 - [select](#select)
+- [Signals](#signals)
 - [Shared state](#shared-state)
 - [Atomics, and updates that get lost](#atomics-and-updates-that-get-lost)
 - [Shared collections](#shared-collections)
@@ -301,7 +302,8 @@ cancelled, cleaned up: true
   `within`, which gives it until its deadline ([Contexts and
   deadlines](14-contexts.md)).
 - Ctrl-C and `SIGTERM` cancel `main`, so a program's own cleanup is the
-  same code whether it ends by itself or is told to.
+  same code whether it ends by itself or is told to. A program that wants
+  to decide what they do takes them as [signals](#signals).
 
 ## Channels
 
@@ -451,6 +453,52 @@ fn main() {
 ```text output
 empty, got some(7)
 ```
+
+## Signals
+
+A program that does nothing about them is cancelled by Ctrl-C, which is
+`Interrupt`, and by `Terminate`: its tasks run their `defer`s, it leaves
+with 130 or 143, and a second one ends it at once. `process.signals` takes
+the signals it names out of that rule and gives them on a channel, for the
+program to decide what each does:
+
+```tondo
+import std.console
+import std.env
+import std.process
+
+fn main() {
+    let signals = process.signals(process.Signal.Hangup, process.Signal.Interrupt)
+    // What a terminal or a supervisor would send, sent here by the program itself.
+    _ = process.signal(env.processId(), process.Signal.Hangup)
+    _ = process.signal(env.processId(), process.Signal.Interrupt)
+    for signal in signals {
+        match signal {
+            Hangup => console.println("reloading the settings")
+            _ => {
+                console.println("closing what is open, and leaving")
+                break
+            }
+        }
+    }
+}
+```
+
+```text output
+reloading the settings
+closing what is open, and leaving
+```
+
+- The signals are `Interrupt`, `Terminate`, `Hangup`, `User1`, `User2` and
+  `Quit`. `Kill` can be sent and never received.
+- Two equal ones that the channel has not given yet are one.
+- The channel is one more thing to wait for in a `select`, beside the
+  program's work.
+- `process.signal(pid, signal)` sends one to any process, and the `signal`
+  of a process the program started sends it to that one
+  ([`std.process`](../std/process.md)).
+- A program that writes to a pipe whose reader has gone, as `| head`, ends
+  without a word, as a command should.
 
 ## Shared state
 
