@@ -138,7 +138,10 @@ impl Shape {
 /// A `fn` value a local holds, whole or at a path of fields of a record
 /// or a tuple: the function, and whether it is a closure's body, which
 /// takes its captures first.
-type Made = HashMap<(Local, Vec<u32>), (crate::hir::FnId, bool)>;
+type Made = HashMap<(Local, Vec<u32>), Held>;
+
+/// A `fn` value's function, and whether it is a closure's body.
+type Held = (crate::hir::FnId, bool);
 
 /// The fields a path names, as far as it names fields.
 fn fields(path: &[Proj]) -> Vec<u32> {
@@ -216,7 +219,7 @@ fn made(body: &Body, writes: &[Writes], seed: &Made) -> Made {
         }
     }
     // By local, what each holds, as copies find it; then by local and path.
-    let mut held: HashMap<Local, Vec<(Vec<u32>, (crate::hir::FnId, bool))>> = HashMap::new();
+    let mut held: HashMap<Local, Vec<(Vec<u32>, Held)>> = HashMap::new();
     for ((local, path), value) in seed {
         held.entry(*local).or_default().push((path.clone(), *value));
     }
@@ -229,7 +232,7 @@ fn made(body: &Body, writes: &[Writes], seed: &Made) -> Made {
             if !place.path.is_empty() {
                 continue;
             }
-            let found: Vec<(Vec<u32>, (crate::hir::FnId, bool))> = match &**rvalue {
+            let found: Vec<(Vec<u32>, Held)> = match &**rvalue {
                 Rvalue::Erase(_, id, _) => vec![(Vec::new(), (*id, true))],
                 Rvalue::FnValue(id) => vec![(Vec::new(), (*id, false))],
                 Rvalue::Use(Operand::Copy(from)) if fields(&from.path).len() == from.path.len() => {
@@ -414,7 +417,7 @@ fn specialize(
                     }
                     // Of a part of a local, as a loan of an adapter's
                     // source, the paths inside that part.
-                    let mut inside: Vec<(Vec<u32>, (crate::hir::FnId, bool))> = held
+                    let mut inside: Vec<(Vec<u32>, Held)> = held
                         .iter()
                         .filter(|((local, path), _)| *local == place.local && path.starts_with(&prefix))
                         .map(|((_, path), value)| (path[prefix.len()..].to_vec(), *value))
