@@ -6043,7 +6043,8 @@ la llamada que hacía. Atraviesa el runtime cuando este llama al programa, y una
 racha del mismo frame, como en una recursión, aparece una vez con su número de
 repeticiones. Una tarea añade dónde se lanzó, y la tarea que la lanzó el suyo,
 hasta `main`; un callback que hace un thread de C lo indica. Un deadlock (`P0013`)
-lista dónde espera cada tarea y dónde se lanzó.
+lista dónde espera cada tarea y dónde se lanzó, y cada tarea que acabó con un
+error que nadie leyó de su handle, con el error y dónde se lanzó.
 
 Un pánico con código propio se informa con él, y con su `data` debajo del
 mensaje, una línea por clave en el orden del map:

@@ -1,0 +1,20 @@
+// A deadlock names the task that ended with an error nobody read, which the
+// others often wait for in its place, with where it was spawned; one whose
+// error was read is not named.
+
+import std.fs
+
+fn main() {
+    let read = spawn fs.readText("/nonexistent/first")
+    _ = read.wait()
+    let slow = spawn fs.readText("/nonexistent/second")
+    let (kept, never) = channel[Int](1)
+    _ = never.receive()
+    kept.send(1)
+    _ = slow.wait()
+}
+
+// expect-panic: P0013
+// expect-stderr: task 3 ended with an error nobody read: err(fs.FsError.NotFound)
+// expect-stderr: it was spawned at:
+// expect-stderr:   main  deadlock_unread_error.to:10:16

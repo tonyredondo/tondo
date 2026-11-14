@@ -639,6 +639,9 @@ extern "C" fn trampoline() -> ! {
                 attend(false);
                 (*join).panic = super::panics::deliver(&*task, panic);
             }
+            if (*join).failed >= 0 {
+                join::note_failure(join, &*task);
+            }
             if complete(join) {
                 let mut detached = DETACHED.lock().unwrap_or_else(|e| e.into_inner());
                 detached.retain(|&j| j != join as usize);

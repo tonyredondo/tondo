@@ -43,6 +43,10 @@ pub struct JoinObject {
     pub(super) lock: AtomicBool,
     pub(super) done: bool,
     pub(super) taken: bool,
+    /// The tag of a result that failed, when the result is `T ! E`, or -1;
+    /// and whether it is among `UNREAD`. In what would be padding.
+    pub(super) failed: i8,
+    pub(super) unread: bool,
     pub(super) waiters: Waiters,
     pub(super) result: *mut u8,
     pub(super) size: usize,
@@ -64,6 +68,80 @@ pub struct JoinObject {
     /// The panic the task ended with, which goes on in whoever waits for
     /// it (language 15.9).
     pub(super) panic: Option<Box<crate::panics::Record>>,
+    /// How a dump shows a result that failed.
+    pub(super) show: Option<Show>,
+}
+
+/// How the program shows a value, appended to a builder.
+pub(crate) type Show = unsafe extern "C" fn(*mut crate::Builder, *const u8);
+
+/// A task that ended with an error its handle holds and nobody read yet,
+/// which a dump tells: as a program that waits for what the task would
+/// have given, its cause.
+pub(crate) struct Unread {
+    pub(crate) join: usize,
+    pub(crate) task: u64,
+    pub(crate) spawned: Vec<usize>,
+}
+
+pub(crate) static UNREAD: Mutex<Vec<Unread>> = Mutex::new(Vec::new());
+
+/// As a task whose result can fail ends, before anyone hears: whether it
+/// failed, in which case it is unread until taken.
+#[cold]
+pub(super) unsafe fn note_failure(join: *mut JoinObject, task: &Task) {
+    unsafe {
+        let j = &mut *join;
+        if j.result.is_null() || j.panic.is_some() || j.detached || !j.group.is_null() {
+            return;
+        }
+        if *j.result as i8 != j.failed {
+            return;
+        }
+        j.unread = true;
+        let spawned = task.origin.as_ref().map_or(Vec::new(), |origin| origin.frames().to_vec());
+        UNREAD.lock().unwrap_or_else(|e| e.into_inner()).push(Unread { join: join as usize, task: task.id, spawned });
+    }
+}
+
+/// A result read, or its handle gone: no longer unread.
+#[inline]
+unsafe fn read(join: *mut JoinObject) {
+    unsafe {
+        if (*join).unread {
+            forget(join);
+        }
+    }
+}
+
+#[cold]
+unsafe fn forget(join: *mut JoinObject) {
+    unsafe { (*join).unread = false };
+    UNREAD.lock().unwrap_or_else(|e| e.into_inner()).retain(|unread| unread.join != join as usize);
+}
+
+/// Each unread failure as the dump shows it: its task, where it was
+/// spawned, and the result.
+pub(crate) fn unread_failures() -> Vec<(u64, Vec<usize>, String)> {
+    let unread = UNREAD.lock().unwrap_or_else(|e| e.into_inner());
+    unread
+        .iter()
+        .map(|unread| {
+            let join = unread.join as *const JoinObject;
+            let text = match unsafe { (*join).show } {
+                Some(show) => unsafe {
+                    let mut builder = crate::Builder::new(0);
+                    show(&mut builder, (*join).result);
+                    let text = builder.finish();
+                    let whole = String::from_utf8_lossy(crate::str_bytes(text)).into_owned();
+                    crate::tondo_rt_str_release(text);
+                    whole
+                },
+                None => String::new(),
+            };
+            (unread.task, unread.spawned.clone(), text)
+        })
+        .collect()
 }
 
 /// A spawned task's join, the task itself while it is alive, and a result
@@ -152,6 +230,8 @@ pub unsafe extern "C" fn tondo_rt_spawn(
     align: usize,
     release: Option<Glue>,
     visit: Option<Visit>,
+    failed: i8,
+    show: Option<Show>,
 ) -> *mut JoinObject {
     start_workers();
     let align = align.max(8);
@@ -162,6 +242,8 @@ pub unsafe extern "C" fn tondo_rt_spawn(
             lock: AtomicBool::new(false),
             done: false,
             taken: false,
+            failed,
+            unread: false,
             waiters: Waiters::default(),
             result: std::ptr::null_mut(),
             size,
@@ -174,6 +256,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
             visit,
             holders: AtomicU8::new(2),
             panic: None,
+            show,
         },
         task: std::mem::MaybeUninit::uninit(),
         result: [0; 2],
@@ -361,6 +444,7 @@ pub(super) unsafe fn take(join: *mut JoinObject, out: *mut u8) {
             std::ptr::copy_nonoverlapping((*join).result, out, (*join).size);
         }
         (*join).taken = true;
+        read(join);
     }
 }
 
@@ -481,6 +565,7 @@ pub(super) unsafe fn free_join(join: *mut JoinObject) {
         if let Some(panic) = (*join).panic.take() {
             crate::panics::rethrow(panic);
         }
+        read(join);
         if !(*join).taken
             && let Some(release) = (*join).release
         {

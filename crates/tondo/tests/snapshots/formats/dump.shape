@@ -51,6 +51,7 @@
 .tasks[].wait.on[]: number
 .tasks[].woken: bool
 .time_ms: number
+.unread[]
 .values[]
 .values[].at: string
 .values[].frame: number

@@ -2007,7 +2007,11 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
         View::Summary if json => return shown("summary", Value::String(summary(&dump))),
         View::Summary => summary(&dump),
         View::Tasks if json => return shown("tasks", Value::Array(tasks)),
-        View::Tasks => tasks.iter().map(|task| task_text(task, false)).collect::<Vec<_>>().join("\n"),
+        View::Tasks => {
+            let unread = unread(&dump);
+            let lines = tasks.iter().map(|task| task_text(task, false)).chain(unread.iter().map(unread_text));
+            lines.collect::<Vec<_>>().join("\n")
+        }
         View::Task(id) => {
             let task = tasks.iter().find(|t| t["id"] == id).ok_or_else(|| {
                 format!("the dump has no task {id}; `tondo dump read {} tasks` lists them", path.display())
@@ -2891,6 +2895,7 @@ fn why(dump: &Value) -> Value {
     let heap = heap(dump);
     found["reason"] = dump["reason"].clone();
     found["message"] = dump["message"].clone();
+    found["unread"] = unread(dump).into();
     found["signature"] = json!(signature(dump));
     found["lock_order"] = dump["lock_order"].clone();
     let events = events(dump);
@@ -2907,6 +2912,24 @@ fn why(dump: &Value) -> Value {
     found["memory"] = heap["sites"].as_array().into_iter().flatten().take(3).cloned().collect();
     found["bytes"] = heap["bytes"].clone();
     found
+}
+
+/// The tasks that ended with an error that their handle holds and nobody
+/// read, with where each was spawned: of a program that waits, often why.
+fn unread(dump: &Value) -> Vec<Value> {
+    let list = dump["unread"].as_array().into_iter().flatten();
+    list.map(|unread| {
+        let spawned = unread["spawned"].as_array().into_iter().flatten();
+        let at = spawned.clone().find(|a| compiled(dump, a)).and_then(|a| frame_text(dump, a));
+        json!({ "task": unread["task"], "spawned": at, "result": unread["result"] })
+    })
+    .collect()
+}
+
+fn unread_text(unread: &Value) -> String {
+    let at = unread["spawned"].as_str().map_or(String::new(), |at| format!(", spawned at {at},"));
+    let result = unread["result"].as_str().map_or(String::new(), |result| format!(": {result}"));
+    format!("task {}{at} ended with an error nobody read{result}", unread["task"])
 }
 
 /// `blocked` in a debugger: who waits for whom now, from what `tasks`
@@ -3139,6 +3162,10 @@ fn why_text(found: &Value) -> String {
         }
     }
     let list = |key: &str| found[key].as_array().map_or(&[][..], Vec::as_slice);
+    // What another task waits for may be what one of these would have given.
+    for unread in list("unread") {
+        out.push_str(&format!("{}\n", unread_text(unread)));
+    }
     let text = |value: &Value| value.as_str().unwrap_or("nowhere known").to_string();
     for order in list("lock_order") {
         out.push_str(&format!("{}\n", text(order)));

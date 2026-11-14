@@ -1034,7 +1034,9 @@ blocked`: cuándo se paró, qué esperaba y dónde; qué tarea le pasó un valor
 un canal sin búfer; y cuándo volvió a correr y qué acabó la espera, un
 despertar, una cancelación o su plazo. Los oye por los enganches del
 depurador, así que un programa sin ella no paga nada. `why` diagnostica
-con eso: el mensaje, las tareas que se esperan en ciclo, las que retienen a otras
+con eso: el mensaje, las tareas que acabaron con un error que su handle guarda y
+nadie leyó, con dónde se lanzaron y el error, que `tasks` lista también y que a
+menudo es lo que otra espera; las tareas que se esperan en ciclo, las que retienen a otras
 y a cuántas, directa o indirectamente, la espera más larga, los grupos de tareas
 en una misma pila y dónde está la memoria; es también lo primero que `tondo dap`
 escribe al abrir un volcado. `stacks` agrupa las tareas por su pila y las da de

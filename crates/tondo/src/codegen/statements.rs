@@ -710,7 +710,17 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let align = self.e.fb.ins().iconst(POINTER, layout.align as i64);
                 let release = self.e.glue_or_null(Glue::Release, result);
                 let visit = self.e.glue_or_null(Glue::Visit, result);
-                Val::Scalar(self.e.call_rt(Rt::Spawn, &[object, kind, size, align, release, visit]).unwrap())
+                // A result that can fail, which a dump tells while nobody
+                // has read it: the tag of `err`, a byte at its start.
+                let fails = matches!(self.e.cg.types().kind(self.e.cg.types().repr(result)), TyKind::Result(..))
+                    && matches!(layout.shape, Shape::Enum { tag, .. } if tag.bytes() == 1);
+                let failed = self.e.fb.ins().iconst(types::I8, if fails { ERR as i64 } else { -1 });
+                let show = match fails {
+                    true => self.e.glue_address(Glue::Show, result),
+                    false => self.e.fb.ins().iconst(POINTER, 0),
+                };
+                let arguments = [object, kind, size, align, release, visit, failed, show];
+                Val::Scalar(self.e.call_rt(Rt::Spawn, &arguments).unwrap())
             }
             Rvalue::Select(cases, blocking, span) => Val::Scalar(self.select(cases, *blocking, *span)),
             // A live build's patches link only the runtime's functions.

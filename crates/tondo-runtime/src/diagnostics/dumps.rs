@@ -110,6 +110,16 @@ pub(super) fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: 
             contexts[index]
         );
     }
+    // The tasks that ended with an error nobody read: what a program that
+    // waits for them shows of its cause.
+    let unread: Vec<String> = crate::tasks::unread_failures()
+        .into_iter()
+        .map(|(task, spawned, result)| {
+            let result = if values_shown() { format!(",\"result\":{}", quoted(&result)) } else { String::new() };
+            format!("{{\"task\":{task},\"spawned\":{}{result}}}", frames.list(&spawned))
+        })
+        .collect();
+    let _ = write!(out, "],\"unread\":[{}", unread.join(","));
     let _ = write!(out, "],\"heap\":{{\"rate\":{},\"dropped\":{dropped},\"samples\":[", crate::heap::rate());
     for (index, (size, stack)) in samples.iter().enumerate() {
         let comma = if index == 0 { "" } else { "," };

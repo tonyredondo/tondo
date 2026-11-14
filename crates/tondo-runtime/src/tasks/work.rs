@@ -504,6 +504,11 @@ pub(super) fn deadlock() -> ! {
         };
         report.push_str(&text.replacen("TITLE", &title, 1));
     }
+    // What the others wait for may be what one of these would have given.
+    for (task, spawned, result) in unread_failures() {
+        report.push_str(&format!("\ntask {task} ended with an error nobody read: {result}"));
+        crate::trace::write_stack(&mut report, "it was spawned at", || spawned.iter().copied(), None);
+    }
     let _ = writeln!(std::io::stderr(), "{report}");
     crate::diagnostics::crash_dump(
         "deadlock",

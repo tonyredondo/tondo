@@ -508,7 +508,7 @@ impl Rt {
             Rt::DeferPop => ("tondo_rt_defer_pop", &[], &[]),
             Rt::SbMap => ("tondo_rt_sb_map", &[I64, I64, I64, I64], &[]),
             Rt::StrHash => ("tondo_rt_str_hash", &[I64], &[I64]),
-            Rt::Spawn => ("tondo_rt_spawn", &[I64, I8, I64, I64, I64, I64], &[I64]),
+            Rt::Spawn => ("tondo_rt_spawn", &[I64, I8, I64, I64, I64, I64, I8, I64], &[I64]),
             Rt::JoinWait => ("tondo_rt_join_wait", &[I64, I64], &[]),
             Rt::JoinRelease => ("tondo_rt_join_release", &[I64], &[]),
             Rt::HandleRetain => ("tondo_rt_handle_retain", &[I64], &[]),

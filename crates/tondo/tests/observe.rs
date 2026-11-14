@@ -571,6 +571,30 @@ fn a_crash_leaves_a_dump_by_itself() {
     assert!(said.contains("it leaves the container with `docker cp <container>:"), "{said}");
 }
 
+/// A dump names a task that ended with an error nobody read, what another
+/// task often waits for in its place, with where it was spawned.
+#[test]
+fn a_dump_names_an_error_nobody_read() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("unread");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.fs\n\nfn main() {\n    let slow = spawn fs.readText(\"/nonexistent/file\")\n    let (kept, never) = channel[Int](1)\n    _ = never.receive()\n    kept.send(1)\n    _ = slow.wait()\n}\n";
+    std::fs::write(dir.join("waits.to"), program).unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+    command.args(["run", "waits.to"]).env("TONDO_DUMP", &dir).current_dir(&dir);
+    let said = String::from_utf8_lossy(&command.output().unwrap().stderr).into_owned();
+    assert!(said.contains("task 2 ended with an error nobody read: err(fs.FsError.NotFound)"), "{said}");
+    let dump = dumps_in(&dir).pop().expect("a dump");
+    let why = tondo(&["dump", "read", dump.to_str().unwrap(), "why", "--json"]);
+    let unread = &why["why"]["unread"][0];
+    assert_eq!((unread["task"].as_u64(), unread["spawned"].as_str()), (Some(2), Some("waits.to:4 in main")), "{why}");
+    assert_eq!(unread["result"], "err(fs.FsError.NotFound)", "{why}");
+    let tasks = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", "read"]).arg(&dump).arg("tasks").output();
+    let tasks = String::from_utf8_lossy(&tasks.unwrap().stdout).into_owned();
+    let named = "task 2, spawned at waits.to:4 in main, ended with an error nobody read: err(fs.FsError.NotFound)";
+    assert!(tasks.contains(named), "{tasks}");
+}
+
 /// A program asked to serve the tools that cannot, as one whose `TMPDIR`
 /// it cannot write in a container, says so and why, and runs on.
 #[test]
