@@ -277,7 +277,8 @@ impl<'a> Checker<'a> {
                         None
                     }
                 };
-                let method = TraitMethod { name: f.name.name.clone(), signature, default, span: f.name.span };
+                let method =
+                    TraitMethod { name: f.name.name.clone(), signature, default, span: f.name.span, outside: false };
                 self.traits[id.0 as usize].methods.push(method);
             }
         }
@@ -303,8 +304,91 @@ impl<'a> Checker<'a> {
             let id = FnId(bodies.len() as u32);
             self.signatures.push(signature.clone());
             bodies.push(f);
-            let method = TraitMethod { name: f.name.name.clone(), signature, default: Some(id), span: f.name.span };
+            let method = TraitMethod {
+                name: f.name.name.clone(),
+                signature,
+                default: Some(id),
+                span: f.name.span,
+                outside: false,
+            };
             self.traits[ITERATOR.0 as usize].methods.push(method);
+        }
+    }
+
+    /// The methods a trait's module declares for it outside it, which ask
+    /// more of its parameters than the trait does, as
+    /// `fn Iterator[T: Additive].sum(self): T` (11.5): methods of each
+    /// implementation whose arguments meet the bounds. Each has a `Self`
+    /// of its own, bound by the trait with the parameters it declares.
+    pub(super) fn outside_methods<'d>(&mut self, fns: &[&'d ast::FnDecl], bodies: &mut Vec<&'d ast::FnDecl>) {
+        for f in fns {
+            let owner = f.owner.as_ref().expect("a method");
+            let id = self.trait_names[&owner.name];
+            let def = &self.traits[id.0 as usize];
+            let (trait_name, count) = (def.name.clone(), def.params.len());
+            // The intrinsic traits are the prelude's.
+            let module = self.trait_modules.get(&id).copied().or(self.prelude.filter(|_| id.0 < PRELUDE_TRAITS));
+            let problem = if module != Some(f.module) {
+                // The function to write instead: `fn twice[I: Iterator[T], T: Additive](items: I)`.
+                let names: Vec<&str> = f.owner_generics.iter().map(|g| g.name.name.as_str()).collect();
+                let bounded = f.owner_generics.iter().map(|g| match g.bounds.as_slice() {
+                    [] => g.name.name.clone(),
+                    bounds => {
+                        let bounds: Vec<&str> = bounds.iter().map(|b| self.sources.slice(b.span)).collect();
+                        format!("{}: {}", g.name.name, bounds.join(" + "))
+                    }
+                });
+                let args = if names.is_empty() { String::new() } else { format!("[{}]", names.join(", ")) };
+                let generics: Vec<String> = std::iter::once(format!("I: {trait_name}{args}")).chain(bounded).collect();
+                Some((
+                    "E1504",
+                    format!(
+                        "`{trait_name}` is declared in another module, which alone declares its methods: write a function that takes an implementation, as `fn {}[{}](items: I)`",
+                        f.name.name,
+                        generics.join(", ")
+                    ),
+                ))
+            } else if f.owner_generics.len() != count {
+                Some((
+                    "E1504",
+                    format!("`{trait_name}` takes {count} type parameter(s), found {}", f.owner_generics.len()),
+                ))
+            } else if def.methods.iter().any(|m| m.name == f.name.name) {
+                Some(("E1505", format!("`{trait_name}` already has a method `{}`", f.name.name)))
+            } else {
+                None
+            };
+            if let Some((code, message)) = problem {
+                self.diags.error(code, owner.span, message);
+                continue;
+            }
+            let self_param = self.types.declare_param("Self".into());
+            // The prelude's methods of an iterator copy it (10.17).
+            if id == ITERATOR {
+                self.types.param_mut(self_param).copy = true;
+            }
+            let scope = FnScope {
+                module: f.module,
+                types: vec![("Self".into(), self_param)],
+                self_type: Some(self_param),
+                implementing: None,
+            };
+            let mut signature = self.signature(f, None, scope);
+            signature.name = format!("{trait_name}.{}", f.name.name);
+            let params = signature.generics[1..1 + count].to_vec();
+            self.bounds.entry(self_param).or_default().push((id, params));
+            self.no_defaults(f);
+            let fn_id = FnId(bodies.len() as u32);
+            self.signatures.push(signature.clone());
+            bodies.push(f);
+            let method = TraitMethod {
+                name: f.name.name.clone(),
+                signature,
+                default: Some(fn_id),
+                span: f.name.span,
+                outside: true,
+            };
+            self.traits[id.0 as usize].methods.push(method);
         }
     }
 
@@ -447,6 +531,7 @@ impl<'a> Checker<'a> {
         map.extend(def.params.iter().copied().zip(trait_args.iter().copied()));
         let declared: Vec<(String, Signature, bool)> =
             def.methods.iter().map(|m| (m.name.clone(), m.signature.clone(), m.default.is_some())).collect();
+        let outside: Vec<bool> = def.methods.iter().map(|m| m.outside).collect();
         let declared_at: Vec<Span> = def.methods.iter().map(|m| m.span).collect();
         let mut first: Vec<Span> = vec![Span::default(); declared.len()];
         let mut types: Vec<(String, Ty)> =
@@ -468,6 +553,15 @@ impl<'a> Checker<'a> {
                 self.diags.error("E1114", f.name.span, message);
                 continue;
             };
+            if outside[index] {
+                let message = format!(
+                    "`{trait_name}.{0}` is declared outside `{trait_name}`, for every implementation it fits, and an implementation does not give its own; an operation of `{target_name}` alone is an inherent method `fn {target_name}.{0}(...)`, which its values call first",
+                    f.name.name
+                );
+                self.diags.error("E1114", f.name.span, message);
+                self.diags.related(declared_at[index], format!("`{trait_name}.{}` is declared here", f.name.name));
+                continue;
+            }
             if methods[index].is_some() {
                 let message = format!("`{}` is implemented more than once", f.name.name);
                 self.diags.error("E1114", f.name.span, message);

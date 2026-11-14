@@ -121,6 +121,11 @@ pub fn Char.toUpper(self): Char
 pub fn Contexts.current(): Contexts
 pub fn Deque[T: Equatable].contains(self, value: T): Bool
 pub fn Failure.find[E](self): E?
+pub fn Iterator[T: Additive].sum(self): T
+pub fn Iterator[T: Fractional].average(self): T?
+pub fn Iterator[T: Key].toSet(self): Set[T]
+pub fn Iterator[T: Ordered].max(self): T?
+pub fn Iterator[T: Ordered].min(self): T?
 pub fn Map[K: Key, V].filter(self, keep: fn(K, V): Bool): Map[K, V]
 pub fn Map[K: Key, V].mapValues[W](self, transform: fn(V): W): Map[K, W]
 pub fn Map[K: Key, V].merge(self, other: Map[K, V]): Map[K, V]
@@ -245,10 +250,12 @@ pub trait Iterator[T] {
     /// How many elements have each key, as `Array.countBy`.
     fn countBy[K: Key](self, key: fn(T): K): Map[K, Int]
 
-    /// The sum of `value` of each element, as `Array.sumBy`. The sum,
-    /// smallest, largest and average of the elements themselves, which ask
-    /// more of `T`, are the array's: `collect()` first.
+    /// The sum of `value` of each element, as `Array.sumBy`.
     fn sumBy[N: Additive](self, value: fn(T): N): N
+
+    /// The average of `value` of each element, or `none` when there is
+    /// none, as `Array.averageBy`.
+    fn averageBy[N: Fractional](self, value: fn(T): N): N?
 
     /// A map of the pair each element gives, as `Array.toMap`.
     fn toMap[K: Key, V](self, entry: fn(T): (K, V)): Map[K, V]

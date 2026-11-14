@@ -1,0 +1,70 @@
+// The ends of a chain that ask more of the elements than an iterator does
+// (11.5): `sum`, `min`, `max`, `average` and `toSet` give what an array's
+// give, floats added in the same order, and `averageBy` too. A cursor's own
+// method of one of these names goes first, `Iterator.sum` reaches the
+// trait's, and a function bound by `Iterator` has them.
+
+import std.console
+
+type Reading = {
+    place: String
+    celsius: Float
+}
+
+/// A count down from `from` to 1, with a `sum` of its own.
+type Countdown = {
+    from: Int
+}
+
+impl Iterator[Int] for Countdown {
+    fn next(mut self): Int? {
+        if self.from == 0 {
+            return none
+        }
+        self.from -= 1
+        self.from + 1
+    }
+}
+
+fn Countdown.sum(self): Int {
+    1000 + self.from
+}
+
+fn total[I: Iterator[Int]](cursor: I): Int {
+    cursor.sum()
+}
+
+fn main() {
+    let numbers = [3, 1, 4, 1, 5, 9, 2, 6]
+    let squares = numbers.iter().map((n) { n * n })
+    console.println("{squares.sum()} {squares.min()} {squares.max()}")
+    let empty = numbers.iter().filter((n) { n > 100 })
+    console.println("{empty.sum()} {empty.min()} {empty.max()} {empty.toSet()}")
+    console.println("{numbers.iter().map((n) { n % 3 }).toSet()}")
+    // The first of equal ones, as the array's.
+    let words = ["bb", "a", "cc", "d"]
+    console.println("{words.iter().min()} {words.iter().max()}")
+    // An order that changes a sum of floats: the array's, both ways.
+    let floats = [1e16, 1.0, -1e16, 1.0, 0.1, 0.2, 0.3, 1e-3, 7.0, 1e16, -1e16]
+    let doubled = floats.map((x) { x * 2.0 })
+    let lazily = floats.iter().map((x) { x * 2.0 })
+    console.println("{lazily.sum()} {lazily.sum() == doubled.sum()}")
+    console.println("{lazily.average() == doubled.average()} {floats.iter().filter((x) { x > 1e17 }).average()}")
+    let readings = [Reading { place: "a", celsius: 20.5 }, Reading { place: "b", celsius: 22.0 }]
+    console.println(
+        "{readings.iter().averageBy((r) { r.celsius })} {readings.averageBy((r) { r.celsius })}",
+    )
+    console.println("{numbers.iter().map((n) { Float(n) }).average()}")
+    let countdown = Countdown { from: 4 }
+    console.println("{countdown.sum()} {Iterator.sum(countdown)} {total(countdown)}")
+}
+
+// expect-stdout: 173 some(1) some(81)
+// expect-stdout: 0 none none Set[]
+// expect-stdout: Set[0, 1, 2]
+// expect-stdout: some(a) some(d)
+// expect-stdout: 20.0 true
+// expect-stdout: true none
+// expect-stdout: some(21.25) some(21.25)
+// expect-stdout: some(3.875)
+// expect-stdout: 1004 10 10

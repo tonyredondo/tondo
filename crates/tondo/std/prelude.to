@@ -1413,6 +1413,36 @@ fn iterSumByFloat32[I: Iterator[T], T](items: I, value: fn(T): Float32): Float32
     partial.halved()
 }
 
+/// `Iterator.averageBy` of `Float` values, in the order of 18.5.
+fn iterAverageByFloat[I: Iterator[T], T](items: I, value: fn(T): Float): Float? {
+    let cursor = items
+    var partial = Lanes8 {}
+    var count = 0
+    for item in cursor {
+        partial.add(value(item))
+        count += 1
+    }
+    if count == 0 {
+        return none
+    }
+    partial.halved() / Number.fromInt[Float](count)
+}
+
+/// `Iterator.averageBy` of `Float32` values, in the order of 18.5.
+fn iterAverageByFloat32[I: Iterator[T], T](items: I, value: fn(T): Float32): Float32? {
+    let cursor = items
+    var partial = Lanes16 {}
+    var count = 0
+    for item in cursor {
+        partial.add(value(item))
+        count += 1
+    }
+    if count == 0 {
+        return none
+    }
+    partial.halved() / Number.fromInt[Float32](count)
+}
+
 /// The sum divided by the length, or `none` when the array is empty:
 /// `[1.0, 2.0, 6.0].average()` is `3.0`. Of integers, which it would
 /// round, divide the `sum()` as floats.
@@ -1885,9 +1915,7 @@ pub trait Iterator[T] {
         out
     }
 
-    /// The sum of `value` of each element, as `Array.sumBy`. The sum,
-    /// smallest, largest and average of the elements themselves, which ask
-    /// more of `T`, are the array's: `collect()` first.
+    /// The sum of `value` of each element, as `Array.sumBy`.
     fn sumBy[N: Additive](self, value: fn(T): N): N {
         // Of `Float` and `Float32`, `iterSumByFloat` and `iterSumByFloat32`.
         let cursor = self
@@ -1896,6 +1924,24 @@ pub trait Iterator[T] {
             total = total + value(item)
         }
         total
+    }
+
+    /// The average of `value` of each element, or `none` when there is
+    /// none, as `Array.averageBy`.
+    fn averageBy[N: Fractional](self, value: fn(T): N): N? {
+        // Of `Float` and `Float32`, `iterAverageByFloat` and
+        // `iterAverageByFloat32`.
+        let cursor = self
+        var total = Additive.zero[N]()
+        var count = 0
+        for item in cursor {
+            total = total + value(item)
+            count += 1
+        }
+        if count == 0 {
+            return none
+        }
+        total / Number.fromInt[N](count)
     }
 
     /// A map of the pair each element gives, as `Array.toMap`.
@@ -1918,6 +1964,58 @@ pub trait Iterator[T] {
         }
         out
     }
+}
+
+/// The sum of the elements, as `Array.sum`, and of floats in the same
+/// order: `[1, 2, 3].iter().map((n) { n * n }).sum()` is `14`.
+pub fn Iterator[T: Additive].sum(self): T {
+    self.sumBy((item) { item })
+}
+
+/// The smallest element, the first of equal ones, or `none` when there is
+/// none, as `Array.min`.
+pub fn Iterator[T: Ordered].min(self): T? {
+    let cursor = self
+    var found: T? = none
+    for item in cursor {
+        found = match found {
+            some(best) if best.compare(item) <= 0 => best
+            _ => item
+        }
+    }
+    found
+}
+
+/// The largest element, the first of equal ones, or `none` when there is
+/// none, as `Array.max`.
+pub fn Iterator[T: Ordered].max(self): T? {
+    let cursor = self
+    var found: T? = none
+    for item in cursor {
+        found = match found {
+            some(best) if best.compare(item) >= 0 => best
+            _ => item
+        }
+    }
+    found
+}
+
+/// The sum divided by the count, or `none` when there is no element, as
+/// `Array.average`. Of integers, which it would round, `map` them to
+/// floats first.
+pub fn Iterator[T: Fractional].average(self): T? {
+    self.averageBy((item) { item })
+}
+
+/// The set of the elements, in the order they first appear, as
+/// `Array.toSet`.
+pub fn Iterator[T: Key].toSet(self): Set[T] {
+    let cursor = self
+    var out: Set[T] = Set[]
+    for item in cursor {
+        out.insert(item)
+    }
+    out
 }
 
 /// The iterator `map` gives: each value of the source through the function.

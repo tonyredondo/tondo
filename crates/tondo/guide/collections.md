@@ -103,7 +103,9 @@ matrix), and a number on either side; `matmul`, `transposed`, `sumAlong`,
 
 `0..10` and `0..=10` are `Range[Int]` values; `'a'..='z'` a `Range[Char]`.
 A range, `text.chars()`, `array.iter()` and `map.keys()` are iterators: their
-adapters are lazy and `collect()` makes an array.
+adapters are lazy and `collect()` makes an array. A chain ends as an array
+does, with no array between: `sum`, `min`, `max`, `average`, `toSet`, `count`
+and the `By` methods give what the array's would.
 
 ```tondo
 import std.console
@@ -112,7 +114,8 @@ fn main() {
     let evens = (0..10).filter((n) { n % 2 == 0 }).map((n) { n * n }).collect()
     let letters = "hello".chars().filter((c) { c != 'l' }).collect()
     let indexed = ["a", "b"].iter().enumerate().collect()
-    console.println("{evens} {letters} {indexed} {5 in 0..10}")
+    let total = (0..10).filter((n) { n % 2 == 0 }).map((n) { n * n }).sum()
+    console.println("{evens} {letters} {indexed} {5 in 0..10} {total}")
 }
 ```
 

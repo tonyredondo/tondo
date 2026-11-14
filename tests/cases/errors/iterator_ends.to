@@ -1,0 +1,45 @@
+// What the ends of a chain ask of the elements, each error with what to
+// write; and that an implementation does not give its own, nor does
+// another module declare methods of `Iterator`.
+
+type User = {
+    name: String
+    age: Int
+}
+
+type Tag = {
+    tags: Array[String]
+}
+
+type Steps = {
+    left: Int
+}
+
+impl Iterator[Int] for Steps {
+    fn next(mut self): Int? {
+        none
+    }
+
+    fn sum(self): Int {
+        0
+    }
+}
+
+fn Iterator[T: Additive].twice(self): T {
+    self.sum() + self.sum()
+}
+
+fn main() {
+    let users = [User { name: "a", age: 1 }]
+    let _ = users.iter().sum()
+    let _ = users.iter().max()
+    let _ = [1, 2].iter().average()
+    let _ = [Tag { tags: [] }].iter().sum()
+}
+
+// expect-error: E1114 `Iterator.sum` is declared outside `Iterator`
+// expect-error: E1504 `Iterator` is declared in another module, which alone declares its methods: write a function that takes an implementation, as `fn twice[I: Iterator[T], T: Additive](items: I)`
+// expect-error: E1105 `User` does not implement `Additive`, which `Iterator.sum` requires of `T`: to add a field of each, `sumBy((user) { user.age })`
+// expect-error: E1105 `User` does not implement `Ordered`, which `Iterator.max` requires of `T`: by a field of each, `maxBy((user) { user.name })`
+// expect-error: E1105 `Int` does not implement `Fractional`, which `Iterator.average` requires of `T`: an average is of floats; for integers, make them floats first, as in `map((n) { Float(n) }).average()`
+// expect-error: E1105 `Tag` does not implement `Additive`, which `Iterator.sum` requires of `T`

@@ -9,7 +9,7 @@
 `tondo api Range`, `tondo api Iterator` show the same in a terminal.
 
 - [Range](#range): [`Range.start`](#rangestart), [`Range.end`](#rangeend), [`Range.isInclusive`](#rangeisinclusive), [`Range.isEmpty`](#rangeisempty), [`Range.contains`](#rangecontains)
-- [Iterator](#iterator)
+- [Iterator](#iterator): [`Iterator.sum`](#iteratorsum), [`Iterator.min`](#iteratormin), [`Iterator.max`](#iteratormax), [`Iterator.average`](#iteratoraverage), [`Iterator.toSet`](#iteratortoset)
 - [For other types](#for-other-types)
 
 ### Range
@@ -132,10 +132,12 @@ pub trait Iterator[T] {
     /// How many elements have each key, as `Array.countBy`.
     fn countBy[K: Key](self, key: fn(T): K): Map[K, Int]
 
-    /// The sum of `value` of each element, as `Array.sumBy`. The sum,
-    /// smallest, largest and average of the elements themselves, which ask
-    /// more of `T`, are the array's: `collect()` first.
+    /// The sum of `value` of each element, as `Array.sumBy`.
     fn sumBy[N: Additive](self, value: fn(T): N): N
+
+    /// The average of `value` of each element, or `none` when there is
+    /// none, as `Array.averageBy`.
+    fn averageBy[N: Fractional](self, value: fn(T): N): N?
 
     /// A map of the pair each element gives, as `Array.toMap`.
     fn toMap[K: Key, V](self, entry: fn(T): (K, V)): Map[K, V]
@@ -168,6 +170,52 @@ impl Iterator[Int] for Fibonacci {
 let evens = Fibonacci { a: 0, b: 1 }.filter((n) { n % 2 == 0 }).take(5).collect()
 console.println("{evens}")
 ```
+
+#### Iterator.sum
+
+```tondo
+pub fn Iterator[T: Additive].sum(self): T
+```
+
+The sum of the elements, as `Array.sum`, and of floats in the same
+order: `[1, 2, 3].iter().map((n) { n * n }).sum()` is `14`.
+
+#### Iterator.min
+
+```tondo
+pub fn Iterator[T: Ordered].min(self): T?
+```
+
+The smallest element, the first of equal ones, or `none` when there is
+none, as `Array.min`.
+
+#### Iterator.max
+
+```tondo
+pub fn Iterator[T: Ordered].max(self): T?
+```
+
+The largest element, the first of equal ones, or `none` when there is
+none, as `Array.max`.
+
+#### Iterator.average
+
+```tondo
+pub fn Iterator[T: Fractional].average(self): T?
+```
+
+The sum divided by the count, or `none` when there is no element, as
+`Array.average`. Of integers, which it would round, `map` them to
+floats first.
+
+#### Iterator.toSet
+
+```tondo
+pub fn Iterator[T: Key].toSet(self): Set[T]
+```
+
+The set of the elements, in the order they first appear, as
+`Array.toSet`.
 
 ### For other types
 

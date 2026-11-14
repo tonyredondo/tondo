@@ -587,6 +587,11 @@ struct TraitMethod {
     default: Option<FnId>,
     /// Where the trait declares it; none for the prelude's own.
     span: Span,
+    /// Declared for the trait outside it, as `fn Iterator[T: Additive].sum`,
+    /// asking more of its parameters (11.5): an implementation does not
+    /// give its own. Its signature's generics start with `Self` and the
+    /// trait's parameters, as every trait method's do, but its own.
+    outside: bool,
 }
 
 /// An implementation (12.4); its methods are generic over the binders.

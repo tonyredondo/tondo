@@ -1165,6 +1165,19 @@ impl<'a> Checker<'a> {
         Some(Self::error_expr(span))
     }
 
+    /// The first field of a record whose type implements `trait_id`, and a
+    /// name for the record, as a hint writes them: `sumBy((user) { user.age })`.
+    fn field_with(&mut self, ty: Ty, trait_id: Option<TraitId>) -> Option<(String, String)> {
+        let trait_id = trait_id?;
+        let TyKind::Adt(id) = *self.types.kind(ty) else { return None };
+        let AdtKind::Record(fields) = self.types.adt(id).kind.clone() else { return None };
+        let field = fields.into_iter().find(|field| self.satisfies(field.ty, trait_id, &[]))?;
+        let shown = self.types.display(ty);
+        let mut chars = shown.rsplit('.').next().unwrap_or_default().chars();
+        let item = chars.next().map_or("item".to_string(), |first| first.to_lowercase().chain(chars).collect());
+        Some((item, field.name))
+    }
+
     /// `value.method(args)` for method `index` of a trait with `Self` set to
     /// the receiver's type.
     #[allow(clippy::too_many_arguments)]
@@ -1191,10 +1204,10 @@ impl<'a> Checker<'a> {
             self.diags.error("E1406", method.span, message);
             return Self::error_expr(span);
         }
-        let def = &self.traits[trait_id.0 as usize];
-        let signature = def.methods[index].signature.clone();
-        let mut prebound = HashMap::from([(def.self_param, value.ty)]);
-        prebound.extend(def.params.iter().copied().zip(trait_args));
+        let signature = self.traits[trait_id.0 as usize].methods[index].signature.clone();
+        // `Self` and the trait's parameters, first in every method's generics.
+        let mut prebound = HashMap::from([(signature.generics[0], value.ty)]);
+        prebound.extend(signature.generics[1..].iter().copied().zip(trait_args));
         let callee = Callee::Trait(trait_id, index as u32);
         self.dot_call(cx, callee, signature, prebound, value, method, args, expected, span)
     }
@@ -1223,7 +1236,7 @@ impl<'a> Checker<'a> {
         // `Trait.op[Self, Own...]`: the trait's parameters come from its bounds.
         let mut prebound = HashMap::new();
         if let Some((&self_ty, own)) = explicit.split_first() {
-            prebound.insert(def.self_param, self_ty);
+            prebound.insert(signature.generics[0], self_ty);
             let own_params = &signature.generics[1 + def.params.len()..];
             prebound.extend(own_params.iter().copied().zip(own.iter().copied()));
         }
@@ -3094,11 +3107,36 @@ impl<'a> Checker<'a> {
                     None if signature.name.starts_with("math.Tensor") && missing == "`Fractional`" => {
                         ": its mean is of floats; for integers, divide the `sum()` as floats, as in `Float(tensor.sum()) / Float(tensor.length())`".into()
                     }
+                    // The elements of a record, by one of its fields (14.5).
+                    None if matches!(signature.name.as_str(), "Array.sum" | "Iterator.sum")
+                        && missing == "`Additive`"
+                        && let Some((item, field)) = self.field_with(actual, self.additive) =>
+                    {
+                        format!(": to add a field of each, `sumBy(({item}) {{ {item}.{field} }})`")
+                    }
+                    None if matches!(signature.name.as_str(), "Array.min" | "Array.max" | "Iterator.min" | "Iterator.max")
+                        && missing == "`Ordered`"
+                        && let Some((item, field)) = self.field_with(actual, self.ordered) =>
+                    {
+                        let by = if signature.name.ends_with("min") { "minBy" } else { "maxBy" };
+                        format!(": by a field of each, `{by}(({item}) {{ {item}.{field} }})`")
+                    }
+                    None if matches!(signature.name.as_str(), "Array.average" | "Iterator.average")
+                        && missing == "`Fractional`"
+                        && let Some((item, field)) = self.field_with(actual, self.fractional) =>
+                    {
+                        format!(": of a field of each, `averageBy(({item}) {{ {item}.{field} }})`")
+                    }
+                    None if signature.name == "Iterator.average" && missing == "`Fractional`" => {
+                        ": an average is of floats; for integers, make them floats first, as in `map((n) { Float(n) }).average()`".into()
+                    }
                     // And their average (14.5).
                     None if signature.name == "Array.average" && missing == "`Fractional`" => {
                         ": an average is of floats; for integers, divide the `sum()` as floats, as in `Float(values.sum()) / Float(values.length())`".into()
                     }
-                    None if signature.name == "Array.averageBy" && missing == "`Fractional`" => {
+                    None if matches!(signature.name.as_str(), "Array.averageBy" | "Iterator.averageBy")
+                        && missing == "`Fractional`" =>
+                    {
                         ": an average is of floats; give `value` as a float, as in `averageBy((item) { Float(item.count) })`".into()
                     }
                     None => String::new(),
@@ -3114,9 +3152,9 @@ impl<'a> Checker<'a> {
             }
         }
         if let Callee::Trait(trait_id, _) = callee {
-            let def = &self.traits[trait_id.0 as usize];
-            let self_ty = inference.map[&def.self_param];
-            let trait_args: Vec<Ty> = def.params.iter().map(|p| inference.map[p]).collect();
+            let count = self.traits[trait_id.0 as usize].params.len();
+            let self_ty = inference.map[&signature.generics[0]];
+            let trait_args: Vec<Ty> = signature.generics[1..1 + count].iter().map(|p| inference.map[p]).collect();
             if !self.satisfies(self_ty, trait_id, &trait_args) {
                 let trait_name = self.traits[trait_id.0 as usize].name.clone();
                 // Only the module of the trait or of the type may implement it.

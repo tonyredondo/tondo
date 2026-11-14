@@ -6845,3 +6845,19 @@ read <log>` takes the last of a log, past the time a container's runtime writes 
 dump written to a file in a container, which the program tells by the marks Docker, Podman and
 Kubernetes leave, says how it leaves: `docker cp`, `TONDO_DUMP` on a volume, or the logs. Tony
 approved both (P1 and P4 of change 29); a published image of `tondo` for `kubectl debug` waits.
+
+## Methods of a trait that ask more of its parameters
+
+An iterator had `sumBy` but not `sum`: the elements of `Iterator[T]` need not add up, and a method
+inside the trait could ask nothing of `T` that the trait does not. So `.iter().map(...).sum()` had to
+`collect()` an array first, only to add it up. An array's methods already ask more of its parameter
+where they are declared, `fn Array[T: Additive].sum(self): T`, and a trait's module now declares
+methods the same way, `fn Iterator[T: Additive].sum(self): T`: methods of each implementation whose
+arguments meet the bounds, found where the trait's are. No new syntax, and the bound sits on the
+parameter it limits; a `where` on a method inside the trait would have put it apart. An
+implementation does not give its own, as Tondo does not choose between methods by their bounds; a
+type that wants another declares an inherent method, which its values call first. `sum`, `min`,
+`max`, `average` and `toSet` of an iterator are these, and give what the array's give, floats added
+in the same order, by `sumBy` and `averageBy` with the element itself. Their errors write the call
+to make instead, `sumBy((user) { user.age })` with a record's first field that qualifies. Tony
+accepted it as proposed.

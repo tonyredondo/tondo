@@ -51,7 +51,7 @@ impl<'a> Checker<'a> {
                 self.declare_module_name(&decl.name, ModuleName::Const(self.consts.len() - 1));
             }
         }
-        let (externs, mut fns): (Vec<&ast::FnDecl>, Vec<&ast::FnDecl>) = module
+        let (externs, fns): (Vec<&ast::FnDecl>, Vec<&ast::FnDecl>) = module
             .items
             .iter()
             .filter_map(|item| match item {
@@ -59,7 +59,10 @@ impl<'a> Checker<'a> {
                 _ => None,
             })
             .partition(|f| f.foreign.is_some() && f.body.is_none());
-        // A fixture's operations come last, after the toolchain's own.
+        // Methods a trait's module declares for it outside it (11.5) are
+        // the trait's, declared with its methods.
+        let (outside, mut fns): (Vec<&ast::FnDecl>, Vec<&ast::FnDecl>) =
+            fns.into_iter().partition(|f| f.owner.as_ref().is_some_and(|o| self.trait_names.contains_key(&o.name)));
         fns.sort_by_key(|f| self.fixture(f.span));
         for f in externs {
             self.declare_extern(f);
@@ -116,6 +119,7 @@ impl<'a> Checker<'a> {
         for extension in extensions {
             self.iterator_defaults(extension, &mut bodies);
         }
+        self.outside_methods(&outside, &mut bodies);
         for item in &module.items {
             if let ast::Item::Impl(decl) = item {
                 self.implementation(decl, &mut bodies);

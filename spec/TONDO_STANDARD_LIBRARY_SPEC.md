@@ -3000,10 +3000,15 @@ programa que lo implementan:
   piden los suyos: `map`, `filter`, `take`, `skip`, `takeWhile`, `skipWhile`,
   `enumerate`, `zip`, `chain` y `flatMap`;
 - consumidores: `collect(): Array[T]`, `count`, `any`, `all`, `find`, `reduce`,
-  `forEach`, y `minBy`, `maxBy`, `countBy`, `sumBy`, `toMap` y `keyedBy`, como
-  los del array, que leen el iterador una vez. Para sumar, ordenar, unir o
-  hacer un set de los elementos mismos, que piden más de `T` de lo que pide el
-  trait, se usa `collect()` y el método del array.
+  `forEach`, y `minBy`, `maxBy`, `countBy`, `sumBy`, `averageBy`, `toMap` y
+  `keyedBy`, como los del array, que leen el iterador una vez;
+- los consumidores que piden más de `T` de lo que pide el trait, declarados
+  fuera de él (11.5 del lenguaje): `sum` (`T: Additive`), `min` y `max`
+  (`T: Ordered`), `average` (`T: Fractional`) y `toSet` (`T: Key`). Dan lo que
+  da el mismo método de un array de esos elementos, los floats sumados en el
+  mismo orden, y sus errores dicen qué escribir, como `sumBy` con un campo de
+  cada record. Para ordenar o unir los elementos se usa `collect()` y el método
+  del array.
 
 Estos métodos trabajan sobre una copia del iterador, así que su tipo es `Copy`;
 con uno afín, el error dice que se recorra con `for`.

@@ -19,7 +19,8 @@ impl<'a> Checker<'a> {
             is_unsafe: false,
             foreign: false,
         };
-        let display = TraitMethod { name: "display".into(), signature, default: None, span: Span::default() };
+        let display =
+            TraitMethod { name: "display".into(), signature, default: None, span: Span::default(), outside: false };
         self.traits.push(TraitDef {
             name: "Display".into(),
             self_param,
@@ -45,7 +46,7 @@ impl<'a> Checker<'a> {
             is_unsafe: false,
             foreign: false,
         };
-        let next = TraitMethod { name: "next".into(), signature, default: None, span: Span::default() };
+        let next = TraitMethod { name: "next".into(), signature, default: None, span: Span::default(), outside: false };
         self.traits.push(TraitDef {
             name: "Iterator".into(),
             self_param,

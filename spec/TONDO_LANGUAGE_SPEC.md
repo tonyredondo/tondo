@@ -3454,6 +3454,26 @@ fn Box[T].map[U, F: Call[fn(T): U]](
 
 La lista del propietario debe tener la misma aridad que la declaración nominal y puede añadir constraints para limitar la disponibilidad del método. Solo puede existir una declaración con el mismo nombre para un propietario; Tondo no selecciona entre métodos según constraints.
 
+El propietario puede ser también un trait del módulo, con un binder por cada
+parámetro del trait y los constraints que el método pide de ellos:
+
+~~~tondo
+pub fn Iterator[T: Additive].sum(self): T {
+    self.sumBy((item) { item })
+}
+~~~
+
+Es un método del trait para cada implementación cuyos argumentos cumplen esos
+constraints, y se encuentra donde se encuentran los métodos del trait: por un
+constraint visible y, los de `Iterator`, sobre cualquier tipo que lo implemente
+(reglas 2 y 4 de la resolución de abajo). Dentro, `self` es el implementador,
+como en un método por defecto. Una implementación no da el suyo (`E1114`): un
+tipo que quiera otro declara un método inherente con ese nombre, que sus
+valores llaman primero (regla 1), mientras `Trait.method(value)` llama al del
+trait. Solo el módulo del trait los declara (`E1504`), y un trait tiene un único
+método de cada nombre, dentro o fuera de él (`E1505`). Una llamada cuyos
+argumentos no cumplen los constraints es `E1105`, que nombra el que falta.
+
 Ninguna operación inherente puede compartir nombre con una variante de su enum propietario. Esto evita que `Type.Member(...)` pueda significar tanto construcción de variante como llamada asociada.
 
 Un método con receptor no puede compartir nombre con un campo de su tipo propietario. Así `value.name` nunca representa un bound method. Si `name` es un campo de tipo función, `value.name()` llama a ese valor; si no existe tal campo, la misma forma puede resolver un método. La prohibición de colisión impide que ambas interpretaciones sean candidatas a la vez.
