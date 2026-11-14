@@ -1565,8 +1565,12 @@ fn what_a_release_build_makes_of_the_code() {
     // a call is told as a call there, and the standard library is not told.
     assert!(!said.contains("`fib(n - 1)` is inlined"), "{said}");
     assert!(!said.contains("<std>") && !said.contains("String."), "{said}");
+    // A function's own, and what is said of its code where it went, as
+    // its copy inlined into `main`: every place within its lines.
     let (fib, _, _) = tondo(&dir, &["optimizations", "main.to", "--function", "fib"]);
-    assert!(fib.lines().count() >= 3 && fib.lines().all(|line| line.ends_with("(in fib)")), "{fib}");
+    let line = |said: &str| said.split(':').nth(1).and_then(|n| n.parse::<u32>().ok()).unwrap_or(0);
+    assert!(fib.lines().count() >= 3 && fib.lines().all(|said| (11..=16).contains(&line(said))), "{fib}");
+    assert!(fib.contains("inlining stops after 3 rounds (in main)"), "{fib}");
     let (found, status) = json(&dir, &["optimizations", "main.to", "--json"]);
     assert_eq!(status, 0);
     assert_eq!(found["format"], "tondo-optimizations-0.1/1");

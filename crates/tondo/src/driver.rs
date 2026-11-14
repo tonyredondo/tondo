@@ -1560,7 +1560,9 @@ impl Optimization {
 
 /// What the passes of a release build of a checked program did in its own
 /// code, in the functions whose names hold `function` and of the `kind`
-/// when they are given, in
+/// when they are given, in; with a function, what is said of a place
+/// written inside it, too, wherever the code of that place went, as the
+/// copy of a function that calls its closures; in
 /// the order of the source, without generating the code. What is done in
 /// one copy of a place, of a loop unrolled or code inlined twice, and not
 /// in another, is told as not done when it is a call or the heap, and as
@@ -1578,12 +1580,27 @@ pub fn optimizations(
     crate::mir_text::ask_remarks(true);
     cpu(analysis, None)?;
     let mut bodies = lower::lower(program, false, false, None);
+    let named = |body: &crate::mir::Body| function.is_none_or(|name| body.name.contains(name));
+    // Where each function asked for is written, from its name to its last
+    // statement, known before inlining mixes other functions' code in.
+    let written: Vec<crate::source::Span> = match function {
+        Some(_) => bodies
+            .iter()
+            .filter(|body| named(body))
+            .map(|body| {
+                let end = body.starts.iter().map(|(_, _, span)| span.end).fold(body.span.end, u32::max);
+                crate::source::Span::new(body.span.start, end)
+            })
+            .collect(),
+        None => Vec::new(),
+    };
     if !analysis.meta {
         optimize(&mut bodies, &program.types, sources);
     }
     crate::mir_text::ask_remarks(false);
     let mut found = Vec::new();
-    for body in bodies.iter().filter(|body| function.is_none_or(|name| body.name.contains(name))) {
+    let inside = |span: crate::source::Span| written.iter().any(|w| w.start <= span.start && span.end <= w.end);
+    for body in &bodies {
         // What a loop unrolled or code inlined twice does in one copy of
         // a place and not in another: a call or the heap is told as such,
         // and a check one copy drops and another keeps as both.
@@ -1600,6 +1617,9 @@ pub fn optimizations(
             body.remarks.iter().map(|r| (r.kind, r.span.start, r.span.end)).collect();
         let kept = |remark: &crate::mir::Remark| told.contains(&("checked", remark.span.start, remark.span.end));
         for remark in &body.remarks {
+            if !named(body) && !inside(remark.span) {
+                continue;
+            }
             let file = sources.file_of(remark.span.start);
             if file.dependency || file.logical.starts_with("<std>/") {
                 continue;

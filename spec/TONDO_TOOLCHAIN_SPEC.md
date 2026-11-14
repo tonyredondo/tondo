@@ -2371,7 +2371,9 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   bucle lee y no cuenta, pues su array lo tiene, o por qué cuenta. `--kind <tipo>` da solo las de ese
   tipo, como `heap` para ver dónde asigna; uno que no existe es un error del
   toolchain (estado 3).
-- `--function <nombre>` da solo lo de las funciones cuyo nombre lo contiene.
+- `--function <nombre>` da solo lo de las funciones cuyo nombre lo contiene,
+  y lo que se dice de un lugar escrito dentro de ellas, vaya donde vaya su
+  código, como la copia de una función que llama a sus closures.
 - `--tests` lee el código de los tests y los benchmarks del proyecto, como
   `tondo test --bench` lo compila, en vez del programa: los benchmarks son
   tests (10 de testing). `asm --tests` hace lo mismo.
