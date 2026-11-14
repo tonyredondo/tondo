@@ -808,8 +808,13 @@ fn says_what_a_release_build_makes_of_the_code() {
     let (heap, _) = agent.call("optimizations", json!({ "path": "main.to", "kind": "heap" }));
     let heap = heap["optimizations"].as_array().unwrap();
     assert!(!heap.is_empty() && heap.iter().all(|o| o["kind"] == "heap"), "{heap:?}");
+    // The function's own, and of its code where it went, inlined in `main`.
     let (sum, _) = agent.call("optimizations", json!({ "path": "main.to", "function": "sum" }));
-    assert!(sum["optimizations"].as_array().unwrap().iter().all(|o| o["functions"] == json!(["sum"])), "{sum}");
+    let within = |o: &Value| {
+        o["line"].as_u64().is_some_and(|line| (3..=9).contains(&line))
+            && o["functions"].as_array().is_some_and(|f| f.contains(&json!("sum")))
+    };
+    assert!(sum["optimizations"].as_array().unwrap().iter().all(within), "{sum}");
     let (wrong, text) = agent.call("optimizations", json!({ "path": "wrong.to" }));
     assert_eq!(wrong["compiles"], false, "{wrong}");
     assert!(text.contains("nothing"), "{text}");
