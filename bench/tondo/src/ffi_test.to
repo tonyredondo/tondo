@@ -1,0 +1,63 @@
+import std.embed
+import std.ffi
+import std.fs
+import std.path
+import std.process
+import std.testing
+
+/// What calls Tondo from C, compiled by the system's C compiler.
+const Callers: String = embed.text("c/callers.c")
+
+fn add(total: Int, i: Int): Int {
+    total + i
+}
+
+fn one(): Int {
+    1
+}
+
+/// A call that waits once, for a task it starts.
+fn waits(total: Int, i: Int): Int {
+    total + i + (spawn one()).wait()
+}
+
+/// The library of `c/callers.c`, or why there is none.
+fn callers(): ffi.Library ! String {
+    let dir =
+        fs.createTemporaryDirectory(pattern: "tondo-ffi-*").mapErr((e) { "no directory: {e}" })?
+    let (source, library) = (
+        path.join(dir, "callers.c"),
+        path.join(dir, ffi.libraryFileName("callers")),
+    )
+    fs.writeText(source, Callers).mapErr((e) { "cannot write {source}: {e}" })?
+    let built =
+        process
+            .command("cc", "-O2", "-shared", "-fPIC", "-o", library, source, "-lpthread")
+            .output()
+            .mapErr((e) { "no C compiler: {e}" })?
+    if built.statuses.isEmpty() or not built.statuses[0].success {
+        fail "cc failed: {String.fromBytes(built.stderr) ?? ""}"
+    }
+    let loaded = ffi.Library.open(library).mapErr((e) { "cannot load {library}: {e}" })
+    // Loaded, it needs its file no more.
+    _ = fs.remove(dir, recursive: true)
+    loaded
+}
+
+test ffi {
+    let library = match callers() {
+        ok(library) => library
+        err(why) => testing.skip(why)
+    }
+    let calls = unsafe { library.function[extern fn(extern fn(Int, Int): Int, Int): Int]("calls")? }
+    let threads =
+        unsafe {
+            library.function[extern fn(extern fn(Int, Int): Int, Int, Int): Int](
+                "calls_from_threads",
+            )?
+        }
+    testing.bench("callback 1000", () { unsafe { calls(add, 1000) } })
+    testing.bench("from a C thread 1000", () { unsafe { threads(add, 1, 1000) } })
+    testing.bench("from C threads 8x1000", () { unsafe { threads(add, 8, 1000) } })
+    testing.bench("waits from a C thread 100", () { unsafe { threads(waits, 1, 100) } })
+}

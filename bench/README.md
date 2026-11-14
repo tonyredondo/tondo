@@ -29,6 +29,13 @@ tells apart: HTTP/1.1 in the clear and HTTP/2 over TLS, as Tondo's client
 and server negotiate them, with the certificate in `tondo/src/tls`, made
 for these benchmarks alone.
 
+The rows of `ffi/` call each side from C: a loop of C that calls a function
+given to it, from the benchmark's own thread, which in Tondo is a task's,
+and from threads that C starts and the runtime has never seen, and a call
+that waits once, for a task or a goroutine it starts. Each side compiles
+the same `callers.c` with the system's C compiler, Go's through cgo; without
+one, Tondo's test skips them and Go builds without them.
+
 The tables were measured on an AMD Ryzen 9 5950X, Linux, with Go 1.27.
 Now, on 2026-11-13 at b42ce555, each side for its default level of
 processor: Tondo's `baseline`, x86-64-v2, and Go's `GOAMD64=v1`:
