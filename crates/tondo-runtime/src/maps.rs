@@ -197,6 +197,17 @@ pub unsafe extern "C" fn tondo_rt_map_find(m: *mut MapObject, key: *const u8, gl
     }
 }
 
+/// The position of the key's entry, in the order of insertion, or -1: what
+/// `map[key, default: value]` finds, in one call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_map_position(m: *mut MapObject, key: *const u8, glue: *const MapGlue) -> i64 {
+    unsafe {
+        let glue = &*glue;
+        let hash = (glue.hash)(key);
+        (*m).find(key, hash, glue).map_or(-1, |index| index as i64)
+    }
+}
+
 /// Inserts or replaces; the key and value move into the map. Returns 1 and
 /// moves the previous value to `old` when the key was present (its position
 /// is kept and the new key is released), 0 otherwise.
