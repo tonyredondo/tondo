@@ -178,9 +178,9 @@ fn main() {
 
 ```text
 $ tondo optimizations kept.to --function of
-kept.to:8:9: `reading` keeps a count of its own: it is kept, as pushed, returned, captured or held (in of)
-kept.to:8:20: `readings` runs one turn at a time: each turn counts a value or measures a text, which costs more than the test saved (in of)
-kept.to:10:13: `found.push(reading)` grows as it is pushed to: the loop pushes to it in some turns only (in of)
+kept.to:8:9: `reading` keeps a count of its own: it is kept, as pushed, returned, captured or held (in main, of)
+kept.to:8:20: `readings` runs one turn at a time: each turn counts a value or measures a text, which costs more than the test saved (in main, of)
+kept.to:10:13: `found.push(reading)` grows as it is pushed to: the loop pushes to it in some turns only (in main, of)
 ```
 
 Each remark names what the code does that the optimization could not get
@@ -191,7 +191,7 @@ view is how one knows that the cost is the program's and not an accident.
 
 | | |
 | --- | --- |
-| `--function <name>` | one function |
+| `--function <name>` | one function, and the code written in it wherever it went |
 | `--kind heap` | only what allocates |
 | `--tests` | the tests and benchmarks instead of the program |
 | `--against <rev>` | only what a change made different |
@@ -237,7 +237,7 @@ fn main() {
 ```
 
 ```text
-$ tondo optimizations squares.to --kind call
+$ tondo optimizations squares.to --function byChain --kind call
 squares.to:10:5: `numbers.iter().filter((n) { n % 2 == 0 }).map((n) { n * n }…` stays a call of `Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int]`: its body costs 52, more than the 30 inlining takes (in byChain, main)
 squares.to:10:27: `(n) { n % 2 == 0 }` is called by its body where a record holds it, as an iterator's adapter does (in prelude.FilterIterator.next[prelude.ArrayIterator[Int], Int])
 squares.to:10:51: `(n) { n * n }` is called by its body where a record holds it, as an iterator's adapter does (in Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int])
@@ -247,13 +247,14 @@ squares.to:10:51: `(n) { n * n }` is called by its body where a record holds it,
 it stays a call. A release build makes a copy of it for this chain in which
 it knows the closure that each adapter holds: asking the filter and the map
 for the next number calls the body of each closure, and no longer a value
-that could be any function. The lines name functions of the standard
-library, since the calls are in its code.
+that could be any function. The lines of the two closures name functions of
+the standard library, where the calls are, and `--function byChain` gives
+them because the closures are written in `byChain`.
 
 The closures themselves are still allocated, one each time `byChain` runs:
 
 ```text
-$ tondo optimizations squares.to --kind heap
+$ tondo optimizations squares.to --function byChain --kind heap
 squares.to:10:27: `(n) { n % 2 == 0 }` is made on the heap: a value holds it (in byChain, main)
 squares.to:10:51: `(n) { n * n }` is made on the heap: a value holds it (in byChain, main)
 squares.to:10:72: `(n) { n }` is made on the heap: it is passed to a call that may keep it (in byChain, main)
