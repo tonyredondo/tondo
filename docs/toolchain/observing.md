@@ -261,9 +261,10 @@ A static executable is all an image needs, and nothing has to be added to
 it for what follows. The sessions were run with Docker, with images made
 `FROM scratch`.
 
-A program that fails leaves its dump inside its container, and says where.
-`docker cp` takes it out, from a container that has stopped too, and it is
-read on any machine, of another architecture as well:
+A program that fails leaves its dump inside its container, and says where
+it is and how it leaves. `docker cp` takes it out, from a container that
+has stopped too, and it is read on any machine, of another architecture as
+well:
 
 ```text
 $ docker run --name orders-1 orders
@@ -273,6 +274,7 @@ stack:
   total  orders.to:7:39
   main   orders.to:12:23
 tondo runtime: a dump of the program is in /.cache/tondo/dumps/orders-1.dump.json
+tondo runtime: it leaves the container with `docker cp <container>:/.cache/tondo/dumps/orders-1.dump.json .`, or as it is written with TONDO_DUMP on a volume, or in the logs with TONDO_DUMP=stderr
 $ docker cp orders-1:/.cache/tondo/dumps/orders-1.dump.json .
 $ tondo dump read orders-1.dump.json locals
 orders.to:7 in total
@@ -292,10 +294,40 @@ So a service's container gets a volume for its dumps:
 $ docker run --read-only --tmpfs /dumps -e TONDO_DUMP=/dumps orders
 ...
 tondo runtime: a dump of the program is in /dumps/orders-1.dump.json
+tondo runtime: it leaves the container with `docker cp <container>:/dumps/orders-1.dump.json .`, or as it is written with TONDO_DUMP on a volume, or in the logs with TONDO_DUMP=stderr
 ```
 
-A tmpfs, as here, goes with the container; a named volume or a mounted
-directory stays.
+A tmpfs, as here, goes with the container, and `docker cp` does not reach
+it, which the program cannot know when it names that way; a named volume or
+a mounted directory stays.
+
+Or the dump goes where the container's output goes. With
+`TONDO_DUMP=stderr` the program writes it into its error output, compressed
+and as text between two marks, and `tondo dump read` takes the log:
+
+```text
+$ docker run --name orders-2 -e TONDO_DUMP=stderr orders
+panic[P0001]: bounds: index 2 is out of bounds for an array of length 2: valid indices are 0 to 1, and -2 to -1 from the end
+ --> orders.to:7:39
+stack:
+  total  orders.to:7:39
+  main   orders.to:12:23
+tondo runtime: a dump of the program follows; `tondo dump read <log>` reads it from the log
+-----BEGIN TONDO DUMP-----
+H4sIAAAAAAAE/+VYy5LqNhD9FZXWHuIXz0V+IdlPpqaELYOCkRxJnkdR/HuOZBk8jJnLcFOVxd0h
+...
+-----END TONDO DUMP-----
+$ docker logs orders-2 > orders.log 2>&1
+$ tondo dump read orders.log locals
+orders.to:7 in total
+order: Order = Order { id: 7, lines: [10, 20] }
+```
+
+This asks nothing of the file system, and the logs are what a platform
+keeps of a container that is gone: `kubectl logs`, the log of a CI job.
+`tondo dump read` reads the last dump of a log, and passes over what stands
+before each line, as the time that `docker logs -t` and GitHub Actions
+write.
 
 A program that is running is reached from a container beside it that
 shares its processes, which is what `kubectl debug --target` makes. That

@@ -223,8 +223,9 @@ its environment a program writes the report as JSON, for a log pipeline.
 The last line of that report matters when the program is not on the
 developer's machine. A program that panics, faults or deadlocks leaves a
 dump, with the values each task held when it ended. `TONDO_DUMP` says
-where; `~/.cache/tondo/dumps` keeps the latest by default. The dump is a
-file to attach to an issue.
+where, a directory or `stderr` for the logs of a
+[container](observing.md#in-a-container) or of CI; `~/.cache/tondo/dumps`
+keeps the latest by default. The dump is a file to attach to an issue.
 
 ```text
 $ tondo dump read dumps/orders-3573589.dump.json why
