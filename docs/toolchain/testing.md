@@ -192,6 +192,63 @@ change what is outside. That is the `note` at the end of the first run on
 this page. `--schedules all` tries the orders of such a test too, when the
 test leaves the outside as it found it.
 
+The system leaves moments open too, between two steps that another task
+can see, and in a real run they last microseconds. Under `--schedules`,
+some orders make them last. This test calls a service on a Unix socket
+once the socket's file is there:
+
+```text
+/// Calls the service once its socket's file is there.
+fn health(socket: String): String ! http.HttpError {
+    for not fs.exists(socket) {
+        time.sleep(time.milliseconds(5))
+    }
+    let web = http.Client(baseUrl: "http://gate", socket: socket)
+    web.get("/health")?.text()
+}
+
+test answersOnItsSocket {
+    let socket = "{fs.createTemporaryDirectory()?}/gate.socket"
+    let asked = spawn health(socket)
+    let server = routes().start(socket: socket)?
+    defer server.stop()
+    assert(asked.wait()? == "ok")
+}
+```
+
+```text
+$ tondo test
+test gate::unit::gate::answersOnItsSocket ... ok
+ok. 1 passed; 0 failed; 0 skipped; 0 blocked; 0.01s
+note: 1 test that starts tasks and reached outside the program ran in one order: `--schedules all` tries the others, if each leaves the outside as it found it
+$ tondo test --schedules 20 --seed 1
+20 orders of the tasks from seed 0000000000000001
+
+order 1, seed 1:
+test gate::unit::gate::answersOnItsSocket ... ok
+
+order 2, seed beeb8da1658eec67:
+test gate::unit::gate::answersOnItsSocket ... FAILED
+...
+--- gate::unit::gate::answersOnItsSocket
+attempt 1, seed 1: passed
+attempt 2, seed beeb8da1658eec67: error: http.HttpError.Connect
+ --> src/main_test.to:19:12
+...
+again in that order: tondo test --exact gate::unit::gate::answersOnItsSocket --schedules 1 --seed beeb8da1658eec67
+debug it in that order: tondo debug --test gate::unit::gate::answersOnItsSocket --schedule beeb8da1658eec67
+
+FAILED. 0 passed; 1 failed; 0 skipped; 0 blocked; 0.24s
+```
+
+Six of the twenty orders failed. The file of a socket is there from the
+moment the socket has its address, a moment before the server listens,
+and a call in between is refused: that moment is one of those made to
+last, and the other is between a signal the program sends itself and its
+arrival. The seed that shows the failure shows it again. Here the fix is
+to start the server before asking, since `start` returns when it listens;
+with that, the twenty orders pass.
+
 ## Models
 
 A test that checks a state machine with `std.model` explores every state
