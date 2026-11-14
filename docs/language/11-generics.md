@@ -12,6 +12,7 @@ trait costs what a direct call costs.
 - [Bounds](#bounds)
 - [Calling a trait's method](#calling-a-traits-method)
 - [Traits that require others](#traits-that-require-others)
+- [Methods for the implementations that qualify](#methods-for-the-implementations-that-qualify)
 - [Functions of the trait itself](#functions-of-the-trait-itself)
 - [The prelude's traits](#the-preludes-traits)
 - [What a type can do by nature](#what-a-type-can-do-by-nature)
@@ -385,6 +386,86 @@ fn main() {
 A bound `E: Entity` gives `Display` as well. This is a requirement and not
 inheritance: `Entity` does not receive `Display`'s methods or replace them,
 and each `impl` writes its own trait's.
+
+## Methods for the implementations that qualify
+
+A method inside a trait asks of the trait's parameters only what the trait
+asks. One declared after it can ask more: it has the form of a type's
+method, with the trait as its owner and a bound on its parameter, and it is
+a method of every implementation whose parameter meets the bound.
+
+```tondo
+import std.console
+
+/// What holds things of one kind.
+trait Pile[T] {
+    fn items(self): Array[T]
+}
+
+/// The largest thing of a pile, when its things compare.
+fn Pile[T: Ordered].largest(self): T? {
+    self.items().max()
+}
+
+type Scores = { values: Array[Int] }
+
+impl Pile[Int] for Scores {
+    fn items(self): Array[Int] {
+        self.values
+    }
+}
+
+type Words = { text: String }
+
+impl Pile[String] for Words {
+    fn items(self): Array[String] {
+        self.text.split(" ")
+    }
+}
+
+fn last[P: Pile[String]](pile: P): String {
+    pile.largest() ?? "nothing"
+}
+
+fn main() {
+    let scores = Scores { values: [3, 9, 4] }
+    console.println("{Pile.largest(scores)} {last(Words { text: "pear fig plum" })}")
+}
+```
+
+```text output
+some(9) plum
+```
+
+This is how an iterator of numbers has `sum` and an iterator of records
+does not: the prelude declares `fn Iterator[T: Additive].sum(self): T`
+beside the trait, and `min`, `max`, `average` and `toSet` the same way
+([Iterators](08-collections.md#iterators)). A call whose elements do not
+meet the bound says what is missing, and what to write when there is a
+way:
+
+```tondo error E1105
+type User = { name: String, age: Int }
+
+fn main() {
+    let users = [User { name: "ana", age: 31 }]
+    _ = users.iter().sum()
+}
+```
+
+```text
+error[E1105]: `User` does not implement `Additive`, which `Iterator.sum` requires of `T`: to add a field of each, `sumBy((user) { user.age })`
+```
+
+Three rules keep such a method one thing for everybody:
+
+- Only the module that declares the trait declares them. Another module
+  writes a function that takes an implementation, as
+  `fn twice[I: Iterator[T], T: Additive](items: I)`.
+- An `impl` does not write its own. A type that wants another declares a
+  method of its own with that name, which its values call first, and
+  `Pile.largest(value)` still calls the trait's.
+- A trait has one method of each name, inside it or after it.
 
 ## Functions of the trait itself
 
