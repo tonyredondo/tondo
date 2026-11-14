@@ -210,7 +210,7 @@ pub(crate) fn wait<T: Send + 'static>(future: impl Future<Output = T> + Send + '
             if self.virtual_clock {
                 super::clock::external(false);
             }
-            HOST_WORK.fetch_sub(1, Ordering::SeqCst);
+            super::tasks::host_work_ended();
         }
     }
     let slot = Arc::new(Mutex::new(None));

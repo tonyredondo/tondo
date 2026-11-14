@@ -59,7 +59,7 @@ pub(crate) fn host<R: Send + 'static>(long: bool, job: impl FnOnce() -> R + Send
         if virtual_clock {
             super::clock::external(false);
         }
-        HOST_WORK.fetch_sub(1, Ordering::SeqCst);
+        super::tasks::host_work_ended();
     });
     // SAFETY: only the work claims `wait`, after `job` has run, and
     // `block_fully` returns only then, even for a cancelled task.
@@ -94,7 +94,7 @@ pub(crate) fn host_cancellable<R: Send + 'static>(
             if virtual_clock {
                 super::clock::external(false);
             }
-            HOST_WORK.fetch_sub(1, Ordering::SeqCst);
+            super::tasks::host_work_ended();
         }),
         true,
     );

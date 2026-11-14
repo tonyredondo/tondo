@@ -317,6 +317,21 @@ pub(super) fn looks_next() -> bool {
     worker(|w| w.looks_next.replace(false))
 }
 
+/// The end of work on the host, which counts down after the task it ran
+/// for is runnable, so that no worker sees a moment with neither and reports
+/// a deadlock: a worker that went to sleep meanwhile saw the work and
+/// reported none, and nothing woke it when the program came to stand still.
+/// The last work to end has a worker look again.
+pub(crate) fn host_work_ended() {
+    if HOST_WORK.fetch_sub(1, Ordering::SeqCst) != 1 || IDLE.load(Ordering::SeqCst) == 0 {
+        return;
+    }
+    let queue = queue();
+    if matches!(super::work::stalled(&queue), super::work::Stalled::Deadlock) {
+        wake_one(queue);
+    }
+}
+
 /// Wakes a worker to look at the queue, as for a signal that came.
 pub(crate) fn wake_worker() {
     wake_one(queue());
