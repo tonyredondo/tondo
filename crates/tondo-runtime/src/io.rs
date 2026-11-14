@@ -495,6 +495,10 @@ pub(crate) struct StreamState {
     ahead: Vec<u8>,
     position: usize,
     filled: usize,
+    /// How much the next read asks for: little at first, as most streams
+    /// are, as a request's body; twice as much after a read that filled
+    /// it, up to `READ_CHUNK`.
+    chunk: usize,
     pending: Vec<u8>,
     /// Whether writes gather in `pending` before reaching the host.
     buffered: bool,
@@ -504,6 +508,7 @@ pub(crate) struct StreamState {
 
 const WRITE_BUFFER: usize = 64 * 1024;
 const READ_CHUNK: usize = 64 * 1024;
+const FIRST_READ: usize = 4 * 1024;
 
 fn closed() -> std::io::Error {
     ErrorKind::NotConnected.into()
@@ -546,13 +551,16 @@ impl StreamState {
             self.position = 0;
             self.filled = 0;
         }
-        let start = self.filled;
-        if self.ahead.len() < start + READ_CHUNK {
-            self.ahead.resize(start + READ_CHUNK, 0);
+        let (start, chunk) = (self.filled, self.chunk);
+        if self.ahead.len() < start + chunk {
+            self.ahead.resize(start + chunk, 0);
         }
-        let read =
-            self.host.as_mut().ok_or_else(closed).and_then(|h| h.read(&mut self.ahead[start..start + READ_CHUNK]));
-        self.filled += *read.as_ref().unwrap_or(&0);
+        let read = self.host.as_mut().ok_or_else(closed).and_then(|h| h.read(&mut self.ahead[start..start + chunk]));
+        let count = *read.as_ref().unwrap_or(&0);
+        if count == chunk {
+            self.chunk = (chunk * 2).min(READ_CHUNK);
+        }
+        self.filled += count;
         read.map(|n| n > 0)
     }
 
@@ -632,6 +640,7 @@ pub(crate) fn stream(host: Box<dyn Host>, mode: Mode, buffered: bool) -> *mut St
         ahead: Vec::new(),
         position: 0,
         filled: 0,
+        chunk: FIRST_READ,
         pending: Vec::new(),
         buffered,
         failed: None,
