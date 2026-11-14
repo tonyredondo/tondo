@@ -202,7 +202,7 @@ The [`todo-api`](../../examples/todo-api) example is a whole service, the
 - [GrpcService](#grpcservice)
 - [Saved](#saved)
 - [Limits](#limits): [`Limits.standard`](#limitsstandard)
-- [Server](#server): [`Server.address`](#serveraddress), [`Server.url`](#serverurl), [`Server.stop`](#serverstop)
+- [Server](#server): [`Server.address`](#serveraddress), [`Server.url`](#serverurl), [`Server.wait`](#serverwait), [`Server.stop`](#serverstop)
 - [Tls](#tls)
 - [TlsVersion](#tlsversion)
 
@@ -2285,7 +2285,9 @@ client sends, `Limits.standard()` without it. A client that goes away
 before its reply cancels the task that answers it: the handler stops at
 its next wait and runs its `defer`s. `Interrupt` (Ctrl-C) or `Terminate`
 first drains the server, as `Server.stop(grace)` does, and then ends
-the program as it would have; a second one ends it at once.
+the program as it would have; a second one ends it at once. It is
+`start` and then `Server.wait`, which a program that needs to know its
+port, or that it listens, calls itself.
 
 #### App.start
 
@@ -2434,6 +2436,31 @@ pub fn Server.url(self): String
 Its URL for a client on the same machine: `http://127.0.0.1:43017`; for
 one on a Unix socket, `http://localhost`, with the socket given to the
 client.
+
+#### Server.wait
+
+```tondo
+pub fn Server.wait(self, grace: time.Duration = time.seconds(30))
+```
+
+Waits until the server stops, as when another task calls `stop`. The
+first `Interrupt` (Ctrl-C) or `Terminate` meanwhile drains it, as
+`stop(grace)` does, and then ends the program as that signal would have;
+a second one ends it at once. A task cancelled while it waits stops the
+server. Before `wait`, a signal does what it does without it: `listen`
+is `start` and then `wait`, with nothing between.
+
+```tondo
+import std.console
+import std.http
+
+var app = http.App()
+app.get("/health", (_) { http.Reply.text("ok") })
+let server = app.start(port: 0, host: "0.0.0.0")?
+// The port it took, which it listens on now.
+console.println("listening on {server.url()}")
+server.wait()
+```
 
 #### Server.stop
 

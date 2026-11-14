@@ -15,7 +15,9 @@ import std.time as __time
 /// before its reply cancels the task that answers it: the handler stops at
 /// its next wait and runs its `defer`s. `Interrupt` (Ctrl-C) or `Terminate`
 /// first drains the server, as `Server.stop(grace)` does, and then ends
-/// the program as it would have; a second one ends it at once.
+/// the program as it would have; a second one ends it at once. It is
+/// `start` and then `Server.wait`, which a program that needs to know its
+/// port, or that it listens, calls itself.
 pub fn App.listen(
     self,
     port: Int = 8080,
@@ -25,38 +27,7 @@ pub fn App.listen(
     limits: Limits? = none,
     grace: __time.Duration = __time.seconds(30),
 ): !HttpError {
-    let listening = bound(host, port, tls, socket, limits)?
-    let (heard, asked) = channel[__process.Signal](1)
-    // Before the task starts: a signal that comes first finds who hears it.
-    let signals = __process.signals(__process.Signal.Interrupt, __process.Signal.Terminate)
-    spawn detached drainWhenAsked(listening, grace, heard, signals)
-    serve(listening, self.pipeline())
-    match asked.receive(timeout: __time.seconds(0)) {
-        some(signal) => {
-            httpNative.signalEnd(if signal == __process.Signal.Interrupt { 0 } else { 1 })
-            // Cancelled now, it unwinds here.
-            __time.sleep(__time.seconds(1))
-        }
-        none => {}
-    }
-}
-
-/// Drains a server that listens once the program is asked to end.
-fn drainWhenAsked(
-    listening: httpNative.Native,
-    grace: __time.Duration,
-    heard: Sender[__process.Signal],
-    signals: Receiver[__process.Signal],
-) {
-    // The first `Interrupt` or `Terminate`: the channel goes with this call,
-    // so that the next ends the program at once.
-    match signals.receive() {
-        some(signal) => {
-            heard.send(signal)
-            httpNative.serverStop(listening, grace.milliseconds())
-        }
-        none => {}
-    }
+    self.start(port: port, host: host, tls: tls, socket: socket, limits: limits)?.wait(grace: grace)
 }
 
 /// Starts serving in a task of its own, for a program that goes on, such
@@ -149,6 +120,55 @@ pub fn Server.url(self): String {
     }
     let address = self.address().replace("0.0.0.0", "127.0.0.1")
     if self.secure { "https://{address}" } else { "http://{address}" }
+}
+
+/// Waits until the server stops, as when another task calls `stop`. The
+/// first `Interrupt` (Ctrl-C) or `Terminate` meanwhile drains it, as
+/// `stop(grace)` does, and then ends the program as that signal would have;
+/// a second one ends it at once. A task cancelled while it waits stops the
+/// server. Before `wait`, a signal does what it does without it: `listen`
+/// is `start` and then `wait`, with nothing between.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// var app = http.App()
+/// app.get("/health", (_) { http.Reply.text("ok") })
+/// let server = app.start(port: 0, host: "0.0.0.0")?
+/// // The port it took, which it listens on now.
+/// console.println("listening on {server.url()}")
+/// server.wait()
+/// ```
+pub fn Server.wait(self, grace: __time.Duration = __time.seconds(30)) {
+    var stopped = false
+    defer {
+        if not stopped {
+            httpNative.serverStop(self.native, 0)
+        }
+    }
+    match askedOrEnded(self.ended) {
+        some(signal) => {
+            httpNative.serverStop(self.native, grace.milliseconds())
+            _ = self.ended.receive()
+            stopped = true
+            httpNative.signalEnd(if signal == __process.Signal.Interrupt { 0 } else { 1 })
+            // Cancelled now, it unwinds here.
+            __time.sleep(__time.seconds(1))
+        }
+        none => stopped = true
+    }
+}
+
+/// The first `Interrupt` or `Terminate` while a server runs, or none when
+/// it ends first: the signals are the program's until then, and the
+/// system's again when this returns, so that the next one ends it at once.
+fn askedOrEnded(ended: Receiver[Unit]): __process.Signal? {
+    let signals = __process.signals(__process.Signal.Interrupt, __process.Signal.Terminate)
+    select {
+        let heard = signals.receive() => heard
+        ended.receive() => none
+    }
 }
 
 /// Stops taking connections and waits until the server stopped: each
@@ -350,7 +370,8 @@ fn serveThenSignal(
     finished: Sender[Unit],
 ) {
     serve(server, handler)
-    finished.send(())
+    // Every one that waits hears it: `stop` and `wait`.
+    finished.close()
 }
 
 fn serve(server: httpNative.Native, handler: fn(Request): Reply ! Problem) {

@@ -1,0 +1,29 @@
+// `wait` returns when another task stops the server, and lets the signals
+// go: an `Interrupt` after it ends the program as it would without a
+// server.
+
+import std.console
+import std.env
+import std.http
+import std.process
+import std.time
+
+fn main(): !http.HttpError {
+    var app = http.App()
+    app.get("/health", (_) { http.Reply.text("ok") })
+    let server = app.start(port: 0)?
+    spawn detached stops(server)
+    server.wait()
+    console.println("stopped")
+    _ = process.signal(env.processId(), process.Signal.Interrupt)
+    time.sleep(time.seconds(30))
+    console.println("not reached")
+}
+
+fn stops(server: http.Server) {
+    _ = http.Client(baseUrl: server.url()).get("/health")
+    server.stop()
+}
+
+// expect-stdout: stopped
+// expect-exit: 130

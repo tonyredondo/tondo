@@ -1,0 +1,43 @@
+// A server started on any port says it listens by having started, and knows
+// its port; `wait` then serves until the program is asked to end, drains as
+// `listen` does, and ends the program as the signal would.
+
+import std.console
+import std.env
+import std.http
+import std.process
+
+fn main(): !http.HttpError {
+    let (started, began) = channel[Unit](1)
+    let (release, released) = channel[Unit](1)
+    var app = http.App()
+    app.get("/health", (_) { http.Reply.text("ok") })
+    app.get(
+        "/slow",
+        (_) {
+            started.send(())
+            _ = released.receive()
+            console.println("answered after the signal")
+            http.Reply.text("finished")
+        },
+    )
+    let server = app.start(port: 0)?
+    let web = http.Client(baseUrl: server.url())
+    console.println("{server.url().startsWith("http://127.0.0.1:")} {web.get("/health")?.text()?}")
+    spawn detached ask(web, began, release)
+    server.wait()
+    console.println("not reached")
+}
+
+/// Calls the server, and asks the program to end while it answers.
+fn ask(web: http.Client, began: Receiver[Unit], release: Sender[Unit]) {
+    let slow = spawn web.get("/slow")
+    _ = began.receive()
+    _ = process.signal(env.processId(), process.Signal.Terminate)
+    release.send(())
+    _ = slow.wait()
+}
+
+// expect-stdout: true ok
+// expect-stdout: answered after the signal
+// expect-exit: 143

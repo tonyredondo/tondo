@@ -5055,6 +5055,8 @@ for message in socket {
 
 Un `App` reúne rutas, middleware y documentación; `listen` sirve hasta que su
 tarea se cancela y `start` sirve en una tarea propia y devuelve el `Server`.
+`listen` es `start` y después `Server.wait`: un programa que necesita saber su
+puerto, o que ya escucha, que es haber vuelto `start`, los llama él.
 Cada petición se atiende en una tarea, así que un handler puede esperar sin
 bloquear a los demás.
 
@@ -5193,6 +5195,7 @@ pub type Server
 pub fn Server.address(self): String
 pub fn Server.url(self): String
 pub fn Server.stop(self, grace: time.Duration = time.seconds(30))
+pub fn Server.wait(self, grace: time.Duration = time.seconds(30))
 pub alias Tls = net.Tls
 pub alias TlsVersion = net.TlsVersion
 ~~~
@@ -5380,7 +5383,12 @@ pub alias TlsVersion = net.TlsVersion
   `Interrupt` y `Terminate` (19.2): con la primera drena así, con su
   `grace`, mientras sus handlers siguen, y después termina el programa como
   la señal lo habría terminado, con `130` o `143`; una segunda lo termina en
-  el acto.
+  el acto. `Server.wait` es esa segunda mitad de `listen`: espera a que el
+  servidor pare, como cuando otra tarea llama a `stop`, y entonces vuelve y
+  deja las señales como estaban; con la primera `Interrupt` o `Terminate`
+  drena y termina el programa como `listen`, y si se cancela la tarea que
+  espera, para el servidor. Una señal que llega entre `start` y `wait` hace lo
+  que hace sin ellos: cancela el programa sin drenar.
 - `limits` acota lo que envía cada cliente, para que uno grande o lento no
   agote el servidor; sin él, `Limits.standard()`. Un cuerpo de más de `body`
   bytes es `413`, con un `Problem` que dice cómo subir el límite; una cabecera

@@ -1551,6 +1551,7 @@ pub fn Response.version(self): String
 pub fn Server.address(self): String
 pub fn Server.stop(self, grace: time.Duration = time.seconds(30))
 pub fn Server.url(self): String
+pub fn Server.wait(self, grace: time.Duration = time.seconds(30))
 pub fn Trailers(): Trailers
 pub fn Trailers.all(self): Map[String, String]
 pub fn Trailers.set(self, name: String, value: String)

@@ -1,0 +1,37 @@
+// A second `Terminate` while `wait` drains ends the program at once, with a
+// handler still answering and the grace far from over.
+
+import std.console
+import std.env
+import std.http
+import std.process
+import std.time
+
+fn main(): !http.HttpError {
+    let (started, began) = channel[Unit](1)
+    let (_kept, never) = channel[Unit](1)
+    var app = http.App()
+    app.get(
+        "/stuck",
+        (_) {
+            started.send(())
+            _ = never.receive()
+            http.Reply.text("never")
+        },
+    )
+    let server = app.start(port: 0)?
+    spawn detached ask(http.Client(baseUrl: server.url()), began)
+    server.wait(grace: time.seconds(600))
+    console.println("not reached")
+}
+
+fn ask(web: http.Client, began: Receiver[Unit]) {
+    let stuck = spawn web.get("/stuck")
+    _ = began.receive()
+    _ = process.signal(env.processId(), process.Signal.Terminate)
+    time.sleep(time.milliseconds(200))
+    _ = process.signal(env.processId(), process.Signal.Terminate)
+    _ = stuck.wait()
+}
+
+// expect-exit: 143

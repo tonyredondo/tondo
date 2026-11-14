@@ -6872,3 +6872,15 @@ copies any map another holds, with the size of an entry from the map's glue. Rea
 more: a null map was the other way, and every lookup paid a branch for it, 2 to 4% more instructions
 in the rows of bench/tondo that look maps up. bench/tondo's http rows make five allocations fewer a
 request, and its map rows do the same instructions.
+## A server says it listens by having started
+
+A program that called `listen(port: 0)` could not know its port, nor when it listened, and a
+test or a supervisor that waited for it waited for the wrong thing: main's `http_listen_signal`
+waited for the socket's file, which appears a moment before the server listens. `listen` is now
+`start` and then `Server.wait`: `start` returns once the server listens, with its address, and
+`wait` is the rest of `listen`, the draining on the first Interrupt or Terminate, the end of the
+program as that signal would end it, the second ending it at once. `wait` returns when another task
+stops the server, and lets the signals go then, in the same task, so that a signal right after it
+does what it does without a server. No `ready:` parameter, which would have been a second way to
+say what `start` returning says. A signal between `start` and `wait` acts as it would without
+them; `start` keeps not taking the signals, as tests want Ctrl-C to end them. Tony accepted it.
