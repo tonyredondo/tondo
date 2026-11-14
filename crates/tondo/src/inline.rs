@@ -218,73 +218,18 @@ fn made(body: &Body, writes: &[Writes], seed: &Made) -> Made {
             _ => {}
         }
     }
-    // By local, what each holds, as copies find it; then by local and path.
-    let mut held: HashMap<Local, Vec<(Vec<u32>, Held)>> = HashMap::new();
-    for ((local, path), value) in seed {
-        held.entry(*local).or_default().push((path.clone(), *value));
-    }
-    // Until nothing more is found: a copy may come before, in the blocks,
-    // what it copies.
-    loop {
-        let mut grew = false;
-        for statement in statements() {
-            let Statement::Assign(place, rvalue, _) = statement else { continue };
-            if !place.path.is_empty() {
-                continue;
-            }
-            let found: Vec<(Vec<u32>, Held)> = match &**rvalue {
-                Rvalue::Erase(_, id, _) => vec![(Vec::new(), (*id, true))],
-                Rvalue::FnValue(id) => vec![(Vec::new(), (*id, false))],
-                Rvalue::Use(Operand::Copy(from)) if fields(&from.path).len() == from.path.len() => {
-                    let prefix = fields(&from.path);
-                    let inside = held.get(&from.local).into_iter().flatten();
-                    let inside = inside.filter(|(path, _)| path.starts_with(&prefix));
-                    inside.map(|(path, value)| (path[prefix.len()..].to_vec(), *value)).collect()
-                }
-                Rvalue::Aggregate(operands) => operands
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(at, operand)| match operand {
-                        Operand::Copy(from) if from.path.is_empty() => Some((at as u32, held.get(&from.local)?)),
-                        _ => None,
-                    })
-                    .flat_map(|(at, inside)| {
-                        inside.iter().map(move |(path, value)| ([vec![at], path.clone()].concat(), *value))
-                    })
-                    .collect(),
-                _ => Vec::new(),
-            };
-            for (path, value) in found {
-                let list = held.entry(place.local).or_default();
-                if !list.iter().any(|(known, _)| *known == path) {
-                    list.push((path, value));
-                    grew = true;
-                }
-            }
-        }
-        if !grew {
-            break;
-        }
-    }
-    let mut made: Made = held
-        .into_iter()
-        .flat_map(|(local, list)| list.into_iter().map(move |(path, value)| ((local, path), value)))
-        .collect();
     // A local assigned again, or a parameter assigned at all, holds what
-    // it was last given; a field changed, moved or lent holds anything.
+    // it was last given; a field changed, moved or lent holds anything,
+    // and so does every copy of the record, whenever it was made. Known
+    // first, so that nothing is taken from either.
     let seeded: HashSet<Local> = seed.keys().map(|(local, _)| *local).collect();
-    made.retain(|(local, _), _| match definitions.get(local) {
-        None => seeded.contains(local),
-        Some(&1) => !seeded.contains(local),
+    let valid = |local: Local| match definitions.get(&local) {
+        None => seeded.contains(&local),
+        Some(&1) => !seeded.contains(&local),
         Some(_) => false,
-    });
-    let holders: HashSet<Local> = made.keys().map(|(local, _)| *local).collect();
-    let mut changed: Vec<(Local, Vec<u32>)> = Vec::new();
-    let mut change = |local: Local, path: Vec<u32>| {
-        if holders.contains(&local) {
-            changed.push((local, path));
-        }
     };
+    let mut changed: HashMap<Local, Vec<Vec<u32>>> = HashMap::new();
+    let mut change = |local: Local, path: Vec<u32>| changed.entry(local).or_default().push(path);
     for statement in statements() {
         match statement {
             Statement::Assign(place, rvalue, _) => {
@@ -319,11 +264,69 @@ fn made(body: &Body, writes: &[Writes], seed: &Made) -> Made {
             _ => {}
         }
     }
-    made.retain(|(local, path), _| {
-        path.is_empty()
-            || !changed.iter().any(|(at, prefix)| at == local && (path.starts_with(prefix) || prefix.starts_with(path)))
-    });
-    made
+    let spoiled = |local: Local, path: &[u32]| {
+        !path.is_empty()
+            && changed
+                .get(&local)
+                .is_some_and(|paths| paths.iter().any(|prefix| path.starts_with(prefix) || prefix.starts_with(path)))
+    };
+    let holds = |local: Local, path: &[u32]| valid(local) && !spoiled(local, path);
+    // By local, what each holds, as copies find it.
+    let mut held: HashMap<Local, Vec<(Vec<u32>, Held)>> = HashMap::new();
+    for ((local, path), value) in seed {
+        if holds(*local, path) {
+            held.entry(*local).or_default().push((path.clone(), *value));
+        }
+    }
+    // Until nothing more is found: a copy may come before, in the blocks,
+    // what it copies.
+    loop {
+        let mut grew = false;
+        for statement in statements() {
+            let Statement::Assign(place, rvalue, _) = statement else { continue };
+            if !place.path.is_empty() {
+                continue;
+            }
+            let found: Vec<(Vec<u32>, Held)> = match &**rvalue {
+                Rvalue::Erase(_, id, _) => vec![(Vec::new(), (*id, true))],
+                Rvalue::FnValue(id) => vec![(Vec::new(), (*id, false))],
+                Rvalue::Use(Operand::Copy(from)) if fields(&from.path).len() == from.path.len() => {
+                    let prefix = fields(&from.path);
+                    let inside = held.get(&from.local).into_iter().flatten();
+                    let inside = inside.filter(|(path, _)| path.starts_with(&prefix));
+                    inside.map(|(path, value)| (path[prefix.len()..].to_vec(), *value)).collect()
+                }
+                Rvalue::Aggregate(operands) => operands
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(at, operand)| match operand {
+                        Operand::Copy(from) if from.path.is_empty() => Some((at as u32, held.get(&from.local)?)),
+                        _ => None,
+                    })
+                    .flat_map(|(at, inside)| {
+                        inside.iter().map(move |(path, value)| ([vec![at], path.clone()].concat(), *value))
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            for (path, value) in found {
+                if !holds(place.local, &path) {
+                    continue;
+                }
+                let list = held.entry(place.local).or_default();
+                if !list.iter().any(|(known, _)| *known == path) {
+                    list.push((path, value));
+                    grew = true;
+                }
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    held.into_iter()
+        .flat_map(|(local, list)| list.into_iter().map(move |(path, value)| ((local, path), value)))
+        .collect()
 }
 
 /// Calls through the `fn` values of `made` as calls of their bodies, which
