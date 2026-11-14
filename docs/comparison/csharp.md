@@ -512,10 +512,7 @@ import std.console
 
 fn main() {
     let text = "to be or not to be that is the question to be"
-    var counts: Map[String, Int] = [:]
-    for word in text.split(" ") {
-        counts[word, default: 0] += 1
-    }
+    let counts = text.split(" ").countBy((word) { word })
     // The three most frequent; those that tie stay in the order they came.
     let top = counts.entries().collect().sortedBy((entry) { -entry.1 }).take(3)
     console.println(top.map((entry) { "{entry.0} {entry.1}" }).join(", "))
@@ -985,6 +982,7 @@ Hello, Ada! (3)
 | `List<T>`, `Dictionary<K, V>`, `HashSet<T>` | `Array[T]`, `Map[K, V]`, `Set[T]` |
 | `x => x * 2` | `(x) { x * 2 }` |
 | `items.Where(...).Select(...)` | `items.filter(...).map(...)` |
+| `items.MaxBy(x => x.Price)`, `items.ToDictionary(x => x.Id)`, `items.CountBy(x => x.Tag)` | `items.maxBy(...)`, `items.keyedBy(...)`, `items.countBy(...)` |
 | `$"{name} is {age}"` | `"{name} is {age}"` |
 | `a + b` for strings | `"{a}{b}"`, or `a.concat(b)` |
 | `foreach (var x in xs)`, `while (c)` | `for x in xs`, `for c` |

@@ -197,12 +197,13 @@ for:
 
 | To | Use |
 | --- | --- |
-| transform | `map`, `flatMap`, `enumerate`, `zip` |
-| select | `filter`, `take`, `drop`, `unique`, `partition` |
-| ask | `contains`, `any`, `all`, `find`, `findIndex`, `count` |
-| reduce | `reduce`, `sum`, `min`, `max`, `join` |
+| transform | `map`, `flatMap`, `enumerate`, `zip`, `scan` |
+| select | `filter`, `take`, `drop`, `takeWhile`, `dropWhile`, `unique`, `uniqueBy`, `partition` |
+| ask | `contains`, `any`, `all`, `find`, `findLast`, `findIndex`, `findLastIndex`, `indexOf`, `count` |
+| reduce | `reduce`, `sum`, `sumBy`, `average`, `averageBy`, `min`, `max`, `minBy`, `maxBy`, `join` |
 | order | `sorted`, `sortedBy`, `sortedWith`, `reversed` |
-| group | `groupBy`, `chunks`, `windows` |
+| group | `groupBy`, `countBy`, `chunks`, `windows` |
+| make another collection | `toMap`, `keyedBy`, `toSet`, `joinBy` |
 
 ```tondo
 import std.console
@@ -217,10 +218,10 @@ fn main() {
     ]
     let names = items.map((item) { item.name })
     let cheap = items.filter((item) { item.price < 5 }).map((item) { item.name })
-    let total = items.reduce(0, (sum, item) { sum + item.price })
-    let dearest = items.sortedBy((item) { -item.price })[0].name
+    let total = items.sumBy((item) { item.price })
+    let dearest = items.maxBy((item) { item.price })?.name ?? "nothing"
     let tags = items.flatMap((item) { item.tags }).unique()
-    let byTag = items.groupBy((item) { item.tags[0] }).mapValues((group) { group.length() })
+    let byTag = items.countBy((item) { item.tags[0] })
     console.println("{names.join(", ")} | {cheap} | {total} | {dearest}")
     console.println("{tags} {byTag}")
     console.println("{items.any((item) { item.price > 4 })} {items.find((item) { item.name == "tea" }).isSome()}")
@@ -234,6 +235,55 @@ pen, ink, tea | [pen, tea] | 12 | ink
 true true
 [[1, 2], [3, 4], [5]] [[1, 2], [2, 3], [3, 4]] ([3, 4], [1, 2])
 ```
+
+The ones that end in `By` take the key or the value of each element, where
+their plain twin takes the element itself. Two arrays that share a key are
+joined as two tables are, and an array becomes a map by a key of its
+elements:
+
+```tondo
+import std.console
+
+pub type Customer = { id: Int, name: String }
+pub type Order = { customer: Int, total: Float }
+
+fn main() {
+    let customers = [Customer { id: 1, name: "Ana" }, Customer { id: 2, name: "Leo" }]
+    let orders = [
+        Order { customer: 2, total: 40.0 },
+        Order { customer: 1, total: 12.5 },
+        Order { customer: 2, total: 7.5 },
+    ]
+    for (order, customer) in orders.joinBy(customers, (order) { order.customer }, (customer) { customer.id }) {
+        console.println("{customer.name} {order.total}")
+    }
+    let byId = customers.keyedBy((customer) { customer.id })
+    let totals = orders.map((order) { order.total })
+    console.println("{byId[2]?.name ?? "nobody"} {totals.average()} {totals.scan(0.0, (sum, total) { sum + total })}")
+    console.println("{totals.takeWhile((total) { total > 10.0 })} {totals.dropWhile((total) { total > 10.0 })}")
+    let buyers = orders.map((order) { order.customer }).toSet()
+    console.println("{orders.uniqueBy((order) { order.customer }).length()} {totals.indexOf(7.5)} {buyers}")
+}
+```
+
+```text output
+Leo 40.0
+Ana 12.5
+Leo 7.5
+Leo some(20.0) [40.0, 52.5, 60.0]
+[40.0, 12.5] [7.5]
+2 some(2) Set[2, 1]
+```
+
+- `minBy`, `maxBy`, `find`, `findLast` and `average` give an option, since
+  an array may be empty or hold no such element.
+- `toMap` takes a pair for each element and `keyedBy` a key; when a key
+  comes twice, the last one stays.
+- `scan` gives what `reduce` had after each element, so a running total has
+  as many values as the array.
+- `average` is of floats and of `math.Decimal`. For integers it does not
+  compile, and the error says to make them floats first.
+- There is no `flatten`: `flatMap((inner) { inner })` says it.
 
 These methods take closures compiled in place, so a chain of them is not
 slower than the loop that would replace it, and `tondo optimizations` says
@@ -342,6 +392,14 @@ fn main() {
     let admins = Set["leo", "zoe"]
     console.println("{editors.union(admins)} {editors.intersection(admins)} {editors.difference(admins)}")
     console.println("{Set["leo"].isSubset(admins)} {editors == Set["leo", "ana"]}")
+    console.println("{editors.symmetricDifference(admins)} {admins.isSuperset(Set["zoe"])} {editors.isDisjoint(Set["eva"])}")
+    console.println("{admins.filter((name) { name > "m" })} {admins.map((name) { name.length() })}")
+
+    var team = editors
+    team.extend(admins)
+    team.subtract(Set["ana"])
+    team.retain((name) { name != "zoe" })
+    console.println("{team} {editors}")
 
     var empty = Set[Int]()
     empty.insert(1)
@@ -354,11 +412,18 @@ true false Set[read, write, admin]
 true true 2
 Set[ana, leo, zoe] Set[leo] Set[ana]
 true true
+Set[ana, zoe] true true
+Set[zoe] Set[3]
+Set[leo] Set[ana, leo]
 [3, 1, 2] Set[1]
 ```
 
 `insert` and `remove` say whether the set changed. Union, intersection and
-difference have names: `|` and `&` are not for sets.
+difference have names: `|` and `&` are not for sets. A name gives a new
+set, as `union` and `filter` do, and a verb changes the one it is called
+on: `extend` adds another's values, `intersect` keeps those the other has
+too, `subtract` takes the other's out and `retain` keeps what passes a
+test. An array's values as a set are `array.toSet()`.
 
 ## Deques
 
@@ -441,6 +506,10 @@ fn main() {
     let total = (1..=10).reduce(0, (sum, n) { sum + n })
     let firstBig = (1..=100).find((n) { n * n > 50 })
     console.println("{total} {firstBig} {(1..=10).count()} {(0..5).chain(10..12).collect()}")
+
+    let evenSquares = (1..=10).filter((n) { n % 2 == 0 }).sumBy((n) { n * n })
+    let longest = ["pen", "paper", "ink"].iter().maxBy((word) { word.length() })
+    console.println("{evenSquares} {longest} {(1..=7).countBy((n) { n % 3 })}")
 }
 ```
 
@@ -448,6 +517,7 @@ fn main() {
 [1, 4, 16, 25]
 [H, W] [(0, a), (1, b)] [(0, a), (1, b), (2, c)]
 55 some(8) 10 [0, 1, 2, 3, 4, 10, 11]
+220 some(paper) [1: 3, 2: 2, 0: 2]
 ```
 
 Only four squares were computed above, not a million.
@@ -457,6 +527,8 @@ Only four squares were computed above, not a million.
 | `map`, `filter`, `flatMap` | `collect()`: an array |
 | `take`, `skip`, `takeWhile`, `skipWhile` | `count()`, `reduce`, `find` |
 | `enumerate`, `zip`, `chain` | `any`, `all`, `forEach` |
+| | `sumBy`, `minBy`, `maxBy`, `countBy` |
+| | `toMap`, `keyedBy`: a map |
 
 An array's own `map` and `filter` give arrays at once, which is what is
 wanted most of the time. Reach for `iter()` when the chain is long and its
