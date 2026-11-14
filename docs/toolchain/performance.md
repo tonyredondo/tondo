@@ -251,29 +251,30 @@ that could be any function. The lines of the two closures name functions of
 the standard library, where the calls are, and `--function byChain` gives
 them because the closures are written in `byChain`.
 
-The closures themselves are still allocated, one each time `byChain` runs:
+The two closures that the adapters hold are still allocated, each time
+`byChain` runs:
 
 ```text
 $ tondo optimizations squares.to --function byChain --kind heap
 squares.to:10:27: `(n) { n % 2 == 0 }` is made on the heap: a value holds it (in byChain, main)
 squares.to:10:51: `(n) { n * n }` is made on the heap: a value holds it (in byChain, main)
-squares.to:10:72: `(n) { n }` is made on the heap: it is passed to a call that may keep it (in byChain, main)
 ```
 
-Those of `byArrays` are made in the frame, as `--kind frame` says, but each
-of its steps makes an array. A benchmark of the two over a thousand numbers
-shows both costs:
+The closure given to `sumBy` is only called, so it is made in the frame, and
+so are those of `byArrays`, whose methods only call them: `--kind frame`
+lists them. Each step of `byArrays` makes an array, though. A benchmark of
+the two over a thousand numbers shows both costs:
 
 ```text
 $ tondo test --bench
 test squares::unit::squares::aThousand ... ok
-  arrays     1.248 µs/op  ±0.3%  9 allocs/op  12448 B/op  25.1k ins/op
-  chain      2.117 µs/op  ±0.3%  3 allocs/op  120 B/op  51.0k ins/op
+  arrays     1.271 µs/op  ±0.2%  9 allocs/op  12448 B/op  25.1k ins/op
+  chain      2.158 µs/op  ±0.2%  2 allocs/op  80 B/op  50.9k ins/op
 ```
 
-The chain allocates its three closures and nothing else, however long the
-array is: a hundredth of the memory here. The arrays' form is the faster of
-the two, with half the instructions.
+The chain allocates its two closures and nothing else, however long the
+array is: less than a hundredth of the memory here. The arrays' form is the
+faster of the two, with half the instructions.
 
 ## The machine code: asm
 
