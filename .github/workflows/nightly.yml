@@ -2,8 +2,8 @@ name: Nightly
 
 # What CI leaves out of each push for its time, each night and when asked:
 # the tests under qemu's emulation, whose slowness brings out races, the
-# sweeps of the tools over every case, and on macOS for Intel, clippy and
-# the cases' other builds.
+# sweeps of the tools over every case, debugging in containers, and on macOS
+# for Intel, clippy and the cases' other builds.
 on:
   schedule:
     - cron: '17 3 * * *'
@@ -69,6 +69,59 @@ jobs:
           name: dumps-${{ matrix.arch }}
           path: target/dumps
           if-no-files-found: ignore
+
+  # Debugging and post-mortems where programs run (containers.sh): on each
+  # architecture, the scenarios in containers with a static tondo built as
+  # Alpine builds it; then each one's dump read by the other's tondo.
+  containers:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, arch: x86_64 }
+          - { os: ubuntu-24.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: musl-${{ matrix.arch }}-linux-musl
+          save-if: false
+      - uses: ./.github/actions/runtime
+        with:
+          label: alpine-${{ matrix.arch }}-linux-musl
+      - name: Build a static tondo
+        run: >
+          mkdir -p ~/.cargo/registry ~/.cargo/git &&
+          docker run --rm -v "$PWD:/work" -w /work -e CARGO_INCREMENTAL=0
+          -v "$HOME/.cargo/registry:/usr/local/cargo/registry" -v "$HOME/.cargo/git:/usr/local/cargo/git"
+          rust:alpine sh -c
+          "apk add --no-cache musl-dev zlib-dev zlib-static git curl tar &&
+          (rustup show active-toolchain || rustup toolchain install) &&
+          cargo build -p tondo"
+      - run: .github/scripts/containers.sh target/debug/tondo out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: containers-${{ matrix.arch }}
+          path: out
+          if-no-files-found: error
+
+  containers-across:
+    needs: containers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: containers-*
+          path: out
+      - run: |
+          chmod +x out/*/tondo
+          .github/scripts/containers.sh --across out/containers-x86_64 out/containers-aarch64
 
   # The editor's server on every case, whole and cut as writing leaves it,
   # the viewer of dumps on dumps with any field damaged, and the compiler on

@@ -49,6 +49,15 @@ dump_read {"file": "shared.dump.json", "view": "why"}
 => panic[P0003]
 ```
 
+In a container a dump goes where the program can write: give `TONDO_DUMP` a
+volume or a tmpfs, or take the file its error output names out with `docker cp`;
+it reads on any machine. The tools reach a program in a container, started with
+`TONDO_DIAGNOSTICS=1` and a `TMPDIR` it can write, through
+`--via "docker exec -i <box>"` and a static `tondo` there, or by its process ID
+from a container that shares its processes, as `kubectl debug` makes. In CI,
+`tondo test --record <dir> --report markdown=<summary>` says under each failure
+how to replay it: keep `<dir>` and the dumps as the job's artifacts.
+
 A core of the system, from a crash inside C or of the runtime, is `dump_core`:
 it makes a dump of it. To go on from a failure: `runbook-crash`, and
 `runbook-regression` for its test.

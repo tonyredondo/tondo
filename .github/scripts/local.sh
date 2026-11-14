@@ -2,7 +2,7 @@
 # What CI and the Nightly run, on this machine, in containers, on the last
 # commit of this repository, so that a failure shows before a push:
 #
-#   .github/scripts/local.sh <out> [services] [nocc] [musl] [emulated] [emuloop] [stress] [sweep] [editor]
+#   .github/scripts/local.sh <out> [services] [nocc] [musl] [emulated] [emuloop] [stress] [sweep] [editor] [containers]
 #
 # Each stage prints its status and leaves its output in <out>/<stage>.txt.
 # `musl`, `emulated` and `emuloop` have targets of their own, so they can run
@@ -16,7 +16,10 @@
 # emulation (EMU_ROUNDS), on EMU_CPUS cores: all of them, and EMU_INIT= with no
 # init, is what brings races out. `sweep` runs the tools over every case, as the
 # Nightly does, and `editor` the extension in a real VS Code, in a container, so
-# that it touches nothing of this machine's. macOS is not here.
+# that it touches nothing of this machine's. `containers` runs the scenarios
+# of debugging in containers (containers.sh) with a static tondo built in
+# musl's target, so not beside `musl`; their eighth, across architectures, is
+# the Nightly's. macOS is not here.
 R=$(git rev-parse --show-toplevel) || exit 1
 S=${TONDO_CI_DIR:-$HOME/.cache/tondo-ci}; C=$S/clone
 out=$(realpath -m "$1"); shift; mkdir -p "$out" "$S/tmp" "$S/emu-target" "$S/alpine-target"
@@ -93,6 +96,17 @@ editor() {
   # With an init: xvfb-run waits for a signal it does not get as process 1.
   docker run --rm --init -u "$me" -e HOME=/tmp -e TONDO_BIN="$PWD/target/debug/tondo" -v "$PWD:$PWD" -w "$PWD/editors/vscode" \
     tondo-editor xvfb-run -a node out/integration/run.js
+}
+
+containers() {
+  mkdir -p ~/.cargo/registry ~/.cargo/git
+  docker run --rm -u 0 -v "$PWD:/work" -w /work -e CARGO_INCREMENTAL=0 -e CARGO_TARGET_DIR=/alpine-target \
+    -v "$S/alpine-target:/alpine-target" \
+    -v "$HOME/.cargo/registry:/usr/local/cargo/registry" -v "$HOME/.cargo/git:/usr/local/cargo/git" rust:alpine sh -c \
+    "apk add --no-cache musl-dev zlib-dev zlib-static git curl tar > /dev/null &&
+     (rustup show active-toolchain || rustup toolchain install) && cargo build -p tondo;
+     status=\$?; chown -R $me /alpine-target /usr/local/cargo/registry /usr/local/cargo/git; exit \$status" || return 1
+  .github/scripts/containers.sh "$S/alpine-target/debug/tondo"
 }
 
 sweep() {

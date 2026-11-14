@@ -6792,3 +6792,18 @@ values, and `extend`, `intersect`, `subtract` and `retain`, which change it in p
 and leave it what `union`, `intersection`, `difference` and `filter` give. The names keep the
 prelude's rule: a noun or a participle for what gives a new value, a verb for what changes it, and
 `extend` and `retain` are the array's names for the same.
+
+## Debugging where programs run: containers and CI
+
+A program in a container is debugged as one here, and what that takes is checked each night by
+`.github/scripts/containers.sh`: an image from `scratch`, a read-only one, one without `tondo` or
+`ptrace`, a stripped build, a container beside another, a job of CI and a dump read on another
+architecture. What they found is fixed rather than documented around. A program that cannot leave a
+dump or serve the tools says so once, with why and what to give, as a container that cannot write
+its cache or its `TMPDIR` otherwise loses them unseen; `TONDO_DUMP` names a directory that is made if
+missing. The tools reach a program from a container that shares its processes, as `kubectl debug`
+makes, through `/proc/<pid>/root` and that process's `TMPDIR` and user, with no `--via` and nothing
+added to the program's image; a socket two containers share through a common `/tmp` is listed once,
+by the process ID the tools see. A `--via` that reaches no `tondo` says how to put one there, and a
+report that a job's summary shows says under each failure how to replay its recording, as the
+console does. A test's panic leaves no dump, as `tondo test` reports it.
