@@ -256,6 +256,77 @@ That test fails as production did, on the developer's machine, before any
 fix is written, and passes once the bug is gone. With `tondo test --bisect`
 it also finds the commit that brought the bug.
 
+What a dump holds depends on the build. One made with `--debug` keeps every
+value of every frame. A Release build keeps none on purpose, and its dump
+has what is still in place when the task stops: at a check that fails, of
+bounds, of an overflow or of a division by zero, the values that the
+function's code still held. This function fails in its third turn:
+
+```tondo
+import std.console
+
+type Order = { id: Int, lines: Array[Int] }
+
+/// What the order comes to, with a discount on each line.
+fn total(order: Order, discount: Int): Int {
+    var sum = 0
+    let count = order.lines.length()
+    for index in 0..=count {
+        let line = order.lines[index]
+        sum += line - discount
+    }
+    sum
+}
+
+fn main() {
+    let order = Order { id: 7, lines: [10, 20] }
+    console.println("{total(order, 1)}")
+}
+```
+
+```text
+$ tondo build bill.to -o bill
+$ TONDO_DUMP=dumps ./bill
+panic[P0001]: bounds: index 2 is out of bounds for an array of length 2: valid indices are 0 to 1, and -2 to -1 from the end
+ --> bill.to:10:20
+stack:
+  total  bill.to:10:20
+  main   bill.to:18:23
+tondo runtime: a dump of the program is in dumps/bill-138607.dump.json
+$ tondo dump read dumps/bill-138607.dump.json locals
+bill.to:10 in total
+order: Order = Order { id: 7, lines: [10, 20] }
+sum: Int = 28
+count: Int = 2
+```
+
+`discount`, `index` and `line` are not there: by that point the code had
+let go of them. Built with `--debug`, the same failure leaves them all:
+
+```text
+$ tondo build bill.to --debug -o bill
+$ TONDO_DUMP=dumps-debug ./bill
+...
+$ tondo dump read dumps-debug/bill-138655.dump.json locals
+bill.to:10 in total
+order: Order = Order { id: 7, lines: [10, 20] }
+discount: Int = 1
+sum: Int = 28
+count: Int = 2
+index: Int = 2
+line: Int = 20
+```
+
+The values of the Release dump cost nothing while the program runs: its
+code is the same, and the dump reads what is still where the code left it.
+A tool that needs a value the dump lacks says so, as `tondo dump test` does
+here:
+
+```text
+$ tondo dump test dumps/bill-138607.dump.json
+tondo: the dump has no value of `discount` in `total`: a build with --debug keeps them all
+```
+
 A service leaves many dumps, most of them of the same few failures:
 
 ```text
