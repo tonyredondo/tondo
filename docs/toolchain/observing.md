@@ -17,6 +17,7 @@ example, with what they printed.
 - [Everything at once: dump](#everything-at-once-dump)
 - [A timeline: trace](#a-timeline-trace)
 - [On another machine](#on-another-machine)
+- [In a container](#in-a-container)
 - [Changing it while it runs](#changing-it-while-it-runs)
 - [From inside the program](#from-inside-the-program)
 
@@ -253,6 +254,97 @@ tondo dump --via "kubectl exec -i api-7f9 --" todo --output api.dump.json
 
 Nothing listens on the network for this. The connection is whatever the
 command is, with the access it already has.
+
+## In a container
+
+A static executable is all an image needs, and nothing has to be added to
+it for what follows. The sessions were run with Docker, with images made
+`FROM scratch`.
+
+A program that fails leaves its dump inside its container, and says where.
+`docker cp` takes it out, from a container that has stopped too, and it is
+read on any machine, of another architecture as well:
+
+```text
+$ docker run --name orders-1 orders
+panic[P0001]: bounds: index 2 is out of bounds for an array of length 2: valid indices are 0 to 1, and -2 to -1 from the end
+ --> orders.to:7:39
+stack:
+  total  orders.to:7:39
+  main   orders.to:12:23
+tondo runtime: a dump of the program is in /.cache/tondo/dumps/orders-1.dump.json
+$ docker cp orders-1:/.cache/tondo/dumps/orders-1.dump.json .
+$ tondo dump read orders-1.dump.json locals
+orders.to:7 in total
+order: Order = Order { id: 7, lines: [10, 20] }
+```
+
+A container removed as it ends takes its dump with it, and one whose file
+system is read-only cannot write it, which the program says once:
+
+```text
+tondo runtime: no dump: /.cache/tondo/dumps cannot be made (Read-only file system (os error 30)); give TONDO_DUMP a directory the program can write, as a volume or a tmpfs of its container, or `off`
+```
+
+So a service's container gets a volume for its dumps:
+
+```text
+$ docker run --read-only --tmpfs /dumps -e TONDO_DUMP=/dumps orders
+...
+tondo runtime: a dump of the program is in /dumps/orders-1.dump.json
+```
+
+A tmpfs, as here, goes with the container; a named volume or a mounted
+directory stays.
+
+A program that is running is reached from a container beside it that
+shares its processes, which is what `kubectl debug --target` makes. That
+container holds only a static `tondo` (`FROM scratch`, `COPY tondo /tondo`,
+`ENTRYPOINT ["/tondo"]`), and the program's image holds none:
+
+```text
+$ docker run --rm -i --pid=container:ticker-1 --tmpfs /tmp tondo-tools ps
+PID          UPTIME  PROGRAM
+1     5.8 s  /ticker
+$ docker run --rm -i --pid=container:ticker-1 --tmpfs /tmp tondo-tools counters 1 --count 1
+ticker (pid 1), up 7.1 s
+
+memory
+  held                             2.5 KiB
+  allocated                          0 B/s   total 1.0 MiB
+...
+$ docker run --rm -i --pid=container:ticker-1 --tmpfs /tmp tondo-tools debug 1
+> break ticker.to:6
+breakpoint 1 at ticker.to:6
+> continue
+task 1 stopped at ticker.to:6 in main (breakpoint 1)
+> print counter > 0
+counter > 0: Bool = true
+```
+
+The same commands work with every capability dropped from both containers
+(`--cap-drop ALL`): the tools ask nothing of the system that a container
+withholds.
+
+The other way is `--via` through the container itself, with a `tondo`
+copied into it:
+
+```text
+$ docker cp tondo ticker-1:/tondo
+$ tondo dump ticker --via "docker exec -i -e PATH=/ ticker-1" --output ticker.dump.json
+tondo: the dump is in ticker.dump.json; `tondo dump read ticker.dump.json` shows it
+```
+
+When there is none, the answer says what is missing and how to put it
+there:
+
+```text
+tondo: `docker exec -i -e PATH=/ ticker-2 tondo relay ticker` did not reach the program: OCI runtime exec failed: exec failed: unable to start container process: exec: "tondo": executable file not found in $PATH; no `tondo` is where it reaches: put one there, as a static tondo copied into a container with `docker cp tondo box:/tondo`, reached with `--via "docker exec -i -e PATH=/ box"`
+```
+
+The program must have `TONDO_DIAGNOSTICS=1` or `TONDO_DUMP` in its
+environment, as on any machine, and a directory for temporary files that
+it can write: with none, it says that the tools cannot reach it.
 
 ## Changing it while it runs
 

@@ -290,6 +290,10 @@ tondo debug --via "ssh api-3" api
 tondo debug --via "docker exec -i box" 4721
 ```
 
+A program in a container whose image has no `tondo` is debugged from a
+container beside it: [A running program](observing.md#in-a-container) has
+the commands.
+
 A live build, `tondo run --live`, goes one step further: at a stop,
 `reload` changes the program's code to what is in the files now, and the
 session goes on with its state. A breakpoint's condition there is compiled,

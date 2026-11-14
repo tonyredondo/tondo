@@ -346,4 +346,36 @@ hundred runs in CI is then a file: `tondo debug --replay <dir>/<id>` runs
 it again, the same, with what it read and when, and steps through it
 backwards. [Debugging](debugging.md) goes on from there.
 
+In a job of CI, two options and one step make a failure something to open
+afterwards: the recordings are uploaded, and the job's summary says the
+command for each. In GitHub Actions:
+
+```yaml
+- run: tondo test --record recorded --report markdown=$GITHUB_STEP_SUMMARY
+- if: failure()
+  uses: actions/upload-artifact@v4
+  with:
+    name: recorded
+    path: recorded
+```
+
+The summary then has each failure with its report and how to run it again:
+
+```text
+### `job::unit::job::halves`
+
+panic[P0007]: assertion-failed: half(7) == 4
+  left:  3
+  right: 4
+ --> src/half_test.to:2:5
+stack:
+  test halves  src/half_test.to:2:5
+recorded, to debug the same again:
+  tondo debug --replay recorded/job.unit.job.halves
+```
+
+A program of the job that fails outside a test leaves a dump instead:
+`TONDO_DUMP=<dir>` in the job's environment, and that directory uploaded
+the same way ([A running program](observing.md#in-a-container)).
+
 Next: [Debugging](debugging.md).
