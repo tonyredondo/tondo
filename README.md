@@ -457,9 +457,26 @@ milestone covers is in [`docs/roadmap.md`](docs/roadmap.md).
 | Standard library, measured against what porting Gin, Hugo and dd-trace-go needs | Done |
 | Tests, every order of their tasks, benchmarks, fuzzing, coverage, profiling | Done |
 | Debugger, dumps, live builds, language server, VS Code, MCP | Done |
-| Windows | Not started |
-| SIMD API | Accepted, not started |
+| C in both directions: bindings, libraries for C, libraries loaded as the program runs, system calls, plugins with a contract | Done |
+| Levels of processor, vectors (`std.simd`) and the instructions of x64 and arm64 | Done |
+
+What is under way and what is planned:
+
+| Work | State |
+| --- | --- |
+| Every row of [`bench/`](bench/README.md) at or under Go's, in time and in memory, and the servers in latency | Under way: that page has the rows still behind, each with its reason |
+| A chain of an iterator compiled as one loop, a chain of arrays without the arrays between, short texts without the heap | Next in the optimizer |
+| A call from a thread of C into Tondo at the cost of Go's | Under way |
+| `tondo test --schedules` over the moments the operating system leaves open: between `bind` and `listen`, the delivery of a signal, a file made and not yet written | Accepted, not started |
+| `Server.wait`: a server started with `start` drains when the program is asked to end, as `listen` does | Accepted, not started |
+| A terminal a program takes over: its size as it changes, and giving it back and taking it again around Ctrl-Z and `fg` | Accepted, its design first |
+| Interfaces of C++ that are tables of functions, as a trait with `@ffi.Interface` | Accepted, not started |
+| A heap for each task | Research |
+| A function's values in a Release dump after a failed check, at no cost while it runs | Measuring first |
+| Vectors of 512 bits with AVX-512; today they are computed by halves | Waits for a machine to test on |
 | Profile-guided optimization while a program runs | Research |
+| Windows | Not started, after the work above |
+| A library for user interfaces, as a package | After Windows |
 | A first release | Not yet |
 
 Known limits today: logpoints and Release breakpoints work on Linux only,
