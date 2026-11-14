@@ -44,19 +44,25 @@ fn pools(): !(executor.ExecutorError | executor.SubmitError) {
     }
     console.println("squares {total}, at most {peak.load()} at once")
 
-    // A job that waits for a worker can be cancelled, and never starts.
+    // A job that waits for a worker can be cancelled, and never starts:
+    // the worker's job goes on until it is cancelled, however slow the
+    // machine is.
     let busy = executor.pool(1, 1)?
     let started = sync.Atomic(0)
     let going = sync.Atomic(0)
+    let released = sync.Atomic(0)
     let first = busy.submit(() {
         _ = going.add(1)
-        time.sleep(time.milliseconds(20))
+        for released.load() == 0 {
+            time.sleep(time.milliseconds(1))
+        }
     })?
     for going.load() == 0 {
         time.sleep(time.milliseconds(1))
     }
     let queued = busy.submit(() { _ = started.add(1) })?
     queued.cancel()
+    _ = released.add(1)
     match busy.trySubmit(() { 0 }) {
         ok(extra) => console.println("room again: {extra.wait()}")
         err(error) => console.println("{error}")
