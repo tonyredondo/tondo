@@ -6824,3 +6824,15 @@ later rounds, so code inlined into it later is resolved too. `tondo optimization
 the program wrote the closure. The lazy chain of numbers of bench/tondo goes from 68 to 46 µs;
 compiling the generated program of 3,584 lines costs 4% more instructions, and that of 192,953
 lines the same.
+
+## A closure lent to a call lives in the caller's frame
+
+A closure the frame makes goes on the heap when a call may keep it. The function a closure is passed
+to, as the copy of `maxBy` the inliner makes for it, often only calls it or reads its captures, and
+keeps nothing past its return, while the caller's frame lives for the whole call. Each function now
+says which of its `fn` parameters it only borrows so: calls, reads for their captures, or passes on to
+a parameter of the same kind, known from every function at once, from all of them down to those every
+use of which borrows. A closure passed to such a parameter is made in the frame. A frame keeps sixteen
+such values rather than eight, as a function into which many calls are inlined, as a test of
+benchmarks, has that many. maxBy and averageBy over an array make no allocation, as Go's loops make
+none; the instructions do not change.

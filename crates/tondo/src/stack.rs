@@ -26,12 +26,13 @@ use crate::mir::*;
 use crate::types::{Ty, Types};
 
 /// The most texts one frame makes so.
-const FRAMED: usize = 8;
+const FRAMED: usize = 16;
 
 pub fn stack(bodies: &mut [Body], types: &Types) {
     bodies.iter_mut().for_each(made_in_place);
+    let borrows = borrowing(bodies, types);
     let indices: Vec<usize> = (0..bodies.len()).collect();
-    let framed = crate::parallel::map(&indices, 16, |&index| framed(&bodies[index], index, types));
+    let framed = crate::parallel::map(&indices, 16, |&index| framed(&bodies[index], index, types, &borrows));
     for (body, (framed, mut notes, remarks)) in bodies.iter_mut().zip(framed) {
         body.framed = framed;
         body.notes.append(&mut notes);
@@ -197,7 +198,85 @@ fn keeping(statement: &Statement) -> &'static str {
     }
 }
 
-fn framed(body: &Body, index: usize, types: &Types) -> Found {
+/// For each function, which of its parameters that are `fn` values it only
+/// borrows: calls, reads for their captures, or passes on to a parameter
+/// that borrows its value too, as the copy of a function the inliner made
+/// for a closure does. A closure made in the frame of a caller lives for
+/// the whole call, so it may be passed to such a parameter.
+fn borrowing(bodies: &[Body], types: &Types) -> Vec<Vec<bool>> {
+    let function = |body: &Body, local: Local| {
+        matches!(types.kind(types.repr(body.locals[local.0 as usize])), crate::types::TyKind::Fn(..))
+    };
+    let mut borrows: Vec<Vec<bool>> = bodies
+        .iter()
+        .enumerate()
+        .map(|(_, body)| {
+            body.params
+                .iter()
+                .enumerate()
+                .map(|(at, &param)| function(body, param) && !body.loans.get(at).copied().unwrap_or(false))
+                .collect()
+        })
+        .collect();
+    // From all of them to those whose every use borrows, as a parameter
+    // passed on is known only once its callee's is.
+    loop {
+        let mut changed = false;
+        for (index, body) in bodies.iter().enumerate() {
+            for (at, &param) in body.params.iter().enumerate() {
+                if borrows[index][at] && !only_borrowed(body, param, &borrows) {
+                    borrows[index][at] = false;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            return borrows;
+        }
+    }
+}
+
+/// Whether a function only calls the `fn` value a local holds, reads its
+/// captures, or passes it whole to a parameter that borrows its value.
+fn only_borrowed(body: &Body, local: Local, borrows: &[Vec<bool>]) -> bool {
+    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+        let mut statement = statement.clone();
+        if let Statement::Assign(target, rvalue, _) = &mut statement {
+            if target.local == local {
+                return false;
+            }
+            if let Rvalue::Call(crate::hir::Callee::Fn(callee), operands) = &mut **rvalue {
+                for (at, operand) in operands.iter_mut().enumerate() {
+                    let whole =
+                        matches!(operand, Operand::Copy(place) if place.local == local && place.path.is_empty());
+                    if whole {
+                        if !borrows.get(callee.0 as usize).and_then(|params| params.get(at)).copied().unwrap_or(false) {
+                            return false;
+                        }
+                        *operand = Operand::Const(Const::Unit);
+                    }
+                }
+            }
+        } else {
+            let (mut read, mut defined) = (Vec::new(), Vec::new());
+            statement_locals(&statement, &mut read, &mut defined);
+            if read.contains(&local) || defined.contains(&local) {
+                return false;
+            }
+            continue;
+        }
+        if !borrowed_function(&statement, local) {
+            return false;
+        }
+    }
+    body.blocks.iter().all(|block| {
+        let mut read = Vec::new();
+        terminator_uses(&block.terminator, &mut read);
+        !read.contains(&local)
+    })
+}
+
+fn framed(body: &Body, index: usize, types: &Types, borrows: &[Vec<bool>]) -> Found {
     let noting = crate::mir_text::noting(&body.name);
     let remarking = crate::mir_text::remarking();
     let mut made_at: Vec<Option<crate::source::Span>> = vec![None; body.locals.len()];
@@ -277,7 +356,9 @@ fn framed(body: &Body, index: usize, types: &Types) -> Found {
             }
         }
         // A function's value read only for its captures, or called.
-        read.retain(|&local| !erased[local.0 as usize] || !borrowed_function(statement, local));
+        read.retain(|&local| {
+            !erased[local.0 as usize] || !borrowed_function(&lent_on(statement, local, borrows), local)
+        });
         keep(read, &mut kept, why);
     }
     for block in &body.blocks {
@@ -358,6 +439,23 @@ fn framed(body: &Body, index: usize, types: &Types) -> Found {
 
 /// Whether the statement reads the function's value at `local` only for
 /// its captures, or calls it.
+/// The statement with a local passed whole to a parameter that only borrows
+/// it, as `borrowing` finds, taken out of the call.
+fn lent_on(statement: &Statement, local: Local, borrows: &[Vec<bool>]) -> Statement {
+    let mut statement = statement.clone();
+    if let Statement::Assign(_, rvalue, _) = &mut statement
+        && let Rvalue::Call(crate::hir::Callee::Fn(callee), operands) = &mut **rvalue
+    {
+        for (at, operand) in operands.iter_mut().enumerate() {
+            let whole = matches!(operand, Operand::Copy(place) if place.local == local && place.path.is_empty());
+            if whole && borrows.get(callee.0 as usize).and_then(|params| params.get(at)).copied().unwrap_or(false) {
+                *operand = Operand::Const(Const::Unit);
+            }
+        }
+    }
+    statement
+}
+
 fn borrowed_function(statement: &Statement, local: Local) -> bool {
     let mut statement = statement.clone();
     if let Statement::Assign(_, rvalue, _) = &mut statement

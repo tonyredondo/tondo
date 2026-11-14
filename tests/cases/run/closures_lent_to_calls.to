@@ -1,0 +1,33 @@
+// A closure passed to a function that only calls it, or reads what it
+// captured, lives in the caller's frame for the call, without the heap:
+// as the copy of `maxBy` the inliner makes for it does. One the function
+// keeps, as in an array, goes on the heap.
+
+import std.console
+
+type Order = {
+    id: Int
+    cents: Int
+}
+
+fn best(all: Array[Order], least: Int): Int {
+    (all.maxBy((order) { order.cents + least }) ?? Order { id: 0, cents: 0 }).id
+}
+
+fn kept(handlers: Array[fn(Int): Int], scale: Int): Array[fn(Int): Int] {
+    var all = handlers
+    all.push((n) { n * scale })
+    all
+}
+
+fn main() {
+    let all = [Order { id: 1, cents: 5 }, Order { id: 2, cents: 9 }, Order { id: 3, cents: 1 }]
+    console.println("{best(all, 1)}")
+    let handlers = kept([], 3)
+    console.println("{handlers[0](7)}")
+}
+
+// expect-stdout: 2
+// expect-stdout: 21
+// expect-optimization: 14:16 frame is made in the frame
+// expect-optimization: 19:14 heap
