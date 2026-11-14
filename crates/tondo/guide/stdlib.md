@@ -350,8 +350,12 @@ fn main() {
   have several lines; `cli.Border.None` makes a table a grid. Widths count
   the columns a character takes, and `@secret` shows as `<secret>`:
   `console.println(cli.panel(cli.table(rows), title: "Today"))`.
-  `cli.calendar(2026, 11, marked: [date])` draws a month, and
-  `cli.json(value)` any value as colored JSON.
+  `cli.calendar(2026, 11, marked: [date])` draws a month,
+  `cli.json(value)` any value as colored JSON, and `cli.figlet("Hello")` big
+  letters. A full screen is panes: `cli.Pane.rows([...])` and
+  `Pane.columns`, each `cli.Pane(text, title:, size:, ratio:, border:)`,
+  `follow: true` to show a log's last lines, and `screen.draw(size)` gives
+  exactly that many rows of that many columns, for `live.show(...)`.
 - What moves is a live region at the bottom of the output:
   `cli.progress("Building", total: n)`, or without a total a spinner that
   turns by itself, `say` to change its text and `finish(failed: true)` to end

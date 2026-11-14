@@ -7084,3 +7084,15 @@ makes the region give the question its place and come back after the answer. It 
 for every question, the choices too, whose lists draw themselves in place; nothing moves twice on
 the screen; and nothing typed has to be written again, which a secret must not be. Tony kept it,
 and the specification's sentence says so now.
+
+## Panes and FIGlet's letters
+
+The last two of the five pieces. A `Pane` is a part of a screen with a fixed size or a ratio of
+what the fixed ones leave, `Pane.rows` and `Pane.columns` nest them, and `draw(size)` gives
+exactly that many rows of that many columns, so a full-screen program is `cli.Terminal(screen:
+true)`, a `Live` and `live.show(screen.draw(size))` at each size `redraws()` gives, and a test
+checks a screen as text. Tony took the scrolling with it: a text longer than its pane shows from
+line `from` or its last lines with `follow`, a mark on the border says where, and `rooms(size)`
+gives a named pane's room to page by. `figlet` has FIGlet's standard font inside, under its BSD
+license, kept as FIGlet 2.2 gives it, and reads any `.flf` text, smushing letters together by the
+font's rules as FIGlet does, so its output is FIGlet's.

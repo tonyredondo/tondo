@@ -1,0 +1,85 @@
+// A screen of panes is text of exactly the size asked for: a fixed row
+// above and below, and two panes side by side that share what is left by
+// ratio. A log longer than its pane shows its last lines with `follow`,
+// or from a line, with a mark on the border where it is; `rooms` gives a
+// named pane's room. And FIGlet's big letters, as FIGlet writes them.
+
+import std.cli
+import std.console
+
+fn main() {
+    let log = (1..=30).map((n) { "line {n}" }).collect().join("\n")
+    let screen = cli.Pane.rows(
+        [
+            cli.Pane("Orders today", size: 1),
+            cli.Pane.columns(
+                [
+                    cli.Pane("#1 tea\n#2 coffee", title: "Orders", border: cli.Border.Rounded),
+                    cli.Pane(
+                        log,
+                        title: "Log",
+                        ratio: 2,
+                        border: cli.Border.Square,
+                        follow: true,
+                        name: "log",
+                    ),
+                ],
+            ),
+            cli.Pane("q: quit", size: 1),
+        ],
+    )
+    let size = cli.Size { columns: 40, rows: 10 }
+    let drawn = screen.draw(size)
+    // Each row up to a mark, as its last columns are spaces.
+    for row in drawn.lines() {
+        console.println("{row}|")
+    }
+    console.println(
+        "{drawn.lines().length()} rows of {drawn.lines().map((line) { line.length() }).max() ?? 0}",
+    )
+    console.println("{screen.rooms(size)}")
+    console.println(
+        cli
+            .Pane(log, from: 3, title: "From 3", border: cli.Border.Ascii)
+            .draw(cli.Size { columns: 20, rows: 6 }),
+    )
+    console.println(cli.figlet("Tondo"))
+    console.println(cli.figlet("Hi all", width: 12))
+}
+
+// expect-stdout: Orders today                            |
+// expect-stdout: ╭─ Orders ──╮┌─ Log ───────────────────┐|
+// expect-stdout: │ #1 tea    ││ line 25                 │|
+// expect-stdout: │ #2 coffee ││ line 26                 │|
+// expect-stdout: │           ││ line 27                 │|
+// expect-stdout: │           ││ line 28                 │|
+// expect-stdout: │           ││ line 29                 │|
+// expect-stdout: │           ││ line 30                 █|
+// expect-stdout: ╰───────────╯└─────────────────────────┘|
+// expect-stdout: q: quit                                 |
+// expect-stdout: 10 rows of 40
+// expect-stdout: [log: Size { columns: 23, rows: 6 }]
+// expect-stdout: +- From 3 ---------+
+// expect-stdout: | line 4           #
+// expect-stdout: | line 5           |
+// expect-stdout: | line 6           |
+// expect-stdout: | line 7           |
+// expect-stdout: +------------------+
+// expect-stdout:  _____               _
+// expect-stdout: |_   _|__  _ __   __| | ___
+// expect-stdout:   | |/ _ \| '_ \ / _` |/ _ \
+// expect-stdout:   | | (_) | | | | (_| | (_) |
+// expect-stdout:   |_|\___/|_| |_|\__,_|\___/
+// expect-stdout:
+// expect-stdout:  _   _ _
+// expect-stdout: | | | (_)
+// expect-stdout: | |_| | |
+// expect-stdout: |  _  | |
+// expect-stdout: |_| |_|_|
+// expect-stdout:
+// expect-stdout:        _ _
+// expect-stdout:   __ _| | |
+// expect-stdout:  / _` | | |
+// expect-stdout: | (_| | | |
+// expect-stdout:  \__,_|_|_|
+// expect-stdout:

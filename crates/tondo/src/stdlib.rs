@@ -139,7 +139,7 @@ const SOURCES: &[(&str, &[(&str, &str)])] = &[
     ("template", &[file!("template")]),
     ("formats", &[file!("formats")]),
     ("shapes", &[file!("shapes")]),
-    ("cli", &[file!("cli")]),
+    ("cli", &[file!("cli"), file!("figlet")]),
     ("mcp", &[file!("mcp")]),
     ("model", &[file!("model")]),
     ("fuzz", &[file!("fuzz")]),

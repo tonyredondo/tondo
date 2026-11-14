@@ -488,6 +488,20 @@ pub enum TerminalError {
 pub fn Live(): Live
 pub fn Live.end(self)
 pub fn Live.show(self, text: String)
+pub fn Pane(
+    text: String = "",
+    title: String = "",
+    size: Int? = none,
+    ratio: Int = 1,
+    border: Border = Border.None,
+    follow: Bool = false,
+    from: Int = 0,
+    name: String = "",
+): Pane
+pub fn Pane.columns(parts: Array[Pane]): Pane
+pub fn Pane.draw(self, size: Size): String
+pub fn Pane.rooms(self, size: Size): Map[String, Size]
+pub fn Pane.rows(parts: Array[Pane]): Pane
 pub fn Progress.advance(self, by: Int = 1)
 pub fn Progress.finish(self, failed: Bool = false)
 pub fn Progress.say(self, label: String)
@@ -519,6 +533,7 @@ pub fn chooseMany(
 ): Array[Int]
 pub fn completions[T: reflect.Reflect](shell: Shell): String
 pub fn confirm(question: String, default: Bool = false): Bool
+pub fn figlet(text: String, font: String? = none, width: Int? = none): String
 pub fn help[T: reflect.Reflect](): String
 pub fn isTerminal(): Bool
 pub fn json[T: reflect.Reflect + serialization.Encode](value: T, indent: Int = 2): String
@@ -550,6 +565,9 @@ pub type CliError = {
     help: Bool
 }
 pub type Live = {
+    // private fields
+}
+pub type Pane = {
     // private fields
 }
 pub type Progress = {

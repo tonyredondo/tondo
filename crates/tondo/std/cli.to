@@ -2699,6 +2699,244 @@ fn maskedRecord(object: Map[String, __json.Value], value: __reflect.Value): __js
     __json.Value.Object(changed)
 }
 
+/// A part of a screen: a text, with a title and a border if asked, that
+/// takes a fixed `size` of rows or columns, or a `ratio` of what the fixed
+/// ones leave. `Pane.rows` stacks panes top to bottom and `Pane.columns`
+/// left to right, and they nest. A text longer than its pane shows from
+/// line `from`, or its last lines with `follow`, as `tail -f` does, and a
+/// border marks where in the text the pane is. `draw` gives the screen at
+/// a size, exactly as many lines as its rows, each as wide as its columns.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// let screen = cli.Pane.rows([
+///     cli.Pane("Orders today", size: 1),
+///     cli.Pane.columns([
+///         cli.Pane("#1 tea\n#2 coffee", title: "Orders", border: cli.Border.Rounded),
+///         cli.Pane("#2: 2 cups", title: "Detail", ratio: 2, border: cli.Border.Rounded),
+///     ]),
+///     cli.Pane("q: quit", size: 1),
+/// ])
+/// console.println(screen.draw(cli.Size { columns: 40, rows: 8 }))
+/// ```
+pub type Pane = {
+    priv text: String
+    priv title: String
+    priv size: Int?
+    priv ratio: Int
+    priv border: Border
+    priv follow: Bool
+    priv from: Int
+    priv name: String
+    /// The panes it is made of, side by side when `across`.
+    priv parts: Array[Pane]
+    priv across: Bool
+}
+
+/// A pane of `text`. `name` gives its room in `rooms`, to page by its
+/// height.
+pub fn Pane(
+    text: String = "",
+    title: String = "",
+    size: Int? = none,
+    ratio: Int = 1,
+    border: Border = Border.None,
+    follow: Bool = false,
+    from: Int = 0,
+    name: String = "",
+): Pane {
+    Pane { text, title, size, ratio, border, follow, from, name, parts: [], across: false }
+}
+
+/// The panes one above another, as tall as the room each takes.
+pub fn Pane.rows(parts: Array[Pane]): Pane {
+    Pane {
+        text: ""
+        title: ""
+        size: none
+        ratio: 1
+        border: Border.None
+        follow: false
+        from: 0
+        name: ""
+        parts
+        across: false
+    }
+}
+
+/// The panes side by side, as wide as the room each takes.
+pub fn Pane.columns(parts: Array[Pane]): Pane {
+    Pane {
+        text: ""
+        title: ""
+        size: none
+        ratio: 1
+        border: Border.None
+        follow: false
+        from: 0
+        name: ""
+        parts
+        across: true
+    }
+}
+
+/// The screen at `size`: `size.rows` lines of `size.columns` columns, each
+/// pane's text cut to its room, or padded, so nothing is torn.
+pub fn Pane.draw(self, size: Size): String {
+    paneLines(self, size.rows.max(0), size.columns.max(0)).join("\n")
+}
+
+/// The room of each pane with a `name`, inside its border: the rows and
+/// columns its text has at `size`.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// let screen = cli.Pane.rows([cli.Pane("head", size: 1), cli.Pane("…", name: "log", border: cli.Border.Square)])
+/// let rooms = screen.rooms(cli.Size { columns: 40, rows: 10 })
+/// console.println("{rooms["log"]}")
+/// ```
+pub fn Pane.rooms(self, size: Size): Map[String, Size] {
+    var found: Map[String, Size] = [:]
+    measured(self, size.rows.max(0), size.columns.max(0), var found)
+    found
+}
+
+/// What each part takes of `room`: its fixed size, then shares of what is
+/// left by ratio, the last taking what rounding leaves.
+fn shares(parts: Array[Pane], room: Int): Array[Int] {
+    let fixed = parts.map((part) { (part.size ?? 0).max(0) }).sum()
+    let left = (room - fixed).max(0)
+    let flexible = parts.filter((part) { part.size.isNone() })
+    let ratios = flexible.map((part) { part.ratio.max(0) }).sum()
+    var given: Array[Int] = []
+    var spent = 0
+    var seen = 0
+    for part in parts {
+        let share = match part.size {
+            some(fixedSize) => fixedSize.max(0)
+            none => {
+                seen += 1
+                if seen == flexible.length() {
+                    (left - spent).max(0)
+                } else {
+                    let one = if ratios > 0 { left * part.ratio.max(0) / ratios } else { 0 }
+                    spent += one
+                    one
+                }
+            }
+        }
+        given.push(share)
+    }
+    // Fixed sizes larger than the room are cut, from the end.
+    var over = given.sum() - room
+    var index = given.length() - 1
+    for over > 0 and index >= 0 {
+        let cut = over.min(given[index])
+        given[index] -= cut
+        over -= cut
+        index -= 1
+    }
+    given
+}
+
+/// A pane's lines at `rows` by `columns`.
+fn paneLines(pane: Pane, rows: Int, columns: Int): Array[String] {
+    if rows == 0 {
+        return []
+    }
+    if pane.parts.isEmpty() {
+        return leafLines(pane, rows, columns)
+    }
+    let given = shares(pane.parts, if pane.across { columns } else { rows })
+    if not pane.across {
+        var lines: Array[String] = []
+        for index in 0..pane.parts.length() {
+            lines.extend(paneLines(pane.parts[index], given[index], columns))
+        }
+        return lines
+    }
+    let blocks = (0..pane.parts.length())
+        .map((index) { paneLines(pane.parts[index], rows, given[index]) })
+        .collect()
+    (0..rows).map((row) { blocks.map((block) { block.get(row) ?? "" }).join("") }).collect()
+}
+
+/// The rooms of the named panes inside a pane at `rows` by `columns`.
+fn measured(pane: Pane, rows: Int, columns: Int, found: var Map[String, Size]) {
+    if pane.parts.isEmpty() {
+        if not pane.name.isEmpty() {
+            let boxed = pane.border != Border.None and rows >= 2 and columns >= 4
+            let (across, down) = if boxed { (4, 2) } else { (0, 0) }
+            found[pane.name] = Size {
+                columns: (columns - across).max(0)
+                rows: (rows - down).max(0)
+            }
+        }
+        return
+    }
+    let given = shares(pane.parts, if pane.across { columns } else { rows })
+    for index in 0..pane.parts.length() {
+        if pane.across {
+            measured(pane.parts[index], rows, given[index], var found)
+        } else {
+            measured(pane.parts[index], given[index], columns, var found)
+        }
+    }
+}
+
+/// A pane of text: its border, its title, and the lines that fit, from
+/// `from` or the last ones, each cut or padded to the room; the border
+/// marks where in the text they are when not all of it fits.
+fn leafLines(pane: Pane, rows: Int, columns: Int): Array[String] {
+    // A border, and a column of room on each side inside it.
+    let boxed = pane.border != Border.None and rows >= 2 and columns >= 4
+    let height = (rows - if boxed { 2 } else { 0 }).max(0)
+    let wide = (columns - if boxed { 4 } else { 0 }).max(0)
+    let text = linesOf(pane.text)
+    let last = (text.length() - height).max(0)
+    let start = if pane.follow { last } else { pane.from.max(0).min(last) }
+    var shown: Array[String] = []
+    for row in 0..height {
+        shown.push(padded(text.get(start + row) ?? "", wide))
+    }
+    if not boxed {
+        return shown
+    }
+    let edge = edges(pane.border)
+    // The part of the right side beside what shows, when not all does.
+    let (mark, marked) = if text.length() > height and height > 0 {
+        let tall = (height * height / text.length()).max(1)
+        let at = if last > 0 { start * (height - tall) / last } else { 0 }
+        (at, tall)
+    } else {
+        (0, 0)
+    }
+    let thumb = if pane.border == Border.Ascii { "#" } else { "█" }
+    let inside = wide + 2
+    let top = if pane.title.isEmpty() {
+        "{edge.topLeft}{edge.across.repeat(inside)}{edge.topRight}"
+    } else {
+        let named = clipped(pane.title, (inside - 4).max(1))
+        let rest = (inside - visible(named) - 3).max(0)
+        "{edge.topLeft}{edge.across} {named} {edge.across.repeat(rest)}{edge.topRight}"
+    }
+    var lines = [top]
+    for row in 0..height {
+        let side = if marked > 0 and row >= mark and row < mark + marked {
+            thumb
+        } else {
+            edge.down
+        }
+        lines.push("{edge.down} {shown[row]} {side}")
+    }
+    lines.push("{edge.bottomLeft}{edge.across.repeat(inside)}{edge.bottomRight}")
+    lines
+}
+
 /// A bar of the progress of some work, or a spinner when it has no total,
 /// in the live region at the bottom of a terminal: what the program prints
 /// goes above it, two at once stack, and a spinner turns by itself. Off a

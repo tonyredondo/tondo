@@ -6139,6 +6139,16 @@ pub fn calendar(
     first: time.Weekday = time.Weekday.Monday, locale: String = "en",
 ): String
 pub fn json[T: reflect.Reflect + serialization.Encode](value: T, indent: Int = 2): String
+pub fn figlet(text: String, font: String? = none, width: Int? = none): String
+pub type Pane
+pub fn Pane(
+    text: String = "", title: String = "", size: Int? = none, ratio: Int = 1,
+    border: Border = Border.None, follow: Bool = false, from: Int = 0, name: String = "",
+): Pane
+pub fn Pane.rows(parts: Array[Pane]): Pane
+pub fn Pane.columns(parts: Array[Pane]): Pane
+pub fn Pane.draw(self, size: Size): String
+pub fn Pane.rooms(self, size: Size): Map[String, Size]
 pub type Progress
 pub fn progress(label: String, total: Int? = none): Progress
 pub fn Progress.advance(self, by: Int = 1)
@@ -6275,7 +6285,8 @@ pub fn secret(question: String): String
 | `progress` | una línea al terminar | en la región viva, al ancho de ahora; un spinner gira solo | igual | la región se redibuja |
 | `Live` | su último texto, al terminar | en la región viva | igual | la región se redibuja, cada línea cortada al ancho |
 | `table` | texto | texto del ancho de sus celdas | igual | nada: es texto ya escrito |
-| `panel`, `rule`, `beside`, `tree`, `bars`, `breakdown`, `calendar`, `json` | texto de 80 columnas, sin colores | texto del ancho de la terminal | igual | nada: es texto ya escrito |
+| `panel`, `rule`, `beside`, `tree`, `bars`, `breakdown`, `calendar`, `json`, `figlet` | texto de 80 columnas, sin colores | texto del ancho de la terminal | igual | nada: es texto ya escrito |
+| `Pane.draw` | texto del tamaño que se le da | igual | igual | el programa dibuja de nuevo al tamaño nuevo |
 | `markup` | texto | texto | texto | — |
 
   `choose` y `chooseMany` usan las flechas cuando su entrada y su salida son
@@ -6342,6 +6353,26 @@ pub fn secret(question: String): String
   `indent` espacios más adentro, o en una línea con `indent: 0`; en una
   terminal sus claves, textos, números y `true`, `false` y `null` llevan
   colores propios. Lo `@secret` es `"<secret>"`, como en los volcados.
+- `figlet` escribe el texto en letras grandes, como FIGlet: con su fuente
+  estándar, que trae dentro (FIGlet y sus fuentes son de licencia BSD), o con
+  `font`, el texto de un fichero `.flf`, como lo da `std.embed`. Las letras se
+  juntan como dice la fuente. Más ancho que la terminal, o que `width`
+  columnas, sigue debajo, entre palabras. Una fuente que no es de FIGlet es un
+  pánico que lo dice.
+- Un `Pane` es una parte de una pantalla: un texto, con un título y un borde
+  si se piden, que toma un `size` fijo de filas o columnas, o una parte
+  `ratio` de lo que dejan los fijos. `Pane.rows` apila paneles de arriba
+  abajo y `Pane.columns` de izquierda a derecha, y se anidan. `draw(size)` da
+  exactamente `size.rows` líneas de `size.columns` columnas: el texto de cada
+  panel cortado a su sitio, o rellenado, así que la pantalla nunca se rompe.
+  Un texto más largo que su panel se muestra desde la línea `from`, o sus
+  últimas líneas con `follow`, como `tail -f`, y su borde marca en qué parte
+  del texto está. `rooms(size)` da el sitio de cada panel con `name`, dentro
+  de su borde, para avanzar una página de su alto. Un programa a pantalla
+  completa es `cli.Terminal(screen: true)`, un `Live` y su bucle sobre
+  `keys()` y `redraws()`, que a cada tamaño nuevo llama a
+  `live.show(screen.draw(size))`. Sin terminal, `draw` a un tamaño que da el
+  programa es texto como cualquier otro, y así lo comprueba una prueba.
 - Lo que se mueve es una región viva: líneas al final de lo que escribe el
   programa, que se redibujan en su sitio. Mientras una está viva, lo que
   escriben la salida y el error de `console` va encima y la región sigue

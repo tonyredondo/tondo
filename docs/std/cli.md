@@ -309,7 +309,7 @@ subcommands.
 
 `tondo api std.cli` shows the same in a terminal.
 
-- [Functions](#functions): [`parse`](#parse), [`parseArgs`](#parseargs), [`help`](#help), [`completions`](#completions), [`isTerminal`](#isterminal), [`terminalWidth`](#terminalwidth), [`terminalSize`](#terminalsize), [`redraws`](#redraws), [`markup`](#markup), [`table`](#table), [`panel`](#panel), [`rule`](#rule), [`beside`](#beside), [`tree`](#tree), [`bars`](#bars), [`breakdown`](#breakdown), [`calendar`](#calendar), [`json`](#json), [`progress`](#progress), [`ask`](#ask), [`confirm`](#confirm), [`choose`](#choose), [`chooseMany`](#choosemany), [`secret`](#secret)
+- [Functions](#functions): [`parse`](#parse), [`parseArgs`](#parseargs), [`help`](#help), [`completions`](#completions), [`isTerminal`](#isterminal), [`terminalWidth`](#terminalwidth), [`terminalSize`](#terminalsize), [`redraws`](#redraws), [`markup`](#markup), [`table`](#table), [`panel`](#panel), [`rule`](#rule), [`beside`](#beside), [`tree`](#tree), [`bars`](#bars), [`breakdown`](#breakdown), [`calendar`](#calendar), [`json`](#json), [`progress`](#progress), [`ask`](#ask), [`confirm`](#confirm), [`choose`](#choose), [`chooseMany`](#choosemany), [`secret`](#secret), [`figlet`](#figlet)
 - [Argument](#argument)
 - [Option](#option)
 - [Rest](#rest)
@@ -320,6 +320,7 @@ subcommands.
 - [Terminal](#terminal): [`Terminal`](#terminal-1), [`Terminal.release`](#terminalrelease), [`Terminal.keys`](#terminalkeys)
 - [Key](#key)
 - [Border](#border)
+- [Pane](#pane): [`Pane`](#pane-1), [`Pane.rows`](#panerows), [`Pane.columns`](#panecolumns), [`Pane.draw`](#panedraw), [`Pane.rooms`](#panerooms)
 - [Progress](#progress-1): [`Progress.advance`](#progressadvance), [`Progress.say`](#progresssay), [`Progress.finish`](#progressfinish)
 - [Live](#live): [`Live`](#live-1), [`Live.show`](#liveshow), [`Live.end`](#liveend)
 
@@ -898,6 +899,28 @@ let password = cli.secret("Password")
 _ = password
 ```
 
+#### figlet
+
+```tondo
+pub fn figlet(text: String, font: String? = none, width: Int? = none): String
+```
+
+The text in big letters, as FIGlet writes them: in its standard font,
+or in `font`, the text of a `.flf` file, as `std.embed` gives one. Wider
+than the terminal, or `width` columns, it goes on below, between words.
+
+```tondo
+import std.cli
+import std.console
+
+console.println(cli.figlet("Tondo"))
+//  _____               _
+// |_   _|__  _ __   __| | ___
+//   | |/ _ \| '_ \ / _` |/ _ \
+//   | | (_) | | | | (_| | (_) |
+//   |_|\___/|_| |_|\__,_|\___/
+```
+
 ### Argument
 
 ```tondo
@@ -1175,6 +1198,98 @@ import std.console
 
 console.println(cli.panel("ready", border: cli.Border.Double))
 console.print(cli.table([["a", "1"], ["b", "2"]], border: cli.Border.None))
+```
+
+### Pane
+
+```tondo
+pub type Pane = {
+    // private fields
+}
+```
+
+A part of a screen: a text, with a title and a border if asked, that
+takes a fixed `size` of rows or columns, or a `ratio` of what the fixed
+ones leave. `Pane.rows` stacks panes top to bottom and `Pane.columns`
+left to right, and they nest. A text longer than its pane shows from
+line `from`, or its last lines with `follow`, as `tail -f` does, and a
+border marks where in the text the pane is. `draw` gives the screen at
+a size, exactly as many lines as its rows, each as wide as its columns.
+
+```tondo
+import std.cli
+import std.console
+
+let screen = cli.Pane.rows([
+    cli.Pane("Orders today", size: 1),
+    cli.Pane.columns([
+        cli.Pane("#1 tea\n#2 coffee", title: "Orders", border: cli.Border.Rounded),
+        cli.Pane("#2: 2 cups", title: "Detail", ratio: 2, border: cli.Border.Rounded),
+    ]),
+    cli.Pane("q: quit", size: 1),
+])
+console.println(screen.draw(cli.Size { columns: 40, rows: 8 }))
+```
+
+#### Pane
+
+```tondo
+pub fn Pane(
+    text: String = "",
+    title: String = "",
+    size: Int? = none,
+    ratio: Int = 1,
+    border: Border = Border.None,
+    follow: Bool = false,
+    from: Int = 0,
+    name: String = "",
+): Pane
+```
+
+A pane of `text`. `name` gives its room in `rooms`, to page by its
+height.
+
+#### Pane.rows
+
+```tondo
+pub fn Pane.rows(parts: Array[Pane]): Pane
+```
+
+The panes one above another, as tall as the room each takes.
+
+#### Pane.columns
+
+```tondo
+pub fn Pane.columns(parts: Array[Pane]): Pane
+```
+
+The panes side by side, as wide as the room each takes.
+
+#### Pane.draw
+
+```tondo
+pub fn Pane.draw(self, size: Size): String
+```
+
+The screen at `size`: `size.rows` lines of `size.columns` columns, each
+pane's text cut to its room, or padded, so nothing is torn.
+
+#### Pane.rooms
+
+```tondo
+pub fn Pane.rooms(self, size: Size): Map[String, Size]
+```
+
+The room of each pane with a `name`, inside its border: the rows and
+columns its text has at `size`.
+
+```tondo
+import std.cli
+import std.console
+
+let screen = cli.Pane.rows([cli.Pane("head", size: 1), cli.Pane("…", name: "log", border: cli.Border.Square)])
+let rooms = screen.rooms(cli.Size { columns: 40, rows: 10 })
+console.println("{rooms["log"]}")
 ```
 
 ### Progress
