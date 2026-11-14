@@ -6137,7 +6137,12 @@ pub fn breakdown(parts: Array[(String, Float)], width: Int? = none): String
 pub type Progress
 pub fn progress(label: String, total: Int? = none): Progress
 pub fn Progress.advance(self, by: Int = 1)
-pub fn Progress.finish(self)
+pub fn Progress.say(self, label: String)
+pub fn Progress.finish(self, failed: Bool = false)
+pub type Live
+pub fn Live(): Live
+pub fn Live.show(self, text: String)
+pub fn Live.end(self)
 pub fn ask(question: String, default: String = ""): String
 pub fn confirm(question: String, default: Bool = false): Bool
 pub fn choose(question: String, options: Array[String]): Int
@@ -6240,10 +6245,11 @@ pub fn secret(question: String): String
   las teclas son suyas, y `keys()` no da ninguna hasta que termina; lo
   tecleado antes de que pregunte puede no llegar a ella. El canal se cierra
   cuando se devuelve la terminal.
-- `table`, `progress` y las preguntas escriben en la salida de `console`, y
-  leen de su entrada. `progress` dibuja una barra, o un spinner sin `total`, que
-  `advance` avanza y `finish` termina; fuera de una terminal solo escribe una
-  línea al terminar. `ask` da la respuesta, o el defecto si se deja vacía;
+- `table`, `progress`, `Live` y las preguntas escriben en la salida de
+  `console`, y leen de su entrada. `progress` dibuja una barra, o un spinner
+  sin `total`, que `advance` avanza, `say` cambia de texto y `finish`
+  termina; fuera de una terminal solo escribe una línea al terminar,
+  `Building: 3/3`, con `, failed` si `failed`. `ask` da la respuesta, o el defecto si se deja vacía;
   `confirm` lee `y` o `n` y Enter; `choose` da el índice elegido;
   `chooseMany`, los índices elegidos, en orden, con los de `chosen` marcados
   al empezar: fuera de una terminal los muestra con `*` y lee los números en
@@ -6259,7 +6265,8 @@ pub fn secret(question: String): String
 | `secret` | lee una línea | sin eco, devuelto también si se cancela o se suspende | igual | — |
 | `choose` | numera las opciones y lee un número y Enter | las flechas mueven una marca y Enter elige | igual | redibuja su lista |
 | `chooseMany` | numera las opciones y lee sus números en una línea | las flechas mueven una marca, Espacio marca o desmarca y Enter termina | igual | redibuja su lista |
-| `progress` | una línea al terminar | se redibuja en su sitio, al ancho de ahora | igual | su siguiente dibujo toma el ancho nuevo |
+| `progress` | una línea al terminar | en la región viva, al ancho de ahora; un spinner gira solo | igual | la región se redibuja |
+| `Live` | su último texto, al terminar | en la región viva | igual | la región se redibuja, cada línea cortada al ancho |
 | `table` | texto | texto del ancho de sus celdas | igual | nada: es texto ya escrito |
 | `panel`, `rule`, `beside`, `tree`, `bars`, `breakdown` | texto de 80 columnas, sin colores | texto del ancho de la terminal | igual | nada: es texto ya escrito |
 | `markup` | texto | texto | texto | — |
@@ -6315,6 +6322,24 @@ pub fn secret(question: String): String
   partida según la parte de cada valor en el total y, debajo, el nombre y el
   porcentaje de cada parte; en una terminal cada parte tiene un color, y fuera
   de ella un sombreado.
+- Lo que se mueve es una región viva: líneas al final de lo que escribe el
+  programa, que se redibujan en su sitio. Mientras una está viva, lo que
+  escriben la salida y el error de `console` va encima y la región sigue
+  debajo, en una sola escritura a la terminal, así que nada parpadea; una
+  pregunta pregunta debajo, y la región vuelve tras la respuesta. Sus partes,
+  dos `progress` o uno y un `Live`, van una debajo de otra. Al cambiar el
+  tamaño de la terminal se redibuja, cada línea cortada a su ancho. Fuera de
+  una terminal no escribe nada hasta que una parte termina, y entonces su
+  último texto, una vez.
+- `progress` es una parte de la región: una barra, o sin `total` un spinner
+  que gira solo. `finish` deja escrita su última línea, la barra llena o `✓`
+  y su texto, y `✗` cuando `failed`.
+- `Live` muestra cualquier texto, de `show` en `show`. Como `cli.Terminal`,
+  es un valor con acción de salida (8.10 del lenguaje): cuando termina,
+  también por un pánico o una cancelación, o con `end`, su último texto queda
+  escrito y el cursor debajo. El runtime hace lo mismo con toda la región
+  cuando el programa termina o entra en pánico, así que un programa que falla
+  a mitad de un progreso no deja la pantalla a medio dibujar.
 
 ### 14.33 `std.mcp`
 

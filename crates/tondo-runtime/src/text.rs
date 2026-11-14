@@ -298,6 +298,23 @@ pub extern "C" fn tondo_rt_char_is(c: u32, class: i64) -> u8 {
     }) as u8
 }
 
+/// The columns a character takes on a terminal, as std.cli counts them:
+/// two for East Asian Wide and Fullwidth, none for a nonspacing or
+/// enclosing mark or a format character, one for any other.
+pub(crate) fn columns(c: char) -> usize {
+    use icu_properties::props::{EastAsianWidth as W, GeneralCategory as G};
+    if (c as u32) < 0x300 {
+        return 1;
+    }
+    if matches!(icu_properties::CodePointMapData::<W>::new().get(c), W::Wide | W::Fullwidth) {
+        return 2;
+    }
+    match icu_properties::CodePointMapData::<G>::new().get(c) {
+        G::NonspacingMark | G::EnclosingMark | G::Format => 0,
+        _ => 1,
+    }
+}
+
 /// The general category of a scalar, as `text.Category` orders them.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_char_category(c: u32) -> i64 {

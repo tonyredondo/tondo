@@ -1,7 +1,8 @@
 // What std.cli writes to a terminal: styles in a markup, whose values are
 // text, codes only on a terminal or with `FORCE_COLOR`; tables of records;
-// progress, which off a terminal writes one line; questions, answered from
-// the console's input; and no terminal to take.
+// progress and a live region, which off a terminal write one line as they
+// end; questions, answered from the console's input; and no terminal to
+// take.
 
 import std.cli
 import std.console
@@ -57,6 +58,18 @@ fn main() {
     let spinner = cli.progress("Waiting")
     spinner.advance()
     spinner.finish()
+    let failing = cli.progress("Fetching", total: 2)
+    failing.advance()
+    failing.finish(failed: true)
+    let work = cli.progress("Connecting")
+    work.say("Downloading")
+    work.finish()
+    // Off a terminal a live region writes its last text once, as it ends.
+    let live = cli.Live()
+    live.show("not yet")
+    console.println("before it")
+    live.show("shown once")
+    live.end()
     console.setInput(io.reader("Ada\n\nmaybe\nY\n7\n2\nhunter2\n\n4\n3,1\n"))
     console.println("<{cli.ask("Name")}>")
     console.println("<{cli.ask("City", default: "Lima")}>")
@@ -105,6 +118,10 @@ fn main() {
 // expect-stdout: <>
 // expect-stdout: Building: 3/3
 // expect-stdout: Waiting: 1
+// expect-stdout: Fetching: 1/2, failed
+// expect-stdout: Downloading: 0
+// expect-stdout: before it
+// expect-stdout: shown once
 // expect-stdout: Name: <Ada>
 // expect-stdout: City [Lima]: <Lima>
 // expect-stdout: Go on? [y/N]: Go on? [y/N]: <true>

@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 const PROGRAM: &str = r#"import std.cli
 import std.console
 import std.env
+import std.time
 
 fn main(): !cli.TerminalError {
     match env.args().get(0) ?? "" {
@@ -21,6 +22,7 @@ fn main(): !cli.TerminalError {
         "screen" => drawing()?
         "secret" => console.println("got {cli.secret("Password")}")
         "raw" => raw()?
+        "live" => living()
         "sizes" => {
             // Only a change of size can wake it: no deadlock.
             for size in cli.redraws() {
@@ -65,6 +67,24 @@ fn drawing(): !cli.TerminalError {
             panic("pressed p")
         }
     }
+}
+
+fn living() {
+    let bar = cli.progress("Building", total: 2)
+    console.println("above the bar")
+    bar.advance()
+    let name = cli.ask("Name")
+    console.println("name {name}")
+    bar.advance()
+    bar.finish()
+    let work = cli.progress("Waiting")
+    let live = cli.Live()
+    live.show("live one")
+    console.eprintln("an error")
+    live.show("live two")
+    work.say("Still waiting")
+    time.sleep(time.milliseconds(400))
+    work.finish(failed: true)
 }
 
 fn raw(): !cli.TerminalError {
@@ -417,5 +437,29 @@ fn a_terminal_without_a_size_gives_none_until_it_has_one() {
     terminal.expect("❯ ◉ docs");
     terminal.send("\r");
     terminal.expect("picked [0]\n");
+    assert_eq!(terminal.status(), 0);
+}
+
+#[test]
+fn a_live_region_stays_below_what_the_program_prints() {
+    let mut terminal = Terminal::start("live", false);
+    terminal.expect("Building ");
+    terminal.expect(" 0/2");
+    // A line printed goes above the bar, which is drawn again below it.
+    terminal.expect("above the bar\n");
+    terminal.expect(" 1/2");
+    // A question asks below, and the region comes back after the answer.
+    terminal.expect("Name: ");
+    terminal.send("Ada\r");
+    terminal.expect("name Ada\n");
+    // A bar that finishes stays written, full, above what comes after.
+    terminal.expect(" 2/2\n");
+    terminal.expect("live one");
+    terminal.expect("an error\n");
+    // A spinner turns by itself while the program waits.
+    terminal.expect("⠙ Still waiting");
+    terminal.expect("✗ Still waiting\n");
+    // The program ends with the region's last text written.
+    terminal.expect("live two\n");
     assert_eq!(terminal.status(), 0);
 }

@@ -7040,3 +7040,23 @@ field and a value of a secret type showed through `reflect.Value` as any other. 
 and `FieldInfo.secret()` now say so, from a bit of the type's capabilities and a mark the
 derived description writes; `tree` and `table`, which showed a `@secret` column's values, show
 `<secret>`.
+
+## A live region at the bottom of the output
+
+The second idea of the drawing half: what moves is a region of lines at the bottom of what the
+program writes, drawn again in place, and what the program prints goes above it with nothing to
+coordinate. The runtime's standard output holds it, the text of each part and the lines it drew:
+a write while it is drawn takes it off, writes, and draws it again, all in one write to the
+terminal, so nothing flickers. A prompt, a line the program has not ended, leaves it off the
+screen until the line typed ends it, when reading the console's input brings it back; standard
+error takes it off and draws it again around what it writes. Each of its lines is cut to the
+terminal's width, counted as std.cli counts columns, so that a terminal made narrower does not
+wrap it into lines nobody clears.
+
+A part is a value of the runtime that ends when its last reference goes, which is `Live`'s exit
+action, and the runtime writes what each part last showed as the program ends or panics, so a
+program that fails mid-progress leaves no half-drawn screen. `progress` is a part, two at once
+stack, and a spinner turns by itself, from a task of its own every 80 ms until it finishes, so a
+program that waits shows that it is waiting; `say` changes its text and `finish(failed: true)`
+ends it with `✗`. Off a terminal a part writes its last text once, as it ends, and progress
+keeps its one line.

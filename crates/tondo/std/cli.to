@@ -2392,7 +2392,9 @@ pub fn breakdown(parts: Array[(String, Float)], width: Int? = none): String {
 }
 
 /// A bar of the progress of some work, or a spinner when it has no total,
-/// that the console's output shows on a terminal.
+/// in the live region at the bottom of a terminal: what the program prints
+/// goes above it, two at once stack, and a spinner turns by itself. Off a
+/// terminal it writes one line when it finishes.
 ///
 /// ```tondo
 /// import std.cli
@@ -2413,8 +2415,10 @@ type Bar = {
     total: Int?
     done: Int
     frame: Int
-    terminal: Bool
     finished: Bool
+    failed: Bool
+    /// Its part of the live region, on a terminal.
+    part: fsNative.Native?
 }
 
 /// A progress of the work `label` of `total` steps, drawn now.
@@ -2427,14 +2431,38 @@ type Bar = {
 /// bar.advance(by: 2)
 /// bar.finish()
 ///
-/// let spinner = cli.progress("Waiting")
-/// spinner.advance()
-/// spinner.finish()
+/// let work = cli.progress("Connecting")
+/// work.say("Downloading")
+/// work.finish()
 /// ```
 pub fn progress(label: String, total: Int? = none): Progress {
-    let bar = Bar { label, total, done: 0, frame: 0, terminal: isTerminal(), finished: false }
+    let part = if isTerminal() { some(fsNative.regionNew()) } else { none }
+    let bar = Bar { label, total, done: 0, frame: 0, finished: false, failed: false, part }
     drawBar(bar)
-    Progress { state: __sync.Mutex(bar) }
+    let made = Progress { state: __sync.Mutex(bar) }
+    if part.isSome() and total.isNone() {
+        spawn detached spinning(made)
+    }
+    made
+}
+
+/// Turns a spinner's mark until it finishes.
+fn spinning(spinner: Progress) {
+    for {
+        __time.sleep(__time.milliseconds(80))
+        let going = spinner.state.update(
+            (bar) {
+                if not bar.finished {
+                    bar.frame += 1
+                    drawBar(bar)
+                }
+                not bar.finished
+            },
+        )
+        if not going {
+            return
+        }
+    }
 }
 
 /// Counts `by` more steps done.
@@ -2450,50 +2478,113 @@ pub fn Progress.advance(self, by: Int = 1) {
     )
 }
 
-/// Ends the progress: a full bar on a terminal, or one line without one.
-pub fn Progress.finish(self) {
+/// Says what the work does now, in place of its label.
+pub fn Progress.say(self, label: String) {
+    self.state.update(
+        (bar) {
+            if not bar.finished {
+                bar.label = label
+                drawBar(bar)
+            }
+        },
+    )
+}
+
+/// Ends the progress, its last line left above what comes after: a full
+/// bar, or `✓` and the label, and `✗` when it `failed`. Off a terminal, its
+/// one line.
+pub fn Progress.finish(self, failed: Bool = false) {
     self.state.update(
         (bar) {
             if bar.finished {
                 return
             }
             bar.finished = true
-            if bar.terminal {
-                drawBar(bar)
-                __console.println("")
-            } else {
-                let count = match bar.total {
-                    some(total) => "{bar.done}/{total}"
-                    none => "{bar.done}"
+            bar.failed = failed
+            match bar.part {
+                some(part) => {
+                    drawBar(bar)
+                    fsNative.regionEnd(part)
                 }
-                __console.println("{bar.label}: {count}")
+                none => {
+                    let count = match bar.total {
+                        some(total) => "{bar.done}/{total}"
+                        none => "{bar.done}"
+                    }
+                    let ended = if failed { ", failed" } else { "" }
+                    __console.println("{bar.label}: {count}{ended}")
+                }
             }
-            _ = __console.flush()
         },
     )
 }
 
 fn drawBar(bar: Bar) {
-    if not bar.terminal {
-        return
+    let part = match bar.part {
+        some(part) => part
+        none => return
     }
     // At the width of now, so that a terminal made narrower does not wrap it.
     let columns = terminalWidth()
     let line = match bar.total {
         some(total) => {
             let count = " {bar.done}/{total}"
-            let cells = (columns - 1 - visible(bar.label) - 1 - count.length()).min(30).max(5)
+            let mark = if bar.failed { "✗ " } else { "" }
+            let cells = (columns - 1 - visible(mark) - visible(bar.label) - 1 - count.length())
+                .min(30)
+                .max(5)
             let filled = if total > 0 { (bar.done.min(total) * cells) / total } else { cells }
-            "{bar.label} {"█".repeat(filled)}{"░".repeat(cells - filled)}{count}"
+            "{mark}{bar.label} {"█".repeat(filled)}{"░".repeat(cells - filled)}{count}"
         }
         none => {
             let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-            let mark = if bar.finished { "✓" } else { frames[bar.frame % frames.length()] }
-            "{mark} {bar.label} {bar.done}"
+            let mark = match (bar.finished, bar.failed) {
+                (true, true) => "✗"
+                (true, false) => "✓"
+                _ => frames[bar.frame % frames.length()]
+            }
+            let count = if bar.done > 0 { " {bar.done}" } else { "" }
+            "{mark} {bar.label}{count}"
         }
     }
-    __console.print("\r{clipped(line, columns - 1)}\u{1b}[K")
-    _ = __console.flush()
+    fsNative.regionShow(part, clipped(line, columns - 1))
+}
+
+/// Text at the bottom of a terminal, drawn again in place each time it is
+/// shown: what the program prints goes above it, and two at once, or one
+/// and a progress, stack. Off a terminal it writes nothing until it ends,
+/// then its last text once. It ends with its value, through a panic or a
+/// cancellation too, or at `end`, its last text left written above what
+/// comes after.
+///
+/// ```tondo
+/// import std.cli
+/// import std.time
+///
+/// let live = cli.Live()
+/// for second in 0..3 {
+///     live.show(cli.panel("{3 - second} s left", title: "Launch"))
+///     time.sleep(time.milliseconds(10))
+/// }
+/// live.end()
+/// ```
+pub type Live = {
+    priv part: fsNative.Native
+}
+
+/// A live region of its own, empty until shown.
+pub fn Live(): Live {
+    Live { part: fsNative.regionNew() }
+}
+
+/// Shows `text` in place of what it showed.
+pub fn Live.show(self, text: String) {
+    fsNative.regionShow(self.part, text)
+}
+
+/// Ends it now, its last text left written.
+pub fn Live.end(self) {
+    fsNative.regionEnd(self.part)
 }
 
 /// The answer to a question, or `default` when it is left empty or the input

@@ -320,7 +320,8 @@ subcommands.
 - [Terminal](#terminal): [`Terminal`](#terminal-1), [`Terminal.release`](#terminalrelease), [`Terminal.keys`](#terminalkeys)
 - [Key](#key)
 - [Border](#border)
-- [Progress](#progress-1): [`Progress.advance`](#progressadvance), [`Progress.finish`](#progressfinish)
+- [Progress](#progress-1): [`Progress.advance`](#progressadvance), [`Progress.say`](#progresssay), [`Progress.finish`](#progressfinish)
+- [Live](#live): [`Live`](#live-1), [`Live.show`](#liveshow), [`Live.end`](#liveend)
 
 ### Functions
 
@@ -732,9 +733,9 @@ bar.advance()
 bar.advance(by: 2)
 bar.finish()
 
-let spinner = cli.progress("Waiting")
-spinner.advance()
-spinner.finish()
+let work = cli.progress("Connecting")
+work.say("Downloading")
+work.finish()
 ```
 
 #### ask
@@ -1119,7 +1120,9 @@ pub type Progress = {
 ```
 
 A bar of the progress of some work, or a spinner when it has no total,
-that the console's output shows on a terminal.
+in the live region at the bottom of a terminal: what the program prints
+goes above it, two at once stack, and a spinner turns by itself. Off a
+terminal it writes one line when it finishes.
 
 ```tondo
 import std.cli
@@ -1140,10 +1143,71 @@ pub fn Progress.advance(self, by: Int = 1)
 
 Counts `by` more steps done.
 
+#### Progress.say
+
+```tondo
+pub fn Progress.say(self, label: String)
+```
+
+Says what the work does now, in place of its label.
+
 #### Progress.finish
 
 ```tondo
-pub fn Progress.finish(self)
+pub fn Progress.finish(self, failed: Bool = false)
 ```
 
-Ends the progress: a full bar on a terminal, or one line without one.
+Ends the progress, its last line left above what comes after: a full
+bar, or `✓` and the label, and `✗` when it `failed`. Off a terminal, its
+one line.
+
+### Live
+
+```tondo
+pub type Live = {
+    // private fields
+}
+```
+
+Text at the bottom of a terminal, drawn again in place each time it is
+shown: what the program prints goes above it, and two at once, or one
+and a progress, stack. Off a terminal it writes nothing until it ends,
+then its last text once. It ends with its value, through a panic or a
+cancellation too, or at `end`, its last text left written above what
+comes after.
+
+```tondo
+import std.cli
+import std.time
+
+let live = cli.Live()
+for second in 0..3 {
+    live.show(cli.panel("{3 - second} s left", title: "Launch"))
+    time.sleep(time.milliseconds(10))
+}
+live.end()
+```
+
+#### Live
+
+```tondo
+pub fn Live(): Live
+```
+
+A live region of its own, empty until shown.
+
+#### Live.show
+
+```tondo
+pub fn Live.show(self, text: String)
+```
+
+Shows `text` in place of what it showed.
+
+#### Live.end
+
+```tondo
+pub fn Live.end(self)
+```
+
+Ends it now, its last text left written.

@@ -415,9 +415,12 @@ struct Stderr;
 
 impl Host for Stderr {
     fn write(&mut self, data: &[u8]) -> std::io::Result<()> {
-        // Keeps the order of output and errors on a terminal.
+        // Keeps the order of output and errors on a terminal, and the live
+        // region below them.
         super::flush_stdout();
-        std::io::stderr().write_all(data)
+        let mut written = Ok(());
+        super::console::region_around(|| written = std::io::stderr().write_all(data));
+        written
     }
 }
 
@@ -1181,6 +1184,8 @@ pub extern "C" fn tondo_rt_console_read_line() -> *mut Str {
         s.read_line(|line| Made(str_new(String::from_utf8_lossy(line).as_bytes()))).ok().flatten()
     });
     unsafe { tondo_rt_stream_release(stream) };
+    // The line typed ended the prompt's: the live region comes back.
+    super::console::region_read();
     line.map_or(std::ptr::null_mut(), |l| l.0)
 }
 

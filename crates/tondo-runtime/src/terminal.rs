@@ -250,6 +250,8 @@ fn started() {
 /// what it says of a panic, so that it shows on the main screen: also from
 /// a crash, so it does not wait for a lock another thread holds.
 pub(crate) fn give_back() {
+    // What the live region last showed stays, the cursor below it.
+    super::console::region_finish();
     if let Ok(mut stack) = STACK.try_lock() {
         stack.restore();
         stack.ended = true;
@@ -299,7 +301,7 @@ pub(crate) fn resume() {
 // ---------------------------------------------------------------------------
 
 /// The columns and rows of the terminal of the console's output.
-fn size() -> Option<(i64, i64)> {
+pub(crate) fn size() -> Option<(i64, i64)> {
     if super::io::tondo_rt_console_terminal(0) == 0 {
         return None;
     }
@@ -363,6 +365,8 @@ pub(crate) fn redraw() {
         unsafe { super::tasks::offer_latest(sender.0, value.as_mut_ptr().cast()) };
     }
     LISTENING.store(!senders.is_empty(), Ordering::SeqCst);
+    drop(senders);
+    super::console::region_redraw();
 }
 
 /// Whether a channel of redraws is left: a task waiting on it waits for the
