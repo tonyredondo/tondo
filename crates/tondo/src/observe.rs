@@ -3,7 +3,8 @@
 //! `$TMPDIR/tondo-<uid>`, named after its process.
 
 use serde_json::{Value, json};
-use std::io::{BufRead, BufReader, IsTerminal, Write};
+use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -19,9 +20,48 @@ pub(crate) struct Program {
     pub(crate) writer: UnixStream,
 }
 
+/// Where a process's socket is when it is in a file system this one does
+/// not share: as a container that shares the processes of another, as an
+/// ephemeral container of Kubernetes does, or this machine looking into a
+/// container. `/proc` gives its root, its `TMPDIR`, its user, and its own
+/// process ID, after which the socket is named.
+fn socket_elsewhere(pid: u32) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    let field = |name: &str| status.lines().find_map(|line| line.strip_prefix(name)).map(str::split_whitespace);
+    let uid = field("Uid:")?.nth(1)?.to_string();
+    let own = field("NSpid:").and_then(|mut ids| ids.next_back()).unwrap_or("").to_string();
+    let own = if own.is_empty() { pid.to_string() } else { own };
+    let environ = std::fs::read(format!("/proc/{pid}/environ")).unwrap_or_default();
+    let tmp = environ
+        .split(|&b| b == 0)
+        .find_map(|entry| entry.strip_prefix(b"TMPDIR="))
+        .map_or(PathBuf::from("/tmp"), |dir| PathBuf::from(std::ffi::OsStr::from_bytes(dir)));
+    let tmp = PathBuf::from(format!("/proc/{pid}/root")).join(tmp.strip_prefix("/").unwrap_or(&tmp));
+    let path = tmp.join(format!("tondo-{uid}")).join(&own);
+    if path.exists() {
+        return Some(path);
+    }
+    // In a namespace of users of its own, as a container without root
+    // has, its user is another there than here.
+    let entries = std::fs::read_dir(&tmp).ok()?;
+    entries
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("tondo-"))
+        .map(|entry| entry.path().join(&own))
+        .find(|path| path.exists())
+}
+
+/// Whether a process is in another file system than this one's.
+fn elsewhere(pid: u32) -> bool {
+    let namespace = |pid: &str| std::fs::read_link(format!("/proc/{pid}/ns/mnt")).ok();
+    namespace(&pid.to_string()).is_some_and(|theirs| Some(theirs) != namespace("self"))
+}
+
 impl Program {
     fn connect(pid: u32) -> std::io::Result<Program> {
-        let stream = UnixStream::connect(directory().join(pid.to_string()))?;
+        let path = elsewhere(pid).then(|| socket_elsewhere(pid)).flatten();
+        let stream = UnixStream::connect(path.unwrap_or_else(|| directory().join(pid.to_string())))?;
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         Ok(Program { pid, reader: BufReader::new(stream.try_clone()?), writer: stream })
     }
@@ -58,10 +98,15 @@ pub(crate) fn alive(pid: u32) -> bool {
 }
 
 fn running() -> Vec<Value> {
-    let Ok(entries) = std::fs::read_dir(directory()) else { return Vec::new() };
-    let mut found = Vec::new();
+    let (mut found, seen) = elsewhere_running();
+    let Ok(entries) = std::fs::read_dir(directory()) else { return found };
     for entry in entries.flatten() {
         let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        // A socket of another container that shares this directory is
+        // named by its process ID there: it is listed by the one here.
+        if entry.metadata().is_ok_and(|file| seen.contains(&(file.dev(), file.ino()))) {
+            continue;
+        }
         // One that does not answer soon must not hold the list up.
         let info = Program::connect(pid).map_err(|e| e.to_string()).and_then(|mut p| {
             let _ = p.reader.get_ref().set_read_timeout(Some(Duration::from_millis(500)));
@@ -77,6 +122,31 @@ fn running() -> Vec<Value> {
     }
     found.sort_by_key(|info| info["pid"].as_u64());
     found
+}
+
+/// The programs of the processes this one sees that are in another file
+/// system, as another container's, whose sockets `/proc` reaches; each
+/// said by the process ID this one knows it by; and the sockets, by device
+/// and inode.
+fn elsewhere_running() -> (Vec<Value>, Vec<(u64, u64)>) {
+    let Ok(entries) = std::fs::read_dir("/proc") else { return (Vec::new(), Vec::new()) };
+    let (mut found, mut seen) = (Vec::new(), Vec::new());
+    for entry in entries.flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        let Some(socket) = elsewhere(pid).then(|| socket_elsewhere(pid)).flatten() else { continue };
+        if let Ok(file) = std::fs::metadata(&socket) {
+            seen.push((file.dev(), file.ino()));
+        }
+        let info = Program::connect(pid).map_err(|e| e.to_string()).and_then(|mut p| {
+            let _ = p.reader.get_ref().set_read_timeout(Some(Duration::from_millis(500)));
+            p.ask("info")
+        });
+        if let Ok(mut info) = info {
+            info["pid"] = json!(pid);
+            found.push(info);
+        }
+    }
+    (found, seen)
 }
 
 pub(crate) fn program_name(info: &Value) -> &str {
@@ -188,8 +258,21 @@ pub(crate) fn via(command: &str, name: &str) -> Result<Program, String> {
     let mut first = String::new();
     let _ = output.read_line(&mut first);
     let Some(pid) = serde_json::from_str::<Value>(&first).ok().and_then(|v| v["relay"].as_u64()) else {
-        let _ = child.wait();
-        return Err(format!("`{command} tondo relay {name}` did not reach the program: it says what failed above"));
+        // What the command said instead, which may come on its output, as
+        // `docker exec -i` gives its own errors.
+        let mut said = first;
+        let _ = output.read_to_string(&mut said);
+        let status = child.wait().ok().and_then(|status| status.code());
+        let said = said.trim();
+        let said = if said.is_empty() { String::new() } else { format!(": {said}") };
+        let hint = match status {
+            // A shell's "command not found", as where nothing installed it.
+            Some(127) => {
+                "; no `tondo` is where it reaches: put one there, as a static tondo copied into a container with `docker cp tondo box:/tondo`, reached with `--via \"docker exec -i -e PATH=/ box\"`"
+            }
+            _ => "",
+        };
+        return Err(format!("`{command} tondo relay {name}` did not reach the program{said}{hint}"));
     };
     // One end of a pair of sockets is the connection; the other goes to
     // and from the relay.

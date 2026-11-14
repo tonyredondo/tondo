@@ -61,7 +61,10 @@ fn main() -> ExitCode {
     // The tools that look at a running program reach one on another
     // machine, or in a container, with `--via <command>`.
     let mut args = args.clone();
-    let observing = matches!(command, "ps" | "counters" | "trace" | "profile" | "dump" | "reload");
+    let observing = matches!(
+        command,
+        "ps" | "counters" | "trace" | "profile" | "dump" | "reload" | "blocked" | "requests" | "logpoint"
+    );
     if let Some(at) = args.iter().position(|a| a == "--via").filter(|_| observing) {
         let Some(via) = args.get(at + 1).map(|v| v.to_string_lossy().into_owned()) else {
             eprintln!("tondo: --via takes the command that reaches the program, as `ssh host`");
@@ -1132,7 +1135,7 @@ fn source_command(args: &[OsString]) -> Result<ExitCode, String> {
 }
 
 fn logpoint_command(args: &[OsString]) -> Result<ExitCode, String> {
-    const USAGE: &str = "usage: tondo logpoint <pid|name> <file:line> [<text>] [--if <condition>] [--request <text>] [--dump <file>] [--stop <seconds>] [--max <n>] [--for <seconds>] [--json]";
+    const USAGE: &str = "usage: tondo logpoint <pid|name> <file:line> [<text>] [--if <condition>] [--request <text>] [--dump <file>] [--stop <seconds>] [--max <n>] [--for <seconds>] [--via <command>] [--json]";
     let (mut given, mut max, mut seconds, mut json, mut condition) = (Vec::new(), None, None, false, None);
     let (mut dump, mut stop, mut request) = (None, None, None);
     let mut rest = args.iter().filter_map(|a| a.to_str());
@@ -1161,7 +1164,7 @@ fn logpoint_command(args: &[OsString]) -> Result<ExitCode, String> {
 }
 
 fn blocked_command(args: &[OsString]) -> Result<ExitCode, String> {
-    const USAGE: &str = "usage: tondo blocked <pid|name> [--json]";
+    const USAGE: &str = "usage: tondo blocked <pid|name> [--via <command>] [--json]";
     let json = args.iter().any(|a| a == "--json");
     let mut names = args.iter().filter(|a| *a != "--json").filter_map(|a| a.to_str());
     let (Some(name), None) = (names.next(), names.next()) else { return Err(USAGE.to_string()) };
@@ -1219,7 +1222,7 @@ fn eval_command(args: &[OsString]) -> Result<ExitCode, String> {
 }
 
 fn requests_command(args: &[OsString]) -> Result<ExitCode, String> {
-    const USAGE: &str = "usage: tondo requests <pid|name> [--json]";
+    const USAGE: &str = "usage: tondo requests <pid|name> [--via <command>] [--json]";
     let json = args.iter().any(|a| a == "--json");
     let mut names = args.iter().filter(|a| *a != "--json").filter_map(|a| a.to_str());
     let (Some(name), None) = (names.next(), names.next()) else { return Err(USAGE.to_string()) };

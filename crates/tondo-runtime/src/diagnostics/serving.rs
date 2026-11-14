@@ -62,7 +62,12 @@ pub(crate) fn start() {
         unsafe { std::env::remove_var("TONDO_DEBUG") };
         crate::debugger::WAIT.store(true, Ordering::Relaxed);
     }
-    if !listen() {
+    if let Err(why) = listen() {
+        // Asked for and missing, which nothing else would tell: as in a
+        // container with no directory to write in.
+        if on(&config.diagnostics) || debugged {
+            let _ = writeln!(std::io::stderr(), "tondo runtime: the tools cannot reach this program: {why}");
+        }
         return;
     }
     // `tondo trace -- program` traces from the start: the program waits
@@ -87,23 +92,31 @@ pub(crate) fn start_again() {
         schedule_dumps();
     }
     if LISTENED.load(Ordering::Relaxed) {
-        listen();
+        let _ = listen();
     }
 }
 
-/// Listens on the program's socket, from a thread of its own.
-fn listen() -> bool {
+/// Listens on the program's socket, from a thread of its own; or why it
+/// cannot.
+fn listen() -> Result<(), String> {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt};
     let directory = directory();
-    let _ = std::fs::DirBuilder::new().mode(0o700).create(&directory);
+    let made = std::fs::DirBuilder::new().mode(0o700).create(&directory);
     let private = std::fs::symlink_metadata(&directory)
         .is_ok_and(|m| m.is_dir() && m.uid() == unsafe { libc::geteuid() } && m.mode() & 0o077 == 0);
     if !private {
-        return false;
+        return Err(match made {
+            Err(error) if !directory.is_dir() => format!(
+                "{} cannot be made ({error}); give TMPDIR a directory it can write, as a tmpfs of its container",
+                directory.display()
+            ),
+            _ => format!("{} is not this user's alone; make it so with `chmod 700`", directory.display()),
+        });
     }
     let path = directory.join(std::process::id().to_string());
     let _ = std::fs::remove_file(&path);
-    let Ok(listener) = UnixListener::bind(&path) else { return false };
+    let listener =
+        UnixListener::bind(&path).map_err(|error| format!("its socket {} cannot be made ({error})", path.display()))?;
     *SOCKET.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
     extern "C" fn remove(_: *mut u8) {
         // The tools' business, which a replay does again.
@@ -118,7 +131,10 @@ fn listen() -> bool {
     // A runtime thread, which a deadlock does not take for one of C.
     let served = crate::tasks::try_spawn_thread(Some(128 * 1024), move || serve(listener)).is_ok();
     LISTENED.store(served, Ordering::Relaxed);
-    served
+    match served {
+        true => Ok(()),
+        false => Err("no thread can be started to answer them".into()),
+    }
 }
 
 /// At a library's end: the thread that answers the tools, woken, ends.

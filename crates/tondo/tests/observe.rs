@@ -459,6 +459,51 @@ fn a_dump_keeps_the_bindings_of_a_task_that_waits() {
     assert_eq!(bindings, ["items: Array[String] = [\"a\", \"b\", \"c\"]", "job: Join[Int] = Join[Int]"], "{locals}");
 }
 
+/// A program in another file system, as another container's whose
+/// processes this one shares (`kubectl debug`, `docker run
+/// --pid=container:`), is reached through `/proc`: here, one in a
+/// namespace of its own with a `/tmp` of its own, as `unshare` makes,
+/// where a machine allows it.
+#[test]
+#[cfg(target_os = "linux")]
+fn the_tools_reach_a_program_in_another_file_system() {
+    let isolated = |command: &str| {
+        let mut unshare = Command::new("unshare");
+        unshare.args(["--user", "--map-root-user", "--mount", "sh", "-c"]);
+        unshare.arg(format!("mount -t tmpfs none /tmp && {command}"));
+        unshare
+    };
+    if !isolated("true").output().is_ok_and(|output| output.status.success()) {
+        eprintln!("not checked: this machine makes no namespaces for a user");
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("elsewhere");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("isolated.to"), PROGRAM).unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "isolated.to", "--output", "isolated"])
+        .current_dir(&dir)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let mut child = isolated(&format!("exec {}", dir.join("isolated").display()))
+        .env("TONDO_DIAGNOSTICS", "1")
+        .env_remove("TMPDIR")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
+    assert_eq!(line, "ready\n");
+    assert!(listed(child.id()));
+    let sample = tondo(&["counters", &child.id().to_string(), "--count", "1", "--json"]);
+    let orders = sample["counters"].as_array().and_then(|c| c.iter().find(|c| c["name"] == "program.orders"));
+    assert_eq!(orders.map(|c| &c["value"]), Some(&serde_json::json!(42)), "{sample}");
+    drop(child.stdin.take());
+    assert!(child.wait().unwrap().success());
+}
+
 /// With no `TONDO_DUMP`, a crash leaves its dump, values and all, in the
 /// cache of Tondo, where only its user can read it, the latest 20 kept; with
 /// `TONDO_DUMP=off`, none.
@@ -495,6 +540,46 @@ fn a_crash_leaves_a_dump_by_itself() {
     let before = std::fs::read_dir(&dumps).unwrap().count();
     assert!(!run(Some("off")).contains("a dump of the program"));
     assert_eq!(std::fs::read_dir(&dumps).unwrap().count(), before);
+    // A directory given that is not there yet is made, for its user alone.
+    let given = dir.join("volume/dumps");
+    assert!(run(given.to_str()).contains(&format!("a dump of the program is in {}", given.display())));
+    assert_eq!(std::fs::metadata(&given).unwrap().permissions().mode() & 0o777, 0o700);
+    // Where none can be made, as in a container whose files are read-only,
+    // it says why and what to give instead.
+    std::fs::write(dir.join("not-a-directory"), "").unwrap();
+    let said = run(dir.join("not-a-directory/dumps").to_str());
+    assert!(said.contains("cannot write a dump to") && !said.contains("chmod"), "{said}");
+    let built = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["build", "falls.to"]).current_dir(&dir).status();
+    assert!(built.unwrap().success());
+    let mut command = Command::new(dir.join("falls"));
+    command.env("XDG_CACHE_HOME", dir.join("not-a-directory")).env_remove("TONDO_DUMP");
+    let said = String::from_utf8_lossy(&command.output().unwrap().stderr).into_owned();
+    assert!(said.contains("cannot be made") && said.contains("give TONDO_DUMP a directory"), "{said}");
+}
+
+/// A program asked to serve the tools that cannot, as one whose `TMPDIR`
+/// it cannot write in a container, says so and why, and runs on.
+#[test]
+fn a_program_the_tools_cannot_reach_says_why() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("unreachable");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("ends.to"), "import std.console\n\nfn main() {\n    console.println(\"ran\")\n}\n")
+        .unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "ends.to", "--output", "ends"])
+        .current_dir(&dir)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    std::fs::write(dir.join("not-a-directory"), "").unwrap();
+    let output = Command::new(dir.join("ends"))
+        .env("TONDO_DIAGNOSTICS", "1")
+        .env("TMPDIR", dir.join("not-a-directory"))
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(said.contains("the tools cannot reach this program") && said.contains("TMPDIR"), "{said}");
+    assert_eq!((output.status.code(), String::from_utf8_lossy(&output.stdout).as_ref()), (Some(0), "ran\n"));
 }
 
 const DEBUGGED: &str = r#"import std.console
@@ -1595,6 +1680,13 @@ fn debugger_reaches_a_program_through_a_relay() {
     let counters = observed(&["counters", &pid, "--count", "1"]);
     let dumped = observed(&["dump", &pid, "--output", dir.join("looped.dump.json").to_str().unwrap()]);
     let listed = observed(&["ps"]);
+    let blocked = observed(&["blocked", &pid]);
+    // A command that reaches no `tondo` says so, and how to put one there.
+    let unreached = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["counters", &pid, "--via", "env PATH=/nonexistent"])
+        .output()
+        .unwrap();
+    let unreached = String::from_utf8_lossy(&unreached.stderr).into_owned();
     let _ = program.kill();
     let _ = program.wait();
     let said = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -1607,6 +1699,11 @@ fn debugger_reaches_a_program_through_a_relay() {
     assert!(dumped["summary"].as_str().is_some_and(|s| s.starts_with("looped (pid ")), "{dumped}");
     let programs = listed["programs"].as_array();
     assert!(programs.is_some_and(|p| p.iter().any(|p| p["pid"].as_u64() == Some(program_id))), "{listed}");
+    assert!(blocked.get("ok").is_some(), "{blocked}");
+    assert!(
+        unreached.contains("did not reach the program") && unreached.contains("no `tondo` is where it reaches"),
+        "{unreached}"
+    );
 }
 
 /// `record` keeps each line a task runs with its bindings; `back`,

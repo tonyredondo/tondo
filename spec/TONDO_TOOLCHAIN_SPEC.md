@@ -769,18 +769,27 @@ UTF-16 si no.
 
 Un programa de Tondo que arranca con `TONDO_DIAGNOSTICS=1` atiende a las
 herramientas que lo observan en un socket Unix, `$TMPDIR/tondo-<uid>/<pid>`,
-dentro de un directorio que solo su usuario puede abrir. Lo sirve un hilo
+dentro de un directorio que solo su usuario puede abrir; si no puede abrirlo,
+como en un contenedor sin un `TMPDIR` donde escribir, lo dice una vez en la
+salida de error, con por qué y qué dar, y sigue sin él. Lo sirve un hilo
 propio del runtime, así que responde aunque sus workers estén ocupados o
 bloqueados. Sin esa variable el programa no abre el socket ni cuenta nada para
 las herramientas, así que no paga por ellas; `tondo trace -- <program>` y
 `TONDO_DUMP` la dan por puesta. Un programa que termina borra su socket, y
-`tondo ps` borra los de los que terminaron sin hacerlo.
+`tondo ps` borra los de los que terminaron sin hacerlo. Las herramientas
+llegan también al programa de un proceso que ven en otro sistema de archivos,
+como desde un contenedor que comparte los procesos de otro (`kubectl debug`,
+`docker run --pid=container:<caja>`): por `/proc/<pid>/root`, en el
+`TMPDIR` de ese proceso, cuando pueden leerlo; `ps` los lista con el pid que
+tienen aquí.
 
-Las órdenes que miran un programa en ejecución, `ps`, `counters`, `trace`,
-`profile`, `dump`, `reload` y `debug`, llegan con `--via <command>` a uno de
-otra máquina o de un contenedor: ejecutan `<command> tondo relay <name>`,
-como `ssh host`, y hablan con el programa por la entrada y la salida de ese
-`tondo relay` (sección 7.6); `ps` ejecuta allí `tondo ps`.
+Las órdenes que miran un programa en ejecución, `ps`, `counters`, `blocked`,
+`requests`, `trace`, `profile`, `dump`, `logpoint`, `reload` y `debug`, llegan
+con `--via <command>` a uno de otra máquina o de un contenedor: ejecutan
+`<command> tondo relay <name>`, como `ssh host`, y hablan con el programa por
+la entrada y la salida de ese `tondo relay` (sección 7.6); `ps` ejecuta allí
+`tondo ps`. Si ese comando no llega al programa, dicen lo que dijo, y si no
+encontró `tondo`, cómo ponerlo allí.
 
 - `ps` lista los programas del usuario en ejecución: su proceso, cuánto llevan
   en marcha y su línea de órdenes; con `--json`, como `programs` de
@@ -845,9 +854,11 @@ Para ver dónde están las tareas que corren, los workers se paran un momento,
 y el que no llega a un punto donde pararse da su pila por una señal. Un
 programa que acaba en un pánico, en una señal fatal o en un deadlock deja su
 volcado antes de terminar, con los valores, y dice en la salida de error dónde:
-en `TONDO_DUMP=<dir>` si se da, y si no en la caché de Tondo,
-`$XDG_CACHE_HOME/tondo/dumps` o `~/.cache/tondo/dumps`, un directorio que solo
-su usuario puede abrir, donde quedan los 20 últimos. No cuesta nada mientras
+en `TONDO_DUMP=<dir>` si se da, que crea si falta, y si no en la caché de
+Tondo, `$XDG_CACHE_HOME/tondo/dumps` o `~/.cache/tondo/dumps`, un directorio
+que solo su usuario puede abrir, donde quedan los 20 últimos. Si no puede
+crearlo, como con un sistema de archivos de solo lectura, lo dice una vez,
+con qué dar en `TONDO_DUMP`, y termina igual. No cuesta nada mientras
 el programa corre: se escribe al fallar. `TONDO_DUMP=off` no deja ninguno, y
 solo un `TONDO_DUMP` dado pone en marcha lo que un volcado de un programa en
 marcha muestra, como los eventos y el orden de los locks. Un pánico que

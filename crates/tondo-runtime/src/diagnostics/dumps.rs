@@ -200,27 +200,37 @@ pub(super) const KEPT_DUMPS: usize = 20;
 /// `off`, in the user's cache of Tondo, which only the user can read, as a
 /// dump holds the program's values; and whether it is that cache.
 pub(super) fn crash_dir() -> Option<(PathBuf, bool)> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
     if let Some(dir) = asked_dump() {
-        return Some((PathBuf::from(dir), false));
+        // Made when it is missing, as the cache is, as only its user reads.
+        let dir = PathBuf::from(dir);
+        let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir);
+        return Some((dir, false));
     }
     if config().dump.is_some() {
         return None;
     }
-    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
     let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
         .unwrap_or_else(std::env::temp_dir);
     let dir = base.join("tondo").join("dumps");
-    let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir);
+    let made = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir);
     let private = std::fs::symlink_metadata(&dir)
         .is_ok_and(|m| m.is_dir() && m.uid() == unsafe { libc::geteuid() } && m.mode() & 0o077 == 0);
     if !private {
-        // Said, as a dump that is not left otherwise goes unnoticed.
-        let why = format!(
-            "no dump: {} is not this user's alone; make it so with `chmod 700`, or give TONDO_DUMP a directory",
-            dir.display()
-        );
+        // Said, as a dump that is not left otherwise goes unnoticed: as a
+        // container's file system that is read-only.
+        let why = match made {
+            Err(error) if !dir.is_dir() => format!(
+                "no dump: {} cannot be made ({error}); give TONDO_DUMP a directory the program can write, as a volume or a tmpfs of its container, or `off`",
+                dir.display()
+            ),
+            _ => format!(
+                "no dump: {} is not this user's alone; make it so with `chmod 700`, or give TONDO_DUMP a directory",
+                dir.display()
+            ),
+        };
         let _ = writeln!(std::io::stderr(), "tondo runtime: {why}");
     }
     private.then_some((dir, true))

@@ -204,18 +204,18 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "logpoint",
         usage: &[
-            "tondo logpoint <pid|name> <file:line> [<text>] [--if <condition>] [--request <text>] [--dump <file>] [--stop <seconds>] [--max <n>] [--for <seconds>] [--json]",
+            "tondo logpoint <pid|name> <file:line> [<text>] [--if <condition>] [--request <text>] [--dump <file>] [--stop <seconds>] [--max <n>] [--for <seconds>] [--via <command>] [--json]",
         ],
         summary: &["what a line of a running program holds as it goes", "by, without stopping it, in any build"],
     },
     Command {
         name: "blocked",
-        usage: &["tondo blocked <pid|name> [--json]"],
+        usage: &["tondo blocked <pid|name> [--via <command>] [--json]"],
         summary: &["say who waits for whom in a running program"],
     },
     Command {
         name: "requests",
-        usage: &["tondo requests <pid|name> [--json]"],
+        usage: &["tondo requests <pid|name> [--via <command>] [--json]"],
         summary: &["say what each request of a running program did, task by task"],
     },
     Command {

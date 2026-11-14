@@ -111,11 +111,12 @@ usage:
   tondo source <file> --from <dump|recording|executable> [--line <n>] [--json]
                                                        the file of a build as it was: here if it is the same,
                                                        or from its repository, at the build's commit
-  tondo logpoint <pid|name> <file:line> [<text>] [--if <condition>] [--request <text>] [--dump <file>] [--stop <seconds>] [--max <n>] [--for <seconds>] [--json]
+  tondo logpoint <pid|name> <file:line> [<text>] [--if <condition>] [--request <text>] [--dump <file>] [--stop <seconds>] [--max <n>] [--for <seconds>] [--via <command>] [--json]
                                                        what a line of a running program holds as it goes
                                                        by, without stopping it, in any build
-  tondo blocked <pid|name> [--json]                    say who waits for whom in a running program
-  tondo requests <pid|name> [--json]                   say what each request of a running program did, task by task
+  tondo blocked <pid|name> [--via <command>] [--json]  say who waits for whom in a running program
+  tondo requests <pid|name> [--via <command>] [--json]
+                                                       say what each request of a running program did, task by task
   tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--via <command>] [--json]
                                                        watch a running program's counters, the runtime's
                                                        and its own (std.diagnostics)
