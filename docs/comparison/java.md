@@ -556,10 +556,7 @@ import std.console
 
 fn main() {
     let text = "to be or not to be that is the question to be"
-    var counts: Map[String, Int] = [:]
-    for word in text.split(" ") {
-        counts[word, default: 0] += 1
-    }
+    let counts = text.split(" ").countBy((word) { word })
     // The three most frequent; those that tie stay in the order they came.
     let top = counts.entries().collect().sortedBy((entry) { -entry.1 }).take(3)
     console.println(top.map((entry) { "{entry.0} {entry.1}" }).join(", "))

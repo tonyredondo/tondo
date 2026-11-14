@@ -48,4 +48,4 @@ for entry in entries {
 }
 let largest = sized.sortedBy((pair) { -pair.0 }).take(wanted)
 console.println(cli.table(largest.map((pair) { Found { size: readable(pair.0), file: pair.1 } })))
-console.println("{sized.length()} files, {readable(sized.map((pair) { pair.0 }).sum())} in all")
+console.println("{sized.length()} files, {readable(sized.sumBy((pair) { pair.0 }))} in all")
