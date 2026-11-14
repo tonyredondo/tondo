@@ -465,7 +465,7 @@ What is under way and what is planned:
 | Work | State |
 | --- | --- |
 | Every row of [`bench/`](bench/README.md) at or under Go's, in time and in memory, and the servers in latency | Under way: that page has the rows still behind, each with its reason |
-| A chain of an iterator at the cost of the loop it stands for: its records and options stay in registers; the program's own bindings are next | Under way |
+| A chain of an iterator at the cost of the loop it stands for | Under way: its records and options stay in registers and the elements it only reads are not counted; the program's own bindings are next |
 | A chain of arrays without the arrays between, short texts without the heap | Next in the optimizer |
 | A call from a thread of C into Tondo at the cost of Go's | Under way |
 | The rest of what Spectre draws, in `std.cli`: panels, rules, trees, columns, charts, a selection of several, a region redrawn in place; then large letters, a calendar, panes that split the screen, a selection with search and JSON in colors | Accepted, not started |
