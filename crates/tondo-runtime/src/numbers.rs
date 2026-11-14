@@ -110,25 +110,38 @@ pub unsafe extern "C" fn tondo_rt_int_parse(
     signed: u8,
     out: *mut [u64; 2],
 ) -> u8 {
-    let text = String::from_utf8_lossy(unsafe { super::str_bytes(s) });
-    let parsed = parse(&text, radix, bits, signed != 0);
+    let parsed = parse(unsafe { super::str_text(s) }, radix, bits, signed != 0);
     let value = parsed.unwrap_or(0);
     unsafe { *out = [value as u64, (value >> 64) as u64] };
     parsed.is_some() as u8
 }
 
+/// In one pass over the bytes, with nothing made: the digits accumulate as
+/// they come, a `_` only between two of them.
 fn parse(s: &str, radix: i64, bits: u32, signed: bool) -> Option<u128> {
     let radix = u32::try_from(radix).ok().filter(|r| (2..=36).contains(r))?;
-    let (negative, digits) = match s.as_bytes().first()? {
-        b'-' => (true, &s[1..]),
-        b'+' => (false, &s[1..]),
-        _ => (false, s),
+    let bytes = s.as_bytes();
+    let (negative, digits) = match bytes.first()? {
+        b'-' => (true, &bytes[1..]),
+        b'+' => (false, &bytes[1..]),
+        _ => (false, bytes),
     };
-    if digits.is_empty() || digits.starts_with('_') || digits.ends_with('_') || digits.contains("__") {
+    if digits.first().is_none_or(|&b| b == b'_') || digits.last() == Some(&b'_') {
         return None;
     }
-    let digits: String = digits.chars().filter(|&c| c != '_').collect();
-    let magnitude = u128::from_str_radix(&digits, radix).ok()?;
+    let (mut magnitude, mut separated) = (0u128, false);
+    for &byte in digits {
+        if byte == b'_' {
+            if separated {
+                return None;
+            }
+            separated = true;
+            continue;
+        }
+        separated = false;
+        let digit = char::from(byte).to_digit(radix)?;
+        magnitude = magnitude.checked_mul(u128::from(radix))?.checked_add(u128::from(digit))?;
+    }
     let (min, max) = bounds(bits, signed);
     match negative {
         true if magnitude == 0 => Some(0),
@@ -266,6 +279,13 @@ mod tests {
         assert_eq!(parse("ff", 16, 8, false), Some(255));
         assert_eq!(parse("340282366920938463463374607431768211455", 10, 128, false), Some(u128::MAX));
         assert_eq!(parse("1_000", 10, 64, true), Some(1000));
+        assert_eq!(parse("+7", 10, 64, true), Some(7));
+        assert_eq!(parse("Zz", 36, 64, true), Some(35 * 36 + 35));
+        for wrong in ["", "-", "_1", "1_", "1__0", "-+5", "1 2", "١٢"] {
+            assert_eq!(parse(wrong, 10, 64, true), None, "{wrong}");
+        }
+        assert_eq!(parse("18446744073709551616", 10, 64, false), None);
+        assert_eq!(parse("3402823669209384634633746074317682114560", 10, 128, false), None);
         assert_eq!(parse("-1", 10, 32, false), None);
     }
 }
