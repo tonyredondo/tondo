@@ -23,6 +23,12 @@ fn main(): !cli.TerminalError {
         "secret" => console.println("got {cli.secret("Password")}")
         "raw" => raw()?
         "live" => living()
+        "search" => {
+            let drinks = ["tea", "coffee", "water", "cocoa"]
+            console.println("found {drinks[cli.choose("Find", drinks, search: true)]}")
+            let picked = cli.chooseMany("Pick", drinks, search: true)
+            console.println("picked {picked}")
+        }
         "sizes" => {
             // Only a change of size can wake it: no deadlock.
             for size in cli.redraws() {
@@ -461,5 +467,24 @@ fn a_live_region_stays_below_what_the_program_prints() {
     terminal.expect("✗ Still waiting\n");
     // The program ends with the region's last text written.
     terminal.expect("live two\n");
+    assert_eq!(terminal.status(), 0);
+}
+
+#[test]
+fn a_choice_with_search_shows_what_matches_what_is_typed() {
+    let mut terminal = Terminal::start("search", false);
+    terminal.expect("❯ tea");
+    // Typed letters narrow the list to the options that have them in order.
+    terminal.send("co");
+    terminal.expect("/ co");
+    terminal.expect("❯ coffee");
+    terminal.send("a");
+    terminal.expect("❯ cocoa");
+    terminal.send("\x7f\x7f\x7f\x1b[B\r");
+    terminal.expect("Find: coffee\nfound coffee\n");
+    // Several: Tab marks, as Space is typed.
+    terminal.expect("❯ ○ tea");
+    terminal.send("\tw\t\r");
+    terminal.expect("Pick: tea, water\npicked [0, 2]\n");
     assert_eq!(terminal.status(), 0);
 }

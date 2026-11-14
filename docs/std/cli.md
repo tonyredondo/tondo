@@ -309,7 +309,7 @@ subcommands.
 
 `tondo api std.cli` shows the same in a terminal.
 
-- [Functions](#functions): [`parse`](#parse), [`parseArgs`](#parseargs), [`help`](#help), [`completions`](#completions), [`isTerminal`](#isterminal), [`terminalWidth`](#terminalwidth), [`terminalSize`](#terminalsize), [`redraws`](#redraws), [`markup`](#markup), [`table`](#table), [`panel`](#panel), [`rule`](#rule), [`beside`](#beside), [`tree`](#tree), [`bars`](#bars), [`breakdown`](#breakdown), [`progress`](#progress), [`ask`](#ask), [`confirm`](#confirm), [`choose`](#choose), [`chooseMany`](#choosemany), [`secret`](#secret)
+- [Functions](#functions): [`parse`](#parse), [`parseArgs`](#parseargs), [`help`](#help), [`completions`](#completions), [`isTerminal`](#isterminal), [`terminalWidth`](#terminalwidth), [`terminalSize`](#terminalsize), [`redraws`](#redraws), [`markup`](#markup), [`table`](#table), [`panel`](#panel), [`rule`](#rule), [`beside`](#beside), [`tree`](#tree), [`bars`](#bars), [`breakdown`](#breakdown), [`calendar`](#calendar), [`json`](#json), [`progress`](#progress), [`ask`](#ask), [`confirm`](#confirm), [`choose`](#choose), [`chooseMany`](#choosemany), [`secret`](#secret)
 - [Argument](#argument)
 - [Option](#option)
 - [Rest](#rest)
@@ -717,6 +717,67 @@ console.println(cli.breakdown([("used", 61.0), ("free", 39.0)], width: 20))
 // █ used 61%  ▓ free 39%
 ```
 
+#### calendar
+
+```tondo
+pub fn calendar(
+    year: Int,
+    month: Int,
+    marked: Array[time.DateTime] = [],
+    first: time.Weekday = time.Weekday.Monday,
+    locale: String = "en",
+): String
+```
+
+A month as a calendar: its name and year, the names of the days of the
+week from `first`, and the days under them. On a terminal today is
+underlined and the days of `marked` in reverse; off one, the days of
+`marked` are in brackets, so what a script writes still shows them. The
+names are those of `locale`.
+
+```tondo
+import std.cli
+import std.console
+import std.time
+
+let release = time.DateTime { year: 2026, month: 11, day: 14, hour: 0, minute: 0, second: 0, nanosecond: 0 }
+console.println(cli.calendar(2026, 11, marked: [release]))
+//        November 2026
+//  Mo  Tu  We  Th  Fr  Sa  Su
+//                           1
+//   2   3   4   5   6   7   8
+//   9  10  11  12  13 [14] 15
+// ...
+```
+
+#### json
+
+```tondo
+pub fn json[T: reflect.Reflect + serialization.Encode](value: T, indent: Int = 2): String
+```
+
+A value as JSON, as `json.encode` writes it, with each level `indent`
+spaces in, or on one line with `indent: 0`; on a terminal its keys,
+texts, numbers and `true`, `false` and `null` have colors of their own.
+What is `@secret` is `"<secret>"`, as dumps show it.
+
+```tondo
+import std.cli
+import std.console
+
+type Service = { name: String, port: Int, hosts: Array[String] }
+
+console.println(cli.json(Service { name: "web", port: 8080, hosts: ["a", "b"] }))
+// {
+//   "name": "web",
+//   "port": 8080,
+//   "hosts": [
+//     "a",
+//     "b"
+//   ]
+// }
+```
+
 #### progress
 
 ```tondo
@@ -778,7 +839,7 @@ if not cli.confirm("Start the server?") {
 #### choose
 
 ```tondo
-pub fn choose(question: String, options: Array[String]): Int
+pub fn choose(question: String, options: Array[String], search: Bool = false): Int
 ```
 
 The index in `options` of the one chosen. On a terminal the arrows move
@@ -798,7 +859,12 @@ console.println("a {drinks[chosen]}")
 #### chooseMany
 
 ```tondo
-pub fn chooseMany(question: String, options: Array[String], chosen: Array[Int] = []): Array[Int]
+pub fn chooseMany(
+    question: String,
+    options: Array[String],
+    chosen: Array[Int] = [],
+    search: Bool = false,
+): Array[Int]
 ```
 
 The indices in `options` of those chosen, in order. On a terminal the

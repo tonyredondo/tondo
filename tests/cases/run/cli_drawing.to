@@ -1,11 +1,12 @@
 // What std.cli draws is text: panels, rules, texts side by side, trees,
-// bars, a breakdown and tables with a title and a border, which nest, as a
-// table in a panel. Widths count the columns a character takes, two for
+// bars, a breakdown, tables with a title and a border, a month and JSON,
+// which nest, as a table in a panel. Widths count the columns a character takes, two for
 // `漢`, and what is `@secret` shows as `<secret>`. Off a terminal, as here,
 // the width is 80 and a breakdown's parts have shades, not colors.
 
 import std.cli
 import std.console
+import std.time
 
 @secret
 type Key = String
@@ -67,6 +68,21 @@ fn main() {
         cli.table([Account { user: "ada", password: "hunter2" }], border: cli.Border.Heavy),
     )
     console.println(cli.panel(cli.table([["x", "1"]]), title: "Nested"))
+    // A month, its marked days in brackets off a terminal, the week from
+    // Sunday in Spanish too; and any value as JSON, its secrets hidden.
+    let release = time.DateTime {
+        year: 2026
+        month: 11
+        day: 14
+        hour: 0
+        minute: 0
+        second: 0
+        nanosecond: 0
+    }
+    console.println(cli.calendar(2026, 11, marked: [release]))
+    console.println(cli.calendar(2026, 2, first: time.Weekday.Sunday, locale: "es"))
+    console.println(cli.json(service))
+    console.println(cli.json([Mode.Fast, Mode.Slow { delay: 1 }], indent: 0))
 }
 
 // expect-stdout: ╭─ Results ──────╮
@@ -136,3 +152,31 @@ fn main() {
 // expect-stdout: │ │ x │ 1 │ │
 // expect-stdout: │ └───┴───┘ │
 // expect-stdout: ╰───────────╯
+// expect-stdout:        November 2026
+// expect-stdout:  Mo  Tu  We  Th  Fr  Sa  Su
+// expect-stdout:                           1
+// expect-stdout:   2   3   4   5   6   7   8
+// expect-stdout:   9  10  11  12  13 [14] 15
+// expect-stdout:  16  17  18  19  20  21  22
+// expect-stdout:  23  24  25  26  27  28  29
+// expect-stdout:  30
+// expect-stdout:         Febrero 2026
+// expect-stdout:  Do  Lu  Ma  Mi  Ju  Vi  Sá
+// expect-stdout:   1   2   3   4   5   6   7
+// expect-stdout:   8   9  10  11  12  13  14
+// expect-stdout:  15  16  17  18  19  20  21
+// expect-stdout:  22  23  24  25  26  27  28
+// expect-stdout: {
+// expect-stdout:   "name": "web",
+// expect-stdout:   "hosts": [
+// expect-stdout:     "a",
+// expect-stdout:     "b"
+// expect-stdout:   ],
+// expect-stdout:   "limits": {
+// expect-stdout:     "memory": 512,
+// expect-stdout:     "cpus": 2
+// expect-stdout:   },
+// expect-stdout:   "pin": "<secret>",
+// expect-stdout:   "key": "<secret>"
+// expect-stdout: }
+// expect-stdout: ["Fast", {"Slow": {"delay": 1}}]

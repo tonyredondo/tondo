@@ -350,6 +350,8 @@ fn main() {
   have several lines; `cli.Border.None` makes a table a grid. Widths count
   the columns a character takes, and `@secret` shows as `<secret>`:
   `console.println(cli.panel(cli.table(rows), title: "Today"))`.
+  `cli.calendar(2026, 11, marked: [date])` draws a month, and
+  `cli.json(value)` any value as colored JSON.
 - What moves is a live region at the bottom of the output:
   `cli.progress("Building", total: n)`, or without a total a spinner that
   turns by itself, `say` to change its text and `finish(failed: true)` to end
@@ -357,7 +359,8 @@ fn main() {
   prints goes above it, and off a terminal it writes its last text once.
 - `cli.ask`, `cli.confirm`, `cli.choose`, `cli.chooseMany`, `cli.secret`,
   `cli.completions[Site](cli.Shell.Bash)`. On a terminal `choose` moves a
-  mark with the arrows, and `chooseMany` marks each with Space; from a pipe
+  mark with the arrows, and `chooseMany` marks each with Space;
+  `search: true` filters them by what is typed, as fzf does; from a pipe
   each question reads a line, `1,3` for several, so a script can answer it.
 
 A program that draws the screen itself takes the terminal: keys as they are

@@ -7060,3 +7060,15 @@ stack, and a spinner turns by itself, from a task of its own every 80 ms until i
 program that waits shows that it is waiting; `say` changes its text and `finish(failed: true)`
 ends it with `✗`. Off a terminal a part writes its last text once, as it ends, and progress
 keeps its one line.
+
+## A calendar, JSON and choices that search
+
+The first three of the five pieces Tony added to the drawing half. `calendar` draws a month as
+`cal` does, the names of the locale's days from the week's first, today and the marked dates in
+color on a terminal, and the marked ones in brackets off one, so a script's output still shows
+them. `json` writes a value as `json.encode` does, so an enum, a duration or a date reads as the
+program sends it, and hides what is `@secret` as dumps do: reflection says where in the value a
+secret is, and the encoded JSON gets `"<secret>"` there. It needs both `Reflect` and `Encode` of
+its type, where the accepted signature named only `Reflect`, which cannot give the JSON
+`json.encode` gives. `search: true` on `choose` and `chooseMany` keeps the options that have
+what is typed in order, as fzf matches; in `chooseMany` Tab marks, as Space is typed.

@@ -25,10 +25,12 @@ import std.console as __console
 import std.env as __env
 import std.internal.fs as fsNative
 import std.internal.text as textNative
+import std.json as __json
 import std.math as __math
 import std.path as __path
 import std.process as __process
 import std.reflect as __reflect
+import std.serialization as __serialization
 import std.shapes as __shapes
 import std.sync as __sync
 import std.time as __time
@@ -1903,7 +1905,7 @@ fn cellOf(value: __reflect.Value): String {
             none => ""
         }
     }
-    if keepsSecrets(value) { masked(value, false) } else { "{value}" }
+    if keepsSecrets(value) { maskedText(value, false) } else { "{value}" }
 }
 
 /// Whether a value has a part, at any depth, that shows as `<secret>`.
@@ -1914,7 +1916,7 @@ fn keepsSecrets(value: __reflect.Value): Bool {
 
 /// A value as the tools show it, with `<secret>` for what is secret; a text
 /// inside another quoted.
-fn masked(value: __reflect.Value, nested: Bool): String {
+fn maskedText(value: __reflect.Value, nested: Bool): String {
     if value.typeInfo().secret() {
         return "<secret>"
     }
@@ -1928,7 +1930,7 @@ fn masked(value: __reflect.Value, nested: Bool): String {
             let text = if hiddenPart(secrets, part.0, part.1) {
                 "<secret>"
             } else {
-                masked(part.1, true)
+                maskedText(part.1, true)
             }
             if part.0.isEmpty() { text } else { "{part.0}: {text}" }
         },
@@ -2391,6 +2393,312 @@ pub fn breakdown(parts: Array[(String, Float)], width: Int? = none): String {
     "{bar}\n{legend.join("  ")}"
 }
 
+/// A month as a calendar: its name and year, the names of the days of the
+/// week from `first`, and the days under them. On a terminal today is
+/// underlined and the days of `marked` in reverse; off one, the days of
+/// `marked` are in brackets, so what a script writes still shows them. The
+/// names are those of `locale`.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+/// import std.time
+///
+/// let release = time.DateTime { year: 2026, month: 11, day: 14, hour: 0, minute: 0, second: 0, nanosecond: 0 }
+/// console.println(cli.calendar(2026, 11, marked: [release]))
+/// //        November 2026
+/// //  Mo  Tu  We  Th  Fr  Sa  Su
+/// //                           1
+/// //   2   3   4   5   6   7   8
+/// //   9  10  11  12  13 [14] 15
+/// // ...
+/// ```
+pub fn calendar(
+    year: Int,
+    month: Int,
+    marked: Array[__time.DateTime] = [],
+    first: __time.Weekday = __time.Weekday.Monday,
+    locale: String = "en",
+): String {
+    if month < 1 or month > 12 {
+        panic("month {month} is not one of 1 to 12")
+    }
+    let start = __time.DateTime {
+        year
+        month
+        day: 1
+        hour: 0
+        minute: 0
+        second: 0
+        nanosecond: 0
+    }
+    let days = start.addMonths(1).addDays(-1).day
+    let order = weekdayIndex(first)
+    // Where the first day falls, from the first day of the week.
+    let skip = (weekdayIndex(start.weekday()) - order + 7) % 7
+    // The names of the days, two letters each, from a week that starts on
+    // a Monday, 2024-01-01.
+    let monday = __time.DateTime {
+        year: 2024
+        month: 1
+        day: 1
+        hour: 0
+        minute: 0
+        second: 0
+        nanosecond: 0
+    }
+    var names: Array[String] = []
+    for index in 0..7 {
+        let name = monday.addDays((order + index) % 7).format("%a", locale)
+        let two: Array[Char] = name.chars().take(2).collect()
+        names.push(" {capitalized(two.map((c) { "{c}" }).join(""))} ")
+    }
+    let paint = painting()
+    let now = __time.localNow()
+    let today = if paint and now.year == year and now.month == month { now.day } else { 0 }
+    let picked = marked
+        .filter((date) { date.year == year and date.month == month })
+        .map((date) { date.day })
+    var lines = [
+        centered(capitalized(start.format("%B %Y", locale)), 28).trimEnd(),
+        names.join("").trimEnd(),
+    ]
+    var line = "    ".repeat(skip)
+    var column = skip
+    for day in 1..=days {
+        let number = "{day}".padStart(2)
+        let cell = match (picked.contains(day), paint, day == today) {
+            (true, true, _) => " \u{1b}[7m{number}\u{1b}[0m "
+            (true, false, _) => "[{number}]"
+            (false, _, true) => " \u{1b}[1;4m{number}\u{1b}[0m "
+            _ => " {number} "
+        }
+        line = "{line}{cell}"
+        column += 1
+        if column == 7 {
+            lines.push(line.trimEnd())
+            line = ""
+            column = 0
+        }
+    }
+    if column > 0 {
+        lines.push(line.trimEnd())
+    }
+    lines.join("\n")
+}
+
+/// Its place in a week that starts on a Monday.
+fn weekdayIndex(day: __time.Weekday): Int {
+    match day {
+        __time.Weekday.Monday => 0
+        __time.Weekday.Tuesday => 1
+        __time.Weekday.Wednesday => 2
+        __time.Weekday.Thursday => 3
+        __time.Weekday.Friday => 4
+        __time.Weekday.Saturday => 5
+        __time.Weekday.Sunday => 6
+    }
+}
+
+/// The text with its first letter in capitals, as a title.
+fn capitalized(text: String): String {
+    var written = ""
+    for c in text.chars() {
+        written = if written.isEmpty() { "{c.toUpper()}" } else { "{written}{c}" }
+    }
+    written
+}
+
+/// A value as JSON, as `json.encode` writes it, with each level `indent`
+/// spaces in, or on one line with `indent: 0`; on a terminal its keys,
+/// texts, numbers and `true`, `false` and `null` have colors of their own.
+/// What is `@secret` is `"<secret>"`, as dumps show it.
+///
+/// ```tondo
+/// import std.cli
+/// import std.console
+///
+/// type Service = { name: String, port: Int, hosts: Array[String] }
+///
+/// console.println(cli.json(Service { name: "web", port: 8080, hosts: ["a", "b"] }))
+/// // {
+/// //   "name": "web",
+/// //   "port": 8080,
+/// //   "hosts": [
+/// //     "a",
+/// //     "b"
+/// //   ]
+/// // }
+/// ```
+pub fn json[T: __reflect.Reflect + __serialization.Encode](value: T, indent: Int = 2): String {
+    let parsed = __json.parse(__json.encode(value)) ?? __json.Value.Null
+    let chars: Array[Char] = __json
+        .encode(masked(parsed, __reflect.valueOf(value)))
+        .chars()
+        .collect()
+    let paint = painting()
+    let styled = (code: String, token: String) {
+        if paint { "\u{1b}[{code}m{token}\u{1b}[0m" } else { token }
+    }
+    let spaces = indent.max(0)
+    let line = (depth: Int) { if spaces == 0 { "" } else { "\n{" ".repeat(depth * spaces)}" } }
+    var pieces: Array[String] = []
+    var depth = 0
+    var at = 0
+    for at < chars.length() {
+        let c = chars[at]
+        match c {
+            '"' => {
+                // A text with its escapes, which is a key when `:` follows.
+                var token = "\""
+                var end = at + 1
+                for end < chars.length() and chars[end] != '"' {
+                    if chars[end] == '\\' {
+                        token = "{token}\\"
+                        end += 1
+                    }
+                    if end < chars.length() {
+                        token = "{token}{chars[end]}"
+                    }
+                    end += 1
+                }
+                token = "{token}\""
+                let key = chars.get(end + 1) == ':'
+                pieces.push(styled(if key { "36" } else { "32" }, token))
+                at = end + 1
+            }
+            '{' | '[' => {
+                let close = if c == '{' { '}' } else { ']' }
+                if chars.get(at + 1) == close {
+                    pieces.push("{c}{close}")
+                    at += 2
+                } else {
+                    depth += 1
+                    pieces.push("{c}{line(depth)}")
+                    at += 1
+                }
+            }
+            '}' | ']' => {
+                depth -= 1
+                pieces.push("{line(depth)}{c}")
+                at += 1
+            }
+            ',' => {
+                pieces.push(if spaces == 0 { ", " } else { ",{line(depth)}" })
+                at += 1
+            }
+            ':' => {
+                pieces.push(": ")
+                at += 1
+            }
+            _ => {
+                // A number, `true`, `false` or `null`, to the next delimiter.
+                var token = ""
+                for at < chars.length() and not [',', ':', ']', '}'].contains(chars[at]) {
+                    token = "{token}{chars[at]}"
+                    at += 1
+                }
+                let word = token == "true" or token == "false" or token == "null"
+                pieces.push(styled(if word { "35" } else { "33" }, token))
+            }
+        }
+    }
+    pieces.join("")
+}
+
+/// The JSON of a value with `"<secret>"` where the value has something
+/// `@secret`: a record's fields by the names JSON gives them, a variant's
+/// payload under its name, an array's elements and a map's values.
+fn masked(document: __json.Value, value: __reflect.Value): __json.Value {
+    if value.typeInfo().secret() {
+        return __json.Value.Text("<secret>")
+    }
+    if value.typeName().endsWith("?") {
+        return match value.elements().first() {
+            some(inner) => masked(document, inner)
+            none => document
+        }
+    }
+    match document {
+        __json.Value.Object(object) => {
+            // A variant with a payload is an object of one member, its name.
+            match value.variant() {
+                some(name) if object.length() == 1 => {
+                    return match object[name] {
+                        some(payload) => __json.Value.Object([name: maskedPayload(payload, value)])
+                        none => document
+                    }
+                }
+                _ => {}
+            }
+            if not value.fields().isEmpty() {
+                return maskedRecord(object, value)
+            }
+            var changed = object
+            for (key, part) in value.entries() {
+                let name = "{key}"
+                match object[name] {
+                    some(inner) => changed[name] = masked(inner, part)
+                    none => {}
+                }
+            }
+            __json.Value.Object(changed)
+        }
+        __json.Value.Array(items) => maskedItems(items, value)
+        _ => document
+    }
+}
+
+/// An array's elements, or a variant's values, each by its part.
+fn maskedItems(items: Array[__json.Value], value: __reflect.Value): __json.Value {
+    let parts = value.elements()
+    var changed = items
+    for index in 0..items.length().min(parts.length()) {
+        changed[index] = masked(items[index], parts[index])
+    }
+    __json.Value.Array(changed)
+}
+
+/// A variant's payload: its record's fields, or its values in order.
+fn maskedPayload(payload: __json.Value, value: __reflect.Value): __json.Value {
+    match payload {
+        __json.Value.Object(object) if not value.fields().isEmpty() => maskedRecord(object, value)
+        __json.Value.Array(items) => maskedItems(items, value)
+        _ => payload
+    }
+}
+
+/// A record's object, each by the name JSON gives its field.
+fn maskedRecord(object: Map[String, __json.Value], value: __reflect.Value): __json.Value {
+    let info = value.typeInfo()
+    let declared = match value.variant() {
+        some(name) =>
+            info
+                .variants()
+                .find((variant) { variant.name() == name })
+                .map((variant) { variant.fields() }) ??
+                []
+        none => info.fields()
+    }
+    var changed = object
+    for field in value.fields() {
+        let described = declared.find((one) { one.name() == field.name })
+        let name = described.map((one) { one.externalName() }) ?? field.name
+        match object[name] {
+            some(inner) => {
+                let hidden = described.map((one) { one.secret() }) ?? false
+                changed[name] = if hidden {
+                    __json.Value.Text("<secret>")
+                } else {
+                    masked(inner, field.value)
+                }
+            }
+            none => {}
+        }
+    }
+    __json.Value.Object(changed)
+}
+
 /// A bar of the progress of some work, or a spinner when it has no total,
 /// in the live region at the bottom of a terminal: what the program prints
 /// goes above it, two at once stack, and a spinner turns by itself. Off a
@@ -2643,9 +2951,9 @@ pub fn confirm(question: String, default: Bool = false): Bool {
 /// let chosen = cli.choose("Pick one", drinks)
 /// console.println("a {drinks[chosen]}")
 /// ```
-pub fn choose(question: String, options: Array[String]): Int {
+pub fn choose(question: String, options: Array[String], search: Bool = false): Int {
     if options.length() > 1 and isTerminal() {
-        match selected(question, options, none) {
+        match selected(question, options, none, search) {
             some(chosen) => return chosen.first() ?? 0
             none => {}
         }
@@ -2681,10 +2989,15 @@ pub fn choose(question: String, options: Array[String]): Int {
 /// let picked = cli.chooseMany("Install", parts, chosen: [0])
 /// console.println(picked.map((index) { parts[index] }).join(", "))
 /// ```
-pub fn chooseMany(question: String, options: Array[String], chosen: Array[Int] = []): Array[Int] {
+pub fn chooseMany(
+    question: String,
+    options: Array[String],
+    chosen: Array[Int] = [],
+    search: Bool = false,
+): Array[Int] {
     let first = chosen.filter((index) { index >= 0 and index < options.length() })
     if not options.isEmpty() and isTerminal() {
-        match selected(question, options, first) {
+        match selected(question, options, first, search) {
             some(marked) => return marked
             none => {}
         }
@@ -2719,7 +3032,12 @@ pub fn chooseMany(question: String, options: Array[String], chosen: Array[Int] =
 
 /// The options chosen with the arrows and Enter, or `none` when the input
 /// is not a terminal: one, or with `marked` those Space marks.
-fn selected(question: String, options: Array[String], marked: Array[Int]?): Array[Int]? {
+fn selected(
+    question: String,
+    options: Array[String],
+    marked: Array[Int]?,
+    search: Bool,
+): Array[Int]? {
     let mode = fsNative.terminalTake(false, false, false, -1, false)
     if fsNative.terminalStatus(ref mode) != 0 {
         return none
@@ -2737,11 +3055,14 @@ fn selected(question: String, options: Array[String], marked: Array[Int]?): Arra
     var choice = Choice {
         question
         options
+        shown: (0..options.length()).collect()
         chosen: 0
         first: 0
         drawn: 0
         marked: if many { marks } else { none }
+        query: if search { "" } else { none }
     }
+    var query = ""
     choice.draw(terminalSize() ?? Size { columns: 80, rows: 24 })
     for {
         let key = if watching {
@@ -2758,21 +3079,31 @@ fn selected(question: String, options: Array[String], marked: Array[Int]?): Arra
         } else {
             keys.receive()
         }
-        let count = options.length()
+        let count = choice.shown.length().max(1)
         match key {
-            some(Key.Up) | some(Key.Char('k')) => choice.chosen =
-                (choice.chosen + count - 1) % count
-            some(Key.Down) | some(Key.Char('j')) | some(Key.Tab) => choice.chosen =
-                (choice.chosen + 1) % count
+            some(Key.Up) => choice.chosen = (choice.chosen + count - 1) % count
+            some(Key.Char('k')) if not search => choice.chosen = (choice.chosen + count - 1) % count
+            some(Key.Down) => choice.chosen = (choice.chosen + 1) % count
+            some(Key.Char('j')) if not search => choice.chosen = (choice.chosen + 1) % count
+            some(Key.Tab) if many and search => toggle(choice, var marks)
+            some(Key.Tab) => choice.chosen = (choice.chosen + 1) % count
             some(Key.Home) | some(Key.PageUp) => choice.chosen = 0
             some(Key.End) | some(Key.PageDown) => choice.chosen = count - 1
-            some(Key.Char(' ')) if many => {
-                marks[choice.chosen] = not marks[choice.chosen]
-                choice.marked = marks
+            some(Key.Char(' ')) if many and not search => toggle(choice, var marks)
+            some(Key.Char(letter)) if search => {
+                query = "{query}{letter}"
+                choice.narrow(query)
             }
-            some(Key.Enter) | none => break
+            some(Key.Backspace) if search => {
+                let kept: Array[Char] = query.chars().collect()
+                query = kept.take(kept.length() - 1).map((c) { "{c}" }).join("")
+                choice.narrow(query)
+            }
+            some(Key.Enter) if many or not choice.shown.isEmpty() => break
+            none => break
             _ => {}
         }
+        choice.marked = if many { marks } else { none }
         choice.draw(terminalSize() ?? Size { columns: 80, rows: 24 })
     }
     fsNative.terminalRelease(ref mode)
@@ -2780,28 +3111,65 @@ fn selected(question: String, options: Array[String], marked: Array[Int]?): Arra
     let picked: Array[Int] = if many {
         (0..options.length()).filter((index) { marks[index] }).collect()
     } else {
-        [choice.chosen]
+        [choice.shown.get(choice.chosen) ?? 0]
     }
     __console.println("{question}: {picked.map((index) { options[index] }).join(", ")}")
     _ = __console.flush()
     picked
 }
 
-/// A list being chosen from, as it is drawn: the options from `first` that
-/// fit, below the question, and the lines it took.
+/// Marks the option under the cursor, or takes its mark away.
+fn toggle(choice: Choice, marks: var Array[Bool]) {
+    match choice.shown.get(choice.chosen) {
+        some(index) => marks[index] = not marks[index]
+        none => {}
+    }
+}
+
+/// A list being chosen from, as it is drawn: the options that match what
+/// was typed, from `first`, as many as fit, below the question, and the
+/// lines it took.
 type Choice = {
     question: String
     options: Array[String]
+    /// The options shown, by index: those that match the search.
+    shown: Array[Int]
     chosen: Int
     first: Int
     drawn: Int
     /// Which are marked, when several are chosen.
     marked: Array[Bool]?
+    /// What was typed to search, when it searches.
+    query: String?
+}
+
+/// Shows only the options that have the characters of `query` in order,
+/// whatever their case, as fzf matches.
+fn Choice.narrow(mut self, query: String) {
+    let wanted: Array[Char] = query.toLower().chars().collect()
+    let options = self.options
+    self.query = query
+    self.shown = (0..options.length())
+        .filter(
+            (index) {
+                var at = 0
+                for c in options[index].toLower().chars() {
+                    if at < wanted.length() and c == wanted[at] {
+                        at += 1
+                    }
+                }
+                at == wanted.length()
+            },
+        )
+        .collect()
+    self.chosen = 0
+    self.first = 0
 }
 
 /// Draws it again in place, at the size of the terminal.
 fn Choice.draw(mut self, at: Size) {
-    let shown = self.options.length().min((at.rows - 2).max(1))
+    let top = if self.query.isSome() { 2 } else { 1 }
+    let shown = self.shown.length().min((at.rows - 1 - top).max(1))
     if self.chosen < self.first {
         self.first = self.chosen
     } else if self.chosen >= self.first + shown {
@@ -2810,13 +3178,18 @@ fn Choice.draw(mut self, at: Size) {
     self.clear()
     let room = (at.columns - 3).max(1)
     var lines = [clipped(self.question, at.columns - 1)]
-    for index in self.first..self.first + shown {
+    match self.query {
+        some(searched) => lines.push(clipped("  / {searched}", at.columns - 1))
+        none => {}
+    }
+    for row in self.first..(self.first + shown).min(self.shown.length()) {
+        let index = self.shown[row]
         let box = match self.marked {
             some(marks) => if marks[index] { "◉ " } else { "○ " }
             none => ""
         }
         let text = clipped("{box}{self.options[index]}", room)
-        lines.push(if index == self.chosen { markup("[bold cyan]❯ {text}[/]") } else { "  {text}" })
+        lines.push(if row == self.chosen { markup("[bold cyan]❯ {text}[/]") } else { "  {text}" })
     }
     __console.print(lines.join("\n"))
     _ = __console.flush()

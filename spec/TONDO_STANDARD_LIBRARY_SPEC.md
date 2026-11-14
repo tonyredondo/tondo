@@ -6134,6 +6134,11 @@ pub fn beside(texts: Array[String], gap: Int = 2, width: Int? = none): String
 pub fn tree[T: reflect.Reflect](value: T): String
 pub fn bars(values: Array[(String, Float)], width: Int? = none): String
 pub fn breakdown(parts: Array[(String, Float)], width: Int? = none): String
+pub fn calendar(
+    year: Int, month: Int, marked: Array[time.DateTime] = [],
+    first: time.Weekday = time.Weekday.Monday, locale: String = "en",
+): String
+pub fn json[T: reflect.Reflect + serialization.Encode](value: T, indent: Int = 2): String
 pub type Progress
 pub fn progress(label: String, total: Int? = none): Progress
 pub fn Progress.advance(self, by: Int = 1)
@@ -6145,8 +6150,10 @@ pub fn Live.show(self, text: String)
 pub fn Live.end(self)
 pub fn ask(question: String, default: String = ""): String
 pub fn confirm(question: String, default: Bool = false): Bool
-pub fn choose(question: String, options: Array[String]): Int
-pub fn chooseMany(question: String, options: Array[String], chosen: Array[Int] = []): Array[Int]
+pub fn choose(question: String, options: Array[String], search: Bool = false): Int
+pub fn chooseMany(
+    question: String, options: Array[String], chosen: Array[Int] = [], search: Bool = false,
+): Array[Int]
 pub fn secret(question: String): String
 ~~~
 
@@ -6268,11 +6275,15 @@ pub fn secret(question: String): String
 | `progress` | una línea al terminar | en la región viva, al ancho de ahora; un spinner gira solo | igual | la región se redibuja |
 | `Live` | su último texto, al terminar | en la región viva | igual | la región se redibuja, cada línea cortada al ancho |
 | `table` | texto | texto del ancho de sus celdas | igual | nada: es texto ya escrito |
-| `panel`, `rule`, `beside`, `tree`, `bars`, `breakdown` | texto de 80 columnas, sin colores | texto del ancho de la terminal | igual | nada: es texto ya escrito |
+| `panel`, `rule`, `beside`, `tree`, `bars`, `breakdown`, `calendar`, `json` | texto de 80 columnas, sin colores | texto del ancho de la terminal | igual | nada: es texto ya escrito |
 | `markup` | texto | texto | texto | — |
 
   `choose` y `chooseMany` usan las flechas cuando su entrada y su salida son
-  una terminal.
+  una terminal. Con `search: true`, lo que se teclea deja las opciones que
+  tienen sus letras en orden, sin mirar mayúsculas, como `fzf`: las flechas
+  se mueven entre ellas, Retroceso borra una letra, y en `chooseMany` Tab
+  marca, porque Espacio se teclea. Fuera de una terminal `search` no cambia
+  nada.
 - `markup` devuelve un texto con estilos, que no escribe por sí misma:
   `[estilo]texto[/]` aplica el estilo a ese bloque y vuelve al de antes, y los
   bloques se anidan. Un estilo combina un
@@ -6322,6 +6333,15 @@ pub fn secret(question: String): String
   partida según la parte de cada valor en el total y, debajo, el nombre y el
   porcentaje de cada parte; en una terminal cada parte tiene un color, y fuera
   de ella un sombreado.
+- `calendar` dibuja un mes como `cal`: su nombre y año, los nombres de los
+  días de la semana del `locale` desde `first`, y los días debajo. En una
+  terminal hoy va subrayado y los días de `marked` en vídeo inverso; fuera de
+  ella los de `marked` van entre corchetes, para que la salida de un script
+  aún los muestre.
+- `json` da un valor como JSON, como lo escribe `json.encode`, con cada nivel
+  `indent` espacios más adentro, o en una línea con `indent: 0`; en una
+  terminal sus claves, textos, números y `true`, `false` y `null` llevan
+  colores propios. Lo `@secret` es `"<secret>"`, como en los volcados.
 - Lo que se mueve es una región viva: líneas al final de lo que escribe el
   programa, que se redibujan en su sitio. Mientras una está viva, lo que
   escriben la salida y el error de `console` va encima y la región sigue

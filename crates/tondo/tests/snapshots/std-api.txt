@@ -503,12 +503,25 @@ pub fn ask(question: String, default: String = ""): String
 pub fn bars(values: Array[(String, Float)], width: Int? = none): String
 pub fn beside(texts: Array[String], gap: Int = 2, width: Int? = none): String
 pub fn breakdown(parts: Array[(String, Float)], width: Int? = none): String
-pub fn choose(question: String, options: Array[String]): Int
-pub fn chooseMany(question: String, options: Array[String], chosen: Array[Int] = []): Array[Int]
+pub fn calendar(
+    year: Int,
+    month: Int,
+    marked: Array[time.DateTime] = [],
+    first: time.Weekday = time.Weekday.Monday,
+    locale: String = "en",
+): String
+pub fn choose(question: String, options: Array[String], search: Bool = false): Int
+pub fn chooseMany(
+    question: String,
+    options: Array[String],
+    chosen: Array[Int] = [],
+    search: Bool = false,
+): Array[Int]
 pub fn completions[T: reflect.Reflect](shell: Shell): String
 pub fn confirm(question: String, default: Bool = false): Bool
 pub fn help[T: reflect.Reflect](): String
 pub fn isTerminal(): Bool
+pub fn json[T: reflect.Reflect + serialization.Encode](value: T, indent: Int = 2): String
 pub fn markup(text: String): String
 pub fn panel(
     text: String,
