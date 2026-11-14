@@ -235,7 +235,8 @@ pub unsafe extern "C" fn tondo_rt_callback(
     crate::trace::guard_thread(false);
     // Where it is in the program, the same in another run.
     crate::replay::entered((inner as usize).wrapping_sub(tondo_rt_callback as *const () as usize));
-    let call = ForeignCall { inner, frame, done: Mutex::new(false), finished: Condvar::new() };
+    let call =
+        ForeignCall { inner, frame, state: AtomicU8::new(CALL_RUNS), lock: Mutex::new(()), finished: Condvar::new() };
     let task = new_task(
         Some(task_stack()),
         std::ptr::null_mut(),
@@ -253,20 +254,24 @@ pub unsafe extern "C" fn tondo_rt_callback(
     run(task);
     // The workers start when a call first waits: one that returns at once
     // needs none.
-    if !*call.done.lock().unwrap_or_else(|e| e.into_inner()) {
+    if !call.done() {
         start_workers();
         FOREIGN_WAITING.fetch_add(1, Ordering::SeqCst);
         // The one worker may have ended: this thread runs what it waits for.
         if exploring().is_some() {
             queue().workers += 1;
-            work_until(false, Some(&|| *call.done.lock().unwrap_or_else(|e| e.into_inner())));
+            work_until(false, Some(&|| call.done()));
             queue().workers -= 1;
         }
-        let mut done = call.done.lock().unwrap_or_else(|e| e.into_inner());
-        while !*done {
-            done = call.finished.wait(done).unwrap_or_else(|e| e.into_inner());
+        // Waited for from now, unless it ended meanwhile; its end stores
+        // that it is done under the lock, so this thread sees it there.
+        let mut locked = call.lock.lock().unwrap_or_else(|e| e.into_inner());
+        if call.state.compare_exchange(CALL_RUNS, CALL_WAITED, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+            while !call.done() {
+                locked = call.finished.wait(locked).unwrap_or_else(|e| e.into_inner());
+            }
         }
-        drop(done);
+        drop(locked);
         FOREIGN_WAITING.fetch_sub(1, Ordering::SeqCst);
     }
     crate::replay::left();

@@ -261,8 +261,33 @@ pub(crate) struct Probe {
 struct ForeignCall {
     inner: unsafe extern "C" fn(*mut u8),
     frame: *mut u8,
-    done: Mutex<bool>,
+    /// `CALL_RUNS`, `CALL_DONE`, or `CALL_WAITED` once the thread of C
+    /// waits for it: only then does its end take the lock and wake it.
+    state: AtomicU8,
+    lock: Mutex<()>,
     finished: Condvar,
+}
+
+const CALL_RUNS: u8 = 0;
+const CALL_DONE: u8 = 1;
+const CALL_WAITED: u8 = 2;
+
+impl ForeignCall {
+    /// The callback ended: the thread of C goes on. One that does not wait
+    /// yet sees it done when it looks, and may free the call at once, so
+    /// nothing here touches it after that.
+    fn end(&self) {
+        if self.state.compare_exchange(CALL_RUNS, CALL_DONE, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+            return;
+        }
+        let _locked = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        self.state.store(CALL_DONE, Ordering::Release);
+        self.finished.notify_one();
+    }
+
+    fn done(&self) -> bool {
+        self.state.load(Ordering::Acquire) == CALL_DONE
+    }
 }
 
 /// Notifies `wait` with operation `index` at `at`, unless another operation
@@ -570,11 +595,7 @@ extern "C" fn trampoline() -> ! {
         if !(*task).foreign.is_null() {
             let call = &*(*task).foreign;
             (call.inner)(call.frame);
-            // Under the lock: the thread of C may free the call once it
-            // sees it done.
-            let mut done = call.done.lock().unwrap_or_else(|e| e.into_inner());
-            *done = true;
-            call.finished.notify_one();
+            call.end();
         } else if (*task).main {
             let main: unsafe extern "C" fn() -> i32 = std::mem::transmute(code);
             MAIN_STATUS.store(main() as usize, Ordering::SeqCst);

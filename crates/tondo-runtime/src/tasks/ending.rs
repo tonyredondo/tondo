@@ -40,11 +40,7 @@ pub(crate) fn end_all(status: i32) -> ! {
             MAIN_STATUS.store(status as usize, Ordering::SeqCst);
         } else if !(*me).foreign.is_null() {
             // The thread of C that waits for the callback goes on.
-            let call = &*(*me).foreign;
-            let mut done = call.done.lock().unwrap_or_else(|e| e.into_inner());
-            *done = true;
-            call.finished.notify_one();
-            drop(done);
+            (*(*me).foreign).end();
             // Its thread may be working for it, and sleep.
             drop(queue());
             READY.iter().for_each(std::sync::Condvar::notify_all);
