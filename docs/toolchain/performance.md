@@ -178,9 +178,9 @@ fn main() {
 
 ```text
 $ tondo optimizations kept.to --function of
-kept.to:8:9: `reading` keeps a count of its own: it is kept, as pushed, returned, captured or held (in of)
-kept.to:8:20: `readings` runs one turn at a time: each turn counts a value or measures a text, which costs more than the test saved (in of)
-kept.to:10:13: `found.push(reading)` grows as it is pushed to: the loop pushes to it in some turns only (in of)
+kept.to:8:9: `reading` keeps a count of its own: it is kept, as pushed, returned, captured or held (in main, of)
+kept.to:8:20: `readings` runs one turn at a time: each turn counts a value or measures a text, which costs more than the test saved (in main, of)
+kept.to:10:13: `found.push(reading)` grows as it is pushed to: the loop pushes to it in some turns only (in main, of)
 ```
 
 Each remark names what the code does that the optimization could not get
@@ -191,7 +191,7 @@ view is how one knows that the cost is the program's and not an accident.
 
 | | |
 | --- | --- |
-| `--function <name>` | one function |
+| `--function <name>` | one function, and the code written in it wherever it went |
 | `--kind heap` | only what allocates |
 | `--tests` | the tests and benchmarks instead of the program |
 | `--against <rev>` | only what a change made different |
@@ -205,6 +205,76 @@ stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in 
 
 `tondo check --performance` reports one thing from this view as a warning
 while writing: a copy that a loop makes on every turn.
+
+### The closures of a chain
+
+The adapters of an [iterator](../language/08-collections.md#iterators) keep
+the closures they are given, and the method that ends the chain calls them
+for every element. This program adds the squares of the even numbers twice:
+with the array's own methods, and with a chain that starts at `iter()`.
+
+```tondo
+import std.console
+
+/// The sum of the squares of the even numbers, with an array at each step.
+fn byArrays(numbers: Array[Int]): Int {
+    numbers.filter((n) { n % 2 == 0 }).map((n) { n * n }).sum()
+}
+
+/// The same, a number at a time.
+fn byChain(numbers: Array[Int]): Int {
+    numbers.iter().filter((n) { n % 2 == 0 }).map((n) { n * n }).sumBy((n) { n })
+}
+
+fn main() {
+    let numbers = (1..=1000).collect()
+    console.println("{byArrays(numbers)} {byChain(numbers)}")
+}
+```
+
+```text output
+167167000 167167000
+```
+
+```text
+$ tondo optimizations squares.to --function byChain --kind call
+squares.to:10:5: `numbers.iter().filter((n) { n % 2 == 0 }).map((n) { n * n }…` stays a call of `Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int]`: its body costs 52, more than the 30 inlining takes (in byChain, main)
+squares.to:10:27: `(n) { n % 2 == 0 }` is called by its body where a record holds it, as an iterator's adapter does (in prelude.FilterIterator.next[prelude.ArrayIterator[Int], Int])
+squares.to:10:51: `(n) { n * n }` is called by its body where a record holds it, as an iterator's adapter does (in Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int])
+```
+
+`sumBy` runs the chain, and it is too large to be copied into `byChain`, so
+it stays a call. A release build makes a copy of it for this chain in which
+it knows the closure that each adapter holds: asking the filter and the map
+for the next number calls the body of each closure, and no longer a value
+that could be any function. The lines of the two closures name functions of
+the standard library, where the calls are, and `--function byChain` gives
+them because the closures are written in `byChain`.
+
+The two closures that the adapters hold are still allocated, each time
+`byChain` runs:
+
+```text
+$ tondo optimizations squares.to --function byChain --kind heap
+squares.to:10:27: `(n) { n % 2 == 0 }` is made on the heap: a value holds it (in byChain, main)
+squares.to:10:51: `(n) { n * n }` is made on the heap: a value holds it (in byChain, main)
+```
+
+The closure given to `sumBy` is only called, so it is made in the frame, and
+so are those of `byArrays`, whose methods only call them: `--kind frame`
+lists them. Each step of `byArrays` makes an array, though. A benchmark of
+the two over a thousand numbers shows both costs:
+
+```text
+$ tondo test --bench
+test squares::unit::squares::aThousand ... ok
+  arrays     1.271 µs/op  ±0.2%  9 allocs/op  12448 B/op  25.1k ins/op
+  chain      2.158 µs/op  ±0.2%  2 allocs/op  80 B/op  50.9k ins/op
+```
+
+The chain allocates its two closures and nothing else, however long the
+array is: less than a hundredth of the memory here. The arrays' form is the
+faster of the two, with half the instructions.
 
 ## The machine code: asm
 
