@@ -3114,6 +3114,17 @@ fn a_dump_of_a_build_without_probes_has_its_bindings() {
     let args = ["dump", "read", dump.to_str().unwrap(), "tasks"];
     let tasks = Command::new(tondo).args(args).output().unwrap();
     assert!(String::from_utf8_lossy(&tasks.stdout).contains("in measure"), "{tasks:?}");
+    // A dump of such a build whose task kept no value where it stopped, as
+    // at a check that fails: why there are none.
+    let mut kept: Value = serde_json::from_slice(&std::fs::read(&dump).unwrap()).unwrap();
+    for task in kept["tasks"].as_array_mut().unwrap() {
+        task["frames"] = json!([]);
+    }
+    assert_eq!(kept["info"]["probes"], false);
+    std::fs::write(dir.join("none.dump.json"), kept.to_string()).unwrap();
+    let locals = Command::new(tondo).args(["dump", "read", "none.dump.json", "locals"]).current_dir(&dir).output();
+    let said = String::from_utf8_lossy(&locals.unwrap().stderr).into_owned();
+    assert!(said.contains("a build with `--debug` keeps them all"), "{said}");
 }
 
 /// Runs git in `dir`, which must work.

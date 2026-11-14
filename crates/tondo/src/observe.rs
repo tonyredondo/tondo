@@ -979,19 +979,27 @@ pub enum View {
 }
 
 /// The frame of a dump's task that a view names.
-fn dump_frame(tasks: &[Value], task: Option<u64>, frame: usize) -> Result<&Value, String> {
+fn dump_frame<'a>(dump: &Value, tasks: &'a [Value], task: Option<u64>, frame: usize) -> Result<&'a Value, String> {
+    // A build without probes keeps a value only where it still is as the
+    // task stops, which a check that failed leaves none of.
+    let none = match dump["info"]["probes"] == false {
+        true => {
+            "this dump has no bindings of that task: a build without `--debug` keeps a value only where it \
+                 still is when the task stops, which a check that fails, as of bounds, leaves none of; a build \
+                 with `--debug` keeps them all"
+        }
+        false => "this dump has no bindings of that task: a task must have reached a line of the program",
+    };
     let has_frames = |t: &&Value| t["frames"].as_array().is_some_and(|frames| !frames.is_empty());
     let chosen = match task {
         Some(id) => tasks.iter().find(|t| t["id"] == id).ok_or(format!("the dump has no task {id}"))?,
-        None => tasks.iter().find(has_frames).ok_or(NO_BINDINGS)?,
+        None => tasks.iter().find(has_frames).ok_or(none)?,
     };
-    let frames = chosen["frames"].as_array().filter(|frames| !frames.is_empty()).ok_or(NO_BINDINGS)?;
+    let frames = chosen["frames"].as_array().filter(|frames| !frames.is_empty()).ok_or(none)?;
     let shown =
         |frames: &[Value]| frames.iter().map(|f| f["at"].as_str().unwrap_or_default().to_string()).collect::<Vec<_>>();
     frames.get(frame).ok_or(format!("that task has bindings in these frames: {}", shown(frames).join(", ")))
 }
-
-const NO_BINDINGS: &str = "this dump has no bindings of that task: a task must have reached a line of the program";
 
 /// What a path names in a frame of a dump: a binding, then its parts, each
 /// by the name `.field`, `[2]` or `["key"]`.
@@ -1976,7 +1984,7 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
             return Err("this dump has no values: the program ran with TONDO_DUMP_VALUES=off".into());
         }
         View::Locals(task, frame) => {
-            let frame = dump_frame(&tasks, task, frame)?;
+            let frame = dump_frame(&dump, &tasks, task, frame)?;
             if json {
                 return shown("locals", frame.clone());
             }
@@ -1989,7 +1997,7 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
             format!("{}\n{}", frame["at"].as_str().unwrap_or_default(), lines.join("\n"))
         }
         View::Print(path_of, task, frame) => {
-            let frame = dump_frame(&tasks, task, frame)?;
+            let frame = dump_frame(&dump, &tasks, task, frame)?;
             let value = dumped_value(frame, &path_of)
                 .ok_or(format!("no binding or part `{path_of}` in {}", frame["at"].as_str().unwrap_or_default()))?;
             if json {
