@@ -917,7 +917,10 @@ salen de los que dejó al cambiar de pila y de las tablas de unwind del ejecutab
 `.eh_frame` en Linux y `__unwind_info` en macOS. Cada frame inlineado tiene las
 suyas. En ese build una variable que el código ya no usa no existe y no aparece,
 salvo los números de un `panic` escrito en el programa, que ese pánico conserva en
-código que solo él ejecuta. En una comprobación que falla, de límites, de
+código que solo él ejecuta, y una que siempre vale la misma constante, que la tabla
+guarda y aparece desde su primera línea. Un record que el código guarda campo a
+campo, cada uno en su variable, aparece entero, con los campos que siguen donde los
+dejó el código y `<gone>` en los que no. En una comprobación que falla, de límites, de
 desbordamiento o una división por cero, tiene las variables que siguen donde las
 dejó el código que comprobaba, mientras nada del camino del pánico las pisa: el
 programa guarda todos sus registros al entrar en él, con una llamada que no cambia

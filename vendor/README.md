@@ -94,7 +94,10 @@ covered them with places the values had left; and a cold block that only
 its branch reaches, as the panic of a failed check, gets the places the
 values had at the branch, until an instruction or a move of the block
 writes over them or a call clobbers them, with no instruction more, so that
-a dump there shows them.
+a dump there shows them. And in `src/ir/dfg.rs`, the labels of a value that
+became an alias, as a variable's copy of another does once its block's
+parameter goes, are the final value's, where Cranelift discarded them: a
+dump finds the copy where the original is.
 
 This copy is where an optimization that Tondo's code needs and Cranelift
 lacks is written, as a rule marked `Tondo:`. To move to a newer Cranelift:

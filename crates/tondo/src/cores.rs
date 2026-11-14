@@ -339,6 +339,8 @@ struct Code<'a> {
     functions: Vec<(u64, u32, u32, usize)>,
     blob: &'a [u8],
     files: usize,
+    /// Where the static objects a dump shows as constants are named.
+    words: Option<u64>,
 }
 
 impl<'a> Code<'a> {
@@ -354,7 +356,10 @@ impl<'a> Code<'a> {
             functions.push((u64_at(entry, 0)?, u32_at(entry, 8)?, u32_at(entry, 12)?, index));
         }
         functions.sort();
-        Some(Code { functions, blob: memory.in_program(blob.wrapping_sub(memory.bias))?, files })
+        // An older build's table ends before: it names no such constant,
+        // so what follows it is never read as one.
+        let words = memory.word(load.address + found - load.offset + memory.bias + 64).filter(|&words| words != 0);
+        Some(Code { functions, blob: memory.in_program(blob.wrapping_sub(memory.bias))?, files, words })
     }
 
     /// The function whose code holds the byte before `address`.
@@ -517,10 +522,20 @@ struct Bound {
     ty: String,
     slot: Option<i64>,
     pointer: bool,
+    /// A constant the code keeps nowhere.
+    constant: Option<Constant>,
     ranges: Vec<(u32, u32, Located)>,
     scope: u32,
     from: u32,
     shape: Option<usize>,
+}
+
+/// A constant's bits, or its number among the static objects the trace
+/// table names.
+#[derive(Clone, Copy)]
+enum Constant {
+    Word(u64),
+    Data(u64),
 }
 
 /// What it says of a function: the registers it saved, and where, and its
@@ -529,6 +544,51 @@ struct Bound {
 struct Bindings {
     saved: Vec<(usize, i64)>,
     bound: Vec<Bound>,
+    records: Vec<Record>,
+}
+
+/// A record the code keeps as a local for each field, shown whole from the
+/// bindings named after its fields: its name, type, scope, each field with
+/// whether it is `@secret`, and how many bindings come before it.
+struct Record {
+    name: String,
+    ty: String,
+    scope: u32,
+    fields: Vec<(String, bool)>,
+    at: usize,
+}
+
+impl Record {
+    /// Whether a binding is a field of it, or of a record inside it.
+    fn holds(&self, name: &str) -> bool {
+        name.len() > self.name.len() && name.starts_with(&self.name) && name.as_bytes()[self.name.len()] == b'.'
+    }
+
+    /// Its text from its fields', as its type shows it; none when the code
+    /// holds none of them there.
+    fn composed(&self, records: &[&Record], value: &mut dyn FnMut(&str) -> Option<String>) -> Option<String> {
+        let mut any = false;
+        let mut parts = Vec::new();
+        for (field, secret) in &self.fields {
+            let path = format!("{}.{field}", self.name);
+            let text = match (secret, value(&path)) {
+                (true, _) => Some("<secret>".to_string()),
+                (false, Some(text)) => Some(text),
+                (false, None) => records.iter().find(|r| r.name == path).and_then(|r| r.composed(records, value)),
+            };
+            any |= text.is_some() && !secret;
+            parts.push((field, text.unwrap_or_else(|| "<gone>".to_string())));
+        }
+        if !any {
+            return None;
+        }
+        if self.fields.iter().all(|(field, _)| field.bytes().all(|b| b.is_ascii_digit())) {
+            let items: Vec<&str> = parts.iter().map(|(_, text)| text.as_str()).collect();
+            return Some(format!("({})", items.join(", ")));
+        }
+        let fields: Vec<String> = parts.iter().map(|(field, text)| format!("{field}: {text}")).collect();
+        Some(format!("{} {{ {} }}", self.ty, fields.join(", ")))
+    }
 }
 
 /// The bindings of each function, by its number, from the text a build
@@ -551,18 +611,35 @@ fn bindings(program: &[u8]) -> (HashMap<usize, Bindings>, Vec<String>) {
             ["Y", shape] => shapes.push(shape.to_string()),
             ["C", register, at] => function.saved.extend(register.parse().ok().zip(at.parse().ok())),
             ["B", name, ty, kind, value, _, scope, from, shape] => {
+                let constant = match kind {
+                    "k" => value.parse().ok().map(Constant::Word),
+                    "d" => value.parse().ok().map(Constant::Data),
+                    _ => None,
+                };
                 let value: i64 = value.parse().unwrap_or(0);
                 function.bound.push(Bound {
                     name: name.to_string(),
                     ty: ty.to_string(),
                     slot: (kind == "s").then_some(value),
-                    pointer: kind != "s" && value == 1,
+                    pointer: kind == "v" && value == 1,
+                    constant,
                     ranges: Vec::new(),
                     scope: scope.parse().unwrap_or(u32::MAX),
                     from: from.parse().unwrap_or(0),
                     shape: shape.parse().ok(),
                 });
             }
+            ["G", name, ty, scope, fields] => function.records.push(Record {
+                name: name.to_string(),
+                ty: ty.to_string(),
+                scope: scope.parse().unwrap_or(u32::MAX),
+                at: function.bound.len(),
+                fields: fields
+                    .split(',')
+                    .filter(|field| !field.is_empty())
+                    .map(|field| (field.trim_end_matches('!').to_string(), field.ends_with('!')))
+                    .collect(),
+            }),
             ["R", start, end, kind, at] => {
                 let place = match kind {
                     "f" => at.parse().ok().map(Located::Frame),
@@ -624,9 +701,24 @@ impl Place {
 
 impl Bound {
     /// Where the binding is in the frame at `fp`, at `offset` of its code.
-    fn value(&self, fp: u64, offset: u32, registers: &[Option<u64>; 32], memory: &Memory) -> Option<Place> {
+    fn value(
+        &self,
+        fp: u64,
+        offset: u32,
+        registers: &[Option<u64>; 32],
+        memory: &Memory,
+        code: &Code,
+    ) -> Option<Place> {
         if let Some(slot) = self.slot {
             return Some(Place::At(fp.wrapping_add_signed(slot)));
+        }
+        match self.constant {
+            Some(Constant::Word(bits)) => return Some(Place::Word(bits)),
+            Some(Constant::Data(index)) => {
+                let words = code.words.filter(|&words| index < memory.word(words).unwrap_or(0))?;
+                return Some(Place::Word(memory.word(words + 8 + index * 8)?));
+            }
+            None => {}
         }
         let &(.., place) = self.ranges.iter().find(|&&(start, end, _)| start <= offset && offset < end)?;
         Some(match (place, self.pointer) {
@@ -862,16 +954,36 @@ fn values(task: u64, start: Start, memory: &Memory, code: &Code, reading: &Readi
             }
             let line = place.split(" in ").next().and_then(|at| at.rsplit(':').next());
             let line: u32 = line.and_then(|line| line.parse().ok()).unwrap_or(u32::MAX);
-            for bound in table.iter().flat_map(|t| &t.bound).filter(|b| b.scope == record && b.from <= line) {
-                let found_at = bound.value(fp, offset, &registers, memory);
-                let value =
-                    found_at.zip(bound.shape).and_then(|(at, shape)| shown(shape, at, &reading.shapes, memory, 0));
-                if let Some(value) = value {
-                    found.push(json!({
-                        "task": task, "frame": at, "at": place, "name": bound.name, "type": bound.ty,
-                        "value": value, "parts": [],
-                    }));
+            let bound: Vec<(usize, &Bound)> = table
+                .iter()
+                .flat_map(|t| t.bound.iter().enumerate())
+                .filter(|(_, b)| b.scope == record && b.from <= line)
+                .collect();
+            let value = |bound: &Bound| {
+                let found_at = bound.value(fp, offset, &registers, memory, code);
+                found_at.zip(bound.shape).and_then(|(at, shape)| shown(shape, at, &reading.shapes, memory, 0))
+            };
+            // A record kept as fields is shown whole, where its binding
+            // was, its fields not on their own.
+            let records: Vec<&Record> = table.iter().flat_map(|t| &t.records).filter(|r| r.scope == record).collect();
+            let held = |name: &str| records.iter().any(|r| r.holds(name));
+            let mut shown_here: Vec<(usize, bool, String, String, String)> = Vec::new();
+            for &(index, bound) in bound.iter().filter(|(_, b)| !held(&b.name)) {
+                if let Some(value) = value(bound) {
+                    shown_here.push((index, true, bound.name.clone(), bound.ty.clone(), value));
                 }
+            }
+            for top in records.iter().filter(|r| !held(&r.name)) {
+                let mut field = |path: &str| bound.iter().find(|(_, b)| b.name == path).and_then(|(_, b)| value(b));
+                if let Some(text) = top.composed(&records, &mut field) {
+                    shown_here.push((top.at, false, top.name.clone(), top.ty.clone(), text));
+                }
+            }
+            shown_here.sort_by_key(|&(index, binding, ..)| (index, binding));
+            for (_, _, name, ty, value) in shown_here {
+                found.push(json!({
+                    "task": task, "frame": at, "at": place, "name": name, "type": ty, "value": value, "parts": [],
+                }));
             }
             at += 1;
         }

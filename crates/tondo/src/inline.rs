@@ -699,15 +699,23 @@ fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Bo
                 Some(_) => None,
                 None => rename.locals.get(&local).copied(),
             };
+            // A parameter given the caller's own local is named there only
+            // if that local has its type: an argument made of a newtype, as
+            // a secret one, is a local of the type it wraps, which a dump
+            // would show.
+            let named_local = |local: Local| {
+                let found = local_of(local)?;
+                (callee.locals[local.0 as usize] == body.locals[found.0 as usize]).then_some(found)
+            };
             let named = callee
                 .names
                 .iter()
                 .enumerate()
-                .filter_map(|(index, name)| Some((local_of(Local(index as u32))?, name.clone()?, call)));
+                .filter_map(|(index, name)| Some((named_local(Local(index as u32))?, name.clone()?, call)));
             let scoped = callee
                 .scoped
                 .iter()
-                .filter_map(|(local, name, scope)| Some((local_of(*local)?, name.clone(), base + scope)));
+                .filter_map(|(local, name, scope)| Some((named_local(*local)?, name.clone(), base + scope)));
             let found: Vec<_> = named.chain(scoped).collect();
             body.scoped.extend(found);
             let given: Vec<Local> =

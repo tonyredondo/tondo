@@ -296,15 +296,17 @@ tondo runtime: a dump of the program is in dumps/bill-138607.dump.json
 $ tondo dump read dumps/bill-138607.dump.json locals
 bill.to:10 in total
 order: Order = Order { id: 7, lines: [10, 20] }
+discount: Int = 1
 sum: Int = 28
-count: Int = 2
+index: Int = 2
 ```
 
-`discount`, `index` and `line` are not there: by that point the code had
-let go of them. Which values it still holds is a matter of the machine
-code, so an arm64 build of this program may keep others than this one, of
-x86-64; what a dump shows is right on both. Built with `--debug`, the same
-failure leaves them all:
+`count` and `line` are not there: by that point the code had let go of
+them. Which values it still holds is a matter of the machine code, so an
+arm64 build of this program may keep others than this one, of x86-64; what
+a dump shows is right on both. A value that is always the same constant,
+as `discount` here, is shown though the code keeps it nowhere. Built with
+`--debug`, the same failure leaves them all:
 
 ```text
 $ tondo build bill.to --debug -o bill
@@ -322,13 +324,9 @@ line: Int = 20
 
 The values of the Release dump cost nothing while the program runs: its
 code is the same, and the dump reads what is still where the code left it.
-A tool that needs a value the dump lacks says so, as `tondo dump test` does
-here:
-
-```text
-$ tondo dump test dumps/bill-138607.dump.json
-tondo: the dump has no value of `discount` in `total`: a build with --debug keeps them all
-```
+This one holds both arguments of `total`, so `tondo dump test` writes the
+test from it too; a tool that needs a value the dump lacks says which, and
+that a build with `--debug` keeps them all.
 
 A service leaves many dumps, most of them of the same few failures:
 

@@ -23,7 +23,8 @@ type Order = {
 
 fn total(order: Order): Int {
     let prices = [3, 4]
-    prices[order.items.length()]
+    let price = prices[order.items.length()]
+    price + order.items[0].length()
 }
 
 fn main() {

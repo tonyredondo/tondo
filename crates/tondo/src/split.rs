@@ -15,6 +15,12 @@
 //! releasing the enum releases each field. Parameters and the result stay
 //! as they are.
 //!
+//! A binding of the program is split too: each field's local takes its
+//! name, `order.id`, and the table of a Release build's dumps names the
+//! records it was (`mir::Split`), from which a debugger, a breakpoint's
+//! condition and a dump show it whole, its secrets kept. One that is an
+//! enum stays whole: nothing shows an enum from its tag.
+//!
 //! A local the split leaves zero, as the field an enum's value moved out
 //! of, needs no release where every path to the release left it so: those
 //! go.
@@ -32,8 +38,9 @@ pub fn split(bodies: &mut [Body], types: &Types, sources: &crate::source::Source
     // lent, not copied.
     let loans: Vec<Vec<bool>> = bodies.iter().map(|body| body.loans.clone()).collect();
     crate::parallel::each_mut(bodies, |body| {
-        // The program's own bindings stay whole, as a debugger and a dump
-        // show them: a record by its name, with its fields and its secrets.
+        // The program's own bindings, which a dump shows: an enum among them
+        // stays whole, as a dump shows a record from its fields but not an
+        // enum from its tag.
         let std = |span: Span| sources.file_of(span.start).logical.starts_with("<std>/");
         let mut bindings = Vec::new();
         if !std(body.span) {
@@ -253,6 +260,35 @@ fn leaf_names(types: &Types, node: &Node, name: &str) -> Vec<(Local, String)> {
     }
 }
 
+/// The records of a split binding named `name`, the binding's and those
+/// of its fields, for a dump to show them whole from their fields; none of
+/// a secret type, nor of an enum.
+fn records(types: &Types, node: &Node, name: &str, (local, scope): (Local, Option<u32>), out: &mut Vec<Split>) {
+    let Node::Record(ty, fields) = node else { return };
+    let secret = match types.kind(types.repr(*ty)) {
+        TyKind::Adt(id) => types.adt(*id).secret,
+        _ => false,
+    };
+    if secret {
+        return;
+    }
+    out.push(Split { name: name.to_string(), ty: *ty, scope, local });
+    let names: Vec<Option<String>> = match types.kind(types.repr(*ty)) {
+        TyKind::Adt(id) => match &types.adt(*id).kind {
+            crate::types::AdtKind::Record(declared) => {
+                declared.iter().map(|field| (!field.secret).then(|| field.name.clone())).collect()
+            }
+            _ => Vec::new(),
+        },
+        _ => (0..fields.len()).map(|index| Some(index.to_string())).collect(),
+    };
+    for (field, part) in fields.iter().zip(names) {
+        if let Some(part) = part {
+            records(types, field, &format!("{name}.{part}"), (local, scope), out);
+        }
+    }
+}
+
 /// How a statement uses a place of a candidate.
 #[derive(Clone, Copy, PartialEq)]
 enum Use {
@@ -285,8 +321,13 @@ fn split_in(body: &mut Body, types: &Types, loans: &[Vec<bool>], bindings: &[Loc
     let mut known: HashMap<Ty, Option<Shape>> = HashMap::new();
     let mut shapes: Vec<Option<Shape>> =
         body.locals.iter().map(|&ty| known.entry(ty).or_insert_with(|| candidate(types, ty)).clone()).collect();
-    for &local in body.params.iter().chain(&body.ret).chain(bindings) {
+    for &local in body.params.iter().chain(&body.ret) {
         shapes[local.0 as usize] = None;
+    }
+    for &local in bindings {
+        if matches!(shapes[local.0 as usize], Some(Shape::Enum(..))) {
+            shapes[local.0 as usize] = None;
+        }
     }
     if shapes.iter().all(Option::is_none) {
         return;
@@ -364,9 +405,11 @@ fn split_in(body: &mut Body, types: &Types, loans: &[Vec<bool>], bindings: &[Loc
             for (leaf, name) in named(&name) {
                 body.names[leaf.0 as usize] = Some(name);
             }
+            records(types, node, &name, (Local(index as u32), None), &mut body.split);
         }
         for (_, name, call) in body.scoped.iter().filter(|(local, ..)| local.0 as usize == index) {
             scoped.extend(named(name).into_iter().map(|(leaf, name)| (leaf, name, *call)));
+            records(types, node, name, (Local(index as u32), Some(*call)), &mut body.split);
         }
         body.locals[index] = Ty::UNIT;
     }

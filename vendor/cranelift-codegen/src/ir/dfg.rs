@@ -502,9 +502,27 @@ impl DataFlowGraph {
         // - `signatures` and `ext_funcs` have no values.
 
         if let Some(values_labels) = &mut self.values_labels {
-            // Debug info is best-effort. If any is attached to value aliases,
-            // just discard it.
+            // Tondo: the labels of a value that became an alias, as a
+            // variable's copy of another is once its block's parameter goes,
+            // are the final value's too, rather than discarded: a dump finds
+            // the copy where the original is.
+            let mut moved = alloc::vec::Vec::new();
+            for (&k, labels) in values_labels.iter() {
+                if let (ValueData::Alias { original, .. }, ir::ValueLabelAssignments::Starts(starts)) =
+                    (self.values[k].into(), labels)
+                {
+                    moved.push((original, starts.clone()));
+                }
+            }
             values_labels.retain(|&k, _| !matches!(self.values[k].into(), ValueData::Alias { .. }));
+            for (original, starts) in moved {
+                let known = values_labels
+                    .entry(original)
+                    .or_insert_with(|| ir::ValueLabelAssignments::Starts(alloc::vec::Vec::new()));
+                if let ir::ValueLabelAssignments::Starts(known) = known {
+                    known.extend(starts);
+                }
+            }
 
             // If debug-info says a value should have the same labels as another
             // value, then make sure that target is not a value alias.

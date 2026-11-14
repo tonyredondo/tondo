@@ -425,6 +425,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         debug_sites: Vec::new(),
         dump: None,
         dump_bindings: HashMap::new(),
+        dump_words: HashMap::new(),
         building_version: false,
         live: None,
         current: 0,
@@ -795,6 +796,8 @@ struct Codegen<'a> {
     dump: Option<DataId>,
     /// By the function's number, and whether of its version.
     dump_bindings: HashMap<(usize, bool), Vec<DumpBinding>>,
+    /// The number of each static object a dump shows as a constant.
+    dump_words: HashMap<DataId, usize>,
     /// Whether what is built now is a function's version.
     building_version: bool,
     live: Option<LiveCodegen>,
@@ -876,7 +879,7 @@ type DebugBinding = (String, Ty, FuncId, Option<FuncId>);
 /// A binding of a build without probes, as a dump shows it: its name, its
 /// type, the glue that shows it, where it is, its place among those an
 /// explicit panic keeps, and the inlined call it is of.
-type DumpBinding = (String, Ty, FuncId, DumpPlace, Option<u32>, Option<u32>, Option<Span>);
+type DumpBinding = (String, Ty, Option<FuncId>, DumpPlace, Option<u32>, Option<u32>, Option<Span>);
 
 /// Where a dump finds a binding: in what a value label says, in a stack
 /// slot, or behind a pointer a value label says.
@@ -885,6 +888,13 @@ enum DumpPlace {
     Value(u32),
     Slot(u32),
     Pointer(u32),
+    /// A record kept as a local for each field, which the dump shows from
+    /// the bindings named after its fields (`mir::Split`).
+    Fields,
+    /// A constant the code keeps nowhere: its bits, or the address of the
+    /// static object it is.
+    Word(u64),
+    Data(DataId),
 }
 
 /// A compiled function for stack traces: its name, size and, for each
@@ -3410,6 +3420,15 @@ struct FnCodegen<'a, 'b> {
     debug: Option<DebugFrame>,
     /// In a build without probes, the value label of each named variable.
     labels: HashMap<u32, u32>,
+    /// What a dump finds in the function, once it is built: a variable
+    /// that only ever holds a constant is found in the table instead.
+    dumped: Option<Vec<DumpBinding>>,
+    /// The local the statement being built assigns whole, and the named
+    /// variables something else gave a value, which `fixed` cannot trust.
+    assigning: Option<Local>,
+    unfixed: HashSet<u32>,
+    /// The static array each local was given, by its whole assignment.
+    statics: HashMap<Local, DataId>,
     /// Where an explicit panic keeps the numbers a dump shows, and which.
     keeping: Option<(ir::StackSlot, Vec<(Local, Variable)>)>,
     /// The block being built.
@@ -3528,6 +3547,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         // values, for a dump: no code changes for it.
         let mut labels = HashMap::new();
         let mut kept = Vec::new();
+        let mut dumped = None;
         let panics = body.blocks.iter().any(|block| matches!(block.terminator, Terminator::Panic { .. }));
         if cg.dumps() {
             fb.func.collect_debug_info();
@@ -3579,9 +3599,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 // What a slot holds before its first line is not the
                 // binding's yet.
                 let from = written[index].flatten().filter(|_| matches!(storage[index], Storage::Slot(_)));
-                described.push((name.clone(), ty, cg.glue(Glue::Show, ty), place, keep, scope, from));
+                described.push((index, (name.clone(), ty, Some(cg.glue(Glue::Show, ty)), place, keep, scope, from)));
             }
-            cg.dump_bindings(described);
+            // A record kept as its fields, where its binding was: the
+            // bindings show in the order the function has them.
+            for split in &body.split {
+                let record = (split.name.clone(), split.ty, None, DumpPlace::Fields, None, split.scope, None);
+                described.push((split.local.0 as usize, record));
+            }
+            described.sort_by_key(|&(index, _)| index);
+            dumped = Some(described.into_iter().map(|(_, described)| described).collect());
         }
         let keeping = (!kept.is_empty()).then(|| {
             let size = (kept.len() as u32 + 1) * 8;
@@ -3650,6 +3677,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             scope: None,
             debug,
             labels,
+            dumped,
+            assigning: None,
+            unfixed: HashSet::new(),
+            statics: HashMap::new(),
             keeping,
             block: 0,
             probed: None,
@@ -3682,7 +3713,48 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.def_var(var, value);
         if let Some(&label) = self.labels.get(&var.as_u32()) {
             self.e.fb.set_val_label(value, ir::ValueLabel::from_u32(label));
+            if self.assigning != Some(Local(label)) {
+                self.unfixed.insert(label);
+            }
         }
+    }
+
+    /// Gives the cranelift module what a dump finds in the function, with
+    /// the variables that only ever hold a constant found in the table:
+    /// the code makes such a value where it is used, if at all, and keeps
+    /// it nowhere.
+    fn describe_dump(&mut self) {
+        let Some(mut described) = self.dumped.take() else { return };
+        let fixed = fixed(self.body, &self.statics);
+        let written = crate::mir::written(self.body);
+        for (_, ty, _, place, _, scope, from) in &mut described {
+            let DumpPlace::Value(label) = *place else { continue };
+            let Some(constant) = &fixed[label as usize] else { continue };
+            if self.unfixed.contains(&label) {
+                continue;
+            }
+            let size = self.e.cg.layout(*ty).size;
+            if size > 8 {
+                continue;
+            }
+            *place = match constant {
+                Fixed::Array(id) => DumpPlace::Data(*id),
+                Fixed::Const(Const::Str(text)) => DumpPlace::Data(self.e.cg.string(text)),
+                Fixed::Const(Const::Bytes(contents, _)) => DumpPlace::Data(self.e.cg.bytes(contents)),
+                Fixed::Const(Const::Int(value, _)) => DumpPlace::Word(*value as u64),
+                Fixed::Const(Const::Float(bits, _)) if size == 4 => {
+                    DumpPlace::Word(u64::from((f64::from_bits(*bits) as f32).to_bits()))
+                }
+                Fixed::Const(Const::Float(bits, _)) => DumpPlace::Word(*bits),
+                Fixed::Const(Const::Bool(value)) => DumpPlace::Word(u64::from(*value)),
+                Fixed::Const(Const::Char(c)) => DumpPlace::Word(u64::from(*c)),
+                Fixed::Const(Const::Unit) => continue,
+            };
+            // It holds the constant from its first line on; an inlined
+            // call's from where the call starts.
+            *from = written[label as usize].flatten().filter(|_| scope.is_none());
+        }
+        self.e.cg.dump_bindings(described);
     }
 
     /// Builds the function's IR; gives where its statements are, which the
@@ -3873,12 +3945,95 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
         }
         self.e.fb.seal_all_blocks();
+        self.describe_dump();
         let config = self.e.cg.isa().frontend_config();
         self.e.fb.finalize(config);
         self.sites
     }
 
     // ---- places and values ---------------------------------------------------
+}
+
+/// What a local always holds, when it is a constant.
+enum Fixed<'b> {
+    Const(&'b Const),
+    /// The static array codegen made for it.
+    Array(DataId),
+}
+
+/// The constant each local holds, when every assignment gives it the same
+/// one, itself or by a copy of a local that holds it: a number, a literal
+/// or a static array, as an inlined call's argument can be. Not a
+/// parameter's, nor what a call or a loan could change, which
+/// `FnCodegen::unfixed` tells.
+fn fixed<'b>(body: &'b Body, statics: &HashMap<Local, DataId>) -> Vec<Option<Fixed<'b>>> {
+    let mut assigned: Vec<Vec<&Rvalue>> = vec![Vec::new(); body.locals.len()];
+    let mut whole = vec![true; body.locals.len()];
+    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+        match statement {
+            Statement::Assign(place, rvalue, _) if place.path.is_empty() => {
+                assigned[place.local.0 as usize].push(rvalue)
+            }
+            Statement::Assign(place, ..) => whole[place.local.0 as usize] = false,
+            _ => {}
+        }
+    }
+    for local in body.params.iter().chain(body.ret.as_ref()) {
+        whole[local.0 as usize] = false;
+    }
+    // A copy's constant is its source's: resolved once each, a cycle of
+    // copies holding none.
+    let mut known: Vec<Option<Option<Fixed>>> = (0..body.locals.len()).map(|_| None).collect();
+    fn resolve<'b>(
+        local: usize,
+        assigned: &[Vec<&'b Rvalue>],
+        whole: &[bool],
+        statics: &HashMap<Local, DataId>,
+        known: &mut Vec<Option<Option<Fixed<'b>>>>,
+    ) -> Option<Fixed<'b>> {
+        if let Some(found) = &known[local] {
+            return found.as_ref().map(Fixed::copied);
+        }
+        known[local] = Some(None);
+        if !whole[local] || assigned[local].is_empty() {
+            return None;
+        }
+        let mut found: Option<Fixed> = None;
+        for rvalue in &assigned[local] {
+            let this = match rvalue {
+                Rvalue::Use(Operand::Const(constant)) => Fixed::Const(constant),
+                Rvalue::Array(..) => Fixed::Array(*statics.get(&Local(local as u32))?),
+                Rvalue::Use(Operand::Copy(from)) if from.path.is_empty() => {
+                    resolve(from.local.0 as usize, assigned, whole, statics, known)?
+                }
+                _ => return None,
+            };
+            match &found {
+                Some(other) if !other.same(&this) => return None,
+                _ => found = Some(this),
+            }
+        }
+        known[local] = Some(found.as_ref().map(Fixed::copied));
+        found
+    }
+    (0..body.locals.len()).map(|local| resolve(local, &assigned, &whole, statics, &mut known)).collect()
+}
+
+impl Fixed<'_> {
+    fn copied(&self) -> Self {
+        match self {
+            Fixed::Const(constant) => Fixed::Const(constant),
+            Fixed::Array(id) => Fixed::Array(*id),
+        }
+    }
+
+    fn same(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Fixed::Const(one), Fixed::Const(two)) => one == two,
+            (Fixed::Array(one), Fixed::Array(two)) => one == two,
+            _ => false,
+        }
+    }
 }
 
 /// The locals a function assigns a string literal and nothing else, nor

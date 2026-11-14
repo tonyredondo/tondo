@@ -18,7 +18,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 };
                 self.at_typed(*span, Some(self.body.place_ty(self.e.cg.types(), made)));
                 self.probe(*span);
+                self.assigning = place.path.is_empty().then_some(place.local);
                 self.assign(place, rvalue, *span);
+                self.assigning = None;
                 if place.path.is_empty() {
                     self.mark(place.local, true);
                 }
@@ -358,6 +360,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 // Made once, in the program's data, rather than each time.
                 let size = self.e.cg.layout(element).size as usize;
                 let id = self.e.cg.static_array(size, elements);
+                if place.path.is_empty() {
+                    self.statics.insert(place.local, id);
+                }
                 let global = self.e.global(id);
                 Val::Scalar(self.e.fb.ins().symbol_value(POINTER, global))
             }

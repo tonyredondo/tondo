@@ -14,7 +14,7 @@
   "name": "bounds",
   "recovered": false,
   "source": {
-    "column": 5,
+    "column": 17,
     "file": "falls.to",
     "line": 14
   },
@@ -22,7 +22,7 @@
     {
       "function": "total",
       "source": {
-        "column": 5,
+        "column": 17,
         "file": "falls.to",
         "line": 14
       },
@@ -34,7 +34,7 @@
       "source": {
         "column": 15,
         "file": "falls.to",
-        "line": 20
+        "line": 21
       },
       "task": 1,
       "times": 1

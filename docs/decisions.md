@@ -6974,3 +6974,41 @@ over numbers 38%. The closure's parameter is a binding of the program, which kee
 in memory: split too, the chain takes 19 µs, which needs the tools to show a record from its
 fields first. Building takes 2 to 3% more instructions; `reserve`, which looked at every function
 on one thread, now does so on every core.
+
+## The program's records in registers too, shown whole from their fields
+
+`split` left the program's own bindings whole, as a debugger, a breakpoint's condition and a dump
+of a Release build read them by name: a closure's parameter is such a binding, so
+`iter().filter(...).sumBy(...)` over records with a text kept each element in the frame's
+memory. They are split now. The table of a Release build's dumps names each record kept as
+fields, its type and its fields, `@secret` ones and those of a secret type marked, where the
+binding was; a dump, a breakpoint's variables and conditions and a core show it whole from the
+bindings named after its fields, `order.id`, with `<secret>` for a secret field and `<gone>` for
+one the code no longer holds there. An enum of the program stays whole, as nothing shows one from
+its tag. On the way, a parameter of a secret newtype that the inliner gave the caller's own local,
+which has the type the newtype wraps, showed its value in a Release dump: such a parameter is no
+longer named there.
+
+Two things the dump of a whole record showed would have been lost. Cranelift discarded the labels
+of a value that became an alias, as a variable's copy of another does once its block's parameter
+goes, so a field copied from another local showed `<gone>`; the vendored Cranelift gives them to
+the final value, and `tondo asm --all` over bench/tondo is the same, byte for byte, with and
+without. And a field always given the same constant, as `total: 10.0` or the static array
+`["a", "b"]`, is kept nowhere: the code makes it where it is used, or folds it away. The table now
+holds such a constant, its bits or the address of its static object, which the trace table lists
+for the runtime and for a core, from the variable's first line on. That holds for any variable
+that only ever holds one constant, as an inlined call's argument: the manual's Release dump of
+`bill.to` shows `discount` now, and `tondo dump test` writes its test from that dump.
+
+The entry before said that splitting them would take the chain over records with a text to
+19 µs: that was a prototype that split values it may not. Measured on this change, the chain
+does 21.5% fewer instructions and takes 67.7 µs, against 80.0 µs on main; its closures are
+called through `fn` values, which take the element whole, in memory. `filter` then `sumBy` on
+the array does 6.2% fewer, and a loop over records of numbers, `points 1000`, 11.5% fewer and
+15% less time: `unroll` took a loop over elements only when its first statement copied the
+element whole, and now also when it reads a field of it, as it does of an element split. Every
+other row of bench/tondo does the same instructions within 1.5%; `countBy`, whose code is the
+same, takes 213–296 µs over eight orders of the functions, against 217–267 µs before, which is
+where the code lies. Building the generated programs takes 1.9 to 2.1% more instructions, for
+the locals each record now has; checking takes the same. Tony accepted the two sentences of the
+toolchain's specification that say what such a dump shows.

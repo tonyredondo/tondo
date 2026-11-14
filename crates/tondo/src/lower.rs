@@ -469,6 +469,7 @@ fn lower_function(
         framed: Vec::new(),
         names: b.names,
         scoped: Vec::new(),
+        split: Vec::new(),
         arguments: Vec::new(),
         params,
         loans: function.loans.clone(),

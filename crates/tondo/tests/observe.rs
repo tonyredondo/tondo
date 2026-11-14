@@ -3170,6 +3170,7 @@ fn a_dump_of_a_build_without_probes_has_its_bindings() {
     for task in kept["tasks"].as_array_mut().unwrap() {
         task["frames"] = json!([]);
     }
+    kept["values"] = json!([]);
     assert_eq!(kept["info"]["probes"], false);
     std::fs::write(dir.join("none.dump.json"), kept.to_string()).unwrap();
     let locals = Command::new(tondo).args(["dump", "read", "none.dump.json", "locals"]).current_dir(&dir).output();
@@ -3794,9 +3795,10 @@ fn a_logpoint_reads_a_running_release_build() {
         let paid = order.total + fee\n    paid\n}\n\nfn tight(rows: Array[Int]): Int {\n    var sum = 0\n    \
         var i = 0\n    for i < rows.length() {\n        sum = sum + rows[i]\n        i += 1\n    }\n    sum\n}\n\n\
         fn scaled(value: Float): Float {\n    let more = value * 2.0\n    more + 1.0\n}\n\n\
+        fn price(round: Int): Float {\n    10.0 + Float(round)\n}\n\n\
         fn main() {\n    var round = 0\n    var sum = 0.0\n    console.println(\"ready\")\n    \
-        let _ = console.flush()\n    let calls = [scaled]\n    for round < 3000 {\n        \
-        let order = Order { id: round, total: 10.0 + Float(round) }\n        sum = sum + charge(order, 0.25) + calls[round % 1](Float(round))\n        \
+        let _ = console.flush()\n    let calls = [scaled]\n    let prices = [price]\n    for round < 3000 {\n        \
+        let order = Order { id: round, total: prices[round % 1](round) }\n        sum = sum + charge(order, 0.25) + calls[round % 1](Float(round))\n        \
         round += tight([1])\n        time.sleep(time.milliseconds(5))\n    }\n    console.println(\"{sum}\")\n}\n";
     std::fs::write(dir.join("orders.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
@@ -3823,7 +3825,8 @@ fn a_logpoint_reads_a_running_release_build() {
     let found: Value = serde_json::from_slice(&found.stdout).unwrap();
     let hits = found["hits"].as_array().unwrap();
     assert_eq!(hits.len(), 2, "{found}");
-    // What it read is what the program had there.
+    // What it read is what the program had there: the fields of a record
+    // the code keeps in registers, one a call gave.
     let said = hits[0]["text"].as_str().unwrap();
     let id: u64 = said.split_whitespace().nth(1).unwrap().parse().unwrap_or_else(|_| panic!("{said}"));
     let total = said.rsplit(' ').next().unwrap();
@@ -4219,7 +4222,7 @@ fn what_is_secret_stays_out_of_dumps_and_the_debugger() {
         fn work(user: User, _wrapped: Wrapped, pair: Pair[Int], login: Login) {\n    \
         with Auth { who: \"ximena\", session: \"s3cr3t\" }\n    console.println(user.password)\n    \
         console.println(\"{pair.first}\")\n    \
-        panic(\"stop here\")\n}\n\n\
+        for _ in user.tokens {\n        panic(\"stop here\")\n    }\n}\n\n\
         fn main() {\n    let tail = \"ter2\"\n    let user = User { name: \"ximena\", password: \"hun{tail}\", \
         token: Token(\"abc{tail}\"), tokens: [Token(\"k1{tail}\")] }\n    \
         work(user, Wrapped(Token(\"xyz{tail}\")), Pair { first: 1, second: 2 }, \

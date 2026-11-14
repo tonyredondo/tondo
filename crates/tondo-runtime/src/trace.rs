@@ -35,6 +35,9 @@ pub struct Table {
     /// offsets, in the order of the functions and their code.
     handlers: *const [u32; 3],
     handled: u64,
+    /// The static objects a dump shows as constants: their count, then
+    /// their addresses; or null.
+    words: *const u64,
 }
 
 #[repr(C)]
@@ -54,6 +57,17 @@ static PATCHED_COUNT: AtomicUsize = AtomicUsize::new(0);
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_trace(table: *const Table) {
     TABLE.store(table as *mut Table, Ordering::Release);
+}
+
+/// The address of the static object a dump shows as the constant
+/// `index` of the program's table.
+pub(crate) fn dump_word(index: usize) -> Option<usize> {
+    let table = unsafe { TABLE.load(Ordering::Acquire).as_ref() }?;
+    if table.words.is_null() {
+        return None;
+    }
+    let count = unsafe { *table.words } as usize;
+    (index < count).then(|| unsafe { *table.words.add(index + 1) } as usize)
 }
 
 /// Registers a patch's table; false when there is no room for another.

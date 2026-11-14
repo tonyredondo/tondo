@@ -105,6 +105,18 @@ pub fn project(types: &Types, ty: Ty, proj: Proj) -> Ty {
     }
 }
 
+/// A record a binding held, which `split` keeps as a local for each field:
+/// its name, its type, the inlined call it is of and the local it was;
+/// each field is the binding named after it, `order.id`, or a record of
+/// its own, and an `@secret` one has none.
+#[derive(Clone, Debug)]
+pub struct Split {
+    pub name: String,
+    pub ty: Ty,
+    pub scope: Option<u32>,
+    pub local: Local,
+}
+
 #[derive(Clone)]
 pub struct Body {
     pub name: String,
@@ -127,6 +139,9 @@ pub struct Body {
     /// The parameters of the code inlined here, which the call writes,
     /// before the first line of the function they belong to.
     pub arguments: Vec<Local>,
+    /// The bindings `split` keeps as a local for each field, which a dump
+    /// shows whole from the bindings named after their fields.
+    pub split: Vec<Split>,
     pub params: Vec<Local>,
     /// Parameters passed as the address of the caller's place (a `mut self`
     /// or `var self` loan); reads and writes go through it.

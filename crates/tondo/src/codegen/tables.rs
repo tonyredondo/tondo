@@ -136,7 +136,35 @@ impl Codegen<'_> {
         }
         let handled = handlers.len() as u64 / 12;
         let handlers = define(&mut self.module, "tondo_trace_handlers", handlers);
-        let mut header = vec![0u8; 64];
+        // The static objects a dump shows as constants (`DumpPlace::Data`),
+        // each once: their count, then their addresses, which only a linker
+        // knows; a core is read with them too.
+        let mut words = Vec::new();
+        for function in &self.traced {
+            for binding in self.dump_bindings.get(&(function.body, function.version)).into_iter().flatten() {
+                if let DumpPlace::Data(data) = binding.3
+                    && !self.dump_words.contains_key(&data)
+                {
+                    self.dump_words.insert(data, words.len());
+                    words.push(data);
+                }
+            }
+        }
+        let constants = (!words.is_empty()).then(|| {
+            let id = self.module.declare_data("tondo_dump_words", Linkage::Local, false, false).expect("dump words");
+            let mut data = DataDescription::new();
+            let mut bytes = vec![0u8; (words.len() + 1) * 8];
+            bytes[..8].copy_from_slice(&(words.len() as u64).to_le_bytes());
+            data.define(bytes.into_boxed_slice());
+            data.set_align(8);
+            for (index, &word) in words.iter().enumerate() {
+                let word = self.module.declare_data_in_data(word, &mut data);
+                data.write_data_addr((index as u32 + 1) * 8, word, 0);
+            }
+            self.module.define_data(id, &data).expect("dump words definition");
+            id
+        });
+        let mut header = vec![0u8; 72];
         header[..16].copy_from_slice(crate::cores::MAGIC);
         header[24..32].copy_from_slice(&(self.traced.len() as u64).to_le_bytes());
         header[40..48].copy_from_slice(&files_at.to_le_bytes());
@@ -150,6 +178,10 @@ impl Codegen<'_> {
         data.write_data_addr(16, functions, 0);
         data.write_data_addr(32, blob, 0);
         data.write_data_addr(48, handlers, 0);
+        if let Some(constants) = constants {
+            let constants = self.module.declare_data_in_data(constants, &mut data);
+            data.write_data_addr(64, constants, 0);
+        }
         self.module.define_data(id, &data).expect("trace table");
     }
 
@@ -178,13 +210,36 @@ impl Codegen<'_> {
             }
             let Some(bindings) = self.dump_bindings.get(&(function.body, function.version)) else { continue };
             for (name, ty, glue, place, keep, scope, from) in bindings {
+                let scope_text = scope.map_or(-1, i64::from);
+                // A record of fields: their names, `!` after a secret one,
+                // or one of a secret type, which shows so held or not.
+                if let DumpPlace::Fields = place {
+                    let fields: Vec<String> = match self.types.kind(self.types.repr(*ty)) {
+                        TyKind::Adt(id) => match &self.types.adt(*id).kind {
+                            crate::types::AdtKind::Record(declared) => declared
+                                .iter()
+                                .map(|field| {
+                                    let secret = field.secret || self.types.secret(field.ty);
+                                    format!("{}{}", field.name, if secret { "!" } else { "" })
+                                })
+                                .collect(),
+                            _ => Vec::new(),
+                        },
+                        TyKind::Tuple(items) => (0..items.len()).map(|index| index.to_string()).collect(),
+                        _ => Vec::new(),
+                    };
+                    let ty = self.types.display(*ty);
+                    text.push_str(&format!("G\t{name}\t{ty}\t{scope_text}\t{}\n", fields.join(",")));
+                    continue;
+                }
+                let Some(glue) = glue else { continue };
                 glues.push(*glue);
                 let shaped = ty;
                 let ty = self.types.display(*ty);
                 let keep = keep.map_or(-1, i64::from);
                 let from = from.map_or(0, |from| self.sources.position(from.start).1);
                 let shape = known[shaped];
-                let keep = format!("{keep}\t{}\t{from}\t{shape}", scope.map_or(-1, i64::from));
+                let keep = format!("{keep}\t{scope_text}\t{from}\t{shape}");
                 match *place {
                     DumpPlace::Slot(slot) => {
                         let Some((_, at)) = function.slots.iter().find(|(s, _)| *s == slot) else {
@@ -192,6 +247,14 @@ impl Codegen<'_> {
                             continue;
                         };
                         text.push_str(&format!("B\t{name}\t{ty}\ts\t{at}\t{keep}\n"));
+                    }
+                    DumpPlace::Fields => {}
+                    // A constant: its bits, or its number among the
+                    // addresses the trace table keeps.
+                    DumpPlace::Word(bits) => text.push_str(&format!("B\t{name}\t{ty}\tk\t{bits}\t{keep}\n")),
+                    DumpPlace::Data(data) => {
+                        let index = self.dump_words[&data];
+                        text.push_str(&format!("B\t{name}\t{ty}\td\t{index}\t{keep}\n"));
                     }
                     DumpPlace::Value(label) | DumpPlace::Pointer(label) => {
                         let pointer = u8::from(matches!(place, DumpPlace::Pointer(_)));

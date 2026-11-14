@@ -915,12 +915,12 @@ pub(super) fn render(
     // waits for that.
     let condition = alone.then(|| CONDITION.lock().unwrap_or_else(|e| e.into_inner()).clone()).flatten();
     let mut waiting: Vec<(String, String, String)> = Vec::new();
-    let mut show = |task: u64, frame: usize, place: &str, name: &str, ty: &str, glue: Show, address: usize| {
+    let mut show = |task: u64, frame: usize, place: &str, name: &str, ty: &str, text: &mut dyn FnMut() -> String| {
         index += 1;
         if index <= from {
             return;
         }
-        let text = shown_here(glue, address);
+        let text = text();
         let line = format!(
             "{{\"task\":{task},\"frame\":{frame},\"at\":{},\"name\":{},\"type\":{},\"value\":{},\"parts\":{}}}\n",
             quoted(place),
@@ -944,7 +944,8 @@ pub(super) fn render(
             stack.splice(0..0, pc.and_then(|pc| frame_at(table, pc, frame)));
             for at in 0..stack.len() {
                 for (binding, address, _) in visible(table, &stack, at) {
-                    show(task, at, &stack[at].place, &binding.name, &binding.ty, binding.show, address);
+                    let glue = binding.show;
+                    show(task, at, &stack[at].place, &binding.name, &binding.ty, &mut || shown_here(glue, address));
                 }
             }
         } else if let Some(functions) = &release {
@@ -983,15 +984,56 @@ pub(super) fn render(
                 for (record, place) in scopes.iter().filter(|(_, place)| !place.contains(" in spawn")) {
                     let line = place.split(" in ").next().and_then(|at| at.rsplit(':').next());
                     let line: u32 = line.and_then(|line| line.parse().ok()).unwrap_or(u32::MAX);
-                    let bound = found.iter().flat_map(|f| &f.bindings);
-                    for binding in bound.filter(|b| b.scope == *record && b.from <= line) {
-                        let mut word = 0usize;
+                    let bound: Vec<(usize, &DumpBinding)> = found
+                        .iter()
+                        .flat_map(|f| f.bindings.iter().enumerate())
+                        .filter(|(_, b)| b.scope == *record && b.from <= line)
+                        .collect();
+                    // Where a binding is, in what a panic kept or as the
+                    // code left it; a register's copy goes in `word`.
+                    let address_of = |binding: &DumpBinding, word: &mut usize| {
                         let kept = numbers.zip(binding.keep).and_then(|(numbers, index)| {
                             let bits = unsafe { *(numbers as *const u64) };
                             (bits & (1 << index) != 0).then_some(numbers + (index + 1) * 8)
                         });
-                        if let Some(address) = kept.or_else(|| binding.found(fp, offset, &registers, &mut word)) {
-                            show(task, at, place, &binding.name, &binding.ty, binding.show, address);
+                        kept.or_else(|| binding.found(fp, offset, &registers, word))
+                    };
+                    // A record kept as fields is shown whole, where its
+                    // binding was, its fields not on their own.
+                    let records: Vec<&DumpRecord> =
+                        found.iter().flat_map(|f| &f.records).filter(|r| r.scope == *record).collect();
+                    let held = |name: &str| records.iter().any(|r| r.holds(name));
+                    let value = |path: &str| {
+                        let (_, binding) = bound.iter().find(|(_, b)| b.name == path)?;
+                        let mut word = 0usize;
+                        let address = address_of(binding, &mut word)?;
+                        Some(shown_here(binding.show, address))
+                    };
+                    let mut shown: Vec<(usize, Result<&DumpBinding, &DumpRecord>)> =
+                        bound.iter().filter(|(_, b)| !held(&b.name)).map(|&(index, b)| (index, Ok(b))).collect();
+                    shown.extend(records.iter().filter(|r| !held(&r.name)).map(|&r| (r.at, Err(r))));
+                    shown.sort_by_key(|(index, entry)| (*index, entry.is_ok()));
+                    for (_, entry) in shown {
+                        let mut word = 0usize;
+                        match entry {
+                            Ok(binding) => {
+                                if let Some(address) = address_of(binding, &mut word) {
+                                    let glue = binding.show;
+                                    show(task, at, place, &binding.name, &binding.ty, &mut || {
+                                        shown_here(glue, address)
+                                    });
+                                }
+                            }
+                            // Shown when the code holds a field of it here.
+                            Err(top) => {
+                                let holds_one =
+                                    bound.iter().any(|(_, b)| top.holds(&b.name) && address_of(b, &mut word).is_some());
+                                if holds_one {
+                                    let text =
+                                        &mut || composed(top, &records, &mut |path| value(path)).unwrap_or_default();
+                                    show(task, at, place, &top.name, &top.ty, text);
+                                }
+                            }
                         }
                     }
                     at += 1;
@@ -1025,6 +1067,8 @@ pub(super) struct DumpBinding {
     pub(super) slot: Option<isize>,
     /// Behind what the ranges find, a pointer to it.
     pub(super) pointer: bool,
+    /// A constant the code keeps nowhere, as a register would hold it.
+    pub(super) constant: Option<usize>,
     /// Over which code it is where.
     pub(super) ranges: Vec<(u32, u32, Place)>,
     /// Its place among what an explicit panic keeps.
@@ -1046,10 +1090,62 @@ pub(super) enum Place {
     Float(usize),
 }
 
+/// A record the code keeps as a local for each field: a dump shows it whole
+/// from the bindings named after its fields, `order.id`, or after those of
+/// a record inside it.
+pub(super) struct DumpRecord {
+    pub(super) name: String,
+    pub(super) ty: String,
+    pub(super) scope: u32,
+    /// Each field, and whether it is `@secret`, which has no binding.
+    pub(super) fields: Vec<(String, bool)>,
+    /// How many of the function's bindings come before it.
+    pub(super) at: usize,
+}
+
+impl DumpRecord {
+    /// Whether a binding is a field of it, or of a record inside it.
+    fn holds(&self, name: &str) -> bool {
+        name.len() > self.name.len() && name.starts_with(&self.name) && name.as_bytes()[self.name.len()] == b'.'
+    }
+}
+
+/// A record's text from its fields', as its type shows it, by `value` of a
+/// field's binding; none when the code holds none of them there.
+pub(super) fn composed(
+    record: &DumpRecord,
+    records: &[&DumpRecord],
+    value: &mut dyn FnMut(&str) -> Option<String>,
+) -> Option<String> {
+    let mut any = false;
+    let mut parts = Vec::new();
+    for (field, secret) in &record.fields {
+        let path = format!("{}.{field}", record.name);
+        let inner = || records.iter().find(|r| r.name == path).copied();
+        let text = match (secret, value(&path)) {
+            (true, _) => Some("<secret>".to_string()),
+            (false, Some(text)) => Some(text),
+            (false, None) => inner().and_then(|inner| composed(inner, records, value)),
+        };
+        any |= text.is_some() && !secret;
+        parts.push((field, text.unwrap_or_else(|| "<gone>".to_string())));
+    }
+    if !any {
+        return None;
+    }
+    if record.fields.iter().all(|(field, _)| field.bytes().all(|b| b.is_ascii_digit())) {
+        let items: Vec<&str> = parts.iter().map(|(_, text)| text.as_str()).collect();
+        return Some(format!("({})", items.join(", ")));
+    }
+    let fields: Vec<String> = parts.iter().map(|(field, text)| format!("{field}: {text}")).collect();
+    Some(format!("{} {{ {} }}", record.ty, fields.join(", ")))
+}
+
 /// What a dump reads of a function of a build without probes.
 #[derive(Default)]
 pub(super) struct DumpFunction {
     pub(super) bindings: Vec<DumpBinding>,
+    pub(super) records: Vec<DumpRecord>,
     /// Where it saves its caller's registers, from the canonical frame
     /// address, by number.
     pub(super) saved: Vec<(usize, isize)>,
@@ -1103,6 +1199,10 @@ impl DumpBinding {
     pub(super) fn found(&self, fp: usize, offset: u32, registers: &Registers, word: &mut usize) -> Option<usize> {
         if let Some(slot) = self.slot {
             return Some((fp as isize + slot) as usize);
+        }
+        if let Some(constant) = self.constant {
+            *word = constant;
+            return Some(word as *mut usize as usize);
         }
         let &(.., place) = self.ranges.iter().find(|&&(start, end, _)| start <= offset && offset < end)?;
         let value = match place {
@@ -1191,13 +1291,42 @@ pub(super) fn dump_functions() -> std::collections::HashMap<usize, DumpFunction>
                 let (name, ty) = (name.to_string(), ty.to_string());
                 let show = glues[next];
                 next += 1;
+                // A constant's bits, or its number among the static
+                // objects the trace table names.
+                let constant = match kind {
+                    "k" => value.parse::<u64>().ok().map(|bits| bits as usize),
+                    "d" => value.parse().ok().and_then(crate::trace::dump_word),
+                    _ => None,
+                };
                 let value: isize = value.parse().unwrap_or(0);
-                let (slot, pointer) = if kind == "s" { (Some(value), false) } else { (None, value == 1) };
+                let (slot, pointer) =
+                    if kind == "s" { (Some(value), false) } else { (None, kind == "v" && value == 1) };
                 let keep = keep.parse().ok();
                 let scope = scope.parse().unwrap_or(u32::MAX);
                 let from = from.parse().unwrap_or(0);
                 let ranges = Vec::new();
-                function.bindings.push(DumpBinding { name, ty, show, slot, pointer, ranges, keep, scope, from });
+                function.bindings.push(DumpBinding {
+                    name,
+                    ty,
+                    show,
+                    slot,
+                    pointer,
+                    constant,
+                    ranges,
+                    keep,
+                    scope,
+                    from,
+                });
+            }
+            ["G", name, ty, scope, fields] => {
+                let fields = fields
+                    .split(',')
+                    .filter(|field| !field.is_empty())
+                    .map(|field| (field.trim_end_matches('!').to_string(), field.ends_with('!')))
+                    .collect();
+                let scope = scope.parse().unwrap_or(u32::MAX);
+                let (name, ty, at) = (name.to_string(), ty.to_string(), function.bindings.len());
+                function.records.push(DumpRecord { name, ty, scope, fields, at });
             }
             ["R", start, end, kind, at] => {
                 let place = match kind {

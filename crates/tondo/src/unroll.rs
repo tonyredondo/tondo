@@ -143,12 +143,17 @@ fn find(body: &Body, types: &Types, done: &[usize], kept: &mut Vec<(usize, Strin
         let loop_blocks: Vec<usize> = (0..blocks.len()).filter(|&b| reached[b] && b != step).collect();
         // Short, without a loop of its own, and its first statement takes
         // the counter, as `for i in a..b` does, or the element at it, as
-        // `for item in items` does.
+        // `for item in items` does, or a field of it, as it does of an
+        // element `split` keeps a local for each field of.
         let statements: usize = loop_blocks.iter().map(|&b| blocks[b].stmts.len()).sum();
         let takes = |value: &Rvalue| match value {
-            Rvalue::Use(Operand::Copy(Place { local, path })) => match path[..] {
+            Rvalue::Use(Operand::Copy(Place { local, path })) => match &path[..] {
                 [] if *local == counter => Some(false),
-                [Proj::InBounds(index)] if index == counter => Some(true),
+                [Proj::InBounds(index), fields @ ..]
+                    if *index == counter && fields.iter().all(|proj| matches!(proj, Proj::Field(_))) =>
+                {
+                    Some(true)
+                }
                 _ => None,
             },
             _ => None,

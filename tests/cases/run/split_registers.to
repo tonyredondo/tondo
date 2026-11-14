@@ -1,9 +1,8 @@
 // Records, tuples and options a function only takes apart are kept in
 // registers, a local for each field: a lazy chain hands each element
 // through `some(item)` at every step, in the standard library's code, and
-// moves it between registers. The program's own bindings stay whole, as a
-// debugger shows them, and so does a value read whole or lent: each gives
-// the same results either way.
+// moves it between registers, as the closure's `order` is. A value read
+// whole or lent stays whole: each gives the same results either way.
 
 import std.console
 
@@ -40,6 +39,25 @@ fn kept(all: Array[Order]): Array[Order] {
     out
 }
 
+type Point = {
+    x: Int
+    y: Int
+}
+
+// Its elements are read a field at a time, and the loop still runs four
+// turns at a time.
+fn sum(count: Int): Int {
+    var all: Array[Point] = []
+    for i in 0..count {
+        all.push(Point { x: i, y: i * 2 })
+    }
+    var total = 0
+    for point in all {
+        total += point.x + point.y
+    }
+    total
+}
+
 fn swapped(): Int {
     var (low, high) = (3, 9)
     if low > high {
@@ -60,7 +78,8 @@ fn lent(): Int {
 
 fn main() {
     let all = orders()
-    console.println("{lazy(all)} {kept(all).length()} {swapped()} {lent()}")
+    console.println("{lazy(all)} {kept(all).length()} {swapped()} {lent()} {sum(10)}")
 }
 
-// expect-stdout: 35025 5 6 3
+// expect-stdout: 35025 5 6 3 135
+// expect-optimization: 55:18 unrolled runs four turns at a time

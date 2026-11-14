@@ -470,7 +470,16 @@ pub(super) fn replay(cg: &mut Codegen, bodies: &[Body], built: &mut Built) {
                 let described = described
                     .into_iter()
                     .map(|(name, ty, glue, place, keep, scope, from)| {
-                        (name, ty, real(glue, &ids), place, keep, scope, from)
+                        let place = match place {
+                            super::DumpPlace::Data(id) => {
+                                super::DumpPlace::Data(match id.as_u32().checked_sub(NAMED) {
+                                    Some(n) => DataId::from_u32(ids[n as usize]),
+                                    None => id,
+                                })
+                            }
+                            place => place,
+                        };
+                        (name, ty, glue.map(|glue| real(glue, &ids)), place, keep, scope, from)
                     })
                     .collect();
                 Gen::dump_bindings(cg, described);
