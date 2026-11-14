@@ -257,7 +257,13 @@ fn on_tmpfs(path: &std::path::Path) -> bool {
         use std::os::unix::ffi::OsStrExt;
         let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else { return false };
         let mut found: libc::statfs = unsafe { std::mem::zeroed() };
-        unsafe { libc::statfs(path.as_ptr(), &mut found) == 0 && found.f_type as i64 == libc::TMPFS_MAGIC as i64 }
+        if unsafe { libc::statfs(path.as_ptr(), &mut found) } != 0 {
+            return false;
+        }
+        // Each libc types them its own way, as glibc both `long`.
+        #[allow(clippy::unnecessary_cast)]
+        let tmpfs = found.f_type as i64 == libc::TMPFS_MAGIC as i64;
+        tmpfs
     }
     #[cfg(not(target_os = "linux"))]
     {
