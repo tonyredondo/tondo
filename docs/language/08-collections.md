@@ -510,6 +510,10 @@ fn main() {
     let evenSquares = (1..=10).filter((n) { n % 2 == 0 }).sumBy((n) { n * n })
     let longest = ["pen", "paper", "ink"].iter().maxBy((word) { word.length() })
     console.println("{evenSquares} {longest} {(1..=7).countBy((n) { n % 3 })}")
+
+    let odds = (1..=9).filter((n) { n % 2 == 1 })
+    let halves = [1.0, 2.0, 6.0].iter().map((x) { x / 2.0 })
+    console.println("{odds.sum()} {odds.max()} {halves.average()} {"banana".chars().toSet()}")
 }
 ```
 
@@ -518,6 +522,7 @@ fn main() {
 [H, W] [(0, a), (1, b)] [(0, a), (1, b), (2, c)]
 55 some(8) 10 [0, 1, 2, 3, 4, 10, 11]
 220 some(paper) [1: 3, 2: 2, 0: 2]
+25 some(9) some(1.5) Set[b, a, n]
 ```
 
 Only four squares were computed above, not a million.
@@ -527,8 +532,13 @@ Only four squares were computed above, not a million.
 | `map`, `filter`, `flatMap` | `collect()`: an array |
 | `take`, `skip`, `takeWhile`, `skipWhile` | `count()`, `reduce`, `find` |
 | `enumerate`, `zip`, `chain` | `any`, `all`, `forEach` |
-| | `sumBy`, `minBy`, `maxBy`, `countBy` |
+| | `sum`, `min`, `max`, `average`, `toSet` |
+| | `sumBy`, `minBy`, `maxBy`, `averageBy`, `countBy` |
 | | `toMap`, `keyedBy`: a map |
+
+A chain ends as an array does, with no array made on the way: `sum`, `min`,
+`max`, `average` and `toSet` ask of the elements what the array's ask, and
+give what the array's give, floats added in the same order.
 
 An array's own `map` and `filter` give arrays at once, which is what is
 wanted most of the time. Reach for `iter()` when the chain is long and its
