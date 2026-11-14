@@ -129,7 +129,13 @@ fn parse(s: &str, radix: i64, bits: u32, signed: bool) -> Option<u128> {
     if digits.first().is_none_or(|&b| b == b'_') || digits.last() == Some(&b'_') {
         return None;
     }
-    let (mut magnitude, mut separated) = (0u128, false);
+    // In 64 bits while the number fits, as most do, then in 128; a
+    // decimal digit is its byte less `0`.
+    let digit_of = |byte: u8| match radix {
+        10 => Some(u32::from(byte.wrapping_sub(b'0'))).filter(|&digit| digit < 10),
+        _ => char::from(byte).to_digit(radix),
+    };
+    let (mut small, mut wide, mut separated) = (0u64, None::<u128>, false);
     for &byte in digits {
         if byte == b'_' {
             if separated {
@@ -139,9 +145,19 @@ fn parse(s: &str, radix: i64, bits: u32, signed: bool) -> Option<u128> {
             continue;
         }
         separated = false;
-        let digit = char::from(byte).to_digit(radix)?;
-        magnitude = magnitude.checked_mul(u128::from(radix))?.checked_add(u128::from(digit))?;
+        let digit = digit_of(byte)?;
+        wide = match wide {
+            None => match small.checked_mul(u64::from(radix)).and_then(|v| v.checked_add(u64::from(digit))) {
+                Some(next) => {
+                    small = next;
+                    None
+                }
+                None => Some(u128::from(small).checked_mul(u128::from(radix))?.checked_add(u128::from(digit))?),
+            },
+            Some(value) => Some(value.checked_mul(u128::from(radix))?.checked_add(u128::from(digit))?),
+        };
     }
+    let magnitude = wide.unwrap_or(u128::from(small));
     let (min, max) = bounds(bits, signed);
     match negative {
         true if magnitude == 0 => Some(0),
