@@ -6,8 +6,13 @@ use super::*;
 /// Every task created and not yet freed: a panic cancels them, and a test
 /// runner counts them before and after a test.
 /// The tasks alive, in shards that a task's address picks, so that the
-/// threads that start and end tasks seldom wait for each other.
-pub(super) static TASKS: [Mutex<Tasks>; SHARDS] = [const { Mutex::new(Tasks::new()) }; SHARDS];
+/// threads that start and end tasks seldom wait for each other; each in a
+/// line of the cache of its own, as otherwise taking one makes the others'
+/// lines go from core to core too.
+pub(super) static TASKS: [Shard; SHARDS] = [const { Shard(Mutex::new(Tasks::new())) }; SHARDS];
+
+#[repr(align(128))]
+pub(super) struct Shard(Mutex<Tasks>);
 pub(super) const SHARDS: usize = 16;
 
 /// A shard's tasks, each in a slot it knows, so that a task comes and goes
@@ -32,7 +37,7 @@ impl Tasks {
 }
 
 pub(super) fn shard(task: usize) -> std::sync::MutexGuard<'static, Tasks> {
-    TASKS[(task >> 6) % SHARDS].lock().unwrap_or_else(|e| e.into_inner())
+    TASKS[(task >> 6) % SHARDS].0.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 pub(super) fn register(task: *mut Task) {
@@ -82,7 +87,7 @@ impl All {
 }
 
 pub(super) fn tasks() -> All {
-    All(TASKS.iter().map(|shard| shard.lock().unwrap_or_else(|e| e.into_inner())).collect())
+    All(TASKS.iter().map(|shard| shard.0.lock().unwrap_or_else(|e| e.into_inner())).collect())
 }
 
 /// What the scheduler holds now, for `tondo counters`.
