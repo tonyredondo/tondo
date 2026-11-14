@@ -358,7 +358,9 @@ fn is_terminal_asks_of_the_output() {
     let (_master, slave) = open();
     let output = Command::new(program()).arg("is").stdin(Stdio::from(slave)).stdout(Stdio::piped()).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout), "output is a terminal: false\n");
-    // The output a terminal, whatever the input is.
+    // The output a terminal, whatever the input is. Its other end stays
+    // open here until it is read, as macOS drops what the terminal holds
+    // once the last one closes.
     let (master, slave) = open();
     let mut child = Command::new(program())
         .arg("is")
@@ -366,9 +368,9 @@ fn is_terminal_asks_of_the_output() {
         .stdout(Stdio::from(slave.try_clone().unwrap()))
         .spawn()
         .unwrap();
-    drop(slave);
     assert!(child.wait().unwrap().success());
     let mut written = vec![0; 256];
     let count = std::fs::File::from(master).read(&mut written).unwrap();
+    drop(slave);
     assert_eq!(String::from_utf8_lossy(&written[..count]), "output is a terminal: true\r\n");
 }
