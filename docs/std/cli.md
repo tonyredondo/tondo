@@ -148,6 +148,71 @@ writes plain text when the output is not a terminal.
 [`confirm`](#confirm), [`choose`](#choose) and [`secret`](#secret) put a
 question to whoever is at the keyboard.
 
+## Taking the terminal over
+
+A program that draws its own screen, as a list to move through or a board
+that changes, takes the terminal: its keys come as they are pressed, and the
+screen is the program's to draw.
+
+```tondo
+import std.cli
+import std.console
+
+/// Draws the options from the top of the screen, the chosen one marked.
+fn draw(options: Array[String], chosen: Int, size: cli.Size) {
+    console.print("\u{1b}[2J\u{1b}[H")
+    for index in 0..options.length() {
+        let mark = if index == chosen { ">" } else { " " }
+        console.println("{mark} {options[index]}")
+    }
+    console.println("─".repeat(size.columns.min(24)))
+}
+
+fn main(): !cli.TerminalError {
+    let options = ["tea", "coffee", "water"]
+    let terminal = cli.Terminal(screen: true)?
+    let keys = terminal.keys()
+    let redraws = cli.redraws()
+    var chosen = 0
+    var size = cli.size() ?? cli.Size { columns: 80, rows: 24 }
+    draw(options, chosen, size)
+    for {
+        select {
+            let key = keys.receive() => match key {
+                some(cli.Key.Up) => chosen = (chosen - 1).max(0)
+                some(cli.Key.Down) => chosen = (chosen + 1).min(options.length() - 1)
+                some(cli.Key.Enter) | none => break
+                _ => {}
+            }
+            let next = redraws.receive() => size = next ?? size
+        }
+        draw(options, chosen, size)
+    }
+    terminal.release()
+    console.println("a {options[chosen]}")
+}
+```
+
+Down twice, Up and Enter leave `a coffee` on the terminal, under what it
+showed before the program started.
+
+- [`cli.Terminal()`](#terminal) takes the terminal, and fails where there is
+  none, as in a pipe. With `screen: true` the program draws on the alternate
+  screen, as editors do, and what the terminal showed is there again when it
+  is given back.
+- [`keys()`](#terminalkeys) and [`redraws()`](#redraws) are channels, so one
+  `select` waits for both: a [key](#key), or a size to draw again at, which
+  comes when the terminal changes its size and when the program comes back
+  from Ctrl-Z and `fg`.
+- The terminal is given back when its value ends, by a return, a panic or a
+  cancellation, and for as long as the program is suspended. None of that
+  is the program's to write.
+- The questions go on working: each asks in the mode it needs and leaves
+  the terminal as the program had it. On a terminal, [`choose`](#choose) is
+  answered with the arrows and Enter; on a pipe, with a number and a line.
+- Ctrl-C and Ctrl-Z keep their meaning. With `signals: false` they are keys,
+  for a program that wants them.
+
 ## What to reach for
 
 | To | Use |
@@ -159,7 +224,9 @@ question to whoever is at the keyboard.
 | Style text | [`markup`](#markup) |
 | Show progress | [`progress`](#progress) |
 | Ask | [`ask`](#ask), [`confirm`](#confirm), [`choose`](#choose), [`secret`](#secret) |
-| Know the terminal | [`isTerminal`](#isterminal), [`width`](#width) |
+| Know the terminal | [`isTerminal`](#isterminal), [`width`](#width), [`size`](#size) |
+| Take the terminal over, key by key | [`Terminal`](#terminal), [`keys`](#terminalkeys), [`Key`](#key) |
+| Draw again when the terminal changes | [`redraws`](#redraws) |
 
 The [`logstat`](../../examples/logstat) and
 [`warehouse`](../../examples/warehouse) examples are command lines with

@@ -388,9 +388,6 @@ goes:
 error[E1008]: on macOS: `std.os.linux` is of Linux only: import it from a file of Linux, as `name_linux.to`, or limit the package with `systems = ["linux"]` in tondo.toml
 ```
 
-The script [`ask.to`](../../examples/scripts/ask.to) reads one key from a
-terminal with `std.os.unix`.
-
 ## Linking a library
 
 The system's C library needs nothing. Any other is named in `tondo.toml`,
