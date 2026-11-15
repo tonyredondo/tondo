@@ -203,13 +203,22 @@ impl Server {
     fn tool(&mut self, name: &str, args: &Args) -> Result<Reply, String> {
         match name {
             "check" => {
-                let mut analysis = analyze(args)?;
+                if args.flag("timings") {
+                    crate::times::keep("check");
+                }
+                let analysis = analyze(args);
+                let timings = crate::times::keeping().then(crate::times::json);
+                crate::times::stop();
+                let mut analysis = analysis?;
                 crate::lints::run(&analysis.sources, &mut analysis.diags, args.flag("docs"), args.flag("performance"));
                 let diagnostics = diagnostics(&analysis);
                 let text = report(&analysis, &diagnostics);
                 let silenced = analysis.diags.silenced_json(&analysis.sources, &analysis.source_id);
-                let data =
+                let mut data =
                     json!({ "compiles": analysis.program.is_some(), "diagnostics": diagnostics, "silenced": silenced });
+                if let Some(timings) = timings {
+                    data["timings"] = timings;
+                }
                 Ok(Reply::new(text, data))
             }
             "fix" => fix(args),
@@ -1286,6 +1295,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         }
     };
     let building = |argv: &mut Vec<String>| {
+        switch(argv, "--timings", "timings");
         switch(argv, "--static", "static");
         switch(argv, "--debug", "debug");
         option(argv, "--target", "target");
@@ -2270,6 +2280,11 @@ const CPU: (&str, &str, &str) = (
     "The level of processor to build for: baseline (the default), x86-64-v3, x86-64-v4 or native (`--cpu`).",
 );
 const LINK: (&str, &str, &str) = ("link", "strings", "Native libraries to link, by name (-l) or file (`--link`).");
+const TIMINGS: (&str, &str, &str) = (
+    "timings",
+    "boolean",
+    "Where the build's time went: each phase, and the files and functions the code generator took longest on (`--timings`).",
+);
 const PROGRAM: (&str, &str, &str) =
     ("program", "string!", "A running program's process ID or name, as `ps` lists them.");
 const VIA: (&str, &str, &str) = (
@@ -2290,6 +2305,7 @@ suggests. Check after every edit.",
             LIBRARY,
             ("docs", "boolean", "Also what is public and has no `///`, as a library wants (W1010)."),
             ("performance", "boolean", "Also a copy a loop makes on every turn (W1009)."),
+            TIMINGS,
         ],
     },
     Tool {
@@ -2601,6 +2617,7 @@ and the header <name>.h.",
             TARGET,
             CPU,
             LINK,
+            TIMINGS,
         ],
     },
     Tool {
@@ -2631,6 +2648,7 @@ message, data, source and stack, as data.",
             TARGET,
             CPU,
             LINK,
+            TIMINGS,
         ],
     },
     Tool {
@@ -2697,6 +2715,7 @@ is reduced and kept in the project's `fuzz/` store, which every run of the tests
             DEBUG,
             TARGET,
             CPU,
+            TIMINGS,
             ("flags", "strings", "Other options, as `tondo test` takes them: --seed, --timeout, --repeat..."),
         ],
     },

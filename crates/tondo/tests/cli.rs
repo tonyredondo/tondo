@@ -1386,6 +1386,38 @@ fn compares_with_another_compiler() {
     assert_eq!(status, 2, "{stderr}");
 }
 
+/// `--timings` says where a build's time went, after it and in its JSON:
+/// its phases, and the files and functions the code generator took longest
+/// on; that a build came from the cache; and in `check`, only its own. What
+/// follows `--` is the program's.
+#[test]
+fn timings_say_where_a_build_went() {
+    let dir = scratch("timings");
+    let program = "import std.console\nimport std.env\n\nfn twice(n: Int): Int {\n    n * 2\n}\n\nfn main() {\n    \
+        console.println(\"{twice(21)} {env.args()}\")\n}\n";
+    std::fs::write(dir.join("main.to"), program).unwrap();
+    let (_, err, code) = tondo(&dir, &["build", "main.to", "--output", "app", "--timings"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.starts_with("the build took ") && err.contains("\n  reading and checking "), "{err}");
+    assert!(err.contains("\n  code generator ") && err.contains("\n  link "), "{err}");
+    assert!(err.contains("\nthe functions:\n") && err.contains("  main.to\n"), "{err}");
+    let (data, _) = json(&dir, &["build", "main.to", "--output", "app", "--timings", "--json"]);
+    let phases: Vec<&str> =
+        data["timings"]["phases"].as_array().unwrap().iter().filter_map(|p| p["phase"].as_str()).collect();
+    assert!(phases.contains(&"code generator") && phases.contains(&"link"), "{data}");
+    let main = data["timings"]["functions"].as_array().unwrap().iter().find(|f| f["function"] == "main");
+    assert!(main.is_some_and(|main| main["file"] == "main.to" && main["ms"].as_f64().is_some()), "{data}");
+    // The second run finds its build in the cache; the program's own
+    // `--timings` is its argument.
+    tondo(&dir, &["run", "main.to"]);
+    let (out, err, code) = tondo(&dir, &["run", "main.to", "--timings", "--", "--timings"]);
+    assert_eq!((out.as_str(), code), ("42 [--timings]\n", 0), "{err}");
+    assert!(err.starts_with("the build took ") && err.contains(", from the cache\n"), "{err}");
+    let (_, err, code) = tondo(&dir, &["check", "main.to", "--timings"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.starts_with("the check took ") && !err.contains("link"), "{err}");
+}
+
 /// With `--tests`, `optimizations` and `asm` read the code of the tests and
 /// benchmarks, as `tondo test --bench` builds it.
 #[test]

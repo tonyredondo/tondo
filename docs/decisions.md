@@ -7273,3 +7273,16 @@ calls it with those values from a closure, and imports `std.testing` for it afte
 documentation. It runs it once, as the test, and says whether the call fails with those values,
 since a dump of a panic gives a benchmark of the failure. What a dump does not hold whole, as a
 release build's values, stops it as it stops the test, rather than measuring made-up values.
+
+## Where a build's time goes, with --timings
+
+`TONDO_COMPILE_TIMES` printed each part of a build as it ended, for the compiler's own
+benchmarks; nothing told a user which phase, file or function made a build slow. `--timings`,
+on `build`, `check`, `run` and `test`, keeps the same parts, summed by name, groups them into
+phases a user knows (finding the build in the cache, reading and checking, lowering, the passes,
+the code generator, the link), and times each function in the code generator on the core that
+compiles it, which is where a release build spends most of its time and the one part that splits
+by function; the passes run over the whole program, so they are a phase alone. The files are the
+sum of their functions. It goes to standard error, so that a program's or a test's output stays
+as it is, and into the command's JSON with `--json`; `run` says it before the program takes the
+process.

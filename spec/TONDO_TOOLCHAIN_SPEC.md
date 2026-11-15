@@ -2522,6 +2522,21 @@ src/main.to:6  total += values[i]
   como la herramienta `asm`, y el editor como *Show the Machine Code of This
   Function*, de la función donde está el cursor.
 
+### 7.20 A dónde va el tiempo de un build
+
+`tondo build`, `check`, `run` y `test` toman `--timings`: tras compilar, en la
+salida de errores, dicen cuánto tardó el build y cuánto cada fase que tuvo
+tiempo: buscarlo en la caché, leer y comprobar el programa, bajarlo al MIR, sus
+pases, el generador de código y el enlace. Luego, los archivos cuyas funciones
+más tardaron en el generador de código, sumado el tiempo de cada una en su
+núcleo, con cuántas funciones son, y las funciones que más, con su archivo:
+diez de cada. Un build que vino de la caché lo dice, con el tiempo de buscarlo.
+`check` dice solo lo suyo, y `run` lo dice antes de que el programa empiece.
+Con `--json`, el JSON del comando lleva `timings`: `ms`, `cached`, `phases`
+(`phase` y `ms`), `files` (`file`, `ms` y `functions`) y `functions`
+(`function`, `file` y `ms`). Lo que sigue a `--` es del programa. `tondo mcp`
+lo ofrece con `timings` en `build`, `check`, `run` y `test`.
+
 ## 8. Determinismo
 
 Con las mismas fuentes, `tondo.toml`, `tondo.lock` y versión de compilador:

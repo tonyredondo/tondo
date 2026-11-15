@@ -15,7 +15,7 @@ pub const COMMANDS: &[Command] = &[
         name: "run",
         usage: &[
             "tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch [--tests]]",
-            "          [--target <target>] [--cpu <level>] [--diagnostic-format human|json] [-- <argument>...]",
+            "          [--target <target>] [--cpu <level>] [--timings] [--diagnostic-format human|json] [-- <argument>...]",
             "tondo run --record <recording> [--last <duration> [--hold <duration>]] [<project>|<file.to>]",
             "          [--link <library>]...",
             "          [-- <argument>...]",
@@ -31,13 +31,14 @@ pub const COMMANDS: &[Command] = &[
         name: "build",
         usage: &[
             "tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--no-source-links]",
-            "          [--debug | --live] [--target <target>] [--cpu <level>] [--diagnostic-format human|json] [--json]",
+            "          [--debug | --live] [--target <target>] [--cpu <level>] [--timings] [--diagnostic-format human|json] [--json]",
         ],
         summary: &[
             "compile a native executable (static on Linux;",
             "without its symbol table; static for a target:",
             "x86_64-linux or aarch64-linux; for a level of",
-            "processor: baseline, x86-64-v3, x86-64-v4, native)",
+            "processor: baseline, x86-64-v3, x86-64-v4, native);",
+            "--timings, where the build's time went",
         ],
     },
     Command {
@@ -47,7 +48,9 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "check",
-        usage: &["tondo check [<project>|<file.to>] [--library] [--unreached] [--docs] [--performance] [--json]"],
+        usage: &[
+            "tondo check [<project>|<file.to>] [--library] [--unreached] [--docs] [--performance] [--timings] [--json]",
+        ],
         summary: &[
             "report diagnostics only (of a library; as JSON);",
             "--unreached, the code neither main nor a test reaches",
@@ -154,7 +157,7 @@ pub const COMMANDS: &[Command] = &[
             "          [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>] [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]",
             "          [--models]",
             "          [--diagnostic-format human|json] [--artifacts <dir>] [--update-snapshots]",
-            "          [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--exec <command>]",
+            "          [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--exec <command>] [--timings]",
         ],
         summary: &[
             "run the tests of a project (of a library); with --watch,",
@@ -469,6 +472,10 @@ pub fn print_json(command: &str, ok: bool, fields: serde_json::Value) {
     object.insert("ok".into(), ok.into());
     if let serde_json::Value::Object(fields) = fields {
         object.extend(fields);
+    }
+    // With `--timings`, where the build's time went.
+    if crate::times::keeping() {
+        object.insert("timings".into(), crate::times::json());
     }
     println!("{}", serde_json::Value::Object(object));
 }

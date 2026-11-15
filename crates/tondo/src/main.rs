@@ -73,6 +73,14 @@ fn main() -> ExitCode {
         tondo::observe::reach_via(via);
         args.drain(at..at + 2);
     }
+    // Where a build's time went, said after it (toolchain 7.20); what
+    // follows `--` is the program's.
+    let given = args.iter().position(|a| a == "--").unwrap_or(args.len());
+    let timed = matches!(command, "build" | "check" | "run" | "test");
+    if let Some(at) = args[..given].iter().position(|a| a == "--timings").filter(|_| timed) {
+        tondo::times::keep(if command == "check" { "check" } else { "build" });
+        args.remove(at);
+    }
     let result = match command {
         "run" => run_command(&args[1..]),
         "build" => build_command(&args[1..]),
@@ -168,6 +176,9 @@ fn main() -> ExitCode {
         file if file.ends_with(".to") => run(Path::new(file), &args[1..], &BuildOptions::default()),
         other => Err(format!("unknown command `{other}`\n{USAGE}")),
     };
+    if let Some(timings) = tondo::times::text() {
+        eprint!("{timings}");
+    }
     // With `--json`, what goes wrong is JSON too, on stdout.
     let json = args[1..].iter().take_while(|a| *a != "--").any(|a| a == "--json")
         || args.windows(2).any(|w| w[0] == "--test-format" && w[1] != "human");
@@ -1022,9 +1033,12 @@ struct TestBuild {
 /// compile. A list gets the tree without the executable.
 fn build_tests(path: &Path, build: &TestBuild) -> Result<Option<(PathBuf, tondo::runner::Tree)>, String> {
     let (coverage, fuzz) = (build.coverage, build.fuzz);
+    let finding = tondo::times::part("cache");
     let dir = tondo::runner::build_dir(path, build.statically, build.debug, coverage, fuzz, build.live, build.target)?;
     let (executable, tree_file) = (dir.join("tests"), dir.join("tree"));
+    drop(finding);
     if let Some(tree) = tondo::runner::Tree::load(&tree_file).filter(|_| build.list || executable.is_file()) {
+        tondo::times::cached();
         return Ok(Some((executable, tree)));
     }
     let analysis = driver::analyze_tests(path, build.library)?;
@@ -3182,7 +3196,12 @@ fn reached_tests(path: &Path) {
 /// emulation when it is for another machine.
 fn run(path: &Path, program_args: &[OsString], options: &BuildOptions) -> Result<ExitCode, String> {
     let launcher = options.target.map(Target::launcher).transpose()?.flatten();
-    match cached_executable(path, options)? {
+    let built = cached_executable(path, options)?;
+    // Said before the program takes the process.
+    if let Some(timings) = tondo::times::text() {
+        eprint!("{timings}");
+    }
+    match built {
         Some(executable) => match launcher {
             Some(launcher) => exec(&launcher, &[&[executable.into_os_string()][..], program_args].concat()),
             None => exec(&executable, program_args),
@@ -3204,6 +3223,7 @@ fn cached_executable(path: &Path, options: &BuildOptions) -> Result<Option<PathB
         target.map_or("", Target::name),
         driver::asked_cpu(),
     );
+    let finding = tondo::times::part("cache");
     let mut parts = vec![identity.into_bytes(), libraries.join("\n").into_bytes(), linking.into_bytes()];
     // A live build is of the files where they are: its manifest says where
     // a reload reads them.
@@ -3218,7 +3238,10 @@ fn cached_executable(path: &Path, options: &BuildOptions) -> Result<Option<PathB
     let program = std::path::absolute(path).map_err(|e| e.to_string())?;
     let dir = driver::build_entry("run", &[program.as_os_str().as_encoded_bytes(), parts[2].as_slice()], &key);
     let executable = dir.join(program_name(path)?);
-    if !executable.exists() {
+    drop(finding);
+    if executable.exists() {
+        tondo::times::cached();
+    } else {
         let Some(analysis) = analyze(path, false, options.shown)? else {
             return Ok(None);
         };

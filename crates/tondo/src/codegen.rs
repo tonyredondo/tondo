@@ -520,7 +520,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     let mut job =
         |id: FuncId, context: &mut cranelift_codegen::Context, traced: Option<&str>, sites, inlined, body, needs| {
             let func = std::mem::replace(&mut context.func, ir::Function::new());
-            jobs.push(Job { id, func, traced: traced.map(str::to_string), sites, inlined, body, needs });
+            jobs.push(Job { id, func, traced: traced.map(str::to_string), sites, inlined, body, needs, file: None });
         };
     // Each function, then the versions of those that have one.
     let built = {
@@ -675,6 +675,11 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     }
     drop(building);
     let compiling = crate::times::part("Cranelift");
+    if crate::times::keeping() {
+        for job in jobs.iter_mut().filter(|job| job.traced.is_some()) {
+            job.file = bodies.get(job.body).map(|body| sources.file_of(body.span.start).logical.clone());
+        }
+    }
     cg.compile_all(jobs)?;
     drop(compiling);
     let _writing = crate::times::part("object");
@@ -946,6 +951,8 @@ struct Job {
     /// The features of the processor it needs beyond the level, which pick
     /// the generator it is compiled with (toolchain 7.8).
     needs: u32,
+    /// Its file, when `--timings` keeps the time it takes.
+    file: Option<String>,
 }
 
 /// A function's machine code, its relocations, and its size and calls for
@@ -1848,7 +1855,9 @@ impl Codegen<'_> {
         };
         // Each function goes to the thread that compiles it, which says
         // which it compiles when the rules it gets are counted.
-        type Compiling = (FuncId, std::sync::Mutex<Option<ir::Function>>, bool, Option<String>, u32);
+        // With `--timings`, its name and file, to keep the time it takes.
+        type Compiling =
+            (FuncId, std::sync::Mutex<Option<ir::Function>>, bool, Option<String>, u32, Option<(String, String)>);
         let functions: Vec<Compiling> = jobs
             .iter_mut()
             .map(|job| {
@@ -1856,11 +1865,12 @@ impl Codegen<'_> {
                 let counted =
                     asked.as_ref().filter(|asked| asked.rules && wanted(job).is_some()).and(job.traced.clone());
                 let function = std::sync::Mutex::new(Some(std::mem::replace(&mut job.func, ir::Function::new())));
-                (job.id, function, ir, counted, job.needs)
+                let timed = job.traced.clone().zip(job.file.take());
+                (job.id, function, ir, counted, job.needs, timed)
             })
             .collect();
         let isas = &self.isas;
-        let compiled = crate::parallel::map(&functions, 1, |(id, function, ir, _counted, needs)| {
+        let compiled = crate::parallel::map(&functions, 1, |(id, function, ir, _counted, needs, timed)| {
             thread_local! {
                 static CONTEXT: std::cell::RefCell<cranelift_codegen::Context> =
                     std::cell::RefCell::new(cranelift_codegen::Context::new());
@@ -1869,7 +1879,11 @@ impl Codegen<'_> {
             #[cfg(feature = "rules")]
             crate::rules::compiling(_counted.as_deref());
             let isa = isas.get(needs).map_or(isa, |isa| &**isa);
+            let started = timed.as_ref().map(|_| std::time::Instant::now());
             let compiled = CONTEXT.with(|context| compile_one(isa, &mut context.borrow_mut(), *id, function, *ir));
+            if let (Some((name, file)), Some(started)) = (timed, started) {
+                crate::times::function(name.clone(), file.clone(), started.elapsed());
+            }
             #[cfg(feature = "rules")]
             crate::rules::compiling(None);
             compiled

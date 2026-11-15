@@ -57,7 +57,8 @@ one out, and `update` fetches them again.
 ## Building, running and testing
 
 - `build`: an executable, or with `library` a library for C; `static`,
-  `debug`, `target`, `link`.
+  `debug`, `target`, `link`; `timings`, here and in `check`, `run` and
+  `test`, where the build's time went.
 - `run`: builds and runs with `args` and `stdin`, and ends a program that
   runs past `timeout`, 60 seconds by default.
 - `test`: `filter`, `glob` or `exact` choose tests and `list` lists them;
