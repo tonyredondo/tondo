@@ -26,6 +26,13 @@ is a topic of the guide.
 | You rename, change a signature or delete what other code uses | `runbook-change` |
 | A program runs and you want to know what it is doing, without stopping it | `runbook-running` |
 | A program asks, draws or reads keys, and there is no terminal to try it on | `runbook-terminal` |
+| You port code from another language: the method | `runbook-port` |
+| You port code from Go | `runbook-port-go` |
+| You port code from C# | `runbook-port-csharp` |
+| You port code from Rust | `runbook-port-rust` |
+| You port code from Python | `runbook-port-python` |
+| You port code from TypeScript or JavaScript | `runbook-port-typescript` |
+| You port code from Java | `runbook-port-java` |
 
 Every step of these runbooks runs in the tests of the toolchain, so what they
 show is what the tools give. A block of tool calls reads `tool {arguments}`,
