@@ -1131,7 +1131,14 @@ unos `nop` que no tocan registros, salvo en los bucles que no llaman a nada, don
 notaría. El logpoint escribe la llamada con todos los hilos parados y la quita al
 llegar a `--max`, 100 por omisión, o al irse la herramienta. Dice en su salida de
 error cuando está puesto, también con `--json`, para que un script haga pasar la línea
-después. Con `--if <condición>`
+después. En el código optimizado, el sitio de una línea puede ir antes del código que
+da valor a sus bindings: lo que el sitio no sabe, un logpoint sin `--if`, `--dump` ni
+`--stop` lo toma en el siguiente sitio del bloque con código entre los dos, cuando la
+misma tarea llega a él en el mismo marco, y solo si ese código no le da valor, de modo
+que es el que tenía en la línea pedida. Ese valor dice de dónde viene (`from` en
+`--json`), y la salida para personas añade `(as line N leaves it)`. Si la tarea sale
+del bloque por otro camino, o vuelve a la línea antes, el hit va como estaba, con `?`
+lo que no se sabe; dos segundos es el tope de esa espera. Con `--if <condición>`
 solo cuentan las veces en que se cumple, que se evalúa en la copia del proceso, así
 que las demás cuestan igual. Cada vez detiene esa
 tarea mientras una copia del proceso muestra los valores, como en un volcado.

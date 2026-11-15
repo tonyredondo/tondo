@@ -31,6 +31,56 @@ struct Logpoint {
     /// Which times count, and how many went by.
     hits: Option<super::debugger::Hits>,
     count: u64,
+    /// For each site, the next of its block, written too; and the hits that
+    /// wait for their task to reach it.
+    follows: Vec<Follow>,
+    followed: Vec<Site>,
+    pending: Vec<Pending>,
+}
+
+impl Logpoint {
+    /// Every place it wrote a call.
+    fn written(&self) -> impl Iterator<Item = &Site> {
+        self.sites.iter().chain(&self.followed)
+    }
+}
+
+/// A site of a logpoint and the next of its block: where a binding its site
+/// did not know yet is taken, as the line leaves it, unless the code between
+/// the two gives it a value.
+#[derive(Clone)]
+struct Follow {
+    main: usize,
+    next: usize,
+    length: usize,
+    assigned: Vec<String>,
+    /// Where the next site is, `file:line`, which a value taken there says.
+    place: String,
+}
+
+/// A hit that waits for its task to reach the next site of its block, in the
+/// same frame: what its site knew, and whether it is the logpoint's last.
+struct Pending {
+    task: u64,
+    fp: usize,
+    main: usize,
+    values: Vec<String>,
+    last: bool,
+    until: std::time::Instant,
+}
+
+/// How long a hit waits for the next site, which a task that leaves the block
+/// another way never reaches: only the cap of that.
+const WAITING: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// What a hit that starts to wait tells the thread that sends those whose
+/// time ran out, by a count it changes.
+static WAITERS: Mutex<u64> = Mutex::new(0);
+static WAITED: std::sync::Condvar = std::sync::Condvar::new();
+
+fn waiters_changed() {
+    *WAITERS.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+    WAITED.notify_all();
 }
 
 /// Where a logpoint holds its task: its number, how long, the task, its frame,
@@ -61,7 +111,7 @@ pub(crate) fn step(rest: &str, client: &UnixStream) -> String {
     let Ok(client) = client.try_clone() else { return error("the tool went away") };
     // The functions of the code it is in, by where each starts.
     let sites = super::debugger::latent_sites();
-    let mut starts: Vec<usize> = sites.iter().map(|site| site.4).collect();
+    let mut starts: Vec<usize> = sites.iter().map(|site| site.start).collect();
     starts.sort();
     starts.dedup();
     let function = |code: usize| starts.iter().rev().find(|&&start| start <= code).copied();
@@ -77,10 +127,10 @@ pub(crate) fn step(rest: &str, client: &UnixStream) -> String {
     let places: Vec<(usize, usize)> = sites
         .iter()
         .filter(|site| match into {
-            true => !site.2.starts_with("<std>/"),
-            false => wanted.contains(&site.4) && (how != Some("out") || named(site.0 + 1) != left),
+            true => !site.file.starts_with("<std>/"),
+            false => wanted.contains(&site.start) && (how != Some("out") || named(site.address + 1) != left),
         })
-        .map(|site| (site.0, site.1))
+        .map(|site| (site.address, site.length))
         .collect();
     let writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
     // The step before ended: what it wrote goes first, or taking it out later
@@ -113,6 +163,9 @@ pub(crate) fn step(rest: &str, client: &UnixStream) -> String {
         step,
         hits: None,
         count: 0,
+        follows: Vec::new(),
+        followed: Vec::new(),
+        pending: Vec::new(),
     });
     go(&held.id.to_string());
     String::new()
@@ -189,14 +242,14 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     let Ok(line) = line.parse::<u32>() else { return error("logpoint takes a limit and file:line") };
     let sites = super::debugger::latent_sites();
     // A tool names a file from where it is, an editor by its whole path.
-    let same_file = |site: &&(usize, usize, String, u32, usize)| {
-        site.2 == file || site.2.ends_with(&format!("/{file}")) || file.ends_with(&format!("/{}", site.2))
+    let same_file = |site: &&super::debugger::LatentSite| {
+        site.file == file || site.file.ends_with(&format!("/{file}")) || file.ends_with(&format!("/{}", site.file))
     };
-    let of_file: Vec<&(usize, usize, String, u32, usize)> = sites.iter().filter(same_file).collect();
-    let places: Vec<(usize, usize)> =
-        of_file.iter().filter(|site| site.3 == line).map(|site| (site.0, site.1)).collect();
+    let of_file: Vec<&super::debugger::LatentSite> = sites.iter().filter(same_file).collect();
+    let at_line: Vec<&super::debugger::LatentSite> = of_file.iter().copied().filter(|site| site.line == line).collect();
+    let places: Vec<(usize, usize)> = at_line.iter().map(|site| (site.address, site.length)).collect();
     if places.is_empty() {
-        let near = of_file.iter().map(|site| site.3).min_by_key(|known| known.abs_diff(line));
+        let near = of_file.iter().map(|site| site.line).min_by_key(|known| known.abs_diff(line));
         return error(&match (of_file.is_empty(), near) {
             _ if super::debugger::probed() => format!(
                 "a build with --debug has no places for a logpoint, as it has probes: `tondo debug <pid>` logs \
@@ -215,16 +268,47 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
             _ => format!("line {line} has no place for a logpoint"),
         });
     }
+    // A logpoint that shows values and goes on takes, at the next site of
+    // the block, the bindings its own did not know yet.
+    let plain = condition.is_none() && dump.is_none() && stop.is_none();
+    let follows: Vec<Follow> = at_line
+        .iter()
+        .filter(|_| plain)
+        .filter_map(|site| {
+            // Past the sites right after it, with no code between, which are
+            // the same place: what the lines between assign is not taken.
+            let (mut at, mut assigned) = (*site, site.assigned.clone());
+            let mut next = sites.iter().find(|other| Some(other.address) == at.next)?;
+            while next.address == at.address + at.length
+                && let Some(further) = sites.iter().find(|other| Some(other.address) == next.next)
+            {
+                assigned.extend(next.assigned.iter().cloned());
+                (at, next) = (next, further);
+            }
+            Some(Follow {
+                main: site.address,
+                next: next.address,
+                length: next.length,
+                assigned,
+                place: format!("{}:{}", next.file, next.line),
+            })
+        })
+        .collect();
     let Ok(mut client) = client.try_clone() else { return error("the tool went away") };
     let writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
     if !super::tasks::stop_world(std::time::Duration::from_secs(2)) {
         return error("the program did not stop for the logpoint: try again");
     }
-    let written = write_calls(&places);
+    let mut all = places.clone();
+    all.extend(follows.iter().map(|follow| (follow.next, follow.length)));
+    let written = write_calls(&all);
     super::tasks::resume_world();
     drop(writing);
-    let sites = match written {
-        Ok(sites) => sites,
+    let (sites, followed) = match written {
+        Ok(mut sites) => {
+            let followed = sites.split_off(places.len());
+            (sites, followed)
+        }
         Err(message) => return error(&message),
     };
     let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -244,8 +328,75 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
         step: None,
         hits,
         count: 0,
+        follows: follows.clone(),
+        followed,
+        pending: Vec::new(),
     });
+    if !follows.is_empty() {
+        let _ = super::tasks::try_spawn_thread(Some(64 * 1024), move || send_when_waited(id));
+    }
     String::new()
+}
+
+/// Sends the hits of logpoint `id` whose next site did not come in their
+/// time, as their own site knew them, until the logpoint goes.
+fn send_when_waited(id: u64) {
+    loop {
+        let seen = *WAITERS.lock().unwrap_or_else(|e| e.into_inner());
+        let (expired, client, wait) = {
+            let mut set = lock();
+            let Some(logpoint) = set.iter_mut().find(|logpoint| logpoint.id == id) else { return };
+            let now = std::time::Instant::now();
+            let (expired, kept): (Vec<Pending>, Vec<Pending>) =
+                std::mem::take(&mut logpoint.pending).into_iter().partition(|pending| pending.until <= now);
+            logpoint.pending = kept;
+            let wait = logpoint.pending.iter().map(|pending| pending.until - now).min();
+            (expired, logpoint.client.try_clone().ok(), wait)
+        };
+        if let Some(mut client) = client {
+            for pending in expired {
+                send_waited(id, &mut client, pending, None);
+            }
+        }
+        let waiters = WAITERS.lock().unwrap_or_else(|e| e.into_inner());
+        let unchanged = |count: &mut u64| *count == seen;
+        match wait {
+            Some(wait) => drop(WAITED.wait_timeout_while(waiters, wait, unchanged)),
+            None => drop(WAITED.wait_while(waiters, unchanged)),
+        }
+    }
+}
+
+/// Sends a hit that waited: what its site knew, with what the next site of
+/// its block knew besides, as the line left it, of the bindings the code
+/// between did not give values.
+fn send_waited(id: u64, client: &mut UnixStream, pending: Pending, later: Option<(&Follow, Vec<String>)>) {
+    use super::diagnostics::quoted;
+    let mut values = pending.values;
+    if let Some((follow, later)) = later {
+        let known: Vec<String> = values.iter().filter_map(|value| binding_name(value)).collect();
+        for value in later {
+            let Some(name) = binding_name(&value) else { continue };
+            if known.contains(&name) || follow.assigned.contains(&name) {
+                continue;
+            }
+            let Some(open) = value.strip_suffix('}') else { continue };
+            values.push(format!("{open},\"from\":{}}}", quoted(&follow.place)));
+        }
+    }
+    let line = format!("{{\"hit\":{id},\"task\":{},\"values\":[{}]}}\n", pending.task, values.join(","));
+    if client.write_all(line.as_bytes()).is_err() {
+        forget(id);
+    } else if pending.last {
+        let _ = client.write_all(format!("{{\"done\":{id}}}\n").as_bytes());
+        forget(id);
+    }
+}
+
+/// The name of a binding a line of values shows.
+fn binding_name(value: &str) -> Option<String> {
+    let (_, rest) = value.split_once(",\"name\":\"")?;
+    rest.split_once('"').map(|(name, _)| name.to_string())
 }
 
 fn lock() -> std::sync::MutexGuard<'static, Vec<Logpoint>> {
@@ -261,7 +412,7 @@ fn write_calls(places: &[(usize, usize)]) -> Result<Vec<Site>, String> {
         // A place another logpoint took holds its call, not the program's code.
         let taken = lock()
             .iter()
-            .flat_map(|logpoint| &logpoint.sites)
+            .flat_map(Logpoint::written)
             .find(|site| site.address == address)
             .map(|site| site.original.clone());
         let original =
@@ -337,12 +488,13 @@ fn take_out(ids: Vec<u64>) {
         std::mem::take(&mut *set).into_iter().partition(|logpoint| ids.contains(&logpoint.id));
     *set = kept;
     // A place another logpoint also has stays as it is.
-    let shared =
-        |site: &&Site| set.iter().flat_map(|logpoint| &logpoint.sites).any(|kept| kept.address == site.address);
-    let sites = gone.iter().flat_map(|logpoint| &logpoint.sites).filter(|site| !shared(site));
+    let shared = |site: &&Site| set.iter().flat_map(Logpoint::written).any(|kept| kept.address == site.address);
+    let sites = gone.iter().flat_map(Logpoint::written).filter(|site| !shared(site));
     let edits: Vec<(usize, Vec<u8>)> = sites.map(|site| (site.address, site.original.clone())).collect();
     drop(set);
     let _ = patch(&edits);
+    // Their threads that send what waited end.
+    waiters_changed();
 }
 
 /// Takes out the logpoints of a tool that went away.
@@ -376,6 +528,28 @@ fn fd_identity(fd: i32) -> Option<(u64, u64)> {
 /// them, and where the code goes on.
 extern "C" fn hit(saved: *const usize) {
     let (registers, floats, address, fp) = unsafe { registers_of(saved) };
+    let task = super::tasks::current_id();
+    // The next site a hit of this task waits for, in the same frame: the
+    // hit goes, with what this site knows besides.
+    let waited = {
+        let mut set = lock();
+        set.iter_mut().find_map(|logpoint| {
+            let follow = logpoint.follows.iter().find(|follow| follow.next + follow.length == address)?.clone();
+            let at = logpoint.pending.iter().position(|p| p.task == task && p.fp == fp && p.main == follow.main)?;
+            let client = logpoint.client.try_clone().ok()?;
+            Some((logpoint.id, client, follow, logpoint.pending.remove(at)))
+        })
+    };
+    if let Some((id, mut client, follow, pending)) = waited {
+        let later = match HIT.try_lock() {
+            Ok(_shown) => {
+                let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
+                super::debugger::frame_values(follow.next, fp, bounds, &registers, &floats, None)
+            }
+            Err(_) => Vec::new(),
+        };
+        send_waited(id, &mut client, pending, Some((&follow, later)));
+    }
     // A site's call is its whole length before where it returns to.
     let found = {
         // The last set first: a step goes before what was on its line.
@@ -417,7 +591,27 @@ extern "C" fn hit(saved: *const usize) {
         logpoint.left -= 1;
         logpoint.left == 0
     };
-    let task = super::tasks::current_id();
+    // What this site does not know yet, the next of its block may: the hit
+    // waits for it there, and one of this task in this frame that waited
+    // already goes as it is, as the task came back to the line first.
+    let earlier = {
+        let mut set = lock();
+        let logpoint = set.iter_mut().find(|logpoint| logpoint.id == id);
+        logpoint.filter(|logpoint| logpoint.follows.iter().any(|follow| follow.main == site)).map(|logpoint| {
+            let at = logpoint.pending.iter().position(|p| p.task == task && p.fp == fp && p.main == site);
+            let earlier = at.map(|at| logpoint.pending.remove(at));
+            let until = std::time::Instant::now() + WAITING;
+            logpoint.pending.push(Pending { task, fp, main: site, values: values.clone(), last, until });
+            earlier
+        })
+    };
+    if let Some(earlier) = earlier {
+        waiters_changed();
+        if let Some(earlier) = earlier {
+            send_waited(id, &mut client, earlier, None);
+        }
+        return;
+    }
     // In a file, or with `-` in the hit itself, for a tool that reads it
     // from another machine.
     let dumped = dump.map_or(String::new(), |path| {

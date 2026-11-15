@@ -524,8 +524,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.ins().call(callee, &[]);
         self.e.fb.set_srcloc(statement);
         let checks = self.defined_here.iter().map(|(&label, &generation)| (own.bits(), label, generation));
-        self.stale.extend(checks);
+        self.latent.stale.extend(checks);
         self.latent_here = true;
+        // This site follows the block's last one.
+        if let Some((previous, assigned)) = self.latent_previous.take() {
+            self.latent.follows.push((previous, own.bits(), assigned.into_iter().collect()));
+        }
+        self.latent_previous = Some((own.bits(), std::collections::HashSet::new()));
     }
 }
 

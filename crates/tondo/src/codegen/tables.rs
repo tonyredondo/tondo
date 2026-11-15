@@ -203,10 +203,29 @@ impl Codegen<'_> {
             for (register, at) in &function.saved {
                 text.push_str(&format!("C\t{register}\t{at}\n"));
             }
+            // Each latent site, and the next of its block with the bindings
+            // the code between them gives values, by their names.
+            let bound = self.dump_bindings.get(&(function.body, function.version));
+            let named = |label: u32| {
+                let found = bound
+                    .into_iter()
+                    .flatten()
+                    .find(|binding| matches!(binding.3, DumpPlace::Value(of) if of == label));
+                found.map(|binding| binding.0.clone())
+            };
             for &(at, length, site) in &function.latent {
                 let Some(&(start, ..)) = function.sites.get((site as usize).wrapping_sub(1)) else { continue };
                 let (file, line, _) = self.sources.position(start);
-                text.push_str(&format!("P\t{at}\t{length}\t{file}\t{line}\n"));
+                let follow = function.follows.iter().find(|follow| follow.0 == site);
+                let next = follow.and_then(|follow| function.latent.iter().find(|latent| latent.2 == follow.1));
+                let next = match (follow, next) {
+                    (Some((_, _, assigned)), Some(&(next, ..))) => {
+                        let names: Vec<String> = assigned.iter().filter_map(|&label| named(label)).collect();
+                        format!("\t{next}\t{}", names.join(","))
+                    }
+                    _ => String::new(),
+                };
+                text.push_str(&format!("P\t{at}\t{length}\t{file}\t{line}{next}\n"));
             }
             let Some(bindings) = self.dump_bindings.get(&(function.body, function.version)) else { continue };
             for (name, ty, glue, place, keep, scope, from) in bindings {

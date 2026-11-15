@@ -794,9 +794,22 @@ pub(super) static CONDITION: Mutex<Option<String>> = Mutex::new(None);
 pub(super) static LOGGING: AtomicBool = AtomicBool::new(false);
 pub(super) static FLOATS: [std::sync::atomic::AtomicUsize; 32] = [const { std::sync::atomic::AtomicUsize::new(0) }; 32];
 
-/// Each place of the code where a logpoint can go: its address, its length,
-/// its file and its line.
-pub(crate) fn latent_sites() -> Vec<(usize, usize, String, u32, usize)> {
+/// A place of the code where a logpoint can go.
+pub(crate) struct LatentSite {
+    pub(crate) address: usize,
+    pub(crate) length: usize,
+    pub(crate) file: String,
+    pub(crate) line: u32,
+    /// Where its function starts.
+    pub(crate) start: usize,
+    /// The next site of its block, and the bindings the code between the
+    /// two gives values: a logpoint takes there what this one did not know.
+    pub(crate) next: Option<usize>,
+    pub(crate) assigned: Vec<String>,
+}
+
+/// Each place of the code where a logpoint can go.
+pub(crate) fn latent_sites() -> Vec<LatentSite> {
     let raw = DUMP_TABLE.load(Ordering::Relaxed);
     if raw.is_null() {
         return Vec::new();
@@ -804,13 +817,20 @@ pub(crate) fn latent_sites() -> Vec<(usize, usize, String, u32, usize)> {
     let text = table_text(unsafe { str_bytes((*raw).text) });
     let (mut sites, mut function) = (Vec::new(), None);
     for line in text.lines() {
-        match line.split('\t').collect::<Vec<_>>()[..] {
+        let fields: Vec<&str> = line.split('\t').collect();
+        match fields[..] {
             ["F", index] => function = index.parse().ok().and_then(crate::trace::function_start),
-            ["P", at, length, file, line] => {
+            ["P", at, length, file, line, ..] => {
+                let next = fields.get(5).and_then(|next| next.parse::<usize>().ok());
+                let assigned = fields.get(6).map_or(Vec::new(), |names| {
+                    names.split(',').filter(|name| !name.is_empty()).map(str::to_string).collect()
+                });
                 if let (Some(start), Ok(at), Ok(length), Ok(line)) =
                     (function, at.parse::<usize>(), length.parse(), line.parse())
                 {
-                    sites.push((start + at, length, file.to_string(), line, start));
+                    let next = next.map(|next| start + next);
+                    let file = file.to_string();
+                    sites.push(LatentSite { address: start + at, length, file, line, start, next, assigned });
                 }
             }
             _ => {}

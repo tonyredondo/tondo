@@ -3956,6 +3956,14 @@ fn a_logpoint_shows_no_value_from_before() {
                     assert_eq!(round, before + 1, "a value from before: {texts:?}");
                 }
             }
+            // What its site did not know yet comes from a later site of the
+            // block, as the line leaves it, and says where.
+            let later =
+                hits["hits"].as_array().unwrap().iter().flat_map(|hit| hit["values"].as_array().unwrap().iter());
+            let later: Vec<&Value> =
+                later.filter(|value| value["name"] == "round" && value.get("from").is_some()).collect();
+            assert!(!later.is_empty(), "{hits}");
+            assert!(later.iter().all(|value| value["from"].as_str().unwrap().starts_with("counts.to:")), "{hits}");
             // For people: a part read as `?` says once why.
             let args = ["logpoint", &pid, "counts.to:12", "{before} {round}", "--max", "1", "--for", "60"];
             let said = Command::new(tondo_bin).args(args).current_dir(&dir).output().unwrap();
@@ -3963,6 +3971,9 @@ fn a_logpoint_shows_no_value_from_before() {
             assert!(err.contains("it ends after 1 time\n"), "{err}");
             if out.contains('?') {
                 assert!(err.contains("not known here, as the optimized code makes"), "{out}{err}");
+            }
+            if !out.ends_with(" ?\n") {
+                assert!(out.ends_with(" (as line 12 leaves it)\n"), "{out}");
             }
             // Past the calls of the turn, where the value made last is.
             let hits = logpoint("counts.to:15", "{round}", "1");

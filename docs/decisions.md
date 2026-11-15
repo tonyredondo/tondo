@@ -7431,3 +7431,17 @@ not find; an interface without one is left out of the module with what to do, `-
 What an interface extends is the interface of the module whose methods begin its own, the
 longest, since the table of C repeats them; `QueryInterface`, `AddRef` and `Release` are
 `ffi.Unknown`.
+
+## A logpoint takes what its line did not know from the next site
+
+In a Release build a line's latent site can come before the code that gives its bindings
+values, which the optimizer places at their first use, and a logpoint read those bindings as
+`?`, the most common thing a logpoint is asked for: a variable on the line after it changed.
+The site cannot move without changing Release code, which Tony's rule keeps as it is. Tony chose
+that a logpoint with no condition, dump or stop also arms the next site of the block that has
+code between, and takes there, for the same task in the same frame, the bindings its own site
+did not know, unless that code gives them values: the value the binding had at the line asked
+for. The value says where it came from, and the output for people says `(as line N leaves
+it)`; a task that leaves the block another way sends the hit as it was, after at most two
+seconds.
+

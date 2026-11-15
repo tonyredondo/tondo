@@ -3167,7 +3167,13 @@ pub fn logpoint(asked: &Logpoint, json: bool) -> Result<(), String> {
                 json!({ "task": hit["task"], "text": logged(&hit, text), "values": hit["values"], "dump": hit["dump"] }),
             ),
             false => {
-                println!("{}", logged(&hit, text));
+                // A value taken at a later site of the block says so.
+                let later = hit["values"].as_array().is_some_and(|values| values.iter().any(|v| v.get("from").is_some()));
+                let line = place.rsplit(':').next().unwrap_or_default();
+                match later {
+                    true => println!("{} (as line {line} leaves it)", logged(&hit, text)),
+                    false => println!("{}", logged(&hit, text)),
+                }
                 // Once, why a part reads `?`: what the reader of it needs.
                 let unknown = text.map_or(Vec::new(), |text| unknown_parts(&hit, text));
                 if !unknown.is_empty() && !told {
