@@ -1,0 +1,15 @@
+// Kotlin's and C++'s library, each with what Tondo has.
+fn main() {
+    let xs = listOf(1, 2)
+    let m = mapOf("a", 1)
+    let s = setOf(1)
+    var ys = [1]
+    ys.push_back(2)
+    let n = ys.count
+}
+
+// expect-error: E1001 unknown name `listOf`; an array is `[1, 2]`
+// expect-error: E1001 unknown name `mapOf`; a map is `["a": 1]`, and an empty one `[:]`
+// expect-error: E1001 unknown name `setOf`; a set is `Set[1, 2]`
+// expect-error: E1001 has no method `push_back`: use `push(value)`
+// expect-error: E1102 has no field `count`; use `length()`

@@ -1,0 +1,50 @@
+// Swift as a porter writes it, each with what Tondo writes.
+enum Kind {
+    case food
+}
+
+type Line = {
+    name: String
+}
+
+extension Line {
+}
+
+fn parse(text: String) throws -> Int {
+    1
+}
+
+fn price(lines: [String: Int]) {
+}
+
+fn first(x: Int?): Int {
+    guard let v = x else { return 0 }
+    v
+}
+
+fn main() {
+    let name = "a"
+    let shown = "hi \(name)"
+    do {
+        let n = 1
+    } catch {
+    }
+    for i in 0..<3 {
+    }
+    let xs = [1]
+    let n = xs.count
+    let ys = xs.map { $0 * 2 }
+}
+
+// expect-error: E0004 a variant is written without `case`, capitalized: `Food`
+// expect-error: E0004 a type's methods are declared apart, anywhere in its module: `fn Line.method(self): Type { ... }`
+// expect-error: E0004 a function that can fail returns `T ! E`, as `fn f(): Int ! ParseError`
+// expect-error: E0004 a map's type is `Map[String, Int]`
+// expect-error: E0004 `let v = x ?? return` gives up where `x` has no value, with no `guard`
+// expect-error: E0003 unknown escape sequence: a string interpolates with braces
+// expect-error: E0004 there is no `try`
+// expect-error: E0004 expected expression, found `}`
+// expect-error: E0004 unexpected `}`
+// expect-error: E0004 a range is `0..3`, without its end, or `0..=3` with it
+// expect-error: E0002 a closure names its parameters, `(x) { x * 2 }`
+// expect-error: E0004 expected field name, found number

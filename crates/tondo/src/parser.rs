@@ -335,7 +335,87 @@ impl Parser<'_> {
         {
             return Some("a loop over values is `for x in xs { ... }`, without parentheses".into());
         }
+        // `when (x) { 1 -> "a" }`, `switch (x) {`
+        if matches!(word(starts), Some("when" | "switch")) && matches!(token(1), Tok::LParen) {
+            return Some("use `match value { pattern => result }`, one arm per line".into());
+        }
+        // `template <typename T>`
+        if word(starts) == Some("template") {
+            return Some(
+                "a function's type parameters follow its name in brackets: `fn first[T](values: Array[T]): T`".into(),
+            );
+        }
+        // `xs.map { it * 2 }`, read as a record's fields after the name
+        let open = self.tokens[..self.pos].iter().rposition(|t| matches!(t.tok, Tok::LBrace | Tok::Newline));
+        if let Some(open) = open.filter(|&open| open >= 2 && matches!(self.tokens[open].tok, Tok::LBrace))
+            && what == "`,` or a new line"
+            && matches!(&self.tokens[open - 1].tok, Tok::Ident(name) if name.starts_with(|c: char| c.is_lowercase()))
+            && matches!(self.tokens[open - 2].tok, Tok::Dot)
+        {
+            return Some(
+                "a closure is passed in the call's parentheses, its parameters named: `xs.map((x) { x * 2 })`".into(),
+            );
+        }
         let hint = match (previous, here, next) {
+            // `std::vector<int>`, `std::cout << x`
+            (Tok::Ident(std), Tok::Colon, Tok::Colon) if std == "std" => match word(self.nth(2)) {
+                Some("vector" | "list" | "deque" | "array") => "an array is `[1, 2]`, of type `Array[Int]`".into(),
+                Some("map" | "unordered_map") => "a map is `[\"a\": 1]`, of type `Map[String, Int]`".into(),
+                Some("set" | "unordered_set") => "a set is `Set[1, 2]`, of type `Set[Int]`".into(),
+                Some("string") => "a text is `String`, and `\"total {x}\"` interpolates".into(),
+                Some("cout" | "cerr" | "endl" | "printf" | "println") => {
+                    "`console.println(\"total {x}\")` writes a line, after `import std.console`".into()
+                }
+                _ => "Tondo's library is in modules imported at the top, as `import std.console`, and used as `console.println(...)`".into(),
+            },
+            // `p->name`, not a result type nor a closure's parameter
+            (Tok::Ident(_), Tok::Minus, Tok::Gt)
+                if matches!(self.nth(2), Tok::Ident(_))
+                    && !matches!(self.back(2), Tok::LBrace | Tok::Comma)
+                    && !matches!(starts, Tok::Kw(Kw::Fn))
+                    && !word(starts).is_some_and(|w| matches!(w, "func" | "fun" | "def" | "function")) =>
+            {
+                "a field is read with `.`, as `p.name`: there are no pointers".into()
+            }
+            // `p->name`, read as `p - >`
+            (Tok::Minus, Tok::Gt, Tok::Ident(_)) if matches!(self.back(2), Tok::Ident(_)) => {
+                "a field is read with `.`, as `p.name`: there are no pointers".into()
+            }
+            // `0..<3`
+            (Tok::DotDot, Tok::Lt, _) => "a range is `0..3`, without its end, or `0..=3` with it".into(),
+            // `x ?: 0`
+            (Tok::Question, Tok::Colon, _) => "`value ?? fallback` gives the fallback where the value has none".into(),
+            // `mapOf("a" to 1)`
+            (_, Tok::Ident(to), _) if to == "to" => "a map's entry is `key: value`, as in `[\"a\": 1]`".into(),
+            // `fn f() throws -> Int`
+            (Tok::RParen, Tok::Ident(throws), _) if throws == "throws" => {
+                "a function that can fail returns `T ! E`, as `fn f(): Int ! ParseError`, and a call passes its failure on with `?`".into()
+            }
+            // `line: const Line&`
+            (_, Tok::Kw(Kw::Const), _) if what == "type" => {
+                "a parameter's type is the value's, as `line: Line`: there are no `const` types or references".into()
+            }
+            // `[String: Int]`
+            (_, Tok::LBracket, _) if what == "type" && {
+                let close = self.tokens[self.pos..].iter().position(|t| matches!(t.tok, Tok::RBracket));
+                close.is_some_and(|close| self.tokens[self.pos..self.pos + close].iter().any(|t| matches!(t.tok, Tok::Colon)))
+            } =>
+            {
+                "a map's type is `Map[String, Int]`".into()
+            }
+            // `enum class Kind { Food, Drink }`
+            (Tok::Ident(class), Tok::Ident(name), _)
+                if matches!(class.as_str(), "class" | "struct") && matches!(self.back(2), Tok::Kw(Kw::Enum)) =>
+            {
+                format!("an enum is `enum {name} {{ ... }}`, a variant on each line, as `Food` and `Drink(Int)`")
+            }
+            // `data class Line(val name: String)`
+            (Tok::Ident(kind), Tok::Ident(class), Tok::Ident(name))
+                if matches!(class.as_str(), "class" | "object")
+                    && matches!(kind.as_str(), "data" | "sealed" | "open" | "abstract" | "inner" | "value") =>
+            {
+                format!("a record is `type {name} = {{ field: Type }}`, its methods declared apart")
+            }
             // `x := 5`
             (Tok::Ident(name), Tok::Colon, Tok::Eq) => {
                 format!("a new binding is `let {name} = value`, or `var {name} = value` for one that changes")
@@ -358,18 +438,19 @@ impl Parser<'_> {
                 }
                 _ => return None,
             },
-            // `string s = "a"`, `void f() {`, but not `go f()`
+            // `string s = "a"`, `int total(...) {`, but not `go f()`
             (Tok::Ident(ty), Tok::Ident(name), Tok::Eq | Tok::LParen)
-                if self.pos >= 2
-                    && matches!(self.back(2), Tok::Newline | Tok::LBrace | Tok::Eof)
-                    && foreign_word(ty, here).is_none() =>
+                if matches!(self.back(2), Tok::Newline | Tok::LBrace | Tok::Eof) && foreign_word(ty, here).is_none() =>
             {
                 match next {
                     Tok::Eq => format!(
                         "a binding is `let {name}: {} = value`, its type after its name, or `var` for one that changes",
                         type_named(ty)
                     ),
-                    _ => format!("a function is `fn {name}(value: Type): Result {{ ... }}`, with no result for none"),
+                    _ => format!(
+                        "a function is `fn {name}(value: Type): {} {{ ... }}`, its result after its parameters",
+                        type_named(ty)
+                    ),
                 }
             }
             // `func (a Account) total()`
@@ -485,6 +566,33 @@ impl Parser<'_> {
             // `foreach (var x in xs) {`, `lock (x) {`
             _ if word(starts) == Some("lock") => {
                 "what tasks change goes in a `sync.Mutex`: `counter.update((value) { value += 1 })`".into()
+            }
+            // `xs.map { it * 2 }`, `let s = when (x) {`
+            (Tok::Ident(_) | Tok::RParen, Tok::LBrace, _) if what == "end of line" => {
+                let called = match previous {
+                    Tok::RParen => {
+                        let mut depth = 0usize;
+                        let open = self.tokens[..self.pos - 1].iter().rposition(|t| match t.tok {
+                            Tok::RParen => {
+                                depth += 1;
+                                false
+                            }
+                            Tok::LParen if depth == 0 => true,
+                            Tok::LParen => {
+                                depth -= 1;
+                                false
+                            }
+                            _ => false,
+                        });
+                        open.and_then(|open| open.checked_sub(1)).and_then(|at| word(&self.tokens[at].tok))
+                    }
+                    _ => None,
+                };
+                match called {
+                    Some("when" | "switch") => "use `match value { pattern => result }`, one arm per line".into(),
+                    _ => "a closure is passed in the call's parentheses, its parameters named: `xs.map((x) { x * 2 })`"
+                        .into(),
+                }
             }
             _ => return None,
         };
@@ -1523,9 +1631,29 @@ impl Parser<'_> {
         match word.as_str() {
             "loop" => Some("a loop until `break` is `for { ... }`"),
             "try" => Some(TRY_BLOCK),
+            // Swift's `do { ... } catch { ... }` is a `try`.
+            "do" if self.caught() => Some(TRY_BLOCK),
             "do" => Some("a loop that runs at least once is `for { ... }` with `if done { break }` at its end"),
             _ => None,
         }
+    }
+
+    /// Whether the block opened by the next token is followed by `catch`.
+    fn caught(&self) -> bool {
+        let mut depth = 0usize;
+        for (at, token) in self.tokens[self.pos + 1..].iter().enumerate() {
+            match token.tok {
+                Tok::LBrace => depth += 1,
+                Tok::RBrace if depth == 1 => {
+                    let after = self.tokens.get(self.pos + 1 + at + 1).map(|t| &t.tok);
+                    return matches!(after, Some(Tok::Ident(word)) if word == "catch");
+                }
+                Tok::RBrace => depth -= 1,
+                Tok::Eof => return false,
+                _ => {}
+            }
+        }
+        false
     }
 
     fn statement(&mut self) -> PResult<Stmt> {
@@ -2946,10 +3074,33 @@ fn foreign_word(word: &str, next: &Tok) -> Option<String> {
         },
         ("void", Tok::Ident(_)) => format!("a function is `fn {name}(value: Type) {{ ... }}`, with no result for none"),
         ("lambda", _) => "a closure is `(x) { x * 2 }`".into(),
+        ("val" | "auto", Tok::Ident(_)) => {
+            format!("a binding is `let {name} = value`, or `var {name} = value` for one that changes")
+        }
+        ("guard", Tok::Kw(Kw::Let)) => "`let v = x ?? return` gives up where `x` has no value, with no `guard`".into(),
+        ("extension", Tok::Ident(_)) => {
+            format!(
+                "a type's methods are declared apart, anywhere in its module: `fn {name}.method(self): Type {{ ... }}`"
+            )
+        }
+        ("template", Tok::Lt) => {
+            "a function's type parameters follow its name in brackets: `fn first[T](values: Array[T]): T`".into()
+        }
+        ("delete", Tok::Ident(_)) => "a value is freed when nothing uses it: there is no `delete`".into(),
+        ("suspend", _) => "there is no `suspend`: any function can wait, and `spawn f()` runs one as a task".into(),
+        ("case", Tok::Ident(_)) => {
+            format!("a variant is written without `case`, capitalized: `{}`", capitalized_word(name))
+        }
         ("f" | "F", Tok::Str(_)) => "a string interpolates as it is: `\"total {x}\"`".into(),
         _ => return None,
     };
     Some(hint)
+}
+
+/// A word with its first letter capitalized.
+fn capitalized_word(word: &str) -> String {
+    let mut chars = word.chars();
+    chars.next().map_or(String::new(), |first| first.to_uppercase().chain(chars).collect())
 }
 
 /// The Tondo type for a type named as another language does.

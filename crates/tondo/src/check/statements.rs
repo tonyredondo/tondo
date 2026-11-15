@@ -1138,10 +1138,10 @@ impl<'a> Checker<'a> {
                 let lower = name[..1].to_lowercase() + &name[1..];
                 let key = (self.owner_key(ty), name.to_string());
                 let lowered = (self.owner_key(ty), lower.clone());
-                if intrinsic.contains(&name) || self.methods.contains_key(&key) {
-                    message.push_str(&format!("; `{name}` is a method: call it, `value.{name}()`"));
-                } else if matches!(name, "Count" | "count" | "Length" | "Size" | "size" | "len") {
+                if matches!(name, "Count" | "count" | "Length" | "Size" | "size" | "len") {
                     message.push_str("; use `length()`");
+                } else if intrinsic.contains(&name) || self.methods.contains_key(&key) {
+                    message.push_str(&format!("; `{name}` is a method: call it, `value.{name}()`"));
                 } else if intrinsic.contains(&lower.as_str()) || self.methods.contains_key(&lowered) {
                     message.push_str(&format!("; call the method `value.{lower}()`"));
                 } else if let TyKind::Option(inner) = *self.types.kind(ty) {

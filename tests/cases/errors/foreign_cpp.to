@@ -1,0 +1,37 @@
+// C++ as a porter writes it, each with what Tondo writes.
+enum class Kind { Food, Drink }
+
+type Line = {
+    name: String
+}
+
+int total(Line line) {
+    return 1
+}
+
+fn count(line: const Line&): Int {
+    1
+}
+
+fn main() {
+    auto x = 5
+    std::vector<int> xs
+    std::cout << x
+    let p = Line { name: "a" }
+    let n = p->name
+    delete p
+}
+
+// A line that ends in `>` goes on in the next, so this one is last.
+#include <vector>
+
+// expect-error: E0002 a module is imported at the top, as `import std.console`
+// expect-error: E0004 an enum is `enum Kind { ... }`, a variant on each line
+// expect-error: E0004 a function is `fn total(value: Type): Int { ... }`, its result after its parameters
+// expect-error: E0004 a parameter's type is the value's, as `line: Line`: there are no `const` types or references
+// expect-error: E0004 a binding is `let x = value`, or `var x = value` for one that changes
+// expect-error: E0004 an array is `[1, 2]`, of type `Array[Int]`
+// expect-error: E0004 `console.println("total {x}")` writes a line
+// expect-error: E0004 a field is read with `.`, as `p.name`: there are no pointers
+// expect-error: E0004 a value is freed when nothing uses it: there is no `delete`
+// expect-error: E0005 `>` cannot be chained

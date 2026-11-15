@@ -1662,7 +1662,11 @@ impl<'a> Checker<'a> {
             (_, "empty") => "use `isEmpty()`",
             (TyKind::String, "charAt" | "at") => "use `text[index]`, or `get(index)` for a `Char?`",
             (TyKind::String, "substring" | "substr" | "slice") => "use `text[start:end]`",
-            (TyKind::Array(_) | TyKind::Deque(_), "append" | "add" | "enqueue" | "pushBack") => "use `push(value)`",
+            (
+                TyKind::Array(_) | TyKind::Deque(_),
+                "append" | "add" | "enqueue" | "pushBack" | "push_back" | "emplace_back",
+            ) => "use `push(value)`",
+            (TyKind::Array(_) | TyKind::Deque(_), "pop_back" | "removeLast") => "use `pop()`, which returns `T?`",
             (TyKind::Array(_) | TyKind::Deque(_), "peek" | "last" | "back") => "use `get(-1)`, which returns `T?`",
             (TyKind::Array(_) | TyKind::Deque(_), "first" | "front") => "use `get(0)`, which returns `T?`",
             (TyKind::Array(_) | TyKind::Deque(_), "popBack") => "use `pop()`",

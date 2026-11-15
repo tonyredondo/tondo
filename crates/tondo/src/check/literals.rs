@@ -1289,6 +1289,15 @@ impl<'a> Checker<'a> {
             }
             "zip" => "`a.zip(b)` pairs their elements".into(),
             "pass" => "a block can be empty, `{}`: Tondo needs no `pass`".into(),
+            "listOf" | "mutableListOf" | "arrayListOf" | "arrayOf" | "emptyList" => {
+                "an array is `[1, 2]`, and one that changes is a `var`: `var values: Array[Int] = []`".into()
+            }
+            "mapOf" | "mutableMapOf" | "hashMapOf" | "emptyMap" => {
+                "a map is `[\"a\": 1]`, and an empty one `[:]`".into()
+            }
+            "setOf" | "mutableSetOf" | "hashSetOf" | "emptySet" => {
+                "a set is `Set[1, 2]`, and an empty one `Set[T]()`".into()
+            }
             "JSON" => {
                 "`json.encode(value)` writes JSON and `json.decode[T](text)` reads it, after `import std.json`".into()
             }

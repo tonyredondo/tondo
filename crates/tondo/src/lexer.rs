@@ -572,15 +572,22 @@ impl Lexer<'_> {
         let found = candidates.iter().map(|&i| &PUNCTUATION[i]).find(|(text, _)| rest.starts_with(text));
         let Some((text, tok)) = found else {
             let after = rest[c.len_utf8()..].chars().next();
+            let directive = rest[1..].starts_with("include") || rest[1..].starts_with("import");
             self.pos += c.len_utf8();
             let message = match (c, after) {
                 (';', _) => "`;` is not a Tondo token: a new line ends a statement".to_string(),
                 ('#', Some('[' | '!')) => "unexpected character `#`: Tondo works out what a type can do, as `==` and \
 copies, and `derive Json for T` writes the rest; an annotation is `@name`"
                     .to_string(),
+                ('#', _) if directive => {
+                    "unexpected character `#`: a module is imported at the top, as `import std.console`, and the prelude's arrays, maps and texts need none".to_string()
+                }
                 ('#', _) => "unexpected character `#`: a comment is `// text`".to_string(),
                 ('$', Some('"')) => {
                     "unexpected character `$`: a string interpolates as it is, `\"total {x}\"`".to_string()
+                }
+                ('$', Some('0'..='9')) => {
+                    "unexpected character `$`: a closure names its parameters, `(x) { x * 2 }`".to_string()
                 }
                 _ => format!("unexpected character `{c}`"),
             };
@@ -744,7 +751,11 @@ copies, and `derive Json for T` writes the rest; an annotation is `@name`"
             _ => None,
         };
         if value.is_none() {
-            self.error("E0003", start, self.pos, "unknown escape sequence");
+            let message = match c {
+                Some('(') => "unknown escape sequence: a string interpolates with braces, `\"total {x}\"`",
+                _ => "unknown escape sequence",
+            };
+            self.error("E0003", start, self.pos, message);
         }
         value
     }

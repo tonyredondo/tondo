@@ -1,0 +1,27 @@
+// Kotlin as a porter writes it, each with what Tondo writes.
+data class Line(val name: String)
+
+suspend fn load() {
+}
+
+fn main() {
+    val limit = 5
+    let x: Int? = none
+    let y = x ?: 0
+    let shown = when (y) {
+        1 -> "a"
+        else -> "b"
+    }
+    let m = mapOf("a" to 1)
+    let xs = [1]
+    let doubled = xs.map { it * 2 }
+}
+
+// expect-error: E0004 a record is `type Line = { field: Type }`, its methods declared apart
+// expect-error: E0004 there is no `suspend`: any function can wait
+// expect-error: E0004 a binding is `let limit = value`, or `var limit = value` for one that changes
+// expect-error: E0004 `value ?? fallback` gives the fallback where the value has none
+// expect-error: E0004 use `match value { pattern => result }`, one arm per line
+// expect-error: E0004 unexpected `}`
+// expect-error: E0004 a map's entry is `key: value`, as in `["a": 1]`
+// expect-error: E0004 a closure is passed in the call's parentheses, its parameters named
