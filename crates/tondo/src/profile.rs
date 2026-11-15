@@ -622,6 +622,8 @@ pub fn remarks(profile: &Profile, base: &Path) -> Result<Remarks, String> {
     let (path, single) = match built.keys().collect::<Vec<_>>()[..] {
         _ if base.join("tondo.toml").is_file() => (base.to_path_buf(), None),
         [file] if base.join(file).is_file() => (base.join(file), Some(file.clone())),
+        // A project without `tondo.toml`: its `main.to`, beside its tests.
+        _ if base.join("src/main.to").is_file() || base.join("main.to").is_file() => (base.to_path_buf(), None),
         _ if base == Path::new(".") => {
             return Err("its sources are not here: show it from its project's directory".into());
         }

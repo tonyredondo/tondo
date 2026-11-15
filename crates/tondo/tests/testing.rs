@@ -2248,6 +2248,25 @@ test joining {
     }
 }
 
+/// A project without `tondo.toml`, its `main.to` beside its tests, has
+/// what the compiler made of each line of its profiles too.
+#[test]
+fn a_profile_of_a_project_without_a_manifest_says_what_was_made() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bare_profile");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+    let main = "fn words(n: Int): Array[String] {\n    (0..n).map((i) { \"word {i}\" }).collect()\n}\n\nfn main() {}\n";
+    std::fs::write(dir.join("main.to"), main).unwrap();
+    std::fs::write(dir.join("main_test.to"), "test many {\n    assert(words(100000)[99999] == \"word 99999\")\n}\n")
+        .unwrap();
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--profile", "memory"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    let profile = "target/profiles/bare_profile.unit.bare_profile.many.memory.pprof";
+    let (shown, stderr, _) = tondo(&dir, &["profile", "show", profile, "--json"]);
+    let shown: serde_json::Value = serde_json::from_str(&shown).unwrap_or_else(|_| panic!("{stderr}"));
+    assert!(shown["no_remarks"].is_null(), "{shown}");
+}
+
 /// The benchmarks (bench/) keep compiling: those against Go run once as
 /// tests, and the programs that compare and that measure compiling check.
 #[test]
