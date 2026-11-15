@@ -10,6 +10,8 @@ heap and why, and which checks a loop keeps. Everything shown was run.
 - [Where the time goes: profiles](#where-the-time-goes-profiles)
 - [What the compiler made: optimizations](#what-the-compiler-made-optimizations)
 - [The machine code: asm](#the-machine-code-asm)
+- [What an executable weighs: size](#what-an-executable-weighs-size)
+- [Where a build's time goes: timings](#where-a-builds-time-goes-timings)
 - [Against another version](#against-another-version)
 - [The processor a build is for](#the-processor-a-build-is-for)
 - [Many numbers at once: vectors](#many-numbers-at-once-vectors)
@@ -40,6 +42,34 @@ tondo test --bench --against main --max-regression 2 --regression-by instruction
 A run made while the machine had more to do than it has processors says so
 in its last line, `note: the machine was busy (load 32.9 on 32 processors):
 times are not to be compared, instructions are`.
+
+When what is slow is one call with the values it had, a dump of that
+moment gives the benchmark. This program is stuck testing a large prime
+the slow way; it was built with `--debug`, so that the dump has its
+values, and started with `TONDO_DIAGNOSTICS=1`:
+
+```text
+$ tondo dump primes --output slow.dump.json
+$ tondo dump read slow.dump.json locals
+src/main.to:4 in isPrime
+number: Int = 2147483647
+divisor: Int = 62746386
+$ tondo dump test slow.dump.json --bench
+src/main_test.to: `benchIsPrime` measures `isPrime` with the dump's values: `tondo test --bench --filter benchIsPrime`
+```
+
+It wrote, in the project's tests:
+
+```text
+// From a dump of the program as it ran
+test benchIsPrime {
+    let number = 2147483647
+    testing.bench("isPrime", () { isPrime(number) })
+}
+```
+
+That benchmark is the slow call, to measure before and after a change,
+without the program around it.
 
 ## Where the time goes: profiles
 
@@ -246,8 +276,52 @@ stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is copied (in ma
 stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in label)
 ```
 
-`tondo check --performance` reports one thing from this view as a warning
-while writing: a copy that a loop makes on every turn.
+`tondo check --performance` warns, while writing, of costs that the
+compiler cannot take away, because doing so would change what the program
+means: a copy that a loop makes on every turn (`W1009`), taking the first
+element of an array in a loop (`W1024`), and compiling a regular
+expression each time the code runs (`W1025`). This program has the last
+two:
+
+```tondo
+import std.console
+import std.regex
+
+/// The lines of a text after the blank ones at its start.
+fn body(lines: Array[String]): Array[String] {
+    var rest = lines
+    for not rest.isEmpty() and rest[0].trim().isEmpty() {
+        _ = rest.removeAt(0)
+    }
+    rest
+}
+
+/// Whether a text is one word.
+fn isWord(text: String): Bool {
+    match regex.Regex.compile(r"^\w+$") {
+        ok(pattern) => pattern.isMatch(text) ?? false
+        err(_) => false
+    }
+}
+
+fn main() {
+    console.println("{body(["", " ", "a", "b"])} {isWord("tea")}")
+}
+```
+
+```text output
+[a, b] true
+```
+
+```text
+$ tondo check queue.to --performance
+warning[W1024]: `rest.removeAt(0)` moves every other element of `rest` on every turn: a `Deque` takes its first at once, with `popFront()`; or find where to cut once and take a `slice`
+warning[W1025]: `regex.Regex.compile(r"^\w+$")` compiles its pattern every time this code runs: a context's field compiles it once, when first read: `context Patterns = { pattern: regex.Regex = regex.Regex.compile(r"^\w+$")? }`, and `Patterns.pattern` reads it
+```
+
+Each says what to write. What the compiler can do by itself it does, and
+no warning asks for it: a text that grows in a loop, as `text =
+text.concat(part)`, grows in place.
 
 ### Why a check stays
 
@@ -382,29 +456,31 @@ line beside it:
 
 ```text
 $ tondo asm stats.to mean
-mean (1224 bytes, 12 of them constants)
+mean (1144 bytes, 8 of them constants)
       0  push rbp
       1  mov rbp, rsp
-      4  sub rsp, 0x90
+      4  sub rsp, 0x80
       ...
 stats.to:9  for reading in readings {
+        ; four turns at once run 48 to 68 instructions on its common path, by the way it branches: no check and at most 4 calls
+        ; four turns at once run 44 to 64 instructions on its common path, by the way it branches: no check and at most 4 calls
+        ; a turn of the last ones, one at a time, runs 13 to 19 instructions on its common path, by the way it branches: at most 1 check and at most 1 call
         ; `reading` is lent, with no count of its own: its array holds it
         ; `readings` runs four turns at a time
-     85  mov rdx, qword [r12 + rcx * 1 + 0x20]
-     8a  mov qword [rsp], rdx
-     8e  mov rcx, qword [r12 + rcx * 1 + 0x28]
-     93  mov qword [rsp + 0x8], rcx
+     79  mov rdi, qword [rbx + rcx * 1 + 0x20]
+     7e  movsd xmm0, qword [rbx + rcx * 1 + 0x28]
+     84  movdqu xmmword [rsp + 0x40], xmm0
 stats.to:10  if reading.sensor == sensor {
-     98  mov rdi, qword [rsp]
-     9c  mov rcx, qword [rip]  ; tondo_rt_str_eq
-     a3  mov rsi, qword [rsp + 0x30]
-     a8  call rcx
-     aa  test al, al
-     ac  jz $+0x19
-     b2  movdqu xmm0, xmmword [rsp + 0x40]
+     8a  mov rcx, qword [rip]  ; tondo_rt_str_eq
+     91  mov rsi, qword [rsp + 0x20]
+     96  call rcx
+     98  test al, al
+     9a  jz $+0x1d
+     a0  movdqu xmm0, xmmword [rsp + 0x40]
+     a6  movdqu xmm1, xmmword [rsp + 0x30]
 stats.to:11  total += reading.value
-     b8  addsd xmm0, qword [r14 + 0x8]
-     be  movdqu xmmword [rsp + 0x40], xmm0
+     ac  addsd xmm1, xmm0
+     b0  movdqu xmmword [rsp + 0x30], xmm1
 ```
 
 What the remarks said is there to see. Under line 9 the element is read
@@ -414,19 +490,23 @@ addition. Nobody has to read assembly to use Tondo, but when a question
 comes down to it, the answer is one command away and is laid out by the
 source.
 
-At the line of a loop that has no other inside it, the listing also says
-what a turn runs on its common path, and how many of those instructions
-are checks and calls. For the function of "Why a check stays":
+The first lines under line 9 say what the loop costs: at the line of a
+loop that has no other inside it, the listing gives the instructions a
+turn runs on its common path, and how many of them are checks and calls.
+This loop runs four turns at once, so the number is of the four, in each
+of the two copies the compiler made of it, one that still checks `count
++= 1` and one that does not, and then of a turn of those left at the end.
+A loop that runs a turn at a time has one line, as the one of "Why a check
+stays":
 
 ```text
 $ tondo asm letters.to letters
 letters.to:6  for c in text.chars() {
-        ; a turn of the loop runs 21 to 43 instructions, by the way it branches on its common path: at most 2 checks and at most 2 calls
+        ; a turn of the loop runs 21 to 43 instructions on its common path, by the way it branches: at most 2 checks and at most 2 calls
 ```
 
 That is the number to bring down, and the one to compare before and after
-a change. A loop that runs four turns at once gives it for the four, and
-for a turn of those left at the end.
+a change.
 
 | | |
 | --- | --- |
@@ -437,6 +517,67 @@ for a turn of those left at the end.
 | `--tests` | a function of the tests or benchmarks |
 | `--against <rev>` | the difference with a revision's code |
 | `tondo profile show <profile> --asm` | the same listing, with the share of the samples on each instruction |
+
+## What an executable weighs: size
+
+`tondo size` says what a release build is made of, by part and then by
+function. For the program of this chapter's first section:
+
+```text
+$ tondo size stats.to
+2.93 MiB in all
+    4.9 KiB   0.2%  the program's code
+    4.0 KiB   0.1%  the standard library's code
+      913 B   0.0%  code the compiler adds
+   1.78 MiB  60.7%  the runtime's code
+      764 B   0.0%  the program's data
+  489.1 KiB  16.3%  the runtime's data
+  167.1 KiB   5.6%  tables for traces, dumps and debuggers
+  470.1 KiB  15.7%  the names of symbols
+   41.2 KiB   1.4%  the rest: headers, dynamic linking, alignment
+the functions that weigh the most:
+   37.1 KiB  tondo_runtime::debugger::commands::command  (tondo_runtime::debugger)
+   34.6 KiB  tondo_runtime::debugger::stopping::render  (tondo_runtime::debugger)
+   32.6 KiB  tondo_runtime::diagnostics::serving::answer  (tondo_runtime::diagnostics)
+```
+
+A small program is its runtime: the scheduler of tasks, the debugger and
+the diagnostics that every executable carries, and the names that a stack
+and a dump read. The program's own code is the first two lines, and they
+are what grows with it. `--function <name>` keeps the functions whose
+names hold it, `--top <n>` gives more of them, `--tests` weighs the build
+of the tests, and `--against <rev>` gives what a change added. The options
+of `build` that change what is built, as `--strip` and `--static`, weigh
+that build.
+
+## Where a build's time goes: timings
+
+`--timings`, on `build`, `check`, `run` and `test`, says where the time of
+the build went, by phase, then the files and the functions that took the
+code generator longest:
+
+```text
+$ tondo build stats.to --timings
+the build took 595.4 ms
+  reading and checking        121.4 ms
+  lowering                      0.9 ms
+  passes                       37.4 ms
+  code generator               17.9 ms
+  link                        413.9 ms
+the files whose functions took the code generator longest, on one core:
+  stats.to                                   16.6 ms  3 functions
+  <std>/formats.to                           11.5 ms  3 functions
+  <std>/prelude.to                            3.9 ms  2 functions
+the functions:
+  main                                       11.2 ms  stats.to
+  formats.formatFloat                         5.6 ms  <std>/formats.to
+  formats.formatText                          4.5 ms  <std>/formats.to
+  mean                                        4.3 ms  stats.to
+```
+
+Here the link is two thirds of it, as in any small program. In a large
+one, the list says which file or function to look at when a build got
+slow.
 
 ## Against another version
 
