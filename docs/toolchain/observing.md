@@ -204,6 +204,11 @@ A profile is in pprof's format, with the function and the line of every
 frame, so `go tool pprof`, Speedscope and the services that read pprof
 read it.
 
+On macOS a profile of processor time has no samples of what a thread that
+C made runs when it calls into the program, and a dump does not say where
+such a thread is: there the profiler signals each thread, and one of C's
+may get the signal as it ends. On Linux both have them.
+
 ## Everything at once: dump
 
 ```text

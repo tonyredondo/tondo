@@ -476,7 +476,8 @@ What is under way and what is planned:
 | A first release | Not yet |
 
 Known limits today: logpoints and Release breakpoints work on Linux only,
-since macOS does not let a program change its code.
+since macOS does not let a program change its code; and on macOS a profile
+of processor time and a dump leave out the threads that C made.
 
 ## Documentation
 
