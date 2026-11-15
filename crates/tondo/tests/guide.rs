@@ -95,7 +95,10 @@ fn the_cli_and_mcp_topics_cover_everything() {
     let missing: Vec<&&str> = commands.iter().filter(|name| !cli.contains(&format!("tondo {name}"))).collect();
     assert!(missing.is_empty(), "`tondo guide cli` does not name: {missing:?}");
     let mcp = tondo::guide::topic("mcp").unwrap();
-    let missing: Vec<&str> = tondo::mcp::tool_names().filter(|name| !mcp.contains(&format!("`{name}`"))).collect();
+    let missing: Vec<&str> = tondo::mcp::tool_names()
+        .chain(tondo::mcp::prompt_names())
+        .filter(|name| !mcp.contains(&format!("`{name}`")))
+        .collect();
     assert!(missing.is_empty(), "`tondo guide mcp` does not name: {missing:?}");
 }
 

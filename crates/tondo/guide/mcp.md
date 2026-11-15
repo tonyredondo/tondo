@@ -175,6 +175,11 @@ overview as an agent skill, and `tondo://api/<module>` a standard module's
 declarations. `tondo://guide/runbooks` lists what to do when something goes
 wrong; a result that leads somewhere names the next tool in `next`.
 
+The prompt `runbook` gives a person the runbooks: in Claude Code,
+`/mcp__tondo__runbook crash target/core.dump` asks the agent to follow
+`runbook-crash` from that dump. Its `topic` is a runbook's name after
+`runbook-`, and without one the agent chooses from the list.
+
 The runbooks go through the tools on a program, step by step, and every step
 runs in the tests of the toolchain: a crash, a dump made a test, a hang, a
 test that fails sometimes, a failure that came once (`record` and `replay`),

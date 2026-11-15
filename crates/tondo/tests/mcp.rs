@@ -118,6 +118,47 @@ fn both_eras_of_the_protocol() {
     agent.stop();
 }
 
+/// The prompt `runbook` gives a person every runbook of the guide, the one
+/// asked for with the case, or the list to choose from.
+#[test]
+fn a_prompt_gives_the_runbooks() {
+    let dir = project("mcp_prompts", &[]);
+    let mut agent = Agent::start(&dir);
+    let discovered = agent.request("server/discover", json!({}));
+    assert!(discovered["capabilities"]["prompts"].is_object(), "{discovered}");
+    let prompts = agent.request("prompts/list", json!({}));
+    assert_eq!(prompts["prompts"].as_array().unwrap().len(), 1, "{prompts}");
+    let runbook = &prompts["prompts"][0];
+    assert_eq!(runbook["name"], "runbook");
+    let topic = runbook["arguments"][0]["description"].as_str().unwrap();
+    let runbooks: Vec<&str> =
+        tondo::guide::TOPICS.iter().filter_map(|(topic, _)| topic.strip_prefix("runbook-")).collect();
+    assert!(runbooks.len() >= 20, "{runbooks:?}");
+    for name in &runbooks {
+        assert!(topic.contains(&format!(" {name},")) || topic.contains(&format!(" {name}.")), "{name}: {topic}");
+        let got = agent.request("prompts/get", json!({ "name": "runbook", "arguments": { "topic": name } }));
+        let text = got["messages"][0]["content"]["text"].as_str().unwrap();
+        assert!(text.ends_with(tondo::guide::topic(&format!("runbook-{name}")).unwrap()), "{name}");
+    }
+    let arguments = json!({ "topic": "hang", "case": "process 4123 stopped answering" });
+    let got = agent.request("prompts/get", json!({ "name": "runbook", "arguments": arguments }));
+    let text = got["messages"][0]["content"]["text"].as_str().unwrap();
+    assert!(text.starts_with("Follow this runbook") && text.contains("The case: process 4123 stopped answering"));
+    // Without a topic, the list to choose from.
+    let got = agent.request("prompts/get", json!({ "name": "runbook", "arguments": { "case": "it is slow" } }));
+    let text = got["messages"][0]["content"]["text"].as_str().unwrap();
+    assert!(text.contains("The case: it is slow") && text.contains("| `runbook-crash` |"), "{text}");
+    let wrong = agent.send("prompts/get", json!({ "name": "runbook", "arguments": { "topic": "crahs" } }));
+    assert!(wrong["error"]["message"].as_str().unwrap().contains("the runbooks are crash, "), "{wrong}");
+    // The topics that start with what the person wrote.
+    let completed = agent.request(
+        "completion/complete",
+        json!({ "ref": { "type": "ref/prompt", "name": "runbook" }, "argument": { "name": "topic", "value": "cr" } }),
+    );
+    assert_eq!(completed["completion"]["values"], json!(["crash"]), "{completed}");
+    agent.stop();
+}
+
 const BROKEN: &str = "import std.console
 
 fn greet(name: String): String {

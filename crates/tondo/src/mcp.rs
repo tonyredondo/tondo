@@ -48,6 +48,14 @@ pub fn tool_names() -> impl Iterator<Item = &'static str> {
     TOOLS.iter().map(|tool| tool.name)
 }
 
+/// The names of the prompts, which a person runs from the client.
+pub fn prompt_names() -> impl Iterator<Item = &'static str> {
+    [RUNBOOK].into_iter()
+}
+
+/// The prompt that gives the runbooks.
+const RUNBOOK: &str = "runbook";
+
 pub fn serve() -> Result<(), String> {
     // A session whose debugger ended fails to write, instead of ending the
     // server.
@@ -111,7 +119,7 @@ impl Server {
                 return Some(failure(id, -32022, "Unsupported protocol version", data));
             }
         };
-        let capabilities = json!({ "tools": {}, "resources": {} });
+        let capabilities = json!({ "tools": {}, "resources": {}, "prompts": {}, "completions": {} });
         let info = json!({ "name": "tondo", "version": driver::VERSION });
         let result = match method {
             "initialize" => {
@@ -138,13 +146,19 @@ impl Server {
                     }
                 }
             }
+            "prompts/list" => Ok(json!({ "prompts": [runbook_prompt()] })),
+            "prompts/get" => prompt(params),
+            "completion/complete" => Ok(json!({ "completion": completion(params) })),
             _ => Err((-32601, format!("`{method}` is not a method of tondo's MCP server"))),
         };
         Some(match result {
             Ok(mut result) => {
                 if modern {
                     result["resultType"] = json!("complete");
-                    if matches!(method, "server/discover" | "tools/list" | "resources/list" | "resources/read") {
+                    if matches!(
+                        method,
+                        "server/discover" | "tools/list" | "resources/list" | "resources/read" | "prompts/list"
+                    ) {
                         result["ttlMs"] = json!(TTL_MS);
                         result["cacheScope"] = json!("public");
                     }
@@ -2147,6 +2161,69 @@ fn resource(uri: &str) -> Option<(&'static str, String)> {
         return crate::guide::topic(topic).map(|text| ("text/markdown", text.to_string()));
     }
     crate::api::shown(uri.strip_prefix("tondo://api/")?).map(|text| ("text/plain", text))
+}
+
+/// The runbooks, by the names the prompt takes: the topics of the guide
+/// after `runbook-`.
+fn runbooks() -> impl Iterator<Item = &'static str> {
+    crate::guide::TOPICS.iter().filter_map(|(topic, _)| topic.strip_prefix("runbook-"))
+}
+
+/// The prompt that gives a person the runbooks: what an agent follows, step
+/// by step, from what they have.
+fn runbook_prompt() -> Value {
+    let topics = runbooks().collect::<Vec<_>>().join(", ");
+    json!({
+        "name": RUNBOOK,
+        "title": "Follow a runbook of Tondo",
+        "description": "What to do, step by step with tondo's tools, when something goes wrong: a crash, a \
+    hang, a slow program, a test that fails now and then.",
+        "arguments": [
+            { "name": "topic", "description": format!("The runbook: {topics}. Without it, the list to choose from."),
+              "required": false },
+            { "name": "case", "description": "What there is to start from: a dump, a process id, a test, an \
+    error or what happens.", "required": false },
+        ],
+    })
+}
+
+/// The runbook asked for, as a message to the agent, with the case; or,
+/// without a topic, the list of runbooks to choose from.
+fn prompt(params: &Value) -> Result<Value, (i64, String)> {
+    let name = params["name"].as_str().unwrap_or_default();
+    if name != RUNBOOK {
+        return Err((-32602, format!("no prompt `{name}`: prompts/list names them")));
+    }
+    let given = |key: &str| params["arguments"][key].as_str().map(str::trim).filter(|text| !text.is_empty());
+    let case = given("case").map_or(String::new(), |case| format!(" The case: {case}"));
+    let text = match given("topic") {
+        Some(topic) => {
+            let topic = topic.strip_prefix("runbook-").unwrap_or(topic);
+            let Some(runbook) = crate::guide::topic(&format!("runbook-{topic}")) else {
+                let topics = runbooks().collect::<Vec<_>>().join(", ");
+                return Err((-32602, format!("no runbook `{topic}`: the runbooks are {topics}")));
+            };
+            format!("Follow this runbook of Tondo, with the tools of tondo's MCP server.{case}\n\n{}", runbook)
+        }
+        None => format!(
+            "Choose the runbook of Tondo that fits, read it with the tool `guide` and its topic, and follow it with \
+the tools of tondo's MCP server.{case}\n\n{}",
+            crate::guide::topic("runbooks").unwrap_or_default()
+        ),
+    };
+    Ok(json!({
+        "description": "A runbook of Tondo",
+        "messages": [{ "role": "user", "content": { "type": "text", "text": text } }],
+    }))
+}
+
+/// The runbooks whose names start with what the person wrote, for the
+/// prompt's topic.
+fn completion(params: &Value) -> Value {
+    let asked = params["ref"]["name"] == RUNBOOK && params["argument"]["name"] == "topic";
+    let start = params["argument"]["value"].as_str().unwrap_or_default();
+    let values: Vec<&str> = runbooks().filter(|topic| asked && topic.starts_with(start)).collect();
+    json!({ "values": values, "total": values.len(), "hasMore": false })
 }
 
 /// How a tool acts on the world, as its annotations say.

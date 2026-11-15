@@ -7175,3 +7175,15 @@ within the noise. Tony chose to count apart: the samples take time alone, then a
 five samples count the events, then a batch counts the allocations, and `--regression-by
 instructions` judges as before. A baseline saved before measured its time with the counters on.
 
+
+## One prompt for the runbooks
+
+A person starts from a dump, a process that stopped answering or a test that fails now and then,
+and the runbooks say what to do from each. MCP's prompts are the person's way to them: Claude
+Code makes each prompt a command, `/mcp__tondo__<prompt>`, with its arguments after it. A prompt
+per runbook would be twenty commands and more, which crowd the list a person reads; a few for the
+most frequent would leave the others out. Tondo's server has one, `runbook`, whose `topic` is a
+runbook's name after `runbook-` and whose `case` is what there is to start from: it gives the
+runbook as a message to the agent, with the case, and without a topic the list of runbooks to
+choose from. Its topics are those of the guide, so a new runbook is one more without a change to
+the server, and `completion/complete` gives the topics that start with what was written.

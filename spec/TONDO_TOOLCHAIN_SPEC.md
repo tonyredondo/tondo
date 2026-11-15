@@ -1845,7 +1845,9 @@ que impide a una herramienta hacer su trabajo, como un build que no compila,
 es un resultado con `isError`; un programa que termina con error, tests que
 fallan o un formato que no se cumple son su resultado. Sus recursos son la
 guía, `tondo://guide/<tema>`, la skill, `tondo://skill`, y la API de cada
-módulo estándar, `tondo://api/<módulo>`.
+módulo estándar, `tondo://api/<módulo>`. Su prompt `runbook`, con un tema
+y un caso, da a una persona el runbook de ese tema como mensaje para el
+agente, o sin tema la lista de los runbooks para elegir.
 
 `tondo setup` prepara los agentes y los editores de la máquina. Comprueba
 que `tondo` compila y ejecuta un programa y que su servidor MCP responde;
