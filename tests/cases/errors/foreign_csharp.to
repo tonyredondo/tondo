@@ -1,0 +1,49 @@
+// C# as a porter writes it, each with what Tondo writes.
+namespace Shop {
+}
+
+public fn open() {
+}
+
+static fn close() {
+}
+
+void reset() {
+}
+
+type Item = {
+    count: Int { get; set; }
+}
+
+fn main() {
+    string label = "a"
+    let item = new Item()
+    let names = new List<String>()
+    let xs = [1]
+    foreach (var x in xs) {
+    }
+    let name = "a"
+    let greeting = $"hi {name}"
+    let isInt = name is String
+    lock (xs) {
+    }
+    let maybe: String? = none
+    let sure = maybe!
+}
+
+// expect-error: E0004 there is no `namespace` block
+// expect-error: E0004 `pub` makes a declaration public; without it, its module alone sees it
+// expect-error: E0004 a type's own function is `fn Type.name()`, and a method `fn Type.name(self)`
+// expect-error: E0004 a function is `fn reset(value: Type) { ... }`, with no result for none
+// expect-error: E0004 a field needs no `get` or `set`
+// expect-error: E0002 `;` is not a Tondo token
+// expect-error: E0004 expected expression, found `}`
+// expect-error: E0004 unexpected `}`
+// expect-error: E0004 a binding is `let label: String = value`, its type after its name
+// expect-error: E0004 a value is made by calling its type, `Item(...)`, or by a literal: `Item { field: value }`
+// expect-error: E0004 an array is `[]`, of type `Array[T]`
+// expect-error: E0004 a loop over values is `for x in xs { ... }`, without parentheses
+// expect-error: E0002 a string interpolates as it is, `"total {x}"`
+// expect-error: E0004 `x == none` asks whether an optional has no value, and `match` which case a value is
+// expect-error: E0004 what tasks change goes in a `sync.Mutex`
+// expect-error: E0004 `value ?? fallback` gives a value where it has none, and `value.expect("why")` panics with why

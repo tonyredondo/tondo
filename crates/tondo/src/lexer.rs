@@ -571,11 +571,18 @@ impl Lexer<'_> {
         let candidates = c.is_ascii().then(|| &by_first_byte()[c as usize]).map_or(&[][..], Vec::as_slice);
         let found = candidates.iter().map(|&i| &PUNCTUATION[i]).find(|(text, _)| rest.starts_with(text));
         let Some((text, tok)) = found else {
+            let after = rest[c.len_utf8()..].chars().next();
             self.pos += c.len_utf8();
-            let message = if c == ';' {
-                "`;` is not a Tondo token: a new line ends a statement".to_string()
-            } else {
-                format!("unexpected character `{c}`")
+            let message = match (c, after) {
+                (';', _) => "`;` is not a Tondo token: a new line ends a statement".to_string(),
+                ('#', Some('[' | '!')) => "unexpected character `#`: Tondo works out what a type can do, as `==` and \
+copies, and `derive Json for T` writes the rest; an annotation is `@name`"
+                    .to_string(),
+                ('#', _) => "unexpected character `#`: a comment is `// text`".to_string(),
+                ('$', Some('"')) => {
+                    "unexpected character `$`: a string interpolates as it is, `\"total {x}\"`".to_string()
+                }
+                _ => format!("unexpected character `{c}`"),
             };
             self.error("E0002", start, self.pos, message);
             if c == ';' {

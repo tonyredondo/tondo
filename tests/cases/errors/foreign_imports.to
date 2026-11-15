@@ -1,0 +1,9 @@
+// Modules as other languages import them.
+import os
+import java.util.List
+
+fn main() {
+}
+
+// expect-error: E1008 module `os` is not available: the standard one is `std.os`, `import std.os`
+// expect-error: E1008 module `java.util.List` is not available: an import starts with `std`, as `import std.console`

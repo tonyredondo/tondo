@@ -159,12 +159,22 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
                     None => {
                         let mut names: Vec<String> = package.dependencies.keys().map(|k| format!("`{k}`")).collect();
                         names.sort();
-                        names.insert(0, format!("`{}`", package.name));
-                        let message = format!(
-                            "module `{}` is not available: imports start with `std`, {}",
-                            path.join("."),
-                            names.join(", ")
-                        );
+                        let wanted = path.join(".");
+                        let standard = format!("std.{wanted}");
+                        let message = if crate::api::standard_modules().contains(&standard) {
+                            format!(
+                                "module `{wanted}` is not available: the standard one is `{standard}`, `import {standard}`"
+                            )
+                        } else {
+                            let dependencies = match names.is_empty() {
+                                true => String::new(),
+                                false => format!(", or a dependency's: {}", names.join(", ")),
+                            };
+                            format!(
+                                "module `{wanted}` is not available: an import starts with `std`, as `import std.console`, with this package's name, `{}`{dependencies}",
+                                package.name
+                            )
+                        };
                         diags.error("E1008", import.span, message);
                         continue;
                     }

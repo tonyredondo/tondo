@@ -1,0 +1,30 @@
+// TypeScript and Java as a porter writes them, each with what Tondo writes.
+export fn total(): Int {
+    0
+}
+
+public class Main {
+}
+
+fn main() {
+    const limit = 5
+    let xs = [1]
+    for (const x of xs) {
+    }
+    let person = { name: "a", age: 1 }
+    let ready = true
+    let shown = ready ? 1 : 2
+    final let fixed = 1
+    String word = "x"
+    let words = new ArrayList<String>()
+}
+
+// expect-error: E0004 `pub` makes a declaration public
+// expect-error: E0004 `pub` makes a declaration public
+// expect-error: E0004 a binding is `let limit = value`; `const` declares a constant outside functions
+// expect-error: E0004 a loop over values is `for x in xs { ... }`, without parentheses
+// expect-error: E0004 a record is written with its type, `Line { name: "a" }`
+// expect-error: E0004 a value that depends on a condition is `if condition { a } else { b }`
+// expect-error: E0004 a `let` binding does not change, and a `var` one does
+// expect-error: E0004 a binding is `let word: String = value`
+// expect-error: E0004 an array is `[]`, of type `Array[T]`

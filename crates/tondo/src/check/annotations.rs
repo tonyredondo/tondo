@@ -164,6 +164,10 @@ impl<'a> Checker<'a> {
                         "there is no annotation `{shown}` here, but the module `{module}` declares one: write `@{}.{shown}`, and import that module if this file does not",
                         module.rsplit('.').next().unwrap_or(module)
                     ),
+                    (None, None) if matches!(shown.as_str(), "Override" | "override") => {
+                        "Tondo needs no `@Override`: an `impl` gives a trait's methods, and the compiler checks each"
+                            .to_string()
+                    }
                     (None, None) => format!(
                         "there is no annotation `{shown}`: declare it with `annotation {shown} = {{ ... }}`, or import the module that does and write `@module.{shown}`"
                     ),

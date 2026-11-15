@@ -1,0 +1,54 @@
+// The library of other languages, each with what Tondo has.
+import std.console
+
+fn main() {
+    fmt.Println("a")
+    let upper = strings.ToUpper("a")
+    let n = strconv.Atoi("3")
+    var xs = [3, 1]
+    xs = append(xs, 2)
+    let m = ["a": 1]
+    delete(m, "a")
+    let c = make(xs)
+    let s = sorted(xs)
+    let t = sum(xs)
+    let big = max(xs)
+    let pairs = enumerate(xs)
+    let both = zip(xs, xs)
+    pass
+    let j = JSON.stringify(1)
+    let f = Math.floor(1.5)
+    let p = parseInt("3")
+    let i = int("3")
+    Console.WriteLine("a")
+    console.log("a")
+    System.out.println("a")
+    let count = xs.Count
+    let stream = xs.stream()
+    let joined = ",".join(["a"])
+    total = 5
+}
+
+// expect-error: E1001 unknown name `fmt`; `console.println("total {x}")` writes a line
+// expect-error: E1001 unknown name `strings`; a `String`'s functions are its methods
+// expect-error: E1001 unknown name `strconv`; `Int.parse(text)` and `Float.parse(text)` read a number
+// expect-error: E1001 unknown name `append`; `values.push(value)` adds to a `var` array
+// expect-error: E1001 unknown name `delete`; `map.remove(key)` takes an entry out
+// expect-error: E1001 unknown name `make`; `[]`, `[:]` and `channel[T](size)` make an array, a map and a channel
+// expect-error: E1001 unknown name `sorted`; `values.sorted()` gives them in order
+// expect-error: E1001 unknown name `sum`; `values.sum()` adds them
+// expect-error: E1001 unknown name `max`; `values.max()` gives one of an array
+// expect-error: E1001 unknown name `enumerate`; `values.enumerate()` gives each with its index
+// expect-error: E1001 unknown name `zip`; `a.zip(b)` pairs their elements
+// expect-error: E1001 unknown name `pass`; a block can be empty, `{}`
+// expect-error: E1001 unknown name `JSON`; `json.encode(value)` writes JSON
+// expect-error: E1001 unknown name `Math`; a number has its functions as methods
+// expect-error: E1001 unknown name `parseInt`; `Int.parse(text)`
+// expect-error: E1001 unknown name `int`; a conversion is a call of the type: `Int(value)`, and `Int.parse(text)` reads one from a text
+// expect-error: E1001 unknown name `Console`; `console.println("total {x}")` writes a line
+// expect-error: E1001 module `console` has no function `log`: `console.println(text)` writes a line
+// expect-error: E1001 Java's `System.out.println(text)` is `console.println(text)`
+// expect-error: E1102 has no field `Count`; use `length()`
+// expect-error: E1001 has no method `stream`: an array has `map`, `filter` and the rest itself
+// expect-error: E1001 `String` has no method `join`: an array joins its texts
+// expect-error: E1001 unknown name `total`: a new binding is `let total = value`

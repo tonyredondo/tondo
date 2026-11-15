@@ -1,0 +1,41 @@
+// Rust as a porter writes it, each with what Tondo writes.
+#[derive(Debug, Clone)]
+type Point = {
+    x: Int
+}
+
+mod geometry {
+}
+
+pub(crate) fn area(): Int {
+    0
+}
+
+fn longest<'a>(text: String): String {
+    text
+}
+
+fn shout(text: &String): String {
+    text
+}
+
+fn main() {
+    let name = "x"
+    shout(&name)
+    println!("hello")
+    let v = vec![1, 2]
+    let s = String::from("x")
+}
+
+// expect-error: E0002 Tondo works out what a type can do, as `==` and copies, and `derive Json for T` writes the rest
+// expect-error: E0004 expected expression, found `derive`
+// expect-error: E0003 unterminated character literal
+// expect-error: E0004 unexpected `}`
+// expect-error: E0004 a module is a file, or a directory of files: there is no `mod` block
+// expect-error: E0004 one its package alone sees goes in a module under `internal`
+// expect-error: E0004 Tondo has no lifetimes
+// expect-error: E0004 there are no references: a value is passed as it is, `f(a)`
+// expect-error: E0004 there are no references: a value is passed as it is, `f(a)`
+// expect-error: E0004 Tondo has no macros: `console.println("total {x}")` writes a line
+// expect-error: E0004 Tondo has no macros: an array is `[1, 2]`
+// expect-error: E0004 Tondo writes `.` where Rust writes `::`

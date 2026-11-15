@@ -1643,6 +1643,10 @@ impl<'a> Checker<'a> {
             (TyKind::String, "starts_with" | "hasPrefix") => "use `startsWith(prefix)`",
             (TyKind::String, "ends_with" | "hasSuffix") => "use `endsWith(suffix)`",
             (TyKind::String, "format") => "interpolate the values: `\"{first} and {second}\"`",
+            (TyKind::String, "join") => "an array joins its texts, `parts.join(separator)`",
+            (TyKind::Array(_), "stream" | "iter" | "into_iter" | "asSequence") => {
+                "an array has `map`, `filter` and the rest itself"
+            }
             (TyKind::String, "equalsIgnoreCase" | "equalFold" | "eq_ignore_ascii_case" | "caseInsensitiveEquals") => {
                 "use `equalsIgnoringCase(other)`"
             }
@@ -2091,7 +2095,12 @@ impl<'a> Checker<'a> {
                     "setError" => (StdFn::ConsoleSet(1), vec![writer], Ty::UNIT),
                     "setInput" => (StdFn::ConsoleSet(2), vec![reader], Ty::UNIT),
                     _ => {
-                        let message = format!("module `console` has no function `{member}`");
+                        let mut message = format!("module `console` has no function `{member}`");
+                        if matches!(*member, "log" | "info" | "WriteLine" | "Println" | "printf" | "debug") {
+                            message.push_str(": `console.println(text)` writes a line");
+                        } else if matches!(*member, "error" | "warn") {
+                            message.push_str(": `console.eprintln(text)` writes a line to the error output");
+                        }
                         self.diags.error("E1001", segments[1].span, message);
                         return Self::error_expr(span);
                     }

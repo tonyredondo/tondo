@@ -1,0 +1,44 @@
+// Go as a porter writes it, each with what Tondo writes.
+package main
+
+type Account struct {
+    total: Int
+}
+
+func (a Account) total() Int {
+    return 1
+}
+
+fn f(): Int {
+    return 1, none
+}
+
+fn work() {
+}
+
+fn main() {
+    x := 5
+    var y int = 3
+    let items = [1]
+    for _, a := range items {
+    }
+    go work()
+    let m = ["a": 1]
+    v, ok := m["a"]
+    let n = map[string]int{}
+    let s = []int{1, 2}
+    let c = make(chan Int, 3)
+}
+
+// expect-error: E0004 a file needs no `package`: its directory is its module
+// expect-error: E0004 a record is `type Account = { field: Type }`, its methods declared apart
+// expect-error: E0004 a method is declared on its type, `fn Account.total(self): Result`, its receiver `self`
+// expect-error: E0004 a function gives one value: `(a, b)` is a pair, and Go's `value, err` is a result `T ! E`
+// expect-error: E0004 a new binding is `let x = value`, or `var x = value` for one that changes
+// expect-error: E0004 a binding's type follows its name and `:`, as `var y: Int = value`
+// expect-error: E0004 over pairs `for (index, x) in xs.enumerate()` or `for (key, value) in map`
+// expect-error: E0004 a task is `spawn work()`; `spawn detached work()` for one nothing waits for
+// expect-error: E0004 a `let` takes a tuple apart, `let (a, b) = pair`; a map's entry is `map.get(key)`
+// expect-error: E0004 a map is `[:]`, or `["a": 1]` with an entry, of type `Map[String, Int]`
+// expect-error: E0004 an array is `[1, 2]`, of type `Array[Int]`
+// expect-error: E0004 a channel is `channel[Int](3)`, which gives its two ends

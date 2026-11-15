@@ -818,6 +818,13 @@ impl<'a> Checker<'a> {
                     let known = self.names.contains_key(&root.name);
                     let (code, message) = if known {
                         ("E1411", format!("`{}` is not a mutable binding", root.name))
+                    } else if segments.len() == 1 {
+                        // `x = 5` declaring it, as Python does.
+                        let name = &root.name;
+                        let message = format!(
+                            "unknown name `{name}`: a new binding is `let {name} = value`, or `var {name} = value` for one that changes"
+                        );
+                        ("E1001", message)
                     } else {
                         ("E1001", format!("unknown name `{}`", root.name))
                     };
@@ -1125,11 +1132,18 @@ impl<'a> Checker<'a> {
                     },
                     _ => Vec::new(),
                 };
-                // `values.length`: a method read as a field.
+                // `values.length`: a method read as a field, or as other
+                // languages name it.
                 let intrinsic = ["length", "isEmpty", "byteLength", "keys", "values", "entries", "chars", "bytes"];
+                let lower = name[..1].to_lowercase() + &name[1..];
                 let key = (self.owner_key(ty), name.to_string());
+                let lowered = (self.owner_key(ty), lower.clone());
                 if intrinsic.contains(&name) || self.methods.contains_key(&key) {
                     message.push_str(&format!("; `{name}` is a method: call it, `value.{name}()`"));
+                } else if matches!(name, "Count" | "count" | "Length" | "Size" | "size" | "len") {
+                    message.push_str("; use `length()`");
+                } else if intrinsic.contains(&lower.as_str()) || self.methods.contains_key(&lowered) {
+                    message.push_str(&format!("; call the method `value.{lower}()`"));
                 } else if let TyKind::Option(inner) = *self.types.kind(ty) {
                     let inner = self.display(inner);
                     message.push_str(&format!(

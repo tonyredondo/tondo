@@ -1270,6 +1270,31 @@ impl<'a> Checker<'a> {
                 "`console.println(text)` writes a line, after `import std.console`".into()
             }
             "range" => "a range is `0..10`, or `0..=10` with its end".into(),
+            "fmt" | "Console" => "`console.println(\"total {x}\")` writes a line, after `import std.console`".into(),
+            "strings" => {
+                "a `String`'s functions are its methods, as `text.toUpper()`: `tondo api String` lists them".into()
+            }
+            "strconv" | "parseInt" | "parseFloat" | "atoi" => {
+                "`Int.parse(text)` and `Float.parse(text)` read a number, and `\"{n}\"` writes one".into()
+            }
+            "errors" => "an error is a value: a function whose result is `T ! E` gives it with `fail error`".into(),
+            "append" => "`values.push(value)` adds to a `var` array".into(),
+            "delete" => "`map.remove(key)` takes an entry out".into(),
+            "make" => "`[]`, `[:]` and `channel[T](size)` make an array, a map and a channel".into(),
+            "sorted" => "`values.sorted()` gives them in order".into(),
+            "sum" => "`values.sum()` adds them".into(),
+            "max" | "min" => format!("`values.{name}()` gives one of an array, a `T?`, and `a.{name}(b)` one of two"),
+            "enumerate" => {
+                "`values.enumerate()` gives each with its index: `for (index, value) in values.enumerate()`".into()
+            }
+            "zip" => "`a.zip(b)` pairs their elements".into(),
+            "pass" => "a block can be empty, `{}`: Tondo needs no `pass`".into(),
+            "JSON" => {
+                "`json.encode(value)` writes JSON and `json.decode[T](text)` reads it, after `import std.json`".into()
+            }
+            "Math" => {
+                "a number has its functions as methods, as `x.floor()` and `x.abs()`, and `std.math` the rest".into()
+            }
             "len" | "length" | "size" | "count" | "sizeof" | "strlen" => "use `value.length()`".into(),
             "self" => "a method takes `self` as its first parameter: `fn Type.name(self)`".into(),
             "this" => "a method's receiver is `self`, its first parameter: `fn Type.name(self)`".into(),
@@ -1285,7 +1310,10 @@ impl<'a> Checker<'a> {
             }
             "HashSet" | "TreeSet" | "BTreeSet" => "a set is `Set[T]`, as in `Set[1, 2]`".into(),
             "str" | "toString" | "string" => "interpolate the value: `\"{value}\"`".into(),
-            "int" | "float" => format!("a conversion is a call of the type: `{}(value)`", capitalized(name)),
+            "int" | "float" => format!(
+                "a conversion is a call of the type: `{0}(value)`, and `{0}.parse(text)` reads one from a text",
+                capitalized(name)
+            ),
             "assert_eq" | "assertEquals" | "assertEqual" | "expect" => {
                 "`assert(actual == expected)` shows both sides when it fails".into()
             }
@@ -1351,7 +1379,12 @@ impl<'a> Checker<'a> {
                 let first = &owners[0];
                 let written = format!("{}.{name}", self.imported_as(span, first));
                 let imported = self.imported(span, first);
-                match owners.len() {
+                // Java's `System.out.println`.
+                let java = match name {
+                    "System" => "; Java's `System.out.println(text)` is `console.println(text)`",
+                    _ => "",
+                };
+                let found = match owners.len() {
                     1 if imported => format!("`{name}` is declared by `{first}`: write `{written}`"),
                     1 => format!("`{name}` is declared by `{first}`: write `{written}`, after `import {first}`"),
                     count => {
@@ -1362,7 +1395,8 @@ impl<'a> Checker<'a> {
                             shown.join(", ")
                         )
                     }
-                }
+                };
+                format!("{found}{java}")
             }
             _ => {
                 // The bindings in sight and the module's names.
