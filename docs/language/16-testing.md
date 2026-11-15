@@ -213,6 +213,7 @@ suite arithmetic {
 | `testing.snapshot(name, value)` | compares a value with a recorded one |
 | `testing.withVirtualTime(...)` | runs code that sleeps, without waiting |
 | `testing.bench(name, closure)` | makes the test a benchmark |
+| `testing.allocations(closure)` | how many times the closure allocates, to hold a function to its count |
 | `testing.fuzz(name, seeds, closure)` | tries the code with inputs |
 | `testing.keep(value)` | in a benchmark, stops the optimizer from dropping work |
 

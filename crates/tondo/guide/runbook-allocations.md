@@ -95,6 +95,26 @@ optimizations {"tests": true, "function": "receipt", "kind": "frame"}
 => is made in the frame, without the heap
 ```
 
+A benchmark is looked at now and then, and a test runs at every change. So
+the number goes into a test: `testing.allocations` gives how many times a
+call allocates, the same count as the benchmark's `allocs/op`, and a plain
+`test` fails the day the receipt allocates for each line again.
+
+```edit src/main_test.to
+-test everyLineIsThere {
++test theReceiptAllocatesNoMore {
++    let lines = bought()
++    assert(testing.allocations(() { receipt(lines) }) <= 7)
++}
++
++test everyLineIsThere {
+```
+
+```mcp
+test {}
+=> theReceiptAllocatesNoMore ... ok
+```
+
 What the view says of a value on the heap, and what it asks for; after the
 reason, the code that keeps the value and where it is, as `` `all.push(line)`
 at 6:5 ``, when it is the program's:

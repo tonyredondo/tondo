@@ -967,6 +967,7 @@ nothing chosen in the source.
 | | |
 | --- | --- |
 | `tondo test --bench` | allocations and bytes for each operation |
+| `testing.allocations(closure)` | the same count in a test, which fails when it grows ([Testing](testing.md#benchmarks)) |
 | `tondo optimizations --kind heap` | each place that allocates, and what keeps it on the heap |
 | `tondo profile <program> --memory` | what is allocated and what is held, by line |
 | `tondo test --exact <id> --bench --profile memory` | where a benchmark allocates |
