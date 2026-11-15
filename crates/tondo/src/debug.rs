@@ -1526,12 +1526,16 @@ impl Replaying {
                 && seen.insert(tick)
             {
                 *left -= 1;
-                if let Ok((running, mut there, stop)) = self.reach(tick, String::new(), true) {
-                    let at = stop["stopped"]["at"].as_str().unwrap_or_default().to_string();
-                    let further = self.causes(&mut |c| ask(&mut there, c), &at, tick);
-                    running.end();
-                    self.gather_ended(&mut there);
-                    node["causes"] = Value::Array(self.origins_of(&further, seen, left, depth + 1));
+                match self.reach(tick, String::new(), true) {
+                    Ok((running, mut there, stop)) => {
+                        let at = stop["stopped"]["at"].as_str().unwrap_or_default().to_string();
+                        let further = self.causes(&mut |c| ask(&mut there, c), &at, tick);
+                        running.end();
+                        self.gather_ended(&mut there);
+                        node["causes"] = Value::Array(self.origins_of(&further, seen, left, depth + 1));
+                    }
+                    // Said, so that a line whose causes are missing tells why.
+                    Err(message) => node["unreached"] = message.into(),
                 }
             }
             out.push(node);
@@ -2035,7 +2039,8 @@ fn origins_text(causes: &[Value], indent: &str) -> String {
         let (branch, next) = if last { ("└ ", "  ") } else { ("├ ", "│ ") };
         let at = cause["at"].as_str().unwrap_or_default();
         let above = if cause["above"] == true { ", as above" } else { "" };
-        text.push_str(&format!("{indent}{branch}{}{}{above}\n", cause_text(cause), tick_of(cause)));
+        let unreached = cause["unreached"].as_str().map_or(String::new(), |why| format!(", not reached: {why}"));
+        text.push_str(&format!("{indent}{branch}{}{}{above}{unreached}\n", cause_text(cause), tick_of(cause)));
         if cause["above"] == true {
             continue;
         }
