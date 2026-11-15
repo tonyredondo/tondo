@@ -103,6 +103,12 @@ suite slow {
   keeps the runs of those that fail: `tondo debug --replay
   target/recordings/<id>` debugs one again, the same, with what it read
   then, as a test that fails once in CI.
+- For a job of CI: `--report junit=<path>` or `markdown=<path>`, `--shard
+  <i/n>` to split a suite between jobs, `--retry <n>`, after which a test
+  that passes is flaky and still fails the run unless it says
+  `--allow-flaky`, `--deny-skips`, `--allow-empty` for a selection that may
+  match nothing, `--show-output`, `--artifacts <dir>` and `--codeowners
+  auto`. `tondo guide runbook-ci` sets a job up and opens what it leaves.
 
 ## Benchmarks
 

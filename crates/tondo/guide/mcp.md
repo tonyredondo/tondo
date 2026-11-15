@@ -31,7 +31,8 @@ source and stack, as data.
 
 Tools: `check`, `fix`, `format`, `compact`, `expand`, `api`, `guide`,
 `graph` (modules, files and imports), `optimizations` (what a release build
-inlines, makes without the heap and checks, place by place), `asm` (the
+inlines, makes without the heap and checks, place by place; `function` and
+`kind` keep a part of it, and `tests` reads the tests and benchmarks), `asm` (the
 machine code of a function, under its lines, and with `clif` Cranelift's
 IR; `all` every function, `compiler` what another tondo makes
 differently), `explain`, and
@@ -160,7 +161,8 @@ tell, `locals` or `print` what a frame held, of any build, and `find` where a
 text is; `dump_core` makes a dump of a core of the system; `dump_test` makes a test of a failure in a dump, and `test_bisect` finds the commit that broke it, or with `bench` and `max_regression` the one that made a benchmark slower; `dump_serve` writes the failures of a directory as a page, `dump_issue` one as an issue, `dump_report` a page and `dump_redact` a dump to share; `blocked` says what a running program waits for, and `requests` what each of its requests did, task by task; `dump_diff` says what changed between two dumps, and `dump_trend` what
 keeps growing over a directory of them, and `dump_group` which failures they
 are. `logpoint` shows what a line of a running program holds as it goes by, without
-stopping it; `debug_start` on a running Release build sets real breakpoints, which stop one task. `source` gives a file of a build as it
+stopping it, at a `place` as `src/main.to:12`, with `text` to say there, `if` for the
+times that count and `stop` to hold that task alone; `debug_start` on a running Release build sets real breakpoints, which stop one task. `source` gives a file of a build as it
 was, from its repository when it is not at hand. `profile` profiles a `path` it runs, a
 running `program`, a `test` or the benchmarks (`bench`), as `cpu`,
 `memory` or `tasks`, and gives the functions and the program's lines that
@@ -172,6 +174,15 @@ take the most, each with its code.
 overview as an agent skill, and `tondo://api/<module>` a standard module's
 declarations. `tondo://guide/runbooks` lists what to do when something goes
 wrong; a result that leads somewhere names the next tool in `next`.
+
+The runbooks go through the tools on a program, step by step, and every step
+runs in the tests of the toolchain: a crash, a dump made a test, a hang, a
+test that fails sometimes, a failure that came once (`record` and `replay`),
+the commit that broke something (`test_bisect`), a test that fails only in
+CI, a value that is wrong, a slow request, slow code, code that allocates,
+memory that grows, a program that runs (`counters`, `logpoint`), failures of
+many machines, fuzzing, every kind of test, a change to a running program, a
+change across a project (`rename`, `refactor`), and a program of the terminal.
 
 `api_diff` says what a project's public API lost or changed since a commit, modules
 under `internal` aside, as `api` leaves out those of a dependency, and

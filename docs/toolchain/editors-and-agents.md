@@ -195,6 +195,13 @@ step, with the tools of `tondo mcp`: why each step, and what it gives.
 | Failures come from many machines, or must be shared | `runbook-production` |
 | You want to find the inputs that break a function | `runbook-fuzz` |
 | You change code and must show it works | `runbook-testing` |
+| Code allocates more than it should | `runbook-allocations` |
+| A failure happened once, and running it again does not bring it back | `runbook-once` |
+| It worked before: which commit broke it | `runbook-bisect` |
+| A test fails in CI and not here | `runbook-ci` |
+| You rename, change a signature or delete what other code uses | `runbook-change` |
+| A program runs and you want to know what it is doing | `runbook-running` |
+| A program asks, draws or reads keys, and there is no terminal | `runbook-terminal` |
 
 Every step of the runbooks runs in the tests of the toolchain, so what
 they show is what the tools give. They are written for a model, and a

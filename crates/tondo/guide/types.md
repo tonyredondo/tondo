@@ -243,6 +243,35 @@ A function without `self` of a generic type, `fn Box[T].empty(): Box[T]`,
 takes `T` from its arguments or from the type expected; when neither gives
 it, write it after the type: `Box[Int].empty()`.
 
+A method declared after a trait, with the trait as its owner, can ask more of
+the trait's parameter than the trait does, and is a method of the
+implementations that meet the bound: this is how an iterator of numbers has
+`sum()` and one of records does not. Only the trait's module declares them,
+and an `impl` does not write its own.
+
+```tondo
+trait Pile[T] {
+    fn items(self): Array[T]
+}
+
+/// The largest thing of a pile, when its things compare.
+fn Pile[T: Ordered].largest(self): T? {
+    self.items().max()
+}
+
+type Scores = { values: Array[Int] }
+
+impl Pile[Int] for Scores {
+    fn items(self): Array[Int] {
+        self.values
+    }
+}
+
+fn main() {
+    assert(Scores { values: [3, 9, 4] }.largest() == some(9))
+}
+```
+
 The prelude's traits: `Display`, `Ordered` (`compare`), `Iterator[T]`
 (`next`), and the arithmetic. A type that implements `Ordered`, and a
 `T: Ordered`, gets `<`, `<=`, `>` and `>=`, which compare by it. `Copy`, `Equatable`, `Key`, `Send` and `Share`
