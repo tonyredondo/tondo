@@ -1871,6 +1871,15 @@ fn judges_benchmarks_by_their_instructions() {
     let counts = counts_itself();
     let saved: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("target/bench/main.json")).unwrap()).unwrap();
+    // The load the baseline was measured under, which a comparison with one
+    // measured on a busy machine says.
+    assert!(saved["environment"]["load"].is_object(), "{saved}");
+    let mut busy = saved.clone();
+    busy["environment"]["load"] = serde_json::json!({ "start": 1000.0, "end": 1000.0 });
+    std::fs::write(dir.join("target/bench/busy.json"), busy.to_string()).unwrap();
+    let (compared, _, _) = tondo(&dir, &[&bench[..], &["--baseline", "busy"]].concat());
+    assert!(compared.contains("note: the baseline was measured on a busy machine (load 1000.0 on "), "{compared}");
+    assert!(compared.contains("its times are not to be compared, its instructions are"), "{compared}");
     let judged =
         [&bench[..], &["--baseline", "main", "--max-regression", "5", "--regression-by", "instructions"]].concat();
     if !counts {

@@ -124,7 +124,9 @@ A row's time moves by a third when only where the code lies moves, as after
 an unrelated change. On Linux a row also has the instructions and cycles of
 a run, counted in a round of their own so that the time is measured with
 nothing counting: `regression_by` `instructions` judges a change by them, and
-`layouts` measures in several orders of the code and gives the range. After
+`layouts` measures in several orders of the code and gives the range. A
+machine busier than its processors moves the time too, and the report ends
+with a note that says so: then compare instructions, not times. After
 taking a new `tondo`, `compiler` with the old one, in `test` with `bench`, in
 `optimizations` and in `asm`, says what the new one makes differently.
 

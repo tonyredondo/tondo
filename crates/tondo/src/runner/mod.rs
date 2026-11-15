@@ -619,6 +619,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
             read
         }
         Some(Baseline::Revision(revision)) => bench::Baselines {
+            busy: None,
             measures: Default::default(),
             source: Some(json::obj(vec![
                 ("kind", json::str("revision")),
@@ -680,7 +681,16 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         _ if !options.layouts.is_empty() => (layouts(&run, &plan, &mut printer), Vec::new()),
         _ if let Some(searching) = &options.fuzz => (fuzz::campaign(&run, &plan, &mut printer, searching), Vec::new()),
         _ if let Some(orders) = &options.orders => (explore(&run, &plan, &mut printer, orders, None), Vec::new()),
-        _ => campaign(&run, &plan, &mut printer),
+        _ => {
+            if options.bench.is_some() {
+                bench::note_load(true);
+            }
+            let ran = campaign(&run, &plan, &mut printer);
+            if options.bench.is_some() {
+                bench::note_load(false);
+            }
+            ran
+        }
     };
     let mut attempts = attempts;
     if by_itself(options) && options.baseline.is_none() && !interrupt::requested() {
@@ -731,7 +741,10 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         .filter_map(|(test, b)| {
             let base = baselines.measures.get(&(test.clone(), b.name.clone()))?;
             let why = bench::compare(b, base, options.max_regression, options.by_instructions).regressed?;
-            Some(format!("{test} {}: {why}", b.name))
+            // Judged by time on a busy machine: given, and said so.
+            let busy = !options.by_instructions && (bench::busy().is_some() || baselines.busy.is_some());
+            let under = if busy { " (measured under load)" } else { "" };
+            Some(format!("{test} {}: {why}{under}", b.name))
         })
         .collect();
     failed |= !regressions.is_empty();
@@ -813,6 +826,11 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         }
     } else {
         human::report(tree, &printer, &aggregates, &owners, options, failed, started.elapsed());
+        if options.bench.is_some() {
+            for note in bench::busy_note(bench::busy(), baselines.busy) {
+                say!("note: {note}");
+            }
+        }
         if !held.is_empty() {
             let exact: Vec<String> = held.iter().map(|test| format!("--exact {test}")).collect();
             say!(

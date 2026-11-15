@@ -4292,16 +4292,23 @@ en qué máquina, para no comparar como iguales medidas de máquinas distintas:
   "os": "linux",
   "arch": "x86_64",
   "cpu": "AMD Ryzen 9 5950X 16-Core Processor",
-  "cpus": 32
+  "cpus": 32,
+  "load": {"start": 2.150, "end": 2.470}
 }
 ~~~
 
 `cpu` es el modelo del procesador como lo nombra el sistema, o la arquitectura
-si no lo nombra; `cpus`, los hilos que puede ejecutar a la vez. Le siguen
+si no lo nombra; `cpus`, los hilos que puede ejecutar a la vez; `load`, la carga
+de la máquina en el último minuto al empezar y al acabar los benchmarks, `null`
+donde el sistema no la da. Cuando una de ellas pasa de `cpus`, la máquina estaba
+ocupada: el reporte acaba con una nota que lo dice, con la carga y los
+procesadores, y que los tiempos no se comparan y las instrucciones sí; lo mismo
+de una línea base medida así. Un `--max-regression` juzgado por tiempo da su
+veredicto igual, marcado como medido bajo carga. Le siguen
 `baseline` y `max_regression_percent`, `null` sin `--baseline`, `--against` ni
 `--max-regression`, y `regression_by`, `time` o `instructions`. Una línea base guardada es
-`{"kind": "saved", "path", "toolchain", "os", "arch", "cpu"}`, con la máquina
-donde se midió, y una revisión, `{"kind": "revision", "ref", "commit"}`. Cada
+`{"kind": "saved", "path", "toolchain", "os", "arch", "cpu", "load"}`, con la
+máquina donde se midió y la carga, si estaba ocupada, y una revisión, `{"kind": "revision", "ref", "commit"}`. Cada
 benchmark de un intento tiene esta forma:
 
 ~~~json
@@ -4373,7 +4380,8 @@ orden del reporte:
     "os": "linux",
     "arch": "x86_64",
     "cpu": "AMD Ryzen 9 5950X 16-Core Processor",
-    "cpus": 32
+    "cpus": 32,
+    "load": {"start": 2.150, "end": 2.470}
   },
   "benchmarks": [
     {

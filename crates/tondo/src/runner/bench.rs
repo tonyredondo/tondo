@@ -121,6 +121,65 @@ pub(super) struct Baselines {
     /// What the report says of them: a saved baseline with the machine it
     /// ran on, or a revision.
     pub source: Option<Value>,
+    /// The load and the processors of the machine they were measured on,
+    /// when it was busy.
+    pub busy: Option<(f64, usize)>,
+}
+
+/// The machine's load as the benchmarks started and as they ended.
+static LOADS: std::sync::Mutex<(Option<f64>, Option<f64>)> = std::sync::Mutex::new((None, None));
+
+/// Notes the machine's load as the benchmarks start, or as they end.
+pub(super) fn note_load(starting: bool) {
+    let now = load();
+    let mut loads = LOADS.lock().unwrap_or_else(|e| e.into_inner());
+    match starting {
+        true => *loads = (now, None),
+        false => loads.1 = now,
+    }
+}
+
+/// The machine's load over the last minute, where the system says it.
+fn load() -> Option<f64> {
+    #[cfg(target_os = "linux")]
+    {
+        let text = std::fs::read_to_string("/proc/loadavg").ok()?;
+        text.split_whitespace().next()?.parse().ok()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("/usr/sbin/sysctl").args(["-n", "vm.loadavg"]).output().ok()?;
+        let text = String::from_utf8_lossy(&output.stdout).into_owned();
+        text.split_whitespace().find_map(|word| word.parse().ok())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    None
+}
+
+/// The highest load the benchmarks ran under, and the processors, when it
+/// was over them: times measured so are not to be compared.
+pub(super) fn busy() -> Option<(f64, usize)> {
+    let (start, end) = *LOADS.lock().unwrap_or_else(|e| e.into_inner());
+    let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let highest =
+        start.into_iter().chain(end).fold(None, |most: Option<f64>, load| Some(most.map_or(load, |m| m.max(load))));
+    highest.filter(|&load| load > cpus as f64).map(|load| (load, cpus))
+}
+
+/// The note a report ends with when a side was measured under load.
+pub(super) fn busy_note(now: Option<(f64, usize)>, baseline: Option<(f64, usize)>) -> Vec<String> {
+    let mut notes = Vec::new();
+    if let Some((load, cpus)) = now {
+        notes.push(format!(
+            "the machine was busy (load {load:.1} on {cpus} processors): times are not to be compared, instructions are"
+        ));
+    }
+    if let Some((load, cpus)) = baseline {
+        notes.push(format!(
+            "the baseline was measured on a busy machine (load {load:.1} on {cpus} processors): its times are not to be compared, its instructions are"
+        ));
+    }
+    notes
 }
 
 /// How a benchmark compares with its baseline: the baseline's median and
@@ -313,6 +372,12 @@ pub(super) fn read_baseline(path: &Path) -> Result<Baselines, String> {
     }
     let environment = &value["environment"];
     let machine = |key: &str| environment[key].as_str().unwrap_or_default().to_string();
+    let cpus = environment["cpus"].as_u64().unwrap_or(1) as usize;
+    let highest = ["start", "end"]
+        .iter()
+        .filter_map(|key| environment["load"][key].as_f64())
+        .fold(None, |most: Option<f64>, load| Some(most.map_or(load, |m| m.max(load))));
+    let busy = highest.filter(|&load| load > cpus as f64).map(|load| (load, cpus));
     let source = obj(vec![
         ("kind", str("saved")),
         ("path", str(path.display().to_string())),
@@ -320,8 +385,9 @@ pub(super) fn read_baseline(path: &Path) -> Result<Baselines, String> {
         ("os", str(machine("os"))),
         ("arch", str(machine("arch"))),
         ("cpu", str(machine("cpu"))),
+        ("load", busy.map_or(Value::Null, |(load, _)| decimal(load))),
     ]);
-    Ok(Baselines { measures, source: Some(source) })
+    Ok(Baselines { measures, source: Some(source), busy })
 }
 
 /// Where benchmarks ran, as people read it.
@@ -348,6 +414,10 @@ pub(super) fn environment(time: std::time::Duration) -> Value {
         ("arch", str(std::env::consts::ARCH)),
         ("cpu", str(cpu())),
         ("cpus", int(cpus)),
+        ("load", {
+            let (start, end) = *LOADS.lock().unwrap_or_else(|e| e.into_inner());
+            obj(vec![("start", start.map_or(Value::Null, decimal)), ("end", end.map_or(Value::Null, decimal))])
+        }),
     ])
 }
 
