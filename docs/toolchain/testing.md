@@ -299,7 +299,10 @@ test words::unit::words::countingAPage ... ok
 ```
 
 Time for each operation with its spread, allocations and bytes, and on
-Linux the instructions the processor ran. The spread here is wide because
+Linux the instructions the processor ran. The time is measured with nothing
+counting: the instructions are counted in a round of their own after the
+samples, and the allocations in another, so that neither slows what the
+time measures. The spread here is wide because
 the machine was busy with other work, which is the usual state of a
 laptop and of CI. The instructions did not move, and that is what makes
 them the measure to judge a change by:

@@ -266,8 +266,8 @@ though. A benchmark of the two over a thousand numbers shows both costs:
 ```text
 $ tondo test --bench
 test squares::unit::squares::aThousand ... ok
-  arrays     1.286 µs/op  ±0.1%  9 allocs/op  12448 B/op  25.1k ins/op
-  chain      1.659 µs/op  ±0.1%  2 allocs/op  80 B/op  36.7k ins/op
+  arrays     1.299 µs/op  ±0.9%  9 allocs/op  12448 B/op  25.1k ins/op
+  chain      1.441 µs/op  ±0.6%  2 allocs/op  80 B/op  38.2k ins/op
 ```
 
 The chain allocates its two closures and nothing else, however long the
