@@ -559,6 +559,9 @@ impl<'a> Checker<'a> {
                 // textually; the left operand is the element).
                 let item = self.expr(cx, left, Some(element));
                 let item = self.coerce(item, element);
+                if matches!(self.types.kind(container.ty), TyKind::Array(_)) {
+                    Self::searched(cx, &container, span);
+                }
                 return Self::mk(hir::ExprKind::ArrayOp(hir::ArrayOp::Contains, vec![item, container]), Ty::BOOL, span);
             }
             BinOp::Range | BinOp::RangeInclusive => {

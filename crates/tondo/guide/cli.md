@@ -70,8 +70,8 @@ tondo api --diff v1.2              what the public API lost, changed or gained s
 tondo check --unreached            the code neither main nor a test reaches
 tondo check --docs                 what is public and has no /// (W1010)
 tondo check --performance          what a loop costs that the compiler cannot take away:
-                                   a copy (W1009), removeAt(0) (W1024), a pattern compiled
-                                   each time (W1025)
+                                   a copy (W1009), contains on what it pushes to (W1023),
+                                   removeAt(0) (W1024), a pattern compiled each time (W1025)
 tondo optimizations                what a release build inlines, makes without the heap
                                    and checks, place by place; --kind heap, --function
 tondo optimizations --against main what it makes differently from a git revision

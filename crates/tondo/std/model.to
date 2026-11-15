@@ -2052,9 +2052,10 @@ fn following[S: reflect.Reflect + serialization.Encode + serialization.Decode](
             none,
         )?
     var named: Array[String] = []
+    var seen = marks.toSet()
     for out in graph.edges {
         for edge in out {
-            if not named.contains(edge.name) and not marks.contains(edge.name) {
+            if seen.insert(edge.name) {
                 named.push(edge.name)
             }
         }

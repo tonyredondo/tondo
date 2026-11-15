@@ -1423,6 +1423,26 @@ fn performance_warnings_name_what_the_compiler_cannot_fix() {
     assert_eq!(found, [("W1025".to_string(), 5), ("W1024".to_string(), 15)], "{data}");
     let (data, _) = json(&dir, &["check", "main.to", "--json"]);
     assert!(!data.to_string().contains("W102"), "{data}");
+    // An array the same loop searches and pushes to looks at more on every
+    // turn, nested loops too, said once; one the loop only reads, or a
+    // `Set`, says nothing.
+    let program = "fn main() {\n    let words = [\"a\", \"b\", \"a\"]\n    let banned = [\"x\"]\n    \
+        var kept: Array[String] = []\n    var seen = [\"z\"].toSet()\n    for word in words {\n        \
+        if not kept.contains(word) and not banned.contains(word) and not seen.contains(word) {\n            \
+        kept.push(word)\n        }\n    }\n    var pairs: Array[Int] = []\n    for i in 0..3 {\n        \
+        for j in 0..3 {\n            if not (i * j in pairs) {\n                pairs.push(i * j)\n            }\n        \
+        }\n    }\n    _ = (kept, pairs, seen)\n}\n";
+    std::fs::write(dir.join("searched.to"), program).unwrap();
+    let (data, _) = json(&dir, &["check", "searched.to", "--performance", "--json"]);
+    let found: Vec<(u64, String)> = data["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["code"] == "W1023")
+        .map(|d| (d["range"]["start"]["line"].as_u64().unwrap() + 1, d["message"].as_str().unwrap().to_string()))
+        .collect();
+    assert_eq!(found.iter().map(|(line, _)| *line).collect::<Vec<_>>(), [7, 14], "{data}");
+    assert!(found[0].1.contains("`var keptSet = kept.toSet()` before the loop"), "{data}");
 }
 
 /// `--timings` says where a build's time went, after it and in its JSON:

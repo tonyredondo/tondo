@@ -7,10 +7,10 @@ use crate::diag::Diagnostics;
 use crate::source::{SourceFile, SourceMap, Span};
 
 /// The codes only a check that asks for its profile gives.
-const PROFILES: [&str; 4] = ["W1009", "W1010", "W1024", "W1025"];
+const PROFILES: [&str; 5] = ["W1009", "W1010", "W1023", "W1024", "W1025"];
 
 /// Whether the check under way asks for the warnings of performance, which
-/// the checker gives as it reads the code (W1024 and W1025).
+/// the checker gives as it reads the code (W1023, W1024 and W1025).
 static PERFORMANCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Asks the next analyses for the warnings of performance, or no longer.

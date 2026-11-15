@@ -1233,6 +1233,22 @@ impl<'a> Checker<'a> {
     }
 
     pub(super) fn for_loop(&mut self, cx: &mut FnCx, header: &ast::ForHeader, body: &ast::Block) -> Option<hir::Stmt> {
+        cx.turn_arrays.push(TurnArrays { start: cx.locals.len(), ..TurnArrays::default() });
+        let looped = self.for_loop_of(cx, header, body);
+        let turns = cx.turn_arrays.pop().unwrap_or_default();
+        for (local, span, array) in turns.searched {
+            if turns.grown.contains(&local) {
+                self.searched_while_grown(span, array);
+                // An enclosing loop has it too, said once.
+                for outer in &mut cx.turn_arrays {
+                    outer.searched.retain(|&(_, searched, _)| searched != span);
+                }
+            }
+        }
+        looped
+    }
+
+    fn for_loop_of(&mut self, cx: &mut FnCx, header: &ast::ForHeader, body: &ast::Block) -> Option<hir::Stmt> {
         match header {
             ast::ForHeader::Infinite => {
                 cx.loops.push(false);

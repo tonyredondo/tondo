@@ -1390,11 +1390,50 @@ impl<'a> Checker<'a> {
         !cx.loops.is_empty() || cx.per_element
     }
 
-    /// What `tondo check --performance` says of a call: a pattern compiled
-    /// each time the code that compiles it runs (W1025).
-    pub(super) fn costly_call(&mut self, cx: &FnCx, called: &hir::Expr) {
+    /// `array` searched at `span`, by `contains` or `in`: when it is a
+    /// binding declared before loops, each of them keeps it, to say whether
+    /// it pushes to it too (W1023).
+    pub(super) fn searched(cx: &mut FnCx, array: &hir::Expr, span: Span) {
+        let hir::ExprKind::Local(local) = array.kind else { return };
+        for turns in &mut cx.turn_arrays {
+            if (local.0 as usize) < turns.start {
+                turns.searched.push((local, span, array.span));
+            }
+        }
+    }
+
+    /// A binding pushed to, or inserted into, in the loops it was declared
+    /// before (W1023).
+    pub(super) fn grown(cx: &mut FnCx, local: hir::LocalId) {
+        for turns in &mut cx.turn_arrays {
+            if (local.0 as usize) < turns.start {
+                turns.grown.insert(local);
+            }
+        }
+    }
+
+    /// W1023: an array searched at `span` on every turn of a loop that
+    /// pushes to it, so that each turn looks at more of it: a `Set` beside
+    /// it finds one at once.
+    pub(super) fn searched_while_grown(&mut self, span: Span, array: Span) {
+        let (code, array) = (self.sources.slice(span), self.sources.slice(array).to_string());
+        let code = code.strip_prefix('(').and_then(|code| code.strip_suffix(')')).unwrap_or(code).to_string();
+        let set = format!("{array}Set");
+        let message = format!(
+            "`{code}` looks at every element of `{array}`, which this loop pushes to, so each turn looks at more: \
+             keep a `Set` beside it, `var {set} = {array}.toSet()` before the loop, ask `{set}.contains(...)`, and \
+             `{set}.insert(...)` with each push"
+        );
+        self.costly("W1023", span, message);
+    }
+
+    /// What `tondo check --performance` says of a call: an array searched by
+    /// a loop that pushes to it (W1023), or a pattern compiled each time the
+    /// code that compiles it runs (W1025).
+    pub(super) fn costly_call(&mut self, cx: &mut FnCx, called: &hir::Expr) {
         let hir::ExprKind::Call(hir::Callee::Fn(id), _, args) = &called.kind else { return };
         match self.signatures[id.0 as usize].name.as_str() {
+            "Array.contains" if !args.is_empty() => Self::searched(cx, &args[0], called.span),
             "regex.Regex.compile"
                 if (!cx.loops.is_empty() || cx.per_call)
                     && matches!(args.first().map(|a| &a.kind), Some(hir::ExprKind::Str(_))) =>
@@ -1447,6 +1486,12 @@ impl<'a> Checker<'a> {
         };
         if args.len() != params.len() {
             return self.arity_error(span, params.len(), args.len());
+        }
+        if matches!(mutation, M::Push | M::InsertAt)
+            && path.is_empty()
+            && matches!(self.types.kind(ty), TyKind::Array(_))
+        {
+            Self::grown(cx, local);
         }
         let values: Vec<hir::Expr> = args
             .iter()

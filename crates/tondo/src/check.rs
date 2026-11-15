@@ -1287,6 +1287,20 @@ struct FnCx {
     /// Whether its code runs at each call: a function's other than `main`,
     /// or a closure's.
     per_call: bool,
+    /// What each enclosing loop's turns search and push to (W1023).
+    turn_arrays: Vec<TurnArrays>,
+}
+
+/// The arrays a loop's turns search with `contains` or `in`, and those it
+/// pushes to, of the bindings declared before it: one searched and pushed
+/// to by the same loop looks at more elements on every turn (W1023).
+#[derive(Default)]
+struct TurnArrays {
+    /// How many locals there were as the loop began.
+    start: usize,
+    /// The binding searched, where, and the array as written.
+    searched: Vec<(hir::LocalId, Span, Span)>,
+    grown: HashSet<hir::LocalId>,
 }
 
 /// What a closure is: a `defer` block, `unsafe`, or the closure of a test

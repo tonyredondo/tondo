@@ -7312,8 +7312,11 @@ costs what it says; `insert(0, value)`, which the standard library uses to build
 groups backwards, was left out after it found five places of a handful of elements each. A
 pattern compiled where it runs each time (W1025) found none once a test's body, which runs once,
 was told from a closure's. `contains` on an array in a loop found eight places in the standard
-library, seven on arrays of a few elements, and waits for Tony's decision with those numbers.
-The warnings come from the checker, which knows types and loops, when the check asks for them.
+library, seven on arrays of a few elements. Shown those numbers, Tony chose the narrower form
+(W1023): `contains` or `in` on an array the same loop pushes to, whose search grows with every
+turn. It finds three places, of which `std.model`'s steps never taken were a real cost, now kept
+with a `Set`. The warnings come from the checker, which knows types and loops, when the check
+asks for them.
 
 ## `${value}` of a value that is not a number warns too
 

@@ -44,6 +44,7 @@ impl<'a> Checker<'a> {
             template: false,
             per_element: false,
             per_call: false,
+            turn_arrays: Vec::new(),
         }
     }
 

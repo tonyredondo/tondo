@@ -332,6 +332,15 @@ pub const CODES: &[(&str, &str, &str)] = &[
          away. `\"${amount}\"` with a number is a dollar and the value, as a price is written, and says nothing.",
     ),
     (
+        "W1023",
+        "array-searched-while-grown",
+        "With `--performance`: `contains` or `in` on an array that the same loop pushes to, as a loop that \
+         keeps the elements it has not seen yet does: each turn looks at more of it, so the loop takes time \
+         that grows as the square of its turns. A `Set` beside the array finds one at once: \
+         `var keptSet = kept.toSet()` before the loop, `keptSet.contains(...)`, and `keptSet.insert(...)` \
+         with each push.",
+    ),
+    (
         "W1024",
         "array-front-every-turn",
         "With `--performance`: `removeAt(0)` on an array in a loop, which moves every other element on every \
