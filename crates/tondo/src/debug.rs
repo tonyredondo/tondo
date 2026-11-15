@@ -1270,7 +1270,11 @@ impl Replaying {
                 serde_json::json!({ "stopped": { "at": at, "task": snapshot["snapshot"]["task"].clone(), "why": why } })
             }
             _ => {
-                ask(&mut next, &format!("seek {to}"))?;
+                // Where it started, should it be past the probe already.
+                ask(&mut next, &format!("seek {to}")).map_err(|e| match base.or(self.held) {
+                    Some((tick, _)) => format!("{e} (it went on from a copy at probe {tick})"),
+                    None => e,
+                })?;
                 let mut stop = next.next_event()?;
                 stop["stopped"]["why"] = why.into();
                 stop

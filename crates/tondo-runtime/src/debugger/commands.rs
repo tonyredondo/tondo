@@ -126,11 +126,11 @@ pub(crate) fn command(line: &str) -> Option<String> {
             let Some(tick) = words.next().and_then(|t| t.parse::<u64>().ok()) else {
                 return Some(format!("{{\"error\":\"{word} takes a probe's tick, as `tick` gives\"}}"));
             };
-            if tick <= crate::replay::ticks() {
-                return Some(
-                    "{\"error\":\"the replay is past that probe: a replay of the recording from its start goes back\"}"
-                        .into(),
-                );
+            let at = crate::replay::ticks();
+            if tick <= at {
+                return Some(format!(
+                    "{{\"error\":\"the replay is at probe {at}, past {tick}: a replay of the recording from its start goes back\"}}"
+                ));
             }
             let task = words.next().and_then(|t| t.parse().ok()).unwrap_or(0);
             *SCANNED.lock().unwrap_or_else(|e| e.into_inner()) = (task, Default::default(), Default::default());
