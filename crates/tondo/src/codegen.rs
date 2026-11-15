@@ -333,6 +333,11 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     // as cranelift-native sets it.
     // A function that needs features beyond the level is compiled with
     // them: a generator for each set of them the program's functions need.
+    // What `tondo asm` reads of a function's blocks, as what a turn of a
+    // loop runs.
+    if ASKED.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+        flags.set("machine_code_cfg_info", "true").map_err(|e| e.to_string())?;
+    }
     let flags = settings::Flags::new(flags);
     let isa_at = |cpu: &crate::target::Cpu, needs: u32| -> Result<cranelift_codegen::isa::OwnedTargetIsa, String> {
         let mut builder = match target {
@@ -972,6 +977,9 @@ struct Compiled {
     /// The calls left as nothing until a logpoint needs them: where each
     /// starts, how long it is, and its statement's site.
     latent: Vec<(u32, u32, u32)>,
+    /// For `tondo asm`: where each block of its machine code starts, where
+    /// each goes, and where the cold blocks start.
+    blocks: (Vec<u32>, Vec<(u32, u32)>, Option<u32>),
 }
 
 /// Where a value label is: in a register, by its number and whether it is
@@ -1071,6 +1079,9 @@ pub struct Kept {
     pub ir: Option<(String, String)>,
     /// The ISLE rules applied to it, with `rules` (`crate::rules`).
     pub rules: Vec<(String, String, u64, bool)>,
+    /// Where each block of its code starts, where each goes, and where the
+    /// cold blocks, after every other, start.
+    pub blocks: (Vec<u32>, Vec<(u32, u32)>, Option<u32>),
 }
 
 /// Asks the next builds to keep the code of the functions named; or no
@@ -1170,6 +1181,7 @@ fn compile_one(
             .map(|s| (s.start, if s.loc.as_abs().is_default() { 0 } else { s.loc.as_abs().bits() }))
             .collect(),
         debug_slots: debug_slots(code.buffer.frame_layout()),
+        blocks: (code.bb_starts.clone(), code.bb_edges.clone(), code.cold_start),
         labelled: labelled(&code.value_labels_ranges),
         saved: if dumps { saved_registers(isa, code) } else { Vec::new() },
         slots: code.buffer.frame_layout().map_or(Vec::new(), |layout| {
@@ -1904,6 +1916,7 @@ impl Codegen<'_> {
                     targets: code.relocs.iter().filter_map(|reloc| Some((reloc.offset, target(reloc)?))).collect(),
                     lines: code.lines.iter().map(|&(at, site_index)| (at, site(site_index))).collect(),
                     ir: code.ir.take(),
+                    blocks: std::mem::take(&mut code.blocks),
                     #[cfg(feature = "rules")]
                     rules: job.traced.as_deref().map_or(Vec::new(), crate::rules::applied),
                     #[cfg(not(feature = "rules"))]

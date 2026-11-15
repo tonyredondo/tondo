@@ -599,6 +599,9 @@ pub struct CompiledCode {
     /// This info is generated only if the `machine_code_cfg_info`
     /// flag is set.
     pub bb_edges: Vec<(CodeOffset, CodeOffset)>,
+    /// Tondo: where the cold blocks start, after every other; generated
+    /// only if the `machine_code_cfg_info` flag is set.
+    pub cold_start: Option<CodeOffset>,
 }
 
 /// Result of compiling a `FunctionStencil`, before applying `FunctionParameters` onto it.

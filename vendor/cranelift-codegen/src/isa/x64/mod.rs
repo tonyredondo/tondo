@@ -107,6 +107,7 @@ impl TargetIsa for X64Backend {
             value_labels_ranges,
             bb_starts: emit_result.bb_offsets,
             bb_edges: emit_result.bb_edges,
+            cold_start: emit_result.cold_start,
         }))
     }
 

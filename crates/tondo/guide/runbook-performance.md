@@ -60,11 +60,16 @@ optimizations {"path": "slow.to"}
 
 `asm` shows what the processor runs for a function, instruction by
 instruction, under the lines of the program they are of: here `main`, with
-`isPrime` inlined in it and the division of its hot line.
+`isPrime` inlined in it and the division of its hot line. At each loop's
+line it says how many instructions a turn runs on its common path, and how
+many of them are checks and calls: the number to make smaller, and to
+compare after a change. This loop runs four turns at a time, and its checks
+are the division's, by zero, one a turn.
 
 ```mcp
 asm {"path": "slow.to", "function": "main"}
 => slow.to:5  if number % divisor == 0 {
+=> four turns at once run
 ```
 
 For a number to compare, a benchmark is a test that calls `testing.bench`.

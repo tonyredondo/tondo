@@ -221,6 +221,10 @@ pub struct EmitResult {
     /// bb-starts. Computed only if `machine_code_cfg_info` is enabled.
     pub bb_edges: Vec<(CodeOffset, CodeOffset)>,
 
+    /// Tondo: where the cold blocks start, after every other, when
+    /// `machine_code_cfg_info` is enabled or debug info is produced.
+    pub cold_start: Option<CodeOffset>,
+
     /// The pretty-printed disassembly, if any. This uses the same
     /// pretty-printing for MachInsts as the pre-regalloc VCode Debug
     /// implementation, but additionally includes the prologue and
@@ -746,7 +750,10 @@ impl<I: VCodeInst> VCode<I> {
         let _tt = timing::vcode_emit();
         let mut buffer = MachBuffer::new();
         buffer.set_log2_min_function_alignment(self.log2_min_function_alignment);
-        let mut bb_starts: Vec<Option<CodeOffset>> = vec![];
+        // Tondo: each block's start in the order blocks are emitted, with the
+        // block, as cold blocks come last: by index, the edges of the blocks
+        // after a cold one took another block's start.
+        let mut bb_starts: Vec<(BlockIndex, Option<CodeOffset>)> = vec![];
 
         // The first M MachLabels are reserved for block indices.
         buffer.reserve_labels_for_blocks(self.num_blocks());
@@ -885,13 +892,13 @@ impl<I: VCodeInst> VCode<I> {
                 let cur_offset = buffer.cur_offset();
                 if last_offset.is_some() && cur_offset <= last_offset.unwrap() {
                     for i in (0..bb_starts.len()).rev() {
-                        if bb_starts[i].is_some() && cur_offset > bb_starts[i].unwrap() {
+                        if bb_starts[i].1.is_some() && cur_offset > bb_starts[i].1.unwrap() {
                             break;
                         }
-                        bb_starts[i] = None;
+                        bb_starts[i].1 = None;
                     }
                 }
-                bb_starts.push(Some(cur_offset));
+                bb_starts.push((block, Some(cur_offset)));
                 last_offset = Some(cur_offset);
             }
 
@@ -906,7 +913,10 @@ impl<I: VCodeInst> VCode<I> {
             // that the values a branch to it leaves in place can be found
             // there (`extend_into_cold_blocks`).
             let cold_here = !self.debug_value_labels.is_empty() && self.block_order.is_cold(block);
-            if cold_here && cold_start.is_none() {
+            // Tondo: where the cold blocks start is also what tells a tool
+            // the common path from them (`machine_code_cfg_info`).
+            let cold = cold_here || flags.machine_code_cfg_info() && self.block_order.is_cold(block);
+            if cold && cold_start.is_none() {
                 cold_start = Some(buffer.cur_offset());
             }
             let mut cold_items = Vec::new();
@@ -1160,16 +1170,15 @@ impl<I: VCodeInst> VCode<I> {
         let mut bb_edges = vec![];
         let mut bb_offsets = vec![];
         if flags.machine_code_cfg_info() {
-            for block in 0..self.num_blocks() {
-                if bb_starts[block].is_none() {
+            for &(block, start) in &bb_starts {
+                let Some(from) = start else {
                     // Block was deleted by MachBuffer; skip.
                     continue;
-                }
-                let from = bb_starts[block].unwrap();
+                };
 
                 bb_offsets.push(from);
                 // Resolve each `succ` label and add edges.
-                let succs = self.block_succs(BlockIndex::new(block));
+                let succs = self.block_succs(block);
                 for &succ in succs.iter() {
                     let to = buffer.resolve_label_offset(MachLabel::from_block(succ));
                     bb_edges.push((from, to));
@@ -1189,6 +1198,7 @@ impl<I: VCodeInst> VCode<I> {
             buffer: buffer.finish(&self.constants, ctrl_plane),
             bb_offsets,
             bb_edges,
+            cold_start,
             disasm: if want_disasm { Some(disasm) } else { None },
             value_labels_ranges,
         })

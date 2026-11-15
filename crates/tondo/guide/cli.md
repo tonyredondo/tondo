@@ -73,8 +73,9 @@ tondo optimizations                what a release build inlines, makes without t
                                    and checks, place by place; --kind heap, --function
 tondo optimizations --against main what it makes differently from a git revision
 tondo optimizations --tests        the same of the tests and benchmarks; asm --tests too
-tondo asm sum                      the machine code of a function, under its lines;
-                                   --clif its IR, --against main what changed
+tondo asm sum                      the machine code of a function, under its lines, with
+                                   what a turn of each loop runs; --clif its IR,
+                                   --against main what changed
 tondo asm --all --compiler <tondo> the functions another tondo makes other code of;
                                    --rules, in a tondo built with them, Cranelift's rules
 tondo asm --runtime tondo_rt_array_push   a function of the runtime; --compiler HEAD, its diff

@@ -1407,6 +1407,31 @@ fn sees_the_code_of_tests() {
     assert!(said.starts_with("doubled ("), "{said}");
 }
 
+/// `asm` says at a loop's line what a turn of it runs on its common path,
+/// without the cold blocks of panics, and of a loop that runs four turns at
+/// a time, what the four run and what one of the last runs.
+#[test]
+fn asm_says_what_a_turn_of_a_loop_runs() {
+    let dir = scratch("turns");
+    let program = "import std.console\n\nfn letters(text: String): Int {\n    var count = 0\n    \
+        for c in text.chars() {\n        if c.isLetter() {\n            count += 1\n        }\n    }\n    count\n}\n\n\
+        fn total(values: Array[Int]): Int {\n    var sum = 0\n    for value in values {\n        sum += value\n    }\n    \
+        sum\n}\n\nfn main() {\n    console.println(\"{letters(\"hello\")} {total([1, 2, 3])}\")\n}\n";
+    std::fs::write(dir.join("main.to"), program).unwrap();
+    // Said at the loop's line, not at the iterator's, whose code comes first.
+    let (said, stderr, status) = tondo(&dir, &["asm", "main.to", "letters"]);
+    assert_eq!(status, 0, "{stderr}");
+    let turn = "main.to:5  for c in text.chars() {\n        ; a turn of the loop runs ";
+    assert!(said.contains(turn) && said.contains("instructions, by the way it branches on its common path:"), "{said}");
+    assert!(!said.contains("prelude.to:2484  if self.offset >= self.text.byteLength() {\n        ; a turn"), "{said}");
+    let (said, stderr, status) = tondo(&dir, &["asm", "main.to", "total"]);
+    assert_eq!(status, 0, "{stderr}");
+    let line = said.split("main.to:15  for value in values {\n").nth(1).unwrap_or_default();
+    assert!(line.starts_with("        ; four turns at once run "), "{said}");
+    assert!(line.contains("\n        ; a turn of the last ones, one at a time, runs "), "{said}");
+    assert!(line.lines().next().is_some_and(|turn| turn.ends_with("and no call")), "{said}");
+}
+
 /// `asm --runtime` gives the machine code of a function of the runtime, as
 /// this tondo links it, and what changed in it from another tondo's.
 #[test]

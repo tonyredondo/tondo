@@ -2469,6 +2469,17 @@ src/main.to:6  total += values[i]
 - El código de las instrucciones es el de esta máquina, x86-64 o arm64; las
   constantes que Cranelift deja tras ellas no se desensamblan, y la cabecera
   dice cuántos bytes son.
+- En la línea de cada bucle sin otro dentro, la primera observación dice
+  cuántas instrucciones corre una vuelta por su camino común, de la cabeza del
+  bucle a ella otra vez por los bloques que no son fríos, sin el pánico de un
+  check ni el crecer de un array, y cuántas de ellas son checks, saltos a un
+  bloque frío, y llamadas: `a turn of the loop runs 14 instructions on its
+  common path: 2 checks and no call`. Si sus ramas dan caminos distintos, da
+  la menor y la mayor cuenta y como mucho cuántos checks y llamadas. Un bucle
+  que corre cuatro vueltas a la vez dice lo que corren las cuatro y, aparte,
+  lo que corre una de las últimas. La línea es la del bucle en el programa, o
+  la primera del código del programa en él, como la de un `for` sobre un
+  iterador de la librería estándar.
 - `--clif` añade el IR de Cranelift de la función antes y después de que su
   optimizador lo cambie, donde se ve si una regla `Tondo:` del generador de
   código (`vendor/`) se aplicó.

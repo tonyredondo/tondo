@@ -43,6 +43,12 @@ The rules are marked `Tondo:` in `src/isa/x64/inst.isle`,
 `src/opts/remat.isle` and `src/prelude_opt.isle`, and the constants'
 merging in `src/machinst/vcode.rs`.
 
+For `tondo asm`, which counts what a turn of a loop runs, `src/machinst/vcode.rs` says where
+the cold blocks start when `machine_code_cfg_info` is set, and keeps each block's start with
+the block it is: Cranelift wrote the starts in the order it emits the blocks, cold ones last,
+and read them by index, so that with a cold block the edges of the blocks after it took other
+blocks' starts. Both are marked `Tondo:`.
+
 And a feature, `isle-rules`, marked `Tondo:` in `Cargo.toml` and
 `build.rs`, has each ISLE rule that matches log itself, as `trace-log`
 does but without regalloc2's logs: `tondo asm --rules`, in a `tondo` built

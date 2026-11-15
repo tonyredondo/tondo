@@ -2213,11 +2213,224 @@ pub fn assembly_with(
                 .collect();
             lines.push(((file, line), code, remarks));
         }
+        // What a turn of each loop runs, first at the loop's line, which
+        // the unrolling pass told of.
+        let of_kind = |kinds: &[&str]| -> Vec<(String, usize)> {
+            let told = told.iter().filter(|o| kinds.contains(&o.kind) && o.functions.contains(&kept.name));
+            told.map(|o| (o.file.clone(), o.line)).collect()
+        };
+        let (loops, unrolled) = (of_kind(&["unrolled", "looped"]), of_kind(&["unrolled"]));
+        let mut turned = turns(&kept.blocks, &instructions, &loops);
+        // A loop that runs four turns at a time has the code of four, then
+        // one for the last turns, with fewer instructions.
+        turned.sort_by_key(|(at, turn)| (at.clone(), std::cmp::Reverse(turn.1)));
+        for (index, (at, turn)) in turned.iter().enumerate().rev() {
+            let first = index == 0 || turned[index - 1].0 != *at;
+            let what = match (unrolled.contains(at), first) {
+                (false, _) => "a turn of the loop runs",
+                (true, true) => "four turns at once run",
+                (true, false) => "a turn of the last ones, one at a time, runs",
+            };
+            if let Some((.., remarks)) = lines.iter_mut().find(|(place, ..)| place == at) {
+                remarks.insert(0, turn_text(what, *turn));
+            }
+        }
         let constants = kept.bytes.len() - code.len();
         let (function, size, ir, rules) = (kept.name, kept.bytes.len(), kept.ir, kept.rules);
         assemblies.push(Assembly { function, size, constants, instructions, lines, ir, rules });
     }
     Ok(assemblies)
+}
+
+/// What a turn of each innermost loop of a function's machine code runs
+/// on its common path, the blocks that are not cold, as a check's panic or
+/// an array's growing are, from its head back to it (toolchain 7.19): at
+/// the place of its head, the fewest and the most instructions, and of
+/// them the most checks, branches to a cold block, and calls. The place is
+/// the line of `loops`, those of loops in the source, that the loop's code
+/// or the code beside it is of, as a loop that runs four turns at a time
+/// tests its range after; or else the first line of the program's own code
+/// in it, which a loop over an iterator of the standard library starts
+/// with; or else its head's.
+fn turns(
+    blocks: &(Vec<u32>, Vec<(u32, u32)>, Option<u32>),
+    instructions: &[Instruction],
+    loops: &[(String, usize)],
+) -> Vec<((String, usize), Turn)> {
+    let (starts, edges, cold) = blocks;
+    let mut starts = starts.clone();
+    starts.sort_unstable();
+    starts.dedup();
+    let n = starts.len();
+    let mut successors = vec![Vec::new(); n];
+    for &(from, to) in edges {
+        let (Ok(from), Ok(to)) = (starts.binary_search(&from), starts.binary_search(&to)) else { continue };
+        if !successors[from].contains(&to) {
+            successors[from].push(to);
+        }
+    }
+    let hot = |block: usize| cold.is_none_or(|cold| starts[block] < cold);
+    // Each block's instructions, its calls, the places they are of, and
+    // its last.
+    let (mut count, mut calls, mut places, mut last) = (vec![0; n], vec![0; n], vec![Vec::new(); n], vec![None; n]);
+    for instruction in instructions {
+        let Some(block) = starts.partition_point(|&start| start as usize <= instruction.offset).checked_sub(1) else {
+            continue;
+        };
+        count[block] += 1;
+        let text = instruction.text.as_str();
+        if text.starts_with("call") || text.starts_with("bl ") || text.starts_with("blr ") {
+            calls[block] += 1;
+        }
+        if let Some(at) = instruction.at.as_ref().filter(|at| !places[block].contains(*at)) {
+            places[block].push(at.clone());
+        }
+        last[block] = Some(instruction);
+    }
+    // A block said to go to itself does so when its last instruction jumps
+    // to its start: an empty block between, which the code has not, leaves
+    // the edge otherwise.
+    for (block, successors) in successors.iter_mut().enumerate() {
+        if last[block].and_then(branch_target) != Some(starts[block] as usize) {
+            successors.retain(|&to| to != block);
+        }
+    }
+    let checks: Vec<usize> = (0..n).map(|block| successors[block].iter().filter(|&&to| !hot(to)).count()).collect();
+    // The edges back to a block still on a walk from the entry, which are
+    // the loops' in the code a structured program makes.
+    let (mut state, mut back, mut walk) = (vec![0u8; n], Vec::new(), vec![(0, 0)]);
+    if n > 0 {
+        state[0] = 1;
+    }
+    while let Some(top) = walk.len().checked_sub(1).filter(|_| n > 0) {
+        let (block, next) = walk[top];
+        match successors[block].get(next) {
+            Some(&to) => {
+                walk[top].1 += 1;
+                match state[to] {
+                    0 => {
+                        state[to] = 1;
+                        walk.push((to, 0));
+                    }
+                    1 => back.push((block, to)),
+                    _ => {}
+                }
+            }
+            None => {
+                state[block] = 2;
+                walk.pop();
+            }
+        }
+    }
+    let mut predecessors = vec![Vec::new(); n];
+    for (from, to) in successors.iter().enumerate() {
+        for &to in to {
+            predecessors[to].push(from);
+        }
+    }
+    // Each loop by its head: the blocks that reach one that goes back to it
+    // without passing it.
+    let mut found_loops: std::collections::BTreeMap<usize, Vec<bool>> = Default::default();
+    for &(latch, head) in &back {
+        let body = found_loops.entry(head).or_insert_with(|| (0..n).map(|block| block == head).collect());
+        let mut work = vec![latch];
+        while let Some(block) = work.pop() {
+            if !body[block] {
+                body[block] = true;
+                work.extend(&predecessors[block]);
+            }
+        }
+    }
+    let heads: Vec<usize> = found_loops.keys().copied().collect();
+    let mut found = Vec::new();
+    for (&head, body) in &found_loops {
+        if !hot(head) || heads.iter().any(|&other| other != head && body[other]) {
+            continue;
+        }
+        let beside = (0..n).filter(|&block| {
+            !body[block] && (predecessors[head].contains(&block) || predecessors[block].iter().any(|&from| body[from]))
+        });
+        let mut near = (0..n).filter(|&block| body[block]).chain(beside).flat_map(|block| &places[block]);
+        let own = (0..n).filter(|&block| body[block]).flat_map(|block| &places[block]);
+        let own = own.filter(|(file, _)| !file.starts_with("<std>/"));
+        let first = own.clone().next().map(|(file, _)| file);
+        let own = own.filter(|(file, _)| Some(file) == first).min_by_key(|(_, line)| *line);
+        let Some(at) = near.find(|at| loops.contains(*at)).or(own).or(places[head].first()).cloned() else { continue };
+        let inside = |block: usize| block != head && body[block] && hot(block);
+        // The blocks from the head, each after those that go to it.
+        let (mut order, mut seen, mut walk) = (Vec::new(), vec![false; n], vec![(head, 0)]);
+        seen[head] = true;
+        while let Some(top) = walk.len().checked_sub(1) {
+            let (block, next) = walk[top];
+            match successors[block].get(next) {
+                Some(&to) => {
+                    walk[top].1 += 1;
+                    if inside(to) && !seen[to] {
+                        seen[to] = true;
+                        walk.push((to, 0));
+                    }
+                }
+                None => {
+                    order.push(block);
+                    walk.pop();
+                }
+            }
+        }
+        order.reverse();
+        // The fewest and the most instructions to each block, and the most
+        // checks and calls.
+        let mut ways: Vec<Option<Turn>> = vec![None; n];
+        ways[head] = Some((count[head], count[head], checks[head], calls[head]));
+        let join = |a: Turn, b: Turn| (a.0.min(b.0), a.1.max(b.1), a.2.max(b.2), a.3.max(b.3));
+        for &block in &order {
+            let Some((least, most, checked, called)) = ways[block] else { continue };
+            for &to in successors[block].iter().filter(|&&to| inside(to)) {
+                let way = (least + count[to], most + count[to], checked + checks[to], called + calls[to]);
+                ways[to] = Some(ways[to].map_or(way, |known| join(known, way)));
+            }
+        }
+        let latches = (0..n).filter(|&block| body[block] && hot(block) && successors[block].contains(&head));
+        if let Some(turn) = latches.filter_map(|block| ways[block]).reduce(join) {
+            found.push((at, turn));
+        }
+    }
+    found
+}
+
+/// What a turn of a loop runs: the fewest and the most instructions, and
+/// the most checks and calls among them.
+type Turn = (usize, usize, usize, usize);
+
+/// Where a jump goes, from the distance its text gives: from the next
+/// instruction on x86-64, from itself on AArch64.
+fn branch_target(instruction: &Instruction) -> Option<usize> {
+    let (_, distance) = instruction.text.rsplit_once('$')?;
+    let negative = distance.starts_with('-');
+    let digits = distance.get(1..)?.trim_start_matches("0x");
+    let digits = &digits[..digits.find(|c: char| !c.is_ascii_hexdigit()).unwrap_or(digits.len())];
+    let distance = i64::from_str_radix(digits, 16).ok()?;
+    let from = match cfg!(target_arch = "x86_64") {
+        true => instruction.offset + instruction.bytes.len() / 2,
+        false => instruction.offset,
+    };
+    usize::try_from(from as i64 + if negative { -distance } else { distance }).ok()
+}
+
+/// What `what`, a turn of a loop and its verb, runs, as `turns` counted it: the fewest
+/// and the most instructions, and the most checks and calls among them.
+fn turn_text(what: &str, (least, most, checked, called): Turn) -> String {
+    let some = |count: usize, what: &str| match (count, least == most) {
+        (0, _) => format!("no {what}"),
+        (1, true) => format!("1 {what}"),
+        (count, true) => format!("{count} {what}s"),
+        (count, false) => format!("at most {count} {what}{}", if count == 1 { "" } else { "s" }),
+    };
+    let instructions = match least == most {
+        true => format!("{most} instructions"),
+        false => format!("{least} to {most} instructions, by the way it branches"),
+    };
+    let (checks, calls) = (some(checked, "check"), some(called, "call"));
+    format!("{what} {instructions} on its common path: {checks} and {calls}")
 }
 
 /// A function whose code changed, and the lines of its diff.

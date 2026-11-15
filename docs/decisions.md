@@ -7237,3 +7237,18 @@ a repository, whether it is a debug build and its level of processor, and a prof
 program is gone, whose build was not optimized or whose files changed says which and gives none.
 A line shows six remarks at most: a loop's line can gather a dozen, and the rest are a call of
 `optimizations` away.
+
+## What a turn of a loop runs, at the loop's line in `tondo asm`
+
+The work on `chars()` counted what a turn of a loop runs by reading `tondo asm` and adding up
+instructions by hand. `tondo asm` now says it at each innermost loop's line: the instructions
+from the loop's head back to it over the blocks that are not cold, and of them the checks,
+branches to a cold block, and the calls. Cold blocks are where Cranelift puts a check's panic
+and an array's growing, so what is left is what a turn runs when nothing goes wrong; a loop
+whose branches give paths of other lengths gives the shortest and the longest. It is said in
+`asm` rather than in `optimizations` because only the machine code has the number, and
+`optimizations` does not generate code. The count needs Cranelift's blocks and their edges,
+which it gives when `machine_code_cfg_info` is set, only for `tondo asm`; Tondo's copy also
+says where the cold blocks start, and records each block's start with the block it is, as the
+original read the starts by index while it had written them in the order it emitted the blocks,
+cold ones last, so that every edge after a cold block took another block's start.
