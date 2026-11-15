@@ -127,11 +127,48 @@ total 6.00
 dearest: tea
 ```
 
-## The first function, with Go's names
+## The first try, with Go's forms
 
-A first try keeps Go's words where Tondo has others. `check` knows the ones
-of the language and says what to write; of Go's library it only says that the
-name is unknown.
+Written as Go writes, the port has a `struct`, a receiver, `go`, `:=` and
+`range`. `check` answers each with Tondo's.
+
+```tondo error E0004 file=orders.to
+import std.console
+
+type Line struct {
+    name: String
+    quantity: Int
+    cents: Int
+}
+
+func (l Line) total() Int {
+    return l.quantity * l.cents
+}
+
+fn work() {
+}
+
+fn main() {
+    go work()
+    lines := [1, 2]
+    for _, line := range lines {
+        console.println("{line}")
+    }
+}
+```
+
+```mcp
+check {"path": "orders.to"}
+=> a record is `type Line = { field: Type }`
+=> a method is declared on its type, `fn Line.total(self): Result`
+=> a task is `spawn work()`
+=> a new binding is `let lines = value`
+=> over pairs `for (index, x) in xs.enumerate()`
+```
+
+With the forms right, Go's names are the next round: its built-ins, `nil`,
+and the packages of its library, for which `check` names what stands in
+their place.
 
 ```tondo error E1001 file=orders.to
 type Line = { name: String, quantity: Int, cents: Int }
@@ -155,18 +192,18 @@ fn main() {}
 check {"path": "orders.to"}
 => unknown name `len`; use `value.length()`
 => unknown name `nil`; Tondo writes `none`
-=> unknown name `strconv`
+=> unknown name `strconv`; `Int.parse(text)` and `Float.parse(text)` read a number
 ```
 
-For the library, ask what does the job: `api` with `search` finds it, and with
-its name gives how it is called and what it fails with.
+`api` with a name gives how it is called and what it fails with; with
+`search`, what does a job that no hint named.
 
 ```mcp
-api {"search": "parse integer"}
-=> Int.parse
+api {"module": "Int.parse"}
+=> Int ! text.TextError
 ```
 
-`Int.parse` gives an `Int ! text.TextError`, and `??` takes what to do when it
+`Int.parse` gives a number or fails, and `??` takes what to do when it
 fails, which may be to fail with the function's own error. That is the three
 lines of `strconv.Atoi` and `if err != nil` in one.
 
