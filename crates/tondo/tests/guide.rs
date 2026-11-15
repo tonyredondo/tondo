@@ -102,6 +102,22 @@ fn the_cli_and_mcp_topics_cover_everything() {
     assert!(missing.is_empty(), "`tondo guide mcp` does not name: {missing:?}");
 }
 
+/// The manual lists the guide's topics and its runbooks, each by its name: a
+/// topic added to the guide and to neither list fails here.
+#[test]
+fn the_manual_lists_every_topic() {
+    let topics = ("docs/README.md", include_str!("../../../docs/README.md"));
+    let runbooks =
+        ("docs/toolchain/editors-and-agents.md", include_str!("../../../docs/toolchain/editors-and-agents.md"));
+    for (name, _) in tondo::guide::TOPICS {
+        let ((page, text), named) = match name.starts_with("runbook-") {
+            true => (runbooks, format!("`{name}`")),
+            false => (topics, format!("guide/{name}.md")),
+        };
+        assert!(text.contains(&named), "{page} does not name the guide's topic `{name}`");
+    }
+}
+
 /// The repository carries the skill for the agents that work in it, where
 /// Claude Code and the Agent Skills standard look; it stays the guide's.
 #[test]

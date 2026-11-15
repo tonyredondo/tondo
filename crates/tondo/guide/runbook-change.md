@@ -73,7 +73,8 @@ references {"file": "src/prices/prices.to", "line": 2, "column": 8}
 
 `calls` gives the functions that call it instead, and with `direction`
 `outgoing` those it calls; `definition` and `hover` answer from a place that
-uses a name, and `symbols` with `query` finds a declaration by its name.
+uses a name, `symbols` with `query` finds a declaration by its name, and
+`implementations` gives the `impl`s of a trait or of a type.
 
 ## A new name
 

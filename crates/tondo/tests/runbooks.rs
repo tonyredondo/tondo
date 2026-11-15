@@ -193,6 +193,24 @@ fn every_runbook_runs_as_it_says() {
     });
 }
 
+/// A tool works some problem, so a runbook calls it, or names it where one
+/// would reach for it: a tool added to the server and to no runbook fails
+/// here. Those that set the toolchain up work no problem of a program.
+#[test]
+fn every_tool_is_in_a_runbook() {
+    let apart = ["setup", "version", "clean", "target_pack"];
+    let runbooks: String =
+        tondo::guide::TOPICS.iter().filter(|(name, _)| name.starts_with("runbook-")).map(|(_, text)| *text).collect();
+    let missing: Vec<&str> = tondo::mcp::tool_names()
+        .filter(|tool| !apart.contains(tool))
+        .filter(|tool| !runbooks.contains(&format!("`{tool}`")) && !runbooks.contains(&format!("\n{tool} {{")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "no runbook calls or names {missing:?}: give each its step in the runbook of the problem it works"
+    );
+}
+
 /// The index names every runbook, and the server's instructions name the index.
 #[test]
 fn the_runbooks_can_be_found() {

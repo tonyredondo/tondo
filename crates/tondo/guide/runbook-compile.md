@@ -57,5 +57,8 @@ check {"path": "greet.to"}
 => it compiles
 ```
 
-`explain` says more of a code, and `tondo guide pitfalls` what is often wrong
-coming from other languages.
+`explain` says more of a code, and `guide` with the topic `pitfalls` what is
+often wrong coming from other languages. While writing, `complete` gives what
+can be written at a place and `expand` what each `derive` wrote; once it
+compiles, `format` lays the files out, and `compact` shows one in fewer
+tokens.
