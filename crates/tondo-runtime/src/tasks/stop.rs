@@ -9,6 +9,20 @@ use super::*;
 pub(super) static STOPPING: AtomicBool = AtomicBool::new(false);
 /// Set while someone has the world stopped, or is stopping it.
 pub(super) static STOPPER: AtomicBool = AtomicBool::new(false);
+/// The thread that stops the world, by `this_thread`: the Tondo code it
+/// runs while the others stand still, as a context's computed value that
+/// a dump shows, does not wait for its own stop, which would never end.
+static STOPPED_BY: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    static HERE: u8 = const { 0 };
+}
+
+/// This thread, by the address of a thread-local of its own, which a fork
+/// keeps for the thread it copies.
+fn this_thread() -> usize {
+    HERE.with(|here| here as *const u8 as usize)
+}
 
 /// How many reasons there are for compiled code to call
 /// `tondo_rt_cancelled` after a call that may wait: a stop of the world, a
@@ -117,6 +131,12 @@ pub(crate) fn enter_tondo() {
         if !STOPPING.load(Ordering::SeqCst) {
             return;
         }
+        // The thread that stopped the world runs on, and stays out of what
+        // this stop and the next wait for.
+        if STOPPED_BY.load(Ordering::SeqCst) == this_thread() {
+            runner.running.store(false, Ordering::SeqCst);
+            return;
+        }
         runner.task.store(current(), Ordering::SeqCst);
         runner.frame.store(crate::trace::frame_pointer(), Ordering::SeqCst);
         runner.running.store(false, Ordering::SeqCst);
@@ -175,6 +195,7 @@ pub(crate) fn stop_world(timeout: Duration) -> bool {
         }
         std::thread::yield_now();
     }
+    STOPPED_BY.store(this_thread(), Ordering::SeqCst);
     STOPPING.store(true, Ordering::SeqCst);
     attend(true);
     let threads = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -225,6 +246,7 @@ pub(crate) fn fork_copy() -> std::io::Result<i32> {
         if STOPPING.swap(false, Ordering::SeqCst) {
             attend(false);
         }
+        STOPPED_BY.store(0, Ordering::SeqCst);
         STOPPER.store(false, Ordering::SeqCst);
         crate::cycles::forked();
     }
@@ -237,6 +259,7 @@ pub(crate) fn resume_world() {
     let resumed = RESUMED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     RESUMED.notify_all();
     drop(resumed);
+    STOPPED_BY.store(0, Ordering::SeqCst);
     STOPPER.store(false, Ordering::SeqCst);
 }
 

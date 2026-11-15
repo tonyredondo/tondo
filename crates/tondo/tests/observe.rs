@@ -5701,6 +5701,59 @@ fn every_object_of_a_debug_build() {
     assert!(chain[1].as_str().unwrap().starts_with("Array[String]"), "{object}");
 }
 
+/// A dump of a debug build shows each task's contexts, and computes a
+/// context's initial value to show it, in the thread that stopped the
+/// program: that code, a line at a time, does not wait for the program to
+/// go on, which only that thread would let it do, and the next stop does
+/// not wait for that thread either, so each dump has its objects.
+#[test]
+fn a_debug_build_dumps_the_contexts_it_computes() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump_computed");
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\n\nfn named(): String {\n    let parts = [\"comp\", \"uted\"]\n    \"{parts[0]}{parts[1]}\"\n}\n\n\
+                   context Settings = {\n    name: String = named()\n}\n\n\
+                   fn main() {\n    console.println(\"ready\")\n    let _ = console.flush()\n    let _ = console.readLine()\n    console.println(Settings.name)\n}\n";
+    std::fs::write(dir.join("computed.to"), program).unwrap();
+    let executable = dir.join("computed");
+    let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "computed.to", "--debug", "--output"])
+        .arg(&executable)
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let mut child = Command::new(&executable)
+        .env("TONDO_DIAGNOSTICS", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
+    assert_eq!(line, "ready\n");
+    let pid = child.id().to_string();
+    for n in 0..2 {
+        let file = dir.join(format!("computed-{n}.dump.json"));
+        let mut dumping =
+            Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", &pid, "--output"]).arg(&file).spawn().unwrap();
+        let (done, ended) = std::sync::mpsc::channel();
+        std::thread::spawn(move || done.send(dumping.wait().unwrap()));
+        // The cap bounds a hang: a dump that works ends in milliseconds.
+        let Ok(status) = ended.recv_timeout(std::time::Duration::from_secs(120)) else {
+            let _ = child.kill();
+            panic!("dump {n} of a debug build never ended");
+        };
+        assert!(status.success());
+        let dump: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert!(dump["objects"]["list"].is_array(), "dump {n}: {}", dump["objects_missing"]);
+    }
+    drop(child.stdin.take());
+    line.clear();
+    BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
+    assert_eq!(line, "computed\n");
+    assert!(child.wait().unwrap().success());
+}
+
 const STOPPING: &str = "import std.console
 
 fn pick(values: Array[Int], at: Int): Int {

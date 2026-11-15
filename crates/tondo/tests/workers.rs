@@ -17,6 +17,7 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("contexts.rs", "SHOWING", "outside any task; a task keeps its own"),
     ("cycles.rs", "OWES", "the thread owes the collector until its next safe point, which it reaches as it runs"),
     ("cycles.rs", "BUSY", "set while this thread collects, which never waits"),
+    ("tasks/stop.rs", "HERE", "names the thread that stops the world, where no task switches until it resumes"),
     ("debugger/stopping.rs", "PANIC_REGISTERS", "written and read in one panic's report, which never waits"),
     ("debugger/stopping.rs", "PANIC_NUMBERS", "written and read in one panic's report, which never waits"),
     ("debugger/bindings.rs", "SHOWING", "a view the debugger shows runs to its end"),
