@@ -461,6 +461,7 @@ milestone covers is in [`docs/roadmap.md`](docs/roadmap.md).
 | macOS on Apple silicon and Intel, signed and notarized | Done |
 | Standard library, measured against what porting Gin, Hugo and dd-trace-go needs | Done |
 | Tests, every order of their tasks, benchmarks, fuzzing, coverage, profiling | Done |
+| Tools that say why code is slow: the optimizer's remarks under a profile's lines, what a turn of a loop costs, what an executable weighs, where a build's time goes | Done |
 | Debugger, dumps, live builds, language server, VS Code, MCP | Done |
 | C in both directions: bindings, libraries for C, libraries loaded as the program runs, system calls, plugins with a contract | Done |
 | Levels of processor, vectors (`std.simd`) and the instructions of x64 and arm64 | Done |
@@ -472,9 +473,9 @@ What is under way and what is planned:
 | Every row of [`bench/`](bench/README.md) at or under Go's, in time and in memory, and the servers in latency | Under way: that page has the rows still behind, each with its reason |
 | A chain of an iterator at the cost of the loop it stands for | Under way: its values stay in registers, the program's own records too, and the elements it only reads are not counted; the calls of its closures through values are what is left |
 | A chain of arrays without the arrays between, short texts without the heap | Next in the optimizer |
-| Interfaces of C++ that are tables of functions, as a trait with `@ffi.Interface` | Accepted, not started |
+| Interfaces of C++ that are tables of functions, as a trait with `@ffi.Interface` | Under way |
+| Constants of a type, as `Duration.Zero`, with the numbers' own in the same form, `Int.Max` | Accepted; under way |
 | A heap for each task | Research |
-| Tools for making a program faster | In: a profile's lines say what the compiler made of them, a profile can be by instructions, the remarks say why a check or a value stays and what a turn of a loop costs, a benchmark is written from a dump or a recording and its report says when the machine was busy, `tondo size` says what an executable weighs and `--timings` where a build's time goes, a test says how much a call allocates, and `check --performance` warns of what the compiler cannot fix. One more of those warnings is being measured |
 | Vectors of 512 bits with AVX-512; today they are computed by halves | Waits for a machine to test on |
 | Profile-guided optimization while a program runs | Research |
 | Windows | Not started, after the work above |
