@@ -3500,6 +3500,9 @@ struct DebugFrame {
     line: Option<(String, usize)>,
     /// The first site of each block that starts a line, with the line.
     opened: Vec<(usize, usize, (String, usize))>,
+    /// Whether a call of code with probes of its own ran since the last
+    /// probe: the line's code after it goes on in a probe of its own.
+    called: bool,
     /// The site of the last probe.
     site: usize,
 }
@@ -3664,7 +3667,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             let alive = fb.create_sized_stack_slot(slot(words * 8, 0));
             let addresses = fb.create_sized_stack_slot(slot((count.max(1) * 8) as u32, 1));
             let first = cg.function_sites();
-            DebugFrame { function, first, shown, captured, alive, addresses, line: None, opened: Vec::new(), site: 0 }
+            DebugFrame {
+                function,
+                first,
+                shown,
+                captured,
+                alive,
+                addresses,
+                line: None,
+                opened: Vec::new(),
+                called: false,
+                site: 0,
+            }
         });
         FnCodegen {
             e: Emit::new(cg, fb),
@@ -3861,6 +3875,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             if let Some(debug) = &mut self.debug {
                 debug.line = self.carried.remove(&index);
+                debug.called = false;
                 // The blocks of a restart point carry its line on; the one
                 // the statement goes on in only takes it.
                 self.carrying =

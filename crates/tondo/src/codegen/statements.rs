@@ -21,6 +21,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.assigning = place.path.is_empty().then_some(place.local);
                 self.assign(place, rvalue, *span);
                 self.assigning = None;
+                if let Some(debug) = &mut self.debug
+                    && matches!(
+                        &**rvalue,
+                        Rvalue::Call(Callee::Fn(_) | Callee::Trait(..), _)
+                            | Rvalue::CallIndirect(..)
+                            | Rvalue::CallOsr(..)
+                    )
+                {
+                    debug.called = true;
+                }
                 if place.path.is_empty() {
                     self.mark(place.local, true);
                 }

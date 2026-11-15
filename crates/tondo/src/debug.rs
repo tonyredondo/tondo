@@ -1600,8 +1600,13 @@ impl Replaying {
             // one that came before this replay started is earlier.
             _ => {
                 let tracked = ask(scan, "tracked")?;
-                let last = tracked["tracked"][0]["changes"].as_array().and_then(|c| c.last()).cloned();
-                let last = last.ok_or(format!("`{rest}` has no value here"))?;
+                // Of this call of the function: an earlier one's are not.
+                let last = tracked["tracked"][0]["changes"]
+                    .as_array()
+                    .and_then(|c| c.last())
+                    .filter(|_| tracked["tracked"][0]["current"] != 0)
+                    .cloned();
+                let last = last.ok_or(format!("`{rest}` has no value here yet"))?;
                 let to = last["tick"].as_u64().ok_or(format!("`{rest}` had this value before"))?;
                 let value = last["value"].as_str().unwrap_or_default();
                 Ok((to, format!("`{rest}` became {value} on this line"), Value::Null))

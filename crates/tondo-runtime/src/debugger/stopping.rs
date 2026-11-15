@@ -517,7 +517,8 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
                 let function = table.sites.get(site).map(|s| &table.functions[s.function]);
                 let caller = unsafe { *(frame as *const usize) };
                 let into = INTO.lock().unwrap_or_else(|e| e.into_inner());
-                (frame >= f && !standard()) || (caller == f && function.is_some_and(|f| named(f, &into, true)))
+                (frame >= f && !standard() && !(frame == f && goes_on))
+                    || (caller == f && function.is_some_and(|f| named(f, &into, true)))
             }
             Mode::Into { .. } => false,
             Mode::Step { .. } | Mode::Next { .. } | Mode::Finish { .. }
@@ -1596,6 +1597,12 @@ pub(super) fn received(stream: &std::os::unix::net::UnixStream) -> (String, Vec<
 pub(super) struct Tracked {
     pub(super) followed: Vec<Followed>,
     pub(super) before: Option<(u64, usize)>,
+    /// The frame of the last line, as its probe's frame pointer.
+    pub(super) before_frame: usize,
+    /// Where a line went on after a call returned to it, and its frame:
+    /// what that frame changes from there is the line's, while what the
+    /// call made and the next call takes stays the call's.
+    pub(super) resumed: Option<(u64, usize, usize)>,
     pub(super) line: Option<Counted>,
     /// Each task's last line of the program's code, by probe and site.
     pub(super) lines: std::collections::BTreeMap<u64, (u64, usize)>,
@@ -1746,6 +1753,9 @@ pub(super) struct Followed {
     /// The first change to each value, as the first time a condition held,
     /// which the last changes may no longer have.
     pub(super) firsts: Vec<(Option<(u64, usize)>, String)>,
+    /// The changes in this call of the frame's function: the frame of an
+    /// earlier call at the same depth held values of its own.
+    pub(super) current: usize,
 }
 
 /// A line a scan counts: its sites, the expression it shows, and its last
@@ -1789,10 +1799,14 @@ pub(super) fn tracking(table: &Table, here: Stop, tick: u64) {
     // A followed frame lives from a probe of its own until its task runs
     // in a caller, or another call takes its place.
     let mut depth = None;
-    for anchor in tracked.followed.iter_mut().map(|f| &mut f.anchor).filter(|a| a.task == task) {
+    for followed in tracked.followed.iter_mut().filter(|f| f.anchor.task == task) {
+        let anchor = &mut followed.anchor;
         let depth = *depth
             .get_or_insert_with(|| crate::tasks::stack_bounds().map_or(0, |(_, high)| high).wrapping_sub(here.frame));
         if depth == anchor.depth && function == Some(anchor.function) {
+            if anchor.live.is_none() {
+                followed.current = 0;
+            }
             anchor.live = Some(here.frame);
         } else if depth <= anchor.depth {
             anchor.live = None;
@@ -1813,15 +1827,25 @@ pub(super) fn tracking(table: &Table, here: Stop, tick: u64) {
     // A probe where a line goes on is of that line: what it did by then and
     // does next is one change of the line, as the next line's start tells.
     // Not after another task ran, as after a wait: the changes that task
-    // made since its own last probe are its line's.
+    // made since its own last probe are its line's. After a call, the
+    // line's frame changes from here on its own.
     if table.sites.get(site).is_some_and(|site| site.goes_on) && tracked.lines.get(&task).copied() == tracked.before {
+        if tracked.before_frame != here.frame {
+            tracked.resumed = Some((tick, site, here.frame));
+        }
         return;
     }
     let before = tracked.before.replace((tick, site));
+    let resumed = tracked.resumed.take();
+    tracked.before_frame = here.frame;
     tracked.lines.insert(task, (tick, site));
     for followed in tracked.followed.iter_mut() {
         let anchor = &followed.anchor;
         let Some(pointer) = anchor.live else { continue };
+        let before = match resumed {
+            Some((tick, site, frame)) if frame == pointer => Some((tick, site)),
+            _ => before,
+        };
         let Some((addressed, living)) = table.offsets.get(anchor.function) else { continue };
         if addressed.load(Ordering::Relaxed) == UNKNOWN {
             continue;
@@ -1841,6 +1865,7 @@ pub(super) fn tracking(table: &Table, here: Stop, tick: u64) {
                 followed.changes.pop_front();
             }
             followed.changes.push_back((before, value.clone()));
+            followed.current += 1;
             if followed.firsts.len() < LISTED && !followed.firsts.iter().any(|(_, v)| v == value) {
                 followed.firsts.push((before, value.clone()));
             }
@@ -1873,6 +1898,7 @@ pub(super) fn track(table: &Table, word: &str, rest: &str) -> Result<String, Str
                 last: None,
                 changes: Default::default(),
                 firsts: Vec::new(),
+                current: 0,
             });
             Ok("{\"tracking\":true}".into())
         }
@@ -1913,7 +1939,7 @@ pub(super) fn track(table: &Table, word: &str, rest: &str) -> Result<String, Str
             let followed: Vec<String> = found
                 .followed
                 .iter()
-                .map(|Followed { text, changes, firsts, .. }| {
+                .map(|Followed { text, changes, firsts, current, .. }| {
                     let shown = |(before, value): &(Option<(u64, usize)>, String)| {
                         let (at, tick) = match before {
                             Some((tick, site)) => (quoted(&place_in(table, *site)), tick.to_string()),
@@ -1924,7 +1950,7 @@ pub(super) fn track(table: &Table, word: &str, rest: &str) -> Result<String, Str
                     let changes: Vec<String> = changes.iter().map(shown).collect();
                     let firsts: Vec<String> = firsts.iter().map(shown).collect();
                     format!(
-                        "{{\"expression\":{},\"changes\":[{}],\"firsts\":[{}]}}",
+                        "{{\"expression\":{},\"changes\":[{}],\"firsts\":[{}],\"current\":{current}}}",
                         quoted(text),
                         changes.join(","),
                         firsts.join(",")

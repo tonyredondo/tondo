@@ -4682,6 +4682,84 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     assert!(!said.contains("memory allocation") && !said.contains("panicked"), "{said}");
 }
 
+/// A replay of the till: the input given, then the commands' output.
+fn replayed(dir: &Path, name: &str, program: &str, commands: &str) -> String {
+    std::fs::write(dir.join(format!("{name}.to")), program).unwrap();
+    let mut run = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "--record", &format!("{name}.rec"), &format!("{name}.to")])
+        .current_dir(dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(&mut run.stdin.take().unwrap(), b"tea,250\ncake,4.00\nwater,100\n").unwrap();
+    let recorded = run.wait_with_output().unwrap();
+    assert!(recorded.status.success(), "{}", String::from_utf8_lossy(&recorded.stderr));
+    let mut replay = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--replay", &format!("{name}.rec")])
+        .current_dir(dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(&mut replay.stdin.take().unwrap(), commands.as_bytes()).unwrap();
+    String::from_utf8(replay.wait_with_output().unwrap().stdout).unwrap()
+}
+
+#[test]
+fn a_replay_gives_a_change_to_the_line_and_the_call_that_made_it() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-till");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let cents = "import std.console\n\nfn cents(sale: String): Int {\n    match sale.splitOnce(\",\") {\n        some((_, amount)) => match Int.parse(amount.trim()) {\n            ok(value) => value\n            err(_) => 0\n        }\n        none => 0\n    }\n}\n\n";
+    // What a line does after a call is the line's, not the last line the
+    // call ran.
+    let program = format!(
+        "{cents}fn main() {{\n    var total = 0\n    for {{\n        match console.readLine() {{\n            some(sale) => total += cents(sale)\n            none => break\n        }}\n    }}\n    console.println(\"total {{total}}\")\n}}\n"
+    );
+    let text = replayed(&dir, "added", &program, "break added.to:21\ncontinue\ntimeline total\nwhy total\nquit\n");
+    assert!(text.contains("250  at added.to:17 in main"), "{text}");
+    assert!(text.contains("at added.to:17 in main (`total` became 350 on this line)"), "{text}");
+    assert!(!text.contains("in cents"), "{text}");
+    // And so in a session that records its history as it runs, where the
+    // lines of a call do not change the caller's bindings either.
+    let program = format!(
+        "{cents}fn main() {{
+    var total = 0
+    for sale in [\"tea,250\", \"cake,4.00\", \"water,100\"] {{
+        total += cents(sale)
+    }}
+    console.println(\"total {{total}}\")
+}}
+"
+    );
+    std::fs::write(dir.join("listed.to"), program).unwrap();
+    let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "listed.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let commands = "record\nbreak listed.to:18\ncontinue\nwhy total\nquit\n";
+    std::io::Write::write_all(&mut debugger.stdin.take().unwrap(), commands.as_bytes()).unwrap();
+    let text = String::from_utf8(debugger.wait_with_output().unwrap().stdout).unwrap();
+    assert!(text.contains("`total` became 350 on this line"), "{text}");
+    assert!(text.contains("`total` was 250, from listed.to:16 in main"), "{text}");
+    assert!(!text.contains("in cents"), "{text}");
+    // A binding of a function called again has the values of this call
+    // alone: where it has none yet, not the last call's.
+    let program = format!(
+        "{cents}fn main() {{\n    var total = 0\n    for {{\n        match console.readLine() {{\n            some(sale) => {{\n                let amount = cents(sale)\n                total += amount\n            }}\n            none => break\n        }}\n    }}\n    console.println(\"total {{total}}\")\n}}\n"
+    );
+    let commands = "break kept.to:24\ncontinue\nlast amount == 0\nwhy amount\norigins amount\nquit\n";
+    let text = replayed(&dir, "kept", &program, commands);
+    assert!(text.contains("at kept.to:5 in cents (`amount` became \"4.00\" on this line)"), "{text}");
+    assert!(text.contains("error: `amount` has no value here yet"), "{text}");
+    assert!(!text.contains("\"250\""), "{text}");
+}
+
 #[test]
 fn a_line_stops_once_however_many_blocks_it_takes() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-one-stop");

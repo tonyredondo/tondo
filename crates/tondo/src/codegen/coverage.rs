@@ -121,12 +121,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
         let Some(mut debug) = self.debug.take() else { return };
         let (file, line, _) = self.e.cg.sources().position(span.start);
-        if span != Span::default() && debug.line.as_ref() != Some(&(file.clone(), line)) {
+        // After a call, the rest of its line goes on: what the line does
+        // from there is its own, not of the last line the call ran.
+        let goes_on = debug.called && debug.line.as_ref() == Some(&(file.clone(), line));
+        if span != Span::default() && (goes_on || debug.line.as_ref() != Some(&(file.clone(), line))) {
+            debug.called = false;
             // The first line of a block's code: whether it goes on from the
             // code before is known once the function is built.
             let opens = debug.line.is_none().then(|| (self.block, (file.clone(), line)));
             debug.line = Some((file, line));
-            // The line's code starts here, which the DWARF says.
+            // The line's code starts here, which the DWARF says; the
+            // statement's after the probe, with the type it makes.
+            let statement = self.e.fb.srcloc();
             let start = self.site(span.start, None);
             self.e.fb.set_srcloc(start);
             for (index, &(local, copy)) in debug.shown.iter().enumerate() {
@@ -160,7 +166,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     self.e.fb.ins().stack_store(POINTER, address, debug.addresses, index * 8);
                 }
             }
-            let index = self.e.cg.debug_site(span.start, debug.function, false);
+            let index = self.e.cg.debug_site(span.start, debug.function, goes_on);
             if let Some((block, line)) = opens {
                 debug.opened.push((block, index, line));
             }
@@ -177,6 +183,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             }
             self.site_now = Some((site, self.e.cg.site_base() + index as u32));
+            if !statement.is_default() {
+                self.e.fb.set_srcloc(statement);
+            }
         }
         self.debug = Some(debug);
     }

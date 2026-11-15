@@ -495,8 +495,42 @@ fn origin(
         Evaluator::new(&read).evaluate(&expr).ok().map(|e| e.text)
     };
     let now = shown(&history[mine[at]]).ok_or(format!("`{text}` has no value here"))?;
-    let starts = |moment: &Moment| !table.sites.get(moment.site).is_some_and(|site| site.goes_on);
-    match mine[..at].iter().rposition(|&i| starts(&history[i]) && shown(&history[i]).as_ref() != Some(&now)) {
+    let goes_on = |moment: &Moment| table.sites.get(moment.site).is_some_and(|site| site.goes_on);
+    let depth = history[mine[at]].stack.len();
+    // A line that went on after a call changed what its own frame has
+    // there, not what the call made and the next took.
+    let resumed = |index: usize| {
+        let moment = &history[mine[index]];
+        index > 0
+            && history[mine[index - 1]].stack.len() > moment.stack.len()
+            && shown(moment).is_some_and(|then| then != now)
+    };
+    let mut found = None;
+    let mut index = at;
+    while index > 0 {
+        index -= 1;
+        let moment = &history[mine[index]];
+        // The lines of a call the frame made: the call gave the value
+        // unless the frame had it before the call.
+        if moment.stack.len() > depth {
+            let caller = mine[..index].iter().rposition(|&i| history[i].stack.len() <= depth);
+            if let Some(caller) = caller.filter(|&caller| shown(&history[mine[caller]]).as_ref() == Some(&now)) {
+                index = caller + 1;
+                continue;
+            }
+            found = Some(index);
+            break;
+        }
+        let changed = match goes_on(moment) {
+            true => resumed(index),
+            false => shown(moment).as_ref() != Some(&now),
+        };
+        if changed {
+            found = Some(index);
+            break;
+        }
+    }
+    match found {
         Some(changed) => Ok((changed, now)),
         None => Err(format!(
             "`{text}` has been {} since the first line of task {{task}}'s history: `record` keeps more of it",
