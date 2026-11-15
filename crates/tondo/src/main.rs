@@ -639,6 +639,9 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
     }
     let given = |flag: &str| seen.iter().any(|s| s == flag);
+    if path.is_file() {
+        return Err(test_file(&path));
+    }
     if bisect.is_none() && bisect_with.is_some() {
         return Err(usage("--bisect-with says how each commit builds its tondo: it goes with --bisect".into()));
     }
@@ -848,6 +851,27 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         return watch_tests(&path, &build, &mut options);
     }
     run_tests(&path, &build, &options)
+}
+
+/// What to write when `tondo test` is given a file: the directory of its
+/// project, the nearest that has `tondo.toml`, or else `src/main.to`, or
+/// else `main.to`.
+fn test_file(file: &Path) -> String {
+    let whole = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
+    let project = ["tondo.toml", "src/main.to", "main.to"]
+        .iter()
+        .find_map(|name| whole.ancestors().skip(1).find(|dir| dir.join(name).exists()));
+    let here = std::env::current_dir().ok().and_then(|dir| std::fs::canonicalize(dir).ok());
+    let project = match project {
+        Some(dir) if Some(dir) == here.as_deref() => ".".to_string(),
+        Some(dir) => dir.display().to_string(),
+        None => "<project>".to_string(),
+    };
+    format!(
+        "{} is a file: tondo test runs the tests of a project, given its directory: `tondo test {project}`, \
+         and `--filter <text>` keeps the tests whose ids hold the text",
+        file.display()
+    )
 }
 
 /// Where a baseline of benchmarks is (testing 10.4): a name, as `main`, is

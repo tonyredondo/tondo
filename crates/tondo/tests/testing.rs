@@ -2122,6 +2122,20 @@ test counted {
     }
 }
 
+/// `tondo test` given a file of tests, as one is often given, says the
+/// directory of its project to give instead.
+#[test]
+fn a_test_file_given_says_its_project() {
+    let dir = project("given_file", "test sums {\n    assert(1 + 1 == 2)\n}\n");
+    let (stdout, stderr, status) = tondo(&dir, &["test", "src/main_test.to"]);
+    assert_ne!(status, 0, "{stdout}{stderr}");
+    assert!(stderr.contains("src/main_test.to is a file") && stderr.contains("`tondo test .`"), "{stderr}");
+    let (stdout, stderr, status) = tondo(&dir.join("src"), &["test", "main_test.to", "--filter", "sums"]);
+    assert_ne!(status, 0, "{stdout}{stderr}");
+    let whole = std::fs::canonicalize(&dir).unwrap();
+    assert!(stderr.contains(&format!("`tondo test {}`", whole.display())), "{stderr}");
+}
+
 #[test]
 fn profiles_tests_and_benchmarks() {
     let tests = "\
