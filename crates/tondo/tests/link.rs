@@ -226,3 +226,35 @@ fn a_c_library_may_call_atexit() {
     let run = Command::new(dir.join("farewell")).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&run.stdout), "registered 0\nbye\n");
 }
+
+/// A C library built for an executable reads libc's variables, as
+/// `stdout`, directly: the executable holds a copy of each, which the
+/// loader fills, and libc's own code reads the copy too.
+#[test]
+fn a_c_library_may_read_libc_variables() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("link_copies");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let source = "#include <stdio.h>\n\nvoid greet(void) {\n    printf(\"to stdout\\n\");\n    fflush(stdout);\n    \
+                  fputs(\"to stderr\\n\", stderr);\n}\n";
+    std::fs::write(dir.join("greet.c"), source).unwrap();
+    let compiled = Command::new("cc").args(["-c", "greet.c", "-o", "greet.o"]).current_dir(&dir).output().unwrap();
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let archived = Command::new("ar").args(["rcs", "libgreet.a", "greet.o"]).current_dir(&dir).status();
+    assert!(archived.unwrap().success());
+    let library = dir.join("libgreet.a");
+    let manifest = format!("[package]\nname = \"greet\"\n\n[native]\nlibraries = [\"{}\"]\n", library.display());
+    std::fs::write(dir.join("tondo.toml"), manifest).unwrap();
+    let program = "import std.console\n\nextern fn greet()\n\n\
+                   fn main() {\n    unsafe { greet() }\n    console.println(\"from Tondo\")\n}\n";
+    std::fs::write(dir.join("src/main.to"), program).unwrap();
+    let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", ".", "--output", "greet"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let run = Command::new(dir.join("greet")).output().unwrap();
+    assert!(run.status.success(), "{:?}: {}", run.status, String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "to stdout\nfrom Tondo\n");
+    assert_eq!(String::from_utf8_lossy(&run.stderr), "to stderr\n");
+}

@@ -49,6 +49,15 @@ impl Arch {
         }
     }
 
+    /// A copy of a library's variable in the executable, which the loader
+    /// fills from the library.
+    fn copy(self) -> RelocationType {
+        match self {
+            Arch::X86_64 => R_X86_64_COPY,
+            Arch::Aarch64 => R_AARCH64_COPY,
+        }
+    }
+
     fn relative(self) -> RelocationType {
         match self {
             Arch::X86_64 => R_X86_64_RELATIVE,
@@ -469,7 +478,13 @@ struct Global<'a> {
     used: bool,
     plt: Option<u32>,
     dynsym: Option<u32>,
+    /// Where in `.bss` a tentative definition is, or the executable's copy
+    /// of a shared library's variable.
     common: u64,
+    /// A shared library's variable that code reaches directly, as a C
+    /// compiler writes `stdout` without the GOT: the executable holds a
+    /// copy, which the loader fills (`R_*_COPY`) and every use binds to.
+    copied: bool,
 }
 
 /// A symbol of a shared library: its kind, and its default version.
@@ -477,6 +492,8 @@ struct Global<'a> {
 struct Export<'a> {
     kind: SymbolType,
     version: Option<&'a [u8]>,
+    /// Its bytes, which a copy of a variable in the executable takes.
+    size: u64,
 }
 
 struct Library<'a> {
@@ -658,6 +675,7 @@ impl<'a> Linker<'a> {
             plt: None,
             dynsym: None,
             common: 0,
+            copied: false,
         })
     }
 
@@ -1024,6 +1042,14 @@ impl<'a> Linker<'a> {
                                 self.unaligned_words += 1;
                             }
                         }
+                        // A variable that code reaches directly: the executable
+                        // holds a copy of it. A library reaches its own
+                        // through the GOT, as code built for one does.
+                        _ if shared && !self.library && self.variable(target) => {
+                            self.import(target);
+                            let Target::Global(id) = target else { continue };
+                            self.globals[id].copied = true;
+                        }
                         _ if shared => {
                             // A call, or the address of a function: its PLT entry.
                             self.import(target);
@@ -1057,6 +1083,14 @@ impl<'a> Linker<'a> {
             Target::Global(id) => !matches!(self.globals[id].def, Def::Shared { .. } | Def::Undefined),
             Target::Local { .. } => true,
         }
+    }
+
+    /// Whether a shared library's symbol is a variable, not a function.
+    fn variable(&self, target: Target) -> bool {
+        let Target::Global(id) = target else { return false };
+        let Def::Shared { library } = self.globals[id].def else { return false };
+        let export = self.libraries[library as usize].exports[self.globals[id].name];
+        export.kind == STT_OBJECT && export.size > 0
     }
 
     fn shared(&self, target: Target) -> bool {
@@ -1137,14 +1171,21 @@ impl<'a> Linker<'a> {
                 self.bounds.entry(bounded).or_insert((out, at, at)).2 = at + size;
             }
         }
-        // Tentative definitions of C.
+        // Tentative definitions of C, and the copies of shared libraries'
+        // variables, aligned as their size asks, to sixteen bytes.
         for id in 0..self.globals.len() {
-            if let Def::Common { size, align } = self.globals[id].def {
-                let at = sizes[Out::Bss as usize].next_multiple_of(align);
-                self.globals[id].common = at;
-                sizes[Out::Bss as usize] = at + size;
-                self.align[Out::Bss as usize] = self.align[Out::Bss as usize].max(align);
-            }
+            let (size, align) = match self.globals[id].def {
+                Def::Common { size, align } => (size, align),
+                Def::Shared { library } if self.globals[id].copied => {
+                    let size = self.libraries[library as usize].exports[self.globals[id].name].size;
+                    (size, size.next_power_of_two().clamp(1, 16))
+                }
+                _ => continue,
+            };
+            let at = sizes[Out::Bss as usize].next_multiple_of(align);
+            self.globals[id].common = at;
+            sizes[Out::Bss as usize] = at + size;
+            self.align[Out::Bss as usize] = self.align[Out::Bss as usize].max(align);
         }
         let (frames, fde_count) = self.eh_frame_size();
         sizes[Out::EhFrame as usize] = frames;
@@ -1172,7 +1213,8 @@ impl<'a> Linker<'a> {
             _ => false,
         });
         let block = block.count();
-        sizes[Out::RelaDyn as usize] = 24 * (bound + block + self.dynamic_words + listed) as u64;
+        let copies = self.globals.iter().filter(|g| g.copied).count();
+        sizes[Out::RelaDyn as usize] = 24 * (bound + block + copies + self.dynamic_words + listed) as u64;
         // At most a word for each; the bitmaps make it less.
         sizes[Out::Relr as usize] = 8 * packed as u64;
         sizes[Out::Plt as usize] = PLT_ENTRY * self.plt.len() as u64;
@@ -1323,6 +1365,7 @@ impl<'a> Linker<'a> {
             Def::Section { input, section, value } => self.section_address(input, section) + value,
             Def::Absolute(value) => value,
             Def::Common { .. } => self.addr[Out::Bss as usize] + global.common,
+            Def::Shared { .. } if global.copied => self.addr[Out::Bss as usize] + global.common,
             Def::Shared { .. } => global.plt.map_or(0, |p| self.addr[Out::Plt as usize] + PLT_ENTRY * p as u64),
             Def::Linker(synthetic) => {
                 let (start, end) =
@@ -1481,7 +1524,7 @@ fn library<'a>(name: &str, data: &'a [u8]) -> Result<Library<'a>, String> {
         };
         let kind = symbol.elf_symbol().st_type();
         let symbol_name = symbol.name_bytes().map_err(|e| error(name, e))?;
-        exports.insert(symbol_name, Export { kind, version });
+        exports.insert(symbol_name, Export { kind, version, size: symbol.size() });
     }
     // Its name for the dynamic loader, which may differ from the file's.
     let mut soname =
@@ -1586,6 +1629,12 @@ impl<'a> Linker<'a> {
             let kind = if export.kind == STT_GNU_IFUNC { STT_FUNC } else { export.kind };
             image.u32(entry_at, strings[global.name]);
             image.put(entry_at + 4, &[(binding.0 << 4) | kind.0, 0]);
+            // A copy is the executable's: the library's code reads it too.
+            if global.copied {
+                image.u16(entry_at + 6, self.section_index(Out::Bss));
+                image.u64(entry_at + 8, self.global_address(id));
+                image.u64(entry_at + 16, export.size);
+            }
             if self.size[Out::Versym as usize] > 0 {
                 let version = export.version.map_or(1, |v| version_index[&(library as usize, v)]);
                 image.u16(at(Out::Versym) + 2 * (n as u64 + 1), version);
@@ -1621,6 +1670,9 @@ impl<'a> Linker<'a> {
         }
         // The GOT and the PLT.
         let mut relocations: Vec<(u64, RelocationType, u32, i64)> = Vec::new();
+        for (id, global) in self.globals.iter().enumerate().filter(|(_, g)| g.copied) {
+            relocations.push((self.global_address(id), self.arch.copy(), global.dynsym.unwrap(), 0));
+        }
         for (n, slot) in self.got.iter().enumerate() {
             let entry_addr = addr(Out::Got) + 8 * n as u64;
             let value = match *slot {
