@@ -6363,6 +6363,65 @@ fn a_failure_in_a_dump_becomes_a_test() {
     assert!(written.contains("    testing.bench(\"charge\", () { charge(item, rate, mode) })\n"), "{written}");
 }
 
+/// A dump of a debug build stops a task that computes, without calling
+/// anything, at its next line, and has its bindings there, which `dump
+/// test --bench` makes a benchmark of.
+#[test]
+fn a_dump_stops_a_task_that_computes_at_its_next_line() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dump-computes");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"spins\"\nversion = \"0.1.0\"\n").unwrap();
+    let program = "import std.console\n\nfn spin(seed: Int, rounds: Int): Int {\n    var total = seed\n    \
+        for i in 0..rounds {\n        total = (total + i) % 1000003\n    }\n    total\n}\n\nfn main() {\n    \
+        console.println(\"ready\")\n    let _ = console.flush()\n    var total = 0\n    for {\n        \
+        total = spin(total, 200000)\n    }\n}\n";
+    std::fs::write(dir.join("src/main.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let built =
+        Command::new(tondo_bin).args(["build", "--debug", "--output", "spins"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let mut child = Command::new(dir.join("spins"))
+        .env("TONDO_DIAGNOSTICS", "1")
+        .stdout(Stdio::piped())
+        .current_dir(&dir)
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
+    let dump = dir.join("spins.dump.json");
+    let taken =
+        Command::new(tondo_bin).args(["dump", &child.id().to_string(), "--output"]).arg(&dump).output().unwrap();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(taken.status.success(), "{}", String::from_utf8_lossy(&taken.stderr));
+    let read: Value = serde_json::from_slice(&std::fs::read(&dump).unwrap()).unwrap();
+    assert_eq!(read["stopped"], true, "{read}");
+    let values = read["values"].as_array().unwrap();
+    let rounds =
+        values.iter().find(|v| v["name"] == "rounds" && v["at"].as_str().is_some_and(|at| at.ends_with("in spin")));
+    assert_eq!(rounds.map(|v| &v["value"]), Some(&json!("200000")), "{read}");
+    let made = Command::new(tondo_bin)
+        .args(["dump", "test"])
+        .arg(&dump)
+        .args(["--bench", "--json"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
+    let made: Value = serde_json::from_slice(&made.stdout).unwrap();
+    assert_eq!((&made["test"], &made["fails"]), (&json!("benchSpin"), &json!(false)), "{made}");
+    let written = std::fs::read_to_string(dir.join("src/main_test.to")).unwrap();
+    assert!(written.contains("// From a dump of the program as it ran\ntest benchSpin {\n"), "{written}");
+    assert!(
+        written.contains("    let rounds = 200000\n    testing.bench(\"spin\", () { spin(seed, rounds) })\n"),
+        "{written}"
+    );
+}
+
 /// A core of macOS, as `gcore` takes it of a program signed to allow it. It
 /// writes gigabytes, so it runs when asked: `TONDO_TEST_MACOS_CORE=1`.
 #[cfg(target_os = "macos")]

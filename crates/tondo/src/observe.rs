@@ -1264,7 +1264,11 @@ fn reproduction(dump: &Value, frame: Option<u64>, bench: bool) -> Result<Reprodu
             name = format!("{named}{base}{number}");
         }
         let message = dump["message"].as_str().unwrap_or_default().lines().next().unwrap_or_default().to_string();
-        let test = format!("// From a dump: {message}\ntest {name} {{\n{body}}}\n");
+        let said = match message.is_empty() {
+            true => "// From a dump of the program as it ran".to_string(),
+            false => format!("// From a dump: {message}"),
+        };
+        let test = format!("{said}\ntest {name} {{\n{body}}}\n");
         return Ok(Reproduction { file: tests, name, text: test, function: function.to_string() });
     }
     Err(match why.is_empty() {

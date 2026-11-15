@@ -376,6 +376,9 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     if crate::live::barrier() {
         crate::live::park();
     }
+    // A stop of the world, as a dump's, takes the thread here, where the
+    // task's bindings are as its last line left them.
+    crate::tasks::stop_point();
     // A recording of the last minutes keeps a copy of the program now and
     // then, which a replay goes on from.
     if crate::replay::copy_due() {

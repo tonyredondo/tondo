@@ -856,7 +856,10 @@ contadores, cada tarea con su estado (`waits`, `ready`, `runs` o `in C`), la
 pila de donde está, dónde se lanzó y dónde tomó los locks que tiene, sus
 contextos con los campos que no tienen su valor inicial, y su memoria viva.
 Para ver dónde están las tareas que corren, los workers se paran un momento,
-y el que no llega a un punto donde pararse da su pila por una señal. Un
+y el que no llega a un punto donde pararse da su pila por una señal. En un
+build de depuración cada línea es uno de esos puntos: una tarea que calcula
+sin llamar a nada se para en su línea siguiente, y el volcado tiene sus
+valores, de los que `dump test --bench` hace un benchmark. Un
 programa que acaba en un pánico, en una señal fatal o en un deadlock deja su
 volcado antes de terminar, con los valores, y dice en la salida de error dónde:
 en `TONDO_DUMP=<dir>` si se da, que crea si falta, y si no en la caché de

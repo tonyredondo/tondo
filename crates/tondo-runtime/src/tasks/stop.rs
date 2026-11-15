@@ -141,6 +141,16 @@ pub(crate) fn pause_here() -> bool {
     worker(|w| w.runner.get()).is_some_and(|runner| runner.running.swap(false, Ordering::SeqCst))
 }
 
+/// Where a line of a debug build lets a stop of the world, as a dump's or
+/// the collector's, take its thread: a loop that calls nothing stops at
+/// its next line.
+pub(crate) fn stop_point() {
+    if STOPPING.load(Ordering::Relaxed) {
+        leave_tondo();
+        enter_tondo();
+    }
+}
+
 /// Where a running task lets a collection run: between two steps.
 pub(super) fn safe_point() {
     if STOPPING.load(Ordering::Relaxed) {
