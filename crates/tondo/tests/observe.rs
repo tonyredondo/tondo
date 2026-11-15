@@ -6422,6 +6422,42 @@ fn a_dump_stops_a_task_that_computes_at_its_next_line() {
     );
 }
 
+/// A recording gives `dump test --bench` the call of a function that ran
+/// the most lines, with its values, or the one that ran at a probe.
+#[test]
+fn a_recorded_call_becomes_a_benchmark() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("recorded-call");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"rec\"\nversion = \"0.1.0\"\n").unwrap();
+    let program = "import std.console\n\nfn work(rounds: Int, label: String): Int {\n    var total = 0\n    \
+        for i in 0..rounds {\n        total += i % 7\n    }\n    total\n}\n\nfn main() {\n    \
+        for rounds in [10, 500, 40] {\n        console.println(\"{work(rounds, \"r{rounds}\")}\")\n    }\n}\n";
+    std::fs::write(dir.join("src/main.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    let run = |args: &[&str]| Command::new(tondo_bin).args(args).current_dir(&dir).output().unwrap();
+    let recorded = run(&["run", "--record", "run.rec"]);
+    assert!(recorded.status.success(), "{}", String::from_utf8_lossy(&recorded.stderr));
+    let made = run(&["dump", "test", "run.rec", "--bench", "--function", "work", "--json"]);
+    assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
+    let written = std::fs::read_to_string(dir.join("src/main_test.to")).unwrap();
+    assert!(written.contains("    let rounds = 500\n    let label = \"r500\"\n"), "{written}");
+    assert!(written.contains("testing.bench(\"work\", () { work(rounds, label) })"), "{written}");
+    // After the longest call ends, the next is the last, of 40 rounds.
+    let said = written.split("// From a recording: the call of work at probe ").nth(1).unwrap_or_default();
+    let numbers: Vec<u64> = said.split(|c: char| !c.is_ascii_digit()).filter_map(|n| n.parse().ok()).take(2).collect();
+    let after = (numbers[0] + numbers[1] + 30).to_string();
+    let made = run(&["dump", "test", "run.rec", "--bench", "--function", "work", "--at", &after, "--json"]);
+    assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
+    let written = std::fs::read_to_string(dir.join("src/main_test.to")).unwrap();
+    assert!(written.contains("test benchWork2 {\n    let rounds = 40\n"), "{written}");
+    let missing = run(&["dump", "test", "run.rec", "--bench"]);
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("--function <name> says whose call to take"));
+}
+
 /// A core of macOS, as `gcore` takes it of a program signed to allow it. It
 /// writes gigabytes, so it runs when asked: `TONDO_TEST_MACOS_CORE=1`.
 #[cfg(target_os = "macos")]

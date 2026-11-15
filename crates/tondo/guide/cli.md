@@ -172,6 +172,9 @@ tondo dump core core.123          a core of the system as a dump; --executable, 
 tondo dump core 4211              the core coredumpctl has of that process
 tondo dump test a.dump            a test that fails as the dump did, with its values;
                                   --bench, a benchmark of the call with them
+tondo dump test run.rec --bench --function parse
+                                  the benchmark of the call of parse that ran the most
+                                  lines in a recording; --at <probe>, the one there
 tondo dump trend dumps/           what keeps growing over dumps: a leak, by its line
 ```
 

@@ -1567,6 +1567,8 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             push(&["dump", "test", &args.need("file")?, "--json"]);
             option(&mut argv, "--frame", "frame");
             switch(&mut argv, "--bench", "bench");
+            option(&mut argv, "--function", "function");
+            option(&mut argv, "--at", "at");
             option(&mut argv, "--project", "project");
         }
         "dump_core" => {
@@ -3018,6 +3020,12 @@ slow moment. Run it where the program's sources are.",
             ("file", "string!", "The dump."),
             ("frame", "integer", "The frame to call, as `dump_read` numbers them; by default the innermost it can."),
             ("bench", "boolean", "A benchmark of the call, `testing.bench` with the dump's values, instead of a test."),
+            (
+                "function",
+                "string",
+                "With a recording as `file`: the function whose call to take, the one that ran the most lines.",
+            ),
+            ("at", "integer", "With `function`: the call that ran at this probe, as `ran` or `timeline` names it."),
             ("project", "string", "The project of the program, when the server's directory is not it."),
         ],
     },

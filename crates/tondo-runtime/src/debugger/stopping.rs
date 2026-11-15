@@ -1622,6 +1622,55 @@ pub(super) struct Tracked {
     pub(super) trail: Option<std::io::BufWriter<std::fs::File>>,
     /// What went wrong writing it, which the scan says when it ends.
     pub(super) trail_failed: Option<String>,
+    /// The calls of a function, as `calls` asks.
+    pub(super) calls: Option<Calls>,
+}
+
+/// The calls of a function a scan measures, by the lines each runs in its
+/// task: the open one of each task, outermost when it calls itself, and
+/// those that ended, the longest kept; and the one that ran at a probe.
+#[derive(Default)]
+pub(super) struct Calls {
+    pub(super) function: usize,
+    pub(super) at: Option<u64>,
+    /// By task: its frame, its first probe, its last and how many lines.
+    pub(super) open: std::collections::BTreeMap<u64, (usize, u64, u64, u64)>,
+    /// Its first probe, how many lines, and its task.
+    pub(super) ended: Vec<(u64, u64, u64)>,
+    pub(super) found: Option<(u64, u64, u64)>,
+}
+
+impl Calls {
+    /// The probe of `task`, in the frame at `frame`, of the function or not.
+    fn line(&mut self, task: u64, frame: usize, ours: bool, tick: u64) {
+        match self.open.get(&task).copied() {
+            // Deeper than the call, or its own frame: still in it.
+            Some((open, first, _, lines)) if frame < open || (frame == open && ours) => {
+                self.open.insert(task, (open, first, tick, lines + 1));
+            }
+            // It returned: its task runs in a caller.
+            Some((_, first, last, lines)) => {
+                self.end(task, first, last, lines);
+                self.open.remove(&task);
+                if ours {
+                    self.open.insert(task, (frame, tick, tick, 1));
+                }
+            }
+            None if ours => drop(self.open.insert(task, (frame, tick, tick, 1))),
+            None => {}
+        }
+    }
+
+    fn end(&mut self, task: u64, first: u64, last: u64, lines: u64) {
+        if self.at.is_some_and(|at| first <= at && at <= last) {
+            self.found = Some((first, lines, task));
+        }
+        self.ended.push((first, lines, task));
+        if self.ended.len() > 2 * LISTED {
+            self.ended.sort_by_key(|&(first, lines, _)| (std::cmp::Reverse(lines), first));
+            self.ended.truncate(LISTED);
+        }
+    }
 }
 
 /// A line of a task: its probe, its site and the task.
@@ -1780,6 +1829,10 @@ pub(super) fn tracking(table: &Table, here: Stop, tick: u64) {
     // The innermost frame alone, which is what a line's expression reads:
     // not the callers, whose names are looked up.
     let function = table.sites.get(site).map(|s| s.function);
+    if let Some(calls) = tracked.calls.as_mut() {
+        let ours = function == Some(calls.function);
+        calls.line(task, here.frame, ours, tick);
+    }
     if let Some(line) = tracked.line.as_mut()
         && line.sites.contains(&site)
     {
@@ -1913,6 +1966,23 @@ pub(super) fn track(table: &Table, word: &str, rest: &str) -> Result<String, Str
             tracked.get_or_insert_with(Tracked::default).trail = Some(std::io::BufWriter::new(file));
             Ok("{\"trailing\":true}".into())
         }
+        // The calls of a function, by the lines each runs, and the one that
+        // ran at a probe.
+        "calls" => {
+            let mut words = rest.split_whitespace();
+            let name = words.next().ok_or("calls takes a function's name, and a probe")?;
+            let function = table
+                .functions
+                .iter()
+                .position(|f| f.name == name)
+                .ok_or(format!("the program has no function `{name}` with lines"))?;
+            let at = words
+                .next()
+                .map(|tick| tick.parse::<u64>().map_err(|_| "calls takes a probe's tick, as `ran` gives it"))
+                .transpose()?;
+            tracked.get_or_insert_with(Tracked::default).calls = Some(Calls { function, at, ..Calls::default() });
+            Ok("{\"counting\":true}".into())
+        }
         "count" => {
             let (at, text) = rest.split_once(' ').map_or((rest, None), |(at, text)| (at, Some(text.trim())));
             let sites = line_sites(table, at)?;
@@ -1973,7 +2043,20 @@ pub(super) fn track(table: &Table, word: &str, rest: &str) -> Result<String, Str
                     .collect();
                 format!(",\"ran\":[{}],\"times\":{times},\"at\":{}", runs.join(","), quoted(&place_in(table, sites[0])))
             });
-            Ok(format!("{{\"tracked\":[{}]{line},\"received\":[{}]}}", followed.join(","), received.join(",")))
+            // The calls still open when the scan ended end there.
+            let calls = found.calls.map_or(String::new(), |mut calls| {
+                for (task, (_, first, last, lines)) in std::mem::take(&mut calls.open) {
+                    calls.end(task, first, last, lines);
+                }
+                calls.ended.sort_by_key(|&(first, lines, _)| (std::cmp::Reverse(lines), first));
+                let call = |&(first, lines, task): &(u64, u64, u64)| {
+                    format!("{{\"tick\":{first},\"lines\":{lines},\"task\":{task}}}")
+                };
+                let listed: Vec<String> = calls.ended.iter().take(LISTED).map(call).collect();
+                let at = calls.found.as_ref().map_or("null".to_string(), call);
+                format!(",\"calls\":[{}],\"call_at\":{at}", listed.join(","))
+            });
+            Ok(format!("{{\"tracked\":[{}]{line}{calls},\"received\":[{}]}}", followed.join(","), received.join(",")))
         }
     }
 }

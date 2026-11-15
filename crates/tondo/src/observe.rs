@@ -1264,9 +1264,10 @@ fn reproduction(dump: &Value, frame: Option<u64>, bench: bool) -> Result<Reprodu
             name = format!("{named}{base}{number}");
         }
         let message = dump["message"].as_str().unwrap_or_default().lines().next().unwrap_or_default().to_string();
-        let said = match message.is_empty() {
-            true => "// From a dump of the program as it ran".to_string(),
-            false => format!("// From a dump: {message}"),
+        let said = match (dump["recording"] == true, message.is_empty()) {
+            (true, _) => format!("// From a recording: {message}"),
+            (false, true) => "// From a dump of the program as it ran".to_string(),
+            (false, false) => format!("// From a dump: {message}"),
         };
         let test = format!("{said}\ntest {name} {{\n{body}}}\n");
         return Ok(Reproduction { file: tests, name, text: test, function: function.to_string() });
@@ -1284,10 +1285,22 @@ pub fn dump_test(
     path: &std::path::Path,
     frame: Option<u64>,
     bench: bool,
+    call: Option<(&str, Option<u64>)>,
     project: Option<&std::path::Path>,
     json: bool,
 ) -> Result<(), String> {
-    let dump = load(path)?;
+    // A recording gives the call of a function, by what it ran, as a dump
+    // of the moment it starts would.
+    let (dump, frame) = match call {
+        Some((function, at)) => (called(path, function, at)?, Some(0)),
+        None if path.is_dir() => {
+            return Err(format!(
+                "{} is a recording: --function <name> says whose call to take, the one that ran the most lines or, with --at <probe>, the one that ran there",
+                path.display()
+            ));
+        }
+        None => (load(path)?, frame),
+    };
     // Its files are named from the project.
     if let Some(dir) = project {
         std::env::set_current_dir(dir).map_err(|e| format!("cannot enter {}: {e}", dir.display()))?;
@@ -1336,6 +1349,7 @@ pub fn dump_test(
     let shown = found.file.display();
     if bench {
         let (name, function) = (&found.name, &found.function);
+        let source = if dump["recording"] == true { "the recording's" } else { "the dump's" };
         match json {
             true => crate::cli::print_json(
                 "dump-test",
@@ -1343,10 +1357,10 @@ pub fn dump_test(
                 json!({ "file": found.file, "test": name, "bench": true, "fails": reproduces }),
             ),
             false if reproduces => println!(
-                "{shown}: `{name}` measures `{function}` with the dump's values, which fail as the dump did: the benchmark measures the failure"
+                "{shown}: `{name}` measures `{function}` with {source} values, which fail as the program did: the benchmark measures the failure"
             ),
             false => println!(
-                "{shown}: `{name}` measures `{function}` with the dump's values: `tondo test --bench --filter {name}`"
+                "{shown}: `{name}` measures `{function}` with {source} values: `tondo test --bench --filter {name}`"
             ),
         }
         return Ok(());
@@ -1361,6 +1375,24 @@ pub fn dump_test(
         false => println!("{shown}: `{}` passes: the failure takes more than these values", found.name),
     }
     Ok(())
+}
+
+/// The call of `function` that ran the most lines in the recording at
+/// `dir`, or the one that ran at probe `at`, as a dump of where it starts:
+/// its task, and the bindings of its frames.
+fn called(dir: &std::path::Path, function: &str, at: Option<u64>) -> Result<Value, String> {
+    let (tick, lines, task) = crate::debug::call_of(dir, function, at)?;
+    let snapshot = crate::debug::snapshot_at(dir, tick)?;
+    let mut values = Vec::new();
+    for (index, frame) in snapshot["snapshot"]["frames"].as_array().into_iter().flatten().enumerate() {
+        for local in frame["locals"].as_array().into_iter().flatten() {
+            values.push(json!({
+                "task": task, "frame": index, "at": frame["at"], "name": local["name"], "value": local["value"],
+            }));
+        }
+    }
+    let message = format!("the call of {function} at probe {tick}, which ran {lines} lines");
+    Ok(json!({ "recording": true, "message": message, "tasks": [{ "id": task, "state": "runs" }], "values": values }))
 }
 
 /// `text`, a test file, with `import std.testing` after the module's

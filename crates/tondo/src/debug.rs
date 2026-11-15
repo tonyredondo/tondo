@@ -1785,6 +1785,45 @@ fn trail_of(dir: &Path) -> Result<Trail, String> {
     Ok(trail)
 }
 
+/// The call of `function` in a recorded run that ran the most lines, or the
+/// one that ran at probe `at`: its first probe, how many lines it ran, and
+/// its task.
+pub(crate) fn call_of(dir: &Path, function: &str, at: Option<u64>) -> Result<(u64, u64, u64), String> {
+    let replaying = Replaying::for_editor(dir.to_path_buf(), PathBuf::new());
+    let (running, mut scan) = replaying.start(None, u64::MAX, true)?;
+    let asked = format!("calls {function}{}", at.map_or(String::new(), |at| format!(" {at}")));
+    let found = (|| -> Result<Value, String> {
+        ask(&mut scan, &asked)?;
+        scanned_to_end(&mut scan)
+    })();
+    running.end();
+    let found = found?;
+    let call = match at {
+        Some(_) => &found["call_at"],
+        None => &found["calls"][0],
+    };
+    let field = |key: &str| call[key].as_u64();
+    match (field("tick"), field("lines"), field("task")) {
+        (Some(tick), Some(lines), Some(task)) => Ok((tick, lines, task)),
+        _ if at.is_some() => Err(format!("no call of `{function}` ran at probe {}", at.unwrap_or(0))),
+        _ => Err(format!("`{function}` was not called in the recorded run")),
+    }
+}
+
+/// What the program held at a probe of a recorded run, as the debugger's
+/// `snapshot` gives it.
+pub(crate) fn snapshot_at(dir: &Path, tick: u64) -> Result<Value, String> {
+    let replaying = Replaying::for_editor(dir.to_path_buf(), PathBuf::new());
+    let (running, mut there) = replaying.start(None, u64::MAX, true)?;
+    let found = (|| -> Result<Value, String> {
+        ask(&mut there, &format!("seek {tick}"))?;
+        there.next_event()?;
+        ask(&mut there, "snapshot")
+    })();
+    running.end();
+    found
+}
+
 /// The program at a probe of a recorded run: where it is, and its moment.
 fn look_at(dir: &Path, tick: u64) -> Result<(String, Value), String> {
     let replaying = Replaying::for_editor(dir.to_path_buf(), PathBuf::new());

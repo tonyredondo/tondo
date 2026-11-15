@@ -7341,3 +7341,13 @@ once, so a count of the whole process would take others' allocations; each task 
 in a field the allocator adds to while any `allocations` runs, under a hook of its own so that a
 benchmark that ends does not stop it. The closure is made before the count starts, since making
 it may allocate its captures, and what it gives is kept, as a benchmark keeps it.
+
+## A benchmark of the call a recording ran longest
+
+The second half of change 35: `dump test <recording> --bench --function <name>` takes the call
+of that function that ran the most lines, or with `--at <probe>` the one that ran there, and
+writes its benchmark as from a dump. A replay measures each call by the lines its task runs inside
+it, outermost when the function calls itself, so that what other tasks ran meanwhile does not
+count; lines stand for time, as a replay's clock is the recording's and not the run's. A second
+replay stops where the call starts and gives its frames' values as the debugger shows them, which
+are the ones a dump writes, so the test is written by the same code.

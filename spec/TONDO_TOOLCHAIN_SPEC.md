@@ -1016,6 +1016,14 @@ no lo hace. Lo ejecuta una vez y dice si la llamada falla, en cuyo caso el bench
 mide el fallo. `tondo mcp` lo ofrece en `dump_test` con `bench`, y el editor, al
 escribir un test de un volcado, deja elegir el benchmark.
 
+En lugar de un volcado toma una grabación (`tondo run --record`), con
+`--function <nombre>`: la llamada de esa función que más líneas corrió en la
+grabación, contadas en su tarea, o con `--at <probe>` la que corría en ese
+probe, que `ran` o `timeline` nombran. Una reproducción la busca de principio a
+fin, otra se para donde empieza y toma sus valores, y el test, o el benchmark
+con `--bench`, se escribe como desde un volcado, con un comentario que dice de
+qué llamada viene. `dump_test` lo ofrece con `function` y `at`.
+
 `tondo dump trend <dir>` lee los volcados del último proceso de un directorio, tres
 por lo menos, y da la memoria y las tareas del primero al último, y qué sitios
 crecen: los que suben en cuatro de cada cinco pasos, de más a menos, con su ritmo.

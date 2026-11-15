@@ -159,7 +159,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
             Ok(answer) => answer,
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },
-        "track" | "trail" | "count" | "tracked" => match track(table, word, rest) {
+        "track" | "trail" | "count" | "calls" | "tracked" => match track(table, word, rest) {
             Ok(answer) => answer,
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },

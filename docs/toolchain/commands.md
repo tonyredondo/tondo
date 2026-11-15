@@ -159,6 +159,7 @@ usage:
   tondo dump issue <dir> <signature>                   a failure of a directory of dumps as an issue to
                                                        file, in Markdown
   tondo dump test <file> [--frame <n>] [--bench] [--project <dir>] [--json]
+  tondo dump test <recording> --function <name> [--at <probe>] [--bench] [--project <dir>] [--json]
                                                        a test that calls the function that failed with
                                                        what the dump says it had; --bench, a benchmark
                                                        of that call

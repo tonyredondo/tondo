@@ -1486,7 +1486,7 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
             tondo::observe::redact(Path::new(file), Path::new(output)).map(|()| ExitCode::SUCCESS)
         }
         ["test", file, rest @ ..] => {
-            let (mut frame, mut project) = (None, None);
+            let (mut frame, mut project, mut function, mut at) = (None, None, None, None);
             let bench = rest.contains(&"--bench");
             let rest: Vec<&str> = rest.iter().copied().filter(|arg| *arg != "--bench").collect();
             for pair in rest.chunks(2) {
@@ -1495,10 +1495,20 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
                         frame = Some(number.parse().map_err(|_| usage("--frame takes a frame's number"))?)
                     }
                     ["--project", dir] => project = Some(Path::new(*dir)),
-                    _ => return Err(usage("dump test takes --frame <n>, --bench and --project <dir>")),
+                    ["--function", name] => function = Some(*name),
+                    ["--at", tick] => at = Some(tick.parse().map_err(|_| usage("--at takes a probe's tick"))?),
+                    _ => {
+                        return Err(usage(
+                            "dump test takes --frame <n>, --bench, --function <name>, --at <probe> and --project <dir>",
+                        ));
+                    }
                 }
             }
-            tondo::observe::dump_test(Path::new(file), frame, bench, project, json).map(|()| ExitCode::SUCCESS)
+            if at.is_some() && function.is_none() {
+                return Err(usage("--at goes with --function <name>, the function whose call ran at that probe"));
+            }
+            let call = function.map(|function| (function, at));
+            tondo::observe::dump_test(Path::new(file), frame, bench, call, project, json).map(|()| ExitCode::SUCCESS)
         }
         ["core", core, rest @ ..] => {
             let (mut executable, mut output) = (None, None);
