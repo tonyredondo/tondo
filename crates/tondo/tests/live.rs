@@ -90,6 +90,13 @@ impl Running {
         }
     }
 
+    /// The program runs again from a new build, as `--watch` runs it after a
+    /// change it cannot make in place: its next answer waits for that build,
+    /// as its first does, which says it runs again before it starts.
+    fn built_again(&mut self) {
+        self.answered = false;
+    }
+
     /// The process ID of the program: the child itself, which `tondo run`
     /// became.
     fn pid(&self) -> String {
@@ -258,15 +265,17 @@ fn watching_reloads_what_is_saved() {
     let mut server = Running::start(&dir, &["run", "server.to", "--watch"]);
     assert_eq!(server.answer("a"), "v1 a 1");
     edit(&file, "\"v1 {line}", "\"v2 {line}");
-    let reloaded = server.errors.recv_timeout(Duration::from_secs(60)).expect("a reload");
+    // A reload builds the new code first, as long as a build takes.
+    let reloaded = server.errors.recv_timeout(Duration::from_secs(600)).expect("a reload");
     assert!(reloaded.contains("reloaded: 1 changed (main)"), "{reloaded}");
     assert_eq!(server.answer("b"), "v2 b 2");
     // A change it cannot make in place runs the program again: a `Ref`
     // keeps a value of a variant the new code does not have.
     let text = std::fs::read_to_string(&file).unwrap();
     save(&file, &text.replace("    Quiet\n", "").replace("Ref(Mode.Quiet)", "Ref(Mode.Loud)"));
-    let restarted = server.errors.recv_timeout(Duration::from_secs(60)).expect("a restart");
+    let restarted = server.errors.recv_timeout(Duration::from_secs(600)).expect("a restart");
     assert!(restarted.contains("running it again"), "{restarted}");
+    server.built_again();
     assert_eq!(server.answer("c"), "v2 c 1");
     server.stop();
 }
