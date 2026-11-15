@@ -322,6 +322,8 @@ did not meet. Tests and the runtime hold to these rules:
   batch, is tested with the events and the clock in the test's hands; the
   test over the real system keeps only what no stall can break.
 - In the runtime, a timeout is the cap of a hang or a time the program
-  asked for, never the way of waiting for something to happen.
+  asked for, never the way of waiting for something to happen; where
+  nothing can wake a wait, as a lock tried before a fork, it asks at a
+  pace, with a cap.
 
 `cargo test -p tondo --test waits` holds `crates/tondo/tests` to it.
