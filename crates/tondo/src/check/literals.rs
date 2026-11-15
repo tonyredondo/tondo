@@ -1344,6 +1344,20 @@ impl<'a> Checker<'a> {
         Self::error_expr(span)
     }
 
+    /// The types that have a constant named `name`, `Color` of
+    /// `const Color.Default`.
+    fn constant_owners(&self, name: &str) -> Vec<String> {
+        let mut owners: Vec<String> = self
+            .names
+            .iter()
+            .filter(|(_, value)| matches!(value, ModuleName::Const(_)))
+            .filter_map(|(key, _)| key.strip_suffix(name)?.strip_suffix('.').map(str::to_string))
+            .filter(|owner| self.type_names.contains_key(owner))
+            .collect();
+        owners.sort();
+        owners
+    }
+
     /// Reports a path whose first name is unknown as a value: a method
     /// called on its type, as `Array.repeat(...)`, or an unknown name.
     pub(super) fn unknown_path(&mut self, cx: &FnCx, segments: &[ast::Ident], span: Span) {
@@ -1491,6 +1505,17 @@ impl<'a> Checker<'a> {
             _ if let Some(owner) = self.enum_of_variant(name) => {
                 format!("`{name}` is a variant of `{owner}`: write `{owner}.{name}`")
             }
+            // A type's constant written alone, as a variant or a module's
+            // constant is.
+            _ if let Some(owners) = Some(self.constant_owners(name)).filter(|owners| !owners.is_empty()) => {
+                match owners.as_slice() {
+                    [owner] => format!("`{name}` is a constant of `{owner}`, read through it: write `{owner}.{name}`"),
+                    _ => {
+                        let written: Vec<String> = owners.iter().map(|owner| format!("`{owner}.{name}`")).collect();
+                        format!("a type's constant is read through it: {}", written.join(", "))
+                    }
+                }
+            }
             _ if module.is_some() => {
                 format!(
                     "`{name}` is the module `{}`: add `import {}` at the top of the file",
@@ -1570,7 +1595,7 @@ impl<'a> Checker<'a> {
             "True" | "TRUE" => Some((true, "true".into())),
             "False" | "FALSE" => Some((true, "false".into())),
             "this" => Some((false, "self".into())),
-            _ if hint.contains(" is a variant of `") => {
+            _ if hint.contains(" is a variant of `") || hint.contains(", read through it: write `") => {
                 hint.rsplit_once(": write `").map(|(_, written)| (true, written.trim_end_matches('`').to_string()))
             }
             _ => hint

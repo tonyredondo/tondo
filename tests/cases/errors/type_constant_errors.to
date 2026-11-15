@@ -16,11 +16,15 @@ type Box[T] = {
 
 const Box.Empty: Int = 0
 
+const Color.Favorite: Color = Color.Red
+
 fn main() {
     _ = Color.Red
+    _ = Favorite
 }
 
 // expect-error: E1002 `Color.Red` is a variant of `Color`: give the constant another name
 // expect-error: E1504 constants cannot be added to the intrinsic type `Int`: declare it of the module, `const Big`
 // expect-error: E1001 unknown type `Missing`
 // expect-error: E1504 `Box` has type parameters, and a constant is of one type: declare it of the module, `const Empty`
+// expect-error: E1001 unknown name `Favorite`; `Favorite` is a constant of `Color`, read through it: write `Color.Favorite`
