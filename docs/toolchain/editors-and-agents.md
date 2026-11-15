@@ -209,6 +209,8 @@ step, with the tools of `tondo mcp`: why each step, and what it gives.
 | You port code from Python | `runbook-port-python` |
 | You port code from TypeScript or JavaScript | `runbook-port-typescript` |
 | You port code from Java | `runbook-port-java` |
+| You port code from C++ | `runbook-port-cpp` |
+| You port code from Swift | `runbook-port-swift` |
 
 Every step of the runbooks runs in the tests of the toolchain, so what
 they show is what the tools give. They are written for a model, and a

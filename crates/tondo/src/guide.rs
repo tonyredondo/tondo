@@ -51,6 +51,8 @@ pub const TOPICS: &[(&str, &str)] = &[
     ("runbook-port-python", include_str!("../guide/runbook-port-python.md")),
     ("runbook-port-typescript", include_str!("../guide/runbook-port-typescript.md")),
     ("runbook-port-java", include_str!("../guide/runbook-port-java.md")),
+    ("runbook-port-cpp", include_str!("../guide/runbook-port-cpp.md")),
+    ("runbook-port-swift", include_str!("../guide/runbook-port-swift.md")),
 ];
 
 pub fn topic(name: &str) -> Option<&'static str> {

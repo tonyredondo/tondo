@@ -33,6 +33,8 @@ is a topic of the guide.
 | You port code from Python | `runbook-port-python` |
 | You port code from TypeScript or JavaScript | `runbook-port-typescript` |
 | You port code from Java | `runbook-port-java` |
+| You port code from C++ | `runbook-port-cpp` |
+| You port code from Swift | `runbook-port-swift` |
 
 Every step of these runbooks runs in the tests of the toolchain, so what they
 show is what the tools give. A block of tool calls reads `tool {arguments}`,

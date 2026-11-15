@@ -5,7 +5,8 @@ does, not its lines: the lines carry the habits of their language, and Tondo
 often asks for less. The order below keeps every step small and checked. The
 runbooks of each language say what each thing becomes: `runbook-port-go`,
 `runbook-port-csharp`, `runbook-port-rust`, `runbook-port-python`,
-`runbook-port-typescript` and `runbook-port-java`.
+`runbook-port-typescript`, `runbook-port-java`, `runbook-port-cpp` and
+`runbook-port-swift`.
 
 1. Read `tondo guide pitfalls` and the runbook of the language once.
 2. Find what says what the code does: its tests, or its output for inputs you
