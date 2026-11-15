@@ -345,11 +345,15 @@ pub unsafe extern "C" fn tondo_rt_files_real_path(path: *const Str) -> *mut Nati
 struct Watch {
     watcher: Option<Watcher>,
     /// Out while a task waits for the next batch, and after the watch ends.
-    changes: Option<tokio::sync::mpsc::UnboundedReceiver<PathBuf>>,
+    changes: Option<tokio::sync::mpsc::UnboundedReceiver<Seen>>,
     roots: Vec<(String, PathBuf)>,
     settle: std::time::Duration,
     existing: HashMap<PathBuf, Stamp>,
 }
+
+/// A path the system says changed, and whether it said the file itself was
+/// written, which inotify tells and kqueue does not.
+type Seen = (PathBuf, bool);
 
 /// What tells that an entry changed: its kind, last change, size and file.
 #[derive(Copy, Clone, PartialEq)]
@@ -430,7 +434,7 @@ mod inotify {
         paths: Mutex<HashMap<i32, PathBuf>>,
     }
 
-    pub(super) fn watcher(send: UnboundedSender<PathBuf>) -> Result<Watcher, i64> {
+    pub(super) fn watcher(send: UnboundedSender<super::Seen>) -> Result<Watcher, i64> {
         let fd = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
         if fd < 0 {
             return Err(failure(&std::io::Error::last_os_error()));
@@ -498,7 +502,7 @@ mod inotify {
     }
 
     /// Sends the paths of each event, until the watch or its receiver ends.
-    async fn read(watches: Arc<Watches>, send: UnboundedSender<PathBuf>) {
+    async fn read(watches: Arc<Watches>, send: UnboundedSender<super::Seen>) {
         let fd = watches.fd.as_raw_fd();
         // The descriptor is the watch's, open while this task holds it.
         let ready = unsafe { tokio::io::unix::AsyncFd::register_with_interest(fd, tokio::io::Interest::READABLE) };
@@ -521,8 +525,11 @@ mod inotify {
                 let name = &buffer[at + head..(at + head + event.len as usize).min(read)];
                 at += head + event.len as usize;
                 let name = &name[..name.iter().position(|&b| b == 0).unwrap_or(name.len())];
+                // The file itself written: so it changed, whatever its stamp.
+                let written =
+                    event.mask & (libc::IN_MODIFY | libc::IN_CLOSE_WRITE) != 0 && event.mask & libc::IN_ISDIR == 0;
                 for path in watches.changed(&event, name) {
-                    if send.send(path).is_err() {
+                    if send.send((path, written)).is_err() {
                         return;
                     }
                 }
@@ -573,7 +580,7 @@ mod kqueue {
         paths: HashMap<RawFd, PathBuf>,
     }
 
-    pub(super) fn watcher(send: UnboundedSender<PathBuf>) -> Result<Watcher, i64> {
+    pub(super) fn watcher(send: UnboundedSender<super::Seen>) -> Result<Watcher, i64> {
         let fd = unsafe { libc::kqueue() };
         if fd < 0 {
             return Err(failure(&std::io::Error::last_os_error()));
@@ -647,7 +654,7 @@ mod kqueue {
     }
 
     /// Sends the path of each event, until the watch or its receiver ends.
-    async fn read(watches: Arc<Watches>, send: UnboundedSender<PathBuf>) {
+    async fn read(watches: Arc<Watches>, send: UnboundedSender<super::Seen>) {
         let fd = watches.fd.as_raw_fd();
         // The descriptor is the watch's, open while this task holds it.
         let ready = unsafe { tokio::io::unix::AsyncFd::register_with_interest(fd, tokio::io::Interest::READABLE) };
@@ -665,7 +672,7 @@ mod kqueue {
             }
             for event in &events[..count as usize] {
                 if let Some(path) = watches.changed(event)
-                    && send.send(path).is_err()
+                    && send.send((path, false)).is_err()
                 {
                     return;
                 }
@@ -740,10 +747,10 @@ pub extern "C" fn tondo_rt_files_watch_next(done: *mut NativeObject) -> *mut Arr
 /// The paths of the next batch: the first change that comes within a
 /// second, and each that comes within `settle` of the one before it; none
 /// when a second passes without a change, and `None` once the watch ended.
-async fn batch(
-    receiver: &mut tokio::sync::mpsc::UnboundedReceiver<PathBuf>,
+async fn batch<T>(
+    receiver: &mut tokio::sync::mpsc::UnboundedReceiver<T>,
     settle: std::time::Duration,
-) -> Option<Vec<PathBuf>> {
+) -> Option<Vec<T>> {
     let first = tokio::time::timeout(std::time::Duration::from_secs(1), receiver.recv()).await;
     let mut changes = match first {
         Ok(change) => vec![change?],
@@ -762,8 +769,13 @@ async fn batch(
 /// again for the entries it holds, one made is read whole, and one removed
 /// takes what it held with it; a directory itself is only made or removed,
 /// as what it holds changes on its own.
-fn settled(watch: &mut Watch, roots: &[(String, PathBuf)], changes: Vec<PathBuf>) -> Vec<String> {
-    let mut pending: Vec<PathBuf> = changes.into_iter().collect::<HashSet<_>>().into_iter().collect();
+fn settled(watch: &mut Watch, roots: &[(String, PathBuf)], changes: Vec<Seen>) -> Vec<String> {
+    // A file the system said was written changed, though a write of the
+    // same size in the same tick of its clock leaves its stamp as it was.
+    let written: HashSet<PathBuf> =
+        changes.iter().filter(|(_, written)| *written).map(|(path, _)| path.clone()).collect();
+    let mut pending: Vec<PathBuf> =
+        changes.into_iter().map(|(path, _)| path).collect::<HashSet<_>>().into_iter().collect();
     for path in pending.clone() {
         let held = |watch: &Watch, deep: bool| -> Vec<PathBuf> {
             let known = watch.existing.keys();
@@ -800,7 +812,7 @@ fn settled(watch: &mut Watch, roots: &[(String, PathBuf)], changes: Vec<PathBuf>
                 "C"
             }
             (Some(_), None) => "R",
-            (Some(old), Some(new)) if old != new && !new.directory => "M",
+            (Some(old), Some(new)) if (old != new || written.contains(&path)) && !new.directory => "M",
             _ => continue,
         };
         let root = roots.iter().any(|(_, real)| *real == path);
@@ -870,17 +882,36 @@ mod tests {
         std::fs::write(dir.join(".draft.txt.tondo-1-2"), "as fs names them").unwrap();
         let changed = ["new.txt", "old.txt", "gone.txt", "brief.txt", ".draft.txt.tondo-1-2", "new.txt"];
         let roots = watch.roots.clone();
-        let out = settled(&mut watch, &roots, changed.iter().map(|name| dir.join(name)).collect());
+        let out = settled(&mut watch, &roots, changed.iter().map(|name| (dir.join(name), false)).collect());
         let at = |name: &str| dir.join(name).to_string_lossy().into_owned();
         assert_eq!(out, ["R", &at("gone.txt"), "C", &at("new.txt"), "M", &at("old.txt")]);
         // What it said is what the next batch starts from.
-        assert!(settled(&mut watch, &roots, vec![dir.join("new.txt")]).is_empty());
+        assert!(settled(&mut watch, &roots, vec![(dir.join("new.txt"), false)]).is_empty());
         // A directory made with what it holds, which the system may tell
         // of as the directory alone.
         std::fs::create_dir(dir.join("sub")).unwrap();
         std::fs::write(dir.join("sub/inner.txt"), "inner").unwrap();
-        let out = settled(&mut watch, &roots, vec![dir.join("sub")]);
+        let out = settled(&mut watch, &roots, vec![(dir.join("sub"), false)]);
         assert_eq!(out, ["C", &at("sub"), "C", &at("sub/inner.txt")]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A file the system said was written is modified, though the write
+    /// left its stamp as it was, as one of the same size in the same tick
+    /// of the file system's clock does: here it is put back by hand.
+    #[test]
+    fn a_file_written_is_modified_whatever_its_stamp() {
+        let dir = directory("written", &["same.txt"]);
+        let mut watch = watching(&dir);
+        let path = dir.join("same.txt");
+        let stamped = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::fs::write(&path, "SAME.TXT").unwrap();
+        std::fs::File::options().write(true).open(&path).unwrap().set_modified(stamped).unwrap();
+        let roots = watch.roots.clone();
+        // Seen only through its directory, as kqueue tells it: the stamp decides.
+        assert!(settled(&mut watch, &roots, vec![(path.clone(), false)]).is_empty());
+        let at = path.to_string_lossy().into_owned();
+        assert_eq!(settled(&mut watch, &roots, vec![(path.clone(), true)]), ["M", &at]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
