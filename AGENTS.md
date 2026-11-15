@@ -314,9 +314,14 @@ did not meet. Tests and the runtime hold to these rules:
   as long as the slowest machine needs, and a wait that includes a build
   has a build's margin.
 - A sleep stays only where time is what is under test, as that nothing
-  happens meanwhile, and a comment says so.
+  happens meanwhile, and a comment saying so starts with "Time is what is
+  under test". What only asking can see, as a port that starts to listen,
+  is waited for with `until` (`crates/tondo/tests/common`), whose pace is
+  not a wait for something to happen.
 - What depends on how events fall in time, as which changes make one
   batch, is tested with the events and the clock in the test's hands; the
   test over the real system keeps only what no stall can break.
-- In the runtime, a timeout is the cap of a hang, never the way of waiting
-  for something: what waits for something is woken by it.
+- In the runtime, a timeout is the cap of a hang or a time the program
+  asked for, never the way of waiting for something to happen.
+
+`cargo test -p tondo --test waits` holds `crates/tondo/tests` to it.
