@@ -410,6 +410,15 @@ TONDO_CACHE_LIMIT=40G tondo test
 
 The dependencies that were fetched and the runtime do not count towards
 it: a build makes the rest again, and those cost a download or a long
-build.
+build. `tondo clean --list` says what the cache holds, part by part, and
+empties nothing:
+
+```text
+$ tondo clean --list
+the cache in /home/ada/.cache/tondo holds 88.84 MiB
+  86.04 MiB  runtime         the runtime, built once for each toolchain
+   2.80 MiB  run             builds of programs, toward the limit
+the builds hold 2.80 MiB of a limit of 10.00 GiB (TONDO_CACHE_LIMIT): once a day the least used past it go
+```
 
 Next: [Testing](testing.md).

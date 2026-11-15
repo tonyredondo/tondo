@@ -71,6 +71,25 @@ test benchIsPrime {
 That benchmark is the slow call, to measure before and after a change,
 without the program around it.
 
+A [recording](debugging.md#backwards-a-recorded-run) gives it too, of a
+run that has ended. `--function` names whose call to take: the one that
+ran the most lines, or with `--at <probe>` the one that ran there. This
+program called `squares` with 10, 5000 and 40:
+
+```text
+$ tondo run --record run.rec
+$ tondo dump test run.rec --bench --function squares
+src/main_test.to: `benchSquares` measures `squares` with the recording's values: `tondo test --bench --filter benchSquares`
+```
+
+```text
+// From a recording: the call of squares at probe 44, which ran 15003 lines
+test benchSquares {
+    let upTo = 5000
+    testing.bench("squares", () { squares(upTo) })
+}
+```
+
 ## Where the time goes: profiles
 
 `tondo profile` samples a running program, or runs one from its start, and

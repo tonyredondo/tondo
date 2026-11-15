@@ -178,18 +178,21 @@ import std.console
 fn main() {
     let name = "Ada"
     console.println("hi $name")
+    console.println("hi ${name}")
 }
 ```
 
 ```mcp
 check {"path": "greeting.to"}
 => `$name` is written as it is: Tondo interpolates `{name}`
+=> `${name}` writes a `$` and then the `String`: Tondo interpolates `{name}`
 run {"path": "greeting.to"}
 => hi $name
+=> hi $Ada
 ```
 
-`"hi ${name}"` gets no warning, since a dollar before an interpolation is
-how a price is written: it prints `hi $Ada`. Take the `$` out of both.
+Take the `$` out of both. Before a number it says nothing: `"${price}"` is
+a dollar and the price, as a price is written.
 
 ## The port
 
@@ -286,9 +289,9 @@ What went, part by part of the original:
   does not fit, where Kotlin's wraps in silence. Code that counts on it, as a
   hash, says `wrappingAdd` and `wrappingMul`.
 - **A text with `$name` in it.** In Tondo it is `{name}`, and a `$` is a
-  dollar. `check` warns of `$name` where `name` is a binding (`W1022`), as
-  above, and says nothing of `${name}`, which prints the dollar and the
-  value.
+  dollar. `check` warns (`W1022`), as above, of `$name` where `name` is a
+  binding and of `${name}` where the value is not a number; a dollar before
+  a number is a price, and stays.
 - **The JVM and its libraries.** A program is one native executable. The
   standard library has HTTP, JSON, SQL, templates and a command line:
   `tondo guide stdlib`.

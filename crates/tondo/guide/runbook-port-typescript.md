@@ -272,8 +272,9 @@ What went, part by part of the original:
 - **`null` and `undefined`.** One `none`, and only in a `T?`.
 - **`${name}` left in a string.** A template whose backticks became double
   quotes keeps its dollars: `"hi ${name}"` prints `hi $Ada`, a dollar and
-  the value, as a price is written, and nothing warns. Take the `$` out
-  when the backticks go. `"hi $name"`, with no braces, does warn (`W1022`).
+  the value. `check` warns of it (`W1022`) when the value is not a number,
+  and says to take the `$` out; before a number, as `"${price}"`, it is a
+  price and nothing warns.
 - **Truthiness and `==` that converts.** A condition is a `Bool`; `0`, `""`
   and an empty array are not false.
 - **Objects shared and changed.** An array or a record given to a function
