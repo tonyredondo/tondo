@@ -510,10 +510,12 @@ impl Display for Guid {
 /// The result of a function of COM: a number whose sign says whether it
 /// failed, each value with its meaning, as Windows writes them: `S_OK` is
 /// `HResult.Ok`, `E_NOINTERFACE` is `HResult.NoInterface`, and a library
-/// declares its own. A method of an interface declared `: ffi.HResult`
-/// gives the number as it is, so that `S_FALSE` is told from `S_OK`; one
-/// declared `: !ffi.HResult`, or `: T ! ffi.HResult`, fails when it is
-/// negative.
+/// declares its own as constants of its module, as `pub const
+/// BufferTooSmall: ffi.HResult = ffi.HResult(-2147024774)`, since only
+/// `std.ffi` adds to `HResult`. A method of an interface declared
+/// `: ffi.HResult` gives the number as it is, so that `S_FALSE` is told
+/// from `S_OK`; one declared `: !ffi.HResult`, or `: T ! ffi.HResult`,
+/// fails when it is negative.
 ///
 /// ```tondo
 /// import std.console
