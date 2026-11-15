@@ -3956,6 +3956,14 @@ fn a_logpoint_shows_no_value_from_before() {
                     assert_eq!(round, before + 1, "a value from before: {texts:?}");
                 }
             }
+            // For people: a part read as `?` says once why.
+            let args = ["logpoint", &pid, "counts.to:12", "{before} {round}", "--max", "1", "--for", "60"];
+            let said = Command::new(tondo_bin).args(args).current_dir(&dir).output().unwrap();
+            let (out, err) = (String::from_utf8_lossy(&said.stdout), String::from_utf8_lossy(&said.stderr));
+            assert!(err.contains("it ends after 1 time\n"), "{err}");
+            if out.contains('?') {
+                assert!(err.contains("not known here, as the optimized code makes"), "{out}{err}");
+            }
             // Past the calls of the turn, where the value made last is.
             let hits = logpoint("counts.to:15", "{round}", "1");
             let hits: Value = serde_json::from_slice(&hits.stdout).unwrap();

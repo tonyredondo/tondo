@@ -3140,11 +3140,12 @@ pub fn logpoint(asked: &Logpoint, json: bool) -> Result<(), String> {
         Some(1) => "1 place".to_string(),
         places => format!("{} places", places.unwrap_or_default()),
     };
-    eprintln!("tondo: a logpoint on {place}, in {places}: it ends after {max} times");
+    let times = if max == 1 { "1 time".to_string() } else { format!("{max} times") };
+    eprintln!("tondo: a logpoint on {place}, in {places}: it ends after {times}");
     let waiting = seconds.map(Duration::from_secs);
     let _ = program.reader.get_ref().set_read_timeout(waiting);
     let deadline = waiting.map(|waiting| std::time::Instant::now() + waiting);
-    let mut hits = Vec::new();
+    let (mut hits, mut told) = (Vec::new(), false);
     loop {
         let mut line = String::new();
         if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
@@ -3167,6 +3168,17 @@ pub fn logpoint(asked: &Logpoint, json: bool) -> Result<(), String> {
             ),
             false => {
                 println!("{}", logged(&hit, text));
+                // Once, why a part reads `?`: what the reader of it needs.
+                let unknown = text.map_or(Vec::new(), |text| unknown_parts(&hit, text));
+                if !unknown.is_empty() && !told {
+                    told = true;
+                    let (verb, value) = if unknown.len() == 1 { ("is", "its value") } else { ("are", "their values") };
+                    eprintln!(
+                        "tondo: {} {verb} not known here, as the optimized code makes {value} later; a build \
+                         with --debug knows every value",
+                        unknown.join(", ")
+                    );
+                }
                 if let Some(dump) = hit["dump"].as_str() {
                     eprintln!("tondo: a dump of the program as it was there is in {dump}");
                 }
@@ -3187,6 +3199,23 @@ pub fn logpoint(asked: &Logpoint, json: bool) -> Result<(), String> {
         crate::cli::print_json("logpoint", true, json!({ "hits": hits }));
     }
     Ok(())
+}
+
+/// The parts of a logpoint's text that a hit has no value for, as `round`
+/// of `"round {round}"`, each once.
+fn unknown_parts(hit: &Value, text: &str) -> Vec<String> {
+    let frame = json!({ "bindings": hit["values"].as_array().cloned().unwrap_or_default() });
+    let mut unknown = Vec::new();
+    let mut rest = text;
+    while let Some((_, after)) = rest.split_once('{') {
+        let Some((path, tail)) = after.split_once('}') else { break };
+        let shown = format!("`{path}`");
+        if dumped_value(&frame, path).is_none() && !unknown.contains(&shown) {
+            unknown.push(shown);
+        }
+        rest = tail;
+    }
+    unknown
 }
 
 /// A hit of a logpoint as a line: the text with its parts in place, or
