@@ -134,11 +134,15 @@ fn loops(body: &Body, types: &Types) -> (Vec<(usize, Local, Local, Span)>, Grown
                 .map(|&(_, _, span)| span)
                 .collect::<Vec<_>>()
         };
-        // Out only by the test, or by unwinding.
+        // Out only by the test, or by unwinding: not to a block that cannot
+        // be reached, as a `match` that covers every case leaves.
         let leaves = members.iter().any(|&block| {
-            successors(&blocks[block].terminator)
-                .into_iter()
-                .any(|to| to != head && !inside[to] && abnormal(&blocks[block]) != Some(to))
+            successors(&blocks[block].terminator).into_iter().any(|to| {
+                to != head
+                    && !inside[to]
+                    && abnormal(&blocks[block]) != Some(to)
+                    && !matches!(blocks[to].terminator, Terminator::Unreachable)
+            })
         });
         if leaves {
             grown.extend(arrays(&pushes).into_iter().map(|span| (span, "the loop may leave before its last turn")));

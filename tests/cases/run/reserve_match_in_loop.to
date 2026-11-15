@@ -1,0 +1,25 @@
+import std.console
+
+// A `match` that covers every case leaves a way that cannot be reached:
+// not one by which the loop leaves before its last turn. A push in some of
+// its arms only grows as it goes, for that reason.
+
+fn split(parts: Array[String]): (Int, Array[String]) {
+    var sum = 0
+    var bad: Array[String] = []
+    for part in parts {
+        match Int.parse(part) {
+            ok(number) => sum += number
+            err(_) => bad.push(part)
+        }
+    }
+    (sum, bad)
+}
+
+fn main() {
+    let (sum, bad) = split(["1", "x", "2"])
+    console.println("{sum} {bad}")
+}
+
+// expect-stdout: 3 [x]
+// expect-optimization: 13:23 grown the loop pushes to it in some turns only
