@@ -3,9 +3,10 @@
 //! body next, until it says none. In a plain test run that is once. Under
 //! `tondo test --bench`, which sets `TONDO_TEST_BENCH` to the seconds each
 //! benchmark measures for, it warms up, finds how many runs make a sample,
-//! takes the samples, counting the processor's instructions, cycles,
-//! mispredicted branches and first-cache misses where the system lets it,
-//! then runs one more batch counting
+//! takes the samples, then runs as many as five samples counting the
+//! processor's instructions, cycles, mispredicted branches and first-cache
+//! misses where the system lets it, apart from the samples, as counting
+//! slows every switch of a thread it counts, then one more batch counting
 //! allocations, and reports the samples to `tondo test` in a `bench`
 //! frame.
 
@@ -17,6 +18,8 @@ use std::time::{Duration, Instant};
 /// The samples a benchmark takes, and the fewest when one run is slow.
 const SAMPLES: usize = 50;
 const FEWEST: usize = 5;
+/// The samples' worth of runs that count the processor's events.
+const COUNTED: u64 = 5;
 
 enum Phase {
     /// A plain test run: the body once.
@@ -25,6 +28,8 @@ enum Phase {
     Warming(Duration),
     /// Takes the samples, each a batch of the same size.
     Sampling(usize),
+    /// Runs `COUNTED` batches at once, counting the processor's events.
+    Events,
     /// One more batch, counting its allocations.
     Counting(u64, u64),
     Done,
@@ -40,10 +45,9 @@ struct Bench {
     samples: Vec<f64>,
     allocations: f64,
     bytes: f64,
-    /// What counts the instructions and cycles of the samples, and the
-    /// runs they took; what a run took of them, once they are done.
+    /// What counts the instructions and cycles of the runs that count
+    /// them; what a run took of them, once they are done.
     counters: Option<super::counters::Counters>,
-    sampled: u64,
     counted: Option<super::counters::Counted>,
 }
 
@@ -113,7 +117,6 @@ pub unsafe extern "C" fn tondo_rt_bench_start(name: *const Str, location: *const
         allocations: 0.0,
         bytes: 0.0,
         counters: None,
-        sampled: 0,
         counted: None,
     });
 }
@@ -150,27 +153,32 @@ pub extern "C" fn tondo_rt_bench_next() -> i64 {
             let each = time.as_nanos() as f64 / SAMPLES as f64;
             bench.batch = (each / per_run.max(1.0)).floor().clamp(1.0, (1u64 << 40) as f64) as u64;
             let samples = (time.as_nanos() as f64 / per_run.max(1.0)) as usize;
-            // A profile of the benchmark covers what it measures, and so
-            // do the counters.
+            // A profile of the benchmark covers what it measures.
             crate::profiling::resume();
-            bench.counters = super::counters::Counters::start();
             Phase::Sampling(samples.clamp(FEWEST, SAMPLES))
         }
-        Phase::Sampling(count) => {
+        Phase::Sampling(count) if bench.samples.len() + 1 < count => {
             bench.samples.push(per_run);
-            bench.sampled += bench.batch;
-            match bench.samples.len() < count {
-                true => Phase::Sampling(count),
-                false => {
-                    let runs = bench.sampled.max(1) as f64;
-                    let counted = bench.counters.take().map(|counters| counters.read());
-                    bench.counted = counted.map(|counted| counted.map(|count| count.map(|count| count / runs)));
-                    crate::profiling::pause();
-                    let before = (ALLOCATIONS.load(Ordering::Relaxed), BYTES.load(Ordering::Relaxed));
-                    crate::diagnostics::hook(crate::diagnostics::MEASURED);
-                    Phase::Counting(before.0, before.1)
+            Phase::Sampling(count)
+        }
+        Phase::Sampling(_) => {
+            bench.samples.push(per_run);
+            crate::profiling::pause();
+            bench.counters = super::counters::Counters::start();
+            match bench.counters.is_some() {
+                true => {
+                    bench.batch *= COUNTED;
+                    Phase::Events
                 }
+                false => count_allocations(),
             }
+        }
+        Phase::Events => {
+            let runs = bench.batch as f64;
+            let counted = bench.counters.take().map(|counters| counters.read());
+            bench.counted = counted.map(|counted| counted.map(|count| count.map(|count| count / runs)));
+            bench.batch /= COUNTED;
+            count_allocations()
         }
         Phase::Counting(allocations, bytes) => {
             crate::diagnostics::unhook(crate::diagnostics::MEASURED);
@@ -187,6 +195,13 @@ pub extern "C" fn tondo_rt_bench_next() -> i64 {
     let batch = bench.batch as i64;
     bench.started = Instant::now();
     batch
+}
+
+/// The batch that counts allocations starts.
+fn count_allocations() -> Phase {
+    let before = (ALLOCATIONS.load(Ordering::Relaxed), BYTES.load(Ordering::Relaxed));
+    crate::diagnostics::hook(crate::diagnostics::MEASURED);
+    Phase::Counting(before.0, before.1)
 }
 
 /// Ends the benchmark that runs: when it measured and its body did not

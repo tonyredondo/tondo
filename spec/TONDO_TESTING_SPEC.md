@@ -2465,16 +2465,19 @@ reporte de cobertura, `--jobs`, `--retry`, `--repeat`, `--allow-flaky`,
    tomar 50 muestras en `--bench-time` segundos, 3 por defecto; si una
    ejecución es lenta, toma una por muestra y las muestras que caben en ese
    tiempo, nunca menos de 5.
-3. Toma las muestras: el tiempo de cada tanda entre sus ejecuciones. En Linux,
-   si el sistema deja que un programa se cuente a sí mismo
-   (`kernel.perf_event_paranoid` de 2 o menos), cuenta también, durante las
-   muestras, lo que el procesador ejecuta del programa fuera del kernel, en
-   todos los hilos que tiene al empezarlas: las instrucciones y los ciclos,
-   los saltos que predice mal y las lecturas que fallan en la primera caché
-   de datos y en la de instrucciones, las que el procesador cuenta. Las
-   instrucciones no cambian con dónde cae el código, como sí el tiempo; los
-   fallos dicen por qué cambió el tiempo cuando ellas no.
-4. Ejecuta una tanda más, que cuenta las asignaciones de memoria y sus bytes.
+3. Toma las muestras: el tiempo de cada tanda entre sus ejecuciones, sin
+   nada que lo cuente.
+4. En Linux, si el sistema deja que un programa se cuente a sí mismo
+   (`kernel.perf_event_paranoid` de 2 o menos), ejecuta tantas ejecuciones
+   como cinco muestras contando lo que el procesador ejecuta del programa
+   fuera del kernel, en todos los hilos que tiene al empezarlas: las
+   instrucciones y los ciclos, los saltos que predice mal y las lecturas que
+   fallan en la primera caché de datos y en la de instrucciones, las que el
+   procesador cuenta. Las cuenta aparte de las muestras porque contarlas hace
+   más lento cada cambio de hilo de los que cuenta: el tiempo es el del
+   programa. Las instrucciones no cambian con dónde cae el código, como sí el
+   tiempo; los fallos dicen por qué cambió el tiempo cuando ellas no.
+5. Ejecuta una tanda más, que cuenta las asignaciones de memoria y sus bytes.
 
 Lo que da el cuerpo se conserva, como con `testing.keep`, para que el
 optimizador no elimine su cálculo. El timeout de la entrada (7.8) cuenta de

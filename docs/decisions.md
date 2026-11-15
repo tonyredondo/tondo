@@ -7131,8 +7131,8 @@ threads at once, 178 µs to Go's 172; and a thread whose 100 calls each wait for
 start, 0.7 to 0.9 ms to Go's 1.05. A call back on the task's own thread does 18% fewer
 instructions than before, as what a task without a parent inherits no longer asks for the
 running task again. The counters cost every switch of a thread they count, so a row that wakes
-threads, as the last one, measures slower with them: Tony decides whether to count in a round of
-their own.
+threads, as the last one, measured slower with them: they count in a round of their own now
+(below).
 
 On macOS a profile does not sample the calls that threads of C make, nor does a dump ask them
 where they are. The sampler there signals each thread every millisecond, and a thread of C may
@@ -7162,3 +7162,16 @@ takes under 0.3% more.
 
 Counting a copy between locals as free when inlining, which the copies inlining leaves are,
 inlined as much, but made building the largest generated program 30% slower: not kept.
+
+## A benchmark's counters in a round of their own
+
+`tondo test --bench` counted the processor's events, instructions, cycles, mispredicted branches
+and first-cache misses, during the samples that measure time: five counters on every thread the
+program has, which the kernel saves and restores at each switch of those threads. A row that
+wakes threads and puts them to sleep paid for it in its time, as Go's side, counted in runs of its
+own, did not: `ffi/waits from a C thread 100` measured 1238 µs with the counters and 687 µs
+without, against Go's 1050, and `http/json 64x100` 39.4 ms against 31.2. The other rows moved
+within the noise. Tony chose to count apart: the samples take time alone, then as many runs as
+five samples count the events, then a batch counts the allocations, and `--regression-by
+instructions` judges as before. A baseline saved before measured its time with the counters on.
+

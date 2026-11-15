@@ -21,7 +21,9 @@ so many times and twice as many, whose difference leaves out the start of
 the program and Go's first run. The instructions do not move with where
 the code lies, as the time does: a row slower in time with fewer
 instructions than Go is slower for its cache misses, branches or layout,
-and one with more instructions does more work.
+and one with more instructions does more work. Neither side's time pays
+for the counting, which slows every switch of a thread it counts: Tondo
+counts in a round of its own after its samples, as Go in runs of its own.
 
 The rows of `http/` and `net/` run a server and its clients in one
 process, so a row mixes the two sides of each request, which a profile
