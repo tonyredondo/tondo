@@ -149,15 +149,17 @@ fn trace_of_a_started_program() {
     assert_eq!(waits["args"]["then"], "waits at traced.to:17 in main");
     let profile = std::fs::read_to_string(dir.join("out.folded")).unwrap();
     assert!(profile.lines().any(|line| line.contains(";crunch;fib")), "{profile}");
-    // A program that does not end well says how it ended.
+    // A program that does not end well says how it ended; the name of one
+    // of the files names both, its dots kept.
     std::fs::write(dir.join("fails.to"), "fn main() {\n    panic(\"no\")\n}\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
-        .args(["trace", "--output", "fails", "--", "fails.to"])
+        .args(["trace", "--output", "fails.trace.json", "--", "fails.to"])
         .current_dir(&dir)
         .output()
         .unwrap();
     let said = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success() && said.contains("; the program exited with status 101"), "{said}");
+    assert!(dir.join("fails.trace.json").is_file() && dir.join("fails.trace.folded").is_file(), "{said}");
 }
 
 const ALLOCATING: &str = r#"import std.console

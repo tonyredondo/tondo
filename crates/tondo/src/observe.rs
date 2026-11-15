@@ -583,11 +583,20 @@ pub(crate) fn record(
 /// Ctrl-C, then writes the timeline and the profile.
 pub fn trace(traced: Traced, duration: Option<Duration>, output: Option<PathBuf>, as_json: bool) -> Result<(), String> {
     let Recorded { info, pid, recording, end, .. } = record(traced, duration, None, true)?;
+    // `<output>.json` and `<output>.folded`, as the name of either file
+    // given names both: `worker.trace.json` is `worker.trace`'s.
     let base = output
-        .map(|path| path.with_extension(""))
+        .map(|path| {
+            let name = path.to_string_lossy();
+            PathBuf::from(name.strip_suffix(".json").or(name.strip_suffix(".folded")).unwrap_or(&name).to_string())
+        })
         .unwrap_or_else(|| PathBuf::from(format!("{}-{}", program_name(&info), pid)));
-    let timeline = base.with_extension("json");
-    let profile = base.with_extension("folded");
+    let named = |ending: &str| {
+        let mut name = base.clone().into_os_string();
+        name.push(ending);
+        PathBuf::from(name)
+    };
+    let (timeline, profile) = (named(".json"), named(".folded"));
     let write = |path: &PathBuf, text: String| {
         std::fs::write(path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))
     };
