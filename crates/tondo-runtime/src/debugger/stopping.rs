@@ -1829,8 +1829,10 @@ pub(super) fn tracking(table: &Table, here: Stop, tick: u64) {
     // Not after another task ran, as after a wait: the changes that task
     // made since its own last probe are its line's. After a call, the
     // line's frame changes from here on its own.
+    // A scan that starts at such a probe has seen no line before it: what
+    // the values are there came before the scan.
     if table.sites.get(site).is_some_and(|site| site.goes_on) && tracked.lines.get(&task).copied() == tracked.before {
-        if tracked.before_frame != here.frame {
+        if tracked.before.is_some() && tracked.before_frame != here.frame {
             tracked.resumed = Some((tick, site, here.frame));
         }
         return;

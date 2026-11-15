@@ -4758,6 +4758,14 @@ fn a_replay_gives_a_change_to_the_line_and_the_call_that_made_it() {
     assert!(text.contains("at kept.to:5 in cents (`amount` became \"4.00\" on this line)"), "{text}");
     assert!(text.contains("error: `amount` has no value here yet"), "{text}");
     assert!(!text.contains("\"250\""), "{text}");
+    // A value that stays the same from one turn to the next came from where
+    // it last changed: a scan that starts at a checkpoint where a line goes
+    // on after a call, as this breakpoint's, saw it before it began.
+    let program = "import std.console\n\nfn main() {\n    let rolls = [4, 5, 5, 6]\n    var total = 0\n    for i in 0..4 {\n        let roll = rolls[i]\n        total += roll\n        console.println(\"{i}: {roll}\")\n    }\n    console.println(\"total {total}\")\n}\n";
+    let commands = "break repeated.to:9\ncontinue\ncontinue\ncontinue\ncontinue\nreverse\nwhy total\nquit\n";
+    let text = replayed(&dir, "repeated", program, commands);
+    assert!(text.contains("`roll` was 5, from repeated.to:7 in main"), "{text}");
+    assert!(text.contains("`total` was 9, from repeated.to:8 in main"), "{text}");
 }
 
 #[test]
