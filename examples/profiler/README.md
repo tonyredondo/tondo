@@ -6,7 +6,7 @@ as things happen, and the profiler asks the host through another. Each
 side has of the other only a pointer to an object, whose first word points
 to a table of functions, as an object of COM is. Both sides are Tondo here,
 so it runs with no C compiler; a host written in C++ would be given the
-same object. About 180 lines, and 60 of tests.
+same object. About 175 lines, and 65 of tests.
 
 ```text
 profiler/
@@ -69,8 +69,7 @@ host another host, and gets `HResult.NoInterface`.
 **A failure is an `HRESULT` on the way, and a failure at each end.** The
 methods are declared `: !ffi.HResult` and `: UInt32 ! ffi.HResult`, so
 their callers use `?` as with any function that fails. `moduleName` fails
-with `HResult.InvalidArgument` for a module the host does not have, and
-with the library's own `api.BufferTooSmall` when the name does not fit. In
+with `HResult.InvalidArgument` for a module the host does not have. In
 [`recorder_test.to`](src/recorder/recorder_test.to) a failure goes through
 the table as a negative number and is a failure again in the caller.
 
@@ -81,10 +80,14 @@ and the profiler releases the host's object in `shutdown`. Each test ends
 with `api.released(object) == 0`: the last hold was its own.
 
 **Text is UTF-16 at this boundary.** `moduleName` writes the name the way
-.NET's API does: UTF-16 with its zero, in a buffer the caller owns, never
-past its capacity, giving the count of units. `ffi.toWide` makes it and
-`ffi.fromWide` reads it; `café.dll` is there so that a character of two
-bytes in UTF-8 is one unit here.
+.NET's API does: in a buffer the caller owns, what fits of it with its
+zero, never past the capacity, and it gives the units of the whole name.
+That is `ffi.writeWide`, in one call. The profiler brings room for sixteen
+units, and when the answer is not under that it asks again with the room
+it was told, as a caller of such an API does:
+`aLongNameIsAskedForAgainWithItsRoom`. `ffi.fromWide` reads the name;
+`café.dll` is there so that a character of two bytes in UTF-8 is one unit
+here.
 
 ## Going further
 

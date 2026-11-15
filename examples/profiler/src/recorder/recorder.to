@@ -51,13 +51,18 @@ impl api.Callback for Recorder {
     }
 }
 
-/// A module's name, asked of the host with a buffer for it to write in.
-pub fn name(info: api.InfoObject, module: UInt): String ! ffi.HResult {
-    let capacity = 64u32
-    let buffer = ffi.allocate[UInt16](Int(capacity))
-    unsafe {
-        defer ffi.free(buffer)
-        let units = info.moduleName(module, capacity, buffer)?
-        ffi.fromWide(buffer, count: Int(units))
-    }
+/// A module's name, asked of the host with a buffer for it to write in,
+/// and asked again with the room it takes when the first was too small.
+pub fn name(info: api.InfoObject, module: UInt, room: UInt32 = 16): String ! ffi.HResult {
+    let buffer = ffi.allocate[UInt16](Int(room))
+    let units =
+        unsafe {
+            defer ffi.free(buffer)
+            let units = info.moduleName(module, room, buffer)?
+            if units < room {
+                return ffi.fromWide(buffer)
+            }
+            units
+        }
+    name(info, module, room: units + 1)
 }

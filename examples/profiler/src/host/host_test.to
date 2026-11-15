@@ -30,15 +30,23 @@ test theHostAnswersWithAName {
     assert(api.released(object) == 0)
 }
 
-test aNameThatDoesNotFitIsNotWritten {
+test aNameThatDoesNotFitIsCutAndItsLengthGiven {
     let object = ffi.object(program())
     let info = unsafe { api.InfoObject.of(object) }
     let buffer = ffi.allocate[UInt16](4)
     unsafe {
         defer ffi.free(buffer)
-        buffer.write(7u16)
-        assert(info.moduleName(1, 4, buffer) == err(api.BufferTooSmall))
-        assert(buffer.read() == 7)
+        // "kernel" is six units, and four have room for three and the zero.
+        assert(info.moduleName(1, 4, buffer) == ok(6))
+        assert(ffi.fromWide(buffer) == "ker")
     }
+    assert(api.released(object) == 0)
+}
+
+test aLongNameIsAskedForAgainWithItsRoom {
+    let long = "a module with a name of more than sixteen units.dll"
+    let object = ffi.object(Host { modules: [7: long] })
+    let info = unsafe { api.InfoObject.of(object) }
+    assert(recorder.name(info, 7) == ok(long))
     assert(api.released(object) == 0)
 }
