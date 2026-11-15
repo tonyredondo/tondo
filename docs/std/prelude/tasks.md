@@ -64,7 +64,8 @@ Adds a task to the group.
 pub fn Group.wait(self): Array[T]
 ```
 
-Every result, in order; with `T = R ! E`, the first error cancels the rest.
+Waits for every task of the group and gives their results, in order;
+with `T = R ! E`, the first error cancels the rest.
 
 #### Group.next
 

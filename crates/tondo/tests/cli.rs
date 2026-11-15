@@ -311,6 +311,17 @@ fn the_api_of_a_declaration_and_a_search() {
     let (together, _) = json(&dir, &["api", "--search", "decode base64", "--json"]);
     assert_eq!(apart["matches"], together["matches"]);
     assert!(!apart["matches"].as_array().unwrap().is_empty(), "{apart}");
+    // The words of the job in another language: little words aside, and
+    // when few hold every word, those that hold some follow.
+    let (waits, _) = json(&dir, &["api", "--search", "wait for all tasks", "--json"]);
+    assert_eq!(waits["matches"][0]["name"], "Group.wait", "{waits}");
+    let (words, _) = json(&dir, &["api", "--search", "split into words", "--json"]);
+    let partial = words["partial"].as_u64().unwrap() as usize;
+    let matches = words["matches"].as_array().unwrap();
+    assert!(matches[partial..].iter().any(|m| m["name"] == "String.words"), "{words}");
+    let (shown, _, _) = tondo(&dir, &["api", "--search", "split whitespace"]);
+    assert!(shown.starts_with("nothing has every word of `split whitespace`; these have the most of them:"), "{shown}");
+    assert!(shown.contains("prelude.String.words"), "{shown}");
     let (module, _) = json(&dir, &["api", "std.csv", "--json"]);
     assert!(module["summary"].as_str().unwrap().starts_with("comma-separated values"), "{module}");
     let (_, stderr, status) = tondo(&dir, &["api", "std.nothing.Here"]);

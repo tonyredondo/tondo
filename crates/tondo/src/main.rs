@@ -2527,17 +2527,29 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
         for (name, paths, _) in modules().unwrap_or_default() {
             apis.push((name, render(&paths)?));
         }
-        let found = tondo::api::search(&query, apis.iter().map(|(name, api)| (name.clone(), api.as_str())));
+        let tondo::api::Searched { found, partial } =
+            tondo::api::search(&query, apis.iter().map(|(name, api)| (name.clone(), api.as_str())));
         if json {
             let matches: Vec<serde_json::Value> = found
                 .iter()
                 .map(|f| serde_json::json!({ "module": f.module, "name": f.name, "declaration": f.declaration, "doc": f.about }))
                 .collect();
-            print_json("api", true, serde_json::json!({ "search": query, "matches": matches }));
+            let mut data = serde_json::json!({ "search": query, "matches": matches });
+            if let Some(partial) = partial {
+                // The matches from here on have only some of the words.
+                data["partial"] = partial.into();
+            }
+            print_json("api", true, data);
         } else if found.is_empty() {
             println!("nothing is named or documented with `{query}`; `tondo api --list` shows the modules");
         } else {
-            for found in &found {
+            for (index, found) in found.iter().enumerate() {
+                if partial == Some(index) {
+                    match index {
+                        0 => println!("nothing has every word of `{query}`; these have the most of them:"),
+                        _ => println!("these have some of the words:"),
+                    }
+                }
                 let qualified = format!("{}.{}", found.module, found.name);
                 println!("{qualified}\n    {}", found.declaration);
                 if !found.about.is_empty() {

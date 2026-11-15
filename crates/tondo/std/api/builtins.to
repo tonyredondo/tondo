@@ -276,7 +276,8 @@ pub fn Group[T](): Group[T]
 /// Adds a task to the group.
 pub fn Group.add(var self, job: Join[T])
 
-/// Every result, in order; with `T = R ! E`, the first error cancels the rest.
+/// Waits for every task of the group and gives their results, in order;
+/// with `T = R ! E`, the first error cancels the rest.
 pub fn Group.wait(self): Array[T]
 
 /// The next task to finish, or `none` when the group is empty.

@@ -251,9 +251,27 @@ pub struct Found {
 /// The declarations of the modules given, as their APIs, whose names or
 /// documentation hold every word of `query`, those named so first: what
 /// `tondo api --search` shows.
-pub fn search<'a>(query: &str, modules: impl IntoIterator<Item = (String, &'a str)>) -> Vec<Found> {
-    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
-    let mut found: Vec<(u8, Found)> = Vec::new();
+///
+/// When few have them all, as a search in the words of another language
+/// may find, those that have the most follow, from `partial` on: the words
+/// of the job, not of its name, find `String.words` for "split into words".
+pub fn search<'a>(query: &str, modules: impl IntoIterator<Item = (String, &'a str)>) -> Searched {
+    // The words that say what is sought, not "for", "all" or "into".
+    const LITTLE: [&str; 16] =
+        ["a", "an", "the", "of", "to", "in", "into", "for", "all", "with", "and", "or", "on", "by", "from", "each"];
+    let mut words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    if words.iter().any(|w| !LITTLE.contains(&w.as_str())) {
+        words.retain(|w| !LITTLE.contains(&w.as_str()));
+    }
+    // A word as it is, or without its ending: "tasks" finds "task".
+    let stems: Vec<&str> = words
+        .iter()
+        .map(|w| {
+            let stem = ["ing", "es", "ed", "s"].iter().find_map(|end| w.strip_suffix(end)).unwrap_or(w);
+            if stem.len() >= 3 { stem } else { w.as_str() }
+        })
+        .collect();
+    let mut found: Vec<((u8, usize), Found)> = Vec::new();
     for (module, api) in modules {
         for declared in declarations(api) {
             if declared["kind"] == "impl" {
@@ -262,14 +280,26 @@ pub fn search<'a>(query: &str, modules: impl IntoIterator<Item = (String, &'a st
             let name = declared["name"].as_str().unwrap_or_default().to_string();
             let doc = declared["doc"].as_str().unwrap_or_default();
             let (named, documented) = (name.to_lowercase(), doc.to_lowercase());
+            let held = stems.iter().filter(|w| named.contains(*w) || documented.contains(*w)).count();
             let rank = if words.iter().all(|w| named == *w || named.ends_with(&format!(".{w}"))) {
                 0
             } else if words.iter().all(|w| named.contains(w.as_str())) {
                 1
-            } else if words.iter().all(|w| named.contains(w.as_str()) || documented.contains(w.as_str())) {
+            } else if held == words.len() {
                 2
+            } else if held > 0 {
+                // A partial match, the more words the earlier, those named
+                // with one of them first.
+                3
             } else {
                 continue;
+            };
+            let named_by = stems.iter().filter(|w| named.contains(*w)).count();
+            // Those whose names hold more of the words first.
+            let order = match rank {
+                2 => words.len() - named_by,
+                3 => words.len() * 2 - held * 2 - usize::from(named_by > 0),
+                _ => 0,
             };
             let declaration = declared["declaration"].as_str().unwrap_or_default();
             let declaration = declaration.split(" {\n").next().unwrap_or(declaration);
@@ -280,11 +310,27 @@ pub fn search<'a>(query: &str, modules: impl IntoIterator<Item = (String, &'a st
                 Some(end) => about[..=end].to_string(),
                 None => about,
             };
-            found.push((rank, Found { module: module.clone(), name, declaration: declaration.to_string(), about }));
+            let found_here = Found { module: module.clone(), name, declaration: declaration.to_string(), about };
+            found.push(((rank, order), found_here));
         }
     }
     found.sort_by(|a, b| (a.0, &a.1.module, &a.1.name).cmp(&(b.0, &b.1.module, &b.1.name)));
-    found.into_iter().map(|(_, found)| found).collect()
+    let whole = found.iter().take_while(|((rank, _), _)| *rank < 3).count();
+    found.truncate(if whole < FEW { whole.max(SOME) } else { whole });
+    let partial = (whole < found.len()).then_some(whole);
+    Searched { found: found.into_iter().map(|(_, found)| found).collect(), partial }
+}
+
+/// Fewer matches of every word than this, and those of some follow, up
+/// to `SOME` in all.
+const FEW: usize = 10;
+const SOME: usize = 15;
+
+/// What a search found: those with every word, then from `partial` on
+/// those with some.
+pub struct Searched {
+    pub found: Vec<Found>,
+    pub partial: Option<usize>,
 }
 
 /// The API of a standard module: `std.http`, `std.fs` or `prelude`, with
