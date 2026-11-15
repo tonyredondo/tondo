@@ -7198,3 +7198,15 @@ or a regular expression's end, so those say nothing; a deliberate one is silence
 allow W1022`. The proposal also warned of a `$` right before an interpolation, Kotlin's
 `"${name}"`, but in Tondo that is how a price is written, a dollar and the value, as two of the
 toolchain's own test programs do: there is no telling one from the other, so it says nothing.
+
+## The cache of builds is bounded by size too
+
+The cache kept a program's last build and removed what no one had used in 30 days, and nothing
+more: a machine that runs suites, as CI or a project's author, holds every program of every copy
+of a tree for a month, and this one held 124 GB, `run/` alone 12,742 entries. A new build also
+listed the whole of `run/` to find its program's older builds, which, with hundreds built at
+once, saturated the disk. Each program's builds now have a directory of their own, which a new
+build alone reads, and once a day the least recently used builds of `run/`, `test/` and `meta/` go
+while together they hold more than a limit. Tony chose 10 GB, a great many builds of a person's
+programs, with `TONDO_CACHE_LIMIT` for whoever compiles more; the fetched dependencies and the
+runtime do not count, since losing them costs the network or a long build.

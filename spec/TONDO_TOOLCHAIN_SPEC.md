@@ -249,6 +249,11 @@ programa, o proyecto en `test/`, compilado del mismo modo (debug, live,
 estático, para otro target o para otro nivel de procesador), un build nuevo
 deja solo el anterior más
 reciente: editar un programa no llena la caché con cada versión suya.
+Además, una vez al día, mientras lo que guardan juntos `run/`, `test/` y
+`meta/` pasa de un límite, se borra la entrada que hace más que nadie usa:
+10 GB, o lo que dé `TONDO_CACHE_LIMIT`, en bytes o con unidad, como `40G` o
+`500M`. Las dependencias descargadas y el runtime no cuentan: lo demás, un
+build lo vuelve a hacer.
 
 Para descargar, el toolchain usa `git`, `curl`, `tar` y `unzip` del sistema.
 Si falta una herramienta, el error lo dice. Con `tondo.lock` y la caché

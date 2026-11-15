@@ -56,7 +56,9 @@ tondo bind lib.h --library z      extern declarations for a C header
 ```
 
 `run` keeps its build in the cache by the files it reads, so a second run of
-the same code starts at once; `tondo clean` empties the cache.
+the same code starts at once; `tondo clean` empties the cache. The builds it
+keeps hold 10 GB at most, the least recently used going first, and
+`TONDO_CACHE_LIMIT=40G` gives them more.
 
 ## Test
 

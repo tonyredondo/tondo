@@ -107,7 +107,89 @@ pub fn cache_entry(kind: &str, key: &str) -> PathBuf {
         let _ = file.set_modified(now);
     }
     sweep(&dir, now, matches!(kind, "run" | "test"));
+    if matches!(kind, "run" | "test" | "meta") {
+        bound(&cache_dir(), now, cache_limit());
+    }
     entry
+}
+
+/// What the builds of `run/`, `test/` and `meta/` may hold together:
+/// `TONDO_CACHE_LIMIT`, as `40G`, `500M` or a number of bytes; 10 GB if it
+/// does not say.
+fn cache_limit() -> u64 {
+    const GB: u64 = 1 << 30;
+    let given = std::env::var("TONDO_CACHE_LIMIT").ok();
+    let parsed = given.as_deref().map(str::trim).and_then(|text| {
+        let (number, unit) = match text.char_indices().find(|(_, c)| !c.is_ascii_digit()) {
+            Some((at, _)) => text.split_at(at),
+            None => (text, ""),
+        };
+        let unit = match unit.trim().to_ascii_uppercase().trim_end_matches('B') {
+            "" => 1,
+            "K" => 1 << 10,
+            "M" => 1 << 20,
+            "G" => GB,
+            "T" => 1 << 40,
+            _ => return None,
+        };
+        number.parse::<u64>().ok()?.checked_mul(unit)
+    });
+    parsed.unwrap_or(10 * GB)
+}
+
+/// Once a day, the builds no one used for longest while `run/`, `test/`
+/// and `meta/` hold more than `limit` together. The dependencies fetched
+/// and the runtime do not count: a build makes the rest again.
+fn bound(cache: &Path, now: std::time::SystemTime, limit: u64) {
+    const DAY: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+    let stamp = cache.join(".bounded");
+    let recent = std::fs::metadata(&stamp)
+        .and_then(|m| m.modified())
+        .is_ok_and(|modified| now.duration_since(modified).unwrap_or_default() < DAY);
+    if recent || std::fs::write(&stamp, b"").is_err() {
+        return;
+    }
+    fn size(path: &Path) -> u64 {
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) if meta.is_dir() => {
+                std::fs::read_dir(path).into_iter().flatten().flatten().map(|e| size(&e.path())).sum()
+            }
+            Ok(meta) => meta.len(),
+            Err(_) => 0,
+        }
+    }
+    let children = |dir: &Path| -> Vec<PathBuf> {
+        let entries = std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path());
+        entries.filter(|path| path.is_dir()).collect()
+    };
+    // Each build, when it was last used, and its bytes: those of `run/`
+    // and `test/` a level down, in their program's directory.
+    let mut builds: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
+    for kind in ["run", "test", "meta"] {
+        let dir = cache.join(kind);
+        let entries = match kind {
+            "meta" => children(&dir),
+            _ => children(&dir).iter().flat_map(|program| children(program)).collect(),
+        };
+        for entry in entries {
+            let used = std::fs::metadata(&entry).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+            builds.push((used, size(&entry), entry));
+        }
+    }
+    let mut total: u64 = builds.iter().map(|(_, bytes, _)| bytes).sum();
+    builds.sort_by_key(|(used, _, _)| *used);
+    for (_, bytes, entry) in builds {
+        if total <= limit {
+            break;
+        }
+        if std::fs::remove_dir_all(&entry).is_ok() {
+            total = total.saturating_sub(bytes);
+            // Its program's directory, when it was the last.
+            if let Some(program) = entry.parent() {
+                let _ = std::fs::remove_dir(program);
+            }
+        }
+    }
 }
 
 /// Removes the entries of `dir` no one used in 30 days, at most once a
@@ -2703,6 +2785,36 @@ mod tests {
         assert!(!programs.join("a/old").exists() && programs.join("a/recent").exists());
         assert!(!programs.join("b").exists() && !programs.join("c0-d1").exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Over the limit, the builds no one used for longest go first, those
+    /// of every kind together, once a day; the limit is read in bytes or
+    /// with a unit.
+    #[test]
+    fn bounds_the_builds_by_size() {
+        let cache = std::env::temp_dir().join(format!("tondo-bound-{}", std::process::id()));
+        let now = SystemTime::now();
+        for (name, days) in [("run/p/old", 3), ("run/p/new", 0), ("test/q/mid", 2), ("meta/m", 1)] {
+            std::fs::create_dir_all(cache.join(name)).unwrap();
+            std::fs::write(cache.join(name).join("built"), [0u8; 1000]).unwrap();
+            let file = std::fs::File::open(cache.join(name)).unwrap();
+            file.set_modified(now - Duration::from_secs(days * 24 * 60 * 60)).unwrap();
+        }
+        super::bound(&cache, now, 2500);
+        let left = ["run/p/old", "run/p/new", "test/q/mid", "meta/m"].map(|name| cache.join(name).exists());
+        assert_eq!(left, [false, true, false, true]);
+        assert!(!cache.join("test/q").exists());
+        // Once a day at most.
+        super::bound(&cache, now, 0);
+        assert!(cache.join("run/p/new").exists());
+        std::fs::remove_dir_all(&cache).unwrap();
+        for (given, bytes) in [("40G", 40u64 << 30), ("500M", 500 << 20), ("2048", 2048), ("1 gb", 1 << 30)] {
+            unsafe { std::env::set_var("TONDO_CACHE_LIMIT", given) };
+            assert_eq!(super::cache_limit(), bytes, "{given}");
+        }
+        unsafe { std::env::set_var("TONDO_CACHE_LIMIT", "lots") };
+        assert_eq!(super::cache_limit(), 10 << 30);
+        unsafe { std::env::remove_var("TONDO_CACHE_LIMIT") };
     }
 
     /// Threads that write the same file at once, as two analyses extracting
