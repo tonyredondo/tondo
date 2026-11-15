@@ -472,6 +472,8 @@ What is under way and what is planned:
 | A chain of arrays without the arrays between, short texts without the heap | Next in the optimizer |
 | Interfaces of C++ that are tables of functions, as a trait with `@ffi.Interface` | Accepted, not started |
 | A heap for each task | Research |
+| Tools for making a program faster: a profile's lines with what the compiler made of them, a benchmark written from a dump, warnings for what the optimizer cannot fix, what an executable weighs, where a build's time goes, a profile by instructions, and remarks that say why | Accepted, not started |
+| A bound on the size of the cache of builds, 10 GB unless `TONDO_CACHE_LIMIT` says another | Accepted; under way |
 | Vectors of 512 bits with AVX-512; today they are computed by halves | Waits for a machine to test on |
 | Profile-guided optimization while a program runs | Research |
 | Windows | Not started, after the work above |

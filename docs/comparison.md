@@ -40,6 +40,14 @@ errors, a type with several shapes, traits and generics, collections,
 tasks, deadlines, shared state, JSON, tests, and an HTTP server with its
 client.
 
+To port a program rather than compare two, the guide has a
+[runbook](toolchain/editors-and-agents.md#runbooks) for each of these
+languages and for C++. `tondo guide runbook-port` is the method: the
+original's tests first, then a function at a time, each call of its
+library looked up. `runbook-port-go` and the others say what each thing of
+the language becomes, and port one program step by step with what
+`tondo check` says of the habits it brings.
+
 ## At a glance
 
 | | Tondo | Go | Rust | C# |
