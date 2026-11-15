@@ -726,6 +726,11 @@ fn tests_by_what_changed_and_by_commit() {
     // Nothing of the API changed but what it says; `main` reaches nothing.
     let (found, _) = agent.call("api_diff", json!({ "rev": good }));
     assert_eq!(found["report"]["breaks"], false, "{found}");
+    // A break is what it answers, not a failure of the tool.
+    std::fs::write(dir.join("src/main.to"), main.replace("pub fn alone", "fn alone")).unwrap();
+    let (found, _) = agent.call("api_diff", json!({ "rev": good }));
+    assert_eq!(found["report"]["breaks"], true, "{found}");
+    std::fs::write(dir.join("src/main.to"), main.replace("n * 2", "n * 3")).unwrap();
     let (found, text) = agent.call("unreached", json!({}));
     assert!(text.contains("unreached") || found.to_string().contains("unreached"), "{found}{text}");
     agent.stop();

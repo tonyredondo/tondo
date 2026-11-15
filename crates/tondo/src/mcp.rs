@@ -1605,7 +1605,9 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         || (name == "test" && args.flag("list"));
     // The result of a program, of its tests or of a check is what it
     // reports, not a failure of the tool.
-    let reported = matches!(name, "run" | "test" | "doc_test") || (name == "format" && args.flag("check"));
+    let reported = matches!(name, "run" | "test" | "doc_test")
+        || (name == "format" && args.flag("check"))
+        || (name == "api_diff" && serde_json::from_str::<Value>(&ran.stdout).is_ok_and(|diff| diff["breaks"] == true));
     let mut structured = json!({ "exit_code": ran.code, "stdout": ran.stdout, "stderr": ran.stderr });
     if ran.timed_out {
         structured["timed_out"] = json!(true);
