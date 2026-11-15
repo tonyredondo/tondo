@@ -37,6 +37,11 @@ fn dir(name: &str) -> PathBuf {
 }
 
 /// A program and the lines it writes, as they come.
+/// How long a wait that includes a build may take: the first line of a
+/// program, the debugger's answers, and what follows a reload, which builds
+/// the new code; on the slowest runner a build takes longer than a minute.
+const BUILDING: Duration = Duration::from_secs(600);
+
 struct Running {
     child: Child,
     input: ChildStdin,
@@ -77,7 +82,7 @@ impl Running {
     fn answer(&mut self, sent: &str) -> String {
         writeln!(self.input, "{sent}").unwrap();
         self.input.flush().unwrap();
-        let wait = Duration::from_secs(if self.answered { 60 } else { 600 });
+        let wait = if self.answered { Duration::from_secs(60) } else { BUILDING };
         match self.lines.recv_timeout(wait) {
             Ok(line) => {
                 self.answered = true;
@@ -202,7 +207,7 @@ fn edit_and_continue() {
     let said = |debugger: &mut Running, until: &str| -> Vec<String> {
         let mut lines = Vec::new();
         loop {
-            let line = debugger.lines.recv_timeout(Duration::from_secs(60)).expect("the debugger's answer");
+            let line = debugger.lines.recv_timeout(BUILDING).expect("the debugger's answer");
             let done = line.contains(until);
             lines.push(line);
             if done {
@@ -266,14 +271,14 @@ fn watching_reloads_what_is_saved() {
     assert_eq!(server.answer("a"), "v1 a 1");
     edit(&file, "\"v1 {line}", "\"v2 {line}");
     // A reload builds the new code first, as long as a build takes.
-    let reloaded = server.errors.recv_timeout(Duration::from_secs(600)).expect("a reload");
+    let reloaded = server.errors.recv_timeout(BUILDING).expect("a reload");
     assert!(reloaded.contains("reloaded: 1 changed (main)"), "{reloaded}");
     assert_eq!(server.answer("b"), "v2 b 2");
     // A change it cannot make in place runs the program again: a `Ref`
     // keeps a value of a variant the new code does not have.
     let text = std::fs::read_to_string(&file).unwrap();
     save(&file, &text.replace("    Quiet\n", "").replace("Ref(Mode.Quiet)", "Ref(Mode.Loud)"));
-    let restarted = server.errors.recv_timeout(Duration::from_secs(600)).expect("a restart");
+    let restarted = server.errors.recv_timeout(BUILDING).expect("a restart");
     assert!(restarted.contains("running it again"), "{restarted}");
     server.built_again();
     assert_eq!(server.answer("c"), "v2 c 1");
@@ -475,7 +480,7 @@ fn collections_and_variants_convert() {
     let (done, said) = reload(&dir, &server.pid());
     assert!(done && said.contains("`Mode.Busy` is gone: a frame holding one stays on the old code"), "{said}");
     assert_eq!(server.answer("c"), "c 4 4 0 3 busy");
-    let told = server.errors.recv_timeout(Duration::from_secs(60)).expect("why the frame stays");
+    let told = server.errors.recv_timeout(BUILDING).expect("why the frame stays");
     assert!(
         told.contains("one of its `Mode` values does not convert: it is of a variant the new code does not have"),
         "{told}"
@@ -594,7 +599,7 @@ fn a_stopped_frame_restarts() {
     let said = |debugger: &mut Running, until: &str| -> Vec<String> {
         let mut lines = Vec::new();
         loop {
-            let line = debugger.lines.recv_timeout(Duration::from_secs(60)).expect("the debugger's answer");
+            let line = debugger.lines.recv_timeout(BUILDING).expect("the debugger's answer");
             let done = line.contains(until);
             lines.push(line);
             if done {
@@ -779,7 +784,7 @@ fn a_panic_waits_for_a_fix() {
     assert!(found["held"][0]["message"].as_str().unwrap().contains("P0003"), "{found}");
     // The fix is above the line that panicked.
     edit(&file, "    total / by\n", "    if by == 0 {\n        return 0\n    }\n    total / by\n");
-    assert_eq!(server.lines.recv_timeout(Duration::from_secs(60)).unwrap(), "3 0");
+    assert_eq!(server.lines.recv_timeout(BUILDING).unwrap(), "3 0");
     assert_eq!(server.answer("2"), "4 50");
     server.stop();
 }
@@ -820,7 +825,7 @@ fn the_lines_of_a_running_program_say_what_they_left() {
         time.sleep(time.milliseconds(5))\n    }\n}\n";
     std::fs::write(dir.join("counts.to"), program).unwrap();
     let server = Running::start(&dir, &["run", "counts.to", "--live"]);
-    assert!(server.lines.recv_timeout(Duration::from_secs(60)).is_ok());
+    assert!(server.lines.recv_timeout(BUILDING).is_ok());
     let args = ["values", &server.pid(), "counts.to", "--json"];
     let told = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
     let found: serde_json::Value = serde_json::from_slice(&told.stdout).unwrap();
@@ -906,7 +911,7 @@ fn a_stopped_frame_goes_on_in_the_new_code() {
     let said = |debugger: &mut Running, until: &str| -> Vec<String> {
         let mut lines = Vec::new();
         loop {
-            let line = debugger.lines.recv_timeout(Duration::from_secs(60)).expect("the debugger's answer");
+            let line = debugger.lines.recv_timeout(BUILDING).expect("the debugger's answer");
             let done = line.contains(until);
             lines.push(line);
             if done {
@@ -1219,7 +1224,7 @@ fn a_wait_for_input_ends_when_cancelled() {
     let program = "import std.console\nimport std.time\n\nlet job = spawn console.readLine()\ntime.sleep(time.milliseconds(50))\njob.cancel()\nconsole.println(\"cancelled\")\n";
     std::fs::write(&file, program).unwrap();
     let server = Running::start(&dir, &["run", "input.to"]);
-    let line = server.lines.recv_timeout(Duration::from_secs(60)).expect("the program goes on");
+    let line = server.lines.recv_timeout(BUILDING).expect("the program goes on");
     assert_eq!(line, "cancelled");
     server.stop();
 }
