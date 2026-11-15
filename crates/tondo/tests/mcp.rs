@@ -693,15 +693,10 @@ fn reads_dumps_sources_and_a_running_program() {
     let mut line = String::new();
     BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
     let pid = child.id().to_string();
+    // It serves the tools from before `main`, which said it was ready.
     let arguments = json!({ "program": pid, "place": "runs.to:5", "text": "at {round}", "max": 2, "seconds": 30 });
-    let mut text = String::new();
-    for _ in 0..200 {
-        text = said(&mut agent, "logpoint", arguments.clone());
-        if !text.contains("answers") {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    let logged = agent.request("tools/call", json!({ "name": "logpoint", "arguments": arguments }));
+    let text = logged["content"][0]["text"].as_str().unwrap().to_string();
     let waits = said(&mut agent, "blocked", json!({ "program": pid }));
     assert!(serde_json::from_str::<Value>(&waits).is_ok(), "{waits}");
     let requests = said(&mut agent, "requests", json!({ "program": pid }));
@@ -729,8 +724,7 @@ fn reads_dumps_sources_and_a_running_program() {
     agent.stop();
     match cfg!(target_os = "linux") {
         true => {
-            let found: Value = serde_json::from_str(&text).unwrap_or_else(|_| panic!("{text}"));
-            let hits = found["hits"].as_array().unwrap_or_else(|| panic!("{text}"));
+            let hits = logged["structuredContent"]["report"]["hits"].as_array().unwrap_or_else(|| panic!("{logged}"));
             assert_eq!(hits.len(), 2, "{text}");
             assert!(hits[0]["text"].as_str().unwrap().starts_with("at "), "{text}");
         }

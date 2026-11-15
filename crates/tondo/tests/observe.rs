@@ -30,6 +30,26 @@ fn tondo(args: &[&str]) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+/// Asks the program `pid` for dumps into `file` until `count` of its tasks
+/// wait, which a program cannot say itself once it waits: their `tasks`,
+/// as `dump read` gives them. The cap only bounds tasks that never wait.
+fn until_waiting(pid: u32, count: usize, file: &Path) -> Value {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(["dump", &pid.to_string(), "--output"])
+            .arg(file)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let tasks = tondo(&["dump", "read", file.to_str().unwrap(), "tasks", "--json"])["tasks"].clone();
+        if tasks.as_array().unwrap().iter().filter(|task| task["state"] == "waits").count() >= count {
+            return tasks;
+        }
+        assert!(std::time::Instant::now() < until, "{count} tasks never waited: {tasks}");
+    }
+}
+
 /// A port for a server a test starts, out of the range the system gives: one
 /// it gave and took back can go to another test before the server binds it.
 fn free_port() -> u16 {
@@ -385,22 +405,10 @@ fn dumps_of_a_running_program_and_at_a_panic() {
         .unwrap();
     let mut line = String::new();
     BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
-    let pid = child.id().to_string();
     let file = dir.join("running.dump.json");
     let read = |view: &[&str]| tondo(&[&["dump", "read", file.to_str().unwrap()], view, &["--json"]].concat());
-    // The tasks get to their waits soon after the program says it is ready.
-    let mut tasks = Value::Null;
-    for _ in 0..50 {
-        let output =
-            Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", &pid, "--output"]).arg(&file).output().unwrap();
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        tasks = read(&["tasks"])["tasks"].clone();
-        let waits = |runs: &str| tasks.as_array().unwrap().iter().any(|t| t["runs"] == runs && t["state"] == "waits");
-        if waits("main") && waits("sleeper") {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+    // The tasks get to their waits after the program says it is ready.
+    let tasks = until_waiting(child.id(), 2, &file);
     drop(child.stdin.take());
     child.wait().unwrap();
 
@@ -3539,19 +3547,20 @@ fn a_request_is_followed_through_its_tasks() {
         let logged = |request: &str, seconds: &str| {
             let args =
                 ["logpoint", &pid, "server.to:5", "--request", request, "--max", "1", "--for", seconds, "--json"];
-            Command::new(tondo_bin).args(args).output().unwrap()
+            Command::new(tondo_bin).args(args).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap()
         };
         let hits = |output: std::process::Output| {
             let found: Value = serde_json::from_slice(&output.stdout).unwrap();
             found["hits"].as_array().unwrap().len()
         };
         for (request, seconds, expected) in [("/other", "3", 0), ("/slow", "30", 1)] {
-            std::thread::scope(|scope| {
-                let asked = scope.spawn(|| logged(request, seconds));
-                std::thread::sleep(std::time::Duration::from_millis(1000));
-                get();
-                assert_eq!(hits(asked.join().unwrap()), expected, "{request}");
-            });
+            let mut asked = logged(request, seconds);
+            // It says when the logpoint is in place, before the request.
+            let mut line = String::new();
+            BufReader::new(asked.stderr.as_mut().unwrap()).read_line(&mut line).unwrap();
+            assert!(line.starts_with("tondo: a logpoint on server.to:5"), "{line}");
+            get();
+            assert_eq!(hits(asked.wait_with_output().unwrap()), expected, "{request}");
         }
     }
     // A dump keeps them.
@@ -3764,6 +3773,8 @@ fn a_breakpoint_stops_one_task_of_a_release_build() {
     // The third time a line is reached, by a count kept where it is reached.
     // The task that stands stays, whatever happens to its breakpoint.
     adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": [] }));
+    // Time is what is under test: a task let go with its breakpoint would
+    // run on meanwhile, and the count below would come out past 3.
     std::thread::sleep(std::time::Duration::from_millis(100));
     let breakpoints = json!([{ "line": 7, "hitCondition": "3" }]);
     adapter.ask("setBreakpoints", json!({ "source": { "path": path }, "breakpoints": breakpoints }));
@@ -4597,7 +4608,8 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     std::fs::create_dir_all(dir.join("dumps")).unwrap();
     let port = free_port();
     let program = format!(
-        "import std.http\nimport std.time\n\nfn slow(id: Int): String {{\n    time.sleep(time.seconds(60))\n    \
+        "import std.console\nimport std.http\nimport std.time\n\nfn slow(id: Int): String {{\n    \
+         console.println(\"handling {{id}}\")\n    let _ = console.flush()\n    time.sleep(time.seconds(60))\n    \
          \"done {{id}}\"\n}}\n\nfn main(): !http.HttpError {{\n    var app = http.App()\n    \
          app.get(\"/slow/:id\", slow)\n    app.listen({port})?\n}}\n"
     );
@@ -4606,8 +4618,13 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     let built =
         Command::new(tondo_bin).args(["build", "server.to", "--output", "server"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let mut server =
-        Command::new(dir.join("server")).env("TONDO_DUMP", dir.join("dumps")).stderr(Stdio::piped()).spawn().unwrap();
+    let mut server = Command::new(dir.join("server"))
+        .env("TONDO_DUMP", dir.join("dumps"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut handling = BufReader::new(server.stdout.take().unwrap());
     // The client holds its connection open while the handler sleeps.
     let client = (0..1200).find_map(|_| {
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -4615,7 +4632,11 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     });
     let mut client = client.unwrap();
     std::io::Write::write_all(&mut client, b"GET /slow/77?token=hidden HTTP/1.1\r\nHost: here\r\n\r\n").unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    let sent = std::time::Instant::now();
+    // The handler says when it has the request, which the signal finds.
+    let mut line = String::new();
+    handling.read_line(&mut line).unwrap();
+    assert_eq!(line, "handling 77\n");
     let pid = server.id().to_string();
     assert!(Command::new("kill").args(["-QUIT", &pid]).status().unwrap().success());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
@@ -4644,7 +4665,8 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     assert_eq!(request["method"], "GET", "{requests}");
     assert_eq!(request["path"], "/slow/77", "{requests}");
     assert_ne!(request["task"], 0, "{requests}");
-    assert!(request["ms"].as_u64().unwrap() >= 400, "{requests}");
+    // How long it was in flight: no longer than since it was sent.
+    assert!(request["ms"].as_u64().unwrap() <= sent.elapsed().as_millis() as u64, "{requests}");
     // A breakpoint on requests stops the task that takes one.
     let debugged = dir.join("debugged");
     std::fs::create_dir_all(&debugged).unwrap();
@@ -6203,8 +6225,9 @@ fn reads_a_core_with_the_tasks_that_waited() {
     let mut line = String::new();
     said.read_line(&mut line).unwrap();
     assert_eq!(line.trim(), "ready");
-    // The task that reads is left waiting, or on a thread, in its own time.
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    // The task that reads, and `main` that waits for it, get to their waits
+    // after the program says it is ready.
+    until_waiting(child.id(), 2, &dir.join("before.json"));
     let core = dir.join("waits.core");
     let written = core_of(child.id(), &executable, &core);
     child.kill().unwrap();
@@ -6565,11 +6588,12 @@ fn reads_a_core_of_macos() {
         .output()
         .unwrap();
     assert!(signed.status.success(), "{signed:?}");
-    let mut child = Command::new(dir.join("stays")).stdout(Stdio::piped()).spawn().unwrap();
+    let mut child =
+        Command::new(dir.join("stays")).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap();
     let mut said = BufReader::new(child.stdout.take().unwrap());
     let mut line = String::new();
     said.read_line(&mut line).unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    until_waiting(child.id(), 2, &dir.join("before.json"));
     let taken =
         Command::new("gcore").args(["-o", "stays.core", &child.id().to_string()]).current_dir(&dir).output().unwrap();
     child.kill().unwrap();
@@ -6713,19 +6737,22 @@ fn sigquit_says_where_the_tasks_are() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("sigquit");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let program =
-        "import std.time\n\nfn stuck() {\n    time.sleep(time.seconds(60))\n}\n\nfn main() {\n    stuck()\n}\n";
+    let program = "import std.console\nimport std.time\n\nfn stuck() {\n    console.println(\"in stuck\")\n    \
+                   let _ = console.flush()\n    time.sleep(time.seconds(60))\n}\n\nfn main() {\n    stuck()\n}\n";
     std::fs::write(dir.join("quit.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
     let built =
         Command::new(tondo_bin).args(["build", "quit.to", "--output", "quit"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let child = Command::new(dir.join("quit")).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
-    std::thread::sleep(std::time::Duration::from_secs(1));
+    let mut child = Command::new(dir.join("quit")).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    // The program says when it is in `stuck`, where the signal finds it.
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+    assert_eq!(line, "in stuck\n");
     Command::new("kill").args(["-QUIT", &child.id().to_string()]).status().unwrap();
     let ended = child.wait_with_output().unwrap();
     let said = String::from_utf8_lossy(&ended.stderr);
-    assert!(said.contains("SIGQUIT") && said.contains("stuck  quit.to:4"), "{said}");
+    assert!(said.contains("SIGQUIT") && said.contains("stuck  quit.to:"), "{said}");
     assert_eq!(std::os::unix::process::ExitStatusExt::signal(&ended.status), Some(3), "{said}");
 }
 

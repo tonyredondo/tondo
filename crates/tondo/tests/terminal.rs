@@ -30,8 +30,11 @@ fn main(): !cli.TerminalError {
             console.println("picked {picked}")
         }
         "sizes" => {
-            // Only a change of size can wake it: no deadlock.
-            for size in cli.redraws() {
+            // Only a change of size can wake it: no deadlock. It says when
+            // it listens for one, which the test then makes.
+            let sizes = cli.redraws()
+            console.println("waiting")
+            for size in sizes {
                 console.println("drawn at {size}")
                 break
             }
@@ -47,9 +50,10 @@ fn pressing(): !cli.TerminalError {
         ok(_) => console.println("two")
         err(error) => console.println("second: {error}")
     }
-    console.println("taken")
     let keys = terminal.keys()
     let sizes = cli.redraws()
+    // Taken, and listening for keys and sizes.
+    console.println("taken")
     for {
         select {
             let key = keys.receive() => match key {
@@ -390,7 +394,7 @@ fn without_signals_ctrl_c_and_ctrl_z_are_keys() {
 #[test]
 fn waiting_for_a_new_size_is_no_deadlock() {
     let mut terminal = Terminal::start("sizes", false);
-    std::thread::sleep(Duration::from_millis(300));
+    terminal.expect("waiting\n");
     terminal.resize(90, 20);
     terminal.expect("drawn at Size { columns: 90, rows: 20 }\n");
     assert_eq!(terminal.status(), 0);
@@ -426,6 +430,7 @@ fn a_terminal_without_a_size_gives_none_until_it_has_one() {
     let mut terminal = Terminal::start_at("keys", false, 0, 0);
     terminal.expect("size none\n");
     terminal.expect("taken\n");
+    // Time is what is under test: a draw with no size would come meanwhile.
     std::thread::sleep(Duration::from_millis(300));
     assert!(!terminal.text().contains("drawn at"), "{}", terminal.text());
     terminal.resize(90, 20);
@@ -436,6 +441,7 @@ fn a_terminal_without_a_size_gives_none_until_it_has_one() {
     terminal.send("Ada\r");
     // A choice draws once, at the size it supposes, and waits.
     terminal.expect("❯ tea");
+    // Time is what is under test: a second draw would come meanwhile.
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(terminal.text().matches("❯ tea").count(), 1, "{}", terminal.text());
     terminal.send("\r");

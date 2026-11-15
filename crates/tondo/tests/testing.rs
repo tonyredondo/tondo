@@ -1504,16 +1504,23 @@ fn watches_and_runs_what_a_change_affects() {
     };
     let all = ["app::integration::api::usesShapes", "app::unit::app::standsAlone", "app::unit::shapes::hasSides"];
     assert_eq!(next_run(), all);
-    // Stamps change at least each second on some filesystems.
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-    std::fs::write(dir.join("src/shapes/shapes.to"), "pub fn sides(): Int {\n    1 + 2\n}\n").unwrap();
+    // Stamps change only each second on some filesystems: each file is
+    // stamped seconds after the last, rather than waiting for the clock to
+    // move, and put in place at once, as an editor saves.
+    let mut stamp = std::time::SystemTime::now();
+    let mut write = |file: &str, text: &str| {
+        let written = dir.join(".saving");
+        std::fs::write(&written, text).unwrap();
+        stamp += std::time::Duration::from_secs(2);
+        std::fs::File::options().write(true).open(&written).unwrap().set_modified(stamp).unwrap();
+        std::fs::rename(&written, dir.join(file)).unwrap();
+    };
+    write("src/shapes/shapes.to", "pub fn sides(): Int {\n    1 + 2\n}\n");
     assert_eq!(next_run(), ["app::integration::api::usesShapes", "app::unit::shapes::hasSides"]);
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-    std::fs::write(dir.join("src/main_test.to"), "test standsAlone {\n    assert(3 == 3)\n}\n").unwrap();
+    write("src/main_test.to", "test standsAlone {\n    assert(3 == 3)\n}\n");
     assert_eq!(next_run(), ["app::unit::app::standsAlone"]);
     // The manifest changed: everything runs.
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\n\n").unwrap();
+    write("tondo.toml", "[package]\nname = \"app\"\n\n");
     assert_eq!(next_run(), all);
     unsafe { libc::kill(child.id() as i32, libc::SIGINT) };
     assert_eq!(child.wait().unwrap().code(), Some(4));

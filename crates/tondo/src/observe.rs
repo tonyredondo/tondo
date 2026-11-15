@@ -3134,13 +3134,13 @@ pub fn logpoint(asked: &Logpoint, json: bool) -> Result<(), String> {
     if let Some(error) = answer["error"].as_str() {
         return Err(error.to_string());
     }
-    if !json {
-        let places = match answer["places"].as_u64() {
-            Some(1) => "1 place".to_string(),
-            places => format!("{} places", places.unwrap_or_default()),
-        };
-        eprintln!("tondo: a logpoint on {place}, in {places}: it ends after {max} times");
-    }
+    // Said with `--json` too, on the error output: a script that waits for
+    // it knows the logpoint is in place before it makes the line run.
+    let places = match answer["places"].as_u64() {
+        Some(1) => "1 place".to_string(),
+        places => format!("{} places", places.unwrap_or_default()),
+    };
+    eprintln!("tondo: a logpoint on {place}, in {places}: it ends after {max} times");
     let waiting = seconds.map(Duration::from_secs);
     let _ = program.reader.get_ref().set_read_timeout(waiting);
     let deadline = waiting.map(|waiting| std::time::Instant::now() + waiting);

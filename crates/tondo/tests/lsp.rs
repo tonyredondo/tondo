@@ -931,8 +931,6 @@ fn checks_the_workspace_and_imports_modules() {
         ],
     );
     let mut editor = Editor::start_with_folders(&dir);
-    editor.notify("initialized", json!({}));
-    std::thread::sleep(std::time::Duration::from_millis(1500));
     editor.request("workspace/symbol", json!({ "query": "" }));
     let uri = format!("file://{}", dir.join("src/main.to").display());
     let (_, diagnostics) =
@@ -1131,7 +1129,6 @@ fn files_changed_on_disk() {
     let dir =
         project("lsp-watched", &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", "fn main() {}\n")]);
     let mut editor = Editor::start_with_folders(&dir);
-    std::thread::sleep(std::time::Duration::from_millis(1500));
     editor.request("workspace/symbol", json!({ "query": "" }));
     let uri = format!("file://{}", dir.join("src/main.to").display());
     std::fs::write(dir.join("src/main.to"), "fn main() {\n    let x: Int = \"text\"\n    _ = x\n}\n").unwrap();

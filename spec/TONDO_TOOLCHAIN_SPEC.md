@@ -1114,7 +1114,9 @@ pararlo ni compilarlo de nuevo, también en un build sin sondas: con el texto
 deja al principio de cada línea de un build sin sondas una llamada que no es nada:
 unos `nop` que no tocan registros, salvo en los bucles que no llaman a nada, donde se
 notaría. El logpoint escribe la llamada con todos los hilos parados y la quita al
-llegar a `--max`, 100 por omisión, o al irse la herramienta. Con `--if <condición>`
+llegar a `--max`, 100 por omisión, o al irse la herramienta. Dice en su salida de
+error cuando está puesto, también con `--json`, para que un script haga pasar la línea
+después. Con `--if <condición>`
 solo cuentan las veces en que se cumple, que se evalúa en la copia del proceso, así
 que las demás cuestan igual. Cada vez detiene esa
 tarea mientras una copia del proceso muestra los valores, como en un volcado.
