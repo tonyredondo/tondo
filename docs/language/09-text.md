@@ -93,6 +93,26 @@ literal, `first.concat(last)`.
 
 ## Formats
 
+A `$` is a character as any other, so `"${price}"` is a dollar and the
+price:
+
+```tondo
+import std.console
+
+fn main() {
+    let price = 5
+    console.println("${price} for {price} apples")
+}
+```
+
+```text output
+$5 for 5 apples
+```
+
+Other languages interpolate with it. Where a text has `$name` and `name` is
+a binding there, the compiler warns (`W1022`) that it is written as it is,
+and says to write `{name}`.
+
 After a `:`, an interpolation says how to write the value. The compiler
 checks the format against the value's type.
 
