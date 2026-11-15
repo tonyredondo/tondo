@@ -5747,6 +5747,22 @@ fn a_debug_build_dumps_the_contexts_it_computes() {
         let dump: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert!(dump["objects"]["list"].is_array(), "dump {n}: {}", dump["objects_missing"]);
     }
+    // A dump that could not stop the program, as the runtime writes it,
+    // says why it has no objects.
+    let file = dir.join("computed-1.dump.json");
+    let mut dump: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    dump.as_object_mut().unwrap().remove("objects");
+    dump["objects_missing"] = json!("the program did not stop for the dump within 2 s");
+    let missing = dir.join("missing.dump.json");
+    std::fs::write(&missing, dump.to_string()).unwrap();
+    let read =
+        Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", "read"]).arg(&missing).arg("objects").output().unwrap();
+    assert!(!read.status.success());
+    let said = String::from_utf8_lossy(&read.stderr);
+    assert!(said.contains("this dump has no objects: the program did not stop for the dump within 2 s"), "{said}");
+    let summary = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", "read"]).arg(&missing).output().unwrap();
+    let said = String::from_utf8_lossy(&summary.stdout);
+    assert!(said.contains("no objects: the program did not stop for the dump within 2 s"), "{said}");
     drop(child.stdin.take());
     line.clear();
     BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
