@@ -26,7 +26,7 @@ console.println("{bytes.length()} bytes: {point.x}, {point.y} {protobuf.toJson(p
 
 `tondo api std.protobuf` shows the same in a terminal.
 
-- [Functions](#functions): [`encode`](#encode), [`decode`](#decode), [`encodeTo`](#encodeto), [`decodeFrom`](#decodefrom), [`entries`](#entries), [`emptyReader`](#emptyreader), [`epoch`](#epoch), [`zeroDuration`](#zeroduration), [`nullValue`](#nullvalue), [`pack`](#pack), [`toJson`](#tojson), [`fromJson`](#fromjson)
+- [Functions](#functions): [`encode`](#encode), [`decode`](#decode), [`encodeTo`](#encodeto), [`decodeFrom`](#decodefrom), [`entries`](#entries), [`emptyReader`](#emptyreader), [`epoch`](#epoch), [`nullValue`](#nullvalue), [`pack`](#pack), [`toJson`](#tojson), [`fromJson`](#fromjson)
 - [Field](#field)
 - [Encoding](#encoding)
 - [Value](#value)
@@ -106,14 +106,6 @@ pub fn epoch(): time.DateTime
 ```
 
 The zero of a `Timestamp`, for a map entry without its value.
-
-#### zeroDuration
-
-```tondo
-pub fn zeroDuration(): time.Duration
-```
-
-The zero of a `Duration`, for a map entry without its value.
 
 #### nullValue
 

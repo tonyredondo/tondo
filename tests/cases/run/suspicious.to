@@ -1,6 +1,6 @@
 import std.console
 
-const Missing = Float.nan
+const Missing = Float.NaN
 
 fn main() {
     let x = 1.5

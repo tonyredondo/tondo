@@ -890,7 +890,7 @@ impl<'a> Checker<'a> {
 
     /// The type a single name denotes, without reporting unknown names.
     pub(super) fn type_named(&mut self, name: &str) -> Option<Ty> {
-        // A type parameter in scope, as `T` in `T.max`.
+        // A type parameter in scope, as `T` in `T.Max`.
         if let Some(&(_, param)) = self.type_params.iter().rev().find(|(n, _)| n == name) {
             return Some(param);
         }

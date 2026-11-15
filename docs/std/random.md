@@ -72,7 +72,7 @@ pub fn Random.int[T: Integer](mut self, range: Range[T]): T
 ```
 
 An integer of the range, each as likely, of any width:
-`random.int(1..=6)`, `random.int(1u64..=UInt64.max)`. An empty range
+`random.int(1..=6)`, `random.int(1u64..=UInt64.Max)`. An empty range
 panics.
 
 #### Random.float

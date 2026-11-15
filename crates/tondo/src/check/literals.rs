@@ -1104,18 +1104,31 @@ impl<'a> Checker<'a> {
             }
             return value;
         }
-        // The constants of the intrinsic numeric types: `Int.max`, `Float.pi`.
+        // `time.Duration.Zero`, the duration of no time.
+        if let [module, ty, constant] = segments
+            && (ty.name.as_str(), constant.name.as_str()) == ("Duration", "Zero")
+            && matches!(self.names.get(&module.name), Some(ModuleName::Module(StdModule::Time)))
+            && let Some(duration) = self.duration
+        {
+            return Self::mk(hir::ExprKind::Int(0), duration, span);
+        }
+        // The constants of the intrinsic numeric types: `Int.Max`, `Float.Pi`.
         if let [type_name, constant] = segments
             && matches!(self.names.get(&type_name.name), None | Some(ModuleName::Fn(_)))
             && let Some(ty) = self.intrinsic_owner(&type_name.name)
-            && let Some(kind) = self.intrinsic_constant(ty, &constant.name)
         {
-            let ty = if matches!(kind, hir::ExprKind::Int(_)) && constant.name == "bits" { Ty::INT } else { ty };
-            return Self::mk(kind, ty, span);
+            if let Some(kind) = self.intrinsic_constant(ty, &constant.name) {
+                let ty = if matches!(kind, hir::ExprKind::Int(_)) && constant.name == "Bits" { Ty::INT } else { ty };
+                return Self::mk(kind, ty, span);
+            }
+            if let Some(written) = renamed_constant(&constant.name)
+                && self.intrinsic_constant(ty, written).is_some()
+            {
+                return self.renamed_constant(type_name, constant, written, span);
+            }
         }
-        // `T.min`, `T.max` and `T.bits` of a `T: Integer` (18.10).
+        // `T.Min`, `T.Max` and `T.Bits` of a `T: Integer` (18.10).
         if let [type_name, constant] = segments
-            && matches!(constant.name.as_str(), "min" | "max" | "bits")
             && self.lookup(cx, &type_name.name).is_none()
             && let Some(ty) = self.type_named(&type_name.name)
             && self.bound_by(ty, self.integer)
@@ -1123,11 +1136,28 @@ impl<'a> Checker<'a> {
             use crate::numbers::NumOp;
             let constant_of = |op: NumOp| Callee::Std(StdFn::Number(op));
             let least = Self::mk(hir::ExprKind::Call(constant_of(NumOp::Least), Vec::new(), Vec::new()), ty, span);
-            return match constant.name.as_str() {
-                "min" => least,
-                "max" => Self::mk(hir::ExprKind::Call(constant_of(NumOp::Greatest), Vec::new(), Vec::new()), ty, span),
-                _ => Self::mk(hir::ExprKind::Call(constant_of(NumOp::Width), Vec::new(), vec![least]), Ty::INT, span),
-            };
+            match constant.name.as_str() {
+                "Min" => return least,
+                "Max" => {
+                    return Self::mk(
+                        hir::ExprKind::Call(constant_of(NumOp::Greatest), Vec::new(), Vec::new()),
+                        ty,
+                        span,
+                    );
+                }
+                "Bits" => {
+                    return Self::mk(
+                        hir::ExprKind::Call(constant_of(NumOp::Width), Vec::new(), vec![least]),
+                        Ty::INT,
+                        span,
+                    );
+                }
+                "min" | "max" | "bits" => {
+                    let written = renamed_constant(&constant.name).unwrap_or_default();
+                    return self.renamed_constant(type_name, constant, written, span);
+                }
+                _ => {}
+            }
         }
         // `Context.field`: its value where the code runs (11.16).
         if let [name, field, rest @ ..] = segments
@@ -1300,6 +1330,18 @@ impl<'a> Checker<'a> {
         );
         self.diags.warning("W1022", at, message);
         self.diags.fix("take the `$` away", false, vec![(Span::new(start, start + 1), String::new())]);
+    }
+
+    /// `Int.max` for `Int.Max`: a number's constant by the name it had,
+    /// before constants of every kind were written in PascalCase.
+    fn renamed_constant(&mut self, owner: &ast::Ident, constant: &ast::Ident, written: &str, span: Span) -> hir::Expr {
+        let message = format!(
+            "`{0}.{1}` is written `{0}.{written}`: a type's constants are written in PascalCase, as every constant is",
+            owner.name, constant.name
+        );
+        self.diags.error("E1001", constant.span, message);
+        self.diags.fix(format!("write `{written}`"), true, vec![(constant.span, written.to_string())]);
+        Self::error_expr(span)
     }
 
     /// Reports a path whose first name is unknown as a value: a method
@@ -1560,4 +1602,19 @@ impl<'a> Checker<'a> {
             }
         }
     }
+}
+
+/// The name a number's constant has now for the one it had: `Max` for `max`.
+fn renamed_constant(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "max" => "Max",
+        "min" => "Min",
+        "bits" => "Bits",
+        "pi" => "Pi",
+        "e" => "E",
+        "infinity" => "Infinity",
+        "nan" => "NaN",
+        "epsilon" => "Epsilon",
+        _ => return None,
+    })
 }

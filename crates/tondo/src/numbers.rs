@@ -98,7 +98,7 @@ pub enum NumOp {
     /// What the language's numbers do for `Number.fromInt`: an `Int` as the
     /// number, a panic when it does not fit (18.10).
     FromInt,
-    /// `T.min`, `T.max` and `T.bits` of a `T: Integer`.
+    /// `T.Min`, `T.Max` and `T.Bits` of a `T: Integer`.
     Least,
     Greatest,
     Width,
@@ -548,7 +548,7 @@ pub const ENTRIES: &[Entry] = &[
         &[("value", Integral, None)],
         Same,
         "The low bits of any integer or `Byte`, in two's complement: `UInt8.wrapping(300)` is 44 and \
-         `UInt.wrapping(-1)` is `UInt.max`.",
+         `UInt.wrapping(-1)` is `UInt.Max`.",
     ),
     function(
         "saturating",

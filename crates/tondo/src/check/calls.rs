@@ -1860,7 +1860,7 @@ impl<'a> Checker<'a> {
                 let receiver = ast::Expr { kind: ast::ExprKind::Path(prefix.to_vec()), span: receiver_span };
                 return self.method_call(cx, &receiver, method, args, expected, span);
             }
-            // `Float.nan.isNaN()`: a method of an intrinsic constant.
+            // `Float.NaN.isNaN()`: a method of an intrinsic constant.
             ast::ExprKind::Path(segments)
                 if segments.len() == 3
                     && !self.names.contains_key(&segments[0].name)

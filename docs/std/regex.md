@@ -19,8 +19,9 @@ console.println(digits.replaceAll("a1b22", "#")?)
 
 `tondo api std.regex` shows the same in a terminal.
 
-- [RegexOptions](#regexoptions): [`RegexOptions.defaults`](#regexoptionsdefaults)
-- [RegexLimits](#regexlimits): [`RegexLimits.defaults`](#regexlimitsdefaults)
+- [Functions](#functions): [`RegexOptions.Default`](#regexoptionsdefault), [`RegexLimits.Default`](#regexlimitsdefault)
+- [RegexOptions](#regexoptions)
+- [RegexLimits](#regexlimits)
 - [RegexErrorKind](#regexerrorkind)
 - [RegexPhase](#regexphase)
 - [RegexError](#regexerror)
@@ -29,6 +30,41 @@ console.println(digits.replaceAll("a1b22", "#")?)
 - [RegexMatch](#regexmatch): [`RegexMatch.capture`](#regexmatchcapture), [`RegexMatch.captureName`](#regexmatchcapturename)
 - [Regex](#regex): [`Regex.compile`](#regexcompile), [`Regex.pattern`](#regexpattern), [`Regex.captureCount`](#regexcapturecount), [`Regex.captureNames`](#regexcapturenames), [`Regex.isMatch`](#regexismatch), [`Regex.isFullMatch`](#regexisfullmatch), [`Regex.find`](#regexfind), [`Regex.findAll`](#regexfindall), [`Regex.replace`](#regexreplace), [`Regex.replaceAll`](#regexreplaceall), [`Regex.replaceWith`](#regexreplacewith), [`Regex.replaceAllWith`](#regexreplaceallwith), [`Regex.escape`](#regexescape)
 - [RegexFindIterator](#regexfinditerator)
+
+### Functions
+
+#### RegexOptions.Default
+
+```tondo
+pub const RegexOptions.Default: RegexOptions = RegexOptions {
+    caseInsensitive: false
+    multiLine: false
+    dotMatchesNewline: false
+    crlf: false
+    ungreedy: false
+}
+```
+
+Every option off: case-sensitive, `^` and `$` at the ends of the text,
+`.` not matching `\n`, and greedy repetition.
+
+#### RegexLimits.Default
+
+```tondo
+pub const RegexLimits.Default: RegexLimits = RegexLimits {
+    maxPatternBytes: 65536
+    maxSyntaxDepth: 256
+    maxCaptureGroups: 256
+    maxProgramStates: 1000000
+    maxInputBytes: 16777216
+    maxMatches: 1000000
+    maxOutputBytes: 67108864
+    maxReplacementBytes: 65536
+}
+```
+
+The default limits: patterns of up to 64 KiB, inputs of up to 16 MiB and
+a million matches.
 
 ### RegexOptions
 
@@ -48,7 +84,7 @@ How a pattern matches.
 import std.console
 import std.regex
 
-var options = regex.RegexOptions.defaults()
+var options = regex.RegexOptions.Default
 options.caseInsensitive = true
 options.multiLine = true
 let heading = regex.Regex.compile(r"^# (\w+)$", options: options)?
@@ -56,15 +92,6 @@ for found in heading.findAll("# Intro\ntext\n# USAGE\n")? {
     console.println(found?.capture(1).map((title) { title.text }) ?? "")
 }
 ```
-
-#### RegexOptions.defaults
-
-```tondo
-pub fn RegexOptions.defaults(): RegexOptions
-```
-
-Every option off: case-sensitive, `^` and `$` at the ends of the text,
-`.` not matching `\n`, and greedy repetition.
 
 ### RegexLimits
 
@@ -87,7 +114,7 @@ How much a pattern and its inputs may take.
 import std.console
 import std.regex
 
-var limits = regex.RegexLimits.defaults()
+var limits = regex.RegexLimits.Default
 limits.maxInputBytes = 1024
 let word = regex.Regex.compile(r"\w+", limits: limits)?
 match word.isMatch("x".repeat(2048)) {
@@ -95,15 +122,6 @@ match word.isMatch("x".repeat(2048)) {
     err(error) => console.println("refused: {error}")
 }
 ```
-
-#### RegexLimits.defaults
-
-```tondo
-pub fn RegexLimits.defaults(): RegexLimits
-```
-
-The default limits: patterns of up to 64 KiB, inputs of up to 16 MiB and
-a million matches.
 
 ### RegexErrorKind
 
@@ -330,23 +348,8 @@ console.println(email.replaceAll("ada@example.com, bo@example.org", r"${user} at
 ```tondo
 pub fn Regex.compile(
     pattern: String,
-    options: RegexOptions = RegexOptions {
-        caseInsensitive: false
-        multiLine: false
-        dotMatchesNewline: false
-        crlf: false
-        ungreedy: false
-    },
-    limits: RegexLimits = RegexLimits {
-        maxPatternBytes: 65536
-        maxSyntaxDepth: 256
-        maxCaptureGroups: 256
-        maxProgramStates: 1000000
-        maxInputBytes: 16777216
-        maxMatches: 1000000
-        maxOutputBytes: 67108864
-        maxReplacementBytes: 65536
-    },
+    options: RegexOptions = RegexOptions.Default,
+    limits: RegexLimits = RegexLimits.Default,
 ): Regex ! RegexError
 ```
 

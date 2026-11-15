@@ -63,7 +63,7 @@ pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Err
     lines.push("pub const Hash: String = \"{input.sha256}\"")
     // What is the same on every run works in a generator.
     var seeded = random.Random.seeded(7)
-    lines.push("pub const Stable: String = \"{uuid.Uuid.v5(uuid.Uuid.namespaceDns(), "app")} {seeded.int(1..=6)}\"")
+    lines.push("pub const Stable: String = \"{uuid.Uuid.v5(uuid.Uuid.NamespaceDns, "app")} {seeded.int(1..=6)}\"")
     var declared: Array[String] = []
     for declaration in request.declarations() {
         var parts: Array[String] = []

@@ -413,7 +413,7 @@ pub fn BigInt.toInt(self): Int? {
     if absolute <= 9223372036854775807 {
         0 - Int.wrapping(absolute)
     } else if absolute == 9223372036854775808 {
-        Int.min
+        Int.Min
     } else {
         none
     }

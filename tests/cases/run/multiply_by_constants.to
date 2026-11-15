@@ -18,37 +18,37 @@ fn said[T: Display](name: String, result: T ! Panic) {
 }
 
 fn main() {
-    let at2 = [Int.max / 2, Int.max / 2 + 1, Int.min / 2, Int.min / 2 - 1]
+    let at2 = [Int.Max / 2, Int.Max / 2 + 1, Int.Min / 2, Int.Min / 2 - 1]
     said("2 high", recover { at2[0] * 2 })
     said("2 past high", recover { at2[1] * 2 })
     said("2 low", recover { 2 * at2[2] })
     said("2 past low", recover { 2 * at2[3] })
-    let at3 = [Int.max / 3, Int.max / 3 + 1, Int.min / 3, Int.min / 3 - 1]
+    let at3 = [Int.Max / 3, Int.Max / 3 + 1, Int.Min / 3, Int.Min / 3 - 1]
     said("3 high", recover { at3[0] * 3 })
     said("3 past high", recover { at3[1] * 3 })
     said("3 low", recover { 3 * at3[2] })
     said("3 past low", recover { 3 * at3[3] })
-    let at5 = [Int.max / 5, Int.max / 5 + 1, Int.min / 5, Int.min / 5 - 1]
+    let at5 = [Int.Max / 5, Int.Max / 5 + 1, Int.Min / 5, Int.Min / 5 - 1]
     said("5 high", recover { at5[0] * 5 })
     said("5 past high", recover { at5[1] * 5 })
     said("5 low", recover { 5 * at5[2] })
     said("5 past low", recover { 5 * at5[3] })
-    let at7 = [Int.max / 7, Int.max / 7 + 1, Int.min / 7, Int.min / 7 - 1]
+    let at7 = [Int.Max / 7, Int.Max / 7 + 1, Int.Min / 7, Int.Min / 7 - 1]
     said("7 high", recover { at7[0] * 7 })
     said("7 past high", recover { at7[1] * 7 })
     said("7 low", recover { 7 * at7[2] })
     said("7 past low", recover { 7 * at7[3] })
-    let at8 = [Int.max / 8, Int.max / 8 + 1, Int.min / 8, Int.min / 8 - 1]
+    let at8 = [Int.Max / 8, Int.Max / 8 + 1, Int.Min / 8, Int.Min / 8 - 1]
     said("8 high", recover { at8[0] * 8 })
     said("8 past high", recover { at8[1] * 8 })
     said("8 low", recover { 8 * at8[2] })
     said("8 past low", recover { 8 * at8[3] })
-    let at9 = [Int.max / 9, Int.max / 9 + 1, Int.min / 9, Int.min / 9 - 1]
+    let at9 = [Int.Max / 9, Int.Max / 9 + 1, Int.Min / 9, Int.Min / 9 - 1]
     said("9 high", recover { at9[0] * 9 })
     said("9 past high", recover { at9[1] * 9 })
     said("9 low", recover { 9 * at9[2] })
     said("9 past low", recover { 9 * at9[3] })
-    let at16 = [Int.max / 16, Int.max / 16 + 1, Int.min / 16, Int.min / 16 - 1]
+    let at16 = [Int.Max / 16, Int.Max / 16 + 1, Int.Min / 16, Int.Min / 16 - 1]
     said("16 high", recover { at16[0] * 16 })
     said("16 past high", recover { at16[1] * 16 })
     said("16 low", recover { 16 * at16[2] })
@@ -62,13 +62,13 @@ fn main() {
     let bytes: Array[UInt8] = [85, 86]
     said("uint8 3", recover { bytes[0] * 3 })
     said("uint8 past", recover { bytes[1] * 3 })
-    let unsigned: Array[UInt] = [UInt.max / 5, UInt.max / 5 + 1]
+    let unsigned: Array[UInt] = [UInt.Max / 5, UInt.Max / 5 + 1]
     said("uint 5", recover { unsigned[0] * 5 })
     said("uint past", recover { unsigned[1] * 5 })
-    let n = [Int.max / 3]
+    let n = [Int.Max / 3]
     said("3n+1", recover { 3 * n[0] + 1 })
     said("3n+2", recover { 3 * n[0] + 2 })
-    let m = [Int.min / 3, Int.min / 3 - 1]
+    let m = [Int.Min / 3, Int.Min / 3 - 1]
     said("-3n+1", recover { -3 * m[0] + 1 })
     said("-3n past", recover { -3 * m[1] + 1 })
 }

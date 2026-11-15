@@ -80,7 +80,7 @@ fn main() {
     console.println("{grids(2, 3)} {odd(7)} {first(1_000_000_000_000, 3)}")
     let cells = flat(300, 40)
     console.println("{flat(2, 3)} {cells.length()} {cells[11_999]} {narrow(4)}")
-    match Array.withCapacity[Int](Int.max) {
+    match Array.withCapacity[Int](Int.Max) {
         ok(huge) => {
             var grown = huge
             grown.push(7)

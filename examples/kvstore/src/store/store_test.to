@@ -29,7 +29,7 @@ test counts {
         run(["SET name Ada", "INCR name"]).reply ==
             protocol.Reply.Error("`name` does not hold a number"),
     )
-    let top = run(["SET big {Int.max}", "INCR big"])
+    let top = run(["SET big {Int.Max}", "INCR big"])
     assert(top.reply == protocol.Reply.Error("`big` would overflow"))
 }
 

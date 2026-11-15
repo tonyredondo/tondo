@@ -337,11 +337,6 @@ pub fn epoch(): __time.DateTime {
     __time.utc(__time.nanoseconds(0))
 }
 
-/// The zero of a `Duration`, for a map entry without its value.
-pub fn zeroDuration(): __time.Duration {
-    __time.nanoseconds(0)
-}
-
 /// The zero of a `Value`, for a map entry without its value.
 pub fn nullValue(): __json.Value {
     __json.Value.Null

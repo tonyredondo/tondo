@@ -14,7 +14,7 @@ import std.yaml
 type Ids = { trace: UInt128, span: UInt, small: Int8, ratio: Float32, delta: Int128 }
 
 fn main(): Unit ! json.JsonError {
-    let ids = Ids { trace: UInt128.max, span: UInt.max, small: -5, ratio: 0.1, delta: Int128.min }
+    let ids = Ids { trace: UInt128.Max, span: UInt.Max, small: -5, ratio: 0.1, delta: Int128.Min }
     let text = json.encode(ids)
     console.println(text)
     let back = json.decode[Ids](text)?
@@ -22,11 +22,11 @@ fn main(): Unit ! json.JsonError {
     console.println("{json.decode[UInt8]("256")} {json.decode[Int8]("-128")} {json.decode[UInt]("18446744073709551615")}")
     let same = (i: Ids) { i.trace == ids.trace and i.delta == ids.delta and i.span == ids.span and i.ratio == ids.ratio }
     console.println("{cbor.decode[Ids](cbor.encode(ids)).map(same)} {yaml.decode[Ids](yaml.encode(ids)).map(same)}")
-    console.println("{messagepack.decode[UInt](messagepack.encode(UInt.max))}")
-    console.println("{toml.encode(["big": UInt.max])}")
+    console.println("{messagepack.decode[UInt](messagepack.encode(UInt.Max))}")
+    console.println("{toml.encode(["big": UInt.Max])}")
     var dice = random.Random.seeded(7)
     console.println("{dice.int(1..=6)} {dice.int(1..=6)} {dice.int(250u8..=255u8)} {dice.int(-5i128..5i128)}")
-    console.println("{math.gcd(12, 18)} {math.gcd(-12i8, 0i8)} {math.lcm(4u32, 6u32)} {math.gcd(Int128.max, 3i128)}")
+    console.println("{math.gcd(12, 18)} {math.gcd(-12i8, 0i8)} {math.lcm(4u32, 6u32)} {math.gcd(Int128.Max, 3i128)}")
 }
 
 // expect-stdout: {"trace":340282366920938463463374607431768211455,"span":18446744073709551615,"small":-5,"ratio":0.1,"delta":-170141183460469231731687303715884105728}

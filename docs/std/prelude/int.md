@@ -321,7 +321,7 @@ pub fn Int.wrapping[N](value: N): Int
 ```
 
 The low bits of any integer or `Byte`, in two's complement:
-`UInt8.wrapping(300)` is 44 and `UInt.wrapping(-1)` is `UInt.max`.
+`UInt8.wrapping(300)` is 44 and `UInt.wrapping(-1)` is `UInt.Max`.
 
 #### Int.saturating
 
@@ -650,7 +650,7 @@ pub fn UInt.wrapping[N](value: N): UInt
 ```
 
 The low bits of any integer or `Byte`, in two's complement:
-`UInt8.wrapping(300)` is 44 and `UInt.wrapping(-1)` is `UInt.max`.
+`UInt8.wrapping(300)` is 44 and `UInt.wrapping(-1)` is `UInt.Max`.
 
 #### UInt.saturating
 

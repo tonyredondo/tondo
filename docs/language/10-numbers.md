@@ -43,7 +43,7 @@ import std.console
 fn main() {
     let big: Int128 = 170_141_183_460_469_231_731_687_303_715_884_105_727
     let id = 18_446_744_073_709_551_615u64
-    console.println("{Int.max} {Int.min} {UInt8.max} {Int16.min} {Int.bits}")
+    console.println("{Int.Max} {Int.Min} {UInt8.Max} {Int16.Min} {Int.Bits}")
     console.println("{big} {id} {2.pow(62)} {7.max(3)} {(-7).abs()} {15.clamp(0, 10)}")
 }
 ```
@@ -69,7 +69,7 @@ fn main() {
         err(crash) => console.println("{crash.code}: {crash.message}")
     }
     let unsigned: UInt = 0
-    console.println("{recover { unsigned - 1 }.isErr()} {recover { Int.min / -1 }.isErr()}")
+    console.println("{recover { unsigned - 1 }.isErr()} {recover { Int.Min / -1 }.isErr()}")
 }
 ```
 
@@ -132,7 +132,7 @@ fn fnv1a(text: String): UInt {
 }
 
 fn main() {
-    let top = Int.max
+    let top = Int.Max
     console.println("{top.wrappingAdd(1)} {top.checkedAdd(1)} {top.saturatingAdd(1)} {top.overflowingAdd(1)}")
     console.println("{200u8.wrappingAdd(100)} {200u8.checkedAdd(100)} {200u8.saturatingAdd(100)} {0u8.saturatingSub(1)}")
     console.println("{fnv1a("hello"):x}")
@@ -541,7 +541,7 @@ fn mean[T: Fractional](values: Array[T]): T {
 
 /// Any integer in hexadecimal, with all its digits.
 fn hex[T: Integer](value: T): String {
-    value.toString(radix: 16).padStart(T.bits / 4, fill: "0")
+    value.toString(radix: 16).padStart(T.Bits / 4, fill: "0")
 }
 
 fn main() {
@@ -560,7 +560,7 @@ ff 00ff 00000000000000ff
 | --- | --- | --- |
 | `T: Additive` | anything that adds | `+`, `-`, `sum()` |
 | `T: Number` | anything that also multiplies | `*`, `/`, integer literals |
-| `T: Integer` | every integer of the language | all an integer has: `%`, bits, `T.max`, `T.bits`, `T.parse` |
+| `T: Integer` | every integer of the language | all an integer has: `%`, bits, `T.Max`, `T.Bits`, `T.parse` |
 | `T: Fractional` | a number whose division keeps the fraction: every float, `math.Decimal` | a `/` that does not cut: `1.0 / 2.0` is `0.5` |
 
 `mean` asks for a `Fractional` and not for any `Number`, since the division

@@ -575,7 +575,7 @@ pub fn JsonReader.uint32(self, value: __json.Value, path: String): UInt32 ! Prot
 
 /// An `int64`, `sint64` or `sfixed64`.
 pub fn JsonReader.int64(self, value: __json.Value, path: String): Int ! ProtobufError {
-    self.integer(value, path, Int.min, Int.max)?
+    self.integer(value, path, Int.Min, Int.Max)?
 }
 
 /// A `uint64` or `fixed64`.
@@ -600,9 +600,9 @@ pub fn JsonReader.uint64(self, value: __json.Value, path: String): UInt ! Protob
 pub fn JsonReader.double(self, value: __json.Value, path: String): Float ! ProtobufError {
     match value {
         __json.Value.Number(number) => number.toFloat()
-        __json.Value.Text("NaN") => Float.nan
-        __json.Value.Text("Infinity") => Float.infinity
-        __json.Value.Text("-Infinity") => -Float.infinity
+        __json.Value.Text("NaN") => Float.NaN
+        __json.Value.Text("Infinity") => Float.Infinity
+        __json.Value.Text("-Infinity") => -Float.Infinity
         __json.Value.Text(text) => match Float.parse(text) {
             ok(number) => number
             err(_) => fail jsonError(serialization.ErrorKind.Type, path, "expected a number")

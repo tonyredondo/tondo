@@ -126,7 +126,7 @@ test moves by hand is `testing.withVirtualTime`
 
 `tondo api std.time` shows the same in a terminal.
 
-- [Functions](#functions): [`nanoseconds`](#nanoseconds), [`microseconds`](#microseconds), [`milliseconds`](#milliseconds), [`seconds`](#seconds), [`minutes`](#minutes), [`hours`](#hours), [`now`](#now), [`sleep`](#sleep), [`utcNow`](#utcnow), [`unixTime`](#unixtime), [`utc`](#utc), [`deadline`](#deadline), [`remaining`](#remaining), [`parseDateTime`](#parsedatetime), [`parseDuration`](#parseduration), [`zone`](#zone), [`localZone`](#localzone), [`utcZone`](#utczone), [`fixedZone`](#fixedzone), [`localNow`](#localnow), [`parseZoned`](#parsezoned)
+- [Functions](#functions): [`Duration.Zero`](#durationzero), [`nanoseconds`](#nanoseconds), [`microseconds`](#microseconds), [`milliseconds`](#milliseconds), [`seconds`](#seconds), [`minutes`](#minutes), [`hours`](#hours), [`now`](#now), [`sleep`](#sleep), [`utcNow`](#utcnow), [`unixTime`](#unixtime), [`utc`](#utc), [`deadline`](#deadline), [`remaining`](#remaining), [`parseDateTime`](#parsedatetime), [`parseDuration`](#parseduration), [`zone`](#zone), [`localZone`](#localzone), [`utcZone`](#utczone), [`fixedZone`](#fixedzone), [`localNow`](#localnow), [`parseZoned`](#parsezoned)
 - [Duration](#duration): [`Duration.nanoseconds`](#durationnanoseconds), [`Duration.microseconds`](#durationmicroseconds), [`Duration.milliseconds`](#durationmilliseconds), [`Duration.seconds`](#durationseconds), [`Duration.minutes`](#durationminutes), [`Duration.hours`](#durationhours), [`Duration.multiply`](#durationmultiply), [`Duration.isZero`](#durationiszero), [`Duration.isNegative`](#durationisnegative), [`Duration.isLessThan`](#durationislessthan)
 - [Instant](#instant): [`Instant.elapsed`](#instantelapsed), [`Instant.since`](#instantsince), [`Instant.add`](#instantadd)
 - [DateTime](#datetime): [`DateTime.sinceEpoch`](#datetimesinceepoch), [`DateTime.inZone`](#datetimeinzone), [`DateTime.format`](#datetimeformat), [`DateTime.add`](#datetimeadd), [`DateTime.since`](#datetimesince), [`DateTime.addDays`](#datetimeadddays), [`DateTime.addMonths`](#datetimeaddmonths), [`DateTime.addYears`](#datetimeaddyears), [`DateTime.weekday`](#datetimeweekday), [`DateTime.dayOfYear`](#datetimedayofyear), [`DateTime.isoWeek`](#datetimeisoweek)
@@ -138,6 +138,14 @@ test moves by hand is `testing.withVirtualTime`
 - [IsoWeek](#isoweek)
 
 ### Functions
+
+#### Duration.Zero
+
+```tondo
+pub const Duration.Zero: Duration
+```
+
+No time at all, `0s`.
 
 #### nanoseconds
 

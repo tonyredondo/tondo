@@ -52,7 +52,7 @@ fn Random.word(mut self): UInt {
 
 /// The next 63 random bits, as a non-negative `Int`.
 fn Random.bits(mut self): Int {
-    Int.wrapping(self.word()) & Int.max
+    Int.wrapping(self.word()) & Int.Max
 }
 
 /// The next 128 random bits.
@@ -62,7 +62,7 @@ fn Random.wide(mut self): UInt128 {
 }
 
 /// An integer of the range, each as likely, of any width:
-/// `random.int(1..=6)`, `random.int(1u64..=UInt64.max)`. An empty range
+/// `random.int(1..=6)`, `random.int(1u64..=UInt64.Max)`. An empty range
 /// panics.
 pub fn Random.int[T: Integer](mut self, range: Range[T]): T {
     if range.isEmpty() {
@@ -75,24 +75,24 @@ pub fn Random.int[T: Integer](mut self, range: Range[T]): T {
     let from = UInt128.wrapping(start)
     // Draws above the last whole multiple of the span would favour the
     // smallest values. A span within `Int` draws 63 bits, as it always did.
-    if spread < UInt128.wrapping(Int.max) {
+    if spread < UInt128.wrapping(Int.Max) {
         let span = Int.wrapping(spread) + 1
-        let rejected = (Int.max % span + 1) % span
+        let rejected = (Int.Max % span + 1) % span
         for {
             let draw = self.bits()
-            if draw <= Int.max - rejected {
+            if draw <= Int.Max - rejected {
                 return T.wrapping(from.wrappingAdd(UInt128.wrapping(draw % span)))
             }
         }
     }
-    if spread == UInt128.max {
+    if spread == UInt128.Max {
         return T.wrapping(self.wide())
     }
     let span = spread + 1
-    let rejected = (UInt128.max % span + 1) % span
+    let rejected = (UInt128.Max % span + 1) % span
     for {
         let draw = self.wide()
-        if draw <= UInt128.max - rejected {
+        if draw <= UInt128.Max - rejected {
             return T.wrapping(from.wrappingAdd(draw % span))
         }
     }

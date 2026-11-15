@@ -22,7 +22,7 @@ import std.reflect as __reflect
 /// import std.console
 /// import std.regex
 ///
-/// var options = regex.RegexOptions.defaults()
+/// var options = regex.RegexOptions.Default
 /// options.caseInsensitive = true
 /// options.multiLine = true
 /// let heading = regex.Regex.compile(r"^# (\w+)$", options: options)?
@@ -40,14 +40,12 @@ pub type RegexOptions = {
 
 /// Every option off: case-sensitive, `^` and `$` at the ends of the text,
 /// `.` not matching `\n`, and greedy repetition.
-pub fn RegexOptions.defaults(): RegexOptions {
-    RegexOptions {
-        caseInsensitive: false
-        multiLine: false
-        dotMatchesNewline: false
-        crlf: false
-        ungreedy: false
-    }
+pub const RegexOptions.Default: RegexOptions = RegexOptions {
+    caseInsensitive: false
+    multiLine: false
+    dotMatchesNewline: false
+    crlf: false
+    ungreedy: false
 }
 
 /// How much a pattern and its inputs may take.
@@ -56,7 +54,7 @@ pub fn RegexOptions.defaults(): RegexOptions {
 /// import std.console
 /// import std.regex
 ///
-/// var limits = regex.RegexLimits.defaults()
+/// var limits = regex.RegexLimits.Default
 /// limits.maxInputBytes = 1024
 /// let word = regex.Regex.compile(r"\w+", limits: limits)?
 /// match word.isMatch("x".repeat(2048)) {
@@ -77,17 +75,15 @@ pub type RegexLimits = {
 
 /// The default limits: patterns of up to 64 KiB, inputs of up to 16 MiB and
 /// a million matches.
-pub fn RegexLimits.defaults(): RegexLimits {
-    RegexLimits {
-        maxPatternBytes: 65536
-        maxSyntaxDepth: 256
-        maxCaptureGroups: 256
-        maxProgramStates: 1000000
-        maxInputBytes: 16777216
-        maxMatches: 1000000
-        maxOutputBytes: 67108864
-        maxReplacementBytes: 65536
-    }
+pub const RegexLimits.Default: RegexLimits = RegexLimits {
+    maxPatternBytes: 65536
+    maxSyntaxDepth: 256
+    maxCaptureGroups: 256
+    maxProgramStates: 1000000
+    maxInputBytes: 16777216
+    maxMatches: 1000000
+    maxOutputBytes: 67108864
+    maxReplacementBytes: 65536
 }
 
 /// What went wrong with a pattern, an input or a replacement.
@@ -363,23 +359,8 @@ fn check(phase: RegexPhase): !RegexError {
 /// ```
 pub fn Regex.compile(
     pattern: String,
-    options: RegexOptions = RegexOptions {
-        caseInsensitive: false
-        multiLine: false
-        dotMatchesNewline: false
-        crlf: false
-        ungreedy: false
-    },
-    limits: RegexLimits = RegexLimits {
-        maxPatternBytes: 65536
-        maxSyntaxDepth: 256
-        maxCaptureGroups: 256
-        maxProgramStates: 1000000
-        maxInputBytes: 16777216
-        maxMatches: 1000000
-        maxOutputBytes: 67108864
-        maxReplacementBytes: 65536
-    },
+    options: RegexOptions = RegexOptions.Default,
+    limits: RegexLimits = RegexLimits.Default,
 ): Regex ! RegexError {
     var flags = 0
     if options.caseInsensitive {

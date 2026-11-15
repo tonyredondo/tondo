@@ -30,7 +30,7 @@ fn main(): !(http.HttpError | net.NetError) {
             http.Reply.stream(reader)
         },
     )
-    let limits = http.Limits.standard() with {
+    let limits = http.Limits.Standard with {
         bodyTimeout: time.milliseconds(100)
         replyTimeout: time.milliseconds(100)
     }

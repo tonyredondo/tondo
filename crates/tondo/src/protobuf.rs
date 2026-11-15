@@ -775,7 +775,8 @@ impl Generator<'_> {
             Kind::Message(name, _) => format!("{p}.Message.readFrom[{name}]({p}.emptyReader())?"),
             Kind::Enum(name) => format!("{p}.Enum.fromNumber[{name}](0).expect(\"a protobuf enum has a value 0\")"),
             Kind::Timestamp => format!("{p}.epoch()"),
-            Kind::Duration => format!("{p}.zeroDuration()"),
+            // The file names `time.Duration` to have one.
+            Kind::Duration => format!("{}.Duration.Zero", alias_of(self.file, "time").unwrap_or_else(|| "time".into())),
             Kind::Json(_) => format!("{p}.nullValue()"),
             Kind::OneOf(..) => unreachable!("a map holds no oneof"),
         }

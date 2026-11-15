@@ -126,7 +126,7 @@ cpu of target/profiles/letters.unit.letters.counts--letters.cpu.pprof, 968ms in 
     653ms  67.5%     653ms  67.5%  src/main.to:5 in letters  if c.isLetter() {
                                      `c.isLetter()` is inlined: the body of `Char.isLetter` is copied here (in closure in test counts, letters)
     219ms  22.6%     219ms  22.6%  src/main.to:4 in letters  for c in text.chars() {
-                                     `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` keeps its overflow check, in a loop: its operands' bounds allow a result past `Int.max` (in closure in test counts, letters)
+                                     `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` keeps its overflow check, in a loop: its operands' bounds allow a result past `Int.Max` (in closure in test counts, letters)
                                      `text.chars()` is inlined: the body of `String.chars` is copied here (in closure in test counts, letters)
                                      `text.chars()` is inlined: the body of `prelude.CharIterator.next` is copied here (in closure in test counts, letters)
 ```
@@ -373,7 +373,7 @@ fn main() {
 
 ```text
 $ tondo optimizations letters.to --kind checked
-letters.to:6:14: `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` keeps its overflow check, in a loop: its operands' bounds allow a result past `Int.max` (in letters, main)
+letters.to:6:14: `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` keeps its overflow check, in a loop: its operands' bounds allow a result past `Int.Max` (in letters, main)
 letters.to:8:13: `count += 1` keeps its overflow check, in a loop: nothing bounds `count` from above (in letters, main)
 ```
 

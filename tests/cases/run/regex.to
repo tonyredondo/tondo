@@ -65,9 +65,9 @@ fn main(): Unit ! regex.RegexError {
 
     let greek = regex.Regex.compile(r"\p{Greek}+")?
     console.println("{greek.isMatch("abc αβγ")?} {regex.Regex.compile(r"^\w+$")?.isMatch("ñandú")?}")
-    let insensitive = regex.Regex.compile("HELLO", regex.RegexOptions.defaults() with { caseInsensitive: true })?
+    let insensitive = regex.Regex.compile("HELLO", regex.RegexOptions.Default with { caseInsensitive: true })?
     console.println("{insensitive.isMatch("well, hello")?}")
-    let lines = regex.Regex.compile("^b$", regex.RegexOptions.defaults() with { multiLine: true })?
+    let lines = regex.Regex.compile("^b$", regex.RegexOptions.Default with { multiLine: true })?
     console.println("{lines.isMatch("a\nb\nc")?} {regex.Regex.compile("^b$")?.isMatch("a\nb\nc")?}")
 
     compileError("(a")
@@ -82,7 +82,7 @@ fn main(): Unit ! regex.RegexError {
     compileError(r"(a)\1")
     compileError(r"\p{Nope}")
 
-    let small = regex.RegexLimits.defaults() with { maxInputBytes: 4, maxMatches: 2, maxOutputBytes: 6 }
+    let small = regex.RegexLimits.Default with { maxInputBytes: 4, maxMatches: 2, maxOutputBytes: 6 }
     let limited = regex.Regex.compile("a", limits: small)?
     match limited.isMatch("aaaaa") {
         ok(_) => console.println("matched")
@@ -100,7 +100,7 @@ fn main(): Unit ! regex.RegexError {
     report(limited.replaceAll("aaaa", "xy"))
     report(limited.replace("aaaa", "$1"))
     report(limited.replace("aaa", "xyzwv"))
-    match regex.Regex.compile("abcdef", limits: regex.RegexLimits.defaults() with { maxPatternBytes: 3 }) {
+    match regex.Regex.compile("abcdef", limits: regex.RegexLimits.Default with { maxPatternBytes: 3 }) {
         ok(_) => console.println("compiled")
         err(error) => console.println("{error}")
     }

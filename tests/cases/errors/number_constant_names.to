@@ -1,0 +1,17 @@
+// The numbers' constants are written in PascalCase, as every constant is:
+// the lowercase names they had say the name to write, with its fix.
+fn widest[T: Integer](): T {
+    T.max
+}
+
+fn main() {
+    _ = Int.max
+    _ = Float.pi
+    _ = Byte.bits
+    _ = widest[Int8]()
+}
+
+// expect-error: E1001 `T.max` is written `T.Max`: a type's constants are written in PascalCase, as every constant is
+// expect-error: E1001 `Int.max` is written `Int.Max`
+// expect-error: E1001 `Float.pi` is written `Float.Pi`
+// expect-error: E1001 `Byte.bits` is written `Byte.Bits`

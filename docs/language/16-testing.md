@@ -158,7 +158,7 @@ test theMeanOfNothingIsABug {
 }
 
 test overflowIsCaught {
-    assert(recover { Int.max + 1 }.isErr())
+    assert(recover { Int.Max + 1 }.isErr())
 }
 ```
 

@@ -1,11 +1,11 @@
-// A MessagePack integer above `Int.max` reads as `Value.UInt`, not as a
+// A MessagePack integer above `Int.Max` reads as `Value.UInt`, not as a
 // float, and is written back as the same integer.
 
 import std.console
 import std.messagepack
 
 fn main(): !messagepack.MessagePackError {
-    let big = UInt.max
+    let big = UInt.Max
     let value = messagepack.parse(messagepack.encode(big))?
     console.println("{value} {value.asInt()} {value.asFloat()}")
     match value {
@@ -15,7 +15,7 @@ fn main(): !messagepack.MessagePackError {
     let back = messagepack.encode(value)
     console.println("{back.length()} {messagepack.decode[UInt](back)? == big}")
     console.println("{messagepack.parse(messagepack.encode(9223372036854775807))?}")
-    console.println("{messagepack.parse(messagepack.encode(["n": UInt.max - 1]))?.find("n")}")
+    console.println("{messagepack.parse(messagepack.encode(["n": UInt.Max - 1]))?.find("n")}")
 }
 
 // expect-stdout: 18446744073709551615 none some(1.8446744073709552e19)

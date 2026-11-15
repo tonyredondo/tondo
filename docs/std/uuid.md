@@ -15,8 +15,51 @@ console.println("{uuid.Uuid.v4()} {uuid.Uuid.v7()}")
 
 `tondo api std.uuid` shows the same in a terminal.
 
-- [Uuid](#uuid): [`Uuid.nil`](#uuidnil), [`Uuid.v4`](#uuidv4), [`Uuid.v5`](#uuidv5), [`Uuid.v7`](#uuidv7), [`Uuid.namespaceDns`](#uuidnamespacedns), [`Uuid.namespaceUrl`](#uuidnamespaceurl), [`Uuid.namespaceOid`](#uuidnamespaceoid), [`Uuid.namespaceX500`](#uuidnamespacex500), [`Uuid.parse`](#uuidparse), [`Uuid.fromBytes`](#uuidfrombytes), [`Uuid.bytes`](#uuidbytes), [`Uuid.version`](#uuidversion), [`Uuid.compare`](#uuidcompare)
+- [Functions](#functions): [`Uuid.Nil`](#uuidnil), [`Uuid.NamespaceDns`](#uuidnamespacedns), [`Uuid.NamespaceUrl`](#uuidnamespaceurl), [`Uuid.NamespaceOid`](#uuidnamespaceoid), [`Uuid.NamespaceX500`](#uuidnamespacex500)
+- [Uuid](#uuid): [`Uuid.v4`](#uuidv4), [`Uuid.v5`](#uuidv5), [`Uuid.v7`](#uuidv7), [`Uuid.parse`](#uuidparse), [`Uuid.fromBytes`](#uuidfrombytes), [`Uuid.bytes`](#uuidbytes), [`Uuid.version`](#uuidversion), [`Uuid.compare`](#uuidcompare)
 - [UuidError](#uuiderror)
+
+### Functions
+
+#### Uuid.Nil
+
+```tondo
+pub const Uuid.Nil: Uuid = Uuid { hex: "00000000000000000000000000000000" }
+```
+
+The UUID whose bits are all zero.
+
+#### Uuid.NamespaceDns
+
+```tondo
+pub const Uuid.NamespaceDns: Uuid = Uuid { hex: "6ba7b8109dad11d180b400c04fd430c8" }
+```
+
+The namespace of domain names, for name-based UUIDs (RFC 9562, `v5`).
+
+#### Uuid.NamespaceUrl
+
+```tondo
+pub const Uuid.NamespaceUrl: Uuid = Uuid { hex: "6ba7b8119dad11d180b400c04fd430c8" }
+```
+
+The namespace of URLs, for name-based UUIDs (RFC 9562).
+
+#### Uuid.NamespaceOid
+
+```tondo
+pub const Uuid.NamespaceOid: Uuid = Uuid { hex: "6ba7b8129dad11d180b400c04fd430c8" }
+```
+
+The namespace of ISO object identifiers, for name-based UUIDs (RFC 9562).
+
+#### Uuid.NamespaceX500
+
+```tondo
+pub const Uuid.NamespaceX500: Uuid = Uuid { hex: "6ba7b8149dad11d180b400c04fd430c8" }
+```
+
+The namespace of X.500 names, for name-based UUIDs (RFC 9562).
 
 ### Uuid
 
@@ -33,20 +76,12 @@ unsigned numbers in network order.
 import std.console
 import std.uuid
 
-let id = uuid.Uuid.v5(uuid.Uuid.namespaceDns(), "example.com")
+let id = uuid.Uuid.v5(uuid.Uuid.NamespaceDns, "example.com")
 let again = uuid.Uuid.parse("{id}")?
-console.println("{id} {again == id} {uuid.Uuid.nil()}")
+console.println("{id} {again == id} {uuid.Uuid.Nil}")
 ```
 
 Implements `Ordered`, `Display`, `serialization.Encode`, `serialization.Decode`, `reflect.Reflect`.
-
-#### Uuid.nil
-
-```tondo
-pub fn Uuid.nil(): Uuid
-```
-
-The UUID whose bits are all zero.
 
 #### Uuid.v4
 
@@ -73,39 +108,6 @@ pub fn Uuid.v7(): Uuid
 
 A UUID that sorts by when it was made (version 7): the Unix time in
 milliseconds, then 74 bits from the system's entropy.
-
-#### Uuid.namespaceDns
-
-```tondo
-pub fn Uuid.namespaceDns(): Uuid
-```
-
-The namespaces of RFC 9562 for `v5`, for names that are domain names,
-URLs, ISO object identifiers or X.500 distinguished names.
-
-#### Uuid.namespaceUrl
-
-```tondo
-pub fn Uuid.namespaceUrl(): Uuid
-```
-
-The namespace of URLs, for name-based UUIDs (RFC 9562).
-
-#### Uuid.namespaceOid
-
-```tondo
-pub fn Uuid.namespaceOid(): Uuid
-```
-
-The namespace of ISO object identifiers, for name-based UUIDs (RFC 9562).
-
-#### Uuid.namespaceX500
-
-```tondo
-pub fn Uuid.namespaceX500(): Uuid
-```
-
-The namespace of X.500 names, for name-based UUIDs (RFC 9562).
 
 #### Uuid.parse
 

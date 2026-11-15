@@ -2538,7 +2538,7 @@ Para un array de longitud `n`:
 La longitud de todo `Array`, `Deque`, `Map`, `Set` o `String` cabe siempre en `Int`;
 `Range` y los cursores no tienen esa limitación porque no necesitan exponer
 longitud. La suma conceptual `n + i` se calcula en enteros matemáticos, sin
-overflow intermedio, antes de comprobar el rango; por tanto incluso `Int.min`
+overflow intermedio, antes de comprobar el rango; por tanto incluso `Int.Min`
 produce simplemente un índice inválido y el pánico de bounds correspondiente.
 
 Ninguna operación puede envolver una longitud. Un literal cuyo tamaño no sea
@@ -2621,7 +2621,7 @@ cálculo. Sea `n` la longitud:
    calcula antes de construir la vista y debe caber en `Int`, como toda longitud
    de colección.
 
-Estas reglas incluyen `Int.min` como paso negativo válido. La representación de la
+Estas reglas incluyen `Int.Min` como paso negativo válido. La representación de la
 vista puede usar una forma interna distinta de un stride firmado si fuera necesario;
 el valor observable sigue siendo la progresión matemática anterior.
 
@@ -2794,7 +2794,7 @@ Un `count` igual a cero produce un array vacío nuevo. Repetir un array vacío
 cualquier número no negativo representable como `Int` también produce
 inmediatamente un array vacío. Un `count` negativo rompe el contrato y produce
 `P0011 invalid-repeat-count`. Si la longitud matemática de cualquiera de las
-dos operaciones excede `Int.max`, se produce `P0005 checked-overflow`. Una
+dos operaciones excede `Int.Max`, se produce `P0005 checked-overflow`. Una
 longitud válida que la implementación no pueda reservar es agotamiento de
 recursos según 10.3, no `P0005` ni `P0011`.
 
@@ -7772,12 +7772,17 @@ emite para cada una las instrucciones de la máquina que la hacen, como contar
 bits, rotar, invertir bytes o detectar el desbordamiento. `tondo api prelude`
 las muestra por tipo.
 
-Los enteros, `Int8` … `Int128` y `UInt8` … `UInt128`:
+Sus constantes, `T.Max`, `T.Pi`…, se escriben en PascalCase, como toda
+constante (6.5). El nombre en minúsculas que tuvieron, `Int.max`, es `E1001`,
+que dice el que se escribe y lo escribe con su arreglo.
+
+Los enteros, `Int8` … `Int128`, `UInt8` … `UInt128` y `Byte`, que tiene las
+constantes de `UInt8`:
 
 ~~~tondo pseudocode
-T.min: T
-T.max: T
-T.bits: Int
+T.Min: T
+T.Max: T
+T.Bits: Int
 T.parse(text: String, radix: Int = 10): T ! text.TextError
 x.toString(radix: Int = 10): String
 x.compare(other: T): Int
@@ -7791,7 +7796,7 @@ x.abs(): T                               // los que tienen signo
 - `parse` acepta un signo, `_` entre dígitos y bases de 2 a 36, y da
   `TextError.InvalidData` para un texto que no es un número que cabe en `T`.
   `toString` escribe las letras en minúscula y `-` delante de un negativo.
-- `pow` y `abs` son comprobadas como los operadores: `Int8.min.abs()` es un
+- `pow` y `abs` son comprobadas como los operadores: `Int8.Min.abs()` es un
   pánico `P0005`. Un exponente negativo es un pánico `P0018`, en `pow` y en
   sus variantes.
 
@@ -7799,18 +7804,18 @@ El desbordamiento a elección (18.2):
 
 | Familia | Operaciones | Da |
 |---|---|---|
-| wrapping | `wrappingAdd`, `wrappingSub`, `wrappingMul`, `wrappingNeg`, `wrappingPow` | los `T.bits` bits bajos del resultado exacto, en complemento a dos |
+| wrapping | `wrappingAdd`, `wrappingSub`, `wrappingMul`, `wrappingNeg`, `wrappingPow` | los `T.Bits` bits bajos del resultado exacto, en complemento a dos |
 | checked | `checkedAdd`, `checkedSub`, `checkedMul`, `checkedDiv`, `checkedRem`, `checkedNeg`, `checkedPow` | `T?`: `none` si no cabe o si divide por cero |
-| saturating | `saturatingAdd`, `saturatingSub`, `saturatingMul`, `saturatingPow` | el resultado, o `T.min` o `T.max` si no cabe |
+| saturating | `saturatingAdd`, `saturatingSub`, `saturatingMul`, `saturatingPow` | el resultado, o `T.Min` o `T.Max` si no cabe |
 | overflowing | `overflowingAdd`, `overflowingSub`, `overflowingMul` | `(T, Bool)`: el de wrapping, y si no cabía |
 
 Los bits:
 
 ~~~tondo pseudocode
 x.countOnes(): Int
-x.leadingZeros(): Int                    // desde el bit alto; T.bits para 0
-x.trailingZeros(): Int                   // desde el bit bajo; T.bits para 0
-x.rotateLeft(count: Int): T              // count módulo T.bits
+x.leadingZeros(): Int                    // desde el bit alto; T.Bits para 0
+x.trailingZeros(): Int                   // desde el bit bajo; T.Bits para 0
+x.rotateLeft(count: Int): T              // count módulo T.Bits
 x.rotateRight(count: Int): T
 x.reverseBytes(): T
 x.reverseBits(): T
@@ -7829,7 +7834,7 @@ x.toBytes(order: ByteOrder = ByteOrder.Big): Array[Byte]
 T.fromBytes(bytes: Array[Byte], at: Int = 0, order: ByteOrder = ByteOrder.Big): T
 ~~~
 
-`toBytes` da `T.bits / 8` bytes. `fromBytes` lee los `T.bits / 8` bytes que
+`toBytes` da `T.Bits / 8` bytes. `fromBytes` lee los `T.Bits / 8` bytes que
 empiezan en `at`; si no están, es un pánico `P0001`.
 
 Las conversiones nombradas, que completan las de 18.6:
@@ -7839,18 +7844,18 @@ T.wrapping(value): T       // value: un entero o Byte
 T.saturating(value): T     // value: un entero, Byte o float
 ~~~
 
-- `wrapping` se queda con los `T.bits` bits bajos del valor en complemento a
-  dos: `UInt8.wrapping(300)` es `44`, `UInt64.wrapping(-1)` es `UInt64.max` e
-  `Int32.wrapping(UInt32.max)` es `-1`.
+- `wrapping` se queda con los `T.Bits` bits bajos del valor en complemento a
+  dos: `UInt8.wrapping(300)` es `44`, `UInt64.wrapping(-1)` es `UInt64.Max` e
+  `Int32.wrapping(UInt32.Max)` es `-1`.
 - `saturating` da el valor de `T` más cercano: `UInt8.saturating(-5)` es `0` e
   `Int8.saturating(1000)` es `127`. Un float se trunca hacia cero; `NaN` da
-  `0`, y los infinitos, `T.min` y `T.max`.
+  `0`, y los infinitos, `T.Min` y `T.Max`.
 
 Los floats, `Float` y `Float32`:
 
 ~~~tondo pseudocode
-T.pi  T.e  T.infinity  T.nan  T.epsilon
-T.min  T.max                             // los finitos extremos
+T.Pi  T.E  T.Infinity  T.NaN  T.Epsilon
+T.Min  T.Max                             // los finitos extremos
 T.parse(text: String): T ! text.TextError
 x.compare(other: T): Int                 // NaN después de todo, igual a sí mismo
 x.abs()  x.min(other)  x.max(other)  x.clamp(low, high)
@@ -7914,7 +7919,7 @@ pub trait Fractional: Number
   la conversión comprobada, un pánico `P0005` si el valor no cabe. Los enteros
   implementan además `Integer`, que un programa no puede implementar
   (`E1114`): sobre `T: Integer` vale todo lo de un entero concreto, sus
-  operadores, sus comparaciones, sus constantes (`T.max`), `T.parse(...)` y las
+  operadores, sus comparaciones, sus constantes (`T.Max`), `T.parse(...)` y las
   operaciones de 18.9. Los floats implementan además `Fractional`: un número
   cuya división conserva la fracción, `1.0 / 2.0` es `0.5` donde un `Integer`
   da 0. Lo pide lo que divide para dar una parte de un todo, como una media
@@ -7953,7 +7958,7 @@ fn mean[T: Number](values: Array[T]): T {
 
 /// Cualquier entero en hexadecimal, con todos sus dígitos: `00ff` para `255u16`.
 fn hex[T: Integer](value: T): String {
-    value.toString(radix: 16).padStart(T.bits / 4, fill: "0")
+    value.toString(radix: 16).padStart(T.Bits / 4, fill: "0")
 }
 ~~~
 
@@ -8070,7 +8075,7 @@ El resultado es otro `String`. La implementación puede compartir almacenamiento
 Los límites y el paso, cuando aparecen, deben tener tipo `Int`. Se aplica
 literalmente el algoritmo matemático de normalización de 10.4, incluidos los
 defaults distintos según el signo, el centinela de `end` omitido y el
-comportamiento de valores extremos como `Int.min`. Los extremos se recortan y un
+comportamiento de valores extremos como `Int.Min`. Los extremos se recortan y un
 paso cero produce pánico igual que en arrays.
 
 Un step distinto de uno puede requerir materializar un string nuevo porque UTF-8 no representa una vista de stride fijo sobre valores escalares.

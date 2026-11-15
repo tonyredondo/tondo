@@ -60,7 +60,7 @@ fn main(): !http.HttpError {
             socket.sendText("{Who.name} on {request.path()}: {first}")?
         },
     )
-    let limits = http.Limits.standard() with { body: 1000 }
+    let limits = http.Limits.Standard with { body: 1000 }
     let server = app.start(limits: limits)?
     let client = http.Client(baseUrl: server.url())
     let shown = (outcome: http.Response ! http.HttpError) {

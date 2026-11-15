@@ -596,10 +596,10 @@ fn arrayOf(bytes: Array[Byte], at: var Int, sizes: Array[Int], dimension: Int, o
 
 /// A timestamp: microseconds from 2000-01-01, or infinite.
 fn timestampOf(micros: Int): Value {
-    if micros == Int.max {
+    if micros == Int.Max {
         return Value.Text("infinity")
     }
-    if micros == Int.min {
+    if micros == Int.Min {
         return Value.Text("-infinity")
     }
     Value.DateTime(__time.utc(__time.microseconds(micros + PostgresEpoch)))

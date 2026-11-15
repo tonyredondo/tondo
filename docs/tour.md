@@ -312,7 +312,7 @@ fn main() {
     let price: math.Decimal = 19.99
     console.println("{price * 3} {0.1 + 0.2}")
 
-    let big = Int.max
+    let big = Int.Max
     console.println("{big.checkedAdd(1)} {big.wrappingAdd(1)} {big.saturatingAdd(1)}")
 }
 ```

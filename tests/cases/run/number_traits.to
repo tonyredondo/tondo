@@ -80,13 +80,13 @@ fn twice[T: Number](value: T): T {
 }
 
 fn hex[T: Integer](value: T): String {
-    value.toString(radix: 16).padStart(T.bits / 4, fill: "0")
+    value.toString(radix: 16).padStart(T.Bits / 4, fill: "0")
 }
 
 fn mix[T: Integer](a: T, b: T): T {
-    var hash = (a ^ b).rotateLeft(3) % T.max
+    var hash = (a ^ b).rotateLeft(3) % T.Max
     hash += a & b
-    if hash > T.min { hash.wrappingMul(3) } else { hash }
+    if hash > T.Min { hash.wrappingMul(3) } else { hash }
 }
 
 fn main() {
@@ -96,7 +96,7 @@ fn main() {
     let half = Fraction { top: 1, bottom: 2 }
     console.println("{half * 3 + half} {twice(half)} {mean([half, half])} {Labeled.label(half)}")
     console.println("{mean([1.0, 2.0, 4.0])} {mean([2, 4, 9])} {twice(21u8)} {mean([1i128, 2i128])}")
-    console.println("{hex(255u16)} {hex(UInt128.max)} {mix(7u8, 12u8)} {mix(1000, 3)}")
+    console.println("{hex(255u16)} {hex(UInt128.Max)} {mix(7u8, 12u8)} {mix(1000, 3)}")
     let d = time.seconds(2) + time.milliseconds(500) - time.seconds(1)
     console.println("{d} {[time.seconds(1), time.seconds(2)].sum()}")
 }

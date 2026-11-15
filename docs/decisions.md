@@ -7379,3 +7379,12 @@ latch is its own test and not a way out, a copy that unrolling makes steps witho
 is never the last, and its turns are `last - start + 1`. The room no longer needs the counter to
 start at 0 either: `start..limit` takes `limit - start`, a count that wraps to a negative one, and
 so to no room, only past an `Int`.
+
+## The numbers' constants are written in PascalCase
+
+With constants of a type, `HResult.Ok` and `Uuid.Nil`, every constant was PascalCase but the
+numbers', which the language gave in lowercase: `Int.max` beside `math.Pi`. Tony chose one rule
+over two: `Int.Max`, `Float.Pi`, `Float.NaN`, `T.Max` of a `T: Integer`. The old names are an
+error that says the new one, with the fix that writes it, so a program or an agent that learned
+them is told at once. `Byte` gets them too, as `UInt8` has them.
+

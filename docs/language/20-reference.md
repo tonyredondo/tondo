@@ -451,7 +451,7 @@ test doubles {
 }
 
 suite edges {
-    let big = Int.max
+    let big = Int.Max
 
     test overflowIsCaught {
         assert(recover { double(big) }.isErr())

@@ -297,9 +297,9 @@ fn mean[T: Fractional](values: Array[T]): T {
     values.sum() / Number.fromInt[T](values.length())
 }
 
-/// Every integer of every width, with all an integer has: `%`, bits, `T.max`.
+/// Every integer of every width, with all an integer has: `%`, bits, `T.Max`.
 fn hex[T: Integer](value: T): String {
-    value.toString(radix: 16).padStart(T.bits / 4, fill: "0")
+    value.toString(radix: 16).padStart(T.Bits / 4, fill: "0")
 }
 ```
 

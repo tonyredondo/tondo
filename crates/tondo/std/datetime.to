@@ -293,7 +293,7 @@ pub fn Zone.at(
         fail __time.TimeError.InvalidDateTime
     }
     let seconds = timeNative.zoneResolve(self.id, [year, month, day, hour, minute, second, 0])
-    if seconds == Int.min {
+    if seconds == Int.Min {
         fail __time.TimeError.InvalidDateTime
     }
     inZone(__time.utc(__time.seconds(seconds) + __time.nanoseconds(nanosecond)), self)

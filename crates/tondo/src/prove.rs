@@ -457,7 +457,7 @@ impl Prover<'_> {
         lacking.dedup();
         match &lacking[..] {
             [] => {
-                format!("its operands' bounds allow a result past `Int.{}`", if up { "max" } else { "min" })
+                format!("its operands' bounds allow a result past `Int.{}`", if up { "Max" } else { "Min" })
                     + if low < min && high > max { ", either way" } else { "" }
             }
             [one] => format!("nothing bounds {one}"),
@@ -1305,7 +1305,7 @@ impl Prover<'_> {
                 _ => Some((0, i64::MAX as i128)),
             },
             // A checked product by a constant went on, so it fits, a
-            // multiple of the constant: `3 * n` is below `Int.max`, and `3 * n
+            // multiple of the constant: `3 * n` is below `Int.Max`, and `3 * n
             // + 1` fits, whatever `n` is, an element or a capture too.
             Rvalue::Binary(BinOp::Mul, a, b) if constant(a).or(constant(b)).is_some_and(|c| c.abs() >= 2) => {
                 let c = constant(a).or(constant(b)).map_or(1, i128::abs);

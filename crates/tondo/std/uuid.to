@@ -19,9 +19,9 @@ import std.serialization as __serialization
 /// import std.console
 /// import std.uuid
 ///
-/// let id = uuid.Uuid.v5(uuid.Uuid.namespaceDns(), "example.com")
+/// let id = uuid.Uuid.v5(uuid.Uuid.NamespaceDns, "example.com")
 /// let again = uuid.Uuid.parse("{id}")?
-/// console.println("{id} {again == id} {uuid.Uuid.nil()}")
+/// console.println("{id} {again == id} {uuid.Uuid.Nil}")
 /// ```
 pub type Uuid = {
     // Its bytes in lowercase hexadecimal, which order as the bytes do.
@@ -59,9 +59,7 @@ impl Display for UuidError {
 }
 
 /// The UUID whose bits are all zero.
-pub fn Uuid.nil(): Uuid {
-    Uuid { hex: "0".repeat(32) }
-}
+pub const Uuid.Nil: Uuid = Uuid { hex: "00000000000000000000000000000000" }
 
 /// A random UUID (version 4): 122 bits from the system's entropy.
 pub fn Uuid.v4(): Uuid {
@@ -87,26 +85,17 @@ pub fn Uuid.v7(): Uuid {
     stamped(bytes, 7)
 }
 
-/// The namespaces of RFC 9562 for `v5`, for names that are domain names,
-/// URLs, ISO object identifiers or X.500 distinguished names.
-pub fn Uuid.namespaceDns(): Uuid {
-    Uuid { hex: "6ba7b8109dad11d180b400c04fd430c8" }
-}
+/// The namespace of domain names, for name-based UUIDs (RFC 9562, `v5`).
+pub const Uuid.NamespaceDns: Uuid = Uuid { hex: "6ba7b8109dad11d180b400c04fd430c8" }
 
 /// The namespace of URLs, for name-based UUIDs (RFC 9562).
-pub fn Uuid.namespaceUrl(): Uuid {
-    Uuid { hex: "6ba7b8119dad11d180b400c04fd430c8" }
-}
+pub const Uuid.NamespaceUrl: Uuid = Uuid { hex: "6ba7b8119dad11d180b400c04fd430c8" }
 
 /// The namespace of ISO object identifiers, for name-based UUIDs (RFC 9562).
-pub fn Uuid.namespaceOid(): Uuid {
-    Uuid { hex: "6ba7b8129dad11d180b400c04fd430c8" }
-}
+pub const Uuid.NamespaceOid: Uuid = Uuid { hex: "6ba7b8129dad11d180b400c04fd430c8" }
 
 /// The namespace of X.500 names, for name-based UUIDs (RFC 9562).
-pub fn Uuid.namespaceX500(): Uuid {
-    Uuid { hex: "6ba7b8149dad11d180b400c04fd430c8" }
-}
+pub const Uuid.NamespaceX500: Uuid = Uuid { hex: "6ba7b8149dad11d180b400c04fd430c8" }
 
 /// A UUID written `8-4-4-4-12` in hexadecimal of either case, with or
 /// without `urn:uuid:` before it.

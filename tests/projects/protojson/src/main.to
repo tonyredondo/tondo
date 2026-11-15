@@ -52,7 +52,7 @@ fn main(): !protobuf.ProtobufError {
         choice: every.EveryChoice.PickedInner(every.Inner { displayName: "chosen" })
         maybe: 0
         renamed: "r"
-        notNumber: Float.nan
+        notNumber: Float.NaN
         infinite: -1.0 / 0.0
     }
     let text = protobuf.toJson(value)?

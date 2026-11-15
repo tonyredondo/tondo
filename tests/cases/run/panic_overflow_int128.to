@@ -1,5 +1,5 @@
 fn main() {
-    let big = UInt128.max / 2
+    let big = UInt128.Max / 2
     _ = big * 3
 }
 

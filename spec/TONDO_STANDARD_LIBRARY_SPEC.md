@@ -1928,6 +1928,7 @@ console.println("now {time.utcNow()}")            // now 2026-10-22T06:38:28.5Z
 
 ~~~tondo pseudocode
 pub type Duration
+pub const Duration.Zero: Duration                 // 0s
 
 pub fn nanoseconds(count: Int): Duration
 pub fn microseconds(count: Int): Duration
@@ -3934,7 +3935,7 @@ pub enum Value {
     Nil
     Bool(Bool)
     Int(Int)
-    UInt(UInt)              // un entero mayor que `Int.max`
+    UInt(UInt)              // un entero mayor que `Int.Max`
     Float(Float)
     Text(String)
     Bytes(Array[Byte])
@@ -4479,8 +4480,8 @@ da para cada coincidencia, sin interpretar `$`, como `ReplaceAllStringFunc` de
 Go. `Regex.escape(text)` da un patrón que encaja con ese texto literal.
 
 ```tondo
-pub fn RegexOptions.defaults(): RegexOptions
-pub fn RegexLimits.defaults(): RegexLimits
+pub const RegexOptions.Default: RegexOptions
+pub const RegexLimits.Default: RegexLimits
 pub fn Regex.compile(pattern: String, options: RegexOptions = …, limits: RegexLimits = …): Regex ! RegexError
 pub fn Regex.pattern(self): String
 pub fn Regex.captureCount(self): Int
@@ -4502,7 +4503,7 @@ pub fn RegexSpan.slice(self, input: String): String ! RegexError
 `RegexMatch` y `RegexCapture` tienen `span` y `text`. `RegexOptions` tiene
 `caseInsensitive` (simple case folding de Unicode), `multiLine`,
 `dotMatchesNewline`, `crlf` (con `multiLine`, `CRLF` es un solo fin de línea) y
-`ungreedy`, todos `false` en `defaults()` y en el valor por defecto de
+`ungreedy`, todos `false` en `RegexOptions.Default` y en el valor por defecto de
 `compile`; Unicode siempre está activo. `RegexLimits` y sus valores por defecto:
 
 | Límite | Default | Se comprueba |
@@ -4547,11 +4548,11 @@ pub enum UuidError { InvalidText, WrongLength }
 pub fn Uuid.v4(): Uuid
 pub fn Uuid.v5(namespace: Uuid, name: String): Uuid
 pub fn Uuid.v7(): Uuid
-pub fn Uuid.nil(): Uuid
-pub fn Uuid.namespaceDns(): Uuid
-pub fn Uuid.namespaceUrl(): Uuid
-pub fn Uuid.namespaceOid(): Uuid
-pub fn Uuid.namespaceX500(): Uuid
+pub const Uuid.Nil: Uuid
+pub const Uuid.NamespaceDns: Uuid
+pub const Uuid.NamespaceUrl: Uuid
+pub const Uuid.NamespaceOid: Uuid
+pub const Uuid.NamespaceX500: Uuid
 pub fn Uuid.parse(text: String): Uuid ! UuidError
 pub fn Uuid.fromBytes(bytes: Array[Byte]): Uuid ! UuidError
 pub fn Uuid.bytes(self): Array[Byte]
@@ -4801,7 +4802,7 @@ pub fn entropy(count: Int): Array[Byte]
 - El generador es SplitMix64: la misma semilla da los mismos valores en
   cualquier máquina. `Random()` toma la semilla de la entropía del sistema.
 - `int` da cada valor del rango con la misma probabilidad, sin sesgo, en
-  cualquier entero: `dice.int(1..=6)`, o `ids.int(1u64..=UInt64.max)` para
+  cualquier entero: `dice.int(1..=6)`, o `ids.int(1u64..=UInt64.Max)` para
   un id de 64 bits. Un rango vacío es un pánico. `float` da un valor de `[0, 1)` con 53 bits; `shuffled` es
   Fisher-Yates sobre una copia; `choice` da `none` sin elementos.
 - El generador no sirve para secretos: claves, tokens y nonces usan
@@ -5191,7 +5192,7 @@ pub fn App.listen(self, port: Int = 8080, host: String = "0.0.0.0", tls: Tls? = 
 pub fn App.start(self, port: Int = 0, host: String = "127.0.0.1", tls: Tls? = none,
     socket: String? = none, limits: Limits? = none): Server ! HttpError
 pub type Limits = { body: Int, head: Int, headTimeout: time.Duration, bodyTimeout: time.Duration, replyTimeout: time.Duration }
-pub fn Limits.standard(): Limits                            // 10 MiB, 64 KiB, 30 s
+pub const Limits.Standard: Limits                           // 10 MiB, 64 KiB, 30 s
 pub fn App.client(self): Client
 pub fn mediaType(path: String): String
 pub fn proxy(target: String, strip: String = "", client: Client? = none): fn(Request): Reply ! Problem
@@ -5394,7 +5395,7 @@ pub alias TlsVersion = net.TlsVersion
   espera, para el servidor. Una señal que llega entre `start` y `wait` hace lo
   que hace sin ellos: cancela el programa sin drenar.
 - `limits` acota lo que envía cada cliente, para que uno grande o lento no
-  agote el servidor; sin él, `Limits.standard()`. Un cuerpo de más de `body`
+  agote el servidor; sin él, `Limits.Standard`. Un cuerpo de más de `body`
   bytes es `413`, con un `Problem` que dice cómo subir el límite; una cabecera
   (la línea de la petición y sus cabeceras) de más de `head` bytes, `431`; y
   una conexión que tarda más de `headTimeout` en enviar una cabecera o en
@@ -5403,7 +5404,7 @@ pub alias TlsVersion = net.TlsVersion
   cliente que no toma nada de su respuesta en `replyTimeout` pierde la
   conexión, y su handler se cancela como si se hubiera ido. Los dos cuentan
   desde el último byte, no en total, así que una subida grande y lenta
-  termina; `Limits.standard()` da 30 segundos a cada uno.
+  termina; `Limits.Standard` da 30 segundos a cada uno.
   `Request.limitBody(bytes)` cambia el límite del cuerpo para una petición,
   antes de leerlo, como hace una ruta de subidas.
 - Un cliente que se va antes de su respuesta cancela la tarea que la atiende

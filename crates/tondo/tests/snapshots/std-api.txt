@@ -1387,6 +1387,13 @@ impl serialization.Encode for Saved
 impl serialization.Encode for UploadedFile
 pub alias Tls = net.Tls
 pub alias TlsVersion = net.TlsVersion
+pub const Limits.Standard: Limits = Limits {
+    body: 10 * 1024 * 1024
+    head: 64 * 1024
+    headTimeout: time.seconds(30)
+    bodyTimeout: time.seconds(30)
+    replyTimeout: time.seconds(30)
+}
 pub enum HttpError {
     /// A URL that does not parse, or whose scheme is not `http` or `https`.
     InvalidUrl(String)
@@ -1547,7 +1554,6 @@ pub fn Client.use(
     mut self,
     hook: fn(ClientRequest, fn(ClientRequest): Response ! HttpError): Response ! HttpError,
 )
-pub fn Limits.standard(): Limits
 pub fn Part.bytes(
     name: String,
     bytes: Array[Byte],
@@ -2281,7 +2287,7 @@ pub enum Value {
     Nil
     Bool(Bool)
     Int(Int)
-    /// An integer above `Int.max`, which MessagePack holds up to `UInt.max`.
+    /// An integer above `Int.Max`, which MessagePack holds up to `UInt.Max`.
     UInt(UInt)
     Float(Float)
     Text(String)
@@ -3132,7 +3138,6 @@ pub fn fromJson[T: Message](text: String, ignoreUnknown: Bool = false): T ! Prot
 pub fn nullValue(): json.Value
 pub fn pack[T: Message](message: T): Any
 pub fn toJson[T: Message](message: T, protoNames: Bool = false): String ! ProtobufError
-pub fn zeroDuration(): time.Duration
 pub trait Enum {
     fn number(self): Int32
 
@@ -3525,6 +3530,23 @@ impl Display for RegexErrorKind
 impl Display for RegexPhase
 impl Iterator[RegexMatch ! RegexError] for RegexFindIterator
 impl reflect.Reflect for RegexError
+pub const RegexLimits.Default: RegexLimits = RegexLimits {
+    maxPatternBytes: 65536
+    maxSyntaxDepth: 256
+    maxCaptureGroups: 256
+    maxProgramStates: 1000000
+    maxInputBytes: 16777216
+    maxMatches: 1000000
+    maxOutputBytes: 67108864
+    maxReplacementBytes: 65536
+}
+pub const RegexOptions.Default: RegexOptions = RegexOptions {
+    caseInsensitive: false
+    multiLine: false
+    dotMatchesNewline: false
+    crlf: false
+    ungreedy: false
+}
 pub enum RegexErrorKind {
     InvalidSyntax
     UnexpectedEnd
@@ -3555,23 +3577,8 @@ pub fn Regex.captureCount(self): Int
 pub fn Regex.captureNames(self): Array[String]
 pub fn Regex.compile(
     pattern: String,
-    options: RegexOptions = RegexOptions {
-        caseInsensitive: false
-        multiLine: false
-        dotMatchesNewline: false
-        crlf: false
-        ungreedy: false
-    },
-    limits: RegexLimits = RegexLimits {
-        maxPatternBytes: 65536
-        maxSyntaxDepth: 256
-        maxCaptureGroups: 256
-        maxProgramStates: 1000000
-        maxInputBytes: 16777216
-        maxMatches: 1000000
-        maxOutputBytes: 67108864
-        maxReplacementBytes: 65536
-    },
+    options: RegexOptions = RegexOptions.Default,
+    limits: RegexLimits = RegexLimits.Default,
 ): Regex ! RegexError
 pub fn Regex.escape(text: String): String
 pub fn Regex.find(self, input: String): RegexMatch? ! RegexError
@@ -3591,10 +3598,8 @@ pub fn Regex.replaceWith(
     input: String,
     replacement: fn(RegexMatch): String,
 ): String ! RegexError
-pub fn RegexLimits.defaults(): RegexLimits
 pub fn RegexMatch.capture(self, index: Int): RegexCapture?
 pub fn RegexMatch.captureName(self, name: String): RegexCapture?
-pub fn RegexOptions.defaults(): RegexOptions
 pub fn RegexSpan.slice(self, input: String): String ! RegexError
 pub type Regex = {
     // private fields
@@ -4506,6 +4511,7 @@ impl serialization.Decode for ZonedDateTime
 impl serialization.Encode for DateTime
 impl serialization.Encode for Duration
 impl serialization.Encode for ZonedDateTime
+pub const Duration.Zero: Duration
 pub enum TimeError {
     InvalidDateTime
     InvalidDuration
@@ -4700,6 +4706,11 @@ impl reflect.Reflect for Uuid
 impl reflect.Reflect for UuidError
 impl serialization.Decode for Uuid
 impl serialization.Encode for Uuid
+pub const Uuid.NamespaceDns: Uuid = Uuid { hex: "6ba7b8109dad11d180b400c04fd430c8" }
+pub const Uuid.NamespaceOid: Uuid = Uuid { hex: "6ba7b8129dad11d180b400c04fd430c8" }
+pub const Uuid.NamespaceUrl: Uuid = Uuid { hex: "6ba7b8119dad11d180b400c04fd430c8" }
+pub const Uuid.NamespaceX500: Uuid = Uuid { hex: "6ba7b8149dad11d180b400c04fd430c8" }
+pub const Uuid.Nil: Uuid = Uuid { hex: "00000000000000000000000000000000" }
 pub enum UuidError {
     /// A text other than `8-4-4-4-12` hexadecimal, after an optional
     /// `urn:uuid:`.
@@ -4710,11 +4721,6 @@ pub enum UuidError {
 pub fn Uuid.bytes(self): Array[Byte]
 pub fn Uuid.compare(self, other: Uuid): Int
 pub fn Uuid.fromBytes(bytes: Array[Byte]): Uuid ! UuidError
-pub fn Uuid.namespaceDns(): Uuid
-pub fn Uuid.namespaceOid(): Uuid
-pub fn Uuid.namespaceUrl(): Uuid
-pub fn Uuid.namespaceX500(): Uuid
-pub fn Uuid.nil(): Uuid
 pub fn Uuid.parse(input: String): Uuid ! UuidError
 pub fn Uuid.v4(): Uuid
 pub fn Uuid.v5(namespace: Uuid, name: String): Uuid

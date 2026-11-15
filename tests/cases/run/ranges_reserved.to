@@ -25,7 +25,7 @@ fn between(start: Int, limit: Int): Array[Int] {
 
 fn top(start: Int): Array[Int] {
     var all: Array[Int] = []
-    for n in start..=Int.max {
+    for n in start..=Int.Max {
         all.push(n - start)
     }
     all
@@ -33,7 +33,7 @@ fn top(start: Int): Array[Int] {
 
 fn counted(last: Int): Int {
     var turns = 0
-    for _ in Int.min..=last {
+    for _ in Int.Min..=last {
         turns += 1
         if turns > 5 {
             break
@@ -47,8 +47,8 @@ fn main() {
         console.println("{upTo}: {squares(upTo)}")
     }
     console.println("{between(2, 5)} {between(5, 2)} {between(-3, 1)}")
-    console.println("{top(Int.max - 5)} {top(Int.max)}")
-    console.println("{counted(Int.min)} {counted(Int.min + 2)} {counted(0)}")
+    console.println("{top(Int.Max - 5)} {top(Int.Max)}")
+    console.println("{counted(Int.Min)} {counted(Int.Min + 2)} {counted(0)}")
 }
 
 // expect-stdout: -1: []

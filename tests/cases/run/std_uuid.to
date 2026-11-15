@@ -5,13 +5,13 @@ import std.time
 import std.uuid
 
 fn main(): !uuid.UuidError {
-    let dns = uuid.Uuid.namespaceDns()
+    let dns = uuid.Uuid.NamespaceDns
     let id = uuid.Uuid.v5(dns, "python.org")
     console.println("{dns} {id} {id.version()}")
     let (a, b) = (uuid.Uuid.v4(), uuid.Uuid.v7())
     console.println("{a.version()} {b.version()} {a != b} {"{a}".length()} {uuid.Uuid.fromBytes(b.bytes())? == b}")
     let parsed = uuid.Uuid.parse("URN:UUID:6BA7B810-9DAD-11D1-80B4-00C04FD430C8")?
-    console.println("{parsed == dns} {uuid.Uuid.nil()} {uuid.Uuid.parse("nope")} {uuid.Uuid.fromBytes([])}")
+    console.println("{parsed == dns} {uuid.Uuid.Nil} {uuid.Uuid.parse("nope")} {uuid.Uuid.fromBytes([])}")
     var seen: Set[uuid.Uuid] = Set[]
     seen.insert(dns)
     seen.insert(parsed)

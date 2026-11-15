@@ -80,7 +80,7 @@ pub enum Value {
     Nil
     Bool(Bool)
     Int(Int)
-    /// An integer above `Int.max`, which MessagePack holds up to `UInt.max`.
+    /// An integer above `Int.Max`, which MessagePack holds up to `UInt.Max`.
     UInt(UInt)
     Float(Float)
     Text(String)

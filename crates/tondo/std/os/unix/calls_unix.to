@@ -280,7 +280,7 @@ pub fn poll(descriptors: mut Array[pollfd], timeout: time.Duration? = none): Int
             }
             none => -1
         }
-        let milliseconds = Int32(left) ?? Int32.max
+        let milliseconds = Int32(left) ?? Int32.Max
         match unsafe { cPoll(asked, nfds_t.wrapping(count), milliseconds) } {
             ok(found) => {
                 ready = Int(found)

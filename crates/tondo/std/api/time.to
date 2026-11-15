@@ -21,6 +21,9 @@
 /// ```
 pub type Duration
 
+/// No time at all, `0s`.
+pub const Duration.Zero: Duration
+
 /// A moment of the monotonic clock, which never goes back.
 ///
 /// ```tondo

@@ -606,7 +606,7 @@ pub fn App.client(self): Client {
         err(error) => panic("`App.client` needs a temporary directory for its socket: {error}")
     }
     let socket = "{directory}/app.socket"
-    let standard = Limits.standard()
+    let standard = Limits.Standard
     let listening = httpNative.listenUnix(
         socket,
         standard.body,

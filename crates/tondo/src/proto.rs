@@ -1333,9 +1333,9 @@ impl Translator<'_> {
             (Token::Float(text), _) => text.clone(),
             // `inf`, `-inf` and `nan` are names to the tokens.
             (Token::Name(name), ty @ ("Float" | "Float32")) => match name.as_str() {
-                "inf" => format!("{ty}.infinity"),
-                "-inf" => format!("-{ty}.infinity"),
-                _ => format!("{ty}.nan"),
+                "inf" => format!("{ty}.Infinity"),
+                "-inf" => format!("-{ty}.Infinity"),
+                _ => format!("{ty}.NaN"),
             },
             (Token::Name(name), "Bool") => name.clone(),
             (Token::Name(name), ty) => {

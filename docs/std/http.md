@@ -181,7 +181,7 @@ The [`todo-api`](../../examples/todo-api) example is a whole service, the
 
 `tondo api std.http` shows the same in a terminal.
 
-- [Functions](#functions): [`get`](#get), [`head`](#head), [`delete`](#delete), [`post`](#post), [`put`](#put), [`patch`](#patch), [`mediaType`](#mediatype), [`proxy`](#proxy)
+- [Functions](#functions): [`get`](#get), [`head`](#head), [`delete`](#delete), [`post`](#post), [`put`](#put), [`patch`](#patch), [`Limits.Standard`](#limitsstandard), [`mediaType`](#mediatype), [`proxy`](#proxy)
 - [HttpError](#httperror)
 - [Body](#body): [`Body.text`](#bodytext), [`Body.bytes`](#bodybytes), [`Body.json`](#bodyjson), [`Body.form`](#bodyform), [`Body.multipart`](#bodymultipart), [`Body.stream`](#bodystream)
 - [Part](#part): [`Part.field`](#partfield), [`Part.bytes`](#partbytes), [`Part.file`](#partfile), [`Part.stream`](#partstream)
@@ -204,7 +204,7 @@ The [`todo-api`](../../examples/todo-api) example is a whole service, the
 - [App](#app): [`App.websocket`](#appwebsocket), [`App`](#app-1), [`App.get`](#appget), [`App.post`](#apppost), [`App.put`](#appput), [`App.patch`](#apppatch), [`App.delete`](#appdelete), [`App.route`](#approute), [`App.use`](#appuse), [`App.cors`](#appcors), [`App.mount`](#appmount), [`App.grpc`](#appgrpc), [`App.files`](#appfiles), [`App.uploads`](#appuploads), [`App.compress`](#appcompress), [`App.client`](#appclient), [`App.trustProxies`](#apptrustproxies), [`App.openApi`](#appopenapi), [`App.listen`](#applisten), [`App.start`](#appstart)
 - [GrpcService](#grpcservice)
 - [Saved](#saved)
-- [Limits](#limits): [`Limits.standard`](#limitsstandard)
+- [Limits](#limits)
 - [Server](#server): [`Server.address`](#serveraddress), [`Server.url`](#serverurl), [`Server.wait`](#serverwait), [`Server.stop`](#serverstop)
 - [Tls](#tls)
 - [TlsVersion](#tlsversion)
@@ -292,6 +292,21 @@ pub fn patch(
 ```
 
 Sends a `PATCH` with the body, on a connection of its own.
+
+#### Limits.Standard
+
+```tondo
+pub const Limits.Standard: Limits = Limits {
+    body: 10 * 1024 * 1024
+    head: 64 * 1024
+    headTimeout: time.seconds(30)
+    bodyTimeout: time.seconds(30)
+    replyTimeout: time.seconds(30)
+}
+```
+
+10 MiB of body, 64 KiB of head, 30 seconds to send a head, and 30
+seconds that a body may stop arriving or a reply stop being taken.
 
 #### mediaType
 
@@ -2284,7 +2299,7 @@ pub fn App.listen(
 Serves until the task is cancelled or the server stops; `port` 0 takes
 any free port. With `socket`, it serves on that Unix socket instead,
 which it makes and removes when it stops. `limits` bounds what each
-client sends, `Limits.standard()` without it. A client that goes away
+client sends, `Limits.Standard` without it. A client that goes away
 before its reply cancels the task that answers it: the handler stops at
 its next wait and runs its `defer`s. `Interrupt` (Ctrl-C) or `Terminate`
 first drains the server, as `Server.stop(grace)` does, and then ends
@@ -2376,7 +2391,7 @@ time to send a head, or a TLS handshake, which also ends a connection
 kept open without a request; the longest a body may stop arriving,
 after which it is `408`; and the longest a client may stop taking a
 reply, after which the connection closes and the handler is cancelled.
-`Limits.standard() with { body: 100_000_000 }` changes one;
+`Limits.Standard with { body: 100_000_000 }` changes one;
 `Request.limitBody` changes the body's for a route.
 
 ```tondo
@@ -2386,18 +2401,9 @@ import std.time
 var app = http.App()
 // Videos up to 1 GB on this route; 10 MiB on the others.
 app.post("/videos", (request) { http.Reply.text("{request.limitBody(1_000_000_000).saveTo("video.mp4")?} bytes") })
-let limits = http.Limits.standard() with { headTimeout: time.seconds(10) }
+let limits = http.Limits.Standard with { headTimeout: time.seconds(10) }
 app.listen(port: 8080, limits: some(limits))?
 ```
-
-#### Limits.standard
-
-```tondo
-pub fn Limits.standard(): Limits
-```
-
-10 MiB of body, 64 KiB of head, 30 seconds to send a head, and 30
-seconds that a body may stop arriving or a reply stop being taken.
 
 ### Server
 
