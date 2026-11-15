@@ -48,6 +48,13 @@ pub(super) struct Runner {
     pub(super) asked: AtomicBool,
     pub(super) answer: [AtomicUsize; ANSWER],
     pub(super) answered: AtomicUsize,
+    /// A thread of C's `Kept::calling`, whether it runs a call now: one
+    /// between its calls, or that ends, gets no profiler's signal, as what
+    /// the handler reads of it may be gone. Null for a worker.
+    pub(super) calling: std::sync::atomic::AtomicPtr<AtomicBool>,
+    /// How many threads it served, which tells one's use of it from the
+    /// next's, as a handle may be another thread's again.
+    pub(super) uses: AtomicUsize,
 }
 
 pub(super) const ANSWER: usize = 64;
@@ -79,8 +86,11 @@ fn first_running_here() -> &'static Runner {
             asked: AtomicBool::new(false),
             answer: [const { AtomicUsize::new(0) }; ANSWER],
             answered: AtomicUsize::new(0),
+            calling: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
+            uses: AtomicUsize::new(0),
         }))
     });
+    runner.uses.fetch_add(1, Ordering::SeqCst);
     runner.thread.store(unsafe { libc::pthread_self() } as usize, Ordering::SeqCst);
     IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).push(runner);
     worker(|w| w.runner.set(Some(runner)));
@@ -96,6 +106,7 @@ pub(super) fn runner_ended(kept: &Kept) {
     runner.task.store(std::ptr::null_mut(), Ordering::SeqCst);
     runner.frame.store(0, Ordering::SeqCst);
     runner.asked.store(false, Ordering::SeqCst);
+    runner.calling.store(std::ptr::null_mut(), Ordering::SeqCst);
     SPARE_RUNNERS.lock().unwrap_or_else(|e| e.into_inner()).push(runner);
 }
 
@@ -273,23 +284,23 @@ mod tests {
     /// to a thread that is gone, and the lists do not grow with every thread.
     #[test]
     fn a_thread_that_ends_leaves_the_lists() {
-        let (runner, in_c, thread) = std::thread::spawn(|| {
+        let (runner, in_c, uses) = std::thread::spawn(|| {
             super::super::kept();
             super::enter_tondo();
             super::leave_tondo();
-            let runner = super::running_here() as *const super::Runner as usize;
+            let runner = super::running_here();
             let in_c = super::super::in_c() as *const super::super::InC as usize;
-            (runner, in_c, unsafe { libc::pthread_self() } as usize)
+            (runner as *const super::Runner as usize, in_c, runner.uses.load(Ordering::SeqCst))
         })
         .join()
         .unwrap();
         let runners = super::IN_TONDO.lock().unwrap_or_else(|e| e.into_inner());
-        // Another test's thread may have taken the runner since, but not
-        // with this thread's handle.
+        // Another test's thread may have taken the runner since, as its
+        // next use, with a handle that may be this thread's again.
         assert!(
             !runners
                 .iter()
-                .any(|&r| r as *const super::Runner as usize == runner && r.thread.load(Ordering::SeqCst) == thread)
+                .any(|&r| r as *const super::Runner as usize == runner && r.uses.load(Ordering::SeqCst) == uses)
         );
         drop(runners);
         // Only this test calls C outside compiled code.

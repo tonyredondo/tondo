@@ -52,9 +52,14 @@ pub(crate) fn answer_where(pc: usize, fp: usize) {
 
 /// Sends `signal` to every thread that has run Tondo code.
 pub(crate) fn signal_workers(signal: i32) {
-    // Under the lock, which a thread that ends takes to leave the list.
+    // Under the lock, which a thread that ends takes to leave the list, and
+    // before it lets go of what `calling` points to.
     let runners = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner());
     for runner in runners.iter() {
+        let calling = runner.calling.load(Ordering::SeqCst);
+        if unsafe { calling.as_ref() }.is_some_and(|calling| !calling.load(Ordering::SeqCst)) {
+            continue;
+        }
         unsafe { libc::pthread_kill(runner.thread.load(Ordering::SeqCst) as libc::pthread_t, signal) };
     }
 }

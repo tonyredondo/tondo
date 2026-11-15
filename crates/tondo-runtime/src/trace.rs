@@ -836,19 +836,26 @@ const SIGNAL_STACK: usize = 128 * 1024;
 static SPARE_SIGNAL_STACKS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 const SPARE_SIGNAL_LIMIT: usize = 64;
 
+/// The profiler's signal no longer comes to this thread.
+pub(crate) fn block_profiler() {
+    unsafe {
+        let mut profiler: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut profiler);
+        libc::sigaddset(&mut profiler, libc::SIGPROF);
+        libc::pthread_sigmask(libc::SIG_BLOCK, &profiler, std::ptr::null_mut());
+    }
+}
+
 /// Frees a thread's signal stack, as it ends or as a library ends.
 pub(crate) fn free_signal_stack(stack: *mut libc::c_void) {
     if stack.is_null() {
         return;
     }
+    // The thread ends, or the process, whose `exit` on macOS drops it
+    // before a trace stops: the profiler's signal, which goes on coming
+    // meanwhile, must not come for a stack that is gone.
+    block_profiler();
     unsafe {
-        // The thread ends, or the process, whose `exit` on macOS drops it
-        // before a trace stops: the profiler's signal, which goes on coming
-        // meanwhile, must not come for a stack that is gone.
-        let mut profiler: libc::sigset_t = std::mem::zeroed();
-        libc::sigemptyset(&mut profiler);
-        libc::sigaddset(&mut profiler, libc::SIGPROF);
-        libc::pthread_sigmask(libc::SIG_BLOCK, &profiler, std::ptr::null_mut());
         let mut current: libc::stack_t = std::mem::zeroed();
         libc::sigaltstack(std::ptr::null(), &mut current);
         if current.ss_sp != stack {

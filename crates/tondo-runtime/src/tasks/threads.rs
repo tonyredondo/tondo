@@ -424,6 +424,9 @@ pub(crate) fn keep_until_end(free: Free, value: *mut u8) {
 
 /// The destructor of the key, as a thread ends.
 unsafe extern "C" fn thread_ended(kept: *mut libc::c_void) {
+    // What the profiler's handler reads of the thread may be gone already,
+    // as its thread-locals on macOS.
+    crate::trace::block_profiler();
     KEPT.with(|cell| cell.set(std::ptr::null_mut()));
     worker_ended(unsafe { &*(kept as *const Kept) });
     give_back(kept as *mut Kept);

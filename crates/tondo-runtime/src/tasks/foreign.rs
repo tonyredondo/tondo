@@ -352,7 +352,11 @@ unsafe fn run_here(inner: unsafe extern "C" fn(*mut u8), frame: *mut u8, kept: &
     kept.calling.store(true, Ordering::Release);
     worker(|w| w.current.set(task));
     let traced = tools::running(task);
+    let first = kept.runner.get().is_none();
     enter_tondo();
+    if first && let Some(runner) = kept.runner.get() {
+        runner.calling.store(&kept.calling as *const AtomicBool as *mut AtomicBool, Ordering::SeqCst);
+    }
     unsafe { inner(frame) };
     leave_tondo();
     worker(|w| w.current.set(std::ptr::null_mut()));
