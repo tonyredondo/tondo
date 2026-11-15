@@ -313,7 +313,9 @@ fn main() {
 ```
 
 C may call the function from any thread, and inside it the function is
-ordinary Tondo: it may wait, spawn tasks and use channels. State goes to a
+ordinary Tondo: it may wait, spawn tasks and use channels. Called from a
+thread that C made, it runs on that thread, as a task of its own, and
+returns to C when it ends; if it waits, the thread waits with it. State goes to a
 callback the way C libraries expect, through a `void *`: `ffi.context(value)`
 makes one of any Tondo value, and `ffi.fromContext[T](pointer)` reads it
 back in the callback.
