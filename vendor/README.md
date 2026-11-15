@@ -103,7 +103,10 @@ writes over them or a call clobbers them, with no instruction more, so that
 a dump there shows them. And in `src/ir/dfg.rs`, the labels of a value that
 became an alias, as a variable's copy of another does once its block's
 parameter goes, are the final value's, where Cranelift discarded them: a
-dump finds the copy where the original is.
+dump finds the copy where the original is. And in
+`src/egraph/elaborate.rs`, the labels of a value the optimizer replaced,
+as `round * 2` made from the value before, go to the value code makes in
+its place, where they stayed on one no code makes.
 
 This copy is where an optimization that Tondo's code needs and Cranelift
 lacks is written, as a rule marked `Tondo:`. To move to a newer Cranelift:

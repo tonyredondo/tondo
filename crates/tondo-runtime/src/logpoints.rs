@@ -198,6 +198,10 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     if places.is_empty() {
         let near = of_file.iter().map(|site| site.3).min_by_key(|known| known.abs_diff(line));
         return error(&match (of_file.is_empty(), near) {
+            _ if super::debugger::probed() => format!(
+                "a build with --debug has no places for a logpoint, as it has probes: `tondo debug <pid>` logs \
+                 at them, with `break {file}:{line} log <message>`, without stopping"
+            ),
             (true, _) => {
                 format!(
                     "{file} has no places for a logpoint: this build has none, as one made with \
@@ -395,10 +399,12 @@ extern "C" fn hit(saved: *const usize) {
     // Those that come while one is shown go by.
     let Ok(_shown) = HIT.try_lock() else { return };
     let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
+    let conditioned = condition.is_some();
     let values = super::debugger::frame_values(site, fp, bounds, &registers, &floats, condition);
     // A condition that does not hold leaves nothing, and takes no time of
-    // the limit.
-    if values.is_empty() {
+    // the limit. Without one, a line where no binding is known yet, as
+    // the optimizer makes their values later, still counts, each `?`.
+    if values.is_empty() && conditioned {
         return;
     }
     let last = {

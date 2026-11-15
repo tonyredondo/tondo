@@ -108,6 +108,7 @@ impl<'s, 't> Shared<'s, 't> {
 pub(super) struct Built {
     pub(super) func: ir::Function,
     pub(super) sites: Vec<super::Site>,
+    pub(super) stale: Vec<super::Stale>,
     asked: Vec<Asked>,
     /// The references to what was asked: functions and data by the index
     /// of what was asked, and the instructions that hold a site's number.
@@ -182,11 +183,12 @@ pub(super) fn build(shared: &Shared, bodies: &[Body], index: usize, version: boo
     let body = &bodies[if version { shared.version_body[index] } else { index }];
     let signature = worker.shapes.signature(body);
     let mut func = ir::Function::with_name_signature(UserFuncName::user(0, index as u32), signature);
-    let sites =
+    let (sites, stale) =
         BUILDER.with(|builder| FnCodegen::new(&mut worker, body, bodies, &mut func, &mut builder.borrow_mut()).run());
     Built {
         func,
         sites,
+        stale,
         asked: worker.asked,
         func_refs: worker.func_refs,
         data_refs: worker.data_refs,

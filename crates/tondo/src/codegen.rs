@@ -542,11 +542,17 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     // to declare is declared in the functions' order (see `worker`);
     // `compile_all` compiles them on every core.
     let mut jobs = Vec::new();
-    let mut job =
-        |id: FuncId, context: &mut cranelift_codegen::Context, traced: Option<&str>, sites, inlined, body, needs| {
-            let func = std::mem::replace(&mut context.func, ir::Function::new());
-            jobs.push(Job { id, func, traced: traced.map(str::to_string), sites, inlined, body, needs, file: None });
-        };
+    let mut job = |id: FuncId,
+                   context: &mut cranelift_codegen::Context,
+                   traced: Option<&str>,
+                   (sites, stale): (Vec<Site>, Vec<Stale>),
+                   inlined,
+                   body,
+                   needs| {
+        let func = std::mem::replace(&mut context.func, ir::Function::new());
+        let traced = traced.map(str::to_string);
+        jobs.push(Job { id, func, traced, sites, stale, inlined, body, needs, file: None });
+    };
     // Each function, then the versions of those that have one.
     let built = {
         let shared = worker::Shared::new(&cg);
@@ -574,12 +580,12 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
             // A function that calls C has no version.
             context.func.signature = cg.signature(body);
             context.func.name = UserFuncName::user(0, index as u32);
-            let sites = FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
-            job(id, &mut context, traced, sites, body.inlined.clone(), index, needs);
+            let built = FnCodegen::new(&mut cg, body, bodies, &mut context.func, &mut builder_context).run();
+            job(id, &mut context, traced, built, body.inlined.clone(), index, needs);
         } else {
             worker::replay(&mut cg, bodies, &mut built);
             context.func = built.func;
-            job(id, &mut context, traced, built.sites, body.inlined.clone(), index, needs);
+            job(id, &mut context, traced, (built.sites, built.stale), body.inlined.clone(), index, needs);
         }
         cg.module.clear_context(&mut context);
     }
@@ -592,13 +598,13 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.signature = cg.module.declarations().get_function_decl(id).signature.clone();
         context.func.name = UserFuncName::user(0, index as u32);
         define_dispatcher(&mut cg, versions, &mut context.func, &mut builder_context);
-        job(id, &mut context, Some(""), Vec::new(), Vec::new(), 0, 0);
+        job(id, &mut context, Some(""), (Vec::new(), Vec::new()), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
         if let Some(bridge) = versions.bridge {
             context.func.signature = cg.module.declarations().get_function_decl(bridge).signature.clone();
             context.func.name = UserFuncName::user(0, index as u32);
             define_bridge(&mut cg, body, versions.version, &mut context.func, &mut builder_context);
-            job(bridge, &mut context, Some(""), Vec::new(), Vec::new(), 0, body.needs | VERSION);
+            job(bridge, &mut context, Some(""), (Vec::new(), Vec::new()), Vec::new(), 0, body.needs | VERSION);
             cg.module.clear_context(&mut context);
         }
     }
@@ -614,14 +620,14 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
             let main = main.0 as usize;
             let entry =
                 cg.entry_point(main, bodies[main].result, &program.tests, trace, &mut context, &mut builder_context)?;
-            job(entry, &mut context, None, Vec::new(), Vec::new(), 0, 0);
+            job(entry, &mut context, None, (Vec::new(), Vec::new()), Vec::new(), 0, 0);
             cg.module.clear_context(&mut context);
             let start = cg.process_main(entry, &mut context, &mut builder_context)?;
-            job(start, &mut context, None, Vec::new(), Vec::new(), 0, 0);
+            job(start, &mut context, None, (Vec::new(), Vec::new()), Vec::new(), 0, 0);
         }
         None => {
             let init = cg.library_start(trace, &mut context, &mut builder_context)?;
-            job(init, &mut context, None, Vec::new(), Vec::new(), 0, 0);
+            job(init, &mut context, None, (Vec::new(), Vec::new()), Vec::new(), 0, 0);
             cg.library = Some(init);
             // `<name>_stop`, and the same under a name every library of
             // Tondo has, by which `ffi.Library` knows one (toolchain 7.7).
@@ -629,7 +635,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
                 for symbol in [format!("{name}_stop"), crate::header::STOP.to_string()] {
                     cg.module.clear_context(&mut context);
                     let stop = cg.library_stop(&symbol, &mut context, &mut builder_context)?;
-                    job(stop, &mut context, None, Vec::new(), Vec::new(), 0, 0);
+                    job(stop, &mut context, None, (Vec::new(), Vec::new()), Vec::new(), 0, 0);
                 }
             }
         }
@@ -640,26 +646,34 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.name = UserFuncName::user(3, thunk.as_u32());
         define_thunk(&mut cg, &bodies[target.0 as usize], target, &mut context.func, &mut builder_context);
         // In the table of the trace, without lines, for its handler.
-        job(thunk, &mut context, Some(""), Vec::new(), Vec::new(), 0, 0);
+        job(thunk, &mut context, Some(""), (Vec::new(), Vec::new()), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
     }
     while let Some((target, forward)) = cg.pending_forwarders.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(forward).signature.clone();
         context.func.name = UserFuncName::user(6, forward.as_u32());
         define_forwarder(&mut cg, target, &mut context.func, &mut builder_context);
-        job(forward, &mut context, Some(""), Vec::new(), Vec::new(), 0, 0);
+        job(forward, &mut context, Some(""), (Vec::new(), Vec::new()), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
     }
     while let Some(callback) = cg.pending_callbacks.pop() {
         context.func.signature = cg.module.declarations().get_function_decl(callback.adapter).signature.clone();
         context.func.name = UserFuncName::user(4, callback.adapter.as_u32());
         define_adapter(&mut cg, &callback, &mut context.func, &mut builder_context);
-        job(callback.adapter, &mut context, None, Vec::new(), Vec::new(), 0, 0);
+        job(callback.adapter, &mut context, None, (Vec::new(), Vec::new()), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
         context.func.signature = cg.module.declarations().get_function_decl(callback.inner).signature.clone();
         context.func.name = UserFuncName::user(5, callback.inner.as_u32());
         define_inner(&mut cg, &bodies[callback.target.0 as usize], &callback, &mut context.func, &mut builder_context);
-        job(callback.inner, &mut context, Some(&bodies[callback.target.0 as usize].name), Vec::new(), Vec::new(), 0, 0);
+        job(
+            callback.inner,
+            &mut context,
+            Some(&bodies[callback.target.0 as usize].name),
+            (Vec::new(), Vec::new()),
+            Vec::new(),
+            0,
+            0,
+        );
         cg.module.clear_context(&mut context);
     }
     // A patch's conversions of the running program's values, which the
@@ -675,7 +689,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.signature = signature;
         context.func.name = UserFuncName::user(7, id.as_u32());
         define_conversion(&mut cg, body, function, &mut context.func, &mut builder_context);
-        job(id, &mut context, None, Vec::new(), Vec::new(), 0, 0);
+        job(id, &mut context, None, (Vec::new(), Vec::new()), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
         let TyKind::Option(new) = *cg.types.kind(body.result) else { unreachable!("a conversion gives `T?`") };
         let old = body.locals[body.params[0].0 as usize];
@@ -695,7 +709,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         context.func.signature = cg.glue_signature(kind);
         context.func.name = UserFuncName::user(2, id.as_u32());
         define_glue(&mut cg, kind, ty, &mut context.func, &mut builder_context);
-        job(id, &mut context, None, Vec::new(), Vec::new(), 0, 0);
+        job(id, &mut context, None, (Vec::new(), Vec::new()), Vec::new(), 0, 0);
         cg.module.clear_context(&mut context);
     }
     drop(building);
@@ -960,6 +974,14 @@ struct Traced {
 /// assigns, and the inlined call it comes from (`Body::inlined`).
 type Site = (u32, Option<Ty>, Option<u32>);
 
+/// A latent site, by its source location, and a binding that a line before
+/// it in its block gave a value, with the label of that value alone: the
+/// binding is shown there only where that value is (`fresh`).
+type Stale = (u32, u32, u32);
+
+/// Where the labels of single values start, past those of bindings.
+const GENERATIONS: u32 = 1 << 31;
+
 /// A function whose IR is built, to compile; `traced` names it in stack
 /// traces.
 struct Job {
@@ -970,6 +992,7 @@ struct Job {
     /// local it assigns, so that a sample of the memory it allocates names
     /// its type: the source location of an instruction indexes this, from 1.
     sites: Vec<Site>,
+    stale: Vec<Stale>,
     inlined: Vec<crate::mir::Inlined>,
     /// The body it is of.
     body: usize,
@@ -1066,6 +1089,31 @@ fn saved_registers(
 }
 
 /// Where each value label of a compiled function is.
+/// A binding that a line gave a new value shows at a later site of its
+/// block only where that value is: the optimizer may make the value after
+/// the site, where the binding's place still holds the one before, which
+/// would show as if it were the binding's now. There it is not known.
+fn fresh(labelled: &mut Vec<(u32, u32, u32, Located)>, latent: &[(u32, u32, u32)], stale: &[Stale]) {
+    for &(site, label, generation) in stale {
+        let Some(&(at, length, _)) = latent.iter().find(|latent| latent.2 == site) else { continue };
+        let covers = |&(of, start, end, _): &(u32, u32, u32, Located)| of == generation && start <= at && at < end;
+        if labelled.iter().any(covers) {
+            continue;
+        }
+        let mut kept = Vec::new();
+        for &(of, start, end, located) in
+            labelled.iter().filter(|&&(of, start, end, _)| of == label && start <= at && at < end)
+        {
+            kept.extend((start < at).then_some((of, start, at, located)));
+            kept.extend((at + length < end).then_some((of, at + length, end, located)));
+        }
+        labelled.retain(|&(of, start, end, _)| !(of == label && start <= at && at < end));
+        labelled.extend(kept);
+    }
+    labelled.retain(|&(of, ..)| of < GENERATIONS);
+    labelled.sort_by_key(|&(label, start, ..)| (label, start));
+}
+
 fn labelled(ranges: &cranelift_codegen::ValueLabelsRanges) -> Vec<(u32, u32, u32, Located)> {
     let mut out = Vec::new();
     for (label, ranges) in ranges {
@@ -1974,8 +2022,9 @@ impl Codegen<'_> {
             }
             if let Some(name) = job.traced {
                 let (size, calls, lines, sites, inlined) = (code.size, code.calls, code.lines, job.sites, job.inlined);
-                let (handlers, labelled, slots, body) = (code.handlers, code.labelled, code.slots, job.body);
+                let (handlers, mut labelled, slots, body) = (code.handlers, code.labelled, code.slots, job.body);
                 let (saved, latent) = (code.saved, code.latent);
+                fresh(&mut labelled, &latent, &job.stale);
                 self.traced.push(Traced {
                     version: job.needs & VERSION != 0,
                     latent,
@@ -3507,6 +3556,13 @@ struct FnCodegen<'a, 'b> {
     tight_loops: Vec<bool>,
     latent_lines: LatentLines,
     latent_callee: Option<ir::FuncRef>,
+    /// Whether the block has had a latent site; the bindings given a value
+    /// since, by the label of the value; what each latent site checks of
+    /// them (`fresh`); and how many such labels there are.
+    latent_here: bool,
+    defined_here: HashMap<u32, u32>,
+    stale: Vec<Stale>,
+    generations: u32,
     carrying: bool,
     carried: HashMap<usize, (String, usize)>,
     /// The site of the probe just placed, as a value and its number; that
@@ -3765,6 +3821,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             tight_loops: crate::mir::tight_loops(&body.blocks),
             latent_lines: Vec::new(),
             latent_callee: None,
+            latent_here: false,
+            defined_here: HashMap::new(),
+            stale: Vec::new(),
+            generations: 0,
             carrying: false,
             carried: HashMap::new(),
             site_now: None,
@@ -3791,6 +3851,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.def_var(var, value);
         if let Some(&label) = self.labels.get(&var.as_u32()) {
             self.e.fb.set_val_label(value, ir::ValueLabel::from_u32(label));
+            // This value alone, for the latent sites after it (`fresh`).
+            if self.latent_here {
+                let generation = GENERATIONS + self.generations;
+                self.generations += 1;
+                self.e.fb.set_val_label(value, ir::ValueLabel::from_u32(generation));
+                self.defined_here.insert(label, generation);
+            }
             if self.assigning != Some(Local(label)) {
                 self.unfixed.insert(label);
             }
@@ -3837,7 +3904,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
 
     /// Builds the function's IR; gives where its statements are, which the
     /// source locations of its instructions index.
-    fn run(mut self) -> Vec<Site> {
+    fn run(mut self) -> (Vec<Site>, Vec<Stale>) {
         let entry = self.blocks[0];
         self.e.fb.append_block_params_for_function_params(entry);
         self.e.fb.switch_to_block(entry);
@@ -3915,6 +3982,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             self.counted = None;
             self.block = index;
+            self.latent_here = false;
+            self.defined_here.clear();
             // Code that only follows that of one line goes on in it, as after
             // a call that may panic: a logpoint's site there would count the
             // line twice. Code that may follow another line, or that one
@@ -4027,7 +4096,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.describe_dump();
         let config = self.e.cg.isa().frontend_config();
         self.e.fb.finalize(config);
-        self.sites
+        (self.sites, self.stale)
     }
 
     // ---- places and values ---------------------------------------------------

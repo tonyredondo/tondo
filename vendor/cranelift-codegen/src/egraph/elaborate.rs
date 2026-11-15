@@ -7,7 +7,7 @@ use crate::ctxhash::NullCtx;
 use crate::dominator_tree::DominatorTree;
 use crate::hash_map::Entry as HashEntry;
 use crate::inst_predicates::is_pure_for_egraph;
-use crate::ir::{Block, Function, Inst, Value, ValueDef};
+use crate::ir::{Block, Function, Inst, Value, ValueDef, ValueLabelAssignments};
 use crate::loop_analysis::{Loop, LoopAnalysis};
 use crate::scoped_hash_map::ScopedHashMap;
 use crate::trace;
@@ -928,5 +928,58 @@ impl<'a> Elaborator<'a> {
         self.compute_best_values();
         self.elaborate_domtree(&self.domtree);
         self.stats.elaborate_func_post_insts += self.func.dfg.num_insts() as u64;
+        self.move_labels();
+    }
+
+    /// Tondo: the labels of a value the optimizer replaced go to the value
+    /// that took its place, as `round * 2` that became `2 * old + 2`,
+    /// where they stayed on a value no code makes: a debugger found the
+    /// variable nowhere, or at the place of its value before.
+    fn move_labels(&mut self) {
+        let Some(values_labels) = &self.func.dfg.values_labels else {
+            return;
+        };
+        let best = |value: Value| match self.value_to_best_value.get(value) {
+            Some(&BestEntry(_, best)) if best != Value::reserved_value() => Some(best),
+            _ => None,
+        };
+        let placed = |value: Value| match self.func.dfg.value_def(value) {
+            ValueDef::Result(inst, _) => self.func.layout.inst_block(inst).is_some(),
+            ValueDef::Param(block, _) => self.func.layout.is_block_inserted(block),
+            ValueDef::Union(..) => false,
+        };
+        let gone: Vec<Value> = values_labels.keys().copied().filter(|&value| !placed(value)).collect();
+        if gone.is_empty() {
+            return;
+        }
+        // A value that code makes for each best value, the first in layout.
+        let mut made: FxHashMap<Value, Value> = FxHashMap::default();
+        for block in self.func.layout.blocks() {
+            for inst in self.func.layout.block_insts(block) {
+                for &result in self.func.dfg.inst_results(inst) {
+                    if let Some(best) = best(result) {
+                        made.entry(best).or_insert(result);
+                    }
+                }
+            }
+        }
+        let mut moved = Vec::new();
+        for value in gone {
+            if let Some(&made) = best(value).and_then(|best| made.get(&best)) {
+                moved.push((value, made));
+            }
+        }
+        let values_labels = self.func.dfg.values_labels.as_mut().unwrap();
+        for (value, made) in moved {
+            let Some(ValueLabelAssignments::Starts(starts)) = values_labels.remove(&value) else {
+                continue;
+            };
+            let known = values_labels
+                .entry(made)
+                .or_insert_with(|| ValueLabelAssignments::Starts(Vec::new()));
+            if let ValueLabelAssignments::Starts(known) = known {
+                known.extend(starts);
+            }
+        }
     }
 }

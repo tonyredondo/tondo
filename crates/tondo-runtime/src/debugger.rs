@@ -113,6 +113,12 @@ static TABLE: OnceLock<RwLock<Table>> = OnceLock::new();
 fn table() -> Option<std::sync::RwLockReadGuard<'static, Table>> {
     TABLE.get().map(|table| table.read().unwrap_or_else(|e| e.into_inner()))
 }
+
+/// Whether this is a build with probes, a debug build's, which stops and
+/// logs at them rather than at latent sites.
+pub(crate) fn probed() -> bool {
+    TABLE.get().is_some()
+}
 /// What each line of a file left in its frame, while a tool looks: the
 /// bindings as the next line of that frame found them.
 struct LineValues {

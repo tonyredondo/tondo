@@ -515,7 +515,17 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 callee
             }
         };
+        // A source location of its own, of the same line, which `fresh`
+        // finds it by, with what it checks of the bindings the block's
+        // lines gave values since its first site.
+        let statement = self.e.fb.srcloc();
+        let own = self.site(span.start, None);
+        self.e.fb.set_srcloc(own);
         self.e.fb.ins().call(callee, &[]);
+        self.e.fb.set_srcloc(statement);
+        let checks = self.defined_here.iter().map(|(&label, &generation)| (own.bits(), label, generation));
+        self.stale.extend(checks);
+        self.latent_here = true;
     }
 }
 

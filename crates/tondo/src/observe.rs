@@ -3197,6 +3197,12 @@ pub(crate) fn logged(hit: &Value, text: Option<&str>) -> String {
     let at = values.first().and_then(|value| value["at"].as_str()).unwrap_or_default();
     let shown = |value: &Value| value["value"].as_str().unwrap_or_default().to_string();
     let Some(text) = text else {
+        if values.is_empty() {
+            return format!(
+                "task {}: no binding is known here, as the optimized code makes the values later",
+                hit["task"]
+            );
+        }
         let all: Vec<String> =
             values.iter().map(|v| format!("{} = {}", v["name"].as_str().unwrap_or_default(), shown(v))).collect();
         return format!("task {} {at}: {}", hit["task"], all.join(", "));

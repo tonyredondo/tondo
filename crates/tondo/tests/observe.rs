@@ -3898,6 +3898,74 @@ fn a_logpoint_reads_a_running_release_build() {
     assert!(status.code() == Some(143) || status.success(), "{status:?}");
 }
 
+/// A logpoint on a line after one that gives a binding a new value, which
+/// the optimized code may make later: the binding reads `?` there, never
+/// the value it had before. One on a line after the values are made, past
+/// calls, fires and reads them. A build with --debug says what logs there.
+#[test]
+fn a_logpoint_shows_no_value_from_before() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("logpoint-fresh");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.time\n\nfn main() {\n    var round = 0\n    var before = 0\n    \
+        console.println(\"ready\")\n    let _ = console.flush()\n    for round < 1000000 {\n        before = round\n        \
+        round += 1\n        let doubled = round * 2\n        console.println(\"at {round} {doubled} {before}\")\n        \
+        let _ = console.flush()\n        time.sleep(time.milliseconds(5))\n    }\n}\n";
+    std::fs::write(dir.join("counts.to"), program).unwrap();
+    let tondo_bin = env!("CARGO_BIN_EXE_tondo");
+    for (output, debug) in [("counts", false), ("debugged", true)] {
+        let mut args = vec!["build", "counts.to", "--output", output];
+        args.extend(debug.then_some("--debug"));
+        let built = Command::new(tondo_bin).args(&args).current_dir(&dir).output().unwrap();
+        assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+        let mut child =
+            Command::new(dir.join(output)).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap();
+        // It serves the tools from before `main`, which says it is ready;
+        // what it prints after is read, so that it never waits to write.
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        let (ready, said) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut lines = stdout.lines();
+            let _ = ready.send(lines.next());
+            lines.for_each(drop);
+        });
+        said.recv().unwrap();
+        let pid = child.id().to_string();
+        let logpoint = |place: &str, text: &str, max: &str| {
+            let args = ["logpoint", &pid, place, text, "--max", max, "--for", "60", "--json"];
+            Command::new(tondo_bin).args(args).current_dir(&dir).output().unwrap()
+        };
+        if debug {
+            let refused = logpoint("counts.to:12", "{round}", "1");
+            let said = String::from_utf8_lossy(&refused.stdout);
+            assert!(said.contains("a build with --debug has no places for a logpoint"), "{said}");
+            assert!(said.contains("break counts.to:12 log"), "{said}");
+        } else {
+            // Right after `round += 1`: the value after it, or none.
+            let hits = logpoint("counts.to:12", "{before} {round}", "5");
+            let hits: Value = serde_json::from_slice(&hits.stdout).unwrap();
+            let texts: Vec<&str> =
+                hits["hits"].as_array().unwrap().iter().map(|h| h["text"].as_str().unwrap()).collect();
+            assert_eq!(texts.len(), 5, "{hits}");
+            for text in &texts {
+                let (before, round) = text.split_once(' ').unwrap();
+                if let (Ok(before), Ok(round)) = (before.parse::<u64>(), round.parse::<u64>()) {
+                    assert_eq!(round, before + 1, "a value from before: {texts:?}");
+                }
+            }
+            // Past the calls of the turn, where the value made last is.
+            let hits = logpoint("counts.to:15", "{round}", "1");
+            let hits: Value = serde_json::from_slice(&hits.stdout).unwrap();
+            assert_eq!(hits["hits"].as_array().unwrap().len(), 1, "{hits}");
+        }
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+}
+
 #[test]
 fn dumps_leave_by_a_command_and_group_by_their_failure() {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {
