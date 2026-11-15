@@ -106,6 +106,49 @@ fn main() {
 - A `GreeterPlugin` is shared by tasks; the program it started ends when its
   last copy goes.
 
+## Interfaces of C, as COM's
+
+An object of COM, or of .NET's profiling API, starts with a pointer to a
+table of functions that each take the object first. A trait with
+`@ffi.Interface` is one: its methods are the table's entries in order,
+after those of the interface it requires, and its module gets
+`NameObject`, which calls them on an object C made.
+
+```tondo
+import std.console
+import std.ffi
+
+@ffi.Interface(id: "6A1B2C3D-0000-4000-8000-00000000C0DE")
+pub trait Counter: ffi.Unknown {
+    fn add(self, by: Int32): !ffi.HResult
+    fn total(self): Int ! ffi.HResult
+}
+
+/// An object C gave the program.
+fn counted(object: Pointer[ffi.Void]): Int ! ffi.HResult {
+    let counter = unsafe { CounterObject.of(object) }
+    counter.add(40)?
+    counter.total()
+}
+
+console.println("{CounterObject.Id} {ffi.HResult.NoInterface}")
+```
+
+- `ffi.Unknown` is `IUnknown`; an interface that requires it has an `id`,
+  its GUID as the header writes it. `counter.unknown()` is the same object
+  as an `ffi.Unknown`, and `CounterObject.Id` its identity, to give
+  `queryInterface`.
+- `: ffi.HResult` gives the number as it is (`S_FALSE` is `HResult.False`,
+  not a failure); `: !ffi.HResult` fails when it is negative; `: T !
+  ffi.HResult` gives C a last pointer for its `T`.
+- Text of Windows and .NET is UTF-16: `ffi.toWide(text)` makes one, and
+  `unsafe { ffi.fromWide(pointer, count) }` reads one.
+- A Tondo type implements one with an ordinary `impl`, of the methods it
+  cares for when the others have bodies; `ffi.object(value)` gives C an
+  object of it, whose table the compiler writes. For one that requires
+  `ffi.Unknown`, the compiler writes `queryInterface`, `addRef` and
+  `release`, and the value goes when the count reaches zero.
+
 ## Libraries for C
 
 `tondo build --library` compiles a project without `main` into a shared

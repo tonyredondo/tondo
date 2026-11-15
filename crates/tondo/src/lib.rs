@@ -36,6 +36,7 @@ pub mod hir;
 pub mod index;
 pub mod inline;
 pub mod instructions;
+pub mod interfaces;
 pub mod lends;
 pub mod lexer;
 pub mod link;

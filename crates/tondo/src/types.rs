@@ -1994,9 +1994,10 @@ impl Types {
             TyKind::Param(index) => self.params[*index as usize].equatable || self.params[*index as usize].key,
             // References compare by identity (16.10).
             TyKind::Handle(Handle::Ref, _) => true,
-            // A C array compares as the `Array` it converts to; a union's
-            // fields overlap.
-            TyKind::Fn(..) | TyKind::CFn(..) | TyKind::CArray(..) | TyKind::Handle(..) => false,
+            // A C array of a few elements compares each, in place, as
+            // `ffi.Guid`'s eight bytes; a union's fields overlap.
+            TyKind::CArray(element, count) => *count <= 64 && self.equatable_in(*element, visiting),
+            TyKind::Fn(..) | TyKind::CFn(..) | TyKind::Handle(..) => false,
             TyKind::Adt(id) if self.foreign.get(id).is_some_and(|l| l.union) => false,
             TyKind::Opaque(id, _) => self.equatable_in(self.opaques[*id as usize].carrier, visiting),
             _ => match (self.components(repr), self.variants(repr)) {

@@ -7388,3 +7388,22 @@ over two: `Int.Max`, `Float.Pi`, `Float.NaN`, `T.Max` of a `T: Integer`. The old
 error that says the new one, with the fix that writes it, so a program or an agent that learned
 them is told at once. `Byte` gets them too, as `UInt8` has them.
 
+## Interfaces of C as traits, and their objects as derived code
+
+Tony chose an annotation on a trait, `@ffi.Interface`, over new declarations, so that an
+interface of C is a trait like any: a bound, a default method, one interface requiring another.
+Its identity is the annotation's `id`, read as a GUID when the program builds and required of an
+interface that reaches `ffi.Unknown`, where `queryInterface` asks for it. The object that calls
+an object C made, `NameObject`, is written as Tondo source after the standard modules are
+added, as a plugin's contract is: a base interface of another module, as `ffi.Unknown`, has its
+methods written with the names the interface's file gives that module. Each method reads the
+table from the object's first word and calls its entry through `toFunction`, so the call is an
+ordinary call of C; `T ! ffi.HResult` passes a last pointer for `T`, as COM's results do.
+`HResult` is a newtype over `Int32` with constants of its type, since its values are open and
+an enum is closed. A Tondo type that implements interfaces gets, in derived source too, a table
+for each interface of its that no other of its requires, as C++ lays out a class with several
+bases: `ffi.object(value)` makes a block of a word for each table and a pointer to what it
+holds, the value and an atomic count, and each entry finds the block from the word it is given,
+by its place among the tables. The count is a `sync.Atomic` beside the value, since COM calls an
+object from any thread; `queryInterface` answers by each interface's `Id`. A value's own
+`ffi.Unknown`, which no C calls, does nothing.

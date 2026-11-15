@@ -88,7 +88,7 @@ pub fn constant_parts(value: &mut Expr) -> Option<Vec<&mut Expr>> {
     use ExprKind as K;
     Some(match &mut value.kind {
         K::Int(_) | K::Float(_) | K::Char(_) | K::Bool(_) | K::Str(_) | K::Bytes(_) | K::Unit => Vec::new(),
-        K::Unary(_, inner) | K::Retype(inner) | K::Convert(inner) => vec![inner],
+        K::Unary(_, inner) | K::Retype(inner) | K::Convert(inner) | K::Fixed(inner) => vec![inner],
         K::Binary(_, left, right) => vec![left, right],
         K::Aggregate(items) | K::Array(items) | K::Set(items) => items.iter_mut().collect(),
         K::Record(fields) | K::Variant(_, fields) => fields.iter_mut().map(|(_, v)| v).collect(),

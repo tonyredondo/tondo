@@ -17,7 +17,7 @@ console.println("{unsafe { abs(-42) }}")
 
 `tondo api std.ffi` shows the same in a terminal.
 
-- [Functions](#functions): [`sizeOf`](#sizeof), [`alignOf`](#alignof), [`allocate`](#allocate), [`free`](#free), [`copy`](#copy), [`toCString`](#tocstring), [`fromCString`](#fromcstring), [`fromCChars`](#fromcchars), [`toCChars`](#tocchars), [`context`](#context), [`fromContext`](#fromcontext), [`freeContext`](#freecontext), [`bytes`](#bytes), [`libraryFileName`](#libraryfilename)
+- [Functions](#functions): [`sizeOf`](#sizeof), [`alignOf`](#alignof), [`allocate`](#allocate), [`free`](#free), [`copy`](#copy), [`toCString`](#tocstring), [`fromCString`](#fromcstring), [`fromCChars`](#fromcchars), [`toCChars`](#tocchars), [`context`](#context), [`fromContext`](#fromcontext), [`freeContext`](#freecontext), [`bytes`](#bytes), [`Guid.Empty`](#guidempty), [`HResult.Ok`](#hresultok), [`HResult.False`](#hresultfalse), [`HResult.Fail`](#hresultfail), [`HResult.NoInterface`](#hresultnointerface), [`HResult.OutOfMemory`](#hresultoutofmemory), [`HResult.NotImplemented`](#hresultnotimplemented), [`HResult.InvalidArgument`](#hresultinvalidargument), [`object`](#object), [`toWide`](#towide), [`fromWide`](#fromwide), [`libraryFileName`](#libraryfilename)
 - [CChar](#cchar)
 - [CShort](#cshort)
 - [CUShort](#cushort)
@@ -35,6 +35,12 @@ console.println("{unsafe { abs(-42) }}")
 - [CString](#cstring)
 - [Void](#void)
 - [VaList](#valist)
+- [Guid](#guid): [`Guid.parse`](#guidparse)
+- [HResult](#hresult): [`HResult.isOk`](#hresultisok), [`HResult.isFailure`](#hresultisfailure)
+- [Interface](#interface)
+- [Unknown](#unknown)
+- [Implemented](#implemented)
+- [WideString](#widestring)
 - [LibraryError](#libraryerror)
 - [Library](#library): [`Library.open`](#libraryopen), [`Library.openUnloadable`](#libraryopenunloadable), [`Library.named`](#librarynamed), [`Library.program`](#libraryprogram), [`Library.function`](#libraryfunction), [`Library.pointer`](#librarypointer), [`Library.has`](#libraryhas), [`Library.path`](#librarypath), [`Library.close`](#libraryclose)
 - [Function](#function): [`Function.raw`](#functionraw)
@@ -154,6 +160,107 @@ pub unsafe fn bytes(from: Pointer[Byte], count: Int): Array[Byte]
 ```
 
 A copy of `count` bytes at an address.
+
+#### Guid.Empty
+
+```tondo
+pub const Guid.Empty: Guid = Guid {
+    data1: 0
+    data2: 0
+    data3: 0
+    data4: [Byte(0u8), Byte(0u8), Byte(0u8), Byte(0u8), Byte(0u8), Byte(0u8), Byte(0u8), Byte(0u8)]
+}
+```
+
+The GUID whose bits are all zero.
+
+#### HResult.Ok
+
+```tondo
+pub const HResult.Ok: HResult = HResult(0)
+```
+
+`S_OK`: it went well.
+
+#### HResult.False
+
+```tondo
+pub const HResult.False: HResult = HResult(1)
+```
+
+`S_FALSE`: it went well, and the answer is no.
+
+#### HResult.Fail
+
+```tondo
+pub const HResult.Fail: HResult = HResult(-2147467259)
+```
+
+`E_FAIL`, `0x80004005`: it failed, with no more said.
+
+#### HResult.NoInterface
+
+```tondo
+pub const HResult.NoInterface: HResult = HResult(-2147467262)
+```
+
+`E_NOINTERFACE`, `0x80004002`: the object is not of the interface asked.
+
+#### HResult.OutOfMemory
+
+```tondo
+pub const HResult.OutOfMemory: HResult = HResult(-2147024882)
+```
+
+`E_OUTOFMEMORY`, `0x8007000E`: memory ran out.
+
+#### HResult.NotImplemented
+
+```tondo
+pub const HResult.NotImplemented: HResult = HResult(-2147467263)
+```
+
+`E_NOTIMPL`, `0x80004001`: the method does nothing in this object.
+
+#### HResult.InvalidArgument
+
+```tondo
+pub const HResult.InvalidArgument: HResult = HResult(-2147024809)
+```
+
+`E_INVALIDARG`, `0x80070057`: an argument is wrong.
+
+#### object
+
+```tondo
+pub fn object[T: Implemented](value: T): Pointer[Void]
+```
+
+An object of C made of `value`, of a type that implements interfaces of
+C: its first word points to the table of the first of them, whose
+functions call the value's methods. One whose interfaces require
+`Unknown` is counted: it starts held once, `addRef` and `release` count,
+and the value goes when nothing holds it; `queryInterface` answers for
+each interface the type implements.
+
+#### toWide
+
+```tondo
+pub fn toWide(written: String): WideString
+```
+
+A copy of the text in UTF-16 that ends with a zero unit, for C to keep;
+`free` gives it back. Text with a zero character inside panics.
+
+#### fromWide
+
+```tondo
+pub unsafe fn fromWide(wide: WideString, count: Int? = none): String
+```
+
+The text of wide text of C: up to its zero unit, or its first `count`
+units, as an API that gives a length gives it. Units that are not
+UTF-16 become U+FFFD.
 
 #### libraryFileName
 
@@ -546,6 +653,181 @@ extern fn logged(level: ffi.CInt, format: ffi.CString, args: Pointer[ffi.VaList]
 extern fn library_set_log(callback: extern fn(ffi.CInt, ffi.CString, Pointer[ffi.VaList]))
 
 unsafe { library_set_log(logged) }
+```
+
+### Guid
+
+```tondo
+pub extern type Guid = {
+    data1: UInt32
+    data2: UInt16
+    data3: UInt16
+    @count(8)
+    data4: Byte
+}
+```
+
+A GUID of COM and .NET, its 16 bytes laid out as C lays out Windows'
+`GUID`: three numbers in the machine's byte order, then eight bytes.
+`Guid.parse` reads one from its text; a literal text is read when the
+program builds, and one that is not a GUID does not build.
+
+```tondo
+import std.console
+import std.ffi
+
+// The identity of `IUnknown`, which every interface of COM extends.
+let unknown = ffi.Guid.parse("00000000-0000-0000-C000-000000000046") ?? ffi.Guid.Empty
+let braced = ffi.Guid.parse("{{00000000-0000-0000-c000-000000000046}}") ?? ffi.Guid.Empty
+console.println("{unknown} {unknown == braced}")
+```
+
+Implements `Display`.
+
+#### Guid.parse
+
+```tondo
+pub fn Guid.parse(written: String): Guid?
+```
+
+The GUID a text writes, as `00000000-0000-0000-C000-000000000046`, in
+braces or not, with digits of either case; none when it is not one.
+
+### HResult
+
+```tondo
+pub type HResult = Int32
+```
+
+The result of a function of COM: a number whose sign says whether it
+failed, each value with its meaning, as Windows writes them: `S_OK` is
+`HResult.Ok`, `E_NOINTERFACE` is `HResult.NoInterface`, and a library
+declares its own. A method of an interface declared `: ffi.HResult`
+gives the number as it is, so that `S_FALSE` is told from `S_OK`; one
+declared `: !ffi.HResult`, or `: T ! ffi.HResult`, fails when it is
+negative.
+
+```tondo
+import std.console
+import std.ffi
+
+let missing = ffi.HResult.NoInterface
+console.println("{missing} {missing.isFailure()} {ffi.HResult.False.isOk()}")
+```
+
+Implements `Display`.
+
+#### HResult.isOk
+
+```tondo
+pub fn HResult.isOk(self): Bool
+```
+
+Whether it went well: not below zero.
+
+#### HResult.isFailure
+
+```tondo
+pub fn HResult.isFailure(self): Bool
+```
+
+Whether it failed: below zero.
+
+### Interface
+
+```tondo
+pub annotation Interface = {
+    id: String = ""
+}
+```
+
+Marks a trait as an interface of C, whose objects begin with a pointer
+to a table of functions, each taking the object first: the trait's
+methods are the entries in the order they are declared, after those of
+the interface it requires. Its module gets `NameObject`, which calls
+the entries of an object C made. `id` is its identity, which an
+interface that requires `Unknown` has, as its header gives it.
+
+```tondo
+import std.ffi
+
+@ffi.Interface(id: "00000000-0000-0000-C000-000000000046")
+pub trait Counter: ffi.Unknown {
+    fn count(self): Int32
+}
+```
+
+### Unknown
+
+```tondo
+pub trait Unknown {
+    /// The object as the interface whose identity `id` points to, in
+    /// `found`, held once more; `HResult.NoInterface` when it is not one.
+    fn queryInterface(self, id: Pointer[Guid], found: Pointer[Pointer[Void]]): HResult
+
+    /// Holds the object once more: the count after.
+    fn addRef(self): UInt32
+
+    /// Lets the object go once: the count after, and at zero it is gone.
+    fn release(self): UInt32
+}
+```
+
+The interface of COM that every other extends: `IUnknown`, which asks
+an object for another of its interfaces by identity, and counts who
+holds it. `UnknownObject` calls an object C made.
+
+```tondo
+import std.console
+import std.ffi
+
+// An object C gave the program, as a `Pointer[ffi.Void]`.
+fn released(object: Pointer[ffi.Void]): UInt32 {
+    let unknown = unsafe { ffi.UnknownObject.of(object) }
+    unknown.release()
+}
+```
+
+### Implemented
+
+```tondo
+pub trait Implemented {
+    /// What `object` gives: the compiler writes it.
+    fn objectForC(self): Pointer[Void]
+}
+```
+
+A Tondo type that implements interfaces of C, for which the compiler
+writes the tables C calls: `object` makes an object of C of one of its
+values. The compiler implements it, and no program does.
+
+```tondo
+import std.ffi
+
+fn given[T: ffi.Implemented](value: T): Pointer[ffi.Void] {
+    ffi.object(value)
+}
+```
+
+### WideString
+
+```tondo
+pub alias WideString = Pointer[UInt16]
+```
+
+Text of C in units of 16 bits, UTF-16 that ends with a zero unit, as
+Windows and .NET give and take it: a `WCHAR*`. `toWide` makes one for
+C, and `fromWide` reads one.
+
+```tondo
+import std.console
+import std.ffi
+
+let wide: ffi.WideString = ffi.toWide("café ☕")
+unsafe {
+    console.println("{ffi.fromWide(wide)} {wide.offset(3).read()}")
+    ffi.free(wide)
+}
 ```
 
 ### LibraryError

@@ -147,6 +147,7 @@ impl<'a> Checker<'a> {
         self.annotation_declarations();
         self.record_defaults();
         self.annotation_uses(&module.items, &bodies);
+        self.check_interfaces(&module.items);
 
         for item in &module.items {
             if let ast::Item::Test(node) = item

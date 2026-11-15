@@ -206,6 +206,41 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// An array of a constant given to a C array of another count, which
+    /// would panic as it is made (`P0006`): the count and the elements.
+    fn fixed_mismatch(&self, value: &hir::Expr) -> Option<(u32, usize)> {
+        if let hir::ExprKind::Fixed(inner) = &value.kind
+            && let (&TyKind::CArray(_, count), hir::ExprKind::Array(items)) = (self.types.kind(value.ty), &inner.kind)
+            && items.len() != count as usize
+        {
+            return Some((count, items.len()));
+        }
+        let mut copy = value.clone();
+        let parts = hir::constant_parts(&mut copy)?;
+        parts.into_iter().find_map(|part| self.fixed_mismatch(part))
+    }
+
+    /// A literal text of `ffi.Guid.parse` is read when the program builds:
+    /// one that is not a GUID is `E1708`.
+    pub(super) fn check_guid_literal(&mut self, id: FnId, args: &[ast::Arg]) {
+        let Some(&TypeName::Nominal(guid)) = self.type_names.get("ffi.Guid") else { return };
+        if self.methods.get(&(guid, "parse".to_string())) != Some(&id) {
+            return;
+        }
+        let Some(arg) = args.first() else { return };
+        let ast::ExprKind::Str(segments) = &arg.value.kind else { return };
+        let text = match segments.as_slice() {
+            [ast::StrSegment::Text(text)] => text.clone(),
+            [] => String::new(),
+            _ => return,
+        };
+        if crate::interfaces::guid(&text).is_none() {
+            let message =
+                format!("`{text}` is not a GUID: one is written `8-4-4-4-12` in hexadecimal, in braces or not");
+            self.diags.error("E1708", arg.value.span, message);
+        }
+    }
+
     pub(super) fn check_regex_literal(&mut self, id: FnId, args: &[ast::Arg]) {
         let Some(&TypeName::Nominal(regex)) = self.type_names.get("regex.Regex") else { return };
         if self.methods.get(&(regex, "compile".to_string())) != Some(&id) {
@@ -717,7 +752,14 @@ impl<'a> Checker<'a> {
                     let message = "a constant is evaluated in compilation: build it from literals, other constants, their operators and constructors";
                     self.diags.error("E1901", decl.value.span, message);
                 }
-                None => {}
+                None => {
+                    if let Some((count, given)) = self.fixed_mismatch(&value) {
+                        let message = format!(
+                            "evaluating the constant would panic: a C array of {count} elements is given {given}"
+                        );
+                        self.diags.error("E1903", decl.value.span, message);
+                    }
+                }
             }
         }
         self.module = module;

@@ -12,6 +12,7 @@ mod features;
 mod foreign;
 mod functions;
 mod indexing;
+mod interfaces;
 mod literals;
 mod natives;
 mod operators;
@@ -181,6 +182,7 @@ fn check_with<'a>(
         export_symbols: HashMap::new(),
         c_functions: Vec::new(),
         c_decls: HashMap::new(),
+        deferred_c: None,
         consts: Vec::new(),
         const_uses: HashSet::new(),
     };
@@ -1135,6 +1137,10 @@ struct Checker<'a> {
     /// What a library's header declares, and each `extern type` with a body.
     c_functions: Vec<hir::CFunction>,
     c_decls: HashMap<crate::types::AdtId, &'a ast::TypeDecl>,
+    /// While types are defined, those whose crossing to C is checked once
+    /// every type is: a newtype a C struct holds, as `ffi.HResult`, may be
+    /// defined after it.
+    deferred_c: Option<Vec<(Ty, Span)>>,
     /// The module's constants (6.5), evaluated when first used.
     consts: Vec<ConstEntry<'a>>,
     /// Where an integer constant is used: its value fits any integer type

@@ -3376,6 +3376,18 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
             }
             return result;
         }
+        // A C array: each element equal by its type's `==`, in place.
+        if let (&TyKind::CArray(element, count), Val::Memory(a), Val::Memory(b)) = (types.kind(types.repr(ty)), a, b) {
+            let size = self.cg.layout(element).size as i64;
+            let mut result = self.fb.ins().iconst(types::I8, 1);
+            for index in 0..count as i64 {
+                let (x, y) = (self.fb.ins().iadd_imm_s(a, index * size), self.fb.ins().iadd_imm_s(b, index * size));
+                let (x, y) = (self.value_at(x, element), self.value_at(y, element));
+                let same = self.equal(element, x, y);
+                result = self.fb.ins().band(result, same);
+            }
+            return result;
+        }
         match (a, b) {
             (Val::Scalar(a), Val::Scalar(b)) => match *self.cg.types().kind(self.cg.types().repr(ty)) {
                 TyKind::String => self.call_rt(Rt::StrEq, &[a, b]).unwrap(),

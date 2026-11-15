@@ -7244,6 +7244,61 @@ Las reglas de llamada son las de C en cada target: System V en x86-64, AAPCS64
 en arm64 y su variante de Apple en macOS, que pasa los argumentos de `...` en
 la pila.
 
+#### Interfaces de C
+
+Un objeto de una interfaz de C, como los de COM y las APIs de profiling de
+.NET, empieza con un puntero a una tabla de funciones, cada una de las cuales
+toma el objeto primero. Un trait con `@ffi.Interface` es una:
+
+~~~tondo
+@ffi.Interface(id: "176FBED1-A55C-4796-98CA-A9DA0EF883E7")
+pub trait ProfilerInfo: ffi.Unknown {
+    fn getClassFromObject(self, object: UInt, class: Pointer[UInt]): ffi.HResult
+}
+~~~
+
+1. Sus métodos son las entradas de la tabla en el orden en que se declaran,
+   tras las de la interfaz que requiere. Cada uno toma `self` y parámetros por
+   valor que cruzan a C, sin parámetros de tipo, y da un tipo que cruza,
+   nada, o falla con `ffi.HResult`. El trait no tiene parámetros de tipo y
+   requiere como mucho otro, que es una interfaz. `id` es su identidad, un
+   GUID que se lee al compilar, que tiene la que requiere `ffi.Unknown` por sí
+   o por la que requiere. Lo que rompe una de estas reglas es `E1707` en el
+   trait, y un GUID mal escrito, `E1708`.
+2. El módulo del trait recibe el tipo `NombreObject`, que guarda un
+   `Pointer[ffi.Void]` a un objeto de C e implementa el trait, y los que
+   requiere, llamando a la entrada de la tabla con el objeto primero.
+   `NombreObject.of(pointer)` lo hace de un puntero y es `unsafe`, pues nada
+   comprueba que el objeto sea de esa interfaz; `pointer()` lo devuelve;
+   `NombreObject.Id` es su identidad, y un método con el nombre de la
+   interfaz que requiere, en minúscula inicial (`unknown()`), da el mismo
+   objeto como esa.
+3. Un método que da `ffi.HResult` da el número tal cual, de modo que `S_FALSE`
+   se distingue de `S_OK`; uno que da `!ffi.HResult` falla con él cuando es
+   negativo, y uno que da `T ! ffi.HResult` pasa a C un último parámetro
+   `Pointer[T]` donde C escribe el `T`, que da cuando el número no es
+   negativo.
+4. Un método con cuerpo es un default, como en todo trait. Las llamadas siguen
+   la convención de C en Linux y macOS.
+5. Un tipo de Tondo implementa una con un `impl` ordinario, y `ffi.object(valor)`
+   da un objeto de C de él: un bloque con una palabra por cada tabla que el
+   compilador escribe para el tipo, una por cada interfaz suya que ninguna otra
+   de las suyas requiere, con las que requiere primero, y lo que guarda, el
+   valor y una cuenta. Cada entrada es una función de C que encuentra el valor
+   desde el objeto que recibe y llama a su método, el default también; el
+   objeto de cada tabla es su palabra del bloque.
+6. Para una que requiere `ffi.Unknown`, el compilador escribe `addRef` y
+   `release` sobre la cuenta, que empieza en uno, y `queryInterface`, que
+   responde por cada interfaz del tipo con identidad dando el objeto de la
+   tabla que la tiene, contado una vez más, y `HResult.NoInterface` con nulo
+   por las demás; el `impl` no escribe ninguno de los tres. Cuando la cuenta
+   llega a cero, el valor y el bloque se liberan, una vez.
+
+`std.ffi` da `ffi.Unknown`, la interfaz que toda interfaz de COM extiende,
+`ffi.Guid`, `ffi.HResult` con las constantes de los resultados comunes, y el
+texto de 16 bits de Windows y .NET, `ffi.WideString`, con `ffi.toWide` y
+`ffi.fromWide` (biblioteca estándar 19).
+
 ---
 
 ## 17. Operadores
@@ -9343,6 +9398,8 @@ oculten un diagnóstico independiente.
 | `E1704` | `invalid-extern-declaration` | Un `extern fn` o `extern type` con genéricos, receptor, modos, valores por defecto o anotaciones que no le corresponden. |
 | `E1705` | `invalid-callback` | Un valor que C no puede llamar, como un cierre con capturas, donde se espera un `extern fn(...)`. |
 | `E1706` | `duplicate-c-symbol` | Dos funciones que C llama por su símbolo tienen el mismo, o una tiene uno del propio programa: `main` o uno que empieza por `tondo_`. |
+| `E1707` | `invalid-interface` | Un trait con `@ffi.Interface` que no puede ser una tabla de C: tiene parámetros de tipo, requiere más de un trait o uno que no es una interfaz, no tiene identidad y requiere `ffi.Unknown`, o tiene un método que no toma `self`, cuyos valores no cruzan a C, o que falla con otra cosa que `ffi.HResult` (16.16). |
+| `E1708` | `invalid-guid` | Un texto donde va un GUID, la identidad de `@ffi.Interface(id: "...")` o un literal de `ffi.Guid.parse`, que no lo es. |
 | `E1801` | `script-imported-as-module` | Un archivo con statements se importa como módulo. |
 | `E1802` | `duplicate-main` | El target contiene más de un entry point. |
 | `E1803` | `invalid-main` | Existe `main`, pero el target, visibilidad, parámetros, modificadores u outcome no lo permiten. |

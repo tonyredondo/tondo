@@ -300,6 +300,10 @@ impl<'a> Checker<'a> {
     /// Reports a type that cannot cross to C (`E1703`): C's numbers,
     /// `Bool`, pointers, `extern fn(...)` and `extern type`s can.
     pub(super) fn require_c_type(&mut self, ty: Ty, span: Span) -> bool {
+        if let Some(deferred) = &mut self.deferred_c {
+            deferred.push((ty, span));
+            return true;
+        }
         let Some(reason) = self.c_type_error(ty) else { return true };
         let message = format!("{} cannot cross to C: {reason}", self.display(ty));
         self.diags.error("E1703", span, message);

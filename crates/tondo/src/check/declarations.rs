@@ -787,9 +787,14 @@ impl<'a> Checker<'a> {
             }
             declared.push((item, name, id));
         }
+        // What crosses to C, once every type is defined.
+        self.deferred_c = Some(Vec::new());
         for &(item, _, id) in &declared {
             let kind = self.adt_kind(item);
             self.types.define_adt(id, kind);
+        }
+        for (ty, span) in self.deferred_c.take().unwrap_or_default() {
+            self.require_c_type(ty, span);
         }
         for &(item, name, template, generics, ref params) in &templates {
             self.enter_generics(generics, params);

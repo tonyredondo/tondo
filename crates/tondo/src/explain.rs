@@ -143,6 +143,20 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "duplicate-c-symbol",
         "Two functions C calls by symbol share it, or one takes `main` or a symbol starting with `tondo_`.",
     ),
+    (
+        "E1707",
+        "invalid-interface",
+        "A trait with `@ffi.Interface` that a table of C cannot be: it has type parameters, requires more than \
+         one trait or one that is not an interface, has no identity while it requires `ffi.Unknown`, or a \
+         method that does not take `self` or whose values do not cross to C, or that fails with other than \
+         `ffi.HResult`.",
+    ),
+    (
+        "E1708",
+        "invalid-guid",
+        "Text written where a GUID is, as the identity of `@ffi.Interface(id: \"...\")` or a literal of \
+         `ffi.Guid.parse`, that is not one: a GUID is written `8-4-4-4-12` in hexadecimal, in braces or not.",
+    ),
     ("E1801", "script-imported-as-module", "A file with statements at its top level is imported as a module."),
     ("E1802", "duplicate-main", "The program has more than one entry point."),
     ("E1803", "invalid-main", "`main` exists, but its visibility, parameters, modifiers or result are not allowed."),

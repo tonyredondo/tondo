@@ -940,6 +940,8 @@ pub type Pool = {
     // private fields
 }
 == std.ffi
+impl Display for Guid
+impl Display for HResult
 impl Display for LibraryError
 impl reflect.Reflect for LibraryError
 pub alias CBool = Bool
@@ -958,6 +960,23 @@ pub alias CULong = UInt64
 pub alias CULongLong = UInt64
 pub alias CUShort = UInt16
 pub alias Void = memory.Void
+pub alias WideString = Pointer[UInt16]
+pub annotation Interface = {
+    id: String = ""
+}
+pub const Guid.Empty: Guid = Guid {
+    data1: 0
+    data2: 0
+    data3: 0
+    data4: [Byte(0u8), Byte(0u8), Byte(0u8), Byte(0u8), Byte(0u8), Byte(0u8), Byte(0u8), Byte(0u8)]
+}
+pub const HResult.Fail: HResult = HResult(-2147467259)
+pub const HResult.False: HResult = HResult(1)
+pub const HResult.InvalidArgument: HResult = HResult(-2147024809)
+pub const HResult.NoInterface: HResult = HResult(-2147467262)
+pub const HResult.NotImplemented: HResult = HResult(-2147467263)
+pub const HResult.Ok: HResult = HResult(0)
+pub const HResult.OutOfMemory: HResult = HResult(-2147024882)
 pub enum LibraryError {
     /// The file is not there, or is not a library this system loads, with
     /// what the system said.
@@ -969,8 +988,18 @@ pub enum LibraryError {
     /// The library was closed.
     Closed
 }
+pub extern type Guid = {
+    data1: UInt32
+    data2: UInt16
+    data3: UInt16
+    @count(8)
+    data4: Byte
+}
 pub extern type VaList
 pub fn Function[F].raw(self): F
+pub fn Guid.parse(written: String): Guid?
+pub fn HResult.isFailure(self): Bool
+pub fn HResult.isOk(self): Bool
 pub fn Library.has(self, name: String): Bool
 pub fn Library.named(
     name: String,
@@ -985,12 +1014,30 @@ pub fn allocate[T: ~Copy](count: Int = 1): Pointer[T]
 pub fn context[T: ~Copy](value: T): Pointer[Void]
 pub fn fromCChars(chars: Array[CChar]): String
 pub fn libraryFileName(name: String, version: String? = none): String
+pub fn object[T: Implemented](value: T): Pointer[Void]
 pub fn sizeOf[T](): Int
 pub fn toCChars(text: String, count: Int): Array[CChar]
 pub fn toCString(text: String): CString
+pub fn toWide(written: String): WideString
+pub trait Implemented {
+    /// What `object` gives: the compiler writes it.
+    fn objectForC(self): Pointer[Void]
+}
+pub trait Unknown {
+    /// The object as the interface whose identity `id` points to, in
+    /// `found`, held once more; `HResult.NoInterface` when it is not one.
+    fn queryInterface(self, id: Pointer[Guid], found: Pointer[Pointer[Void]]): HResult
+
+    /// Holds the object once more: the count after.
+    fn addRef(self): UInt32
+
+    /// Lets the object go once: the count after, and at zero it is gone.
+    fn release(self): UInt32
+}
 pub type Function[F] = {
     // private fields
 }
+pub type HResult = Int32
 pub type Library = {
     // private fields
 }
@@ -1004,6 +1051,7 @@ pub unsafe fn free(pointer: Pointer[Void]?)
 pub unsafe fn freeContext[T: ~Copy](data: Pointer[Void])
 pub unsafe fn fromCString(text: CString): String
 pub unsafe fn fromContext[T](data: Pointer[Void]): T
+pub unsafe fn fromWide(wide: WideString, count: Int? = none): String
 == std.format
 impl Display for Builder
 impl Display for FormatError

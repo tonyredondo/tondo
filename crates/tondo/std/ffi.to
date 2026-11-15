@@ -419,6 +419,308 @@ pub unsafe fn bytes(from: Pointer[Byte], count: Int): Array[Byte] {
     memory.bytes(from, count)
 }
 
+/// A GUID of COM and .NET, its 16 bytes laid out as C lays out Windows'
+/// `GUID`: three numbers in the machine's byte order, then eight bytes.
+/// `Guid.parse` reads one from its text; a literal text is read when the
+/// program builds, and one that is not a GUID does not build.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// // The identity of `IUnknown`, which every interface of COM extends.
+/// let unknown = ffi.Guid.parse("00000000-0000-0000-C000-000000000046") ?? ffi.Guid.Empty
+/// let braced = ffi.Guid.parse("{{00000000-0000-0000-c000-000000000046}}") ?? ffi.Guid.Empty
+/// console.println("{unknown} {unknown == braced}")
+/// ```
+pub extern type Guid = {
+    data1: UInt32
+    data2: UInt16
+    data3: UInt16
+    @count(8)
+    data4: Byte
+}
+
+/// The GUID whose bits are all zero.
+pub const Guid.Empty: Guid = Guid {
+    data1: 0
+    data2: 0
+    data3: 0
+    data4: [Byte(0u8), Byte(0u8), Byte(0u8), Byte(0u8), Byte(0u8), Byte(0u8), Byte(0u8), Byte(0u8)]
+}
+
+/// The GUID a text writes, as `00000000-0000-0000-C000-000000000046`, in
+/// braces or not, with digits of either case; none when it is not one.
+pub fn Guid.parse(written: String): Guid? {
+    let inner = match written.startsWith("{") and written.endsWith("}") {
+        true => written.removePrefix("{").removeSuffix("}")
+        false => written
+    }
+    let parts = inner.split("-")
+    let sizes = parts.map((part) { part.length() })
+    if sizes != [8, 4, 4, 4, 12] {
+        return none
+    }
+    // Its 32 digits, each a number of four bits.
+    var digits: Array[Int] = []
+    for char in parts.join("").chars() {
+        let code = char.code()
+        let digit = match () {
+            _ if code >= 48 and code <= 57 => code - 48
+            _ if code >= 97 and code <= 102 => code - 87
+            _ if code >= 65 and code <= 70 => code - 55
+            _ => return none
+        }
+        digits.push(digit)
+    }
+    let number = (from: Int, count: Int) {
+        var value = 0
+        for at in from..from + count {
+            value = value * 16 + digits[at]
+        }
+        value
+    }
+    // Eight, four and two digits fit the fields they are read for.
+    let tail: Array[Byte] = (0..8).map((at) { Byte(number(16 + 2 * at, 2)) ?? Byte(0u8) }).collect()
+    Guid {
+        data1: UInt32(number(0, 8)) ?? 0u32
+        data2: UInt16(number(8, 4)) ?? 0u16
+        data3: UInt16(number(12, 4)) ?? 0u16
+        data4: tail
+    }
+}
+
+impl Display for Guid {
+    /// As `00000000-0000-0000-c000-000000000046`.
+    fn display(self): String {
+        let hex = (value: Int, digits: Int) { value.toString(16).padStart(digits, "0") }
+        let last: Array[Byte] = self.data4
+        var written =
+            "{hex(Int(self.data1), 8)}-{hex(Int(self.data2), 4)}-{hex(Int(self.data3), 4)}-"
+        for (at, byte) in last.enumerate() {
+            if at == 2 {
+                written = "{written}-"
+            }
+            written = "{written}{hex(Int(byte), 2)}"
+        }
+        written
+    }
+}
+
+/// The result of a function of COM: a number whose sign says whether it
+/// failed, each value with its meaning, as Windows writes them: `S_OK` is
+/// `HResult.Ok`, `E_NOINTERFACE` is `HResult.NoInterface`, and a library
+/// declares its own. A method of an interface declared `: ffi.HResult`
+/// gives the number as it is, so that `S_FALSE` is told from `S_OK`; one
+/// declared `: !ffi.HResult`, or `: T ! ffi.HResult`, fails when it is
+/// negative.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// let missing = ffi.HResult.NoInterface
+/// console.println("{missing} {missing.isFailure()} {ffi.HResult.False.isOk()}")
+/// ```
+pub type HResult = Int32
+
+/// `S_OK`: it went well.
+pub const HResult.Ok: HResult = HResult(0)
+
+/// `S_FALSE`: it went well, and the answer is no.
+pub const HResult.False: HResult = HResult(1)
+
+/// `E_FAIL`, `0x80004005`: it failed, with no more said.
+pub const HResult.Fail: HResult = HResult(-2147467259)
+
+/// `E_NOINTERFACE`, `0x80004002`: the object is not of the interface asked.
+pub const HResult.NoInterface: HResult = HResult(-2147467262)
+
+/// `E_OUTOFMEMORY`, `0x8007000E`: memory ran out.
+pub const HResult.OutOfMemory: HResult = HResult(-2147024882)
+
+/// `E_NOTIMPL`, `0x80004001`: the method does nothing in this object.
+pub const HResult.NotImplemented: HResult = HResult(-2147467263)
+
+/// `E_INVALIDARG`, `0x80070057`: an argument is wrong.
+pub const HResult.InvalidArgument: HResult = HResult(-2147024809)
+
+/// Whether it went well: not below zero.
+pub fn HResult.isOk(self): Bool {
+    self.value >= 0
+}
+
+/// Whether it failed: below zero.
+pub fn HResult.isFailure(self): Bool {
+    self.value < 0
+}
+
+impl Display for HResult {
+    /// As `0x80004002: No such interface supported` for the ones Windows
+    /// names, and as the number alone for the others.
+    fn display(self): String {
+        let unsigned = if self.value < 0 { Int(self.value) + 4294967296 } else { Int(self.value) }
+        let number = "0x{unsigned.toString(16).toUpper().padStart(8, "0")}"
+        let said = match self.value {
+            0 => "The operation completed successfully"
+            1 => "Success, and the answer is no"
+            -2147467259 => "Unspecified error"
+            -2147467262 => "No such interface supported"
+            -2147024882 => "Not enough memory resources are available to complete this operation"
+            -2147467263 => "Not implemented"
+            -2147024809 => "The parameter is incorrect"
+            _ => ""
+        }
+        if said.isEmpty() { number } else { "{number}: {said}" }
+    }
+}
+
+/// Marks a trait as an interface of C, whose objects begin with a pointer
+/// to a table of functions, each taking the object first: the trait's
+/// methods are the entries in the order they are declared, after those of
+/// the interface it requires. Its module gets `NameObject`, which calls
+/// the entries of an object C made. `id` is its identity, which an
+/// interface that requires `Unknown` has, as its header gives it.
+///
+/// ```tondo
+/// import std.ffi
+///
+/// @ffi.Interface(id: "00000000-0000-0000-C000-000000000046")
+/// pub trait Counter: ffi.Unknown {
+///     fn count(self): Int32
+/// }
+/// ```
+pub annotation Interface = {
+    id: String = ""
+}
+
+/// The interface of COM that every other extends: `IUnknown`, which asks
+/// an object for another of its interfaces by identity, and counts who
+/// holds it. `UnknownObject` calls an object C made.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// // An object C gave the program, as a `Pointer[ffi.Void]`.
+/// fn released(object: Pointer[ffi.Void]): UInt32 {
+///     let unknown = unsafe { ffi.UnknownObject.of(object) }
+///     unknown.release()
+/// }
+/// ```
+@Interface(id: "00000000-0000-0000-C000-000000000046")
+pub trait Unknown {
+    /// The object as the interface whose identity `id` points to, in
+    /// `found`, held once more; `HResult.NoInterface` when it is not one.
+    fn queryInterface(self, id: Pointer[Guid], found: Pointer[Pointer[Void]]): HResult
+
+    /// Holds the object once more: the count after.
+    fn addRef(self): UInt32
+
+    /// Lets the object go once: the count after, and at zero it is gone.
+    fn release(self): UInt32
+}
+
+/// A Tondo type that implements interfaces of C, for which the compiler
+/// writes the tables C calls: `object` makes an object of C of one of its
+/// values. The compiler implements it, and no program does.
+///
+/// ```tondo
+/// import std.ffi
+///
+/// fn given[T: ffi.Implemented](value: T): Pointer[ffi.Void] {
+///     ffi.object(value)
+/// }
+/// ```
+pub trait Implemented {
+    /// What `object` gives: the compiler writes it.
+    fn objectForC(self): Pointer[Void]
+}
+
+/// An object of C made of `value`, of a type that implements interfaces of
+/// C: its first word points to the table of the first of them, whose
+/// functions call the value's methods. One whose interfaces require
+/// `Unknown` is counted: it starts held once, `addRef` and `release` count,
+/// and the value goes when nothing holds it; `queryInterface` answers for
+/// each interface the type implements.
+pub fn object[T: Implemented](value: T): Pointer[Void] {
+    value.objectForC()
+}
+
+/// Text of C in units of 16 bits, UTF-16 that ends with a zero unit, as
+/// Windows and .NET give and take it: a `WCHAR*`. `toWide` makes one for
+/// C, and `fromWide` reads one.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// let wide: ffi.WideString = ffi.toWide("café ☕")
+/// unsafe {
+///     console.println("{ffi.fromWide(wide)} {wide.offset(3).read()}")
+///     ffi.free(wide)
+/// }
+/// ```
+pub alias WideString = Pointer[UInt16]
+
+/// A copy of the text in UTF-16 that ends with a zero unit, for C to keep;
+/// `free` gives it back. Text with a zero character inside panics.
+pub fn toWide(written: String): WideString {
+    var units: Array[UInt16] = []
+    for char in written.chars() {
+        let code = char.code()
+        if code == 0 {
+            panic("ffi.toWide: the text has a zero character, where C's wide text ends")
+        }
+        // Each unit is below 0x10000.
+        if code < 0x10000 {
+            units.push(UInt16(code) ?? 0u16)
+        } else {
+            let above = code - 0x10000
+            units.push(UInt16(0xD800 + above / 0x400) ?? 0u16)
+            units.push(UInt16(0xDC00 + above % 0x400) ?? 0u16)
+        }
+    }
+    units.push(0)
+    let wide = allocate[UInt16](units.length())
+    for (at, unit) in units.enumerate() {
+        unsafe { wide.offset(at).write(unit) }
+    }
+    wide
+}
+
+/// The text of wide text of C: up to its zero unit, or its first `count`
+/// units, as an API that gives a length gives it. Units that are not
+/// UTF-16 become U+FFFD.
+pub unsafe fn fromWide(wide: WideString, count: Int? = none): String {
+    let length = match count {
+        some(given) => given
+        none => {
+            var length = 0
+            for wide.offset(length).read() != 0 {
+                length += 1
+            }
+            length
+        }
+    }
+    var out = ""
+    var at = 0
+    for at < length {
+        let unit = Int(wide.offset(at).read())
+        at += 1
+        var code = unit
+        if unit >= 0xD800 and unit < 0xDC00 and at < length {
+            let low = Int(wide.offset(at).read())
+            if low >= 0xDC00 and low < 0xE000 {
+                code = 0x10000 + (unit - 0xD800) * 0x400 + (low - 0xDC00)
+                at += 1
+            }
+        }
+        out = "{out}{Char.from(code) ?? '\u{FFFD}'}"
+    }
+    out
+}
+
 /// Why a shared library could not be loaded, read or unloaded.
 ///
 /// ```tondo

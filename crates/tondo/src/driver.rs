@@ -950,6 +950,9 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         drop(expanding);
         let loading = crate::times::part("std");
         stdlib::add(&mut modules, &mut packages, &mut sources, &mut diags);
+        // An interface's object, once the standard modules it may require
+        // are there, as `ffi.Unknown`.
+        crate::interfaces::derive(&mut modules, &mut sources, &mut diags);
         drop(loading);
         let _linking = crate::times::part("modules");
         let mut module = modules::link(modules, root, &packages, &mut diags);
@@ -992,6 +995,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             drop(expanding);
             let loading = crate::times::part("std");
             stdlib::add(&mut modules, &mut packages, &mut sources, &mut diags);
+            crate::interfaces::derive(&mut modules, &mut sources, &mut diags);
             drop(loading);
             let _linking = crate::times::part("modules");
             modules::link(modules, 0, &packages, &mut diags)
@@ -1120,6 +1124,7 @@ pub fn analyze_fence(
         let path = vec!["std".to_string(), name.clone()];
         modules.push(modules::ModuleSource { path, package: packages.len() - 1, files: vec![(stub, false)] });
     }
+    crate::interfaces::derive(&mut modules, &mut sources, &mut diags);
     let mut module = modules::link(modules, 0, &packages, &mut diags);
     module.library = library;
     if !diags.has_errors()

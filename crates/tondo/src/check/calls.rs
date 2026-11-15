@@ -2966,6 +2966,7 @@ impl<'a> Checker<'a> {
             self.check_time_literals(id, &signature, receiver.is_some() as usize, args);
             self.check_template_literals(id, args);
             self.check_regex_literal(id, args);
+            self.check_guid_literal(id, args);
             self.note_model_name(id, args);
             if self.is_std_fn(id, "cli", "cli.markup")
                 && let Some(arg) = args.first()

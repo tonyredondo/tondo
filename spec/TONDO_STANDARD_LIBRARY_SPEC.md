@@ -8541,6 +8541,36 @@ pub unsafe fn freeContext[T: ~Copy](data: Pointer[Void])
   `fromContext[T]` lee el valor, que debe ser un `T`, y `freeContext[T]` lo
   suelta y devuelve la memoria.
 
+#### Interfaces, GUID y texto de Windows
+
+Lo que una interfaz de C (lenguaje 16.16) necesita:
+
+~~~tondo pseudocode
+pub extern type Guid = { data1: UInt32, data2: UInt16, data3: UInt16, @count(8) data4: Byte }
+pub const Guid.Empty: Guid
+pub fn Guid.parse(text: String): Guid?          // un literal se lee al compilar (E1708)
+pub type HResult = Int32
+pub const HResult.Ok, False, Fail, NoInterface, OutOfMemory, NotImplemented, InvalidArgument: HResult
+pub fn HResult.isOk(self): Bool                 // no negativo
+pub fn HResult.isFailure(self): Bool            // negativo
+pub annotation Interface = { id: String = "" }
+pub trait Unknown { queryInterface, addRef, release }   // IUnknown, con UnknownObject
+pub trait Implemented                           // lo implementa el compilador
+pub fn object[T: Implemented](value: T): Pointer[Void]
+pub alias WideString = Pointer[UInt16]
+pub fn toWide(text: String): WideString
+pub unsafe fn fromWide(text: WideString, count: Int? = none): String
+~~~
+
+`Guid` se muestra como `00000000-0000-0000-c000-000000000046`, y `parse` lee
+ese texto con o sin llaves y con dígitos de cualquier caja. `HResult` se
+muestra como `0x80004002: No such interface supported` para los que Windows
+nombra y como el número para los demás; su signo dice si falló, de modo que
+`HResult.False` (`S_FALSE`) no falla. `toWide` da una copia en UTF-16 con su
+cero, que `free` devuelve, y un texto con un carácter cero dentro es un pánico;
+`fromWide` lee hasta su cero, o `count` unidades, y lo que no es UTF-16 da
+U+FFFD.
+
 #### Librerías compartidas
 
 `Library` carga una librería compartida mientras el programa corre, da sus
