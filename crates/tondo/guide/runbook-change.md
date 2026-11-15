@@ -121,6 +121,22 @@ test {"affected": "HEAD"}
 => addsTheTax ... ok
 ```
 
+## What it breaks for others
+
+For a package that others import, `api_diff` with a commit says what its
+public API lost or changed since then, which breaks who uses it, and what it
+gained.
+
+```mcp
+api_diff {"rev": "HEAD"}
+=> "breaks":true
+=> shop.prices.total
+=> pub fn withTax(cents: Int, percent: Int): Int
+```
+
+The rename took `total` away and the parameter changed `withTax`: nothing in a
+program, and a version that says so in a library.
+
 ## What nothing uses
 
 `unreached` gives the code that neither `main` nor a test reaches, and
@@ -147,7 +163,5 @@ parameters into a record (`group`, with `Point: x, y`), extracts a trait
 `inline_alias`), and with `end_line` and `end_column` extracts the selection
 as a variable, a function or a constant.
 
-For a library, `api_diff` with a commit says what its public API lost or
-changed since then, which breaks who uses it, and what it gained; `graph` with
-a `module` and `reverse` gives the modules that import one. To find the commit
-that broke something: `runbook-bisect`.
+`graph` with a `module` and `reverse` gives the modules that import one. To
+find the commit that broke something: `runbook-bisect`.
