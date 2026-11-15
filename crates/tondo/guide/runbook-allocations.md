@@ -76,25 +76,24 @@ one more text: the array and its hundred texts live only to be copied. A
 -    lines.map((line) { "{line.name}: {line.cents}\n" }).join("")
 +    var text = format.Builder()
 +    for line in lines {
-+        text.add(line.name)
-+        text.add(": ")
-+        text.addLine(line.cents)
++        text.addLine("{line.name}: {line.cents}")
 +    }
 +    text.text()
 ```
 
 `baseline` compares with the row kept: the allocations that are left are the
-builder's text as it doubles, whatever the number of lines.
+builder's text as it doubles, whatever the number of lines. The text of each
+line is still written, and no longer allocated: the builder only reads it,
+so it is made in the frame.
 
 ```mcp
 test {"bench": true, "bench_time": 1, "baseline": "before"}
-=> 8 allocs/op
+=> 7 allocs/op
 optimizations {"tests": true, "function": "receipt", "kind": "heap"}
 => nothing to tell
+optimizations {"tests": true, "function": "receipt", "kind": "frame"}
+=> is made in the frame, without the heap
 ```
-
-Give the builder the parts, not a text made of them: `text.add("{line.name}:
-{line.cents}")` makes that text first, at every turn, and the view says so.
 
 What the view says of a value on the heap, and what it asks for; after the
 reason, the code that keeps the value and where it is, as `` `all.push(line)`

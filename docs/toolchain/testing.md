@@ -317,6 +317,18 @@ test words::unit::words::countingAPage ... ok
 Nothing changed between those two runs but the machine. By time, the
 second is 42% faster; by instructions, it is the same program.
 
+When the machine had more to do than it has processors, the run says so in
+its last line, and a baseline kept under load says it again when it is
+compared with:
+
+```text
+note: the machine was busy (load 32.9 on 32 processors): times are not to be compared, instructions are
+```
+
+A regression by time is still judged then, and marked `(measured under
+load)`. The JSON of the report has the load when the benchmarks started and
+when they ended, in `bench.load`.
+
 | | |
 | --- | --- |
 | `--save-baseline <name>` | keeps this run's numbers |
@@ -327,6 +339,7 @@ second is 42% faster; by instructions, it is the same program.
 | `--bench-time <seconds>` | how long to measure each |
 | `--layouts <n>` | measures in `n` orders of the code's functions, and gives the range: how much of a difference is only where the code lies |
 | `--profile cpu`, `--profile memory` | writes a profile of the benchmark, for `tondo profile show` |
+| `--profile instructions` | the same by the instructions it ran, which a busy machine does not move; on Linux |
 | `--exec <command>` | runs the tests' executable under a command, as `perf stat` |
 
 `tondo test --bench --against main --max-regression 5 --regression-by

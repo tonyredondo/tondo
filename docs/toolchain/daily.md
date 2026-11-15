@@ -398,4 +398,18 @@ were made from. Nothing is written into the project but what `build` is
 asked for. `tondo clean` empties the cache, and with `--all` the
 dependencies that were fetched too.
 
+The cache keeps itself small. A build that nobody used in 30 days goes.
+Of a program that is built again and again, only its last build and the
+one before stay. And once a day, while the builds together hold more than
+10 GB, the one that nobody used for the longest goes, until they fit.
+`TONDO_CACHE_LIMIT`, in bytes or with a unit, sets another limit:
+
+```text
+TONDO_CACHE_LIMIT=40G tondo test
+```
+
+The dependencies that were fetched and the runtime do not count towards
+it: a build makes the rest again, and those cost a download or a long
+build.
+
 Next: [Testing](testing.md).
