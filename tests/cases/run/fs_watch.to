@@ -7,11 +7,12 @@ import std.fs
 import std.path
 import std.time
 
-/// The changes of the batches that come until `wanted` have: a change
-/// made after a batch settled comes in the next one.
+/// The changes of the batches that come until `wanted` have, in order: a
+/// change made after a batch settled comes in the next one, as one does
+/// when a busy machine holds the program back longer than `settle`.
 fn show(changes: Receiver[Array[fs.Change]], dir: String, wanted: Int) {
-    var seen = 0
-    for seen < wanted {
+    var seen: Array[String] = []
+    for seen.length() < wanted {
         match changes.receive(timeout: time.seconds(10)) {
             some(batch) => {
                 for change in batch {
@@ -20,15 +21,17 @@ fn show(changes: Receiver[Array[fs.Change]], dir: String, wanted: Int) {
                         fs.ChangeKind.Modified => "modified"
                         fs.ChangeKind.Removed => "removed"
                     }
-                    console.println("{change.path.removePrefix(dir)} {what}")
-                    seen += 1
+                    seen.push("{change.path.removePrefix(dir)} {what}")
                 }
             }
             none => {
-                console.println("no changes")
+                seen.push("no changes")
                 break
             }
         }
+    }
+    for line in seen.sorted() {
+        console.println(line)
     }
 }
 
@@ -36,7 +39,9 @@ fn main() {
     let dir = fs.realPath(fs.createTemporaryDirectory()?)?
     fs.writeText(path.join(dir, "old.txt"), "old")?
     fs.writeText(path.join(dir, "gone.txt"), "gone")?
-    let changes = fs.watch([dir], settle: time.milliseconds(300))?
+    // Long enough that the changes below, made one after another, settle
+    // together on a busy machine too.
+    let changes = fs.watch([dir], settle: time.seconds(2))?
     fs.writeText(path.join(dir, "new.txt"), "new")?
     fs.writeText(path.join(dir, "new.txt"), "newer")?
     fs.writeText(path.join(dir, "old.txt"), "changed")?
