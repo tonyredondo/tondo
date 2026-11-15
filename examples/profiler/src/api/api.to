@@ -1,0 +1,48 @@
+import std.ffi
+
+/// What a host tells a profiler as things happen in it, as the profiling
+/// API of .NET does through `ICorProfilerCallback`.
+@ffi.Interface(id: "2F4B6A10-5C1E-4D7A-9B33-0A1C5E7F9D01")
+pub trait Callback: ffi.Unknown {
+    /// The host starts. `host` is the host's own object, to ask for `Info`.
+    fn initialize(self, host: Pointer[ffi.Void]): !ffi.HResult
+
+    /// The host loaded a module.
+    fn moduleLoaded(self, module: UInt): !ffi.HResult
+
+    /// The host ends: it calls nothing after this.
+    fn shutdown(self): !ffi.HResult
+}
+
+/// What a profiler asks the host, as through `ICorProfilerInfo`.
+@ffi.Interface(id: "2F4B6A10-5C1E-4D7A-9B33-0A1C5E7F9D02")
+pub trait Info: ffi.Unknown {
+    /// Writes a module's name in `name`, UTF-16 with its zero, where there
+    /// is room for `capacity` units: the units of the name.
+    fn moduleName(self, module: UInt, capacity: UInt32, name: ffi.WideString): UInt32 ! ffi.HResult
+}
+
+/// `ERROR_INSUFFICIENT_BUFFER` as an `HRESULT`: the name does not fit.
+pub const BufferTooSmall: ffi.HResult = ffi.HResult(-2147024774)
+
+/// The object as the interface of that identity, held once more for the
+/// caller, who releases it; `HResult.NoInterface` when it is not one.
+pub fn asked(object: Pointer[ffi.Void], id: ffi.Guid): Pointer[ffi.Void] ! ffi.HResult {
+    let wanted = ffi.allocate[ffi.Guid]()
+    let found = ffi.allocate[Pointer[ffi.Void]]()
+    unsafe {
+        defer ffi.free(wanted)
+        defer ffi.free(found)
+        wanted.write(id)
+        let result = ffi.UnknownObject.of(object).queryInterface(wanted, found)
+        if result.isFailure() {
+            fail result
+        }
+        found.read()
+    }
+}
+
+/// Lets go of an object held once: how many still hold it.
+pub fn released(object: Pointer[ffi.Void]): UInt32 {
+    unsafe { ffi.UnknownObject.of(object).release() }
+}

@@ -1,0 +1,13 @@
+import profiler.api
+import std.ffi
+
+test aFailureCrossesAsItsNumberAndComesBackAsOne {
+    // Told of a module before `initialize`, the profiler fails; through
+    // the object that is an `HRESULT` below zero, and a failure again here.
+    let heard = Recorder()
+    let object = ffi.object(heard)
+    let callback = unsafe { api.CallbackObject.of(object) }
+    assert(callback.moduleLoaded(1) == err(ffi.HResult.Fail))
+    assert(heard.events().isEmpty())
+    assert(api.released(object) == 0)
+}

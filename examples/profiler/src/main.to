@@ -1,0 +1,21 @@
+import profiler.api
+import profiler.host
+import profiler.recorder
+import std.console
+import std.ffi
+
+/// A host with three modules and a profiler that records what it hears.
+fn main() {
+    let heard = recorder.Recorder()
+    let program = host.Host { modules: [1: "kernel", 2: "café.dll", 3: "app"] }
+    // All the host gets of the profiler is this pointer, as a host in C would.
+    let profiler = ffi.object(heard)
+    match program.run(profiler) {
+        ok(_) => console.println("the host ran")
+        err(code) => console.println("the host stopped: {code}")
+    }
+    console.println("{api.released(profiler)} still hold the profiler")
+    for event in heard.events() {
+        console.println(event)
+    }
+}

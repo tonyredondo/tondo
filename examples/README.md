@@ -15,6 +15,7 @@ warning and passes its own tests on each change to the compiler.
 | [`chat`](chat) | rooms over WebSockets | an actor that owns the rooms and one for each connection, messages as an enum, bounded mailboxes for slow readers, the page inside the executable |
 | [`warehouse`](warehouse) | a gRPC service and its client | a `.proto` as a module, the four kinds of call, interceptors, deadlines, health and reflection |
 | [`textkit`](textkit) | a library for C | `pub extern fn`, a struct by value, C's conventions for buffers and callbacks, the header the build writes, a C program that links it |
+| [`profiler`](profiler) | a host and a profiler, as .NET's profiling API | interfaces of C as traits, a Tondo value given as an object, objects called through their tables, `queryInterface` by identity, `HRESULT`s as failures, UTF-16 text |
 | [`notes`](notes) | an MCP server | tools from the methods of a type, schemas from records, validated arguments, resources and prompts |
 | [`tabulate`](tabulate) | a program and its plugins | a trait as a contract, a plugin that is a library and one that is a program, loading both while it runs, four packages |
 | [`scripts`](scripts) | ten programs of one file | scripts with no `main`: files, JSON, CSV, processes, hashing in tasks, dates, a web server, the terminal's keys |
@@ -48,7 +49,7 @@ Each README has the commands for its example, with what they print.
 | Files and templates | `sitegen`, `notes`, `scripts` |
 | JSON, YAML, CSV, Protocol Buffers | `todo-api`, `sitegen`, `scripts/csvsum.to`, `warehouse` |
 | Files inside the executable | `todo-api`, `chat` |
-| C | `textkit` |
+| C | `textkit`, `profiler` |
 | Running other programs | `scripts/authors.to`, `scripts/rerun.to` |
 
 ## Beside the examples

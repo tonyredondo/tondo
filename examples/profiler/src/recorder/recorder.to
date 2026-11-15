@@ -1,0 +1,63 @@
+import profiler.api
+import std.ffi
+import std.sync
+
+/// A profiler that keeps what the host told it, in order.
+pub type Recorder = {
+    priv heard: sync.Mutex[Array[String]]
+    priv info: sync.Mutex[api.InfoObject?]
+}
+
+/// A profiler that has heard nothing yet.
+pub fn Recorder(): Recorder {
+    Recorder { heard: sync.Mutex([]), info: sync.Mutex(none) }
+}
+
+/// What it was told so far.
+pub fn Recorder.events(self): Array[String] {
+    self.heard.get()
+}
+
+fn Recorder.record(self, event: String) {
+    self.heard.update((events) { events.push(event) })
+}
+
+impl api.Callback for Recorder {
+    fn initialize(self, host: Pointer[ffi.Void]): !ffi.HResult {
+        // The host is an object like any other: ask it for the interface, and keep it.
+        let info = unsafe { api.InfoObject.of(api.asked(host, api.InfoObject.Id)?) }
+        self.info.set(info)
+        self.record("initialized")
+    }
+
+    fn moduleLoaded(self, module: UInt): !ffi.HResult {
+        let info = match self.info.get() {
+            some(info) => info
+            none => fail ffi.HResult.Fail
+        }
+        self.record("loaded {name(info, module)?}")
+    }
+
+    fn shutdown(self): !ffi.HResult {
+        // The hold that `initialize` took of the host ends here.
+        match self.info.get() {
+            some(info) => {
+                _ = info.release()
+                self.info.set(none)
+            }
+            none => {}
+        }
+        self.record("shut down")
+    }
+}
+
+/// A module's name, asked of the host with a buffer for it to write in.
+pub fn name(info: api.InfoObject, module: UInt): String ! ffi.HResult {
+    let capacity = 64u32
+    let buffer = ffi.allocate[UInt16](Int(capacity))
+    unsafe {
+        defer ffi.free(buffer)
+        let units = info.moduleName(module, capacity, buffer)?
+        ffi.fromWide(buffer, count: Int(units))
+    }
+}
