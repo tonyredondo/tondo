@@ -48,10 +48,9 @@ pub(super) struct Runner {
     pub(super) asked: AtomicBool,
     pub(super) answer: [AtomicUsize; ANSWER],
     pub(super) answered: AtomicUsize,
-    /// A thread of C's `Kept::calling`, whether it runs a call now: one
-    /// between its calls, or that ends, gets no profiler's signal, as what
-    /// the handler reads of it may be gone. Null for a worker.
-    pub(super) calling: std::sync::atomic::AtomicPtr<AtomicBool>,
+    /// Whether it is a thread of C's, whose calls run on its own stack
+    /// (`Task::native`), not a worker.
+    pub(super) native: AtomicBool,
     /// How many threads it served, which tells one's use of it from the
     /// next's, as a handle may be another thread's again.
     pub(super) uses: AtomicUsize,
@@ -86,7 +85,7 @@ fn first_running_here() -> &'static Runner {
             asked: AtomicBool::new(false),
             answer: [const { AtomicUsize::new(0) }; ANSWER],
             answered: AtomicUsize::new(0),
-            calling: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
+            native: AtomicBool::new(false),
             uses: AtomicUsize::new(0),
         }))
     });
@@ -106,7 +105,7 @@ pub(super) fn runner_ended(kept: &Kept) {
     runner.task.store(std::ptr::null_mut(), Ordering::SeqCst);
     runner.frame.store(0, Ordering::SeqCst);
     runner.asked.store(false, Ordering::SeqCst);
-    runner.calling.store(std::ptr::null_mut(), Ordering::SeqCst);
+    runner.native.store(false, Ordering::SeqCst);
     SPARE_RUNNERS.lock().unwrap_or_else(|e| e.into_inner()).push(runner);
 }
 

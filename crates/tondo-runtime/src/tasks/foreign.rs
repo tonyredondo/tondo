@@ -355,7 +355,7 @@ unsafe fn run_here(inner: unsafe extern "C" fn(*mut u8), frame: *mut u8, kept: &
     let first = kept.runner.get().is_none();
     enter_tondo();
     if first && let Some(runner) = kept.runner.get() {
-        runner.calling.store(&kept.calling as *const AtomicBool as *mut AtomicBool, Ordering::SeqCst);
+        runner.native.store(true, Ordering::SeqCst);
     }
     unsafe { inner(frame) };
     leave_tondo();

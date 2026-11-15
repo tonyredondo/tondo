@@ -50,16 +50,21 @@ pub(crate) fn answer_where(pc: usize, fp: usize) {
     runner.asked.store(false, Ordering::Release);
 }
 
-/// Sends `signal` to every thread that has run Tondo code.
+/// Whether a runner is a thread of C's (`Task::native`), which macOS does
+/// not signal: one may get the signal just after its call, as it ends, when
+/// macOS freed its thread-locals already, and the handler that reads them
+/// then allocates inside the signal, as an Intel Mac of CI showed. Its calls
+/// are not sampled there, nor asked where they are by a dump.
+fn of_c(runner: &Runner) -> bool {
+    runner.native.load(Ordering::SeqCst)
+}
+
+/// Sends `signal` to every thread that has run Tondo code, but the threads
+/// of C (`of_c`).
 pub(crate) fn signal_workers(signal: i32) {
-    // Under the lock, which a thread that ends takes to leave the list, and
-    // before it lets go of what `calling` points to.
+    // Under the lock, which a thread that ends takes to leave the list.
     let runners = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner());
-    for runner in runners.iter() {
-        let calling = runner.calling.load(Ordering::SeqCst);
-        if unsafe { calling.as_ref() }.is_some_and(|calling| !calling.load(Ordering::SeqCst)) {
-            continue;
-        }
+    for runner in runners.iter().filter(|runner| !of_c(runner)) {
         unsafe { libc::pthread_kill(runner.thread.load(Ordering::SeqCst) as libc::pthread_t, signal) };
     }
 }
@@ -72,7 +77,11 @@ pub(super) fn ask_where(runners: &[&Runner]) -> Vec<(*mut Task, Vec<usize>)> {
     let present = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner());
     let asked: Vec<&&Runner> = runners
         .iter()
-        .filter(|&&r| r.running.load(Ordering::SeqCst) && present.iter().any(|&p| std::ptr::eq(p, r)))
+        .filter(|&&r| {
+            r.running.load(Ordering::SeqCst)
+                && present.iter().any(|&p| std::ptr::eq(p, r))
+                && !(cfg!(target_os = "macos") && of_c(r))
+        })
         .collect();
     for runner in &asked {
         runner.answered.store(0, Ordering::Relaxed);

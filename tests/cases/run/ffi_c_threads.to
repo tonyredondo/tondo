@@ -1,7 +1,8 @@
 // Threads of C that call Tondo, each new to the runtime, and call C from
 // there, while the CPU profile samples them: a sample that comes as one
 // allocates does not itself allocate to know where the thread's stack is,
-// which would wait forever for the allocator's lock the thread holds.
+// which would wait forever for the allocator's lock the thread holds. On
+// macOS no thread of C is sampled, and none that ends gets the signal.
 import std.console
 import std.ffi
 import std.profile

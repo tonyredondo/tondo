@@ -7129,3 +7129,10 @@ instructions than before, as what a task without a parent inherits no longer ask
 running task again. The counters cost every switch of a thread they count, so a row that wakes
 threads, as the last one, measures slower with them: Tony decides whether to count in a round of
 their own.
+
+On macOS a profile does not sample the calls that threads of C make, nor does a dump ask them
+where they are. The sampler there signals each thread every millisecond, and a thread of C may
+get the signal just after its call, as it ends, when macOS has freed its thread-locals already:
+the handler that reads them allocates inside the signal and waits forever, as `sample` showed on
+an Intel Mac of CI. Linux samples them, with a timer of the process whose signal comes to a
+thread that runs, where its thread-locals live as long as the thread.
