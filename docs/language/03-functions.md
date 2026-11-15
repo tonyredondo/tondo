@@ -11,6 +11,7 @@ values.
 - [Methods](#methods)
 - [Methods that change their value](#methods-that-change-their-value)
 - [Building a type](#building-a-type)
+- [Constants of a type](#constants-of-a-type)
 - [Closures](#closures)
 - [What a closure captures](#what-a-closure-captures)
 - [Functions as values](#functions-as-values)
@@ -156,27 +157,29 @@ pub fn Point.distanceTo(self, other: Point): Float {
 }
 
 /// With no `self`, a function that belongs to the type, called through it.
-pub fn Point.origin(): Point {
-    Point { x: 0.0, y: 0.0 }
+pub fn Point.between(first: Point, second: Point): Point {
+    Point { x: (first.x + second.x) / 2.0, y: (first.y + second.y) / 2.0 }
 }
 
 fn main() {
-    let home = Point.origin()
+    let home = Point { x: 0.0, y: 0.0 }
     let work = Point { x: 3.0, y: 4.0 }
     console.println("{home.distanceTo(work)}")
     console.println("{Point.distanceTo(home, work)}")      // the same call, written in full
+    console.println("{Point.between(home, work).x}")
 }
 ```
 
 ```text output
 5.0
 5.0
+1.5
 ```
 
 `self` is the value the method is called on, lent for the call: the method
 reads it and neither copies nor keeps it. A function of the type without
-`self`, as `Point.origin`, is called as `Point.origin()` and never with a
-dot.
+`self`, as `Point.between`, is called as `Point.between(home, work)` and
+never with a dot.
 
 A method is found without searching: `value.method()` is a method of the
 value's type, or of a trait its type is bound by in generic code
@@ -291,6 +294,67 @@ A type is built by calling it, everywhere: `http.App()`, `sync.Mutex(0)`,
 nothing is overloaded, a type has one constructor, and the other ways to
 make one are functions of the type with names that say what they start
 from.
+
+## Constants of a type
+
+A value of a type that has a name of its own, as the point where the axes
+meet, is a constant of the type. It is declared with the type's name, as a
+method is, and read through it:
+
+```tondo
+import std.console
+
+pub type Point = { x: Float, y: Float }
+
+/// Where the axes meet.
+pub const Point.Origin: Point = Point { x: 0.0, y: 0.0 }
+
+pub type Celsius = Float
+
+/// Where water freezes.
+pub const Celsius.Freezing: Celsius = Celsius(0.0)
+
+/// Where water boils.
+pub const Celsius.Boiling: Celsius = Celsius(100.0)
+
+pub enum Level {
+    Low
+    High
+}
+
+/// The level a setting has until it is given one.
+pub const Level.Default: Level = Level.Low
+
+fn main() {
+    let start = Point.Origin
+    console.println("{start.x} {start.y} {Level.Default == Level.Low}")
+    console.println("{Celsius.Boiling.value - Celsius.Freezing.value}")
+}
+```
+
+```text output
+0.0 0.0 true
+100.0
+```
+
+It is a constant like any other ([Values](02-values.md)): computed when the
+program compiles, and with its type stated when it is `pub`. It is declared
+in the type's module, where the type's methods are, and named through the
+type: `Origin` alone names nothing, and another module reads it as
+`geometry.Point.Origin`.
+
+Records, enums and newtypes have constants. A type with type parameters has
+none, since a constant is of one type, and neither has an `alias`. The types
+of the language have the ones the language gives them, as `Int.Max` and
+`Float.Pi` ([Numbers](10-numbers.md)), and a program adds no more. An enum's
+constant cannot take the name of one of its variants, which is read in the
+same way.
+
+What is always the same value is a constant, and what is worked out from
+arguments, or by calling a function, is a function of the type. The standard
+library writes its own so: `time.Duration.Zero`, `uuid.Uuid.Nil` and
+`regex.RegexOptions.Default` are constants, and `time.seconds(5)` and
+`uuid.Uuid.parse(text)` are functions.
 
 ## Closures
 
