@@ -1,0 +1,28 @@
+import std.console
+
+// A program with a `recover` checks for a panic after what may raise one,
+// which a program without one does not: in a loop, each such check is
+// said. A quotient by a constant other than 0 and -1 and a text's length
+// raise none.
+
+fn halve(values: Array[Int], text: String): Int {
+    var total = 0
+    for value in values {
+        let half = value / 2
+        let size = text.byteLength()
+        total += half + size
+    }
+    total
+}
+
+fn main() {
+    match recover { halve([4, 6, 8], "ab") } {
+        ok(total) => console.println("{total}")
+        err(_) => console.println("panicked")
+    }
+}
+
+// expect-stdout: 15
+// expect-optimization: 13:9 checked is followed by a check for a panic, in a loop: a program with a `recover`
+// expect-no-optimization: 11:20 checked is followed by a check for a panic
+// expect-no-optimization: 12:20 checked is followed by a check for a panic

@@ -45,6 +45,9 @@ fn kept(body: &mut Body, types: &Types, reasons: &HashMap<Span, String>) {
     let locals = &body.locals;
     for (index, block) in body.blocks.iter_mut().enumerate() {
         let looping = tight.get(index).copied().unwrap_or(false);
+        // The last statement with a place of its own: what a check for a
+        // panic after it is for.
+        let mut last: Option<Span> = None;
         for statement in &mut block.stmts {
             if looping {
                 crate::inline::visit_statement(statement, &mut |place| {
@@ -52,6 +55,27 @@ fn kept(body: &mut Body, types: &Types, reasons: &HashMap<Span, String>) {
                         remarks.push((*span, "checked", "keeps its bounds check, in a loop".into()));
                     }
                 });
+            }
+            // A program with a `recover`, as tests often are, checks for a
+            // panic after what may raise one: a turn of a benchmark of it
+            // pays what a program without one does not.
+            if let Statement::Assign(_, rvalue, _) = statement
+                && matches!(**rvalue, Rvalue::Unwinding)
+            {
+                if let (true, Some(span)) = (looping, last) {
+                    remarks.push((
+                        span,
+                        "checked",
+                        "is followed by a check for a panic, in a loop: a program with a `recover` checks after what may panic"
+                            .into(),
+                    ));
+                }
+                continue;
+            }
+            if let Statement::Assign(_, _, span) = statement
+                && *span != Span::default()
+            {
+                last = Some(*span);
             }
             let Statement::Assign(place, rvalue, span) = statement else { continue };
             let Rvalue::Binary(op @ (BinOp::Add | BinOp::Sub | BinOp::Mul), a, b) = &**rvalue else { continue };

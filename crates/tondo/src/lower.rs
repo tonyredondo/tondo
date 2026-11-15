@@ -103,6 +103,13 @@ pub(crate) fn may_panic(statement: &Statement) -> bool {
                 || match &**rvalue {
                     Rvalue::Use(o) | Rvalue::Length(o) | Rvalue::Convert(o) => read(o),
                     Rvalue::Unary(op, o) => *op == crate::ast::UnaryOp::Neg || read(o),
+                    // A quotient or a remainder by a constant other than 0
+                    // and -1 cannot fail.
+                    Rvalue::Binary(
+                        crate::ast::BinOp::Div | crate::ast::BinOp::Rem,
+                        a,
+                        Operand::Const(Const::Int(divisor, _)),
+                    ) if *divisor != 0 && *divisor != -1 => read(a),
                     Rvalue::Binary(op, a, b) => {
                         use crate::ast::BinOp::*;
                         !matches!(op, Eq | Ne | Lt | Le | Gt | Ge | BitAnd | BitOr | BitXor) || read(a) || read(b)
@@ -111,6 +118,8 @@ pub(crate) fn may_panic(statement: &Statement) -> bool {
                         operands.iter().any(read)
                     }
                     Rvalue::Discriminant(place) => checked(place),
+                    // A text's length in bytes is read where it is kept.
+                    Rvalue::StrOp(hir::StrOp::ByteLength, operands, _) => operands.iter().any(read),
                     // What only adds or takes an element: an index or a key
                     // of the program's own type may panic.
                     Rvalue::Mutate(mutation, place, operands, ..) => {
