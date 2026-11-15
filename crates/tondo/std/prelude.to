@@ -2035,10 +2035,8 @@ pub type MapIterator[I, T, U] = {
 
 impl[I: Iterator[T], T, U] Iterator[U] for MapIterator[I, T, U] {
     fn next(mut self): U? {
-        match self.source.next() {
-            some(item) => some(self.transform(item))
-            none => none
-        }
+        let item = self.source.next()?
+        self.transform(item)
     }
 }
 
@@ -2522,7 +2520,9 @@ pub type ArrayIterator[T] = {
 
 impl[T] Iterator[T] for ArrayIterator[T] {
     fn next(mut self): T? {
-        if self.position >= self.items.length() {
+        // Never negative, as it starts at 0: said, so that the compiler
+        // knows the element is in the array and checks none of its reads.
+        if self.position < 0 or self.position >= self.items.length() {
             return none
         }
         let item = self.items[self.position]

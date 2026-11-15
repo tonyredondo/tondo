@@ -1498,6 +1498,9 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, types: &crate::types::Types, sou
     crate::prove::prove(bodies, types);
     lower::drop_dead_checks(bodies);
     after("prove", bodies, types, sources);
+    crate::split::split(bodies, types, sources);
+    crate::borrowed::borrowed(bodies, types);
+    after("split again", bodies, types, sources);
     crate::stack::stack(bodies, types);
     after("stack", bodies, types, sources);
 }

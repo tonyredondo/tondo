@@ -7136,3 +7136,25 @@ get the signal just after its call, as it ends, when macOS has freed its thread-
 the handler that reads them allocates inside the signal and waits forever, as `sample` showed on
 an Intel Mac of CI. Linux samples them, with a timer of the process whose signal comes to a
 thread that runs, where its thread-locals live as long as the thread.
+
+## A chain's element split where a panic can unwind, once its check is gone
+
+A test, and a program with a `recover`, as a server is, compiles each statement that may panic
+with its unwinding check after it, and `split` keeps whole what such a statement gives: split, it
+would be one statement a field, and a panic between them would leave the first fields copied. So
+in a benchmark the element `ArrayIterator.next` reads stayed whole in the frame, retained and
+released at every step, while a program without a `recover` kept it in registers: the rows did
+not show what a program gets.
+
+`split` and `borrowed` run again after `prove`: once `prove` knows the read is within the array
+it is no check, and its unwinding check goes, so nothing stops the split. `prove` knows it where
+the index is known not to be negative, which `ArrayIterator.next` now says of its position, never
+negative as it starts at 0, and where a check of the same element passed before it, which tells
+the index was below the length. `MapIterator.next` returns the source's `none` with `?`, which
+leaves it under the cost inlining takes, so a chain with `map` is one loop too. In the rows,
+`iter().filter(...).sumBy(...)` over records does 34% fewer instructions, `maxBy` 35% and is
+under Go's time, `iter().map(...).filter(...).sum` over numbers 40% and `sortedBy` 9%; building
+takes under 0.3% more.
+
+Counting a copy between locals as free when inlining, which the copies inlining leaves are,
+inlined as much, but made building the largest generated program 30% slower: not kept.
