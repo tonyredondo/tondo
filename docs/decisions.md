@@ -5989,6 +5989,10 @@ instructions and 6% of the time. The maintainer chose on 2026-11-11 to keep them
 a build leave them out with `TONDO_LOGPOINT_SITES=0` in its environment, which is part of the key of
 the build in the cache; `tondo logpoint` then says that the build has no places, and why.
 
+A loop over a text's characters calls nothing on its way either: codegen reads an ASCII character
+in place and calls the runtime only for the others, so its loop has no places, which were six of
+its 23 instructions a character.
+
 ## Workers keep to the cores that share a cache
 
 A task that `spawn` makes waits for a worker, and the worker the scheduler woke was any that slept,

@@ -543,7 +543,8 @@ pub fn counted_loops(blocks: &[BlockData]) -> Vec<Counted> {
 pub fn calls(rvalue: &Rvalue) -> bool {
     match rvalue {
         Rvalue::Call(Callee::Std(hir::StdFn::Native(index)), _) => {
-            !hir::IN_ONE_INSTRUCTION.contains(&hir::NATIVES[*index as usize].symbol)
+            let symbol = hir::NATIVES[*index as usize].symbol;
+            !hir::IN_ONE_INSTRUCTION.contains(&symbol) && !hir::IN_PLACE.contains(&symbol)
         }
         Rvalue::Call(Callee::Std(hir::StdFn::Number(op)), _) => op.calls(),
         Rvalue::Call(..) | Rvalue::CallIndirect(..) => true,
@@ -897,8 +898,9 @@ mod tests {
     use super::*;
 
     /// A loop is tight when it calls nothing but what the processor does
-    /// in one instruction, as a square root, and not when it calls anything
-    /// else.
+    /// in one instruction, as a square root, or what codegen reads in place
+    /// but for a rare case, as a text's character, and not when it calls
+    /// anything else.
     #[test]
     fn a_loop_of_one_instruction_natives_is_tight() {
         let native = |symbol: &str| hir::NATIVES.iter().position(|n| n.symbol == symbol).unwrap() as u16;
@@ -910,9 +912,11 @@ mod tests {
             tight_loops(&[goto(1), body])
         };
         assert_eq!(looping(Callee::Std(hir::StdFn::Native(native("tondo_rt_math_sqrt")))), [false, true]);
+        assert_eq!(looping(Callee::Std(hir::StdFn::Native(native("tondo_rt_text_scalar_at")))), [false, true]);
         assert_eq!(looping(Callee::Std(hir::StdFn::ConsolePrintln)), [false, false]);
         // Each of them is one codegen writes in place.
         let calls = include_str!("codegen/calls.rs");
         assert!(hir::IN_ONE_INSTRUCTION.iter().all(|symbol| calls.contains(&format!("\"{symbol}\" =>"))));
+        assert!(hir::IN_PLACE.iter().all(|symbol| calls.contains(&format!("symbol == \"{symbol}\""))));
     }
 }

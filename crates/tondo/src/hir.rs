@@ -1325,6 +1325,13 @@ pub const IN_ONE_INSTRUCTION: [&str; 7] = [
     "tondo_rt_model_recording",
 ];
 
+/// The natives codegen reads in place but for a case that calls: a text's
+/// character, read in place when it is ASCII (`codegen/calls.rs`). A loop
+/// that calls only these and those of `IN_ONE_INSTRUCTION` calls nothing on
+/// its way, and has no places for logpoints, which cost a loop over a
+/// text's characters a fifth of its time.
+pub const IN_PLACE: [&str; 1] = ["tondo_rt_text_scalar_at"];
+
 pub const NATIVES: &[Native] = {
     use NativeTy::*;
     const fn f(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
