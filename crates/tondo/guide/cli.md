@@ -73,6 +73,8 @@ tondo optimizations                what a release build inlines, makes without t
                                    and checks, place by place; --kind heap, --function
 tondo optimizations --against main what it makes differently from a git revision
 tondo optimizations --tests        the same of the tests and benchmarks; asm --tests too
+tondo size                         what the executable weighs: its parts, the functions
+                                   that weigh most; --against main what changed
 tondo build --timings              where the build's time went: phases, files and
                                    functions; check, run and test take it too
 tondo asm sum                      the machine code of a function, under its lines, with

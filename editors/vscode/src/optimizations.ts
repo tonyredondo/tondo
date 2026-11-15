@@ -99,6 +99,24 @@ export function registerOptimizations(context: vscode.ExtensionContext, output: 
       await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside, preview: true });
       return ran.stdout;
     }),
+    // What the program's executable weighs, by part and by function.
+    vscode.commands.registerCommand('tondo.showSize', async () => {
+      const file = vscode.window.activeTextEditor?.document.uri.fsPath;
+      if (!file?.endsWith('.to')) {
+        void vscode.window.showInformationMessage('Open a Tondo file to see what its program\'s executable weighs.');
+        return undefined;
+      }
+      await vscode.workspace.saveAll(false);
+      const { program, cwd } = await programFor(file);
+      const ran = await exec(['size', program], cwd);
+      if (ran.code !== 0) {
+        void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo size failed');
+        return undefined;
+      }
+      const document = await vscode.workspace.openTextDocument({ content: ran.stdout, language: 'plaintext' });
+      await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside, preview: true });
+      return ran.stdout;
+    }),
     vscode.commands.registerCommand('tondo.clearOptimizations', () => {
       shown = new Map();
       told = undefined;

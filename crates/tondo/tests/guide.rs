@@ -202,6 +202,7 @@ fn the_command_line_is_in_the_tools_and_the_editor() {
         ("graph", "graph", "tondo.exportGraph"),
         ("optimizations", "optimizations", "tondo.showOptimizations"),
         ("asm", "asm", "tondo.showMachineCode"),
+        ("size", "size", "tondo.showSize"),
         ("guide", "guide", "tondo.guide"),
         ("explain", "explain", "tondo.runCommand"),
         ("model", "model", "tondo.modelTests"),

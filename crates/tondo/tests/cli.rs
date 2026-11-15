@@ -1418,6 +1418,55 @@ fn timings_say_where_a_build_went() {
     assert!(err.starts_with("the check took ") && !err.contains("link"), "{err}");
 }
 
+/// `tondo size` says what an executable weighs, by part and by function,
+/// stripped or not, and what changed from a revision's.
+#[test]
+fn size_says_what_an_executable_weighs() {
+    let dir = scratch("size");
+    let source = "import std.console\n\nfn letters(text: String): Int {\n    var count = 0\n    for c in text.chars() {\n        \
+        if c.isLetter() {\n            count += 1\n        }\n    }\n    count\n}\n\nfn main() {\n    \
+        console.println(\"{letters(\"hello\")}\")\n}\n";
+    std::fs::write(dir.join("main.to"), source).unwrap();
+    let (data, status) = json(&dir, &["size", "main.to", "--json"]);
+    assert_eq!(status, 0, "{data}");
+    let part = |data: &Value, name: &str| {
+        let parts = data["parts"].as_array().unwrap();
+        parts.iter().find(|p| p["part"] == name).and_then(|p| p["bytes"].as_u64()).unwrap()
+    };
+    let sum: u64 = data["parts"].as_array().unwrap().iter().filter_map(|p| p["bytes"].as_u64()).sum();
+    assert_eq!(Some(sum), data["size"].as_u64(), "{data}");
+    let own = part(&data, "the program's code");
+    assert!(own > 0 && part(&data, "the runtime's code") > own, "{data}");
+    let (letters, _) = json(&dir, &["size", "main.to", "--function", "letters", "--json"]);
+    let first = &letters["functions"][0];
+    assert_eq!((&first["function"], &first["place"]), (&json!("letters"), &json!("main.to")), "{letters}");
+    assert_eq!(first["part"], "the program's code", "{letters}");
+    // Without the symbols' names: smaller, the same code.
+    let (stripped, _) = json(&dir, &["size", "main.to", "--strip", "--json"]);
+    assert!(stripped["size"].as_u64() < data["size"].as_u64(), "{stripped}");
+    assert_eq!((part(&stripped, "the names of symbols"), part(&stripped, "the program's code")), (0, own));
+    // Since a revision: a function more.
+    let git = |args: &[&str]| assert!(Command::new("git").args(args).current_dir(&dir).status().unwrap().success());
+    git(&["init", "-q"]);
+    git(&["add", "main.to"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "one"]);
+    let more = source.replace(
+        "fn main() {\n",
+        "fn shout(text: String): String {\n    \"{text}!\"\n}\n\nfn main() {\n    \
+        console.println(shout(\"hi\"))\n",
+    );
+    std::fs::write(dir.join("main.to"), more).unwrap();
+    let (changed, status) = json(&dir, &["size", "main.to", "--against", "HEAD", "--json"]);
+    assert_eq!(status, 0, "{changed}");
+    let changes = &changed["changes"];
+    let program = changes["parts"].as_array().unwrap().iter().find(|p| p["part"] == "the program's code").unwrap();
+    assert!(program["change"].as_i64().unwrap() > 0, "{changed}");
+    let shout = changes["functions"].as_array().unwrap().iter().find(|f| f["function"] == "shout");
+    assert!(shout.is_some_and(|shout| shout["before"] == 0), "{changed}");
+    let (said, _, _) = tondo(&dir, &["size", "main.to", "--against", "HEAD"]);
+    assert!(said.contains(" at HEAD: +") && said.contains("  shout  (main.to)"), "{said}");
+}
+
 /// With `--tests`, `optimizations` and `asm` read the code of the tests and
 /// benchmarks, as `tondo test --bench` builds it.
 #[test]

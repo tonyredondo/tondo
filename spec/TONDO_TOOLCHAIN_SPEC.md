@@ -2537,6 +2537,33 @@ Con `--json`, el JSON del comando lleva `timings`: `ms`, `cached`, `phases`
 (`function`, `file` y `ms`). Lo que sigue a `--` es del programa. `tondo mcp`
 lo ofrece con `timings` en `build`, `check`, `run` y `test`.
 
+### 7.21 `tondo size`
+
+`tondo size [<proyecto>|<archivo.to>]` dice cuánto pesa el ejecutable de un build
+de release, que hace aparte, y en qué: primero por partes, el código del
+programa, el de sus dependencias, el de la librería estándar, el que añade el
+compilador, el del runtime, los datos del programa (textos, arrays estáticos, lo
+que `std.embed` guarda) y los del runtime, las tablas que leen las trazas, los
+volcados y los depuradores, los nombres de los símbolos y el resto (cabeceras,
+enlace dinámico, alineación), cada una con sus bytes y su parte del total; luego
+las funciones que más pesan, con su archivo o el módulo del runtime. Lo que no
+nombra ningún símbolo es del runtime: el compilador nombra todo lo que hace. El
+código que una llamada inlinea pesa en la función a la que se copió.
+
+- `--function <nombre>` da solo las funciones cuyo nombre lo contiene, y `--top
+  <n>`, cuántas (20 por defecto). `--tests` pesa el ejecutable de los tests.
+- `--static`, `--strip`, `--debug`, `--target` y `--cpu` lo construyen como
+  `tondo build`. Sin los nombres de los símbolos, las partes son las del build
+  con ellos y el total, el del que no los tiene.
+- `--against <revisión>` construye también el código de esa revisión de git,
+  como en 7.18, y da cuánto cambió el total, cada parte y las funciones que más
+  cambiaron, con lo que tenían antes.
+- Con `--json`, `tondo-size-0.1/1`: `size`, `parts` (`part` y `bytes`) y
+  `functions` (`function`, `place`, `part` y `bytes`); con `--against`,
+  `against` (`ref` y `commit`) y `changes`, que da `before`, `size` y `change`
+  del total, de cada parte y de cada función. `tondo mcp` lo ofrece como la
+  herramienta `size`, y el editor como *Show What the Executable Weighs*.
+
 ## 8. Determinismo
 
 Con las mismas fuentes, `tondo.toml`, `tondo.lock` y versión de compilador:

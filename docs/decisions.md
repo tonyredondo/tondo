@@ -7286,3 +7286,17 @@ by function; the passes run over the whole program, so they are a phase alone. T
 sum of their functions. It goes to standard error, so that a program's or a test's output stays
 as it is, and into the command's JSON with `--json`; `run` says it before the program takes the
 process.
+
+## What an executable is made of, with tondo size
+
+A program of 37 lines builds to about 3 MB, and nothing said why. `tondo size` builds the
+program aside and reads the executable: each symbol's bytes go to a part by who made it. The
+compiler names every function it makes, `tondo_f<n>_<name>`, with its name cleaned, so the
+code generator records, only while `size` asks, each symbol's name, file and whether it is the
+program's, a dependency's or the standard library's; other symbols of the compiler are glue or
+tables, by their names; the rest of the code and data is the runtime's, by Rust's demangled
+paths, and what no symbol names is the runtime's too, as Rust's constants and the C library's
+are, since the compiler names all it makes. Code a call inlines weighs where it was copied, as
+the executable has it. A stripped build is weighed by the parts of the build with names and the
+size of the one without. `--against` builds the revision's code as `optimizations` does and
+gives what each part and function gained or lost.

@@ -185,6 +185,11 @@ usage:
                                                        runs (Linux), what it allocates and holds, or where its
                                                        tasks are, in pprof's format; show reads one: the
                                                        functions and lines that take the most
+  tondo size [<project>|<file.to>] [--tests] [--function <name>] [--top <n>] [--against <rev>]
+            [--static] [--strip] [--debug] [--target <target>] [--cpu <level>] [--json]
+                                                       what an executable of a build weighs: by part, the
+                                                       program's code, the standard library's, the runtime,
+                                                       the data and the tables, and the functions that weigh most
   tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>]
             [--cpu <level>] [--against <rev> | --compiler <tondo|rev>] [--json]
                                                        what a release build makes of the code: the calls it

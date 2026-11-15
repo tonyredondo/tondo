@@ -379,6 +379,18 @@ pub const COMMANDS: &[Command] = &[
         ],
     },
     Command {
+        name: "size",
+        usage: &[
+            "tondo size [<project>|<file.to>] [--tests] [--function <name>] [--top <n>] [--against <rev>]",
+            "          [--static] [--strip] [--debug] [--target <target>] [--cpu <level>] [--json]",
+        ],
+        summary: &[
+            "what an executable of a build weighs: by part, the",
+            "program's code, the standard library's, the runtime,",
+            "the data and the tables, and the functions that weigh most",
+        ],
+    },
+    Command {
         name: "optimizations",
         usage: &[
             "tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>]",
@@ -455,6 +467,8 @@ pub const FEATURES: &[&str] = &[
     "profile",
     "optimizations",
     "asm",
+    "size",
+    "timings",
     "lsp-tests",
     "lsp-lenses",
     "explain",
@@ -517,7 +531,7 @@ pub const GROUPS: &[Group] = &[
     Group {
         name: "performance",
         purpose: "where time and memory go, and what the compiler made",
-        commands: &["profile", "optimizations", "asm", "compiler"],
+        commands: &["profile", "optimizations", "asm", "size", "compiler"],
     },
     Group {
         name: "tools",

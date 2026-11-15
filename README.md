@@ -310,7 +310,9 @@ text and parsing numbers, 1.9× to 4.6×; `queries/countBy`, 2.3×; and within
 [`bench/README.md`](bench/README.md) has every row with its allocations, and
 how to run them. The toolchain says where the time goes: `tondo optimizations`
 lists what a release build inlined, kept off the heap and still checks,
-`tondo asm` shows a function's machine code under its lines, and
+`tondo asm` shows a function's machine code under its lines and what a turn
+of each loop runs, `tondo size` what an executable is made of, `--timings`
+where a build's time goes, and
 `tondo test --bench --against main --max-regression 5` fails a change that
 makes a benchmark slower. `loops/collatz` moves from 0.87× to 1.07× with
 where its code lies; `--cpu x86-64-v3` builds for AVX2, BMI2 and FMA, and

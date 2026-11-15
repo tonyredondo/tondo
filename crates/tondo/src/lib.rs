@@ -69,6 +69,7 @@ pub mod reserve;
 #[cfg(feature = "rules")]
 pub mod rules;
 pub mod simd;
+pub mod size;
 pub mod split;
 pub mod stack;
 pub mod verify;

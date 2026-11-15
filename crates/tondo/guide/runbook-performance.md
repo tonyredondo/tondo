@@ -73,6 +73,9 @@ asm {"path": "slow.to", "function": "main"}
 => four turns at once run
 ```
 
+`size` says what the executable weighs, by part and by function, when it is
+its size that matters, as for a program shipped many times or started often.
+
 For a number to compare, a benchmark is a test that calls `testing.bench`. When
 the slow call's values matter, a dump of the slow moment has them, and
 `dump_test` with `bench` writes the benchmark of that call with them.

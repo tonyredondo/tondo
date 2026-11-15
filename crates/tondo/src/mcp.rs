@@ -1467,6 +1467,18 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             option(&mut argv, "--vsix", "vsix");
         }
         "version" => push(&["version", "--json"]),
+        "size" => {
+            push(&["size", &path, "--json"]);
+            switch(&mut argv, "--tests", "tests");
+            option(&mut argv, "--function", "function");
+            option(&mut argv, "--top", "top");
+            option(&mut argv, "--against", "against");
+            switch(&mut argv, "--strip", "strip");
+            switch(&mut argv, "--static", "static");
+            switch(&mut argv, "--debug", "debug");
+            option(&mut argv, "--target", "target");
+            option(&mut argv, "--cpu", "cpu");
+        }
         "dump_plugin" => push(&["dump", "plugin", &args.need("debugger")?, "--json"]),
         "profile_show" => {
             push(&["profile", "show", &args.need("file")?, "--json"]);
@@ -2407,6 +2419,26 @@ grown, lent or counted.",
                 "string",
                 "Another tondo, or a revision of tondo's repository, built once: what it makes differently.",
             ),
+        ],
+    },
+    Tool {
+        name: "size",
+        description: "What an executable of a build weighs: by part, the program's code, the standard library's, \
+dependencies', what the compiler adds, the runtime, the data, the tables that traces, dumps and debuggers read, and \
+the symbols' names; then the functions that weigh the most, each with its file or the runtime's module. With \
+against, what changed since a git revision.",
+        kind: Kind::Reads,
+        params: &[
+            PATH,
+            ("tests", "boolean", "The executable of the tests and benchmarks instead."),
+            ("function", "string", "Only the functions whose names hold this."),
+            ("top", "number", "How many functions to give: 20 by default."),
+            ("against", "string", "A git revision, as main: what each part and function gained or lost since it."),
+            ("strip", "boolean", "Without the symbols' names, as `build` with `strip` makes it."),
+            STATIC,
+            DEBUG,
+            TARGET,
+            CPU,
         ],
     },
     Tool {

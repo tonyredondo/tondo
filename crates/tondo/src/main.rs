@@ -93,6 +93,7 @@ fn main() -> ExitCode {
         "bind" => bind_command(&args[1..]),
         "graph" => graph_command(&args[1..]),
         "optimizations" => optimizations_command(&args[1..]),
+        "size" => size_command(&args[1..]),
         "asm" => asm_command(&args[1..]),
         "compiler" => compiler_command(&args[1..]),
         "new" | "init" => create_command(command, &args[1..]),
@@ -2179,6 +2180,60 @@ fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     if found.is_empty() {
         println!("nothing to tell of the program's own code");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `tondo size` (toolchain 7.21): what an executable of a build weighs, by
+/// part and by function, or what changed from a revision's.
+fn size_command(args: &[OsString]) -> Result<ExitCode, String> {
+    let mut args = args.to_vec();
+    let (json, tests) = (take_flag(&mut args, "--json"), take_flag(&mut args, "--tests"));
+    let (statically, strip, debug) =
+        (take_flag(&mut args, "--static"), take_flag(&mut args, "--strip"), take_flag(&mut args, "--debug"));
+    let mut valued = |flag: &str| -> Result<Option<String>, String> {
+        let Some(at) = args.iter().position(|a| a == flag) else { return Ok(None) };
+        let value = args.get(at + 1).and_then(|v| v.to_str()).filter(|v| !v.starts_with('-')).map(str::to_string);
+        let value = value.ok_or(format!("{flag} takes a value\n{USAGE}"))?;
+        args.drain(at..at + 2);
+        Ok(Some(value))
+    };
+    let (function, top, against) = (valued("--function")?, valued("--top")?, valued("--against")?);
+    let target = valued("--target")?.map(|name| Target::parse(&name)).transpose()?;
+    if let Some(level) = valued("--cpu")? {
+        driver::set_cpu(&level);
+    }
+    let top = match top {
+        Some(top) => top.parse::<usize>().map_err(|_| format!("--top takes a number\n{USAGE}"))?,
+        None => 20,
+    };
+    if let Some(flag) = args.iter().find(|a| a.to_string_lossy().starts_with('-') && *a != "--project") {
+        return Err(format!("size does not take {}\n{USAGE}", flag.display()));
+    }
+    let (path, rest) = source_argument(&args);
+    if !rest.is_empty() {
+        return Err(format!("size takes one project or file\n{USAGE}"));
+    }
+    let options = tondo::size::Options { tests, statically, strip, debug, target };
+    let now = tondo::size::weigh(&path, options)?;
+    if let Some(reference) = against {
+        let (commit, dir) = driver::revision(&path, &reference)?;
+        let before = tondo::size::weigh(&dir, options)
+            .map_err(|e| format!("the code of {reference} does not build, so there is nothing to compare with: {e}"))?;
+        let changes = tondo::size::changes(&before, &now, function.as_deref(), top);
+        match json {
+            true => print_json(
+                "size",
+                true,
+                serde_json::json!({ "against": { "ref": reference, "commit": commit }, "changes": changes }),
+            ),
+            false => print!("{}", tondo::size::changes_text(&changes, &reference)),
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    match json {
+        true => print_json("size", true, tondo::size::json(&now, function.as_deref(), top)),
+        false => print!("{}", tondo::size::text(&now, function.as_deref(), top)),
     }
     Ok(ExitCode::SUCCESS)
 }

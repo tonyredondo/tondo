@@ -742,6 +742,11 @@
         "category": "Tondo"
       },
       {
+        "command": "tondo.showSize",
+        "title": "Show What the Executable Weighs",
+        "category": "Tondo"
+      },
+      {
         "command": "tondo.guide",
         "title": "Read the Guide",
         "category": "Tondo"
@@ -997,6 +1002,10 @@
         },
         {
           "command": "tondo.showMachineCode",
+          "when": "resourceLangId == tondo"
+        },
+        {
+          "command": "tondo.showSize",
           "when": "resourceLangId == tondo"
         },
         {

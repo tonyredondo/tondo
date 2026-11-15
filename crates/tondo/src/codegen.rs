@@ -172,6 +172,21 @@ fn leb128(out: &mut Vec<u8>, mut value: u64) {
     }
 }
 
+/// Whether `tondo size` asks each function's symbol to be named.
+static NAMING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The functions of the program's builds by their symbols, with their
+/// names, files and whether each is the program's own, the standard
+/// library's or a dependency's, while `tondo size` asks.
+static NAMED: std::sync::Mutex<Vec<(String, String, String, &'static str)>> = std::sync::Mutex::new(Vec::new());
+
+/// Asks the next builds to name their functions' symbols, or no longer;
+/// what they named.
+pub fn name_functions(on: bool) -> Vec<(String, String, String, &'static str)> {
+    NAMING.store(on, std::sync::atomic::Ordering::Relaxed);
+    std::mem::take(&mut *NAMED.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 fn symbol_name(index: usize, name: &str) -> String {
     let clean: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
     format!("tondo_f{index}_{clean}")
@@ -472,6 +487,16 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         }
         let signature = cg.signature(body);
         let name = symbol_name(index, &body.name);
+        if NAMING.load(std::sync::atomic::Ordering::Relaxed) {
+            let file = sources.file_of(body.span.start);
+            let part = match () {
+                _ if file.logical.starts_with("<std>/") => "std",
+                _ if file.dependency => "dependency",
+                _ => "program",
+            };
+            let named = (name.clone(), body.name.clone(), file.logical.clone(), part);
+            NAMED.lock().unwrap_or_else(|e| e.into_inner()).push(named);
+        }
         let id = cg.module.declare_function(&name, Linkage::Local, &signature).map_err(|e| e.to_string())?;
         cg.functions.push(id);
         // A function with a version: `id` calls the body of the build's
