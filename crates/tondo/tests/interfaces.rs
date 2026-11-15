@@ -304,3 +304,27 @@ fn c_calls_a_tondo_value_through_its_interface() {
     // letters, gives 7 by default, and is let go to nothing.
     assert_eq!(stdout, "[0, -2147467262, 1, 1, 0, -2147024809, 0, 40, 7, 3, 2, 1, 0]\nthe value has 35\n", "{stderr}");
 }
+
+/// What a trait's methods are named and how their parameters are: an `impl`
+/// takes its methods' names from its trait, so only the trait's
+/// declaration is held to the conventions, as a trait `tondo bind` writes
+/// keeps C's; and a parameter named `_`, or as the derived code names its
+/// own, is passed on all the same.
+#[test]
+fn an_implementation_takes_its_names_from_its_trait() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("interfaces-names");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.ffi\n\n\
+        @ffi.Interface(id: \"6A1B2C3D-0000-4000-8000-00000000BEEF\")\npub trait Touched: ffi.Unknown {\n    \
+        fn Touch(self, _: Int32, call: Int32, result: Int32): ffi.HResult\n}\n\n\
+        type Toucher = {}\n\n\
+        impl Touched for Toucher {\n    fn Touch(self, _: Int32, call: Int32, result: Int32): ffi.HResult {\n        \
+        console.println(\"touched {call} {result}\")\n        ffi.HResult.Ok\n    }\n}\n\n\
+        fn main() {\n    let object = ffi.object(Toucher {})\n    let touched = unsafe { TouchedObject.of(object) }\n    \
+        console.println(\"{touched.Touch(1, 2, 3).isOk()}\")\n    _ = unsafe { ffi.UnknownObject.of(object).release() }\n}\n";
+    std::fs::write(dir.join("touched.to"), program).unwrap();
+    let (out, err, code) = tondo(&dir, &["run", "touched.to"]);
+    assert_eq!((out.as_str(), code), ("touched 2 3\ntrue\n", 0), "{err}");
+    assert_eq!(err.matches("W1004").count(), 1, "only the trait's declaration: {err}");
+}

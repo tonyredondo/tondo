@@ -246,11 +246,16 @@ fn method(f: &ast::FnDecl) -> Option<Method> {
         return None;
     }
     let mut named = Vec::new();
-    for param in params {
+    for (index, param) in params.iter().enumerate() {
         if param.mode != ast::Mode::Value || param.variadic {
             return None;
         }
-        named.push((param.name.name.clone(), param.ty.clone()?));
+        // The derived code passes each on by its name: one it cannot name,
+        // as `_`, or that its own would shadow, gets one of its own.
+        let name = &param.name.name;
+        let own = name.starts_with('_') || ["table", "call", "result"].contains(&name.as_str());
+        let name = if own { format!("argument{}", index + 1) } else { name.clone() };
+        named.push((name, param.ty.clone()?));
     }
     Some(Method { name: f.name.name.clone(), params: named, result: f.result.clone() })
 }

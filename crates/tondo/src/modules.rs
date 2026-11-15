@@ -232,6 +232,7 @@ pub fn link(mut modules: Vec<ModuleSource>, root: usize, packages: &[PackageInfo
                 module: index,
                 class,
                 conventions: !file.bound,
+                implementing: false,
                 imports,
                 decls: &decls,
                 prefixes: &prefixes,
@@ -550,6 +551,9 @@ struct Linker<'a> {
     /// Whether its names follow the conventions of 5.4, unless it keeps
     /// those of C.
     conventions: bool,
+    /// Whether the function being linked is a method of an `impl`, whose
+    /// name is its trait's, which the trait's declaration answers for.
+    implementing: bool,
     /// This file's imports of the package's modules.
     imports: &'a HashMap<String, usize>,
     decls: &'a [Declarations],
@@ -792,7 +796,10 @@ impl Linker<'_> {
                 self.generics(&mut i.generics);
                 self.ty(&mut i.trait_ref);
                 self.ty(&mut i.target);
-                i.methods.iter_mut().for_each(|m| self.function(m, false));
+                for method in &mut i.methods {
+                    self.implementing = true;
+                    self.function(method, false);
+                }
             }
             Item::Test(node) => self.test_node(node),
             // Expanded into implementations before modules are linked.
@@ -826,7 +833,8 @@ impl Linker<'_> {
         let (conventions, visible) = (self.conventions, self.visible.len());
         self.conventions &= f.foreign.is_none();
         // One named as a type of its module builds it (11.5).
-        if f.owner.is_some() || !self.decls[self.module].types.contains_key(&f.name.name) {
+        let implementing = std::mem::take(&mut self.implementing);
+        if !implementing && (f.owner.is_some() || !self.decls[self.module].types.contains_key(&f.name.name)) {
             self.convention(&f.name, Case::Camel);
         }
         match &mut f.owner {
