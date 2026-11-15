@@ -4320,12 +4320,14 @@ fn a_dump_keeps_each_task_s_waits_and_wakes() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     // A task takes two values and waits for a third, which comes after a
-    // long sleep.
+    // long sleep. The second comes once it waits for it, so that it is
+    // handed over: the tools' questions stop a debug build's tasks at their
+    // lines a moment, which a busy machine makes longer.
     let waits = "import std.time\n\n\
         fn take(values: Receiver[Int]) {\n    var count = 0\n    for count < 3 {\n        \
         _ = values.receive()\n        count += 1\n    }\n}\n\n\
         fn main() {\n    let (sender, values) = channel[Int]()\n    let taker = spawn take(values)\n    \
-        sender.send(1)\n    time.sleep(time.milliseconds(20))\n    sender.send(2)\n    \
+        sender.send(1)\n    time.sleep(time.milliseconds(500))\n    sender.send(2)\n    \
         time.sleep(time.seconds(60))\n    sender.send(3)\n    taker.wait()\n}\n";
     std::fs::write(dir.join("waits.to"), waits).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
