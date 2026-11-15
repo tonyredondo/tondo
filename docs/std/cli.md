@@ -220,6 +220,23 @@ fn main() {
 
 <img src="images/cli-choose-many.png" width="396" alt="The question Install over docs, tests and examples: docs marked from the start, tests not, and examples marked and under the arrow">
 
+With `search: true` either one narrows its list by what is typed, the
+letters in their order as `fzf` matches them, and the arrows move among
+what is left. In a pipe nothing changes: the answer is a number.
+
+```tondo
+import std.cli
+import std.console
+
+fn main() {
+    let countries = ["Argentina", "Chile", "Colombia", "España", "México", "Perú", "Uruguay"]
+    let chosen = cli.choose("Country", countries, search: true)
+    console.println(countries[chosen])
+}
+```
+
+<img src="images/cli-search.png" width="396" alt="The question Country, the letters co typed under it, and the two countries left of seven, Colombia marked and México">
+
 [`progress`](#progress) shows work as it advances: a bar when the total is
 known, and a spinner that turns by itself when it is not. It stays at the
 bottom of the output, so what the program prints meanwhile goes above it,
@@ -349,6 +366,41 @@ fn main() {
 
 <img src="images/cli-tree.png" width="362" alt="A panel titled Service with the value as a tree: name, hosts with its two elements, limits with memory and cpus, and token shown as secret">
 
+Three more give texts of their own, which go beside the rest:
+[`figlet`](#figlet) writes a word in big letters, [`calendar`](#calendar) a
+month with the days it is given marked, and [`json`](#json) a value as JSON
+in colors, with what is `@secret` hidden.
+
+```tondo
+import std.cli
+import std.console
+import std.time
+
+type Release = {
+    name: String
+    version: String
+    targets: Array[String]
+    signed: Bool
+    @secret
+    key: String
+}
+
+fn main() {
+    let day = time.DateTime { year: 2026, month: 11, day: 14, hour: 0, minute: 0, second: 0, nanosecond: 0 }
+    let release = Release {
+        name: "tondo",
+        version: "0.1.0",
+        targets: ["linux", "macos"],
+        signed: true,
+        key: "s3cret",
+    }
+    console.println(cli.figlet("Tondo"))
+    console.println(cli.beside([cli.calendar(2026, 11, marked: [day]), cli.json(release)], gap: 4))
+}
+```
+
+<img src="images/cli-letters.png" width="566" alt="The word Tondo in big letters made of characters; under it, November 2026 as a calendar with the 14th marked, beside the release as JSON with its keys, texts and true in different colors and its key shown as secret">
+
 ## Taking the terminal over
 
 A program that draws its own screen, as a list to move through or a board
@@ -423,6 +475,42 @@ started.
 - Ctrl-C and Ctrl-Z keep their meaning. With `signals: false` they are keys,
   for a program that wants them.
 
+A screen of several parts is made of [panes](#pane). Each is a text with
+the room it takes, a fixed `size` or a `ratio` of what is left, and
+`Pane.rows` and `Pane.columns` put them one above another or side by side:
+
+```tondo
+import std.cli
+import std.console
+
+fn main() {
+    let orders = ["#1 tea", "#2 coffee", "#3 water"].join("\n")
+    let log = (1..=40).map((n) { "request {n} answered in {n * 3 % 17 + 2} ms" }).collect().join("\n")
+    let screen = cli.Pane.rows([
+        cli.Pane(cli.markup("[bold]Orders today[/]"), size: 1),
+        cli.Pane.columns([
+            cli.Pane(orders, title: "Orders", border: cli.Border.Rounded),
+            cli.Pane(log, title: "Log", ratio: 2, border: cli.Border.Rounded, follow: true),
+        ]),
+        cli.Pane("q: quit", size: 1),
+    ])
+    let size = cli.terminalSize() ?? cli.Size { columns: 64, rows: 12 }
+    console.print(screen.draw(size))
+}
+```
+
+<img src="images/cli-panes.png" width="566" alt="A screen with a title on its first line, a pane titled Orders with three orders beside a wider pane titled Log that shows the last eight of forty lines, with a mark low on its right border, and q: quit on the last line">
+
+- `draw(size)` gives the screen at a size, exactly that many lines of that
+  many columns, each pane's text cut to its room or padded: text as any
+  other, so a test checks a screen without a terminal.
+- A text longer than its pane shows its last lines with `follow: true`, as
+  a log does, or from the line `from:`, which the program moves with the
+  keys; the border marks where in the text the pane is. `rooms(size)`
+  gives the room of each pane with a `name:`, to move by a page.
+- A program with the terminal taken shows it with a [`Live`](#live) at
+  each size that `redraws()` gives, and the panes take the new room.
+
 ## What to reach for
 
 | To | Use |
@@ -432,11 +520,13 @@ started.
 | Print the help, or a shell's completions | [`help`](#help), [`completions`](#completions) |
 | Show rows | [`table`](#table) |
 | Draw boxes, rules, trees and charts | [`panel`](#panel), [`rule`](#rule), [`beside`](#beside), [`tree`](#tree), [`bars`](#bars), [`breakdown`](#breakdown), [`Border`](#border) |
+| Write big letters, a month, JSON in colors | [`figlet`](#figlet), [`calendar`](#calendar), [`json`](#json) |
 | Style text | [`markup`](#markup) |
 | Show progress, or keep a text drawn in place | [`progress`](#progress), [`Live`](#live) |
 | Ask | [`ask`](#ask), [`confirm`](#confirm), [`choose`](#choose), [`chooseMany`](#choosemany), [`secret`](#secret) |
 | Know the terminal | [`isTerminal`](#isterminal), [`terminalWidth`](#terminalwidth), [`terminalSize`](#terminalsize) |
 | Take the terminal over, key by key | [`Terminal`](#terminal), [`keys`](#terminalkeys), [`Key`](#key) |
+| Split the screen into parts | [`Pane`](#pane) |
 | Draw again when the terminal changes | [`redraws`](#redraws) |
 
 The [`logstat`](../../examples/logstat) and
