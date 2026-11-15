@@ -6446,10 +6446,15 @@ fn a_dump_stops_a_task_that_computes_at_its_next_line() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"spins\"\nversion = \"0.1.0\"\n").unwrap();
-    let program = "import std.console\n\nfn spin(seed: Int, rounds: Int): Int {\n    var total = seed\n    \
-        for i in 0..rounds {\n        total = (total + i) % 1000003\n    }\n    total\n}\n\nfn main() {\n    \
-        console.println(\"ready\")\n    let _ = console.flush()\n    var total = 0\n    for {\n        \
-        total = spin(total, 200000)\n    }\n}\n";
+    // `spin` says it is ready from inside, and goes on while the program
+    // keeps it going, so that a dump asked for after it finds it there; a
+    // benchmark of it, with no `with`, runs one round.
+    let program = "import std.console\nimport std.sync\n\ncontext Run = {\n    going: sync.Atomic[Bool] = sync.Atomic(false)\n}\n\n\
+        fn spin(seed: Int, rounds: Int): Int {\n    var total = seed\n    var said = false\n    for {\n        \
+        for i in 0..rounds {\n            total = (total + i) % 1000003\n        }\n        \
+        if not Run.going.load() {\n            return total\n        }\n        if not said {\n            \
+        console.println(\"ready\")\n            let _ = console.flush()\n            said = true\n        }\n    }\n}\n\n\
+        fn main() {\n    with Run { going: sync.Atomic(true) }\n    console.println(\"{spin(0, 200000)}\")\n}\n";
     std::fs::write(dir.join("src/main.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
     let built =
@@ -6463,32 +6468,21 @@ fn a_dump_stops_a_task_that_computes_at_its_next_line() {
         .unwrap();
     let mut line = String::new();
     BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
+    assert_eq!(line, "ready\n");
     let dump = dir.join("spins.dump.json");
-    // "ready" comes before `main` reaches the loop: a dump asked for at once
-    // may stop the task on its way there, on a busy machine, where nothing
-    // is bound yet. It is asked for again until the task is in `spin`.
-    let rounds_in_spin = |read: &Value| {
-        let values = read["values"].as_array()?;
-        let rounds = values
-            .iter()
-            .find(|v| v["name"] == "rounds" && v["at"].as_str().is_some_and(|at| at.ends_with("in spin")))?;
-        Some(rounds["value"].clone())
-    };
-    let mut read = Value::Null;
-    for _ in 0..50 {
-        let taken =
-            Command::new(tondo_bin).args(["dump", &child.id().to_string(), "--output"]).arg(&dump).output().unwrap();
-        assert!(taken.status.success(), "{}", String::from_utf8_lossy(&taken.stderr));
-        read = serde_json::from_slice(&std::fs::read(&dump).unwrap()).unwrap();
-        assert_eq!(read["stopped"], true, "{read}");
-        if rounds_in_spin(&read).is_some() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
+    let taken =
+        Command::new(tondo_bin).args(["dump", &child.id().to_string(), "--output"]).arg(&dump).output().unwrap();
+    assert!(taken.status.success(), "{}", String::from_utf8_lossy(&taken.stderr));
     child.kill().unwrap();
     child.wait().unwrap();
-    assert_eq!(rounds_in_spin(&read), Some(json!("200000")), "{read}");
+    let read: Value = serde_json::from_slice(&std::fs::read(&dump).unwrap()).unwrap();
+    assert_eq!(read["stopped"], true, "{read}");
+    let rounds = read["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == "rounds" && v["at"].as_str().is_some_and(|at| at.ends_with("in spin")));
+    assert_eq!(rounds.map(|rounds| &rounds["value"]), Some(&json!("200000")), "{read}");
     let made = Command::new(tondo_bin)
         .args(["dump", "test"])
         .arg(&dump)
