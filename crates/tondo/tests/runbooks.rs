@@ -133,17 +133,19 @@ fn replay(topic: &str, text: &str) {
     // A port out of what the system gives, of this runbook alone.
     let port = (21000 + (std::process::id() % 1000) * 10 + topic.len() as u32 % 10).to_string();
     for (info, lines) in blocks(text) {
+        // What only Linux has, as recording a test, is in a block that says so.
+        if info.split(' ').skip(1).any(|word| word == "linux") && !cfg!(target_os = "linux") {
+            continue;
+        }
         let lines: Vec<String> = lines.iter().map(|line| line.replace("<port>", &port)).collect();
         let named = info.split_whitespace().find_map(|word| word.strip_prefix("file="));
         let file = named.or(info.split_once(' ').map(|(_, rest)| rest.trim()));
         match info.split(' ').next().unwrap_or_default() {
-            "tondo" => {
-                let file = file.unwrap_or_else(|| panic!("{topic}: {info}"));
-                std::fs::write(dir.join(file), lines.join("\n") + "\n").unwrap();
-            }
-            "file" => {
-                let file = file.unwrap_or_else(|| panic!("{topic}: a file block names its file"));
-                std::fs::write(dir.join(file), lines.join("\n") + "\n").unwrap();
+            "tondo" | "file" => {
+                // In a directory that may be new, as a module's.
+                let path = dir.join(file.unwrap_or_else(|| panic!("{topic}: `{info}` names no file")));
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, lines.join("\n") + "\n").unwrap();
             }
             "sh" => {
                 let script = lines.join("\n");

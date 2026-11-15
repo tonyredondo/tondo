@@ -19,11 +19,19 @@ is a topic of the guide.
 | Failures come from many machines, or must be shared | `runbook-production` |
 | You want to find the inputs that break a function | `runbook-fuzz` |
 | You change code and must show it works: which tests, alone and together | `runbook-testing` |
+| Code allocates more than it should | `runbook-allocations` |
+| A failure happened once, and running it again does not bring it back | `runbook-once` |
+| It worked before: which commit broke it | `runbook-bisect` |
+| A test fails in CI and not here, or a job must leave what it takes to see why | `runbook-ci` |
+| You rename, change a signature or delete what other code uses | `runbook-change` |
+| A program runs and you want to know what it is doing, without stopping it | `runbook-running` |
+| A program asks, draws or reads keys, and there is no terminal to try it on | `runbook-terminal` |
 
 Every step of these runbooks runs in the tests of the toolchain, so what they
 show is what the tools give. A block of tool calls reads `tool {arguments}`,
 then `=>` and what its result says. `<dump>`, `<pid>` and `<session>` stand
-for the file, the process and the session of the steps before.
+for the file, the process and the session of the steps before. A block marked
+`linux` is of what only Linux has, as a logpoint.
 
 A result that leads somewhere says so: `next` names the tool that goes on from
 it, and the runbook.
