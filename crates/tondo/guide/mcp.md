@@ -183,8 +183,8 @@ CI, a value that is wrong, a slow request, slow code, code that allocates,
 memory that grows, a program that runs (`counters`, `logpoint`), failures of
 many machines, fuzzing, every kind of test, a change to a running program, a
 change across a project (`rename`, `refactor`), a program of the terminal, and
-porting code from Go, C#, Rust, Python, TypeScript, Java, C++ or Swift
-(`runbook-port`).
+porting code from Go, C#, Rust, Python, TypeScript, Java, C++, Swift or
+Kotlin (`runbook-port`).
 
 `api_diff` says what a project's public API lost or changed since a commit, modules
 under `internal` aside, as `api` leaves out those of a dependency, and

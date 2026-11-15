@@ -3,8 +3,8 @@
 Mistakes that come from other languages, the error each gives, and the fix.
 Every error message says what to write; `tondo check --json` has it as data.
 To port a program, `tondo guide runbook-port` has the method, and a runbook
-for Go, C#, Rust, Python, TypeScript, Java, C++ and Swift says what each
-thing becomes.
+for Go, C#, Rust, Python, TypeScript, Java, C++, Swift and Kotlin says what
+each thing becomes.
 
 | Elsewhere | Tondo |
 |---|---|
