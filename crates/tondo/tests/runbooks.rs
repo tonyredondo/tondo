@@ -187,8 +187,21 @@ fn every_runbook_runs_as_it_says() {
     // The dumps of an earlier run, as CI's cache gives them back owned by
     // another user, whose directory a crash would not write to.
     let _ = std::fs::remove_dir_all(Path::new(env!("CARGO_TARGET_TMPDIR")).join("runbook-cache/tondo/dumps"));
+    // Twice as many runbooks at once as there are cores, as their steps
+    // also wait: all at once on a runner of one core gave each so little of
+    // it that a step's work went past its cap.
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let next = std::sync::atomic::AtomicUsize::new(0);
     std::thread::scope(|scope| {
-        let runs: Vec<_> = topics.iter().map(|(name, text)| scope.spawn(move || replay(name, text))).collect();
+        let runs: Vec<_> = (0..(2 * cores).min(topics.len()))
+            .map(|_| {
+                scope.spawn(|| {
+                    while let Some((name, text)) = topics.get(next.fetch_add(1, std::sync::atomic::Ordering::SeqCst)) {
+                        replay(name, text);
+                    }
+                })
+            })
+            .collect();
         runs.into_iter().for_each(|run| run.join().unwrap());
     });
 }
