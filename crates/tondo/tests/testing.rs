@@ -983,6 +983,15 @@ test badMedia {
     let (stdout, _, status) = tondo(&dir, &["test", "--filter", "rendersGreeting"]);
     assert!(stdout.contains("panic[P2007]: test-snapshot-mismatch: there is no snapshot \"greeting\""), "{stdout}");
     assert_eq!(status, 1);
+    // Another test fails: nothing is recorded, and the run says so, with
+    // the command that records these alone.
+    let (stdout, _, status) = tondo(&dir, &["test", "--update-snapshots"]);
+    assert_eq!(status, 1);
+    assert!(!dir.join("snapshots").exists());
+    let command = stdout.split("record these alone:\n  tondo ").nth(1).expect(&stdout).lines().next().unwrap();
+    assert!(command.ends_with("rendersGreeting") && !command.contains("badMedia"), "{stdout}");
+    let (_, _, status) = tondo(&dir, &command.split(' ').collect::<Vec<_>>());
+    assert_eq!(status, 0);
     let (_, _, status) = tondo(&dir, &["test", "--filter", "rendersGreeting", "--update-snapshots"]);
     assert_eq!(status, 0);
     let store = std::fs::read_to_string(dir.join("snapshots/unit/app/rendersGreeting/greeting.snap")).unwrap();

@@ -256,7 +256,9 @@ test reportsAsBefore {
 The first run has nothing to compare with and says so. `tondo test
 --update-snapshots` records the value, as JSON, in
 `snapshots/unit/<module>/<test>/report.snap`, which is committed with the
-code. A later change shows as the lines that differ:
+code. It records only in a run whose tests all pass: when another fails, it
+records nothing and gives the command that records these tests alone. A later
+change shows as the lines that differ:
 
 ```text
 panic[P2007]: test-snapshot-mismatch: the snapshot "report" differs; `tondo test --update-snapshots` records the new value

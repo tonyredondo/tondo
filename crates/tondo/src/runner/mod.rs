@@ -743,7 +743,8 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         publish(path, &(bench::baseline(bench::environment(time), &measured).text() + "\n"))?;
     }
     // Updated snapshots are published only after a run without failures,
-    // skips or blocks (9.7).
+    // skips or blocks (9.7); otherwise, the tests that made them.
+    let mut held: Vec<String> = Vec::new();
     let after = if options.update_snapshots {
         let clean = aggregates.iter().all(|a| a.status == Status::Passed && !a.flaky);
         let values: Vec<((String, String), String)> = attempts
@@ -754,7 +755,11 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
             .collect();
         match clean {
             true => Some((snapshots.publish(values).map_err(Failure::Output)?, true)),
-            false => Some((snapshots.before.clone(), false)),
+            false => {
+                held = values.into_iter().map(|((test, _), _)| test).collect();
+                held.dedup();
+                Some((snapshots.before.clone(), false))
+            }
         }
     } else {
         None
@@ -808,6 +813,13 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         }
     } else {
         human::report(tree, &printer, &aggregates, &owners, options, failed, started.elapsed());
+        if !held.is_empty() {
+            let exact: Vec<String> = held.iter().map(|test| format!("--exact {test}")).collect();
+            say!(
+                "\nno snapshot was recorded: only a run whose tests all pass records them; to record these alone:\n  tondo test --update-snapshots {}",
+                exact.join(" ")
+            );
+        }
         if !recordings.is_empty() {
             say!("\nthe runs that failed, recorded, to debug the same again:");
             for (_, recording) in &recordings {

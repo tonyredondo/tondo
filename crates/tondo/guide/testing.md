@@ -46,7 +46,8 @@ suite slow {
   `p.code` and `p.data`. It does not stop `testing.skip` or `failNow`.
 - `std.testing`: `log`, `tags`, `skip(reason)`, `failNow(message)`,
   `attach(name, mediaType, bytes)`, `snapshot(name, value)` (compares the
-  value's JSON with a file; `tondo test --update-snapshots` writes it), and
+  value's JSON with a file; `tondo test --update-snapshots` writes it, in a
+  run whose tests all pass), and
   `withVirtualTime` for code that sleeps.
 - `tondo test --watch` runs the tests again as files change: those the
   change can affect, through the imports.
