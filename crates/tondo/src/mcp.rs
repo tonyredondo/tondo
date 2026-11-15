@@ -597,7 +597,10 @@ impl Server {
                     session.ended = true;
                     return Err(format!("the program of {id} ended: `debug_start` debugs it again"));
                 }
-                let mut heard = session.hear(|value| !event(value), wait.max(Duration::from_secs(10)));
+                // The first message answers: a value, `running` for a
+                // command that runs the program, or the stop itself, as a
+                // replay's `back`, `why` or `last` answers.
+                let mut heard = session.hear(|_| true, wait.max(Duration::from_secs(10)));
                 if heard.said.last().is_some_and(|answer| answer["running"] == true) {
                     let more = session.hear(event, wait);
                     heard.said.extend(more.said);
@@ -2072,7 +2075,7 @@ impl Session {
 
 /// A line the debugger wrote, rather than the program.
 fn debugger(value: &Value) -> bool {
-    const KEYS: [&str; 28] = [
+    const KEYS: [&str; 36] = [
         "debugging",
         "running",
         "pausing",
@@ -2101,6 +2104,15 @@ fn debugger(value: &Value) -> bool {
         "deleted",
         "reloaded",
         "error",
+        // A replay's answers over the whole run.
+        "timeline",
+        "ran",
+        "origins",
+        "diff",
+        "checkpoints",
+        "tick",
+        "parted",
+        "blocked",
     ];
     value.as_object().is_some_and(|object| KEYS.iter().any(|key| object.contains_key(*key)))
 }

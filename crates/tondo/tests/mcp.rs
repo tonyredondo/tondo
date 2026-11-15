@@ -832,3 +832,36 @@ fn says_what_a_release_build_makes_of_the_code() {
     assert!(text.contains("main.to:6  total += values[i]") && text.contains("IR after:"), "{text}");
     agent.stop();
 }
+
+/// A replay's questions over the whole run answer as soon as the debugger
+/// does, and those that move it with the stop itself: none waits out its
+/// `wait`, which took ten seconds a question.
+#[test]
+fn a_replay_answers_at_once() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        return;
+    }
+    let till = "import std.console\n\nfn cents(sale: String): Int {\n    Int.parse(sale) ?? 0\n}\n\nfn main() {\n    var total = 0\n    for {\n        match console.readLine() {\n            some(sale) => {\n                let amount = cents(sale)\n                total += amount\n            }\n            none => break\n        }\n    }\n    console.println(\"total {total}\")\n}\n";
+    let dir = project("mcp_replay", &[("till.to", till)]);
+    let mut agent = Agent::start(&dir);
+    let (ran, _) = agent.call("run", json!({ "path": "till.to", "stdin": "250\n4\n100\n", "record": "day.rec" }));
+    assert_eq!(ran["stdout"], "total 354\n", "{ran}");
+    let (started, _) = agent.call("debug_start", json!({ "target": "day.rec", "replay": true }));
+    let session = started["session"].clone();
+    let mut debug = |command: &str| {
+        let asked = std::time::Instant::now();
+        let (answer, _) = agent.call("debug", json!({ "session": session, "command": command, "wait": 30 }));
+        assert!(asked.elapsed() < std::time::Duration::from_secs(8), "{command} took {:?}", asked.elapsed());
+        answer["said"].as_array().and_then(|said| said.last()).cloned().unwrap()
+    };
+    assert!(debug("break till.to:13")["breakpoint"].is_object());
+    assert!(debug("continue")["stopped"].is_object());
+    assert!(debug("timeline amount")["timeline"].is_array());
+    assert!(debug("ran till.to:13 total")["ran"].is_array());
+    assert!(debug("origins total")["origins"].is_object());
+    assert!(debug("why total")["stopped"].is_object());
+    assert!(debug("last amount == 4")["stopped"].is_object());
+    assert!(debug("back 1")["stopped"].is_object());
+    agent.call("debug", json!({ "session": session, "command": "quit" }));
+    agent.stop();
+}
