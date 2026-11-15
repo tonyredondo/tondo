@@ -344,6 +344,7 @@ $ tondo dump group dumps
 | `tondo dump read <dump> stacks` | the tasks, by the stack they share |
 | `tondo dump read <dump> locals` | the bindings of a frame |
 | `tondo dump test <dump>` | a test that fails as the dump did |
+| `tondo dump test <dump> --bench` | a benchmark of the call a frame was in, with its values ([Performance](performance.md#is-it-slower-benchmarks)) |
 | `tondo dump diff a.dump b.dump` | what changed between two dumps |
 | `tondo dump group <dir>` | the dumps by the failure they are, the most frequent first |
 | `tondo dump trend <dir>` | what keeps growing over dumps: a leak, by its line |

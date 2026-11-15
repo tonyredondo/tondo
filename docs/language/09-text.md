@@ -109,9 +109,11 @@ fn main() {
 $5 for 5 apples
 ```
 
-Other languages interpolate with it. Where a text has `$name` and `name` is
-a binding there, the compiler warns (`W1022`) that it is written as it is,
-and says to write `{name}`.
+Other languages interpolate with it, so the compiler warns (`W1022`) where
+a text looks like theirs: `$name` with `name` a binding there, which is
+written as it is, and a `$` before an interpolation of what is no number,
+as `"hi ${name}"`, since a dollar before a text is seldom meant. Both say
+to write `{name}`.
 
 After a `:`, an interpolation says how to write the value. The compiler
 checks the format against the value's type.
