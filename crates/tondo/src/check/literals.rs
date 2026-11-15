@@ -961,7 +961,7 @@ impl<'a> Checker<'a> {
             return Self::mk(hir::ExprKind::Str(text.clone()), Ty::STRING, span);
         }
         let mut out = Vec::new();
-        for segment in segments {
+        for (index, segment) in segments.iter().enumerate() {
             match segment {
                 ast::StrSegment::Text(text) => out.push(hir::Segment::Text(text.clone())),
                 ast::StrSegment::Expr(e, format) => {
@@ -970,6 +970,11 @@ impl<'a> Checker<'a> {
                     let outer = std::mem::replace(&mut self.interpolating, lone);
                     let value = self.expr(cx, e, None);
                     self.interpolating = outer;
+                    let after_dollar =
+                        index > 0 && matches!(&segments[index - 1], ast::StrSegment::Text(text) if text.ends_with('$'));
+                    if after_dollar {
+                        self.dollar_before(&value);
+                    }
                     if !self.satisfies(value.ty, DISPLAY, &[]) {
                         let mut message = format!("{} does not implement `Display`", self.display(value.ty));
                         if let Some(members) = self.types.members(value.ty).map(<[Ty]>::to_vec) {
@@ -1246,6 +1251,35 @@ impl<'a> Checker<'a> {
             self.diags.warning("W1022", at, message);
             self.diags.fix(format!("write `{written}`"), false, vec![(at, written)]);
         }
+    }
+
+    /// W1022: `${value}` of a value that is not a number, which another
+    /// language interpolates and Tondo writes with a dollar before it: a
+    /// price is a number, and stays silent.
+    fn dollar_before(&mut self, value: &hir::Expr) {
+        let number = matches!(
+            self.types.kind(self.types.repr(value.ty)),
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Byte | TyKind::Error
+        );
+        let file = self.sources.file_of(value.span.start);
+        if number || file.logical.starts_with('<') {
+            return;
+        }
+        let before = &file.text[..(value.span.start - file.base) as usize];
+        let Some(open) = before.trim_end().strip_suffix('{') else { return };
+        let Some(dollar) = open.strip_suffix('$').map(str::len) else { return };
+        let after = &file.text[(value.span.end - file.base) as usize..];
+        let Some(close) = after.find('}') else { return };
+        let start = file.base + dollar as u32;
+        let at = Span::new(start, value.span.end + close as u32 + 1);
+        let written = self.sources.slice(at).to_string();
+        let message = format!(
+            "`{written}` writes a `$` and then the {}: Tondo interpolates `{}`; keep the `$` only if it is meant",
+            self.display(value.ty),
+            &written[1..]
+        );
+        self.diags.warning("W1022", at, message);
+        self.diags.fix("take the `$` away", false, vec![(Span::new(start, start + 1), String::new())]);
     }
 
     /// Reports a path whose first name is unknown as a value: a method

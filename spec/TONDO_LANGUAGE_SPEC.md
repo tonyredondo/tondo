@@ -8111,8 +8111,10 @@ La interpolación es preferida cuando se mezclan texto y valores.
 Un `$` en un literal es un carácter: `"hi $name"` da `hi $name`. Como otros
 lenguajes interpolan así, avisa (`W1022`) un `$name` en el texto de un
 literal cuando `name` es un binding visible allí, con la corrección de
-escribir `{name}`. No avisa de un `$` ante lo que no es un binding, como `$5`
-o `$HOME`, ni de `"${amount}"`, que es un dólar y el valor, como se escribe
+escribir `{name}`. Avisa también de `${expr}` cuando el valor no es un número,
+como `"hi ${name}"` con un texto, que da `hi $Ada`, con la corrección de quitar
+el `$`. No avisa de un `$` ante lo que no es un binding, como `$5` o `$HOME`,
+ni de `"${amount}"` con un número, que es un dólar y el valor, como se escribe
 un precio.
 
 Una interpolación puede llevar un formato tras `:`, como en Python y Rust:
@@ -9389,7 +9391,7 @@ oculten un diagnóstico independiente.
 | `W1019` | `unused-allow` | Un comentario `// tondo: allow` que no silencia nada. |
 | `W1020` | `unknown-model-step` | Un `model.mark`, `model.weak` o `model.strong` con un nombre escrito que ningún `model.step` del programa da (biblioteca 14.43). |
 | `W1021` | `needless-some` | `some(value)` donde se espera un `T?` y `value` es un `T` que no es una option: el valor solo se eleva igual (9.7). |
-| `W1022` | `foreign-interpolation` | Un `$name` en el texto de un literal con `name` un binding visible allí: se escribe tal cual, y Tondo interpola `{name}` (19.6). |
+| `W1022` | `foreign-interpolation` | Un `$name` en el texto de un literal con `name` un binding visible allí, o `${expr}` de un valor que no es un número: el `$` se escribe tal cual, y Tondo interpola `{name}` (19.6). |
 | `W1024` | `array-front-every-turn` | Con `performance`: `removeAt(0)` de un array en cada vuelta de un bucle, que mueve los demás elementos; un `Deque` toma el primero de una vez. |
 | `W1025` | `pattern-compiled-every-call` | Con `performance`: `regex.Regex.compile` de un patrón escrito donde corre cada vez; el campo de un contexto lo compila una vez. |
 
@@ -9722,7 +9724,7 @@ con condiciones cerradas:
 - Sentencia que es un valor negativo que nada usa (`W1014`).
 - Llamada cuyo resultado nada usa y sin otro efecto (`W1018`).
 - `some(value)` donde el valor solo se elevaría igual (`W1021`).
-- `$name` en el texto de un literal, con `name` un binding, que otro lenguaje interpolaría (`W1022`).
+- `$name` en el texto de un literal, con `name` un binding, o `${expr}` de un valor que no es un número, que otro lenguaje interpolaría (`W1022`).
 
 Son errores obligatorios, entre otros:
 

@@ -7314,3 +7314,12 @@ pattern compiled where it runs each time (W1025) found none once a test's body, 
 was told from a closure's. `contains` on an array in a loop found eight places in the standard
 library, seven on arrays of a few elements, and waits for Tony's decision with those numbers.
 The warnings come from the checker, which knows types and loops, when the check asks for them.
+
+## `${value}` of a value that is not a number warns too
+
+W1022 warned of `$name` and left `${expr}` alone, since `"${amount}"` is how a price is written,
+and the wider form found prices in the test projects. Tony then agreed to warn of `${expr}` when
+the value is not a number: a price is a number and stays silent, while `"hi ${name}"` with a text
+is almost always a port from Kotlin, TypeScript or a shell, and prints `hi $Ada`. The checker
+knows the value's type there, so the rule is by type, and its fix takes the `$` away; over the
+cases, the examples, `bench/` and the test projects it found only the case written to show it.

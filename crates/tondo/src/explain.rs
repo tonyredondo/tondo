@@ -327,8 +327,9 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "W1022",
         "foreign-interpolation",
         "A text literal holds another language's interpolation, `$name` with `name` a binding there, which \
-         Tondo writes as it is: it interpolates `{name}`. The fix writes that. `\"${amount}\"` is a dollar and \
-         the value, as a price is written, and says nothing.",
+         Tondo writes as it is: it interpolates `{name}`. The fix writes that. `${expr}` of a value that is not \
+         a number writes a `$` and then the value, as `\"hi ${name}\"` gives `hi $Ada`; the fix takes the `$` \
+         away. `\"${amount}\"` with a number is a dollar and the value, as a price is written, and says nothing.",
     ),
     (
         "W1024",
