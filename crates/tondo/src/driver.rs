@@ -2221,18 +2221,26 @@ pub fn assembly_with(
         };
         let (loops, unrolled) = (of_kind(&["unrolled", "looped"]), of_kind(&["unrolled"]));
         let mut turned = turns(&kept.blocks, &instructions, &loops);
-        // A loop that runs four turns at a time has the code of four, then
-        // one for the last turns, with fewer instructions.
+        // A loop that runs four turns at a time has the code of four, in as
+        // many versions as the passes made of it, and one for the last
+        // turns: the smallest, whose fewest instructions the code of four
+        // has twice at least.
         turned.sort_by_key(|(at, turn)| (at.clone(), std::cmp::Reverse(turn.1)));
-        for (index, (at, turn)) in turned.iter().enumerate().rev() {
-            let first = index == 0 || turned[index - 1].0 != *at;
-            let what = match (unrolled.contains(at), first) {
+        let least = |at: &(String, usize)| turned.iter().filter(|(other, _)| other == at).map(|(_, t)| t.0).min();
+        let mut said = Vec::new();
+        for (at, turn) in &turned {
+            let several = turned.iter().filter(|(other, _)| other == at).count() > 1;
+            let what = match (unrolled.contains(at), several) {
                 (false, _) => "a turn of the loop runs",
-                (true, true) => "four turns at once run",
-                (true, false) => "a turn of the last ones, one at a time, runs",
+                (true, false) => "a turn of its code runs",
+                (true, true) if least(at).is_some_and(|least| turn.0 >= 2 * least) => "four turns at once run",
+                (true, true) => "a turn of the last ones, one at a time, runs",
             };
-            if let Some((.., remarks)) = lines.iter_mut().find(|(place, ..)| place == at) {
-                remarks.insert(0, turn_text(what, *turn));
+            said.push((at.clone(), turn_text(what, *turn)));
+        }
+        for (at, turn) in said.into_iter().rev() {
+            if let Some((.., remarks)) = lines.iter_mut().find(|(place, ..)| *place == at) {
+                remarks.insert(0, turn);
             }
         }
         let constants = kept.bytes.len() - code.len();
@@ -2426,11 +2434,11 @@ fn turn_text(what: &str, (least, most, checked, called): Turn) -> String {
         (count, false) => format!("at most {count} {what}{}", if count == 1 { "" } else { "s" }),
     };
     let instructions = match least == most {
-        true => format!("{most} instructions"),
-        false => format!("{least} to {most} instructions, by the way it branches"),
+        true => format!("{most} instructions on its common path"),
+        false => format!("{least} to {most} instructions on its common path, by the way it branches"),
     };
     let (checks, calls) = (some(checked, "check"), some(called, "call"));
-    format!("{what} {instructions} on its common path: {checks} and {calls}")
+    format!("{what} {instructions}: {checks} and {calls}")
 }
 
 /// A function whose code changed, and the lines of its diff.

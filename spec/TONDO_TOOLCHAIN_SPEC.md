@@ -2482,8 +2482,9 @@ src/main.to:6  total += values[i]
   bloque frío, y llamadas: `a turn of the loop runs 14 instructions on its
   common path: 2 checks and no call`. Si sus ramas dan caminos distintos, da
   la menor y la mayor cuenta y como mucho cuántos checks y llamadas. Un bucle
-  que corre cuatro vueltas a la vez dice lo que corren las cuatro y, aparte,
-  lo que corre una de las últimas. La línea es la del bucle en el programa, o
+  que corre cuatro vueltas a la vez dice lo que corren las cuatro, en cada
+  versión que hicieron los pases, y, aparte, lo que corre una de las últimas:
+  la del bucle más pequeño de su línea, que las de cuatro doblan. La línea es la del bucle en el programa, o
   la primera del código del programa en él, como la de un `for` sobre un
   iterador de la librería estándar.
 - `--clif` añade el IR de Cranelift de la función antes y después de que su

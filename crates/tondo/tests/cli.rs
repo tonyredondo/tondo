@@ -1503,7 +1503,7 @@ fn asm_says_what_a_turn_of_a_loop_runs() {
     let (said, stderr, status) = tondo(&dir, &["asm", "main.to", "letters"]);
     assert_eq!(status, 0, "{stderr}");
     let turn = "main.to:5  for c in text.chars() {\n        ; a turn of the loop runs ";
-    assert!(said.contains(turn) && said.contains("instructions, by the way it branches on its common path:"), "{said}");
+    assert!(said.contains(turn) && said.contains("instructions on its common path, by the way it branches:"), "{said}");
     assert!(!said.contains("prelude.to:2484  if self.offset >= self.text.byteLength() {\n        ; a turn"), "{said}");
     let (said, stderr, status) = tondo(&dir, &["asm", "main.to", "total"]);
     assert_eq!(status, 0, "{stderr}");
@@ -1511,6 +1511,23 @@ fn asm_says_what_a_turn_of_a_loop_runs() {
     assert!(line.starts_with("        ; four turns at once run "), "{said}");
     assert!(line.contains("\n        ; a turn of the last ones, one at a time, runs "), "{said}");
     assert!(line.lines().next().is_some_and(|turn| turn.ends_with("and no call")), "{said}");
+    // A loop of four turns in two versions, one that keeps a check and one
+    // that does not, and the one for the last turns: told apart by size.
+    let program = "type Reading = { sensor: String, value: Float }\n\nfn mean(readings: Array[Reading], sensor: String): Float {\n    \
+        var total = 0.0\n    var count = 0\n    for reading in readings {\n        if reading.sensor == sensor {\n            \
+        total += reading.value\n            count += 1\n        }\n    }\n    if count == 0 { 0.0 } else { total / Float(count) }\n}\n\n\
+        fn main() {\n    _ = mean([Reading { sensor: \"a\", value: 1.0 }], \"a\")\n}\n";
+    std::fs::write(dir.join("mean.to"), program).unwrap();
+    let (said, stderr, status) = tondo(&dir, &["asm", "mean.to", "mean"]);
+    assert_eq!(status, 0, "{stderr}");
+    let line = said.split("mean.to:6  for reading in readings {\n").nth(1).unwrap_or_default();
+    let turns: Vec<&str> =
+        line.lines().take_while(|l| l.starts_with("        ; ") && l.contains("common path")).collect();
+    let last = turns.iter().filter(|t| t.contains("a turn of the last ones")).count();
+    assert!(
+        last == 1 && turns.len() > 1 && turns[..turns.len() - 1].iter().all(|t| t.contains("four turns at once")),
+        "{said}"
+    );
 }
 
 /// `asm --runtime` gives the machine code of a function of the runtime, as
