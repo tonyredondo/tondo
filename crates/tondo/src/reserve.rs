@@ -2,7 +2,9 @@
 //! loop pushes to once in each turn, as `for item in items { out.push(..) }`
 //! does and as `map`, `zip` and `enumerate` build theirs, takes room for
 //! every turn when the loop starts, rather than growing as it goes: one
-//! allocation where growing takes one each time the length doubles. A loop
+//! allocation where growing takes one each time the length doubles. The
+//! turns are `last - start`, and one more over `a..=b`, which wrap to a
+//! negative count, and so to no room, past an `Int`. A loop
 //! that may leave before its last turn, by `break` or `return`, or that
 //! pushes in some turns only, as `filter` does, is left to grow, so that no
 //! array takes much more room than its elements. The room is a hint, which
@@ -21,17 +23,38 @@ pub fn reserve(bodies: &mut [Body], types: &Types) {
         for (span, why) in grown {
             crate::mir_text::remark(body, span, "grown", || format!("grows as it is pushed to: {why}"));
         }
-        for (before, array, last, span) in found {
+        for Found { before, array, counter, last, from_zero, inclusive, span } in found {
             crate::mir_text::remark(body, span, "reserved", || "takes room for every turn before the loop".into());
             if noting {
                 body.notes.push(format!("reserve: l{} takes room for l{} pushes after b{before}", array.0, last.0));
             }
-            body.locals.push(Ty::UNIT);
-            body.names.push(None);
-            let done = Local(body.locals.len() as u32 - 1);
+            let mut new_local = |ty: Ty| {
+                body.locals.push(ty);
+                body.names.push(None);
+                Local(body.locals.len() as u32 - 1)
+            };
+            // The turns, `last - counter`, and one more for `a..=b`, as the
+            // counter starts: a count past an `Int`, or none, wraps to a
+            // negative one, which takes no room.
+            let mut stmts = Vec::new();
+            let mut turns = last;
+            if !from_zero {
+                let difference = new_local(Ty::INT);
+                let less = Rvalue::Exact(BinOp::Sub, Operand::local(last), Operand::local(counter));
+                stmts.push(Statement::Assign(Place::local(difference), Box::new(less), span));
+                turns = difference;
+            }
+            if inclusive {
+                let more = new_local(Ty::INT);
+                let one = Rvalue::Exact(BinOp::Add, Operand::local(turns), Operand::Const(Const::Int(1, Ty::INT)));
+                stmts.push(Statement::Assign(Place::local(more), Box::new(one), span));
+                turns = more;
+            }
+            let done = new_local(Ty::UNIT);
             let room =
-                Rvalue::Mutate(Mutation::Reserve, Place::local(array), vec![Operand::local(last)], vec![false], span);
-            body.blocks[before].stmts.push(Statement::Assign(Place::local(done), Box::new(room), span));
+                Rvalue::Mutate(Mutation::Reserve, Place::local(array), vec![Operand::local(turns)], vec![false], span);
+            stmts.push(Statement::Assign(Place::local(done), Box::new(room), span));
+            body.blocks[before].stmts.extend(stmts);
         }
     });
 }
@@ -56,14 +79,25 @@ fn abnormal(block: &BlockData) -> Option<usize> {
     (asked && condition.path.is_empty()).then_some(to.0 as usize)
 }
 
-/// The counted loops from 0 that push to an array once in each turn and
-/// leave only by their test or by unwinding: the block before each, the
-/// array, the bound of the counter, and where the push is.
+/// A push to an array once in each turn of a counted loop that leaves only
+/// by its test or by unwinding: the block before the loop, the array, the
+/// counter and its bound, whether the counter starts at 0, whether the
+/// loop runs the turn of the bound too, and where the push is.
+struct Found {
+    before: usize,
+    array: Local,
+    counter: Local,
+    last: Local,
+    from_zero: bool,
+    inclusive: bool,
+    span: Span,
+}
+
 /// Why the pushes it leaves are, with where they are, for `tondo
 /// optimizations`.
 type Grown = Vec<(Span, &'static str)>;
 
-fn loops(body: &Body, types: &Types) -> (Vec<(usize, Local, Local, Span)>, Grown) {
+fn loops(body: &Body, types: &Types) -> (Vec<Found>, Grown) {
     let mut grown = Vec::new();
     let blocks = &body.blocks;
     let pushes = |statement: &Statement| matches!(statement, Statement::Assign(_, rvalue, _) if matches!(**rvalue, Rvalue::Mutate(Mutation::Push, ..)));
@@ -79,7 +113,7 @@ fn loops(body: &Body, types: &Types) -> (Vec<(usize, Local, Local, Span)>, Grown
         defined.drain(..).for_each(|local| assigned[local.0 as usize].push(statement));
     }
     let mut found = Vec::new();
-    for Counted { head, step, entry, before, counter, last, inside } in counted_loops(blocks) {
+    for Counted { head, step, entry, before, counter, last, inside, latch } in counted_loops(blocks) {
         // A way in from a block that goes to the loop alone, with a bound
         // that is an `Int`, as the runtime takes it.
         if !matches!(blocks[before].terminator, Terminator::Goto(_))
@@ -134,15 +168,17 @@ fn loops(body: &Body, types: &Types) -> (Vec<(usize, Local, Local, Span)>, Grown
                 .map(|&(_, _, span)| span)
                 .collect::<Vec<_>>()
         };
-        // Out only by the test, or by unwinding: not to a block that cannot
-        // be reached, as a `match` that covers every case leaves.
+        // Out only by the test, its latch's for `a..=b`, or by unwinding:
+        // not to a block that cannot be reached, as a `match` that covers
+        // every case leaves.
         let leaves = members.iter().any(|&block| {
-            successors(&blocks[block].terminator).into_iter().any(|to| {
-                to != head
-                    && !inside[to]
-                    && abnormal(&blocks[block]) != Some(to)
-                    && !matches!(blocks[to].terminator, Terminator::Unreachable)
-            })
+            Some(block) != latch
+                && successors(&blocks[block].terminator).into_iter().any(|to| {
+                    to != head
+                        && !inside[to]
+                        && abnormal(&blocks[block]) != Some(to)
+                        && !matches!(blocks[to].terminator, Terminator::Unreachable)
+                })
         });
         if leaves {
             grown.extend(arrays(&pushes).into_iter().map(|span| (span, "the loop may leave before its last turn")));
@@ -153,8 +189,8 @@ fn loops(body: &Body, types: &Types) -> (Vec<(usize, Local, Local, Span)>, Grown
         let from_zero = assigned[counter.0 as usize].iter().any(|statement| {
             matches!(statement, Statement::Assign(_, rvalue, _) if matches!(&**rvalue, Rvalue::Use(Operand::Const(Const::Int(0, _)))))
         });
-        if changed.contains(&last) || !counted_once || assigned[counter.0 as usize].len() != 2 || !from_zero {
-            let why = "the loop does not count its turns from 0 to an end it keeps";
+        if changed.contains(&last) || !counted_once || assigned[counter.0 as usize].len() != 2 {
+            let why = "the loop does not count its turns to an end it keeps";
             grown.extend(arrays(&pushes).into_iter().map(|span| (span, why)));
             continue;
         }
@@ -170,7 +206,8 @@ fn loops(body: &Body, types: &Types) -> (Vec<(usize, Local, Local, Span)>, Grown
                 _ if changed.contains(&array) => "the loop changes it in other ways too",
                 _ if around => "the loop pushes to it in some turns only",
                 _ => {
-                    found.push((before, array, last, span));
+                    let inclusive = latch.is_some();
+                    found.push(Found { before, array, counter, last, from_zero, inclusive, span });
                     continue;
                 }
             };

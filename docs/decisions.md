@@ -7367,3 +7367,15 @@ none, since a constant has one type; nor does an alias, nor an intrinsic type, w
 the language gives. An enum's constant cannot take a variant's name, which `Color.Red` already
 reads.
 
+## Loops over an inclusive range are counted loops
+
+`for n in 1..=upTo` got neither the room for what it pushes, nor four turns at a time, nor the
+bounds that drop a check, which `0..limit` gets: the lowering tests `counter <= last` and leaves
+after the turn of `last` from a latch before the step, so that the counter never steps past the
+type's greatest value, and no pass knew that shape. Making it `counter < last + 1` would lose the
+turn of `Int.max` (and of 255 for a `UInt8`, a loop people write), and a copy of the body for that
+one case costs code everywhere. So the passes learn the shape instead: the loop is counted, its
+latch is its own test and not a way out, a copy that unrolling makes steps without it, as its turn
+is never the last, and its turns are `last - start + 1`. The room no longer needs the counter to
+start at 0 either: `start..limit` takes `limit - start`, a count that wraps to a negative one, and
+so to no room, only past an `Int`.

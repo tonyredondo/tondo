@@ -476,7 +476,9 @@ pub fn successors(terminator: &Terminator) -> Vec<usize> {
 /// items`: its head tests `counter < last` and goes to `entry` or out, its
 /// step adds one to the counter and goes back to the head, `before` is the
 /// one block outside it that goes to the head, and `inside` marks its
-/// blocks but the head.
+/// blocks but the head. One of `for i in a..=b` tests `counter <= last`,
+/// and its `latch`, the one way to the step, leaves after the turn of
+/// `last`, so that the counter never steps past it.
 pub struct Counted {
     pub head: usize,
     pub step: usize,
@@ -485,6 +487,39 @@ pub struct Counted {
     pub counter: Local,
     pub last: Local,
     pub inside: Vec<bool>,
+    pub latch: Option<usize>,
+}
+
+impl Counted {
+    /// Whether it runs the turn of `last` too, as `a..=b` does.
+    pub fn inclusive(&self) -> bool {
+        self.latch.is_some()
+    }
+}
+
+/// The latch of a loop over `a..=b` that goes to `step`: its one way
+/// there, which tests `counter == last` and leaves when it holds.
+pub fn latch(
+    blocks: &[BlockData],
+    predecessors: &[Vec<usize>],
+    step: usize,
+    counter: Local,
+    last: Local,
+) -> Option<usize> {
+    let local = |operand: &Operand| match operand {
+        Operand::Copy(Place { local, path }) if path.is_empty() => Some(*local),
+        _ => None,
+    };
+    let &[latch] = &predecessors[step][..] else { return None };
+    let (Terminator::Branch(done, _, on), [Statement::Assign(tested, comparison, _)]) =
+        (&blocks[latch].terminator, &blocks[latch].stmts[..])
+    else {
+        return None;
+    };
+    let Rvalue::Binary(crate::ast::BinOp::Eq, left, right) = &**comparison else { return None };
+    let compared = (local(left) == Some(counter) && local(right) == Some(last))
+        || (local(left) == Some(last) && local(right) == Some(counter));
+    (compared && on.0 as usize == step && tested.path.is_empty() && local(done) == Some(tested.local)).then_some(latch)
 }
 
 /// The counted loops of a body.
@@ -517,12 +552,21 @@ pub fn counted_loops(blocks: &[BlockData]) -> Vec<Counted> {
         else {
             continue;
         };
-        let Rvalue::Binary(crate::ast::BinOp::Lt, left, right) = &**comparison else { continue };
+        let Rvalue::Binary(op @ (crate::ast::BinOp::Lt | crate::ast::BinOp::Le), left, right) = &**comparison else {
+            continue;
+        };
         let (Some(last), true) = (local(right), local(left) == Some(counter)) else { continue };
         let entry = entry.0 as usize;
         if local(test) != Some(tested.local) {
             continue;
         }
+        let latch = match op {
+            crate::ast::BinOp::Le => match latch(blocks, &predecessors, step, counter, last) {
+                Some(latch) => Some(latch),
+                None => continue,
+            },
+            _ => None,
+        };
         // Its blocks: those that reach the step without the head.
         let mut inside = vec![false; blocks.len()];
         let mut pending = vec![step];
@@ -534,7 +578,7 @@ pub fn counted_loops(blocks: &[BlockData]) -> Vec<Counted> {
         }
         let outside: Vec<usize> = predecessors[head].iter().copied().filter(|&p| !inside[p]).collect();
         if let (&[before], true) = (&outside[..], inside[entry]) {
-            found.push(Counted { head, step, entry, before, counter, last, inside });
+            found.push(Counted { head, step, entry, before, counter, last, inside, latch });
         }
     }
     found

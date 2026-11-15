@@ -47,14 +47,17 @@ fn head_span(body: &Body, head: usize) -> Span {
 }
 
 /// A counted loop: its head tests `counter < last` and goes to `entry`
-/// or out, its step adds one to the counter and goes back to the head.
+/// or out, its step adds one to the counter and goes back to the head. Over
+/// `a..=b` it tests `counter <= last`, and its latch leaves after the turn
+/// of `last` (`mir::latch`).
 struct Counted {
     head: usize,
     step: usize,
     entry: usize,
     counter: Local,
     last: Local,
-    /// Its blocks but the head and the step.
+    latch: Option<usize>,
+    /// Its blocks but the head, the latch and the step.
     blocks: Vec<usize>,
 }
 
@@ -113,11 +116,18 @@ fn find(body: &Body, types: &Types, done: &[usize], kept: &mut Vec<(usize, Strin
         else {
             continue;
         };
-        let Rvalue::Binary(BinOp::Lt, left, right) = &**comparison else { continue };
+        let Rvalue::Binary(op @ (BinOp::Lt | BinOp::Le), left, right) = &**comparison else { continue };
         let (Some(last), true) = (local(right), local(left) == Some(counter)) else { continue };
         if local(test) != Some(tested.local) || !int(body, types, last) {
             continue;
         }
+        let latch = match op {
+            BinOp::Le => match crate::mir::latch(blocks, &predecessors, step, counter, last) {
+                Some(latch) => Some(latch),
+                None => continue,
+            },
+            _ => None,
+        };
         // The loop's blocks: those that reach the step without the head.
         let mut inside = vec![false; blocks.len()];
         let mut pending = vec![step];
@@ -140,7 +150,8 @@ fn find(body: &Body, types: &Types, done: &[usize], kept: &mut Vec<(usize, Strin
                 pending.extend(successors(&blocks[block].terminator));
             }
         }
-        let loop_blocks: Vec<usize> = (0..blocks.len()).filter(|&b| reached[b] && b != step).collect();
+        let loop_blocks: Vec<usize> =
+            (0..blocks.len()).filter(|&b| reached[b] && b != step && Some(b) != latch).collect();
         // Short, without a loop of its own, and its first statement takes
         // the counter, as `for i in a..b` does, or the element at it, as
         // `for item in items` does, or a field of it, as it does of an
@@ -206,7 +217,7 @@ fn find(body: &Body, types: &Types, done: &[usize], kept: &mut Vec<(usize, Strin
                 }
             }
         }
-        return Some(Counted { head, step, entry, counter, last, blocks: loop_blocks });
+        return Some(Counted { head, step, entry, counter, last, latch, blocks: loop_blocks });
     }
     None
 }
@@ -257,9 +268,10 @@ fn rewrite(body: &mut Body, found: &Counted) {
     let original = BlockId(found.head as u32);
     let (big, counted_small, small, bound) =
         (new_local(body, Ty::BOOL), new_local(body, Ty::BOOL), new_local(body, Ty::BOOL), new_local(body, Ty::INT));
-    // Before the loop: `bound = last - 3` when it fits, or only the loop
-    // as it was.
-    let at_least = Rvalue::Binary(BinOp::Ge, operand(found.last), int(i64::MIN as i128 + COPIES as i128 - 1));
+    // Before the loop: `bound = last - 3`, or `last - 2` for `a..=b`, which
+    // runs the turn of `last` too, when it fits, or only the loop as it was.
+    let fewer = COPIES as i128 - 1 - found.latch.is_some() as i128;
+    let at_least = Rvalue::Binary(BinOp::Ge, operand(found.last), int(i64::MIN as i128 + fewer));
     let placeholder = BlockData { stmts: Vec::new(), terminator: Terminator::Unreachable };
     let before = fresh(body, scope, placeholder.clone());
     let sizes = [fresh(body, scope, placeholder.clone()), fresh(body, scope, placeholder.clone())];
@@ -273,7 +285,7 @@ fn rewrite(body: &mut Body, found: &Counted) {
     // within an `Int` and needs no check; another for any others.
     let from = Rvalue::Binary(BinOp::Ge, operand(found.counter), int(-SMALL_BOUND));
     let to = Rvalue::Binary(BinOp::Le, operand(found.last), int(SMALL_BOUND));
-    let less = Rvalue::Exact(BinOp::Sub, operand(found.last), int(COPIES as i128 - 1));
+    let less = Rvalue::Exact(BinOp::Sub, operand(found.last), int(fewer));
     let (within, any) = (unrolled(body, found, scope, bound), unrolled(body, found, scope, bound));
     let starts: Vec<BlockId> = [within, any]
         .into_iter()
@@ -363,8 +375,9 @@ fn unrolled(body: &mut Body, found: &Counted, scope: Option<u32>, bound: Local) 
         terminator: Terminator::Branch(operand(fits), entries[0], original),
     };
     for (copy, map) in maps.iter().enumerate() {
+        // A copy's turn is never the last: its latch only steps.
         let target = |to: BlockId| match to.0 as usize {
-            to if to == found.step => steps[copy],
+            to if to == found.step || Some(to) == found.latch => steps[copy],
             to => map.get(&to).copied().unwrap_or(BlockId(to as u32)),
         };
         for (&block, &new) in map {

@@ -1,0 +1,69 @@
+// A loop over a range from any start, or over an inclusive one, takes room
+// for every turn before it, as one from 0 does, and an inclusive one runs
+// four turns at a time too. The room is the turns the range has: none for
+// an empty range, and none past an `Int`, where the loop grows as before
+// and still runs the turn of the type's greatest value, which its counter
+// never steps past.
+
+import std.console
+
+fn squares(upTo: Int): Array[Int] {
+    var all: Array[Int] = []
+    for n in 1..=upTo {
+        all.push(n * n)
+    }
+    all
+}
+
+fn between(start: Int, limit: Int): Array[Int] {
+    var all: Array[Int] = []
+    for n in start..limit {
+        all.push(n)
+    }
+    all
+}
+
+fn top(start: Int): Array[Int] {
+    var all: Array[Int] = []
+    for n in start..=Int.max {
+        all.push(n - start)
+    }
+    all
+}
+
+fn counted(last: Int): Int {
+    var turns = 0
+    for _ in Int.min..=last {
+        turns += 1
+        if turns > 5 {
+            break
+        }
+    }
+    turns
+}
+
+fn main() {
+    for upTo in [-1, 0, 1, 2, 3, 4, 5, 9] {
+        console.println("{upTo}: {squares(upTo)}")
+    }
+    console.println("{between(2, 5)} {between(5, 2)} {between(-3, 1)}")
+    console.println("{top(Int.max - 5)} {top(Int.max)}")
+    console.println("{counted(Int.min)} {counted(Int.min + 2)} {counted(0)}")
+}
+
+// expect-stdout: -1: []
+// expect-stdout: 0: []
+// expect-stdout: 1: [1]
+// expect-stdout: 2: [1, 4]
+// expect-stdout: 3: [1, 4, 9]
+// expect-stdout: 4: [1, 4, 9, 16]
+// expect-stdout: 5: [1, 4, 9, 16, 25]
+// expect-stdout: 9: [1, 4, 9, 16, 25, 36, 49, 64, 81]
+// expect-stdout: [2, 3, 4] [] [-3, -2, -1, 0]
+// expect-stdout: [0, 1, 2, 3, 4, 5] [0]
+// expect-stdout: 1 3 6
+// expect-optimization: 12:14 unrolled runs four turns at a time
+// expect-optimization: 13:9 reserved takes room for every turn before the loop
+// expect-optimization: 13:18 unchecked cannot overflow: no check, in one copy of the code; another keeps the check
+// expect-optimization: 21:9 reserved
+// expect-optimization: 29:9 reserved

@@ -721,8 +721,9 @@ fn project(name: &str, tests: &str) -> PathBuf {
 }
 
 /// An array a counted loop pushes to in every turn, as `map`, `zip` and
-/// `enumerate` build theirs and as a program's own loop does, takes room for
-/// every turn when the loop starts: one allocation for 10,000 elements,
+/// `enumerate` build theirs and as a program's own loop does, over a range
+/// from any start or an inclusive one, takes room for every turn when the
+/// loop starts: one allocation for 10,000 elements,
 /// where growing to them takes 13; `filter`, which pushes in some turns
 /// only, still grows. Counted by benchmarks, which build optimized and count
 /// every allocation of their bodies.
@@ -735,6 +736,10 @@ fn arrays_a_loop_fills_allocate_once() {
         testing.bench(\"enumerate\", () { values.enumerate().length() })\n    \
         testing.bench(\"loop\", () {\n        var out: Array[Int] = []\n        \
         for i in 0..values.length() {\n            out.push(values[i] + 1)\n        }\n        out.length()\n    })\n    \
+        testing.bench(\"inclusive\", () {\n        var out: Array[Int] = []\n        \
+        for i in 1..=values.length() {\n            out.push(i * i)\n        }\n        out.length()\n    })\n    \
+        testing.bench(\"from\", () {\n        var out: Array[Int] = []\n        \
+        for i in 5..values.length() {\n            out.push(values[i])\n        }\n        out.length()\n    })\n    \
         testing.bench(\"filter\", () { values.filter((x) { x % 3 == 0 }).length() })\n}\n";
     let dir = project("reserved", tests);
     let (stdout, stderr, status) = tondo(&dir, &["test", "--bench", "--bench-time", "0.1", "--test-format", "json"]);
@@ -743,9 +748,10 @@ fn arrays_a_loop_fills_allocate_once() {
     let benchmarks = report["tests"][0]["attempts"][0]["benchmarks"].as_array().unwrap().clone();
     let allocations: Vec<(&str, f64)> =
         benchmarks.iter().map(|b| (b["name"].as_str().unwrap(), b["allocations_per_op"].as_f64().unwrap())).collect();
-    let once: Vec<(&str, f64)> = ["map", "zip", "enumerate", "loop"].map(|name| (name, 1.0)).to_vec();
-    assert_eq!(allocations[..4], once[..], "{report}");
-    assert!(allocations[4].1 > 1.0, "{report}");
+    let once: Vec<(&str, f64)> =
+        ["map", "zip", "enumerate", "loop", "inclusive", "from"].map(|name| (name, 1.0)).to_vec();
+    assert_eq!(allocations[..6], once[..], "{report}");
+    assert!(allocations[6].1 > 1.0, "{report}");
 }
 
 /// `--compiler` measures the same benchmarks with another tondo and compares

@@ -453,6 +453,8 @@ impl Prover<'_> {
         if let Some(side) = side_b {
             lacking.push(format!("{}{side}", named(b, other)));
         }
+        // A square names its operand once.
+        lacking.dedup();
         match &lacking[..] {
             [] => {
                 format!("its operands' bounds allow a result past `Int.{}`", if up { "max" } else { "min" })
