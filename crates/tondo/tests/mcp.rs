@@ -495,6 +495,12 @@ fn profiles_for_agents() {
     let profile = &profiled["profiles"][0];
     assert_eq!(profile["type"], "alloc_space", "{profiled}");
     assert!(profile["total"].as_i64().unwrap() > 0, "{profiled}");
+    // What `tondo profile` says when it fails, which it writes as JSON.
+    let arguments = json!({ "program": "999999999", "kind": "tasks", "duration": 1 });
+    let failed = agent.request("tools/call", json!({ "name": "profile", "arguments": arguments }));
+    assert_eq!(failed["isError"], true, "{failed}");
+    let message = failed["structuredContent"]["error"].as_str().unwrap();
+    assert!(message.starts_with("no Tondo program with process ID 999999999 answers"), "{failed}");
     agent.stop();
 }
 

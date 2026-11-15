@@ -1740,8 +1740,9 @@ fn profile(args: &Args) -> Result<Reply, String> {
         if args.flag("bench") {
             argv.push("--bench".into());
         }
-        let ran = execute(&argv, None, Some(Duration::from_secs(600)))?;
-        let report: Value = serde_json::from_str(&ran.stdout).map_err(|_| ran.stderr.trim().to_string())?;
+        let limit = Duration::from_secs(600);
+        let ran = execute(&argv, None, Some(limit))?;
+        let report: Value = serde_json::from_str(&ran.stdout).map_err(|_| why_failed(&argv, &ran, limit))?;
         let dir = PathBuf::from(&path);
         let written = report["profiles"].as_array().cloned().unwrap_or_default();
         (written.iter().filter_map(|p| Some(dir.join(p["profile"].as_str()?))).collect(), dir)
@@ -1765,10 +1766,10 @@ fn profile(args: &Args) -> Result<Reply, String> {
                 argv.extend(args.list("args"));
             }
         }
-        let limit = duration.map_or(120.0, |d| d + 60.0);
-        let ran = execute(&argv, None, Some(Duration::from_secs_f64(limit)))?;
+        let limit = Duration::from_secs_f64(duration.map_or(120.0, |d| d + 60.0));
+        let ran = execute(&argv, None, Some(limit))?;
         if ran.code != Some(0) {
-            return Err(ran.stderr.trim().to_string());
+            return Err(why_failed(&argv, &ran, limit));
         }
         let base = if Path::new(&path).is_dir() {
             PathBuf::from(&path)
@@ -1942,6 +1943,23 @@ fn execute(argv: &[String], stdin: Option<String>, timeout: Option<Duration>) ->
     };
     let text = |handle: std::thread::JoinHandle<Vec<u8>>| bounded(handle.join().unwrap_or_default());
     Ok(Ran { code: status.code(), stdout: text(stdout), stderr: text(stderr), timed_out })
+}
+
+/// Why a command that failed did: the message of the error it wrote as
+/// JSON, with `--json`, what it wrote to its error output, or how it ended.
+fn why_failed(argv: &[String], ran: &Ran, limit: Duration) -> String {
+    let envelope = ran.stdout.lines().rev().find_map(|line| serde_json::from_str::<Value>(line).ok());
+    let message = envelope.as_ref().and_then(|e| e["message"].as_str()).unwrap_or_default();
+    let command = format!("`tondo {}`", argv.join(" "));
+    match (message.trim(), ran.stderr.trim()) {
+        ("", "") if ran.timed_out => format!("{command} took more than {} s, and was ended", limit.as_secs()),
+        ("", "") => match ran.code {
+            Some(code) => format!("{command} ended with exit code {code}, and said nothing"),
+            None => format!("{command} was ended by a signal, and said nothing"),
+        },
+        ("", stderr) => stderr.to_string(),
+        (message, _) => message.to_string(),
+    }
 }
 
 /// Reads a stream to its end on a thread of its own.
