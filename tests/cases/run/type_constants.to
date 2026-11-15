@@ -3,6 +3,7 @@
 // expect-stdout: 0 -1
 // expect-stdout: 0 Point { x: 0, y: 0 }
 // expect-stdout: true
+// expect-stdout: 1 3 true
 import std.console
 
 type Code = Int32
@@ -18,6 +19,10 @@ type Point = {
 
 const Point.Origin: Point = Point { x: 0, y: 0 }
 
+fn Code.positive(self): Bool {
+    self.value >= 0
+}
+
 enum Color {
     Red
     Green
@@ -29,4 +34,5 @@ fn main() {
     console.println("{Code.Ok.value} {Code.Failed.value}")
     console.println("{Point.Origin.x} {Point.Origin}")
     console.println("{Color.Favorite == Color.Green}")
+    console.println("{Code.Failed.value.abs()} {Point.Origin.x.max(3)} {Code.Ok.positive()}")
 }

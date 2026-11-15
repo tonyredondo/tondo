@@ -1874,6 +1874,21 @@ impl<'a> Checker<'a> {
                 let receiver = ast::Expr { kind: ast::ExprKind::Path(prefix.to_vec()), span: receiver_span };
                 return self.method_call(cx, &receiver, method, args, expected, span);
             }
+            // `HResult.False.isOk()`, `Point.Origin.x.abs()`: a method of a
+            // type's constant, or of its fields.
+            ast::ExprKind::Path(segments)
+                if segments.len() > 2
+                    && self.lookup(cx, &segments[0].name).is_none()
+                    && matches!(
+                        self.names.get(&format!("{}.{}", segments[0].name, segments[1].name)),
+                        Some(ModuleName::Const(_))
+                    ) =>
+            {
+                let (method, prefix) = segments.split_last().unwrap();
+                let receiver_span = prefix[0].span.to(prefix.last().unwrap().span);
+                let receiver = ast::Expr { kind: ast::ExprKind::Path(prefix.to_vec()), span: receiver_span };
+                return self.method_call(cx, &receiver, method, args, expected, span);
+            }
             // `Color.Red.describe()`: a method of a variant without payload.
             ast::ExprKind::Path(segments) if segments.len() == 3 && self.unit_variant(&segments[..2]) => {
                 let (method, prefix) = segments.split_last().unwrap();
