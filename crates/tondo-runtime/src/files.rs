@@ -720,16 +720,7 @@ pub extern "C" fn tondo_rt_files_watch_next(done: *mut NativeObject) -> *mut Arr
         };
         let batch = crate::http::wait(async move {
             let mut receiver = receiver;
-            let first = tokio::time::timeout(std::time::Duration::from_secs(1), receiver.recv()).await;
-            let mut changes = match first {
-                Ok(change) => vec![change?],
-                Err(_) => Vec::new(),
-            };
-            while !changes.is_empty()
-                && let Ok(Some(change)) = tokio::time::timeout(settle, receiver.recv()).await
-            {
-                changes.push(change);
-            }
+            let changes = batch(&mut receiver, settle).await?;
             Some((changes, receiver))
         });
         let Some(Some((changes, receiver))) = batch else { return string_array(&[]) };
@@ -744,6 +735,26 @@ pub extern "C" fn tondo_rt_files_watch_next(done: *mut NativeObject) -> *mut Arr
             return string_array(&out);
         }
     }
+}
+
+/// The paths of the next batch: the first change that comes within a
+/// second, and each that comes within `settle` of the one before it; none
+/// when a second passes without a change, and `None` once the watch ended.
+async fn batch(
+    receiver: &mut tokio::sync::mpsc::UnboundedReceiver<PathBuf>,
+    settle: std::time::Duration,
+) -> Option<Vec<PathBuf>> {
+    let first = tokio::time::timeout(std::time::Duration::from_secs(1), receiver.recv()).await;
+    let mut changes = match first {
+        Ok(change) => vec![change?],
+        Err(_) => Vec::new(),
+    };
+    while !changes.is_empty()
+        && let Ok(Some(change)) = tokio::time::timeout(settle, receiver.recv()).await
+    {
+        changes.push(change);
+    }
+    Some(changes)
 }
 
 /// What became of the paths the system says changed, from their stamps:
@@ -817,5 +828,75 @@ pub extern "C" fn tondo_rt_files_watch_stop(done: *mut NativeObject) {
         let mut watch = watch.lock().unwrap_or_else(|e| e.into_inner());
         watch.watcher = None;
         watch.changes = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A directory of its own for a test, with `files` in it.
+    fn directory(name: &str, files: &[&str]) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tondo-watch-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for file in files {
+            std::fs::write(dir.join(file), file).unwrap();
+        }
+        dir.canonicalize().unwrap()
+    }
+
+    fn watching(dir: &Path) -> Watch {
+        let mut existing = HashMap::new();
+        stamps(dir, None, &mut existing);
+        let roots = vec![(dir.to_string_lossy().into_owned(), dir.to_path_buf())];
+        Watch { watcher: None, changes: None, roots, settle: std::time::Duration::ZERO, existing }
+    }
+
+    /// A batch says what became of each path, once, sorted, from what is
+    /// there when it settles: a file made and removed within it is not
+    /// there, nor the temporary file through which `fs` writes one whole.
+    #[test]
+    fn a_batch_says_what_became_of_each_path() {
+        let dir = directory("batch", &["old.txt", "gone.txt"]);
+        let mut watch = watching(&dir);
+        std::fs::write(dir.join("new.txt"), "new").unwrap();
+        std::fs::write(dir.join("old.txt"), "changed").unwrap();
+        std::fs::remove_file(dir.join("gone.txt")).unwrap();
+        std::fs::write(dir.join("brief.txt"), "brief").unwrap();
+        std::fs::remove_file(dir.join("brief.txt")).unwrap();
+        std::fs::write(dir.join(".draft.txt.tondo-1-2"), "as fs names them").unwrap();
+        let changed = ["new.txt", "old.txt", "gone.txt", "brief.txt", ".draft.txt.tondo-1-2", "new.txt"];
+        let roots = watch.roots.clone();
+        let out = settled(&mut watch, &roots, changed.iter().map(|name| dir.join(name)).collect());
+        let at = |name: &str| dir.join(name).to_string_lossy().into_owned();
+        assert_eq!(out, ["R", &at("gone.txt"), "C", &at("new.txt"), "M", &at("old.txt")]);
+        // What it said is what the next batch starts from.
+        assert!(settled(&mut watch, &roots, vec![dir.join("new.txt")]).is_empty());
+        // A directory made with what it holds, which the system may tell
+        // of as the directory alone.
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("sub/inner.txt"), "inner").unwrap();
+        let out = settled(&mut watch, &roots, vec![dir.join("sub")]);
+        assert_eq!(out, ["C", &at("sub"), "C", &at("sub/inner.txt")]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The changes that come one after another are one batch; one that
+    /// comes after the batch is the next one's.
+    #[test]
+    fn changes_that_come_together_are_one_batch() {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+        let (send, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        for name in ["a", "b", "c"] {
+            send.send(PathBuf::from(name)).unwrap();
+        }
+        let settle = std::time::Duration::from_millis(10);
+        let first = runtime.block_on(batch(&mut receiver, settle)).unwrap();
+        assert_eq!(first, [PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")]);
+        send.send(PathBuf::from("d")).unwrap();
+        assert_eq!(runtime.block_on(batch(&mut receiver, settle)).unwrap(), [PathBuf::from("d")]);
+        drop(send);
+        assert_eq!(runtime.block_on(batch(&mut receiver, settle)), None);
     }
 }

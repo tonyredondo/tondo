@@ -1,71 +1,63 @@
 // fs.watch sends the changes under a directory in batches, once they
-// settle: each path once, created, modified or removed, sorted, without
-// the temporary files through which fs writes a file whole.
+// settle: each path once, created, modified or removed, without the
+// temporary files through which fs writes a file whole. Each change here
+// waits for the batch of the one before, so that none depends on how
+// long the machine takes; what a batch of many changes says is the
+// runtime's test of `settled`.
 
 import std.console
 import std.fs
 import std.path
 import std.time
 
-/// The changes of the batches that come until `wanted` have, in order: a
-/// change made after a batch settled comes in the next one, as one does
-/// when a busy machine holds the program back longer than `settle`.
-fn show(changes: Receiver[Array[fs.Change]], dir: String, wanted: Int) {
-    var seen: Array[String] = []
-    for seen.length() < wanted {
-        match changes.receive(timeout: time.seconds(10)) {
-            some(batch) => {
-                for change in batch {
-                    let what = match change.kind {
-                        fs.ChangeKind.Created => "created"
-                        fs.ChangeKind.Modified => "modified"
-                        fs.ChangeKind.Removed => "removed"
-                    }
-                    seen.push("{change.path.removePrefix(dir)} {what}")
+/// The changes of the next batch with one, or that none came.
+fn show(changes: Receiver[Array[fs.Change]], dir: String) {
+    match changes.receive(timeout: time.seconds(10)) {
+        some(batch) => {
+            for change in batch {
+                let what = match change.kind {
+                    fs.ChangeKind.Created => "created"
+                    fs.ChangeKind.Modified => "modified"
+                    fs.ChangeKind.Removed => "removed"
                 }
-            }
-            none => {
-                seen.push("no changes")
-                break
+                console.println("{change.path.removePrefix(dir)} {what}")
             }
         }
-    }
-    for line in seen.sorted() {
-        console.println(line)
+        none => console.println("no changes")
     }
 }
 
 fn main() {
     let dir = fs.realPath(fs.createTemporaryDirectory()?)?
     fs.writeText(path.join(dir, "old.txt"), "old")?
-    fs.writeText(path.join(dir, "gone.txt"), "gone")?
-    // Long enough that the changes below, made one after another, settle
-    // together on a busy machine too.
-    let changes = fs.watch([dir], settle: time.seconds(2))?
+    let changes = fs.watch([dir])?
     fs.writeText(path.join(dir, "new.txt"), "new")?
-    fs.writeText(path.join(dir, "new.txt"), "newer")?
+    show(changes, dir)
     fs.writeText(path.join(dir, "old.txt"), "changed")?
-    fs.remove(path.join(dir, "gone.txt"))?
-    fs.writeText(path.join(dir, "brief.txt"), "brief")?
-    fs.remove(path.join(dir, "brief.txt"))?
+    show(changes, dir)
+    fs.remove(path.join(dir, "new.txt"))?
+    show(changes, dir)
+    // The temporary file never shows, in this batch or one of its own.
     fs.writeText(path.join(dir, ".draft.txt.tondo-1-2"), "as fs names them")?
-    show(changes, dir, 3)
+    fs.writeText(path.join(dir, "after.txt"), "after")?
+    show(changes, dir)
     fs.createDirectory(path.join(dir, "sub"))?
-    time.sleep(time.milliseconds(100))
+    show(changes, dir)
     fs.writeText(path.join(dir, "sub/inner.txt"), "inner")?
-    show(changes, dir, 2)
+    show(changes, dir)
     // A file watched alone.
     let notes = path.join(dir, "notes.txt")
     fs.writeText(notes, "first")?
-    let edits = fs.watch([notes], settle: time.milliseconds(300))?
+    let edits = fs.watch([notes])?
     fs.appendText(notes, " and second")?
-    show(edits, dir, 1)
+    show(edits, dir)
     fs.remove(dir, recursive: true)?
 }
 
-// expect-stdout: /gone.txt removed
 // expect-stdout: /new.txt created
 // expect-stdout: /old.txt modified
+// expect-stdout: /new.txt removed
+// expect-stdout: /after.txt created
 // expect-stdout: /sub created
 // expect-stdout: /sub/inner.txt created
 // expect-stdout: /notes.txt modified
