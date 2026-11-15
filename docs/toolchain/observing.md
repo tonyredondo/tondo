@@ -158,6 +158,25 @@ the line to print is put into the running code and taken out again.
 It is the `print` one would add and deploy, without the deploy. It works on
 Linux.
 
+When it is in place the tool says so on its error stream, with `--json`
+too, so that a script which then makes the line run waits for that first:
+
+```text
+$ tondo logpoint counts counts.to:10 "round {round}" --max 2
+tondo: a logpoint on counts.to:10, in 1 place: it ends after 2 times
+round 8
+round 9
+```
+
+A message never holds a value that is not the binding's at that line. In a
+Release build a binding reads `?` where the optimized code has not made its
+value yet, which happens on the line or two after the one that changes it;
+further on it is there. A build with `--debug` has no places for a
+logpoint, since it has the debugger's probes instead: in `tondo debug
+<pid>`, `break counts.to:10 log round {round}` and then `continue` write
+the same lines without stopping there, with every value
+([Debugging](debugging.md)).
+
 ## Where the time goes: profile
 
 ```text
