@@ -351,7 +351,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 }
             }
             Rvalue::Convert(operand) => {
-                let from = self.operand_ty(operand);
+                // A newtype's value converts as the number it holds: its
+                // sign is that number's.
+                let from = self.e.cg.types().repr(self.operand_ty(operand));
                 let value = self.scalar(operand);
                 match self.e.cg.types().kind(ty) {
                     TyKind::Result(target, _) => {

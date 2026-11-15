@@ -1,0 +1,22 @@
+// A newtype's value widens as the number it holds: a negative `Int32` in a
+// newtype is the same negative `Int`, and an unsigned one stays positive.
+// expect-stdout: -5 -2147467262 -5.0
+// expect-stdout: 250 250
+import std.console
+
+type Code = Int32
+
+type Small = UInt8
+
+fn widened(code: Code): Int {
+    Int(code.value)
+}
+
+fn main() {
+    let n: Int32 = -5
+    let float: Float = Float(Code(n).value)
+    console.println("{widened(Code(n))} {widened(Code(-2147467262))} {float}")
+    let small = Small(250u8)
+    let wide: Int = Int(small.value)
+    console.println("{wide} {Int(small.value)}")
+}
