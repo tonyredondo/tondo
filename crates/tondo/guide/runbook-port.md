@@ -113,7 +113,12 @@ test {"coverage": true}
   line. `check` warns of some, and the language's runbook names the rest.
 - **Not the dependencies, at first**: the standard library has HTTP, JSON,
   SQL, templates, a command line and more. `api` with `list` names the
-  modules, and `tondo guide stdlib` says what each is for.
+  modules, and `tondo guide stdlib` says what each is for. For what it has
+  not, `add_dependency` adds a package from a directory, a git repository or
+  an archive, `update` fetches them again and `remove_dependency` takes one
+  out.
+- **The examples of its documents**: `doc_test` checks the Tondo examples of
+  a Markdown file, as the port's README.
 - **C stays C**: a C library is called as it is, with `bind` and `extern fn`
   (`tondo guide ffi`), not ported.
 

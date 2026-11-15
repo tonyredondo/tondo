@@ -145,9 +145,9 @@ test.
   there. `--jobs 1` runs them one at a time.
 - **Less processor.** A runner with one or two cores brings out the waits a
   fast machine hides: `taskset -c 0 tondo test` here, on Linux.
-- **The build.** `static`, `target` and `cpu` build as the job does; a
-  recording or a dump says which build it is of, and `source` gives its files
-  as they were.
+- **The build.** `build`, `run` and `test` take `static`, `target` and `cpu`,
+  to build as the job does; a recording or a dump says which build it is of,
+  and `source` gives its files as they were.
 
 ## What a job's `tondo test` takes
 

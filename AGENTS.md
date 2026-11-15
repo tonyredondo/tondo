@@ -139,6 +139,21 @@ its own, with `gh workflow run CI --ref <branch>`.
   `crates/tondo/guide`, when users meet it; an entry in
   `docs/decisions.md` for a decision of design; and its row in
   `docs/roadmap.md`, and in the README's status when it changes it.
+- The guide (`crates/tondo/guide`), which `tondo guide` prints and `tondo
+  mcp` serves as its resources and its prompt, its runbooks and the manual
+  (`docs/`) say the same thing, and none of them waits for later: a change
+  to the language, the standard library, a command or a tool is not done
+  until each of them says it, and a change to the manual or to the guide
+  is read against the other. What changes how a problem is worked, as a
+  tool, an option or a diagnostic, gets its step in that problem's
+  runbook, or a runbook of its own. `cargo test -p tondo --test runbooks
+  --test guide` holds every tool to a runbook, and every topic and runbook
+  to the manual's lists.
+- What the command line does, `tondo mcp` and the editor's extension do
+  too: a command or an option lands with its tool or its parameter in
+  `crates/tondo/src/mcp.rs` and with its command in `editors/vscode`, in
+  the same change. `cargo test -p tondo --test guide` holds every command
+  and option to both.
 - Errors say how to fix them, with the code to write when there is one.
   The toolchain does what it can by itself rather than ask for
   annotations.

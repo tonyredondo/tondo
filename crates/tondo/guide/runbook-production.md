@@ -32,7 +32,8 @@ dump_group {"dir": "dumps"}
 => app.to:5 in charge
 ```
 
-`dump_issue` writes a group as an issue, and `dump_report` one dump as a page.
+`dump_issue` writes a group as an issue, `dump_report` one dump as a page, and
+`dump_serve` the failures of the whole directory as one page.
 
 ```mcp
 dump_issue {"dir": "dumps", "signature": "<signature>"}
@@ -61,5 +62,6 @@ how to replay it: keep `<dir>` and the dumps as the job's artifacts
 (`runbook-ci`). What a program that still runs is doing: `runbook-running`.
 
 A core of the system, from a crash inside C or of the runtime, is `dump_core`:
-it makes a dump of it. To go on from a failure: `runbook-crash`, and
-`runbook-regression` for its test.
+it makes a dump of it. In lldb or gdb, the command that `dump_plugin` writes
+shows a stopped program as `dump_read` does. To go on from a failure:
+`runbook-crash`, and `runbook-regression` for its test.

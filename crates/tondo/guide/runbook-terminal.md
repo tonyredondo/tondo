@@ -10,7 +10,9 @@ terminal is recorded, to open here.
 
 From a pipe each question reads a line: `choose` a number, `chooseMany`
 several as `1,3`, `confirm` a `y`, and an empty line takes the default. So
-`run` answers them with `stdin`, as a script or a test would.
+`run` answers them with `stdin`, as a script or a test would. When an answer
+depends on what the program said before, `run_start` keeps it running and
+`run_input` writes one answer and gives what the program printed then.
 
 ```tondo file=order.to
 import std.cli
