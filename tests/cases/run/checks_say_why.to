@@ -1,0 +1,40 @@
+import std.console
+
+// A check a loop keeps says which bound the compiler lacked: what nothing
+// bounds, and from which side; a difference grows as what it takes away
+// falls.
+
+fn letters(text: String): Int {
+    var count = 0
+    for c in text.chars() {
+        if c.isLetter() {
+            count += 1
+        }
+    }
+    count
+}
+
+fn total(parts: Array[String]): Int {
+    var sum = 0
+    for part in parts {
+        sum += Int.parse(part) ?? 0
+    }
+    sum
+}
+
+fn widest(words: Array[Int]): Int {
+    var most = 0
+    for word in words {
+        most = most.max(64 - word.leadingZeros())
+    }
+    most
+}
+
+fn main() {
+    console.println("{letters("ab1")} {total(["1", "2"])} {widest([5, 300])}")
+}
+
+// expect-stdout: 2 3 9
+// expect-optimization: 11:13 checked keeps its overflow check, in a loop: nothing bounds `count` from above
+// expect-optimization: 20:9 checked nothing bounds `sum` from above, nor what is added from above
+// expect-optimization: 28:25 checked nothing bounds what is taken away from below

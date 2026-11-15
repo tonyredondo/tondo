@@ -397,7 +397,7 @@ the line is a `bsr` and what makes it right for a word of zero:
 
 ```text
 src/main.to:7  most = most.max(64 - word.leadingZeros())
-        ; `64 - word.leadingZeros()` keeps its overflow check, in a loop
+        ; `64 - word.leadingZeros()` keeps its overflow check, in a loop: nothing bounds what is taken away from below
      6f  mov r9, -0x1
      76  bsr rsi, rdx
      7a  cmovz rsi, r9
@@ -413,7 +413,7 @@ optimizations` takes the option too:
 
 ```text
 src/main.to:7  most = most.max(64 - word.leadingZeros())
-        ; `64 - word.leadingZeros()` keeps its overflow check, in a loop
+        ; `64 - word.leadingZeros()` keeps its overflow check, in a loop: nothing bounds what is taken away from below
      76  lzcnt r8, r8
      7b  sub rsi, r8
      7e  jo $+0x2f9

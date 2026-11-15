@@ -22,11 +22,13 @@ use std::collections::HashMap;
 pub fn prove(bodies: &mut [Body], types: &Types) {
     let loans: Vec<Vec<bool>> = bodies.iter().map(|body| body.loans.clone()).collect();
     crate::parallel::each_mut(bodies, |body| {
+        let mut reasons = HashMap::new();
         if let Some(relevant) = relevant(body, types) {
-            Prover { body, types, loans: &loans, relevant, live: Vec::new() }.run();
+            let prover = Prover { body, types, loans: &loans, relevant, live: Vec::new(), reasons: HashMap::new() };
+            reasons = prover.run();
         }
         if crate::mir_text::remarking() {
-            kept(body, types);
+            kept(body, types, &reasons);
         }
     });
 }
@@ -34,10 +36,12 @@ pub fn prove(bodies: &mut [Body], types: &Types) {
 /// Remarks on the checks a body keeps in its innermost loops, where they
 /// cost the most, and on its products by a constant that are checked by
 /// the range of the other factor (`tondo optimizations`).
-fn kept(body: &mut Body, types: &Types) {
+/// With `reasons`, why a check stays where it is known: the bound the
+/// facts lack.
+fn kept(body: &mut Body, types: &Types, reasons: &HashMap<Span, String>) {
     use crate::ast::BinOp;
     let tight = crate::mir::inner_loops(&body.blocks, true);
-    let mut remarks: Vec<(Span, &'static str, &'static str)> = Vec::new();
+    let mut remarks: Vec<(Span, &'static str, String)> = Vec::new();
     let locals = &body.locals;
     for (index, block) in body.blocks.iter_mut().enumerate() {
         let looping = tight.get(index).copied().unwrap_or(false);
@@ -45,7 +49,7 @@ fn kept(body: &mut Body, types: &Types) {
             if looping {
                 crate::inline::visit_statement(statement, &mut |place| {
                     if let Some(Proj::Index(_, span)) = place.path.first() {
-                        remarks.push((*span, "checked", "keeps its bounds check, in a loop"));
+                        remarks.push((*span, "checked", "keeps its bounds check, in a loop".into()));
                     }
                 });
             }
@@ -59,14 +63,22 @@ fn kept(body: &mut Body, types: &Types) {
                 _ => None,
             };
             if *op == BinOp::Mul && constant.is_some_and(|c| crate::codegen::by_range(c, int.bits())) {
-                remarks.push((*span, "arithmetic", "is checked by the range of the other factor, not by the product"));
+                remarks.push((
+                    *span,
+                    "arithmetic",
+                    "is checked by the range of the other factor, not by the product".into(),
+                ));
             } else if looping {
-                remarks.push((*span, "checked", "keeps its overflow check, in a loop"));
+                let text = match reasons.get(span) {
+                    Some(reason) => format!("keeps its overflow check, in a loop: {reason}"),
+                    None => "keeps its overflow check, in a loop".to_string(),
+                };
+                remarks.push((*span, "checked", text));
             }
         }
     }
     for (span, kind, text) in remarks {
-        crate::mir_text::remark(body, span, kind, || text.to_string());
+        crate::mir_text::remark(body, span, kind, || text);
     }
 }
 
@@ -354,6 +366,9 @@ struct Prover<'a> {
     relevant: Vec<bool>,
     /// The locals read on some way from each block's start.
     live: Vec<Vec<bool>>,
+    /// Why an operation keeps its check, by its statement's place: the
+    /// bound the facts lack, for what `tondo optimizations` says.
+    reasons: HashMap<Span, String>,
 }
 
 /// A comparison a local holds, of two integers as `node + offset`.
@@ -363,6 +378,66 @@ impl Prover<'_> {
     /// An `Int` local.
     fn typed_int(&self, local: Local) -> bool {
         self.types.repr(self.body.locals[local.0 as usize]) == Ty::INT
+    }
+
+    /// What the facts lack for `a op b` not to overflow: the operand and
+    /// the side no fact bounds, by its name when it has one.
+    fn unbounded(
+        &self,
+        op: crate::ast::BinOp,
+        (a, range_a): (&Operand, (i128, i128)),
+        (b, range_b): (&Operand, (i128, i128)),
+        (low, high): (i128, i128),
+    ) -> String {
+        use crate::ast::BinOp;
+        let (min, max) = (i64::MIN as i128, i64::MAX as i128);
+        let named = |operand: &Operand, other: &'static str| match operand {
+            // Its own name, or the one it had in the function inlined.
+            Operand::Copy(Place { local, path }) if path.is_empty() => {
+                let scoped = || self.body.scoped.iter().find(|(l, ..)| l == local).map(|(_, name, _)| name.clone());
+                match self.body.names.get(local.0 as usize).cloned().flatten().or_else(scoped) {
+                    Some(name) => format!("`{name}`"),
+                    None => other.to_string(),
+                }
+            }
+            _ => other.to_string(),
+        };
+        let other = match op {
+            BinOp::Add => "what is added",
+            BinOp::Sub => "what is taken away",
+            _ => "the other factor",
+        };
+        // The operands whose bound on the side that overflows no fact
+        // gives, each with that side: a difference grows as what it takes
+        // away falls.
+        let up = high > max;
+        let product = op == BinOp::Mul;
+        let wide = |range: (i128, i128)| range.0 <= min || range.1 >= max;
+        let side = |range: (i128, i128), rising: bool| match rising {
+            true => (range.1 >= max).then_some(" from above"),
+            false => (range.0 <= min).then_some(" from below"),
+        };
+        let (side_a, side_b) = match (op, product) {
+            (_, true) => (wide(range_a).then_some(""), wide(range_b).then_some("")),
+            (BinOp::Sub, _) => (side(range_a, up), side(range_b, !up)),
+            _ => (side(range_a, up), side(range_b, up)),
+        };
+        let mut lacking = Vec::new();
+        if let Some(side) = side_a {
+            lacking.push(format!("{}{side}", named(a, "the first operand")));
+        }
+        if let Some(side) = side_b {
+            lacking.push(format!("{}{side}", named(b, other)));
+        }
+        match &lacking[..] {
+            [] => {
+                format!("its operands' bounds allow a result past `Int.{}`", if up { "max" } else { "min" })
+                    + if low < min && high > max { ", either way" } else { "" }
+            }
+            [one] => format!("nothing bounds {one}"),
+            [one, two] => format!("nothing bounds {one}, nor {two}"),
+            _ => unreachable!("two operands"),
+        }
     }
 
     /// An `Int` local the facts follow.
@@ -390,10 +465,12 @@ impl Prover<'_> {
         }
     }
 
-    fn run(mut self) {
+    /// Proves what it can, and gives why each operation it could not keeps
+    /// its check.
+    fn run(mut self) -> HashMap<Span, String> {
         let count = self.body.blocks.len();
         if count == 0 {
-            return;
+            return HashMap::new();
         }
         let successors: Vec<Vec<usize>> = self.body.blocks.iter().map(|block| successors(&block.terminator)).collect();
         let (order, heads) = order(&successors);
@@ -406,7 +483,7 @@ impl Prover<'_> {
                 live
             })
             .collect();
-        let Some((mut entry, reaching)) = self.fixpoint(&order, &heads, &HashMap::new()) else { return };
+        let Some((mut entry, reaching)) = self.fixpoint(&order, &heads, &HashMap::new()) else { return HashMap::new() };
         // What a loop's counter bounds of the locals it only adds to, which
         // a second round holds at the loop's head.
         let pins = self.accumulators(&entry, &reaching, &successors, &heads);
@@ -420,6 +497,7 @@ impl Prover<'_> {
                 self.exits(block, facts, true);
             }
         }
+        self.reasons
     }
 
     /// The facts at the start of each block, and what reaches each block
@@ -841,12 +919,14 @@ impl Prover<'_> {
         let mut tests: HashMap<Local, Test> = HashMap::new();
         let mut statements = std::mem::take(&mut self.body.blocks[block].stmts);
         let mut remarks = Vec::new();
+        let mut reasons = Vec::new();
         for statement in &mut statements {
             if rewrite {
-                self.rewrite(statement, &facts, &mut remarks);
+                self.rewrite(statement, &facts, &mut remarks, &mut reasons);
             }
             self.step(statement, &mut facts, &mut tests);
         }
+        self.reasons.extend(reasons);
         self.body.blocks[block].stmts = statements;
         for (span, kind, text) in remarks {
             crate::mir_text::remark(self.body, span, kind, || text.to_string());
@@ -883,7 +963,13 @@ impl Prover<'_> {
     }
 
     /// Marks what the facts before a statement prove in it.
-    fn rewrite(&self, statement: &mut Statement, facts: &Facts, remarks: &mut Vec<(Span, &'static str, &'static str)>) {
+    fn rewrite(
+        &self,
+        statement: &mut Statement,
+        facts: &Facts,
+        remarks: &mut Vec<(Span, &'static str, &'static str)>,
+        reasons: &mut Vec<(Span, String)>,
+    ) {
         let within = |place: &mut Place| {
             if let Some(Proj::Index(index, span)) = place.path.first()
                 && self.array(place.local)
@@ -959,6 +1045,11 @@ impl Prover<'_> {
                 if low < high {
                     remarks.push((span, "unchecked", "cannot overflow: no check"));
                 }
+            } else {
+                let Rvalue::Binary(_, left, right) = &**rvalue else {
+                    unreachable!("a sum, a difference or a product")
+                };
+                reasons.push((span, self.unbounded(*op, (left, range_a), (right, range_b), (low, high))));
             }
         } else if let Statement::Assign(place, rvalue, _) = statement
             && place.path.is_empty()

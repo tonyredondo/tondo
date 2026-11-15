@@ -39,8 +39,10 @@ sample often falls on the instruction after the slow one, which waits for it.
 
 `optimizations` says what a release build made of that code: the calls it
 inlined and those it kept, with why; the texts and closures it made without the
-heap, and what keeps the others on it; the checks it dropped, and those a loop
-keeps. `function` keeps one function, with the code written in it wherever it
+heap, and what keeps the others on it, naming the code; the checks it dropped,
+and those a loop keeps, with the bound it lacked, as "nothing bounds `count`
+from above": a value compared with a limit before the operation gives one.
+`function` keeps one function, with the code written in it wherever it
 went, `kind` one kind of line, as `heap` for what allocates, and `against`
 with a commit only what a change made different.
 
