@@ -1,0 +1,52 @@
+// ffi.writeWide and ffi.writeCString write what fits of a text in a buffer
+// of C, with a zero after it and never half a character, and give what the
+// whole text takes, as snprintf does: a result not under the capacity says
+// the text was cut.
+
+import std.console
+import std.ffi
+
+fn wide(text: String, capacity: Int): String {
+    let buffer = ffi.allocate[UInt16](8)
+    unsafe {
+        buffer.offset(0).write(0x58)
+        let needed = ffi.writeWide(text, to: buffer, capacity: capacity)
+        let shown = "{ffi.fromWide(buffer)} {needed}"
+        ffi.free(buffer)
+        shown
+    }
+}
+
+fn narrow(text: String, capacity: Int): String {
+    let buffer = ffi.allocate[ffi.CChar](8)
+    unsafe {
+        buffer.offset(0).write(0x58)
+        let needed = ffi.writeCString(text, to: buffer, capacity: capacity)
+        let shown = "{ffi.fromCString(buffer)} {needed}"
+        ffi.free(buffer)
+        shown
+    }
+}
+
+fn main() {
+    // Cut to three units and its zero.
+    console.println(wide("café ☕", 4))
+    // A pair of UTF-16 is not split: `a` alone fits before the zero.
+    console.println(wide("a😀", 3))
+    // All of it with its zero.
+    console.println(wide("a😀", 4))
+    // Nothing written: the X stays.
+    console.println(wide("tea", 0))
+    // In bytes: `é` takes two, and is not split.
+    console.println(narrow("héllo", 3))
+    console.println(narrow("héllo", 7))
+    console.println(narrow("tea", 0))
+}
+
+// expect-stdout: caf 6
+// expect-stdout: a 3
+// expect-stdout: a😀 3
+// expect-stdout: X 3
+// expect-stdout: h 6
+// expect-stdout: héllo 6
+// expect-stdout: X 3

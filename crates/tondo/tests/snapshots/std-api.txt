@@ -1018,7 +1018,7 @@ pub fn object[T: Implemented](value: T): Pointer[Void]
 pub fn sizeOf[T](): Int
 pub fn toCChars(text: String, count: Int): Array[CChar]
 pub fn toCString(text: String): CString
-pub fn toWide(written: String): WideString
+pub fn toWide(text: String): WideString
 pub trait Implemented {
     /// What `object` gives: the compiler writes it.
     fn objectForC(self): Pointer[Void]
@@ -1052,6 +1052,8 @@ pub unsafe fn freeContext[T: ~Copy](data: Pointer[Void])
 pub unsafe fn fromCString(text: CString): String
 pub unsafe fn fromContext[T](data: Pointer[Void]): T
 pub unsafe fn fromWide(wide: WideString, count: Int? = none): String
+pub unsafe fn writeCString(text: String, to: Pointer[CChar], capacity: Int): Int
+pub unsafe fn writeWide(text: String, to: WideString, capacity: Int): Int
 == std.format
 impl Display for Builder
 impl Display for FormatError

@@ -8519,6 +8519,7 @@ pub fn toCString(text: String): CString
 pub unsafe fn fromCString(text: CString): String
 pub fn toCChars(text: String, count: Int): Array[CChar]
 pub fn fromCChars(chars: Array[CChar]): String
+pub unsafe fn writeCString(text: String, to: Pointer[CChar], capacity: Int): Int
 pub unsafe fn bytes(from: Pointer[Byte], count: Int): Array[Byte]
 pub fn context[T: ~Copy](value: T): Pointer[Void]
 pub unsafe fn fromContext[T](data: Pointer[Void]): T
@@ -8536,6 +8537,11 @@ pub unsafe fn freeContext[T: ~Copy](data: Pointer[Void])
 - `toCChars` y `fromCChars` hacen lo mismo con un array de C de un struct,
   como `@count(16) name: CChar`: el primero rellena con ceros hasta `count` y
   produce un pánico si el texto y un cero no caben.
+- `writeCString` escribe el texto en un buffer de C de `capacity` bytes: lo
+  que cabe con un byte cero detrás, sin partir un carácter, y da los bytes del
+  texto entero sin el cero, como `snprintf`, de modo que un resultado que no
+  es menor que `capacity` dice que se cortó. Con `capacity` 0 no escribe nada;
+  una negativa o un byte cero dentro del texto producen un pánico.
 - `context` guarda una copia del valor en memoria de C y da su dirección, el
   `void*` que las APIs de C devuelven a una función que llaman;
   `fromContext[T]` lee el valor, que debe ser un `T`, y `freeContext[T]` lo
@@ -8559,6 +8565,7 @@ pub trait Implemented                           // lo implementa el compilador
 pub fn object[T: Implemented](value: T): Pointer[Void]
 pub alias WideString = Pointer[UInt16]
 pub fn toWide(text: String): WideString
+pub unsafe fn writeWide(text: String, to: WideString, capacity: Int): Int
 pub unsafe fn fromWide(text: WideString, count: Int? = none): String
 ~~~
 
@@ -8569,7 +8576,10 @@ nombra y como el número para los demás; su signo dice si falló, de modo que
 `HResult.False` (`S_FALSE`) no falla. `toWide` da una copia en UTF-16 con su
 cero, que `free` devuelve, y un texto con un carácter cero dentro es un pánico;
 `fromWide` lee hasta su cero, o `count` unidades, y lo que no es UTF-16 da
-U+FFFD.
+U+FFFD. `writeWide` escribe el texto en UTF-16 en un buffer de C de
+`capacity` unidades como `writeCString` lo escribe en bytes: lo que cabe con
+su cero, sin partir un par de UTF-16, y da las unidades del texto entero, que
+es lo que responde un `GetName` de COM.
 
 #### Librerías compartidas
 

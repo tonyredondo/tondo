@@ -17,7 +17,7 @@ console.println("{unsafe { abs(-42) }}")
 
 `tondo api std.ffi` shows the same in a terminal.
 
-- [Functions](#functions): [`sizeOf`](#sizeof), [`alignOf`](#alignof), [`allocate`](#allocate), [`free`](#free), [`copy`](#copy), [`toCString`](#tocstring), [`fromCString`](#fromcstring), [`fromCChars`](#fromcchars), [`toCChars`](#tocchars), [`context`](#context), [`fromContext`](#fromcontext), [`freeContext`](#freecontext), [`bytes`](#bytes), [`Guid.Empty`](#guidempty), [`HResult.Ok`](#hresultok), [`HResult.False`](#hresultfalse), [`HResult.Fail`](#hresultfail), [`HResult.NoInterface`](#hresultnointerface), [`HResult.OutOfMemory`](#hresultoutofmemory), [`HResult.NotImplemented`](#hresultnotimplemented), [`HResult.InvalidArgument`](#hresultinvalidargument), [`object`](#object), [`toWide`](#towide), [`fromWide`](#fromwide), [`libraryFileName`](#libraryfilename)
+- [Functions](#functions): [`sizeOf`](#sizeof), [`alignOf`](#alignof), [`allocate`](#allocate), [`free`](#free), [`copy`](#copy), [`toCString`](#tocstring), [`fromCString`](#fromcstring), [`fromCChars`](#fromcchars), [`toCChars`](#tocchars), [`writeCString`](#writecstring), [`context`](#context), [`fromContext`](#fromcontext), [`freeContext`](#freecontext), [`bytes`](#bytes), [`Guid.Empty`](#guidempty), [`HResult.Ok`](#hresultok), [`HResult.False`](#hresultfalse), [`HResult.Fail`](#hresultfail), [`HResult.NoInterface`](#hresultnointerface), [`HResult.OutOfMemory`](#hresultoutofmemory), [`HResult.NotImplemented`](#hresultnotimplemented), [`HResult.InvalidArgument`](#hresultinvalidargument), [`object`](#object), [`toWide`](#towide), [`writeWide`](#writewide), [`fromWide`](#fromwide), [`libraryFileName`](#libraryfilename)
 - [CChar](#cchar)
 - [CShort](#cshort)
 - [CUShort](#cushort)
@@ -126,6 +126,18 @@ pub fn toCChars(text: String, count: Int): Array[CChar]
 
 The text as a C array of `count` characters: its bytes, then zero bytes.
 Text that does not fit with a zero byte after it panics.
+
+#### writeCString
+
+```tondo
+pub unsafe fn writeCString(text: String, to: Pointer[CChar], capacity: Int): Int
+```
+
+Writes the text to a buffer of C of `capacity` bytes, as much of it as
+fits with a zero byte after it, never half a character, and gives the
+bytes the whole text takes, without the zero: a result that is not
+under `capacity` says the text was cut, as `snprintf` says. A capacity
+of 0 writes nothing. Text with a zero byte inside panics.
 
 #### context
 
@@ -246,11 +258,36 @@ each interface the type implements.
 #### toWide
 
 ```tondo
-pub fn toWide(written: String): WideString
+pub fn toWide(text: String): WideString
 ```
 
 A copy of the text in UTF-16 that ends with a zero unit, for C to keep;
 `free` gives it back. Text with a zero character inside panics.
+
+#### writeWide
+
+```tondo
+pub unsafe fn writeWide(text: String, to: WideString, capacity: Int): Int
+```
+
+Writes the text in UTF-16 to a buffer of C of `capacity` units, as much
+of it as fits with a zero unit after it, never half a character, and
+gives the units the whole text takes, without the zero: a result that
+is not under `capacity` says the text was cut, as `snprintf` says and a
+`GetName` of COM answers. A capacity of 0 writes nothing. Text with a
+zero character inside panics.
+
+```tondo
+import std.console
+import std.ffi
+
+let buffer = ffi.allocate[UInt16](4)
+unsafe {
+    let needed = ffi.writeWide("café ☕", to: buffer, capacity: 4)
+    console.println("{ffi.fromWide(buffer)}, {needed} units in all")
+    ffi.free(buffer)
+}
+```
 
 #### fromWide
 

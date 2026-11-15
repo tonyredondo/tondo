@@ -142,7 +142,10 @@ console.println("{CounterObject.Id} {ffi.HResult.NoInterface}")
   not a failure); `: !ffi.HResult` fails when it is negative; `: T !
   ffi.HResult` gives C a last pointer for its `T`.
 - Text of Windows and .NET is UTF-16: `ffi.toWide(text)` makes one, and
-  `unsafe { ffi.fromWide(pointer, count) }` reads one.
+  `unsafe { ffi.fromWide(pointer, count) }` reads one. Into a buffer C
+  gives, `ffi.writeWide(text, to: buffer, capacity: n)` writes what fits
+  with its zero and gives the units of the whole text, as a `GetName`
+  answers; `ffi.writeCString` does the same in bytes.
 - A Tondo type implements one with an ordinary `impl`, of the methods it
   cares for when the others have bodies; `ffi.object(value)` gives C an
   object of it, whose table the compiler writes. For one that requires

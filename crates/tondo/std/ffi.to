@@ -392,6 +392,50 @@ pub fn toCChars(text: String, count: Int): Array[CChar] {
     encoded.concat([Byte(0u8)].repeat(count - encoded.length()))
 }
 
+/// Writes the text to a buffer of C of `capacity` bytes, as much of it as
+/// fits with a zero byte after it, never half a character, and gives the
+/// bytes the whole text takes, without the zero: a result that is not
+/// under `capacity` says the text was cut, as `snprintf` says. A capacity
+/// of 0 writes nothing. Text with a zero byte inside panics.
+pub unsafe fn writeCString(text: String, to: Pointer[CChar], capacity: Int): Int {
+    let encoded = text.bytes()
+    for byte in encoded {
+        if byte == 0 {
+            panic("ffi.writeCString: the text has a zero byte, where C's text ends")
+        }
+    }
+    let fits = fitting(
+        encoded.length(),
+        capacity,
+        "writeCString",
+        (at) { encoded[at] >= 0x80 and encoded[at] < 0xC0 },
+    )
+    if capacity > 0 {
+        for at in 0..fits {
+            to.offset(at).write(encoded[at])
+        }
+        to.offset(fits).write(0)
+    }
+    encoded.length()
+}
+
+/// How many of `length` units fit in `capacity` with a zero after them,
+/// back to the start of a character: `continues(at)` says the unit at `at`
+/// goes on with the one before it.
+fn fitting[F: CallMut[fn(Int): Bool]](length: Int, capacity: Int, name: String, continues: F): Int {
+    if capacity < 0 {
+        panic("ffi.{name} takes a capacity that is not negative, not {capacity}")
+    }
+    if capacity == 0 {
+        return 0
+    }
+    var fits = if length < capacity { length } else { capacity - 1 }
+    for fits > 0 and fits < length and continues(fits) {
+        fits -= 1
+    }
+    fits
+}
+
 /// A value for C to hand back to a callback, as C passes data through a
 /// `void*`: a copy of it in memory from `allocate`. `fromContext` reads it
 /// and `freeContext` gives it back.
@@ -667,12 +711,57 @@ pub alias WideString = Pointer[UInt16]
 
 /// A copy of the text in UTF-16 that ends with a zero unit, for C to keep;
 /// `free` gives it back. Text with a zero character inside panics.
-pub fn toWide(written: String): WideString {
+pub fn toWide(text: String): WideString {
+    let units = wideUnits(text, "toWide")
+    let wide = allocate[UInt16](units.length() + 1)
+    for (at, unit) in units.enumerate() {
+        unsafe { wide.offset(at).write(unit) }
+    }
+    wide
+}
+
+/// Writes the text in UTF-16 to a buffer of C of `capacity` units, as much
+/// of it as fits with a zero unit after it, never half a character, and
+/// gives the units the whole text takes, without the zero: a result that
+/// is not under `capacity` says the text was cut, as `snprintf` says and a
+/// `GetName` of COM answers. A capacity of 0 writes nothing. Text with a
+/// zero character inside panics.
+///
+/// ```tondo
+/// import std.console
+/// import std.ffi
+///
+/// let buffer = ffi.allocate[UInt16](4)
+/// unsafe {
+///     let needed = ffi.writeWide("café ☕", to: buffer, capacity: 4)
+///     console.println("{ffi.fromWide(buffer)}, {needed} units in all")
+///     ffi.free(buffer)
+/// }
+/// ```
+pub unsafe fn writeWide(text: String, to: WideString, capacity: Int): Int {
+    let units = wideUnits(text, "writeWide")
+    let fits = fitting(
+        units.length(),
+        capacity,
+        "writeWide",
+        (at) { units[at] >= 0xDC00 and units[at] < 0xE000 },
+    )
+    if capacity > 0 {
+        for at in 0..fits {
+            to.offset(at).write(units[at])
+        }
+        to.offset(fits).write(0)
+    }
+    units.length()
+}
+
+/// The text in UTF-16, without a zero unit; one inside panics, for `name`.
+fn wideUnits(text: String, name: String): Array[UInt16] {
     var units: Array[UInt16] = []
-    for char in written.chars() {
+    for char in text.chars() {
         let code = char.code()
         if code == 0 {
-            panic("ffi.toWide: the text has a zero character, where C's wide text ends")
+            panic("ffi.{name}: the text has a zero character, where C's wide text ends")
         }
         // Each unit is below 0x10000.
         if code < 0x10000 {
@@ -683,12 +772,7 @@ pub fn toWide(written: String): WideString {
             units.push(UInt16(0xDC00 + above % 0x400) ?? 0u16)
         }
     }
-    units.push(0)
-    let wide = allocate[UInt16](units.length())
-    for (at, unit) in units.enumerate() {
-        unsafe { wide.offset(at).write(unit) }
-    }
-    wide
+    units
 }
 
 /// The text of wide text of C: up to its zero unit, or its first `count`
