@@ -27,7 +27,9 @@ pub(super) fn contexts_json(described: Vec<crate::contexts::Described>) -> Strin
 /// The dumps being written, asked by a signal or a schedule, which the end
 /// of the process waits for: one asked for just before the program ends,
 /// or written slowly, as under emulation, is not lost with the process.
-static WRITING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static WRITING: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
+/// Told when the last dump being written ends.
+static WRITTEN: std::sync::Condvar = std::sync::Condvar::new();
 
 /// How long the end of the process waits for the dumps being written.
 const FINISHING: std::time::Duration = std::time::Duration::from_secs(10);
@@ -39,24 +41,27 @@ impl Writing {
     fn start() -> Writing {
         static WAITS: std::sync::Once = std::sync::Once::new();
         WAITS.call_once(|| crate::at_exit(finished));
-        WRITING.fetch_add(1, Ordering::SeqCst);
+        *WRITING.lock().unwrap_or_else(|e| e.into_inner()) += 1;
         Writing
     }
 }
 
 impl Drop for Writing {
     fn drop(&mut self) {
-        WRITING.fetch_sub(1, Ordering::SeqCst);
+        let mut writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+        *writing -= 1;
+        if *writing == 0 {
+            WRITTEN.notify_all();
+        }
     }
 }
 
 /// At the end of the process, however it ends but by a crash: the dumps
-/// being written, for as long as `FINISHING`.
+/// being written, until the last ends; `FINISHING` only bounds a dump that
+/// never would.
 extern "C" fn finished(_: *mut u8) {
-    let until = Instant::now() + FINISHING;
-    while WRITING.load(Ordering::SeqCst) > 0 && Instant::now() < until {
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    let writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    let _ = WRITTEN.wait_timeout_while(writing, FINISHING, |writing| *writing > 0);
 }
 
 /// Whether a dump holds values: not with `TONDO_DUMP_VALUES=off`. A value
@@ -865,15 +870,18 @@ mod tests {
     /// signal asked for just before the end is.
     #[test]
     fn the_end_waits_for_a_dump_being_written() {
+        static ENDED: AtomicBool = AtomicBool::new(false);
         let writing = Writing::start();
-        let started = Instant::now();
         let thread = std::thread::spawn(move || {
+            // Time is what is under test: an end that did not wait for the
+            // dump would come before this one does.
             std::thread::sleep(std::time::Duration::from_millis(200));
+            ENDED.store(true, Ordering::SeqCst);
             drop(writing);
         });
         finished(std::ptr::null_mut());
-        assert!(started.elapsed() >= std::time::Duration::from_millis(200));
-        assert_eq!(WRITING.load(Ordering::SeqCst), 0);
+        assert!(ENDED.load(Ordering::SeqCst));
+        assert_eq!(*WRITING.lock().unwrap(), 0);
         thread.join().unwrap();
     }
 }
