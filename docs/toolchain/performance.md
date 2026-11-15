@@ -64,13 +64,31 @@ metal:
 | `tondo profile show cpu.pb.gz --asm` | the instructions of the hottest function, each with its share of the samples |
 | `tondo profile show cpu.pb.gz --html flame.html` | a flame graph, as one file |
 
-By line, a profile reads like this:
+By line, a profile says where the time goes and, under each line of the
+program, what the compiler made of it, in the words of `tondo
+optimizations` (below). This is a benchmark of a function that counts the
+letters of a text:
 
 ```text
+$ tondo test --bench --profile cpu
+$ tondo profile show target/profiles/letters.unit.letters.counts--letters.cpu.pprof --lines
+cpu of target/profiles/letters.unit.letters.counts--letters.cpu.pprof, 968ms in all over 1.05s
      flat  flat%       cum   cum%  line
-     94ms  64.4%      94ms  64.4%  busy.to:14 in words  total += text.split(" ").length()
-     45ms  30.8%      45ms  30.8%  busy.to:13 in words  let text = "word {i} and more words"
+    653ms  67.5%     653ms  67.5%  src/main.to:5 in letters  if c.isLetter() {
+                                     `c.isLetter()` is inlined: the body of `Char.isLetter` is copied here (in closure in test counts, letters)
+    219ms  22.6%     219ms  22.6%  src/main.to:4 in letters  for c in text.chars() {
+                                     `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` keeps its overflow check, in a loop: its operands' bounds allow a result past `Int.max` (in closure in test counts, letters)
+                                     `text.chars()` is inlined: the body of `String.chars` is copied here (in closure in test counts, letters)
+                                     `text.chars()` is inlined: the body of `prelude.CharIterator.next` is copied here (in closure in test counts, letters)
 ```
+
+So the question that follows a profile, why that line costs what it does,
+is answered where the line is: two thirds of the time is the test of each
+character, and the loop keeps a check for each. A line shows six remarks at
+most and says how many more there are. They are read from the sources at
+hand when those are the ones the program was built from; when they are
+not, as after an edit, or for a build made with `--debug`, the view says
+why it shows none.
 
 A profile by time samples what the clock says, and a machine that is busy
 with other work stretches every line of it. On Linux, `--instructions`
@@ -80,11 +98,12 @@ machine does. It reads the same way, in instructions:
 
 ```text
 $ tondo test --bench --profile instructions
-$ tondo profile show target/profiles/p.unit.p.counts--letters.instructions.pprof --lines
-instructions of target/profiles/p.unit.p.counts--letters.instructions.pprof, 6.86G in all over 1.26s
+$ tondo profile show target/profiles/letters.unit.letters.counts--letters.instructions.pprof --lines
+instructions of target/profiles/letters.unit.letters.counts--letters.instructions.pprof, 6.66G in all over 0.57s
      flat  flat%       cum   cum%  line
-    4.08G  59.4%     4.08G  59.4%  src/main.to:7 in letters  if c.isLetter() {
-    1.85G  27.0%     1.85G  27.0%  src/main.to:6 in letters  for c in text.chars() {
+    4.56G  68.5%     4.56G  68.5%  src/main.to:5 in letters  if c.isLetter() {
+                                     `c.isLetter()` is inlined: the body of `Char.isLetter` is copied here (in closure in test counts, letters)
+    1.42G  21.2%     1.42G  21.2%  src/main.to:4 in letters  for c in text.chars() {
 ```
 
 Where the system does not let a program count its instructions, as a
@@ -394,6 +413,20 @@ call of the loop, the comparison of two strings, and line 11 is a single
 addition. Nobody has to read assembly to use Tondo, but when a question
 comes down to it, the answer is one command away and is laid out by the
 source.
+
+At the line of a loop that has no other inside it, the listing also says
+what a turn runs on its common path, and how many of those instructions
+are checks and calls. For the function of "Why a check stays":
+
+```text
+$ tondo asm letters.to letters
+letters.to:6  for c in text.chars() {
+        ; a turn of the loop runs 21 to 43 instructions, by the way it branches on its common path: at most 2 checks and at most 2 calls
+```
+
+That is the number to bring down, and the one to compare before and after
+a change. A loop that runs four turns at once gives it for the four, and
+for a turn of those left at the end.
 
 | | |
 | --- | --- |
