@@ -861,7 +861,9 @@ mod tests {
         let dir = directory("batch", &["old.txt", "gone.txt"]);
         let mut watch = watching(&dir);
         std::fs::write(dir.join("new.txt"), "new").unwrap();
-        std::fs::write(dir.join("old.txt"), "changed").unwrap();
+        // Of another size: a write of the same size in the same tick of the
+        // file system's clock, in the same file, leaves its stamp as it was.
+        std::fs::write(dir.join("old.txt"), "changed, and longer").unwrap();
         std::fs::remove_file(dir.join("gone.txt")).unwrap();
         std::fs::write(dir.join("brief.txt"), "brief").unwrap();
         std::fs::remove_file(dir.join("brief.txt")).unwrap();
