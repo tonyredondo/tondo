@@ -35,7 +35,7 @@ pub(crate) fn values_shown() -> bool {
 /// when `wait` says, so that the running tasks show where they are; `here`
 /// is the stack of this thread's own task.
 pub(super) fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std::time::Duration>) -> String {
-    let (stopped, tasks, contexts, values) = crate::cycles::without_collections(|| {
+    let (stopped, tasks, contexts, values, objects) = crate::cycles::without_collections(|| {
         let stopped = wait.is_some_and(crate::tasks::stop_world);
         let current = here.is_some();
         let tasks = crate::tasks::snapshot(here);
@@ -51,10 +51,14 @@ pub(super) fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: 
                 None => "[]".to_string(),
             })
             .collect();
+        // The objects of a debug build, read while nothing frees one: a
+        // dump that could not stop the program, which may free an object
+        // and give its memory back while it is read, goes without them.
+        let objects = (stopped || wait.is_none()).then(crate::heap::objects).flatten();
         if stopped {
             crate::tasks::resume_world();
         }
-        (stopped, tasks, contexts, values)
+        (stopped, tasks, contexts, values, objects)
     });
     let (samples, dropped) = crate::heap::alive();
     let mut frames = Frames::default();
@@ -127,7 +131,7 @@ pub(super) fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: 
     }
     out.push_str("]}");
     // A debug build knows every object, and the dump who holds each.
-    if let Some(objects) = crate::heap::objects() {
+    if let Some(objects) = objects {
         out.push_str(",\"objects\":{\"list\":[");
         for (index, (address, size, site, text)) in objects.list.iter().enumerate() {
             let comma = if index == 0 { "" } else { "," };
