@@ -4,12 +4,14 @@
 //! ask in its mode. Each program runs on a pseudo-terminal of its own, as
 //! on a person's.
 
+mod common;
+
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const PROGRAM: &str = r#"import std.cli
 import std.console
@@ -202,16 +204,13 @@ impl Terminal {
 
     /// Waits for the program to write `text` after what the last call saw.
     fn expect(&mut self, text: &str) {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        loop {
-            let written = self.text();
-            if let Some(at) = written.get(self.seen..).and_then(|rest| rest.find(text)) {
-                self.seen += at + text.len();
-                return;
-            }
-            assert!(Instant::now() < deadline, "no {text:?} after {:?}", &written[self.seen.min(written.len())..]);
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        let seen = self.seen;
+        let at = common::until_showing(
+            &format!("{text:?}"),
+            || self.text().get(seen..).and_then(|rest| rest.find(text)),
+            || format!("after {:?}", self.text().get(seen..).unwrap_or_default()),
+        );
+        self.seen += at + text.len();
     }
 
     /// Whether the terminal is in lines and shows what is typed.
@@ -223,11 +222,11 @@ impl Terminal {
 
     /// Waits for the terminal's mode to be `lines` and `echo`.
     fn expect_mode(&self, lines: bool, echo: bool) {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while self.mode() != (lines, echo) {
-            assert!(Instant::now() < deadline, "the mode stayed {:?}: {}", self.mode(), self.text());
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        common::until_showing(
+            &format!("the mode {:?}", (lines, echo)),
+            || (self.mode() == (lines, echo)).then_some(()),
+            || format!("the mode stayed {:?}: {}", self.mode(), self.text()),
+        );
     }
 
     fn resize(&self, columns: u16, rows: u16) {
@@ -237,15 +236,11 @@ impl Terminal {
 
     /// Its exit status, once it ends.
     fn status(&mut self) -> i32 {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        loop {
-            if let Some(status) = self.child.try_wait().unwrap() {
-                use std::os::unix::process::ExitStatusExt;
-                return status.code().unwrap_or_else(|| 128 + status.signal().unwrap_or(0));
-            }
-            assert!(Instant::now() < deadline, "it did not end: {}", self.text());
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        use std::os::unix::process::ExitStatusExt;
+        let written = &self.written;
+        let shown = || String::from_utf8_lossy(&written.lock().unwrap()).into_owned();
+        let status = common::until_showing("its end", || self.child.try_wait().unwrap(), shown);
+        status.code().unwrap_or_else(|| 128 + status.signal().unwrap_or(0))
     }
 }
 

@@ -2,9 +2,10 @@
 //! when `TONDO_TEST_POSTGRES` and `TONDO_TEST_MYSQL` give their URLs, as CI
 //! does on Linux; SQLite is a case of `tests/cases`.
 
+mod common;
+
 use std::path::Path;
 use std::process::Command;
-use std::time::{Duration, Instant};
 
 const PROGRAM: &str = r#"
 import std.console
@@ -147,11 +148,7 @@ true 2 ada
 /// starts with the tests does.
 fn reachable(url: &str) {
     let address = url.split('@').nth(1).and_then(|rest| rest.split('/').next()).unwrap();
-    let started = Instant::now();
-    while std::net::TcpStream::connect(address).is_err() {
-        assert!(started.elapsed() < Duration::from_secs(180), "nothing listens at {address}");
-        std::thread::sleep(Duration::from_millis(500));
-    }
+    common::until(&format!("a server at {address}"), || std::net::TcpStream::connect(address).ok());
 }
 
 fn check(name: &str, variable: &str) {
@@ -162,8 +159,7 @@ fn check(name: &str, variable: &str) {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("main.to"), PROGRAM).unwrap();
     // A server that just started may still refuse its first connections.
-    let started = Instant::now();
-    loop {
+    let output = common::until("a run the database does not refuse", || {
         let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
             .args(["run", "main.to"])
             .current_dir(&dir)
@@ -171,15 +167,13 @@ fn check(name: &str, variable: &str) {
             .env("TONDO_RT_CHECK_LEAKS", "1")
             .output()
             .unwrap();
-        let (stdout, stderr) = (String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        let stderr = String::from_utf8_lossy(&output.stderr);
         let refused = stderr.contains("connection") || stderr.contains("closed");
-        if output.status.success() || !refused || started.elapsed() > Duration::from_secs(120) {
-            assert_eq!(stdout, EXPECTED, "{stderr}");
-            assert!(output.status.success(), "{stderr}");
-            return;
-        }
-        std::thread::sleep(Duration::from_secs(2));
-    }
+        (output.status.success() || !refused).then_some(output)
+    });
+    let (stdout, stderr) = (String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    assert_eq!(stdout, EXPECTED, "{stderr}");
+    assert!(output.status.success(), "{stderr}");
 }
 
 #[test]

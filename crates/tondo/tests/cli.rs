@@ -2,6 +2,8 @@
 //! help of each command, completions for the shells, exit statuses, and
 //! the JSON of each command.
 
+mod common;
+
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -911,19 +913,14 @@ fn a_server_says_why_it_cannot_listen() {
         "import std.http\n\nfn main(): !http.HttpError {{\n    var app = http.App()\n    app.listen({port})?\n}}\n"
     );
     std::fs::write(dir.join("server.to"), program).unwrap();
-    let mut server = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let server = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "server.to"])
         .current_dir(&dir)
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
     // A server that did listen would never end.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
-    while server.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-    let _ = server.kill();
-    let ran = server.wait_with_output().unwrap();
+    let ran = common::ended(server, "the server that cannot listen");
     let said = String::from_utf8_lossy(&ran.stderr);
     assert!(said.contains("cannot listen"), "{said}");
 }
@@ -1010,21 +1007,13 @@ fn a_thread_stands_in_while_a_callback_waits_for_the_host() {
     let case = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/cases/run/ffi_callback_waits_for_a_process.to");
     let (_, stderr, status) = tondo(&dir, &["build", case.to_str().unwrap(), "--output", "callback"]);
     assert_eq!(status, 0, "{stderr}");
-    let mut child = Command::new(dir.join("callback"))
+    let child = Command::new(dir.join("callback"))
         .env("TONDO_RT_SCHEDULE", "1")
         .stdout(std::process::Stdio::piped())
         .spawn()
         .unwrap();
     // One that missed it would hang.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    while child.try_wait().unwrap().is_none() {
-        if std::time::Instant::now() > deadline {
-            let _ = child.kill();
-            panic!("the program hung: {:?}", child.wait_with_output().unwrap());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    let output = child.wait_with_output().unwrap();
+    let output = common::ended(child, "the program");
     assert_eq!(String::from_utf8_lossy(&output.stdout), "the process ended: true\n");
     assert!(output.status.success());
 }

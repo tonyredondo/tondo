@@ -380,18 +380,18 @@ fn run_with_timeout(command: &mut Command, seconds: u64) -> Result<std::process:
         let _ = err.read_to_end(&mut bytes);
         bytes
     });
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
-    let status = loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            break status;
-        }
-        if std::time::Instant::now() > deadline {
-            let why = why_it_hangs(child.id());
-            let _ = child.kill();
-            let _ = child.wait();
+    // Its end, which a thread waits for; the time only bounds a hang.
+    let pid = child.id();
+    let (done, ended) = std::sync::mpsc::channel();
+    let waiter = std::thread::spawn(move || done.send(child.wait()));
+    let status = match ended.recv_timeout(std::time::Duration::from_secs(seconds)) {
+        Ok(status) => status.unwrap(),
+        Err(_) => {
+            let why = why_it_hangs(pid);
+            unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+            let _ = waiter.join();
             return Err(format!("timed out after {seconds}s{why}"));
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
     };
     Ok(std::process::Output { status, stdout: stdout.join().unwrap(), stderr: stderr.join().unwrap() })
 }

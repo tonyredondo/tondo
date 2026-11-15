@@ -122,6 +122,8 @@ fn serve(stream: TcpStream) {
             respond(&mut stream, "200 OK", &[("content-encoding", "br".into())], encoded)
         }
         "/slow" => {
+            // Time is what is under test: a server slower than the client's
+            // timeout.
             std::thread::sleep(std::time::Duration::from_secs(3));
             respond(&mut stream, "200 OK", &[], b"late")
         }

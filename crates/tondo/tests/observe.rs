@@ -1,6 +1,9 @@
 //! `tondo ps` and `tondo counters` look at a running program through its
 //! socket, and the socket goes when the program ends.
 
+mod common;
+
+use common::until;
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -1716,7 +1719,9 @@ fn debugger_steps_into_a_chosen_call() {
 fn debugger_reaches_a_program_through_a_relay() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-relay");
     std::fs::create_dir_all(&dir).unwrap();
-    let looped = "import std.time\n\nfn main() {\n    var ticks = 0\n    for {\n        ticks += 1\n        time.sleep(time.milliseconds(10))\n    }\n}\n";
+    let looped = "import std.console\nimport std.time\n\nfn main() {\n    console.println(\"ready\")\n    \
+                  let _ = console.flush()\n    var ticks = 0\n    for {\n        ticks += 1\n        \
+                  time.sleep(time.milliseconds(10))\n    }\n}\n";
     std::fs::write(dir.join("looped.to"), looped).unwrap();
     let executable = dir.join("looped");
     let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
@@ -1726,10 +1731,11 @@ fn debugger_reaches_a_program_through_a_relay() {
         .status()
         .unwrap();
     assert!(status.success());
-    let mut program = Command::new(&executable).env("TONDO_DIAGNOSTICS", "1").spawn().unwrap();
-    while !listed(program.id()) {
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    let mut program = Command::new(&executable).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap();
+    // It serves the tools from before `main`, which says it is ready.
+    let mut line = String::new();
+    BufReader::new(program.stdout.take().unwrap()).read_line(&mut line).unwrap();
+    assert!(listed(program.id()));
     let tools = Path::new(env!("CARGO_BIN_EXE_tondo")).parent().unwrap();
     let via = format!("env PATH={}", tools.display());
     let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
@@ -1739,10 +1745,10 @@ fn debugger_reaches_a_program_through_a_relay() {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    let script = "break looped.to:6\ncontinue\nprint ticks > 0\ndelete 1\n";
+    let script = "break looped.to:9\ncontinue\nprint ticks > 0\ndelete 1\n";
     std::io::Write::write_all(child.stdin.as_mut().unwrap(), script.as_bytes()).unwrap();
     drop(child.stdin.take());
-    let output = child.wait_with_output().unwrap();
+    let output = common::ended(child, "the debugger through the relay");
     // The other tools that look at a running program reach it so too.
     let (program_id, pid) = (u64::from(program.id()), program.id().to_string());
     // What a tool gives, or what it said when it gave nothing.
@@ -1769,7 +1775,7 @@ fn debugger_reaches_a_program_through_a_relay() {
     let said = String::from_utf8_lossy(&output.stdout).into_owned();
     let lines: Vec<Value> = said.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
     let stop = lines.iter().find_map(|l| l.get("stopped")).unwrap_or_else(|| panic!("{said}"));
-    assert_eq!(stop["at"], "looped.to:6 in main");
+    assert_eq!(stop["at"], "looped.to:9 in main");
     let printed = lines.iter().find(|l| l["name"] == "ticks > 0").unwrap_or_else(|| panic!("{said}"));
     assert_eq!(printed["value"], "true");
     assert!(counters["counters"].as_array().is_some_and(|c| !c.is_empty()), "{counters}");
@@ -2387,7 +2393,7 @@ fn a_replay_holds_the_threads_of_c_to_their_order() {
     let run: Value = serde_json::from_slice(&std::fs::read(dir.join("run/run.json")).unwrap()).unwrap();
     for _ in 0..3 {
         // A replay that hung would hold the tests for hours.
-        let mut replayed = Command::new(dir.join("run/program"))
+        let replayed = Command::new(dir.join("run/program"))
             .env("TONDO_RT_REPLAY", dir.join("run/calls"))
             .env("TONDO_RT_SCHEDULE", run["seed"].as_str().unwrap())
             .current_dir(&dir)
@@ -2395,15 +2401,7 @@ fn a_replay_holds_the_threads_of_c_to_their_order() {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        while replayed.try_wait().unwrap().is_none() {
-            if std::time::Instant::now() > deadline {
-                let _ = replayed.kill();
-                panic!("the replay hung: {:?}", replayed.wait_with_output().unwrap());
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        let replayed = replayed.wait_with_output().unwrap();
+        let replayed = common::ended(replayed, "the replay");
         let said = String::from_utf8_lossy(&replayed.stderr).into_owned();
         assert_eq!(String::from_utf8_lossy(&replayed.stdout), stdout, "{said}");
         assert!(replayed.status.success(), "{said}");
@@ -3265,27 +3263,18 @@ fn a_server_that_goes_wrong_dumps_itself_and_a_dump_can_be_shared() {
         .env("TONDO_DUMP_WHEN", "request=1s,stall=2s,keep=10")
         .spawn()
         .unwrap();
-    let client = (0..1200).find_map(|_| {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        std::net::TcpStream::connect(("127.0.0.1", port)).ok()
-    });
-    let mut client = client.unwrap();
+    let mut client = until("the server's port", || std::net::TcpStream::connect(("127.0.0.1", port)).ok());
     std::io::Write::write_all(&mut client, b"GET /slow/7 HTTP/1.1\r\nHost: here\r\n\r\n").unwrap();
     // A request past its limit, then nothing moving, each with its dump.
-    let mut messages: Vec<String> = Vec::new();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    while std::time::Instant::now() < deadline {
-        messages.clear();
+    let messages = until("the dumps of a slow request and of a stall", || {
+        let mut messages: Vec<String> = Vec::new();
         for file in dumps_in(&dir.join("dumps")) {
             let read = Command::new(tondo_bin).args(["dump", "read"]).arg(file).arg("--json").output().unwrap();
             messages.push(String::from_utf8_lossy(&read.stdout).into_owned());
         }
         let seen = |text: &str| messages.iter().any(|message| message.contains(text));
-        if seen("GET /slow/7 took") && seen("nothing moved for") {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+        (seen("GET /slow/7 took") && seen("nothing moved for")).then_some(messages)
+    });
     let _ = server.kill();
     let _ = server.wait();
     assert!(messages.iter().any(|m| m.contains("GET /slow/7 took")), "{messages:?}");
@@ -3499,11 +3488,7 @@ fn a_request_is_followed_through_its_tasks() {
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let get = || {
         use std::io::{Read, Write};
-        let connected = (0..1200).find_map(|_| {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            std::net::TcpStream::connect(("127.0.0.1", port)).ok()
-        });
-        let mut client = connected.expect("the server listens");
+        let mut client = until("the server's port", || std::net::TcpStream::connect(("127.0.0.1", port)).ok());
         client.write_all(b"GET /slow HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n").unwrap();
         let mut answer = String::new();
         client.read_to_string(&mut answer).unwrap();
@@ -3601,15 +3586,10 @@ fn a_request_is_followed_through_its_tasks() {
     get();
     // The answer leaves before the request is done with, and on one core the
     // question may come in between.
-    let mut found = adapter.ask("requests", json!({}));
-    for _ in 0..500 {
-        if found["served"][0]["path"] == "/slow" {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        found = adapter.ask("requests", json!({}));
-    }
-    assert_eq!(found["served"][0]["path"], "/slow", "{found}");
+    let found = until("the request served", || {
+        let found = adapter.ask("requests", json!({}));
+        (found["served"][0]["path"] == "/slow").then_some(found)
+    });
     assert!(found["served"][0]["picture"].as_str().unwrap().starts_with("<svg"), "{found}");
     assert!(found["served"][0]["steps"].as_array().unwrap().len() >= 3, "{found}");
     // A breakpoint of a request stops only in its tasks, which say what they
@@ -3672,14 +3652,8 @@ fn a_breakpoint_stops_one_task_of_a_release_build() {
         .spawn()
         .unwrap();
     let pid = child.id();
-    // It serves the tools a moment after it starts.
-    for _ in 0..500 {
-        let asked = Command::new(tondo_bin).args(["blocked", &pid.to_string()]).output().unwrap();
-        if asked.status.success() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    // It serves the tools from before `main`, which prints as it starts.
+    until("the program's first line", || (std::fs::metadata(&printed).unwrap().len() > 0).then_some(()));
     let mut adapter = Adapter::start();
     adapter.ask("initialize", json!({ "adapterID": "tondo" }));
     adapter.ask("attach", json!({ "processId": pid, "cwd": dir }));
@@ -3727,15 +3701,7 @@ fn a_breakpoint_stops_one_task_of_a_release_build() {
     // The rest of the program goes on.
     let length = || std::fs::metadata(&printed).unwrap().len();
     let before = length();
-    let mut went_on = false;
-    for _ in 0..500 {
-        went_on = length() > before;
-        if went_on {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    assert!(went_on, "the other task stopped too");
+    until("the other task going on", || (length() > before).then_some(()));
     // Steps: to the next line, and out to the caller, with its variables.
     adapter.ask("next", json!({ "threadId": thread }));
     let stopped = adapter.until("stopped");
@@ -3800,6 +3766,8 @@ fn a_breakpoint_stops_one_task_of_a_release_build() {
 
     adapter.ask("disconnect", json!({}));
     let before = length();
+    // Time is what is under test: a program that ended with the session
+    // would have ended meanwhile.
     std::thread::sleep(std::time::Duration::from_millis(200));
     // How it ended, and what it said, when it did.
     if let Some(status) = child.try_wait().unwrap() {
@@ -3842,15 +3810,8 @@ fn a_logpoint_reads_a_running_release_build() {
     output.read_line(&mut line).unwrap();
     let pid = child.id().to_string();
     let logpoint = |args: &[&str]| Command::new(tondo_bin).arg("logpoint").arg(&pid).args(args).output().unwrap();
-    // It serves the tools a moment after it starts.
-    let mut found = logpoint(&["orders.to:8", "order {order.id} total {order.total}", "--max", "2", "--json"]);
-    for _ in 0..200 {
-        if found.status.success() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        found = logpoint(&["orders.to:8", "order {order.id} total {order.total}", "--max", "2", "--json"]);
-    }
+    // It serves the tools from before `main`, which printed its line.
+    let found = logpoint(&["orders.to:8", "order {order.id} total {order.total}", "--max", "2", "--json"]);
     assert!(found.status.success(), "{found:?}");
     let found: Value = serde_json::from_slice(&found.stdout).unwrap();
     let hits = found["hits"].as_array().unwrap();
@@ -4356,23 +4317,18 @@ fn a_dump_keeps_each_task_s_waits_and_wakes() {
             .spawn()
             .unwrap();
         let pid = child.id().to_string();
-        // Until the task waits for its third value.
-        let mut graph = Value::Null;
-        for _ in 0..500 {
+        // Until the task waits for its third value, which only asking sees.
+        let graph = until("the task's wait for its third value", || {
             let asked = Command::new(tondo_bin).args(["blocked", &pid, "--json"]).output().unwrap();
-            if asked.status.success() {
-                graph = serde_json::from_slice(&asked.stdout).unwrap();
-                let waits = graph["waits"].as_array().map_or(&[][..], Vec::as_slice);
-                let taker = waits.iter().find(|t| t["id"] == 2);
-                let parked = |t: &Value| t["wakes"].as_array().unwrap().iter().filter(|w| w["did"] == "parked").count();
-                if taker.is_some_and(|t| {
-                    !wakes || parked(t) >= 2 && t["wakes"].as_array().unwrap().last().unwrap()["did"] == "parked"
-                }) {
-                    break;
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+            let graph: Value = serde_json::from_slice(&asked.stdout).ok().filter(|_| asked.status.success())?;
+            let waits = graph["waits"].as_array().map_or(&[][..], Vec::as_slice);
+            let taker = waits.iter().find(|t| t["id"] == 2);
+            let parked = |t: &Value| t["wakes"].as_array().unwrap().iter().filter(|w| w["did"] == "parked").count();
+            let waits = taker.is_some_and(|t| {
+                !wakes || parked(t) >= 2 && t["wakes"].as_array().unwrap().last().unwrap()["did"] == "parked"
+            });
+            waits.then_some(graph)
+        });
         let text = Command::new(tondo_bin).args(["blocked", &pid]).output().unwrap();
         child.kill().unwrap();
         child.wait().unwrap();
@@ -4535,9 +4491,7 @@ fn a_signal_asks_for_a_dump_and_dumps_show_what_grows() {
         .spawn()
         .unwrap();
     // The first dump says it is well under way.
-    while dumps_in(&dir.join("dumps")).is_empty() {
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    until("the first dump", || (!dumps_in(&dir.join("dumps")).is_empty()).then_some(()));
     let pid = child.id().to_string();
     assert!(Command::new("kill").args(["-QUIT", &pid]).status().unwrap().success());
     let output = child.wait_with_output().unwrap();
@@ -4626,11 +4580,7 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
         .unwrap();
     let mut handling = BufReader::new(server.stdout.take().unwrap());
     // The client holds its connection open while the handler sleeps.
-    let client = (0..1200).find_map(|_| {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        std::net::TcpStream::connect(("127.0.0.1", port)).ok()
-    });
-    let mut client = client.unwrap();
+    let mut client = until("the server's port", || std::net::TcpStream::connect(("127.0.0.1", port)).ok());
     std::io::Write::write_all(&mut client, b"GET /slow/77?token=hidden HTTP/1.1\r\nHost: here\r\n\r\n").unwrap();
     let sent = std::time::Instant::now();
     // The handler says when it has the request, which the signal finds.
@@ -4639,26 +4589,13 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     assert_eq!(line, "handling 77\n");
     let pid = server.id().to_string();
     assert!(Command::new("kill").args(["-QUIT", &pid]).status().unwrap().success());
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    let dump = loop {
-        let found = dumps_in(&dir.join("dumps")).into_iter().next();
-        if let Some(found) = found.filter(|_| std::time::Instant::now() < deadline) {
-            break found;
-        }
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    };
+    let dump = until("the dump of SIGQUIT", || dumps_in(&dir.join("dumps")).into_iter().next());
     // A file is there before all of it; a dump that reads is all of it.
-    let mut requests = Value::Null;
-    for _ in 0..100 {
+    let requests: Value = until("the whole dump", || {
         let read =
             Command::new(tondo_bin).args(["dump", "read"]).arg(&dump).args(["requests", "--json"]).output().unwrap();
-        if read.status.success() {
-            requests = serde_json::from_slice(&read.stdout).unwrap();
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
+        read.status.success().then(|| serde_json::from_slice(&read.stdout).unwrap())
+    });
     let _ = server.kill();
     let output = server.wait_with_output().unwrap();
     let request = &requests["requests"][0];
@@ -4686,16 +4623,8 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
         .unwrap();
     let mut commands = debugger.stdin.take().unwrap();
     std::io::Write::write_all(&mut commands, b"break on request\ncontinue\n").unwrap();
-    let connected = (0..2400).find_map(|_| {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        std::net::TcpStream::connect(("127.0.0.1", debug_port)).ok()
-    });
-    let Some(mut connected) = connected else {
-        let _ = debugger.kill();
-        let mut said = String::new();
-        let _ = std::io::Read::read_to_string(&mut debugger.stdout.take().unwrap(), &mut said);
-        panic!("nothing listens on {debug_port}: {said}{}", std::fs::read_to_string(debugged.join("errors")).unwrap());
-    };
+    let mut connected =
+        until("the debugged server's port", || std::net::TcpStream::connect(("127.0.0.1", debug_port)).ok());
     std::io::Write::write_all(&mut connected, b"GET /one HTTP/1.1\r\nHost: here\r\n\r\n").unwrap();
     let mut said = BufReader::new(debugger.stdout.take().unwrap());
     let mut stop = String::new();
@@ -4940,17 +4869,9 @@ fn in_groups(groups: &[i32]) -> Vec<i32> {
         .collect()
 }
 
-/// Waits a few seconds for `gone` to hold.
-fn soon(gone: impl Fn() -> bool) -> bool {
-    within(5, gone)
-}
-
-/// Waits up to `seconds` for `gone` to hold.
-fn within(seconds: u64, gone: impl Fn() -> bool) -> bool {
-    (0..seconds * 40).any(|_| {
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        gone()
-    })
+/// Until `holds` does, which `what` names.
+fn soon(what: &str, holds: impl Fn() -> bool) {
+    until(what, || holds().then_some(()))
 }
 
 /// The processes `pid` started, as `pgrep -P` lists them.
@@ -4997,23 +4918,21 @@ fn a_debugger_ended_by_a_signal_ends_its_program() {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        let started = within(10, || !children(debugger.id()).is_empty());
-        let program = *children(debugger.id()).first().filter(|_| started).expect("the program did not start");
+        let program = until("the debugged program", || children(debugger.id()).first().copied());
         unsafe { libc::kill(debugger.id() as i32, signal) };
         let status = debugger.wait().unwrap();
         assert_eq!(std::os::unix::process::ExitStatusExt::signal(&status), Some(signal), "{status}");
-        assert!(soon(|| ended(program)), "the program runs on after signal {signal}");
+        soon(&format!("the program's end after signal {signal}"), || ended(program));
     }
     // The editor's adapter, with what it launched.
     let mut adapter = Adapter::start();
     adapter.ask("initialize", json!({ "adapterID": "tondo" }));
     adapter.ask("launch", json!({ "program": "endless", "cwd": dir }));
     adapter.ask("configurationDone", json!({}));
-    let started = within(10, || !children(adapter.child.id()).is_empty());
-    let program = *children(adapter.child.id()).first().filter(|_| started).expect("the adapter's program");
+    let program = until("the adapter's program", || children(adapter.child.id()).first().copied());
     unsafe { libc::kill(adapter.child.id() as i32, libc::SIGTERM) };
     adapter.child.wait().unwrap();
-    assert!(soon(|| ended(program)), "the adapter's program runs on");
+    soon("the end of the adapter's program", || ended(program));
     // A program it attached to, stopped at a breakpoint, goes on.
     let printed = dir.join("printed");
     let mut running = Command::new(dir.join("endless"))
@@ -5022,7 +4941,7 @@ fn a_debugger_ended_by_a_signal_ends_its_program() {
         .spawn()
         .unwrap();
     let lines = || std::fs::read_to_string(&printed).unwrap_or_default().lines().count();
-    assert!(within(10, || lines() > 0), "the program printed nothing");
+    soon("a line of the program", || lines() > 0);
     let mut adapter = Adapter::start();
     adapter.ask("initialize", json!({ "adapterID": "tondo" }));
     adapter.ask("attach", json!({ "processId": running.id(), "cwd": dir }));
@@ -5031,15 +4950,17 @@ fn a_debugger_ended_by_a_signal_ends_its_program() {
     adapter.ask("configurationDone", json!({}));
     let stop = adapter.until("stopped");
     assert_eq!(stop["reason"], "breakpoint", "{stop}");
-    // A line written before the stop may reach the file after it, on a
-    // machine with little CPU: what counts is that no more come.
+    // Time is what is under test: a line written before the stop may reach
+    // the file after it, on a machine with little CPU, and what counts is
+    // that no more come meanwhile.
     std::thread::sleep(std::time::Duration::from_millis(300));
     let stopped = lines();
+    // Time is what is under test: a program that went on would print.
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert_eq!(lines(), stopped, "the program went on at its breakpoint");
     unsafe { libc::kill(adapter.child.id() as i32, libc::SIGTERM) };
     adapter.child.wait().unwrap();
-    assert!(within(10, || lines() > stopped), "the program stays stopped without its debugger");
+    soon("a line of the program once its debugger is gone", || lines() > stopped);
     assert!(running.try_wait().unwrap().is_none(), "the program the adapter attached to ended");
     let _ = running.kill();
     let _ = running.wait();
@@ -5068,36 +4989,30 @@ fn a_held_task_goes_on_when_its_tool_ends() {
         .spawn()
         .unwrap();
     let lines = || std::fs::read_to_string(&printed).unwrap_or_default().lines().count();
-    assert!(within(10, || lines() > 0), "the program printed nothing");
+    soon("a line of the program", || lines() > 0);
     let pid = running.id().to_string();
-    // It serves the tools a moment after it starts.
-    let mut tool = None;
-    for _ in 0..200 {
-        let mut started = Command::new(tondo)
-            .args(["logpoint", &pid, "endless.to:9", "{round}", "--stop", "60"])
-            .current_dir(&dir)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        let mut said = BufReader::new(started.stdout.take().unwrap());
-        let mut line = String::new();
-        while said.read_line(&mut line).unwrap_or(0) > 0 && !line.contains("stands here") {}
-        if line.contains("stands here") {
-            tool = Some(started);
-            break;
-        }
-        let _ = started.wait();
-        std::thread::sleep(std::time::Duration::from_millis(20));
+    // It serves the tools from before `main`, which printed its line.
+    let mut tool = Command::new(tondo)
+        .args(["logpoint", &pid, "endless.to:9", "{round}", "--stop", "60"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut said = BufReader::new(tool.stdout.take().unwrap());
+    let mut line = String::new();
+    while !line.contains("stands here") {
+        line.clear();
+        assert!(said.read_line(&mut line).unwrap() > 0, "a logpoint that holds its task");
     }
-    let mut tool = tool.expect("a logpoint that holds its task");
     let held = lines();
+    // Time is what is under test: a task that went on would print.
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert_eq!(lines(), held, "the task went on while its tool held it");
     unsafe { libc::kill(tool.id() as i32, libc::SIGTERM) };
     tool.wait().unwrap();
-    assert!(within(10, || lines() > held), "the task stays held after its tool ended");
+    soon("a line of the task once its tool ended", || lines() > held);
     let _ = running.kill();
     let _ = running.wait();
 }
@@ -5139,12 +5054,12 @@ fn a_replay_ended_by_a_signal_ends_its_copies() {
     // A held copy is a group of its own, and the copies a replay makes of it
     // are in it.
     let copies = || in_groups(&held).into_iter().filter(|pid| !held.contains(pid)).collect::<Vec<i32>>();
-    assert!(soon(|| copies().len() >= 2), "the replay made no copies: {:?}", copies());
+    soon("the replay's copies", || copies().len() >= 2);
     unsafe { libc::kill(debugger.id() as i32, libc::SIGTERM) };
     debugger.wait().unwrap();
     // A copy the program made as the debugger ended, which it never heard
     // of, ends once it sees the debugger gone, in at most ten seconds.
-    assert!(within(20, || copies().is_empty()), "the replay's copies run on: {:?}", copies());
+    soon("the end of the replay's copies", || copies().is_empty());
     assert!(held.iter().all(|&pid| in_groups(&held).contains(&pid)), "a held copy went");
     for pid in held {
         unsafe { libc::kill(pid, libc::SIGKILL) };

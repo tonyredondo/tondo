@@ -4,9 +4,10 @@
 //! certificate, as CI does on Linux: a server obtains a certificate for
 //! `localhost`, answering the check on port 5001 itself, and serves with it.
 
+mod common;
+
 use std::path::Path;
 use std::process::Command;
-use std::time::{Duration, Instant};
 
 const PROGRAM: &str = r#"
 import std.acme
@@ -61,11 +62,7 @@ fn obtains_and_keeps_a_certificate() {
         assert!(output.status.success(), "{stderr}");
     };
     // Pebble may still be starting.
-    let started = Instant::now();
-    while std::net::TcpStream::connect("127.0.0.1:14000").is_err() {
-        assert!(started.elapsed() < Duration::from_secs(120), "Pebble does not listen");
-        std::thread::sleep(Duration::from_millis(500));
-    }
+    common::until("Pebble's port", || std::net::TcpStream::connect("127.0.0.1:14000").ok());
     run();
     // A second start shows the certificate it kept, without asking again.
     let kept = dir.join("cache/localhost/localhost.pem");

@@ -1,6 +1,8 @@
 //! `tondo test` on the project of `tests/testing/sample`: what it runs
 //! and reports, what it selects, and the errors a test file can have.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -1347,10 +1349,7 @@ test waits {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
-    while !dir.join("started").exists() && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    common::until("the test's start", || dir.join("started").exists().then_some(()));
     Command::new("kill").args(["-INT", &child.id().to_string()]).status().unwrap();
     let output = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
