@@ -26,6 +26,8 @@ each thing becomes.
 | `len(x)`, `x.len()`, `x.length` | `x.length()` |
 | `` `${x}` ``, `"{}".format(x)` | `"{x}"` |
 | a method guessed from another library | `tondo api String`, `tondo api std.http.Client`: its methods and an example |
+| `queue.pop(0)`, `queue.shift()` in a loop | a `Deque` and `popFront()` (`check --performance`: W1024) |
+| `re.compile(...)`, `new RegExp(...)` in a function | a context's field: `context Patterns = { words: regex.Regex = regex.Regex.compile(r"\w+")? }` (W1025) |
 
 No semicolons; a newline ends a statement.
 

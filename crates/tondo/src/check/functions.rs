@@ -42,6 +42,8 @@ impl<'a> Checker<'a> {
             named: Vec::new(),
             reads: HashSet::new(),
             template: false,
+            per_element: false,
+            per_call: false,
         }
     }
 
@@ -75,6 +77,7 @@ impl<'a> Checker<'a> {
             }
             None => self.new_cx(signature.result),
         };
+        cx.per_call = f.name.name != "main";
         let mut params = Vec::new();
         let mut loans = Vec::new();
         for (param, ty) in f.params.iter().zip(signature.params) {
@@ -821,6 +824,8 @@ impl<'a> Checker<'a> {
         }
         inner.test_member = test;
         inner.deferred = deferred;
+        // A test's body runs once; another closure's, at each call.
+        (inner.per_element, inner.per_call) = (!deferred && !test, !test);
         inner.template = std::mem::take(&mut self.templating);
         inner.unsafe_region = is_unsafe;
         inner.unsafe_body = is_unsafe;

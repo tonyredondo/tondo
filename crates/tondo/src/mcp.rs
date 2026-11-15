@@ -206,7 +206,9 @@ impl Server {
                 if args.flag("timings") {
                     crate::times::keep("check");
                 }
+                crate::lints::ask_performance(args.flag("performance"));
                 let analysis = analyze(args);
+                crate::lints::ask_performance(false);
                 let timings = crate::times::keeping().then(crate::times::json);
                 crate::times::stop();
                 let mut analysis = analysis?;
@@ -2316,7 +2318,12 @@ suggests. Check after every edit.",
             PATH,
             LIBRARY,
             ("docs", "boolean", "Also what is public and has no `///`, as a library wants (W1010)."),
-            ("performance", "boolean", "Also a copy a loop makes on every turn (W1009)."),
+            (
+                "performance",
+                "boolean",
+                "Also what a loop costs that the compiler cannot take away: a copy on every turn (W1009), removeAt(0) \
+                 (W1024), a pattern compiled each time its code runs (W1025).",
+            ),
             TIMINGS,
         ],
     },

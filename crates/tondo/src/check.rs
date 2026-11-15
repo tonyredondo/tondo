@@ -1281,6 +1281,12 @@ struct FnCx {
     /// captures nothing, and a name that is no binding is a field of its
     /// data, `self`.
     template: bool,
+    /// Whether its code runs once for each element, as a closure's an
+    /// iterator calls: what a turn of a loop costs, it costs.
+    per_element: bool,
+    /// Whether its code runs at each call: a function's other than `main`,
+    /// or a closure's.
+    per_call: bool,
 }
 
 /// What a closure is: a `defer` block, `unsafe`, or the closure of a test

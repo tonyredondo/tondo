@@ -549,7 +549,11 @@ impl<'a> Checker<'a> {
                 self.expr_kind(cx, &form, Some(expected))
             }
             ast::ExprKind::Path(segments) => self.path(cx, segments, expected, span),
-            ast::ExprKind::Call { callee, args } => self.call(cx, callee, args, expected, span),
+            ast::ExprKind::Call { callee, args } => {
+                let called = self.call(cx, callee, args, expected, span);
+                self.costly_call(cx, &called);
+                called
+            }
             ast::ExprKind::Unary(op, operand) => self.unary(cx, *op, operand, expected, span),
             ast::ExprKind::Binary(op, left, right) => self.binary(cx, *op, left, right, expected, span),
             ast::ExprKind::If { condition, then, otherwise } => {

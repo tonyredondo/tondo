@@ -330,6 +330,20 @@ pub const CODES: &[(&str, &str, &str)] = &[
          Tondo writes as it is: it interpolates `{name}`. The fix writes that. `\"${amount}\"` is a dollar and \
          the value, as a price is written, and says nothing.",
     ),
+    (
+        "W1024",
+        "array-front-every-turn",
+        "With `--performance`: `removeAt(0)` on an array in a loop, which moves every other element on every \
+         turn. A `Deque` takes its first at once, with `popFront()`; or find where to cut once and take a \
+         `slice`.",
+    ),
+    (
+        "W1025",
+        "pattern-compiled-every-call",
+        "With `--performance`: `regex.Regex.compile` of a written pattern in a loop, a closure or a function \
+         other than `main`, which compiles it every time that code runs. A context's field compiles it once, \
+         when first read: `context Patterns = { words: regex.Regex = regex.Regex.compile(r\"\\w+\")? }`.",
+    ),
     ("P0001", "bounds", "An index or bound outside the range allowed."),
     ("P0002", "zero-slice-step", "A slice with a step of zero."),
     ("P0003", "integer-division-by-zero", "An integer division or remainder by zero."),

@@ -1386,6 +1386,33 @@ fn compares_with_another_compiler() {
     assert_eq!(status, 2, "{stderr}");
 }
 
+/// `check --performance` names what a loop costs that the compiler cannot
+/// take away: `removeAt(0)` on an array in a loop (W1024), a written
+/// pattern compiled where it runs each time (W1025); not in `main`, which
+/// runs once, and not without the option.
+#[test]
+fn performance_warnings_name_what_the_compiler_cannot_fix() {
+    let dir = scratch("performance");
+    let program = "import std.console\nimport std.regex\n\nfn words(text: String): Int {\n    \
+        let pattern = regex.Regex.compile(r\"\\w+\") ?? return 0\n    _ = pattern\n    text.length()\n}\n\n\
+        fn main() {\n    let once = regex.Regex.compile(r\"\\d+\")\n    _ = once\n    var queue = [1, 2, 3]\n    \
+        for not queue.isEmpty() {\n        _ = queue.removeAt(0)\n    }\n    var front = [1]\n    \
+        front.insert(0, 2)\n    console.println(\"{words(\"a\")} {front}\")\n}\n";
+    std::fs::write(dir.join("main.to"), program).unwrap();
+    let (data, status) = json(&dir, &["check", "main.to", "--performance", "--json"]);
+    assert_eq!(status, 0, "{data}");
+    let found: Vec<(String, u64)> = data["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["code"].as_str().is_some_and(|code| code.starts_with("W102")))
+        .map(|d| (d["code"].as_str().unwrap().to_string(), d["range"]["start"]["line"].as_u64().unwrap_or(0) + 1))
+        .collect();
+    assert_eq!(found, [("W1025".to_string(), 5), ("W1024".to_string(), 15)], "{data}");
+    let (data, _) = json(&dir, &["check", "main.to", "--json"]);
+    assert!(!data.to_string().contains("W102"), "{data}");
+}
+
 /// `--timings` says where a build's time went, after it and in its JSON:
 /// its phases, and the files and functions the code generator took longest
 /// on; that a build came from the cache; and in `check`, only its own. What

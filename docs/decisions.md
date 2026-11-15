@@ -7300,3 +7300,17 @@ are, since the compiler names all it makes. Code a call inlines weighs where it 
 the executable has it. A stripped build is weighed by the parts of the build with names and the
 size of the one without. `--against` builds the revision's code as `optimizations` does and
 gives what each part and function gained or lost.
+
+## Warnings of performance for what the compiler cannot take away
+
+Tony approved warnings, under `--performance`, only for costs the optimizer cannot remove by
+itself, each measured over the standard library, the examples and `bench/` before it lands. Of
+the four candidates, a text joined to itself in a loop turned out quadratic only with `concat`,
+which interpolation already grew in place, so `concat` became an interpolation and needs no
+warning. `removeAt(0)` on an array in a loop (W1024) found one place, in `std.graphql`, where it
+costs what it says; `insert(0, value)`, which the standard library uses to build a few digits or
+groups backwards, was left out after it found five places of a handful of elements each. A
+pattern compiled where it runs each time (W1025) found none once a test's body, which runs once,
+was told from a closure's. `contains` on an array in a loop found eight places in the standard
+library, seven on arrays of a few elements, and waits for Tony's decision with those numbers.
+The warnings come from the checker, which knows types and loops, when the check asks for them.

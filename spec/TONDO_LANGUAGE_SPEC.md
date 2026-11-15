@@ -9390,6 +9390,8 @@ oculten un diagnóstico independiente.
 | `W1020` | `unknown-model-step` | Un `model.mark`, `model.weak` o `model.strong` con un nombre escrito que ningún `model.step` del programa da (biblioteca 14.43). |
 | `W1021` | `needless-some` | `some(value)` donde se espera un `T?` y `value` es un `T` que no es una option: el valor solo se eleva igual (9.7). |
 | `W1022` | `foreign-interpolation` | Un `$name` en el texto de un literal con `name` un binding visible allí: se escribe tal cual, y Tondo interpola `{name}` (19.6). |
+| `W1024` | `array-front-every-turn` | Con `performance`: `removeAt(0)` de un array en cada vuelta de un bucle, que mueve los demás elementos; un `Deque` toma el primero de una vez. |
+| `W1025` | `pattern-compiled-every-call` | Con `performance`: `regex.Regex.compile` de un patrón escrito donde corre cada vez; el campo de un contexto lo compila una vez. |
 
 #### Pánicos del lenguaje
 
@@ -9756,6 +9758,13 @@ activan, completan el registro sin volver heurística la conformidad del lenguaj
   que el mismo owner realiza un detach en una arista de retorno de loop y una
   única reborrow local evitaría la copia conservando orden, aliasing, pánicos y
   efectos. No se exige que dos optimizadores descubran el mismo conjunto.
+- `performance` emite también lo que el optimizador no puede quitar sin cambiar
+  lo que el programa dice: `removeAt(0)` de un array en un bucle o en un closure
+  que un iterador llama, que mueve los demás elementos en cada vuelta
+  (`W1024`), y `regex.Regex.compile` de un patrón escrito en un bucle, un
+  closure o una función que no es `main` ni un test, que lo compila cada vez
+  que ese código corre (`W1025`). Lo que el compilador puede hacer por sí mismo,
+  como unir un texto en un bucle, lo hace, y no avisa.
 - `docs-strict` emite `W1010` para toda declaración `pub` sin comentario `///`.
   La calidad del contenido contractual exigido por 21.5 sigue siendo revisable,
   no se adivina mediante búsqueda de palabras.

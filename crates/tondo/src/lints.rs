@@ -7,7 +7,20 @@ use crate::diag::Diagnostics;
 use crate::source::{SourceFile, SourceMap, Span};
 
 /// The codes only a check that asks for its profile gives.
-const PROFILES: [&str; 2] = ["W1009", "W1010"];
+const PROFILES: [&str; 4] = ["W1009", "W1010", "W1024", "W1025"];
+
+/// Whether the check under way asks for the warnings of performance, which
+/// the checker gives as it reads the code (W1024 and W1025).
+static PERFORMANCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Asks the next analyses for the warnings of performance, or no longer.
+pub fn ask_performance(on: bool) {
+    PERFORMANCE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn performance() -> bool {
+    PERFORMANCE.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// `// tondo: allow W1004: why`: takes the warnings of a code on the line the
 /// comment is on, or on the next one with code, out of the list. It has to say

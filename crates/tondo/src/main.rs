@@ -291,6 +291,7 @@ fn check_command(args: &[OsString]) -> Result<ExitCode, String> {
     if unreached {
         return tondo::affected::report_unreached(&path, json).map(|()| ExitCode::SUCCESS);
     }
+    tondo::lints::ask_performance(performance);
     let mut analysis = if library { driver::analyze_library(&path)? } else { driver::check(&path)? };
     tondo::lints::run(&analysis.sources, &mut analysis.diags, docs, performance);
     let ok = analysis.program.is_some();

@@ -1375,6 +1375,42 @@ impl<'a> Checker<'a> {
         None
     }
 
+    /// A warning of `tondo check --performance` (22.8), when the check asks
+    /// for them; those of the standard library and of dependencies are
+    /// dropped as every other warning of theirs.
+    pub(super) fn costly(&mut self, code: &'static str, span: Span, message: String) {
+        if crate::lints::performance() {
+            self.diags.warning(code, span, message);
+        }
+    }
+
+    /// Whether code runs on every turn of something: a loop's body, or a
+    /// closure's, which an iterator calls for each element.
+    pub(super) fn turns(cx: &FnCx) -> bool {
+        !cx.loops.is_empty() || cx.per_element
+    }
+
+    /// What `tondo check --performance` says of a call: a pattern compiled
+    /// each time the code that compiles it runs (W1025).
+    pub(super) fn costly_call(&mut self, cx: &FnCx, called: &hir::Expr) {
+        let hir::ExprKind::Call(hir::Callee::Fn(id), _, args) = &called.kind else { return };
+        match self.signatures[id.0 as usize].name.as_str() {
+            "regex.Regex.compile"
+                if (!cx.loops.is_empty() || cx.per_call)
+                    && matches!(args.first().map(|a| &a.kind), Some(hir::ExprKind::Str(_))) =>
+            {
+                let code = self.sources.slice(called.span).to_string();
+                let message = format!(
+                    "`{code}` compiles its pattern every time this code runs: a context's field compiles it once, \
+                     when first read: `context Patterns = {{ pattern: regex.Regex = {code}? }}`, and \
+                     `Patterns.pattern` reads it"
+                );
+                self.costly("W1025", called.span, message);
+            }
+            _ => {}
+        }
+    }
+
     /// A method that changes a collection's extent or contents; the
     /// receiver must be a `var` place (10.5).
     pub(super) fn mutation_call(
@@ -1386,7 +1422,7 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> hir::Expr {
         use hir::Mutation as M;
-        let ty = receiver.ty;
+        let (ty, receiver_span) = (receiver.ty, receiver.span);
         let operation = format!("`{}`", method.name);
         let Some(hir::Place { local, path }) = self.loan_place(cx, receiver, &operation, true) else {
             return Self::error_expr(span);
@@ -1412,7 +1448,7 @@ impl<'a> Checker<'a> {
         if args.len() != params.len() {
             return self.arity_error(span, params.len(), args.len());
         }
-        let values = args
+        let values: Vec<hir::Expr> = args
             .iter()
             .zip(params)
             .map(|(a, t)| {
@@ -1420,6 +1456,18 @@ impl<'a> Checker<'a> {
                 self.coerce(v, t)
             })
             .collect();
+        // A queue taken from its front, the whole array moved each time.
+        if matches!(mutation, M::RemoveAt)
+            && matches!(values.first().map(|v| &v.kind), Some(hir::ExprKind::Int(0)))
+            && Self::turns(cx)
+        {
+            let (code, array) = (self.sources.slice(span).to_string(), self.sources.slice(receiver_span).to_string());
+            let message = format!(
+                "`{code}` moves every other element of `{array}` on every turn: a `Deque` takes its first at once, \
+                 with `popFront()`; or find where to cut once and take a `slice`"
+            );
+            self.costly("W1024", span, message);
+        }
         Self::mk(hir::ExprKind::Mutate(mutation, hir::Place { local, path }, values), result, span)
     }
 

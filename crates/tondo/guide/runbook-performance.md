@@ -73,6 +73,12 @@ asm {"path": "slow.to", "function": "main"}
 => four turns at once run
 ```
 
+`check` with `performance` names what a loop costs that the compiler cannot take
+away without changing what the program says: `removeAt(0)` on an array, which
+moves the rest each time (a `Deque` takes its first at once), and a pattern
+compiled every time the code that compiles it runs (a context's field compiles
+it once).
+
 `size` says what the executable weighs, by part and by function, when it is
 its size that matters, as for a program shipped many times or started often.
 
