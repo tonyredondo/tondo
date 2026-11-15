@@ -225,3 +225,65 @@ fn interfaces_of_c() {
         Command::new(compiler).args(["bind", "thing.h", "--id", "IThing=8d3c"]).current_dir(&dir).output().unwrap();
     assert!(String::from_utf8_lossy(&wrong.stderr).contains("--id takes an interface and its IID"), "{wrong:?}");
 }
+
+/// What a header of COM made by MIDL needs of `bind`, as .NET's corprof.h
+/// does: its own `IUnknown` is `ffi.Unknown`; a parameter of a function type
+/// is a pointer to one; an enumerator past `int`'s values is unsigned, and so
+/// is what is made of it; a declaration it cannot read is listed, not left
+/// out in silence; and an interface that extends one left out is left out.
+#[test]
+fn what_a_header_of_com_needs() {
+    let dir = scratch("bind-com");
+    let header = "#include <stdint.h>\ntypedef int32_t HRESULT;\n#define DEFINE_GUID(name, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8) extern int name\n\
+        typedef struct IUnknown IUnknown;\n\
+        typedef struct IUnknownVtbl {\n    HRESULT (*QueryInterface)(IUnknown *This, const void *id, void **found);\n    \
+        uint32_t (*AddRef)(IUnknown *This);\n    uint32_t (*Release)(IUnknown *This);\n} IUnknownVtbl;\n\
+        struct IUnknown { const IUnknownVtbl *lpVtbl; };\n\
+        typedef int Visit(void *data);\n\
+        typedef enum { One = 1, High = 0x80000000, Both = (One | High) } Flags;\n\
+        DEFINE_GUID(IID_IWalker, 0x11112222, 0x3333, 0x4444, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc);\n\
+        typedef struct IWalker IWalker;\n\
+        typedef struct IWalkerVtbl {\n    HRESULT (*QueryInterface)(IWalker *This, const void *id, void **found);\n    \
+        uint32_t (*AddRef)(IWalker *This);\n    uint32_t (*Release)(IWalker *This);\n    \
+        HRESULT (*Walk)(IWalker *This, Visit visit, Flags flags);\n} IWalkerVtbl;\n\
+        struct IWalker { const IWalkerVtbl *lpVtbl; };\n\
+        typedef struct IBase IBase;\n\
+        typedef struct IBaseVtbl {\n    HRESULT (*QueryInterface)(IBase *This, const void *id, void **found);\n    \
+        uint32_t (*AddRef)(IBase *This);\n    uint32_t (*Release)(IBase *This);\n    \
+        HRESULT (*Start)(IBase *This);\n} IBaseVtbl;\n\
+        struct IBase { const IBaseVtbl *lpVtbl; };\n\
+        typedef struct IChild IChild;\n\
+        typedef struct IChildVtbl {\n    HRESULT (*QueryInterface)(IChild *This, const void *id, void **found);\n    \
+        uint32_t (*AddRef)(IChild *This);\n    uint32_t (*Release)(IChild *This);\n    \
+        HRESULT (*Start)(IChild *This);\n    HRESULT (*Grow)(IChild *This);\n} IChildVtbl;\n\
+        struct IChild { const IChildVtbl *lpVtbl; };\n\
+        struct Broken { Mystery field; };\n";
+    std::fs::write(dir.join("com.h"), header).unwrap();
+    let compiler = env!("CARGO_BIN_EXE_tondo");
+    run(Command::new(compiler).args(["bind", "com.h", "--output", "com.to"]).current_dir(&dir));
+    let written = std::fs::read_to_string(dir.join("com.to")).unwrap();
+    assert!(!written.contains("trait IUnknown"), "{written}");
+    assert!(written.contains("pub trait IWalker: ffi.Unknown {"), "{written}");
+    assert!(
+        written.contains("fn Walk(self, visit: (extern fn(Pointer[ffi.Void]?): ffi.CInt)?, flags: Flags): ffi.HResult"),
+        "{written}"
+    );
+    assert!(
+        written.contains("pub alias Flags = ffi.CUInt") && written.contains("pub const Both: Flags = 2147483649"),
+        "{written}"
+    );
+    assert!(written.contains("// - a declaration it could not read, near `Broken{Mystery field;}`"), "{written}");
+    // IBase has no IID, and IChild extends it.
+    assert!(written.contains("// - IBase: no IID found for it"), "{written}");
+    assert!(written.contains("// - IChild: it extends IBase, which is not bound"), "{written}");
+    assert!(!written.contains("trait IChild"), "{written}");
+    // What it wrote builds.
+    let project = dir.join("app");
+    std::fs::create_dir_all(project.join("src/com")).unwrap();
+    std::fs::write(project.join("tondo.toml"), "[package]\nname = \"app\"\n").unwrap();
+    std::fs::copy(dir.join("com.to"), project.join("src/com/com.to")).unwrap();
+    let main = "import std.console\nimport app.com\n\nfn main() {\n    console.println(\"{com.IWalkerObject.Id} {com.Both}\")\n}\n";
+    std::fs::write(project.join("src/main.to"), main).unwrap();
+    let ran = run(Command::new(compiler).arg("run").arg(&project));
+    assert_eq!(ran, "11112222-3333-4444-5566-778899aabbcc 2147483649\n");
+}

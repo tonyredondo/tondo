@@ -500,6 +500,9 @@ struct C {
     complete_records: bool,
     /// The IID of each interface, by its name.
     ids: HashMap<String, String>,
+    /// The declarations the parser could not read: their file, and the C
+    /// where it stopped.
+    unread: Vec<(usize, String)>,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -657,7 +660,12 @@ impl Parser<'_> {
                 continue;
             }
             if self.declaration().is_err() {
-                self.pos = start.max(self.pos);
+                // Where it stopped, for the module to say what it left out.
+                let near = &self.tokens[self.pos.saturating_sub(3)..(self.pos + 3).min(self.tokens.len())];
+                let file = self.tokens.get(start).map_or(0, |token| token.file);
+                self.c.unread.push((file, spell(near)));
+                // The whole declaration goes, a struct's body with it.
+                self.pos = start;
                 self.recover();
             }
         }
@@ -1276,8 +1284,16 @@ impl<'c> Evaluator<'c> {
                 Some(Value::Int(layout(self.c, &ty).0 as i128, CType::ULong))
             }
             Tok::Ident(name) => {
+                // An enumerator is an `int`, or, past `int`'s values, as GCC
+                // makes it, an `unsigned int` or wider.
                 if let Some(&value) = self.c.constants.get(&name) {
-                    return Some(Value::Int(value, CType::Int));
+                    let ty = match value {
+                        _ if i32::try_from(value).is_ok() => CType::Int,
+                        _ if u32::try_from(value).is_ok() => CType::UInt,
+                        _ if i64::try_from(value).is_ok() => CType::LongLong,
+                        _ => CType::ULongLong,
+                    };
+                    return Some(Value::Int(value, ty));
                 }
                 if self.expanding.contains(&name) {
                     return None;
@@ -1630,6 +1646,8 @@ struct Emitter<'c> {
     /// its name, with its function; and the structs of their tables.
     interfaces: HashMap<usize, Vec<(String, CFunction)>>,
     tables: HashSet<usize>,
+    /// The interfaces left out: those that extend one are too.
+    failed: HashSet<usize>,
 }
 
 /// What a type is through every typedef.
@@ -1727,6 +1745,7 @@ impl<'c> Emitter<'c> {
             failing: false,
             interfaces,
             tables,
+            failed: HashSet::new(),
         }
     }
 
@@ -1825,6 +1844,10 @@ impl<'c> Emitter<'c> {
             // Validate what it names, so an alias that cannot exist is not used.
             match &typedef.ty {
                 CType::Record(_) | CType::Enum(_) => {}
+                // A parameter of a function type is a pointer to one, in C.
+                CType::Function(function) if position == Position::Parameter => {
+                    return Ok(format!("({})?", self.function_type(&function.clone())?));
+                }
                 CType::Function(_) => return Err(format!("it uses the function type `{name}` as a value")),
                 ty => {
                     self.ty(&ty.clone(), Position::Field)?;
@@ -1921,6 +1944,17 @@ impl<'c> Emitter<'c> {
             body.extend(declaration);
         }
         body.extend(self.macros());
+        // What the parser could not read of the bound headers, as a type a
+        // header takes from one `bind` does not read: what refers to it is
+        // left out or opaque.
+        for (file, near) in &self.c.unread {
+            if self.target(*file) {
+                self.skipped.push(format!(
+                    "a declaration it could not read, near `{near}`: a name there may be a type of a header it does \
+                     not read, which one given with -I can declare"
+                ));
+            }
+        }
         // Records of other headers the declarations reach.
         let mut done = HashSet::new();
         while let Some((id, by_value)) = self.needed.pop() {
@@ -1963,6 +1997,13 @@ impl<'c> Emitter<'c> {
         }
     }
 
+    /// Whether an interface has the three methods of `IUnknown` alone, as
+    /// `IUnknown` and a marker as `IAgileObject`: no interface is told to
+    /// extend one, as its table is `ffi.Unknown`'s.
+    fn only_unknown(&self, id: usize) -> bool {
+        self.interfaces[&id].iter().map(|(name, _)| name.as_str()).eq(["QueryInterface", "AddRef", "Release"])
+    }
+
     /// The interface an interface extends, with how many of its methods
     /// are that one's: the bound interface whose methods begin its own, the
     /// longest, or `ffi.Unknown` for `QueryInterface`, `AddRef` and
@@ -1974,6 +2015,7 @@ impl<'c> Emitter<'c> {
             .iter()
             .filter(|(other, theirs)| {
                 **other != id
+                    && !self.only_unknown(**other)
                     && theirs.len() < methods.len()
                     && theirs.iter().zip(methods).all(|(theirs, mine)| theirs.0 == mine.0)
             })
@@ -1992,22 +2034,25 @@ impl<'c> Emitter<'c> {
         }
     }
 
+    /// The interface of the module an interface extends.
+    fn base_of(&self, id: usize) -> Option<usize> {
+        let (base, _) = self.interface_base(id);
+        self.interfaces.keys().copied().find(|&other| Some(self.record_name(other)) == base)
+    }
+
     /// Why an interface cannot be bound: it reaches `ffi.Unknown` with no
-    /// IID found, or what it extends cannot be.
+    /// IID found.
     fn interface_problem(&self, id: usize) -> Option<String> {
         let name = self.record_name(id);
         let (base, _) = self.interface_base(id);
-        let base_id = self.interfaces.keys().copied().find(|&other| Some(self.record_name(other)) == base);
         let unknown =
-            base.as_deref() == Some("ffi.Unknown") || base_id.is_some_and(|other| self.reaches_unknown(other));
-        if unknown && !self.c.ids.contains_key(&name) {
-            return Some(format!(
+            base.as_deref() == Some("ffi.Unknown") || self.base_of(id).is_some_and(|other| self.reaches_unknown(other));
+        (unknown && !self.c.ids.contains_key(&name)).then(|| {
+            format!(
                 "{name}: no IID found for it: give it with `--id {name}=<GUID>`, or bind the header or file \
                  that defines IID_{name}"
-            ));
-        }
-        let base_problem = base_id.and_then(|other| self.interface_problem(other));
-        base_problem.map(|_| format!("{name}: it extends {}, which is not bound", base.unwrap_or_default()))
+            )
+        })
     }
 
     fn reaches_unknown(&self, id: usize) -> bool {
@@ -2030,6 +2075,27 @@ impl<'c> Emitter<'c> {
         if !self.used_types.insert(name.clone()) {
             return None;
         }
+        // What it extends goes first, here, and if it is left out, so is this.
+        let mut before = None;
+        if let Some(base) = self.base_of(id) {
+            before = self.interface(base);
+            if self.failed.contains(&base) {
+                self.failed.insert(id);
+                self.skipped.push(format!("{name}: it extends {}, which is not bound", self.record_name(base)));
+                return before;
+            }
+        }
+        let own = self.interface_own(id, &name);
+        if own.is_none() {
+            self.failed.insert(id);
+        }
+        match (before, own) {
+            (Some(before), Some(own)) => Some(format!("{before}\n\n{own}")),
+            (before, own) => before.or(own),
+        }
+    }
+
+    fn interface_own(&mut self, id: usize, name: &str) -> Option<String> {
         if let Some(problem) = self.interface_problem(id) {
             self.skipped.push(problem);
             return None;
@@ -2063,7 +2129,7 @@ impl<'c> Emitter<'c> {
             };
             lines.push(format!("    fn {}({}){result}", tondo_name(&method), params.join(", ")));
         }
-        let annotation = match self.c.ids.get(&name) {
+        let annotation = match self.c.ids.get(name) {
             Some(id) => format!("@ffi.Interface(id: {id:?})"),
             None => "@ffi.Interface".to_string(),
         };
@@ -2184,9 +2250,10 @@ impl<'c> Emitter<'c> {
         if record.tag.is_none() && !self.record_names.contains_key(&id) && !dependency {
             return None;
         }
-        // An interface is its trait; its table and a GUID are `std.ffi`'s.
+        // An interface is its trait; its table, `IUnknown` and a GUID are
+        // `std.ffi`'s.
         if self.interfaces.contains_key(&id) {
-            return self.interface(id);
+            return if name == "IUnknown" && self.only_unknown(id) { None } else { self.interface(id) };
         }
         if self.tables.contains(&id) || well_known(&name).is_some() {
             return None;
