@@ -956,6 +956,7 @@ impl<'a> Checker<'a> {
     }
 
     pub(super) fn string(&mut self, cx: &mut FnCx, segments: &[ast::StrSegment], span: Span) -> hir::Expr {
+        self.dollars(cx, span);
         if let [ast::StrSegment::Text(text)] = segments {
             return Self::mk(hir::ExprKind::Str(text.clone()), Ty::STRING, span);
         }
@@ -1203,6 +1204,47 @@ impl<'a> Checker<'a> {
                 self.unknown_path(cx, segments, span);
                 Self::error_expr(span)
             }
+        }
+    }
+
+    /// W1022: another language's interpolation in a literal, which Tondo
+    /// writes as it is: `$name` with `name` a binding here. Not `${name}`,
+    /// which in Tondo is a dollar and the value, as a price is written.
+    /// Text between the literal's braces is code, and the standard
+    /// library's literals are its own.
+    fn dollars(&mut self, cx: &FnCx, span: Span) {
+        let file = self.sources.file_of(span.start);
+        if file.logical.starts_with('<') {
+            return;
+        }
+        let raw = self.sources.slice(span).to_string();
+        let bytes = raw.as_bytes();
+        let (mut depth, mut at) = (0usize, 0usize);
+        let mut found = Vec::new();
+        while at < bytes.len() {
+            match bytes[at] {
+                b'{' if depth == 0 && bytes.get(at + 1) == Some(&b'{') => at += 1,
+                b'}' if depth == 0 && bytes.get(at + 1) == Some(&b'}') => at += 1,
+                b'{' => depth += 1,
+                b'}' => depth = depth.saturating_sub(1),
+                b'$' if depth == 0 => {
+                    let name: String = raw[at + 1..].chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                    let starts = name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_');
+                    if starts && self.lookup(cx, &name).is_some() {
+                        found.push((at, 1 + name.len(), format!("{{{name}}}")));
+                    }
+                }
+                _ => {}
+            }
+            at += 1;
+        }
+        for (offset, length, written) in found {
+            let start = span.start + offset as u32;
+            let at = Span::new(start, start + length as u32);
+            let message =
+                format!("`{}` is written as it is: Tondo interpolates `{written}`", &raw[offset..offset + length]);
+            self.diags.warning("W1022", at, message);
+            self.diags.fix(format!("write `{written}`"), false, vec![(at, written)]);
         }
     }
 

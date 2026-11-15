@@ -323,6 +323,13 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "`some(value)` where a `T?` is expected and the value is a `T`: the value alone becomes one by itself, as \
          `limit: 3` for `limit: some(3)`. The fix writes it alone.",
     ),
+    (
+        "W1022",
+        "foreign-interpolation",
+        "A text literal holds another language's interpolation, `$name` with `name` a binding there, which \
+         Tondo writes as it is: it interpolates `{name}`. The fix writes that. `\"${amount}\"` is a dollar and \
+         the value, as a price is written, and says nothing.",
+    ),
     ("P0001", "bounds", "An index or bound outside the range allowed."),
     ("P0002", "zero-slice-step", "A slice with a step of zero."),
     ("P0003", "integer-division-by-zero", "An integer division or remainder by zero."),

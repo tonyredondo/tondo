@@ -1,0 +1,18 @@
+import std.console
+
+// Kotlin's interpolation in a literal, which Tondo writes as it is: `$name`
+// with a binding of that name here. A `$` before what no binding names is a
+// dollar, and so is one before an interpolation, as a price is written.
+
+fn main() {
+    let name = "Ada"
+    let price = 5
+    console.println("hi $name")
+    console.println("hi ${name}")
+    console.println("costs $5, in $HOME, {price}$ and {{literal}}")
+}
+
+// expect-stdout: hi $name
+// expect-stdout: hi $Ada
+// expect-stdout: costs $5, in $HOME, 5$ and {literal}
+// expect-warning: W1022 `$name` is written as it is: Tondo interpolates `{name}`

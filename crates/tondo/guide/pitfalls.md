@@ -47,7 +47,9 @@ fn main() {
 ```
 
 `{...}` in a string interpolates. Write `{{` and `}}` for braces, or a raw
-string `r"..."`; web routes use `:id`, not `{id}`.
+string `r"..."`; web routes use `:id`, not `{id}`. A `$` is a dollar:
+`"hi $name"` prints it and the name as they are, and `W1022` says to write
+`"hi {name}"`; `"${price}"` is a dollar and the price.
 
 ```tondo error E1001
 fn main() {

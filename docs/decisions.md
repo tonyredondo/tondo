@@ -7187,3 +7187,14 @@ runbook's name after `runbook-` and whose `case` is what there is to start from:
 runbook as a message to the agent, with the case, and without a topic the list of runbooks to
 choose from. Its topics are those of the guide, so a new runbook is one more without a change to
 the server, and `completion/complete` gives the topics that start with what was written.
+
+## Another language's interpolation in a literal warns
+
+Kotlin writes `"hi $name"`, as Groovy and shells do, and in Tondo it compiles and prints the
+dollar: a port that carries a string over as it is gives wrong text without a word. Tony chose a
+warning, `W1022`, for a `$name` in the text of a literal when `name` is a binding there, with the
+fix that writes `{name}`. A `$` before anything else is a dollar, as in a price, a shell's `$HOME`
+or a regular expression's end, so those say nothing; a deliberate one is silenced with `// tondo:
+allow W1022`. The proposal also warned of a `$` right before an interpolation, Kotlin's
+`"${name}"`, but in Tondo that is how a price is written, a dollar and the value, as two of the
+toolchain's own test programs do: there is no telling one from the other, so it says nothing.
