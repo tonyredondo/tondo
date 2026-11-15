@@ -1438,7 +1438,7 @@ pub fn redact(path: &std::path::Path, output: &std::path::Path) -> Result<(), St
     dump["values_off"] = json!(true);
     // What is kept is named, not what goes: a field added to dumps later
     // stays out until someone says it can be shared.
-    const KEPT: [&str; 15] = [
+    const KEPT: [&str; 16] = [
         "dump",
         "reason",
         "message",
@@ -1454,6 +1454,7 @@ pub fn redact(path: &std::path::Path, output: &std::path::Path) -> Result<(), St
         "values_off",
         "frames",
         "objects",
+        "objects_missing",
     ];
     const OF_TASK: [&str; 11] =
         ["id", "main", "state", "cancelled", "stack", "spawned", "locks", "contexts", "wait", "woken", "wakes"];
@@ -2173,7 +2174,10 @@ pub fn read(path: &std::path::Path, view: View, json: bool) -> Result<(), String
         View::Heap if json => return shown("heap", heap(&dump)),
         View::Heap => heap_text(&heap(&dump)),
         View::Objects | View::Object(_) if dump.get("objects").is_none() => {
-            return Err("this dump has no objects: a dump of a build with --debug has every object".into());
+            return Err(match dump["objects_missing"].as_str() {
+                Some(why) => format!("this dump has no objects: {why}"),
+                None => "this dump has no objects: a dump of a build with --debug has every object".into(),
+            });
         }
         View::Objects if json => return shown("objects", objects_by_type(&dump)),
         View::Objects => objects_text(&objects_by_type(&dump)),
@@ -3542,6 +3546,9 @@ fn summary(dump: &Value) -> String {
         counter("memory.objects").unwrap_or(0.0),
         bytes(counter("os.resident").unwrap_or(0.0))
     ));
+    if let Some(why) = dump["objects_missing"].as_str() {
+        out.push_str(&format!("no objects: {why}\n"));
+    }
     let tasks = tasks(dump);
     let mut states: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     let mut places: std::collections::HashMap<String, usize> = std::collections::HashMap::new();

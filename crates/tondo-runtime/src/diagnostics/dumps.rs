@@ -65,11 +65,20 @@ pub(crate) fn values_shown() -> bool {
     config().dump_values.as_ref().is_none_or(|value| value == "on")
 }
 
+/// How long a dump of a debug build waits for the program to stop.
+const OBJECTS_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// A dump of the program, as JSON: its counters, every task and where it
 /// is, and the samples of its live memory. The workers stop for it a while
 /// when `wait` says, so that the running tasks show where they are; `here`
 /// is the stack of this thread's own task.
 pub(super) fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: Option<std::time::Duration>) -> String {
+    // A debug build's objects need the program stopped: it waits longer for
+    // a thread that a busy machine has not run.
+    let wait = wait.map(|wait| match crate::heap::tracks_objects() {
+        true => wait.max(OBJECTS_WAIT),
+        false => wait,
+    });
     let (stopped, tasks, contexts, values, objects) = crate::cycles::without_collections(|| {
         let stopped = wait.is_some_and(crate::tasks::stop_world);
         let current = here.is_some();
@@ -180,6 +189,13 @@ pub(super) fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: 
         let edges: Vec<String> = objects.edges.iter().map(|(from, to)| format!("[{from},{to}]")).collect();
         let roots: Vec<String> = objects.roots.iter().map(|(task, to)| format!("[{task},{to}]")).collect();
         let _ = write!(out, "],\"edges\":[{}],\"roots\":[{}]}}", edges.join(","), roots.join(","));
+    } else if crate::heap::tracks_objects() {
+        let why = format!(
+            "the program did not stop for the dump within {} s, as reading its objects needs: a thread ran on without \
+             a safe point, or the machine was too busy to run it; take another dump",
+            OBJECTS_WAIT.as_secs()
+        );
+        let _ = write!(out, ",\"objects_missing\":{}", quoted(&why));
     }
     match values_shown() {
         true => {

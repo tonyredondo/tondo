@@ -298,6 +298,11 @@ pub(crate) fn track_objects() {
     OBJECTS_ON.store(true, Ordering::Relaxed);
 }
 
+/// Whether this is a debug build, which tracks every object.
+pub(crate) fn tracks_objects() -> bool {
+    OBJECTS_ON.load(Ordering::Relaxed)
+}
+
 fn shard(address: usize) -> std::sync::MutexGuard<'static, Shard> {
     OBJECTS[(address >> 4) % SHARDS].lock().unwrap_or_else(|e| e.into_inner())
 }
