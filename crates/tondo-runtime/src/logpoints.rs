@@ -294,7 +294,9 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
             })
         })
         .collect();
-    let Ok(mut client) = client.try_clone() else { return error("the tool went away") };
+    let (Ok(mut client), Ok(kept)) = (client.try_clone(), client.try_clone()) else {
+        return error("the tool went away");
+    };
     let writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
     if !super::tasks::stop_world(std::time::Duration::from_secs(2)) {
         return error("the program did not stop for the logpoint: try again");
@@ -302,25 +304,28 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
     let mut all = places.clone();
     all.extend(follows.iter().map(|follow| (follow.next, follow.length)));
     let written = write_calls(&all);
-    super::tasks::resume_world();
-    drop(writing);
     let (sites, followed) = match written {
         Ok(mut sites) => {
             let followed = sites.split_off(places.len());
             (sites, followed)
         }
-        Err(message) => return error(&message),
+        Err(message) => {
+            super::tasks::resume_world();
+            return error(&message);
+        }
     };
     let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    // The answer goes first: a hit counts once it is in the list, and must
-    // not reach the tool before it.
     let answered = format!("{{\"logpoint\":{id},\"places\":{}}}\n", sites.len());
-    let _ = client.write_all(answered.as_bytes());
-    lock().push(Logpoint {
+    // In the list before the program goes on, so that no hit of its calls
+    // is lost; the answer goes while the list is held, which a hit waits
+    // for, so that the tool reads it before any hit, and a hit that comes
+    // once the tool says the logpoint is in place counts.
+    let mut set = lock();
+    set.push(Logpoint {
         id,
         sites,
         left: max,
-        client,
+        client: kept,
         condition,
         dump,
         stop,
@@ -332,6 +337,10 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
         followed,
         pending: Vec::new(),
     });
+    super::tasks::resume_world();
+    drop(writing);
+    let _ = client.write_all(answered.as_bytes());
+    drop(set);
     if !follows.is_empty() {
         let _ = super::tasks::try_spawn_thread(Some(64 * 1024), move || send_when_waited(id));
     }
