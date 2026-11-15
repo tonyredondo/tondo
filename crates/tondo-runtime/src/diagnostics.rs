@@ -429,26 +429,28 @@ pub(crate) fn retire_here() {
     }
 }
 
-/// After an allocation of a program that is watched.
+/// After an allocation of a program that is watched: `size` bytes asked
+/// for, in a block that holds `held`, which may be more and is what
+/// `freed` counts.
 #[cold]
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
-pub(crate) fn allocated(address: *mut u8, size: usize) {
+pub(crate) fn allocated(address: *mut u8, size: usize, held: usize) {
     if let Some(block) = block() {
-        bump(&block.allocated, size as u64);
+        bump(&block.allocated, held as u64);
         bump(&block.allocations, 1);
         super::heap::allocated(address as usize, size);
         super::heap::track(address as usize, size);
     }
 }
 
-/// Before a program that is watched frees memory.
+/// Before a program that is watched frees a block that holds `held` bytes.
 #[cold]
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
-pub(crate) fn freed(address: *mut u8, size: usize) {
+pub(crate) fn freed(address: *mut u8, held: usize) {
     super::heap::freed(address as usize);
     super::heap::untrack(address as usize);
     if let Some(block) = block() {
-        bump(&block.freed, size as u64);
+        bump(&block.freed, held as u64);
     }
 }
 

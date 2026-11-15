@@ -144,8 +144,9 @@ test parsing {
   away; `testing.keep(value)` keeps a value the closure does not give.
 - `testing.allocations(() { receipt(lines) })` runs the closure once and
   gives how many times it allocated, in its task and in the optimized build
-  of the tests: `assert(testing.allocations(() { receipt(lines) }) <= 7)`
-  keeps a function at what it allocates now.
+  of the tests, the same count as the `allocs/op` of a benchmark of that
+  call: `assert(testing.allocations(() { receipt(lines) }) <= 7)` keeps a
+  function at what it allocates now.
 - `--save-baseline main` keeps what was measured in
   `target/bench/main.json`, and `--baseline main` compares with it: each
   benchmark says how much it changed, and whether that is `slower`,

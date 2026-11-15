@@ -2084,6 +2084,44 @@ test heldToIt {
     assert!(stdout.contains("heldToIt") && stdout.contains("assert"), "{stdout}");
 }
 
+/// A test is watched, for its dump, and a benchmark is not: a string that
+/// grows makes as many allocations in both, which a benchmark's row and
+/// `testing.allocations` count alike, and a memory profile too.
+#[test]
+fn a_test_and_its_benchmark_count_the_same_allocations() {
+    let tests = "\
+import std.console
+import std.format
+import std.testing
+
+fn receipt(lines: Array[Int]): String {
+    var text = format.Builder()
+    for line in lines {
+        text.addLine(\"thing {line}: {line * 5}\")
+    }
+    text.text()
+}
+
+test counted {
+    let lines = (0..100).collect()
+    console.println(\"allocations: {testing.allocations(() { receipt(lines) })}\")
+    testing.bench(\"receipt\", () { receipt(lines) })?
+}
+";
+    let dir = project("same_allocations", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--show-output"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    let counted = stdout.split("allocations: ").nth(1).and_then(|rest| rest.split_whitespace().next());
+    let counted = counted.unwrap_or_else(|| panic!("{stdout}")).to_string();
+    for profile in [&[][..], &["--profile", "memory"]] {
+        let mut args = vec!["test", "--bench", "--bench-time", "0.1"];
+        args.extend(profile);
+        let (stdout, stderr, status) = tondo(&dir, &args);
+        assert_eq!(status, 0, "{stdout}{stderr}");
+        assert!(stdout.contains(&format!("  {counted} allocs/op")), "{counted} counted by the test:\n{stdout}");
+    }
+}
+
 #[test]
 fn profiles_tests_and_benchmarks() {
     let tests = "\

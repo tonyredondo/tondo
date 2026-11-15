@@ -91,11 +91,13 @@ const PLAIN: usize = 8;
 
 /// The bytes a block can hold, which may be more than were asked for: what
 /// a string being built grows into before it moves. Exactly those asked
-/// for while a budget or a watch counts the bytes of each block.
+/// for while a budget counts the bytes of each block. A watch counts the
+/// bytes the blocks hold, so that a program watched, as a test is, grows
+/// its strings as it does otherwise.
 #[cfg(tondo_staticlib)]
 pub(crate) fn usable(block: *const u8, asked: usize) -> usize {
-    use super::diagnostics::{BUDGET, WATCHED, hooks};
-    match hooks() & (BUDGET | WATCHED) {
+    use super::diagnostics::{BUDGET, hooks};
+    match hooks() & BUDGET {
         0 => unsafe { mi_usable_size(block) },
         _ => asked,
     }
@@ -121,13 +123,14 @@ pub fn start() {
 }
 
 #[cfg(tondo_staticlib)]
-unsafe impl GlobalAlloc for Counting {
-    /// Memory runs short only after a collection of garbage cycles found
-    /// none to free (language 16.7); the collector itself may go past the
-    /// budget while it frees.
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        use super::diagnostics::{BUDGET, COUNTED, MEASURED, WATCHED, hooks};
-        let hooks = hooks();
+impl Counting {
+    /// A block for `layout`, held against the budget and watched. Memory
+    /// runs short only after a collection of garbage cycles found none to
+    /// free (language 16.7); the collector itself may go past the budget
+    /// while it frees.
+    #[inline(always)]
+    unsafe fn take(&self, layout: Layout, hooks: u8) -> *mut u8 {
+        use super::diagnostics::{BUDGET, WATCHED};
         if hooks & BUDGET != 0 {
             budget(layout.size());
         }
@@ -137,13 +140,33 @@ unsafe impl GlobalAlloc for Counting {
             block = get();
         }
         if hooks & WATCHED != 0 && !block.is_null() {
-            super::diagnostics::allocated(block, layout.size());
+            super::diagnostics::allocated(block, layout.size(), unsafe { mi_usable_size(block) });
         }
-        if hooks & MEASURED != 0 && !block.is_null() {
-            super::bench::allocated(layout.size());
-        }
-        if hooks & COUNTED != 0 && !block.is_null() {
-            super::tasks::count_allocation();
+        block
+    }
+}
+
+/// Counts a block that is new, or that grew, for a benchmark and for
+/// `testing.allocations`.
+#[cfg(tondo_staticlib)]
+#[inline(always)]
+fn counted(hooks: u8, size: usize) {
+    use super::diagnostics::{COUNTED, MEASURED};
+    if hooks & MEASURED != 0 {
+        super::bench::allocated(size);
+    }
+    if hooks & COUNTED != 0 {
+        super::tasks::count_allocation();
+    }
+}
+
+#[cfg(tondo_staticlib)]
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let hooks = super::diagnostics::hooks();
+        let block = unsafe { self.take(layout, hooks) };
+        if !block.is_null() {
+            counted(hooks, layout.size());
         }
         block
     }
@@ -155,26 +178,19 @@ unsafe impl GlobalAlloc for Counting {
             HELD.fetch_sub(layout.size(), Ordering::Relaxed);
         }
         if hooks & WATCHED != 0 {
-            super::diagnostics::freed(ptr, layout.size());
+            super::diagnostics::freed(ptr, unsafe { mi_usable_size(ptr) });
         }
         unsafe { Heap.dealloc(ptr, layout) }
     }
 
     /// The system's, which grows and shrinks a block in place when it can.
-    /// A budget and a watch see a block freed and another allocated; a
-    /// benchmark counts a block that grows as an allocation.
+    /// A benchmark and `testing.allocations` count a block that grows as an
+    /// allocation.
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        use super::diagnostics::{BUDGET, MEASURED, WATCHED, hooks};
+        use super::diagnostics::{BUDGET, WATCHED, hooks};
         let hooks = hooks();
         if hooks & (BUDGET | WATCHED) != 0 {
-            let block = unsafe { self.alloc(Layout::from_size_align_unchecked(new_size, layout.align())) };
-            if !block.is_null() {
-                unsafe {
-                    std::ptr::copy_nonoverlapping(ptr, block, layout.size().min(new_size));
-                    self.dealloc(ptr, layout);
-                }
-            }
-            return block;
+            return unsafe { self.held_realloc(ptr, layout, new_size, hooks) };
         }
         let get = || unsafe {
             if layout.align() <= PLAIN { mi_realloc(ptr, new_size) } else { Heap.realloc(ptr, layout, new_size) }
@@ -183,11 +199,54 @@ unsafe impl GlobalAlloc for Counting {
         if block.is_null() && super::cycles::collect_for_memory() {
             block = get();
         }
-        if hooks & MEASURED != 0 && !block.is_null() && new_size > layout.size() {
-            super::bench::allocated(new_size);
+        if !block.is_null() && new_size > layout.size() {
+            counted(hooks, new_size);
         }
-        if hooks & super::diagnostics::COUNTED != 0 && !block.is_null() && new_size > layout.size() {
-            super::tasks::count_allocation();
+        block
+    }
+}
+
+#[cfg(tondo_staticlib)]
+impl Counting {
+    /// `realloc` while a budget or a watch counts memory. A budget sees a
+    /// block freed and another allocated. A watch sees the block freed and
+    /// the one the system gives allocated, which may be the same, so that a
+    /// program watched, as a test is, keeps the blocks it keeps otherwise.
+    #[cold]
+    #[inline(never)]
+    unsafe fn held_realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize, hooks: u8) -> *mut u8 {
+        use super::diagnostics::BUDGET;
+        if hooks & BUDGET != 0 {
+            let block = unsafe { self.take(Layout::from_size_align_unchecked(new_size, layout.align()), hooks) };
+            if !block.is_null() {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(ptr, block, layout.size().min(new_size));
+                    self.dealloc(ptr, layout);
+                }
+                if new_size > layout.size() {
+                    counted(hooks, new_size);
+                }
+            }
+            return block;
+        }
+        // Before the block may go back, where another thread may take it.
+        let held = unsafe { mi_usable_size(ptr) };
+        super::diagnostics::freed(ptr, held);
+        let get = || unsafe {
+            if layout.align() <= PLAIN { mi_realloc(ptr, new_size) } else { Heap.realloc(ptr, layout, new_size) }
+        };
+        let mut block = get();
+        if block.is_null() && super::cycles::collect_for_memory() {
+            block = get();
+        }
+        match block.is_null() {
+            true => super::diagnostics::allocated(ptr, layout.size(), held),
+            false => {
+                super::diagnostics::allocated(block, new_size, unsafe { mi_usable_size(block) });
+                if new_size > layout.size() {
+                    counted(hooks, new_size);
+                }
+            }
         }
         block
     }

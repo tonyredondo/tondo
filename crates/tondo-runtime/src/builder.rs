@@ -73,8 +73,8 @@ impl Builder {
 
     /// The string built. Its block keeps room it does not use, as much as it
     /// uses at most, which the allocator frees with it and a string appended
-    /// to in place grows into. While a budget or a watch counts memory, that
-    /// room is what was asked for, and counted (`meta::usable`).
+    /// to in place grows into. While a budget counts memory, that room is
+    /// what was asked for, and counted (`meta::usable`).
     pub fn finish(self) -> *mut Str {
         if self.text.is_null() {
             return str_new(&[]);
