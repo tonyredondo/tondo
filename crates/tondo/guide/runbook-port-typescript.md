@@ -270,6 +270,10 @@ What went, part by part of the original:
   the type and fails with what is wrong. An object with keys nobody listed is
   a `Map`.
 - **`null` and `undefined`.** One `none`, and only in a `T?`.
+- **`${name}` left in a string.** A template whose backticks became double
+  quotes keeps its dollars: `"hi ${name}"` prints `hi $Ada`, a dollar and
+  the value, as a price is written, and nothing warns. Take the `$` out
+  when the backticks go. `"hi $name"`, with no braces, does warn (`W1022`).
 - **Truthiness and `==` that converts.** A condition is a `Bool`; `0`, `""`
   and an empty array are not false.
 - **Objects shared and changed.** An array or a record given to a function
