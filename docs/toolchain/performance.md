@@ -37,6 +37,10 @@ so a change of 2% in it is a change in the program.
 tondo test --bench --against main --max-regression 2 --regression-by instructions
 ```
 
+A run made while the machine had more to do than it has processors says so
+in its last line, `note: the machine was busy (load 32.9 on 32 processors):
+times are not to be compared, instructions are`.
+
 ## Where the time goes: profiles
 
 `tondo profile` samples a running program, or runs one from its start, and
@@ -47,6 +51,7 @@ tondo test --bench --against main --max-regression 2 --regression-by instruction
 tondo profile -- ./report big.csv         a program, from its start
 tondo profile api --cpu --duration 10     one that is running
 tondo test --exact <id> --bench --profile cpu
+tondo test --exact <id> --bench --profile instructions
 ```
 
 `tondo profile show` reads the result three ways, each closer to the
@@ -66,6 +71,25 @@ By line, a profile reads like this:
      94ms  64.4%      94ms  64.4%  busy.to:14 in words  total += text.split(" ").length()
      45ms  30.8%      45ms  30.8%  busy.to:13 in words  let text = "word {i} and more words"
 ```
+
+A profile by time samples what the clock says, and a machine that is busy
+with other work stretches every line of it. On Linux, `--instructions`
+samples by the instructions each thread ran instead, one sample each
+million, so the same program gives the same profile whatever else the
+machine does. It reads the same way, in instructions:
+
+```text
+$ tondo test --bench --profile instructions
+$ tondo profile show target/profiles/p.unit.p.counts--letters.instructions.pprof --lines
+instructions of target/profiles/p.unit.p.counts--letters.instructions.pprof, 6.86G in all over 1.26s
+     flat  flat%       cum   cum%  line
+    4.08G  59.4%     4.08G  59.4%  src/main.to:7 in letters  if c.isLetter() {
+    1.85G  27.0%     1.85G  27.0%  src/main.to:6 in letters  for c in text.chars() {
+```
+
+Where the system does not let a program count its instructions, as a
+container does by default, the command says so before it builds and names
+`--cpu`.
 
 ## What the compiler made: optimizations
 
@@ -205,6 +229,63 @@ stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in 
 
 `tondo check --performance` reports one thing from this view as a warning
 while writing: a copy that a loop makes on every turn.
+
+### Why a check stays
+
+A check that the compiler keeps says what it would need to know to drop
+it, and the code of the standard library that a loop runs is said at the
+program's line that brought it in. This function walks a text:
+
+```tondo
+import std.console
+
+/// How many letters a text has.
+fn letters(text: String): Int {
+    var count = 0
+    for c in text.chars() {
+        if c.isLetter() {
+            count += 1
+        }
+    }
+    count
+}
+
+fn main() {
+    console.println("{letters("hello, world")}")
+}
+```
+
+```text output
+10
+```
+
+```text
+$ tondo optimizations letters.to --kind checked
+letters.to:6:14: `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` keeps its overflow check, in a loop: its operands' bounds allow a result past `Int.max` (in letters, main)
+letters.to:8:13: `count += 1` keeps its overflow check, in a loop: nothing bounds `count` from above (in letters, main)
+```
+
+The second line is the program's own: nothing says how large `count` can
+get, so each turn checks that adding one fits. The first is of the standard
+library, in the method that gives the next character, which the loop over
+`chars()` copied into `letters`: its line is the program's, and it names
+where the code is from and the statement checked. A check that the
+compiler could drop, as the one of `count += 1` in the first program of
+this chapter, is under the kind `unchecked`.
+
+A program that has a `recover` anywhere, as tests often do, pays one more
+thing in its loops: after what may panic, it looks whether it did. The
+same function, called inside `recover { ... }`, shows it:
+
+```text
+$ tondo optimizations caught.to --kind checked
+caught.to:8:13: `count += 1` is followed by a check for a panic, in a loop: a program with a `recover` checks after what may panic (in letters, main)
+caught.to:8:13: `count += 1` keeps its overflow check, in a loop: nothing bounds `count` from above (in letters, main)
+```
+
+So a benchmark is not always the cost of the program: the build of the
+tests may check what the program's build does not, and `tondo
+optimizations --tests` says where.
 
 ### The closures of a chain
 
@@ -711,7 +792,8 @@ data structures hold.
 ## What not to be fooled by
 
 - **Time on a busy machine.** Judge by instructions, and look at time
-  last.
+  last. A run made under load says so in its last line, and a profile by
+  instructions is the one to take then.
 - **Where the code lies.** The same machine code at another address can
   run a few percent faster or slower, from how it meets the processor's
   caches and predictors. A change that moves code can look like a speed-up
