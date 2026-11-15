@@ -2259,7 +2259,12 @@ impl Server {
                         "const" => 14,
                         _ => continue,
                     };
-                    let Some(score) = matched(&declared, query).filter(|_| !declared.is_empty()) else { continue };
+                    // Its names that hold the query: of thousands, those
+                    // that only hold its letters in order are noise.
+                    let Some(score) = matched(&declared, query).filter(|&score| score < 3 && !declared.is_empty())
+                    else {
+                        continue;
+                    };
                     let column = code.find(&declared).unwrap_or(0);
                     let range = json!({
                         "start": { "line": line, "character": column },

@@ -623,6 +623,10 @@ fn highlights_symbols_signatures_hints() {
     let symbols = symbols.as_array().unwrap();
     assert_eq!(symbols[0]["name"], "greet");
     assert!(symbols[1..].iter().all(|s| s["containerName"].as_str().is_some()), "{symbols:?}");
+    // Of the standard library's, those whose names hold it, not only its
+    // letters in order.
+    let lower = |s: &Value| s["name"].as_str().unwrap().to_lowercase();
+    assert!(symbols[1..].iter().all(|s| lower(s).contains("gre")), "{symbols:?}");
     let found = |editor: &mut Editor, query: &str| -> Value {
         let symbols = editor.request("workspace/symbol", json!({ "query": query }));
         symbols.as_array().unwrap().iter().find(|s| s["name"] == query).cloned().unwrap_or_default()

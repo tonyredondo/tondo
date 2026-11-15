@@ -942,7 +942,12 @@ fn language(name: &str, args: &Args) -> Result<Reply, String> {
     if name == "symbols" {
         let mut symbols = server.ask("textDocument/documentSymbol", &json!({ "textDocument": document }))?;
         if let Some(query) = args.text("query") {
+            // The project's, which the standard library's would follow,
+            // each with its module.
             symbols = server.ask("workspace/symbol", &json!({ "query": query }))?;
+            if let Some(list) = symbols.as_array_mut() {
+                list.retain(|symbol| symbol["containerName"].as_str().is_none_or(|module| !module.starts_with("std.")));
+            }
         }
         let symbols: Vec<Value> = symbols.as_array().into_iter().flatten().map(symbol).collect();
         let mut text = String::new();

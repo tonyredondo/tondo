@@ -165,6 +165,10 @@ fn checks_fixes_and_navigates() {
     assert!(source.contains("fn welcome(") && source.contains("console.println(welcome(\"ada\"))"), "{source}");
     let (symbols, _) = agent.call("symbols", json!({ "file": "main.to" }));
     assert_eq!(symbols["symbols"][0]["name"], "welcome");
+    // With a query, the project's alone.
+    let (symbols, _) = agent.call("symbols", json!({ "file": "main.to", "query": "wel" }));
+    let names: Vec<&Value> = symbols["symbols"].as_array().unwrap().iter().map(|s| &s["name"]).collect();
+    assert_eq!(names, [&json!("welcome")], "{symbols}");
     // Who calls it, and what a code means.
     let (calls, text) = agent.call("calls", json!({ "file": "main.to", "line": 3, "column": 4 }));
     assert_eq!(calls["calls"][0]["function"], "main", "{text}");
