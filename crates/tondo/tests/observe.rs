@@ -6395,17 +6395,31 @@ fn a_dump_stops_a_task_that_computes_at_its_next_line() {
     let mut line = String::new();
     BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
     let dump = dir.join("spins.dump.json");
-    let taken =
-        Command::new(tondo_bin).args(["dump", &child.id().to_string(), "--output"]).arg(&dump).output().unwrap();
+    // "ready" comes before `main` reaches the loop: a dump asked for at once
+    // may stop the task on its way there, on a busy machine, where nothing
+    // is bound yet. It is asked for again until the task is in `spin`.
+    let rounds_in_spin = |read: &Value| {
+        let values = read["values"].as_array()?;
+        let rounds = values
+            .iter()
+            .find(|v| v["name"] == "rounds" && v["at"].as_str().is_some_and(|at| at.ends_with("in spin")))?;
+        Some(rounds["value"].clone())
+    };
+    let mut read = Value::Null;
+    for _ in 0..50 {
+        let taken =
+            Command::new(tondo_bin).args(["dump", &child.id().to_string(), "--output"]).arg(&dump).output().unwrap();
+        assert!(taken.status.success(), "{}", String::from_utf8_lossy(&taken.stderr));
+        read = serde_json::from_slice(&std::fs::read(&dump).unwrap()).unwrap();
+        assert_eq!(read["stopped"], true, "{read}");
+        if rounds_in_spin(&read).is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     child.kill().unwrap();
     child.wait().unwrap();
-    assert!(taken.status.success(), "{}", String::from_utf8_lossy(&taken.stderr));
-    let read: Value = serde_json::from_slice(&std::fs::read(&dump).unwrap()).unwrap();
-    assert_eq!(read["stopped"], true, "{read}");
-    let values = read["values"].as_array().unwrap();
-    let rounds =
-        values.iter().find(|v| v["name"] == "rounds" && v["at"].as_str().is_some_and(|at| at.ends_with("in spin")));
-    assert_eq!(rounds.map(|v| &v["value"]), Some(&json!("200000")), "{read}");
+    assert_eq!(rounds_in_spin(&read), Some(json!("200000")), "{read}");
     let made = Command::new(tondo_bin)
         .args(["dump", "test"])
         .arg(&dump)
