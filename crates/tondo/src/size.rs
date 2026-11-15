@@ -50,6 +50,10 @@ pub struct Weighed {
     pub size: u64,
     pub parts: Vec<(&'static str, u64)>,
     pub functions: Vec<Function>,
+    /// Whether the functions' sizes are the distances between their
+    /// symbols, as Mach-O gives no sizes: of the program's, the compiler
+    /// knows them; of the runtime's, what lies between counts too.
+    pub estimated: bool,
 }
 
 /// Builds the program or the tests at `path` as `options` say, aside, and
@@ -161,7 +165,7 @@ fn weigh_file(bytes: &[u8], named: &HashMap<String, (String, String, &'static st
     *parts.entry(PARTS[9]).or_default() += size.saturating_sub(counted);
     functions.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.name.cmp(&b.name)));
     let parts = PARTS.iter().map(|part| (*part, parts.get(part).copied().unwrap_or(0))).collect();
-    Ok(Weighed { size, parts, functions })
+    Ok(Weighed { size, parts, functions, estimated: macho })
 }
 
 /// The part of a symbol, the name a person reads, and where it comes from.
@@ -207,7 +211,7 @@ pub fn json(weighed: &Weighed, function: Option<&str>, top: usize) -> Value {
     let functions: Vec<Value> = chosen(weighed, function, top)
         .map(|f| json!({ "function": f.name, "place": f.place, "part": f.part, "bytes": f.bytes }))
         .collect();
-    json!({ "size": weighed.size, "parts": parts, "functions": functions })
+    json!({ "size": weighed.size, "parts": parts, "functions": functions, "estimated": weighed.estimated })
 }
 
 fn chosen<'a>(weighed: &'a Weighed, function: Option<&'a str>, top: usize) -> impl Iterator<Item = &'a Function> {
@@ -238,6 +242,9 @@ pub fn text(weighed: &Weighed, function: Option<&str>, top: usize) -> String {
         for f in listed {
             out.push_str(&format!("{:>11}  {}  ({})\n", bytes(f.bytes), f.name, f.place));
         }
+        if weighed.estimated {
+            out.push_str("on macOS a function's bytes reach the next symbol: the runtime's count what lies between\n");
+        }
     }
     out
 }
@@ -254,9 +261,14 @@ pub fn changes(before: &Weighed, now: &Weighed, function: Option<&str>, top: usi
         .collect();
     // Functions of one name, as copies of a generic's glue, are counted
     // together on each side, so that one does not stand for another.
+    // Where sizes are distances between symbols, a function of the
+    // runtime, which two builds of one tondo share, seems to change with
+    // what came to lie after it: only the program's are compared there.
+    let estimated = before.estimated || now.estimated;
+    let compared = |f: &&Function| !(estimated && matches!(f.part, "the runtime's code" | "the runtime's data"));
     let summed = |functions: &[Function]| {
         let mut sums: std::collections::BTreeMap<(String, String), u64> = Default::default();
-        for f in functions {
+        for f in functions.iter().filter(compared) {
             *sums.entry((f.name.clone(), f.place.clone())).or_default() += f.bytes;
         }
         sums
@@ -278,7 +290,10 @@ pub fn changes(before: &Weighed, now: &Weighed, function: Option<&str>, top: usi
             json!({ "function": name, "place": place, "before": old, "bytes": new, "change": signed(*old, *new) })
         })
         .collect();
-    json!({ "before": before.size, "size": now.size, "change": signed(before.size, now.size), "parts": parts, "functions": functions })
+    json!({
+        "before": before.size, "size": now.size, "change": signed(before.size, now.size), "parts": parts,
+        "functions": functions, "estimated": estimated,
+    })
 }
 
 /// What `changes` gives, for a person.
@@ -298,6 +313,9 @@ pub fn changes_text(changes: &Value, against: &str) -> String {
         out.push_str(&format!("{:>12}  {}\n", signed(&part["change"]), part["part"].as_str().unwrap_or_default()));
     }
     let functions = changes["functions"].as_array().cloned().unwrap_or_default();
+    if changes["estimated"] == true {
+        out.push_str("the runtime's functions are not compared: on macOS their bytes reach the next symbol\n");
+    }
     if !functions.is_empty() {
         out.push_str("the functions whose bytes changed the most:\n");
         for f in &functions {
@@ -306,4 +324,39 @@ pub fn changes_text(changes: &Value, against: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn weighed(functions: &[(&str, &'static str, u64)], estimated: bool) -> Weighed {
+        let functions = functions
+            .iter()
+            .map(|&(name, part, bytes)| Function { name: name.into(), place: "here".into(), part, bytes })
+            .collect();
+        let parts = PARTS.iter().map(|part| (*part, 0)).collect();
+        Weighed { size: 0, parts, functions, estimated }
+    }
+
+    /// Where sizes are distances between symbols, as on macOS, a function
+    /// of the runtime that seems to change is not compared; the program's
+    /// are, and copies of one name are summed on each side.
+    #[test]
+    fn a_comparison_keeps_to_what_it_can_tell() {
+        let before = [("glue", PARTS[4], 60), ("glue", PARTS[4], 200), ("main", PARTS[0], 100)];
+        let now = [("glue", PARTS[4], 200), ("glue", PARTS[4], 768), ("main", PARTS[0], 100), ("shout", PARTS[0], 40)];
+        let changed = |estimated| {
+            let found = changes(&weighed(&before, estimated), &weighed(&now, estimated), None, 10);
+            let names: Vec<String> = found["functions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f["function"].as_str().unwrap().to_string())
+                .collect();
+            names
+        };
+        assert_eq!(changed(true), ["shout"]);
+        assert_eq!(changed(false), ["glue", "shout"]);
+    }
 }

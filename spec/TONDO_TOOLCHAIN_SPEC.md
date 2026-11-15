@@ -2573,7 +2573,10 @@ código que una llamada inlinea pesa en la función a la que se copió.
   con ellos y el total, el del que no los tiene.
 - `--against <revisión>` construye también el código de esa revisión de git,
   como en 7.18, y da cuánto cambió el total, cada parte y las funciones que más
-  cambiaron, con lo que tenían antes.
+  cambiaron, con lo que tenían antes. En macOS, donde Mach-O no da el tamaño de
+  un símbolo, los bytes de una función llegan al símbolo siguiente: las del
+  runtime cuentan lo que haya entre medias, lo dice, y `--against` compara solo
+  las del programa (`estimated` en el JSON).
 - Con `--json`, `tondo-size-0.1/1`: `size`, `parts` (`part` y `bytes`) y
   `functions` (`function`, `place`, `part` y `bytes`); con `--against`,
   `against` (`ref` y `commit`) y `changes`, que da `before`, `size` y `change`
