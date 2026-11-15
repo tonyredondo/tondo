@@ -156,6 +156,10 @@ executable.
 A `pub` constant states its type, as everything public does. An expression
 that would panic, as a division by zero, is a compile error in a constant.
 
+A constant can belong to a type instead: `const Point.Origin: Point = ...`
+is read as `Point.Origin`, as `Int.Max` is
+([Constants of a type](03-functions.md#constants-of-a-type)).
+
 There are no global variables. What a whole program shares and changes is a
 field of a [context](14-contexts.md), or state in `std.sync`.
 

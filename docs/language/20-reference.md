@@ -27,6 +27,8 @@ pub type User = { name: String, age: Int = 0, priv token: String = "" }
 
 pub type UserId = Int
 
+pub const UserId.Nobody: UserId = UserId(0)
+
 alias Scores = Map[String, Int]
 
 pub enum Status {
@@ -57,13 +59,13 @@ fn main() {
     let scores: Scores = ["ada": changing]
     let status = Status.Suspended("spam")
     console.println("{left} {right.value} {scores} {status == Status.Active} {clock.seconds(1).seconds()}")
-    console.println("{User { name: "ada" }.name()} {Request.id.isEmpty()}")
+    console.println("{User { name: "ada" }.name()} {Request.id.isEmpty()} {right == UserId.Nobody}")
 }
 ```
 
 ```text output
 a 2 [ada: 4] false 1
-ada true
+ada true false
 ```
 
 [Values](02-values.md) · [Records](05-records.md) · [Enums](06-enums.md) ·

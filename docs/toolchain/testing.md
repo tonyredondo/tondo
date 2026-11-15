@@ -317,6 +317,32 @@ test words::unit::words::countingAPage ... ok
 Nothing changed between those two runs but the machine. By time, the
 second is 42% faster; by instructions, it is the same program.
 
+A benchmark is run now and then. What it found is kept by a test, which
+runs at every change: `testing.allocations` gives how many times a call
+allocates, the count that the benchmark's row shows as `allocs/op`, since
+the tests are built optimized as the benchmarks are.
+
+```tondo test
+import std.testing
+
+/// The squares below a number.
+fn squares(limit: Int): Array[Int] {
+    var all: Array[Int] = []
+    for n in 0..limit {
+        all.push(n * n)
+    }
+    all
+}
+
+test theSquaresTakeOneAllocation {
+    assert(testing.allocations(() { squares(100) }) <= 1)
+}
+```
+
+The array is given its room before the loop, so the hundred squares cost
+one allocation, and the test fails when a change makes them cost more.
+Written with `<=`, it does not fail when the compiler gets better.
+
 When the machine had more to do than it has processors, the run says so in
 its last line, and a baseline kept under load says it again when it is
 compared with:

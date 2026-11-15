@@ -53,6 +53,9 @@ fn main() {
 170141183460469231731687303715884105727 18446744073709551615 4611686018427387904 7 7 10
 ```
 
+`Max`, `Min` and `Bits` are the constants of every integer type, and of
+`Byte`: its greatest value, its least, and its width.
+
 ## Overflow
 
 An operation whose result does not fit its type panics. It does so in a
@@ -202,6 +205,7 @@ fn main() {
     console.println("{2.5.round()} {3.5.round()} {2.5.roundTiesAway()} {2.7.floor()} {2.2.ceil()} {(-2.7).truncate()}")
     console.println("{2.0.pow(10.0)} {(-3.5).abs()} {3.14159.toFixed(2)} {7.5.clamp(0.0, 5.0)} {1.5.min(2.5)}")
     console.println("{2.0.sqrt()} {(-1.0).sqrt()} {(-1.0).checkedSqrt().isErr()}")
+    console.println("{Float.Infinity} {Float.NaN} {Float.Max} {Float.Epsilon} {Float.Pi}")
 }
 ```
 
@@ -211,6 +215,7 @@ inf -inf NaN false true
 2.0 4.0 3.0 2.0 3.0 -2.0
 1024.0 3.5 3.14 5.0 1.5
 1.4142135623730951 NaN true
+inf NaN 1.7976931348623157e308 2.220446049250313e-16 3.141592653589793
 ```
 
 - Floats are approximate. `0.1 + 0.2` is not `0.3`: compare with a
@@ -222,6 +227,10 @@ inf -inf NaN false true
 - `round()` rounds halves to the even neighbour, as IEEE does, and
   `roundTiesAway()` away from zero, as school does.
 - A float is not a key of a map and has no `%`.
+- The constants of a float type are `Infinity` and `NaN`; `Max` and `Min`,
+  the greatest and the least of the finite ones; `Epsilon`, the gap between
+  1.0 and the float after it; and `Pi` and `E`, which `math.Pi` and `math.E`
+  name too. `Float32` has its own.
 - The compiler never reorders float arithmetic or merges `a * b + c` into
   one instruction, because the result would change. `math.fma(a, b, c)` asks
   for it.

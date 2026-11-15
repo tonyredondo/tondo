@@ -360,7 +360,10 @@ fn main() {
 ```
 
 `total(quantity, price)` does not compile, and neither does `total(1999,
-3)`. A newtype is built by calling it and opened with `.value`.
+3)`. A newtype is built by calling it and opened with `.value`. The values
+of one that have a name are its constants, `pub const Cents.Zero: Cents =
+Cents(0)`, read as `Cents.Zero`
+([Constants of a type](03-functions.md#constants-of-a-type)).
 
 A newtype can be copied, compared, used as a key and sent to a task when
 its value can, and has none of its value's methods or operators: `Cents`

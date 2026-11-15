@@ -297,10 +297,10 @@ stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in 
 
 `tondo check --performance` warns, while writing, of costs that the
 compiler cannot take away, because doing so would change what the program
-means: a copy that a loop makes on every turn (`W1009`), taking the first
-element of an array in a loop (`W1024`), and compiling a regular
-expression each time the code runs (`W1025`). This program has the last
-two:
+means: a copy that a loop makes on every turn (`W1009`), an array that a
+loop searches while it pushes to it (`W1023`), taking the first element
+of an array in a loop (`W1024`), and compiling a regular expression each
+time the code runs (`W1025`). This program has the last two:
 
 ```tondo
 import std.console
@@ -338,9 +338,43 @@ warning[W1024]: `rest.removeAt(0)` moves every other element of `rest` on every 
 warning[W1025]: `regex.Regex.compile(r"^\w+$")` compiles its pattern every time this code runs: a context's field compiles it once, when first read: `context Patterns = { pattern: regex.Regex = regex.Regex.compile(r"^\w+$")? }`, and `Patterns.pattern` reads it
 ```
 
-Each says what to write. What the compiler can do by itself it does, and
-no warning asks for it: a text that grows in a loop, as `text =
-text.concat(part)`, grows in place.
+Each says what to write. The loop that keeps what it has not seen yet is
+the one `W1023` is for: it looks through an array that grows with every
+turn.
+
+```tondo
+import std.console
+
+/// The names, each once, in the order they came.
+fn once(names: Array[String]): Array[String] {
+    var seen: Array[String] = []
+    for name in names {
+        if not seen.contains(name) {
+            seen.push(name)
+        }
+    }
+    seen
+}
+
+fn main() {
+    console.println("{once(["ada", "bo", "ada"])}")
+}
+```
+
+```text output
+[ada, bo]
+```
+
+```text
+$ tondo check names.to --performance
+warning[W1023]: `seen.contains(name)` looks at every element of `seen`, which this loop pushes to, so each turn looks at more: keep a `Set` beside it, `var seenSet = seen.toSet()` before the loop, ask `seenSet.contains(...)`, and `seenSet.insert(...)` with each push
+```
+
+A loop that searches an array which stays as it is gets no warning: it
+is most often an array of a few elements, where a `Set` gains nothing.
+
+What the compiler can do by itself it does, and no warning asks for it: a
+text that grows in a loop, as `text = text.concat(part)`, grows in place.
 
 ### Why a check stays
 
@@ -967,6 +1001,7 @@ nothing chosen in the source.
 | | |
 | --- | --- |
 | `tondo test --bench` | allocations and bytes for each operation |
+| `testing.allocations(closure)` | the same count in a test, which fails when it grows ([Testing](testing.md#benchmarks)) |
 | `tondo optimizations --kind heap` | each place that allocates, and what keeps it on the heap |
 | `tondo profile <program> --memory` | what is allocated and what is held, by line |
 | `tondo test --exact <id> --bench --profile memory` | where a benchmark allocates |
