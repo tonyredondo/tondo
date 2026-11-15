@@ -131,7 +131,8 @@ observed by its process ID or name:
 tondo ps                          the programs there are
 tondo counters api --interval 1   the runtime's counters and the program's own
 tondo trace api --duration 5      what its tasks do, for Perfetto, and a profile
-tondo profile api --cpu           where it spends its time; --memory, --tasks
+tondo profile api --cpu           where it spends its time; --memory, --tasks,
+                                  --instructions (Linux), which load does not move
 tondo profile -- ./app arg        a program it starts, until it ends
 tondo profile show cpu.pb.gz      the functions and lines that take the most; --html;
                                   --asm, the hottest function's instructions with their share

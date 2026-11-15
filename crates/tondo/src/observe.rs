@@ -493,12 +493,15 @@ pub(crate) struct Recorded {
 /// Records what a program does until it ends, `duration` passes or
 /// Ctrl-C, which ends a program it started too. Before it stops a program
 /// that runs, it asks it `ask`, as `memory` or `dump`, on a connection of
-/// its own. A program it starts counts its memory only when `counting`.
+/// its own. A program it starts counts its memory only when `counting`;
+/// with `instructions`, its threads are sampled by the instructions they
+/// run rather than by time.
 pub(crate) fn record(
     traced: Traced,
     duration: Option<Duration>,
     ask: Option<&str>,
     counting: bool,
+    instructions: bool,
 ) -> Result<Recorded, String> {
     let (mut program, mut child) = match traced {
         Traced::Running(name) => (connect(&name)?, None),
@@ -507,7 +510,16 @@ pub(crate) fn record(
             // Its own process group, so that Ctrl-C ends the trace first.
             let child = std::process::Command::new(&executable)
                 .args(&arguments)
-                .env("TONDO_TRACE", if counting { "1" } else { "cpu" })
+                .env(
+                    "TONDO_TRACE",
+                    if counting {
+                        "1"
+                    } else if instructions {
+                        "instructions"
+                    } else {
+                        "cpu"
+                    },
+                )
                 .process_group(0)
                 .spawn()
                 .map_err(|e| format!("cannot start {}: {e}", executable.display()))?;
@@ -516,7 +528,7 @@ pub(crate) fn record(
         }
     };
     let info = program.ask("info")?;
-    let reply = program.ask("trace")?;
+    let reply = program.ask(if instructions { "trace instructions" } else { "trace" })?;
     if let Some(error) = reply["error"].as_str() {
         return Err(format!("the program {} cannot be traced: {error}", program.pid));
     }
@@ -582,7 +594,7 @@ pub(crate) fn record(
 /// `tondo trace`: records until the program ends, `duration` passes or
 /// Ctrl-C, then writes the timeline and the profile.
 pub fn trace(traced: Traced, duration: Option<Duration>, output: Option<PathBuf>, as_json: bool) -> Result<(), String> {
-    let Recorded { info, pid, recording, end, .. } = record(traced, duration, None, true)?;
+    let Recorded { info, pid, recording, end, .. } = record(traced, duration, None, true, false)?;
     // `<output>.json` and `<output>.folded`, as the name of either file
     // given names both: `worker.trace.json` is `worker.trace`'s.
     let base = output

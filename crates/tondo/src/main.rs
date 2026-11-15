@@ -467,9 +467,13 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--profile" => {
                 options.profile = Some(match value()?.as_str() {
                     "cpu" => tondo::profile::Kind::Cpu,
+                    "instructions" => tondo::profile::Kind::Instructions,
                     "memory" => tondo::profile::Kind::Memory,
-                    other => return Err(usage(format!("--profile is cpu or memory, not {other}"))),
+                    other => return Err(usage(format!("--profile is cpu, instructions or memory, not {other}"))),
                 });
+                if let Some(Err(why)) = options.profile.map(|kind| kind.here("--profile cpu")) {
+                    return Err(why);
+                }
             }
             "--save-baseline" => save = Some(value()?),
             "--baseline" => baseline = Some(value()?),
@@ -1589,14 +1593,15 @@ fn profile_command(args: &[OsString]) -> Result<ExitCode, String> {
                 break;
             }
             "--json" => json = true,
-            flag @ ("--cpu" | "--memory" | "--tasks") => {
+            flag @ ("--cpu" | "--instructions" | "--memory" | "--tasks") => {
                 let chosen = match flag {
                     "--cpu" => Kind::Cpu,
+                    "--instructions" => Kind::Instructions,
                     "--memory" => Kind::Memory,
                     _ => Kind::Tasks,
                 };
                 if kind.is_some_and(|k| k != chosen) {
-                    return Err(usage("a profile is of one thing: --cpu, --memory or --tasks"));
+                    return Err(usage("a profile is of one thing: --cpu, --instructions, --memory or --tasks"));
                 }
                 kind = Some(chosen);
             }

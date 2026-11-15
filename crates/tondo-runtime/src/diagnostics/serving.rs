@@ -40,9 +40,9 @@ pub(crate) fn start() {
         crate::tasks::wakes::start();
     }
     let live = crate::live::on() && config.diagnostics.as_ref().is_none_or(|value| value != "0");
-    // `cpu`: a profile of processor time, which counting the memory would
-    // change.
-    let processor = config.trace.as_ref().is_some_and(|value| value == "cpu");
+    // `cpu` or `instructions`: a profile of processor time or of the
+    // instructions run, which counting the memory would change.
+    let processor = config.trace.as_ref().is_some_and(|value| value == "cpu" || value == "instructions");
     let traced = on(&config.trace) || processor;
     if !on(&config.diagnostics) && !traced && !debugged && !live && asked_dump().is_none() {
         return;
@@ -204,6 +204,7 @@ pub(super) fn serve(listener: UnixListener) {
             }
             kept
         });
+        crate::recorder::sample_new_threads();
         push(&mut SESSION.lock().unwrap_or_else(|e| e.into_inner()));
         if polled[0].revents != 0 {
             while let Ok((client, _)) = listener.accept() {
@@ -259,10 +260,15 @@ pub(super) fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
                 let memory = memory(&mut frames);
                 format!("{{\"memory\":{memory},\"frames\":{{{}}}}}", frames.json)
             }
-            "trace" => match trace(client) {
-                Ok(()) => continue,
-                Err(reply) => reply,
-            },
+            "trace" | "trace instructions" => {
+                // Sampled by the instructions each thread runs, or by time.
+                let every = if line == "trace" { 0 } else { crate::recorder::INSTRUCTIONS_PERIOD };
+                crate::recorder::INSTRUCTIONS_EVERY.store(every, Ordering::Relaxed);
+                match trace(client) {
+                    Ok(()) => continue,
+                    Err(reply) => reply,
+                }
+            }
             "dump" => dump("request", "", None, Some(std::time::Duration::from_millis(250))),
             "stop" => {
                 let mut session = SESSION.lock().unwrap_or_else(|e| e.into_inner());

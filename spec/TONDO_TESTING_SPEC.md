@@ -2247,7 +2247,7 @@ tondo test [<project> | --project <dir>]
                     [--baseline <name|path> | --against <revision> | --compiler <tondo|revision>]
                     [--max-regression <percent> [--regression-by <time|instructions>]]
                     [--layouts <n>]]
-           [--profile <cpu|memory>]
+           [--profile <cpu|instructions|memory>]
            [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>]
                    [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]
            [--show-output]
@@ -2582,11 +2582,13 @@ comparar dos compiladores, uno guarda la línea base y el otro la compara.
 benchmark, en el formato de pprof de 7.15 de la especificación del toolchain:
 las muestras de cada milisegundo de procesador mientras el test corre, o
 mientras el benchmark toma sus muestras, sin el calentamiento ni la tanda que
-cuenta. `--profile memory` cuenta en su lugar lo que asignan, como lo cuenta
+cuenta. `--profile instructions`, en Linux, toma las muestras por las
+instrucciones que corren, como `tondo profile --instructions`, y no por el
+tiempo. `--profile memory` cuenta en su lugar lo que asignan, como lo cuenta
 `tondo profile --memory`, lo que hace más lenta cada asignación: un
 benchmark medido así no se compara con uno medido sin él. Cada perfil va a
-`target/profiles/<id>.<cpu|memory>.pprof` del proyecto, con `::` del id como
-`.`, o `<id>--<benchmark>.<cpu|memory>.pprof`, con los caracteres que no son
+`target/profiles/<id>.<cpu|instructions|memory>.pprof` del proyecto, con `::`
+del id como `.`, o `<id>--<benchmark>.<cpu|instructions|memory>.pprof`, con los caracteres que no son
 letras, dígitos, `.`, `_` ni `-` como `_`. Un test demasiado corto para tener
 una muestra no tiene perfil. La salida para personas lista los perfiles al
 final, y el reporte, en `profiles` (15.1).

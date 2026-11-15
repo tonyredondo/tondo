@@ -172,11 +172,12 @@
           "type": "string",
           "enum": [
             "cpu",
+            "instructions",
             "memory",
             "tasks"
           ],
           "default": "cpu",
-          "markdownDescription": "What *Profile* measures: processor time, memory, or where tasks wait."
+          "markdownDescription": "What *Profile* measures: processor time, the instructions run (Linux; a busy machine does not move it), memory, or where tasks wait."
         }
       }
     },

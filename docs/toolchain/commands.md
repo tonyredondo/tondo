@@ -89,7 +89,7 @@ usage:
                       | html=<path>]... [--coverage]
             [--bench [--bench-time <seconds>] [--save-baseline <name>] [--baseline <name> | --against <rev> | --compiler <tondo|rev>]
                      [--max-regression <percent> [--regression-by time|instructions]] [--layouts <n>]]
-            [--profile cpu|memory]
+            [--profile cpu|instructions|memory]
             [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>] [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]
             [--models]
             [--diagnostic-format human|json] [--artifacts <dir>] [--update-snapshots]
@@ -176,12 +176,13 @@ usage:
   tondo trace [--duration <seconds>] [--output <path>] [--json] -- <program> [<argument>...]
                                                        record what a program's tasks do, for Perfetto,
                                                        and a profile of where it spends its time
-  tondo profile <pid|name> [--cpu | --memory | --tasks] [--duration <seconds>] [--output <path>] [--via <command>] [--json]
-  tondo profile [--cpu | --memory | --tasks] [--duration <seconds>] [--output <path>] [--json] -- <program> [<argument>...]
+  tondo profile <pid|name> [--cpu | --instructions | --memory | --tasks] [--duration <seconds>] [--output <path>] [--via <command>] [--json]
+  tondo profile [--cpu | --instructions | --memory | --tasks] [--duration <seconds>] [--output <path>] [--json] -- <program> [<argument>...]
   tondo profile show <profile> [--top <n>] [--lines | --asm [<function>]] [--sample <type>] [--html <path>] [--json]
-                                                       where a program spends its time, what it allocates and
-                                                       holds, or where its tasks are, in pprof's format; show
-                                                       reads one: the functions and lines that take the most
+                                                       where a program spends its time, or the instructions it
+                                                       runs (Linux), what it allocates and holds, or where its
+                                                       tasks are, in pprof's format; show reads one: the
+                                                       functions and lines that take the most
   tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>]
             [--cpu <level>] [--against <rev> | --compiler <tondo|rev>] [--json]
                                                        what a release build makes of the code: the calls it

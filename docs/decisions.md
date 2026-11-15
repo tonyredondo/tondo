@@ -7210,3 +7210,17 @@ build alone reads, and once a day the least recently used builds of `run/`, `tes
 while together they hold more than a limit. Tony chose 10 GB, a great many builds of a person's
 programs, with `TONDO_CACHE_LIMIT` for whoever compiles more; the fetched dependencies and the
 runtime do not count, since losing them costs the network or a long build.
+
+## A profile by instructions samples with the counter's own signal
+
+A profile by time on a busy machine says where the program waited for the processor as much as
+where it worked, and `tondo test --bench` judges a change by instructions for that reason; a
+profile could not. `--instructions` samples a thread every million instructions it runs, counted
+by Linux's `perf_event_open`. Rather than the counter's ring buffer of samples, which needs a
+mapping per thread and a reader that unwinds what the kernel copied, each counter raises
+`SIGPROF` on its own thread when it overflows (`F_SETSIG` and `F_SETOWN_EX`): the handler that
+samples by time records the stack as it always has, so the frames, labels and lines are the same
+code. A thread started while a profile runs is counted from the next turn of the thread that
+drains the samples, within a tenth of a second. Where the system forbids counting, as a container or a high
+`perf_event_paranoid` does, `tondo` says so before it builds anything, and names the profile by
+time instead.

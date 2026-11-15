@@ -229,6 +229,23 @@ fn profiles_time_memory_and_tasks() {
     run(&["profile", "show", "cpu.pprof", "--html", "flame.html"]);
     let page = std::fs::read_to_string(dir.join("flame.html")).unwrap();
     assert!(page.contains("<svg") && page.contains("<title>fib") && !page.contains("<script"), "{page}");
+    // By the instructions each thread runs, which a busy machine does not
+    // move: Linux's, where the system lets a program count them.
+    let counted = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["profile", "--instructions", "--output", "instructions.pprof", "--", "busy.to"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&counted.stderr);
+    if !cfg!(target_os = "linux") || said.contains("profile by time with --cpu") {
+        assert!(said.contains("profile by time with --cpu") && !counted.status.success(), "{said}");
+    } else {
+        assert!(counted.status.success(), "{said}");
+        let instructions = show(&["instructions.pprof", "--top", "1000"]);
+        assert_eq!((&instructions["type"], &instructions["unit"]), (&json!("instructions"), &json!("count")));
+        let fib = instructions["lines"].as_array().unwrap().iter().find(|l| l["function"] == "fib");
+        assert!(fib.is_some_and(|l| l["line"] == 4), "{instructions}");
+    }
     // Memory, as the program left it: what it holds and what it allocated.
     // A sample every 64 KiB: at the default 512 KiB, the 11 MB it holds are
     // about 21 samples, and one run in a few thousand passed the bounds.

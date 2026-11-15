@@ -1685,15 +1685,15 @@ struct Ran {
 /// benchmarks of a project, then reads each profile it wrote.
 fn profile(args: &Args) -> Result<Reply, String> {
     let kind = args.text("kind").unwrap_or_else(|| "cpu".into());
-    if !matches!(kind.as_str(), "cpu" | "memory" | "tasks") {
-        return Err(format!("no profile of `{kind}`: cpu, memory or tasks"));
+    if !matches!(kind.as_str(), "cpu" | "instructions" | "memory" | "tasks") {
+        return Err(format!("no profile of `{kind}`: cpu, instructions, memory or tasks"));
     }
     let top = args.number("top").map_or(15, |n| n.max(1.0) as usize);
     let path = args.path().display().to_string();
     let mut argv: Vec<String> = Vec::new();
     let (profiles, base): (Vec<PathBuf>, PathBuf) = if args.text("test").is_some() || args.flag("bench") {
         if kind == "tasks" {
-            return Err("tests are profiled for cpu or memory".into());
+            return Err("tests are profiled for cpu, instructions or memory".into());
         }
         argv.extend([
             "test".into(),
@@ -2485,7 +2485,11 @@ with `bench`, the benchmarks of `test` or of all, what they measure.",
         params: &[
             ("path", "string", "The program, a .to file or a project directory; the server's directory by default."),
             ("program", "string", "A running program's process ID or name, instead of `path`."),
-            ("kind", "string", "cpu (the default), memory or tasks."),
+            (
+                "kind",
+                "string",
+                "cpu (the default), instructions (Linux: by the instructions run, which a busy machine does not move), memory or tasks.",
+            ),
             ("args", "strings", "The program's arguments."),
             ("duration", "number", "Seconds to profile for, instead of until the program ends."),
             ("test", "string", "The id of a test of the project to profile, as `tondo test --list` gives it."),

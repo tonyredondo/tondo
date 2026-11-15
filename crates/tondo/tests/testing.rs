@@ -2105,7 +2105,23 @@ test joining {
     );
     let (_, stderr, status) = tondo(&dir, &["test", "--profile", "time"]);
     assert_eq!(status, 2);
-    assert!(stderr.contains("--profile is cpu or memory, not time"), "{stderr}");
+    assert!(stderr.contains("--profile is cpu, instructions or memory, not time"), "{stderr}");
+    // By the instructions each runs, where the system lets it count them.
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--profile", "instructions", "--filter", "slow"]);
+    if stderr.contains("profile by time with --profile cpu") {
+        assert_ne!(status, 0, "{stderr}");
+    } else {
+        assert_eq!(status, 0, "{stderr}");
+        assert!(stdout.contains("  target/profiles/app.unit.app.slow.instructions.pprof\n"), "{stdout}");
+        let slow = "target/profiles/app.unit.app.slow.instructions.pprof";
+        let (shown, stderr, _) = tondo(&dir, &["profile", "show", slow, "--json"]);
+        let shown: serde_json::Value = serde_json::from_str(&shown).unwrap_or_else(|_| panic!("{stderr}"));
+        assert_eq!(
+            (&shown["type"], &shown["functions"][0]["function"]),
+            (&serde_json::json!("instructions"), &serde_json::json!("fib")),
+            "{shown}"
+        );
+    }
 }
 
 /// The benchmarks (bench/) keep compiling: those against Go run once as

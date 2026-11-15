@@ -16,6 +16,9 @@ use std::time::Duration;
 #[derive(Clone, Copy, PartialEq)]
 pub enum Kind {
     Cpu,
+    /// By the instructions each thread runs, which a busy machine does not
+    /// move: Linux's.
+    Instructions,
     Memory,
     Tasks,
 }
@@ -24,11 +27,71 @@ impl Kind {
     pub fn name(self) -> &'static str {
         match self {
             Kind::Cpu => "cpu",
+            Kind::Instructions => "instructions",
             Kind::Memory => "memory",
             Kind::Tasks => "tasks",
         }
     }
+
+    /// Whether this system can take a profile of the kind: one by
+    /// instructions only where Linux lets a program count them, which a
+    /// container or `perf_event_paranoid` may not. `by_time` is the option
+    /// that profiles by time instead.
+    pub fn here(self, by_time: &str) -> Result<(), String> {
+        if self != Kind::Instructions {
+            return Ok(());
+        }
+        if !cfg!(target_os = "linux") {
+            return Err(format!(
+                "a profile by instructions counts them as Linux does: here, profile by time with {by_time}"
+            ));
+        }
+        counts_instructions().map_err(|error| {
+            let why = match error.raw_os_error() {
+                Some(libc::EPERM | libc::EACCES) => "`perf_event_paranoid`, or a container, forbids it".to_string(),
+                Some(libc::ENOENT | libc::ENODEV | libc::EOPNOTSUPP) => "the processor gives it no counter".to_string(),
+                _ => error.to_string(),
+            };
+            format!("the system does not let a program count its instructions ({why}): profile by time with {by_time}")
+        })
+    }
 }
+
+/// Whether this thread may count the instructions it runs, as the program
+/// profiled by instructions counts its own.
+#[cfg(target_os = "linux")]
+fn counts_instructions() -> std::io::Result<()> {
+    /// `perf_event_attr` as its first version lays it out: an event of the
+    /// hardware (0), instructions (1), outside the kernel and the hypervisor.
+    #[repr(C)]
+    #[derive(Default)]
+    struct Attr {
+        kind: u32,
+        size: u32,
+        config: u64,
+        fields: [u64; 4],
+        wakeup_events: u32,
+        bp_type: u32,
+        config1: u64,
+    }
+    let mut attr = Attr { size: size_of::<Attr>() as u32, config: 1, ..Attr::default() };
+    attr.fields[3] = 1 << 5 | 1 << 6;
+    let file = unsafe { libc::syscall(libc::SYS_perf_event_open, &attr as *const Attr, 0, -1i32, -1i32, 8u64) };
+    if file < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    unsafe { libc::close(file as i32) };
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn counts_instructions() -> std::io::Result<()> {
+    Ok(())
+}
+
+/// The instructions a sample of a profile by instructions stands for, as
+/// the runtime samples them.
+const INSTRUCTIONS: i64 = 1_000_000;
 
 /// The processor time a sample stands for, in nanoseconds.
 const PERIOD: i64 = 1_000_000;
@@ -56,12 +119,13 @@ pub fn profile(
     output: Option<PathBuf>,
     as_json: bool,
 ) -> Result<(), String> {
+    kind.here("--cpu")?;
     let ask = match kind {
-        Kind::Cpu => None,
+        Kind::Cpu | Kind::Instructions => None,
         Kind::Memory => Some("memory"),
         Kind::Tasks => Some("dump"),
     };
-    let recorded = observe::record(traced, duration, ask, kind == Kind::Memory)?;
+    let recorded = observe::record(traced, duration, ask, kind == Kind::Memory, kind == Kind::Instructions)?;
     let mut frames = recorded.recording.frames.clone();
     if let Some(Value::Object(more)) = recorded.asked.as_ref().and_then(|a| a.get("frames")) {
         frames.extend(more.clone());
@@ -92,6 +156,7 @@ pub fn profile(
     }
     let what = match kind {
         Kind::Cpu => format!("{count} samples of 1 ms of processor time"),
+        Kind::Instructions => format!("{count} samples of a million instructions"),
         Kind::Memory => format!("{count} samples of memory"),
         Kind::Tasks => format!("{count} tasks"),
     };
@@ -151,9 +216,12 @@ pub(crate) fn build(
         builder.sample(&frames, values, labels);
     };
     match kind {
-        Kind::Cpu => {
-            let mut builder =
-                Builder::new(program, &[("samples", "count"), ("cpu", "nanoseconds")], ("cpu", "nanoseconds"), PERIOD);
+        Kind::Cpu | Kind::Instructions => {
+            let (unit, period) = match kind {
+                Kind::Cpu => (("cpu", "nanoseconds"), PERIOD),
+                _ => (("instructions", "count"), INSTRUCTIONS),
+            };
+            let mut builder = Builder::new(program, &[("samples", "count"), unit], unit, period);
             for sample in samples {
                 let thread = sample[1].to_string();
                 // The thread, and the labels of the task that ran.
@@ -164,7 +232,7 @@ pub(crate) fn build(
                     .collect();
                 let mut tags: Vec<(&str, &str)> = vec![("thread", &thread)];
                 tags.extend(named.iter().map(|(name, value)| (name.as_str(), value.as_str())));
-                add(&mut builder, &sample[2], &[1, PERIOD], &tags);
+                add(&mut builder, &sample[2], &[1, period], &tags);
             }
             Ok((builder, samples.len()))
         }
@@ -518,6 +586,9 @@ pub fn amount(value: i64, unit: &str) -> String {
             v if v >= 1024.0 => format!("{:.1}KiB", v / 1024.0),
             v => format!("{v:.0}B"),
         },
+        // Millions, as a profile by instructions counts.
+        "count" if value >= 1e9 => format!("{:.2}G", value / 1e9),
+        "count" if value >= 1e6 => format!("{:.0}M", value / 1e6),
         _ => format!("{value:.0}"),
     }
 }

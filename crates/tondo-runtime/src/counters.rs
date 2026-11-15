@@ -70,6 +70,47 @@ mod linux {
         }
     }
 
+    /// A counter of the instructions the thread `tid` runs that raises
+    /// `SIGPROF` on that thread every `period` of them, which samples it as
+    /// the processor's time does; or the system's error.
+    pub(super) fn sampling(tid: i32, period: u64) -> Result<i32, i32> {
+        const F_SETSIG: i32 = 10;
+        const F_SETOWN_EX: i32 = 15;
+        const F_OWNER_TID: i32 = 0;
+        #[repr(C)]
+        struct Owner {
+            kind: i32,
+            pid: i32,
+        }
+        let attr = Attr {
+            kind: HARDWARE,
+            size: size_of::<Attr>() as u32,
+            config: EVENTS[0].1,
+            sample_period: period,
+            flags: EXCLUDE_KERNEL | EXCLUDE_HYPERVISOR,
+            wakeup_events: 1,
+            ..Attr::default()
+        };
+        let file =
+            unsafe { libc::syscall(libc::SYS_perf_event_open, &attr as *const Attr, tid, -1i32, -1i32, CLOSE_ON_EXEC) };
+        if file < 0 {
+            return Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(0));
+        }
+        let file = file as i32;
+        let owner = Owner { kind: F_OWNER_TID, pid: tid };
+        let set = unsafe {
+            libc::fcntl(file, libc::F_SETFL, libc::O_ASYNC | libc::O_NONBLOCK) == 0
+                && libc::fcntl(file, F_SETSIG, libc::SIGPROF) == 0
+                && libc::fcntl(file, F_SETOWN_EX, &owner as *const Owner) == 0
+        };
+        if !set {
+            let error = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            unsafe { libc::close(file) };
+            return Err(error);
+        }
+        Ok(file)
+    }
+
     /// What a counter counted, scaled to the time it was on.
     pub(super) fn read(file: i32) -> Option<f64> {
         let mut values = [0u64; 3];
@@ -141,6 +182,46 @@ impl Counters {
     #[cfg(not(target_os = "linux"))]
     pub(crate) fn read(&self) -> Counted {
         [None; EVENTS]
+    }
+}
+
+/// The counters that sample the program's threads by instructions, by
+/// thread, while a profile of instructions runs.
+static SAMPLERS: std::sync::Mutex<Vec<(i32, i32)>> = std::sync::Mutex::new(Vec::new());
+
+/// Samples by the instructions they run, every `period`, the threads the
+/// program has that are not sampled yet: at the start and again as a
+/// profile goes, for the threads it started meanwhile. Whether any is.
+#[cfg(target_os = "linux")]
+pub(crate) fn sample_instructions(period: u64) -> bool {
+    let mut samplers = SAMPLERS.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(tasks) = std::fs::read_dir("/proc/self/task") else { return !samplers.is_empty() };
+    for task in tasks.flatten() {
+        let Some(tid) = task.file_name().to_str().and_then(|tid| tid.parse::<i32>().ok()) else { continue };
+        if samplers.iter().any(|&(sampled, _)| sampled == tid) {
+            continue;
+        }
+        if let Ok(file) = linux::sampling(tid, period) {
+            samplers.push((tid, file));
+        }
+    }
+    !samplers.is_empty()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn sample_instructions(_period: u64) -> bool {
+    false
+}
+
+/// Stops sampling by instructions.
+pub(crate) fn stop_sampling_instructions() {
+    for (_, file) in SAMPLERS.lock().unwrap_or_else(|e| e.into_inner()).drain(..) {
+        #[cfg(target_os = "linux")]
+        unsafe {
+            libc::close(file)
+        };
+        #[cfg(not(target_os = "linux"))]
+        let _ = file;
     }
 }
 

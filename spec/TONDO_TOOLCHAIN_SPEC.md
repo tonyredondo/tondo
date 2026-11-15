@@ -295,8 +295,8 @@ tondo ps [--json]
 tondo counters <pid|name> [--interval <seconds>] [--count <n>] [--json]
 tondo trace <pid|name> [--duration <seconds>] [--output <path>] [--json]
 tondo trace [--duration <seconds>] [--output <path>] [--json] -- <program> [<argument>...]
-tondo profile <pid|name> [--cpu | --memory | --tasks] [--duration <seconds>] [--output <path>] [--json]
-tondo profile [--cpu | --memory | --tasks] [--duration <seconds>] [--output <path>] [--json] -- <program> [<argument>...]
+tondo profile <pid|name> [--cpu | --instructions | --memory | --tasks] [--duration <seconds>] [--output <path>] [--json]
+tondo profile [--cpu | --instructions | --memory | --tasks] [--duration <seconds>] [--output <path>] [--json] -- <program> [<argument>...]
 tondo profile show <profile> [--top <n>] [--lines | --asm [<function>]] [--sample <type>] [--html <path>] [--json]
 tondo dump <pid|name> [--output <path>] [--json]
 tondo dump read <file> [tasks | task <id> | locals [<task> [<frame>]] | print <path> [<task> [<frame>]]
@@ -2237,13 +2237,18 @@ código que no existe es un error del toolchain (estado 3).
 
 ### 7.15 Perfiles
 
-`tondo profile` dice dónde gasta un programa su tiempo de procesador, qué
-memoria asigna y retiene, o dónde están sus tareas, nombrado como en
+`tondo profile` dice dónde gasta un programa su tiempo de procesador o sus
+instrucciones, qué memoria asigna y retiene, o dónde están sus tareas, nombrado como en
 `counters` (7.5) o uno que arranca tras `--` y compila como `run`:
 
 - `--cpu`, por defecto: las muestras de cada milisegundo de procesador de
   7.5, hasta que el programa termina, pasa `--duration` o llega Ctrl-C. El
   programa que arranca no cuenta su memoria, que cambiaría lo que mide.
+- `--instructions`, en Linux: una muestra de cada millón de instrucciones que
+  ejecuta cada hilo, contadas por el sistema (`perf_event_open`), con los
+  mismos límites que `--cpu`. Lo que mide no lo cambia la carga de la
+  máquina, como el tiempo. Donde el sistema no deja al programa contar sus
+  instrucciones, lo dice y propone `--cpu`.
 - `--memory`: las muestras de memoria de 7.5, la viva y todo lo que asignó
   cada pila desde que empezó a muestrear, al terminar `--duration` o
   Ctrl-C, o al acabar el programa. Cada muestra cuenta como las
@@ -2251,16 +2256,17 @@ memoria asigna y retiene, o dónde están sus tareas, nombrado como en
 - `--tasks`: dónde está cada tarea, como en `dump`, al terminar `--duration`.
 
 Escribe el perfil en el formato de pprof (`profile.proto`), comprimido con
-gzip, en `<output>` o en `<programa>-<pid>.<cpu|memory|tasks>.pprof`, que
+gzip, en `<output>` o en `<programa>-<pid>.<cpu|instructions|memory|tasks>.pprof`, que
 leen `go tool pprof`, speedscope, Pyroscope y Datadog. Cada marco tiene su
 función, su archivo y su línea, también el más interno de una muestra: el
 compilador guarda, junto a la tabla de llamadas de las trazas, dónde empieza
 el código de cada línea de cada función, sin coste al ejecutar. Los tipos de
-muestra son `samples` y `cpu` (nanosegundos); `alloc_objects`,
+muestra son `samples` y `cpu` (nanosegundos), o `instructions` en uno por
+instrucciones; `alloc_objects`,
 `alloc_space`, `inuse_objects` e `inuse_space`, este el primero que se
 muestra, o `alloc_space` en el perfil de un test o de un benchmark, que no
-tiene memoria viva; y `tasks`. Las muestras de CPU llevan la etiqueta `thread`, y las de
-tareas, `state`; las de CPU llevan también los labels de la tarea que
+tiene memoria viva; y `tasks`. Las muestras de CPU y las de instrucciones llevan la etiqueta
+`thread`, y las de tareas, `state`; las de CPU y las de instrucciones llevan también los labels de la tarea que
 corría (`profile.withLabels`, 14.26 de la librería estándar). En un perfil de
 memoria, el asignador y su muestreo no cuentan como marcos: el más interno es
 lo que pidió la memoria. El mapping del programa empieza donde se cargó, así

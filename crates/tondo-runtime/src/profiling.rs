@@ -12,9 +12,11 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// What the tests are profiled for, and where it goes:
-/// `TONDO_TEST_PROFILE` is `cpu:<dir>` or `memory:<dir>`.
+/// `TONDO_TEST_PROFILE` is `cpu:<dir>`, `instructions:<dir>` or
+/// `memory:<dir>`.
 struct Settings {
     memory: bool,
+    instructions: bool,
     dir: PathBuf,
 }
 
@@ -24,7 +26,7 @@ fn settings() -> Option<&'static Settings> {
         .get_or_init(|| {
             let value = super::config::config().test_profile.as_deref()?;
             let (kind, dir) = value.split_once(':')?;
-            Some(Settings { memory: kind == "memory", dir: PathBuf::from(dir) })
+            Some(Settings { memory: kind == "memory", instructions: kind == "instructions", dir: PathBuf::from(dir) })
         })
         .as_ref()
 }
@@ -52,6 +54,9 @@ pub(crate) fn start() {
         super::heap::prepare();
         super::diagnostics::hook(super::diagnostics::WATCHED);
         return;
+    }
+    if settings.instructions {
+        super::recorder::INSTRUCTIONS_EVERY.store(super::recorder::INSTRUCTIONS_PERIOD, Ordering::Relaxed);
     }
     super::recorder::sample_threads();
     keep_draining();
@@ -130,7 +135,8 @@ pub(crate) fn write(node: u32, bench: Option<&str>) {
         }
     } else {
         let samples = std::mem::take(&mut *SAMPLES.lock().unwrap_or_else(|e| e.into_inner()));
-        out.push_str("\"kind\":\"cpu\",\"samples\":[");
+        let kind = if settings.instructions { "instructions" } else { "cpu" };
+        let _ = write!(out, "\"kind\":\"{kind}\",\"samples\":[");
         let mut labels = Labels::default();
         for (index, (at, thread, stack, set)) in samples.iter().enumerate() {
             let comma = if index == 0 { "" } else { "," };
@@ -167,6 +173,7 @@ fn keep_draining() {
         super::diagnostics::retire_here();
         while !super::tasks::stopping() {
             std::thread::sleep(std::time::Duration::from_millis(50));
+            super::recorder::sample_new_threads();
             drain();
         }
     });

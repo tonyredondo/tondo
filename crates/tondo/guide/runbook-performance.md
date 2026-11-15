@@ -126,7 +126,9 @@ a run, counted in a round of their own so that the time is measured with
 nothing counting: `regression_by` `instructions` judges a change by them, and
 `layouts` measures in several orders of the code and gives the range. A
 machine busier than its processors moves the time too, and the report ends
-with a note that says so: then compare instructions, not times. A program that
+with a note that says so: then compare instructions, not times, and profile
+with `kind` `instructions` (Linux), which samples by the instructions each
+thread runs rather than by time. A program that
 holds a `recover`, as a project's tests may, checks for a panic after what may
 raise one, which `optimizations` with `tests` says in a loop: a benchmark's
 row then costs more than the same loop in a program without one. After

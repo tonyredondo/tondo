@@ -332,6 +332,22 @@ pub(crate) fn stop() {
 /// which `profile.startCpu(every:)` sets before they start.
 pub(crate) static CPU_EVERY: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1000);
 
+/// Instructions a thread runs between two of its samples, when a profile
+/// samples by instructions rather than by time (Linux), or 0.
+pub(crate) static INSTRUCTIONS_EVERY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many instructions a sample of a profile by instructions stands for.
+pub(crate) const INSTRUCTIONS_PERIOD: u64 = 1_000_000;
+
+/// Samples by instructions, while a profile does, the threads started since
+/// the last time.
+pub(crate) fn sample_new_threads() {
+    let period = INSTRUCTIONS_EVERY.load(Ordering::Relaxed);
+    if period > 0 && SAMPLING.load(Ordering::Relaxed) {
+        crate::counters::sample_instructions(period);
+    }
+}
+
 /// Samples the threads every `CPU_EVERY` of processor time, without
 /// recording events.
 pub(crate) fn sample_threads() {
@@ -345,7 +361,10 @@ pub(crate) fn sample_threads() {
     // macOS sends the signal of the process's processor time to whichever
     // thread it likes, mostly the main one, however idle; a thread of the
     // runtime signals each worker every millisecond instead.
-    if cfg!(target_os = "macos") {
+    let period = INSTRUCTIONS_EVERY.load(Ordering::Relaxed);
+    if period > 0 {
+        crate::counters::sample_instructions(period);
+    } else if cfg!(target_os = "macos") {
         let _ = crate::tasks::try_spawn_thread(Some(64 * 1024), || {
             while SAMPLING.load(Ordering::Relaxed) {
                 crate::tasks::signal_workers(libc::SIGPROF);
@@ -359,6 +378,7 @@ pub(crate) fn sample_threads() {
 
 pub(crate) fn stop_sampling() {
     timer(0);
+    crate::counters::stop_sampling_instructions();
     SAMPLING.store(false, Ordering::SeqCst);
 }
 

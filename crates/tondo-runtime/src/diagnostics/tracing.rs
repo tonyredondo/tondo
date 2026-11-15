@@ -23,6 +23,15 @@ pub(super) fn trace(client: &mut UnixStream) -> Result<(), String> {
         return Err("{\"error\":\"another tool traces this program\"}".into());
     }
     let Ok(stream) = client.try_clone() else { return Err("{\"error\":\"cannot trace\"}".into()) };
+    // By instructions, where the system lets the program count them.
+    let every = crate::recorder::INSTRUCTIONS_EVERY.load(std::sync::atomic::Ordering::Relaxed);
+    if every > 0 && !crate::counters::sample_instructions(every) {
+        crate::counters::stop_sampling_instructions();
+        return Err(
+            "{\"error\":\"the system does not let the program count its instructions: profile by time with --cpu\"}"
+                .into(),
+        );
+    }
     *session = Some(Session { stream, fd: client.as_raw_fd(), described: Default::default() });
     if !crate::recorder::on() {
         crate::recorder::start();
