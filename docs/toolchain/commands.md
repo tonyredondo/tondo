@@ -157,9 +157,10 @@ usage:
                                                        up to date as dumps come; --output writes it once
   tondo dump issue <dir> <signature>                   a failure of a directory of dumps as an issue to
                                                        file, in Markdown
-  tondo dump test <file> [--frame <n>] [--project <dir>] [--json]
+  tondo dump test <file> [--frame <n>] [--bench] [--project <dir>] [--json]
                                                        a test that calls the function that failed with
-                                                       what the dump says it had
+                                                       what the dump says it had; --bench, a benchmark
+                                                       of that call
   tondo dump core <core|pid|-> [--executable <file>] [--output <path>] [--json]
                                                        a core of the system as a dump: the signal, and
                                                        where each task and thread was; by pid from

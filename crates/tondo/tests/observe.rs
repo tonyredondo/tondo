@@ -6350,6 +6350,17 @@ fn a_failure_in_a_dump_becomes_a_test() {
     assert_eq!(answer["reproduces"], true, "{answer}");
     let written = std::fs::read_to_string(dir.join("src/main_test.to")).unwrap();
     assert!(written.contains("let mode = Mode.Slow(3)") && written.contains("failedInItemTotal"), "{written}");
+    // A benchmark of the call instead, as for a dump of a slow moment, in a
+    // file that imports `std.testing` for it; here the call fails, as the
+    // dump's did, and says so.
+    let answer = test(&["--frame", "1", "--bench", "--json"]);
+    assert_eq!(
+        (&answer["test"], &answer["bench"], &answer["fails"]),
+        (&json!("benchCharge"), &json!(true), &json!(true))
+    );
+    let written = std::fs::read_to_string(dir.join("src/main_test.to")).unwrap();
+    assert!(written.starts_with("import std.testing\n\n// From a dump:"), "{written}");
+    assert!(written.contains("    testing.bench(\"charge\", () { charge(item, rate, mode) })\n"), "{written}");
 }
 
 /// A core of macOS, as `gcore` takes it of a program signed to allow it. It

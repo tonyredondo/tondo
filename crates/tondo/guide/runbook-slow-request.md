@@ -40,6 +40,9 @@ requests {"program": "<pid>"}
 
 `logpoint` with `request` follows one kind of request on a line, without stopping
 anything; `dump_trend` says which kinds grow slower over the dumps of a directory.
+A dump taken while a request is slow, with `TONDO_DUMP_WHEN=request=<seconds>`,
+has the values of the slow call: `dump_test` with `bench` writes a benchmark of
+that call with them, to measure a change against (`runbook-performance`).
 A request that does not end is a hang: `runbook-hang`.
 
 ```mcp

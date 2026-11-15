@@ -1189,11 +1189,13 @@ struct Reproduction {
     file: PathBuf,
     name: String,
     text: String,
+    function: String,
 }
 
 /// A test that calls the function of `frame` of the task that failed with
 /// what the dump says it had; the innermost it can, when no frame is asked.
-fn reproduction(dump: &Value, frame: Option<u64>) -> Result<Reproduction, String> {
+/// With `bench`, a benchmark of that call instead (testing 10.4).
+fn reproduction(dump: &Value, frame: Option<u64>, bench: bool) -> Result<Reproduction, String> {
     let tasks = tasks(dump);
     let running = tasks.iter().find(|t| t["state"] == "runs" && !tondo_frames(t).is_empty());
     let task = running.or(tasks.first()).ok_or("the dump has no tasks")?;
@@ -1244,24 +1246,26 @@ fn reproduction(dump: &Value, frame: Option<u64>) -> Result<Reproduction, String
             (Some(&"self"), Some((_, method))) => format!("receiver.{method}({})", arguments.join(", ")),
             _ => format!("{function}({})", arguments.join(", ")),
         };
-        body.push_str(&match gives {
-            true => format!("    _ = {called}{question}\n"),
-            false => format!("    {called}{question}\n"),
+        body.push_str(&match (bench, gives) {
+            (true, _) => format!("    testing.bench(\"{function}\", () {{ {called} }})\n"),
+            (false, true) => format!("    _ = {called}{question}\n"),
+            (false, false) => format!("    {called}{question}\n"),
         });
         let path = std::path::Path::new(file);
         let stem = path.file_stem().map_or(String::new(), |stem| stem.to_string_lossy().into_owned());
         let tests = path.with_file_name(format!("{stem}_test.to"));
         let existing = std::fs::read_to_string(&tests).unwrap_or_default();
         let base: String = function.split('.').map(|part| part[..1].to_uppercase() + &part[1..]).collect();
-        let mut name = format!("failedIn{base}");
+        let named = if bench { "bench" } else { "failedIn" };
+        let mut name = format!("{named}{base}");
         let mut number = 1;
         while existing.contains(&format!("test {name} ")) {
             number += 1;
-            name = format!("failedIn{base}{number}");
+            name = format!("{named}{base}{number}");
         }
         let message = dump["message"].as_str().unwrap_or_default().lines().next().unwrap_or_default().to_string();
         let test = format!("// From a dump: {message}\ntest {name} {{\n{body}}}\n");
-        return Ok(Reproduction { file: tests, name, text: test });
+        return Ok(Reproduction { file: tests, name, text: test, function: function.to_string() });
     }
     Err(match why.is_empty() {
         true => "the dump has no function with values to call".to_string(),
@@ -1269,11 +1273,13 @@ fn reproduction(dump: &Value, frame: Option<u64>) -> Result<Reproduction, String
     })
 }
 
-/// `tondo dump test <file> [--frame <n>]`: writes the test of a failure in a
-/// dump, next to the function, and says whether it fails as the dump did.
+/// `tondo dump test <file> [--frame <n>] [--bench]`: writes the test of a
+/// failure in a dump, next to the function, and says whether it fails as
+/// the dump did; or a benchmark of the call, which it runs once.
 pub fn dump_test(
     path: &std::path::Path,
     frame: Option<u64>,
+    bench: bool,
     project: Option<&std::path::Path>,
     json: bool,
 ) -> Result<(), String> {
@@ -1282,18 +1288,24 @@ pub fn dump_test(
     if let Some(dir) = project {
         std::env::set_current_dir(dir).map_err(|e| format!("cannot enter {}: {e}", dir.display()))?;
     }
-    let found = reproduction(&dump, frame)?;
+    let found = reproduction(&dump, frame, bench)?;
     if !project_of(&found.file).join("tondo.toml").exists() {
         let message = "a test lives in a project, and this file has none: `tondo init` makes one of its directory";
         return Err(format!("{message}\nthe test would be:\n{}", found.text));
     }
     let before = std::fs::read_to_string(&found.file).ok();
-    let gap = match before.as_deref() {
-        None | Some("") => "",
-        Some(text) if text.ends_with('\n') => "\n",
-        Some(_) => "\n\n",
+    // A benchmark calls `testing.bench`, which the file imports.
+    let kept = match bench {
+        true => importing_testing(before.as_deref().unwrap_or_default()),
+        false => before.clone().unwrap_or_default(),
     };
-    let written = format!("{}{gap}{}", before.as_deref().unwrap_or_default(), found.text);
+    let gap = match kept.as_str() {
+        "" => "",
+        text if text.ends_with("\n\n") => "",
+        text if text.ends_with('\n') => "\n",
+        _ => "\n\n",
+    };
+    let written = format!("{kept}{gap}{}", found.text);
     std::fs::write(&found.file, &written).map_err(|e| format!("cannot write {}: {e}", found.file.display()))?;
     // A value may not write back as code: what cannot compile does not stay.
     let tondo = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -1318,6 +1330,23 @@ pub fn dump_test(
     }
     let reproduces = !ran.status.success();
     let shown = found.file.display();
+    if bench {
+        let (name, function) = (&found.name, &found.function);
+        match json {
+            true => crate::cli::print_json(
+                "dump-test",
+                true,
+                json!({ "file": found.file, "test": name, "bench": true, "fails": reproduces }),
+            ),
+            false if reproduces => println!(
+                "{shown}: `{name}` measures `{function}` with the dump's values, which fail as the dump did: the benchmark measures the failure"
+            ),
+            false => println!(
+                "{shown}: `{name}` measures `{function}` with the dump's values: `tondo test --bench --filter {name}`"
+            ),
+        }
+        return Ok(());
+    }
     match json {
         true => crate::cli::print_json(
             "dump-test",
@@ -1328,6 +1357,21 @@ pub fn dump_test(
         false => println!("{shown}: `{}` passes: the failure takes more than these values", found.name),
     }
     Ok(())
+}
+
+/// `text`, a test file, with `import std.testing` after the module's
+/// documentation that opens it, when it has none.
+fn importing_testing(text: &str) -> String {
+    if text.lines().any(|line| line.trim() == "import std.testing") {
+        return text.to_string();
+    }
+    let opening: usize = text.lines().take_while(|line| line.starts_with("//!")).map(|line| line.len() + 1).sum();
+    let (head, rest) = text.split_at(opening.min(text.len()));
+    let gap = match rest.trim_start().starts_with("import ") {
+        true => "",
+        false => "\n",
+    };
+    format!("{head}import std.testing\n{gap}{rest}")
 }
 
 /// The project a file is in, or where the file is.

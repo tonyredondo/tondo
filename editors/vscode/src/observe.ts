@@ -225,15 +225,31 @@ async function testFromDump(): Promise<void> {
   if (!dump) {
     return;
   }
-  const ran = await exec(['dump', 'test', dump.file, '--json'], dump.root);
+  // A test that fails as the dump did, or a benchmark of the call, for a
+  // dump of a slow moment.
+  const kinds = [
+    { label: 'Test', description: 'calls the function with the dump\'s values, to fix it against', bench: false },
+    { label: 'Benchmark', description: 'measures the call with the dump\'s values', bench: true },
+  ];
+  const kind = await vscode.window.showQuickPick(kinds, { placeHolder: 'What to write from the dump' });
+  if (!kind) {
+    return;
+  }
+  const ran = await exec(['dump', 'test', dump.file, ...(kind.bench ? ['--bench'] : []), '--json'], dump.root);
   if (ran.code !== 0) {
     void vscode.window.showErrorMessage(ran.stderr.trim() || 'tondo dump test failed');
     return;
   }
-  const made = JSON.parse(ran.stdout) as { file: string; test: string; reproduces: boolean };
+  const made = JSON.parse(ran.stdout) as { file: string; test: string; reproduces?: boolean; bench?: boolean; fails?: boolean };
   const opened = await vscode.workspace.openTextDocument(path.resolve(dump.root, made.file));
   await vscode.window.showTextDocument(opened, vscode.ViewColumn.Beside);
-  const said = made.reproduces ? 'fails as the dump did' : 'passes: the failure takes more than these values';
+  const said = made.bench
+    ? made.fails
+      ? 'measures a call that fails, as the dump\'s did'
+      : 'measures the call: Benchmark runs it'
+    : made.reproduces
+      ? 'fails as the dump did'
+      : 'passes: the failure takes more than these values';
   void vscode.window.showInformationMessage(`\`${made.test}\` ${said}.`);
 }
 

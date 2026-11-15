@@ -1000,12 +1000,18 @@ largo del tiempo y un filtro de los que aparecen tras cada commit, y el informe 
 uno; solo esta máquina la ve, y una petición solo nombra un fallo por su firma. Con `--output <archivo>`
 escribe la página una vez.
 
-`tondo dump test <archivo> [--frame <n>]` convierte un fallo en un test: toma la función
+`tondo dump test <archivo> [--frame <n>] [--bench]` convierte un fallo en un test: toma la función
 más interna de la tarea que falló de la que el volcado tiene todos los argumentos, o
 la del marco `<n>`, y escribe en el archivo de tests de su módulo un test que la llama
 con esos valores, escritos como código. Luego lo ejecuta y dice si falla como el
 volcado. Si un valor no se puede escribir como código, no deja nada y dice por qué.
-Se ejecuta donde están las fuentes del programa.
+Se ejecuta donde están las fuentes del programa. Con `--bench` escribe en su lugar un
+benchmark de esa llamada, para el volcado de un momento lento: un test que llama a
+`testing.bench` con el nombre de la función y un closure que la llama con esos
+valores (10.4 de la especificación de tests), e importa `std.testing` si el archivo
+no lo hace. Lo ejecuta una vez y dice si la llamada falla, en cuyo caso el benchmark
+mide el fallo. `tondo mcp` lo ofrece en `dump_test` con `bench`, y el editor, al
+escribir un test de un volcado, deja elegir el benchmark.
 
 `tondo dump trend <dir>` lee los volcados del último proceso de un directorio, tres
 por lo menos, y da la memoria y las tareas del primero al último, y qué sitios
@@ -2167,7 +2173,7 @@ campos de su resultado:
 | `dump core` | `tondo-dump-core-0.1/1` | `file` |
 | `api --diff` | `tondo-api-diff-0.1/1` | `breaks`, `removed`, `changed` y `added`, cada uno con `name` y su texto |
 | `check --unreached` | `tondo-check-unreached-0.1/1` | `unreached`: cada uno con `name`, `file` y `line` |
-| `dump test` | `tondo-dump-test-0.1/1` | `file`, `test` y `reproduces` |
+| `dump test` | `tondo-dump-test-0.1/1` | `file`, `test` y `reproduces`; con `--bench`, `bench` y `fails` |
 | `dump trend` | `tondo-dump-trend-0.1/1` | `dumps`, `seconds`, `held`, `resident`, `tasks`, con `piling`, y `memory`, lo que crece |
 | `source` | `tondo-source-0.1/1` | `path`, `state` (`same`, `changed`, `fetched`), `commit` y `link` |
 | `blocked` | `tondo-blocked-0.1/1` | `waits`, `cycles`, `holding` y `longest` |

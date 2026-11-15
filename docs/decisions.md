@@ -7263,3 +7263,13 @@ knows not below zero, is now an exact unsigned division, which neither check nee
 went from 2.72 billion instructions to 1.13 and from 417 to 254 ms; its four turns run 26
 instructions. A dividend that may be negative keeps the signed division and its checks: the
 MIR has no form yet for a signed division without them, and no measured case asked for one.
+
+## A benchmark from a dump's values
+
+A dump of a slow moment holds the values of the slow call, and `tondo dump test` already wrote a
+test that calls a frame's function with them. `--bench`, as Tony chose, writes instead a test
+named `bench` and the function's name, whose `testing.bench` is named after the function and
+calls it with those values from a closure, and imports `std.testing` for it after the module's
+documentation. It runs it once, as the test, and says whether the call fails with those values,
+since a dump of a panic gives a benchmark of the failure. What a dump does not hold whole, as a
+release build's values, stops it as it stops the test, rather than measuring made-up values.

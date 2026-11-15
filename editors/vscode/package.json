@@ -479,7 +479,7 @@
       },
       {
         "command": "tondo.testFromDump",
-        "title": "Write a Test From a Dump",
+        "title": "Write a Test or a Benchmark From a Dump",
         "category": "Tondo"
       },
       {

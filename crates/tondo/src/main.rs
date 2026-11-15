@@ -1471,16 +1471,18 @@ fn dump_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
         ["test", file, rest @ ..] => {
             let (mut frame, mut project) = (None, None);
+            let bench = rest.contains(&"--bench");
+            let rest: Vec<&str> = rest.iter().copied().filter(|arg| *arg != "--bench").collect();
             for pair in rest.chunks(2) {
                 match pair {
                     ["--frame", number] => {
                         frame = Some(number.parse().map_err(|_| usage("--frame takes a frame's number"))?)
                     }
                     ["--project", dir] => project = Some(Path::new(*dir)),
-                    _ => return Err(usage("dump test takes --frame <n> and --project <dir>")),
+                    _ => return Err(usage("dump test takes --frame <n>, --bench and --project <dir>")),
                 }
             }
-            tondo::observe::dump_test(Path::new(file), frame, project, json).map(|()| ExitCode::SUCCESS)
+            tondo::observe::dump_test(Path::new(file), frame, bench, project, json).map(|()| ExitCode::SUCCESS)
         }
         ["core", core, rest @ ..] => {
             let (mut executable, mut output) = (None, None);

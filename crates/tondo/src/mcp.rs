@@ -707,6 +707,9 @@ one state never left it; `guide` topic `models`",
         "dump_read" | "dump_group" if !said("\"groups\":[]") => {
             Some("`dump_test` makes a test of this failure, to fix it against; `guide` topic `runbook-regression`")
         }
+        "dump_test" if said("\"bench\":true") => {
+            Some("`test` with `bench` measures it; `profile` with `test` says where its time goes")
+        }
         "dump_test" if said("\"reproduces\":true") => Some("`test` shows it failing: fix the code, then `test` again"),
         "dump_test" => Some("the values alone do not bring it back: `frame` tries a function further up the stack"),
         "blocked" if said("\"waits\":[{") => {
@@ -1538,6 +1541,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         "dump_test" => {
             push(&["dump", "test", &args.need("file")?, "--json"]);
             option(&mut argv, "--frame", "frame");
+            switch(&mut argv, "--bench", "bench");
             option(&mut argv, "--project", "project");
         }
         "dump_core" => {
@@ -2945,11 +2949,13 @@ up to date in a browser.",
     Tool {
         name: "dump_test",
         description: "Writes a test that calls the function that failed with what the dump says it had, in the module's \
-test file, and says whether it fails as the dump did. Run it where the program's sources are.",
+test file, and says whether it fails as the dump did; with `bench`, a benchmark of that call instead, for a dump of a \
+slow moment. Run it where the program's sources are.",
         kind: Kind::Edits,
         params: &[
             ("file", "string!", "The dump."),
             ("frame", "integer", "The frame to call, as `dump_read` numbers them; by default the innermost it can."),
+            ("bench", "boolean", "A benchmark of the call, `testing.bench` with the dump's values, instead of a test."),
             ("project", "string", "The project of the program, when the server's directory is not it."),
         ],
     },
