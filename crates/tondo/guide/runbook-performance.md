@@ -40,7 +40,9 @@ sample often falls on the instruction after the slow one, which waits for it.
 `optimizations` says what a release build made of that code: the calls it
 inlined and those it kept, with why; the texts and closures it made without the
 heap, and what keeps the others on it; the checks it dropped, and those a loop
-keeps. Its `kind` `heap` gives only what allocates.
+keeps. `function` keeps one function, with the code written in it wherever it
+went, `kind` one kind of line, as `heap` for what allocates, and `against`
+with a commit only what a change made different.
 
 ```mcp
 optimizations {"path": "slow.to"}
@@ -113,3 +115,15 @@ A divisor above the square root has a partner below it, so that is far enough.
 test {"bench": true, "bench_time": 1, "baseline": "before"}
 => isPrime
 ```
+
+A row's time moves by a third when only where the code lies moves, as after
+an unrelated change. On Linux a row also has the instructions and cycles of
+a run, counted in a round of their own so that the time is measured with
+nothing counting: `regression_by` `instructions` judges a change by them, and
+`layouts` measures in several orders of the code and gives the range. After
+taking a new `tondo`, `compiler` with the old one, in `test` with `bench`, in
+`optimizations` and in `asm`, says what the new one makes differently.
+
+When the row says the cost is in allocations: `runbook-allocations`. For a
+program that is slow as it runs, without stopping it: `runbook-running`. To
+find the commit that made a benchmark slower: `runbook-bisect`.

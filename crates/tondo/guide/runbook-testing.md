@@ -296,7 +296,8 @@ test {"bench": true, "bench_time": 1}
 
 When one fails, the runbooks say what to do: `runbook-flaky` for a test that
 fails sometimes, `runbook-regression` to keep a failure from coming back,
-`runbook-debug` for a value that is wrong. In CI, run `tondo test`, then
+`runbook-debug` for a value that is wrong, `runbook-ci` for a test that fails
+only there. In CI, run `tondo test`, then
 `--schedules all` on the tests of tasks that reach outside the program and
 leave it as they found it, `--models` for the models, `--bench
 --against main --max-regression 5` for speed, and `--fuzz --fuzz-time 300`

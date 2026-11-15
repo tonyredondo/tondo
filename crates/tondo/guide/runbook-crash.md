@@ -76,6 +76,13 @@ dump_read {"file": "<dump>", "view": "locals"}
 
 The index is 2 and `lines` has two values: the loop goes one too far.
 
+What a dump holds depends on the build. One made with `debug` keeps every
+value of every frame. A release build keeps none on purpose, and its dump has
+what was still in place where the task stopped: at a check that failed, of
+bounds, of an overflow or of a division by zero, the values the function's
+code still held. When the binding wanted is not there, build with `debug` and
+run it again, or go back from a recording: `runbook-once`.
+
 ## Fix it
 
 ```edit orders.to
@@ -92,3 +99,5 @@ run {"path": "orders.to"}
 
 A failure worth keeping out for good goes on to `runbook-regression`. A dump to
 share is `dump_redact` first: it leaves where the program was, not what it held.
+A crash in a job of CI or in a container, whose disk is gone when it ends, is
+read from its log: `runbook-ci`.
