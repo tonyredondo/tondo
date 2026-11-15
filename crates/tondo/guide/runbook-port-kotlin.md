@@ -102,13 +102,14 @@ dearest: tea
 
 ## The first try, with Kotlin's words
 
-Kotlin's forms are close, and a port tends to keep `fun`, the `try` and the
-`!!`. `check` knows each and says Tondo's.
+Kotlin's forms are close, and a port tends to keep them: a `data class`,
+`fun` and `val`, the `try`, `?:` and `!!`. `check` knows each and says
+Tondo's.
 
 ```tondo error E0004 file=orders.to
 import std.console
 
-type Line = { name: String, quantity: Int, cents: Int }
+data class Line(val name: String, val quantity: Int, val cents: Int)
 
 fun total(line: Line): Int {
     line.quantity * line.cents
@@ -123,19 +124,24 @@ fn number(part: String): Int {
 }
 
 fn main() {
+    val parts = "tea,2,250".split(",")
     let dearest: Line? = none
-    console.println("{total(dearest!!)} {number("2")}")
+    let name = dearest?.name ?: "nothing"
+    console.println("{total(dearest!!)} {number("2")} {name}")
 }
 ```
 
 ```mcp
 check {"path": "orders.to"}
+=> a record is `type Line = { field: Type }`, its methods declared apart
 => a function is `fn total(value: Type): Result { ... }`
 => there is no `try`: a function that can fail returns `T ! E`
+=> a binding is `let parts = value`, or `var parts = value` for one that changes
+=> `value ?? fallback` gives the fallback where the value has none
 => `value.expect("why")` panics with why
 ```
 
-With the forms right, three names are left.
+With the forms right, four names are left.
 
 ```tondo error E1001 file=orders.to
 import std.console
@@ -150,7 +156,8 @@ fn dearest(lines: Array[Line]): Line? {
 }
 
 fn main() {
-    println(dearest([]))
+    let lines = mutableListOf()
+    println(dearest(lines))
 }
 ```
 
@@ -158,6 +165,7 @@ fn main() {
 check {"path": "orders.to"}
 => has no field `size`; use `length()`
 => unknown name `null`; Tondo writes `none`
+=> unknown name `mutableListOf`; an array is `[1, 2]`, and one that changes is a `var`
 => unknown name `println`; `console.println(text)` writes a line
 ```
 

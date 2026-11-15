@@ -125,8 +125,9 @@ dearest: tea
 
 ## The first try, with C++'s habits
 
-Written as C++ writes, the port has a `struct` with its `;`, a `try` and
-`++`. `check` answers each with Tondo's.
+Written as C++ writes, the port has a `struct` with its `;`, a function with
+its result first, a `const` reference, a `try`, `auto`, `++` and `std::cout`.
+`check` answers each with Tondo's.
 
 ```tondo error E0004 file=orders.to
 import std.console
@@ -137,6 +138,14 @@ struct Line {
     cents: Int
 };
 
+int total(Line line) {
+    return line.quantity * line.cents
+}
+
+fn money(cents: const Int&): String {
+    "{cents / 100}.{cents % 100:02}"
+}
+
 fn number(part: String): Int {
     try {
         return Int.parse(part)
@@ -146,9 +155,9 @@ fn number(part: String): Int {
 }
 
 fn main() {
-    var count = 0
+    auto count = 0
     count++
-    console.println("{count} {number("2")}")
+    std::cout << count
 }
 ```
 
@@ -156,12 +165,16 @@ fn main() {
 check {"path": "orders.to"}
 => a record is `type Line = { field: Type }`
 => `;` is not a Tondo token
+=> a function is `fn total(value: Type): Int { ... }`, its result after its parameters
+=> a parameter's type is the value's, as `line: Line`: there are no `const` types or references
 => there is no `try`: a function that can fail returns `T ! E`
+=> a binding is `let count = value`, or `var count = value` for one that changes
 => `++` is not a Tondo operator: write `value += 1`
+=> `console.println("total {x}")` writes a line
 ```
 
 With the forms right, the names of the standard containers and the null
-pointer are the next round.
+pointer are the next round: `size()`, `push_back` and `nullptr`.
 
 ```tondo error E1001 file=orders.to
 import std.console
@@ -176,7 +189,9 @@ fn dearest(lines: Array[Line]): Line? {
 }
 
 fn main() {
-    console.println("{dearest([])}")
+    var lines: Array[Line] = []
+    lines.push_back(Line { name: "tea", quantity: 2, cents: 250 })
+    console.println("{dearest(lines)}")
 }
 ```
 
@@ -184,6 +199,7 @@ fn main() {
 check {"path": "orders.to"}
 => has no method `size`: use `length()`
 => unknown name `nullptr`; Tondo writes `none`
+=> has no method `push_back`: use `push(value)`
 ```
 
 What the standard library does, ask for by what it does.
