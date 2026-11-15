@@ -96,7 +96,9 @@ optimizations {"tests": true, "function": "receipt", "kind": "heap"}
 Give the builder the parts, not a text made of them: `text.add("{line.name}:
 {line.cents}")` makes that text first, at every turn, and the view says so.
 
-What the view says of a value on the heap, and what it asks for:
+What the view says of a value on the heap, and what it asks for; after the
+reason, the code that keeps the value and where it is, as `` `all.push(line)`
+at 6:5 ``, when it is the program's:
 
 - **it is returned**, **a collection takes it**: the value outlives the code
   that makes it, so the allocation is the program's. Make fewer of them, as

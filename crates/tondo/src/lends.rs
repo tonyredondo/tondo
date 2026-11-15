@@ -51,6 +51,9 @@ struct Uses {
     changed: bool,
     /// Read in a way that may keep it: copied, or given to what takes it.
     kept: bool,
+    /// The first statement that may keep it, for what `tondo optimizations`
+    /// says.
+    kept_by: Option<crate::source::Span>,
     /// Given to a call or an operation, which writes through a loan.
     passed: bool,
 }
@@ -86,6 +89,12 @@ fn lends_in(body: &mut Body, types: &Types, loans: &[Vec<bool>]) {
     };
     for block in &body.blocks {
         for statement in &block.stmts {
+            // What this statement is the first to keep, when remarks are
+            // asked for.
+            let before: Vec<bool> = match statement {
+                Statement::Assign(..) if crate::mir_text::remarking() => uses.iter().map(|u| u.kept).collect(),
+                _ => Vec::new(),
+            };
             match statement {
                 Statement::Retain(place) | Statement::Release(place) if !place.path.is_empty() => {
                     uses[place.local.0 as usize].kept = true;
@@ -202,6 +211,13 @@ fn lends_in(body: &mut Body, types: &Types, loans: &[Vec<bool>]) {
                             uses[place.local.0 as usize].changed = true;
                         }
                         _ => {}
+                    }
+                }
+            }
+            if let Statement::Assign(_, _, span) = statement {
+                for (local, was) in before.iter().enumerate() {
+                    if !was && uses[local].kept {
+                        uses[local].kept_by.get_or_insert(*span);
                     }
                 }
             }
@@ -357,15 +373,22 @@ fn told(body: &mut Body, uses: &[Uses], gone: &[bool]) {
         if !element || u.retained != 1 {
             continue;
         }
-        let (kind, text) = match () {
-            _ if gone[target.local.0 as usize] => ("lent", "is lent, with no count of its own: its array holds it"),
-            _ if u.kept => ("counted", "keeps a count of its own: it is kept, as pushed, returned, captured or held"),
-            _ if u.changed => ("counted", "keeps a count of its own: it is changed"),
-            _ => ("counted", "keeps a count of its own: its array may change while it is read"),
+        let (kind, text, by) = match () {
+            _ if gone[target.local.0 as usize] => {
+                ("lent", "is lent, with no count of its own: its array holds it", None)
+            }
+            _ if u.kept && u.kept_by.is_some() => {
+                ("counted", "keeps a count of its own: what it is given to may keep it", u.kept_by)
+            }
+            _ if u.kept => {
+                ("counted", "keeps a count of its own: it is kept, as pushed, returned, captured or held", None)
+            }
+            _ if u.changed => ("counted", "keeps a count of its own: it is changed", None),
+            _ => ("counted", "keeps a count of its own: its array may change while it is read", None),
         };
-        remarks.push((*span, kind, text));
+        remarks.push((*span, kind, text, by));
     }
-    for (span, kind, text) in remarks {
-        crate::mir_text::remark(body, span, kind, || text.to_string());
+    for (span, kind, text, by) in remarks {
+        crate::mir_text::remark_by(body, span, kind, by, || text.to_string());
     }
 }

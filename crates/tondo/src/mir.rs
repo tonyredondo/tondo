@@ -41,6 +41,9 @@ pub struct Remark {
     /// One of `driver::OPTIMIZATION_KINDS`.
     pub kind: &'static str,
     pub text: String,
+    /// The code the remark is of, when another place than its own: the
+    /// call that keeps a value, which the text names after it.
+    pub by: Option<Span>,
 }
 
 /// A local or a path inside it.

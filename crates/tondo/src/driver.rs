@@ -1750,10 +1750,23 @@ pub fn optimizations(
                 true => format!("{}…", first.chars().take(59).collect::<String>()),
                 false => first.to_string(),
             };
-            let text = match remark.kind == "unchecked" && kept(remark) {
+            let mut text = match remark.kind == "unchecked" && kept(remark) {
                 true => format!("{}, in one copy of the code; another keeps the check", remark.text),
                 false => remark.text.clone(),
             };
+            // The code that keeps it, as the program writes it.
+            if let Some(by) = remark.by.filter(|by| {
+                let file = sources.file_of(by.start);
+                !file.dependency && !file.logical.starts_with("<std>/") && *by != crate::source::Span::default()
+            }) {
+                let (_, line, column) = sources.position(by.start);
+                let code = sources.slice(by).lines().next().unwrap_or("").trim().to_string();
+                let code = match code.chars().count() > 50 {
+                    true => format!("{}…", code.chars().take(49).collect::<String>()),
+                    false => code,
+                };
+                text = format!("{text}: `{code}` at {line}:{column}");
+            }
             found.push(Optimization {
                 file: name,
                 line,

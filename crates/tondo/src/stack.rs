@@ -36,8 +36,8 @@ pub fn stack(bodies: &mut [Body], types: &Types) {
     for (body, (framed, mut notes, remarks)) in bodies.iter_mut().zip(framed) {
         body.framed = framed;
         body.notes.append(&mut notes);
-        for (span, kind, text) in remarks {
-            crate::mir_text::remark(body, span, kind, || text);
+        for (span, kind, text, by) in remarks {
+            crate::mir_text::remark_by(body, span, kind, by, || text);
         }
         if crate::mir_text::remarking() {
             for (span, text) in allocations(body, types) {
@@ -167,17 +167,19 @@ fn allocations(body: &Body, types: &Types) -> Vec<(crate::source::Span, String)>
 /// What `framed` finds: the locals made in the frame; while the MIR is to
 /// be written, why the others that could be are not; and, while remarks
 /// are asked for, what is made where, at the source that makes it.
-type Found = (Vec<Local>, Vec<String>, Vec<(crate::source::Span, &'static str, String)>);
+type Found = (Vec<Local>, Vec<String>, Vec<(crate::source::Span, &'static str, String, Option<crate::source::Span>)>);
 
 const COPIED: &str = "it is copied";
 const READ: &str = "it is read in a way that may keep it";
 
 /// Keeps the most telling of what may keep a local: the first but for a
 /// read that says less.
-fn told(kept: &mut Option<&'static str>, why: &'static str) {
-    if kept.is_none() || *kept == Some(READ) || (*kept == Some(COPIED) && why != READ) {
+fn told(kept: &mut Option<&'static str>, why: &'static str) -> bool {
+    let telling = kept.is_none() || *kept == Some(READ) || (*kept == Some(COPIED) && why != READ);
+    if telling {
         *kept = Some(why);
     }
+    telling
 }
 
 /// What in a statement may keep what it reads, in words.
@@ -292,13 +294,28 @@ fn framed(body: &Body, index: usize, types: &Types, borrows: &[Vec<bool>]) -> Fo
     let (mut made, mut otherwise) = (vec![false; count], vec![false; count]);
     // What may keep each local, first.
     let mut kept: Vec<Option<&'static str>> = vec![None; count];
-    let keep = |locals: Vec<Local>, kept: &mut Vec<Option<&'static str>>, why: &'static str| {
-        locals.into_iter().for_each(|l| told(&mut kept[l.0 as usize], why))
+    // And the statement that keeps it, when it is one: the code a remark
+    // names.
+    let mut kept_by: Vec<Option<crate::source::Span>> = vec![None; count];
+    let keep = |locals: Vec<Local>,
+                kept: &mut Vec<Option<&'static str>>,
+                kept_by: &mut Vec<Option<crate::source::Span>>,
+                why: &'static str,
+                by: Option<crate::source::Span>| {
+        for local in locals {
+            if told(&mut kept[local.0 as usize], why) {
+                kept_by[local.0 as usize] = by;
+            }
+        }
     };
     // Where each local is copied to, first, whose keeping says why.
     let mut copied: Vec<Option<Local>> = vec![None; count];
     for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
         let why = keeping(statement);
+        let by = match statement {
+            Statement::Assign(_, _, span) => Some(*span),
+            _ => None,
+        };
         if let Statement::Assign(to, rvalue, _) = statement
             && let Rvalue::Use(Operand::Copy(from)) = &**rvalue
             && to.path.is_empty()
@@ -365,7 +382,7 @@ fn framed(body: &Body, index: usize, types: &Types, borrows: &[Vec<bool>]) -> Fo
                         indexes.push(*local);
                     }
                 }
-                keep(indexes, &mut kept, why);
+                keep(indexes, &mut kept, &mut kept_by, why, by);
             }
             // What any other statement reads or defines, as a loan or a
             // move, may keep it.
@@ -378,7 +395,7 @@ fn framed(body: &Body, index: usize, types: &Types, borrows: &[Vec<bool>]) -> Fo
         read.retain(|&local| {
             !erased[local.0 as usize] || !borrowed_function(&lent_on(statement, local, borrows), local)
         });
-        keep(read, &mut kept, why);
+        keep(read, &mut kept, &mut kept_by, why, by);
     }
     for block in &body.blocks {
         let mut read = Vec::new();
@@ -387,10 +404,10 @@ fn framed(body: &Body, index: usize, types: &Types, borrows: &[Vec<bool>]) -> Fo
             Terminator::Return(_) => "it is returned",
             _ => "a branch reads it",
         };
-        keep(read, &mut kept, why);
+        keep(read, &mut kept, &mut kept_by, why, None);
     }
-    body.params.iter().for_each(|&local| told(&mut kept[local.0 as usize], "it is a parameter"));
-    body.ret.iter().for_each(|&local| told(&mut kept[local.0 as usize], "it is returned"));
+    body.params.iter().for_each(|&local| _ = told(&mut kept[local.0 as usize], "it is a parameter"));
+    body.ret.iter().for_each(|&local| _ = told(&mut kept[local.0 as usize], "it is returned"));
     // A copy keeps what its copy is kept by; one that nothing keeps names
     // where it was copied to, the first local with a name.
     let mut copied_to: Vec<Option<usize>> = vec![None; count];
@@ -404,7 +421,7 @@ fn framed(body: &Body, index: usize, types: &Types, borrows: &[Vec<bool>]) -> Fo
             named = named.or(body.names.get(local).and_then(Option::as_ref).map(|_| local));
         }
         match kept[local] {
-            Some(_) => kept[at] = kept[local],
+            Some(_) => (kept[at], kept_by[at]) = (kept[local], kept_by[local]),
             None => copied_to[at] = Some(named.unwrap_or(local)),
         }
     }
@@ -440,7 +457,7 @@ fn framed(body: &Body, index: usize, types: &Types, borrows: &[Vec<bool>]) -> Fo
             None => {
                 framed.push(Local(at as u32));
                 if let (true, Some(span)) = (remarking, made_at[at]) {
-                    remarks.push((span, "frame", "is made in the frame, without the heap".to_string()));
+                    remarks.push((span, "frame", "is made in the frame, without the heap".to_string(), None));
                 }
             }
             Some(why) => {
@@ -448,7 +465,7 @@ fn framed(body: &Body, index: usize, types: &Types, borrows: &[Vec<bool>]) -> Fo
                     notes.push(format!("stack: l{at} stays on the heap: {why}"));
                 }
                 if let (true, Some(span)) = (remarking, made_at[at]) {
-                    remarks.push((span, "heap", format!("is made on the heap: {why}")));
+                    remarks.push((span, "heap", format!("is made on the heap: {why}"), kept_by[at]));
                 }
             }
         }

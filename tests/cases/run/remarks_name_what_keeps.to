@@ -1,0 +1,27 @@
+import std.console
+
+// What keeps a value is named in what `tondo optimizations` says of it: the
+// code that keeps it, and where it is.
+
+fn kept(parts: Array[String]): Array[String] {
+    var all: Array[String] = []
+    for part in parts {
+        all.push(part)
+    }
+    all
+}
+
+fn greet(name: String, seen: Array[String]): Int {
+    var all = seen
+    let line = "hello {name}"
+    all.push(line)
+    all.length()
+}
+
+fn main() {
+    console.println("{kept(["a", "b"]).length()} {greet("ada", [])}")
+}
+
+// expect-stdout: 2 1
+// expect-optimization: 8:9 counted keeps a count of its own: what it is given to may keep it: `all.push(part)` at 9:9
+// expect-optimization: 16:16 heap is made on the heap: a collection takes it: `all.push(line)` at 17:5

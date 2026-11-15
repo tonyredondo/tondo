@@ -178,13 +178,13 @@ fn main() {
 
 ```text
 $ tondo optimizations kept.to --function of
-kept.to:8:9: `reading` keeps a count of its own: it is kept, as pushed, returned, captured or held (in main, of)
+kept.to:8:9: `reading` keeps a count of its own: what it is given to may keep it: `found.push(reading)` at 10:13 (in main, of)
 kept.to:8:20: `readings` runs one turn at a time: each turn counts a value or measures a text, which costs more than the test saved (in main, of)
 kept.to:10:13: `found.push(reading)` grows as it is pushed to: the loop pushes to it in some turns only (in main, of)
 ```
 
 Each remark names what the code does that the optimization could not get
-past: the element is kept, so it is counted; counting makes a turn too
+past: the element is kept, by the push the remark names, so it is counted; counting makes a turn too
 heavy to run four at a time; and the array cannot be given its room
 beforehand, since only some turns push. None of it is wrong here, and the
 view is how one knows that the cost is the program's and not an accident.
