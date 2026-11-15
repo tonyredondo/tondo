@@ -7252,3 +7252,14 @@ which it gives when `machine_code_cfg_info` is set, only for `tondo asm`; Tondo'
 says where the cold blocks start, and records each block's start with the block it is, as the
 original read the starts by index while it had written them in the order it emitted the blocks,
 cold ones last, so that every edge after a cold block took another block's start.
+
+## A division by a divisor above zero has no checks
+
+A division or a remainder by a value kept a check of a zero divisor, and one of `MIN / -1`, unless
+the divisor was a constant: `number % divisor` in `for divisor in 2..number`, the runbook's slow
+program, ran 71 instructions every four turns, four of them those checks, and signed division.
+`prove` knows the ranges of a loop's counters, so a divisor it knows above zero, of a dividend it
+knows not below zero, is now an exact unsigned division, which neither check needs. That program
+went from 2.72 billion instructions to 1.13 and from 417 to 254 ms; its four turns run 26
+instructions. A dividend that may be negative keeps the signed division and its checks: the
+MIR has no form yet for a signed division without them, and no measured case asked for one.

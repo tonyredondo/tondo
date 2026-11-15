@@ -63,8 +63,9 @@ instruction, under the lines of the program they are of: here `main`, with
 `isPrime` inlined in it and the division of its hot line. At each loop's
 line it says how many instructions a turn runs on its common path, and how
 many of them are checks and calls: the number to make smaller, and to
-compare after a change. This loop runs four turns at a time, and its checks
-are the division's, by zero, one a turn.
+compare after a change. This loop runs four turns at a time, without a check:
+`divisor` starts at 2, so the division needs none for a zero divisor, and
+`number` is not negative, so it divides without signs.
 
 ```mcp
 asm {"path": "slow.to", "function": "main"}

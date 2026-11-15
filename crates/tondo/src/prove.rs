@@ -1095,6 +1095,19 @@ impl Prover<'_> {
                 };
                 remarks.push((span, "arithmetic", said));
             }
+        } else if let Statement::Assign(place, rvalue, _) = statement
+            && place.path.is_empty()
+            && self.typed_int(place.local)
+            && let Rvalue::Binary(crate::ast::BinOp::Div | crate::ast::BinOp::Rem, a, b) = &**rvalue
+            && let (Some(a), Some(b)) = (self.value(a), self.value(b))
+            && b.0 != Node::Zero
+            && facts.range(b).0 > 0
+            && facts.range(a).0 >= 0
+        {
+            // By a divisor above zero, of a dividend not below it: neither a
+            // zero divisor nor `MIN / -1` can come, and no sign is needed.
+            exact(rvalue);
+            remarks.push((span, "unchecked", "has a divisor above zero and a dividend not below it: no check"));
         }
     }
 

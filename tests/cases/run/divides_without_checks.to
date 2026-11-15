@@ -1,0 +1,43 @@
+// A division or a remainder whose divisor is above zero and whose dividend
+// is not below it, as a loop's counters often are, has no check of a zero
+// divisor and divides without signs. One whose divisor may be zero keeps
+// its check: here `among` may be, and is.
+
+import std.console
+
+fn isPrime(number: Int): Bool {
+    for divisor in 2..number {
+        if number % divisor == 0 {
+            return false
+        }
+    }
+    number > 1
+}
+
+fn columns(count: Int): Int {
+    var widest = 0
+    for i in 1..count {
+        widest = widest.max(count / i)
+    }
+    widest
+}
+
+fn spread(total: Int, among: Int): Int {
+    total / among
+}
+
+fn main() {
+    var found = 0
+    for number in 0..60 {
+        if isPrime(number) {
+            found += 1
+        }
+    }
+    console.println("{found} {columns(10)}")
+    console.println("{spread(7, Int.parse("0") ?? 1)}")
+}
+
+// expect-stdout: 17 10
+// expect-panic: P0003
+// expect-optimization: 10:12 unchecked has a divisor above zero and a dividend not below it: no check
+// expect-optimization: 20:29 unchecked has a divisor above zero and a dividend not below it: no check
