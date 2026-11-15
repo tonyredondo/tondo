@@ -20,8 +20,55 @@ pub(super) static BEFORE: AtomicUsize = AtomicUsize::new(0);
 /// what they hold is not leaked when the program ends before them.
 pub fn wait_foreign_calls() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-    while FOREIGN_CALLS.load(Ordering::SeqCst) > 0 && std::time::Instant::now() < deadline {
+    while (FOREIGN_CALLS.load(Ordering::SeqCst) > 0 || calls_on_their_stacks()) && std::time::Instant::now() < deadline
+    {
         std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
+/// Whether a call of C's runs on its thread's stack (`Task::native`), which
+/// each thread counts for itself.
+fn calls_on_their_stacks() -> bool {
+    let every = EVERY_KEPT.lock().unwrap_or_else(|e| e.into_inner());
+    every.iter().any(|&kept| unsafe { &*(kept as *const Kept) }.calling.load(Ordering::Acquire))
+}
+
+/// The next thread's shard of the registry.
+static SHARD_TURN: AtomicUsize = AtomicUsize::new(0);
+
+impl Kept {
+    /// The number and the shard of the registry of a call on this thread's
+    /// stack: numbers from a run of them this thread takes at a time, and
+    /// its own shard, which few other threads share.
+    pub(super) fn native(&self) -> (u64, u8) {
+        const RUN: u64 = 1024;
+        let (mut next, mut end) = self.ids.get();
+        if next == end {
+            next = TASK_IDS.fetch_add(RUN, Ordering::Relaxed);
+            end = next + RUN;
+        }
+        self.ids.set((next + 1, end));
+        (next, self.shard)
+    }
+
+    /// This thread's block for a call of C's that runs on its stack, made
+    /// once.
+    pub(super) fn call_block(&self) -> *mut Task {
+        if self.call.get().is_null() {
+            self.call.set(Box::into_raw(Box::new(std::mem::MaybeUninit::uninit())));
+        }
+        self.call.get() as *mut Task
+    }
+
+    /// Looks up the bounds of this thread's own stack, where a call of C's
+    /// runs (`Task::native`), once, before the call: the system's answer
+    /// may allocate, which a signal's handler cannot.
+    pub(super) fn find_stack(&self) {
+        if self.own_stack.get().1 == 0
+            && let Some(bounds) = unsafe { own_stack_bounds() }
+        {
+            self.own_stack.set(bounds);
+        }
     }
 }
 
@@ -157,8 +204,7 @@ pub(crate) fn leave_host_thread() {
     let task = current();
     // A task with C's frames on its stack goes on on this thread, as when
     // it waits (`park`).
-    let in_c = in_c_here();
-    if task.is_null() || unsafe { in_c.as_ref() }.is_some_and(|in_c| in_c.depth.load(Ordering::SeqCst) > 0) {
+    if task.is_null() || stays(task) {
         return;
     }
     unsafe {
@@ -286,6 +332,16 @@ pub(crate) struct Kept {
     ends: std::cell::RefCell<Vec<(Free, *mut u8)>>,
     /// The key's number when it was put under it.
     generation: Cell<usize>,
+    /// The bounds of the thread's own stack, once looked up.
+    own_stack: Cell<(usize, usize)>,
+    /// The block a call of C's on its stack is a task in, from one call to
+    /// the next (`Task::native`), and whether one runs now.
+    call: Cell<*mut std::mem::MaybeUninit<Task>>,
+    pub(super) calling: AtomicBool,
+    /// The numbers its calls take next, from a run the others do not.
+    ids: Cell<(u64, u64)>,
+    /// Its shard of the registry (`native`).
+    shard: u8,
 }
 
 /// What frees a value a thread keeps (`keep_until_end`).
@@ -315,6 +371,11 @@ pub(crate) fn kept() -> &'static Kept {
             blocks: Cell::new(std::ptr::null_mut()),
             ends: std::cell::RefCell::new(Vec::new()),
             generation: Cell::new(0),
+            own_stack: Cell::new((0, 0)),
+            call: Cell::new(std::ptr::null_mut()),
+            calling: AtomicBool::new(false),
+            ids: Cell::new((0, 0)),
+            shard: (SHARD_TURN.fetch_add(1, Ordering::Relaxed) % SHARDS) as u8,
         };
         kept = Box::into_raw(Box::new(new));
         KEPT.with(|cell| cell.set(kept));
@@ -348,6 +409,7 @@ pub(crate) fn keep_until_end(free: Free, value: *mut u8) {
 /// The destructor of the key, as a thread ends.
 unsafe extern "C" fn thread_ended(kept: *mut libc::c_void) {
     KEPT.with(|cell| cell.set(std::ptr::null_mut()));
+    worker_ended();
     give_back(kept as *mut Kept);
 }
 
@@ -363,6 +425,9 @@ fn give_back(kept: *mut Kept) {
     free_blocks(kept.blocks.get(), true);
     for (free, value) in kept.ends.take() {
         unsafe { free(value, true) };
+    }
+    if !kept.call.get().is_null() {
+        drop(unsafe { Box::from_raw(kept.call.get()) });
     }
     crate::trace::free_signal_stack(kept.signal.get());
 }
@@ -395,4 +460,34 @@ pub(super) fn give_back_kept() {
         unsafe { libc::pthread_key_delete(key) };
     }
     GENERATION.fetch_add(1, Ordering::AcqRel);
+}
+
+/// The bounds of this thread's own stack, as `Kept::find_stack` found
+/// them, read without allocating, as in a signal's handler.
+pub(super) fn thread_stack() -> Option<(usize, usize)> {
+    let kept = unsafe { KEPT.with(Cell::get).as_ref()? };
+    Some(kept.own_stack.get()).filter(|bounds| bounds.1 != 0)
+}
+
+#[cfg(not(target_os = "macos"))]
+unsafe fn own_stack_bounds() -> Option<(usize, usize)> {
+    unsafe {
+        let mut attributes: libc::pthread_attr_t = std::mem::zeroed();
+        if libc::pthread_getattr_np(libc::pthread_self(), &mut attributes) != 0 {
+            return None;
+        }
+        let (mut low, mut size) = (std::ptr::null_mut(), 0usize);
+        let found = libc::pthread_attr_getstack(&attributes, &mut low, &mut size) == 0;
+        libc::pthread_attr_destroy(&mut attributes);
+        found.then(|| (low as usize, low as usize + size))
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn own_stack_bounds() -> Option<(usize, usize)> {
+    unsafe {
+        let this = libc::pthread_self();
+        let top = libc::pthread_get_stackaddr_np(this) as usize;
+        Some((top - libc::pthread_get_stacksize_np(this), top))
+    }
 }

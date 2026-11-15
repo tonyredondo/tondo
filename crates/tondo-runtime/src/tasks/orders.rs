@@ -314,8 +314,7 @@ pub(super) fn give_way() {
     if task.is_null() {
         return;
     }
-    let in_c = in_c_here();
-    if !in_c.is_null() && unsafe { (*in_c).depth.load(Ordering::SeqCst) } > 0 {
+    if stays(task) {
         return;
     }
     unsafe {

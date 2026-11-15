@@ -48,11 +48,10 @@ pub(super) fn park() {
     }
     unsafe {
         let state = &(*task).state;
-        // With C frames on its stack the task cannot resume on another
-        // thread, so it waits on this one; the monitor may start another
-        // worker meanwhile.
-        let in_c = in_c_here();
-        if !in_c.is_null() && (*in_c).depth.load(Ordering::SeqCst) > 0 {
+        // With C frames on its stack, or on the stack of the thread of C
+        // that called, the task cannot resume on another thread, so it
+        // waits on this one; the monitor may start another worker meanwhile.
+        if stays(task) {
             if state.compare_exchange(RUNNING, PINNED, Ordering::AcqRel, Ordering::Acquire).is_err() {
                 state.swap(RUNNING, Ordering::AcqRel);
                 return;
@@ -89,8 +88,14 @@ pub(super) fn wait_pinned(task: *mut Task) {
         check(queue);
     }
     // One worker has no other to run what it waits for: a thread stands in
-    // for it meanwhile.
+    // for it meanwhile. A call of C's on that thread's stack needs the
+    // workers to run what it waits for, and its thread is one that waits.
     let standing_in = exploring().is_some().then(|| stand_in(state));
+    let native = unsafe { (*task).native };
+    if native {
+        start_workers();
+        FOREIGN_WAITING.fetch_add(1, Ordering::SeqCst);
+    }
     // Waiting, the thread runs no Tondo code that a collection could meet.
     leave_tondo();
     // The wait's own reading of the clock is not the program's.
@@ -113,6 +118,9 @@ pub(super) fn wait_pinned(task: *mut Task) {
         crate::replay::waited();
     }
     drop(outside);
+    if native {
+        FOREIGN_WAITING.fetch_sub(1, Ordering::SeqCst);
+    }
     enter_tondo();
     queue().pinned.retain(|&t| t != task);
 }

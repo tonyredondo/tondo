@@ -288,7 +288,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
         3 => ResultKind::Float32,
         _ => ResultKind::Memory,
     };
-    let task = new_task(None, body, code, kind, join, unsafe { (&raw mut (*block).task).cast() });
+    let task = new_task(current(), None, body, code, kind, join, unsafe { (&raw mut (*block).task).cast() }, None);
     unsafe {
         (*join).task = task;
         let spawned = crate::trace::spawned(origin());

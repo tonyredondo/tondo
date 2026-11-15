@@ -75,7 +75,7 @@ pub(super) fn program_ended(queue: &Queue) -> bool {
 /// `work` in a recorded run, on a thread other than the worker's until
 /// `until` says: the worker may be in C, and only the baton's runs anyway.
 pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
-    crate::trace::guard_thread(true);
+    crate::trace::guard_thread(true, kept());
     if exploring().is_none()
         && own_next().is_none()
         && let Some(next) = NEXTS.get(NEXT_COUNT.fetch_add(1, Ordering::AcqRel))

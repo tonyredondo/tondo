@@ -42,8 +42,9 @@ pub(super) struct Runner {
     pub(super) task: std::sync::atomic::AtomicPtr<Task>,
     pub(super) frame: AtomicUsize,
     /// For a dump, a thread that runs on is asked where it is with a
-    /// signal, and answers here.
-    pub(super) thread: libc::pthread_t,
+    /// signal, and answers here. The thread's handle, a pointer with musl
+    /// and on macOS, is another thread's once it ended (`runner_ended`).
+    pub(super) thread: AtomicUsize,
     pub(super) asked: AtomicBool,
     pub(super) answer: [AtomicUsize; ANSWER],
     pub(super) answered: AtomicUsize,
@@ -51,30 +52,50 @@ pub(super) struct Runner {
 
 pub(super) const ANSWER: usize = 64;
 
-// The thread's handle, a pointer with musl and on macOS, only goes to
-// `pthread_kill`.
-unsafe impl Send for Runner {}
-unsafe impl Sync for Runner {}
-
 pub(super) static IN_TONDO: Mutex<Vec<&'static Runner>> = Mutex::new(Vec::new());
+/// The runners of threads that ended, for the next to start: a list of
+/// them taken before may still read one.
+static SPARE_RUNNERS: Mutex<Vec<&'static Runner>> = Mutex::new(Vec::new());
 
 /// This thread's state, registered the first time it runs Tondo code.
+#[inline]
 pub(super) fn running_here() -> &'static Runner {
-    if let Some(runner) = worker(|w| w.runner.get()) {
-        return runner;
+    match worker(|w| w.runner.get()) {
+        Some(runner) => runner,
+        None => first_running_here(),
     }
-    let runner: &'static Runner = Box::leak(Box::new(Runner {
-        running: AtomicBool::new(false),
-        task: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
-        frame: AtomicUsize::new(0),
-        thread: unsafe { libc::pthread_self() },
-        asked: AtomicBool::new(false),
-        answer: [const { AtomicUsize::new(0) }; ANSWER],
-        answered: AtomicUsize::new(0),
-    }));
+}
+
+#[cold]
+#[inline(never)]
+fn first_running_here() -> &'static Runner {
+    let spare = SPARE_RUNNERS.lock().unwrap_or_else(|e| e.into_inner()).pop();
+    let runner: &'static Runner = spare.unwrap_or_else(|| {
+        Box::leak(Box::new(Runner {
+            running: AtomicBool::new(false),
+            task: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
+            frame: AtomicUsize::new(0),
+            thread: AtomicUsize::new(0),
+            asked: AtomicBool::new(false),
+            answer: [const { AtomicUsize::new(0) }; ANSWER],
+            answered: AtomicUsize::new(0),
+        }))
+    });
+    runner.thread.store(unsafe { libc::pthread_self() } as usize, Ordering::SeqCst);
     IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).push(runner);
     worker(|w| w.runner.set(Some(runner)));
     runner
+}
+
+/// As a thread that ran Tondo code ends: its runner leaves the list, so that
+/// no signal goes to the thread, and serves the next thread that starts.
+pub(super) fn runner_ended() {
+    let Some(runner) = worker(|w| w.runner.replace(None)) else { return };
+    IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).retain(|&other| !std::ptr::eq(other, runner));
+    runner.task.store(std::ptr::null_mut(), Ordering::SeqCst);
+    runner.frame.store(0, Ordering::SeqCst);
+    runner.asked.store(false, Ordering::SeqCst);
+    SPARE_RUNNERS.lock().unwrap_or_else(|e| e.into_inner()).push(runner);
 }
 
 /// From now on this thread runs Tondo code, once no collection runs.
@@ -244,6 +265,35 @@ mod tests {
         }
         assert!(forked.as_ref().is_err_and(|e| e.kind() == std::io::ErrorKind::WouldBlock), "{forked:?}");
         holder.join().unwrap();
+    }
+
+    /// A thread that ran Tondo code and called C, as a thread of C that
+    /// calls a program does, leaves neither list as it ends: no signal goes
+    /// to a thread that is gone, and the lists do not grow with every thread.
+    #[test]
+    fn a_thread_that_ends_leaves_the_lists() {
+        let (runner, in_c, thread) = std::thread::spawn(|| {
+            super::super::kept();
+            super::enter_tondo();
+            super::leave_tondo();
+            let runner = super::running_here() as *const super::Runner as usize;
+            let in_c = super::super::in_c() as *const super::super::InC as usize;
+            (runner, in_c, unsafe { libc::pthread_self() } as usize)
+        })
+        .join()
+        .unwrap();
+        let runners = super::IN_TONDO.lock().unwrap_or_else(|e| e.into_inner());
+        // Another test's thread may have taken the runner since, but not
+        // with this thread's handle.
+        assert!(
+            !runners
+                .iter()
+                .any(|&r| r as *const super::Runner as usize == runner && r.thread.load(Ordering::SeqCst) == thread)
+        );
+        drop(runners);
+        // Only this test calls C outside compiled code.
+        let callers = super::super::CALLERS.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(!callers.iter().any(|&c| c as *const super::super::InC as usize == in_c));
     }
 
     #[test]

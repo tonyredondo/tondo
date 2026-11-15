@@ -829,6 +829,13 @@ impl Write for Stderr {
 /// that is full.
 const SIGNAL_STACK: usize = 128 * 1024;
 
+/// The signal stacks of a program's threads that ended, for those that
+/// start: mapping and unmapping one took longer than a call that a new
+/// thread of C makes. A library keeps none, which would stay mapped after
+/// it unloads.
+static SPARE_SIGNAL_STACKS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+const SPARE_SIGNAL_LIMIT: usize = 64;
+
 /// Frees a thread's signal stack, as it ends or as a library ends.
 pub(crate) fn free_signal_stack(stack: *mut libc::c_void) {
     if stack.is_null() {
@@ -850,6 +857,13 @@ pub(crate) fn free_signal_stack(stack: *mut libc::c_void) {
         let disabled = libc::stack_t { ss_sp: std::ptr::null_mut(), ss_flags: libc::SS_DISABLE, ss_size: 0 };
         // A stack the kernel may still deliver a signal on stays.
         if libc::sigaltstack(&disabled, std::ptr::null_mut()) == 0 {
+            if !crate::library() {
+                let mut spare = SPARE_SIGNAL_STACKS.lock().unwrap_or_else(|e| e.into_inner());
+                if spare.len() < SPARE_SIGNAL_LIMIT {
+                    spare.push(stack as usize);
+                    return;
+                }
+            }
             libc::munmap(stack, SIGNAL_STACK);
         }
     }
@@ -873,13 +887,13 @@ static INSTALLING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// not, an abort, an illegal instruction or an arithmetic fault, as C may
 /// make. The first call installs the handler. A thread of C that calls a
 /// library keeps the signal stack it has.
-pub(crate) fn guard_thread(runtime: bool) {
-    // The handler reads the format of reports, which reading the
-    // environment there could not.
-    crate::panics::json_reports();
+pub(crate) fn guard_thread(runtime: bool, kept: &crate::tasks::Kept) {
     if !INSTALLED.load(Ordering::Acquire) {
         let _installing = INSTALLING.lock().unwrap_or_else(|e| e.into_inner());
         if !INSTALLED.load(Ordering::Acquire) {
+            // The handler reads the format of reports, which reading the
+            // environment there could not.
+            crate::panics::json_reports();
             unsafe {
                 let mut action: libc::sigaction = std::mem::zeroed();
                 action.sa_sigaction = fault as *const () as usize;
@@ -893,7 +907,6 @@ pub(crate) fn guard_thread(runtime: bool) {
             INSTALLED.store(true, Ordering::Release);
         }
     }
-    let kept = crate::tasks::kept();
     if kept.guarded.get() {
         return;
     }
@@ -906,8 +919,14 @@ pub(crate) fn guard_thread(runtime: bool) {
                 return;
             }
         }
-        let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
-        let stack = libc::mmap(std::ptr::null_mut(), SIGNAL_STACK, libc::PROT_READ | libc::PROT_WRITE, flags, -1, 0);
+        let spare = SPARE_SIGNAL_STACKS.lock().unwrap_or_else(|e| e.into_inner()).pop();
+        let stack = match spare {
+            Some(stack) => stack as *mut libc::c_void,
+            None => {
+                let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
+                libc::mmap(std::ptr::null_mut(), SIGNAL_STACK, libc::PROT_READ | libc::PROT_WRITE, flags, -1, 0)
+            }
+        };
         if stack == libc::MAP_FAILED {
             return;
         }

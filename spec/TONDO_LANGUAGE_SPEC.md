@@ -7174,8 +7174,9 @@ unsafe {
 Cuando C llama durante una llamada de la propia tarea, la función corre en esa
 tarea y puede usar todo el lenguaje, esperas incluidas: mientras haya frames de
 C en su pila, la tarea espera en su thread en lugar de cederlo. Cuando la llama
-un thread de C, la función corre como una tarea nueva y ese thread espera a que
-termine. Un pánico termina el proceso (15.7); nunca vuelve a C.
+un thread de C, la función corre como una tarea nueva en ese thread, sobre su
+pila, y vuelve a C al terminar; si espera, el thread espera con ella. Un pánico
+termina el proceso (15.7); nunca vuelve a C.
 
 Una tarea que espera dentro de una función que C llamó cuenta como cualquier
 otra para `P0013`. Mientras todas esperan, el programa solo está bloqueado si

@@ -184,6 +184,11 @@ pub(crate) struct Task {
     finished: bool,
     /// For a task that runs a callback for a thread of C, the call.
     foreign: *const ForeignCall,
+    /// Whether it runs on the stack of the thread of C that called, not on
+    /// one of its own: it stays on that thread, and waits there.
+    pub(super) native: bool,
+    /// The shard of the registry it is in (`registry::register`).
+    shard: u8,
     /// Whether its clock is a test's virtual clock (testing 7.9).
     pub(crate) in_domain: bool,
     /// Where it was started, for stack traces.
@@ -425,6 +430,25 @@ pub(crate) type Held = (usize, bool, *const Str);
 /// How many lists of held locks a worker keeps.
 const SPARE_HELDS: usize = 16;
 
+/// As a thread that ran Tondo code ends, a worker that retires or a thread
+/// of C: what it kept for that, which nothing else gives back.
+pub(super) fn worker_ended() {
+    fn free<T>(kept: &Cell<*mut T>) {
+        let kept = kept.replace(std::ptr::null_mut());
+        if !kept.is_null() {
+            drop(unsafe { Box::from_raw(kept) });
+        }
+    }
+    runner_ended();
+    in_c_ended();
+    worker(|w| {
+        free(&w.waits);
+        free(&w.helds);
+        free(&w.turns);
+        free(&w.events);
+    });
+}
+
 fn spare_helds() -> &'static mut Vec<Vec<Held>> {
     let helds = worker(|w| {
         if w.helds.get().is_null() {
@@ -444,8 +468,11 @@ pub(crate) fn held_room() -> Vec<Held> {
 /// What a task that ended leaves: the room of its list of held locks.
 fn left_held(task: &mut Task) {
     let mut held = std::mem::take(&mut task.held);
+    if held.capacity() == 0 {
+        return;
+    }
     let spare = spare_helds();
-    if held.capacity() > 0 && spare.len() < SPARE_HELDS {
+    if spare.len() < SPARE_HELDS {
         held.clear();
         spare.push(held);
     }
@@ -507,11 +534,23 @@ pub(crate) fn set_own_labels(set: u32) {
     }
 }
 
-/// The bounds of the running task's stack, above its guard.
+/// The bounds of the running task's stack, above its guard: the thread's
+/// own for a call of C's that runs there.
 pub(crate) fn stack_bounds() -> Option<(usize, usize)> {
-    let task = current();
-    let stack = unsafe { task.as_ref()?.stack.as_ref()? };
+    let task = unsafe { current().as_ref()? };
+    if task.native {
+        return thread_stack();
+    }
+    let stack = task.stack.as_ref()?;
     Some((stack.base as usize + GUARD, stack.top() as usize))
+}
+
+/// Whether the running task stays on its thread: C's frames are on its
+/// stack, or it runs on the thread's own.
+pub(super) fn stays(task: *mut Task) -> bool {
+    let in_c = in_c_here();
+    (!in_c.is_null() && unsafe { (*in_c).depth.load(Ordering::SeqCst) } > 0)
+        || unsafe { task.as_ref() }.is_some_and(|task| task.native)
 }
 
 /// Where the running task was started.
@@ -655,22 +694,32 @@ extern "C" fn trampoline() -> ! {
     runtime_fault("a finished task resumed")
 }
 
-/// A new task, in `place` or in a block of its own when that is null.
+/// The numbers of tasks, the next to give.
+pub(super) static TASK_IDS: AtomicU64 = AtomicU64::new(1);
+
+/// A new task that `parent` starts, or none, in `place` or in a block of
+/// its own when that is null; one `native` runs on its thread's stack
+/// (`Task::native`), its number and its shard its thread's, so that calls of
+/// C on several threads share nothing. Inlined, what a task without a parent
+/// inherits folds away.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
 fn new_task(
+    parent: *mut Task,
     stack: Option<Stack>,
     body: *mut u8,
     code: *const u8,
     kind: ResultKind,
     join: *mut JoinObject,
     place: *mut Task,
+    native: Option<(u64, u8)>,
 ) -> *mut Task {
     super::diagnostics::TASKS_SPAWNED.add(1);
-    static IDS: AtomicU64 = AtomicU64::new(1);
     let sp = stack.as_ref().map_or(std::ptr::null_mut(), |stack| unsafe { initial_stack(stack.top()) });
     // `spawn detached` said so just before (11.11).
-    let detached = unsafe { current().as_mut() }.is_some_and(|parent| std::mem::take(&mut parent.detaching));
-    let id = IDS.fetch_add(1, Ordering::Relaxed);
-    let name = match unsafe { current().as_mut() }.filter(|_| tools::listens(tools::RACES) && noting()) {
+    let detached = unsafe { parent.as_mut() }.is_some_and(|parent| std::mem::take(&mut parent.detaching));
+    let id = native.map_or_else(|| TASK_IDS.fetch_add(1, Ordering::Relaxed), |(id, _)| id);
+    let name = match unsafe { parent.as_mut() }.filter(|_| tools::listens(tools::RACES) && noting()) {
         Some(parent) => {
             parent.started += 1;
             let name = parent.name.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(parent.started);
@@ -684,6 +733,18 @@ fn new_task(
     if !join.is_null() {
         tools::began(id);
     }
+    // What a task inherits from the one that starts it; one that a thread of
+    // C starts inherits nothing.
+    let (labels, own_labels, context, inherited, owner) = match parent.is_null() {
+        true => (0, 0, super::contexts::Held::NONE, u64::MAX, None),
+        false => (
+            labels(),
+            own_labels(),
+            super::contexts::inherited(),
+            if detached { u64::MAX } else { super::contexts::deadline_nanos() },
+            if detached { None } else { super::panics::owner_of_new() },
+        ),
+    };
     let task = Task {
         mark: TASK_MARK,
         sp,
@@ -713,24 +774,26 @@ fn new_task(
         blocked_since: AtomicU64::new(0),
         flight: 0,
         retrying: false,
-        service: !current().is_null() && unsafe { (*current()).service },
+        service: unsafe { parent.as_ref() }.is_some_and(|parent| parent.service),
         probes: Vec::new(),
         finished: false,
         main: join.is_null(),
         foreign: std::ptr::null(),
+        native: native.is_some(),
+        shard: 0,
         // A task started on a virtual clock keeps it, and its labels.
-        in_domain: !current().is_null() && unsafe { (*current()).in_domain },
+        in_domain: unsafe { parent.as_ref() }.is_some_and(|parent| parent.in_domain),
         origin: None,
-        labels: std::sync::atomic::AtomicU32::new(labels()),
-        own_labels: std::sync::atomic::AtomicU32::new(own_labels()),
-        context: super::contexts::inherited(),
+        labels: std::sync::atomic::AtomicU32::new(labels),
+        own_labels: std::sync::atomic::AtomicU32::new(own_labels),
+        context,
         withins: Vec::new(),
         grace: None,
         expired: false,
-        inherited: AtomicU64::new(if detached { u64::MAX } else { super::contexts::deadline_nanos() }),
+        inherited: AtomicU64::new(inherited),
         recovers: Vec::new(),
         // A task started inside a `recover` belongs to it, until detached.
-        owner: if detached { None } else { super::panics::owner_of_new() },
+        owner,
         free: AtomicBool::new(detached),
         detaching: false,
         alarm: AtomicBool::new(false),
@@ -746,6 +809,7 @@ fn new_task(
             place
         },
     };
+    unsafe { (*task).shard = native.map_or(((task as usize >> 6) % SHARDS) as u8, |(_, shard)| shard) };
     register(task);
     super::clock::woke(task);
     task
@@ -760,12 +824,14 @@ pub fn run_main(code: unsafe extern "C" fn() -> i32) -> i32 {
     // Before any compiled code reads `ATTENTION`.
     exploring();
     let task = new_task(
+        std::ptr::null_mut(),
         Some(Stack::new(MAIN_STACK)),
         std::ptr::null_mut(),
         code as *const u8,
         ResultKind::Integer,
         std::ptr::null_mut(),
         std::ptr::null_mut(),
+        None,
     );
     schedule(task);
     let status = work(true);

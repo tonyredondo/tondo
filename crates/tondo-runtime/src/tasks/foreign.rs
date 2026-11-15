@@ -20,10 +20,18 @@ pub(super) struct InC {
     pub(super) task: std::sync::atomic::AtomicPtr<Task>,
     /// Whether another worker took this one's place during the current call.
     pub(super) replaced: AtomicBool,
+    /// Whether the thread is one of C's, not a worker, whose calls of C hold
+    /// no worker: the monitor starts none in its place (`Task::native`).
+    pub(super) native: AtomicBool,
 }
 
 /// Every worker that has called C, which the monitor watches.
 pub(super) static CALLERS: Mutex<Vec<&'static InC>> = Mutex::new(Vec::new());
+/// Those of threads that ended, for the next: a list of them taken before
+/// may still read one.
+static SPARE_CALLERS: Mutex<Vec<&'static InC>> = Mutex::new(Vec::new());
+/// The calls of C made by threads that ended.
+pub(super) static ENDED_C_CALLS: AtomicUsize = AtomicUsize::new(0);
 pub(super) static MONITOR: ThreadSlot = ThreadSlot::new();
 pub(super) static MONITOR_ASLEEP: AtomicBool = AtomicBool::new(false);
 /// How often the monitor looks: a call still in C after one look and the
@@ -36,22 +44,39 @@ pub(super) fn in_c_here() -> *const InC {
 }
 
 pub(super) fn in_c() -> &'static InC {
-    let current = in_c_here();
-    if !current.is_null() {
-        return unsafe { &*current };
+    let here = in_c_here();
+    if !here.is_null() {
+        return unsafe { &*here };
     }
-    let new: &'static InC = Box::leak(Box::new(InC {
-        depth: AtomicUsize::new(0),
-        calls: AtomicUsize::new(0),
-        frames: Default::default(),
-        returns: Default::default(),
-        started: Default::default(),
-        task: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
-        replaced: AtomicBool::new(false),
-    }));
+    let spare = SPARE_CALLERS.lock().unwrap_or_else(|e| e.into_inner()).pop();
+    let new: &'static InC = spare.unwrap_or_else(|| {
+        Box::leak(Box::new(InC {
+            depth: AtomicUsize::new(0),
+            calls: AtomicUsize::new(0),
+            frames: Default::default(),
+            returns: Default::default(),
+            started: Default::default(),
+            task: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
+            replaced: AtomicBool::new(false),
+            native: AtomicBool::new(false),
+        }))
+    });
+    new.native.store(unsafe { current().as_ref() }.is_some_and(|task| task.native), Ordering::SeqCst);
     CALLERS.lock().unwrap_or_else(|e| e.into_inner()).push(new);
     worker(|w| w.in_c.set(new));
     new
+}
+
+/// As a thread that called C ends: its calls leave the list and its count,
+/// and serve the next thread that calls C.
+pub(super) fn in_c_ended() {
+    let Some(state) = (unsafe { worker(|w| w.in_c.replace(std::ptr::null())).as_ref() }) else { return };
+    CALLERS.lock().unwrap_or_else(|e| e.into_inner()).retain(|&other| !std::ptr::eq(other, state));
+    // `calls` counts entries and exits, all made.
+    ENDED_C_CALLS.fetch_add(state.calls.swap(0, Ordering::SeqCst) / 2, Ordering::SeqCst);
+    state.task.store(std::ptr::null_mut(), Ordering::SeqCst);
+    state.replaced.store(false, Ordering::SeqCst);
+    SPARE_CALLERS.lock().unwrap_or_else(|e| e.into_inner()).push(state);
 }
 
 /// Compiled code calls this before a C function: while the call lasts the
@@ -166,7 +191,7 @@ pub(super) fn monitor() {
         for state in callers {
             let key = state as *const InC as usize;
             let calls = state.calls.load(Ordering::SeqCst);
-            if state.depth.load(Ordering::SeqCst) == 0 {
+            if state.depth.load(Ordering::SeqCst) == 0 || state.native.load(Ordering::SeqCst) {
                 last.remove(&key);
                 continue;
             }
@@ -203,7 +228,11 @@ pub(super) fn monitor() {
         if !busy {
             MONITOR_ASLEEP.store(true, Ordering::SeqCst);
             let callers = CALLERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
-            if callers.iter().all(|state| state.depth.load(Ordering::SeqCst) == 0) && !stopping() {
+            if callers
+                .iter()
+                .all(|state| state.depth.load(Ordering::SeqCst) == 0 || state.native.load(Ordering::SeqCst))
+                && !stopping()
+            {
                 MONITOR.park();
             }
             MONITOR_ASLEEP.store(false, Ordering::SeqCst);
@@ -232,18 +261,34 @@ pub unsafe extern "C" fn tondo_rt_callback(
     if let Some(start) = library {
         crate::start_library(start);
     }
-    crate::trace::guard_thread(false);
+    let kept = kept();
+    crate::trace::guard_thread(false, kept);
     // Where it is in the program, the same in another run.
     crate::replay::entered((inner as usize).wrapping_sub(tondo_rt_callback as *const () as usize));
+    // On this thread's own stack, as a task that stays here: no stack of its
+    // own nor a switch to one, and if it waits, this thread waits for it. One
+    // worker exploring orders runs every task, this one too; and a library's
+    // tasks leave the threads of the program that loaded it, which keep
+    // nothing of it, so that it unloads (`leave_host_thread`).
+    if exploring().is_none() && !crate::library() {
+        unsafe { run_here(inner, frame, kept) };
+        crate::replay::left();
+        if library.is_some() {
+            crate::flush_stdout();
+        }
+        return;
+    }
     let call =
         ForeignCall { inner, frame, state: AtomicU8::new(CALL_RUNS), lock: Mutex::new(()), finished: Condvar::new() };
     let task = new_task(
+        std::ptr::null_mut(),
         Some(task_stack()),
         std::ptr::null_mut(),
         std::ptr::null(),
         ResultKind::Nothing,
         std::ptr::null_mut(),
         std::ptr::null_mut(),
+        None,
     );
     unsafe {
         (*task).main = false;
@@ -280,4 +325,50 @@ pub unsafe extern "C" fn tondo_rt_callback(
     if library.is_some() {
         crate::flush_stdout();
     }
+}
+
+/// Runs a call of C's on the calling thread's stack as a task that stays
+/// there (`Task::native`): it waits on this thread if it waits, and ends as
+/// a task that switched back to its worker would.
+unsafe fn run_here(inner: unsafe extern "C" fn(*mut u8), frame: *mut u8, kept: &Kept) {
+    kept.find_stack();
+    // In this thread's block, which the call before left: no allocation.
+    let task = new_task(
+        std::ptr::null_mut(),
+        None,
+        std::ptr::null_mut(),
+        std::ptr::null(),
+        ResultKind::Nothing,
+        std::ptr::null_mut(),
+        kept.call_block(),
+        Some(kept.native()),
+    );
+    unsafe {
+        (*task).main = false;
+        (*task).origin = Some(&crate::trace::FOREIGN);
+    }
+    // Counted on this thread, as the others' calls are on theirs.
+    kept.calling.store(true, Ordering::Release);
+    worker(|w| w.current.set(task));
+    let traced = tools::running(task);
+    enter_tondo();
+    unsafe { inner(frame) };
+    leave_tondo();
+    worker(|w| w.current.set(std::ptr::null_mut()));
+    tools::stopped(task, traced);
+    unsafe {
+        let in_domain = (*task).in_domain;
+        for asked in [&(*task).cancelled, &(*task).again] {
+            if asked.load(Ordering::SeqCst) {
+                attend(false);
+            }
+        }
+        Wait::left(&mut *task);
+        left_held(&mut *task);
+        unregister(task);
+        (*task).mark = 0;
+        std::ptr::drop_in_place(task);
+        crate::clock::stopped(in_domain);
+    }
+    kept.calling.store(false, Ordering::Release);
 }

@@ -7096,3 +7096,36 @@ line `from` or its last lines with `follow`, a mark on the border says where, an
 gives a named pane's room to page by. `figlet` has FIGlet's standard font inside, under its BSD
 license, kept as FIGlet 2.2 gives it, and reads any `.flf` text, smushing letters together by the
 font's rules as FIGlet does, so its output is FIGlet's.
+
+## Calls from threads of C run on their own stacks
+
+Change 30 of the third brief: a function that a thread of C calls, one the runtime never started,
+ran as a new task on a worker, with a stack of its own, while the thread waited on a lock for it
+to end. Every call took two switches between threads, and with eight threads calling at once
+they took turns on the registry's locks and the count of calls in flight. Tony chose the second
+of two ways: keep a task and a stack for each thread of C, which halves the cost, or run the
+call on the thread's own stack, as Go does, which the target, at or under Go, needed.
+
+The call is a task like any other, in the registry, with an id, contexts and labels of its own,
+but it runs on the stack of the thread that called and stays there (`Task::native`): if it waits,
+it waits on that thread, as a task with C's frames on its stack already did, and the workers it
+waits for start then. Its block, its numbers and its shard of the registry are the thread's, so
+calls on several threads share no line of the cache on the way in and out; the lists of each
+shard are in lines of their own, since two shards' lists in one block of the allocator made
+threads of different shards wait for each other once threads came and went. The handler of a
+signal reads the thread's stack bounds, which the call looks up before it starts, as the
+system's answer allocates. A thread that ends gives back what the runtime kept for it: its state
+for stopping the world and its count of calls of C leave the lists that a dump signals and the
+monitor watches, and serve the next thread, and its signal stack waits for the next thread
+rather than being unmapped, which cost a new thread more than its call. A library's calls keep
+the old way: a library's tasks leave the threads of the program that loaded it, so that it
+unloads; so do a test's that explores orders, which one worker runs.
+
+Against Go, measured without the processor's counters, which `tondo test --bench` keeps on
+while it measures time: a call from a new thread of C 1000 times, 65 µs to Go's 61; eight such
+threads at once, 178 µs to Go's 172; and a thread whose 100 calls each wait for a task they
+start, 0.7 to 0.9 ms to Go's 1.05. A call back on the task's own thread does 18% fewer
+instructions than before, as what a task without a parent inherits no longer asks for the
+running task again. The counters cost every switch of a thread they count, so a row that wakes
+threads, as the last one, measures slower with them: Tony decides whether to count in a round of
+their own.

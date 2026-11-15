@@ -52,21 +52,29 @@ pub(crate) fn answer_where(pc: usize, fp: usize) {
 
 /// Sends `signal` to every thread that has run Tondo code.
 pub(crate) fn signal_workers(signal: i32) {
-    let runners: Vec<&Runner> = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    for runner in runners {
-        unsafe { libc::pthread_kill(runner.thread, signal) };
+    // Under the lock, which a thread that ends takes to leave the list.
+    let runners = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner());
+    for runner in runners.iter() {
+        unsafe { libc::pthread_kill(runner.thread.load(Ordering::SeqCst) as libc::pthread_t, signal) };
     }
 }
 
 /// Asks the threads that still run Tondo code where they are, a while.
 pub(super) fn ask_where(runners: &[&Runner]) -> Vec<(*mut Task, Vec<usize>)> {
     crate::recorder::install();
-    let asked: Vec<&&Runner> = runners.iter().filter(|r| r.running.load(Ordering::SeqCst)).collect();
+    // Only threads still in the list, under its lock, which a thread that
+    // ends takes to leave it.
+    let present = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner());
+    let asked: Vec<&&Runner> = runners
+        .iter()
+        .filter(|&&r| r.running.load(Ordering::SeqCst) && present.iter().any(|&p| std::ptr::eq(p, r)))
+        .collect();
     for runner in &asked {
         runner.answered.store(0, Ordering::Relaxed);
         runner.asked.store(true, Ordering::Release);
-        unsafe { libc::pthread_kill(runner.thread, libc::SIGPROF) };
+        unsafe { libc::pthread_kill(runner.thread.load(Ordering::SeqCst) as libc::pthread_t, libc::SIGPROF) };
     }
+    drop(present);
     let deadline = Instant::now() + Duration::from_millis(100);
     while asked.iter().any(|r| r.asked.load(Ordering::Acquire)) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(1));

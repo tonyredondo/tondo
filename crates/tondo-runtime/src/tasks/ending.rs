@@ -58,6 +58,13 @@ pub(crate) fn end_all(status: i32) -> ! {
             }
         }
         (*me).finished = true;
+        // A call on the stack of a thread of C has no worker to go back
+        // to: its thread waits, as the program ends.
+        if (*me).native {
+            loop {
+                std::thread::park();
+            }
+        }
         switch(&mut (*me).sp, *home());
     }
     runtime_fault("a finished task resumed")

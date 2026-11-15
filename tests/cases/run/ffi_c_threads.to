@@ -1,0 +1,50 @@
+// Threads of C that call Tondo, each new to the runtime, and call C from
+// there, while the CPU profile samples them: a sample that comes as one
+// allocates does not itself allocate to know where the thread's stack is,
+// which would wait forever for the allocator's lock the thread holds.
+import std.console
+import std.ffi
+import std.profile
+
+extern fn pthread_create(
+    thread: Pointer[UInt64],
+    attributes: Pointer[ffi.Void]?,
+    start: extern fn(Pointer[ffi.Void]?): Pointer[ffi.Void]?,
+    argument: Pointer[ffi.Void]?,
+): ffi.CInt
+
+extern fn pthread_join(thread: UInt64, result: Pointer[Pointer[ffi.Void]?]?): ffi.CInt
+
+extern fn labs(value: Int): Int
+
+fn one(): Int {
+    1
+}
+
+unsafe fn worker(argument: Pointer[ffi.Void]?): Pointer[ffi.Void]? {
+    let counter = ffi.fromContext[Pointer[Int]](argument?)
+    for _ in 0..20 {
+        counter.write(counter.read() + (spawn one()).wait() + labs(-1))
+    }
+    none
+}
+
+fn main() {
+    let sampled = profile.startCpu()
+    unsafe {
+        let counter = ffi.allocate[Int]()
+        let context = ffi.context(counter)
+        let thread = ffi.allocate[UInt64]()
+        for _ in 0..1500 {
+            _ = pthread_create(thread, none, worker, context)
+            _ = pthread_join(thread.read(), none)
+        }
+        console.println("{counter.read()}")
+        ffi.freeContext[Pointer[Int]](context)
+        ffi.free(counter)
+        ffi.free(thread)
+    }
+    _ = sampled.stop()
+}
+
+// expect-stdout: 60000

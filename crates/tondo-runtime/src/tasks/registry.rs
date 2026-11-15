@@ -18,13 +18,91 @@ pub(super) const SHARDS: usize = 16;
 /// A shard's tasks, each in a slot it knows, so that a task comes and goes
 /// without a search; a slot let go of, 0, serves the next.
 pub(super) struct Tasks {
-    pub(super) slots: Vec<usize>,
-    pub(super) free: Vec<usize>,
+    pub(super) slots: Words,
+    pub(super) free: Words,
+}
+
+/// A list of words in lines of the cache of its own. In the allocator's
+/// blocks, the lists of two shards could share a line, which the threads
+/// that use each, as threads of C that call the program, then took from
+/// each other at every task they started and ended.
+pub(super) struct Words {
+    start: std::ptr::NonNull<usize>,
+    len: usize,
+    room: usize,
+}
+
+// Only the lock of its shard reaches it.
+unsafe impl Send for Words {}
+
+impl Words {
+    const LINES: usize = 128;
+
+    const fn new() -> Words {
+        Words { start: std::ptr::NonNull::dangling(), len: 0, room: 0 }
+    }
+
+    fn layout(room: usize) -> std::alloc::Layout {
+        std::alloc::Layout::from_size_align(room * size_of::<usize>(), Self::LINES).expect("a list of tasks")
+    }
+
+    #[inline]
+    pub(super) fn push(&mut self, word: usize) {
+        if self.len == self.room {
+            self.grow();
+        }
+        unsafe { self.start.as_ptr().add(self.len).write(word) };
+        self.len += 1;
+    }
+
+    #[cold]
+    fn grow(&mut self) {
+        let room = (self.room * 2).max(Self::LINES / size_of::<usize>());
+        let start = unsafe {
+            match self.room {
+                0 => std::alloc::alloc(Self::layout(room)),
+                _ => {
+                    std::alloc::realloc(self.start.as_ptr().cast(), Self::layout(self.room), room * size_of::<usize>())
+                }
+            }
+        };
+        let Some(start) = std::ptr::NonNull::new(start.cast()) else {
+            std::alloc::handle_alloc_error(Self::layout(room))
+        };
+        (self.start, self.room) = (start, room);
+    }
+
+    pub(super) fn pop(&mut self) -> Option<usize> {
+        self.len = self.len.checked_sub(1)?;
+        Some(unsafe { self.start.as_ptr().add(self.len).read() })
+    }
+}
+
+impl std::ops::Deref for Words {
+    type Target = [usize];
+
+    fn deref(&self) -> &[usize] {
+        unsafe { std::slice::from_raw_parts(self.start.as_ptr(), self.len) }
+    }
+}
+
+impl std::ops::DerefMut for Words {
+    fn deref_mut(&mut self) -> &mut [usize] {
+        unsafe { std::slice::from_raw_parts_mut(self.start.as_ptr(), self.len) }
+    }
+}
+
+impl Drop for Words {
+    fn drop(&mut self) {
+        if self.room > 0 {
+            unsafe { std::alloc::dealloc(self.start.as_ptr().cast(), Self::layout(self.room)) };
+        }
+    }
 }
 
 impl Tasks {
     const fn new() -> Tasks {
-        Tasks { slots: Vec::new(), free: Vec::new() }
+        Tasks { slots: Words::new(), free: Words::new() }
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = &usize> {
@@ -36,12 +114,8 @@ impl Tasks {
     }
 }
 
-pub(super) fn shard(task: usize) -> std::sync::MutexGuard<'static, Tasks> {
-    TASKS[(task >> 6) % SHARDS].0.lock().unwrap_or_else(|e| e.into_inner())
-}
-
 pub(super) fn register(task: *mut Task) {
-    let mut shard = shard(task as usize);
+    let mut shard = TASKS[unsafe { (*task).shard } as usize].0.lock().unwrap_or_else(|e| e.into_inner());
     let slot = match shard.free.pop() {
         Some(slot) => {
             shard.slots[slot] = task as usize;
@@ -56,7 +130,7 @@ pub(super) fn register(task: *mut Task) {
 }
 
 pub(super) fn unregister(task: *mut Task) {
-    let mut shard = shard(task as usize);
+    let mut shard = TASKS[unsafe { (*task).shard } as usize].0.lock().unwrap_or_else(|e| e.into_inner());
     let slot = unsafe { (*task).slot };
     shard.slots[slot] = 0;
     shard.free.push(slot);
@@ -123,8 +197,9 @@ pub(crate) fn scheduler() -> Scheduler {
     let callers = CALLERS.lock().unwrap_or_else(|e| e.into_inner());
     let depths = callers.iter().map(|c| (c.depth.load(Ordering::Relaxed), c.calls.load(Ordering::Relaxed)));
     // `calls` counts entries and exits.
-    let (in_c, c_calls) = depths
-        .fold((0, 0), |(inside, made), (depth, calls)| (inside + usize::from(depth > 0), made + (calls + depth) / 2));
+    let (in_c, c_calls) = depths.fold((0, ENDED_C_CALLS.load(Ordering::Relaxed)), |(inside, made), (depth, calls)| {
+        (inside + usize::from(depth > 0), made + (calls + depth) / 2)
+    });
     Scheduler { live, ready, workers, idle, timers, in_c, c_calls }
 }
 
