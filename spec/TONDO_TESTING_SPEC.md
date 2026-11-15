@@ -2547,9 +2547,13 @@ que pasa al menos una vez cada mil instrucciones:
 
 `--max-regression <percent>` hace fallar la invocación (9.6) si un benchmark
 es `slower` en más de ese porcentaje, o si sus asignaciones o sus bytes por
-ejecución, que son exactos, crecen más que ese porcentaje. La salida para
-personas añade el cambio, y el de las instrucciones, a la línea de cada
-benchmark y lista al final los que empeoraron:
+ejecución, que son exactos, crecen más que ese porcentaje y además en una
+asignación por cada cien ejecuciones, o en ocho bytes por ejecución, como
+mínimo: lo que asignan unas pocas ejecuciones de cada mil, como un thread de C
+que empieza, no es del código, y una cuenta así cambia de una medida a otra.
+La salida para personas añade el cambio, y el de las instrucciones, a la línea
+de cada benchmark, con sus asignaciones y bytes de antes cuando cambiaron,
+falle o no, y lista al final los que empeoraron:
 
 ~~~text
 test app::unit::app::fibonacci ... ok

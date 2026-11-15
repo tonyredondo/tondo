@@ -7407,3 +7407,14 @@ holds, the value and an atomic count, and each entry finds the block from the wo
 by its place among the tables. The count is a `sync.Atomic` beside the value, since COM calls an
 object from any thread; `queryInterface` answers by each interface's `Id`. A value's own
 `ffi.Unknown`, which no C calls, does nothing.
+
+## Allocations that judge a regression
+
+`--max-regression` judged a benchmark's allocations by the percentage alone, and a row that
+allocates a few times in a thousand runs, as threads of C that start, moved by 10% against
+itself from run to run (0.010 to 0.011), failing a comparison of the compiler's speed on code
+that did not change. Tony chose that a count fails only when it also grows by one allocation in
+a hundred runs, and bytes by eight a run; a real regression smaller than that goes unflagged.
+The line of each benchmark shows its allocations and bytes of before whenever they changed,
+with the decimals that tell them apart, whether or not they fail the run.
+

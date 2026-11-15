@@ -228,7 +228,10 @@ pub(super) fn compare(new: &Benchmark, base: &Benchmark, max: Option<f64>, by_in
             _ => "same",
         },
     };
-    let grew = |now: f64, before: f64, max: f64| now > before * (1.0 + max) + 1e-9;
+    // More by `max`, and by `least` at least (testing 10.4): an allocation
+    // in a hundred runs, or eight bytes a run. What a few runs in a
+    // thousand allocate, as threads of C that start, is not the code's.
+    let grew = |now: f64, before: f64, max: f64, least: f64| now > before * (1.0 + max) + 1e-9 && now - before >= least;
     let changed = |now: Option<f64>, before: Option<f64>| match (now, before) {
         (Some(now), Some(before)) if before > 0.0 => Some(now / before - 1.0),
         _ => None,
@@ -255,10 +258,12 @@ pub(super) fn compare(new: &Benchmark, base: &Benchmark, max: Option<f64>, by_in
             instructions_change.map(more)
         } else if !by_instructions && verdict == "slower" && change > max {
             Some(format!("{:.1}% slower", change * 100.0))
-        } else if grew(new.allocations, base.allocations, max) {
-            Some(format!("{} allocs/op, was {}", amount(new.allocations), amount(base.allocations)))
-        } else if grew(new.bytes, base.bytes, max) {
-            Some(format!("{} B/op, was {}", amount(new.bytes), amount(base.bytes)))
+        } else if grew(new.allocations, base.allocations, max, 0.01) {
+            let (now, was) = amounts(new.allocations, base.allocations);
+            Some(format!("{now} allocs/op, was {was}"))
+        } else if grew(new.bytes, base.bytes, max, 8.0) {
+            let (now, was) = amounts(new.bytes, base.bytes);
+            Some(format!("{now} B/op, was {was}"))
         } else {
             None
         }
@@ -493,7 +498,22 @@ pub(super) fn lines(
                         Some(format!(", {} {:+.1}%", name.replace('_', " "), change * 100.0))
                     })
                     .collect();
-                format!("  {:+.1}% {}{instructions}{moved}{regressed}", compared.change * 100.0, compared.verdict)
+                // What it allocates, when that changed, whether or not it
+                // fails the run.
+                let mut allocated = String::new();
+                for (unit, now, was) in
+                    [("allocs/op", benchmark.allocations, base.allocations), ("B/op", benchmark.bytes, base.bytes)]
+                {
+                    if now != was {
+                        let (now, was) = amounts(now, was);
+                        allocated.push_str(&format!(", {now} {unit}, was {was}"));
+                    }
+                }
+                format!(
+                    "  {:+.1}% {}{instructions}{moved}{allocated}{regressed}",
+                    compared.change * 100.0,
+                    compared.verdict
+                )
             }
             None if baselines.source.is_some() => "  new".to_string(),
             None => String::new(),
@@ -525,6 +545,17 @@ pub(super) fn many(value: f64) -> String {
         v if v >= 1e3 => format!("{:.1}k", v / 1e3),
         v => format!("{v:.0}"),
     }
+}
+
+/// Two amounts, with as many decimals as tell them apart.
+fn amounts(now: f64, was: f64) -> (String, String) {
+    let (mut shown, mut before) = (amount(now), amount(was));
+    let mut digits = 3;
+    while shown == before && now != was && digits <= 6 {
+        (shown, before) = (format!("{now:.digits$}"), format!("{was:.digits$}"));
+        digits += 1;
+    }
+    (shown, before)
 }
 
 /// A count per run: whole when it is.
@@ -579,6 +610,20 @@ mod tests {
         // An allocation more regresses, however fast.
         let allocating = measured(base.samples.clone(), 3.0);
         assert_eq!(compare(&allocating, &base, Some(0.05), false).regressed.as_deref(), Some("3 allocs/op, was 2"));
+        // A few in a thousand runs are not the code's: an allocation in a
+        // hundred runs is, said with the decimals that tell the two apart.
+        let rare = |allocations: f64| measured(base.samples.clone(), allocations);
+        assert!(compare(&rare(0.0123), &rare(0.0101), Some(0.05), false).regressed.is_none());
+        assert_eq!(
+            compare(&rare(0.1234), &rare(0.1201), Some(0.01), false).regressed.as_deref(),
+            None,
+            "less than one in a hundred more"
+        );
+        assert_eq!(
+            compare(&rare(0.1234), &rare(0.1101), Some(0.01), false).regressed.as_deref(),
+            Some("0.12 allocs/op, was 0.11")
+        );
+        assert_eq!(amounts(0.1234, 0.1201), ("0.123".to_string(), "0.120".to_string()));
         let faster = measured((0..50).map(|i| 50.0 + (i % 5) as f64).collect(), 2.0);
         assert_eq!(compare(&faster, &base, None, false).verdict, "faster");
     }
