@@ -431,28 +431,28 @@ pub(crate) type Held = (usize, bool, *const Str);
 const SPARE_HELDS: usize = 16;
 
 /// As a thread that ran Tondo code ends, a worker that retires or a thread
-/// of C: what it kept for that, which nothing else gives back.
-pub(super) fn worker_ended() {
-    fn free<T>(kept: &Cell<*mut T>) {
-        let kept = kept.replace(std::ptr::null_mut());
-        if !kept.is_null() {
-            drop(unsafe { Box::from_raw(kept) });
+/// of C: what it kept for that, which nothing else gives back, as `kept`
+/// says, without its thread-locals.
+pub(super) fn worker_ended(kept: &Kept) {
+    fn free<T: ?Sized>(given: &Cell<*mut T>) {
+        let given = given.get();
+        if !given.is_null() {
+            drop(unsafe { Box::from_raw(given) });
         }
     }
-    runner_ended();
-    in_c_ended();
-    worker(|w| {
-        free(&w.waits);
-        free(&w.helds);
-        free(&w.turns);
-        free(&w.events);
-    });
+    runner_ended(kept);
+    in_c_ended(kept);
+    free(&kept.waits);
+    free(&kept.helds);
+    free(&kept.turns);
+    free(&kept.events);
 }
 
 fn spare_helds() -> &'static mut Vec<Vec<Held>> {
     let helds = worker(|w| {
         if w.helds.get().is_null() {
             w.helds.set(Box::into_raw(Box::default()));
+            kept().helds.set(w.helds.get());
         }
         w.helds.get()
     });

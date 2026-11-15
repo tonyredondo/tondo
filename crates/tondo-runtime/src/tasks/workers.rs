@@ -384,6 +384,7 @@ pub(super) fn poll(
     let events = worker(|w| {
         if w.events.get().is_null() {
             w.events.set(Box::into_raw(Box::default()));
+            kept().events.set(w.events.get());
         }
         w.events.get()
     });

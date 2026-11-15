@@ -64,13 +64,14 @@ pub(super) fn in_c() -> &'static InC {
     new.native.store(unsafe { current().as_ref() }.is_some_and(|task| task.native), Ordering::SeqCst);
     CALLERS.lock().unwrap_or_else(|e| e.into_inner()).push(new);
     worker(|w| w.in_c.set(new));
+    kept().in_c.set(new);
     new
 }
 
 /// As a thread that called C ends: its calls leave the list and its count,
 /// and serve the next thread that calls C.
-pub(super) fn in_c_ended() {
-    let Some(state) = (unsafe { worker(|w| w.in_c.replace(std::ptr::null())).as_ref() }) else { return };
+pub(super) fn in_c_ended(kept: &Kept) {
+    let Some(state) = (unsafe { kept.in_c.replace(std::ptr::null()).as_ref() }) else { return };
     CALLERS.lock().unwrap_or_else(|e| e.into_inner()).retain(|&other| !std::ptr::eq(other, state));
     // `calls` counts entries and exits, all made.
     ENDED_C_CALLS.fetch_add(state.calls.swap(0, Ordering::SeqCst) / 2, Ordering::SeqCst);

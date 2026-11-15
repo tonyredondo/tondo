@@ -193,6 +193,7 @@ fn spare_waits() -> &'static mut Vec<Arc<Wait>> {
     let waits = worker(|w| {
         if w.waits.get().is_null() {
             w.waits.set(Box::into_raw(Box::default()));
+            kept().waits.set(w.waits.get());
         }
         w.waits.get()
     });

@@ -467,6 +467,7 @@ pub(super) fn turn_host() {
     let turns = worker(|w| {
         if w.turns.get().is_null() {
             w.turns.set(Box::into_raw(Box::default()));
+            kept().turns.set(w.turns.get());
         }
         w.turns.get()
     });

@@ -342,6 +342,15 @@ pub(crate) struct Kept {
     ids: Cell<(u64, u64)>,
     /// Its shard of the registry (`native`).
     shard: u8,
+    /// What its `Worker` was given as it ran Tondo code, which it gives
+    /// back as it ends (`worker_ended`): read here, as its thread-locals
+    /// may be gone by then, as on macOS.
+    pub(super) runner: Cell<Option<&'static Runner>>,
+    pub(super) in_c: Cell<*const InC>,
+    pub(super) waits: Cell<*mut Vec<Arc<Wait>>>,
+    pub(super) helds: Cell<*mut Vec<Vec<Held>>>,
+    pub(super) turns: Cell<*mut Vec<Arc<dyn Turned>>>,
+    pub(super) events: Cell<*mut crate::poll::Events>,
 }
 
 /// What frees a value a thread keeps (`keep_until_end`).
@@ -376,6 +385,13 @@ pub(crate) fn kept() -> &'static Kept {
             calling: AtomicBool::new(false),
             ids: Cell::new((0, 0)),
             shard: (SHARD_TURN.fetch_add(1, Ordering::Relaxed) % SHARDS) as u8,
+            // What the thread was given before this.
+            runner: Cell::new(worker(|w| w.runner.get())),
+            in_c: Cell::new(worker(|w| w.in_c.get())),
+            waits: Cell::new(worker(|w| w.waits.get())),
+            helds: Cell::new(worker(|w| w.helds.get())),
+            turns: Cell::new(worker(|w| w.turns.get())),
+            events: Cell::new(worker(|w| w.events.get())),
         };
         kept = Box::into_raw(Box::new(new));
         KEPT.with(|cell| cell.set(kept));
@@ -409,7 +425,7 @@ pub(crate) fn keep_until_end(free: Free, value: *mut u8) {
 /// The destructor of the key, as a thread ends.
 unsafe extern "C" fn thread_ended(kept: *mut libc::c_void) {
     KEPT.with(|cell| cell.set(std::ptr::null_mut()));
-    worker_ended();
+    worker_ended(unsafe { &*(kept as *const Kept) });
     give_back(kept as *mut Kept);
 }
 

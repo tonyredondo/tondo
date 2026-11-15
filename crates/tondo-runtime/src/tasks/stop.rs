@@ -84,13 +84,14 @@ fn first_running_here() -> &'static Runner {
     runner.thread.store(unsafe { libc::pthread_self() } as usize, Ordering::SeqCst);
     IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).push(runner);
     worker(|w| w.runner.set(Some(runner)));
+    kept().runner.set(Some(runner));
     runner
 }
 
 /// As a thread that ran Tondo code ends: its runner leaves the list, so that
 /// no signal goes to the thread, and serves the next thread that starts.
-pub(super) fn runner_ended() {
-    let Some(runner) = worker(|w| w.runner.replace(None)) else { return };
+pub(super) fn runner_ended(kept: &Kept) {
+    let Some(runner) = kept.runner.take() else { return };
     IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).retain(|&other| !std::ptr::eq(other, runner));
     runner.task.store(std::ptr::null_mut(), Ordering::SeqCst);
     runner.frame.store(0, Ordering::SeqCst);
