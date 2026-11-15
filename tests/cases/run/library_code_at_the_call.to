@@ -1,0 +1,32 @@
+import std.console
+
+// What the passes decide in the standard library's code copied into the
+// program's loop is said at the program's call that brought it, as of the
+// function copied: the iterator's step keeps its check, and a value a copied
+// call keeps names that call.
+
+fn letters(text: String): Int {
+    var count = 0
+    for c in text.chars() {
+        if c.isLetter() {
+            count += 1
+        }
+    }
+    count
+}
+
+fn longest(words: Array[String]): Int {
+    var best = 0
+    for word in words {
+        best = best.max(word.trim().length())
+    }
+    best
+}
+
+fn main() {
+    console.println("{letters("ab1")} {longest(["a ", " bb"])}")
+}
+
+// expect-stdout: 2 2
+// expect-optimization: 10:14 checked in `prelude.CharIterator.next`, `self.offset +=
+// expect-optimization: 20:9 counted what it is given to may keep it: `word.trim()` at 21:25

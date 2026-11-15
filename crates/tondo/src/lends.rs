@@ -214,7 +214,10 @@ fn lends_in(body: &mut Body, types: &Types, loans: &[Vec<bool>]) {
                     }
                 }
             }
-            if let Statement::Assign(_, _, span) = statement {
+            // A copy passes it on: what keeps the copy is later.
+            if let Statement::Assign(_, value, span) = statement
+                && !matches!(**value, Rvalue::Use(_))
+            {
                 for (local, was) in before.iter().enumerate() {
                     if !was && uses[local].kept {
                         uses[local].kept_by.get_or_insert(*span);

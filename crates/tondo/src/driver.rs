@@ -1732,50 +1732,75 @@ pub fn optimizations(
             body.remarks.iter().map(|r| (r.kind, r.span.start, r.span.end)).collect();
         let kept = |remark: &crate::mir::Remark| told.contains(&("checked", remark.span.start, remark.span.end));
         for remark in &body.remarks {
-            if !named(body) && !inside(remark.span) {
-                continue;
-            }
-            let file = sources.file_of(remark.span.start);
-            if file.dependency || file.logical.starts_with("<std>/") {
-                continue;
-            }
             if told.contains(&(worse(remark.kind), remark.span.start, remark.span.end))
                 || kind.is_some_and(|kind| kind != remark.kind)
             {
                 continue;
             }
-            let (name, line, column) = sources.position(remark.span.start);
-            let first = sources.slice(remark.span).lines().next().unwrap_or("").trim();
-            let source = match first.chars().count() > 60 {
-                true => format!("{}…", first.chars().take(59).collect::<String>()),
-                false => first.to_string(),
+            // Where it is said: at its own place in the program's code; one
+            // in the standard library's code copied into the program's, at
+            // the program's call that brought it, as of that function, when
+            // it costs.
+            let library = |span: crate::source::Span| {
+                let file = sources.file_of(span.start);
+                file.dependency || file.logical.starts_with("<std>/")
             };
-            let mut text = match remark.kind == "unchecked" && kept(remark) {
-                true => format!("{}, in one copy of the code; another keeps the check", remark.text),
-                false => remark.text.clone(),
-            };
-            // The code that keeps it, as the program writes it.
-            if let Some(by) = remark.by.filter(|by| {
-                let file = sources.file_of(by.start);
-                !file.dependency && !file.logical.starts_with("<std>/") && *by != crate::source::Span::default()
-            }) {
-                let (_, line, column) = sources.position(by.start);
-                let code = sources.slice(by).lines().next().unwrap_or("").trim().to_string();
-                let code = match code.chars().count() > 50 {
+            // A place's code on its first line, cut short.
+            let clipped = |span: crate::source::Span| {
+                let code = sources.slice(span).lines().next().unwrap_or("").trim().to_string();
+                match code.chars().count() > 50 {
                     true => format!("{}…", code.chars().take(49).collect::<String>()),
                     false => code,
+                }
+            };
+            let sites: Vec<(crate::source::Span, Option<String>)> = match library(remark.span) {
+                false => vec![(remark.span, None)],
+                true if matches!(remark.kind, "checked" | "heap" | "call" | "counted" | "grown") => {
+                    copied_into(body, remark.span, &library)
+                        .into_iter()
+                        .map(|(call, function)| (call, Some(format!("in `{function}`, `{}` ", clipped(remark.span)))))
+                        .collect()
+                }
+                true => Vec::new(),
+            };
+            for (site, of) in sites {
+                if !named(body) && !inside(site) {
+                    continue;
+                }
+                let (name, line, column) = sources.position(site.start);
+                let first = sources.slice(site).lines().next().unwrap_or("").trim();
+                let source = match first.chars().count() > 60 {
+                    true => format!("{}…", first.chars().take(59).collect::<String>()),
+                    false => first.to_string(),
                 };
-                text = format!("{text}: `{code}` at {line}:{column}");
+                let mut text = match remark.kind == "unchecked" && kept(remark) {
+                    true => format!("{}, in one copy of the code; another keeps the check", remark.text),
+                    false => remark.text.clone(),
+                };
+                // The code that keeps it, as the program writes it: the call
+                // that brought it, for the standard library's code.
+                let by =
+                    remark.by.filter(|by| *by != crate::source::Span::default()).and_then(|by| match library(by) {
+                        false => Some(by),
+                        true => copied_into(body, by, &library).first().map(|(call, _)| *call),
+                    });
+                if let Some(by) = by {
+                    let (_, line, column) = sources.position(by.start);
+                    text = format!("{text}: `{}` at {line}:{column}", clipped(by));
+                }
+                if let Some(of) = of {
+                    text = format!("{of}{text}");
+                }
+                found.push(Optimization {
+                    file: name,
+                    line,
+                    column,
+                    functions: vec![body.name.clone()],
+                    kind: remark.kind,
+                    text,
+                    source,
+                });
             }
-            found.push(Optimization {
-                file: name,
-                line,
-                column,
-                functions: vec![body.name.clone()],
-                kind: remark.kind,
-                text,
-                source,
-            });
         }
     }
     let key = |o: &Optimization| (o.file.clone(), o.line, o.column, o.kind, o.text.clone());
@@ -1792,6 +1817,39 @@ pub fn optimizations(
         }
     }
     Ok(grouped)
+}
+
+/// The program's calls whose inlined code holds a statement at `span`, of
+/// the standard library or a dependency, each with the function inlined
+/// there that the statement is of.
+fn copied_into(
+    body: &crate::mir::Body,
+    span: crate::source::Span,
+    library: &impl Fn(crate::source::Span) -> bool,
+) -> Vec<(crate::source::Span, String)> {
+    let mut sites = Vec::new();
+    for (index, block) in body.blocks.iter().enumerate() {
+        let here = block
+            .stmts
+            .iter()
+            .any(|statement| matches!(statement, crate::mir::Statement::Assign(_, _, at) if *at == span));
+        if !here {
+            continue;
+        }
+        let (mut scope, mut function) = (body.scopes.get(index).copied().flatten(), None);
+        while let Some(at) = scope {
+            let inlined = &body.inlined[at as usize];
+            function.get_or_insert_with(|| inlined.name.clone());
+            if !library(inlined.call) {
+                sites.push((inlined.call, function.clone().unwrap_or_default()));
+                break;
+            }
+            scope = inlined.parent;
+        }
+    }
+    sites.sort_by_key(|(call, name)| (call.start, call.end, name.clone()));
+    sites.dedup();
+    sites
 }
 
 /// What a release build made of the code at `path` as the git revision
