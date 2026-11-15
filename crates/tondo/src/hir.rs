@@ -804,7 +804,6 @@ pub enum StrOp {
     /// `text.get(index)`: `Char?`
     Get,
     ByteLength,
-    Concat,
     Contains,
     StartsWith,
     EndsWith,

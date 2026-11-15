@@ -1,0 +1,22 @@
+// `a.concat(b)` is `"{a}{b}"`: a text a loop grows with it grows in place,
+// as with interpolation, when nothing else holds it, rather than being
+// copied on every turn; one that something else holds is copied, and what
+// holds it keeps its text.
+
+import std.console
+
+type Holder = { name: String }
+
+fn main() {
+    var text = ""
+    for i in 0..5 {
+        text = text.concat("{i}")
+    }
+    let kept = text
+    text = text.concat("!")
+    var holder = Holder { name: "a" }
+    holder.name = holder.name.concat("b")
+    console.println("{text} {kept} {holder.name} {"x".concat("y").concat("z")}")
+}
+
+// expect-stdout: 01234! 01234 ab xyz

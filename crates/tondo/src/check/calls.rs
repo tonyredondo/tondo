@@ -938,10 +938,18 @@ impl<'a> Checker<'a> {
         let int_option = self.types.intern(TyKind::Option(Ty::INT));
         let checked = self.types.intern(TyKind::Result(Ty::STRING, self.text_error));
         use hir::StrOp as S;
+        // As `"{a}{b}"`, which grows `a` in place when nothing else holds
+        // it: `text = text.concat(more)` in a loop is linear.
+        if method.name == "concat" {
+            let [arg] = args else { return self.arity_error(span, 1, args.len()) };
+            let arg = self.expr(cx, &arg.value, Some(Ty::STRING));
+            let arg = self.coerce(arg, Ty::STRING);
+            let segments = vec![hir::Segment::Value(text), hir::Segment::Value(arg)];
+            return Self::mk(hir::ExprKind::Interpolate(segments), Ty::STRING, span);
+        }
         let (op, params, result) = match method.name.as_str() {
             "length" | "byteLength" | "isEmpty" => (S::ByteLength, vec![], Ty::INT),
             "get" => (S::Get, vec![Ty::INT], char_option),
-            "concat" => (S::Concat, vec![Ty::STRING], Ty::STRING),
             "contains" => (S::Contains, vec![Ty::STRING], Ty::BOOL),
             "startsWith" => (S::StartsWith, vec![Ty::STRING], Ty::BOOL),
             "endsWith" => (S::EndsWith, vec![Ty::STRING], Ty::BOOL),

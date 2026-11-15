@@ -597,11 +597,6 @@ pub unsafe extern "C" fn tondo_rt_str_slice(
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_str_concat(a: *const Str, b: *const Str) -> *mut Str {
-    unsafe { str_new(&[str_bytes(a), str_bytes(b)].concat()) }
-}
-
 /// `contains` (0), `startsWith` (1) or `endsWith` (2).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_test(s: *const Str, other: *const Str, test: u32) -> u8 {

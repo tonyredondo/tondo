@@ -498,7 +498,6 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         return;
                     }
                     StrOp::ByteLength => Val::Scalar(self.e.fb.ins().load(types::I64, flags(), values[0], 8)),
-                    StrOp::Concat => Val::Scalar(self.e.call_rt(Rt::StrConcat, &values).unwrap()),
                     StrOp::Decode => Val::Scalar(self.decoded(values[0], values[1], Rt::StrDecode, false)),
                     StrOp::Next => Val::Scalar(self.stepped(values[0], values[1])),
                 }
