@@ -42,6 +42,10 @@ struct Running {
     input: ChildStdin,
     lines: mpsc::Receiver<String>,
     errors: mpsc::Receiver<String>,
+    /// Whether it answered: the first answer waits for its build too, which
+    /// on a slow machine, with the other tests building theirs, takes more
+    /// than a running program needs to answer.
+    answered: bool,
 }
 
 impl Running {
@@ -66,15 +70,19 @@ impl Running {
         let input = child.stdin.take().unwrap();
         let out = lines(Box::new(child.stdout.take().unwrap()));
         let errors = lines(Box::new(child.stderr.take().unwrap()));
-        Running { child, input, lines: out, errors }
+        Running { child, input, lines: out, errors, answered: false }
     }
 
     /// The next line it writes for `sent`.
     fn answer(&mut self, sent: &str) -> String {
         writeln!(self.input, "{sent}").unwrap();
         self.input.flush().unwrap();
-        match self.lines.recv_timeout(Duration::from_secs(60)) {
-            Ok(line) => line,
+        let wait = Duration::from_secs(if self.answered { 60 } else { 600 });
+        match self.lines.recv_timeout(wait) {
+            Ok(line) => {
+                self.answered = true;
+                line
+            }
             Err(_) => {
                 let errors: Vec<String> = self.errors.try_iter().collect();
                 panic!("no answer to {sent}; the error stream said {errors:?}")
