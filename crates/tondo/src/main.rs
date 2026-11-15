@@ -1752,7 +1752,7 @@ fn update_command(args: &[OsString]) -> Result<ExitCode, String> {
 fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (mut headers, mut libraries, mut arguments) = (Vec::new(), Vec::new(), Vec::new());
     let (mut project, mut output, mut package, mut json) = (PathBuf::from("."), None, None, false);
-    let (mut included, mut fails) = (false, Vec::new());
+    let (mut included, mut fails, mut ids) = (false, Vec::new(), Vec::new());
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         let text = arg.to_string_lossy();
@@ -1770,6 +1770,17 @@ fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
                     std::fs::read_to_string(&list).map_err(|e| format!("cannot read {}: {e}", list.display()))?;
                 let names = text.lines().map(|line| line.split('#').next().unwrap_or_default().trim());
                 fails.extend(names.filter(|name| !name.is_empty()).map(String::from));
+            }
+            "--id" => {
+                let given = value("--id")?.to_string_lossy().into_owned();
+                let parsed =
+                    given.split_once('=').and_then(|(name, id)| Some((name.to_string(), tondo::bind::guid(id)?)));
+                let Some(parsed) = parsed else {
+                    return Err(format!(
+                        "--id takes an interface and its IID, as `--id ICorProfilerCallback=176fbed1-a55c-4796-98ca-a9da0ef883e7`, not `{given}`"
+                    ));
+                };
+                ids.push(parsed);
             }
             "-I" | "-D" => arguments.push(format!("{text}{}", value(&text)?.to_string_lossy())),
             flag if flag.starts_with("-I") || flag.starts_with("-D") => arguments.push(flag.to_string()),
@@ -1803,7 +1814,7 @@ fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
     }
     let module = match &library_file {
         Some(library) if headers.is_empty() => tondo::bind::generate_from_library(library, &command)?,
-        _ => tondo::bind::generate(&headers, &arguments, &command, included, &fails)?,
+        _ => tondo::bind::generate(&headers, &arguments, &command, included, &fails, &ids)?,
     };
     let mut sources = tondo::source::SourceMap::default();
     let index = sources.add(Path::new("bound.to"), module.clone());

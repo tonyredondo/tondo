@@ -438,7 +438,7 @@ pub const COMMANDS: &[Command] = &[
         name: "bind",
         usage: &[
             "tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [--included] [--fails <file>]",
-            "          [-I <dir>] [-D <name[=value]>] [--json]",
+            "          [--id <interface>=<GUID>]... [-I <dir>] [-D <name[=value]>] [--json]",
         ],
         summary: &["write a module of extern declarations for a C header"],
     },

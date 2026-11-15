@@ -1450,6 +1450,9 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
                 argv.push("--included".to_string());
             }
             option(&mut argv, "--fails", "fails");
+            for id in args.list("ids") {
+                argv.extend(["--id".to_string(), id]);
+            }
         }
         "update" => {
             push(&["update", "--json"]);
@@ -2802,6 +2805,11 @@ is reduced and kept in the project's `fuzz/` store, which every run of the tests
             ("define", "strings", "Macros, as name or name=value (-D)."),
             ("included", "boolean", "Bind the headers the named ones include, too (`--included`)."),
             ("fails", "string", "A file naming the functions that fail with the system's error number (`--fails`)."),
+            (
+                "ids",
+                "strings",
+                "The IIDs of interfaces of C the headers do not give, as `ICorProfilerCallback=176fbed1-...` (`--id`).",
+            ),
         ],
     },
     Tool {

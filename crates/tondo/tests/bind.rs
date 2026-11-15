@@ -164,3 +164,64 @@ fn functions_that_fail_with_the_error_number() {
     std::fs::write(dir.join("src/main.to"), format!("{module}\nfn main() {{}}\n")).unwrap();
     run(Command::new(compiler).args(["check"]).current_dir(&dir));
 }
+
+/// An interface of C, as MIDL writes one for C, is a trait with
+/// `@ffi.Interface`: its IID from the header's branch of C++ or from
+/// `DEFINE_GUID`, what it extends from the methods its table begins with,
+/// and an object of it a `Pointer[ffi.Void]`. A program calls an object C
+/// made through it, and asks it for the interface that extends it.
+#[test]
+fn interfaces_of_c() {
+    let dir = scratch("bind-interfaces");
+    std::fs::copy(fixtures().join("counter.h"), dir.join("counter.h")).unwrap();
+    let compiler = env!("CARGO_BIN_EXE_tondo");
+    run(Command::new(compiler).args(["bind", "counter.h", "--output", "counter.to"]).current_dir(&dir));
+    let written = std::fs::read_to_string(dir.join("counter.to")).unwrap();
+    let expected = std::fs::read_to_string(fixtures().join("counter.to")).unwrap();
+    assert_eq!(written, expected, "the module differs from tests/bind/counter.to");
+    run(Command::new("cc")
+        .args(["-c", "-fPIC", "-o"])
+        .arg(dir.join("counter.o"))
+        .arg(fixtures().join("counter.c"))
+        .arg("-I")
+        .arg(fixtures()));
+    run(Command::new("ar").arg("rcs").arg(dir.join("libcounter.a")).arg(dir.join("counter.o")));
+    let project = dir.join("app");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(project.join("tondo.toml"), "[package]\nname = \"app\"\n").unwrap();
+    std::fs::copy(fixtures().join("interfaces.to"), project.join("src/main.to")).unwrap();
+    run(Command::new(compiler)
+        .arg("bind")
+        .arg(dir.join("counter.h"))
+        .arg("--library")
+        .arg(dir.join("libcounter.a"))
+        .arg("--project")
+        .arg(&project));
+    let executable = dir.join("program");
+    run(Command::new(compiler).arg("build").arg(&project).arg("--output").arg(&executable));
+    assert_eq!(
+        run(&mut Command::new(&executable)),
+        "true true 0x80070057: The parameter is incorrect true 40\ntrue true true 5 tally\n1 0\n"
+    );
+    // An interface whose IID the header does not give is left out, and
+    // says how to give it; `--id` gives it.
+    let header = "#include <stdint.h>\ntypedef int32_t HRESULT;\ntypedef struct IThing IThing;\n\
+                  typedef struct IThingVtbl {\n    HRESULT (*QueryInterface)(IThing *This, const void *id, void **found);\n    \
+                  uint32_t (*AddRef)(IThing *This);\n    uint32_t (*Release)(IThing *This);\n    \
+                  HRESULT (*Touch)(IThing *This);\n} IThingVtbl;\nstruct IThing { const IThingVtbl *lpVtbl; };\n";
+    std::fs::write(dir.join("thing.h"), header).unwrap();
+    run(Command::new(compiler).args(["bind", "thing.h", "--output", "thing.to"]).current_dir(&dir));
+    let left = std::fs::read_to_string(dir.join("thing.to")).unwrap();
+    assert!(!left.contains("trait IThing"), "{left}");
+    assert!(left.contains("// - IThing: no IID found for it: give it with `--id IThing=<GUID>`"), "{left}");
+    let id = ["--id", "IThing={8D3C4F2A-1B6E-4A7C-9E05-3F2B1D0C6A94}"];
+    run(Command::new(compiler).args(["bind", "thing.h", "--output", "thing.to"]).args(id).current_dir(&dir));
+    let bound = std::fs::read_to_string(dir.join("thing.to")).unwrap();
+    assert!(
+        bound.contains("@ffi.Interface(id: \"8d3c4f2a-1b6e-4a7c-9e05-3f2b1d0c6a94\")\npub trait IThing: ffi.Unknown {"),
+        "{bound}"
+    );
+    let wrong =
+        Command::new(compiler).args(["bind", "thing.h", "--id", "IThing=8d3c"]).current_dir(&dir).output().unwrap();
+    assert!(String::from_utf8_lossy(&wrong.stderr).contains("--id takes an interface and its IID"), "{wrong:?}");
+}

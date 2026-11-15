@@ -207,7 +207,8 @@ usage:
   tondo target pack [<dir>] [--json]                   write this machine's target, for a tondo elsewhere
                                                        to build for it (TONDO_TARGETS=<dir>)
   tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [--included] [--fails <file>]
-            [-I <dir>] [-D <name[=value]>] [--json]    write a module of extern declarations for a C header
+            [--id <interface>=<GUID>]... [-I <dir>] [-D <name[=value]>] [--json]
+                                                       write a module of extern declarations for a C header
   tondo completions bash|zsh|fish                      what a shell completes of tondo's commands
   tondo help [<group> | <command> | --all]             the groups of commands; what a group's commands do;
                                                        a command's usage; every usage

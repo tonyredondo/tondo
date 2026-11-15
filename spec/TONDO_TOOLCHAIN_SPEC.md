@@ -284,7 +284,7 @@ tondo remove <alias> [--project <dir>] [--json]
 tondo fix [<project>|<file.to>] [--library] [--json]
 tondo explain [<code>] [--json]
 tondo clean [--all | --list] [--json]
-tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [--included] [--fails <file>] [-I <dir>] [-D <name[=value]>] [--json]
+tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [--included] [--fails <file>] [--id <interface>=<GUID>]... [-I <dir>] [-D <name[=value]>] [--json]
 tondo test [<project>] [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--watch] [--coverage] [--bench [--bench-time <seconds>]] [--fuzz [--fuzz-time <seconds>]] [--test-format human|json|events] [--json] [--diagnostic-format human|json]
 tondo doc-test [--edition 0.1] <markdown>
 tondo target pack [<dir>] [--json]
@@ -411,6 +411,21 @@ en otros (`bits/`, `asm-generic/`):
 | macro de un puntero | `const` de valor `none` si es `NULL`; si no, una función que lo construye |
 | macro con parámetros que llama a una función | una función `unsafe` que la llama, con los tipos de sus parámetros |
 | `va_list` como parámetro | `Pointer[ffi.VaList]` |
+| interfaz de C: `struct` cuyo único campo es `lpVtbl`, puntero a un `struct` de punteros a funciones que reciben el objeto primero | `trait` con `@ffi.Interface` (16.16 del lenguaje) |
+| `HRESULT`, `GUID`, `IID`, `CLSID` | `ffi.HResult`, `ffi.Guid` |
+
+Una interfaz de C es como MIDL la escribe para C, y un header de MIDL leído
+como C toma esa rama sin `-D CINTERFACE`. Sus métodos son las entradas de su
+tabla, en orden, con el objeto como `self`, tras las de la interfaz que
+extiende: la interfaz del módulo cuyos métodos empiezan los suyos, la más
+larga, o `ffi.Unknown` por `QueryInterface`, `AddRef` y `Release`. Un puntero
+a un objeto de una interfaz es `Pointer[ffi.Void]?`, que `NombreObject.of`
+llama. El `id` de una interfaz sale del texto de los headers que lee:
+`MIDL_INTERFACE("...")` delante de su nombre, en la rama de C++, o
+`DEFINE_GUID(IID_Nombre, ...)` y `MIDL_DEFINE_GUID(IID, IID_Nombre, ...)`; o
+de `--id Nombre=<GUID>`, que se puede repetir. Una interfaz que llega a
+`ffi.Unknown` sin `id`, o que extiende una que no se escribe, queda fuera del
+módulo con el porqué, que nombra `--id` primero.
 
 `--fails <file>` nombra, una por línea y con `#` para comentarios, las
 funciones que fallan dando -1 o un puntero nulo con el número de error del

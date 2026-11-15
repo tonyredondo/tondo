@@ -103,6 +103,7 @@ pub fn generate(
     command: &str,
     included: bool,
     fails: &[String],
+    ids: &[(String, String)],
 ) -> Result<String, String> {
     let compiler = std::env::var("TONDO_CC").unwrap_or_else(|_| "cc".into());
     let mut source = String::new();
@@ -133,9 +134,81 @@ pub fn generate(
     parser.c.macros = tokens.macros;
     parser.program();
     let mut c = parser.c;
+    // The interfaces' IIDs, from the text of the bound headers, as the
+    // branch of C++ and `DEFINE_GUID` give them, then those given.
+    let mut read: Vec<&PathBuf> = tokens.targets.iter().map(|&file| &tokens.files[file]).collect();
+    read.extend(roots.iter());
+    for path in read {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            c.ids.extend(interface_ids(&text));
+        }
+    }
+    c.ids.extend(ids.iter().cloned());
     c.targets = tokens.targets;
     c.fails = fails.iter().cloned().collect();
     Ok(Emitter::new(&c).module(command))
+}
+
+/// The IIDs a header's text gives its interfaces: `MIDL_INTERFACE("...")`
+/// before an interface's name, as its branch of C++ declares it, and
+/// `DEFINE_GUID(IID_Name, ...)` or `MIDL_DEFINE_GUID(IID, IID_Name, ...)`.
+fn interface_ids(text: &str) -> HashMap<String, String> {
+    let mut ids = HashMap::new();
+    let word = |text: &str| -> String { text.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect() };
+    let mut rest = text;
+    while let Some(at) = rest.find("MIDL_INTERFACE(\"") {
+        rest = &rest[at + "MIDL_INTERFACE(\"".len()..];
+        let Some((id, after)) = rest.split_once('"') else { break };
+        let name = word(after.trim_start_matches(|c: char| c == ')' || c.is_whitespace()));
+        if let (Some(id), false) = (guid(id), name.is_empty()) {
+            ids.insert(name, id);
+        }
+    }
+    for macro_name in ["DEFINE_GUID(", "MIDL_DEFINE_GUID("] {
+        let mut rest = text;
+        while let Some(at) = rest.find(macro_name) {
+            // Not the end of another name, as `MIDL_DEFINE_GUID` for `DEFINE_GUID`.
+            let before = rest[..at].chars().next_back();
+            rest = &rest[at + macro_name.len()..];
+            if before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
+                continue;
+            }
+            let Some((arguments, _)) = rest.split_once(')') else { break };
+            let mut parts: Vec<&str> = arguments.split(',').map(str::trim).collect();
+            if macro_name == "MIDL_DEFINE_GUID(" && !parts.is_empty() {
+                parts.remove(0);
+            }
+            let Some(name) = parts.first().and_then(|name| name.strip_prefix("IID_")) else { continue };
+            let numbers: Option<Vec<u64>> = parts[1..].iter().map(|part| number_of(part)).collect();
+            if let Some(numbers) = numbers.filter(|n| n.len() == 11) {
+                let tail: String = numbers[3..].iter().map(|n| format!("{:02x}", n & 0xff)).collect();
+                let id =
+                    format!("{:08x}-{:04x}-{:04x}-{}-{}", numbers[0], numbers[1], numbers[2], &tail[..4], &tail[4..]);
+                ids.insert(name.to_string(), id);
+            }
+        }
+    }
+    ids
+}
+
+/// A number of C, in hexadecimal or decimal, with its suffixes.
+fn number_of(text: &str) -> Option<u64> {
+    let text = text.trim_end_matches(['u', 'U', 'l', 'L']);
+    match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        Some(hex) => u64::from_str_radix(hex, 16).ok(),
+        None => text.parse().ok(),
+    }
+}
+
+/// A GUID as text, `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`, with or without
+/// braces and in either case, as `ffi.Guid` reads it: in lower case, or
+/// `None` when it is not one.
+pub fn guid(text: &str) -> Option<String> {
+    let inner = text.trim().strip_prefix('{').and_then(|t| t.strip_suffix('}')).unwrap_or(text.trim());
+    let groups: Vec<&str> = inner.split('-').collect();
+    let shape = groups.iter().map(|g| g.len()).collect::<Vec<_>>() == [8, 4, 4, 4, 12];
+    let hex = groups.iter().all(|g| g.chars().all(|c| c.is_ascii_hexdigit()));
+    (shape && hex).then(|| inner.to_ascii_lowercase())
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +237,8 @@ struct Lexed {
     macros: Vec<Macro>,
     /// The files whose declarations the module binds.
     targets: HashSet<usize>,
+    /// Each file, by its number.
+    files: Vec<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -248,7 +323,7 @@ fn lex(text: &str, roots: &[PathBuf], included: bool) -> Lexed {
         }
         tokens.extend(scan(line, current));
     }
-    Lexed { tokens, macros, targets }
+    Lexed { tokens, macros, targets, files }
 }
 
 /// The tokens of one line of C.
@@ -423,6 +498,8 @@ struct C {
     /// Whether a struct a pointer reaches is bound whole, as for a library
     /// read from its debug information, whose structs are its own.
     complete_records: bool,
+    /// The IID of each interface, by its name.
+    ids: HashMap<String, String>,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -1509,6 +1586,9 @@ fn well_known(name: &str) -> Option<&'static str> {
         "uint32_t" => "UInt32",
         "uint64_t" => "UInt64",
         "bool" => "Bool",
+        // Of COM, as a header of Windows or of .NET's PAL names them.
+        "HRESULT" => "ffi.HResult",
+        "GUID" | "IID" | "CLSID" => "ffi.Guid",
         _ => return None,
     })
 }
@@ -1546,6 +1626,56 @@ struct Emitter<'c> {
     helpers: Vec<&'static str>,
     /// Whether a function fails with `os.Errno`, which `std.os` names.
     failing: bool,
+    /// The interfaces of C, by their struct: each method of the table, by
+    /// its name, with its function; and the structs of their tables.
+    interfaces: HashMap<usize, Vec<(String, CFunction)>>,
+    tables: HashSet<usize>,
+}
+
+/// What a type is through every typedef.
+fn underlying(c: &C, ty: &CType) -> CType {
+    match ty {
+        CType::Named(name) => match c.typedef_names.get(name) {
+            Some(&index) => underlying(c, &c.typedefs[index].ty),
+            None => ty.clone(),
+        },
+        other => other.clone(),
+    }
+}
+
+/// The interfaces of C among the structs (toolchain 7.1): a struct whose
+/// one field is `lpVtbl`, a pointer to a struct of pointers to functions
+/// that each take the object first, as MIDL writes them for C.
+fn interfaces(c: &C, names: &HashMap<usize, String>) -> HashMap<usize, Vec<(String, CFunction)>> {
+    let mut found = HashMap::new();
+    for (id, record) in c.records.iter().enumerate() {
+        let (Some([field]), Some(name)) = (record.fields.as_deref(), names.get(&id)) else { continue };
+        if field.name.as_deref() != Some("lpVtbl") {
+            continue;
+        }
+        let CType::Pointer(table, _) = underlying(c, &field.ty) else { continue };
+        let CType::Record(table) = underlying(c, &table) else { continue };
+        let Some(entries) = &c.records[table].fields else { continue };
+        let is_object = |ty: &CType| match underlying(c, ty) {
+            CType::Pointer(object, _) => {
+                matches!(underlying(c, &object), CType::Record(other) if names.get(&other) == Some(name))
+            }
+            _ => false,
+        };
+        let methods: Vec<(String, CFunction)> = entries
+            .iter()
+            .map_while(|entry| {
+                let CType::Pointer(function, _) = underlying(c, &entry.ty) else { return None };
+                let CType::Function(function) = underlying(c, &function) else { return None };
+                let takes_object = function.params.first().is_some_and(|(_, ty)| is_object(ty));
+                takes_object.then(|| (entry.name.clone().unwrap_or_default(), *function))
+            })
+            .collect();
+        if !methods.is_empty() && methods.len() == entries.len() {
+            found.insert(id, methods);
+        }
+    }
+    found
 }
 
 impl<'c> Emitter<'c> {
@@ -1574,6 +1704,17 @@ impl<'c> Emitter<'c> {
                 enum_names.entry(id).or_insert_with(|| tag.clone());
             }
         }
+        let interfaces = interfaces(c, &record_names);
+        let tables = interfaces
+            .keys()
+            .filter_map(|&id| match underlying(c, &c.records[id].fields.as_ref()?[0].ty) {
+                CType::Pointer(table, _) => match underlying(c, &table) {
+                    CType::Record(table) => Some(table),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
         Emitter {
             c,
             record_names,
@@ -1584,6 +1725,8 @@ impl<'c> Emitter<'c> {
             used_values: HashSet::new(),
             helpers: Vec::new(),
             failing: false,
+            interfaces,
+            tables,
         }
     }
 
@@ -1649,6 +1792,8 @@ impl<'c> Emitter<'c> {
                         self.va_list(position)?
                     }
                     CType::Function(function) => format!("({})?", self.function_type(function)?),
+                    // An object of an interface, which `NameObject.of` calls.
+                    _ if self.interface_record(&inner).is_some() => "Pointer[ffi.Void]?".into(),
                     CType::Record(id) => {
                         self.need(*id, false);
                         format!("Pointer[{}]?", self.record_name(*id))
@@ -1807,6 +1952,125 @@ impl<'c> Emitter<'c> {
         out
     }
 
+    /// The interface whose object a type is, through typedefs.
+    fn interface_record(&self, ty: &CType) -> Option<usize> {
+        match underlying(self.c, ty) {
+            CType::Record(id) => self.interfaces.keys().copied().find(|&other| {
+                other == id
+                    || self.record_names.get(&other).is_some_and(|name| self.record_names.get(&id) == Some(name))
+            }),
+            _ => None,
+        }
+    }
+
+    /// The interface an interface extends, with how many of its methods
+    /// are that one's: the bound interface whose methods begin its own, the
+    /// longest, or `ffi.Unknown` for `QueryInterface`, `AddRef` and
+    /// `Release`.
+    fn interface_base(&self, id: usize) -> (Option<String>, usize) {
+        let methods = &self.interfaces[&id];
+        let base = self
+            .interfaces
+            .iter()
+            .filter(|(other, theirs)| {
+                **other != id
+                    && theirs.len() < methods.len()
+                    && theirs.iter().zip(methods).all(|(theirs, mine)| theirs.0 == mine.0)
+            })
+            .max_by_key(|(_, theirs)| theirs.len());
+        match base {
+            Some((&other, theirs)) => (Some(self.record_name(other)), theirs.len()),
+            None if methods.iter().map(|(name, _)| name.as_str()).take(3).eq([
+                "QueryInterface",
+                "AddRef",
+                "Release",
+            ]) =>
+            {
+                (Some("ffi.Unknown".into()), 3)
+            }
+            None => (None, 0),
+        }
+    }
+
+    /// Why an interface cannot be bound: it reaches `ffi.Unknown` with no
+    /// IID found, or what it extends cannot be.
+    fn interface_problem(&self, id: usize) -> Option<String> {
+        let name = self.record_name(id);
+        let (base, _) = self.interface_base(id);
+        let base_id = self.interfaces.keys().copied().find(|&other| Some(self.record_name(other)) == base);
+        let unknown =
+            base.as_deref() == Some("ffi.Unknown") || base_id.is_some_and(|other| self.reaches_unknown(other));
+        if unknown && !self.c.ids.contains_key(&name) {
+            return Some(format!(
+                "{name}: no IID found for it: give it with `--id {name}=<GUID>`, or bind the header or file \
+                 that defines IID_{name}"
+            ));
+        }
+        let base_problem = base_id.and_then(|other| self.interface_problem(other));
+        base_problem.map(|_| format!("{name}: it extends {}, which is not bound", base.unwrap_or_default()))
+    }
+
+    fn reaches_unknown(&self, id: usize) -> bool {
+        match self.interface_base(id).0.as_deref() {
+            Some("ffi.Unknown") => true,
+            Some(base) => self
+                .interfaces
+                .keys()
+                .copied()
+                .find(|&other| self.record_name(other) == base)
+                .is_some_and(|other| self.reaches_unknown(other)),
+            None => false,
+        }
+    }
+
+    /// The trait of an interface of C (language 16.16), its methods those
+    /// its table adds to what it extends, the object as `self`.
+    fn interface(&mut self, id: usize) -> Option<String> {
+        let name = self.record_name(id);
+        if !self.used_types.insert(name.clone()) {
+            return None;
+        }
+        if let Some(problem) = self.interface_problem(id) {
+            self.skipped.push(problem);
+            return None;
+        }
+        let (base, inherited) = self.interface_base(id);
+        let mut lines = Vec::new();
+        for (method, function) in self.interfaces[&id].clone().into_iter().skip(inherited) {
+            if function.variadic {
+                self.skipped.push(format!("{name}: its method `{method}` takes a variable count of arguments"));
+                return None;
+            }
+            let mut params = vec!["self".to_string()];
+            for (index, (param, ty)) in function.params.iter().enumerate().skip(1) {
+                let named = param.as_deref().map(|p| p.strip_prefix("__").unwrap_or(p)).filter(|p| !p.is_empty());
+                let param = named.map(tondo_name).unwrap_or_else(|| format!("arg{index}"));
+                match self.ty(ty, Position::Parameter) {
+                    Ok(ty) => params.push(format!("{param}: {ty}")),
+                    Err(reason) => {
+                        self.skipped.push(format!("{name}: its method `{method}`: {reason}"));
+                        return None;
+                    }
+                }
+            }
+            let result = match self.ty(&function.result, Position::Result) {
+                Ok(result) if result == "Unit" => String::new(),
+                Ok(result) => format!(": {result}"),
+                Err(reason) => {
+                    self.skipped.push(format!("{name}: its method `{method}`: {reason}"));
+                    return None;
+                }
+            };
+            lines.push(format!("    fn {}({}){result}", tondo_name(&method), params.join(", ")));
+        }
+        let annotation = match self.c.ids.get(&name) {
+            Some(id) => format!("@ffi.Interface(id: {id:?})"),
+            None => "@ffi.Interface".to_string(),
+        };
+        let base = base.map(|base| format!(": {base}")).unwrap_or_default();
+        Some(format!("{annotation}\npub trait {name}{base} {{\n{}\n}}", lines.join("\n")))
+    }
+
     fn function(&mut self, index: usize) -> Option<String> {
         let function = &self.c.functions[index];
         if !self.target(function.file) || function.inline || function.name.starts_with("__") {
@@ -1918,6 +2182,13 @@ impl<'c> Emitter<'c> {
         }
         let name = self.record_name(id);
         if record.tag.is_none() && !self.record_names.contains_key(&id) && !dependency {
+            return None;
+        }
+        // An interface is its trait; its table and a GUID are `std.ffi`'s.
+        if self.interfaces.contains_key(&id) {
+            return self.interface(id);
+        }
+        if self.tables.contains(&id) || well_known(&name).is_some() {
             return None;
         }
         if !self.used_types.insert(name.clone()) {

@@ -7418,3 +7418,16 @@ a hundred runs, and bytes by eight a run; a real regression smaller than that go
 The line of each benchmark shows its allocations and bytes of before whenever they changed,
 with the decimals that tell them apart, whether or not they fail the run.
 
+## `tondo bind` finds interfaces of C by their shape
+
+The brief proposed a flag, `--interfaces`, to have `tondo bind` write traits for the interfaces
+of a header. A struct whose one field is `lpVtbl`, a pointer to a struct of pointers to
+functions that each take the object first, is not mistaken for anything else, so Tony chose
+that `bind` writes the trait by itself. An interface needs its IID when it reaches
+`ffi.Unknown`, and a header of MIDL read as C keeps it out of the C declarations: it is in the
+branch of C++, `MIDL_INTERFACE("...")`, or in `DEFINE_GUID`, often in a file of its own. `bind`
+reads the ids from the text of the headers it reads, and `--id Name=<GUID>` gives one it does
+not find; an interface without one is left out of the module with what to do, `--id` first.
+What an interface extends is the interface of the module whose methods begin its own, the
+longest, since the table of C repeats them; `QueryInterface`, `AddRef` and `Release` are
+`ffi.Unknown`.

@@ -1,0 +1,28 @@
+import std.console
+import std.ffi
+import app.counter
+
+fn main() {
+    let slot = ffi.allocate[Pointer[ffi.Void]?]()
+    let made = unsafe { counter.counter_make(slot) }
+    let object = unsafe { slot.read() } ?? panic("no counter")
+    let counting = unsafe { counter.ICounterObject.of(object) }
+    let added = counting.Add(40)
+    let refused = counting.Add(-1)
+    let total = ffi.allocate[ffi.CInt]()
+    let read = counting.GetTotal(total)
+    console.println("{made.isOk()} {added.isOk()} {refused} {read.isOk()} {unsafe { total.read() }}")
+    // The same object, as the interface that extends it.
+    let id = ffi.allocate[ffi.Guid]()
+    let found = ffi.allocate[Pointer[ffi.Void]]()
+    unsafe { id.write(counter.INamedCounterObject.Id) }
+    let asked = counting.unknown().queryInterface(id, found)
+    let named = unsafe { counter.INamedCounterObject.of(found.read()) }
+    let buffer = ffi.allocate[UInt16](8)
+    let needed = ffi.allocate[UInt32]()
+    let small = named.GetName(2, needed, buffer)
+    let whole = named.GetName(8, needed, buffer)
+    let name = unsafe { ffi.fromWide(buffer) }
+    console.println("{asked.isOk()} {small.isFailure()} {whole.isOk()} {unsafe { needed.read() }} {name}")
+    console.println("{named.release()} {counting.release()}")
+}
