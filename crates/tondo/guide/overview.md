@@ -111,7 +111,9 @@ tondo guide <topic>                one topic of this guide
 explains one, and with `--json` a command writes its result as one JSON
 object. When something goes wrong, `tondo guide runbooks` says what to do step
 by step: a crash, a dump, a hang, a test that fails only in CI, code that is
-slow or allocates, a change across a project.
+slow or allocates, a change across a project, and porting code from Go, C#,
+Rust, Python, TypeScript, Java, C++, Swift or Kotlin (`tondo guide
+runbook-port`).
 
 Every error has a code and says how to fix it, often with the exact code to
 write; `tondo check --json` gives the same as data with spans, and many
@@ -170,5 +172,6 @@ ffi          calling C: extern fn, unsafe
 cli          every tondo command: write, run, test, observe, debug
 mcp          every tool of tondo mcp, for agents
 pitfalls     mistakes models make in Tondo, with the error each gives
-runbooks     what to do, step by step: a crash, a hang, a failure in CI, slow code
+runbooks     what to do, step by step: a crash, a hang, a failure in CI, slow code,
+             porting from another language
 ```

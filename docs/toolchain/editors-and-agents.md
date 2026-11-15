@@ -202,6 +202,16 @@ step, with the tools of `tondo mcp`: why each step, and what it gives.
 | You rename, change a signature or delete what other code uses | `runbook-change` |
 | A program runs and you want to know what it is doing | `runbook-running` |
 | A program asks, draws or reads keys, and there is no terminal | `runbook-terminal` |
+| You port code from another language: the method | `runbook-port` |
+| You port code from Go | `runbook-port-go` |
+| You port code from C# | `runbook-port-csharp` |
+| You port code from Rust | `runbook-port-rust` |
+| You port code from Python | `runbook-port-python` |
+| You port code from TypeScript or JavaScript | `runbook-port-typescript` |
+| You port code from Java | `runbook-port-java` |
+| You port code from C++ | `runbook-port-cpp` |
+| You port code from Swift | `runbook-port-swift` |
+| You port code from Kotlin | `runbook-port-kotlin` |
 
 Every step of the runbooks runs in the tests of the toolchain, so what
 they show is what the tools give. They are written for a model, and a
