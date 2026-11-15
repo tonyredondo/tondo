@@ -348,8 +348,22 @@ fn the_cache_keeps_a_programs_last_builds() {
     for text in ["one", "two", "three", "four"] {
         run(text);
     }
-    let builds = std::fs::read_dir(cache.join("tondo/run")).unwrap().flatten();
-    assert_eq!(builds.filter(|entry| entry.path().is_dir()).count(), 2);
+    // The program's builds, in a directory of their own.
+    let dirs = |path: &Path| -> Vec<PathBuf> {
+        let entries = std::fs::read_dir(path).unwrap().flatten().map(|entry| entry.path());
+        entries.filter(|path| path.is_dir()).collect()
+    };
+    let programs = dirs(&cache.join("tondo/run"));
+    assert_eq!(programs.len(), 1, "{programs:?}");
+    assert_eq!(dirs(&programs[0]).len(), 2);
+    // An entry of the layout before, which nothing looks up, goes at the
+    // next sweep, a day after the last.
+    std::fs::create_dir_all(cache.join("tondo/run/0123-4567")).unwrap();
+    let swept = std::fs::File::options().write(true).open(cache.join("tondo/run/.swept")).unwrap();
+    swept.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 24 * 60 * 60)).unwrap();
+    run("five");
+    assert!(!cache.join("tondo/run/0123-4567").exists());
+    assert_eq!(dirs(&cache.join("tondo/run")).len(), 1);
 }
 
 /// A program built again where it runs still runs, and its new build runs

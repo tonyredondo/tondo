@@ -68,23 +68,23 @@ fn forget_others(dir: &Path, name: &str, own: &str, now: std::time::SystemTime) 
     }
 }
 
-/// The cache entry `key` of `kind` (`run`, `test` or `meta`), which holds
-/// what a build can make again: using it marks it, and an entry no one
-/// used in 30 days is removed, looking at most once a day.
 /// The entry `key` of the builds of one program, as `run` and `test` keep
 /// them, `owner` naming the program and how it is built: a new one lets go
 /// of its older builds but the last, so that editing a program does not
-/// fill the cache with every version of it.
+/// fill the cache with every version of it. Each program's builds are in a
+/// directory of their own, so that a new one reads only those: a suite that
+/// builds hundreds of programs at once would otherwise read the whole cache
+/// for each.
 pub fn build_entry(kind: &str, owner: &[&[u8]], key: &str) -> PathBuf {
     const KEPT: usize = 1;
-    let prefix = format!("{}-", fingerprint(owner));
-    let entry = cache_entry(kind, &format!("{prefix}{key}"));
-    if !entry.exists() {
-        let mut older: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(cache_dir().join(kind))
+    let entry = cache_entry(kind, &format!("{}/{key}", fingerprint(owner)));
+    if !entry.exists()
+        && let Some(builds) = entry.parent()
+    {
+        let mut older: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(builds)
             .into_iter()
             .flatten()
             .flatten()
-            .filter(|e| e.file_name().to_str().is_some_and(|name| name.starts_with(&prefix)))
             .filter_map(|e| Some((e.metadata().and_then(|m| m.modified()).ok()?, e.path())))
             .collect();
         older.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
@@ -95,6 +95,10 @@ pub fn build_entry(kind: &str, owner: &[&[u8]], key: &str) -> PathBuf {
     entry
 }
 
+/// The cache entry `key` of `kind` (`run`, `test`, `meta`, `revision` or
+/// `compiler`), which holds what a build can make again: using it marks it,
+/// and an entry no one used in 30 days is removed, looking at most once a
+/// day.
 pub fn cache_entry(kind: &str, key: &str) -> PathBuf {
     let dir = cache_dir().join(kind);
     let entry = dir.join(key);
@@ -102,11 +106,15 @@ pub fn cache_entry(kind: &str, key: &str) -> PathBuf {
     if let Ok(file) = std::fs::File::open(&entry) {
         let _ = file.set_modified(now);
     }
-    sweep(&dir, now);
+    sweep(&dir, now, matches!(kind, "run" | "test"));
     entry
 }
 
-fn sweep(dir: &Path, now: std::time::SystemTime) {
+/// Removes the entries of `dir` no one used in 30 days, at most once a
+/// day; with `programs`, those in each program's directory, the
+/// directories left empty, and the entries of the layout before them,
+/// `<program>-<key>`, which nothing looks up any more.
+fn sweep(dir: &Path, now: std::time::SystemTime, programs: bool) {
     const DAY: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
     // A time after `now`, as one this sweep just wrote, is no age.
     let age = |path: &Path| {
@@ -117,11 +125,29 @@ fn sweep(dir: &Path, now: std::time::SystemTime) {
     if age(&stamp).is_some_and(|age| age < DAY) || std::fs::write(&stamp, b"").is_err() {
         return;
     }
+    let old = |path: &Path| path.is_dir() && age(path).is_some_and(|age| age > 30 * DAY);
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let path = entry.path();
-        if path.is_dir() && age(&path).is_some_and(|age| age > 30 * DAY) {
-            let _ = std::fs::remove_dir_all(&path);
+        if !programs {
+            if old(&path) {
+                let _ = std::fs::remove_dir_all(&path);
+            }
+            continue;
         }
+        if !path.is_dir() {
+            continue;
+        }
+        if entry.file_name().to_str().is_some_and(|name| name.contains('-')) {
+            let _ = std::fs::remove_dir_all(&path);
+            continue;
+        }
+        for build in std::fs::read_dir(&path).into_iter().flatten().flatten() {
+            if old(&build.path()) {
+                let _ = std::fs::remove_dir_all(build.path());
+            }
+        }
+        // Empty, it goes; one a build just made a place in stays.
+        let _ = std::fs::remove_dir(&path);
     }
 }
 
@@ -2659,12 +2685,23 @@ mod tests {
             let file = std::fs::File::open(dir.join(name)).unwrap();
             file.set_modified(now - Duration::from_secs(days * 24 * 60 * 60)).unwrap();
         }
-        super::sweep(&dir, now);
+        super::sweep(&dir, now, false);
         assert!(!dir.join("old").exists() && dir.join("recent").exists());
         // Once a day at most.
         std::fs::File::open(dir.join("recent")).unwrap().set_modified(now - Duration::from_secs(40 * 86400)).unwrap();
-        super::sweep(&dir, now);
+        super::sweep(&dir, now, false);
         assert!(dir.join("recent").exists());
+        // By programs: their old builds, the directories left empty and the
+        // entries of the layout before them.
+        let programs = dir.join("programs");
+        for (name, days) in [("a/old", 31), ("a/recent", 1), ("b/old", 31), ("c0-d1", 1)] {
+            std::fs::create_dir_all(programs.join(name)).unwrap();
+            let file = std::fs::File::open(programs.join(name)).unwrap();
+            file.set_modified(now - Duration::from_secs(days * 24 * 60 * 60)).unwrap();
+        }
+        super::sweep(&programs, now, true);
+        assert!(!programs.join("a/old").exists() && programs.join("a/recent").exists());
+        assert!(!programs.join("b").exists() && !programs.join("c0-d1").exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
