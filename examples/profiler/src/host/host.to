@@ -1,0 +1,51 @@
+import profiler.api
+import std.ffi
+
+/// A host: a program that loads modules, tells a profiler as it does, and
+/// answers what the profiler asks about them.
+pub type Host = {
+    modules: Map[UInt, String]
+}
+
+impl api.Info for Host {
+    fn moduleName(self, module: UInt, capacity: UInt32, name: ffi.WideString): UInt32 ! ffi.HResult {
+        let found = match self.modules.get(module) {
+            some(found) => found
+            none => fail ffi.HResult.InvalidArgument
+        }
+        let wide = ffi.toWide(found)
+        unsafe {
+            defer ffi.free(wide)
+            var units = 0u32
+            for wide.offset(Int(units)).read() != 0 {
+                units += 1
+            }
+            if units + 1 > capacity {
+                fail api.BufferTooSmall
+            }
+            ffi.copy(wide, name, Int(units) + 1)
+            units
+        }
+    }
+}
+
+/// Runs the host with a profiler, of which it has only a pointer to an
+/// object: asks it for `Callback`, tells it of each module in order, and
+/// lets it go.
+pub fn Host.run(self, profiler: Pointer[ffi.Void]): !ffi.HResult {
+    let asked = api.asked(profiler, api.CallbackObject.Id)?
+    defer {
+        _ = api.released(asked)
+    }
+    let callback = unsafe { api.CallbackObject.of(asked) }
+    // The host gives the profiler an object of itself, and keeps its own hold of it.
+    let itself = ffi.object(self)
+    defer {
+        _ = api.released(itself)
+    }
+    callback.initialize(itself)?
+    for module in self.modules.keys().collect().sorted() {
+        callback.moduleLoaded(module)?
+    }
+    callback.shutdown()
+}

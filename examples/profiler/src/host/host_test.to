@@ -1,0 +1,44 @@
+import profiler.api
+import profiler.recorder
+import std.ffi
+
+fn program(): Host {
+    Host { modules: [1: "kernel", 2: "café.dll"] }
+}
+
+test aProfilerHearsOfEveryModuleByItsName {
+    let heard = recorder.Recorder()
+    let profiler = ffi.object(heard)
+    assert(program().run(profiler).isOk())
+    assert(heard.events() == ["initialized", "loaded kernel", "loaded café.dll", "shut down"])
+    // The host let go of what it asked for: this test's hold is the last.
+    assert(api.released(profiler) == 0)
+}
+
+test anObjectThatIsNoProfilerIsRefused {
+    // A host is an object too, of `Info` and not of `Callback`.
+    let other = ffi.object(program())
+    assert(program().run(other) == err(ffi.HResult.NoInterface))
+    assert(api.released(other) == 0)
+}
+
+test theHostAnswersWithAName {
+    let object = ffi.object(program())
+    let info = unsafe { api.InfoObject.of(object) }
+    assert(recorder.name(info, 2) == ok("café.dll"))
+    assert(recorder.name(info, 9) == err(ffi.HResult.InvalidArgument))
+    assert(api.released(object) == 0)
+}
+
+test aNameThatDoesNotFitIsNotWritten {
+    let object = ffi.object(program())
+    let info = unsafe { api.InfoObject.of(object) }
+    let buffer = ffi.allocate[UInt16](4)
+    unsafe {
+        defer ffi.free(buffer)
+        buffer.write(7u16)
+        assert(info.moduleName(1, 4, buffer) == err(api.BufferTooSmall))
+        assert(buffer.read() == 7)
+    }
+    assert(api.released(object) == 0)
+}

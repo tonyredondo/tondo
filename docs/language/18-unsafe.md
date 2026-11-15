@@ -411,8 +411,10 @@ three, and how the method is declared says what the call makes of it:
 | a type that crosses to C, or none | what C returns |
 
 `ffi.HResult` has the common results as its constants, `HResult.Ok`,
-`HResult.NoInterface`, `HResult.InvalidArgument`, and a library declares its
-own the same way ([Constants of a type](03-functions.md#constants-of-a-type)).
+`HResult.NoInterface`, `HResult.InvalidArgument`
+([Constants of a type](03-functions.md#constants-of-a-type)), and a library
+declares its own as constants of its module, `pub const BufferTooSmall:
+ffi.HResult = ffi.HResult(-2147024774)`.
 
 **`ffi.Unknown`** is `IUnknown`, which every interface of COM extends:
 `queryInterface`, `addRef` and `release`. An interface that requires it
@@ -434,9 +436,14 @@ type parameters, one that requires more than one trait, or a method whose
 parameters or result do not cross to C. The calls follow C's convention on
 Linux and macOS.
 
-Text in the APIs of Windows and .NET is UTF-16. `ffi.toWide(text)` makes an
-`ffi.WideString` for C, and `unsafe { ffi.fromWide(pointer) }` reads one, up
-to its zero or for a count of units.
+Text in the APIs of Windows and .NET is UTF-16. `ffi.toWide(text)` makes a
+copy of a text as an `ffi.WideString` for C, which `ffi.free` gives back,
+and `unsafe { ffi.fromWide(pointer) }` reads one, up to its zero or for a
+count of units.
+
+The example [`profiler`](../../examples/profiler) is a host and a profiler
+that talk through two such interfaces, in the shape of .NET's profiling
+API, with objects going both ways.
 
 ## The system's calls
 
