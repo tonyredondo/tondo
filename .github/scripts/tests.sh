@@ -34,12 +34,37 @@ tr '\n' '\0' < "$work/order" | xargs -0 -n 1 -P "$at_once" sh -c '
     if [ -n "$share" ]; then
         (cd "$dir" && exec setsid "$test") > "$work/$name.log" 2>&1 &
         pid=$!
+        page=$(($(getconf PAGESIZE) / 1024))
+        # The processes of its group: the id, parent, state and KiB held of
+        # each, and with "all", what it waits for in the kernel and its
+        # command. From /proc, as BusyBox ps selects no group, and with no
+        # process of its own for each one.
+        group() {
+            all=${1:-}
+            for proc in /proc/[0-9]*; do
+                read -r line 2> /dev/null < "$proc/stat" || continue
+                set -- ${line##*) }
+                [ "$3" = "$pid" ] || continue
+                state=$1 parent=$2
+                read -r _ pages _ 2> /dev/null < "$proc/statm" || continue
+                if [ -n "$all" ]; then
+                    # It has no newline, which read takes as a failure.
+                    wchan=
+                    read -r wchan 2> /dev/null < "$proc/wchan"
+                    echo "${proc#/proc/} $parent $state $((pages * page)) ${wchan:-?} $(tr "\0" " " < "$proc/cmdline" 2> /dev/null)"
+                else
+                    echo "$((pages * page))"
+                fi
+            done
+        }
         while kill -0 "$pid" 2> /dev/null; do
-            held=$(ps -o rss= -g "$pid" 2> /dev/null | awk "{ s += \$1 } END { print s + 0 }")
+            held=0
+            for kib in $(group); do held=$((held + kib)); done
             if [ "$held" -gt "$share" ] || [ $(($(date +%s) - start)) -gt 1800 ]; then
                 {
                     echo "watchdog: $name holds $held KiB after $(($(date +%s) - start)) s, past $share KiB or 1800 s:"
-                    ps -o pid,ppid,rss,etime,args -g "$pid"
+                    echo "pid parent state KiB wchan command"
+                    group all
                 } >> "$work/$name.log" 2>&1
                 kill -QUIT -- "-$pid" 2> /dev/null
                 sleep 5
