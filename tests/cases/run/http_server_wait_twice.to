@@ -4,6 +4,7 @@
 import std.console
 import std.env
 import std.http
+import std.net
 import std.process
 import std.time
 
@@ -20,18 +21,36 @@ fn main(): !http.HttpError {
         },
     )
     let server = app.start(port: 0)?
-    spawn detached ask(http.Client(baseUrl: server.url()), began)
+    spawn detached ask(http.Client(baseUrl: server.url()), server.address(), began)
     server.wait(grace: time.seconds(600))
     console.println("not reached")
 }
 
-fn ask(web: http.Client, began: Receiver[Unit]) {
+fn ask(web: http.Client, address: String, began: Receiver[Unit]) {
     let stuck = spawn web.get("/stuck")
     _ = began.receive()
-    _ = process.signal(env.processId(), process.Signal.Terminate)
-    time.sleep(time.milliseconds(200))
+    untilHeard(address)
+    // Its channel gone, the second ends the program, as it would.
     _ = process.signal(env.processId(), process.Signal.Terminate)
     _ = stuck.wait()
+}
+
+/// Asks the program to end until `wait` hears it, which the server taking
+/// no more connections shows. A signal that comes before `wait` listens
+/// ends the program at once, as it does without a server (`Server.wait`),
+/// and nothing says when `wait` listens: a channel of `Terminate` of its
+/// own, while this asks, keeps such a signal from ending it.
+fn untilHeard(address: String) {
+    let heard = process.signals(process.Signal.Terminate)
+    let (host, port) = address.splitOnce(":") ?? ("", "")
+    for {
+        _ = process.signal(env.processId(), process.Signal.Terminate)
+        _ = heard.receive()
+        if net.connect(host, Int.parse(port) ?? 0).isErr() {
+            return
+        }
+        time.sleep(time.milliseconds(1))
+    }
 }
 
 // expect-exit: 143
