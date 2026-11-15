@@ -38,6 +38,8 @@ pub(crate) const WATCHED: u8 = 2;
 const EXACT: u8 = 4;
 /// Counts allocations for a benchmark (`testing.bench`).
 pub(crate) const MEASURED: u8 = 8;
+/// Counts each task's allocations, for `testing.allocations`.
+pub(crate) const COUNTED: u8 = 16;
 
 #[inline(always)]
 pub(crate) fn hooks() -> u8 {

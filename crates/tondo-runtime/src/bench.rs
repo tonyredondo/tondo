@@ -70,6 +70,30 @@ pub(crate) fn allocated(size: usize) {
     BYTES.fetch_add(size as u64, Ordering::Relaxed);
 }
 
+/// How many tasks count their allocations now (`testing.allocations`).
+static COUNTING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// `testing.allocations(body)` starts: the running task's allocations from
+/// now on are counted; what it counted before, to take away at the end.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_allocations_start() -> i64 {
+    if COUNTING.fetch_add(1, Ordering::SeqCst) == 0 {
+        crate::diagnostics::hook(crate::diagnostics::COUNTED);
+    }
+    crate::tasks::allocations_made() as i64
+}
+
+/// `testing.allocations(body)` ends: how many allocations the task made
+/// since `before`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_allocations_since(before: i64) -> i64 {
+    let made = crate::tasks::allocations_made() as i64 - before;
+    if COUNTING.fetch_sub(1, Ordering::SeqCst) == 1 {
+        crate::diagnostics::unhook(crate::diagnostics::COUNTED);
+    }
+    made
+}
+
 /// Whether benchmarks measure: `tondo test --bench`.
 pub(crate) fn measures() -> bool {
     measuring().is_some()

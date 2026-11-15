@@ -48,7 +48,7 @@ them.
 
 `tondo api std.testing` shows the same in a terminal.
 
-- [Functions](#functions): [`log`](#log), [`tags`](#tags), [`failNow`](#failnow), [`skip`](#skip), [`attach`](#attach), [`snapshot`](#snapshot), [`withVirtualTime`](#withvirtualtime), [`bench`](#bench), [`keep`](#keep)
+- [Functions](#functions): [`log`](#log), [`tags`](#tags), [`failNow`](#failnow), [`skip`](#skip), [`attach`](#attach), [`snapshot`](#snapshot), [`withVirtualTime`](#withvirtualtime), [`bench`](#bench), [`keep`](#keep), [`allocations`](#allocations)
 - [VirtualTime](#virtualtime): [`VirtualTime.settle`](#virtualtimesettle), [`VirtualTime.advance`](#virtualtimeadvance)
 
 ### Functions
@@ -136,6 +136,35 @@ pub fn keep[T](value: T)
 ```
 
 Uses the value, so that the optimizer keeps the work that made it.
+
+#### allocations
+
+```tondo
+pub fn allocations[T, F: CallMut[fn(): T]](body: F): Int
+```
+
+How many times a run of `body` allocates on the heap, in the task that
+calls it, in the build the tests have, which is optimized: a test that
+keeps a function from allocating more than it does now. What the
+closure gives is kept, so that the optimizer keeps its work; tasks it
+starts count their own.
+
+```tondo
+import std.testing
+
+fn receipt(lines: Array[Int]): String {
+    var text = ""
+    for line in lines {
+        text = "{text}{line}\n"
+    }
+    text
+}
+
+test theReceiptDoesNotAllocateForEachLine {
+    let lines = [10, 20, 30, 40]
+    assert(testing.allocations(() { receipt(lines) }) <= 3)
+}
+```
 
 ### VirtualTime
 

@@ -1046,6 +1046,10 @@ pub enum StdFn {
     BenchNext,
     BenchEnd,
     Keep,
+    /// `testing.allocations(body)`: counting the task's allocations starts,
+    /// and how many it made since.
+    AllocationsStart,
+    AllocationsSince,
 }
 
 /// What `std.internal.reflect` does with a value of a type it is given:

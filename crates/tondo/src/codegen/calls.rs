@@ -203,6 +203,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Callee::Std(StdFn::BenchNext) => self.e.call_rt(Rt::BenchNext, &values),
             Callee::Std(StdFn::BenchEnd) => self.e.call_rt(Rt::BenchEnd, &values),
+            Callee::Std(StdFn::AllocationsStart) => self.e.call_rt(Rt::AllocationsStart, &values),
+            Callee::Std(StdFn::AllocationsSince) => self.e.call_rt(Rt::AllocationsSince, &values),
             Callee::Std(StdFn::Keep) => {
                 // The value as a word the runtime is given, so that its
                 // computation stays.

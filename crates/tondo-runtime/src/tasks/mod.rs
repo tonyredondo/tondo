@@ -198,6 +198,8 @@ pub(crate) struct Task {
     labels: std::sync::atomic::AtomicU32,
     /// Those of them `profile.withLabels` gives, without its contexts'.
     own_labels: std::sync::atomic::AtomicU32,
+    /// The allocations it made while `testing.allocations` counts them.
+    allocations: std::sync::atomic::AtomicU64,
     /// Its contexts (language 11.16), shared with the task that spawned it
     /// until a `with` changes them.
     pub(crate) context: super::contexts::Held,
@@ -512,6 +514,20 @@ pub(crate) fn current() -> *mut Task {
     worker(|w| w.current.get())
 }
 
+/// One more allocation of the running task, while `testing.allocations`
+/// counts them.
+#[cfg_attr(not(tondo_staticlib), allow(dead_code))]
+pub(crate) fn count_allocation() {
+    if let Some(task) = unsafe { current().as_ref() } {
+        task.allocations.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// The allocations the running task made while they were counted.
+pub(crate) fn allocations_made() -> u64 {
+    unsafe { current().as_ref() }.map_or(0, |task| task.allocations.load(Ordering::Relaxed))
+}
+
 /// The labels of the running task, which a signal handler may read.
 pub(crate) fn labels() -> u32 {
     unsafe { current().as_ref() }.map_or(0, |task| task.labels.load(Ordering::Relaxed))
@@ -786,6 +802,7 @@ fn new_task(
         origin: None,
         labels: std::sync::atomic::AtomicU32::new(labels),
         own_labels: std::sync::atomic::AtomicU32::new(own_labels),
+        allocations: std::sync::atomic::AtomicU64::new(0),
         context,
         withins: Vec::new(),
         grace: None,

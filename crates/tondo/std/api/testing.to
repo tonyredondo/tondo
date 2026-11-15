@@ -56,3 +56,27 @@ pub fn bench[T, E, F: CallMut[fn(): T ! E]](name: String, body: F): !E
 
 /// Uses the value, so that the optimizer keeps the work that made it.
 pub fn keep[T](value: T)
+
+/// How many times a run of `body` allocates on the heap, in the task that
+/// calls it, in the build the tests have, which is optimized: a test that
+/// keeps a function from allocating more than it does now. What the
+/// closure gives is kept, so that the optimizer keeps its work; tasks it
+/// starts count their own.
+///
+/// ```tondo
+/// import std.testing
+///
+/// fn receipt(lines: Array[Int]): String {
+///     var text = ""
+///     for line in lines {
+///         text = "{text}{line}\n"
+///     }
+///     text
+/// }
+///
+/// test theReceiptDoesNotAllocateForEachLine {
+///     let lines = [10, 20, 30, 40]
+///     assert(testing.allocations(() { receipt(lines) }) <= 3)
+/// }
+/// ```
+pub fn allocations[T, F: CallMut[fn(): T]](body: F): Int

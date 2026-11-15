@@ -2485,6 +2485,15 @@ nuevo desde que termina cada benchmark. Un cuerpo que falla termina su
 benchmark sin medidas, y `bench` devuelve ese error; un pánico termina el test,
 como siempre.
 
+`testing.allocations(body)` ejecuta el closure una vez y da cuántas veces
+asignó memoria del heap, como un `Int`, en la tarea que lo llama: las tareas
+que empieza cuentan las suyas, y los tests que corren a la vez, también. El
+closure se hace antes de que empiece la cuenta, y lo que da se conserva, como
+con `testing.keep`. Cuenta en el build de los tests, que es optimizado salvo con
+`--debug`, como el de `--bench`: un test con `assert(testing.allocations(() {
+receipt(lines) }) <= 7)` mantiene una función en las asignaciones que hace
+ahora, y falla cuando el compilador o el código hacen más.
+
 El reporte (15.11) da por cada benchmark las ejecuciones de cada muestra, los
 nanosegundos por ejecución de cada muestra, su mediana, media, mínimo, máximo y
 desviación (la mediana de las distancias a la mediana, que una muestra

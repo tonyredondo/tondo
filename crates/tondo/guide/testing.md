@@ -142,6 +142,10 @@ test parsing {
   `--test-format json` gives every sample, and the machine.
 - What the closure gives is kept, so the work that made it is not optimized
   away; `testing.keep(value)` keeps a value the closure does not give.
+- `testing.allocations(() { receipt(lines) })` runs the closure once and
+  gives how many times it allocated, in its task and in the optimized build
+  of the tests: `assert(testing.allocations(() { receipt(lines) }) <= 7)`
+  keeps a function at what it allocates now.
 - `--save-baseline main` keeps what was measured in
   `target/bench/main.json`, and `--baseline main` compares with it: each
   benchmark says how much it changed, and whether that is `slower`,

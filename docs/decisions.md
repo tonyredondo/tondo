@@ -7331,3 +7331,13 @@ the form open. `--list` gives each part of the cache directory, the largest firs
 is, whether it counts toward the limit on the builds (`run`, `test` and `meta`, which the daily
 bound evicts), and whether `clean` empties it without `--all`; then what the builds hold beside
 the limit. It reads sizes as `clean` would free them, so the two agree.
+
+## A test that says how much a call allocates
+
+Tony approved the simplest form, `testing.allocations(() { receipt(lines) })`, an `Int`, over a
+record with the bytes too, on the condition that a plain test's build is the optimized one, as it
+is: `tondo test` builds its tests as `--bench` does, unless `--debug`. Tests of a process run at
+once, so a count of the whole process would take others' allocations; each task counts its own,
+in a field the allocator adds to while any `allocations` runs, under a hook of its own so that a
+benchmark that ends does not stop it. The closure is made before the count starts, since making
+it may allocate its captures, and what it gives is kept, as a benchmark keeps it.

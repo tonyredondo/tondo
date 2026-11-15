@@ -932,6 +932,44 @@ impl<'a> Checker<'a> {
         Self::mk(hir::ExprKind::Block(block), ty, span)
     }
 
+    /// `testing.allocations(body)` (testing 10.4): how many allocations a
+    /// run of `body` makes in its task, its result kept so that the
+    /// optimizer keeps its work. The closure is made before counting starts.
+    pub(super) fn allocations(&mut self, cx: &mut FnCx, args: &[ast::Arg], span: Span) -> hir::Expr {
+        let [body] = args else {
+            return self.arity_error(span, 1, args.len());
+        };
+        let ast::ExprKind::Closure(closure) = &body.value.kind else {
+            let message = "`allocations` takes a closure: `testing.allocations(() { receipt(lines) })`";
+            self.diags.error("E1102", body.value.span, message);
+            return Self::error_expr(span);
+        };
+        let kind = ClosureKind { deferred: false, is_unsafe: closure.is_unsafe, test: false, infer_error: false };
+        let parts = (&closure.params[..], closure.result.as_ref());
+        let block = &closure.body;
+        let value = self.closure_with(cx, parts, None, kind, span, |this, cx, success| this.block(cx, block, success));
+        let Some((_, _, info)) = self.types.closure(value.ty) else { return Self::error_expr(span) };
+        let mk = |kind, ty| Self::mk(kind, ty, span);
+        let std = |function, values, ty| mk(hir::ExprKind::Call(Callee::Std(function), Vec::new(), values), ty);
+        let (body, before) = (self.hidden_local(cx, value.ty), self.hidden_local(cx, Ty::INT));
+        let run =
+            mk(hir::ExprKind::CallValue(Box::new(mk(hir::ExprKind::Local(body), value.ty)), Vec::new()), info.result);
+        let run = match info.result {
+            Ty::UNIT | Ty::NEVER => hir::Stmt::Expr(run),
+            result => {
+                hir::Stmt::Expr(mk(hir::ExprKind::Call(Callee::Std(StdFn::Keep), vec![result], vec![run]), Ty::UNIT))
+            }
+        };
+        let stmts = vec![
+            hir::Stmt::Let(body, value),
+            hir::Stmt::Let(before, std(StdFn::AllocationsStart, Vec::new(), Ty::INT)),
+            run,
+        ];
+        let since = std(StdFn::AllocationsSince, vec![mk(hir::ExprKind::Local(before), Ty::INT)], Ty::INT);
+        let block = hir::Block { stmts, tail: Some(Box::new(since)), ty: Ty::INT };
+        mk(hir::ExprKind::Block(block), Ty::INT)
+    }
+
     /// `testing.snapshot(name, value, ignore:, matches:, replace:)` (testing
     /// 9.7): a `String` is compared as it is, any other value as the JSON
     /// `json.encode` writes for it.

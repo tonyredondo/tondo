@@ -2039,6 +2039,51 @@ test adding {
     assert!(page.contains("<td>add | sum</td>") && page.contains("<svg"), "{page}");
 }
 
+/// `testing.allocations` counts what a closure allocates in its task, in
+/// the optimized build of the tests: a text grown in place a few times, an
+/// array given its room once, a sum none; and a test can hold a function
+/// to that number.
+#[test]
+fn a_test_counts_what_a_call_allocates() {
+    let tests = "\
+import std.testing
+
+fn receipt(lines: Array[Int]): String {
+    var text = \"\"
+    for line in lines {
+        text = \"{text}{line}\\n\"
+    }
+    text
+}
+
+fn listed(count: Int): Array[Int] {
+    var out: Array[Int] = []
+    for i in 0..count {
+        out.push(i * i)
+    }
+    out
+}
+
+test counts {
+    let lines = [10, 20, 30, 40]
+    let made = testing.allocations(() { receipt(lines) })
+    let many = testing.allocations(() { listed(1000) })
+    let sum = testing.allocations(() { lines[0] + lines[1] })
+    testing.log(\"{made} {many} {sum}\")
+    assert(made <= 3 and many == 1 and sum == 0)
+}
+
+test heldToIt {
+    assert(testing.allocations(() { listed(10) }) <= 0)
+}
+";
+    let dir = project("allocations", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--show-output"]);
+    assert_eq!(status, 1, "{stdout}{stderr}");
+    assert!(stdout.contains("1 passed; 1 failed"), "{stdout}");
+    assert!(stdout.contains("heldToIt") && stdout.contains("assert"), "{stdout}");
+}
+
 #[test]
 fn profiles_tests_and_benchmarks() {
     let tests = "\
