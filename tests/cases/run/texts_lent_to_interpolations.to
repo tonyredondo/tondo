@@ -1,0 +1,37 @@
+import std.console
+import std.format
+
+// A text that an interpolation of other pieces reads is copied into the
+// text it makes, or appended in place: the interpolation keeps nothing of
+// it, so a text made for a line of a builder stays in the frame. A text
+// alone is the text it gives, which keeps it.
+
+type Line = {
+    name: String
+    cents: Int
+}
+
+fn report(lines: Array[Line]): String {
+    var text = format.Builder()
+    for line in lines {
+        text.addLine("{line.name}: {line.cents}")
+    }
+    text.text()
+}
+
+fn alone(name: String): String {
+    let shown = "<{name}>"
+    "{shown}"
+}
+
+fn main() {
+    let lines = [Line { name: "tea", cents: 250 }, Line { name: "cake", cents: 400 }]
+    console.print(report(lines))
+    console.println(alone("x"))
+}
+
+// expect-stdout: tea: 250
+// expect-stdout: cake: 400
+// expect-stdout: <x>
+// expect-optimization: 17:22 frame is made in the frame
+// expect-optimization: 23:17 heap

@@ -320,6 +320,26 @@ fn framed(body: &Body, index: usize, types: &Types, borrows: &[Vec<bool>]) -> Fo
                     }
                 }
                 match &**rvalue {
+                    // A text among others is copied into the one made, or
+                    // appended in place; a text alone is that text.
+                    Rvalue::Concat(pieces) if pieces.len() > 1 => {
+                        statement_locals(statement, &mut read, &mut defined);
+                        let taken = |local: Local| {
+                            local == place.local
+                                || pieces.iter().any(|piece| matches!(piece, Piece::Taken(at) if at.local == local))
+                        };
+                        let lent: Vec<Local> = pieces
+                            .iter()
+                            .filter_map(|piece| match piece {
+                                Piece::Value(Operand::Copy(at), ty) if *ty == Ty::STRING && at.path.is_empty() => {
+                                    Some(at.local)
+                                }
+                                _ => None,
+                            })
+                            .filter(|&local| !taken(local))
+                            .collect();
+                        read.retain(|local| !lent.contains(local));
+                    }
                     Rvalue::Concat(_) | Rvalue::Erase(..) => statement_locals(statement, &mut read, &mut defined),
                     // Borrows that keep nothing.
                     Rvalue::Length(operand) => borrowed(&[operand], &mut read),
