@@ -124,8 +124,9 @@ dearest: tea
 
 ## The first try, with Swift's words
 
-Swift's forms are close, and a port tends to keep four of them. `check` knows
-each and says Tondo's.
+Swift's forms are close, and a port tends to keep them: `struct`, `protocol`
+and `func`, a function that `throws`, `guard let`, `if let`, and `\(value)` in
+a text. `check` knows each and says Tondo's.
 
 ```tondo error E0004 file=orders.to
 import std.console
@@ -144,7 +145,18 @@ func money(cents: Int) -> String {
     "{cents / 100}.{cents % 100:02}"
 }
 
+fn number(part: String) throws -> Int {
+    Int.parse(part)
+}
+
+fn quantity(part: Int?): Int {
+    guard let value = part else { return 0 }
+    value
+}
+
 fn main() {
+    let parts = "tea,2,250".split(",")
+    console.println("it has \(parts.length()) parts")
     let dearest: Line? = none
     if let line = dearest {
         console.println(line.name)
@@ -158,10 +170,13 @@ check {"path": "orders.to"}
 => a record is `type Line = { field: Type }`
 => an interface is a trait: `trait Priced { fn method(self): Type }`
 => a function is `fn money(value: Type): Result { ... }`
+=> a function that can fail returns `T ! E`, as `fn f(): Int ! ParseError`
+=> `let v = x ?? return` gives up where `x` has no value, with no `guard`
+=> a string interpolates with braces, `"total {x}"`
 => there is no `if let`: match the value
 ```
 
-With the forms right, two names are left.
+With the forms right, three names are left.
 
 ```tondo error E1001 file=orders.to
 import std.console
@@ -169,7 +184,7 @@ import std.console
 type Line = { name: String, quantity: Int, cents: Int }
 
 fn dearest(lines: Array[Line]): Line? {
-    if lines.isEmpty() {
+    if lines.count == 0 {
         return nil
     }
     lines[0]
@@ -182,6 +197,7 @@ fn main() {
 
 ```mcp
 check {"path": "orders.to"}
+=> has no field `count`; use `length()`
 => unknown name `nil`; Tondo writes `none`
 => unknown name `print`; `console.println(text)` writes a line
 ```
