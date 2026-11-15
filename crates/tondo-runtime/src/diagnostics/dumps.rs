@@ -24,6 +24,41 @@ pub(super) fn contexts_json(described: Vec<crate::contexts::Described>) -> Strin
     format!("[{}]", contexts.join(","))
 }
 
+/// The dumps being written, asked by a signal or a schedule, which the end
+/// of the process waits for: one asked for just before the program ends,
+/// or written slowly, as under emulation, is not lost with the process.
+static WRITING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// How long the end of the process waits for the dumps being written.
+const FINISHING: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// A dump being written, from its start to its end.
+struct Writing;
+
+impl Writing {
+    fn start() -> Writing {
+        static WAITS: std::sync::Once = std::sync::Once::new();
+        WAITS.call_once(|| crate::at_exit(finished));
+        WRITING.fetch_add(1, Ordering::SeqCst);
+        Writing
+    }
+}
+
+impl Drop for Writing {
+    fn drop(&mut self) {
+        WRITING.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// At the end of the process, however it ends but by a crash: the dumps
+/// being written, for as long as `FINISHING`.
+extern "C" fn finished(_: *mut u8) {
+    let until = Instant::now() + FINISHING;
+    while WRITING.load(Ordering::SeqCst) > 0 && Instant::now() < until {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
 /// Whether a dump holds values: not with `TONDO_DUMP_VALUES=off`. A value
 /// it does not know also turns them off, as a mistake must not show them.
 pub(crate) fn values_shown() -> bool {
@@ -606,7 +641,10 @@ pub(crate) fn dump_on_signal() {
     static NUMBER: AtomicU64 = AtomicU64::new(0);
     let Some(dir) = asked_dump() else { return };
     let number = NUMBER.fetch_add(1, Ordering::Relaxed) + 1;
+    // Counted from the signal on, before its thread starts.
+    let writing = Writing::start();
     let _ = crate::tasks::try_spawn_thread(Some(DUMPING_STACK), move || {
+        let _writing = writing;
         retire_here();
         let program = std::env::current_exe().ok().and_then(|p| Some(p.file_name()?.to_string_lossy().into_owned()));
         let program = program.unwrap_or_else(|| "tondo".into());
@@ -691,6 +729,7 @@ pub(super) fn dumps_on_schedule(schedule: Schedule, dir: PathBuf) {
             last_timed = now;
         }
         number += 1;
+        let _writing = Writing::start();
         if to_log() {
             logged(&dump("schedule", &why, None, Some(std::time::Duration::from_millis(100))));
             continue;
@@ -800,4 +839,25 @@ pub(crate) fn quoted(text: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The end of the process waits for a dump being written, as one a
+    /// signal asked for just before the end is.
+    #[test]
+    fn the_end_waits_for_a_dump_being_written() {
+        let writing = Writing::start();
+        let started = Instant::now();
+        let thread = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            drop(writing);
+        });
+        finished(std::ptr::null_mut());
+        assert!(started.elapsed() >= std::time::Duration::from_millis(200));
+        assert_eq!(WRITING.load(Ordering::SeqCst), 0);
+        thread.join().unwrap();
+    }
 }
