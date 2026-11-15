@@ -478,8 +478,11 @@ What is under way and what is planned:
 | A heap for each task | Research |
 | Vectors of 512 bits with AVX-512; today they are computed by halves | Waits for a machine to test on |
 | Profile-guided optimization while a program runs | Research |
-| Windows | Not started, after the work above |
-| A library for user interfaces, as a package | After Windows |
+| Windows | Parked: not started, after the work above |
+| A library for user interfaces, as a package | Parked: after Windows |
+| An image of `tondo` to debug a program in a container with | Parked |
+| The mouse in a program that takes the terminal | Parked: the keyboard and the terminal's size are in |
+| A newer version of the allocator on macOS | Parked: tried once, to decide |
 | A first release | Not yet |
 
 Known limits today: logpoints and Release breakpoints work on Linux only,
