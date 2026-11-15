@@ -1,0 +1,37 @@
+import std.console
+
+// An index whose check passed is below the array's length for the reads
+// after it of the same element, as the fields of a copied record: with an
+// index known not to be negative, one check and not one a field. A check
+// that passed says nothing of the index being negative, which counts from
+// the end: those reads stay checked, and read the last element.
+
+type Point = {
+    x: Int
+    y: Int
+    z: Int
+}
+
+fn sum(points: Array[Point], at: Int): Int {
+    if at < 0 {
+        return 0
+    }
+    let point = points[at]
+    point.x + point.y + point.z
+}
+
+fn fromEnd(points: Array[Point], at: Int): Int {
+    let point = points[at]
+    point.x + point.y + point.z
+}
+
+fn main() {
+    let points = [Point { x: 1, y: 2, z: 3 }, Point { x: 4, y: 5, z: 6 }]
+    console.println("{sum(points, Int.parse("1") ?? 0)}")
+    console.println("{fromEnd(points, Int.parse("-1") ?? 0)}")
+}
+
+// expect-stdout: 15
+// expect-stdout: 15
+// expect-optimization: 19:17 unchecked stays within its array
+// expect-no-optimization: 24:17 unchecked

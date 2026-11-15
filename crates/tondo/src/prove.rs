@@ -958,6 +958,26 @@ impl Prover<'_> {
         };
         match statement {
             Statement::Assign(place, rvalue, _) => {
+                // An element read or written with its check: what follows
+                // runs only if the index was below the array's length, as
+                // `xs[i].a` and then `xs[i].b`, the fields of a copied
+                // element; not that it was not negative, which counts from
+                // the end. Before the statement assigns, which may change
+                // the index. A failed check that unwinds leads to cleanups
+                // only, which compare no index: `recover` and `defer` run
+                // functions of their own.
+                let read = match &**rvalue {
+                    Rvalue::Use(Operand::Copy(from)) => Some(from),
+                    _ => None,
+                };
+                for checked in [Some(place), read].into_iter().flatten() {
+                    if let Some(&Proj::Index(index, _)) = checked.path.first()
+                        && self.array(checked.local)
+                        && self.int(index)
+                    {
+                        facts.add(Node::Int(index), Node::Len(checked.local), -1);
+                    }
+                }
                 // What may change the length of an array or a local the
                 // call borrows.
                 self.calls(rvalue, facts, tests, &forget_local);
