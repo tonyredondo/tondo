@@ -65,11 +65,38 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Callee::Std(StdFn::Number(_)) => unreachable!("assigned by `number`"),
             Callee::Std(StdFn::Simd(_)) => unreachable!("assigned by `simd`"),
-            // A character of a text, read in place when it is ASCII.
+            // A character of a text, read in place when it is ASCII; the
+            // offset checked unless `prove` showed it within the text.
             Callee::Std(StdFn::Native(index))
                 if crate::hir::NATIVES[index as usize].symbol == "tondo_rt_text_scalar_at" =>
             {
-                Some(self.decoded(values[0], values[1], Rt::Native(index), true))
+                let guard = crate::hir::NATIVES[index as usize].name != "scalarWithin";
+                Some(self.decoded(values[0], values[1], Rt::Native(index), guard))
+            }
+            // A byte of a text, read in place: 256 outside it, unless
+            // `prove` showed the offset within.
+            Callee::Std(StdFn::Native(index))
+                if crate::hir::NATIVES[index as usize].symbol == "tondo_rt_text_byte_at" =>
+            {
+                let (text, offset) = (values[0], values[1]);
+                let read = |this: &mut Self| {
+                    let address = this.e.fb.ins().iadd(text, offset);
+                    this.e.fb.ins().uload8(types::I64, flags(), address, STRING_BYTES as i32)
+                };
+                if crate::hir::NATIVES[index as usize].name == "byteWithin" {
+                    return Some(read(self));
+                }
+                let (inside, done) = (self.e.fb.create_block(), self.e.fb.create_block());
+                self.e.fb.append_block_param(done, types::I64);
+                let length = self.e.fb.ins().load(types::I64, flags(), text, STRING_LENGTH);
+                let within = self.e.fb.ins().icmp(IntCC::UnsignedLessThan, offset, length);
+                let outside = self.e.fb.ins().iconst(types::I64, 256);
+                self.e.fb.ins().brif(within, inside, &[], done, &[outside.into()]);
+                self.e.fb.switch_to_block(inside);
+                let byte = read(self);
+                self.e.fb.ins().jump(done, &[byte.into()]);
+                self.e.fb.switch_to_block(done);
+                Some(self.e.fb.block_params(done)[0])
             }
             Callee::Std(StdFn::Native(index)) => {
                 // Arithmetic the processor does in one instruction, as
@@ -80,6 +107,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 match crate::hir::NATIVES[index as usize].symbol {
                     // A character's code is its scalar, made an `Int`.
                     "tondo_rt_char_code" => Some(ins.uextend(types::I64, values[0])),
+                    "tondo_rt_char_ascii" => Some(ins.ireduce(types::I32, values[0])),
                     "tondo_rt_math_sqrt" => Some(ins.sqrt(values[0])),
                     "tondo_rt_math_floor" => Some(ins.floor(values[0])),
                     "tondo_rt_math_ceil" => Some(ins.ceil(values[0])),

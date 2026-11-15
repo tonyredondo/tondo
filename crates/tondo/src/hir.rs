@@ -1315,8 +1315,9 @@ pub struct Native {
 /// The natives the processor does in one instruction, which codegen writes
 /// in place of a call (`codegen/calls.rs`): a loop that calls only these
 /// calls nothing.
-pub const IN_ONE_INSTRUCTION: [&str; 7] = [
+pub const IN_ONE_INSTRUCTION: [&str; 8] = [
     "tondo_rt_char_code",
+    "tondo_rt_char_ascii",
     "tondo_rt_math_sqrt",
     "tondo_rt_math_floor",
     "tondo_rt_math_ceil",
@@ -1330,7 +1331,7 @@ pub const IN_ONE_INSTRUCTION: [&str; 7] = [
 /// that calls only these and those of `IN_ONE_INSTRUCTION` calls nothing on
 /// its way, and has no places for logpoints, which cost a loop over a
 /// text's characters a fifth of its time.
-pub const IN_PLACE: [&str; 1] = ["tondo_rt_text_scalar_at"];
+pub const IN_PLACE: [&str; 2] = ["tondo_rt_text_scalar_at", "tondo_rt_text_byte_at"];
 
 pub const NATIVES: &[Native] = {
     use NativeTy::*;
@@ -1534,6 +1535,12 @@ pub const NATIVES: &[Native] = {
         text("charCode", &[Char], Int, "tondo_rt_char_code"),
         text("charFrom", &[Int], Char, "tondo_rt_char_from"),
         text("scalarAt", &[String, Int], Char, "tondo_rt_text_scalar_at"),
+        // The same, at an offset `prove` showed is within the text: read
+        // without the check of the offset.
+        text("scalarWithin", &[String, Int], Char, "tondo_rt_text_scalar_at"),
+        text("byteAt", &[String, Int], Int, "tondo_rt_text_byte_at"),
+        text("byteWithin", &[String, Int], Int, "tondo_rt_text_byte_at"),
+        text("asciiChar", &[Int], Char, "tondo_rt_char_ascii"),
         text("between", &[String, Int, Int], String, "tondo_rt_text_between"),
         text("findIn", &[String, String, Int, Int], Int, "tondo_rt_text_find_in"),
         text("template", &[String, Bool], String, "tondo_rt_template_parse"),

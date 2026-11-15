@@ -1,0 +1,31 @@
+import std.console
+
+// A text's characters, one after another: an ASCII one read as its byte in
+// place, the others decoded; the offset known within the text reads
+// without its check. Every width, and a text with none.
+
+fn listed(text: String): String {
+    var codes: Array[Int] = []
+    for c in text.chars() {
+        codes.push(c.code())
+    }
+    "{text.chars().count()}: {codes}"
+}
+
+fn main() {
+    console.println(listed("año 💡 ok"))
+    console.println(listed("abc"))
+    console.println(listed(""))
+    console.println(listed("€"))
+    var letters = ""
+    for c in "Tondo".chars() {
+        letters = "{c}{letters}"
+    }
+    console.println(letters)
+}
+
+// expect-stdout: 8: [97, 241, 111, 32, 128161, 32, 111, 107]
+// expect-stdout: 3: [97, 98, 99]
+// expect-stdout: 0: []
+// expect-stdout: 1: [8364]
+// expect-stdout: odnoT

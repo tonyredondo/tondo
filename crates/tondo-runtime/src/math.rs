@@ -69,6 +69,13 @@ pub extern "C" fn tondo_rt_char_code(c: u32) -> i64 {
     c as i64
 }
 
+/// The character of an ASCII code, which the caller knows is one. Codegen
+/// writes it in place.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_char_ascii(code: i64) -> u32 {
+    code as u32 & 0x7F
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_char_from(code: i64) -> u32 {
     u32::try_from(code).ok().and_then(char::from_u32).map_or(0xFFFD, |c| c as u32)

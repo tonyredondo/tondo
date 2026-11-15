@@ -2484,14 +2484,15 @@ impl Iterator[Char] for CharIterator {
         if self.offset >= self.text.byteLength() {
             return none
         }
+        // ASCII on its own path, a byte read in place, which the processor
+        // predicts: the next offset then waits for nothing.
+        let byte = textNative.byteAt(self.text, self.offset)
+        if byte < 0x80 {
+            self.offset += 1
+            return textNative.asciiChar(byte)
+        }
         let c = textNative.scalarAt(self.text, self.offset)
         let code = c.code()
-        // ASCII on its own path, which the processor predicts: the next
-        // offset then waits for nothing.
-        if code < 0x80 {
-            self.offset += 1
-            return c
-        }
         self.offset += if code < 0x800 { 2 } else if code < 0x10000 { 3 } else { 4 }
         c
     }

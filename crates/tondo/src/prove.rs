@@ -126,6 +126,17 @@ fn relevant(body: &mut Body, types: &Types) -> Option<Vec<bool>> {
             {
                 tested[local] = true;
             }
+            // A text read at a byte offset, whose length in bytes the
+            // offset may be shown below.
+            if let Statement::Assign(_, rvalue, _) = statement
+                && let Rvalue::Call(Callee::Std(StdFn::Native(index)), args) = &**rvalue
+                && matches!(crate::hir::NATIVES[*index as usize].name, "scalarAt" | "byteAt")
+                && let [text, at] = &args[..]
+                && let (Some(text), Some(at)) = (local(text), local(at))
+            {
+                relevant[text] = true;
+                relevant[at] = true;
+            }
             if let Statement::Assign(place, rvalue, _) = statement
                 && place.path.is_empty()
                 && ints[place.local.0 as usize]
@@ -175,6 +186,9 @@ fn relevant(body: &mut Body, types: &Types) -> Option<Vec<bool>> {
                     }
                 }
                 Rvalue::Use(o) | Rvalue::Increment(o) | Rvalue::Length(o) if target => local(o).into_iter().collect(),
+                Rvalue::StrOp(crate::hir::StrOp::ByteLength, operands, _) if target => {
+                    operands.first().and_then(local).into_iter().collect()
+                }
                 // A tested copy of a local followed or of a counter, or of
                 // one more or less.
                 Rvalue::Use(o)
@@ -354,6 +368,11 @@ impl Prover<'_> {
     /// An `Int` local the facts follow.
     fn int(&self, local: Local) -> bool {
         self.relevant[local.0 as usize] && self.typed_int(local)
+    }
+
+    /// A text local whose length in bytes the facts follow.
+    fn text(&self, local: Local) -> bool {
+        self.relevant[local.0 as usize] && self.types.repr(self.body.locals[local.0 as usize]) == Ty::STRING
     }
 
     /// An array local whose length the facts follow.
@@ -882,6 +901,24 @@ impl Prover<'_> {
             Statement::Assign(_, _, span) => *span,
             _ => Span::default(),
         };
+        // A character read at an offset within the text: without the
+        // check of the offset.
+        if let Statement::Assign(_, rvalue, _) = statement
+            && let Rvalue::Call(Callee::Std(StdFn::Native(index)), args) = &mut **rvalue
+            && let Some(within) = match crate::hir::NATIVES[*index as usize].name {
+                "scalarAt" => Some("scalarWithin"),
+                "byteAt" => Some("byteWithin"),
+                _ => None,
+            }
+            && let [Operand::Copy(Place { local: text, path }), at] = &args[..]
+            && path.is_empty()
+            && self.text(*text)
+            && let Some((node, offset)) = self.value(at)
+            && facts.bound(Node::Zero, node).is_some_and(|k| k <= offset)
+            && facts.bound(node, Node::Len(*text)).is_some_and(|k| k <= -1 - offset)
+        {
+            *index = native_named(within);
+        }
         // The lanes of a `load` or a `store` from `at` to `at + lanes`,
         // within the array.
         if let Statement::Assign(place, rvalue, _) = statement
@@ -1123,6 +1160,20 @@ impl Prover<'_> {
                 facts.add(length, node, 0);
                 return;
             }
+            // A text's length in bytes, as an array's length: the text's
+            // own when the facts follow it.
+            Rvalue::StrOp(crate::hir::StrOp::ByteLength, operands, _) => match &operands[..] {
+                [Operand::Copy(Place { local: text, path })] if path.is_empty() && self.text(*text) => {
+                    forget_local(facts, tests, local);
+                    let length = Node::Len(*text);
+                    facts.add(Node::Zero, length, 0);
+                    facts.add(length, Node::Zero, i64::MAX as i128);
+                    facts.add(node, length, 0);
+                    facts.add(length, node, 0);
+                    return;
+                }
+                _ => Some((0, i64::MAX as i128)),
+            },
             // A checked product by a constant went on, so it fits, a
             // multiple of the constant: `3 * n` is below `Int.max`, and `3 * n
             // + 1` fits, whatever `n` is, an element or a capture too.
@@ -1161,6 +1212,12 @@ impl Prover<'_> {
             facts.add(node, Node::Zero, high);
         }
     }
+}
+
+/// The native of that name, as one that reads a text at an offset already
+/// shown within it.
+fn native_named(name: &str) -> u16 {
+    crate::hir::NATIVES.iter().position(|native| native.name == name).expect("a native") as u16
 }
 
 /// `Exact` in place of the `Binary` it was.

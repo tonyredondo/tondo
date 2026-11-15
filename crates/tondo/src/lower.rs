@@ -134,6 +134,13 @@ pub(crate) fn may_panic(statement: &Statement) -> bool {
                     | Rvalue::OsrPoint => false,
                     Rvalue::Call(hir::Callee::Std(hir::StdFn::Number(op)), _) => op.may_panic(),
                     Rvalue::Call(hir::Callee::Std(hir::StdFn::Simd(op)), _) => op.may_panic(),
+                    // What codegen writes in place, which never panics.
+                    Rvalue::Call(hir::Callee::Std(hir::StdFn::Native(index)), _)
+                        if hir::IN_ONE_INSTRUCTION.contains(&hir::NATIVES[*index as usize].symbol)
+                            || hir::IN_PLACE.contains(&hir::NATIVES[*index as usize].symbol) =>
+                    {
+                        false
+                    }
                     Rvalue::Call(hir::Callee::Std(function), _) => !matches!(
                         function,
                         hir::StdFn::RecoverEnter

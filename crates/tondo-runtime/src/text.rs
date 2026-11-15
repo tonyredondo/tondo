@@ -63,6 +63,13 @@ pub unsafe extern "C" fn tondo_rt_text_scalar_at(s: *const Str, offset: i64) -> 
     rest.chars().next().map_or(0xFFFD, |c| c as u32)
 }
 
+/// The byte at an offset of a text, or 256 outside it. Codegen reads it in
+/// place.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_text_byte_at(s: *const Str, offset: i64) -> i64 {
+    text(s).as_bytes().get(usize::try_from(offset).unwrap_or(usize::MAX)).map_or(256, |&byte| i64::from(byte))
+}
+
 /// The text between two byte offsets that start characters; empty when
 /// they do not.
 #[unsafe(no_mangle)]
