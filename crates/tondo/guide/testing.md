@@ -108,7 +108,8 @@ suite slow {
   <i/n>` to split a suite between jobs, `--retry <n>`, after which a test
   that passes is flaky and still fails the run unless it says
   `--allow-flaky`, `--deny-skips`, `--allow-empty` for a selection that may
-  match nothing, `--show-output`, `--artifacts <dir>` and `--codeowners
+  match nothing, `--show-output`, `--artifacts <dir>` for what the tests
+  attached with `testing.attach(name, mediaType, bytes)`, and `--codeowners
   auto`. `tondo guide runbook-ci` sets a job up and opens what it leaves.
 
 ## Benchmarks
