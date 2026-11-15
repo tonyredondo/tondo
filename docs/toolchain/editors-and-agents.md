@@ -217,6 +217,24 @@ Every step of the runbooks runs in the tests of the toolchain, so what
 they show is what the tools give. They are written for a model, and a
 person in a hurry reads them the same way.
 
+An agent reaches them by itself: the server's instructions name the index,
+and a result that leads somewhere names its runbook in `next`. A person
+starts one with the server's prompt, `runbook`. Its `topic` is a runbook's
+name after `runbook-`, and its `case` is what there is to start from: a
+dump, a process, a test, an error or what happens. In Claude Code a
+server's prompt is a command:
+
+```text
+/mcp__tondo__runbook crash dumps/app-1.dump.json
+/mcp__tondo__runbook port-go
+/mcp__tondo__runbook
+```
+
+The first opens the turn with `runbook-crash` and that dump, the second
+with the runbook for porting from Go, and the third, without a topic, with
+the index to choose from. Other clients show a server's prompts in their
+own way, or not at all.
+
 ## Every command as data
 
 With `--json`, a command writes one JSON object with its result, and
