@@ -317,6 +317,22 @@ test words::unit::words::countingAPage ... ok
 Nothing changed between those two runs but the machine. By time, the
 second is 42% faster; by instructions, it is the same program.
 
+`--max-regression` fails the run for a benchmark that got slower by more
+than the percentage, or that does that many more instructions with
+`--regression-by instructions`, and for one whose allocations or bytes a
+run grew by more than it. The line of a benchmark that is compared says
+what it allocated before whenever that changed, whether it fails or not:
+
+```text
+  squares 100     1.430 µs/op  ±0.2%  99 allocs/op  4881 B/op  28.1k ins/op  +22.1% slower, +16.8% ins, cycles +21.9%, l1d misses +3780.9%, 99 allocs/op, was 92, 4881 B/op, was 3359, REGRESSED
+```
+
+Allocations count as worse only when they also grew by one in a hundred
+runs, and bytes by eight a run. A benchmark that calls into C can show
+`0.010 allocs/op` in one measure and `0.012` in the next with the same
+code: what a few runs in a thousand allocate, as a thread of C that starts,
+is not the code's, and no comparison fails for it.
+
 A benchmark is run now and then. What it found is kept by a test, which
 runs at every change: `testing.allocations` gives how many times a call
 allocates, the count that the benchmark's row shows as `allocs/op`, since

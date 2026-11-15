@@ -13,6 +13,7 @@ building a Tondo library that C calls.
 - [Structs](#structs)
 - [Pointers and raw memory](#pointers-and-raw-memory)
 - [Callbacks](#callbacks)
+- [Interfaces of C](#interfaces-of-c)
 - [The system's calls](#the-systems-calls)
 - [Linking a library](#linking-a-library)
 - [A library loaded as the program runs](#a-library-loaded-as-the-program-runs)
@@ -319,6 +320,123 @@ returns to C when it ends; if it waits, the thread waits with it. State goes to 
 callback the way C libraries expect, through a `void *`: `ffi.context(value)`
 makes one of any Tondo value, and `ffi.fromContext[T](pointer)` reads it
 back in the callback.
+
+## Interfaces of C
+
+An object of COM, or of .NET's profiling API, starts with a pointer to a
+table of functions, each of which takes the object first; a header of C++
+writes one as a class of pure virtual methods. In Tondo such an interface
+is a trait with `@ffi.Interface`. Its methods are the entries of the table,
+in the order they are declared, after those of the interface it requires.
+
+```tondo
+import std.console
+import std.ffi
+import std.sync
+
+/// A counter, as a library's header declares it.
+@ffi.Interface(id: "6A1B2C3D-0000-4000-8000-00000000C0DE")
+pub trait Counter: ffi.Unknown {
+    fn add(self, by: Int32): !ffi.HResult
+    fn total(self): Int ! ffi.HResult
+}
+
+/// A Tondo type that is one.
+type Tally = { sum: sync.Atomic[Int] }
+
+impl Counter for Tally {
+    fn add(self, by: Int32): !ffi.HResult {
+        if by < 0 {
+            fail ffi.HResult.InvalidArgument
+        }
+        _ = self.sum.add(Int(by))
+    }
+
+    fn total(self): Int ! ffi.HResult {
+        self.sum.load()
+    }
+}
+
+/// What a library does with an object: all it has of it is a pointer.
+fn count(object: Pointer[ffi.Void]): Int ! ffi.HResult {
+    let counter = unsafe { CounterObject.of(object) }
+    counter.add(40)?
+    counter.add(2)?
+    counter.total()
+}
+
+fn main() {
+    let object = ffi.object(Tally { sum: sync.Atomic(0) })
+    match count(object) {
+        ok(total) => console.println("counted {total}")
+        err(code) => console.println("failed: {code}")
+    }
+    let counter = unsafe { CounterObject.of(object) }
+    match counter.add(-1) {
+        ok(_) => console.println("added")
+        err(code) => console.println("refused: {code}")
+    }
+    console.println("{CounterObject.Id}")
+    console.println("held {counter.addRef()}, then {counter.release()} and {counter.release()}")
+}
+```
+
+```text output
+counted 42
+refused: 0x80070057: The parameter is incorrect
+6a1b2c3d-0000-4000-8000-00000000c0de
+held 2, then 1 and 0
+```
+
+The program has both sides in one process, so that it runs without a
+library: `ffi.object` gives C an object made of a Tondo value, and `count`
+does what the library would, calling it through its table.
+
+**An object C made.** The trait's module gets a type with the trait's name
+and `Object`, here `CounterObject`, which holds the pointer and implements
+the trait by calling the entries of the table. `CounterObject.of(pointer)`
+makes one, and is `unsafe` because nothing checks that the object is of that
+interface. `pointer()` gives the pointer back, `CounterObject.Id` is the
+interface's identity, an `ffi.Guid`, and `unknown()` is the same object as
+the interface this one requires.
+
+**What a method gives.** C's function returns an `HRESULT` in the first
+three, and how the method is declared says what the call makes of it:
+
+| Declared | The call gives |
+| --- | --- |
+| `: ffi.HResult` | the number as it is, so that `S_FALSE`, `HResult.False`, is told from `S_OK` |
+| `: !ffi.HResult` | nothing, or the failure when the number is negative |
+| `: T ! ffi.HResult` | the `T`, which C writes through a last parameter that the declaration leaves out, or the failure |
+| a type that crosses to C, or none | what C returns |
+
+`ffi.HResult` has the common results as its constants, `HResult.Ok`,
+`HResult.NoInterface`, `HResult.InvalidArgument`, and a library declares its
+own the same way ([Constants of a type](03-functions.md#constants-of-a-type)).
+
+**`ffi.Unknown`** is `IUnknown`, which every interface of COM extends:
+`queryInterface`, `addRef` and `release`. An interface that requires it
+states its identity, the GUID its header gives, in `id`. The text is read
+when the program compiles, and one that is no GUID is an error there
+(`E1708`).
+
+**A Tondo value for C.** A type implements an interface with an ordinary
+`impl`, of the methods that have no body in the trait. `ffi.object(value)`
+gives C an object of it, with the table the compiler writes. For an
+interface that requires `ffi.Unknown` the compiler writes `queryInterface`,
+`addRef` and `release` as well, and the `impl` has none of the three: the
+object starts held once, `queryInterface` answers for each interface of the
+type that has an identity and with `HResult.NoInterface` for any other, and
+the value is released when the count reaches zero.
+
+A trait that cannot be a table is an error at the trait (`E1707`): one with
+type parameters, one that requires more than one trait, or a method whose
+parameters or result do not cross to C. The calls follow C's convention on
+Linux and macOS.
+
+Text in the APIs of Windows and .NET is UTF-16. `ffi.toWide(text)` makes an
+`ffi.WideString` for C, and `unsafe { ffi.fromWide(pointer) }` reads one, up
+to its zero or for a count of units.
 
 ## The system's calls
 
