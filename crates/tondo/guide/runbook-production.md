@@ -57,7 +57,8 @@ which the container's logs keep, and `tondo dump read <log>` reads it there. The
 `--via "docker exec -i <box>"` and a static `tondo` there, or by its process ID
 from a container that shares its processes, as `kubectl debug` makes. In CI,
 `tondo test --record <dir> --report markdown=<summary>` says under each failure
-how to replay it: keep `<dir>` and the dumps as the job's artifacts.
+how to replay it: keep `<dir>` and the dumps as the job's artifacts
+(`runbook-ci`). What a program that still runs is doing: `runbook-running`.
 
 A core of the system, from a crash inside C or of the runtime, is `dump_core`:
 it makes a dump of it. To go on from a failure: `runbook-crash`, and

@@ -41,4 +41,5 @@ dump_trend {"dir": "dumps"}
 one holds. In a debugger, `retainers <path>` says what keeps a value alive.
 
 Line 6 is the array that only grows: keep what is needed, or a fixed number of
-the last ones, and the trend goes flat.
+the last ones, and the trend goes flat. Memory that does not grow, but is
+allocated and let go too often: `runbook-allocations`.

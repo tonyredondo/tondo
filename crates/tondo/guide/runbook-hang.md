@@ -77,6 +77,46 @@ run {"path": "worker.to", "timeout": 300}
 => 1
 ```
 
+With `beat` still running this ends with `main`, so the run ends too.
+
+## The task that was to wake them
+
+The cause is often not among the tasks that wait: the one that was to wake
+them ended with an error, and nobody had read its result yet. The report of
+`P0013` names it, with where it was spawned, and so do the views `why` and
+`tasks` of a dump of a program that still runs.
+
+```tondo file=report.to
+import std.console
+import std.fs
+
+/// The report's lines, read by a task of its own.
+fn load(path: String): Array[String] ! fs.FsError {
+    fs.readText(path)?.lines()
+}
+
+fn main() {
+    let (ready, started) = channel[Unit](1)
+    let lines = spawn load("report.txt")
+    // Waits for a word that only a load that went well would send.
+    _ = started.receive()
+    ready.send(())
+    console.println("{lines.wait() ?? []}")
+}
+```
+
+```mcp
+run {"path": "report.to"}
+=> panic[P0013]
+=> task 2 ended with an error nobody read: err(fs.FsError.NotFound)
+=> it was spawned at
+```
+
+There is no file, the load failed, and `main` waits for a word that will not
+come. Read a task's result before waiting for what only its success sends.
+
+## What else there is
+
 A program no tool can reach, without `TONDO_DIAGNOSTICS`, still answers
 `kill -QUIT`: it writes where each task is and ends.
 
@@ -88,6 +128,7 @@ value, and what ended each wait. A task whose wait was claimed but that is
 still parked lost its wake on the way; one whose last wait nothing claimed was
 never woken. Without it the program pays nothing.
 
-With `beat` still running this ends with `main`, so the run ends too. For a test
-that hangs, `test` takes `flags` with `--timeout <seconds>`; `lock_order` finds
-locks taken in opposite orders, which only sometimes hang.
+For a test that hangs, `test` takes `flags` with `--timeout <seconds>`;
+`lock_order` finds locks taken in opposite orders, which only sometimes hang.
+What a program that runs is doing, when it is slow rather than stopped:
+`runbook-running`.

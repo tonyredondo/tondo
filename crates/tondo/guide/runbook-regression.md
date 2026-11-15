@@ -72,4 +72,6 @@ test {}
 => failedInTotal ... ok
 ```
 
-Give the test a name that says what it guards, and keep it.
+Give the test a name that says what it guards, and keep it. When there is a
+commit where it worked, `test_bisect` finds the one that broke it:
+`runbook-bisect`.

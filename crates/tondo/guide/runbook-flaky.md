@@ -40,12 +40,11 @@ check {}
 => W1016
 ```
 
-`--schedules all` tries every order that differs, not only some, and says
-if it got through them all.
-
-`schedules` takes a number of orders or `all`: each order has a seed, and the result says which
-tasks wrote what, and where. `debug_start` with `test` and `schedule` runs that
-same order again under the debugger, as many times as it takes.
+`schedules` takes a number, so many orders by chance, each with its seed, or
+`all`, every order that differs, which says if it got through them all. The
+result says which tasks wrote what, and where, and names the order that
+failed: `debug_start` with `test` and `schedule` runs that same order again
+under the debugger, as many times as it takes.
 
 ```mcp
 test {"schedules": "50"}
@@ -66,6 +65,17 @@ test {"schedules": "50"}
 => counts ... ok
 ```
 
+The system leaves moments open too, between two steps that another task can
+see: the file of a socket is there a moment before its server listens, and a
+signal a program sends itself arrives a moment later. In a real run they last
+microseconds, and some orders of `schedules` make them last, so a test that
+passes here and fails once in a hundred runs of CI can fail under `schedules`,
+with the seed that repeats it. A test that reaches outside the program, to
+files, the network or a database, runs in one order in a plain `test`, whose
+last line says so: `schedules` tries the others, when the test leaves the
+outside as it found it.
+
 `lock_order` finds locks taken in opposite orders, which hang only sometimes,
 and `flags` with `--repeat <n>` runs a test many times. A run recorded with
-`record` is the same each time it is replayed, with `debug_start` and `replay`.
+`record` is the same each time it is replayed, with `debug_start` and
+`replay`: `runbook-once`, and `runbook-ci` for a test that fails only there.
