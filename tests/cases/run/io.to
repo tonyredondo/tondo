@@ -1,13 +1,14 @@
 import std.console
 import std.fs
 import std.io
+import std.path
 
 fn report(name: String) {
     console.println("report for {name}")
     console.eprintln("a warning about {name}")
 }
 
-fn run(): Unit ! io.IoError {
+fn run(): !io.IoError {
     let buffer = io.Buffer()
     let out = buffer.writer()
     out.writeLine("first")?
@@ -17,8 +18,8 @@ fn run(): Unit ! io.IoError {
     let input = io.reader("one\r\ntwo\nthree")
     for {
         match input.readLine()? {
-            some(line) => console.println("line {line}"),
-            none => break,
+            some(line) => console.println("line {line}")
+            none => break
         }
     }
 
@@ -50,23 +51,30 @@ fn run(): Unit ! io.IoError {
 
 fn main() {
     match run() {
-        ok(_) => console.println("done"),
-        err(error) => console.println("failed: {error}"),
+        ok(_) => console.println("done")
+        err(error) => console.println("failed: {error}")
     }
-    match fs.open("io_log.txt", fs.OpenMode.Write) {
+    // In a directory of its own, as a case writes nowhere else.
+    let dir = match fs.createTemporaryDirectory() {
+        ok(dir) => dir
+        err(error) => panic("{error}")
+    }
+    let log = path.join(dir, "io_log.txt")
+    match fs.open(log, fs.OpenMode.Write) {
         ok(file) => {
             let previous = console.stdout()
             console.setOutput(file.writer())
             console.println("into the file")
             console.println("second line")
             console.setOutput(previous)
-        },
-        err(error) => console.println("{error}"),
+        }
+        err(error) => console.println("{error}")
     }
-    match fs.readText("io_log.txt") {
-        ok(text) => console.println("file has: {text}"),
-        err(error) => console.println("{error}"),
+    match fs.readText(log) {
+        ok(text) => console.println("file has: {text}")
+        err(error) => console.println("{error}")
     }
+    _ = fs.remove(dir, recursive: true)
 }
 
 // expect-stdout: buffer: first
