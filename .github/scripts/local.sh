@@ -14,7 +14,9 @@
 # a quarter of one, and then the cases with their tasks in the order of a seed
 # for each round: what a runner rarely shows comes out in minutes. `emuloop` runs them under
 # emulation (EMU_ROUNDS), on EMU_CPUS cores: all of them, and EMU_INIT= with no
-# init, is what brings races out. `sweep` runs the tools over every case, as the
+# init, is what brings races out. STRESS_ONLY=<name> runs only the tests whose
+# names hold it, and not the cases, and STRESS_CPUS=<n> only on n cores: one
+# test that fails now and then, run until it does. `sweep` runs the tools over every case, as the
 # Nightly does, and `editor` the extension in a real VS Code, in a container, so
 # that it touches nothing of this machine's. `containers` runs the scenarios
 # of debugging in containers (containers.sh) with a static tondo built in
@@ -150,9 +152,14 @@ stress() {
       2) cpus=1 ;;
       0) cpus=0.25 ;;
     esac
+    cpus=${STRESS_CPUS:-$cpus}
     while read -r test; do
+      # A binary with none of the tests asked for runs nothing.
+      if [ -n "${STRESS_ONLY:-}" ] && ! "$PWD/$test" --list 2>/dev/null | grep -q -- "$STRESS_ONLY"; then
+        continue
+      fi
       docker run --rm --cpus="$cpus" --memory=16g -u "$me" -e HOME=/tmp -e TMPDIR=/tmp -v "$PWD:$PWD" -w "$PWD/crates/tondo" tondo-ci-amd64 \
-        timeout 1800 "$PWD/$test" > "$out/stress-now.txt" 2>&1
+        timeout 1800 "$PWD/$test" ${STRESS_ONLY:-} > "$out/stress-now.txt" 2>&1
       code=$?
       echo "round $round, $cpus cores, $(basename "$test"): $code $(grep -E '^test result' "$out/stress-now.txt" | tail -1 | cut -c1-60)"
       if [ $code != 0 ]; then
@@ -161,6 +168,7 @@ stress() {
         grep -E " FAILED$|panicked at" "$out/stress-now.txt" | cut -c1-200 | head -8
       fi
     done < target/stress
+    [ -n "${STRESS_ONLY:-}" ] && continue
     TONDO_CASES_SCHEDULE=$round cargo test -q --workspace --test cases cases > "$out/stress-now.txt" 2>&1
     code=$?
     echo "round $round, cases in the order of seed $round: $code"

@@ -122,8 +122,11 @@ case in every mode is a loop over them.
 `.github/scripts/local.sh` runs what CI and the Nightly add, in containers
 on this machine: the servers, no C compiler, musl, emulation, and the tests that
 race with little CPU, which is where a failure otherwise shows hours later.
-The tree stays as it is while these checks run: bash reads a script as it
-runs it, and cargo builds what is there.
+A test that fails now and then is run until it does, in its stage `stress`
+with `STRESS_ONLY=<test> STRESS_CPUS=0.25 STRESS_ROUNDS=30`, and its cause
+found and fixed rather than the test run again. The tree stays as it is
+while these checks run: bash reads a script as it runs it, and cargo builds
+what is there.
 
 A newer push to a branch ends CI's run of the one before, which is
 superseded, not failed. A change to the workflows is tried on a branch of
