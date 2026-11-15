@@ -252,18 +252,22 @@ pub fn changes(before: &Weighed, now: &Weighed, function: Option<&str>, top: usi
         .zip(&before.parts)
         .map(|((part, now), (_, then))| json!({ "part": part, "before": then, "bytes": now, "change": signed(*then, *now) }))
         .collect();
-    let key = |f: &Function| (f.name.clone(), f.place.clone());
-    let then: HashMap<_, u64> = before.functions.iter().map(|f| (key(f), f.bytes)).collect();
-    let mut changed: Vec<(String, String, u64, u64)> = Vec::new();
-    for f in &now.functions {
-        let old = then.get(&key(f)).copied().unwrap_or(0);
-        if old != f.bytes {
-            changed.push((f.name.clone(), f.place.clone(), old, f.bytes));
+    // Functions of one name, as copies of a generic's glue, are counted
+    // together on each side, so that one does not stand for another.
+    let summed = |functions: &[Function]| {
+        let mut sums: std::collections::BTreeMap<(String, String), u64> = Default::default();
+        for f in functions {
+            *sums.entry((f.name.clone(), f.place.clone())).or_default() += f.bytes;
         }
-    }
-    let here: std::collections::HashSet<_> = now.functions.iter().map(key).collect();
-    for f in before.functions.iter().filter(|f| !here.contains(&key(f))) {
-        changed.push((f.name.clone(), f.place.clone(), f.bytes, 0));
+        sums
+    };
+    let (then, now_summed) = (summed(&before.functions), summed(&now.functions));
+    let mut changed: Vec<(String, String, u64, u64)> = Vec::new();
+    for key in then.keys().chain(now_summed.keys()).collect::<std::collections::BTreeSet<_>>() {
+        let (old, new) = (then.get(key).copied().unwrap_or(0), now_summed.get(key).copied().unwrap_or(0));
+        if old != new {
+            changed.push((key.0.clone(), key.1.clone(), old, new));
+        }
     }
     changed.retain(|(name, ..)| function.is_none_or(|asked| name.contains(asked)));
     changed.sort_by_key(|(.., old, new)| std::cmp::Reverse(signed(*old, *new).abs()));

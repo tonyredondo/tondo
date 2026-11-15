@@ -1500,9 +1500,10 @@ fn size_says_what_an_executable_weighs() {
     let changes = &changed["changes"];
     let program = changes["parts"].as_array().unwrap().iter().find(|p| p["part"] == "the program's code").unwrap();
     assert!(program["change"].as_i64().unwrap() > 0, "{changed}");
-    let shout = changes["functions"].as_array().unwrap().iter().find(|f| f["function"] == "shout");
-    assert!(shout.is_some_and(|shout| shout["before"] == 0), "{changed}");
-    let (said, _, _) = tondo(&dir, &["size", "main.to", "--against", "HEAD"]);
+    let (named, _) = json(&dir, &["size", "main.to", "--against", "HEAD", "--function", "shout", "--json"]);
+    let shout = named["changes"]["functions"].as_array().unwrap().iter().find(|f| f["function"] == "shout");
+    assert!(shout.is_some_and(|shout| shout["before"] == 0), "{named}");
+    let (said, _, _) = tondo(&dir, &["size", "main.to", "--against", "HEAD", "--function", "shout"]);
     assert!(said.contains(" at HEAD: +") && said.contains("  shout  (main.to)"), "{said}");
 }
 
