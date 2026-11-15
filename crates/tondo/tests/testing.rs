@@ -2073,6 +2073,21 @@ test joining {
     let shown: serde_json::Value = serde_json::from_str(&shown).unwrap_or_else(|_| panic!("{stderr}"));
     assert_eq!(shown["functions"][0]["function"], "fib", "{shown}");
     assert_eq!(shown["lines"][0]["file"], "src/main_test.to", "{shown}");
+    // Each line with what a release build made of it, as `tondo
+    // optimizations` says it.
+    let recursive = shown["lines"].as_array().unwrap().iter().find(|l| l["source"] == "fib(n - 1) + fib(n - 2)");
+    let said = recursive.map(|line| line["remarks"].clone()).unwrap_or_default();
+    let calls_itself = |said: &serde_json::Value| {
+        said.as_array().is_some_and(|said| {
+            said.iter().any(|r| r["kind"] == "call" && r["text"] == "stays a call of `fib`: the function calls itself")
+        })
+    };
+    assert!(calls_itself(&said) && shown["no_remarks"].is_null(), "{shown}");
+    let (lines, _, _) = tondo(&dir, &["profile", "show", "target/profiles/app.unit.app.slow.cpu.pprof", "--lines"]);
+    assert!(
+        lines.contains("fib(n - 2)\n                                     `fib(n - 1)` stays a call of `fib`"),
+        "{lines}"
+    );
     // Its instructions, each with what it took, the function's own whole.
     let slow = "target/profiles/app.unit.app.slow.cpu.pprof";
     let (asm, stderr, status) = tondo(&dir, &["profile", "show", slow, "--asm"]);
@@ -2103,6 +2118,18 @@ test joining {
         (&serde_json::json!("src/main_test.to"), &serde_json::json!(15)),
         "{shown}"
     );
+    // None when the sources changed since, or of a debug build, which the
+    // optimizer leaves as written.
+    let test_file = dir.join("src/main_test.to");
+    std::fs::write(&test_file, format!("{tests}// changed\n")).unwrap();
+    let (shown, _, _) = tondo(&dir, &["profile", "show", "target/profiles/app.unit.app.slow.cpu.pprof", "--json"]);
+    let shown: serde_json::Value = serde_json::from_str(&shown).unwrap();
+    assert_eq!(shown["no_remarks"], "src/main_test.to changed since its build: profile it again to see them");
+    std::fs::write(&test_file, tests).unwrap();
+    assert_eq!(tondo(&dir, &["test", "--debug", "--profile", "cpu", "--filter", "slow"]).2, 0);
+    let (shown, _, _) = tondo(&dir, &["profile", "show", "target/profiles/app.unit.app.slow.cpu.pprof", "--json"]);
+    let shown: serde_json::Value = serde_json::from_str(&shown).unwrap();
+    assert!(shown["no_remarks"].as_str().unwrap().starts_with("it is of a debug build"), "{shown}");
     let (_, stderr, status) = tondo(&dir, &["test", "--profile", "time"]);
     assert_eq!(status, 2);
     assert!(stderr.contains("--profile is cpu, instructions or memory, not time"), "{stderr}");

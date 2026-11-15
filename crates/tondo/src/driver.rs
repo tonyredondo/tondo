@@ -278,6 +278,15 @@ pub fn set_cpu(name: &str) {
     CPU.with(|cpu| *cpu.borrow_mut() = Some(name.to_string()));
 }
 
+/// What `read` gives with `--cpu` asking for the level `name`, as when a
+/// build for it is read again; the level asked before stays afterwards.
+pub fn with_cpu<T>(name: &str, read: impl FnOnce() -> T) -> T {
+    let before = CPU.with(|cpu| cpu.replace(Some(name.to_string())));
+    let read = read();
+    CPU.with(|cpu| *cpu.borrow_mut() = before);
+    read
+}
+
 /// The level `--cpu` asked for, for a cache key: empty when none did.
 pub fn asked_cpu() -> String {
     CPU.with(|cpu| cpu.borrow().clone().unwrap_or_default())
@@ -1471,7 +1480,10 @@ pub fn compile(
         let _passes = crate::times::part("MIR passes");
         optimize(&mut bodies, types, sources);
     }
-    let roots = analysis.project.as_ref().map_or(String::new(), |p| crate::roots::table(p, &analysis.sources));
+    let roots = analysis
+        .project
+        .as_ref()
+        .map_or(String::new(), |p| crate::roots::table(p, &analysis.sources, debug, &cpu.name));
     let options = codegen::Options {
         meta: analysis.meta,
         debug,

@@ -593,16 +593,96 @@ pub fn amount(value: i64, unit: &str) -> String {
     }
 }
 
+/// What a release build made of each line of a profiled program, by file
+/// and line, as `tondo optimizations` says it.
+pub type Remarks = HashMap<(String, i64), Vec<crate::driver::Optimization>>;
+
+/// The remarks of the lines of the program `profile` is of (toolchain
+/// 7.15), read from its sources in `base` when they are those its build
+/// had, with the build's level of processor; or why its lines get none.
+pub fn remarks(profile: &Profile, base: &Path) -> Result<Remarks, String> {
+    if profile.program.is_empty() {
+        return Err("the profile does not say what program it is of".into());
+    }
+    let Ok(bytes) = std::fs::read(&profile.program) else {
+        return Err(format!("its program, {}, is gone: profile it again to see them", profile.program));
+    };
+    let roots = crate::roots::Roots::text_in(&bytes).map(|text| crate::roots::Roots::parse(&text));
+    let Some((roots, (mode, cpu))) = roots.and_then(|roots| Some((roots.clone(), roots.build?))) else {
+        return Err("its program does not say what its sources were, as one built with --no-source-links".into());
+    };
+    if mode == "debug" {
+        return Err("it is of a debug build, which the optimizer leaves as written: profile a release build".into());
+    }
+    // A build of the tests has their files, which a program's never has.
+    let built = &roots.files;
+    let tests = built.keys().any(|file| file.ends_with("_test.to") || file.starts_with("tests/"));
+    // A program of one file names it as it was given, which its remarks
+    // name as `path` is.
+    let (path, single) = match built.keys().collect::<Vec<_>>()[..] {
+        _ if base.join("tondo.toml").is_file() => (base.to_path_buf(), None),
+        [file] if base.join(file).is_file() => (base.join(file), Some(file.clone())),
+        _ if base == Path::new(".") => {
+            return Err("its sources are not here: show it from its project's directory".into());
+        }
+        _ => return Err(format!("its sources are not in {}", base.display())),
+    };
+    let analysis = crate::driver::analyzed(&path, tests)?;
+    if analysis.program.is_none() {
+        return Err("its program does not compile as it is here".into());
+    }
+    let here = crate::roots::hashes(&analysis.sources);
+    if let Some(file) = built.keys().chain(here.keys()).find(|file| built.get(*file) != here.get(*file)) {
+        return Err(format!("{file} changed since its build: profile it again to see them"));
+    }
+    let found = crate::driver::with_cpu(&cpu, || crate::driver::optimizations(&analysis, None, None))?;
+    let mut remarks = Remarks::new();
+    for remark in found {
+        let file = single.clone().unwrap_or_else(|| remark.file.clone());
+        remarks.entry((file, remark.line as i64)).or_default().push(remark);
+    }
+    Ok(remarks)
+}
+
 /// The source of a line, when its file is here to read, from `base`.
 fn source(base: &Path, file: &str, line: i64) -> Option<String> {
     let text = std::fs::read_to_string(base.join(file)).ok()?;
     text.lines().nth(line as usize - 1).map(|l| l.trim().to_string())
 }
 
+/// How many remarks a line of a profile shows before it says how many more
+/// `tondo optimizations` gives.
+const REMARKS: usize = 6;
+
+/// The remarks of a line of a profile of `function`, as text, each on a
+/// line of its own after `indent`.
+pub fn remarks_text(remarks: &[crate::driver::Optimization], function: &str, indent: &str) -> String {
+    let mut out = String::new();
+    for remark in remarks.iter().take(REMARKS) {
+        let functions = match remark.functions[..] == [function.to_string()] {
+            true => String::new(),
+            false => format!(" (in {})", remark.functions.join(", ")),
+        };
+        out.push_str(&format!("{indent}`{}` {}{functions}\n", remark.source, remark.text));
+    }
+    if remarks.len() > REMARKS {
+        out.push_str(&format!("{indent}and {} more, as `tondo optimizations` says\n", remarks.len() - REMARKS));
+    }
+    out
+}
+
 /// What a profile says as data (`tondo-profile-show-0.1/1`): its sample
 /// types, the total, the `top` functions and lines, with the source of
-/// each line read from `base`, and what each label took.
-pub fn summary(path: &Path, profile: &Profile, hot: &Hot, top: usize, base: &Path) -> Value {
+/// each line read from `base` and what a release build made of it, and
+/// what each label took.
+pub fn summary(
+    path: &Path,
+    profile: &Profile,
+    hot: &Hot,
+    top: usize,
+    base: &Path,
+    remarks: &Result<Remarks, String>,
+) -> Value {
     let functions: Vec<Value> = hot
         .functions
         .iter()
@@ -615,7 +695,12 @@ pub fn summary(path: &Path, profile: &Profile, hot: &Hot, top: usize, base: &Pat
         .take(top)
         .map(|(file, line, function, flat, cum)| {
             let source = source(base, file, *line);
-            json!({ "file": file, "line": line, "function": function, "flat": flat, "cum": cum, "source": source })
+            let said = remarks.as_ref().ok().and_then(|remarks| remarks.get(&(file.clone(), *line)));
+            let said: Vec<Value> = said.into_iter().flatten().map(crate::driver::Optimization::json).collect();
+            json!({
+                "file": file, "line": line, "function": function, "flat": flat, "cum": cum, "source": source,
+                "remarks": said,
+            })
         })
         .collect();
     let labels: Vec<Value> =
@@ -629,6 +714,7 @@ pub fn summary(path: &Path, profile: &Profile, hot: &Hot, top: usize, base: &Pat
         "duration_ms": profile.duration / 1_000_000,
         "functions": functions,
         "lines": lines,
+        "no_remarks": remarks.as_ref().err(),
         "labels": labels,
     })
 }
@@ -650,8 +736,13 @@ pub fn show(
         let page = flame_page(&path.display().to_string(), &hot);
         std::fs::write(html, page).map_err(|e| format!("cannot write {}: {e}", html.display()))?;
     }
+    // What the compiler made of each line, for the lines alone.
+    let remarks = match as_json || lines {
+        true => remarks(&profile, Path::new(".")),
+        false => Ok(Remarks::new()),
+    };
     if as_json {
-        let mut fields = summary(path, &profile, &hot, top, Path::new("."));
+        let mut fields = summary(path, &profile, &hot, top, Path::new("."), &remarks);
         fields["html"] = json!(html);
         crate::cli::print_json("profile-show", true, fields);
         return Ok(());
@@ -672,6 +763,12 @@ pub fn show(
                 amount(*cum, &hot.unit),
                 percent(*cum),
             ));
+            if let Some(said) = remarks.as_ref().ok().and_then(|remarks| remarks.get(&(file.clone(), *line))) {
+                out.push_str(&remarks_text(said, function, &" ".repeat(37)));
+            }
+        }
+        if let Err(why) = &remarks {
+            out.push_str(&format!("what the compiler made of each line is not shown: {why}\n"));
         }
     } else {
         out.push_str(&format!("{:>9} {:>6} {:>9} {:>6}  function\n", "flat", "flat%", "cum", "cum%"));

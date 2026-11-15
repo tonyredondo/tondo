@@ -702,15 +702,30 @@ export interface HotLines {
   type: string;
   unit: string;
   total: number;
-  lines: { file: string; line: number; flat: number; cum: number }[];
+  /** Each line, with what a release build made of it, as `tondo
+   *  optimizations` says it. */
+  lines: { file: string; line: number; flat: number; cum: number; said: string[] }[];
+  /** Why the lines say nothing of what the compiler made of them. */
+  noRemarks?: string;
 }
 
 export function hotLines(json: string): HotLines {
-  const shown = JSON.parse(json) as { format?: string; type: string; unit: string; total: number; lines: HotLines['lines'] };
+  const shown = JSON.parse(json) as {
+    format?: string;
+    type: string;
+    unit: string;
+    total: number;
+    lines: (Omit<HotLines['lines'][number], 'said'> & { remarks?: { text: string; source: string; functions: string[] }[] })[];
+    no_remarks?: string | null;
+  };
   if (shown.format !== 'tondo-profile-show-0.1/1') {
     throw new Error('tondo profile show gave no profile');
   }
-  return { type: shown.type, unit: shown.unit, total: shown.total, lines: shown.lines };
+  const lines = shown.lines.map(({ remarks, ...line }) => ({
+    ...line,
+    said: (remarks ?? []).map((o) => `\`${o.source}\` ${o.text} (in ${o.functions.join(', ')})`),
+  }));
+  return { type: shown.type, unit: shown.unit, total: shown.total, lines, noRemarks: shown.no_remarks ?? undefined };
 }
 
 /** What a line took, as its end shows it: its share and amount, and with
@@ -729,7 +744,11 @@ export function share(flat: number, cum: number, total: number, unit: string): s
         ? value >= 1 << 20
           ? `${(value / (1 << 20)).toFixed(1)}MiB`
           : `${(value / 1024).toFixed(1)}KiB`
-        : `${value}`;
+        : value >= 1e9
+          ? `${(value / 1e9).toFixed(2)}G`
+          : value >= 1e6
+            ? `${Math.round(value / 1e6)}M`
+            : `${value}`;
   const own = flat > 0 ? `${percent(flat)} (${amount(flat)})` : '';
   const calls = cum > flat ? `${percent(cum)} with what it calls` : '';
   return `🔥 ${[own, calls].filter((part) => part).join(', ')}`;

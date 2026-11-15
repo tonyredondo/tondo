@@ -1070,8 +1070,9 @@ con `TONDO_DUMP`, `TONDO_DUMP_VALUES=off` los quita, y `why` da los diez último
 Cada ejecutable guarda de dónde vienen sus fuentes, salvo con `tondo build
 --no-source-links`: el repositorio y el commit del programa, el `remote.origin.url`
 de su repositorio y su `HEAD`, y los de cada dependencia, la URL y el commit de
-`tondo.lock`, sin credenciales, y un hash de cada archivo; `<std>/` viene con el
-propio `tondo`. Los volcados lo copian, `dump read` dice de qué commit es y cuántos
+`tondo.lock`, sin credenciales, y un hash de cada archivo, también fuera de un
+repositorio; `<std>/` viene con el propio `tondo`. Guarda además cómo se compiló:
+si es un build de depuración y para qué nivel de procesador (`--cpu`). Los volcados lo copian, `dump read` dice de qué commit es y cuántos
 archivos no están aquí como se compilaron, y `sources` da cada uno. `tondo source
 <archivo> --from <volcado|grabación|ejecutable>` da el archivo tal como se compiló:
 el de aquí si su hash coincide, o el del commit, que llega de la caché de `tondo` o
@@ -2281,11 +2282,23 @@ suyo (`flat`, donde la muestra está) y con lo que llama (`cum`). Con
 `--lines`, por línea: lo suyo de una línea es lo que gasta la línea más
 interna del código del programa de cada pila, con lo que llama del runtime
 y de la librería estándar, así que señala el programa; con su texto cuando
-el archivo está. `--html <path>` escribe además un flame graph en un archivo
+el archivo está. Bajo cada línea del programa va lo que su build hizo de ella,
+como lo dice `tondo optimizations` (7.18): hasta seis observaciones, y cuántas
+más hay. Las lee de las fuentes de aquí, del proyecto del directorio actual o
+del archivo que nombra el perfil, y solo si son las del build: el ejecutable
+que se perfiló guarda el hash de cada archivo y cómo se compiló (7.5). Si ya no
+está, no lo guarda, es un build de depuración, que el optimizador deja como
+está escrito, o un archivo cambió desde el build, dice por qué no las da en
+lugar de dar las de otro código. Las líneas de la librería estándar y del
+runtime no llevan: lo que importa de ellas se dice en la llamada del programa.
+`--html <path>` escribe además un flame graph en un archivo
 HTML sin scripts: cada función, una caja tan ancha como su parte sobre la de
 quien la llamó, cuyo título dice cuánto, y la tabla de funciones. Con
 labels, dice además cuánto tomó cada valor de cada uno, salvo `thread`. Con
-`--json`, `tondo-profile-show-0.1/1` (7.12).
+`--json`, `tondo-profile-show-0.1/1` (7.12): cada línea lleva en `remarks` las
+suyas, cada una como en `tondo optimizations --json`, y `no_remarks` dice por
+qué no hay, o es `null`. `tondo mcp` las da bajo cada línea en `profile` y
+`profile_show`, y el editor al pasar sobre una línea de un perfil.
 
 `--asm [<función>]` baja de la línea a la instrucción: da el código máquina de
 la función, la que nombra o, sin nombre, la que más tomó con su propio

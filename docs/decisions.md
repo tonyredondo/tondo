@@ -7224,3 +7224,16 @@ code. A thread started while a profile runs is counted from the next turn of the
 drains the samples, within a tenth of a second. Where the system forbids counting, as a container or a high
 `perf_event_paranoid` does, `tondo` says so before it builds anything, and names the profile by
 time instead.
+
+## A profile's lines say what the compiler made of them
+
+The runbooks walked a profile's hot lines and `tondo optimizations` in turn and joined them by
+line number by hand. Each line of the program a profile shows now has the remarks of
+`optimizations` under it, without an option, as Tony chose. They are read again from the sources
+at hand, which costs the analysis of the program each time a profile is shown, rather than kept
+with the build, which would cost every build for the few that are profiled. Remarks of other
+code would mislead more than none, so the executable now keeps the hash of each file even outside
+a repository, whether it is a debug build and its level of processor, and a profile whose
+program is gone, whose build was not optimized or whose files changed says which and gives none.
+A line shows six remarks at most: a loop's line can gather a dozen, and the rest are a call of
+`optimizations` away.

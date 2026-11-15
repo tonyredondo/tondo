@@ -166,7 +166,8 @@ times that count and `stop` to hold that task alone; `debug_start` on a running 
 was, from its repository when it is not at hand. `profile` profiles a `path` it runs, a
 running `program`, a `test` or the benchmarks (`bench`), as `cpu`,
 `instructions` (Linux, which a busy machine does not move), `memory` or `tasks`, and gives the functions and the program's lines that
-take the most, each with its code.
+take the most, each with its code and, under it, what a release build made of it, as
+`optimizations` says it.
 
 ## Resources
 

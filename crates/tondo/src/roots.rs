@@ -1,8 +1,8 @@
 //! Where a program's sources came from (toolchain 7.6): a table of the
 //! repository and commit of the program and of each dependency, with a hash
-//! of each file, which the executable keeps and dumps carry. With it a tool
-//! tells when the files at hand are not those of the build, and gets those
-//! that were, from the place they came from.
+//! of each file and how it was built, which the executable keeps and dumps
+//! carry. With it a tool tells when the files at hand are not those of the
+//! build, and gets those that were, from the place they came from.
 
 use crate::source::SourceMap;
 use std::collections::BTreeMap;
@@ -32,6 +32,9 @@ pub struct Roots {
     pub files: BTreeMap<String, String>,
     /// The project's `[source] url`.
     pub template: Option<String>,
+    /// How it was built: `debug` or `release`, and the level of processor,
+    /// as `--cpu` names it; empty in a table of before they were kept.
+    pub build: Option<(String, String)>,
 }
 
 /// The repository of a directory: where its root is, its first remote
@@ -74,9 +77,9 @@ pub struct Project {
     pub template: Option<String>,
 }
 
-/// The table of a build, as the executable keeps it: empty without any
-/// repository, as a file on its own.
-pub fn table(project: &Project, sources: &SourceMap) -> String {
+/// The table of a build, as the executable keeps it: `debug` or not, for
+/// the level of processor `cpu`.
+pub fn table(project: &Project, sources: &SourceMap, debug: bool, cpu: &str) -> String {
     let mut roots = Vec::new();
     let mut root_of = |prefix: String, dir: &Path, pinned: Option<&(String, String)>| {
         let (repository, commit, directory) = match pinned {
@@ -93,15 +96,18 @@ pub fn table(project: &Project, sources: &SourceMap) -> String {
     for (name, dir, origin) in &project.dependencies {
         root_of(format!("{name}/"), dir, origin.as_ref());
     }
-    let files: BTreeMap<String, String> = sources
+    let build = Some((if debug { "debug" } else { "release" }.to_string(), cpu.to_string()));
+    Roots { roots, files: hashes(sources), template: project.template.clone(), build }.text()
+}
+
+/// The hash of each file of a program but the standard library's, by its
+/// name, as a table keeps them.
+pub fn hashes(sources: &SourceMap) -> BTreeMap<String, String> {
+    sources
         .files()
         .filter(|file| !file.logical.starts_with('<') && !file.logical.is_empty())
         .map(|file| (file.logical.clone(), hash(file.text.as_bytes())))
-        .collect();
-    if roots.is_empty() {
-        return String::new();
-    }
-    Roots { roots, files, template: project.template.clone() }.text()
+        .collect()
 }
 
 /// The hash a table keeps of a file.
@@ -122,6 +128,9 @@ impl Roots {
         if let Some(template) = &self.template {
             text.push_str(&format!("U\t{template}\n"));
         }
+        if let Some((mode, cpu)) = &self.build {
+            text.push_str(&format!("B\t{mode}\t{cpu}\n"));
+        }
         text.push_str(END);
         text
     }
@@ -138,6 +147,7 @@ impl Roots {
                 }),
                 ["F", file, hash] => drop(roots.files.insert(file.to_string(), hash.to_string())),
                 ["U", template] => roots.template = Some(template.to_string()),
+                ["B", mode, cpu] => roots.build = Some((mode.to_string(), cpu.to_string())),
                 _ => {}
             }
         }

@@ -19,8 +19,9 @@ export function registerProfiles(context: vscode.ExtensionContext, output: vscod
   const decoration = vscode.window.createTextEditorDecorationType({
     after: { margin: '0 0 0 2em', color: new vscode.ThemeColor('editorCodeLens.foreground') },
   });
-  // The lines of the profile shown, by file.
-  let shown = new Map<string, { line: number; text: string }[]>();
+  // The lines of the profile shown, by file, with what the compiler made
+  // of each.
+  let shown = new Map<string, { line: number; text: string; said: string[] }[]>();
   let panel: vscode.WebviewPanel | undefined;
   // The profile shown last, and the project it is of.
   let last: { dir: string; file: string } | undefined;
@@ -31,9 +32,10 @@ export function registerProfiles(context: vscode.ExtensionContext, output: vscod
         decoration,
         lines
           .filter(({ line }) => line <= editor.document.lineCount)
-          .map(({ line, text }) => {
-            const end = editor.document.lineAt(line - 1).range.end;
-            return { range: new vscode.Range(end, end), renderOptions: { after: { contentText: text } } };
+          .map(({ line, text, said }) => {
+            const range = editor.document.lineAt(line - 1).range;
+            const hover = said.length ? new vscode.MarkdownString(said.map((text) => `- ${text}`).join('\n')) : undefined;
+            return { range, hoverMessage: hover, renderOptions: { after: { contentText: text } } };
           }),
       );
     }
@@ -55,12 +57,15 @@ export function registerProfiles(context: vscode.ExtensionContext, output: vscod
       const text = share(line.flat, line.cum, hot.total, hot.unit);
       if (text) {
         const file = path.resolve(dir, line.file);
-        shown.set(file, [...(shown.get(file) ?? []), { line: line.line, text }]);
+        shown.set(file, [...(shown.get(file) ?? []), { line: line.line, text, said: line.said }]);
       }
     }
     decorate(vscode.window.visibleTextEditors);
     void vscode.commands.executeCommand('setContext', 'tondo.profiled', true);
     output.info(`profile ${file}: ${hot.type}, ${hot.lines.length} lines of the program`);
+    if (hot.noRemarks) {
+      output.info(`what the compiler made of each line is not shown: ${hot.noRemarks}`);
+    }
     panel ??= vscode.window.createWebviewPanel('tondoProfile', 'Tondo Profile', vscode.ViewColumn.Beside, {});
     panel.onDidDispose(() => (panel = undefined));
     panel.title = `Profile: ${path.basename(file)}`;

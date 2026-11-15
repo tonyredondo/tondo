@@ -1756,22 +1756,26 @@ fn profile(args: &Args) -> Result<Reply, String> {
     for file in &profiles {
         let read = crate::profile::read(file)?;
         let hot = crate::profile::hot(&read, None)?;
-        let summary = crate::profile::summary(file, &read, &hot, top, &base);
+        let remarks = crate::profile::remarks(&read, &base);
+        let summary = crate::profile::summary(file, &read, &hot, top, &base, &remarks);
         text.push_str(&format!(
             "{} of {}, {} in all\n",
             hot.kind,
             file.display(),
             crate::profile::amount(hot.total, &hot.unit)
         ));
-        for line in summary["lines"].as_array().into_iter().flatten().take(top) {
-            let share = line["flat"].as_i64().unwrap_or(0) as f64 * 100.0 / hot.total.max(1) as f64;
-            text.push_str(&format!(
-                "{share:5.1}%  {}:{} in {}  {}\n",
-                line["file"].as_str().unwrap_or_default(),
-                line["line"],
-                line["function"].as_str().unwrap_or_default(),
-                line["source"].as_str().unwrap_or_default()
-            ));
+        for (file, line, function, flat, _) in hot.lines.iter().take(top) {
+            let share = *flat as f64 * 100.0 / hot.total.max(1) as f64;
+            let code = summary["lines"]
+                .as_array()
+                .and_then(|lines| lines.iter().find(|l| l["file"] == *file && l["line"] == *line)?["source"].as_str());
+            text.push_str(&format!("{share:5.1}%  {file}:{line} in {function}  {}\n", code.unwrap_or_default()));
+            if let Some(said) = remarks.as_ref().ok().and_then(|remarks| remarks.get(&(file.clone(), *line))) {
+                text.push_str(&crate::profile::remarks_text(said, function, "        "));
+            }
+        }
+        if let Err(why) = &remarks {
+            text.push_str(&format!("what the compiler made of each line is not shown: {why}\n"));
         }
         summaries.push(summary);
     }
@@ -2478,7 +2482,7 @@ with the new parameters, `move` with a module, `group` with `Point: x, y`, `trai
     Tool {
         name: "profile",
         description: "Where a program spends its time, what it allocates, or where its tasks wait: the functions and \
-the program's own lines that take the most, each line with its code. Profiles `path`, a .to file or a project, run \
+the program's own lines that take the most, each line with its code and what a release build made of it. Profiles `path`, a .to file or a project, run \
 with `args` until it ends or `duration` passes; or a running `program`; or with `test`, that test of the project, and \
 with `bench`, the benchmarks of `test` or of all, what they measure.",
         kind: Kind::Runs,
@@ -2500,7 +2504,7 @@ with `bench`, the benchmarks of `test` or of all, what they measure.",
     Tool {
         name: "profile_show",
         description: "Read a profile that is already written, in pprof's format: the functions, and with `lines` \
-the lines, that take the most.",
+the lines, that take the most, each line with what a release build made of it.",
         kind: Kind::Reads,
         params: &[
             ("file", "string!", "The profile."),

@@ -389,12 +389,22 @@ test("a profile's hot lines, and how much each took at its end", () => {
     unit: 'nanoseconds',
     total: 146_000_000,
     lines: [
-      { file: 'busy.to', line: 14, flat: 94_000_000, cum: 94_000_000 },
-      { file: 'busy.to', line: 23, flat: 2_000_000, cum: 141_000_000 },
+      {
+        file: 'busy.to',
+        line: 14,
+        flat: 94_000_000,
+        cum: 94_000_000,
+        remarks: [{ kind: 'call', text: 'stays a call of `fib`: the function calls itself', source: 'fib(n - 1)', functions: ['fib'] }],
+      },
+      { file: 'busy.to', line: 23, flat: 2_000_000, cum: 141_000_000, remarks: [] },
     ],
+    no_remarks: null,
   });
   const hot = hotLines(shown);
   assert.equal(hot.lines.length, 2);
+  assert.deepEqual(hot.lines[0].said, ['`fib(n - 1)` stays a call of `fib`: the function calls itself (in fib)']);
+  assert.equal(hot.noRemarks, undefined);
+  assert.equal(share(139_000_000, 139_000_000, 139_000_000, 'count'), '🔥 100.0% (139M)');
   assert.equal(share(hot.lines[0].flat, hot.lines[0].cum, hot.total, hot.unit), '🔥 64.4% (94ms)');
   assert.equal(share(hot.lines[1].flat, hot.lines[1].cum, hot.total, hot.unit), '🔥 1.4% (2ms), 96.6% with what it calls');
   assert.equal(share(100, 100, hot.total, hot.unit), undefined);

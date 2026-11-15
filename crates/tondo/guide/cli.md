@@ -134,7 +134,8 @@ tondo trace api --duration 5      what its tasks do, for Perfetto, and a profile
 tondo profile api --cpu           where it spends its time; --memory, --tasks,
                                   --instructions (Linux), which load does not move
 tondo profile -- ./app arg        a program it starts, until it ends
-tondo profile show cpu.pb.gz      the functions and lines that take the most; --html;
+tondo profile show cpu.pb.gz      the functions and lines that take the most; --lines,
+                                  each with what a release build made of it; --html;
                                   --asm, the hottest function's instructions with their share
 tondo dump api                    its tasks, where each is, counters and live memory
 tondo blocked api                 who waits for whom now

@@ -29,15 +29,20 @@ fn main() {
 ```mcp
 profile {"path": "slow.to"}
 => slow.to:5
-=> isPrime
+=> `isPrime(number)` is inlined
 ```
+
+Under each line of the program goes what a release build made of it, as
+`optimizations` says it: here, that `isPrime` is copied into the loop of
+`main`, so no call costs there. A profile whose sources changed since its build
+says so, and gives none rather than those of other code: profile again.
 
 `kind` asks `memory`, what it allocates, or `tasks`, where they wait. `top` gives
 more lines, and `profile_show` reads a profile written before; with `asm`, the
 instructions of the function that took the most, each with its share. A
 sample often falls on the instruction after the slow one, which waits for it.
 
-`optimizations` says what a release build made of that code: the calls it
+`optimizations` says it of the whole program, sampled or not: the calls it
 inlined and those it kept, with why; the texts and closures it made without the
 heap, and what keeps the others on it, naming the code; the checks it dropped,
 and those a loop keeps, with the bound it lacked, as "nothing bounds `count`
