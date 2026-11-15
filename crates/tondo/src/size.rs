@@ -220,7 +220,8 @@ pub fn bytes(count: u64) -> String {
     match count {
         0..1024 => format!("{count} B"),
         1024..1_048_576 => format!("{:.1} KiB", count as f64 / 1024.0),
-        _ => format!("{:.2} MiB", count as f64 / 1_048_576.0),
+        1_048_576..1_073_741_824 => format!("{:.2} MiB", count as f64 / 1_048_576.0),
+        _ => format!("{:.2} GiB", count as f64 / 1_073_741_824.0),
     }
 }
 

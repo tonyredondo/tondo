@@ -283,7 +283,7 @@ tondo add <alias> --path <dir> | --git <url> [--tag <tag> | --branch <branch> | 
 tondo remove <alias> [--project <dir>] [--json]
 tondo fix [<project>|<file.to>] [--library] [--json]
 tondo explain [<code>] [--json]
-tondo clean [--all] [--json]
+tondo clean [--all | --list] [--json]
 tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [--included] [--fails <file>] [-I <dir>] [-D <name[=value]>] [--json]
 tondo test [<project>] [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--watch] [--coverage] [--bench [--bench-time <seconds>]] [--fuzz [--fuzz-time <seconds>]] [--test-format human|json|events] [--json] [--diagnostic-format human|json]
 tondo doc-test [--edition 0.1] <markdown>
@@ -2243,7 +2243,11 @@ código que no existe es un error del toolchain (estado 3).
   imports que faltan, en orden, y quitar los que no se usan.
 - `tondo clean` vacía la caché de builds (sección 6); con `--all`, también
   los repositorios y archivos descargados, que el siguiente build descarga
-  de nuevo.
+  de nuevo. Con `--list` no vacía nada: dice qué ocupa cada parte de la caché,
+  de la mayor a la menor, qué es, si cuenta para el límite de los builds y si
+  `clean` la vacía sin `--all`, y lo que los builds suman frente a ese límite.
+  Con `--json`, `dir`, `total`, `parts` (`part`, `bytes`, `what`, `counted` y
+  `cleaned`), `builds` y `limit`; `tondo mcp` lo ofrece con `list` en `clean`.
 
 ### 7.15 Perfiles
 

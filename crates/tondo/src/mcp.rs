@@ -1463,6 +1463,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         "clean" => {
             push(&["clean", "--json"]);
             switch(&mut argv, "--all", "all");
+            switch(&mut argv, "--list", "list");
         }
         "setup" => {
             push(&["setup", "--json"]);
@@ -2802,9 +2803,12 @@ TONDO_TARGETS names the directory.",
     Tool {
         name: "clean",
         description: "Empty the cache of builds, which the next build fills again; with `all`, the fetched \
-dependencies too.",
+dependencies too; with `list`, say what each part of the cache holds and the limit on the builds, emptying nothing.",
         kind: Kind::Edits,
-        params: &[("all", "boolean", "The fetched dependencies too.")],
+        params: &[
+            ("all", "boolean", "The fetched dependencies too."),
+            ("list", "boolean", "Say what the cache holds, by part, and empty nothing."),
+        ],
     },
     Tool {
         name: "setup",

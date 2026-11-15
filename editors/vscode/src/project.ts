@@ -195,7 +195,10 @@ export function registerProject(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       'tondo.clean',
       inProject(async () => {
-        const what = await vscode.window.showQuickPick(['The cache of builds', 'And the fetched dependencies']);
+        const what = await vscode.window.showQuickPick(['The cache of builds', 'And the fetched dependencies', 'What the cache holds, emptying nothing']);
+        if (what?.startsWith('What')) {
+          return ['clean', '--list'];
+        }
         return what ? ['clean', ...(what.startsWith('And') ? ['--all'] : [])] : undefined;
       }),
     ),

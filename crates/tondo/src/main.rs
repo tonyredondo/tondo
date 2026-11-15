@@ -2047,8 +2047,18 @@ fn clean_command(args: &[OsString]) -> Result<ExitCode, String> {
     let mut args = args.to_vec();
     let json = take_flag(&mut args, "--json");
     let all = take_flag(&mut args, "--all");
-    if !args.is_empty() {
-        return Err(format!("clean takes only --all and --json\n{USAGE}"));
+    let list = take_flag(&mut args, "--list");
+    if !args.is_empty() || (list && all) {
+        return Err(format!("clean takes --all or --list, and --json\n{USAGE}"));
+    }
+    // What it holds, emptying nothing.
+    if list {
+        let listed = tondo::manage::listed();
+        match json {
+            true => print_json("clean", true, listed),
+            false => print!("{}", tondo::manage::listed_text(&listed)),
+        }
+        return Ok(ExitCode::SUCCESS);
     }
     let freed = tondo::manage::clean(all)?;
     match json {

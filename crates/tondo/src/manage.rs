@@ -156,6 +156,76 @@ pub fn clean(all: bool) -> Result<u64, String> {
     Ok(freed)
 }
 
+/// What each part of the cache holds, without emptying it: its name,
+/// bytes, what it is, whether it counts toward the limit on the builds, and
+/// whether `clean` empties it without `--all`; the largest first.
+pub fn listed() -> serde_json::Value {
+    let cache = crate::driver::cache_dir();
+    let what = |name: &str| match name {
+        "run" => "builds of programs",
+        "test" => "builds of tests",
+        "meta" => "builds of what derives and generators run",
+        "runtime" => "the runtime, built once for each toolchain",
+        "compiler" | "compiler-target" => "the tondo of a revision, for --compiler",
+        "revision" => "the code of a revision, for --against",
+        "deps" => "fetched dependencies",
+        "git" => "the repositories of dependencies",
+        "dumps" => "dumps of programs that failed",
+        "live" => "live builds",
+        "plugins" => "built plugins",
+        "sources" => "files of builds, from their repositories",
+        name if name.starts_with("std-") => "the standard library's sources",
+        _ => "",
+    };
+    let mut parts: Vec<(String, u64)> = std::fs::read_dir(&cache)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| (entry.file_name().to_string_lossy().into_owned(), size(&entry.path())))
+        .filter(|(name, _)| !name.starts_with('.'))
+        .collect();
+    parts.sort_by_key(|(name, bytes)| (std::cmp::Reverse(*bytes), name.clone()));
+    let counted = |name: &str| matches!(name, "run" | "test" | "meta");
+    let total: u64 = parts.iter().map(|(_, bytes)| bytes).sum();
+    let builds: u64 = parts.iter().filter(|(name, _)| counted(name)).map(|(_, bytes)| bytes).sum();
+    let parts: Vec<serde_json::Value> = parts
+        .iter()
+        .map(|(name, bytes)| {
+            serde_json::json!({
+                "part": name, "bytes": bytes, "what": what(name), "counted": counted(name),
+                "cleaned": !matches!(name.as_str(), "deps" | "git"),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "dir": cache, "total": total, "parts": parts, "builds": builds, "limit": crate::driver::cache_limit(),
+    })
+}
+
+/// What `listed` says, for a person.
+pub fn listed_text(listed: &serde_json::Value) -> String {
+    let bytes = |value: &serde_json::Value| crate::size::bytes(value.as_u64().unwrap_or(0));
+    let dir = listed["dir"].as_str().unwrap_or_default();
+    let mut out = format!("the cache in {dir} holds {}\n", bytes(&listed["total"]));
+    for part in listed["parts"].as_array().into_iter().flatten() {
+        let name = part["part"].as_str().unwrap_or_default();
+        let what = part["what"].as_str().unwrap_or_default();
+        let note = match (part["counted"] == true, part["cleaned"] == true) {
+            (true, _) => ", toward the limit",
+            (false, false) => ", emptied only with --all",
+            _ => "",
+        };
+        let said = format!("{what}{note}");
+        out.push_str(&format!("{:>11}  {name:<16}{}\n", bytes(&part["bytes"]), said.trim_start_matches(", ")));
+    }
+    out.push_str(&format!(
+        "the builds hold {} of a limit of {} (TONDO_CACHE_LIMIT): once a day the least used past it go\n",
+        bytes(&listed["builds"]),
+        bytes(&listed["limit"])
+    ));
+    out
+}
+
 fn size(path: &Path) -> u64 {
     match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.is_dir() => {

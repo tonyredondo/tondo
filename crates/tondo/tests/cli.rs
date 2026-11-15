@@ -246,6 +246,18 @@ fn manages_projects() {
     std::fs::create_dir_all(cache.join("tondo/run/entry")).unwrap();
     std::fs::write(cache.join("tondo/run/entry/program"), [0u8; 1000]).unwrap();
     std::fs::create_dir_all(cache.join("tondo/deps/kept")).unwrap();
+    // What it holds, emptying nothing: each part, and the builds' limit.
+    let listed = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["clean", "--list", "--json"])
+        .env("XDG_CACHE_HOME", &cache)
+        .env("TONDO_CACHE_LIMIT", "1m")
+        .output()
+        .unwrap();
+    let listed: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let run = listed["parts"].as_array().unwrap().iter().find(|p| p["part"] == "run").cloned().unwrap_or_default();
+    assert_eq!((&run["bytes"], &run["counted"], &run["cleaned"]), (&json!(1000), &json!(true), &json!(true)));
+    assert_eq!((&listed["builds"], &listed["limit"]), (&json!(1000), &json!(1 << 20)), "{listed}");
+    assert!(cache.join("tondo/run/entry/program").exists());
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .args(["clean", "--json"])
         .env("XDG_CACHE_HOME", &cache)

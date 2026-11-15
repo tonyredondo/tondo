@@ -7323,3 +7323,11 @@ the value is not a number: a price is a number and stays silent, while `"hi ${na
 is almost always a port from Kotlin, TypeScript or a shell, and prints `hi $Ada`. The checker
 knows the value's type there, so the rule is by type, and its fix takes the `$` away; over the
 cases, the examples, `bench/` and the test projects it found only the case written to show it.
+
+## What the cache holds, with clean --list
+
+Tony agreed that `tondo clean` could say what the cache holds without emptying it, and left
+the form open. `--list` gives each part of the cache directory, the largest first, with what it
+is, whether it counts toward the limit on the builds (`run`, `test` and `meta`, which the daily
+bound evicts), and whether `clean` empties it without `--all`; then what the builds hold beside
+the limit. It reads sizes as `clean` would free them, so the two agree.

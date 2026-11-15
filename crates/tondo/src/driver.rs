@@ -116,7 +116,7 @@ pub fn cache_entry(kind: &str, key: &str) -> PathBuf {
 /// What the builds of `run/`, `test/` and `meta/` may hold together:
 /// `TONDO_CACHE_LIMIT`, as `40G`, `500M` or a number of bytes; 10 GB if it
 /// does not say.
-fn cache_limit() -> u64 {
+pub fn cache_limit() -> u64 {
     const GB: u64 = 1 << 30;
     let given = std::env::var("TONDO_CACHE_LIMIT").ok();
     let parsed = given.as_deref().map(str::trim).and_then(|text| {

@@ -137,8 +137,11 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "clean",
-        usage: &["tondo clean [--all] [--json]"],
-        summary: &["empty the cache of builds; with --all, the fetched", "dependencies too"],
+        usage: &["tondo clean [--all | --list] [--json]"],
+        summary: &[
+            "empty the cache of builds; with --all, the fetched",
+            "dependencies too; with --list, say what it holds",
+        ],
     },
     Command {
         name: "test",
