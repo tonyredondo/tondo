@@ -222,6 +222,9 @@ pub fn User.describe(self): String {
 pub fn make(name: String, age: Int = 30): User {
     User { name, age }
 }
+
+/// The role of a user nobody chose one for.
+pub const Role.Default: Role = Role.Admin
 "#;
 
 const MAIN: &str = r#"import std.console
@@ -512,7 +515,8 @@ fn completion_and_highlighting() {
     // A standard module, a type's functions and an enum's variants.
     let console = complete(&mut editor, "console.");
     assert!(console.contains(&"println".to_string()) && console.contains(&"readLine".to_string()), "{console:?}");
-    assert_eq!(complete(&mut editor, "models.Role."), ["Admin", "Member"]);
+    // A type's constants.
+    assert_eq!(complete(&mut editor, "models.Role."), ["Admin", "Member", "Default"]);
     let strings = complete(&mut editor, "String.");
     assert!(strings.contains(&"fromBytes".to_string()) && !strings.contains(&"length".to_string()), "{strings:?}");
     let strings = complete(&mut editor, "\"text\".");

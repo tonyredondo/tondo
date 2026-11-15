@@ -7354,3 +7354,16 @@ it, outermost when the function calls itself, so that what other tasks ran meanw
 count; lines stand for time, as a replay's clock is the recording's and not the run's. A second
 replay stops where the call starts and gives its frames' values as the debugger shows them, which
 are the ones a dump writes, so the test is written by the same code.
+
+## Constants of a type
+
+For `ffi.HResult`, the brief needed values of a type named through it, `HResult.Ok`, which a
+module's constant (`ffi.HResultOk`) or a function without arguments (`HResult.ok()`) could only
+imitate. Tony chose the change to the language, `const HResult.Ok: HResult = HResult(0)`, and asked
+that the standard library's other types that are better with one get them. A constant of a type is
+an ordinary constant, evaluated the same way, declared in the type's module as the type's methods
+are, and named through the type: `Ok` alone does not name it. A type with type parameters has
+none, since a constant has one type; nor does an alias, nor an intrinsic type, whose constants
+the language gives. An enum's constant cannot take a variant's name, which `Color.Red` already
+reads.
+

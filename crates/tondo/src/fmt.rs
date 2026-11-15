@@ -428,7 +428,9 @@ impl Formatter<'_> {
                 }
             }
             Item::Const(c) => {
-                let mut parts = vec![text(format!("{}const {}", if c.public { "pub " } else { "" }, c.name.name))];
+                let owner = c.owner.as_ref().map_or(String::new(), |owner| format!("{}.", owner.name));
+                let public = if c.public { "pub " } else { "" };
+                let mut parts = vec![text(format!("{public}const {owner}{}", c.name.name))];
                 if let Some(ty) = &c.ty {
                     parts.push(text(": "));
                     parts.push(self.ty(ty));

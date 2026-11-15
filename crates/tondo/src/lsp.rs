@@ -3053,9 +3053,13 @@ impl Server {
             .iter()
             .enumerate()
             .filter(|(_, d)| {
+                let text = sources.slice(d.decl_span);
+                // A type's constant, `pub const Point.Origin`, is the type's.
+                let of_type = text.strip_prefix("pub const ").and_then(|rest| rest.split([':', '=', ' ']).next());
                 matches!(d.kind, DefKind::Function | DefKind::Type | DefKind::Enum | DefKind::Trait | DefKind::Const)
                     && sources.file_of(d.decl_span.start).module == module
-                    && sources.slice(d.decl_span).starts_with("pub ")
+                    && text.starts_with("pub ")
+                    && !of_type.is_some_and(|name| name.contains('.'))
             })
             .map(|(id, d)| self.item(analyzed, &d.name, d.kind, Some(id), call))
             .collect();
@@ -3077,7 +3081,7 @@ impl Server {
             for d in &declarations {
                 let (kind, declared) = (d["kind"].as_str().unwrap_or(""), d["name"].as_str().unwrap_or(""));
                 let code = d["declaration"].as_str().unwrap_or("");
-                if kind == "fn" && declared.starts_with(&prefix) && !crate::api::takes_self(code) {
+                if (kind == "fn" && !crate::api::takes_self(code) || kind == "const") && declared.starts_with(&prefix) {
                     let mut d = d.clone();
                     d["name"] = json!(&declared[prefix.len()..]);
                     items.push(declared_item(&d, call));
@@ -3113,10 +3117,15 @@ impl Server {
         let mut items = Vec::new();
         for (id, d) in index.defs.iter().enumerate().filter(|(_, d)| of_module(d)) {
             let text = sources.slice(d.decl_span);
-            let owned = text.strip_prefix("pub ").unwrap_or(text).starts_with(&format!("fn {name}."));
+            let declared = text.strip_prefix("pub ").unwrap_or(text);
+            let owned = declared.starts_with(&format!("fn {name}."));
             match d.kind {
                 DefKind::Function | DefKind::Method if owned && !crate::api::takes_self(&header(text)) => {
                     items.push(self.item(analyzed, &d.name, DefKind::Function, Some(id), call))
+                }
+                // A constant of the type, `const Point.Origin`.
+                DefKind::Const if declared.starts_with(&format!("const {name}.")) => {
+                    items.push(self.item(analyzed, &d.name, d.kind, Some(id), false))
                 }
                 DefKind::Variant if ty.decl_span.start <= d.decl_span.start && d.decl_span.end <= ty.decl_span.end => {
                     items.push(self.item(analyzed, &d.name, d.kind, Some(id), false))

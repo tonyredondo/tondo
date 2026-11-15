@@ -269,6 +269,7 @@ pub(crate) fn reserved_type(name: &str) -> bool {
     PRELUDE_TYPES.contains(&name) && !OWN_NAMES.contains(&name)
 }
 
+#[derive(Clone, Copy)]
 enum TypeName {
     Nominal(Ty),
     Alias(usize),

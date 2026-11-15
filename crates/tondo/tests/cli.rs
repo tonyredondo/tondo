@@ -1402,6 +1402,31 @@ fn compares_with_another_compiler() {
 /// take away: `removeAt(0)` on an array in a loop (W1024), a written
 /// pattern compiled where it runs each time (W1025); not in `main`, which
 /// runs once, and not without the option.
+/// A type's constant is read through its module and type from another
+/// module, and only when it is `pub`; `tondo api` shows it with the type.
+#[test]
+fn a_types_constant_is_read_from_another_module() {
+    let dir = scratch("type-constants");
+    std::fs::create_dir_all(dir.join("src/shapes")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\n").unwrap();
+    let shapes = "pub type Point = {\n    x: Int\n    y: Int\n}\n\n/// Where the axes cross.\n\
+        pub const Point.Origin: Point = Point { x: 0, y: 0 }\n\nconst Point.Hidden: Point = Point { x: 1, y: 1 }\n\n\
+        pub fn hidden(): Point {\n    Point.Hidden\n}\n";
+    std::fs::write(dir.join("src/shapes/shapes.to"), shapes).unwrap();
+    let main = |read: &str| {
+        format!("import std.console\nimport app.shapes\n\nfn main() {{\n    console.println(\"{{{read}}}\")\n}}\n")
+    };
+    std::fs::write(dir.join("src/main.to"), main("shapes.Point.Origin.x + shapes.hidden().y")).unwrap();
+    let (stdout, stderr, status) = tondo(&dir, &["run", "."]);
+    assert_eq!((stdout.as_str(), status), ("1\n", 0), "{stderr}");
+    std::fs::write(dir.join("src/main.to"), main("shapes.Point.Hidden.x")).unwrap();
+    let (_, stderr, status) = tondo(&dir, &["check", "."]);
+    assert_eq!(status, 1, "{stderr}");
+    assert!(stderr.contains("E1501") && stderr.contains("`shapes.Point.Hidden` is private to its module"), "{stderr}");
+    let (api, _, _) = tondo(&dir, &["api", "app.shapes.Point"]);
+    assert!(api.contains("/// Where the axes cross.\npub const Point.Origin: Point"), "{api}");
+}
+
 #[test]
 fn performance_warnings_name_what_the_compiler_cannot_fix() {
     let dir = scratch("performance");

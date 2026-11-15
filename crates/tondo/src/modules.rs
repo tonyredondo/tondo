@@ -337,10 +337,12 @@ fn declarations(module: &ModuleSource) -> Declarations {
                     decls.types.insert(a.name.name.clone(), a.public);
                     decls.starts.insert(a.name.name.clone(), a.span);
                 }
-                Item::Const(c) => {
+                Item::Const(c) if c.owner.is_none() => {
                     decls.values.insert(c.name.name.clone(), c.public);
                     decls.starts.insert(c.name.name.clone(), c.span);
                 }
+                // A type's constant is named through the type.
+                Item::Const(_) => {}
                 Item::Trait(t) => {
                     decls.types.insert(t.name.name.clone(), t.public);
                     decls.starts.insert(t.name.name.clone(), t.span);
@@ -413,10 +415,10 @@ fn declared_name(item: &Item) -> Option<&Ident> {
         Item::Fn(f) if f.owner.is_none() => Some(&f.name),
         Item::Type(t) => Some(&t.name),
         Item::Alias(a) => Some(&a.name),
-        Item::Const(c) => Some(&c.name),
+        Item::Const(c) if c.owner.is_none() => Some(&c.name),
         Item::Enum(e) => Some(&e.name),
         Item::Trait(t) => Some(&t.name),
-        Item::Fn(_) | Item::Impl(_) | Item::Test(_) | Item::Derive(_) => None,
+        Item::Fn(_) | Item::Const(_) | Item::Impl(_) | Item::Test(_) | Item::Derive(_) => None,
     }
 }
 
@@ -740,7 +742,14 @@ impl Linker<'_> {
             Item::Const(c) => {
                 c.module = module;
                 self.convention(&c.name, Case::Pascal);
-                self.declared(&mut c.name);
+                match &mut c.owner {
+                    Some(owner) => {
+                        let mut path = vec![owner.clone()];
+                        self.path(&mut path, Position::Any);
+                        *owner = path.pop().unwrap();
+                    }
+                    None => self.declared(&mut c.name),
+                }
                 if let Some(ty) = &mut c.ty {
                     self.ty(ty);
                 }

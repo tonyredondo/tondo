@@ -135,6 +135,63 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Whether `const Owner.Name` is a constant a type may have (6.5): of a
+    /// record, an enum or a newtype of this module without type parameters,
+    /// whose name no variant of it has.
+    pub(super) fn const_owner(&mut self, owner: &ast::Ident, name: &ast::Ident, module: u32) -> bool {
+        let named = self.type_names.get(&owner.name).copied();
+        let wrong = match named {
+            Some(TypeName::Nominal(ty)) if self.owner(ty).is_some_and(|o| o.module != module) => format!(
+                "`{0}` is declared in another module, which alone declares its constants: move this constant there, \
+                 or declare one of this module, `const {1}`",
+                owner.name, name.name
+            ),
+            Some(TypeName::Nominal(ty)) => {
+                let TyKind::Adt(id) = *self.types.kind(ty) else {
+                    let message = format!(
+                        "constants of a type are declared on records, enums and newtypes, not `{}`",
+                        owner.name
+                    );
+                    self.diags.error("E1504", owner.span, message);
+                    return false;
+                };
+                self.index_refer(owner, crate::index::Key::Type(owner.name.clone()));
+                let AdtKind::Enum(variants) = &self.types.adt(id).kind else { return true };
+                if !variants.iter().any(|v| v.name == name.name) {
+                    return true;
+                }
+                let message = format!(
+                    "`{}.{}` is a variant of `{}`: give the constant another name",
+                    owner.name, name.name, owner.name
+                );
+                self.diags.error("E1002", name.span, message);
+                return false;
+            }
+            Some(TypeName::Template(_)) => format!(
+                "`{0}` has type parameters, and a constant is of one type: declare it of the module, `const {1}`",
+                owner.name, name.name
+            ),
+            Some(TypeName::Alias(_)) => {
+                format!(
+                    "`{}` is an alias: declare the constant on the type it names, in that type's module",
+                    owner.name
+                )
+            }
+            None if PRELUDE_TYPES.contains(&owner.name.as_str()) || self.type_named(&owner.name).is_some() => {
+                format!(
+                    "constants cannot be added to the intrinsic type `{}`: declare it of the module, `const {}`",
+                    owner.name, name.name
+                )
+            }
+            None => {
+                self.diags.error("E1001", owner.span, unknown_type(&owner.name));
+                return false;
+            }
+        };
+        self.diags.error("E1504", owner.span, wrong);
+        false
+    }
+
     /// The type an inherent method is declared on: a nominal type of this
     /// module (11.5).
     pub(super) fn method_owner(&mut self, owner: &ast::Ident, module: u32) -> Ty {

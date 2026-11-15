@@ -35,6 +35,9 @@ pub type User = {
 /// A newtype: a distinct type over another, built with `UserId(7)`.
 pub type UserId = Int
 
+/// A constant of the type, read as `UserId.Nobody`.
+pub const UserId.Nobody: UserId = UserId(0)
+
 /// An alias: another name for the same type.
 alias Pair = (Int, String)
 
@@ -61,7 +64,7 @@ fn main() {
     let later = ada with { age }                // `age: age`, as in a literal
     let id = UserId(7)
     let pair: Pair = (id.value, "seven")
-    console.println("{ada.describe()} {older.age} {later.age} {pair.1}")
+    console.println("{ada.describe()} {older.age} {later.age} {pair.1} {id == UserId.Nobody}")
 }
 ```
 

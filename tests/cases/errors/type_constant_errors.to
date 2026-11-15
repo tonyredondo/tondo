@@ -1,0 +1,26 @@
+// A constant of a type is of a record, an enum or a newtype of its module,
+// without type parameters, and named as no variant is.
+enum Color {
+    Red
+}
+
+const Color.Red: Color = Color.Red
+
+const Int.Big: Int = 3
+
+const Missing.Value: Int = 1
+
+type Box[T] = {
+    value: T
+}
+
+const Box.Empty: Int = 0
+
+fn main() {
+    _ = Color.Red
+}
+
+// expect-error: E1002 `Color.Red` is a variant of `Color`: give the constant another name
+// expect-error: E1504 constants cannot be added to the intrinsic type `Int`: declare it of the module, `const Big`
+// expect-error: E1001 unknown type `Missing`
+// expect-error: E1504 `Box` has type parameters, and a constant is of one type: declare it of the module, `const Empty`

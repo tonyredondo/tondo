@@ -45,10 +45,18 @@ impl<'a> Checker<'a> {
         self.declare_traits(&traits);
         for item in &module.items {
             if let ast::Item::Const(decl) = item {
-                let key = Some(crate::index::Key::Value(decl.name.name.clone()));
+                // A type's, `const HResult.Ok`, is named through the type.
+                let name = match &decl.owner {
+                    Some(owner) if !self.const_owner(owner, &decl.name, decl.module) => continue,
+                    Some(owner) => {
+                        ast::Ident { name: format!("{}.{}", owner.name, decl.name.name), span: decl.name.span }
+                    }
+                    None => decl.name.clone(),
+                };
+                let key = Some(crate::index::Key::Value(name.name.clone()));
                 self.index_define(key, crate::index::DefKind::Const, &decl.name, decl.span, None);
                 self.consts.push(ConstEntry { decl, value: None, resolving: false });
-                self.declare_module_name(&decl.name, ModuleName::Const(self.consts.len() - 1));
+                self.declare_module_name(&name, ModuleName::Const(self.consts.len() - 1));
             }
         }
         let (externs, fns): (Vec<&ast::FnDecl>, Vec<&ast::FnDecl>) = module

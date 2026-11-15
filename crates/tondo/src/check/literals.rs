@@ -1084,6 +1084,26 @@ impl<'a> Checker<'a> {
             written.extend(segments[1..].iter().cloned());
             return self.path(cx, &written, expected, span);
         }
+        // `Type.Name`: a constant of the type (6.5).
+        if let [owner, name, rest @ ..] = segments
+            && self.lookup(cx, &owner.name).is_none()
+            && let Some(&ModuleName::Const(id)) = self.names.get(&format!("{}.{}", owner.name, name.name))
+        {
+            self.index_refer(owner, crate::index::Key::Type(owner.name.clone()));
+            self.index_refer(name, crate::index::Key::Value(format!("{}.{}", owner.name, name.name)));
+            let decl = self.consts[id].decl;
+            if decl.module != self.module && !decl.public {
+                let message =
+                    format!("`{}.{}` is private to its module; declare it `pub` to use it here", owner.name, name.name);
+                self.diags.error("E1501", name.span, message);
+            }
+            let mut value = self.const_value(id, name.span);
+            for segment in rest {
+                let span = value.span.to(segment.span);
+                value = self.field_access(value, FieldRef::Name(&segment.name), segment.span, span);
+            }
+            return value;
+        }
         // The constants of the intrinsic numeric types: `Int.max`, `Float.pi`.
         if let [type_name, constant] = segments
             && matches!(self.names.get(&type_name.name), None | Some(ModuleName::Fn(_)))

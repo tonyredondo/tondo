@@ -1054,6 +1054,25 @@ conserva `ok(valor)` o `err(NumericConversionError...)` dentro de la constante.
 
 Las constantes no pueden realizar I/O, acceder al reloj o al entorno, crear identidad mediante `Ref`, construir punteros, tasks, cursores afines, handles de recursos ni asignar memoria mutable observable. Una constante pública debe declarar su tipo porque ese tipo forma parte de la API del módulo.
 
+Una constante puede ser **de un tipo**: `const Tipo.Nombre` la declara en el
+módulo del tipo, un record, enum o newtype sin parámetros de tipo, y se lee
+como `Tipo.Nombre`, o `modulo.Tipo.Nombre` desde otro módulo, igual que una
+función asociada:
+
+~~~tondo
+pub type Code = Int32
+
+pub const Code.Ok: Code = Code(0)
+
+let ok = Code.Ok
+~~~
+
+Es una constante como las demás: las mismas reglas de evaluación, de tipo
+declarado si es `pub`, y de visibilidad (`E1501` fuera de su módulo si no es
+`pub`). No es un nombre del módulo: `Nombre` solo no la nombra. Declararla de
+un tipo de otro módulo, de uno con parámetros de tipo, de un alias o de un
+tipo intrínseco es `E1504`; con el nombre de una variante del enum, `E1002`.
+
 ### 6.6 Módulos ejecutables
 
 Un target ejecutable `hosted` selecciona un módulo raíz. Ese módulo debe contener
@@ -10064,7 +10083,7 @@ module_path     = identifier, { ".", identifier } ;
 ### 23.6 Constantes
 
 ~~~ebnf
-const_decl      = [ visibility ], "const", identifier,
+const_decl      = [ visibility ], "const", [ type_path, "." ], identifier,
                   [ ":", type_expr ], "=", expression, NL ;
 ~~~
 

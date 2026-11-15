@@ -1,0 +1,32 @@
+// A constant of a type, `const Type.Name`, is read as `Type.Name`: of a
+// newtype, a record and an enum, with fields read after it.
+// expect-stdout: 0 -1
+// expect-stdout: 0 Point { x: 0, y: 0 }
+// expect-stdout: true
+import std.console
+
+type Code = Int32
+
+/// What succeeded.
+const Code.Ok: Code = Code(0)
+const Code.Failed: Code = Code(-1)
+
+type Point = {
+    x: Int
+    y: Int
+}
+
+const Point.Origin: Point = Point { x: 0, y: 0 }
+
+enum Color {
+    Red
+    Green
+}
+
+const Color.Favorite: Color = Color.Green
+
+fn main() {
+    console.println("{Code.Ok.value} {Code.Failed.value}")
+    console.println("{Point.Origin.x} {Point.Origin}")
+    console.println("{Color.Favorite == Color.Green}")
+}

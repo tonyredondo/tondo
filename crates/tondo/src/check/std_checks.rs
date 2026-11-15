@@ -115,7 +115,7 @@ impl<'a> Checker<'a> {
         for item in &module.items {
             let (name, span, end) = match item {
                 ast::Item::Fn(f) if f.owner.is_none() => (&f.name, f.span, f.body.as_ref().map(|b| b.span.start)),
-                ast::Item::Const(c) => (&c.name, c.span, None),
+                ast::Item::Const(c) if c.owner.is_none() => (&c.name, c.span, None),
                 ast::Item::Type(t) => (&t.name, t.span, None),
                 ast::Item::Enum(e) => (&e.name, e.span, None),
                 ast::Item::Alias(a) => (&a.name, a.span, None),

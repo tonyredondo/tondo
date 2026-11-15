@@ -391,6 +391,8 @@ pub enum AnnotationArg {
 #[derive(Clone, Debug)]
 pub struct ConstDecl {
     pub public: bool,
+    /// The type of `const Type.Name`, a constant of that type (6.5).
+    pub owner: Option<Ident>,
     pub name: Ident,
     pub ty: Option<TypeExpr>,
     pub value: Expr,

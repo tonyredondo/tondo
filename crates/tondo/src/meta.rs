@@ -652,7 +652,9 @@ fn constant(expr: &ast::Expr, at: &Place, depth: u32) -> Option<String> {
                     };
                     at.modules[module].files.iter().enumerate().find_map(|(file, (source, _))| {
                         source.items.iter().find_map(|item| match item {
-                            ast::Item::Const(c) if c.name.name.rsplit('.').next() == Some(*name) => {
+                            ast::Item::Const(c)
+                                if c.owner.is_none() && c.name.name.rsplit('.').next() == Some(*name) =>
+                            {
                                 constant(&c.value, &Place { module, file, ..*at }, depth + 1)
                             }
                             _ => None,

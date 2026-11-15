@@ -1161,7 +1161,7 @@ fn declared_elsewhere(package: &deps::Package, target: project::Target) -> Vec<a
         for item in &module.items {
             let (name, head) = match item {
                 ast::Item::Fn(f) if f.owner.is_none() => (&f.name.name, head(f.span, f.body.as_ref().map(|b| b.span))),
-                ast::Item::Const(c) => (&c.name.name, head(c.span, None)),
+                ast::Item::Const(c) if c.owner.is_none() => (&c.name.name, head(c.span, None)),
                 ast::Item::Type(t) => (&t.name.name, head(t.span, None)),
                 ast::Item::Enum(e) => (&e.name.name, head(e.span, None)),
                 ast::Item::Alias(a) => (&a.name.name, head(a.span, None)),

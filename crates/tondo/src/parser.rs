@@ -939,13 +939,26 @@ impl Parser<'_> {
             }
             Tok::Kw(Kw::Const) => {
                 self.bump();
-                let name = self.ident()?;
+                let first = self.ident()?;
+                // `const HResult.Ok`: a constant of a type.
+                let (owner, name) = match self.eat(&Tok::Dot) {
+                    true => {
+                        let (mut owner, mut name) = (first, self.ident()?);
+                        while self.eat(&Tok::Dot) {
+                            let joined = format!("{}.{}", owner.name, name.name);
+                            owner = Ident { name: joined, span: owner.span.to(name.span) };
+                            name = self.ident()?;
+                        }
+                        (Some(owner), name)
+                    }
+                    false => (None, first),
+                };
                 let ty = if self.eat(&Tok::Colon) { Some(self.type_expr()?) } else { None };
                 self.expect(Tok::Eq)?;
                 let value = self.expression()?;
                 let span = start.to(self.prev_span());
                 self.end_of_statement()?;
-                Ok(Some(Item::Const(ConstDecl { public, name, ty, value, span, module: 0 })))
+                Ok(Some(Item::Const(ConstDecl { public, owner, name, ty, value, span, module: 0 })))
             }
             Tok::Kw(Kw::Enum) => Ok(Some(Item::Enum(self.enum_declaration(public, start)?))),
             Tok::Kw(Kw::Trait) => Ok(Some(Item::Trait(self.trait_declaration(public, start)?))),
