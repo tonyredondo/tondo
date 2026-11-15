@@ -162,20 +162,30 @@ When it is in place the tool says so on its error stream, with `--json`
 too, so that a script which then makes the line run waits for that first:
 
 ```text
-$ tondo logpoint counts counts.to:10 "round {round}" --max 2
-tondo: a logpoint on counts.to:10, in 1 place: it ends after 2 times
-round 8
-round 9
+$ tondo logpoint counts counts.to:9 "round {round}" --max 2
+tondo: a logpoint on counts.to:9, in 1 place: it ends after 2 times
+round 7 (as line 9 leaves it)
+round 8 (as line 9 leaves it)
 ```
 
 A message never holds a value that is not the binding's at that line. In a
-Release build a binding reads `?` where the optimized code has not made its
-value yet, which happens on the line or two after the one that changes it;
-further on it is there. A build with `--debug` has no places for a
-logpoint, since it has the debugger's probes instead: in `tondo debug
-<pid>`, `break counts.to:10 log round {round}` and then `continue` write
-the same lines without stopping there, with every value
-([Debugging](debugging.md)).
+Release build the optimized code may make a value after the place where the
+line begins. The logpoint then takes it where it is first known, before
+anything changes it, and the message says `(as line 9 leaves it)`; in the
+JSON that value has `"from": "counts.to:10"`. A binding that the optimized
+code makes and uses up between two lines reads `?`, and the tool says why:
+
+```text
+$ tondo logpoint counts counts.to:9 "round {round}, doubled {doubled}" --max 1
+tondo: a logpoint on counts.to:9, in 1 place: it ends after 1 time
+round 10, doubled ? (as line 9 leaves it)
+tondo: `doubled` is not known here, as the optimized code makes its value later; a build with --debug knows every value
+```
+
+A build with `--debug` has no places for a logpoint, since it has the
+debugger's probes instead: in `tondo debug <pid>`, `break counts.to:10 log
+round {round}` and then `continue` write the same lines without stopping
+there, with every value ([Debugging](debugging.md)).
 
 ## Where the time goes: profile
 
