@@ -164,6 +164,19 @@ fn lends_in(body: &mut Body, types: &Types, loans: &[Vec<bool>]) {
                         Rvalue::TaskOp(crate::hir::TaskOp::Lock(_), operands, flags, _) => {
                             lend(operands, Some(flags), &|_| false, &mut uses)
                         }
+                        // What only reads its operands and keeps none: an
+                        // operation of numbers, as a text parsed, and what
+                        // codegen writes in place, as a text's character.
+                        Rvalue::Call(crate::hir::Callee::Std(crate::hir::StdFn::Number(_)), operands) => {
+                            lend(operands, None, &|_| false, &mut uses)
+                        }
+                        Rvalue::Call(crate::hir::Callee::Std(crate::hir::StdFn::Native(index)), operands)
+                            if crate::hir::IN_PLACE.contains(&crate::hir::NATIVES[*index as usize].symbol)
+                                || crate::hir::IN_ONE_INSTRUCTION
+                                    .contains(&crate::hir::NATIVES[*index as usize].symbol) =>
+                        {
+                            lend(operands, None, &|_| false, &mut uses)
+                        }
                         _ => {
                             let (mut read, mut defined) = (Vec::new(), Vec::new());
                             statement_locals(statement, &mut read, &mut defined);

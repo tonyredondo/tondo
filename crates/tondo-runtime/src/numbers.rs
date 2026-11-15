@@ -126,6 +126,39 @@ fn parse(s: &str, radix: i64, bits: u32, signed: bool) -> Option<u128> {
         b'+' => (false, &bytes[1..]),
         _ => (false, bytes),
     };
+    // Up to 18 decimal digits, as most numbers are, in a loop that cannot
+    // overflow: a `u64` holds what is below 10^18. A `_` or anything else
+    // goes the general way.
+    let fast = (radix == 10 && (1..=18).contains(&digits.len())).then(|| decimal(digits)).flatten();
+    let magnitude = match fast {
+        Some(value) => u128::from(value),
+        None => general(digits, radix)?,
+    };
+    let (min, max) = bounds(bits, signed);
+    match negative {
+        true if magnitude == 0 => Some(0),
+        true if signed && magnitude <= min.unsigned_abs() => Some((magnitude as i128).wrapping_neg() as u128),
+        true => None,
+        false => (magnitude <= max).then_some(magnitude),
+    }
+}
+
+/// The decimal digits' value, when they are digits alone.
+fn decimal(digits: &[u8]) -> Option<u64> {
+    let mut value = 0u64;
+    for &byte in digits {
+        let digit = byte.wrapping_sub(b'0');
+        if digit >= 10 {
+            return None;
+        }
+        value = value * 10 + u64::from(digit);
+    }
+    Some(value)
+}
+
+/// The digits' value in `radix`, a `_` only between two of them, in 64 bits
+/// while it fits and then in 128.
+fn general(digits: &[u8], radix: u32) -> Option<u128> {
     if digits.first().is_none_or(|&b| b == b'_') || digits.last() == Some(&b'_') {
         return None;
     }
@@ -157,14 +190,7 @@ fn parse(s: &str, radix: i64, bits: u32, signed: bool) -> Option<u128> {
             Some(value) => Some(value.checked_mul(u128::from(radix))?.checked_add(u128::from(digit))?),
         };
     }
-    let magnitude = wide.unwrap_or(u128::from(small));
-    let (min, max) = bounds(bits, signed);
-    match negative {
-        true if magnitude == 0 => Some(0),
-        true if signed && magnitude <= min.unsigned_abs() => Some((magnitude as i128).wrapping_neg() as u128),
-        true => None,
-        false => (magnitude <= max).then_some(magnitude),
-    }
+    Some(wide.unwrap_or(u128::from(small)))
 }
 
 /// An integer in `radix`, clamped to 2 to 36, with lowercase digits.

@@ -1,0 +1,51 @@
+import std.console
+
+// Integers read from texts: up to 18 decimal digits in a loop that cannot
+// overflow, and the rest the general way, with the same answers: signs,
+// `_` between digits, the bounds of each width, and what is no number.
+
+fn shown(text: String): String {
+    match Int.parse(text) {
+        ok(value) => "{value}"
+        err(_) => "error"
+    }
+}
+
+fn main() {
+    let texts = [
+        "0", "-0", "+7", "42", "-42", "1_000", "_1", "1_", "1__0", "", "-", "+", "12a", " 1",
+        "999999999999999999", "1000000000000000000", "9223372036854775807", "9223372036854775808",
+        "-9223372036854775808", "-9223372036854775809", "00000000000000000000001",
+    ]
+    for text in texts {
+        console.println("{text}: {shown(text)}")
+    }
+    console.println("{Int8.parse("127") ?? 0} {Int8.parse("128") ?? 0} {Int8.parse("-128") ?? 0}")
+    console.println("{UInt.parse("18446744073709551615") ?? 0} {UInt.parse("-1") ?? 7} {UInt.parse("-0") ?? 7}")
+    console.println("{Int.parse("ff", radix: 16) ?? 0} {Int.parse("-1_0", radix: 2) ?? 0}")
+}
+
+// expect-stdout: 0: 0
+// expect-stdout: -0: 0
+// expect-stdout: +7: 7
+// expect-stdout: 42: 42
+// expect-stdout: -42: -42
+// expect-stdout: 1_000: 1000
+// expect-stdout: _1: error
+// expect-stdout: 1_: error
+// expect-stdout: 1__0: error
+// expect-stdout: : error
+// expect-stdout: -: error
+// expect-stdout: +: error
+// expect-stdout: 12a: error
+// expect-stdout:  1: error
+// expect-stdout: 999999999999999999: 999999999999999999
+// expect-stdout: 1000000000000000000: 1000000000000000000
+// expect-stdout: 9223372036854775807: 9223372036854775807
+// expect-stdout: 9223372036854775808: error
+// expect-stdout: -9223372036854775808: -9223372036854775808
+// expect-stdout: -9223372036854775809: error
+// expect-stdout: 00000000000000000000001: 1
+// expect-stdout: 127 0 -128
+// expect-stdout: 18446744073709551615 7 0
+// expect-stdout: 255 -2
