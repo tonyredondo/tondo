@@ -7,9 +7,11 @@
 //! starts, as the loop reads it and does not write it: reading it before
 //! the loop costs a load even when the loop ends before it reads it.
 //!
-//! Nothing in the loop changes the value when no statement of the loop
-//! writes, releases, lends or clears its local, of which the value may be a
-//! field, and no call takes it to
+//! Nothing in the loop changes the value when its local is not an address,
+//! as a loan or a lock's state is, which other code may change while the
+//! loop waits; when no statement of the loop writes, releases, lends or
+//! clears the local, of which the value may be a field; and no call takes
+//! it to
 //! write: as a `var` parameter, or as an array the runtime or C is given,
 //! which may change it in place. A text the runtime is given it only reads.
 
@@ -63,6 +65,16 @@ fn hoist_body(body: &mut Body, types: &Types, loans: &[Vec<bool>]) {
         })
         .collect();
     loops.sort_by_key(|(_, inside, _)| inside.iter().filter(|&&inside| inside).count());
+    // The locals that are an address: a loan, and what a statement lends.
+    let mut addressed = vec![false; body.locals.len()];
+    for (&param, &loan) in body.params.iter().zip(&body.loans) {
+        addressed[param.0 as usize] |= loan;
+    }
+    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+        if let Statement::Lend(alias, _) | Statement::LendAt(alias, _) = statement {
+            addressed[alias.0 as usize] = true;
+        }
+    }
     // Each read of a length in a loop, by its block and statement: why it
     // stays in its innermost loop, or that it left it, at its place.
     type At = (usize, usize, crate::source::Span);
@@ -79,6 +91,9 @@ fn hoist_body(body: &mut Body, types: &Types, loans: &[Vec<bool>]) {
                 let fields = read.path.iter().all(|projection| matches!(projection, Proj::Field(_)));
                 let why = match before {
                     _ if !place.path.is_empty() || !fields => Some("it is read out of another value".to_string()),
+                    _ if addressed[read.local.0 as usize] => {
+                        Some("it is read through a loan or a lock, where other code may change it".to_string())
+                    }
                     _ if written[read.local.0 as usize] => Some(match &body.names[read.local.0 as usize] {
                         Some(name) => format!("the loop may change `{name}`"),
                         None => "the loop may change what it is the length of".to_string(),
