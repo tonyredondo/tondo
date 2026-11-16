@@ -487,7 +487,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// count the line twice.
     pub(super) fn latent_site(&mut self, span: Span) {
         let tight = self.tight_loops.get(self.block).copied().unwrap_or(false);
-        if !self.e.cg.dumps() || tight || span == Span::default() || !crate::driver::logpoint_sites() {
+        if !self.e.cg.logpoints() || tight || span == Span::default() {
             return;
         }
         let (_, line, _) = self.e.cg.sources().position(span.start);

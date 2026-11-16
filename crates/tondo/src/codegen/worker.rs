@@ -62,6 +62,7 @@ pub(super) struct Shared<'s, 't> {
     fuzz: bool,
     testing: bool,
     dumps: bool,
+    logpoints: bool,
     /// The functions with a version (rule 19 of `std.simd`), and the
     /// generators of their level.
     versions: &'s [Option<Versions>],
@@ -94,6 +95,7 @@ impl<'s, 't> Shared<'s, 't> {
             live: cg.live.as_ref().map(|live| (live.slots, &live.slot_of[..], Gen::site_base(cg))),
             debug: cg.debug.is_some(),
             dumps: cg.dump.is_some(),
+            logpoints: cg.dump.is_some() && cg.logpoints,
             coverage: Gen::coverage(cg),
             fuzz: Gen::fuzzing(cg),
             testing: Gen::testing(cg),
@@ -394,6 +396,9 @@ impl<'t> Gen<'t> for Worker<'_, '_, 't> {
     }
     fn dumps(&self) -> bool {
         self.shared.dumps
+    }
+    fn logpoints(&self) -> bool {
+        self.shared.logpoints
     }
     fn dump_bindings(&mut self, described: Vec<super::DumpBinding>) {
         self.ask(Asked::DumpBindings(described));

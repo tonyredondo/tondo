@@ -255,12 +255,11 @@ pub(crate) fn set(request: &str, client: &UnixStream) -> String {
                 "a build with --debug has no places for a logpoint, as it has probes: `tondo debug <pid>` logs \
                  at them, with `break {file}:{line} log <message>`, without stopping"
             ),
-            (true, _) => {
-                format!(
-                    "{file} has no places for a logpoint: this build has none, as one made with \
-                     `TONDO_LOGPOINT_SITES=0` in its environment, or the file is not its code"
-                )
-            }
+            _ if sites.is_empty() => "this program has no places for a logpoint or a breakpoint: it was built \
+                                      with `--no-logpoints`, or with `logpoints = false` in the `[build]` of its \
+                                      tondo.toml; build it again without that to put one in it"
+                .to_string(),
+            (true, _) => format!("{file} has no places for a logpoint: it is not this program's code"),
             (_, Some(near)) => format!(
                 "line {line} has no place for a logpoint: it has no code, or is in a tight loop, which calls nothing; \
                  the nearest line that has one is {near}"

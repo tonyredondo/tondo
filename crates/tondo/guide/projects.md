@@ -104,6 +104,11 @@ asks the processor; a feature the level has, or one of the other
 architecture, is known when compiling, and only the way of the `if` that
 runs is compiled.
 
+`logpoints = false` in the `[build]` of `tondo.toml`, or `--no-logpoints`,
+leaves out the `nop` a build keeps at the start of each line for a logpoint:
+code that does little but call runs a few percent faster, and the program
+takes no logpoint (`runbook-running`).
+
 `std.cpu.x64` and `std.cpu.arm64` have functions that are one instruction
 each, as `x64.depositBits` (BMI2's `pdep`), for the files of their
 architecture. A function that uses one needs its feature, and is compiled

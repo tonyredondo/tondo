@@ -253,6 +253,9 @@ pub struct Analysis {
     /// The level of processor the root package's `[build] cpu` asks for,
     /// and where it says it.
     pub cpu: Option<(String, String)>,
+    /// Whether the root package's `[build] logpoints` leaves a place at
+    /// each line for a logpoint, as it does unless it says `false`.
+    pub logpoints: bool,
 }
 
 thread_local! {
@@ -728,6 +731,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
     let mut libraries: Vec<String> = Vec::new();
     let mut elsewhere = Vec::new();
     let mut cpu = None;
+    let mut logpoints = true;
     PROJECT_CPU.with(|project| *project.borrow_mut() = None);
     // The dependencies, whose warnings their authors see, not this program's.
     let mut dependencies: Vec<String> = Vec::new();
@@ -773,6 +777,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         dependencies = packages[1..].iter().map(|p| p.name.clone()).collect();
         // The program's own `[build]` decides, not a dependency's.
         cpu = packages[0].cpu.clone();
+        logpoints = packages[0].logpoints;
         PROJECT_CPU.with(|project| *project.borrow_mut() = cpu.as_ref().map(|(name, _)| name.clone()));
         built = ast::Built {
             name: packages[0].name.clone(),
@@ -922,6 +927,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                 index,
                 project: Some(project.clone()),
                 cpu: cpu.clone(),
+                logpoints,
             });
         }
         let mut providers: Vec<Vec<(String, PathBuf)>> = packages.iter().map(|p| p.providers.clone()).collect();
@@ -974,6 +980,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                     index,
                     project: Some(project.clone()),
                     cpu: cpu.clone(),
+                    logpoints,
                 });
             }
         };
@@ -1040,6 +1047,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             index,
             project: Some(project.clone()),
             cpu: cpu.clone(),
+            logpoints,
         });
     }
     let checking = crate::times::part("check");
@@ -1076,6 +1084,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         index: None,
         project: Some(project.clone()),
         cpu: cpu.clone(),
+        logpoints,
     })
 }
 
@@ -1460,6 +1469,7 @@ pub fn object_counting(
         roots: "",
         coverage: Some(&mut counted),
         fuzz,
+        logpoints: logpoints(analysis),
     };
     let object = codegen::compile(program, &bodies, &analysis.sources, options)?;
     Ok((object, counted))
@@ -1498,6 +1508,7 @@ pub fn compile(
         coverage: None,
         fuzz: false,
         roots: &roots,
+        logpoints: logpoints(analysis),
     };
     codegen::compile(program, &bodies, &analysis.sources, options)
 }
@@ -2781,18 +2792,28 @@ pub fn compiler_identity() -> String {
     let exe = std::env::current_exe().ok().and_then(|p| std::fs::metadata(p).ok());
     let stamp = exe.map(|m| format!("{}:{:?}", m.len(), m.modified().ok())).unwrap_or_default();
     let layout = layout_seed().map(|seed| format!(":layout {seed}")).unwrap_or_default();
-    let sites = if logpoint_sites() { "" } else { ":no logpoint sites" };
+    let sites = if NO_LOGPOINTS.load(std::sync::atomic::Ordering::Relaxed) { ":no logpoint sites" } else { "" };
     format!("{VERSION}:{}:{stamp}{layout}{sites}", RUNTIME_HASH)
 }
 
-/// `TONDO_LOGPOINT_SITES=0`: a build without probes leaves no place for a
-/// logpoint at the start of each line, which costs the instructions of a
-/// `nop` each time the line runs: a function that does little but call,
-/// as a recursive one, runs a few percent faster, and `tondo logpoint`
-/// finds no place in it.
-pub fn logpoint_sites() -> bool {
-    static SITES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *SITES.get_or_init(|| std::env::var("TONDO_LOGPOINT_SITES").map_or(true, |value| value.trim() != "0"))
+/// Whether `--no-logpoints` asked for builds without a place at the start of
+/// each line for a logpoint (toolchain 7.5).
+static NO_LOGPOINTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Makes this command's builds leave no place for a logpoint, as
+/// `--no-logpoints` asks.
+pub fn set_no_logpoints() {
+    NO_LOGPOINTS.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether a build without probes of `analysis` leaves a place at the start
+/// of each line for a logpoint, which costs the instructions of a `nop` each
+/// time the line runs: unless `--no-logpoints` or the project's `[build]
+/// logpoints = false` say otherwise, which a function that does little but
+/// call, as a recursive one, runs a few percent faster for, and `tondo
+/// logpoint` finds no place in.
+pub fn logpoints(analysis: &Analysis) -> bool {
+    analysis.logpoints && !NO_LOGPOINTS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// `TONDO_LAYOUT_SEED`: the order a build lays the program's functions out

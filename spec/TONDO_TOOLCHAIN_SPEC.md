@@ -107,8 +107,10 @@ outputs = ["proto.user"]
   los nombra, y `check` lo comprueba solo para ellos; y `architectures`, las
   arquitecturas, `["x64"]`, `["arm64"]` o las dos, del mismo modo. `tondo new`
   escribe `version = "0.1.0"`.
-- `[build]` dice cómo se compila el programa. Su única clave es `cpu`, el
-  nivel de procesador para el que se compila (7.8), que `--cpu` reemplaza.
+- `[build]` dice cómo se compila el programa. Sus claves son `cpu`, el
+  nivel de procesador para el que se compila (7.8), que `--cpu` reemplaza, y
+  `logpoints`, que con `false` compila sin el sitio de cada línea donde un
+  logpoint escribe su llamada (7.5), como `--no-logpoints`.
   Solo cuenta el `[build]` del paquete raíz: el de una dependencia no se lee,
   porque decide el programa. `systems` y `architectures` siguen en
   `[package]`: dicen qué admite el paquete, no cómo se compila.
@@ -262,9 +264,9 @@ completos no se ejecuta ninguna.
 ## 7. Comandos
 
 ~~~text
-tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch] [--target <target>] [--cpu <level>] [--diagnostic-format human|json] [-- <argument>...]
-tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug | --live] [--target <target>] [--cpu <level>] [--diagnostic-format human|json] [--json]
-tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--cpu <level>] [--json]
+tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch] [--target <target>] [--cpu <level>] [--no-logpoints] [--diagnostic-format human|json] [-- <argument>...]
+tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug | --live] [--target <target>] [--cpu <level>] [--no-logpoints] [--diagnostic-format human|json] [--json]
+tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--cpu <level>] [--no-logpoints] [--json]
 tondo check [<project>|<file.to>] [--library] [--json]
 tondo expand [<project>|<file.to>] [--json]
 tondo fmt [--check | --compact] [--json] <file.to>...
@@ -272,7 +274,7 @@ tondo api [<module>|<module>.<declaration>|<file.to>] [--private] [--list] [--pr
 tondo api --search <palabras> [--project <dir>] [--json]
 tondo graph [<project>|<dir>|<file.to>] [--packages | --files] [--module <module> [--reverse]] [--json | --dot | --mermaid]
 tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>] [--cpu <level>] [--against <revision> | --compiler <tondo|revision>] [--json]
-tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--cpu <level>] [--against <revision> | --compiler <tondo|revision>] [--json]
+tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--cpu <level>] [--no-logpoints] [--against <revision> | --compiler <tondo|revision>] [--json]
 tondo asm --runtime <function> [--compiler <tondo|revision>] [--json]
 tondo compiler <tondo|revision> [--json]
 tondo guide [<topic>] [--list] [--skill] [--json]
@@ -285,7 +287,7 @@ tondo fix [<project>|<file.to>] [--library] [--json]
 tondo explain [<code>] [--json]
 tondo clean [--all | --list] [--json]
 tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [--included] [--fails <file>] [--id <interface>=<GUID>]... [-I <dir>] [-D <name[=value]>] [--json]
-tondo test [<project>] [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--watch] [--coverage] [--bench [--bench-time <seconds>]] [--fuzz [--fuzz-time <seconds>]] [--test-format human|json|events] [--json] [--diagnostic-format human|json]
+tondo test [<project>] [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--no-logpoints] [--watch] [--coverage] [--bench [--bench-time <seconds>]] [--fuzz [--fuzz-time <seconds>]] [--test-format human|json|events] [--json] [--diagnostic-format human|json]
 tondo doc-test [--edition 0.1] <markdown>
 tondo target pack [<dir>] [--json]
 tondo lsp
@@ -1149,10 +1151,11 @@ tarea mientras una copia del proceso muestra los valores, como en un volcado.
 Necesita `TONDO_DIAGNOSTICS=1` y Linux: otro sistema no deja a un programa cambiar
 su código, y lo dice. Medido en cinco programas el tiempo no cambia más que su ruido,
 un 2 % como mucho, y el ejecutable crece menos del 1 %; una función que casi solo llama,
-como una recursiva, ejecuta hasta un 16 % más de instrucciones y tarda un 6 % más. Con
-`TONDO_LOGPOINT_SITES=0` en el entorno del build, el compilador no deja esas llamadas:
-el build es otro en la caché, y `tondo logpoint` no encuentra dónde escribir en él, y lo
-dice. El editor pone un logpoint
+como una recursiva, ejecuta hasta un 25 % más de instrucciones y tarda un 5 % más. Con
+`--no-logpoints` en `run`, `build`, `test`, `asm` o `size`, o `logpoints = false` en el
+`[build]` del `tondo.toml` raíz, el compilador no deja esas llamadas: el build es otro en
+la caché, y un logpoint o un breakpoint de un build así se rechaza diciendo cómo se
+compiló y que se compile sin eso. El editor pone un logpoint
 en la línea del cursor de un programa que elige de los que corren, con su texto y su
 condición, y muestra lo que llega en un panel. Con `--dump <archivo>` esa vez deja
 además un volcado de todo el programa tal como estaba allí, sin pararlo más que el

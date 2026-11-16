@@ -43,6 +43,9 @@ pub struct Package {
     /// The level of processor its programs are built for (`[build] cpu`),
     /// and where its manifest says it, for an error about it.
     pub cpu: Option<(String, String)>,
+    /// Whether its builds leave a place at each line for a logpoint
+    /// (`[build] logpoints`).
+    pub logpoints: bool,
 }
 
 /// A generator (27.5 of the language): a program that writes modules of
@@ -106,6 +109,7 @@ struct Manifest {
     systems: Vec<System>,
     architectures: Vec<Arch>,
     cpu: Option<(String, String)>,
+    logpoints: bool,
 }
 
 /// Reads `tondo.toml` in `dir`; a missing file declares nothing.
@@ -123,6 +127,7 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
         systems: Vec::new(),
         architectures: Vec::new(),
         cpu: None,
+        logpoints: true,
     };
     if !path.is_file() {
         return Ok(manifest);
@@ -219,7 +224,20 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
                             let usage = "`cpu = \"x86-64-v3\"` names the level of processor the program is built for";
                             return Err(at(line, usage.into()));
                         }
-                        _ => return Err(at(line, format!("unknown key `{key}` in `[build]`, which has `cpu`"))),
+                        ("logpoints", _) => match &value {
+                            crate::toml::Value::Boolean(on) => manifest.logpoints = *on,
+                            _ => {
+                                let usage = "`logpoints = false` builds the program without a place at each line \
+                                             for a logpoint, which costs a `nop` each time the line runs";
+                                return Err(at(line, usage.into()));
+                            }
+                        },
+                        _ => {
+                            return Err(at(
+                                line,
+                                format!("unknown key `{key}` in `[build]`, which has `cpu` and `logpoints`"),
+                            ));
+                        }
                     }
                 }
             }
@@ -479,6 +497,7 @@ impl Resolver<'_> {
             systems: manifest.systems,
             architectures: manifest.architectures,
             cpu: manifest.cpu,
+            logpoints: manifest.logpoints,
         });
         self.visiting.push(dir.clone());
         for (dependency, source) in manifest.dependencies {

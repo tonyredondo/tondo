@@ -326,12 +326,16 @@ pub struct Options<'o> {
     pub fuzz: bool,
     /// Where the program comes from (`roots.rs`), or nothing.
     pub roots: &'o str,
+    /// Whether a build without probes leaves a place at each line for a
+    /// logpoint (toolchain 7.5): not with `--no-logpoints` or the
+    /// project's `[build] logpoints = false`.
+    pub logpoints: bool,
 }
 
 /// Compiles the program to an object file.
 pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options: Options) -> Result<Vec<u8>, String> {
     let building = crate::times::part("IR");
-    let Options { meta, debug, target, cpu, mut live, coverage, fuzz, roots } = options;
+    let Options { meta, debug, target, cpu, mut live, coverage, fuzz, roots, logpoints } = options;
     let mut flags = settings::builder();
     // A debug build keeps the code as written, statement after statement.
     flags.set("opt_level", if debug { "none" } else { "speed" }).map_err(|e| e.to_string())?;
@@ -444,6 +448,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
         debug_slots: HashMap::new(),
         debug_sites: Vec::new(),
         dump: None,
+        logpoints,
         dump_bindings: HashMap::new(),
         dump_words: HashMap::new(),
         building_version: false,
@@ -843,6 +848,8 @@ struct Codegen<'a> {
     /// A build without probes: the table of what its dumps show, and the
     /// bindings of each function, by its number.
     dump: Option<DataId>,
+    /// Whether it leaves a place for a logpoint at each line.
+    logpoints: bool,
     /// By the function's number, and whether of its version.
     dump_bindings: HashMap<(usize, bool), Vec<DumpBinding>>,
     /// The number of each static object a dump shows as a constant.
@@ -1652,6 +1659,9 @@ trait Gen<'t> {
     fn debug_function(&mut self, name: String, lends: bool, described: Vec<DebugBinding>) -> u32;
     /// A build without probes: whether its dumps show bindings.
     fn dumps(&self) -> bool;
+    /// A build without probes: whether it leaves a place for a logpoint at
+    /// each line.
+    fn logpoints(&self) -> bool;
     /// What a dump finds in the function that is being built.
     fn dump_bindings(&mut self, described: Vec<DumpBinding>);
     /// In a live build, the word that holds the number of the function's
@@ -1830,6 +1840,9 @@ impl<'t> Gen<'t> for Codegen<'t> {
     }
     fn dumps(&self) -> bool {
         self.dump.is_some()
+    }
+    fn logpoints(&self) -> bool {
+        self.dump.is_some() && self.logpoints
     }
     fn dump_bindings(&mut self, described: Vec<DumpBinding>) {
         self.dump_bindings.insert((self.current, self.building_version), described);
@@ -3986,7 +3999,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let live = (!self.labels.is_empty()).then(|| crate::mir::live_in(&self.body.blocks, self.body.locals.len()));
         // With probes or logpoint sites, the blocks that lead to each, and
         // the line each ended in, or the lines of the last sites.
-        let latent = self.debug.is_none() && self.e.cg.dumps() && crate::driver::logpoint_sites();
+        let latent = self.debug.is_none() && self.e.cg.logpoints();
         let lines = latent || self.debug.is_some();
         let mut leading = vec![Vec::new(); if lines { self.body.blocks.len() } else { 0 }];
         for (index, block) in self.body.blocks.iter().enumerate().filter(|_| lines) {

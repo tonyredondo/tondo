@@ -1,11 +1,12 @@
 //! The part of TOML that `tondo.toml` and `tondo.lock` use: tables, arrays
-//! of tables, and keys with strings, integers, inline tables of strings or
-//! arrays on one line.
+//! of tables, and keys with strings, integers, booleans, inline tables of
+//! strings or arrays on one line.
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     String(String),
     Integer(i64),
+    Boolean(bool),
     Table(Vec<(String, Value)>),
     Array(Vec<Value>),
 }
@@ -152,10 +153,17 @@ fn parse_value(text: &str) -> Result<(Value, &str), String> {
             }
         }
     }
+    for (word, value) in [("true", true), ("false", false)] {
+        if let Some(rest) = text.strip_prefix(word).filter(|rest| !rest.starts_with(|c: char| c.is_alphanumeric())) {
+            return Ok((Value::Boolean(value), rest));
+        }
+    }
     let end = text.find(|c: char| !(c.is_ascii_digit() || c == '-' || c == '_')).unwrap_or(text.len());
     match text[..end].replace('_', "").parse() {
         Ok(number) if end > 0 => Ok((Value::Integer(number), &text[end..])),
-        _ => Err(format!("unsupported value `{text}`: use a string, an integer, an inline table or an array")),
+        _ => Err(format!(
+            "unsupported value `{text}`: use a string, an integer, `true` or `false`, an inline table or an array"
+        )),
     }
 }
 
@@ -184,7 +192,9 @@ mod tests {
     #[test]
     fn reports_errors_with_lines() {
         assert!(parse("[a]\nkey\n").unwrap_err().starts_with("line 2:"));
-        assert!(parse("key = true\n").is_err());
+        assert!(parse("key = 1.5\n").is_err());
+        assert!(parse("key = truly\n").is_err());
+        assert_eq!(parse("key = false # no\n").unwrap()[0].entries[0].1, Value::Boolean(false));
         assert!(parse("key = [\"a\"\n").is_err());
         let tables = parse("[native]\nlibraries = [\"m\", \"z\",]\n").unwrap();
         assert_eq!(tables[1].entries[0].1, Value::Array(vec![Value::String("m".into()), Value::String("z".into())]));

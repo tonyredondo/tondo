@@ -5989,6 +5989,18 @@ instructions and 6% of the time. The maintainer chose on 2026-11-11 to keep them
 a build leave them out with `TONDO_LOGPOINT_SITES=0` in its environment, which is part of the key of
 the build in the cache; `tondo logpoint` then says that the build has no places, and why.
 
+Measured again on 2026-11-16 over every row of `bench/tondo`, the places cost under 1% of the
+instructions in 60 of 68 rows, and 25% of `fib`'s instructions and 5% of its time; the code around
+them had shrunk since. Of keeping them as they were, a documented way to leave them out, leaving
+them out by default, fewer of them, or none and a trap written where a logpoint is asked for, Tony
+chose the second: the places stay by default, as a running Release build that takes a logpoint is
+why they exist, and `--no-logpoints`, or `logpoints = false` in the `[build]` of the root
+`tondo.toml`, as `--cpu` and `cpu` are given, builds without them, in place of the variable of the
+environment. A logpoint or a breakpoint asked of such a build says how it was built and to build it
+without that. The traps, which would leave nothing in the code and still take a logpoint on any line,
+are research: what a line's place in optimized code gives, against a place the optimizer cannot
+move, is answered by a prototype on Linux x64 first.
+
 A loop over a text's characters calls nothing on its way either: codegen reads an ASCII character
 in place and calls the runtime only for the others, so its loop has no places, which were six of
 its 23 instructions a character.

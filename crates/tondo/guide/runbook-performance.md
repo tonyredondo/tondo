@@ -73,6 +73,12 @@ asm {"path": "slow.to", "function": "main"}
 => four turns at once run
 ```
 
+Each line keeps a `nop` at its start, where a logpoint writes its call in a
+running program (`runbook-running`). A function that does little but call, as
+a recursive one, runs a few percent faster without them: `no_logpoints` in
+`build` and `run`, or `logpoints = false` in the `[build]` of `tondo.toml`,
+builds without them, and such a build takes no logpoint.
+
 `check` with `performance` names what a loop costs that the compiler cannot take
 away without changing what the program says: `removeAt(0)` on an array, which
 moves the rest each time (a `Deque` takes its first at once), and a pattern

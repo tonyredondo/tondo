@@ -613,6 +613,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
                 target = Some(parsed);
             }
             "--cpu" => driver::set_cpu(&value()?),
+            "--no-logpoints" => driver::set_no_logpoints(),
             "--deny-skips" => options.deny_skips = true,
             "--allow-flaky" => options.allow_flaky = true,
             "--lock-order" => options.lock_order = true,
@@ -2280,6 +2281,9 @@ fn size_command(args: &[OsString]) -> Result<ExitCode, String> {
     let (json, tests) = (take_flag(&mut args, "--json"), take_flag(&mut args, "--tests"));
     let (statically, strip, debug) =
         (take_flag(&mut args, "--static"), take_flag(&mut args, "--strip"), take_flag(&mut args, "--debug"));
+    if take_flag(&mut args, "--no-logpoints") {
+        driver::set_no_logpoints();
+    }
     let mut valued = |flag: &str| -> Result<Option<String>, String> {
         let Some(at) = args.iter().position(|a| a == flag) else { return Ok(None) };
         let value = args.get(at + 1).and_then(|v| v.to_str()).filter(|v| !v.starts_with('-')).map(str::to_string);
@@ -2394,6 +2398,9 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
         (take_flag(&mut args, "--json"), take_flag(&mut args, "--clif"), take_flag(&mut args, "--all"));
     let (rules, tests) = (take_flag(&mut args, "--rules"), take_flag(&mut args, "--tests"));
     let runtime = take_flag(&mut args, "--runtime");
+    if take_flag(&mut args, "--no-logpoints") {
+        driver::set_no_logpoints();
+    }
     let mut valued = |flag: &str| -> Result<Option<String>, String> {
         let Some(at) = args.iter().position(|a| a == flag) else { return Ok(None) };
         let value = args.get(at + 1).and_then(|v| v.to_str()).filter(|v| !v.starts_with('-')).map(str::to_string);
@@ -2880,6 +2887,8 @@ fn link_options(args: &[OsString]) -> Result<(BuildOptions, Vec<OsString>), Stri
         } else if arg == "--cpu" {
             let name = args.next().ok_or_else(|| format!("--cpu needs a level of processor, as baseline\n{USAGE}"))?;
             driver::set_cpu(&name.to_string_lossy());
+        } else if arg == "--no-logpoints" {
+            driver::set_no_logpoints();
         } else if arg == "--static" && !statically {
             statically = true;
         } else if arg == "--debug" && !debug {
@@ -2991,6 +3000,7 @@ fn library_command(args: &[OsString]) -> Result<ExitCode, String> {
                 Some(level) => driver::set_cpu(&level.to_string_lossy()),
                 None => return Err(format!("--cpu needs a level of processor, as baseline\n{USAGE}")),
             },
+            Some("--no-logpoints") => driver::set_no_logpoints(),
             Some("--static") => {
                 return Err("--static builds executables; a library is linked into its host, as the host is".into());
             }

@@ -1302,6 +1302,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         switch(argv, "--debug", "debug");
         option(argv, "--target", "target");
         option(argv, "--cpu", "cpu");
+        switch(argv, "--no-logpoints", "no_logpoints");
         for library in args.list("link") {
             argv.extend(["--link".to_string(), library]);
         }
@@ -1484,6 +1485,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             switch(&mut argv, "--debug", "debug");
             option(&mut argv, "--target", "target");
             option(&mut argv, "--cpu", "cpu");
+            switch(&mut argv, "--no-logpoints", "no_logpoints");
         }
         "dump_plugin" => push(&["dump", "plugin", &args.need("debugger")?, "--json"]),
         "profile_show" => {
@@ -2317,6 +2319,12 @@ const CPU: (&str, &str, &str) = (
     "string",
     "The level of processor to build for: baseline (the default), x86-64-v3, x86-64-v4 or native (`--cpu`).",
 );
+const NO_LOGPOINTS: (&str, &str, &str) = (
+    "no_logpoints",
+    "boolean",
+    "Build without the place at each line where a logpoint goes, a `nop` each time the line runs: a few percent \
+faster in code that does little but call, and no `logpoint` or Release breakpoint in it (`--no-logpoints`).",
+);
 const LINK: (&str, &str, &str) = ("link", "strings", "Native libraries to link, by name (-l) or file (`--link`).");
 const TIMINGS: (&str, &str, &str) = (
     "timings",
@@ -2470,6 +2478,7 @@ against, what changed since a git revision.",
             DEBUG,
             TARGET,
             CPU,
+            NO_LOGPOINTS,
         ],
     },
     Tool {
@@ -2679,6 +2688,7 @@ and the header <name>.h.",
             DEBUG,
             TARGET,
             CPU,
+            NO_LOGPOINTS,
             LINK,
             TIMINGS,
         ],
@@ -2710,6 +2720,7 @@ message, data, source and stack, as data.",
             DEBUG,
             TARGET,
             CPU,
+            NO_LOGPOINTS,
             LINK,
             TIMINGS,
         ],
@@ -2778,6 +2789,7 @@ is reduced and kept in the project's `fuzz/` store, which every run of the tests
             DEBUG,
             TARGET,
             CPU,
+            NO_LOGPOINTS,
             TIMINGS,
             ("flags", "strings", "Other options, as `tondo test` takes them: --seed, --timeout, --repeat..."),
         ],

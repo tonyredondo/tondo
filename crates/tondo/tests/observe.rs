@@ -3901,7 +3901,8 @@ fn a_logpoint_reads_a_running_release_build() {
 /// A logpoint on a line after one that gives a binding a new value, which
 /// the optimized code may make later: the binding reads `?` there, never
 /// the value it had before. One on a line after the values are made, past
-/// calls, fires and reads them. A build with --debug says what logs there.
+/// calls, fires and reads them. A build with --debug says what logs there,
+/// and one with --no-logpoints how to build it to take one.
 #[test]
 fn a_logpoint_shows_no_value_from_before() {
     if !cfg!(target_os = "linux") {
@@ -3916,9 +3917,9 @@ fn a_logpoint_shows_no_value_from_before() {
         let _ = console.flush()\n        time.sleep(time.milliseconds(5))\n    }\n}\n";
     std::fs::write(dir.join("counts.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
-    for (output, debug) in [("counts", false), ("debugged", true)] {
+    for (output, how) in [("counts", None), ("debugged", Some("--debug")), ("bare", Some("--no-logpoints"))] {
         let mut args = vec!["build", "counts.to", "--output", output];
-        args.extend(debug.then_some("--debug"));
+        args.extend(how);
         let built = Command::new(tondo_bin).args(&args).current_dir(&dir).output().unwrap();
         assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
         let mut child =
@@ -3938,11 +3939,15 @@ fn a_logpoint_shows_no_value_from_before() {
             let args = ["logpoint", &pid, place, text, "--max", max, "--for", "60", "--json"];
             Command::new(tondo_bin).args(args).current_dir(&dir).output().unwrap()
         };
-        if debug {
+        if how == Some("--debug") {
             let refused = logpoint("counts.to:12", "{round}", "1");
             let said = String::from_utf8_lossy(&refused.stdout);
             assert!(said.contains("a build with --debug has no places for a logpoint"), "{said}");
             assert!(said.contains("break counts.to:12 log"), "{said}");
+        } else if how.is_some() {
+            let refused = logpoint("counts.to:12", "{round}", "1");
+            let said = String::from_utf8_lossy(&refused.stdout);
+            assert!(said.contains("it was built with `--no-logpoints`"), "{said}");
         } else {
             // Right after `round += 1`: the value after it, or none.
             let hits = logpoint("counts.to:12", "{before} {round}", "5");

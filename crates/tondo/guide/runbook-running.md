@@ -117,7 +117,9 @@ Every tenth mail takes forty times what the others take, which is where the
 rate went. Without `text` a logpoint gives every binding of the line; `request`
 keeps the tasks that work for one kind of request, `stop` holds the task there
 for some seconds, as a breakpoint of that task alone, and `dump` writes a dump
-of the whole program the first time it counts.
+of the whole program the first time it counts. A build with `no_logpoints`, or
+`logpoints = false` in the `[build]` of its `tondo.toml`, has no place for one,
+and says so: the one in production is built without it.
 
 ```sh linux
 kill $(cat mailer.pid)
