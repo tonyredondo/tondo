@@ -470,10 +470,10 @@ What is under way and what is planned:
 | Work | State |
 | --- | --- |
 | Every row of [`bench/`](bench/README.md) at or under Go's, in time and in memory, and the servers in latency | Under way: that page has the rows still behind, each with its reason |
-| A chain of an iterator at the cost of the loop it stands for | Under way: its values stay in registers, the program's own records too, the elements it only reads are not counted, and its closures are called directly; the lazy chains of queries are still 3.9× and 8.3× Go's bare loops |
+| A chain of an iterator at the cost of the loop it stands for | Under way: its values stay in registers, the program's own records too, the elements it only reads are not counted, and its closures are called directly; the lazy chains of queries are still behind Go's bare loops, by what the table of [Speed](#speed) says |
 | A chain of arrays without the arrays between, short texts without the heap | Next in the optimizer |
 | A heap for each task | Stopped: measured on the servers' rows, it could save about 1.5% of the processor at most, so what a request allocates is taken out directly instead; to look at again for a program that allocates far more for each request |
-| An arena for what a program builds and drops together, as a parser's tree, where letting go of the values one by one is a large part of the time | Research: measuring first, then what releasing can save without one, then its design |
+| Regions for what a program builds and drops together, as a parser's tree: the compiler puts there what it proves never leaves a scope, and lets go of it all at once instead of value by value | Under way: the analysis is in, `tondo optimizations --kind region`, which says what would go in a region and what would not, and why. Of the values a program allocates, about three quarters would on the benchmarks and over half on the examples' tests; whether to build the regions is decided by that. An arena to ask for in the code is left for later |
 | Vectors of 512 bits with AVX-512; today they are computed by halves | Waits for a machine to test on |
 | Profile-guided optimization while a program runs | Research |
 | Logpoints that leave nothing in Release code, set with a trap when one is asked for; today each line keeps a place for one, which costs instructions in the tightest code | Research: a prototype first |

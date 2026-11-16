@@ -286,6 +286,8 @@ view is how one knows that the cost is the program's and not an accident.
 | --- | --- |
 | `--function <name>` | one function, and the code written in it wherever it went |
 | `--kind heap` | only what allocates |
+| `--kind region` | where a [region](#where-a-region-would-take-it) would take what each place allocates |
+| `--kind hoisted`, `--kind reloaded` | the [lengths](#a-length-read-once) a loop reads once, and those it reads each turn |
 | `--tests` | the tests and benchmarks instead of the program |
 | `--against <rev>` | only what a change made different |
 | `--json` | the same as data |
@@ -434,6 +436,67 @@ So a benchmark is not always the cost of the program: the build of the
 tests may check what the program's build does not, and `tondo
 optimizations --tests` says where.
 
+### A length read once
+
+A loop that compares its place with the length of an array or of a text
+reads that length once, before the loop, when nothing in the loop can
+change it; `--kind hoisted` lists those, and `--kind reloaded` the ones it
+reads at every turn, with why.
+
+```tondo
+import std.console
+
+/// How many of the values are even: the loop only reads `values`.
+fn evens(values: Array[Int]): Int {
+    var count = 0
+    var i = 0
+    for i < values.length() {
+        if values[i] % 2 == 0 {
+            count += 1
+        }
+        i += 1
+    }
+    count
+}
+
+/// Each even value followed by the number after it: the loop pushes to
+/// what it reads.
+fn spread(values: Array[Int]): Array[Int] {
+    var out = values
+    var i = 0
+    for i < out.length() {
+        if out[i] % 2 == 0 and out.length() < 8 {
+            out.push(out[i] + 1)
+        }
+        i += 1
+    }
+    out
+}
+
+fn main() {
+    console.println("{evens([1, 2, 3, 4])} {spread([2, 5])}")
+}
+```
+
+```text output
+2 [2, 5, 3]
+```
+
+```text
+$ tondo optimizations lengths.to --kind hoisted
+lengths.to:7:13: `values.length()` reads the length once, before the loop (in evens, main)
+$ tondo optimizations lengths.to --kind reloaded --function spread
+lengths.to:21:13: `out.length()` reads the length each turn: the loop may change `out` (in spread)
+lengths.to:21:13: `out.length()` reads the length each turn: the loop may change what it is the length of (in main)
+lengths.to:22:32: `out.length()` reads the length each turn: the loop may change `out` (in spread)
+lengths.to:22:32: `out.length()` reads the length each turn: the loop may change what it is the length of (in main)
+```
+
+`spread` pushes to the array whose length it tests, so the length is read
+each turn, as the program says. A length is also read each turn when it is
+reached through a loan or a lock, where other code may change it, which is
+what a loop that waits for another task to push relies on.
+
 ### The closures of a chain
 
 The adapters of an [iterator](../language/08-collections.md#iterators) keep
@@ -501,6 +564,82 @@ test squares::unit::squares::aThousand ... ok
 The chain allocates its two closures and nothing else, however long the
 array is: less than a hundredth of the memory here. The arrays' form is
 still the faster of the two, with two thirds of the instructions.
+
+### Where a region would take it
+
+Code that builds a large structure and lets go of all of it at once, as a
+parser's tree or a document read to answer one question, spends much of its
+time letting go, value by value. A region would let go of it together.
+Tondo has no regions yet. `tondo optimizations --kind region` says what
+they would take, for each place that allocates, so that building them is
+decided on real programs; it speaks only when asked, since it tells of
+something that is not there.
+
+```tondo
+import std.console
+
+type Node = {
+    value: Int
+    children: Array[Node]
+}
+
+/// A tree of that depth, each node with `fan` children.
+fn build(depth: Int, fan: Int): Node {
+    var children: Array[Node] = []
+    if depth > 0 {
+        for _ in 0..fan {
+            children.push(build(depth - 1, fan))
+        }
+    }
+    Node { value: depth, children }
+}
+
+fn sum(node: Node): Int {
+    var total = node.value
+    for child in node.children {
+        total += sum(child)
+    }
+    total
+}
+
+fn main() {
+    console.println("{sum(build(8, 4))}")
+}
+```
+
+```text output
+29124
+```
+
+```text
+$ tondo optimizations tree.to --kind region
+tree.to:13:13: `children.push(build(depth - 1, fan))` grows an array that would go in a region of `main` (in main)
+tree.to:13:13: `children.push(build(depth - 1, fan))` grows an array that would go in a region that the caller of `build` gives (in build)
+```
+
+The copy of the line that was inlined in `main` builds what `main` lets go
+of, so a region of `main` would hold it. `build` itself only returns what
+it builds, new, so it would build in a region that its caller gives.
+
+A place stays on the heap when something keeps what it makes beyond the
+call, and the remark names the code that does. The verdict is by call. With
+a function added to the program that sends a tree through a channel, `fn
+offer(sender: Sender[Node], depth: Int) { sender.send(build(depth, 2)) }`,
+which `main` calls after its sum:
+
+```text
+$ tondo optimizations kept.to --kind region --function build
+kept.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: it is sent: `sender.send(build(depth, 2))` at 29:5 (in main, offer)
+kept.to:13:13: `children.push(build(depth - 1, fan))` grows an array that would go in a region of `main` (in main)
+kept.to:13:13: `children.push(build(depth - 1, fan))` grows an array that would go in a region that the caller of `build` gives, in a copy of it for the calls that let it go: `main` at 33; `main` keeps it: it is sent: `sender.send(build(depth, 2))` at 29:5 (in build)
+```
+
+The trees that `main` lets go of would still be built in its region, by a
+copy of `build` made for the calls that let its result go; the one that is
+sent stays on the heap, and one call that keeps does not take the region
+from the others. The other reasons to stay on the heap are that a value is
+stored in what the function was given, in a lock's state or in a `Ref`,
+captured by a closure, taken by a task or given to C.
 
 ## The machine code: asm
 
@@ -1038,6 +1177,7 @@ nothing chosen in the source.
 | `tondo test --bench` | allocations and bytes for each operation |
 | `testing.allocations(closure)` | the same count in a test, which fails when it grows ([Testing](testing.md#benchmarks)) |
 | `tondo optimizations --kind heap` | each place that allocates, and what keeps it on the heap |
+| `tondo optimizations --kind region` | where a region would take it, were there regions |
 | `tondo profile <program> --memory` | what is allocated and what is held, by line |
 | `tondo test --exact <id> --bench --profile memory` | where a benchmark allocates |
 | `tondo profile show <profile> --sample alloc_objects --lines` | the lines that allocate most often |
