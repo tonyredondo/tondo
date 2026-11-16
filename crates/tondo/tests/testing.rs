@@ -2342,12 +2342,21 @@ fn a_profile_of_a_project_without_a_manifest_says_what_was_made() {
 }
 
 /// The benchmarks (bench/) keep compiling: those against Go run once as
-/// tests, and the programs that compare and that measure compiling check.
+/// tests, with the memory of each region that ends made unreadable, so that
+/// a value put in a region it outlives faults; and the programs that compare
+/// and that measure compiling check.
 #[test]
 fn the_comparison_with_go_builds() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let (stdout, stderr, status) = tondo(&root, &["test", "bench/tondo"]);
-    assert_eq!(status, 0, "{stdout}{stderr}");
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["test", "bench/tondo"])
+        .current_dir(&root)
+        .env("TONDO_CHECK_REGIONS", "1")
+        .env("TONDO_DUMP", "off")
+        .output()
+        .unwrap();
+    let (stdout, stderr) = (String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    assert!(output.status.success(), "{stdout}{stderr}");
     for program in ["bench/compare.to", "bench/compile.to", "bench/compile/generate.to", "bench/latency/latency.to"] {
         let (stdout, stderr, status) = tondo(&root, &["check", program]);
         assert_eq!(status, 0, "{program}: {stdout}{stderr}");

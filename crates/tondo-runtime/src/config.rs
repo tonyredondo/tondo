@@ -61,6 +61,9 @@ pub(crate) struct Config {
     /// `TONDO_LIVE_HOLD`, set by `tondo run --watch` and the tools' sessions:
     /// `1` holds a panic until the code changes.
     pub(crate) live_hold: Option<OsString>,
+    /// `TONDO_CHECK_REGIONS`: `1` makes the memory of a region that ended
+    /// unreadable, never given again (`regions::checked`).
+    pub(crate) check_regions: Option<OsString>,
     /// `TONDO_RT_CHECK_LEAKS`, set by the tests of the toolchain: counts the
     /// objects alive as the program ends.
     pub(crate) check_leaks: Option<OsString>,
@@ -147,6 +150,7 @@ pub(crate) fn config() -> &'static Config {
             trace: os("TONDO_TRACE"),
             race: os("TONDO_RACE"),
             live_hold: os("TONDO_LIVE_HOLD"),
+            check_regions: os("TONDO_CHECK_REGIONS"),
             check_leaks: os("TONDO_RT_CHECK_LEAKS"),
             record: os("TONDO_RT_RECORD"),
             record_children: os("TONDO_RT_RECORD_CHILDREN"),

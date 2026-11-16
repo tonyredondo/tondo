@@ -206,6 +206,7 @@ pub unsafe extern "C" fn tondo_rt_main(
 ) -> i32 {
     unsafe { env::keep_arguments(argc, argv) };
     config::config();
+    regions::checked::start();
     replay::start();
     meta::start();
     diagnostics::start();

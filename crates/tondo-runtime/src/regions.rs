@@ -23,6 +23,10 @@
 //! to `tondo_rt_region_alloc`'s slow path, which counts it, as does a
 //! loop's region from its next turn. A program nobody watches never takes
 //! that path for a value.
+//!
+//! With `TONDO_CHECK_REGIONS=1` (`checked`), a chunk that goes is made
+//! unreadable and its addresses are never given again, so that a value
+//! that outlived its region faults where it is read.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -208,11 +212,17 @@ unsafe fn take(size: usize) -> *mut Chunk {
         }
     }
     HELD.fetch_add(size, Ordering::Relaxed);
-    let layout = chunk_layout(size);
-    let chunk = unsafe { super::meta::uncounted_alloc(layout) } as *mut Chunk;
-    if chunk.is_null() {
-        handle_alloc_error(layout);
-    }
+    let chunk = match checked::take(size) {
+        Some(chunk) => chunk as *mut Chunk,
+        None => {
+            let layout = chunk_layout(size);
+            let chunk = unsafe { super::meta::uncounted_alloc(layout) } as *mut Chunk;
+            if chunk.is_null() {
+                handle_alloc_error(layout);
+            }
+            chunk
+        }
+    };
     unsafe { chunk.write(Chunk { next: std::ptr::null_mut(), size }) };
     chunk
 }
@@ -309,7 +319,9 @@ pub unsafe extern "C" fn tondo_rt_region_leave(region: *mut Region) {
             let next = (*chunk).next;
             emptied(chunk);
             let size = (*chunk).size;
-            if size != CHUNK {
+            if checked::ended(chunk as usize, size) {
+                HELD.fetch_sub(size, Ordering::Relaxed);
+            } else if size != CHUNK {
                 HELD.fetch_sub(size, Ordering::Relaxed);
                 super::meta::uncounted_dealloc(chunk as *mut u8, chunk_layout(size));
             } else if !local(|kept| (kept.count < LOCAL).then(|| kept.push(chunk)).is_some()).unwrap_or(false) {
@@ -372,6 +384,12 @@ pub unsafe extern "C" fn tondo_rt_array_reserve_in(
 pub unsafe extern "C" fn tondo_rt_region_reset(region: *mut Region) {
     unsafe {
         let r = &mut *region;
+        // Checked, a turn's chunks all go, so that the next turn writes
+        // nothing where a value of this one was.
+        if checked::on() {
+            tondo_rt_region_leave(r);
+            return;
+        }
         use super::diagnostics::{COUNTED, MEASURED, WATCHED, hooks};
         let current = if r.ptr != 0 { r.chunks } else { std::ptr::null_mut() };
         // A loop's region counts from the turn after counting starts.
@@ -402,9 +420,147 @@ pub unsafe extern "C" fn tondo_rt_region_reset(region: *mut Region) {
     }
 }
 
+/// `TONDO_CHECK_REGIONS=1`: chunks come from an area of address space set
+/// apart as the program starts, one after another and never again, and a
+/// chunk that goes becomes unreadable, its memory given back to the system,
+/// so that a value read after its region ended faults where it is read, and
+/// the report of the fault says so, rather than read what another region
+/// wrote there since.
+pub(crate) mod checked {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    /// The area, its end and where its next chunk goes; none while off.
+    static FROM: AtomicUsize = AtomicUsize::new(0);
+    static TO: AtomicUsize = AtomicUsize::new(0);
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    static PAGE: AtomicUsize = AtomicUsize::new(4096);
+    static USED_UP: AtomicBool = AtomicBool::new(false);
+
+    /// Sets the area apart when the program's environment asks for it.
+    pub(crate) fn start() {
+        if crate::config::on(&crate::config::config().check_regions) {
+            reserve();
+        }
+    }
+
+    /// Sets the area apart: as large as the system lets, as it costs no
+    /// memory until a chunk is in it.
+    pub(super) fn reserve() {
+        if on() {
+            return;
+        }
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        let page = if page > 0 { page as usize } else { 4096 };
+        let flags = libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_NORESERVE;
+        for size in [1usize << 40, 1 << 36, 1 << 32] {
+            let at = unsafe { libc::mmap(std::ptr::null_mut(), size, libc::PROT_NONE, flags, -1, 0) };
+            if at != libc::MAP_FAILED {
+                PAGE.store(page, Ordering::Relaxed);
+                NEXT.store(at as usize, Ordering::Relaxed);
+                TO.store(at as usize + size, Ordering::Relaxed);
+                FROM.store(at as usize, Ordering::Release);
+                return;
+            }
+        }
+        let _ = writeln!(
+            std::io::stderr(),
+            "tondo: TONDO_CHECK_REGIONS: the system set no address space apart; regions go unchecked"
+        );
+    }
+
+    /// Whether regions are checked.
+    #[inline(always)]
+    pub(super) fn on() -> bool {
+        FROM.load(Ordering::Relaxed) != 0
+    }
+
+    fn rounded(size: usize) -> usize {
+        size.next_multiple_of(PAGE.load(Ordering::Relaxed))
+    }
+
+    /// Readable memory for a chunk of `size` bytes from the area; none
+    /// while unchecked, or once the area is used up, which is said once.
+    pub(super) fn take(size: usize) -> Option<*mut u8> {
+        if !on() {
+            return None;
+        }
+        let bytes = rounded(size);
+        let to = TO.load(Ordering::Relaxed);
+        match NEXT
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| (next + bytes <= to).then_some(next + bytes))
+        {
+            Ok(at) => {
+                let readable = libc::PROT_READ | libc::PROT_WRITE;
+                if unsafe { libc::mprotect(at as *mut libc::c_void, bytes, readable) } != 0 {
+                    crate::runtime_fault("TONDO_CHECK_REGIONS: a chunk of the area could not be made readable");
+                }
+                Some(at as *mut u8)
+            }
+            Err(_) => {
+                if !USED_UP.swap(true, Ordering::Relaxed) {
+                    let _ = writeln!(
+                        std::io::stderr(),
+                        "tondo: TONDO_CHECK_REGIONS: the area of regions is used up; regions from now on go unchecked"
+                    );
+                }
+                None
+            }
+        }
+    }
+
+    /// Whether the chunk at `at` came from the area: it becomes unreadable,
+    /// and its memory goes back to the system.
+    pub(super) fn ended(at: usize, size: usize) -> bool {
+        if !on() || !(FROM.load(Ordering::Relaxed)..TO.load(Ordering::Relaxed)).contains(&at) {
+            return false;
+        }
+        let flags = libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_NORESERVE | libc::MAP_FIXED;
+        let gone = unsafe { libc::mmap(at as *mut libc::c_void, rounded(size), libc::PROT_NONE, flags, -1, 0) };
+        if gone == libc::MAP_FAILED {
+            crate::runtime_fault("TONDO_CHECK_REGIONS: a chunk of the area could not be made unreadable");
+        }
+        true
+    }
+
+    /// Whether `address` is in what the area gave: a fault there is a read
+    /// of a value whose region ended.
+    pub(crate) fn ended_at(address: usize) -> bool {
+        let from = FROM.load(Ordering::Relaxed);
+        from != 0 && (from..NEXT.load(Ordering::Relaxed)).contains(&address)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Checked, a chunk is readable while its region holds it, and a read
+    /// of it once it went faults: in a child, as the area is the process's.
+    #[test]
+    fn a_checked_chunk_cannot_be_read_once_it_went() {
+        unsafe {
+            match libc::fork() {
+                0 => {
+                    checked::reserve();
+                    let Some(at) = checked::take(CHUNK) else { libc::_exit(2) };
+                    let at = at as *mut u64;
+                    at.write(7);
+                    if at.read() != 7 || !checked::ended(at as usize, CHUNK) || !checked::ended_at(at as usize) {
+                        libc::_exit(3);
+                    }
+                    std::ptr::read_volatile(at);
+                    libc::_exit(0)
+                }
+                child => {
+                    let mut status = 0;
+                    assert_eq!(libc::waitpid(child, &mut status, 0), child);
+                    assert!(libc::WIFSIGNALED(status), "the child ended with {status:#x}, not by a fault");
+                    assert!(matches!(libc::WTERMSIG(status), libc::SIGSEGV | libc::SIGBUS));
+                }
+            }
+        }
+    }
 
     fn region() -> Region {
         Region { ptr: 0, end: 0, chunks: std::ptr::null_mut() }

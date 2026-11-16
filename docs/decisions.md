@@ -7587,3 +7587,28 @@ that a region's first chunk is no allocation of the program's, and a thread keep
 for its next regions, with what the runtime keeps for it, so that a function that enters and
 leaves a region at each call takes no lock: such a function went from 6 to 12 % slower than the
 heap to 6.5 % faster.
+
+## A region that ends can be made unreadable
+
+The first wrong result regions gave was a value written through a loan in a loop, which went in
+the turn's region though what the loan lent outlived the turn: each turn's array took the same
+room, and every row read the last one, `[3, 30] [3, 30] [3, 30]`, which looks like data. The cases
+and the examples passed with it. A value in a region that ends too soon does not fail; it reads
+what the next region writes there, often a value of the same shape.
+
+`TONDO_CHECK_REGIONS=1` in a program's environment makes such a value fail where it is read. The
+runtime sets apart, as the program starts, an area of address space that costs no memory until a
+chunk is in it; regions take their chunks from it one after another, never the same addresses
+twice, and a chunk that goes is made unreadable and its memory given back to the system, as is
+every chunk of a loop's region at the end of each turn, which otherwise keeps one for the next.
+A read of a value that outlived its region then faults, and the report of the fault says that the
+address is in a region that ended, which is the compiler's fault, with the line that read it.
+
+A pattern written over a region that ends was the other way, and is weaker: what it reads may
+pass for data, and a count of the pattern may be one that a release passes over. A verifier of
+the pass's result would have to know what outlives a scope through an analysis of aliases of its
+own, which shares the pass's blind spots or doubles it; the memory's own check depends on
+neither. The cases run with it but in the static mode, which keeps the runtime's usual way, and
+so do the examples' tests and the tests of `bench/tondo`. Nothing of it runs unless the variable
+is set: a chunk that goes, and a loop's region at each turn, read one word more, beside the
+thread's list a chunk goes to and the hooks a turn already reads.

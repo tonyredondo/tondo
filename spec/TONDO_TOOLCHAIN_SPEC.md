@@ -2406,6 +2406,7 @@ significan lo de siempre.
 | `TONDO_VERSIONS` | Quien lo ejecuta | `0` corre el código del nivel del build y no las versiones de sus funciones para uno mayor (7.8), como en un procesador sin ese nivel. |
 | `TONDO_CACHE_DOMAINS` | Quien lo ejecuta | `0` toma todos los núcleos como un dominio: los workers no se quedan entre los núcleos que comparten una caché. |
 | `TONDO_ZONES` | Quien lo ejecuta | `builtin` usa las zonas horarias que lleva el programa y no las del sistema. |
+| `TONDO_CHECK_REGIONS` | Quien lo ejecuta, y los tests del toolchain | `1` da a las regiones memoria que no se vuelve a usar y la hace ilegible cuando la región acaba: un valor que la sobrevive falla al leerse, con dónde. |
 | `TONDO_DEBUG` | `tondo debug`, el editor y un programa depurado a los hijos que sigue | `1` espera al depurador antes de `main`. |
 | `TONDO_TRACE` | `tondo trace` | `1` traza desde el principio; `cpu` muestrea el procesador sin contar la memoria. |
 | `TONDO_RACE` | `tondo test`, salvo con `--bench`, y `tondo debug` de un test | `1` busca actualizaciones perdidas. |

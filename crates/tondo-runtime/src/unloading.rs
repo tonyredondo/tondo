@@ -36,6 +36,7 @@ pub(crate) fn start_library(start: unsafe extern "C" fn()) {
     if !state.tables {
         crate::LIBRARY.store(true, Ordering::Relaxed);
         crate::config::config();
+        crate::regions::checked::start();
         #[cfg(tondo_staticlib)]
         crate::meta::start();
         crate::diagnostics::start();

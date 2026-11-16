@@ -234,6 +234,12 @@ Ask the toolchain before guessing why code is slow or allocates:
   lowering and after each pass (`verify.rs`): a pass that leaves a local
   read on a path that does not assign it fails there, naming the pass and
   the function, with its MIR.
+- `TONDO_CHECK_REGIONS=1` in the environment of a program makes the
+  memory of each region that ends unreadable, its addresses never given
+  again: a value the compiler put in a region it outlives faults where it
+  is read, and the report says so. The cases, the examples' tests and
+  `bench/tondo`'s tests run with it; a change to what goes in regions is
+  tried with it on the programs that run what it touches.
 - `tondo test --exec <command>` runs the tests' executable under a
   command: `perf stat`, `valgrind`, `gdb --args`.
 - `tondo test --bench` gives, on Linux, the instructions and cycles of a

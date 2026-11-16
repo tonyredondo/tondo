@@ -876,6 +876,12 @@ pub(crate) fn free_signal_stack(stack: *mut libc::c_void) {
     }
 }
 
+/// What the report of a fault in a region that ended adds: the release
+/// build put a value in a region that it outlived, which is the compiler's
+/// fault, not the program's.
+const ENDED_REGION: &str =
+    ", in the memory of a region that ended: the compiler put a value in a region it outlives, a bug of tondo's";
+
 const FAULTS: [i32; 5] = [libc::SIGSEGV, libc::SIGBUS, libc::SIGABRT, libc::SIGILL, libc::SIGFPE];
 
 /// The handlers there were before, which in a library get the faults that
@@ -1140,6 +1146,8 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
             let _ = out.write_str("{\"code\":null,\"data\":null,\"error_type\":null,\"format\":\"tondo-panic-0.1/1\",\"kind\":\"fault\",\"message\":\"");
         }
         let overflow = (bounds.0.saturating_sub(crate::tasks::GUARD)..bounds.0).contains(&address);
+        // Under `TONDO_CHECK_REGIONS`, in a chunk of a region that ended.
+        let ended_region = matches!(signal, libc::SIGSEGV | libc::SIGBUS) && crate::regions::checked::ended_at(address);
         if overflow {
             let size = (bounds.1 - bounds.0 + crate::tasks::GUARD) >> 20;
             let whose = if !task.is_null() && crate::tasks::is_main(task) { "the main task" } else { "a task" };
@@ -1165,6 +1173,9 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
             };
             if in_c {
                 let _ = write!(out, ", inside a function of C");
+            }
+            if ended_region {
+                let _ = write!(out, "{ENDED_REGION}");
             }
         }
         if json {
@@ -1204,6 +1215,7 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
             libc::SIGBUS => format!("SIGBUS: invalid memory access at {address:#x}"),
             _ => format!("SIGSEGV: invalid memory access at {address:#x}"),
         };
+        let message = if ended_region { message + ENDED_REGION } else { message };
         let frames: Vec<usize> = std::iter::once(pc).chain(first).chain(walk).collect();
         crate::diagnostics::fault_registers(&fault_registers(context), !in_c);
         crate::diagnostics::faulted_at(if in_c { link } else { pc }, fp, bounds);

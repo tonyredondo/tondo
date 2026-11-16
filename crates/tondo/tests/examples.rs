@@ -1,5 +1,7 @@
 //! The projects and scripts of `examples/`: each compiles without a warning,
-//! is in the canonical format, and passes its own tests.
+//! is in the canonical format, and passes its own tests, with the memory of
+//! each region that ends made unreadable, so that a value put in a region it
+//! outlives faults.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -9,6 +11,7 @@ fn tondo(dir: &Path, args: &[&str]) -> (String, bool) {
         .args(args)
         .current_dir(dir)
         .env("TONDO_DUMP", "off")
+        .env("TONDO_CHECK_REGIONS", "1")
         .output()
         .unwrap();
     let said = String::from_utf8_lossy(&output.stdout).into_owned() + &String::from_utf8_lossy(&output.stderr);
