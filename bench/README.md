@@ -39,82 +39,82 @@ the same `callers.c` with the system's C compiler, Go's through cgo; without
 one, Tondo's test skips them and Go builds without them.
 
 The tables were measured on an AMD Ryzen 9 5950X, Linux, with Go 1.27 and
-.NET 10, on 2026-11-16 at 0230fe0f, each side for its default level of
+.NET 10, on 2026-11-16 at 1dcf4858, each side for its default level of
 processor: Tondo's `baseline`, x86-64-v2, and Go's `GOAMD64=v1`. A row is
 marked when it is slower than Go, and its allocations when it allocates
 more, in number or in bytes:
 
 | Benchmark | Tondo | Go | Tondo/Go | Allocs/op Tondo | Allocs/op Go | B/op Tondo | B/op Go | Ins/op Tondo | Ins/op Go | Cycles/op Tondo | Cycles/op Go |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| queries/iter filter sumBy 10000 | 50.93 µs | 6.24 µs | 8.16× ⚠ | 1 ⚠ | 0 | 40 | 0 | 540.1k | 80.0k | 248.2k | 29.9k |
-| texts/trim | 23.8 ns | 5.2 ns | 4.56× ⚠ | 1 ⚠ | 0 | 67 | 0 | 540 | 115 | 114 | 25 |
-| queries/numbers iter map filter sum 10000 | 19.21 µs | 7.09 µs | 2.71× ⚠ | 2 ⚠ | 0 | 80 | 0 | 414.9k | 142.8k | 92.9k | 34.0k |
-| texts/chars ascii | 461.9 ns | 306.5 ns | 1.51× ⚠ | 0 | 0 | 0 | 0 | 11.1k | 9.9k | 2.3k | 1.5k |
-| texts/chars other | 1.71 µs | 1.15 µs | 1.48× ⚠ | 0 | 0 | 0 | 0 | 33.4k | 28.2k | 8.3k | 5.4k |
-| queries/countBy 10000 | 143.87 µs | 110.32 µs | 1.30× ⚠ | 6 ⚠ | 2 | 304 | 256 | 2.52M | 1.55M | 692.0k | 530.5k |
-| texts/parse ints 1000 | 8.20 µs | 6.41 µs | 1.28× ⚠ | 0 | 0 | 0 | 0 | 194.6k | 144.5k | 39.8k | 30.9k |
-| tasks/spawn 1000 | 194.66 µs | 168.82 µs | 1.15× ⚠ | 1954 ⚠ | 2002 | 641.7k | 78.5k | 2.22M | 2.35M | 1.43M | 1.66M |
-| texts/toUpper other | 8.81 µs | 8.00 µs | 1.10× ⚠ | 2 ⚠ | 1 | 3.4k | 1.8k | 136.4k | 172.9k | 42.8k | 38.2k |
-| ffi/from a C thread 1000 | 66.31 µs | 60.92 µs | 1.09× ⚠ | 2 ⚠ | 0 | 617 | 0 | 1.8k | 516.9k | 4.4k | 159.6k |
-| ffi/from C threads 8x1000 | 182.14 µs | 172.37 µs | 1.06× ⚠ | 16 ⚠ | 0 | 4.8k | 5 | 12.9k | 4.12M | 36.4k | 1.48M |
-| net/tls echo 1x1000 | 12.87 ms | 12.24 ms | 1.05× ⚠ | 7000 ⚠ | 3745 | 172.1k | 50.7k | 18.68M | 14.12M | 14.87M | 11.24M |
-| floats/sqrt 100000 | 177.00 µs | 174.15 µs | 1.02× ⚠ | 0 | 0 | 0 | 0 | 725.0k | 700.0k | 886.8k | 866.7k |
-| queries/uniqueBy 10000 | 150.82 µs | 148.77 µs | 1.01× ⚠ | 39 ⚠ | 32 | 128.1k | 160.2k | 2.22M | 1.95M | 731.1k | 773.9k |
-| net/echo 1x1000 | 11.14 ms | 11.34 ms | 0.98× | 3000 ⚠ | 3744 | 94.4k | 50.5k | 10.66M | 7.13M | 9.03M | 7.18M |
-| calls/closure 1000 | 202.6 ns | 206.7 ns | 0.98× | 0 | 0 | 0 | 0 | 3.3k | 5.0k | 1.0k | 1.0k |
-| loops/collatz 10000 | 815.66 µs | 836.66 µs | 0.97× | 0 | 0 | 0 | 0 | 15.37M | 8.86M | 4.00M | 4.14M |
-| floats/mandelbrot 64 | 134.79 µs | 138.49 µs | 0.97× | 0 | 0 | 0 | 0 | 1.48M | 1.57M | 671.4k | 687.8k |
-| runtime/mutex 4x1000 | 20.20 µs | 20.81 µs | 0.97× | 6 ⚠ | 6 | 432 | 224 | 408.6k | 120.7k | 94.6k | 146.4k |
-| texts/split other | 1.52 µs | 1.60 µs | 0.95× | 1 ⚠ | 1 | 9.4k | 3.4k | 31.8k | 27.3k | 7.3k | 7.9k |
-| arrays/index sum 10000 | 2.06 µs | 2.17 µs | 0.95× | 0 | 0 | 0 | 0 | 45.0k | 40.0k | 10.0k | 10.4k |
-| strings/split 100 | 754.1 ns | 801.2 ns | 0.94× | 1 ⚠ | 1 | 4.4k | 1.8k | 16.0k | 14.0k | 3.6k | 3.9k |
-| json/decode struct | 1.17 µs | 1.24 µs | 0.94× | 2 | 4 | 280 | 288 | 17.9k | 21.0k | 5.6k | 5.9k |
-| strings/builder 100 | 734.8 ns | 797.7 ns | 0.92× | 6 | 8 | 1.2k | 1.9k | 16.3k | 13.4k | 3.5k | 3.7k |
-| strings/contains 1000 | 13.5 ns | 15.6 ns | 0.86× | 0 | 0 | 0 | 0 | 340 | 394 | 65 | 75 |
-| runtime/select 1000 | 123.55 µs | 144.15 µs | 0.86× | 4 ⚠ | 4 | 723 | 528 | 1.33M | 2.11M | 549.5k | 755.7k |
-| runtime/join 1 | 259.5 ns | 304.3 ns | 0.85× | 1 | 2 | 40 | 144 | 2.8k | 3.2k | 1.2k | 1.4k |
-| loops/sum 1000000 | 606.50 µs | 729.09 µs | 0.83× | 0 | 0 | 0 | 0 | 9.25M | 15.00M | 3.00M | 3.58M |
-| http/hello 1x1000 | 31.73 ms | 39.81 ms | 0.80× | 56000 ⚠ | 69145 | 19.57M | 6.18M | 67.90M | 145.54M | 77.94M | 137.91M |
-| queries/maxBy 10000 | 6.66 µs | 8.37 µs | 0.80× | 0 | 0 | 0 | 0 | 145.3k | 150.1k | 32.6k | 39.7k |
-| json/encode 100 structs | 23.26 µs | 29.89 µs | 0.78× | 2 | 4 | 7.2k | 16.1k | 404.0k | 441.9k | 112.3k | 141.7k |
-| texts/join 100 | 510.5 ns | 664.6 ns | 0.77× | 1 ⚠ | 1 | 1.0k | 576 | 8.2k | 11.5k | 2.5k | 3.1k |
-| calls/fib 25 | 216.42 µs | 288.40 µs | 0.75× | 0 | 0 | 0 | 0 | 4.81M | 3.52M | 1.05M | 1.41M |
-| maps/lookup 10000 ints | 55.64 µs | 74.29 µs | 0.75× | 0 | 0 | 0 | 0 | 970.1k | 1.06M | 267.2k | 355.5k |
-| tasks/channel 10000 | 192.73 µs | 272.81 µs | 0.71× | 2 ⚠ | 2 | 744 | 664 | 3.17M | 4.42M | 943.9k | 1.29M |
-| strings/int to text 1000 | 7.92 µs | 11.30 µs | 0.70× | 0 | 900 | 0 | 2.8k | 163.6k | 211.7k | 38.3k | 54.9k |
-| http/tls 64x100 | 56.87 ms | 81.67 ms | 0.70× | 423505 ⚠ | 459142 | 52.49M | 51.24M | 587.45M | 1.73G | 822.70M | 1.48G |
-| strings/interpolate | 22.7 ns | 33.6 ns | 0.68× | 1 ⚠ | 1 | 52 | 32 | 497 | 664 | 108 | 160 |
-| ffi/waits from a C thread 100 | 680.89 µs | 1.01 ms | 0.67× | 109 | 200 | 5.3k | 12.5k | 228.7k | 2.03M | 451.9k | 2.16M |
-| json/parse object | 2.33 µs | 3.71 µs | 0.63× | 17 ⚠ | 36 | 2.3k | 1.5k | 34.9k | 48.2k | 11.3k | 18.1k |
-| queries/joinBy 10000x1000 | 454.21 µs | 745.49 µs | 0.61× | 1045 ⚠ | 1039 | 1.67M | 2.91M | 6.23M | 13.48M | 2.18M | 6.25M |
-| json/parse 1000 numbers | 75.98 µs | 132.34 µs | 0.57× | 909 ⚠ | 2015 | 55.9k | 54.2k | 1.38M | 2.12M | 368.1k | 646.2k |
-| texts/replace ascii | 685.3 ns | 1.28 µs | 0.54× | 9 ⚠ | 1 | 4.6k | 1.0k | 14.3k | 24.6k | 3.3k | 6.1k |
-| structs/users 1000 | 20.24 µs | 38.22 µs | 0.53× | 1001 | 1910 | 48.3k | 72.8k | 410.8k | 669.7k | 97.4k | 187.9k |
-| queries/groupBy 10000 | 265.86 µs | 530.74 µs | 0.50× | 2683 | 4664 | 879.9k | 1.18M | 3.52M | 7.59M | 1.28M | 3.57M |
-| queries/filter sumBy 10000 | 67.47 µs | 139.31 µs | 0.48× | 12 | 16 | 512.2k | 727.7k | 822.2k | 2.62M | 327.9k | 1.27M |
-| arrays/map filter sum 10000 | 17.01 µs | 35.82 µs | 0.47× | 12 | 16 | 142.5k | 165.2k | 374.3k | 486.2k | 82.2k | 200.8k |
-| texts/replace other | 532.8 ns | 1.13 µs | 0.47× | 3 ⚠ | 1 | 6.8k | 1.8k | 12.0k | 19.6k | 2.6k | 5.4k |
-| queries/numbers map filter sum 10000 | 16.76 µs | 35.97 µs | 0.47× | 12 | 16 | 142.5k | 165.2k | 374.3k | 666.5k | 81.7k | 291.0k |
-| queries/averageBy 10000 | 10.56 µs | 24.29 µs | 0.43× | 0 | 0 | 0 | 0 | 200.2k | 90.1k | 51.3k | 120.0k |
-| http/json 64x100 | 30.90 ms | 76.38 ms | 0.40× | 518760 ⚠ | 698440 | 138.72M | 86.36M | 658.48M | 3.62G | 1.77G | 6.09G |
-| maps/insert 1000 strings | 40.14 µs | 99.90 µs | 0.40× | 1030 | 1920 | 111.6k | 121.0k | 664.8k | 1.29M | 193.8k | 459.0k |
-| queries/toSet 10000 | 194.86 µs | 493.07 µs | 0.40× | 42 ⚠ | 81 | 1024.0k | 577.8k | 2.43M | 5.87M | 943.0k | 2.66M |
-| queries/sortedBy 10000 | 1.53 ms | 3.89 ms | 0.39× | 4 ⚠ | 2 | 1.45M | 392.0k | 18.95M | 33.36M | 7.38M | 19.52M |
-| texts/contains other | 177.1 ns | 478.9 ns | 0.37× | 0 | 0 | 0 | 0 | 3.5k | 8.2k | 857 | 2.4k |
-| ffi/callback 1000 | 9.97 µs | 29.89 µs | 0.33× | 0 | 0 | 0 | 0 | 140.2k | 497.4k | 48.2k | 147.1k |
-| http/hello 64x100 | 19.28 ms | 58.32 ms | 0.33× | 358545 ⚠ | 442958 | 124.78M | 41.91M | 429.82M | 3.18G | 746.22M | 6.20G |
-| queries/keyedBy 10000 | 207.04 µs | 697.24 µs | 0.30× | 42 ⚠ | 81 | 2.00M | 1.75M | 3.23M | 9.36M | 990.6k | 4.41M |
-| maps/insert 10000 ints | 135.08 µs | 505.08 µs | 0.27× | 42 ⚠ | 79 | 1.25M | 577.6k | 2.34M | 5.37M | 652.0k | 2.30M |
-| regex/match 1000 | 37.66 µs | 152.30 µs | 0.25× | 0 | 0 | 0 | 0 | 571.3k | 2.99M | 183.2k | 746.6k |
-| floats/add 100000 | 20.48 µs | 97.48 µs | 0.21× | 1 | 1 | 781.3k | 784.0k | 281.3k | 1.70M | 86.8k | 607.0k |
-| structs/points 1000 | 1.33 µs | 7.06 µs | 0.19× | 1 | 12 | 15.7k | 49.2k | 30.7k | 85.1k | 6.5k | 49.1k |
-| arrays/sort 10000 | 65.70 µs | 364.52 µs | 0.18× | 1 | 1 | 78.2k | 80.0k | 1.37M | 2.42M | 319.2k | 1.73M |
-| tensors/matmul 64 | 79.42 µs | 491.23 µs | 0.16× | 2 ⚠ | 1 | 32.1k | 32.0k | 1.57M | 4.30M | 386.8k | 2.44M |
-| arrays/push 1000 | 506.5 ns | 3.44 µs | 0.15× | 1 | 12 | 7.8k | 24.6k | 13.0k | 41.7k | 2.4k | 21.5k |
-| tensors/broadcast 256 | 10.40 µs | 74.86 µs | 0.14× | 2 ⚠ | 1 | 512.1k | 512.0k | 189.7k | 1.46M | 50.4k | 560.5k |
-| floats/dot 100000 | 16.17 µs | 240.40 µs | 0.07× | 0 | 0 | 0 | 0 | 262.6k | 1.00M | 78.7k | 1.20M |
-| floats/sum 100000 | 7.87 µs | 239.95 µs | 0.03× | 0 | 0 | 0 | 0 | 118.8k | 601.5k | 38.5k | 1.20M |
-| texts/toUpper ascii | 76.9 ns | 2.39 µs | 0.03× | 2 ⚠ | 1 | 2.2k | 1.1k | 1.9k | 51.6k | 369 | 11.3k |
+| texts/trim | 23.9 ns | 5.2 ns | 4.56× ⚠ | 1 ⚠ | 0 | 67 | 0 | 540 | 115 | 114 | 25 |
+| queries/numbers iter map filter sum 10000 | 19.24 µs | 7.08 µs | 2.72× ⚠ | 2 ⚠ | 0 | 80 | 0 | 414.9k | 142.7k | 92.6k | 34.1k |
+| queries/iter filter sumBy 10000 | 12.44 µs | 6.22 µs | 2.00× ⚠ | 1 ⚠ | 0 | 40 | 0 | 250.0k | 80.0k | 60.4k | 30.3k |
+| texts/chars other | 1.70 µs | 1.14 µs | 1.50× ⚠ | 0 | 0 | 0 | 0 | 33.4k | 28.2k | 8.3k | 5.5k |
+| texts/chars ascii | 459.0 ns | 307.3 ns | 1.49× ⚠ | 0 | 0 | 0 | 0 | 11.1k | 9.9k | 2.2k | 1.5k |
+| queries/countBy 10000 | 145.95 µs | 110.96 µs | 1.32× ⚠ | 6 ⚠ | 2 | 304 | 256 | 2.52M | 1.55M | 701.9k | 527.3k |
+| texts/toUpper other | 8.72 µs | 7.99 µs | 1.09× ⚠ | 2 ⚠ | 1 | 3.4k | 1.8k | 136.4k | 172.3k | 42.4k | 37.4k |
+| ffi/from a C thread 1000 | 67.30 µs | 61.80 µs | 1.09× ⚠ | 2 ⚠ | 0 | 616 | 0 | 1.8k | 516.1k | 4.5k | 163.9k |
+| tasks/spawn 1000 | 183.01 µs | 172.27 µs | 1.06× ⚠ | 1952 ⚠ | 2002 | 640.7k | 78.5k | 2.21M | 2.36M | 1.37M | 1.71M |
+| ffi/from C threads 8x1000 | 180.42 µs | 173.40 µs | 1.04× ⚠ | 16 ⚠ | 0 | 4.8k | 5 | 12.9k | 4.12M | 36.0k | 1.47M |
+| net/tls echo 1x1000 | 12.68 ms | 12.21 ms | 1.04× ⚠ | 7000 ⚠ | 3744 | 172.1k | 50.7k | 18.68M | 14.18M | 14.50M | 11.56M |
+| floats/sqrt 100000 | 177.76 µs | 174.11 µs | 1.02× ⚠ | 0 | 0 | 0 | 0 | 725.0k | 699.9k | 891.1k | 873.9k |
+| texts/parse ints 1000 | 6.48 µs | 6.39 µs | 1.01× ⚠ | 0 | 0 | 0 | 0 | 160.5k | 144.4k | 31.3k | 31.2k |
+| queries/uniqueBy 10000 | 151.16 µs | 149.21 µs | 1.01× ⚠ | 39 ⚠ | 32 | 128.1k | 160.2k | 2.22M | 1.95M | 730.2k | 761.3k |
+| net/echo 1x1000 | 11.11 ms | 11.29 ms | 0.98× | 3000 ⚠ | 3744 | 94.4k | 50.5k | 10.66M | 7.06M | 8.87M | 7.38M |
+| strings/split 100 | 762.9 ns | 778.4 ns | 0.98× | 1 ⚠ | 1 | 4.4k | 1.8k | 16.0k | 13.9k | 3.7k | 4.0k |
+| json/decode struct | 1.22 µs | 1.24 µs | 0.98× | 2 | 4 | 280 | 288 | 17.9k | 21.0k | 5.9k | 6.0k |
+| runtime/mutex 4x1000 | 20.41 µs | 20.90 µs | 0.98× | 6 ⚠ | 6 | 432 | 224 | 408.6k | 119.9k | 94.6k | 144.6k |
+| calls/closure 1000 | 202.2 ns | 207.5 ns | 0.97× | 0 | 0 | 0 | 0 | 3.3k | 5.0k | 1.0k | 1.0k |
+| loops/collatz 10000 | 815.03 µs | 843.82 µs | 0.97× | 0 | 0 | 0 | 0 | 15.37M | 8.86M | 4.00M | 4.14M |
+| floats/mandelbrot 64 | 135.00 µs | 140.00 µs | 0.96× | 0 | 0 | 0 | 0 | 1.48M | 1.57M | 670.8k | 685.5k |
+| texts/split other | 1.51 µs | 1.58 µs | 0.95× | 1 ⚠ | 1 | 9.4k | 3.4k | 31.8k | 27.0k | 7.3k | 8.0k |
+| arrays/index sum 10000 | 2.07 µs | 2.21 µs | 0.94× | 0 | 0 | 0 | 0 | 45.0k | 40.0k | 10.0k | 10.8k |
+| ffi/waits from a C thread 100 | 975.08 µs | 1.05 ms | 0.93× | 109 | 200 | 5.3k | 12.5k | 228.7k | 2.37M | 457.0k | 2.79M |
+| strings/builder 100 | 724.1 ns | 797.3 ns | 0.91× | 6 | 8 | 1.2k | 1.9k | 16.3k | 13.5k | 3.5k | 4.0k |
+| runtime/select 1000 | 125.07 µs | 143.49 µs | 0.87× | 4 ⚠ | 4 | 723 | 529 | 1.33M | 2.09M | 552.6k | 710.3k |
+| strings/contains 1000 | 13.5 ns | 15.8 ns | 0.86× | 0 | 0 | 0 | 0 | 340 | 394 | 65 | 76 |
+| runtime/join 1 | 261.3 ns | 307.3 ns | 0.85× | 1 | 2 | 40 | 144 | 2.8k | 3.2k | 1.2k | 1.4k |
+| loops/sum 1000000 | 608.76 µs | 725.74 µs | 0.84× | 0 | 0 | 0 | 0 | 9.25M | 15.00M | 3.00M | 3.58M |
+| queries/maxBy 10000 | 6.68 µs | 8.40 µs | 0.79× | 0 | 0 | 0 | 0 | 145.3k | 150.1k | 32.6k | 40.1k |
+| json/encode 100 structs | 23.74 µs | 30.27 µs | 0.78× | 2 | 4 | 7.2k | 16.1k | 404.0k | 443.2k | 114.4k | 146.5k |
+| http/hello 1x1000 | 31.77 ms | 40.73 ms | 0.78× | 56000 ⚠ | 69149 | 19.57M | 6.18M | 67.90M | 145.49M | 77.95M | 136.90M |
+| texts/join 100 | 508.2 ns | 652.2 ns | 0.78× | 1 ⚠ | 1 | 1.0k | 576 | 8.2k | 11.5k | 2.4k | 3.1k |
+| calls/fib 25 | 214.92 µs | 288.31 µs | 0.75× | 0 | 0 | 0 | 0 | 4.81M | 3.52M | 1.05M | 1.39M |
+| maps/lookup 10000 ints | 54.78 µs | 74.54 µs | 0.73× | 0 | 0 | 0 | 0 | 970.1k | 1.06M | 262.3k | 354.2k |
+| http/tls 64x100 | 60.50 ms | 82.41 ms | 0.73× | 423861 ⚠ | 459281 | 52.59M | 51.32M | 587.77M | 1.73G | 854.17M | 1.48G |
+| tasks/channel 10000 | 192.17 µs | 270.45 µs | 0.71× | 2 ⚠ | 2 | 744 | 664 | 3.17M | 4.42M | 920.4k | 1.28M |
+| strings/int to text 1000 | 7.92 µs | 11.21 µs | 0.71× | 0 | 900 | 0 | 2.8k | 163.6k | 211.3k | 38.2k | 53.8k |
+| strings/interpolate | 22.8 ns | 33.3 ns | 0.68× | 1 ⚠ | 1 | 52 | 32 | 497 | 664 | 108 | 158 |
+| queries/joinBy 10000x1000 | 446.54 µs | 710.25 µs | 0.63× | 1045 ⚠ | 1039 | 1.67M | 2.91M | 6.23M | 13.26M | 2.15M | 6.16M |
+| json/parse object | 2.26 µs | 3.77 µs | 0.60× | 17 ⚠ | 36 | 2.3k | 1.5k | 34.9k | 47.9k | 10.9k | 17.7k |
+| json/parse 1000 numbers | 73.99 µs | 133.98 µs | 0.55× | 909 ⚠ | 2015 | 55.9k | 54.2k | 1.38M | 2.12M | 353.7k | 636.6k |
+| texts/replace ascii | 692.2 ns | 1.26 µs | 0.55× | 9 ⚠ | 1 | 4.6k | 1.0k | 14.3k | 24.6k | 3.3k | 6.0k |
+| structs/users 1000 | 21.26 µs | 39.03 µs | 0.54× | 1001 | 1910 | 48.3k | 72.8k | 410.8k | 667.6k | 102.3k | 196.1k |
+| arrays/map filter sum 10000 | 16.95 µs | 32.75 µs | 0.52× | 12 | 16 | 142.5k | 165.2k | 374.3k | 496.5k | 81.5k | 200.5k |
+| queries/groupBy 10000 | 271.46 µs | 531.14 µs | 0.51× | 2683 | 4664 | 879.9k | 1.18M | 3.52M | 7.52M | 1.31M | 3.71M |
+| queries/filter sumBy 10000 | 67.62 µs | 138.24 µs | 0.49× | 12 | 16 | 512.2k | 727.7k | 822.2k | 2.28M | 326.9k | 1.24M |
+| texts/replace other | 527.9 ns | 1.10 µs | 0.48× | 3 ⚠ | 1 | 6.8k | 1.8k | 12.0k | 19.6k | 2.6k | 5.4k |
+| queries/numbers map filter sum 10000 | 16.95 µs | 36.08 µs | 0.47× | 12 | 16 | 142.5k | 165.2k | 374.3k | 626.4k | 81.5k | 284.0k |
+| queries/averageBy 10000 | 10.42 µs | 24.09 µs | 0.43× | 0 | 0 | 0 | 0 | 200.2k | 90.0k | 50.3k | 120.6k |
+| queries/toSet 10000 | 193.92 µs | 492.65 µs | 0.39× | 42 ⚠ | 81 | 1024.0k | 577.8k | 2.43M | 5.91M | 942.0k | 2.67M |
+| maps/insert 1000 strings | 40.04 µs | 101.75 µs | 0.39× | 1030 | 1920 | 111.6k | 121.0k | 664.8k | 1.31M | 192.5k | 481.7k |
+| queries/sortedBy 10000 | 1.51 ms | 3.92 ms | 0.38× | 4 ⚠ | 2 | 1.45M | 392.0k | 18.95M | 31.55M | 7.34M | 19.36M |
+| texts/contains other | 177.1 ns | 477.4 ns | 0.37× | 0 | 0 | 0 | 0 | 3.5k | 8.2k | 858 | 2.3k |
+| http/json 64x100 | 30.77 ms | 85.64 ms | 0.36× | 518608 ⚠ | 702808 | 138.69M | 97.16M | 658.45M | 3.69G | 1.77G | 6.38G |
+| ffi/callback 1000 | 10.74 µs | 29.91 µs | 0.36× | 0 | 0 | 0 | 0 | 140.2k | 497.4k | 52.2k | 142.8k |
+| queries/keyedBy 10000 | 205.34 µs | 693.42 µs | 0.30× | 42 ⚠ | 81 | 2.00M | 1.75M | 3.23M | 9.41M | 969.7k | 4.39M |
+| maps/insert 10000 ints | 133.63 µs | 501.17 µs | 0.27× | 42 ⚠ | 79 | 1.25M | 577.6k | 2.34M | 5.36M | 643.7k | 2.39M |
+| http/hello 64x100 | 19.75 ms | 79.52 ms | 0.25× | 358858 ⚠ | 448387 | 125.28M | 43.82M | 430.82M | 3.21G | 1.08G | 7.25G |
+| regex/match 1000 | 37.74 µs | 153.21 µs | 0.25× | 0 | 0 | 0 | 0 | 571.3k | 2.99M | 183.2k | 736.6k |
+| floats/add 100000 | 20.10 µs | 95.54 µs | 0.21× | 1 | 1 | 781.3k | 784.0k | 281.3k | 1.69M | 86.3k | 572.2k |
+| arrays/sort 10000 | 66.12 µs | 360.70 µs | 0.18× | 1 | 1 | 78.2k | 80.0k | 1.37M | 2.42M | 320.8k | 1.71M |
+| structs/points 1000 | 1.33 µs | 7.49 µs | 0.18× | 1 | 12 | 15.7k | 49.2k | 30.7k | 86.0k | 6.5k | 48.1k |
+| tensors/matmul 64 | 78.82 µs | 490.98 µs | 0.16× | 2 ⚠ | 1 | 32.1k | 32.0k | 1.57M | 4.30M | 382.0k | 2.45M |
+| arrays/push 1000 | 512.9 ns | 3.47 µs | 0.15× | 1 | 12 | 7.8k | 24.6k | 13.0k | 42.0k | 2.5k | 23.4k |
+| tensors/broadcast 256 | 10.32 µs | 71.56 µs | 0.14× | 2 ⚠ | 1 | 512.1k | 512.0k | 189.7k | 1.45M | 49.8k | 519.0k |
+| floats/dot 100000 | 16.33 µs | 241.79 µs | 0.07× | 0 | 0 | 0 | 0 | 262.6k | 1.00M | 78.8k | 1.21M |
+| floats/sum 100000 | 7.85 µs | 239.92 µs | 0.03× | 0 | 0 | 0 | 0 | 118.8k | 599.8k | 38.5k | 1.20M |
+| texts/toUpper ascii | 77.4 ns | 2.37 µs | 0.03× | 2 ⚠ | 1 | 2.2k | 1.1k | 1.9k | 51.6k | 370 | 11.4k |
 
 14 of 69 benchmarks are slower than Go; 34 allocate more; 19 run more instructions than Go.
 
@@ -133,9 +133,6 @@ The rows still behind Go, and why:
   place and the text's length once, before it, but checks its count for
   overflow each turn and jumps twice for each ASCII character, out of the
   test and back to the loop's head, where Go's loop jumps once.
-- `texts/parse ints`: a call of the runtime for each number, which counted
-  in 128 bits; since this table it reads an `Int` in decimal of up to 18
-  digits in 64 bits, 21% faster, 6.49 µs against Go's 6.41.
 - `queries/countBy`: each element's key takes two calls of the runtime,
   one that finds its entry and one for where the entries start, to count
   its position, where Go's takes one; the hash itself takes a word at a
@@ -143,9 +140,10 @@ The rows still behind Go, and why:
 - `ffi/*`: within 10% of Go. A thread of C new to the runtime costs it the
   records it keeps for a thread, and each call a task's record in the
   thread's block.
-- `tasks/spawn`, 15%: each task's record with its join, below; `texts/toUpper
-  other`, `queries/uniqueBy`, `floats/sqrt`: within 10% of Go, as much as a
-  row moves from one run to the next.
+- `tasks/spawn`, 6%: each task's record with its join, below; `texts/toUpper
+  other`, `net/tls echo`, `floats/sqrt`, `texts/parse ints` and
+  `queries/uniqueBy`: within 10% of Go, as much as a row moves from one run
+  to the next.
 - `net/tls echo` makes about three more allocations a round trip than Go,
   and `http/tls` a few more a request: rustls 0.23 makes a buffer for each
   record it encrypts and copies each one it reads into another, in its
@@ -165,9 +163,9 @@ answer, after half a second that opens the connections (`bench/latency`):
 
 | Server | p50 Tondo | p50 Go | p99 Tondo | p99 Go |
 |---|---:|---:|---:|---:|
-| http/hello 20000/s | 55 µs | 394 µs | 76 µs | 1524 µs |
-| http/json 20000/s | 88 µs | 202 µs | 133 µs | 1826 µs |
-| http/tls hello 20000/s | 110 µs ⚠ | 90 µs | 175 µs | 1587 µs |
+| http/hello 20000/s | 54 µs | 308 µs | 77 µs | 1470 µs |
+| http/json 20000/s | 87 µs | 171 µs | 138 µs | 1510 µs |
+| http/tls hello 20000/s | 107 µs ⚠ | 89 µs | 161 µs | 1556 µs |
 
 Tondo's median is behind Go's on `http/tls hello` alone, and its 99th
 percentile is about a tenth of Go's on every server; why the median of
@@ -179,23 +177,24 @@ allocations):
 
 | Benchmark | Tondo | C# | Tondo/C# | B/op Tondo | B/op C# |
 |---|---:|---:|---:|---:|---:|
-| queries/iter filter sumBy 10000 | 50.93 µs | 63.06 µs | 0.81× | 40 | 96 |
-| queries/numbers iter map filter sum 10000 | 19.21 µs | 24.14 µs | 0.80× | 80 | 128 |
-| queries/countBy 10000 | 143.87 µs | 82.37 µs | 1.75× ⚠ | 304 | 1.1k |
-| queries/uniqueBy 10000 | 150.82 µs | 61.97 µs | 2.43× ⚠ | 128.1k | 65.2k |
-| queries/maxBy 10000 | 6.66 µs | 16.29 µs | 0.41× | 0 | 40 |
-| queries/joinBy 10000x1000 | 454.21 µs | 137.32 µs | 3.31× ⚠ | 1.67M | 102.3k |
-| queries/groupBy 10000 | 265.86 µs | 275.88 µs | 0.96× | 879.9k | 583.9k |
-| queries/filter sumBy 10000 | 67.47 µs | 46.98 µs | 1.44× ⚠ | 512.2k | 39.0k |
-| queries/numbers map filter sum 10000 | 16.76 µs | 10.88 µs | 1.54× ⚠ | 142.5k | 51.7k |
-| queries/averageBy 10000 | 10.56 µs | 25.66 µs | 0.41× | 0 | 24 |
-| queries/toSet 10000 | 194.86 µs | 48.01 µs | 4.06× ⚠ | 1024.0k | 158.0k |
-| queries/sortedBy 10000 | 1.53 ms | 521.04 µs | 2.93× ⚠ | 1.45M | 234.7k |
-| queries/keyedBy 10000 | 207.04 µs | 73.75 µs | 2.81× ⚠ | 2.00M | 276.4k |
+| queries/numbers iter map filter sum 10000 | 19.24 µs | 24.50 µs | 0.79× | 80 | 128 |
+| queries/iter filter sumBy 10000 | 12.44 µs | 73.71 µs | 0.17× | 40 | 96 |
+| queries/countBy 10000 | 145.95 µs | 82.40 µs | 1.77× ⚠ | 304 | 1.1k |
+| queries/uniqueBy 10000 | 151.16 µs | 61.60 µs | 2.45× ⚠ | 128.1k | 65.2k |
+| queries/maxBy 10000 | 6.68 µs | 16.28 µs | 0.41× | 0 | 40 |
+| queries/joinBy 10000x1000 | 446.54 µs | 135.63 µs | 3.29× ⚠ | 1.67M | 102.3k |
+| queries/groupBy 10000 | 271.46 µs | 283.89 µs | 0.96× | 879.9k | 583.9k |
+| queries/filter sumBy 10000 | 67.62 µs | 48.33 µs | 1.40× ⚠ | 512.2k | 39.0k |
+| queries/numbers map filter sum 10000 | 16.95 µs | 10.84 µs | 1.56× ⚠ | 142.5k | 51.7k |
+| queries/averageBy 10000 | 10.42 µs | 25.70 µs | 0.41× | 0 | 24 |
+| queries/toSet 10000 | 193.92 µs | 48.26 µs | 4.02× ⚠ | 1024.0k | 158.0k |
+| queries/sortedBy 10000 | 1.51 ms | 514.42 µs | 2.93× ⚠ | 1.45M | 234.7k |
+| queries/keyedBy 10000 | 205.34 µs | 73.06 µs | 2.81× ⚠ | 2.00M | 276.4k |
 
-Tondo is ahead of C# on both lazy chains, `maxBy`, `averageBy` and
-`groupBy`; C# on the rest, by half on the eager chains and on `countBy`, and
-two to four times on sorting, on sets and on most maps. C#'s times move more
+Tondo is ahead of C# on both lazy chains, six times on the one over
+records, on `maxBy`, `averageBy` and `groupBy`; C# on the rest, 1.4 to 1.6
+times on the eager chains, 1.8 times on `countBy`, and two to four times on
+sorting, on sets and on most maps. C#'s times move more
 than the other sides' from one run to the next.
 
 Both for x86-64-v3, `--cpu x86-64-v3` and `GOAMD64=v3`, with
