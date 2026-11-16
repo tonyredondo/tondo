@@ -384,16 +384,29 @@ pub unsafe extern "C" fn tondo_rt_array_reserve_in(
 pub unsafe extern "C" fn tondo_rt_region_reset(region: *mut Region) {
     unsafe {
         let r = &mut *region;
+        use super::diagnostics::{COUNTED, MEASURED, WATCHED, hooks};
+        // A loop's region counts from the turn after counting starts.
+        let counting = hooks() & (MEASURED | COUNTED | WATCHED) != 0;
+        // Most turns' regions hold one chunk of the usual size, filling it,
+        // which emptying puts the pointer back at the start of.
+        let chunk = r.chunks;
+        if !counting
+            && r.ptr != 0
+            && (*chunk).next.is_null()
+            && (*chunk).size == CHUNK
+            && r.end == chunk as usize + CHUNK
+            && !checked::on()
+        {
+            r.ptr = chunk as usize + CHUNK_HEADER;
+            return;
+        }
         // Checked, a turn's chunks all go, so that the next turn writes
         // nothing where a value of this one was.
         if checked::on() {
             tondo_rt_region_leave(r);
             return;
         }
-        use super::diagnostics::{COUNTED, MEASURED, WATCHED, hooks};
         let current = if r.ptr != 0 { r.chunks } else { std::ptr::null_mut() };
-        // A loop's region counts from the turn after counting starts.
-        let counting = hooks() & (MEASURED | COUNTED | WATCHED) != 0;
         let mut kept = std::ptr::null_mut();
         let mut chunk = r.chunks;
         let mut others = Region { ptr: 0, end: 0, chunks: std::ptr::null_mut() };
