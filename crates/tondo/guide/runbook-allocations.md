@@ -97,8 +97,9 @@ optimizations {"tests": true, "function": "receipt", "kind": "frame"}
 
 A benchmark is looked at now and then, and a test runs at every change. So
 the number goes into a test: `testing.allocations` gives how many times a
-call allocates, the same count as the benchmark's `allocs/op`, and a plain
-`test` fails the day the receipt allocates for each line again.
+call allocates, on the heap and in regions: the benchmark's `allocs/op` and
+what its row says `in regions`, added. A plain `test` fails the day the
+receipt allocates for each line again, wherever those texts would go.
 
 ```edit src/main_test.to
 -test everyLineIsThere {

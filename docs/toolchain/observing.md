@@ -46,14 +46,17 @@ Every command after this takes that process ID, or the program's name.
 ## What it holds: counters
 
 ```text
-$ tondo counters todo
-todo (pid 3576673), up 2.1 s
+$ tondo counters todo --count 1
+todo (pid 4080903), up 11m 40s
 
 memory
-  held                           108.4 KiB
-  allocated                          0 B/s   total 617.6 KiB
-  allocations                        0.0/s   total 2567
+  held                           119.5 KiB
+  allocated                          0 B/s   total 1.5 MiB
+  allocations                        0.0/s   total 3730
   objects                               60
+  regions                         32.0 KiB
+  regions_kept                         0 B
+  region_allocations                 0.0/s   total 8
 
 collector
   collections                        0.0/s   total 0
@@ -64,7 +67,7 @@ collector
 tasks
   live                                   2
   ready                                  0
-  spawned                            0.0/s   total 7
+  spawned                            0.0/s   total 8
 
 workers
   total                                 32
@@ -83,20 +86,54 @@ net
 
 http
   client.requests                    0.0/s   total 0
-  server.requests                    0.0/s   total 5
+  server.requests                    0.0/s   total 6
   server.active                          0
+
+grpc
+  client.calls                       0.0/s   total 0
+  client.active                          0
+  client.failed                      0.0/s   total 0
+  server.calls                       0.0/s   total 0
+  server.active                          0
+  server.failed                      0.0/s   total 0
+
+sockets
+  tcp                                    0
+  listening                              1
+  udp                                    0
+  unix                                   0
+
+descriptors
+  files                                  2
+  pipes                                  2
+  total                                 12
+
+processes
+  running                                0
+  started                            0.0/s   total 0
+
+os
+  cpu                                 0.0%   total 147.7 ms
+  resident                        35.0 MiB
+  threads                               53
 ```
 
 One screen of what matters in a server: memory held and the rate it is
 allocated at, the collector of cycles and how long it paused, tasks alive
 and ready to run, the workers and how many are inside C, sockets, and the
-requests of `std.http` and `std.grpc`. `--interval 1` prints it again every
-second, as rates.
+requests of `std.http` and `std.grpc`. Without `--count` it prints the
+screen again every second, as rates, until it is stopped; `--interval`
+gives another pace.
 
 - `tasks ready` that stays above zero is a program with more work than
   cores. `workers in_c` that stays high is tasks blocked in C calls.
 - `memory held` that grows while `objects` does not is large values;
   both growing is a leak, and [dumps](#everything-at-once-dump) find it.
+- `memory regions` is what regions hold now, the values a release build
+  lets go of all at once when a scope ends
+  ([Performance](performance.md#what-a-region-takes)); `regions_kept` is
+  what they keep free to use again, and `region_allocations` how many
+  values were made in them.
 - A program adds its own with `std.diagnostics`: a counter or a gauge it
   declares shows here beside the runtime's.
 
@@ -275,6 +312,29 @@ stopping it: every task with its stack and what it waits for, the
 counters, and the live memory by the line that allocated it. It is the
 same file a crash leaves, read with the same commands
 ([Debugging](debugging.md#a-failure-somewhere-else-dumps)).
+
+The memory is given for the heap and for regions apart. Of a program that
+filled an array of two hundred thousand numbers which never leaves `main`,
+and waits, run with `TONDO_HEAP_RATE=1` so that every allocation is in the
+dump:
+
+```text
+$ tondo dump read holds.dump.json heap
+live memory: about 146.9 KiB, from samples of one allocation every 1 B on average
+       BYTES    OBJECTS  SITE                        TYPE
+    73.7 KiB         20  outside the program's code  other
+    71.9 KiB        168  holds.to:11 in main         String?
+     1.4 KiB          5  holds.to:9 in main          Unit
+
+       BYTES    OBJECTS  BY TYPE
+    73.7 KiB         20  other
+    71.9 KiB        168  String?
+     1.4 KiB          5  Unit
+
+in regions: about 1.5 MiB
+       BYTES    OBJECTS  SITE                        TYPE
+     1.5 MiB          1  holds.to:7 in main          Array[Int]
+```
 
 Two dumps a while apart answer the question about a leak: `tondo dump diff
 before.json after.json` says what grew, by place, and `tondo dump trend

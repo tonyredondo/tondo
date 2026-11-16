@@ -143,10 +143,12 @@ test parsing {
 - What the closure gives is kept, so the work that made it is not optimized
   away; `testing.keep(value)` keeps a value the closure does not give.
 - `testing.allocations(() { receipt(lines) })` runs the closure once and
-  gives how many times it allocated, in its task and in the optimized build
-  of the tests, the same count as the `allocs/op` of a benchmark of that
-  call: `assert(testing.allocations(() { receipt(lines) }) <= 7)` keeps a
-  function at what it allocates now.
+  gives how many times it allocated, on the heap and in regions, in its
+  task and in the optimized build of the tests: the two figures of a
+  benchmark's row added, `allocs/op` and what it says `in regions`.
+  `assert(testing.allocations(() { receipt(lines) }) <= 7)` keeps a
+  function at what it allocates now, wherever the optimizer puts it;
+  `testing.heapAllocations` counts the heap alone.
 - `--save-baseline main` keeps what was measured in
   `target/bench/main.json`, and `--baseline main` compares with it: each
   benchmark says how much it changed, and whether that is `slower`,

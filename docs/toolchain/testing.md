@@ -335,8 +335,12 @@ is not the code's, and no comparison fails for it.
 
 A benchmark is run now and then. What it found is kept by a test, which
 runs at every change: `testing.allocations` gives how many times a call
-allocates, the count that the benchmark's row shows as `allocs/op`, since
-the tests are built optimized as the benchmarks are.
+allocates, on the heap and in regions together, since the tests are built
+optimized as the benchmarks are. It is the two figures of the benchmark's
+row added, `allocs/op` and what it says `in regions`
+([Performance](performance.md#what-a-region-takes)), so the number stays
+the same when the compiler moves a value from the heap to a region.
+`testing.heapAllocations` counts the heap's alone, which is `allocs/op`.
 
 ```tondo test
 import std.testing

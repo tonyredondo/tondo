@@ -276,7 +276,7 @@ tondo test --bisect v1.2 --filter count --bench --max-regression 5    the commit
 ```
 
 ```text
-  count 600 words     38.56 µs/op  ±6.7%  8 allocs/op  25712 B/op  445.5k ins/op
+  count 600 words     14.90 µs/op  ±0.1%  10 allocs/op  26032 B/op  274.6k ins/op
 ```
 
 Time moves with what else the machine does and with where the code lies in

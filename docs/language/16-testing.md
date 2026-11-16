@@ -213,7 +213,8 @@ suite arithmetic {
 | `testing.snapshot(name, value)` | compares a value with a recorded one |
 | `testing.withVirtualTime(...)` | runs code that sleeps, without waiting |
 | `testing.bench(name, closure)` | makes the test a benchmark |
-| `testing.allocations(closure)` | how many times the closure allocates, to hold a function to its count |
+| `testing.allocations(closure)` | how many times the closure allocates, on the heap and in regions, to hold a function to its count |
+| `testing.heapAllocations(closure)` | how many of those are on the heap, to hold a function off it |
 | `testing.fuzz(name, seeds, closure)` | tries the code with inputs |
 | `testing.keep(value)` | in a benchmark, stops the optimizer from dropping work |
 
@@ -363,7 +364,7 @@ time of a run with its spread, what it allocates, and on Linux the
 instructions it executes:
 
 ```text
-  count 600 words     38.56 µs/op  ±6.7%  8 allocs/op  25712 B/op  445.5k ins/op
+  count 600 words     14.90 µs/op  ±0.1%  10 allocs/op  26032 B/op  274.6k ins/op
 ```
 
 What the closure returns is kept, so the work that made it is not optimized
