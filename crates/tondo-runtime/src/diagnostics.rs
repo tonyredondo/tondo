@@ -323,11 +323,7 @@ struct Block {
     freed: AtomicU64,
     allocations: AtomicU64,
     objects: AtomicI64,
-    /// The bytes of the chunks regions took less those they gave back, and
-    /// of those the thread keeps for its next regions; the values regions
-    /// made while the tools count.
-    regions: AtomicI64,
-    regions_kept: AtomicI64,
+    /// The values regions made while the tools count.
     region_allocations: AtomicU64,
     /// The block made before this one.
     next: *const Block,
@@ -396,8 +392,6 @@ fn new_block() -> *const Block {
             freed: zero(),
             allocations: zero(),
             objects: AtomicI64::new(0),
-            regions: AtomicI64::new(0),
-            regions_kept: AtomicI64::new(0),
             region_allocations: zero(),
             next: head,
             spare: AtomicPtr::new(std::ptr::null_mut()),
@@ -449,16 +443,6 @@ pub(crate) fn allocated(address: *mut u8, size: usize, held: usize) {
         bump(&block.allocations, 1);
         super::heap::allocated(address as usize, size);
         super::heap::track(address as usize, size);
-    }
-}
-
-/// The chunks of regions the thread took, less those it gave back, and
-/// the change in those it keeps, in bytes.
-pub(crate) fn regions_took(held: i64, kept: i64) {
-    if let Some(block) = block() {
-        let add = |counter: &AtomicI64, by: i64| counter.store(counter.load(Ordering::Relaxed) + by, Ordering::Relaxed);
-        add(&block.regions, held);
-        add(&block.regions_kept, kept);
     }
 }
 
@@ -621,9 +605,8 @@ fn sample() -> Vec<Sample> {
     add("memory.allocated", false, "bytes", allocated);
     add("memory.allocations", false, "", total(|b| b.allocations.load(Ordering::Relaxed) as i64));
     add("memory.objects", true, "", super::LIVE_OBJECTS.live() as i64);
-    add("memory.regions", true, "bytes", total(|b| b.regions.load(Ordering::Relaxed)));
-    let kept = total(|b| b.regions_kept.load(Ordering::Relaxed)) + super::regions::shared_kept() as i64;
-    add("memory.regions_kept", true, "bytes", kept);
+    add("memory.regions", true, "bytes", super::regions::held() as i64);
+    add("memory.regions_kept", true, "bytes", super::regions::shared_kept() as i64);
     add("memory.region_allocations", false, "", total(|b| b.region_allocations.load(Ordering::Relaxed) as i64));
     add("collector.collections", false, "", COLLECTIONS.get());
     add("collector.freed", false, "", COLLECTED.get());

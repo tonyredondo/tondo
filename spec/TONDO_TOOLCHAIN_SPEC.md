@@ -832,7 +832,7 @@ Los contadores del runtime, por grupos:
 
 | Grupo | Contadores |
 |---|---|
-| `memory` | `held`, los bytes asignados ahora; `allocated`, bytes; `allocations`; `objects`, los strings y boxes vivos; `regions`, los bytes de los trozos que tienen las regiones ahora; `regions_kept`, los de los trozos guardados para las siguientes; `region_allocations`, los valores que hicieron las regiones mientras se contaba |
+| `memory` | `held`, los bytes asignados ahora; `allocated`, bytes; `allocations`; `objects`, los strings y boxes vivos; `regions`, los bytes de los trozos que tienen las regiones ahora, con los pocos que cada hilo guarda para las suyas; `regions_kept`, los de los trozos que los hilos comparten para las siguientes; `region_allocations`, los valores que hicieron las regiones mientras se contaba |
 | `collector` | `collections`; `freed`, objetos de ciclos liberados; `paused`, el tiempo que los workers esperaron al colector; `longest`, la pausa más larga |
 | `tasks` | `live`; `ready`, las que esperan un worker; `spawned` |
 | `workers` | `total`; `idle`; `in_c`, los que están dentro de una llamada a C; `replaced`, los que tomaron el puesto de uno que tardaba en C; `c_calls` |

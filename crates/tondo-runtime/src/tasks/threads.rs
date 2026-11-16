@@ -416,6 +416,14 @@ pub(crate) fn kept() -> &'static Kept {
     kept
 }
 
+/// What the runtime keeps for the thread, when it made it already and will
+/// give it back as the thread ends; never made here, as a caller that
+/// counts what a task allocates must not count the runtime's own.
+pub(crate) fn kept_if_made() -> Option<&'static Kept> {
+    let kept = unsafe { KEPT.with(Cell::get).as_ref() }?;
+    (kept.generation.get() == GENERATION.load(Ordering::Acquire)).then_some(kept)
+}
+
 /// Frees `value` with `free` when the thread ends, or when a library ends
 /// on it: what a part of the runtime keeps for the thread in a thread-local
 /// that does not drop. `free(value, true)` runs on the thread and empties

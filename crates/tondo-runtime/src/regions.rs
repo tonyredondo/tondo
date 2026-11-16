@@ -99,7 +99,31 @@ impl Kept {
     }
 }
 
-static FREE: std::sync::Mutex<Kept> = std::sync::Mutex::new(Kept { first: std::ptr::null_mut(), count: 0 });
+/// The chunks the threads share, behind a lock that allocates nothing: a
+/// `Mutex` may allocate when it is first locked, as on macOS, which a count
+/// of what a task allocates would count. A thread takes it only when its
+/// own chunks run out or overflow.
+struct Shared {
+    locked: std::sync::atomic::AtomicBool,
+    kept: std::cell::UnsafeCell<Kept>,
+}
+
+unsafe impl Sync for Shared {}
+
+static FREE: Shared = Shared {
+    locked: std::sync::atomic::AtomicBool::new(false),
+    kept: std::cell::UnsafeCell::new(Kept { first: std::ptr::null_mut(), count: 0 }),
+};
+
+/// The threads' chunks, lent to `f` under their lock.
+fn shared<R>(f: impl FnOnce(&mut Kept) -> R) -> R {
+    while FREE.locked.swap(true, Ordering::Acquire) {
+        std::hint::spin_loop();
+    }
+    let result = f(unsafe { &mut *FREE.kept.get() });
+    FREE.locked.store(false, Ordering::Release);
+    result
+}
 
 /// The chunks a thread keeps for its next regions, before the list the
 /// threads share, so that a function that enters and leaves a region at
@@ -107,11 +131,13 @@ static FREE: std::sync::Mutex<Kept> = std::sync::Mutex::new(Kept { first: std::p
 /// thread, which allocates nothing more for them.
 const LOCAL: usize = 8;
 
-/// This thread's chunks, lent to `f`, which takes or gives one. The thread
-/// keeps only the first; how many there are is in it, where a chunk kept
-/// has its size, as each kept one says how many lie from it on.
-fn local<R>(f: impl FnOnce(&mut Kept) -> R) -> R {
-    let kept = super::tasks::kept();
+/// This thread's chunks, lent to `f`, which takes or gives one; none on a
+/// thread the runtime keeps nothing for yet, which uses the threads' list
+/// rather than allocate, as a count of what a task allocates would count
+/// it. The thread keeps only the first; how many there are is in it, where
+/// a chunk kept has its size, as each kept one says how many lie from it on.
+fn local<R>(f: impl FnOnce(&mut Kept) -> R) -> Option<R> {
+    let kept = super::tasks::kept_if_made()?;
     let first = kept.chunks.get() as *mut Chunk;
     let count = if first.is_null() { 0 } else { unsafe { (*first).size } };
     let mut local = Kept { first, count };
@@ -120,7 +146,7 @@ fn local<R>(f: impl FnOnce(&mut Kept) -> R) -> R {
         unsafe { (*local.first).size = local.count };
     }
     kept.chunks.set(local.first as *mut u8);
-    result
+    Some(result)
 }
 
 /// A chunk this thread kept, with its size again.
@@ -133,19 +159,36 @@ unsafe fn local_taken(chunk: *mut Chunk) -> *mut Chunk {
 pub(crate) fn thread_ended(first: *mut u8) {
     let count = if first.is_null() { 0 } else { unsafe { (*(first as *mut Chunk)).size } };
     let mut local = Kept { first: first as *mut Chunk, count };
-    let mut free = FREE.lock().unwrap_or_else(|e| e.into_inner());
     while let Some(chunk) = unsafe { local.pop().map(|chunk| local_taken(chunk)) } {
-        super::diagnostics::regions_took(0, -(CHUNK as i64));
-        match free.count < KEPT {
-            true => unsafe { free.push(chunk) },
-            false => unsafe { super::meta::uncounted_dealloc(chunk as *mut u8, chunk_layout(CHUNK)) },
-        }
+        given_back(chunk);
     }
+}
+
+/// A chunk of the usual size goes to the list the threads share, or back
+/// to the allocator when that list is full.
+fn given_back(chunk: *mut Chunk) {
+    HELD.fetch_sub(CHUNK, Ordering::Relaxed);
+    let kept = shared(|free| (free.count < KEPT).then(|| unsafe { free.push(chunk) }).is_some());
+    if !kept {
+        unsafe { super::meta::uncounted_dealloc(chunk as *mut u8, chunk_layout(CHUNK)) };
+    }
+}
+
+/// The bytes of the chunks out of the threads' list and the allocator,
+/// which regions hold, or the threads for their next ones; changed only as
+/// a chunk comes from or goes to the list or the allocator, never as a
+/// thread takes or gives back one of its own.
+static HELD: AtomicUsize = AtomicUsize::new(0);
+
+/// `memory.regions`: the bytes regions hold now, with the few each thread
+/// keeps for its next ones.
+pub(crate) fn held() -> usize {
+    HELD.load(Ordering::Relaxed)
 }
 
 /// The bytes of the chunks the threads share for the next regions.
 pub(crate) fn shared_kept() -> usize {
-    FREE.lock().unwrap_or_else(|e| e.into_inner()).count * CHUNK
+    shared(|free| free.count) * CHUNK
 }
 
 fn chunk_layout(size: usize) -> Layout {
@@ -156,16 +199,15 @@ fn chunk_layout(size: usize) -> Layout {
 /// thread's, else the threads'.
 unsafe fn take(size: usize) -> *mut Chunk {
     if size == CHUNK {
-        if let Some(chunk) = local(|kept| unsafe { kept.pop().map(|chunk| local_taken(chunk)) }) {
-            super::diagnostics::regions_took(CHUNK as i64, -(CHUNK as i64));
+        if let Some(chunk) = local(|kept| unsafe { kept.pop().map(|chunk| local_taken(chunk)) }).flatten() {
             return chunk;
         }
-        if let Some(chunk) = unsafe { FREE.lock().unwrap_or_else(|e| e.into_inner()).pop() } {
-            super::diagnostics::regions_took(CHUNK as i64, 0);
+        if let Some(chunk) = shared(|free| unsafe { free.pop() }) {
+            HELD.fetch_add(CHUNK, Ordering::Relaxed);
             return chunk;
         }
     }
-    super::diagnostics::regions_took(size as i64, 0);
+    HELD.fetch_add(size, Ordering::Relaxed);
     let layout = chunk_layout(size);
     let chunk = unsafe { super::meta::uncounted_alloc(layout) } as *mut Chunk;
     if chunk.is_null() {
@@ -263,32 +305,18 @@ pub unsafe extern "C" fn tondo_rt_region_leave(region: *mut Region) {
     unsafe {
         let r = &mut *region;
         let mut chunk = r.chunks;
-        let (mut given, mut kept) = (0, 0);
-        let mut shared = Kept { first: std::ptr::null_mut(), count: 0 };
         while !chunk.is_null() {
             let next = (*chunk).next;
             emptied(chunk);
             let size = (*chunk).size;
-            given += size as i64;
             if size != CHUNK {
+                HELD.fetch_sub(size, Ordering::Relaxed);
                 super::meta::uncounted_dealloc(chunk as *mut u8, chunk_layout(size));
-            } else if local(|kept| (kept.count < LOCAL).then(|| kept.push(chunk)).is_some()) {
-                kept += CHUNK as i64;
-            } else {
-                shared.push(chunk);
+            } else if !local(|kept| (kept.count < LOCAL).then(|| kept.push(chunk)).is_some()).unwrap_or(false) {
+                given_back(chunk);
             }
             chunk = next;
         }
-        if shared.count > 0 {
-            let mut free = FREE.lock().unwrap_or_else(|e| e.into_inner());
-            while let Some(chunk) = shared.pop() {
-                match free.count < KEPT {
-                    true => free.push(chunk),
-                    false => super::meta::uncounted_dealloc(chunk as *mut u8, chunk_layout(CHUNK)),
-                }
-            }
-        }
-        super::diagnostics::regions_took(-given, kept);
         *r = Region { ptr: 0, end: 0, chunks: std::ptr::null_mut() };
     }
 }
@@ -407,6 +435,7 @@ mod tests {
     /// takes a chunk the first gave back.
     #[test]
     fn chunks_are_kept_for_the_next_region() {
+        crate::tasks::kept();
         let mut r = region();
         unsafe {
             let first = tondo_rt_region_alloc(&mut r, 64);
@@ -416,7 +445,7 @@ mod tests {
             assert!(!(*r.chunks).next.is_null());
             tondo_rt_region_leave(&mut r);
             // The thread keeps them, within what it keeps.
-            assert!((1..=LOCAL).contains(&local(|kept| kept.count)));
+            assert!((1..=LOCAL).contains(&local(|kept| kept.count).unwrap()));
             let mut again = region();
             let reused = tondo_rt_region_alloc(&mut again, 64);
             assert_eq!(reused as usize % 16, 0);
@@ -540,12 +569,13 @@ mod tests {
     /// the thread, without the list the threads share.
     #[test]
     fn a_thread_keeps_chunks_for_its_next_regions() {
+        crate::tasks::kept();
         let mut r = region();
         unsafe {
             tondo_rt_region_alloc(&mut r, 64);
             let chunk = r.chunks;
             tondo_rt_region_leave(&mut r);
-            assert_eq!(local(|kept| kept.first), chunk);
+            assert_eq!(local(|kept| kept.first), Some(chunk));
             tondo_rt_region_alloc(&mut r, 64);
             assert_eq!(r.chunks, chunk);
             tondo_rt_region_leave(&mut r);

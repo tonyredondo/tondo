@@ -164,9 +164,12 @@ fn counters_and_dumps_show_what_regions_hold() {
         .status()
         .unwrap();
     assert!(status.success());
+    // A sample every 4 KiB: at the default 512 KiB, the one value of 1.6 MB
+    // is sampled in 96 runs of 100.
     let mut child = Started::new(
         Command::new(&executable)
             .env("TONDO_DIAGNOSTICS", "1")
+            .env("TONDO_HEAP_RATE", "4096")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
