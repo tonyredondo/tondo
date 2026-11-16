@@ -560,19 +560,24 @@ of, so a region of `main` would hold it. `build` itself only returns what
 it builds, new, so it would build in a region that its caller gives.
 
 A place stays on the heap when something keeps what it makes beyond the
-call, and the remark names the code that does. With a function added to
-the program that keeps a tree, `fn keep(kept: var Array[Node], depth: Int)
-{ kept.push(build(depth, 2)) }`:
+call, and the remark names the code that does. The verdict is by call. With
+a function added to the program that keeps a tree, `fn keep(kept: var
+Array[Node], depth: Int) { kept.push(build(depth, 2)) }`, which `main` calls
+after its sum:
 
 ```text
 $ tondo optimizations kept.to --kind region --function build
-kept.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: `build` returns it, and `keep` keeps it: it is stored in what the function was given: `kept.push(build(depth, 2))` at 21:5 (in build)
+kept.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: it is stored in what the function was given: `kept.push(build(depth, 2))` at 29:5 (in keep)
+kept.to:13:13: `children.push(build(depth - 1, fan))` grows an array that would go in a region of `main` (in main)
+kept.to:13:13: `children.push(build(depth - 1, fan))` grows an array that would go in a region that the caller of `build` gives, in a copy of it for the calls that let it go: `main` at 13; `keep` keeps it: it is stored in what the function was given: `kept.push(build(depth, 2))` at 29:5 (in build)
 ```
 
-One caller that keeps the result is enough for the function: every tree
-`build` makes then stays on the heap, the ones another caller lets go of
-too. The other reasons are that a value is stored in a lock's state or in a
-`Ref`, captured by a closure, sent, taken by a task or given to C.
+The trees that `main` lets go of would still be built in its region, by a
+copy of `build` made for the calls that let its result go; the one that
+`keep` stores stays on the heap, and one caller that keeps does not take
+the region from the others. The other reasons to stay on the heap are that
+a value is stored in a lock's state or in a `Ref`, captured by a closure,
+sent, taken by a task or given to C.
 
 ## The machine code: asm
 
