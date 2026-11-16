@@ -279,33 +279,32 @@ example that compiles for each of its types.
 Tondo compiles to native code with Cranelift, of which it keeps its own copy
 for the optimizations it adds. The goal is every benchmark of
 [`bench/`](bench/README.md) at or under Go's time and allocations. Measured
-on 2026-11-15 at `7f4677ad`, on an AMD Ryzen 9 5950X against Go 1.27, each
-for its default processor, Tondo's x86-64-v2 and Go's v1, 53 of the 69 are
-at or under Go's time. Behind: the lazy chains of queries, 3.9× and 8.3×
-Go's bare loops, though ahead of C#'s; `texts/trim`, the characters of a
-text and parsing numbers, 1.9× to 4.6×; `queries/countBy`, 2.3×; and within
-1.10×, `tasks/spawn`, the calls from threads of C, `texts/toUpper other`,
-`queries/uniqueBy`, `net/tls echo`, `loops/collatz`, `strings/split` and
-`floats/sqrt`. On 2026-10-26, with the 27 benchmarks there were then,
-23 of the 27 were slower than Go.
+on 2026-11-16 at `0230fe0f`, on an AMD Ryzen 9 5950X against Go 1.27, each
+for its default processor, Tondo's x86-64-v2 and Go's v1, 55 of the 69 are
+at or under Go's time. Behind: the lazy chains of queries, 2.7× and 8.2×
+Go's bare loops, though ahead of C#'s; `texts/trim`, 4.6×; the characters of
+a text, parsing numbers and `queries/countBy`, 1.3× to 1.5×; and within
+1.15×, `tasks/spawn`, the calls from threads of C, `texts/toUpper other`,
+`net/tls echo`, `floats/sqrt` and `queries/uniqueBy`. On 2026-10-26, with
+the 27 benchmarks there were then, 23 of the 27 were slower than Go.
 
 | Benchmark | Tondo | Go | Tondo/Go |
 | --- | ---: | ---: | ---: |
-| arrays/sort 10000 | 66.53 µs | 360.87 µs | 0.18× |
-| regex/match 1000 | 38.18 µs | 153.15 µs | 0.25× |
-| maps/insert 10000 ints | 138.27 µs | 497.94 µs | 0.28× |
-| structs/users 1000 | 22.87 µs | 39.23 µs | 0.58× |
-| json/parse object | 2.27 µs | 3.76 µs | 0.60× |
-| tasks/channel 10000 | 189.72 µs | 274.34 µs | 0.69× |
-| calls/fib 25 | 230.48 µs | 289.07 µs | 0.80× |
-| loops/sum 1000000 | 609.07 µs | 728.96 µs | 0.84× |
-| runtime/select 1000 | 121.92 µs | 143.24 µs | 0.85× |
-| runtime/mutex 4x1000 | 20.35 µs | 21.13 µs | 0.96× |
-| calls/closure 1000 | 203.1 ns | 207.6 ns | 0.98× |
-| strings/split 100 | 812.3 ns | 797.7 ns | 1.02× |
-| floats/sqrt 100000 | 178.70 µs | 175.74 µs | 1.02× |
-| loops/collatz 10000 | 864.35 µs | 842.52 µs | 1.03× |
-| tasks/spawn 1000 | 186.62 µs | 169.73 µs | 1.10× |
+| arrays/sort 10000 | 65.70 µs | 364.52 µs | 0.18× |
+| regex/match 1000 | 37.66 µs | 152.30 µs | 0.25× |
+| maps/insert 10000 ints | 135.08 µs | 505.08 µs | 0.27× |
+| structs/users 1000 | 20.24 µs | 38.22 µs | 0.53× |
+| json/parse object | 2.33 µs | 3.71 µs | 0.63× |
+| tasks/channel 10000 | 192.73 µs | 272.81 µs | 0.71× |
+| calls/fib 25 | 216.42 µs | 288.40 µs | 0.75× |
+| loops/sum 1000000 | 606.50 µs | 729.09 µs | 0.83× |
+| runtime/select 1000 | 123.55 µs | 144.15 µs | 0.86× |
+| strings/split 100 | 754.1 ns | 801.2 ns | 0.94× |
+| runtime/mutex 4x1000 | 20.20 µs | 20.81 µs | 0.97× |
+| loops/collatz 10000 | 815.66 µs | 836.66 µs | 0.97× |
+| calls/closure 1000 | 202.6 ns | 206.7 ns | 0.98× |
+| floats/sqrt 100000 | 177.00 µs | 174.15 µs | 1.02× |
+| tasks/spawn 1000 | 194.66 µs | 168.82 µs | 1.15× |
 
 [`bench/README.md`](bench/README.md) has every row with its allocations, and
 how to run them. The toolchain says where the time goes: `tondo optimizations`
