@@ -207,9 +207,13 @@ stats.to:9:20: `readings` runs four turns at a time (in main, mean)
 stats.to:12:13: `count += 1` cannot overflow: no check, in one copy of the code; another keeps the check (in main, mean)
 stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is copied (in main)
 stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in label)
+stats.to:19:5: `"{sensor}: {value:.1}"` stays on the heap: `label` returns it with what it was given (in label)
+stats.to:19:5: `"{sensor}: {value:.1}"` stays on the heap: regions do not take texts yet (in main)
+stats.to:19:17: `value` in `formats.formatFloat`, `formatNumber(` stays a call of `formats.formatNumber`: its body costs 31, more than the 30 inlining takes (in label)
 stats.to:19:17: `value` stays a call of `formats.formatFloat`: its body costs 80, more than the 30 inlining takes (in main)
 stats.to:19:17: `value` is inlined: the body of `formats.formatFloat` is copied here (in label)
 stats.to:24:14: `0..1000` runs four turns at a time (in main)
+stats.to:25:9: `readings.push(Reading { sensor: if n % 2 == 0 { "a" } else …` grows an array that goes in a region of `main` (in main)
 stats.to:25:9: `readings.push(Reading { sensor: if n % 2 == 0 { "a" } else …` takes room for every turn before the loop (in main)
 stats.to:25:44: `n % 2` is a shift or a mask: its dividend is not negative (in main)
 stats.to:27:21: `label("a", mean(readings, "a"))` is inlined: the body of `label` is copied here (in main)
@@ -231,6 +235,11 @@ from the bottom:
   the heap. A string, a closure or a record that does not outlive its
   function stays in the function's frame, and the line says which of the
   two happened and what decided it.
+- **Regions.** The array of readings never leaves `main`, and its size is
+  not known when compiling, so it goes in a region of `main`: it is made
+  by moving a pointer and goes with the region when `main` ends
+  ([What a region takes](#what-a-region-takes)). The label stays on the
+  heap, and the line says why.
 - **Checks.** The compiler proved that `count += 1` cannot overflow in one
   copy of the loop, which has no check; the copy it could not prove it for
   keeps it. A check that stays says so too.
@@ -274,6 +283,8 @@ $ tondo optimizations kept.to --function of
 kept.to:8:9: `reading` keeps a count of its own: what it is given to may keep it: `found.push(reading)` at 10:13 (in main, of)
 kept.to:8:20: `readings` runs one turn at a time: each turn counts a value or measures a text, which costs more than the test saved (in main, of)
 kept.to:10:13: `found.push(reading)` grows as it is pushed to: the loop pushes to it in some turns only (in main, of)
+kept.to:10:13: `found.push(reading)` grows an array that goes in a region of `main` (in main)
+kept.to:10:13: `found.push(reading)` grows an array that stays on the heap: `of` returns it, and no call of it is left in the program's code: each was inlined (in of)
 ```
 
 Each remark names what the code does that the optimization could not get
@@ -281,12 +292,14 @@ past: the element is kept, by the push the remark names, so it is counted; count
 heavy to run four at a time; and the array cannot be given its room
 beforehand, since only some turns push. None of it is wrong here, and the
 view is how one knows that the cost is the program's and not an accident.
+The last two lines are of where the array is made: in the copy of `of` that
+was inlined in `main`, which lets go of it, it goes in a region of `main`.
 
 | | |
 | --- | --- |
 | `--function <name>` | one function, and the code written in it wherever it went |
 | `--kind heap` | only what allocates |
-| `--kind region` | where a [region](#where-a-region-would-take-it) would take what each place allocates |
+| `--kind region` | what goes in a [region](#what-a-region-takes), and what stays on the heap and why |
 | `--kind hoisted`, `--kind reloaded` | the [lengths](#a-length-read-once) a loop reads once, and those it reads each turn |
 | `--tests` | the tests and benchmarks instead of the program |
 | `--against <rev>` | only what a change made different |
@@ -424,10 +437,13 @@ this chapter, is under the kind `unchecked`.
 
 A program that has a `recover` anywhere, as tests often do, pays one more
 thing in its loops: after what may panic, it looks whether it did. The
-same function, called inside `recover { ... }`, shows it:
+same function, called as `recover { letters("hello, world") }`, shows it:
 
 ```text
 $ tondo optimizations caught.to --kind checked
+caught.to:6:14: `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` is followed by a check for a panic, in a loop: a program with a `recover` checks after what may panic (in letters, main)
+caught.to:6:14: `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` keeps its overflow check, in a loop: its operands' bounds allow a result past `Int.Max` (in letters, main)
+caught.to:7:12: `c.isLetter()` in `Char.isLetter`, `textNative.charIs(self, 1)` is followed by a check for a panic, in a loop: a program with a `recover` checks after what may panic (in letters, main)
 caught.to:8:13: `count += 1` is followed by a check for a panic, in a loop: a program with a `recover` checks after what may panic (in letters, main)
 caught.to:8:13: `count += 1` keeps its overflow check, in a loop: nothing bounds `count` from above (in letters, main)
 ```
@@ -529,12 +545,13 @@ fn main() {
 
 ```text
 $ tondo optimizations squares.to --function byChain --kind call
+squares.to:10:5: `numbers.iter().filter((n) { n % 2 == 0 }).map((n) { n * n }…` in `Iterator.sum[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int]`, `self.sumBy((item) { item })` stays a call of `Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int]`: its body costs 48, more than the 30 inlining takes (in byChain, main)
 squares.to:10:27: `(n) { n % 2 == 0 }` is called by its body where a record holds it, as an iterator's adapter does (in prelude.FilterIterator.next[prelude.ArrayIterator[Int], Int])
 squares.to:10:51: `(n) { n * n }` is called by its body where a record holds it, as an iterator's adapter does (in Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int])
 ```
 
 The chain is run by the standard library's `sumBy`, which `sum` calls: a
-function of its own, not copied into `byChain`. A release build makes a copy
+function of its own, not copied into `byChain`, as the first line says. A release build makes a copy
 of it for this chain in which it knows the closure that each adapter holds:
 asking the filter and the map for the next number calls the body of each
 closure, and no longer a value that could be any function. The lines name
@@ -546,8 +563,8 @@ The two closures are still allocated, each time `byChain` runs:
 
 ```text
 $ tondo optimizations squares.to --function byChain --kind heap
-squares.to:10:27: `(n) { n % 2 == 0 }` is made on the heap: a value holds it (in byChain, main)
-squares.to:10:51: `(n) { n * n }` is made on the heap: a value holds it (in byChain, main)
+squares.to:10:27: `(n) { n % 2 == 0 }` is made on the heap: a value holds it: `numbers.iter().filter((n) { n % 2 == 0 }).map((n)…` at 10:5 (in byChain, main)
+squares.to:10:51: `(n) { n * n }` is made on the heap: a value holds it: `numbers.iter().filter((n) { n % 2 == 0 }).map((n)…` at 10:5 (in byChain, main)
 ```
 
 Those of `byArrays` are made in the frame, since its methods only call
@@ -557,23 +574,25 @@ though. A benchmark of the two over a thousand numbers shows both costs:
 ```text
 $ tondo test --bench
 test squares::unit::squares::aThousand ... ok
-  arrays     1.299 µs/op  ±0.9%  9 allocs/op  12448 B/op  25.1k ins/op
-  chain      1.441 µs/op  ±0.6%  2 allocs/op  80 B/op  38.2k ins/op
+  arrays     1.127 µs/op  ±0.2%  0 allocs/op +9 in regions  0 B/op +12448 in regions  24.0k ins/op
+  chain      1.618 µs/op  ±0.1%  2 allocs/op  80 B/op  38.2k ins/op
 ```
 
 The chain allocates its two closures and nothing else, however long the
-array is: less than a hundredth of the memory here. The arrays' form is
+array is: less than a hundredth of the memory here. The arrays' form makes
+its arrays in a region, which the row counts apart from the heap, and is
 still the faster of the two, with two thirds of the instructions.
 
-### Where a region would take it
+### What a region takes
 
 Code that builds a large structure and lets go of all of it at once, as a
 parser's tree or a document read to answer one question, spends much of its
-time letting go, value by value. A region would let go of it together.
-Tondo has no regions yet. `tondo optimizations --kind region` says what
-they would take, for each place that allocates, so that building them is
-decided on real programs; it speaks only when asked, since it tells of
-something that is not there.
+time letting go, value by value. A release build puts in a region what it
+proves never leaves a scope: a value there is made by moving a pointer, and
+the region goes whole when the scope ends, with no value visited. Nothing
+is written for it, and a build with `--debug` or a live one has none.
+`tondo optimizations` says, of each place that allocates, the region its
+values go in, or what keeps them on the heap.
 
 ```tondo
 import std.console
@@ -611,35 +630,74 @@ fn main() {
 29124
 ```
 
+A benchmark of `sum(build(8, 4))` against the Tondo of 57ef8277, from
+before it had regions, which `tondo compiler 57ef8277` builds
+([Against another version](#against-another-version)):
+
+```text
+$ tondo test --bench --compiler <the tondo of 57ef8277>
+test tree::unit::tree::aTree ... ok
+  tree of 87 thousand nodes     793.3 µs/op  ±0.4%  0 allocs/op +21845 in regions  0 B/op +2097120 in regions  15.79M ins/op  -28.9% faster, -22.9% ins, cycles -26.5%, l1d misses -35.5%, 0 allocs/op, was 21845, 0 B/op, was 2097120, 21845 allocs/op in regions, was 0, 2097120 B/op in regions, was 0
+```
+
+The tree's arrays are still made, all 21845 of them: the row counts them
+`in regions`, apart from `allocs/op`, which is the heap's. What is gone is
+the walk that let go of each, and with it 29% of the time.
+`testing.allocations` counts the two together, so a test that holds a
+function to its count does not change when its values move to a region
+([Testing](testing.md)).
+
 ```text
 $ tondo optimizations tree.to --kind region
-tree.to:13:13: `children.push(build(depth - 1, fan))` grows an array that would go in a region of `main` (in main)
-tree.to:13:13: `children.push(build(depth - 1, fan))` grows an array that would go in a region that the caller of `build` gives (in build)
+tree.to:13:13: `children.push(build(depth - 1, fan))` grows an array that goes in a region that the caller of `build` gives (in build)
+tree.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: it holds a value that its region did not make (in main)
+tree.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: it outlives a turn of the loop at line 12 (in main)
 ```
 
-The copy of the line that was inlined in `main` builds what `main` lets go
-of, so a region of `main` would hold it. `build` itself only returns what
-it builds, new, so it would build in a region that its caller gives.
+There are three regions a value can go in:
+
+- **Of its function**, when nothing keeps it beyond the call, as the array
+  of readings of the first program of this chapter.
+- **Of a turn of a loop**, when it does not outlive the turn: the region is
+  emptied at each turn, as the benchmark's own loop does with each tree.
+- **One its caller gives**, when the function only returns what it makes,
+  new, and the caller lets go of it: `build` here. The function builds in
+  its caller's region, in a copy of it made for the calls that let its
+  result go.
+
+The other two lines are of the copy of `build` that was inlined in `main`.
+There the tree stays on the heap: the code of several levels of `build` is
+one loop in `main`, and the analysis cannot yet tell that an array moved
+into its parent is done with at the end of the turn. A tree built by a call
+that stays a call, as in the benchmark, goes in a region whole.
 
 A place stays on the heap when something keeps what it makes beyond the
-call, and the remark names the code that does. The verdict is by call. With
-a function added to the program that sends a tree through a channel, `fn
-offer(sender: Sender[Node], depth: Int) { sender.send(build(depth, 2)) }`,
-which `main` calls after its sum:
+scope, and the remark names the code that does. The verdict is by call.
+With a function added to the program that sends a tree through a channel,
+`fn offer(sender: Sender[Node], depth: Int) { sender.send(build(depth, 2))
+}`, which `main` calls after its sum:
 
 ```text
-$ tondo optimizations kept.to --kind region --function build
-kept.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: it is sent: `sender.send(build(depth, 2))` at 29:5 (in main, offer)
-kept.to:13:13: `children.push(build(depth - 1, fan))` grows an array that would go in a region of `main` (in main)
-kept.to:13:13: `children.push(build(depth - 1, fan))` grows an array that would go in a region that the caller of `build` gives, in a copy of it for the calls that let it go: `main` at 33; `main` keeps it: it is sent: `sender.send(build(depth, 2))` at 29:5 (in build)
+$ tondo optimizations offered.to --kind region --function build
+offered.to:13:13: `children.push(build(depth - 1, fan))` grows an array that goes in a region that the caller of `build` gives, in a copy of it for the calls that let it go: `main` at 33; `main` keeps it: it is sent: `sender.send(build(depth, 2))` at 29:5 (in build)
+offered.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: it holds a value that its region did not make (in main)
+offered.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: it is sent: `sender.send(build(depth, 2))` at 29:5 (in main, offer)
+offered.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: it outlives a turn of the loop at line 12 (in main)
 ```
 
-The trees that `main` lets go of would still be built in its region, by a
-copy of `build` made for the calls that let its result go; the one that is
-sent stays on the heap, and one call that keeps does not take the region
-from the others. The other reasons to stay on the heap are that a value is
-stored in what the function was given, in a lock's state or in a `Ref`,
-captured by a closure, taken by a task or given to C.
+The call that lets its tree go still gets a region, and the tree that is
+sent stays on the heap: one call that keeps does not take the region from
+the others. The reasons a value stays on the heap are that it is stored in
+what the function was given, in a lock's state or in a `Ref`; that a
+closure captures it, that it is sent, taken by a task or given to C; that
+it outlives a turn of its loop; that it holds a value its region did not
+make; and that regions do not take that kind of value yet, as texts and
+maps.
+
+What regions hold is seen where the heap is: a memory profile has
+`region_objects` and `region_space` beside the heap's samples, `tondo
+counters` has the bytes regions hold now, and a dump lists the memory in
+regions by the place that made it ([Observing](observing.md)).
 
 ## The machine code: asm
 
@@ -1174,15 +1232,16 @@ nothing chosen in the source.
 
 | | |
 | --- | --- |
-| `tondo test --bench` | allocations and bytes for each operation |
-| `testing.allocations(closure)` | the same count in a test, which fails when it grows ([Testing](testing.md#benchmarks)) |
+| `tondo test --bench` | allocations and bytes for each operation, on the heap and in regions |
+| `testing.allocations(closure)` | the two added, in a test, which fails when the count grows; `testing.heapAllocations` for the heap alone ([Testing](testing.md#benchmarks)) |
 | `tondo optimizations --kind heap` | each place that allocates, and what keeps it on the heap |
-| `tondo optimizations --kind region` | where a region would take it, were there regions |
+| `tondo optimizations --kind region` | each place whose values go in a region, and each that stays on the heap, with why |
 | `tondo profile <program> --memory` | what is allocated and what is held, by line |
 | `tondo test --exact <id> --bench --profile memory` | where a benchmark allocates |
 | `tondo profile show <profile> --sample alloc_objects --lines` | the lines that allocate most often |
+| `tondo profile show <profile> --sample region_objects --lines` | the lines that make most values in regions |
 | `tondo dump diff a.json b.json` | what grew between two moments of a running program |
-| `tondo counters <program>` | memory held, the rate of allocation, the collector's pauses |
+| `tondo counters <program>` | memory held, what regions hold, the rate of allocation, the collector's pauses |
 
 A memory profile samples allocations. `TONDO_HEAP_RATE=1` in the program's
 environment records every one, for a benchmark where each allocation is to
