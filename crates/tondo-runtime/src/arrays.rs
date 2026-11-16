@@ -151,10 +151,20 @@ pub extern "C" fn tondo_rt_array_reserved(size: usize, capacity: usize) -> *mut 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_array_retain(a: *mut ArrayHeader) {
-    if !a.is_null() {
-        unsafe { (*a).rc.fetch_add(1, Ordering::Relaxed) };
+    if a.is_null() {
+        return;
+    }
+    let rc = unsafe { &(*a).rc };
+    if rc.load(Ordering::Relaxed) & SHARED_FOREVER == 0 {
+        rc.fetch_add(1, Ordering::Relaxed);
     }
 }
+
+/// The count of an array in the program's data, as `[]` is, which codegen
+/// writes: one no release takes to one, so that a change copies it.
+/// Retaining and releasing it leave it as it is, as each would otherwise be
+/// an atomic operation on one word that every thread that holds `[]` shares.
+const SHARED_FOREVER: usize = 1 << 62;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_array_release(a: *mut ArrayHeader, size: usize, release: Option<Glue>) {
@@ -165,6 +175,7 @@ pub unsafe extern "C" fn tondo_rt_array_release(a: *mut ArrayHeader, size: usize
     let rc = unsafe { &(*a).rc };
     let before = match rc.load(Ordering::Relaxed) {
         last @ (1 | LAST_IN_BLOCK) => last,
+        shared if shared & SHARED_FOREVER != 0 => return,
         _ => rc.fetch_sub(1, Ordering::Release),
     };
     match before {
@@ -1069,5 +1080,32 @@ pub unsafe extern "C" fn tondo_rt_sb_array(b: *mut Builder, a: *mut ArrayHeader,
             display(b, element(a, size, k));
         }
         (*b).push(b']');
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An array of the program's data, as `[]` is, keeps its count through
+    /// retains and releases, and one of its own counts them.
+    #[test]
+    fn a_static_array_is_counted_by_no_one() {
+        let mut shared = ArrayHeader { rc: AtomicUsize::new(SHARED_FOREVER), len: 0, cap: 0, head: 0 };
+        let array = &mut shared as *mut ArrayHeader;
+        unsafe {
+            tondo_rt_array_retain(array);
+            tondo_rt_array_release(array, 8, None);
+            tondo_rt_array_release(array, 8, None);
+        }
+        assert_eq!(shared.rc.load(Ordering::Relaxed), SHARED_FOREVER);
+        let own = tondo_rt_array_new(8, 0);
+        unsafe {
+            tondo_rt_array_retain(own);
+            assert_eq!((*own).rc.load(Ordering::Relaxed), 2);
+            tondo_rt_array_release(own, 8, None);
+            assert_eq!((*own).rc.load(Ordering::Relaxed), 1);
+            tondo_rt_array_release(own, 8, None);
+        }
     }
 }
