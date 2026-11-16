@@ -9,6 +9,8 @@ import std.sync as __sync
 
 enum Payload {
     Data(Array[Byte])
+    /// A text, which the server sends as its bytes without copying them.
+    Text(String)
     Stream(__io.Reader)
     /// A stream whose trailers follow its last bytes.
     Trailed(__io.Reader, Trailers)
@@ -48,7 +50,7 @@ pub fn Reply.text(text: String, status: Int = 200): Reply {
     Reply {
         code: status
         headerList: ["content-type", "text/plain; charset=utf-8"]
-        payload: Payload.Data(text.bytes())
+        payload: Payload.Text(text)
     }
 }
 
@@ -57,17 +59,16 @@ pub fn Reply.html(html: String, status: Int = 200): Reply {
     Reply {
         code: status
         headerList: ["content-type", "text/html; charset=utf-8"]
-        payload: Payload.Data(html.bytes())
+        payload: Payload.Text(html)
     }
 }
 
 /// The value as JSON (`std.json`).
 pub fn Reply.json[T: __serialization.Encode](value: T, status: Int = 200): Reply {
-    let data = __json.encode(value).bytes()
     Reply {
         code: status
         headerList: ["content-type", "application/json"]
-        payload: Payload.Data(data)
+        payload: Payload.Text(__json.encode(value))
     }
 }
 
@@ -207,6 +208,7 @@ pub fn Reply.withStatus(self, status: Int): Reply {
 pub fn Reply.body(self): Array[Byte]? {
     match self.payload {
         Payload.Data(bytes) => bytes
+        Payload.Text(text) => text.bytes()
         _ => none
     }
 }
@@ -266,6 +268,6 @@ fn problemReply(problem: Problem): Reply {
     Reply {
         code: problem.status
         headerList: ["content-type", "application/problem+json"]
-        payload: Payload.Data(body.bytes())
+        payload: Payload.Text(body)
     }
 }

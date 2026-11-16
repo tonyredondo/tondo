@@ -117,10 +117,8 @@ pub type Request = {
     priv target: String
     priv queryText: String
     priv protocol: String
-    priv peer: String
-    /// The host it was for, from `:authority` or `Host`, and whether it came
-    /// over TLS.
-    priv authority: String
+    /// Whether it came over TLS. Its client's address and the host it was
+    /// for are read from `native` when asked, as few handlers ask.
     priv secure: Bool
     priv params: Map[String, String]
     /// The route that answers it, chosen before the middleware runs, and
@@ -163,7 +161,7 @@ pub fn Request.rawQuery(self): String {
 pub fn Request.host(self): String {
     match self.forwarded("x-forwarded-host") {
         some(host) => host
-        none => self.authority
+        none => httpNative.requestAuthority(self.native)
     }
 }
 
@@ -194,7 +192,7 @@ pub fn Request.url(self): __url.Url {
 
 /// The first value of a header a trusted proxy wrote, or `none`.
 fn Request.forwarded(self, name: String): String? {
-    if not trusts(self.trusted, hostOf(self.peer)) {
+    if self.trusted.isEmpty() or not trusts(self.trusted, hostOf(self.remoteAddress())) {
         return none
     }
     self
@@ -220,7 +218,7 @@ pub fn Request.clientCertificate(self): __crypto.Certificate? {
 
 /// The client's address and port.
 pub fn Request.remoteAddress(self): String {
-    self.peer
+    httpNative.requestRemote(self.native)
 }
 
 /// The client's IP address, without its port. A connection from a proxy of
@@ -229,7 +227,7 @@ pub fn Request.remoteAddress(self): String {
 /// networks, or `X-Real-Ip`, as Gin's `ClientIP`. Without trusted proxies
 /// no header is believed, since any client can write one.
 pub fn Request.clientIp(self): String {
-    let remote = hostOf(self.peer)
+    let remote = hostOf(self.remoteAddress())
     if not trusts(self.trusted, remote) {
         return remote
     }

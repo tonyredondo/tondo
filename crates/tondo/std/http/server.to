@@ -409,8 +409,6 @@ fn answer(incoming: httpNative.Native, handler: fn(Request): Reply ! Problem) {
         target: httpNative.requestPath(incoming)
         queryText: httpNative.requestQuery(incoming)
         protocol: httpNative.requestVersion(incoming)
-        peer: httpNative.requestRemote(incoming)
-        authority: httpNative.requestAuthority(incoming)
         secure: httpNative.requestSecure(incoming)
         params: [:]
         chosen: none
@@ -429,7 +427,7 @@ fn answer(incoming: httpNative.Native, handler: fn(Request): Reply ! Problem) {
             Reply {
                 code: 500
                 headerList: ["content-type", "application/problem+json"]
-                payload: Payload.Data(body.bytes())
+                payload: Payload.Text(body)
             }
         }
     }
@@ -439,6 +437,7 @@ fn answer(incoming: httpNative.Native, handler: fn(Request): Reply ! Problem) {
 fn send(incoming: httpNative.Native, reply: Reply) {
     match reply.payload {
         Payload.Data(bytes) => httpNative.respond(incoming, reply.code, reply.headerList, bytes)
+        Payload.Text(text) => httpNative.respondText(incoming, reply.code, reply.headerList, text)
         Payload.Stream(input) => httpNative.respondStream(
             incoming,
             reply.code,

@@ -6,6 +6,7 @@ import std.fs as __fs
 import std.gzip as __gzip
 import std.hash as __hash
 import std.internal.http as httpNative
+import std.internal.text as textNative
 import std.io as __io
 import std.net as __net
 import std.serialization as __serialization
@@ -562,6 +563,13 @@ fn compressed(reply: Reply, accepted: String, minimum: Int): Reply {
         Payload.Data(bytes) if bytes.length() >= minimum => Payload.Data(
             if encoding == "zstd" { __zstd.compress(bytes) } else { __gzip.compress(bytes) },
         )
+        Payload.Text(text) if text.byteLength() >= minimum => Payload.Data(
+            if encoding == "zstd" {
+                __zstd.compress(text.bytes())
+            } else {
+                __gzip.compress(text.bytes())
+            },
+        )
         Payload.Stream(input) => {
             let (writer, reader) = __io.pipe()
             spawn detached pump(
@@ -679,7 +687,7 @@ fn wrapped(
 /// `HEAD`, the one with the most fixed segments, and its parameters; or
 /// without one, the methods of the routes its path has.
 fn choose(routes: Array[Route], request: Request): Request {
-    let path = segments(request.target)
+    let path = request.target
     var best: Route? = none
     var bestScore = -1
     var bestParams: Map[String, String] = [:]
@@ -728,51 +736,96 @@ fn dispatch(request: Request): Reply ! Problem {
 }
 
 /// The parameters a pattern takes from a path and how fixed the match is:
-/// two for a fixed segment, one for a parameter.
-fn matching(pattern: Array[String], path: Array[String]): (Map[String, String], Int)? {
+/// two for a fixed segment, one for a parameter. The path is read where it
+/// is, a segment at a time, without its empty ones.
+fn matching(pattern: Array[String], path: String): (Map[String, String], Int)? {
     // Whether it matches first, which most routes do not, making nothing.
     var score = 0
     var rest = false
-    var index = 0
-    for index < pattern.length() {
-        let part = pattern[index]
+    var at = 0
+    for part in pattern {
         if part.startsWith("*") {
             rest = true
             break
         }
-        if index >= path.length() {
-            return none
+        let (start, end) = match nextSegment(path, at) {
+            some(found) => found
+            none => return none
         }
         if part.startsWith(":") {
             score += 1
-        } else if part == path[index] {
+        } else if sameBytes(path, start, end, part) {
             score += 2
         } else {
             return none
         }
-        index += 1
+        at = end
     }
-    if not rest and pattern.length() != path.length() {
+    if not rest and nextSegment(path, at).isSome() {
         return none
     }
     // Then its parameters.
     var params: Map[String, String] = [:]
-    index = 0
-    for index < pattern.length() {
-        let part = pattern[index]
+    at = 0
+    for part in pattern {
         if part.startsWith("*") {
-            let name = part.slice(1, part.length()) ?? ""
-            params[name] = path
-                .drop(index)
-                .map((segment) { __encoding.urlDecode(segment) ?? segment })
-                .join("/")
-        } else if part.startsWith(":") {
-            params[part.slice(1, part.length()) ?? ""] =
-                __encoding.urlDecode(path[index]) ?? path[index]
+            var taken: Array[String] = []
+            for {
+                let (start, end) = match nextSegment(path, at) {
+                    some(found) => found
+                    none => break
+                }
+                let segment = textNative.between(path, start, end)
+                taken.push(__encoding.urlDecode(segment) ?? segment)
+                at = end
+            }
+            params[part.slice(1, part.length()) ?? ""] = taken.join("/")
+            break
+        }
+        let (start, end) = match nextSegment(path, at) {
+            some(found) => found
+            none => break
+        }
+        if part.startsWith(":") {
+            let segment = textNative.between(path, start, end)
+            params[part.slice(1, part.length()) ?? ""] = __encoding.urlDecode(segment) ?? segment
+        }
+        at = end
+    }
+    (params, score)
+}
+
+/// Where the next segment of a path from the byte `at` starts and ends,
+/// past the slashes before it; none after the last.
+fn nextSegment(path: String, at: Int): (Int, Int)? {
+    let length = path.byteLength()
+    var start = at
+    for start < length and textNative.byteAt(path, start) == 47 {
+        start += 1
+    }
+    if start >= length {
+        return none
+    }
+    var end = start + 1
+    for end < length and textNative.byteAt(path, end) != 47 {
+        end += 1
+    }
+    (start, end)
+}
+
+/// Whether the bytes of `path` from `start` to `end` are those of `part`.
+fn sameBytes(path: String, start: Int, end: Int, part: String): Bool {
+    if part.byteLength() != end - start {
+        return false
+    }
+    var index = 0
+    for index < end - start {
+        if textNative.byteAt(path, start + index) != textNative.byteAt(part, index) {
+            return false
         }
         index += 1
     }
-    (params, score)
+    true
 }
 
 fn segments(path: String): Array[String] {

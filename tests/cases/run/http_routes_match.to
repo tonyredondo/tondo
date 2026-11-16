@@ -1,0 +1,58 @@
+// A route matches a path a segment at a time, without the empty ones: a
+// fixed segment goes before a parameter, a parameter takes one segment,
+// decoded, and `*name` takes the rest, each decoded, joined by `/`, or
+// nothing; a path that only routes of other methods match is answered with
+// `405`, and one that none matches with `404`.
+
+import std.console
+import std.http
+
+fn show(client: http.Client, path: String): !http.HttpError {
+    match client.get(path) {
+        ok(reply) => console.println("{path} {reply.status()} {reply.text()?}")
+        err(http.HttpError.Status(answer)) => console.println("{path} {answer.status()}")
+        err(other) => console.println("{path} {other}")
+    }
+}
+
+fn main(): !http.HttpError {
+    var app = http.App()
+    app.get("/users/:id", (request) { http.Reply.text("user {request.param("id")}") })
+    app.get("/users/me", (_) { http.Reply.text("me") })
+    app.get(
+        "/users/:id/posts/:post",
+        (request) { http.Reply.text("post {request.param("post")} of {request.param("id")}") },
+    )
+    app.get("/files/*path", (request) { http.Reply.text("file [{request.param("path")}]") })
+    app.post("/only", (_) { http.Reply.text("posted") })
+    let client = app.client()
+    for path in [
+        "/users/7",
+        "/users/me",
+        "/users//me/",
+        "/users/caf%C3%A9",
+        "/users/7/posts/9",
+        "/files/a/b%20c//d",
+        "/files",
+        "/files/",
+        "/users",
+        "/users/7/more",
+        "/only",
+        "/",
+    ] {
+        show(client, path)?
+    }
+}
+
+// expect-stdout: /users/7 200 user 7
+// expect-stdout: /users/me 200 me
+// expect-stdout: /users//me/ 200 me
+// expect-stdout: /users/caf%C3%A9 200 user café
+// expect-stdout: /users/7/posts/9 200 post 9 of 7
+// expect-stdout: /files/a/b%20c//d 200 file [a/b c/d]
+// expect-stdout: /files 200 file []
+// expect-stdout: /files/ 200 file []
+// expect-stdout: /users 404
+// expect-stdout: /users/7/more 404
+// expect-stdout: /only 405
+// expect-stdout: / 404

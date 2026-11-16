@@ -343,7 +343,8 @@ struct Request {
     uri: hyper::Uri,
     version: hyper::Version,
     headers: hyper::HeaderMap,
-    remote: String,
+    /// Its connection's, one for all its requests.
+    remote: Arc<str>,
     /// Whether it came over TLS.
     secure: bool,
     /// The DER of the certificate the client showed, if it showed one.
@@ -375,7 +376,7 @@ impl Request {
             uri: hyper::Uri::default(),
             version: hyper::Version::default(),
             headers: hyper::HeaderMap::new(),
-            remote: String::new(),
+            remote: Arc::from(""),
             secure: false,
             client: Arc::default(),
             body: Mutex::new(None),
@@ -1110,6 +1111,7 @@ async fn serving(
         None => (stream, Vec::new()),
     };
     let (client, answering) = (Arc::new(client), stopping.clone());
+    let remote: Arc<str> = Arc::from(remote);
     // Weak: the exchange holds this future, which would keep it alive.
     let exchange = Arc::downgrade(&exchange);
     let streams = Streams(exchange.clone());
@@ -1145,7 +1147,7 @@ async fn serving(
 async fn handle(
     mut request: hyper::Request<Incoming>,
     exchange: std::sync::Weak<Exchange>,
-    remote: String,
+    remote: Arc<str>,
     secure: bool,
     client: Arc<Vec<u8>>,
     limits: Limits,
@@ -1521,6 +1523,38 @@ pub extern "C" fn tondo_rt_http_respond(
     data: *mut ArrayHeader,
 ) {
     request(object).send(response(status, &strings(headers), full(unsafe { array_items::<u8>(data) }.to_vec())));
+}
+
+/// Responds with a text, which the body reads where it is, without a copy.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_http_respond_text(
+    object: *mut NativeObject,
+    status: i64,
+    headers: *mut ArrayHeader,
+    text: *mut Str,
+) {
+    unsafe { super::strings::tondo_rt_str_retain(text) };
+    let body = full(Bytes::from_owner(Held(text)));
+    request(object).send(response(status, &strings(headers), body));
+}
+
+/// A text of the program that a reply's body reads where it is, held until
+/// hyper lets go of it: the program changes a copy of a text two hold.
+struct Held(*mut Str);
+
+// A text's count is atomic, and nothing changes the bytes of one held.
+unsafe impl Send for Held {}
+
+impl AsRef<[u8]> for Held {
+    fn as_ref(&self) -> &[u8] {
+        unsafe { super::strings::str_bytes(self.0) }
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        unsafe { super::strings::tondo_rt_str_release(self.0) };
+    }
 }
 
 /// Responds with what a stream gives, as it gives it.

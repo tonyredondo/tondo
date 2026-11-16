@@ -1766,6 +1766,7 @@ pub const NATIVES: &[Native] = {
         http("requestBody", &[Object], IoReader, "tondo_rt_http_request_body"),
         http("requestRead", &[Object], Bytes, "tondo_rt_http_request_read"),
         http("respond", &[Object, Int, Strings, Bytes], Unit, "tondo_rt_http_respond"),
+        http("respondText", &[Object, Int, Strings, String], Unit, "tondo_rt_http_respond_text"),
         http("respondStream", &[Object, Int, Strings, IoReader], Unit, "tondo_rt_http_respond_stream"),
         http("respondTrailed", &[Object, Int, Strings, IoReader, Object], Unit, "tondo_rt_http_respond_trailed"),
         http("trailers", &[], Object, "tondo_rt_http_trailers"),
