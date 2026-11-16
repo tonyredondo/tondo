@@ -14,6 +14,7 @@ heap and why, and which checks a loop keeps. Everything shown was run.
 - [Where a build's time goes: timings](#where-a-builds-time-goes-timings)
 - [Against another version](#against-another-version)
 - [The processor a build is for](#the-processor-a-build-is-for)
+- [What the places for logpoints cost](#what-the-places-for-logpoints-cost)
 - [Many numbers at once: vectors](#many-numbers-at-once-vectors)
 - [Memory](#memory)
 - [What not to be fooled by](#what-not-to-be-fooled-by)
@@ -901,6 +902,40 @@ error[E1809]: this call needs `Bmi2` of the processor, and `main`, or the top le
 
 Built with `--cpu x86-64-v3`, whose level has BMI2, the test is answered
 when compiling and only the instruction's way is in the program.
+
+## What the places for logpoints cost
+
+A Release build keeps, at each line, a place where `tondo logpoint` and a
+breakpoint of a Release program can be put while it runs
+([Observing](observing.md#what-a-line-holds-logpoint)). The place is five
+bytes that do nothing, and passing them is the only cost when nobody asks
+for one. In most code it does not show: on the benchmarks of this repository
+all but a few do under 1% more instructions with them. It shows where a line
+is a handful of instructions and runs many times:
+
+```text
+$ tondo test bench/tondo --bench --filter bench::calls
+  fib 25           217.8 µs/op  ±0.2%  0 allocs/op  0 B/op  4.81M ins/op
+$ tondo test bench/tondo --bench --filter bench::calls --no-logpoints
+  fib 25           226.9 µs/op  ±1.4%  0 allocs/op  0 B/op  3.84M ins/op
+```
+
+A quarter more instructions with the places. In time it is far less, since
+an instruction that does nothing is the cheapest there is: about 5% on a
+quiet machine, which is less than a busy one moves a measure by, as these
+two runs show, where the build without them took longer
+([What not to be fooled by](#what-not-to-be-fooled-by)). A program measured
+to need those instructions back is built without the places:
+
+| | |
+| --- | --- |
+| `--no-logpoints` | in `build`, `run`, `test`, `asm` and `size` |
+| `logpoints = false` | in the `[build]` of the program's `tondo.toml`, for every build of it |
+
+Such a program takes no logpoint and no breakpoint while it runs, and says
+so when asked for one. Leave the places in a program that runs in
+production unless a measure of that program says otherwise: they are what
+lets one ask it what a line holds without building it again.
 
 ## Many numbers at once: vectors
 
