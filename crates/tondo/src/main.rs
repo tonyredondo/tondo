@@ -614,6 +614,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             }
             "--cpu" => driver::set_cpu(&value()?),
             "--no-logpoints" => driver::set_no_logpoints(),
+            "--no-regions" => driver::set_no_regions(),
             "--deny-skips" => options.deny_skips = true,
             "--allow-flaky" => options.allow_flaky = true,
             "--lock-order" => options.lock_order = true,
@@ -2284,6 +2285,9 @@ fn size_command(args: &[OsString]) -> Result<ExitCode, String> {
     if take_flag(&mut args, "--no-logpoints") {
         driver::set_no_logpoints();
     }
+    if take_flag(&mut args, "--no-regions") {
+        driver::set_no_regions();
+    }
     let mut valued = |flag: &str| -> Result<Option<String>, String> {
         let Some(at) = args.iter().position(|a| a == flag) else { return Ok(None) };
         let value = args.get(at + 1).and_then(|v| v.to_str()).filter(|v| !v.starts_with('-')).map(str::to_string);
@@ -2400,6 +2404,9 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
     let runtime = take_flag(&mut args, "--runtime");
     if take_flag(&mut args, "--no-logpoints") {
         driver::set_no_logpoints();
+    }
+    if take_flag(&mut args, "--no-regions") {
+        driver::set_no_regions();
     }
     let mut valued = |flag: &str| -> Result<Option<String>, String> {
         let Some(at) = args.iter().position(|a| a == flag) else { return Ok(None) };
@@ -2889,6 +2896,8 @@ fn link_options(args: &[OsString]) -> Result<(BuildOptions, Vec<OsString>), Stri
             driver::set_cpu(&name.to_string_lossy());
         } else if arg == "--no-logpoints" {
             driver::set_no_logpoints();
+        } else if arg == "--no-regions" {
+            driver::set_no_regions();
         } else if arg == "--static" && !statically {
             statically = true;
         } else if arg == "--debug" && !debug {
@@ -3001,6 +3010,7 @@ fn library_command(args: &[OsString]) -> Result<ExitCode, String> {
                 None => return Err(format!("--cpu needs a level of processor, as baseline\n{USAGE}")),
             },
             Some("--no-logpoints") => driver::set_no_logpoints(),
+            Some("--no-regions") => driver::set_no_regions(),
             Some("--static") => {
                 return Err("--static builds executables; a library is linked into its host, as the host is".into());
             }

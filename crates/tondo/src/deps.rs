@@ -46,6 +46,9 @@ pub struct Package {
     /// Whether its builds leave a place at each line for a logpoint
     /// (`[build] logpoints`).
     pub logpoints: bool,
+    /// Whether its release builds put in regions what the program makes and
+    /// lets go (`[build] regions`).
+    pub regions: bool,
 }
 
 /// A generator (27.5 of the language): a program that writes modules of
@@ -110,6 +113,7 @@ struct Manifest {
     architectures: Vec<Arch>,
     cpu: Option<(String, String)>,
     logpoints: bool,
+    regions: bool,
 }
 
 /// Reads `tondo.toml` in `dir`; a missing file declares nothing.
@@ -128,6 +132,7 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
         architectures: Vec::new(),
         cpu: None,
         logpoints: true,
+        regions: true,
     };
     if !path.is_file() {
         return Ok(manifest);
@@ -232,10 +237,18 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
                                 return Err(at(line, usage.into()));
                             }
                         },
+                        ("regions", _) => match &value {
+                            crate::toml::Value::Boolean(on) => manifest.regions = *on,
+                            _ => {
+                                let usage = "`regions = false` builds the program without regions: what it makes \
+                                             and lets go goes on the heap";
+                                return Err(at(line, usage.into()));
+                            }
+                        },
                         _ => {
                             return Err(at(
                                 line,
-                                format!("unknown key `{key}` in `[build]`, which has `cpu` and `logpoints`"),
+                                format!("unknown key `{key}` in `[build]`, which has `cpu`, `logpoints` and `regions`"),
                             ));
                         }
                     }
@@ -498,6 +511,7 @@ impl Resolver<'_> {
             architectures: manifest.architectures,
             cpu: manifest.cpu,
             logpoints: manifest.logpoints,
+            regions: manifest.regions,
         });
         self.visiting.push(dir.clone());
         for (dependency, source) in manifest.dependencies {

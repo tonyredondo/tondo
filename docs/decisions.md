@@ -7612,3 +7612,13 @@ neither. The cases run with it but in the static mode, which keeps the runtime's
 so do the examples' tests and the tests of `bench/tondo`. Nothing of it runs unless the variable
 is set: a chunk that goes, and a loop's region at each turn, read one word more, beside the
 thread's list a chunk goes to and the hooks a turn already reads.
+
+## A release build can leave regions out
+
+After two wrong results regions gave in one day, Tony chose that a user who meets one can go on
+working while it is mended, and compare a program with and without them: `--no-regions` on the
+commands that take `--no-logpoints`, `run`, `build`, `test`, `asm` and `size`, and `regions = false`
+in the `[build]` of the root `tondo.toml`, with the MCP tools' `no_regions` and the editor's
+`tondo.build.flags`. Such a build runs every pass but the regions', puts on the heap what the
+program makes and lets go, and is a build of its own in the cache, as one without logpoint sites
+is. `tondo optimizations` does not take it: what it shows is what regions would do.

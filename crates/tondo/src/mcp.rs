@@ -1303,6 +1303,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         option(argv, "--target", "target");
         option(argv, "--cpu", "cpu");
         switch(argv, "--no-logpoints", "no_logpoints");
+        switch(argv, "--no-regions", "no_regions");
         for library in args.list("link") {
             argv.extend(["--link".to_string(), library]);
         }
@@ -1486,6 +1487,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             option(&mut argv, "--target", "target");
             option(&mut argv, "--cpu", "cpu");
             switch(&mut argv, "--no-logpoints", "no_logpoints");
+            switch(&mut argv, "--no-regions", "no_regions");
         }
         "dump_plugin" => push(&["dump", "plugin", &args.need("debugger")?, "--json"]),
         "profile_show" => {
@@ -2367,6 +2369,12 @@ const NO_LOGPOINTS: (&str, &str, &str) = (
     "Build without the place at each line where a logpoint goes, a `nop` each time the line runs: a few percent \
 faster in code that does little but call, and no `logpoint` or Release breakpoint in it (`--no-logpoints`).",
 );
+const NO_REGIONS: (&str, &str, &str) = (
+    "no_regions",
+    "boolean",
+    "A release build that puts nothing in a region: what the program makes and lets go goes on the heap, to go on \
+with a program a region gives a wrong result in, or to compare (`--no-regions`).",
+);
 const LINK: (&str, &str, &str) = ("link", "strings", "Native libraries to link, by name (-l) or file (`--link`).");
 const TIMINGS: (&str, &str, &str) = (
     "timings",
@@ -2522,6 +2530,7 @@ against, what changed since a git revision.",
             TARGET,
             CPU,
             NO_LOGPOINTS,
+            NO_REGIONS,
         ],
     },
     Tool {
@@ -2732,6 +2741,7 @@ and the header <name>.h.",
             TARGET,
             CPU,
             NO_LOGPOINTS,
+            NO_REGIONS,
             LINK,
             TIMINGS,
         ],
@@ -2764,6 +2774,7 @@ message, data, source and stack, as data.",
             TARGET,
             CPU,
             NO_LOGPOINTS,
+            NO_REGIONS,
             LINK,
             TIMINGS,
         ],
@@ -2833,6 +2844,7 @@ is reduced and kept in the project's `fuzz/` store, which every run of the tests
             TARGET,
             CPU,
             NO_LOGPOINTS,
+            NO_REGIONS,
             TIMINGS,
             ("flags", "strings", "Other options, as `tondo test` takes them: --seed, --timeout, --repeat..."),
         ],

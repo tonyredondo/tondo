@@ -1393,6 +1393,36 @@ fn a_build_without_logpoint_sites() {
     assert!(stderr.contains("tondo.toml:5: `logpoints = false` builds the program without"), "{stderr}");
 }
 
+/// `--no-regions`, or `regions = false` in a project's `[build]`, builds a
+/// program that puts nothing in a region: what a turn of a loop makes goes
+/// on the heap, the program does what it did, and the build is one of its
+/// own, not the other's from the cache. Another value of the key says what
+/// to write.
+#[test]
+fn a_build_without_regions() {
+    let source: &[u8] = b"import std.console\n\nfn turns(count: Int): Int {\n    var total = 0\n    \
+        for i in 0..count {\n        var row = [i, i + 1]\n        row.push(i)\n        total += row.length()\n    \
+        }\n    total\n}\n\nfn main() {\n    console.println(\"{turns(1000)}\")\n}\n";
+    let dir = project_at("no-regions", &[("src/main.to", source), ("tondo.toml", b"[package]\nname = \"turns\"\n")]);
+    let tondo_in = |args: &[&str]| {
+        let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+        assert!(ran.status.success(), "{args:?}: {}", String::from_utf8_lossy(&ran.stderr));
+        String::from_utf8_lossy(&ran.stdout).into_owned()
+    };
+    let regions = |said: &str| said.matches("tondo_rt_region").count();
+    assert!(regions(&tondo_in(&["asm", ".", "turns"])) > 0);
+    assert_eq!(regions(&tondo_in(&["asm", ".", "turns", "--no-regions"])), 0);
+    assert_eq!(tondo_in(&["run", ".", "--no-regions"]), "3000\n");
+    assert_eq!(tondo_in(&["run", "."]), "3000\n");
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"turns\"\n\n[build]\nregions = false\n").unwrap();
+    assert_eq!(regions(&tondo_in(&["asm", ".", "turns"])), 0);
+    assert_eq!(tondo_in(&["run", "."]), "3000\n");
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"turns\"\n\n[build]\nregions = \"no\"\n").unwrap();
+    let (_, stderr, status) = tondo(&dir, &["check", "."]);
+    assert_eq!(status, 3, "{stderr}");
+    assert!(stderr.contains("tondo.toml:5: `regions = false` builds the program without regions"), "{stderr}");
+}
+
 /// `tondo asm` writes the machine code a release build makes of a
 /// function, under the lines of the program it is of, with its IR before
 /// and after Cranelift optimizes it with `--clif`, as data with `--json`,

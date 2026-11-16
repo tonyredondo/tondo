@@ -256,6 +256,9 @@ pub struct Analysis {
     /// Whether the root package's `[build] logpoints` leaves a place at
     /// each line for a logpoint, as it does unless it says `false`.
     pub logpoints: bool,
+    /// Whether the root package's `[build] regions` lets a release build
+    /// put values in regions, as it does unless it says `false`.
+    pub regions: bool,
 }
 
 thread_local! {
@@ -732,6 +735,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
     let mut elsewhere = Vec::new();
     let mut cpu = None;
     let mut logpoints = true;
+    let mut regions = true;
     PROJECT_CPU.with(|project| *project.borrow_mut() = None);
     // The dependencies, whose warnings their authors see, not this program's.
     let mut dependencies: Vec<String> = Vec::new();
@@ -778,6 +782,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         // The program's own `[build]` decides, not a dependency's.
         cpu = packages[0].cpu.clone();
         logpoints = packages[0].logpoints;
+        regions = packages[0].regions;
         PROJECT_CPU.with(|project| *project.borrow_mut() = cpu.as_ref().map(|(name, _)| name.clone()));
         built = ast::Built {
             name: packages[0].name.clone(),
@@ -928,6 +933,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                 project: Some(project.clone()),
                 cpu: cpu.clone(),
                 logpoints,
+                regions,
             });
         }
         let mut providers: Vec<Vec<(String, PathBuf)>> = packages.iter().map(|p| p.providers.clone()).collect();
@@ -981,6 +987,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                     project: Some(project.clone()),
                     cpu: cpu.clone(),
                     logpoints,
+                    regions,
                 });
             }
         };
@@ -1048,6 +1055,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             project: Some(project.clone()),
             cpu: cpu.clone(),
             logpoints,
+            regions,
         });
     }
     let checking = crate::times::part("check");
@@ -1085,6 +1093,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         project: Some(project.clone()),
         cpu: cpu.clone(),
         logpoints,
+        regions,
     })
 }
 
@@ -1493,7 +1502,7 @@ pub fn compile(
     after("lower", &bodies, types, sources);
     if !debug && !analysis.meta {
         let _passes = crate::times::part("MIR passes");
-        optimize(&mut bodies, program, sources);
+        optimize(&mut bodies, program, sources, regions(analysis));
     }
     let roots = analysis
         .project
@@ -1610,7 +1619,7 @@ pub fn compiler(reference: &str, near: &Path) -> Result<(String, PathBuf), Strin
 
 /// The MIR passes of a release build, in their order, each followed by
 /// what `after` does.
-fn optimize(bodies: &mut Vec<crate::mir::Body>, program: &crate::hir::Program, sources: &SourceMap) {
+fn optimize(bodies: &mut Vec<crate::mir::Body>, program: &crate::hir::Program, sources: &SourceMap, regions: bool) {
     let types = &program.types;
     crate::captured::captured(bodies, types);
     after("captured", bodies, types, sources);
@@ -1642,6 +1651,9 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, program: &crate::hir::Program, s
     after("stack", bodies, types, sources);
     crate::hoist::hoist(bodies, types);
     after("hoist", bodies, types, sources);
+    if !regions {
+        return;
+    }
     // The regions that take what the program makes and lets go, and where
     // each place's values go, for `tondo optimizations`; while it is being
     // measured, `TONDO_REGIONS=<file>` writes a line for each place, the
@@ -1786,7 +1798,7 @@ pub fn optimizations(
         None => Vec::new(),
     };
     if !analysis.meta {
-        optimize(&mut bodies, program, sources);
+        optimize(&mut bodies, program, sources, regions(analysis));
     }
     crate::mir_text::ask_remarks(false);
     let mut found = Vec::new();
@@ -2842,7 +2854,8 @@ pub fn compiler_identity() -> String {
     let stamp = exe.map(|m| format!("{}:{:?}", m.len(), m.modified().ok())).unwrap_or_default();
     let layout = layout_seed().map(|seed| format!(":layout {seed}")).unwrap_or_default();
     let sites = if NO_LOGPOINTS.load(std::sync::atomic::Ordering::Relaxed) { ":no logpoint sites" } else { "" };
-    format!("{VERSION}:{}:{stamp}{layout}{sites}", RUNTIME_HASH)
+    let regions = if NO_REGIONS.load(std::sync::atomic::Ordering::Relaxed) { ":no regions" } else { "" };
+    format!("{VERSION}:{}:{stamp}{layout}{sites}{regions}", RUNTIME_HASH)
 }
 
 /// Whether `--no-logpoints` asked for builds without a place at the start of
@@ -2863,6 +2876,24 @@ pub fn set_no_logpoints() {
 /// logpoint` finds no place in.
 pub fn logpoints(analysis: &Analysis) -> bool {
     analysis.logpoints && !NO_LOGPOINTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Whether `--no-regions` asked for release builds that put nothing in a
+/// region.
+static NO_REGIONS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Makes this command's release builds put nothing in a region, as
+/// `--no-regions` asks.
+pub fn set_no_regions() {
+    NO_REGIONS.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether a release build of `analysis` puts in regions what the program
+/// makes and lets go: unless `--no-regions` or the project's `[build]
+/// regions = false` say otherwise, to go on with a program while a wrong
+/// result regions gave is mended, or to compare a program with and without.
+pub fn regions(analysis: &Analysis) -> bool {
+    analysis.regions && !NO_REGIONS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// `TONDO_LAYOUT_SEED`: the order a build lays the program's functions out

@@ -15,7 +15,7 @@ pub const COMMANDS: &[Command] = &[
         name: "run",
         usage: &[
             "tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch [--tests]]",
-            "          [--target <target>] [--cpu <level>] [--no-logpoints] [--timings] [--diagnostic-format human|json] [-- <argument>...]",
+            "          [--target <target>] [--cpu <level>] [--no-logpoints] [--no-regions] [--timings] [--diagnostic-format human|json] [-- <argument>...]",
             "tondo run --record <recording> [--last <duration> [--hold <duration>]] [<project>|<file.to>]",
             "          [--link <library>]...",
             "          [-- <argument>...]",
@@ -31,7 +31,7 @@ pub const COMMANDS: &[Command] = &[
         name: "build",
         usage: &[
             "tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--no-source-links]",
-            "          [--debug | --live] [--target <target>] [--cpu <level>] [--no-logpoints] [--timings] [--diagnostic-format human|json] [--json]",
+            "          [--debug | --live] [--target <target>] [--cpu <level>] [--no-logpoints] [--no-regions] [--timings] [--diagnostic-format human|json] [--json]",
         ],
         summary: &[
             "compile a native executable (static on Linux;",
@@ -44,7 +44,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "build",
         usage: &[
-            "tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--cpu <level>] [--no-logpoints] [--json]",
+            "tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--cpu <level>] [--no-logpoints] [--no-regions] [--json]",
         ],
         summary: &["compile a library for C, lib<name>.so (.dylib)", "and lib<name>.a, with its header <name>.h"],
     },
@@ -162,7 +162,7 @@ pub const COMMANDS: &[Command] = &[
             "          [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>] [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]",
             "          [--models]",
             "          [--diagnostic-format human|json] [--artifacts <dir>] [--update-snapshots]",
-            "          [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--no-logpoints] [--exec <command>] [--timings]",
+            "          [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--no-logpoints] [--no-regions] [--exec <command>] [--timings]",
         ],
         summary: &[
             "run the tests of a project (of a library); with --watch,",
@@ -390,7 +390,7 @@ pub const COMMANDS: &[Command] = &[
         name: "size",
         usage: &[
             "tondo size [<project>|<file.to>] [--tests] [--function <name>] [--top <n>] [--against <rev>]",
-            "          [--static] [--strip] [--debug] [--target <target>] [--cpu <level>] [--no-logpoints] [--json]",
+            "          [--static] [--strip] [--debug] [--target <target>] [--cpu <level>] [--no-logpoints] [--no-regions] [--json]",
         ],
         summary: &[
             "what an executable of a build weighs: by part, the",
@@ -414,7 +414,7 @@ pub const COMMANDS: &[Command] = &[
         name: "asm",
         usage: &[
             "tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--against <rev> | --compiler <tondo|rev>]",
-            "          [--cpu <level>] [--no-logpoints] [--json]",
+            "          [--cpu <level>] [--no-logpoints] [--no-regions] [--json]",
             "tondo asm --runtime <function> [--compiler <tondo|rev>] [--json]",
         ],
         summary: &[
