@@ -7656,3 +7656,21 @@ statement, operation or native fails until its cases are written. Writing it fou
 assignment whose target the analysis did not follow. A native that only reads what it is given
 gives a value the runtime made, which holds none of it: what it gives no longer keeps its
 arguments on the heap.
+
+## A variable a move empties keeps nothing past the turn
+
+A value a turn makes outlives the turn when a variable live at the loop's head or where it is left
+may hold it; the analysis took every variable that ever held it as holding it everywhere, so that
+`children.push(build(depth - 1, fan))`, whose array the node then takes and the next turn starts
+again, looked kept by `children` from turn to turn, and a tree built that way stayed on the heap.
+It now follows each place's value through the statements from where it is made: a variable a move
+empties, or that a whole value holding none of it writes over, holds it no more there, and what is
+written through a loan holds it in what the loan lends too. Only what holds the value where the
+loop turns or is left keeps it past the turn. The loops are now each its own: a loop inside another
+was taken as the same blocks as the outer one, and one whose value only an outer array grows went
+by the outer loop's rule. The tree of the manual's page goes in `main`'s region, as its builder's
+inlined copy now lets its array go at the end of each call: 26.2 million instructions to 20.5.
+A loop inside a benchmark's whose arrays went in the region of the outer turn, by the old reading
+of nested loops, now has them in its own turn's, as the rule says, with memory bounded by a chunk:
+one that makes two small arrays a turn runs 8.5 % more instructions, the reset of its region every
+four turns, which an inline reset of a region of one chunk would take back.

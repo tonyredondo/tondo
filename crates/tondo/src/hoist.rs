@@ -228,29 +228,6 @@ fn written(body: &Body, types: &Types, loans: &[Vec<bool>], inside: &[bool]) -> 
     written
 }
 
-/// The loops of the body, the innermost first: each one's head and its
-/// blocks, those the head reaches that reach it again.
-pub(crate) fn loops(body: &Body) -> Vec<(usize, Vec<bool>)> {
-    let count = body.blocks.len();
-    let successors: Vec<Vec<usize>> = body.blocks.iter().map(|block| successors(&block.terminator)).collect();
-    let mut predecessors = vec![Vec::new(); count];
-    for (block, to) in successors.iter().enumerate() {
-        for &to in to {
-            predecessors[to].push(block);
-        }
-    }
-    let heads = heads(&successors);
-    let mut loops: Vec<(usize, Vec<bool>)> = (0..count)
-        .filter(|&block| heads[block])
-        .map(|head| {
-            let (forward, backward) = (reach(head, &successors), reach(head, &predecessors));
-            (head, (0..count).map(|block| forward[block] && backward[block]).collect())
-        })
-        .collect();
-    loops.sort_by_key(|(_, inside)| inside.iter().filter(|&&inside| inside).count());
-    loops
-}
-
 /// The blocks a jump from a block goes to.
 pub(crate) fn targets(terminator: &Terminator) -> Vec<usize> {
     successors(terminator)

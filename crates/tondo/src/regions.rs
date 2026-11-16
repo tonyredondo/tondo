@@ -367,8 +367,7 @@ fn place(
                     let Statement::Assign(place, ..) = &body.blocks[at.0 as usize].stmts[at.1 as usize] else {
                         return None;
                     };
-                    let region =
-                        lifetimes[index].region(&flows[index], body, types, place.local, at.0 as usize, true, None)?;
+                    let region = lifetimes[index].region(&flows[index], body, types, place.local, at, true, None)?;
                     Some((at, region))
                 })
                 .collect()
@@ -392,15 +391,7 @@ fn place(
             .iter()
             .zip(verdicts)
             .map(|(site, verdict)| match site.placed() && verdict.own {
-                true => lifetimes[index].region(
-                    &flows[index],
-                    body,
-                    types,
-                    site.local,
-                    site.at.0 as usize,
-                    false,
-                    Some(site),
-                ),
+                true => lifetimes[index].region(&flows[index], body, types, site.local, site.at, false, Some(site)),
                 false => None,
             })
             .collect();
@@ -558,7 +549,7 @@ impl Lifetimes {
     /// Of a function that puts something in a region in `blocks`; what is
     /// live where is read only when one of them is in a loop.
     fn of(body: &Body, mut blocks: impl Iterator<Item = u32>) -> Lifetimes {
-        let loops = crate::hoist::loops(body);
+        let loops = loops(body);
         let mut looped = vec![false; body.blocks.len()];
         for (_, inside) in &loops {
             for (looped, &inside) in looped.iter_mut().zip(inside) {
@@ -631,10 +622,11 @@ impl Lifetimes {
         body: &Body,
         types: &Types,
         local: Local,
-        block: usize,
+        at: (u32, u32),
         parts: bool,
         grows: Option<&Site>,
     ) -> Option<u32> {
+        let block = at.0 as usize;
         if !self.looped.get(block).copied().unwrap_or(false) {
             return Some(0);
         }
@@ -643,28 +635,59 @@ impl Lifetimes {
             return None;
         }
         let held = flow.holders(types, body, local, parts);
-        let outlives = |live: &[u64]| {
-            held.iter().enumerate().any(|(index, &held)| held && live[index / 64] & (1 << (index % 64)) != 0)
+        let words = held.len().div_ceil(64);
+        let mut bits = vec![0u64; words];
+        for (index, _) in held.iter().enumerate().filter(|&(_, &held)| held) {
+            bits[index / 64] |= 1 << (index % 64);
+        }
+        // The locals that hold it past a turn of loop `k`, of `holds`: live
+        // at its head, or where it is left, and holding it there.
+        let keepers = |k: usize, at_head: &[u64], at_exits: &[u64]| -> Vec<usize> {
+            let (head, out) = (&self.live_head[k], &self.live_out[k]);
+            (0..held.len())
+                .filter(|&index| {
+                    let (word, bit) = (index / 64, 1 << (index % 64));
+                    (head[word] & at_head[word] | out[word] & at_exits[word]) & bit != 0
+                })
+                .collect()
         };
-        for (k, (_, inside)) in self.loops.iter().enumerate() {
-            if inside[block] && !outlives(&self.live_head[k]) && !outlives(&self.live_out[k]) {
-                return Some(k as u32 + 1);
-            }
+        let containing: Vec<usize> = (0..self.loops.len()).filter(|&k| self.loops[k].1[block]).collect();
+        if let Some(&k) = containing.iter().find(|&&k| keepers(k, &bits, &bits).is_empty()) {
+            return Some(k as u32 + 1);
         }
         if grows.is_some_and(|site| bounded(body, &self.looped, site)) {
             return Some(0);
+        }
+        // Where it is at each loop's head and exits, following the statements
+        // from where it is made: a local a move zeroes, or that a whole value
+        // of another writes over, holds it no more, as a tree's array once its
+        // node took it.
+        let (entry, exit) = held_from(body, &bits, local, at);
+        let at = |k: usize| {
+            let inside = &self.loops[k].1;
+            let mut exits = vec![0u64; words];
+            for (from, data) in body.blocks.iter().enumerate().filter(|&(from, _)| inside[from]) {
+                if crate::hoist::targets(&data.terminator).into_iter().any(|to| !inside[to]) {
+                    exits.iter_mut().zip(&exit[from]).for_each(|(all, out)| *all |= out);
+                }
+            }
+            (&entry[self.loops[k].0], exits)
+        };
+        if let Some(&k) = containing.iter().find(|&&k| {
+            let (head, exits) = at(k);
+            keepers(k, head, &exits).is_empty()
+        }) {
+            return Some(k as u32 + 1);
         }
         // What only arrays that each loop does nothing to but push keeps
         // past its turns lives as long as they do, and adds nothing to throw
         // away: the function's region, as a tree's children each turn makes.
         let kept = |k: usize| {
-            let (inside, head, out) = (&self.loops[k].1, &self.live_head[k], &self.live_out[k]);
-            let live = |index: usize| (head[index / 64] | out[index / 64]) & (1 << (index % 64)) != 0;
-            (0..held.len())
-                .filter(|&index| held[index] && live(index))
-                .all(|keeper| only_pushed(body, types, inside, Local(keeper as u32)))
+            let (head, exits) = at(k);
+            let inside = &self.loops[k].1;
+            keepers(k, head, &exits).into_iter().all(|keeper| only_pushed(body, types, inside, Local(keeper as u32)))
         };
-        (0..self.loops.len()).filter(|&k| self.loops[k].1[block]).all(kept).then_some(0)
+        containing.into_iter().all(kept).then_some(0)
     }
 
     /// Each loop's head and the blocks that go back to it.
@@ -685,6 +708,68 @@ impl Lifetimes {
     }
 }
 
+/// The loops of a body, the innermost first: each one's head and its
+/// blocks, the head and those that reach an edge back to it without passing
+/// it: a loop inside another is a loop of its own, as a turn of the outer
+/// one is many of the inner's, though the blocks on a cycle through either
+/// head are the same.
+fn loops(body: &Body) -> Vec<(usize, Vec<bool>)> {
+    let count = body.blocks.len();
+    let successors: Vec<Vec<usize>> = body.blocks.iter().map(|data| crate::hoist::targets(&data.terminator)).collect();
+    let mut predecessors = vec![Vec::new(); count];
+    for (block, to) in successors.iter().enumerate() {
+        for &to in to {
+            predecessors[to].push(block);
+        }
+    }
+    // The edges back, to a block on the path a walk from the entry is on.
+    let (mut state, mut back) = (vec![0u8; count], Vec::new());
+    let mut stack = vec![(0usize, 0usize)];
+    if count > 0 {
+        state[0] = 1;
+    }
+    while let Some(&mut (block, ref mut next)) = stack.last_mut() {
+        match successors[block].get(*next).copied() {
+            Some(to) => {
+                *next += 1;
+                match state[to] {
+                    0 => {
+                        state[to] = 1;
+                        stack.push((to, 0));
+                    }
+                    1 => back.push((block, to)),
+                    _ => {}
+                }
+            }
+            None => {
+                state[block] = 2;
+                stack.pop();
+            }
+        }
+    }
+    let mut loops: Vec<(usize, Vec<bool>)> = Vec::new();
+    for (from, head) in back {
+        let at = match loops.iter().position(|(other, _)| *other == head) {
+            Some(at) => at,
+            None => {
+                let mut inside = vec![false; count];
+                inside[head] = true;
+                loops.push((head, inside));
+                loops.len() - 1
+            }
+        };
+        let inside = &mut loops[at].1;
+        let mut pending = vec![from];
+        while let Some(block) = pending.pop() {
+            if !std::mem::replace(&mut inside[block], true) {
+                pending.extend(&predecessors[block]);
+            }
+        }
+    }
+    loops.sort_by_key(|(_, inside)| inside.iter().filter(|&&inside| inside).count());
+    loops
+}
+
 /// Whether what a place makes in the function's own region stays within
 /// what the function does once: a place in a loop makes a value in each
 /// turn, which would gather in the region until the function returns, but
@@ -701,6 +786,89 @@ fn bounded(body: &Body, looped: &[bool], site: &Site) -> bool {
                 !matches!(statement, Statement::Assign(place, ..) if place.local == site.local && place.path.is_empty())
             })
         })
+}
+
+/// The locals of `held`, as bits, that may hold what `local` takes at
+/// `at`, at the start and at the end of each block, from `at` on: a
+/// statement that reads one of them passes it on to what it writes and to
+/// every local it reads, which a call or a change may write through, and
+/// what is written through a loan to what it lends; a local a move or
+/// `clear` zeroes, or that a whole value of none of them writes over, holds
+/// it no more.
+fn held_from(body: &Body, held: &[u64], local: Local, at: (u32, u32)) -> (Vec<Vec<u64>>, Vec<Vec<u64>>) {
+    let words = held.len();
+    let has = |set: &[u64], l: Local| set[l.0 as usize / 64] & (1 << (l.0 % 64)) != 0;
+    let set = |set: &mut [u64], l: Local, on: bool| {
+        let (word, bit) = (l.0 as usize / 64, 1u64 << (l.0 % 64));
+        if on && held[word] & bit != 0 {
+            set[word] |= bit;
+        } else if !on {
+            set[word] &= !bit;
+        }
+    };
+    let lends: Vec<(Local, Local)> = positioned(body)
+        .filter_map(|(_, statement)| match statement {
+            Statement::Lend(alias, place) => Some((*alias, place.local)),
+            _ => None,
+        })
+        .collect();
+    let step = |state: &mut Vec<u64>, statement: &Statement| {
+        match statement {
+            Statement::Assign(place, rvalue, _) => {
+                let mut used = Vec::new();
+                rvalue_uses(rvalue, &mut used);
+                let from = used.iter().any(|&l| has(state, l));
+                if from {
+                    used.iter().for_each(|&l| set(state, l, true));
+                }
+                match (from, place.path.is_empty()) {
+                    (true, _) => set(state, place.local, true),
+                    (false, true) => set(state, place.local, false),
+                    (false, false) => {}
+                }
+            }
+            Statement::Moved(place) if place.path.is_empty() => set(state, place.local, false),
+            Statement::Clear(cleared) => set(state, *cleared, false),
+            Statement::Lend(alias, place) if has(state, place.local) => set(state, *alias, true),
+            _ => {}
+        }
+        // A loan of a loan passes it on as far as it goes.
+        for _ in 0..lends.len() {
+            let before = state.clone();
+            for &(alias, lent) in &lends {
+                if has(state, alias) {
+                    set(state, lent, true);
+                }
+            }
+            if *state == before {
+                break;
+            }
+        }
+    };
+    let count = body.blocks.len();
+    let (mut entry, mut exit) = (vec![vec![0u64; words]; count], vec![vec![0u64; words]; count]);
+    let mut pending = vec![at.0 as usize];
+    let mut queued = vec![false; count];
+    queued[at.0 as usize] = true;
+    while let Some(block) = pending.pop() {
+        queued[block] = false;
+        let mut state = entry[block].clone();
+        for (index, statement) in body.blocks[block].stmts.iter().enumerate() {
+            step(&mut state, statement);
+            if (block as u32, index as u32) == at {
+                set(&mut state, local, true);
+            }
+        }
+        exit[block].clone_from(&state);
+        for to in crate::hoist::targets(&body.blocks[block].terminator) {
+            let before = entry[to].clone();
+            entry[to].iter_mut().zip(&state).for_each(|(into, from)| *into |= from);
+            if entry[to] != before && !std::mem::replace(&mut queued[to], true) {
+                pending.push(to);
+            }
+        }
+    }
+    (entry, exit)
 }
 
 /// Whether `local` is an array that the blocks `inside` a loop only push
