@@ -12,6 +12,7 @@ program of [the daily loop](daily.md), and are shown as they went.
 - [A test, in the order that fails](#a-test-in-the-order-that-fails)
 - [Backwards: a recorded run](#backwards-a-recorded-run)
 - [What a panic says](#what-a-panic-says)
+- [A release build that gives another result](#a-release-build-that-gives-another-result)
 - [A failure somewhere else: dumps](#a-failure-somewhere-else-dumps)
 - [A program that is running](#a-program-that-is-running)
 
@@ -217,6 +218,56 @@ tondo runtime: a dump of the program is in dumps/orders-3573589.dump.json
 A release build reports the same, with the same lines: the checks are not
 a feature of debug builds. With `TONDO_PANIC_FORMAT=json` in
 its environment a program writes the report as JSON, for a log pipeline.
+
+## A release build that gives another result
+
+A debug build and a release build are the same program: what one prints
+the other prints, unless the program depends on the time or on the order
+its tasks run in. When only the release build gives a wrong result, the
+cause is the compiler, and one thing that only a release build has is
+regions: the memory of a scope, let go of at once when the scope ends
+([Performance](performance.md#what-a-region-takes)). A value that the
+compiler put in a region it outlives does not fail. It reads what the next
+region wrote in its place, which is often a value of the same shape, and
+the program goes on with data that looks right.
+
+`TONDO_CHECK_REGIONS=1` in the program's environment makes it fail. The
+memory of each region that ends becomes unreadable and its addresses are
+not used again, so the first read of such a value is a fault, and the
+report says what it is and the line that read:
+
+```text
+$ TONDO_CHECK_REGIONS=1 ./slices
+fatal: SIGSEGV: invalid memory access at 0x7e5839008238, in the memory of a region that ended: the compiler put a value in a region it outlives, a bug of tondo's
+stack:
+  main  slices.to:9:21
+```
+
+That report is of a bug mended since, in a loop that assigned to a slice
+of an array. The check is the runtime's, so the release executable that
+gave the wrong result takes it as it is, with nothing built again.
+
+Its price is by region that ends: a page of memory that is new, and two
+calls to the system. A program that builds a tree of thousands of nodes in
+each region ran twice as slow with it. A loop of three million turns that
+makes an array of three numbers in each went from 0.02 s to 4 s. It is a
+check for the run that shows the wrong result, not one to leave on.
+
+`--no-regions` builds the program without regions, every value on the
+heap as a debug build has it, and `regions = false` under `[build]` in
+`tondo.toml` does so for every build of the project:
+
+```text
+$ tondo build --no-regions
+$ tondo test --no-regions
+```
+
+A wrong result that goes away without them is the regions', whether or not
+the check found the read. It is also the build to go on with meanwhile: it
+is slower only where regions were faster
+([Performance](performance.md#what-a-region-takes)). Either way the bug is
+tondo's, to report with the program or the smallest piece of it that shows
+the result.
 
 ## A failure somewhere else: dumps
 

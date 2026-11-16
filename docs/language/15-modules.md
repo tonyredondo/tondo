@@ -214,7 +214,7 @@ logpoints = false
 | `[dependencies]` | the packages it uses, each under the name it is imported by |
 | `[dev-dependencies]` | those only its tests use |
 | `[native]` | the C libraries its `extern fn`s link ([Unsafe and C](18-unsafe.md)) |
-| `[build]` | how the program is built: `cpu`, the level of processor it is for ([Performance](../toolchain/performance.md#the-processor-a-build-is-for)), and `logpoints = false`, without the place each line keeps for a logpoint ([Performance](../toolchain/performance.md#what-the-places-for-logpoints-cost)). Only the program's own package says it: a dependency's is not read |
+| `[build]` | how the program is built: `cpu`, the level of processor it is for ([Performance](../toolchain/performance.md#the-processor-a-build-is-for)), `logpoints = false`, without the place each line keeps for a logpoint ([Performance](../toolchain/performance.md#what-the-places-for-logpoints-cost)), and `regions = false`, without regions ([Debugging](../toolchain/debugging.md#a-release-build-that-gives-another-result)). Only the program's own package says it: a dependency's is not read |
 | `[derive]`, `[generators.x]` | programs that write code when it compiles ([Metaprogramming](17-meta.md)) |
 | `[source]` | how to link to a line of its sources, on a host of its own |
 

@@ -574,8 +574,8 @@ though. A benchmark of the two over a thousand numbers shows both costs:
 ```text
 $ tondo test --bench
 test squares::unit::squares::aThousand ... ok
-  arrays     1.127 µs/op  ±0.2%  0 allocs/op +9 in regions  0 B/op +12448 in regions  24.0k ins/op
-  chain      1.618 µs/op  ±0.1%  2 allocs/op  80 B/op  38.2k ins/op
+  arrays     1.099 µs/op  ±0.2%  0 allocs/op +9 in regions  0 B/op +12448 in regions  23.9k ins/op
+  chain      1.397 µs/op  ±0.3%  2 allocs/op  80 B/op  38.2k ins/op
 ```
 
 The chain allocates its two closures and nothing else, however long the
@@ -630,28 +630,29 @@ fn main() {
 29124
 ```
 
-A benchmark of `sum(build(8, 4))` against the Tondo of 57ef8277, from
-before it had regions, which `tondo compiler 57ef8277` builds
-([Against another version](#against-another-version)):
+A benchmark of `sum(build(8, 4))`, as a release build makes it and then
+without regions, which `--no-regions` leaves out of a build:
 
 ```text
-$ tondo test --bench --compiler <the tondo of 57ef8277>
+$ tondo test --bench
 test tree::unit::tree::aTree ... ok
-  tree of 87 thousand nodes     793.3 µs/op  ±0.4%  0 allocs/op +21845 in regions  0 B/op +2097120 in regions  15.79M ins/op  -28.9% faster, -22.9% ins, cycles -26.5%, l1d misses -35.5%, 0 allocs/op, was 21845, 0 B/op, was 2097120, 21845 allocs/op in regions, was 0, 2097120 B/op in regions, was 0
+  tree of 87 thousand nodes     771.8 µs/op  ±0.1%  0 allocs/op +21845 in regions  0 B/op +2097120 in regions  15.78M ins/op
+$ tondo test --bench --no-regions
+test tree::unit::tree::aTree ... ok
+  tree of 87 thousand nodes     1.046 ms/op  ±0.7%  21845 allocs/op  2097120 B/op  20.40M ins/op
 ```
 
 The tree's arrays are still made, all 21845 of them: the row counts them
 `in regions`, apart from `allocs/op`, which is the heap's. What is gone is
-the walk that let go of each, and with it 29% of the time.
+the walk that let go of each, and with it 26% of the time.
 `testing.allocations` counts the two together, so a test that holds a
 function to its count does not change when its values move to a region
 ([Testing](testing.md)).
 
 ```text
 $ tondo optimizations tree.to --kind region
+tree.to:13:13: `children.push(build(depth - 1, fan))` grows an array that goes in a region of `main` (in main)
 tree.to:13:13: `children.push(build(depth - 1, fan))` grows an array that goes in a region that the caller of `build` gives (in build)
-tree.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: it holds a value that its region did not make (in main)
-tree.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: it outlives a turn of the loop at line 12 (in main)
 ```
 
 There are three regions a value can go in:
@@ -665,11 +666,10 @@ There are three regions a value can go in:
   its caller's region, in a copy of it made for the calls that let its
   result go.
 
-The other two lines are of the copy of `build` that was inlined in `main`.
-There the tree stays on the heap: the code of several levels of `build` is
-one loop in `main`, and the analysis cannot yet tell that an array moved
-into its parent is done with at the end of the turn. A tree built by a call
-that stays a call, as in the benchmark, goes in a region whole.
+The first line is of the copy of `build` that was inlined in `main`: the
+code of several levels of `build` is one loop there, and what it makes goes
+in the region of `main`, which lets go of the tree when it ends. The second
+is of `build` where it stays a call, as in the benchmark.
 
 A place stays on the heap when something keeps what it makes beyond the
 scope, and the remark names the code that does. The verdict is by call.
@@ -679,10 +679,9 @@ With a function added to the program that sends a tree through a channel,
 
 ```text
 $ tondo optimizations offered.to --kind region --function build
+offered.to:13:13: `children.push(build(depth - 1, fan))` grows an array that goes in a region of `main` (in main)
 offered.to:13:13: `children.push(build(depth - 1, fan))` grows an array that goes in a region that the caller of `build` gives, in a copy of it for the calls that let it go: `main` at 33; `main` keeps it: it is sent: `sender.send(build(depth, 2))` at 29:5 (in build)
-offered.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: it holds a value that its region did not make (in main)
 offered.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: it is sent: `sender.send(build(depth, 2))` at 29:5 (in main, offer)
-offered.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: it outlives a turn of the loop at line 12 (in main)
 ```
 
 The call that lets its tree go still gets a region, and the tree that is
@@ -698,6 +697,13 @@ What regions hold is seen where the heap is: a memory profile has
 `region_objects` and `region_space` beside the heap's samples, `tondo
 counters` has the bytes regions hold now, and a dump lists the memory in
 regions by the place that made it ([Observing](observing.md)).
+
+`--no-regions` on `tondo build`, `run`, `test`, `size` and `asm`, or `regions =
+false` under `[build]` in `tondo.toml`, builds without them: every value
+that a region would take is on the heap, as in a debug build. It is how the
+second row above was measured, and what to build with when a release build
+gives a result that a debug build does not
+([Debugging](debugging.md#a-release-build-that-gives-another-result)).
 
 ## The machine code: asm
 

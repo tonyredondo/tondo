@@ -293,6 +293,7 @@ library, which makes it the content of a container image from `scratch`.
 | `--target aarch64-linux` | for another architecture |
 | `--cpu x86-64-v3` | for a level of processor above the baseline |
 | `--no-logpoints` | without the place each line keeps for a [logpoint](observing.md#what-a-line-holds-logpoint) |
+| `--no-regions` | without [regions](performance.md#what-a-region-takes), when a release build gives [another result](debugging.md#a-release-build-that-gives-another-result) |
 | `--link <library>` | a C library to link, for `extern fn` |
 | `--library` | a library for C instead: `lib<name>.so`, `lib<name>.a` and a header |
 
