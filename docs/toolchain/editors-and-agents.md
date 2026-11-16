@@ -166,9 +166,10 @@ Three things make it more than the commands under another name:
   ends a program that runs past `timeout`, so an agent cannot hang itself
   on a program that waits for a key.
 - **Programs that keep running.** `run_start` gives a session for a
-  server. After an edit, `reload` changes its code while it runs and keeps
-  its state, where starting it again would lose the situation the agent
-  was looking at. A panic in a session does not end the program: the task
+  server. `run_output` gives what it printed since the last time it was
+  asked, in whole lines, and `run_input` writes to its input. After an
+  edit, `reload` changes its code while it runs and keeps its state, where
+  starting it again would lose the situation the agent was looking at. A panic in a session does not end the program: the task
   waits, and the next `reload` starts that function again.
 - **A debugger with no terminal.** `debug_start` gives a session, on a
   program, a test in the order that failed, a recording or a dump, and
