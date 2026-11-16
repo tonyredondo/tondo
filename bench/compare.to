@@ -2,7 +2,9 @@
 // `tondo test --bench` and those of bench/go with `go test -bench`, and
 // writes a Markdown table: for each benchmark, the time a run takes on each
 // side, Tondo's time over Go's, and the allocations and bytes of a run, the
-// slowest against Go first; and, where `perf` counts them, the instructions
+// slowest against Go first: those of the heap, which compare with Go's, and
+// beside them what Tondo makes in regions, where Go would use its heap for
+// what leaves a function; and, where `perf` counts them, the instructions
 // and cycles of a run on each side, which where the code lies does not move
 // as it moves the time. A second table gives the latency of the servers of
 // the `http` rows at a fixed rate of requests, the median and the 99th
@@ -37,6 +39,9 @@ type Measure = {
     nanoseconds: Float
     allocations: Float
     bytes: Float
+    /// What Tondo makes in regions, none on Go's side.
+    regionAllocations: Float
+    regionBytes: Float
     instructions: Float?
     cycles: Float?
 }
@@ -76,9 +81,20 @@ fn tondoSide(tondo: String, seconds: String, cpu: String): Map[String, Measure] 
                 let nanoseconds = benchmark.field("ns_per_op").field("median").asFloat() ?? 0.0
                 let allocations = benchmark.field("allocations_per_op").asFloat() ?? 0.0
                 let bytes = benchmark.field("bytes_per_op").asFloat() ?? 0.0
+                let regionAllocations =
+                    benchmark.field("region_allocations_per_op").asFloat() ?? 0.0
+                let regionBytes = benchmark.field("region_bytes_per_op").asFloat() ?? 0.0
                 let instructions = benchmark.field("instructions_per_op").asFloat()
                 let cycles = benchmark.field("cycles_per_op").asFloat()
-                measured[key] = Measure { nanoseconds, allocations, bytes, instructions, cycles }
+                measured[key] = Measure {
+                    nanoseconds
+                    allocations
+                    bytes
+                    regionAllocations
+                    regionBytes
+                    instructions
+                    cycles
+                }
             }
         }
     }
@@ -146,6 +162,8 @@ fn benchmarked(text: String): Map[String, Measure] {
             nanoseconds
             allocations
             bytes
+            regionAllocations: 0.0
+            regionBytes: 0.0
             instructions: none
             cycles: none
         }
@@ -275,6 +293,8 @@ fn goCounts(measured: Map[String, Measure], level: String): Map[String, Measure]
             nanoseconds: measure.nanoseconds
             allocations: measure.allocations
             bytes: measure.bytes
+            regionAllocations: measure.regionAllocations
+            regionBytes: measure.regionBytes
             instructions: if instructions > 0.0 { instructions } else { none }
             cycles: if cycles > 0.0 { cycles } else { none }
         }
@@ -359,6 +379,8 @@ fn againstOld(
             nanoseconds: median(times)
             allocations: median(allocations)
             bytes: 0.0
+            regionAllocations: 0.0
+            regionBytes: 0.0
             instructions: none
             cycles: none
         }
@@ -462,10 +484,18 @@ fn main(): !String {
         }
         let mark = if ratio > 1.0 { " ⚠" } else { "" }
         let marked = if memory { " ⚠" } else { "" }
+        // What Tondo made in regions, beside its heap's.
+        let (regions, regionBytes) = match row.tondo.regionAllocations > 0.0 {
+            true => (
+                " +{row.tondo.regionAllocations.toFixed(0)} in regions",
+                " +{sized(row.tondo.regionBytes)} in regions",
+            )
+            false => ("", "")
+        }
         let counts =
             "{many(row.tondo.instructions)} | {many(row.go.instructions)} | {many(row.tondo.cycles)} | {many(row.go.cycles)}"
         lines.push(
-            "| {row.name} | {time(row.tondo.nanoseconds)} | {time(row.go.nanoseconds)} | {ratio.toFixed(2)}×{mark} | {row.tondo.allocations.toFixed(0)}{marked} | {row.go.allocations.toFixed(0)} | {sized(row.tondo.bytes)} | {sized(row.go.bytes)} | {counts} |",
+            "| {row.name} | {time(row.tondo.nanoseconds)} | {time(row.go.nanoseconds)} | {ratio.toFixed(2)}×{mark} | {row.tondo.allocations.toFixed(0)}{marked}{regions} | {row.go.allocations.toFixed(0)} | {sized(row.tondo.bytes)}{regionBytes} | {sized(row.go.bytes)} | {counts} |",
         )
     }
     lines.push("")
