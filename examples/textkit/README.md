@@ -4,7 +4,7 @@ A small library of text functions that a C program links and calls: the
 slug of a title, the distance between two words, counts, and the words of a
 text by how often they appear. It is written in Tondo, with its Unicode and
 its collections, and what C sees is four functions and a header that the
-build writes. About 140 lines of Tondo, and 35 of C that use them.
+build writes. About 130 lines of Tondo, and 35 of C that use them.
 
 ```text
 textkit/
@@ -82,7 +82,7 @@ and all of the language is there for it.
 **C's conventions, kept.** `textkit_slug` writes into a buffer the caller
 owns, never past its capacity, always ends it with a zero, and gives the
 length of the whole result so the caller can tell that it was cut, as
-`snprintf` does. `textkit_stats` gives a struct by value: `TextkitStats`
+`snprintf` does: that is `ffi.writeCString`, in one call. `textkit_stats` gives a struct by value: `TextkitStats`
 is an `extern type`, laid out as C lays it out, and the header declares it.
 `textkit_words` takes a function and a `void *` to hand back to it, the way
 C libraries pass state to a callback.

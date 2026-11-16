@@ -17,13 +17,11 @@ pub trait Callback: ffi.Unknown {
 /// What a profiler asks the host, as through `ICorProfilerInfo`.
 @ffi.Interface(id: "2F4B6A10-5C1E-4D7A-9B33-0A1C5E7F9D02")
 pub trait Info: ffi.Unknown {
-    /// Writes a module's name in `name`, UTF-16 with its zero, where there
-    /// is room for `capacity` units: the units of the name.
+    /// Writes a module's name in `name`, where there is room for `capacity`
+    /// units: what fits of it, UTF-16 with its zero. Gives the units of the
+    /// whole name: one that is not under `capacity` was cut.
     fn moduleName(self, module: UInt, capacity: UInt32, name: ffi.WideString): UInt32 ! ffi.HResult
 }
-
-/// `ERROR_INSUFFICIENT_BUFFER` as an `HRESULT`: the name does not fit.
-pub const BufferTooSmall: ffi.HResult = ffi.HResult(-2147024774)
 
 /// The object as the interface of that identity, held once more for the
 /// caller, who releases it; `HResult.NoInterface` when it is not one.

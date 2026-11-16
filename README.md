@@ -463,7 +463,7 @@ milestone covers is in [`docs/roadmap.md`](docs/roadmap.md).
 | Tests, every order of their tasks, benchmarks, fuzzing, coverage, profiling | Done |
 | Tools that say why code is slow: the optimizer's remarks under a profile's lines, what a turn of a loop costs, what an executable weighs, where a build's time goes | Done |
 | Debugger, dumps, live builds, language server, VS Code, MCP | Done |
-| C in both directions: bindings, libraries for C, libraries loaded as the program runs, system calls, plugins with a contract | Done |
+| C in both directions: bindings, libraries for C, libraries loaded as the program runs, system calls, plugins with a contract, and the interfaces of C++ that are tables of functions, as COM's and those of .NET's profiling API | Done |
 | Levels of processor, vectors (`std.simd`) and the instructions of x64 and arm64 | Done |
 
 What is under way and what is planned:
@@ -471,9 +471,8 @@ What is under way and what is planned:
 | Work | State |
 | --- | --- |
 | Every row of [`bench/`](bench/README.md) at or under Go's, in time and in memory, and the servers in latency | Under way: that page has the rows still behind, each with its reason |
-| A chain of an iterator at the cost of the loop it stands for | Under way: its values stay in registers, the program's own records too, and the elements it only reads are not counted; the calls of its closures through values are what is left |
+| A chain of an iterator at the cost of the loop it stands for | Under way: its values stay in registers, the program's own records too, the elements it only reads are not counted, and its closures are called directly; the lazy chains of queries are still 3.9× and 8.3× Go's bare loops |
 | A chain of arrays without the arrays between, short texts without the heap | Next in the optimizer |
-| Interfaces of C++ that are tables of functions, as a trait with `@ffi.Interface` | Under way: a program calls an object C made and gives C its own values as objects; `tondo bind` does not write the traits yet |
 | A heap for each task | Research |
 | Vectors of 512 bits with AVX-512; today they are computed by halves | Waits for a machine to test on |
 | Profile-guided optimization while a program runs | Research |

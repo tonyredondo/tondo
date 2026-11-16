@@ -13,19 +13,8 @@ impl api.Info for Host {
             some(found) => found
             none => fail ffi.HResult.InvalidArgument
         }
-        let wide = ffi.toWide(found)
-        unsafe {
-            defer ffi.free(wide)
-            var units = 0u32
-            for wide.offset(Int(units)).read() != 0 {
-                units += 1
-            }
-            if units + 1 > capacity {
-                fail api.BufferTooSmall
-            }
-            ffi.copy(wide, name, Int(units) + 1)
-            units
-        }
+        let units = unsafe { ffi.writeWide(found, to: name, capacity: Int(capacity)) }
+        UInt32(units) ?? UInt32.Max
     }
 }
 
