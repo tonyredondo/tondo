@@ -279,15 +279,16 @@ example that compiles for each of its types.
 Tondo compiles to native code with Cranelift, of which it keeps its own copy
 for the optimizations it adds. The goal is every benchmark of
 [`bench/`](bench/README.md) at or under Go's time and allocations. Measured
-on 2026-11-16 at `80fc037a`, on an AMD Ryzen 9 5950X against Go 1.27, each
-for its default processor, Tondo's x86-64-v2 and Go's v1, 53 of the 69 are
-at or under Go's time. Behind: `texts/trim`, 4.7×, as Go's trimmed text is a
-view of the old one and Tondo's a new one; the lazy chains of queries, 1.7×
-and 2.8× Go's bare loops, though ahead of C#'s; the characters of a text and
-`queries/countBy`, 1.3× to 1.5×; the calls from threads of C, within 1.15×;
-and within 1.10×, as much as a row moves from one run to the next,
-`tasks/spawn`, `texts/toUpper other`, `texts/split other`, `net/tls echo`,
-`loops/collatz`, `texts/parse ints`, `floats/sqrt` and `runtime/mutex`.
+on 2026-11-17 at `fccc97c3`, on an AMD Ryzen 9 5950X against Go 1.27, each
+for its default processor, Tondo's x86-64-v2 and Go's v1, 54 of the 69 are
+at or under Go's time. Behind: `texts/trim`, 4.6×, as Go's trimmed text is a
+view of the old one and Tondo's a new one; the lazy chains of queries, 2.0×
+and 2.8× Go's bare loops, though ahead of C#'s; the characters of a text,
+1.5× and 2.2×, the second with the instructions it had at 1.5×, which where
+its code lies may explain; `queries/countBy`, 1.3×; the calls from threads
+of C, within 1.15×; and within 1.05×, as much as a row moves from one run to
+the next, `tasks/spawn`, `texts/toUpper other`, `texts/split other`,
+`net/tls echo`, `loops/collatz`, `texts/parse ints` and `floats/sqrt`.
 What Tondo makes in regions, which Go would give its heap where a value
 leaves its function, is counted beside its heap's allocations.
 On 2026-10-26, with the 27 benchmarks there were then,
