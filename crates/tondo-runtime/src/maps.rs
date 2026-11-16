@@ -419,17 +419,55 @@ pub unsafe extern "C" fn tondo_rt_str_hash(s: *const Str) -> u64 {
 /// index with.
 pub(crate) fn hash_bytes(bytes: &[u8]) -> u64 {
     const K: u64 = 0x9e37_79b9_7f4a_7c15;
-    let mut hash = 0xcbf2_9ce4_8422_2325u64 ^ bytes.len() as u64;
+    // The length mixed in by a product, not only an exclusive or, which a
+    // key's last bytes could undo: `b` and `ab` would hash alike.
+    let mut hash = (0xcbf2_9ce4_8422_2325u64 ^ bytes.len() as u64).wrapping_mul(K);
     let (words, rest) = bytes.as_chunks::<8>();
     for &word in words {
         hash = (hash ^ u64::from_le_bytes(word)).wrapping_mul(K).rotate_left(29);
     }
-    if !rest.is_empty() {
-        let mut last = [0u8; 8];
-        last[..rest.len()].copy_from_slice(rest);
-        hash = (hash ^ u64::from_le_bytes(last)).wrapping_mul(K).rotate_left(29);
+    // The last bytes read in place, not copied, as a short key, `north`,
+    // has nothing else: two reads of four that may overlap, or the first,
+    // middle and last of fewer. The length, in the seed, tells apart keys
+    // these read alike.
+    let n = rest.len();
+    if n > 0 {
+        let tail = if n >= 4 {
+            let low = u32::from_le_bytes([rest[0], rest[1], rest[2], rest[3]]);
+            let high = u32::from_le_bytes([rest[n - 4], rest[n - 3], rest[n - 2], rest[n - 1]]);
+            u64::from(low) | u64::from(high) << 32
+        } else {
+            u64::from(rest[0]) | u64::from(rest[n / 2]) << 8 | u64::from(rest[n - 1]) << 16
+        };
+        hash = (hash ^ tail).wrapping_mul(K).rotate_left(29);
     }
     hash ^= hash >> 33;
     hash = hash.wrapping_mul(0xff51_afd7_ed55_8ccd);
     hash ^ (hash >> 33)
+}
+
+#[cfg(test)]
+mod hashing {
+    use super::hash_bytes;
+
+    /// Keys of every length a tail can have, and some that read alike in
+    /// part, hash apart; the same key, alike.
+    #[test]
+    fn short_keys_hash_apart() {
+        let mut keys: Vec<String> = ["abcd", "abdc", "abcde", "abcdf", "abcdef", "abcdefg", "abcdefh", "abcdefgh"]
+            .into_iter()
+            .chain(["abcdefghi", "north", "south", "east", "west", "aaaa", "aaaaa", "aaaaaaaa"])
+            .map(String::from)
+            .collect();
+        // And every key of up to three of `abc`, which a tail reads whole.
+        let mut short = vec![String::new()];
+        keys.push(String::new());
+        for _ in 0..3 {
+            short = short.iter().flat_map(|key| "abc".chars().map(move |c| format!("{key}{c}"))).collect();
+            keys.extend(short.clone());
+        }
+        let hashes: std::collections::HashSet<u64> = keys.iter().map(|key| hash_bytes(key.as_bytes())).collect();
+        assert_eq!(hashes.len(), keys.len());
+        assert_eq!(hash_bytes(b"north"), hash_bytes(String::from("north").as_bytes()));
+    }
 }
