@@ -453,7 +453,10 @@ pub(crate) mod checked {
         let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         let page = if page > 0 { page as usize } else { 4096 };
         let flags = libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_NORESERVE;
-        for size in [1usize << 40, 1 << 36, 1 << 32] {
+        // 64 TiB is two thousand million chunks, close to an hour of
+        // regions at the microsecond each costs checked; the system may give
+        // less, as an emulator's.
+        for size in [1usize << 46, 1 << 44, 1 << 40, 1 << 36, 1 << 32] {
             let at = unsafe { libc::mmap(std::ptr::null_mut(), size, libc::PROT_NONE, flags, -1, 0) };
             if at != libc::MAP_FAILED {
                 PAGE.store(page, Ordering::Relaxed);
