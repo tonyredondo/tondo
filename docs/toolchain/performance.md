@@ -286,6 +286,7 @@ view is how one knows that the cost is the program's and not an accident.
 | --- | --- |
 | `--function <name>` | one function, and the code written in it wherever it went |
 | `--kind heap` | only what allocates |
+| `--kind region` | where a [region](#where-a-region-would-take-it) would take what each place allocates |
 | `--tests` | the tests and benchmarks instead of the program |
 | `--against <rev>` | only what a change made different |
 | `--json` | the same as data |
@@ -501,6 +502,77 @@ test squares::unit::squares::aThousand ... ok
 The chain allocates its two closures and nothing else, however long the
 array is: less than a hundredth of the memory here. The arrays' form is
 still the faster of the two, with two thirds of the instructions.
+
+### Where a region would take it
+
+Code that builds a large structure and lets go of all of it at once, as a
+parser's tree or a document read to answer one question, spends much of its
+time letting go, value by value. A region would let go of it together.
+Tondo has no regions yet. `tondo optimizations --kind region` says what
+they would take, for each place that allocates, so that building them is
+decided on real programs; it speaks only when asked, since it tells of
+something that is not there.
+
+```tondo
+import std.console
+
+type Node = {
+    value: Int
+    children: Array[Node]
+}
+
+/// A tree of that depth, each node with `fan` children.
+fn build(depth: Int, fan: Int): Node {
+    var children: Array[Node] = []
+    if depth > 0 {
+        for _ in 0..fan {
+            children.push(build(depth - 1, fan))
+        }
+    }
+    Node { value: depth, children }
+}
+
+fn sum(node: Node): Int {
+    var total = node.value
+    for child in node.children {
+        total += sum(child)
+    }
+    total
+}
+
+fn main() {
+    console.println("{sum(build(8, 4))}")
+}
+```
+
+```text output
+29124
+```
+
+```text
+$ tondo optimizations tree.to --kind region
+tree.to:13:13: `children.push(build(depth - 1, fan))` grows an array that would go in a region of `main` (in main)
+tree.to:13:13: `children.push(build(depth - 1, fan))` grows an array that would go in a region that the caller of `build` gives (in build)
+```
+
+The copy of the line that was inlined in `main` builds what `main` lets go
+of, so a region of `main` would hold it. `build` itself only returns what
+it builds, new, so it would build in a region that its caller gives.
+
+A place stays on the heap when something keeps what it makes beyond the
+call, and the remark names the code that does. With a function added to
+the program that keeps a tree, `fn keep(kept: var Array[Node], depth: Int)
+{ kept.push(build(depth, 2)) }`:
+
+```text
+$ tondo optimizations kept.to --kind region --function build
+kept.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: `build` returns it, and `keep` keeps it: it is stored in what the function was given: `kept.push(build(depth, 2))` at 21:5 (in build)
+```
+
+One caller that keeps the result is enough for the function: every tree
+`build` makes then stays on the heap, the ones another caller lets go of
+too. The other reasons are that a value is stored in a lock's state or in a
+`Ref`, captured by a closure, sent, taken by a task or given to C.
 
 ## The machine code: asm
 
@@ -1038,6 +1110,7 @@ nothing chosen in the source.
 | `tondo test --bench` | allocations and bytes for each operation |
 | `testing.allocations(closure)` | the same count in a test, which fails when it grows ([Testing](testing.md#benchmarks)) |
 | `tondo optimizations --kind heap` | each place that allocates, and what keeps it on the heap |
+| `tondo optimizations --kind region` | where a region would take it, were there regions |
 | `tondo profile <program> --memory` | what is allocated and what is held, by line |
 | `tondo test --exact <id> --bench --profile memory` | where a benchmark allocates |
 | `tondo profile show <profile> --sample alloc_objects --lines` | the lines that allocate most often |
