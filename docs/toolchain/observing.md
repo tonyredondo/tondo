@@ -182,7 +182,22 @@ round 10, doubled ? (as line 9 leaves it)
 tondo: `doubled` is not known here, as the optimized code makes its value later; a build with --debug knows every value
 ```
 
-A build with `--debug` has no places for a logpoint, since it has the
+A logpoint can be put on any line because a Release build keeps a place for
+one at each: a few bytes that do nothing until a logpoint is asked for. They
+cost what it takes to pass them, which in most code is nothing to measure
+and in the tightest is not: a function of a few instructions that calls
+itself runs a quarter more of them. A build that needs every cycle leaves
+the places out, with `--no-logpoints` or `logpoints = false` in the
+`[build]` of `tondo.toml`
+([Performance](performance.md#what-the-places-for-logpoints-cost)), and then
+says so when it is asked for one:
+
+```text
+$ tondo logpoint counts counts.to:8 "round {round}"
+tondo: this program has no places for a logpoint or a breakpoint: it was built with `--no-logpoints`, or with `logpoints = false` in the `[build]` of its tondo.toml; build it again without that to put one in it
+```
+
+A build with `--debug` has no places for a logpoint either, since it has the
 debugger's probes instead: in `tondo debug <pid>`, `break counts.to:10 log
 round {round}` and then `continue` write the same lines without stopping
 there, with every value ([Debugging](debugging.md)).
