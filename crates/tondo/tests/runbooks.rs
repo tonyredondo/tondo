@@ -101,6 +101,9 @@ fn step(agent: &mut Agent, dir: &Path, topic: &str, call: &str, expected: &[&str
     let arguments: Value = serde_json::from_str(arguments).unwrap_or_else(|e| panic!("{topic}: {call}: {e}"));
     let until = Instant::now() + Duration::from_secs(120);
     let mut seen = if tool == "run_output" { known.started.clone() } else { String::new() };
+    // What the program wrote on each of its streams, joined across the asks:
+    // an ask may come while a line is half written, and gives the half.
+    let mut streams = [String::new(), String::new()];
     loop {
         let result = agent.call(tool, arguments.clone());
         assert_ne!(result["isError"], true, "{topic}: {call}: {result}");
@@ -115,7 +118,10 @@ fn step(agent: &mut Agent, dir: &Path, topic: &str, call: &str, expected: &[&str
         }
         seen.push_str(result["content"][0]["text"].as_str().unwrap_or_default());
         seen.push_str(&result["structuredContent"].to_string());
-        if expected.iter().all(|text| seen.contains(text)) {
+        for (stream, name) in streams.iter_mut().zip(["stdout", "stderr"]) {
+            stream.push_str(structured[name].as_str().unwrap_or_default());
+        }
+        if expected.iter().all(|text| seen.contains(text) || streams.iter().any(|stream| stream.contains(text))) {
             return;
         }
         assert!(tool == "run_output" && Instant::now() < until, "{topic}: {call} gave no {expected:?}: {seen}");
