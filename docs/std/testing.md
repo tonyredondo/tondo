@@ -48,7 +48,7 @@ them.
 
 `tondo api std.testing` shows the same in a terminal.
 
-- [Functions](#functions): [`log`](#log), [`tags`](#tags), [`failNow`](#failnow), [`skip`](#skip), [`attach`](#attach), [`snapshot`](#snapshot), [`withVirtualTime`](#withvirtualtime), [`bench`](#bench), [`keep`](#keep), [`allocations`](#allocations)
+- [Functions](#functions): [`log`](#log), [`tags`](#tags), [`failNow`](#failnow), [`skip`](#skip), [`attach`](#attach), [`snapshot`](#snapshot), [`withVirtualTime`](#withvirtualtime), [`bench`](#bench), [`keep`](#keep), [`allocations`](#allocations), [`heapAllocations`](#heapallocations)
 - [VirtualTime](#virtualtime): [`VirtualTime.settle`](#virtualtimesettle), [`VirtualTime.advance`](#virtualtimeadvance)
 
 ### Functions
@@ -143,11 +143,14 @@ Uses the value, so that the optimizer keeps the work that made it.
 pub fn allocations[T, F: CallMut[fn(): T]](body: F): Int
 ```
 
-How many times a run of `body` allocates on the heap, in the task that
-calls it, in the build the tests have, which is optimized: a test that
-keeps a function from allocating more than it does now. What the
-closure gives is kept, so that the optimizer keeps its work; tasks it
-starts count their own.
+How many times a run of `body` allocates, on the heap and in regions,
+in the task that calls it, in the build the tests have, which is
+optimized: a test that keeps a function from allocating more than it
+does now, whichever of the two the optimizer gives its values. It is the
+two figures of a benchmark's row added, `allocs/op` and what it says in
+regions, not `allocs/op` alone, which is the heap's:
+`testing.heapAllocations` counts that. What the closure gives is kept,
+so that the optimizer keeps its work; tasks it starts count their own.
 
 ```tondo
 import std.testing
@@ -163,6 +166,32 @@ fn receipt(lines: Array[Int]): String {
 test theReceiptDoesNotAllocateForEachLine {
     let lines = [10, 20, 30, 40]
     assert(testing.allocations(() { receipt(lines) }) <= 3)
+}
+```
+
+#### heapAllocations
+
+```tondo
+pub fn heapAllocations[T, F: CallMut[fn(): T]](body: F): Int
+```
+
+How many times a run of `body` allocates on the heap alone, as
+`testing.allocations` counts, without what goes in regions: what a
+benchmark's row says in `allocs/op`.
+
+```tondo
+import std.testing
+
+fn squares(count: Int): Int {
+    var values: Array[Int] = []
+    for i in 0..count {
+        values.push(i * i)
+    }
+    values.length()
+}
+
+test squaresStayOffTheHeap {
+    assert(testing.heapAllocations(() { squares(100) }) == 0)
 }
 ```
 

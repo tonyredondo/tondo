@@ -725,12 +725,11 @@ fn project(name: &str, tests: &str) -> PathBuf {
 /// An array a counted loop pushes to in every turn, as `map`, `zip` and
 /// `enumerate` build theirs and as a program's own loop does, over a range
 /// from any start or an inclusive one, takes room for every turn when the
-/// loop starts: one allocation for 10,000 elements,
-/// where growing to them takes 13; `filter`, which pushes in some turns
-/// only, still grows, on the heap when its result outlives the turn, as it
-/// does here: in a region, growing costs no allocation. Counted by
-/// benchmarks, which build optimized and count every allocation of their
-/// bodies.
+/// loop starts: one allocation for 10,000 elements, in a region here, where
+/// growing to them takes 13; `filter`, which pushes in some turns only,
+/// still grows, on the heap when its result outlives the turn, as it does
+/// here. Counted by benchmarks, which build optimized and count every
+/// allocation of their bodies, on the heap and in regions.
 #[test]
 fn arrays_a_loop_fills_allocate_once() {
     let tests = "import std.testing\n\n\
@@ -751,8 +750,11 @@ fn arrays_a_loop_fills_allocate_once() {
     assert_eq!(status, 0, "{stdout}{stderr}");
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let benchmarks = report["tests"][0]["attempts"][0]["benchmarks"].as_array().unwrap().clone();
-    let allocations: Vec<(&str, f64)> =
-        benchmarks.iter().map(|b| (b["name"].as_str().unwrap(), b["allocations_per_op"].as_f64().unwrap())).collect();
+    let count = |b: &serde_json::Value, key: &str| b[key].as_f64().unwrap();
+    let allocations: Vec<(&str, f64)> = benchmarks
+        .iter()
+        .map(|b| (b["name"].as_str().unwrap(), count(b, "allocations_per_op") + count(b, "region_allocations_per_op")))
+        .collect();
     let once: Vec<(&str, f64)> =
         ["map", "zip", "enumerate", "loop", "inclusive", "from"].map(|name| (name, 1.0)).to_vec();
     assert_eq!(allocations[..6], once[..], "{report}");
@@ -2097,6 +2099,63 @@ test heldToIt {
     assert_eq!(status, 1, "{stdout}{stderr}");
     assert!(stdout.contains("1 passed; 1 failed"), "{stdout}");
     assert!(stdout.contains("heldToIt") && stdout.contains("assert"), "{stdout}");
+}
+
+/// What a function makes in a region is counted beside the heap: a
+/// benchmark's row says it after its `allocs/op`, and its report apart;
+/// `testing.allocations` counts both, which are the row's two figures
+/// added, and `testing.heapAllocations` the heap's alone; and a memory
+/// profile gives the lines that allocate in regions as kinds of their own.
+#[test]
+fn what_regions_make_is_counted_beside_the_heap() {
+    let tests = "\
+import std.testing
+
+fn squares(count: Int): Int {
+    var values: Array[Int] = []
+    for i in 0..count {
+        values.push(i * i)
+    }
+    values.length()
+}
+
+test counted {
+    let both = testing.allocations(() { squares(100) })
+    let heap = testing.heapAllocations(() { squares(100) })
+    testing.log(\"counted {both} {heap}\")
+    testing.bench(\"squares\", () { squares(100) })
+}
+";
+    let dir = project("in_regions", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--show-output"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(stdout.contains("counted 1 0"), "{stdout}");
+    let args = ["test", "--bench", "--bench-time", "0.1", "--profile", "memory"];
+    let (stdout, stderr, status) = tondo(&dir, &args);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(stdout.contains("  0 allocs/op +1 in regions  0 B/op +832 in regions"), "{stdout}");
+    let profile = stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| line.ends_with(".memory.pprof"))
+        .unwrap_or_else(|| panic!("{stdout}"));
+    let (shown, stderr, status) =
+        tondo(&dir, &["profile", "show", profile, "--sample", "region_objects", "--lines", "--json"]);
+    assert_eq!(status, 0, "{shown}{stderr}");
+    let shown: serde_json::Value = serde_json::from_str(&shown).unwrap();
+    let line = &shown["lines"][0];
+    assert_eq!(
+        (&line["file"], &line["line"]),
+        (&serde_json::json!("src/main_test.to"), &serde_json::json!(6)),
+        "{shown}"
+    );
+    let (report, stderr, status) = tondo(&dir, &["test", "--bench", "--bench-time", "0.1", "--test-format", "json"]);
+    assert_eq!(status, 0, "{report}{stderr}");
+    let report: serde_json::Value = serde_json::from_str(&report).unwrap();
+    let measured = &report["tests"][0]["attempts"][0]["benchmarks"][0];
+    let figures =
+        ["allocations_per_op", "region_allocations_per_op", "region_bytes_per_op"].map(|key| measured[key].as_f64());
+    assert_eq!(figures, [Some(0.0), Some(1.0), Some(832.0)], "{measured}");
 }
 
 /// A test is watched, for its dump, and a benchmark is not: a string that

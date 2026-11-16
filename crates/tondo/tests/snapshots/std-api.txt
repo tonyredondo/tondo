@@ -4278,6 +4278,7 @@ pub fn allocations[T, F: CallMut[fn(): T]](body: F): Int
 pub fn attach(name: String, mediaType: String, data: Array[Byte])
 pub fn bench[T, E, F: CallMut[fn(): T ! E]](name: String, body: F): !E
 pub fn failNow(message: String): Never
+pub fn heapAllocations[T, F: CallMut[fn(): T]](body: F): Int
 pub fn keep[T](value: T)
 pub fn log(message: String)
 pub fn skip(reason: String): Never

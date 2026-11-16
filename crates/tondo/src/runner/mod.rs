@@ -388,10 +388,10 @@ pub struct FuzzInput {
 }
 
 /// What a benchmark measured: the runs of each sample, the nanoseconds a
-/// run took by sample, the allocations of a run and their bytes, and what
-/// the processor counted of a run where the system let it count:
-/// instructions, cycles, mispredicted branches, and reads that missed the
-/// first cache of data and of instructions.
+/// run took by sample, the allocations of a run and their bytes, on the
+/// heap and in regions, and what the processor counted of a run where the
+/// system let it count: instructions, cycles, mispredicted branches, and
+/// reads that missed the first cache of data and of instructions.
 #[derive(Clone, Debug, Default)]
 pub struct Benchmark {
     pub name: String,
@@ -399,6 +399,8 @@ pub struct Benchmark {
     pub samples: Vec<f64>,
     pub allocations: f64,
     pub bytes: f64,
+    pub region_allocations: f64,
+    pub region_bytes: f64,
     pub instructions: Option<f64>,
     pub cycles: Option<f64>,
     pub branch_misses: Option<f64>,
@@ -966,7 +968,12 @@ fn profiled(
         let frames = collected["frames"].as_object().unwrap_or(&empty);
         let labels = collected["labels"].as_object().unwrap_or(&empty);
         let samples = collected["samples"].as_array().cloned().unwrap_or_default();
-        let memory = serde_json::json!({ "memory": { "rate": collected["rate"], "samples": [], "allocated": collected["allocated"] } });
+        let memory = serde_json::json!({ "memory": {
+            "rate": collected["rate"],
+            "samples": [],
+            "allocated": collected["allocated"],
+            "region_allocated": collected["region_allocated"],
+        } });
         let program = executable.display().to_string();
         let (mut builder, count) = crate::profile::build(kind, &program, frames, labels, &samples, Some(&memory))?;
         builder.base(collected["base"].as_u64().unwrap_or(0));

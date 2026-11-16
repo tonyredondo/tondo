@@ -37,6 +37,7 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ),
     ("heap.rs", "UNTIL", "a sample of the heap per thread, whichever task allocates"),
     ("heap.rs", "SEED", "a sample of the heap per thread, whichever task allocates"),
+    ("heap.rs", "REGION_UNTIL", "a sample of what regions make per thread, whichever task makes it"),
     ("heap.rs", "TRACKING", "set inside the registry of objects, which never waits"),
     ("heap.rs", "QUIET", "set while the debugger works at a probe, which never waits"),
     ("panics.rs", "STAGED", "a panic's code and data, staged by calls that never wait until it is raised"),

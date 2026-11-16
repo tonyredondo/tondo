@@ -80,6 +80,8 @@ pub(super) fn json(benchmark: &Benchmark, compared: Option<&Compared>) -> Value 
         ),
         ("allocations_per_op", decimal(benchmark.allocations)),
         ("bytes_per_op", decimal(benchmark.bytes)),
+        ("region_allocations_per_op", decimal(benchmark.region_allocations)),
+        ("region_bytes_per_op", decimal(benchmark.region_bytes)),
         ("instructions_per_op", counted(benchmark.instructions)),
         ("cycles_per_op", counted(benchmark.cycles)),
         ("branch_misses_per_op", counted(benchmark.branch_misses)),
@@ -327,6 +329,8 @@ pub(super) fn baseline(environment: Value, measured: &[(String, &Benchmark)]) ->
                 ("runs_per_sample", Value::Int(benchmark.runs as i64)),
                 ("allocations_per_op", decimal(benchmark.allocations)),
                 ("bytes_per_op", decimal(benchmark.bytes)),
+                ("region_allocations_per_op", decimal(benchmark.region_allocations)),
+                ("region_bytes_per_op", decimal(benchmark.region_bytes)),
                 ("instructions_per_op", counted(benchmark.instructions)),
                 ("cycles_per_op", counted(benchmark.cycles)),
                 ("branch_misses_per_op", counted(benchmark.branch_misses)),
@@ -366,6 +370,8 @@ pub(super) fn read_baseline(path: &Path) -> Result<Baselines, String> {
             samples,
             allocations: number("allocations_per_op"),
             bytes: number("bytes_per_op"),
+            region_allocations: number("region_allocations_per_op"),
+            region_bytes: number("region_bytes_per_op"),
             instructions: entry["instructions_per_op"].as_f64(),
             cycles: entry["cycles_per_op"].as_f64(),
             branch_misses: entry["branch_misses_per_op"].as_f64(),
@@ -501,9 +507,12 @@ pub(super) fn lines(
                 // What it allocates, when that changed, whether or not it
                 // fails the run.
                 let mut allocated = String::new();
-                for (unit, now, was) in
-                    [("allocs/op", benchmark.allocations, base.allocations), ("B/op", benchmark.bytes, base.bytes)]
-                {
+                for (unit, now, was) in [
+                    ("allocs/op", benchmark.allocations, base.allocations),
+                    ("B/op", benchmark.bytes, base.bytes),
+                    ("allocs/op in regions", benchmark.region_allocations, base.region_allocations),
+                    ("B/op in regions", benchmark.region_bytes, base.region_bytes),
+                ] {
                     if now != was {
                         let (now, was) = amounts(now, was);
                         allocated.push_str(&format!(", {now} {unit}, was {was}"));
@@ -527,11 +536,13 @@ pub(super) fn lines(
             false => String::new(),
         };
         text.push_str(&format!(
-            "  {:<width$}  {:>11}/op  ±{spread:.1}%  {} allocs/op  {} B/op{instructions}{layouts}{compared}\n",
+            "  {:<width$}  {:>11}/op  ±{spread:.1}%  {} allocs/op{}  {} B/op{}{instructions}{layouts}{compared}\n",
             benchmark.name,
             time(stats.median),
             amount(benchmark.allocations),
+            in_regions(benchmark.region_allocations),
             amount(benchmark.bytes),
+            in_regions(benchmark.region_bytes),
         ));
     }
     text
@@ -556,6 +567,15 @@ fn amounts(now: f64, was: f64) -> (String, String) {
         digits += 1;
     }
     (shown, before)
+}
+
+/// What a run made in regions besides the heap, after its count of the
+/// heap: nothing when none.
+pub(super) fn in_regions(value: f64) -> String {
+    match value > 0.0 {
+        true => format!(" +{} in regions", amount(value)),
+        false => String::new(),
+    }
 }
 
 /// A count per run: whole when it is.

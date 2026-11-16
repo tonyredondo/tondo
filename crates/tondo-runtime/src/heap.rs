@@ -3,7 +3,8 @@
 //! size is favoured, kept with the stack that made it for as long as it
 //! lives, and added to what that stack allocated in all. A dump shows
 //! them: where the live memory was allocated; and a profile of memory
-//! (toolchain 7.15) both.
+//! (toolchain 7.15) both. What regions make is sampled apart, at the same
+//! rate: a sample lives until its region lets go of the chunk it is in.
 
 use std::cell::{Cell, UnsafeCell};
 use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
@@ -19,8 +20,10 @@ pub(crate) fn rate() -> u64 {
 
 thread_local! {
     /// Bytes this thread allocates before its next sample, 0 before its
-    /// first allocation; and the state of its random numbers.
+    /// first allocation, on the heap and in regions; and the state of its
+    /// random numbers.
     static UNTIL: Cell<i64> = const { Cell::new(0) };
+    static REGION_UNTIL: Cell<i64> = const { Cell::new(0) };
     static SEED: Cell<u64> = const { Cell::new(0) };
 }
 
@@ -64,6 +67,15 @@ unsafe impl Sync for Allocated {}
 
 static ALLOCATED: AtomicPtr<Allocated> = AtomicPtr::new(std::ptr::null_mut());
 static UNSTACKED: AtomicU64 = AtomicU64::new(0);
+/// The same, of what regions made.
+static REGION_ALLOCATED: AtomicPtr<Allocated> = AtomicPtr::new(std::ptr::null_mut());
+
+/// The samples of regions alive, any of them in any slot: few, and looked
+/// for only when a chunk that holds one goes.
+const REGION_SAMPLES: usize = 1024;
+static REGION_ADDRESSES: [AtomicUsize; REGION_SAMPLES] = [const { AtomicUsize::new(EMPTY) }; REGION_SAMPLES];
+static REGION_SAMPLED: AtomicPtr<Sample> = AtomicPtr::new(std::ptr::null_mut());
+static REGION_DROPPED: AtomicU64 = AtomicU64::new(0);
 
 /// Makes the samples' tables, before any sample is taken.
 pub(crate) fn prepare() {
@@ -75,16 +87,21 @@ pub(crate) fn prepare() {
     if SAMPLES.load(Ordering::Acquire).is_null() {
         SAMPLES.store(super::zeroed(BUCKETS * WAYS), Ordering::Release);
     }
-    if ALLOCATED.load(Ordering::Acquire).is_null() {
-        ALLOCATED.store(super::zeroed(STACKS), Ordering::Release);
+    for table in [&ALLOCATED, &REGION_ALLOCATED] {
+        if table.load(Ordering::Acquire).is_null() {
+            table.store(super::zeroed(STACKS), Ordering::Release);
+        }
+    }
+    if REGION_SAMPLED.load(Ordering::Acquire).is_null() {
+        REGION_SAMPLED.store(super::zeroed(REGION_SAMPLES), Ordering::Release);
     }
 }
 
 /// Adds a sample of `size` bytes to what its stack allocated: as the
 /// allocations and bytes it stands for, `1 / (1 − e^(−size / RATE))` of
 /// them.
-fn allocated_by(frames: &[usize; FRAMES], size: usize) {
-    let table = ALLOCATED.load(Ordering::Acquire);
+fn allocated_by(table: &AtomicPtr<Allocated>, frames: &[usize; FRAMES], size: usize) {
+    let table = table.load(Ordering::Acquire);
     if table.is_null() {
         return;
     }
@@ -121,11 +138,11 @@ fn allocated_by(frames: &[usize; FRAMES], size: usize) {
     UNSTACKED.fetch_add(1, Ordering::Relaxed);
 }
 
-/// What each stack allocated since the samples began: the allocations and
-/// bytes, and the stack, innermost first; and how many stacks found no
-/// room.
-pub(crate) fn allocations() -> (Vec<(f64, f64, Vec<usize>)>, u64) {
-    let table = ALLOCATED.load(Ordering::Acquire);
+/// What each stack allocated since the samples began, on the heap or, with
+/// `regions`, in regions: the allocations and bytes, and the stack,
+/// innermost first; and how many stacks found no room.
+pub(crate) fn allocations(regions: bool) -> (Vec<(f64, f64, Vec<usize>)>, u64) {
+    let table = if regions { &REGION_ALLOCATED } else { &ALLOCATED }.load(Ordering::Acquire);
     if table.is_null() {
         return (Vec::new(), 0);
     }
@@ -158,19 +175,29 @@ fn bucket(address: usize) -> usize {
 /// then.
 #[inline]
 pub(crate) fn allocated(address: usize, size: usize) {
-    UNTIL.with(|until| {
+    if due(&UNTIL, size) {
+        take(address, size);
+    }
+}
+
+/// After a region made a value of a thread that counts: takes a sample now
+/// and then, which the region's chunk keeps; whether it took one.
+pub(crate) fn region_allocated(address: usize, size: usize) -> bool {
+    due(&REGION_UNTIL, size) && take_in_region(address, size)
+}
+
+/// Whether the bytes until the next sample are spent, counting `size`.
+#[inline]
+fn due(until: &'static std::thread::LocalKey<Cell<i64>>, size: usize) -> bool {
+    until.with(|until| {
         let mut left = until.get();
         if left == 0 {
             left = interval();
         }
         left -= size as i64;
-        if left > 0 {
-            until.set(left);
-            return;
-        }
-        until.set(interval());
-        take(address, size);
-    });
+        until.set(if left > 0 { left } else { interval() });
+        left <= 0
+    })
 }
 
 /// Before memory goes back: a sample of it is no longer alive.
@@ -198,15 +225,21 @@ fn interval() -> i64 {
     })
 }
 
-#[cold]
-fn take(address: usize, size: usize) {
+/// The stack that allocates, innermost first.
+fn stack() -> [usize; FRAMES] {
     let mut frames = [0; FRAMES];
     let bounds = super::tasks::stack_bounds().unwrap_or((0, 0));
     let walk = super::trace::walk(super::trace::through(super::trace::frame_pointer(), bounds), bounds);
     for (slot, frame) in frames.iter_mut().zip(walk) {
         *slot = frame;
     }
-    allocated_by(&frames, size);
+    frames
+}
+
+#[cold]
+fn take(address: usize, size: usize) {
+    let frames = stack();
+    allocated_by(&ALLOCATED, &frames, size);
     let bucket = bucket(address);
     let samples = samples();
     for slot in (bucket * WAYS..(bucket + 1) * WAYS).filter(|&slot| slot < samples.len()) {
@@ -238,22 +271,71 @@ fn forget(bucket: usize, address: usize) {
     }
 }
 
-/// The samples alive now, each its size and the stack that allocated it,
-/// innermost first; and how many were not kept.
-pub(crate) fn alive() -> (Vec<(usize, Vec<usize>)>, u64) {
+#[cold]
+fn take_in_region(address: usize, size: usize) -> bool {
+    let frames = stack();
+    allocated_by(&REGION_ALLOCATED, &frames, size);
+    let samples = REGION_SAMPLED.load(Ordering::Acquire);
+    if samples.is_null() {
+        return false;
+    }
+    let samples = unsafe { std::slice::from_raw_parts(samples, REGION_SAMPLES) };
+    for (slot, sample) in REGION_ADDRESSES.iter().zip(samples) {
+        if slot.compare_exchange(EMPTY, BUSY, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+            unsafe {
+                *sample.size.get() = size;
+                *sample.frames.get() = frames;
+            }
+            slot.store(address, Ordering::Release);
+            return true;
+        }
+    }
+    REGION_DROPPED.fetch_add(1, Ordering::Relaxed);
+    false
+}
+
+/// A chunk of a region at `start`, of `bytes`, goes or is emptied: the
+/// samples in it are no longer alive.
+#[cold]
+pub(crate) fn region_freed(start: usize, bytes: usize) {
+    for slot in &REGION_ADDRESSES {
+        let address = slot.load(Ordering::Relaxed);
+        if address > BUSY && (start..start + bytes).contains(&address) {
+            let _ = slot.compare_exchange(address, EMPTY, Ordering::AcqRel, Ordering::Relaxed);
+        }
+    }
+}
+
+/// The samples alive now, on the heap or, with `regions`, in regions:
+/// each its size and the stack that allocated it, innermost first; and how
+/// many were not kept.
+pub(crate) fn alive(regions: bool) -> (Vec<(usize, Vec<usize>)>, u64) {
+    if regions {
+        let samples = REGION_SAMPLED.load(Ordering::Acquire);
+        if samples.is_null() {
+            return (Vec::new(), 0);
+        }
+        let samples = unsafe { std::slice::from_raw_parts(samples, REGION_SAMPLES) };
+        return (living(&REGION_ADDRESSES, samples), REGION_DROPPED.load(Ordering::Relaxed));
+    }
+    (living(&ADDRESSES, samples()), DROPPED.load(Ordering::Relaxed))
+}
+
+/// The samples of `addresses` that are alive.
+fn living(addresses: &[AtomicUsize], samples: &[Sample]) -> Vec<(usize, Vec<usize>)> {
     let mut out = Vec::new();
-    for (slot, sample) in samples().iter().enumerate() {
-        let before = ADDRESSES[slot].load(Ordering::Acquire);
+    for (slot, sample) in addresses.iter().zip(samples) {
+        let before = slot.load(Ordering::Acquire);
         if before == EMPTY || before == BUSY {
             continue;
         }
         let (size, frames) = unsafe { (*sample.size.get(), *sample.frames.get()) };
         std::sync::atomic::fence(Ordering::Acquire);
-        if ADDRESSES[slot].load(Ordering::Relaxed) == before {
+        if slot.load(Ordering::Relaxed) == before {
             out.push((size, frames.into_iter().take_while(|&f| f != 0).collect()));
         }
     }
-    (out, DROPPED.load(Ordering::Relaxed))
+    out
 }
 
 // ---------------------------------------------------------------------------

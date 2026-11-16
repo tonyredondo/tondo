@@ -98,9 +98,12 @@ const PERIOD: i64 = 1_000_000;
 
 /// The functions of the allocator and of its samples, which a sample of
 /// memory goes through before it reaches what asked for the memory.
-const ALLOCATOR: [&str; 9] = [
+const ALLOCATOR: [&str; 12] = [
     "tondo_runtime::diagnostics::allocated",
+    "tondo_runtime::diagnostics::region_allocated",
     "tondo_runtime::heap::",
+    "tondo_runtime::regions::",
+    "tondo_rt_region_alloc",
     "<tondo_runtime::meta::Counting",
     "__rust_alloc",
     "__rust_realloc",
@@ -246,6 +249,8 @@ pub(crate) fn build(
                 ("alloc_space", "bytes"),
                 ("inuse_objects", "count"),
                 ("inuse_space", "bytes"),
+                ("region_objects", "count"),
+                ("region_space", "bytes"),
             ];
             let mut builder = Builder::new(program, &types, ("space", "bytes"), rate as i64);
             let samples = memory["samples"].as_array().cloned().unwrap_or_default();
@@ -255,16 +260,22 @@ pub(crate) fn build(
                 let size = sample["size"].as_f64().unwrap_or(0.0);
                 // A sample stands for 1 / (1 − e^(−size / rate)) allocations.
                 let weight = 1.0 / (1.0 - (-size / rate).exp());
-                let values = [0, 0, weight.round() as i64, (weight * size).round() as i64];
+                let values = [0, 0, weight.round() as i64, (weight * size).round() as i64, 0, 0];
                 add(&mut builder, &sample["stack"], &values, &[]);
             }
-            let allocated = memory["allocated"].as_array().cloned().unwrap_or_default();
-            for entry in &allocated {
-                let (objects, bytes) =
-                    (entry["objects"].as_f64().unwrap_or(0.0), entry["bytes"].as_f64().unwrap_or(0.0));
-                add(&mut builder, &entry["stack"], &[objects.round() as i64, bytes.round() as i64, 0, 0], &[]);
+            // What each stack allocated, on the heap and in regions.
+            let mut allocated = 0;
+            for (name, at) in [("allocated", 0), ("region_allocated", 4)] {
+                for entry in memory[name].as_array().cloned().unwrap_or_default() {
+                    let (objects, bytes) =
+                        (entry["objects"].as_f64().unwrap_or(0.0), entry["bytes"].as_f64().unwrap_or(0.0));
+                    let mut values = [0; 6];
+                    (values[at], values[at + 1]) = (objects.round() as i64, bytes.round() as i64);
+                    add(&mut builder, &entry["stack"], &values, &[]);
+                    allocated += 1;
+                }
             }
-            Ok((builder, samples.len() + allocated.len()))
+            Ok((builder, samples.len() + allocated))
         }
         Kind::Tasks => {
             let dump = asked.filter(|d| d["tasks"].is_array()).ok_or(

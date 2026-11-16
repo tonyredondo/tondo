@@ -2477,7 +2477,11 @@ reporte de cobertura, `--jobs`, `--retry`, `--repeat`, `--allow-flaky`,
    más lento cada cambio de hilo de los que cuenta: el tiempo es el del
    programa. Las instrucciones no cambian con dónde cae el código, como sí el
    tiempo; los fallos dicen por qué cambió el tiempo cuando ellas no.
-5. Ejecuta una tanda más, que cuenta las asignaciones de memoria y sus bytes.
+5. Ejecuta una tanda más, que cuenta las asignaciones de memoria y sus bytes:
+   las del heap y, aparte, los valores que hacen las regiones (7.18 del
+   toolchain). Antes ejecuta el cuerpo una vez contando, sin que cuente, para
+   que la región de un bucle, que guarda su trozo de una tanda a otra, cuente
+   desde su vuelta siguiente.
 
 Lo que da el cuerpo se conserva, como con `testing.keep`, para que el
 optimizador no elimine su cálculo. El timeout de la entrada (7.8) cuenta de
@@ -2486,26 +2490,30 @@ benchmark sin medidas, y `bench` devuelve ese error; un pánico termina el test,
 como siempre.
 
 `testing.allocations(body)` ejecuta el closure una vez y da cuántas veces
-asignó memoria del heap, como un `Int`, en la tarea que lo llama: las tareas
-que empieza cuentan las suyas, y los tests que corren a la vez, también. El
-closure se hace antes de que empiece la cuenta, y lo que da se conserva, como
-con `testing.keep`. Cuenta en el build de los tests, que es optimizado salvo con
-`--debug`, como el de `--bench`: un test con `assert(testing.allocations(() {
-receipt(lines) }) <= 7)` mantiene una función en las asignaciones que hace
-ahora, y falla cuando el compilador o el código hacen más.
+asignó memoria, en el heap o en una región, como un `Int`, en la tarea que lo
+llama: las tareas que empieza cuentan las suyas, y los tests que corren a la
+vez, también. Es la suma de las dos cifras de la línea de un benchmark, la del
+heap y la de las regiones, no `allocs/op` solo; `testing.heapAllocations(body)`
+cuenta solo el heap, lo que dice `allocs/op`. El closure se hace antes de que
+empiece la cuenta, y lo que da se conserva, como con `testing.keep`. Cuenta en
+el build de los tests, que es optimizado salvo con `--debug`, como el de
+`--bench`: un test con `assert(testing.allocations(() { receipt(lines) }) <= 7)`
+mantiene una función en las asignaciones que hace ahora, vayan donde el
+optimizador las ponga, y falla cuando el compilador o el código hacen más.
 
 El reporte (15.11) da por cada benchmark las ejecuciones de cada muestra, los
 nanosegundos por ejecución de cada muestra, su mediana, media, mínimo, máximo y
 desviación (la mediana de las distancias a la mediana, que una muestra
-retrasada por otra cosa no estira), las asignaciones y bytes por ejecución, y
-las instrucciones y ciclos por ejecución donde se contaron; y una vez por
-invocación, el tiempo de cada benchmark y la máquina. La salida para personas
-pone bajo la línea de cada test una línea por benchmark:
+retrasada por otra cosa no estira), las asignaciones y bytes por ejecución,
+los del heap y los de las regiones, y las instrucciones y ciclos por ejecución
+donde se contaron; y una vez por invocación, el tiempo de cada benchmark y la
+máquina. La salida para personas pone bajo la línea de cada test una línea por
+benchmark, con lo que hizo en regiones tras lo del heap cuando hizo algo:
 
 ~~~text
 test app::unit::app::parsing ... ok
   parse 10       1.973 µs/op  ±0.5%  51 allocs/op  1685 B/op  24.1k ins/op
-  parse 1000     173.3 µs/op  ±0.4%  4017 allocs/op  85613 B/op  2.13M ins/op
+  parse 1000     173.3 µs/op  ±0.4%  4017 allocs/op +2000 in regions  85613 B/op +224000 in regions  2.13M ins/op
 ~~~
 
 Las medidas se comparan con una línea base:
@@ -4340,6 +4348,8 @@ benchmark de un intento tiene esta forma:
   },
   "allocations_per_op": 0.000,
   "bytes_per_op": 0.000,
+  "region_allocations_per_op": 0.000,
+  "region_bytes_per_op": 0.000,
   "instructions_per_op": 61.000,
   "cycles_per_op": 72.412,
   "branch_misses_per_op": 0.012,
@@ -4405,6 +4415,8 @@ orden del reporte:
       "runs_per_sample": 367839,
       "allocations_per_op": 0.000,
       "bytes_per_op": 0.000,
+      "region_allocations_per_op": 0.000,
+      "region_bytes_per_op": 0.000,
       "instructions_per_op": 61.000,
       "cycles_per_op": 72.412,
       "branch_misses_per_op": 0.012,

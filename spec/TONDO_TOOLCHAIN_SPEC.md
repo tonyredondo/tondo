@@ -832,7 +832,7 @@ Los contadores del runtime, por grupos:
 
 | Grupo | Contadores |
 |---|---|
-| `memory` | `held`, los bytes asignados ahora; `allocated`, bytes; `allocations`; `objects`, los strings y boxes vivos |
+| `memory` | `held`, los bytes asignados ahora; `allocated`, bytes; `allocations`; `objects`, los strings y boxes vivos; `regions`, los bytes de los trozos que tienen las regiones ahora; `regions_kept`, los de los trozos guardados para las siguientes; `region_allocations`, los valores que hicieron las regiones mientras se contaba |
 | `collector` | `collections`; `freed`, objetos de ciclos liberados; `paused`, el tiempo que los workers esperaron al colector; `longest`, la pausa más larga |
 | `tasks` | `live`; `ready`, las que esperan un worker; `spawned` |
 | `workers` | `total`; `idle`; `in_c`, los que están dentro de una llamada a C; `replaced`, los que tomaron el puesto de uno que tardaba en C; `c_calls` |
@@ -1245,7 +1245,11 @@ función las direcciones de sus bindings y cuáles tienen valor.
 
 La memoria viva sale de muestras que el runtime toma siempre, como Go: una
 asignación por cada 512 KiB de media, a intervalos al azar, con la pila que
-la hizo, mientras vive. Una muestra de `n` bytes cuenta por
+la hizo, mientras vive. Lo que hacen las regiones se muestrea aparte, al
+mismo ritmo, y vive hasta que su región suelta el trozo en que está: un
+volcado da también la memoria en regiones por sitio. Mientras las
+herramientas cuentan, cada valor que hace una región pasa por el camino lento
+de la región, que lo cuenta; un programa que nadie mira no lo paga. Una muestra de `n` bytes cuenta por
 `n / (1 − e^(−n / 512 KiB))`, así que sus cifras son estimaciones; el sitio
 es el código del programa que asignó, pasando por la librería estándar, y el
 tipo, el del valor que hacía la sentencia o la colección que cambiaba, que el
@@ -2318,7 +2322,10 @@ muestra son `samples` y `cpu` (nanosegundos), o `instructions` en uno por
 instrucciones; `alloc_objects`,
 `alloc_space`, `inuse_objects` e `inuse_space`, este el primero que se
 muestra, o `alloc_space` en el perfil de un test o de un benchmark, que no
-tiene memoria viva; y `tasks`. Las muestras de CPU y las de instrucciones llevan la etiqueta
+tiene memoria viva, y `region_objects` y `region_space`, lo que asignó cada
+pila en regiones, muestreado aparte del heap y al mismo ritmo, de modo que
+`--sample region_objects --lines` da las líneas que más asignan en regiones;
+y `tasks`. Las muestras de CPU y las de instrucciones llevan la etiqueta
 `thread`, y las de tareas, `state`; las de CPU y las de instrucciones llevan también los labels de la tarea que
 corría (`profile.withLabels`, 14.26 de la librería estándar). En un perfil de
 memoria, el asignador y su muestreo no cuentan como marcos: el más interno es

@@ -942,9 +942,11 @@ impl<'a> Checker<'a> {
     }
 
     /// `testing.allocations(body)` (testing 10.4): how many allocations a
-    /// run of `body` makes in its task, its result kept so that the
-    /// optimizer keeps its work. The closure is made before counting starts.
-    pub(super) fn allocations(&mut self, cx: &mut FnCx, args: &[ast::Arg], span: Span) -> hir::Expr {
+    /// run of `body` makes in its task, on the heap and in regions, or with
+    /// `heap`, as `testing.heapAllocations`, on the heap alone; its result
+    /// kept so that the optimizer keeps its work. The closure is made before
+    /// counting starts.
+    pub(super) fn allocations(&mut self, cx: &mut FnCx, args: &[ast::Arg], span: Span, heap: bool) -> hir::Expr {
         let [body] = args else {
             return self.arity_error(span, 1, args.len());
         };
@@ -971,10 +973,14 @@ impl<'a> Checker<'a> {
         };
         let stmts = vec![
             hir::Stmt::Let(body, value),
-            hir::Stmt::Let(before, std(StdFn::AllocationsStart, Vec::new(), Ty::INT)),
+            hir::Stmt::Let(
+                before,
+                std(StdFn::AllocationsStart, vec![mk(hir::ExprKind::Bool(heap), Ty::BOOL)], Ty::INT),
+            ),
             run,
         ];
-        let since = std(StdFn::AllocationsSince, vec![mk(hir::ExprKind::Local(before), Ty::INT)], Ty::INT);
+        let values = vec![mk(hir::ExprKind::Local(before), Ty::INT), mk(hir::ExprKind::Bool(heap), Ty::BOOL)];
+        let since = std(StdFn::AllocationsSince, values, Ty::INT);
         let block = hir::Block { stmts, tail: Some(Box::new(since)), ty: Ty::INT };
         mk(hir::ExprKind::Block(block), Ty::INT)
     }

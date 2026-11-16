@@ -130,6 +130,71 @@ fn ps_and_counters() {
     child.wait().unwrap();
 }
 
+const IN_REGIONS: &str = r#"import std.console
+
+fn work(count: Int): Int {
+    var values: Array[Int] = []
+    for i in 0..count {
+        values.push(i * 2)
+    }
+    console.println("ready")
+    let _ = console.flush()
+    let _ = console.readLine()
+    values.length()
+}
+
+fn main() {
+    console.println("{work(200000)}")
+}
+"#;
+
+/// What regions hold shows beside the heap: the counters give the bytes
+/// regions hold now and the values they made, and a dump what they hold
+/// by site, sampled.
+#[test]
+fn counters_and_dumps_show_what_regions_hold() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("in_regions");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("in_regions.to"), IN_REGIONS).unwrap();
+    let executable = dir.join("in_regions");
+    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "in_regions.to", "--output"])
+        .arg(&executable)
+        .current_dir(&dir)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let mut child = Started::new(
+        Command::new(&executable)
+            .env("TONDO_DIAGNOSTICS", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut line = String::new();
+    BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
+    assert_eq!(line, "ready\n");
+    let pid = child.id().to_string();
+    let sample = tondo(&["counters", &pid, "--count", "1", "--json"]);
+    let value = |name: &str| {
+        let counters = sample["counters"].as_array().unwrap();
+        counters.iter().find(|c| c["name"] == name).map(|c| c["value"].as_i64().unwrap())
+    };
+    // 200,000 numbers, given their room before the loop: one value.
+    assert!(value("memory.regions").unwrap() >= 1_600_000, "{sample}");
+    assert_eq!(value("memory.region_allocations"), Some(1), "{sample}");
+    let file = dir.join("in_regions.dump.json");
+    let _ = std::fs::remove_file(&file);
+    tondo(&["dump", &pid, "--output", file.to_str().unwrap(), "--json"]);
+    let heap = tondo(&["dump", "read", file.to_str().unwrap(), "heap", "--json"]);
+    let regions = &heap["heap"]["regions"];
+    assert!(regions["bytes"].as_f64().unwrap() >= 1_000_000.0, "{heap}");
+    assert_eq!(regions["sites"][0]["site"], "in_regions.to:6 in work", "{heap}");
+    drop(child.stdin.take());
+    assert!(child.wait().unwrap().success());
+}
+
 const TRACED: &str = r#"import std.console
 
 fn fib(n: Int): Int {
@@ -281,7 +346,8 @@ fn profiles_time_memory_and_tasks() {
     assert!(sampled.status.success(), "{}", String::from_utf8_lossy(&sampled.stderr));
     let memory = show(&["memory.pprof"]);
     assert_eq!(memory["type"], "inuse_space", "{memory}");
-    assert_eq!(memory["types"], json!(["alloc_objects", "alloc_space", "inuse_objects", "inuse_space"]));
+    let types = ["alloc_objects", "alloc_space", "inuse_objects", "inuse_space", "region_objects", "region_space"];
+    assert_eq!(memory["types"], json!(types));
     // Twenty thousand strings of about 550 bytes, estimated from samples.
     let held = memory["total"].as_i64().unwrap();
     assert!((4_000_000..20_000_000).contains(&held), "{memory}");

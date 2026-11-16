@@ -101,13 +101,15 @@ pub(super) fn markdown(document: &Document) -> String {
         for (test, benchmark, compared) in &document.benchmarks {
             let stats = bench::stats(&benchmark.samples);
             let mut row = format!(
-                "| `{}` | {} | {} | {:.1}% | {} | {} | {} |",
+                "| `{}` | {} | {} | {:.1}% | {}{} | {}{} | {} |",
                 test.rsplit("::").next().unwrap_or(test),
                 cell(&benchmark.name),
                 bench::time(stats.median),
                 spread(&stats),
                 bench::amount(benchmark.allocations),
+                bench::in_regions(benchmark.region_allocations),
                 bench::amount(benchmark.bytes),
+                bench::in_regions(benchmark.region_bytes),
                 benchmark.instructions.map_or("—".to_string(), bench::many),
             );
             if baselined {
@@ -204,13 +206,15 @@ pub(super) fn html(document: &Document) -> String {
         for (test, benchmark, compared) in &document.benchmarks {
             let stats = bench::stats(&benchmark.samples);
             out.push_str(&format!(
-                "<tr><td><code>{}</code></td><td>{}</td><td class=\"n\">{}</td><td class=\"n\">{:.1}%</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td>{}</td>",
+                "<tr><td><code>{}</code></td><td>{}</td><td class=\"n\">{}</td><td class=\"n\">{:.1}%</td><td class=\"n\">{}{}</td><td class=\"n\">{}{}</td><td class=\"n\">{}</td><td>{}</td>",
                 escape(test.rsplit("::").next().unwrap_or(test)),
                 escape(&benchmark.name),
                 escape(&bench::time(stats.median)),
                 spread(&stats),
                 bench::amount(benchmark.allocations),
+                bench::in_regions(benchmark.region_allocations),
                 bench::amount(benchmark.bytes),
+                bench::in_regions(benchmark.region_bytes),
                 benchmark.instructions.map_or("—".to_string(), bench::many),
                 samples(&benchmark.samples, &stats),
             ));

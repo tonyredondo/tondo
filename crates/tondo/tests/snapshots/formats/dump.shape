@@ -17,6 +17,8 @@
 .frames.<address>.type: string
 .heap.dropped: number
 .heap.rate: number
+.heap.region_dropped: number
+.heap.region_samples[]
 .heap.samples (varies)
 .info.arguments[]
 .info.base: number

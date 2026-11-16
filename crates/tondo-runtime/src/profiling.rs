@@ -40,10 +40,10 @@ static COLLECTING: AtomicBool = AtomicBool::new(false);
 /// The samples of what is profiled now.
 static SAMPLES: Mutex<Vec<Sample>> = Mutex::new(Vec::new());
 /// What each stack had allocated when collecting began, and what it
-/// allocated while collecting.
+/// allocated while collecting, on the heap and in regions.
 type Allocations = HashMap<Vec<usize>, (f64, f64)>;
-static BEFORE: Mutex<Option<Allocations>> = Mutex::new(None);
-static ALLOCATED: Mutex<Option<Allocations>> = Mutex::new(None);
+static BEFORE: Mutex<Option<[Allocations; 2]>> = Mutex::new(None);
+static ALLOCATED: Mutex<Option<[Allocations; 2]>> = Mutex::new(None);
 static WRITTEN: AtomicU64 = AtomicU64::new(0);
 
 /// Readies the worker: samples its threads, emptied into what is
@@ -79,7 +79,7 @@ pub(crate) fn resume() {
     let Some(settings) = settings() else { return };
     if settings.memory {
         *ALLOCATED.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        *BEFORE.lock().unwrap_or_else(|e| e.into_inner()) = Some(allocations());
+        *BEFORE.lock().unwrap_or_else(|e| e.into_inner()) = Some([allocations(false), allocations(true)]);
     } else {
         COLLECTING.store(false, Ordering::Release);
         drain();
@@ -95,12 +95,14 @@ pub(crate) fn pause() {
         let Some(before) = BEFORE.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
         let mut allocated = ALLOCATED.lock().unwrap_or_else(|e| e.into_inner());
         let allocated = allocated.get_or_insert_default();
-        for (stack, (objects, bytes)) in allocations() {
-            let (was_objects, was_bytes) = before.get(&stack).copied().unwrap_or_default();
-            if objects > was_objects {
-                let entry = allocated.entry(stack).or_default();
-                entry.0 += objects - was_objects;
-                entry.1 += bytes - was_bytes;
+        for (regions, (allocated, before)) in allocated.iter_mut().zip(&before).enumerate() {
+            for (stack, (objects, bytes)) in allocations(regions == 1) {
+                let (was_objects, was_bytes) = before.get(&stack).copied().unwrap_or_default();
+                if objects > was_objects {
+                    let entry = allocated.entry(stack).or_default();
+                    entry.0 += objects - was_objects;
+                    entry.1 += bytes - was_bytes;
+                }
             }
         }
     } else {
@@ -109,8 +111,8 @@ pub(crate) fn pause() {
     }
 }
 
-fn allocations() -> Allocations {
-    super::heap::allocations().0.into_iter().map(|(objects, bytes, stack)| (stack, (objects, bytes))).collect()
+fn allocations(regions: bool) -> Allocations {
+    super::heap::allocations(regions).0.into_iter().map(|(objects, bytes, stack)| (stack, (objects, bytes))).collect()
 }
 
 /// Writes what was collected of the test `node`, or of its benchmark
@@ -123,15 +125,19 @@ pub(crate) fn write(node: u32, bench: Option<&str>) {
     let base = super::diagnostics::program_base();
     let mut out = format!("{{\"node\":{node},\"bench\":{bench},\"base\":{base},");
     if settings.memory {
-        let allocated = ALLOCATED.lock().unwrap_or_else(|e| e.into_inner()).take().unwrap_or_default();
-        let _ = write!(out, "\"kind\":\"memory\",\"rate\":{},\"allocated\":[", super::heap::rate());
-        for (index, (stack, (objects, bytes))) in allocated.iter().enumerate() {
-            let comma = if index == 0 { "" } else { "," };
-            let _ = write!(
-                out,
-                "{comma}{{\"objects\":{objects:.1},\"bytes\":{bytes:.0},\"stack\":{}}}",
-                frames.list(stack)
-            );
+        let [allocated, in_regions] = ALLOCATED.lock().unwrap_or_else(|e| e.into_inner()).take().unwrap_or_default();
+        let _ = write!(out, "\"kind\":\"memory\",\"rate\":{}", super::heap::rate());
+        for (name, allocated) in [("allocated", allocated), ("region_allocated", in_regions)] {
+            let _ = write!(out, ",\"{name}\":[");
+            for (index, (stack, (objects, bytes))) in allocated.iter().enumerate() {
+                let comma = if index == 0 { "" } else { "," };
+                let _ = write!(
+                    out,
+                    "{comma}{{\"objects\":{objects:.1},\"bytes\":{bytes:.0},\"stack\":{}}}",
+                    frames.list(stack)
+                );
+            }
+            out.push(']');
         }
     } else {
         let samples = std::mem::take(&mut *SAMPLES.lock().unwrap_or_else(|e| e.into_inner()));
@@ -143,9 +149,6 @@ pub(crate) fn write(node: u32, bench: Option<&str>) {
             let _ = write!(out, "{comma}[{at},{thread},{},{}]", frames.list(stack.frames()), labels.number(*set));
         }
         let _ = write!(out, "],\"labels\":{{{}}}", labels.json);
-    }
-    if settings.memory {
-        out.push(']');
     }
     let _ = write!(out, ",\"frames\":{{{}}}}}", frames.json);
     let number = WRITTEN.fetch_add(1, Ordering::Relaxed);
@@ -554,21 +557,31 @@ pub extern "C" fn tondo_rt_profile_memory_sampled() -> u8 {
 pub extern "C" fn tondo_rt_profile_memory() -> *mut super::native::NativeObject {
     let rate = super::heap::rate() as f64;
     let mut weighed: Vec<Weighed> = Vec::new();
-    for (size, stack) in super::heap::alive().0 {
+    for (size, stack) in super::heap::alive(false).0 {
         let weight = 1.0 / (1.0 - (-(size as f64) / rate).exp());
-        weighed.push((stack, vec![0, 0, weight.round() as i64, (weight * size as f64).round() as i64], Vec::new()));
+        let values = vec![0, 0, weight.round() as i64, (weight * size as f64).round() as i64, 0, 0];
+        weighed.push((stack, values, Vec::new()));
     }
-    for (objects, bytes, stack) in super::heap::allocations().0 {
-        weighed.push((stack, vec![objects.round() as i64, bytes.round() as i64, 0, 0], Vec::new()));
+    for (objects, bytes, stack) in super::heap::allocations(false).0 {
+        weighed.push((stack, vec![objects.round() as i64, bytes.round() as i64, 0, 0, 0, 0], Vec::new()));
+    }
+    for (objects, bytes, stack) in super::heap::allocations(true).0 {
+        weighed.push((stack, vec![0, 0, 0, 0, objects.round() as i64, bytes.round() as i64], Vec::new()));
     }
     // The allocator is not where the memory was asked for.
     for (stack, ..) in &mut weighed {
         let asked = stack.iter().position(|&a| !allocator(&named(a)[0].0)).unwrap_or(0);
         stack.drain(..asked);
     }
-    let kinds =
-        [("alloc_objects", "count"), ("alloc_space", "bytes"), ("inuse_objects", "count"), ("inuse_space", "bytes")];
-    let cumulative = [true, true, false, false];
+    let kinds = [
+        ("alloc_objects", "count"),
+        ("alloc_space", "bytes"),
+        ("inuse_objects", "count"),
+        ("inuse_space", "bytes"),
+        ("region_objects", "count"),
+        ("region_space", "bytes"),
+    ];
+    let cumulative = [true, true, false, false, true, true];
     super::native::new(made(
         "memory",
         &kinds,
@@ -584,7 +597,10 @@ pub extern "C" fn tondo_rt_profile_memory() -> *mut super::native::NativeObject 
 fn allocator(name: &str) -> bool {
     [
         "tondo_runtime::diagnostics::allocated",
+        "tondo_runtime::diagnostics::region_allocated",
         "tondo_runtime::heap::",
+        "tondo_runtime::regions::",
+        "tondo_rt_region_alloc",
         "tondo_runtime::meta::Counting",
         "<tondo_runtime::meta::Counting",
         "__rust_alloc",

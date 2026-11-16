@@ -3452,11 +3452,22 @@ fn find(dump: &Value, tasks: &[Value], text: &str) -> Vec<Value> {
 
 /// The live memory the samples stand for, by where it was allocated and
 /// by kind: a sample of `size` bytes stands for `size / (1 - e^(-size /
-/// rate))` of them, as in Go.
+/// rate))` of them, as in Go; and what regions hold, sampled apart.
 fn heap(dump: &Value) -> Value {
     let rate = dump["heap"]["rate"].as_f64().unwrap_or(524_288.0);
+    let mut heap = sampled(dump, &dump["heap"]["samples"], rate);
+    heap["rate"] = json!(rate);
+    heap["dropped"] = dump["heap"]["dropped"].clone();
+    let mut regions = sampled(dump, &dump["heap"]["region_samples"], rate);
+    regions["dropped"] = dump["heap"]["region_dropped"].clone();
+    heap["regions"] = regions;
+    heap
+}
+
+/// What `samples` stand for, by site and by kind.
+fn sampled(dump: &Value, samples: &Value, rate: f64) -> Value {
     let mut sites: std::collections::HashMap<(String, String), (f64, f64, u64)> = std::collections::HashMap::new();
-    for sample in dump["heap"]["samples"].as_array().into_iter().flatten() {
+    for sample in samples.as_array().into_iter().flatten() {
         let size = sample["size"].as_f64().unwrap_or(0.0).max(1.0);
         let weight = size / (1.0 - (-size / rate).exp());
         let stack: Vec<&Value> = sample["stack"].as_array().into_iter().flatten().collect();
@@ -3503,7 +3514,7 @@ fn heap(dump: &Value) -> Value {
         .into_iter()
         .map(|(kind, (bytes, objects))| json!({ "kind": kind, "bytes": bytes, "objects": objects }))
         .collect();
-    json!({ "bytes": total, "rate": rate, "dropped": dump["heap"]["dropped"], "sites": rows, "kinds": kinds })
+    json!({ "bytes": total, "sites": rows, "kinds": kinds })
 }
 
 /// What a runtime function allocates, by its name.
@@ -3550,6 +3561,22 @@ fn heap_text(heap: &Value) -> String {
     }
     if heap["dropped"].as_u64().unwrap_or(0) > 0 {
         out.push_str(&format!("({} samples were not kept, too many alive at once)\n", heap["dropped"]));
+    }
+    // What regions hold, sampled apart, when they hold something.
+    let regions = &heap["regions"];
+    let rows: Vec<&Value> = regions["sites"].as_array().into_iter().flatten().collect();
+    if !rows.is_empty() {
+        out.push_str(&format!("\nin regions: about {}\n", bytes(regions["bytes"].as_f64().unwrap_or(0.0))));
+        out.push_str(&format!("{:>12} {:>10}  {:<width$}  TYPE\n", "BYTES", "OBJECTS", "SITE"));
+        for row in rows {
+            out.push_str(&format!(
+                "{:>12} {:>10}  {:<width$}  {}\n",
+                bytes(row["bytes"].as_f64().unwrap_or(0.0)),
+                row["objects"].as_f64().unwrap_or(0.0) as u64,
+                row["site"].as_str().unwrap_or_default(),
+                row["kind"].as_str().unwrap_or_default()
+            ));
+        }
     }
     out
 }
@@ -3607,14 +3634,23 @@ fn summary(dump: &Value) -> String {
         out.push_str(&format!("  {count} {place}\n"));
     }
     let heap = heap(dump);
-    out.push_str(&format!("live memory, sampled: about {}\n", bytes(heap["bytes"].as_f64().unwrap_or(0.0))));
-    for row in heap["sites"].as_array().into_iter().flatten().take(5) {
-        out.push_str(&format!(
-            "  {:>10}  {}  {}\n",
-            bytes(row["bytes"].as_f64().unwrap_or(0.0)),
-            row["site"].as_str().unwrap_or_default(),
-            row["kind"].as_str().unwrap_or_default()
-        ));
+    let regions = &heap["regions"];
+    let parts = [("live memory, sampled", &heap), ("in regions, sampled", regions)];
+    for (index, (title, part)) in parts.into_iter().enumerate() {
+        let total = part["bytes"].as_f64().unwrap_or(0.0);
+        // What regions hold, when they hold something.
+        if index > 0 && total == 0.0 {
+            continue;
+        }
+        out.push_str(&format!("{title}: about {}\n", bytes(total)));
+        for row in part["sites"].as_array().into_iter().flatten().take(5) {
+            out.push_str(&format!(
+                "  {:>10}  {}  {}\n",
+                bytes(row["bytes"].as_f64().unwrap_or(0.0)),
+                row["site"].as_str().unwrap_or_default(),
+                row["kind"].as_str().unwrap_or_default()
+            ));
+        }
     }
     out
 }

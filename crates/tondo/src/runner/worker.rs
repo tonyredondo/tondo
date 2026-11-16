@@ -692,15 +692,30 @@ impl Session<'_> {
             }
             "bench" => {
                 let parts: Vec<&str> = text.split('\0').collect();
-                if let [name, runs, samples, allocations, bytes, instructions, cycles, branches, data, code] = parts[..]
+                if let [
+                    name,
+                    runs,
+                    samples,
+                    allocations,
+                    bytes,
+                    instructions,
+                    cycles,
+                    branches,
+                    data,
+                    code,
+                    ref regions @ ..,
+                ] = parts[..]
                     && let Some(entry) = self.running.iter_mut().rev().find(|(o, _, _)| o.node == node)
                 {
+                    let region = |at: usize| regions.get(at).and_then(|value| value.parse().ok()).unwrap_or_default();
                     entry.0.benchmarks.push(Benchmark {
                         name: name.to_string(),
                         runs: runs.parse().unwrap_or(1),
                         samples: samples.split(' ').filter_map(|s| s.parse().ok()).collect(),
                         allocations: allocations.parse().unwrap_or_default(),
                         bytes: bytes.parse().unwrap_or_default(),
+                        region_allocations: region(0),
+                        region_bytes: region(1),
                         instructions: instructions.parse().ok(),
                         cycles: cycles.parse().ok(),
                         branch_misses: branches.parse().ok(),

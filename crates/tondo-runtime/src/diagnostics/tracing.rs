@@ -81,8 +81,8 @@ pub(super) fn end_trace(session: &mut Option<Session>, why: &str) {
 /// The samples of the memory alive and what each stack allocated in all,
 /// as JSON (toolchain 7.15).
 pub(super) fn memory(frames: &mut Frames) -> String {
-    let (samples, dropped) = crate::heap::alive();
-    let (allocated, unstacked) = crate::heap::allocations();
+    let (samples, dropped) = crate::heap::alive(false);
+    let (allocated, unstacked) = crate::heap::allocations(false);
     let mut out =
         format!("{{\"rate\":{},\"dropped\":{dropped},\"unstacked\":{unstacked},\"samples\":[", crate::heap::rate());
     for (index, (size, stack)) in samples.iter().enumerate() {
@@ -91,6 +91,13 @@ pub(super) fn memory(frames: &mut Frames) -> String {
     }
     out.push_str("],\"allocated\":[");
     for (index, (objects, bytes, stack)) in allocated.iter().enumerate() {
+        let comma = if index == 0 { "" } else { "," };
+        let _ =
+            write!(out, "{comma}{{\"objects\":{objects:.1},\"bytes\":{bytes:.0},\"stack\":{}}}", frames.list(stack));
+    }
+    // What regions made, apart.
+    out.push_str("],\"region_allocated\":[");
+    for (index, (objects, bytes, stack)) in crate::heap::allocations(true).0.iter().enumerate() {
         let comma = if index == 0 { "" } else { "," };
         let _ =
             write!(out, "{comma}{{\"objects\":{objects:.1},\"bytes\":{bytes:.0},\"stack\":{}}}", frames.list(stack));

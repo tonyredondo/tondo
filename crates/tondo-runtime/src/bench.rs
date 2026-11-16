@@ -30,8 +30,13 @@ enum Phase {
     Sampling(usize),
     /// Runs `COUNTED` batches at once, counting the processor's events.
     Events,
-    /// One more batch, counting its allocations.
-    Counting(u64, u64),
+    /// One run that counts and is not counted, so that a loop's region
+    /// that kept its chunk from the batches before counts from the next
+    /// turn on; the size of the batch after it.
+    Priming(u64),
+    /// One more batch, counting its allocations: on the heap and in
+    /// regions, and their bytes, before it.
+    Counting([u64; 4]),
     Done,
 }
 
@@ -45,6 +50,8 @@ struct Bench {
     samples: Vec<f64>,
     allocations: f64,
     bytes: f64,
+    region_allocations: f64,
+    region_bytes: f64,
     /// What counts the instructions and cycles of the runs that count
     /// them; what a run took of them, once they are done.
     counters: Option<super::counters::Counters>,
@@ -59,9 +66,28 @@ struct State {
 
 static STATE: Mutex<State> = Mutex::new(State { bench: None, named: Vec::new() });
 
-/// The allocations of a batch that counts them, and their bytes.
+/// The allocations of a batch that counts them, and their bytes; on the
+/// heap, and in regions.
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
 static BYTES: AtomicU64 = AtomicU64::new(0);
+static REGION_ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
+static REGION_BYTES: AtomicU64 = AtomicU64::new(0);
+
+/// After a value a region made while a batch counts them.
+pub(crate) fn region_allocated(size: usize) {
+    REGION_ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+    REGION_BYTES.fetch_add(size as u64, Ordering::Relaxed);
+}
+
+/// The values regions made while batches counted them, and their bytes.
+#[cfg(test)]
+pub(crate) fn region_counts() -> (u64, u64) {
+    (REGION_ALLOCATIONS.load(Ordering::Relaxed), REGION_BYTES.load(Ordering::Relaxed))
+}
+
+fn counts() -> [u64; 4] {
+    [&ALLOCATIONS, &BYTES, &REGION_ALLOCATIONS, &REGION_BYTES].map(|count| count.load(Ordering::Relaxed))
+}
 
 /// After an allocation while a batch counts them.
 #[cfg_attr(not(tondo_staticlib), allow(dead_code))]
@@ -73,21 +99,29 @@ pub(crate) fn allocated(size: usize) {
 /// How many tasks count their allocations now (`testing.allocations`).
 static COUNTING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// `testing.allocations(body)` starts: the running task's allocations from
-/// now on are counted; what it counted before, to take away at the end.
+/// `testing.allocations(body)` or `testing.heapAllocations(body)` starts:
+/// the running task's allocations from now on are counted; what it counted
+/// before, of the heap alone when `heap`, to take away at the end.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_allocations_start() -> i64 {
+pub extern "C" fn tondo_rt_allocations_start(heap: u8) -> i64 {
     if COUNTING.fetch_add(1, Ordering::SeqCst) == 0 {
         crate::diagnostics::hook(crate::diagnostics::COUNTED);
     }
-    crate::tasks::allocations_made() as i64
+    made(heap)
+}
+
+/// What the running task allocated while it was counted: on the heap, and
+/// in regions unless `heap`.
+fn made(heap: u8) -> i64 {
+    let (on_heap, in_regions) = crate::tasks::allocations_made();
+    (on_heap + if heap != 0 { 0 } else { in_regions }) as i64
 }
 
 /// `testing.allocations(body)` ends: how many allocations the task made
-/// since `before`.
+/// since `before`, of the heap alone when `heap`.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_allocations_since(before: i64) -> i64 {
-    let made = crate::tasks::allocations_made() as i64 - before;
+pub extern "C" fn tondo_rt_allocations_since(before: i64, heap: u8) -> i64 {
+    let made = made(heap) - before;
     if COUNTING.fetch_sub(1, Ordering::SeqCst) == 1 {
         crate::diagnostics::unhook(crate::diagnostics::COUNTED);
     }
@@ -140,6 +174,8 @@ pub unsafe extern "C" fn tondo_rt_bench_start(name: *const Str, location: *const
         samples: Vec::new(),
         allocations: 0.0,
         bytes: 0.0,
+        region_allocations: 0.0,
+        region_bytes: 0.0,
         counters: None,
         counted: None,
     });
@@ -194,7 +230,7 @@ pub extern "C" fn tondo_rt_bench_next() -> i64 {
                     bench.batch *= COUNTED;
                     Phase::Events
                 }
-                false => count_allocations(),
+                false => count_allocations(bench),
             }
         }
         Phase::Events => {
@@ -202,13 +238,19 @@ pub extern "C" fn tondo_rt_bench_next() -> i64 {
             let counted = bench.counters.take().map(|counters| counters.read());
             bench.counted = counted.map(|counted| counted.map(|count| count.map(|count| count / runs)));
             bench.batch /= COUNTED;
-            count_allocations()
+            count_allocations(bench)
         }
-        Phase::Counting(allocations, bytes) => {
+        Phase::Priming(batch) => {
+            bench.batch = batch;
+            Phase::Counting(counts())
+        }
+        Phase::Counting(before) => {
             crate::diagnostics::unhook(crate::diagnostics::MEASURED);
             let runs = bench.batch as f64;
-            bench.allocations = (ALLOCATIONS.load(Ordering::Relaxed) - allocations) as f64 / runs;
-            bench.bytes = (BYTES.load(Ordering::Relaxed) - bytes) as f64 / runs;
+            let [allocations, bytes, region_allocations, region_bytes] =
+                std::array::from_fn(|at| (counts()[at] - before[at]) as f64 / runs);
+            (bench.allocations, bench.bytes) = (allocations, bytes);
+            (bench.region_allocations, bench.region_bytes) = (region_allocations, region_bytes);
             Phase::Done
         }
         Phase::Done => Phase::Done,
@@ -221,11 +263,11 @@ pub extern "C" fn tondo_rt_bench_next() -> i64 {
     batch
 }
 
-/// The batch that counts allocations starts.
-fn count_allocations() -> Phase {
-    let before = (ALLOCATIONS.load(Ordering::Relaxed), BYTES.load(Ordering::Relaxed));
+/// The batch that counts allocations starts, after a run that primes it.
+fn count_allocations(bench: &mut Bench) -> Phase {
     crate::diagnostics::hook(crate::diagnostics::MEASURED);
-    Phase::Counting(before.0, before.1)
+    let batch = std::mem::replace(&mut bench.batch, 1);
+    Phase::Priming(batch)
 }
 
 /// Ends the benchmark that runs: when it measured and its body did not
@@ -233,7 +275,8 @@ fn count_allocations() -> Phase {
 /// sample, the nanoseconds of a run by sample, the allocations of a run
 /// and their bytes, and the instructions, cycles, mispredicted branches
 /// and first-cache misses of data and of instructions of a run, each empty
-/// when not counted, separated by NUL.
+/// when not counted, then the values a run made in regions and their
+/// bytes, separated by NUL.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_bench_end(completed: u8) {
     let bench = STATE.lock().unwrap_or_else(|e| e.into_inner()).bench.take();
@@ -248,8 +291,12 @@ pub extern "C" fn tondo_rt_bench_end(completed: u8) {
         .map(|count| count.map_or(String::new(), |count| format!("{count:.3}")))
         .collect();
     let (name, batch, allocations, bytes) = (&bench.name, bench.batch, bench.allocations, bench.bytes);
-    let payload =
-        format!("{name}\0{batch}\0{}\0{allocations:.3}\0{bytes:.3}\0{}", samples.join(" "), counted.join("\0"));
+    let (region_allocations, region_bytes) = (bench.region_allocations, bench.region_bytes);
+    let payload = format!(
+        "{name}\0{batch}\0{}\0{allocations:.3}\0{bytes:.3}\0{}\0{region_allocations:.3}\0{region_bytes:.3}",
+        samples.join(" "),
+        counted.join("\0")
+    );
     crate::testing::report("bench", payload.as_bytes());
 }
 

@@ -5,7 +5,6 @@
 
 use super::config::config;
 use super::{Str, str_bytes, str_new};
-#[cfg(tondo_staticlib)]
 use std::alloc::{GlobalAlloc, Layout};
 use std::io::Write;
 #[cfg(tondo_staticlib)]
@@ -82,6 +81,27 @@ unsafe extern "C" {
     fn mi_malloc(size: usize) -> *mut u8;
     fn mi_realloc(block: *mut u8, size: usize) -> *mut u8;
     fn mi_usable_size(block: *const u8) -> usize;
+}
+
+/// Memory none of the hooks counts, for the chunks of regions: what a
+/// region holds is counted by value, apart from the heap, and a chunk is
+/// no allocation of the program's.
+pub(crate) unsafe fn uncounted_alloc(layout: Layout) -> *mut u8 {
+    #[cfg(tondo_staticlib)]
+    return unsafe { Heap.alloc(layout) };
+    #[cfg(not(tondo_staticlib))]
+    return unsafe { std::alloc::System.alloc(layout) };
+}
+
+pub(crate) unsafe fn uncounted_dealloc(block: *mut u8, layout: Layout) {
+    #[cfg(tondo_staticlib)]
+    unsafe {
+        Heap.dealloc(block, layout)
+    }
+    #[cfg(not(tondo_staticlib))]
+    unsafe {
+        std::alloc::System.dealloc(block, layout)
+    }
 }
 
 /// mimalloc's blocks are aligned to 8 bytes at least: what needs no more

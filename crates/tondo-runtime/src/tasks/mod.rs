@@ -198,8 +198,10 @@ pub(crate) struct Task {
     labels: std::sync::atomic::AtomicU32,
     /// Those of them `profile.withLabels` gives, without its contexts'.
     own_labels: std::sync::atomic::AtomicU32,
-    /// The allocations it made while `testing.allocations` counts them.
+    /// The allocations it made while `testing.allocations` counts them, on
+    /// the heap and in regions.
     allocations: std::sync::atomic::AtomicU64,
+    region_allocations: std::sync::atomic::AtomicU64,
     /// Its contexts (language 11.16), shared with the task that spawned it
     /// until a `with` changes them.
     pub(crate) context: super::contexts::Held,
@@ -444,6 +446,7 @@ pub(super) fn worker_ended(kept: &Kept) {
     }
     runner_ended(kept);
     in_c_ended(kept);
+    crate::regions::thread_ended(kept.chunks.replace((std::ptr::null_mut(), 0)));
     free(&kept.waits);
     free(&kept.helds);
     free(&kept.turns);
@@ -523,9 +526,20 @@ pub(crate) fn count_allocation() {
     }
 }
 
-/// The allocations the running task made while they were counted.
-pub(crate) fn allocations_made() -> u64 {
-    unsafe { current().as_ref() }.map_or(0, |task| task.allocations.load(Ordering::Relaxed))
+/// One more value the running task made in a region, while
+/// `testing.allocations` counts them.
+pub(crate) fn count_region_allocation() {
+    if let Some(task) = unsafe { current().as_ref() } {
+        task.region_allocations.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// The allocations the running task made while they were counted: on the
+/// heap, and in regions.
+pub(crate) fn allocations_made() -> (u64, u64) {
+    unsafe { current().as_ref() }.map_or((0, 0), |task| {
+        (task.allocations.load(Ordering::Relaxed), task.region_allocations.load(Ordering::Relaxed))
+    })
 }
 
 /// The labels of the running task, which a signal handler may read.
@@ -803,6 +817,7 @@ fn new_task(
         labels: std::sync::atomic::AtomicU32::new(labels),
         own_labels: std::sync::atomic::AtomicU32::new(own_labels),
         allocations: std::sync::atomic::AtomicU64::new(0),
+        region_allocations: std::sync::atomic::AtomicU64::new(0),
         context,
         withins: Vec::new(),
         grace: None,

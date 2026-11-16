@@ -7561,3 +7561,28 @@ the cores, about 35 ms of a build of examples/warehouse, and a release build wit
 depth 8 went from 1.04 ms to 699 µs and from 21,845 allocations to none; a parser of 2,000 terms
 makes 2,000 fewer; parsing JSON and YAML, which make maps and texts and keep what they parse, did
 not change.
+
+## What regions make is counted apart from the heap
+
+Once regions were built, a program that made 21,845 arrays a run showed none: a benchmark's
+counts, `testing.allocations`, the memory profiles, the counters and the dumps all came from the
+heap's allocator, which a value in a region never reaches. Tony asked that what a program makes
+be seen wherever it goes, as an algorithm is made better by seeing where it makes its values,
+and that the two be told apart. A benchmark's row says `0 allocs/op +21845 in regions`, and the
+bytes alike; a memory profile has `region_objects` and `region_space`; the counters have
+`memory.regions`, `memory.regions_kept` and `memory.region_allocations`; and a dump says what
+regions hold, by site. `testing.allocations` counts both, as what it guards is how much a
+function allocates, which does not change when the optimizer moves a value from the heap to a
+region; `testing.heapAllocations` counts the heap alone, the row's `allocs/op`. The table against
+Go keeps its column of the heap, which compares with Go's, and Tondo's figure in regions beside
+it: what goes in the region a caller gives leaves its function, and Go would count it.
+
+Counting costs nothing when nobody counts. A region made while a benchmark,
+`testing.allocations`, a profile or the tools count keeps its end at its pointer, so that each
+value takes the slow path, which counts it; a loop's region follows from its next turn, and a
+benchmark runs its body once, counting and not counted, before the batch it counts. The fast
+path is the same instructions as before. Chunks come from the allocator beneath the hooks, so
+that a region's first chunk is no allocation of the program's, and a thread keeps eight of them
+for its next regions, with what the runtime keeps for it, so that a function that enters and
+leaves a region at each call takes no lock: such a function went from 6 to 12 % slower than the
+heap to 6.5 % faster.

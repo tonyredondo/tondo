@@ -109,7 +109,8 @@ pub(super) fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: 
         }
         (stopped, tasks, contexts, values, objects)
     });
-    let (samples, dropped) = crate::heap::alive();
+    let (samples, dropped) = crate::heap::alive(false);
+    let (region_samples, region_dropped) = crate::heap::alive(true);
     let mut frames = Frames::default();
     let time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
     let mut out = format!(
@@ -175,6 +176,12 @@ pub(super) fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: 
     let _ = write!(out, "],\"unread\":[{}", unread.join(","));
     let _ = write!(out, "],\"heap\":{{\"rate\":{},\"dropped\":{dropped},\"samples\":[", crate::heap::rate());
     for (index, (size, stack)) in samples.iter().enumerate() {
+        let comma = if index == 0 { "" } else { "," };
+        let _ = write!(out, "{comma}{{\"size\":{size},\"stack\":{}}}", frames.list(stack));
+    }
+    // What regions hold, sampled apart.
+    let _ = write!(out, "],\"region_dropped\":{region_dropped},\"region_samples\":[");
+    for (index, (size, stack)) in region_samples.iter().enumerate() {
         let comma = if index == 0 { "" } else { "," };
         let _ = write!(out, "{comma}{{\"size\":{size},\"stack\":{}}}", frames.list(stack));
     }

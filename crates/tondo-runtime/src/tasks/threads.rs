@@ -351,6 +351,9 @@ pub(crate) struct Kept {
     pub(super) helds: Cell<*mut Vec<Vec<Held>>>,
     pub(super) turns: Cell<*mut Vec<Arc<dyn Turned>>>,
     pub(super) events: Cell<*mut crate::poll::Events>,
+    /// The chunks of regions it keeps for its next ones, linked, and how
+    /// many (`regions`), which go to the list the threads share as it ends.
+    pub(crate) chunks: Cell<(*mut u8, usize)>,
 }
 
 /// What frees a value a thread keeps (`keep_until_end`).
@@ -392,6 +395,7 @@ pub(crate) fn kept() -> &'static Kept {
             helds: Cell::new(worker(|w| w.helds.get())),
             turns: Cell::new(worker(|w| w.turns.get())),
             events: Cell::new(worker(|w| w.events.get())),
+            chunks: Cell::new((std::ptr::null_mut(), 0)),
         };
         kept = Box::into_raw(Box::new(new));
         KEPT.with(|cell| cell.set(kept));

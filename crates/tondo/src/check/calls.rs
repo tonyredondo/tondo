@@ -2249,7 +2249,8 @@ impl<'a> Checker<'a> {
                     }
                     "withVirtualTime" => return self.with_virtual_time(cx, args, span),
                     "bench" => return self.bench(cx, args, span),
-                    "allocations" => return self.allocations(cx, args, span),
+                    "allocations" => return self.allocations(cx, args, span, false),
+                    "heapAllocations" => return self.allocations(cx, args, span, true),
                     "fuzz" => return self.fuzz(cx, args, span),
                     "keep" => {
                         let [arg] = args else {
