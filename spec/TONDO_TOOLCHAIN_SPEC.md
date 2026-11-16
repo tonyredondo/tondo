@@ -2482,15 +2482,18 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
 - `region`: dónde va lo que asigna cada sitio, en una región, memoria que
   un marco toma moviendo un puntero y devuelve entera al terminar, o en el
   heap. Va en la región de la función que lo hace si nada lo guarda más
-  allá de la llamada, o en la de una vuelta de un bucle si no sobrevive a
-  la vuelta, y nombra el bucle por su línea; en una que le da quien la llama
+  allá de la llamada, aunque lo guarde de una vuelta a otra un array al que
+  el bucle solo añade con `push`, o en la de una vuelta de un bucle si no
+  sobrevive a la vuelta, y nombra el bucle por su línea; en una que le da quien la llama
   si la función solo lo devuelve, nuevo, y quienes lo toman tampoco lo
   guardan, y si unas llamadas lo sueltan y otras lo guardan, en una copia
   de la función para las primeras, y nombra unas y otras; o se queda en el
   heap, y dice por qué: se guarda en lo que la función recibió, en el
   estado de un lock o en un `Ref`, lo captura una closure, se envía, va a
   una tarea o a C, lo guarda una función a la que se pasa, sobrevive a una
-  vuelta del bucle en que se hace, contiene un valor que su región no hizo,
+  vuelta del bucle en que se hace en algo que el bucle hace más que ampliar,
+  como la variable que la vuelta siguiente reescribe, contiene un valor que
+  su región no hizo,
   o es de una clase que una región no toma aún, y la nombra: una región
   toma arrays, cajas y arrays que crecen con `push`. Un valor en una región
   no es una asignación para los contadores, los perfiles de memoria ni las

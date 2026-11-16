@@ -651,7 +651,20 @@ impl Lifetimes {
                 return Some(k as u32 + 1);
             }
         }
-        grows.filter(|site| bounded(body, &self.looped, site)).map(|_| 0)
+        if grows.is_some_and(|site| bounded(body, &self.looped, site)) {
+            return Some(0);
+        }
+        // What only arrays that each loop does nothing to but push keeps
+        // past its turns lives as long as they do, and adds nothing to throw
+        // away: the function's region, as a tree's children each turn makes.
+        let kept = |k: usize| {
+            let (inside, head, out) = (&self.loops[k].1, &self.live_head[k], &self.live_out[k]);
+            let live = |index: usize| (head[index / 64] | out[index / 64]) & (1 << (index % 64)) != 0;
+            (0..held.len())
+                .filter(|&index| held[index] && live(index))
+                .all(|keeper| only_pushed(body, types, inside, Local(keeper as u32)))
+        };
+        (0..self.loops.len()).filter(|&k| self.loops[k].1[block]).all(kept).then_some(0)
     }
 
     /// Each loop's head and the blocks that go back to it.
@@ -686,6 +699,33 @@ fn bounded(body: &Body, looped: &[bool], site: &Site) -> bool {
         && body.blocks.iter().enumerate().filter(|&(block, _)| looped[block]).all(|(_, data)| {
             data.stmts.iter().all(|statement| {
                 !matches!(statement, Statement::Assign(place, ..) if place.local == site.local && place.path.is_empty())
+            })
+        })
+}
+
+/// Whether `local` is an array that the blocks `inside` a loop only push
+/// to: given its value outside them, never written whole there, nor an
+/// element of it, nor changed otherwise, nor lent, nor passed to a call.
+fn only_pushed(body: &Body, types: &Types, inside: &[bool], local: Local) -> bool {
+    let array = matches!(types.kind(types.repr(body.locals[local.0 as usize])), crate::types::TyKind::Array(_));
+    let ours = |operand: &Operand| matches!(operand, Operand::Copy(place) if place.local == local);
+    array
+        && body.blocks.iter().enumerate().filter(|&(block, _)| inside[block]).all(|(_, data)| {
+            data.stmts.iter().all(|statement| match statement {
+                Statement::Assign(place, rvalue, _) => {
+                    place.local != local
+                        && match &**rvalue {
+                            Rvalue::Mutate(mutation, target, ..) if target.local == local => {
+                                target.path.is_empty()
+                                    && matches!(mutation, crate::hir::Mutation::Push | crate::hir::Mutation::Reserve)
+                            }
+                            Rvalue::AssignSlice(target, ..) => target.local != local,
+                            Rvalue::Call(_, args) | Rvalue::CallIndirect(_, args) => !args.iter().any(ours),
+                            _ => true,
+                        }
+                }
+                Statement::Lend(_, place) => place.local != local,
+                _ => true,
             })
         })
 }

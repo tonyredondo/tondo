@@ -7538,7 +7538,8 @@ that grows by `push` that nothing keeps past the call: in the function's own, or
 turn of the innermost loop whose turn the value does not outlive, which the loop empties at each
 turn, since a function's region in a loop would gather every turn's values until the function
 returns; an array that grows across the turns goes in the function's, as its old room adds up to
-no more than what it ends with. A function that returns what it makes, fresh, has a copy that
+no more than what it ends with, and so does a value that only arrays the loop pushes to keep past
+the turn, as it lives as long as they do and leaves nothing to throw away. A function that returns what it makes, fresh, has a copy that
 takes its caller's region, which the calls that let the result go call, giving theirs, as copies
 are made for closures; a function and its clone for wider vectors are copied together, so that
 the copy has its version for `x86-64-v3` too. A value in a region holds only values of a region
