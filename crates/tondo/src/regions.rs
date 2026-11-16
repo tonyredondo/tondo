@@ -848,6 +848,9 @@ fn holding(
                 }
                 let stored: Vec<&Operand> = match &**rvalue {
                     Rvalue::Mutate(_, target, operands, ..) if is[target.local.0 as usize] => operands.iter().collect(),
+                    // The elements of what it is given, which hold what a
+                    // region made when it did.
+                    Rvalue::AssignSlice(target, _, operand, _) if is[target.local.0 as usize] => vec![operand],
                     Rvalue::Aggregate(operands) | Rvalue::Variant(_, operands) | Rvalue::Array(operands, _)
                         if place.path.is_empty() && place.local == local && at_statement == site.at =>
                     {
@@ -1221,6 +1224,17 @@ impl Flow {
                             });
                             continue;
                         }
+                        // A slice written in place puts the elements of
+                        // what it is given in what it names, as growing does.
+                        Rvalue::AssignSlice(target, _, operand, _) => {
+                            transfers.push(Transfer {
+                                into: target.local,
+                                part: true,
+                                how: How::Grows,
+                                from: copies(std::slice::from_ref(operand)),
+                            });
+                            continue;
+                        }
                         // A call of the program's keeps what it returns of
                         // what it is given, which `fate` sees.
                         Rvalue::Call(Callee::Fn(_), _) => continue,
@@ -1253,7 +1267,6 @@ impl Flow {
                         | Rvalue::Convert(_)
                         | Rvalue::ArrayOp(..)
                         | Rvalue::Slice(..)
-                        | Rvalue::AssignSlice(..)
                         | Rvalue::CheckRegion(..)
                         | Rvalue::Length(_)
                         | Rvalue::StrOp(..)
@@ -1544,11 +1557,12 @@ fn fate_of(flow: &Flow, body: &Body, held: &[bool], summaries: &[Summary], bodie
                     Rvalue::Pointer(crate::hir::PointerOp::Write, ..) => {
                         return kept("it is written through a raw pointer", *span);
                     }
-                    Rvalue::Mutate(_, target, ..) if given(target.local) => {
+                    Rvalue::Mutate(_, target, ..) | Rvalue::AssignSlice(target, ..) if given(target.local) => {
                         return kept(where_given(target.local), *span);
                     }
-                    // What grows is followed as what it holds (`Flow`).
-                    Rvalue::Mutate(..) => {}
+                    // What grows, or has a slice written, is followed as
+                    // what it holds (`Flow`).
+                    Rvalue::Mutate(..) | Rvalue::AssignSlice(..) => {}
                     // These keep nothing of what they read but in what they
                     // give, which `Flow` follows by its type; a C array is a
                     // copy of the elements, either way.
@@ -1576,7 +1590,6 @@ fn fate_of(flow: &Flow, body: &Body, held: &[bool], summaries: &[Summary], bodie
                     | Rvalue::Array(..)
                     | Rvalue::ArrayOp(..)
                     | Rvalue::Slice(..)
-                    | Rvalue::AssignSlice(..)
                     | Rvalue::CheckRegion(..)
                     | Rvalue::Length(_)
                     | Rvalue::StrOp(..)

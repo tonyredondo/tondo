@@ -1,0 +1,118 @@
+// What the operations of arrays and maps give (MIR `ArrayOp`, `Slice`,
+// `AssignSlice`, `MapOp`): an array joined to another, repeated, sliced,
+// or written into a slice of another, and a map made of values or grown,
+// each holding what a scope made, kept past the scope, in the region of a
+// turn, of a function and of a caller, with each kind of value a region
+// makes.
+
+import std.console
+
+enum List {
+    Cons(Int, List)
+    Nil
+}
+
+fn sum(list: List): Int {
+    match list {
+        List.Cons(head, rest) => head + sum(rest)
+        List.Nil => 0
+    }
+}
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        var junk = [i, i, i, i, i, i, i, i]
+        junk.push(i)
+        total += junk.length()
+    }
+    total
+}
+
+/// The region of a turn: joined, repeated and sliced into what outlives it.
+fn turns(): String {
+    var joined: Array[Array[Int]] = []
+    var repeated: Array[Array[Int]] = []
+    var sliced: Array[Array[Int]] = []
+    var written: Array[Array[Int]] = [[], [], []]
+    var lists: Array[List] = []
+    for i in 0..3 {
+        var grown = [i]
+        grown.push(i + 1)
+        joined = joined.concat([grown, [i, i + 2]])
+        repeated = [[i, i + 3]].repeat(2)
+        let pair = [[i, i + 4], [i, i + 5], [i, i + 6]]
+        sliced = pair[1:3]
+        written[0:2] = [[i, i + 7], grown]
+        lists = lists.concat([List.Cons(i, List.Nil)])
+    }
+    var total = 0
+    for list in lists {
+        total += sum(list)
+    }
+    "{joined} {repeated} {sliced} {written} {total}"
+}
+
+/// The region of a turn: a map made of it, and one it grows.
+fn mapped(): String {
+    var made: Map[String, Array[Int]] = [:]
+    var grown: Map[Int, Array[Int]] = [:]
+    var lists: Map[Int, List] = [:]
+    for i in 0..3 {
+        var values = [i, i + 8]
+        values.push(i)
+        made = ["last": values, "pair": [i, i + 9]]
+        grown[i] = [i, i + 10]
+        lists[i] = List.Cons(i, List.Cons(i + 11, List.Nil))
+    }
+    "{made["last"] ?? []} {made["pair"] ?? []} {grown[1] ?? []} {sum(lists[2] ?? List.Nil)}"
+}
+
+/// The region of a function: what it makes, in the slice it returns.
+fn window(i: Int): Array[Array[Int]] {
+    var grown = [i]
+    grown.push(i + 12)
+    let all = [[i, i + 13], grown, [i, i + 14]]
+    all[1:3]
+}
+
+/// The region of a function: what it makes, written into a slice of what
+/// it is given.
+fn writeInto(into: var Array[Array[Int]], i: Int) {
+    var grown = [i]
+    grown.push(i + 16)
+    into[0:2] = [[i, i + 17], grown]
+}
+
+/// The region a caller gives, to a function that returns what it makes,
+/// fresh, joined by the caller into what it keeps.
+fn fresh(i: Int): Array[Int] {
+    var values = [i, i + 15]
+    values.push(i)
+    values
+}
+
+fn main() {
+    let a = turns()
+    let b = mapped()
+    var windows: Array[Array[Array[Int]]] = []
+    for i in 0..2 {
+        windows.push(window(i))
+    }
+    var given: Array[Array[Int]] = [[], [], []]
+    for i in 0..2 {
+        writeInto(var given, i)
+    }
+    var kept: Array[Array[Int]] = []
+    for i in 0..2 {
+        kept = kept.concat([fresh(i)])
+    }
+    let quiet = noise()
+    console.println(a)
+    console.println(b)
+    console.println("{windows} {given} {kept} {quiet}")
+}
+
+// expect-stdout: [[0, 1], [0, 2], [1, 2], [1, 3], [2, 3], [2, 4]] [[2, 5], [2, 5]] [[2, 7], [2, 8]] [[2, 9], [2, 3], []] 3
+// expect-stdout: [2, 10, 2] [2, 11] [1, 11] 15
+// expect-stdout: [[[0, 12], [0, 14]], [[1, 13], [1, 15]]] [[1, 18], [1, 17], []] [[0, 15, 0], [1, 16, 1]] 1800
