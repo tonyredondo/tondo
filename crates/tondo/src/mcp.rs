@@ -1987,6 +1987,30 @@ fn bounded(bytes: Vec<u8>) -> String {
 
 /// A program a session keeps running, live: what it printed, and how much
 /// of it a tool read.
+/// How long the end of a session's output may stay without a newline and
+/// still be a line being written, rather than a prompt, which nothing else
+/// tells apart.
+const PROMPT: Duration = Duration::from_millis(100);
+
+/// Whether what a stream holds from `from` ends in a line still written,
+/// which an answer waits for, so as not to stop in its middle and the next
+/// start there: its end has no newline, it changed `still` ago, less than a
+/// prompt stays as it is, and the program runs.
+fn unfinished(bytes: &[u8], from: usize, still: Duration, ended: bool) -> bool {
+    bytes.len() > from && bytes.last() != Some(&b'\n') && still < PROMPT && !ended
+}
+
+/// Where an answer ends in what a stream holds from `from`: after its last
+/// newline while a line is still written there; at its end once that end
+/// stayed as it is for as long as a prompt does, or the program ended.
+fn answer_end(bytes: &[u8], from: usize, still: Duration, ended: bool) -> usize {
+    let from = from.min(bytes.len());
+    match still < PROMPT && !ended {
+        true => bytes[from..].iter().rposition(|&byte| byte == b'\n').map_or(from, |at| from + at + 1),
+        false => bytes.len(),
+    }
+}
+
 struct Run {
     child: Child,
     stdout: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
@@ -2015,19 +2039,13 @@ impl Run {
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        // What follows a stream's last newline is a line still written: a
-        // moment for its end, so that an answer does not stop in its middle
-        // and the next start there; one that stays as it is that long, as a
-        // prompt does, comes as it is, and one that keeps growing waits for
-        // the next answer.
-        let partial = |buffer: &std::sync::Mutex<Vec<u8>>, from: usize| {
-            let bytes = buffer.lock().unwrap_or_else(|e| e.into_inner());
-            bytes.len() > from && bytes.last() != Some(&b'\n')
+        // A line still written waits for its end (`unfinished`).
+        let unfinished = |buffer: &std::sync::Mutex<Vec<u8>>, from: usize, still: Duration, ended: bool| {
+            unfinished(&buffer.lock().unwrap_or_else(|e| e.into_inner()), from, still, ended)
         };
         let (cap, mut seen, mut still) = (Instant::now() + Duration::from_secs(1), self.lengths(), Instant::now());
-        while self.status.is_none()
-            && (partial(&self.stdout, self.read.0) || partial(&self.stderr, self.read.1))
-            && still.elapsed() < Duration::from_millis(100)
+        while (unfinished(&self.stdout, self.read.0, still.elapsed(), self.status.is_some())
+            || unfinished(&self.stderr, self.read.1, still.elapsed(), self.status.is_some()))
             && Instant::now() < cap
         {
             std::thread::sleep(Duration::from_millis(10));
@@ -2036,7 +2054,7 @@ impl Run {
                 (seen, still) = (self.lengths(), Instant::now());
             }
         }
-        let whole_lines = self.status.is_none() && still.elapsed() < Duration::from_millis(100);
+        let (still, ended) = (still.elapsed(), self.status.is_some());
         // A last moment for what the program wrote as it ended.
         if self.status.is_some() {
             std::thread::sleep(Duration::from_millis(50));
@@ -2044,10 +2062,7 @@ impl Run {
         let take = |buffer: &std::sync::Mutex<Vec<u8>>, from: usize| {
             let bytes = buffer.lock().unwrap_or_else(|e| e.into_inner());
             let from = from.min(bytes.len());
-            let end = match whole_lines {
-                true => bytes[from..].iter().rposition(|&byte| byte == b'\n').map_or(from, |at| from + at + 1),
-                false => bytes.len(),
-            };
+            let end = answer_end(&bytes, from, still, ended);
             (bounded(bytes[from..end].to_vec()), end)
         };
         let (stdout, out_end) = take(&self.stdout, self.read.0);
@@ -3322,5 +3337,32 @@ impl Tool {
             "inputSchema": { "type": "object", "properties": properties, "required": required },
             "annotations": annotations,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A line written in pieces comes whole: its first piece waits while
+    /// its end is still to come, a prompt comes as it is once it stayed so,
+    /// a whole line comes at once, and what a program left as it ended
+    /// comes as it is. Time is given, as how long the end stayed as it is.
+    #[test]
+    fn an_answer_ends_at_a_whole_line_or_a_prompt() {
+        let (soon, later) = (PROMPT / 10, PROMPT);
+        let piece = b"ready\ntondo: task ";
+        assert!(unfinished(piece, 0, soon, false));
+        assert_eq!(answer_end(piece, 0, soon, false), 6);
+        assert!(!unfinished(piece, 0, later, false));
+        assert_eq!(answer_end(piece, 0, later, false), piece.len());
+        assert!(!unfinished(piece, 0, soon, true));
+        assert_eq!(answer_end(piece, 0, soon, true), piece.len());
+        let whole = b"tondo: task 1 waits here\n";
+        assert!(!unfinished(whole, 0, Duration::ZERO, false));
+        assert_eq!(answer_end(whole, 0, Duration::ZERO, false), whole.len());
+        // From where the last answer ended: nothing new is nothing to wait for.
+        assert!(!unfinished(piece, piece.len(), soon, false));
+        assert_eq!(answer_end(piece, 6, soon, false), 6);
     }
 }

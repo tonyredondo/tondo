@@ -636,12 +636,10 @@ fn live_sessions_reload() {
 }
 
 const PIECES: &str = "import std.console
-import std.time
 
 console.print(\"tondo: task \")
-time.sleep(time.milliseconds(30))
+_ = console.readLine()
 console.println(\"1 waits here\")
-time.sleep(time.milliseconds(300))
 console.print(\"Name: \")
 match console.readLine() {
     some(name) => console.println(\"hello {name}\")
@@ -649,24 +647,31 @@ match console.readLine() {
 }
 ";
 
-/// A session's output comes in whole lines: a line written in pieces comes
-/// whole, and a prompt that ends no line comes as it is, once it stays so.
+/// A session's output as a program writes it: the start of a line it then
+/// waits on comes as it is, as a prompt; the rest of the line, once the
+/// program goes on, comes after it, whole. A program that stops in the
+/// middle of a line waits for the test here, so no stall of the machine
+/// changes what comes; that a line written in pieces with a moment between
+/// them comes whole is `mcp`'s own test, with that moment given.
 #[test]
 fn session_output_comes_in_whole_lines() {
     let dir = project("mcp_lines", &[("pieces.to", PIECES)]);
     let mut agent = Agent::start(&dir);
     let (started, _) = agent.call("run_start", json!({ "path": "pieces.to" }));
     let session = started["session"].clone();
-    // The first answer that has something has the whole line.
-    let mut heard = started["stdout"].as_str().unwrap_or_default().to_string();
-    while heard.is_empty() {
-        let (output, _) = agent.call("run_output", json!({ "session": session, "wait": 60 }));
-        assert!(output["running"] == true, "{output}");
-        heard = output["stdout"].as_str().unwrap_or_default().to_string();
-    }
-    assert_eq!(heard, "tondo: task 1 waits here\n");
-    let (prompt, _) = agent.call("run_output", json!({ "session": session, "wait": 60 }));
-    assert_eq!(prompt["stdout"], "Name: ", "{prompt}");
+    let heard = |agent: &mut Agent, mut so_far: String, until: &str| {
+        while so_far.len() < until.len() {
+            let (output, _) = agent.call("run_output", json!({ "session": session, "wait": 60 }));
+            assert!(output["running"] == true, "{output}");
+            so_far.push_str(output["stdout"].as_str().unwrap_or_default());
+        }
+        so_far
+    };
+    let first = heard(&mut agent, started["stdout"].as_str().unwrap_or_default().to_string(), "tondo: task ");
+    assert_eq!(first, "tondo: task ");
+    let (went_on, _) = agent.call("run_input", json!({ "session": session, "text": "go\n", "wait": 60 }));
+    let rest = heard(&mut agent, went_on["stdout"].as_str().unwrap_or_default().to_string(), "1 waits here\nName: ");
+    assert_eq!(rest, "1 waits here\nName: ");
     let (answered, _) =
         agent.call("run_input", json!({ "session": session, "text": "ana\n", "close": true, "wait": 60 }));
     let mut rest = answered["stdout"].as_str().unwrap_or_default().to_string();
