@@ -1,11 +1,11 @@
-// `tondo optimizations --kind region` says where what each place allocates
-// would go if the program had regions: in the region of the function that
-// makes it, when nothing keeps it past the call; in one its caller gives,
-// when the function only returns it and no caller keeps it; or on
-// the heap, with why: stored in what the function was given or in a lock's
-// state, captured by a closure, sent, or taken by a task. A function whose
-// result one call lets go and another keeps builds in a region in a copy
-// for the first. Nothing is built from it yet; the program runs as ever.
+// `tondo optimizations` says where what each place allocates goes: in a
+// region of the function that makes it, when nothing keeps it past the
+// call, or in that of a turn of a loop it does not outlive; in one its
+// caller gives, when the function only returns it and no caller keeps it,
+// through a copy of the function for the calls that let it go when another
+// call keeps it; or on the heap, with why: stored in what the function was
+// given or in a lock's state, captured by a closure, sent, taken by a task,
+// kept past a turn of its loop, or of a kind no region takes yet.
 
 import std.console
 import std.sync
@@ -63,21 +63,51 @@ fn main() {
     console.println(
         "{into.length()} {count()} {receiver.receive()?.length() ?? 0} {spawned(5)} {local} {receiver.receive()?.length() ?? 0}",
     )
+    console.println("{turns(3)} {gathered(2)} {tally(4)}")
 }
 
 fn report(sender: Sender[Array[Int]], n: Int) {
     sender.send(digits(n))
 }
 
+fn turns(n: Int): Int {
+    var total = 0
+    for i in 0..n {
+        var row: Array[Int] = []
+        row.push(i)
+        total += row.length()
+    }
+    total
+}
+
+fn gathered(n: Int): Int {
+    var rows: Array[Array[Int]] = []
+    for i in 0..n {
+        rows.push([i, i])
+    }
+    rows.length()
+}
+
+fn tally(n: Int): Int {
+    var counts = ["a": 1]
+    counts["b"] = n
+    counts.length()
+}
+
 // expect-stdout: 1 1 1 1 [4] 2
-// expect-optimization: 15:5 region would go in a region that the caller of `digits` gives, in a copy of it for the calls that let it go: `main`
+// expect-stdout: 3 2 2
+// expect-optimization: 15:5 region goes in a region that the caller of `digits` gives, in a copy of it for the calls that let it go: `main`
 // expect-optimization: 15:5 region keeps it: it is sent
 // expect-optimization: 20:15 region stays on the heap: it is stored in what the function was given
-// expect-optimization: 20:15 region would go in a region of `main`
+// expect-optimization: 20:15 region goes in a region of `main`
 // expect-optimization: 25:5 region stays on the heap: a closure captures it
 // expect-optimization: 31:5 region stays on the heap: it is sent
 // expect-optimization: 41:5 region stays on the heap: a task takes it
 // expect-optimization: 48:5 region stays on the heap: it is stored in a lock's state
 // expect-optimization: 58:28 region stays on the heap: it is stored in a lock's state
-// expect-optimization: 61:5 region would go in a region of `main`
+// expect-optimization: 61:5 region goes in a region of `main`
 // expect-no-optimization: 61:5 region stays on the heap
+// expect-optimization: 77:9 region goes in the region of a turn of the loop at line 75
+// expect-optimization: 86:19 region stays on the heap: it outlives a turn of the loop at line 85
+// expect-optimization: 86:9 region stays on the heap: it holds a value that its region did not make
+// expect-optimization: 92:18 region stays on the heap: regions do not take maps yet

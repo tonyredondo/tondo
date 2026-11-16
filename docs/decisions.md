@@ -7528,3 +7528,36 @@ so it is whole when the loop starts, and reading it there costs one load even wh
 before reading it. A text's length in characters, or a map's, is a call, and stays where it is.
 `tondo optimizations` tells each length a loop of the program's code reads, `hoisted` or
 `reloaded` with why.
+
+## Regions take what a function makes and lets go
+
+The measurement before building them found what programs make and let go mostly within reach of
+regions, and Tony chose to build them as one unit: the region of the function that makes a value
+and the region its caller gives. A release build puts in a region an array, a box or an array
+that grows by `push` that nothing keeps past the call: in the function's own, or in that of a
+turn of the innermost loop whose turn the value does not outlive, which the loop empties at each
+turn, since a function's region in a loop would gather every turn's values until the function
+returns; an array that grows across the turns goes in the function's, as its old room adds up to
+no more than what it ends with. A function that returns what it makes, fresh, has a copy that
+takes its caller's region, which the calls that let the result go call, giving theirs, as copies
+are made for closures; a function and its clone for wider vectors are copied together, so that
+the copy has its version for `x86-64-v3` too. A value in a region holds only values of a region
+or values that count nothing, as nothing lets go of what it holds when the region goes.
+
+A region is three words in the frame: it takes chunks of 32 KiB from a pool the threads share,
+since a task moves between threads, and gives them back whole when its function returns or
+unwinds. A value in it carries a bit in its count, which goes on counting below it, so that a
+change still knows when it holds the only reference, and its last release does nothing; a dump,
+the debugger, the cycle collector and a replay read it as any other value. Debug and live builds
+have no regions: they run none of the passes of a release build, and a reload moves values a
+region would hold. A value in a region is no allocation for the counters, the memory profiles or
+a benchmark's allocations; the chunks are.
+
+`tondo optimizations` says where each place's values go by default, as it says what the frame
+and the heap take, and why the others stay on the heap, kinds no region takes yet among them:
+maps, texts and slices are the next ones. The analysis reads each function once and spreads over
+the cores, about 35 ms of a build of examples/warehouse, and a release build with regions runs
+4.3 % more instructions than one without, the copies' code included. A tree built and walked to
+depth 8 went from 1.04 ms to 699 µs and from 21,845 allocations to none; a parser of 2,000 terms
+makes 2,000 fewer; parsing JSON and YAML, which make maps and texts and keep what they parse, did
+not change.

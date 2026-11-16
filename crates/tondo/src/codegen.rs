@@ -383,9 +383,16 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     let x64 = isa.name() == "x64";
     let mut version_body: Vec<usize> = (0..bodies.len()).collect();
     let mut base_of = vec![None; bodies.len()];
+    // The copies of a function and of its clone that take their caller's
+    // region are such a pair too (`regions`).
+    let copies: HashMap<u32, usize> =
+        bodies.iter().enumerate().filter_map(|(index, body)| Some((body.copy_of?, index))).collect();
     for (&base, &clone) in &program.clones {
-        version_body[base.0 as usize] = clone.0 as usize;
-        base_of[clone.0 as usize] = Some(base.0 as usize);
+        let copied = copies.get(&base.0).zip(copies.get(&clone.0)).map(|(&base, &clone)| (base, clone));
+        for (base, clone) in [(base.0 as usize, clone.0 as usize)].into_iter().chain(copied) {
+            version_body[base] = clone;
+            base_of[clone] = Some(base);
+        }
     }
     let versioned = match x64 && !wide_vectors(&*isa) && !debug && live.is_none() && coverage.is_none() && !fuzz {
         true => versioned(&program.types, bodies, &version_body, &base_of),
@@ -1509,7 +1516,7 @@ impl<'t> Shapes<'t> {
             }
         }
         // The region a copy that takes its caller's makes its result in.
-        if body.takes_region {
+        if body.copy_of.is_some() {
             signature.params.push(AbiParam::new(POINTER));
         }
         // A live build's hidden parameter: the state a frame brings from
@@ -4009,7 +4016,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Storage::Zero | Storage::Slot(_) => {}
             }
         }
-        if self.body.takes_region {
+        if self.body.copy_of.is_some() {
             self.given = Some(incoming.next().expect("the region a caller gives"));
         }
         if let Some(osr) = self.body.osr {

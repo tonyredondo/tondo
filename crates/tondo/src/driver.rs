@@ -1642,23 +1642,24 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, program: &crate::hir::Program, s
     after("stack", bodies, types, sources);
     crate::hoist::hoist(bodies, types);
     after("hoist", bodies, types, sources);
-    // Where regions would take what the program makes, for `tondo
-    // optimizations --kind region`, and while it is being measured:
-    // `TONDO_REGIONS=<file>` writes a line for each place, the standard
-    // library's too, and `<file>.calls` what each call does with the result
-    // of its callee, to tell apart the calls of a function that returns
-    // what it makes.
-    let measured = std::env::var_os("TONDO_REGIONS");
-    if crate::regions::asked() || measured.is_some() || crate::regions::built() {
-        // What code outside the program's calls: `main` and the exports.
-        let roots: Vec<usize> = program
-            .main
-            .iter()
-            .chain(program.exports.iter().map(|export| &export.function))
-            .map(|id| id.0 as usize)
-            .collect();
-        let (verdicts, takings) = crate::regions::regions(bodies, types, sources, &roots);
-        let Some(path) = measured else { return };
+    // The regions that take what the program makes and lets go, and where
+    // each place's values go, for `tondo optimizations`; while it is being
+    // measured, `TONDO_REGIONS=<file>` writes a line for each place, the
+    // standard library's too, and `<file>.calls` what each call does with
+    // the result of its callee, to tell apart the calls of a function that
+    // returns what it makes. The roots are what code outside the program's
+    // calls: `main` and the exports.
+    let roots: Vec<usize> = program
+        .main
+        .iter()
+        .chain(program.exports.iter().map(|export| &export.function))
+        .map(|id| id.0 as usize)
+        .collect();
+    let clones: Vec<(usize, usize)> =
+        program.clones.iter().map(|(base, clone)| (base.0 as usize, clone.0 as usize)).collect();
+    let (verdicts, takings) = crate::regions::regions(bodies, types, sources, &roots, &clones);
+    after("regions", bodies, types, sources);
+    if let Some(path) = std::env::var_os("TONDO_REGIONS") {
         let place = |span: crate::source::Span| {
             let (file, line, _) = sources.position(span.start);
             if span == crate::source::Span::default() { "-".to_string() } else { format!("{file}:{line}") }
@@ -1769,7 +1770,6 @@ pub fn optimizations(
     let sources = &analysis.sources;
     crate::mir_text::ask_remarks(true);
     cpu(analysis, None)?;
-    crate::regions::ask(kind == Some("region"));
     let mut bodies = lower::lower(program, false, false, None);
     let named = |body: &crate::mir::Body| function.is_none_or(|name| body.name.contains(name));
     // Where each function asked for is written, from its name to its last
@@ -1789,7 +1789,6 @@ pub fn optimizations(
         optimize(&mut bodies, program, sources);
     }
     crate::mir_text::ask_remarks(false);
-    crate::regions::ask(false);
     let mut found = Vec::new();
     let inside = |span: crate::source::Span| written.iter().any(|w| w.start <= span.start && span.end <= w.end);
     for body in &bodies {

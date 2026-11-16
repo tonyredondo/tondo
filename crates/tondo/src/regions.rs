@@ -1,15 +1,15 @@
-//! Where each value a function makes on the heap would go if the program
-//! had regions: memory a frame takes by moving a pointer and gives back
-//! whole when it ends, without letting go of each value. A value would go
-//! in the region of the function that makes it when nothing keeps it past
-//! the call; in one its caller gives when the function only returns it,
-//! fresh, and the callers that take it keep it nowhere either; and it
-//! stays on the heap otherwise, for the reason said. When some calls let
-//! the result go and others keep it, it would go in a region in a copy of
-//! the function for the first, as copies are made for closures, and the
-//! verdict names both. Nothing is built from this yet: `tondo
-//! optimizations --kind region` says it, so that what regions would reach
-//! is known before they are made.
+//! Regions: memory a frame takes by moving a pointer and gives back whole
+//! when it ends, without letting go of each value. A value goes in the
+//! region of the function that makes it when nothing keeps it past the
+//! call, or in that of a turn of the innermost loop it does not outlive; in
+//! one its caller gives when the function only returns it, fresh, and the
+//! callers that take it keep it nowhere either, through a copy of the
+//! function that takes its caller's region, made for the calls that let the
+//! result go, as copies are made for closures; and it stays on the heap
+//! otherwise, for the reason said. A region takes arrays, boxes and arrays
+//! that grow by `push`, and a value in a region holds only values of a
+//! region or values that count nothing, as the region goes whole. `tondo
+//! optimizations --kind region` says where each place's values go.
 //!
 //! What may keep a value is what `stack` and `lends` say keeps one: being
 //! stored in what the function was given, captured by a closure, sent,
@@ -21,25 +21,6 @@ use crate::hir::Callee;
 use crate::mir::*;
 use crate::source::Span;
 use crate::types::{Ty, Types};
-
-static ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Asks for the verdicts, or no longer: `tondo optimizations --kind
-/// region`, the only one that says them, as they cost a build time.
-pub fn ask(asked: bool) {
-    ASKED.store(asked, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Whether the verdicts are asked for.
-pub fn asked() -> bool {
-    ASKED.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// Whether a build puts values in regions: while regions are made,
-/// `TONDO_REGIONS_BUILD=1` in the environment of a build.
-pub fn built() -> bool {
-    std::env::var_os("TONDO_REGIONS_BUILD").is_some()
-}
 
 /// What becomes of a value a function made.
 #[derive(Clone, Debug, PartialEq)]
@@ -116,14 +97,15 @@ pub struct Taking {
     pub taken: &'static str,
 }
 
-/// The verdicts for every place that makes a value on the heap, and what
-/// each call does with the result of its callee; while remarks are asked
-/// for, the verdicts as remarks.
+/// The regions of every function and copy, and where each place's values
+/// go: the verdicts, and what each call does with the result of its
+/// callee; while remarks are asked for, the verdicts as remarks.
 pub fn regions(
     bodies: &mut Vec<Body>,
     types: &Types,
     sources: &crate::source::SourceMap,
     roots: &[usize],
+    clones: &[(usize, usize)],
 ) -> (Vec<Verdict>, Vec<Taking>) {
     // What each function's statements pass on, and its places, on every
     // core: each function is read on its own.
@@ -145,7 +127,7 @@ pub fn regions(
             let fate = fate(&flows[index], body, types, local, &summaries, bodies);
             let own = fate == Fate::Here;
             let (region, text, by) = match fate {
-                Fate::Here => (true, format!("{what}would go in a region of `{name}`"), None),
+                Fate::Here => (true, format!("{what}goes in a region of `{name}`"), None),
                 Fate::Returned if !summaries[index].fresh => {
                     (false, format!("{what}stays on the heap: `{name}` returns it with what it was given"), None)
                 }
@@ -155,7 +137,7 @@ pub fn regions(
                     resolve(index, &summaries, &mut seen, &mut drops, &mut keeps);
                     match (drops.is_empty(), keeps.first()) {
                         (false, None) => {
-                            (true, format!("{what}would go in a region that the caller of `{name}` gives"), None)
+                            (true, format!("{what}goes in a region that the caller of `{name}` gives"), None)
                         }
                         (false, Some((who, at))) => {
                             by_call = true;
@@ -173,7 +155,7 @@ pub fn regions(
                                 lets.push(format!("{more} more"));
                             }
                             let text = format!(
-                                "{what}would go in a region that the caller of `{name}` gives, in a copy of it for the \
+                                "{what}goes in a region that the caller of `{name}` gives, in a copy of it for the \
                                  calls that let it go: {}; {who}",
                                 lets.join(", ")
                             );
@@ -213,8 +195,49 @@ pub fn regions(
         }
         verdicts
     });
-    if built() {
-        place(bodies, types, &summaries, &loans, &all_sites, &judged, &flows);
+    // What the placement changed of the verdicts: a region a loop empties
+    // each turn, or the heap, where no region takes the value.
+    let mut judged = judged;
+    let outcomes = place(bodies, types, &summaries, &all_sites, &judged, &flows, clones);
+    for ((verdicts, outcomes), sites) in judged.iter_mut().zip(&outcomes).zip(&all_sites) {
+        for ((verdict, outcome), site) in verdicts.iter_mut().zip(outcomes).zip(sites) {
+            let what = site.what;
+            // A loop by its line, and its file when it is another.
+            let line = |at: &Span| {
+                let ((file, line, _), (here, ..)) = (sources.position(at.start), sources.position(verdict.span.start));
+                match file == here {
+                    true => format!("line {line}"),
+                    false => format!("{file}:{line}"),
+                }
+            };
+            match outcome {
+                Outcome::Stands => continue,
+                Outcome::Turn(at) => {
+                    verdict.text = format!("{what}goes in the region of a turn of the loop at {}", line(at))
+                }
+                Outcome::Outlives(at) => {
+                    verdict.region = false;
+                    verdict.own = false;
+                    verdict.text = format!("{what}stays on the heap: it outlives a turn of the loop at {}", line(at));
+                }
+                Outcome::Heap(why, by) => {
+                    verdict.region = false;
+                    verdict.by_call = false;
+                    verdict.own = false;
+                    verdict.text = format!("{what}stays on the heap: {why}");
+                    verdict.by = *by;
+                }
+            }
+            verdict.by = verdict.by.filter(|by| *by != Span::default() && *by != verdict.span);
+        }
+    }
+    if crate::mir_text::remarking() {
+        for (body, verdicts) in bodies.iter_mut().zip(&judged) {
+            for verdict in verdicts {
+                let text = verdict.text.clone();
+                crate::mir_text::remark_by(body, verdict.span, "region", verdict.by, || text);
+            }
+        }
     }
     let verdicts: Vec<Verdict> = judged.into_iter().flatten().collect();
     let takings = summaries
@@ -232,15 +255,6 @@ pub fn regions(
             },
         })
         .collect();
-    if crate::mir_text::remarking() {
-        for verdict in &verdicts {
-            let body = bodies.iter_mut().find(|body| body.name == verdict.function);
-            if let Some(body) = body {
-                let text = verdict.text.clone();
-                crate::mir_text::remark_by(body, verdict.span, "region", verdict.by, || text);
-            }
-        }
-    }
     (verdicts, takings)
 }
 
@@ -258,12 +272,13 @@ fn place(
     bodies: &mut Vec<Body>,
     types: &Types,
     summaries: &[Summary],
-    loans: &[Vec<bool>],
     all_sites: &[Vec<Site>],
     judged: &[Vec<Verdict>],
     flows: &[Flow],
-) {
+    clones: &[(usize, usize)],
+) -> Vec<Vec<Outcome>> {
     let count = bodies.len();
+    let loans: &[Vec<bool>] = &bodies.iter().map(|body| body.loans.clone()).collect::<Vec<_>>();
     // What each call does with its result, by caller and statement.
     let mut taking: crate::hash::FastMap<(usize, (u32, u32)), bool> = crate::hash::FastMap::default();
     for summary in summaries {
@@ -276,24 +291,45 @@ fn place(
         }
     }
     // A copy for each function whose result a call lets go, through the
-    // callers that return it.
-    let mut copied = vec![false; count];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for index in 0..count {
-            if copied[index] || !summaries[index].fresh {
-                continue;
+    // callers that return it. A function and its clone for wider vectors,
+    // the body of its version for `x86-64-v3`, are copied together, so that
+    // the copy has that version too, or neither is.
+    let mut barred = vec![false; count];
+    let copied = loop {
+        let mut copied = vec![false; count];
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for index in 0..count {
+                if copied[index] || !summaries[index].fresh || barred[index] {
+                    continue;
+                }
+                let lets_go = summaries[index].calls.iter().any(|call| {
+                    matches!(call.taken, Taken::Drops) || matches!(call.taken, Taken::Passes) && copied[call.caller]
+                });
+                if lets_go {
+                    copied[index] = true;
+                    changed = true;
+                }
             }
-            let lets_go = summaries[index].calls.iter().any(|call| {
-                matches!(call.taken, Taken::Drops) || matches!(call.taken, Taken::Passes) && copied[call.caller]
-            });
-            if lets_go {
-                copied[index] = true;
-                changed = true;
+            for &(base, clone) in clones {
+                if copied[base] != copied[clone] && summaries[base].fresh && summaries[clone].fresh {
+                    copied[base] = true;
+                    copied[clone] = true;
+                    changed = true;
+                }
             }
         }
-    }
+        let apart: Vec<(usize, usize)> =
+            clones.iter().copied().filter(|&(base, clone)| copied[base] != copied[clone]).collect();
+        if apart.is_empty() {
+            break copied;
+        }
+        for (base, clone) in apart {
+            barred[base] = true;
+            barred[clone] = true;
+        }
+    };
     // The calls of a copy that let its result go, by caller.
     let mut copy_calls: Vec<Vec<(u32, u32)>> = vec![Vec::new(); count];
     for (summary, _) in summaries.iter().zip(&copied).filter(|&(_, &copied)| copied) {
@@ -307,7 +343,7 @@ fn place(
     let lifetimes: Vec<Lifetimes> = crate::parallel::map(&indices, 16, |&index| {
         let mut blocks = all_sites[index]
             .iter()
-            .filter(|site| site.placed)
+            .filter(|site| site.placed())
             .map(|site| site.at.0)
             .chain(copy_calls[index].iter().map(|at| at.0))
             .peekable();
@@ -343,6 +379,7 @@ fn place(
     let mut own: Vec<Vec<((u32, u32), u32)>> = vec![Vec::new(); count];
     let mut copy_own: Vec<Vec<((u32, u32), u32)>> = vec![Vec::new(); count];
     let mut copy_given: Vec<Vec<(u32, u32)>> = vec![Vec::new(); count];
+    let mut outcomes: Vec<Vec<Outcome>> = vec![Vec::new(); count];
     // Each function, and again those that call a copy whose result is no
     // longer all its region's.
     let mut queued = vec![true; count];
@@ -354,7 +391,7 @@ fn place(
         let regions: Vec<Option<u32>> = sites
             .iter()
             .zip(verdicts)
-            .map(|(site, verdict)| match site.placed && verdict.own {
+            .map(|(site, verdict)| match site.placed() && verdict.own {
                 true => lifetimes[index].region(
                     &flows[index],
                     body,
@@ -367,9 +404,32 @@ fn place(
                 false => None,
             })
             .collect();
+        // Where what the verdicts give a region goes in the end.
+        let loops = &lifetimes[index];
+        let written = |k: usize| loops.written(body, k);
+        let mut outcome: Vec<Outcome> = sites
+            .iter()
+            .zip(verdicts)
+            .zip(&regions)
+            .map(|((site, verdict), region)| match (verdict.region, verdict.own, site.refused, region) {
+                (false, ..) => Outcome::Stands,
+                (true, _, Some(why), _) => Outcome::Heap(why.to_string(), None),
+                (true, true, None, Some(0)) => Outcome::Stands,
+                (true, true, None, Some(region)) => Outcome::Turn(written(*region as usize - 1)),
+                (true, true, None, None) => {
+                    Outcome::Outlives(loops.loop_of(site.at.0 as usize).map(written).unwrap_or_default())
+                }
+                (true, false, None, _) => match copied[index] {
+                    true => Outcome::Stands,
+                    false => Outcome::Heap(format!("no call of `{}` lets it go", body.name), None),
+                },
+            })
+            .collect();
         let lets_go = |at: (u32, u32), callee: usize| whole[callee] && call_regions[index].contains_key(&at);
         let mut placed: Vec<bool> = regions.iter().map(Option::is_some).collect();
-        holding(&flows[index], body, types, loans, sites, &mut placed, &lets_go);
+        for (at, (why, by)) in holding(&flows[index], body, types, loans, sites, &mut placed, &lets_go) {
+            outcome[at] = Outcome::Heap(why, Some(by));
+        }
         own[index] = sites
             .iter()
             .zip(&regions)
@@ -377,6 +437,7 @@ fn place(
             .filter_map(|((site, region), placed)| region.filter(|_| *placed).map(|region| (site.at, region)))
             .collect();
         if !copied[index] {
+            outcomes[index] = outcome;
             continue;
         }
         let gives = |at: (u32, u32), callee: usize| match taking.get(&(index, at)) {
@@ -388,9 +449,14 @@ fn place(
             .iter()
             .zip(verdicts)
             .zip(&regions)
-            .map(|((site, verdict), region)| site.placed && verdict.region && (!verdict.own || region.is_some()))
+            .map(|((site, verdict), region)| site.placed() && verdict.region && (!verdict.own || region.is_some()))
             .collect();
-        holding(&flows[index], body, types, loans, sites, &mut placed, &gives);
+        for (at, (why, by)) in holding(&flows[index], body, types, loans, sites, &mut placed, &gives) {
+            if !verdicts[at].own {
+                outcome[at] = Outcome::Heap(why, Some(by));
+            }
+        }
+        outcomes[index] = outcome;
         copy_own[index] = sites
             .iter()
             .zip(verdicts)
@@ -421,7 +487,7 @@ fn place(
     for index in 0..count {
         if copied[index] {
             let mut copy = bodies[index].clone();
-            copy.takes_region = true;
+            copy.copy_of = Some(index as u32);
             copy.region = std::mem::take(&mut copy_own[index]);
             copy.given = std::mem::take(&mut copy_given[index]);
             bodies.push(copy);
@@ -457,6 +523,20 @@ fn place(
         }
         bodies[index].region_calls = calls;
     }
+    outcomes
+}
+
+/// Where a value the verdicts give a region goes in the end.
+#[derive(Clone)]
+enum Outcome {
+    /// Where its verdict says, in a region or on the heap.
+    Stands,
+    /// In the region of a turn of the loop written there.
+    Turn(Span),
+    /// On the heap, as it outlives a turn of the loop written there.
+    Outlives(Span),
+    /// On the heap, as no region takes it: why, and the code that keeps it.
+    Heap(String, Option<Span>),
 }
 
 /// Where a value a function lets go may go: its loops, the innermost
@@ -503,6 +583,40 @@ impl Lifetimes {
             live_out.push(out);
         }
         Lifetimes { loops, live_head, live_out, looped }
+    }
+
+    /// The innermost loop `block` is in.
+    fn loop_of(&self, block: usize) -> Option<usize> {
+        self.loops.iter().position(|(_, inside)| inside[block])
+    }
+
+    /// Where loop `k` is written: the first statement of its head, as its
+    /// range or its test; for a loop unrolling made, whose test is not
+    /// written, that of the loop it copies, which has the same statements
+    /// and is not around it nor in it; else its first statement written.
+    fn written(&self, body: &Body, k: usize) -> Span {
+        let placed = |statement: &Statement| match statement {
+            Statement::Assign(_, _, span) if *span != Span::default() => Some(*span),
+            _ => None,
+        };
+        let head = |k: usize| body.blocks[self.loops[k].0].stmts.iter().find_map(placed);
+        let spans = |k: usize| {
+            let inside = &self.loops[k].1;
+            (0..body.blocks.len())
+                .filter(move |&block| inside[block])
+                .flat_map(|block| &body.blocks[block].stmts)
+                .filter_map(placed)
+        };
+        let mine: std::collections::HashSet<Span> = spans(k).collect();
+        let nested = |j: usize| self.loops[j].1[self.loops[k].0] || self.loops[k].1[self.loops[j].0];
+        head(k)
+            .or_else(|| {
+                (0..self.loops.len())
+                    .filter(|&j| j != k && !nested(j) && spans(j).any(|span| mine.contains(&span)))
+                    .find_map(head)
+            })
+            .or_else(|| spans(k).next())
+            .unwrap_or_default()
     }
 
     /// The region a value made in `block` would go in: the function's, 0,
@@ -879,13 +993,19 @@ struct Site {
     /// The local that holds the value.
     local: Local,
     span: Span,
-    /// What it is in words, before "would go" or "stays".
+    /// What it is in words, before "goes" or "stays".
     what: &'static str,
     /// Its statement, by block and position.
     at: (u32, u32),
-    /// Whether a region can take it today: an array, a box, an array that
-    /// grows by `push`.
-    placed: bool,
+    /// Why a region does not take it yet, when it does not: one takes an
+    /// array, a box and an array that grows by `push`.
+    refused: Option<&'static str>,
+}
+
+impl Site {
+    fn placed(&self) -> bool {
+        self.refused.is_none()
+    }
 }
 
 /// The places the function makes a value on the heap in: an array of
@@ -895,17 +1015,16 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
     let mut found = Vec::new();
     let array =
         |place: &Place| matches!(types.kind(types.repr(body.place_ty(types, place))), crate::types::TyKind::Array(_));
+    const MAPS: Option<&str> = Some("regions do not take maps yet");
+    const TEXTS: Option<&str> = Some("regions do not take texts yet");
+    const RUNTIME: Option<&str> = Some("regions do not take what the runtime makes yet");
     for (at, statement) in positioned(body) {
         let Statement::Assign(place, rvalue, span) = statement else { continue };
-        let mut placed = false;
-        let what = match &**rvalue {
-            Rvalue::Array(values, _) if values.iter().any(|value| matches!(value, Operand::Copy(_))) => {
-                placed = true;
-                ""
-            }
-            Rvalue::MapOp(crate::hir::MapOp::New, ..) => "",
-            Rvalue::Slice(..) => "",
-            Rvalue::Concat(_) if !body.framed.contains(&place.local) => "",
+        let refused = match &**rvalue {
+            Rvalue::Array(values, _) if values.iter().any(|value| matches!(value, Operand::Copy(_))) => None,
+            Rvalue::MapOp(crate::hir::MapOp::New, ..) => MAPS,
+            Rvalue::Slice(..) => Some("regions do not take slices yet"),
+            Rvalue::Concat(_) if !body.framed.contains(&place.local) => TEXTS,
             Rvalue::Aggregate(operands) | Rvalue::Variant(_, operands) => {
                 let ty = body.place_ty(types, place);
                 let boxed = operands.iter().any(|operand| match operand {
@@ -915,8 +1034,7 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
                 if !boxed {
                     continue;
                 }
-                placed = true;
-                ""
+                None
             }
             Rvalue::Mutate(
                 mutation @ (crate::hir::Mutation::Push
@@ -925,38 +1043,42 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
                 target,
                 ..,
             ) => {
-                let placed = *mutation == crate::hir::Mutation::Push && array(target);
-                found.push(Site { local: target.local, span: *span, what: "grows an array that ", at, placed });
+                let refused = match (array(target), mutation) {
+                    (true, crate::hir::Mutation::Push) => None,
+                    (true, _) => Some("a region grows an array only at its end yet"),
+                    (false, _) => Some("regions do not take deques yet"),
+                };
+                found.push(Site { local: target.local, span: *span, what: "grows an array that ", at, refused });
                 continue;
             }
             // Room a loop is about to push into, which goes where its
             // pushes go.
             Rvalue::Mutate(crate::hir::Mutation::Reserve, target, ..) if array(target) => {
-                found.push(Site { local: target.local, span: *span, what: "grows an array that ", at, placed: true });
+                found.push(Site { local: target.local, span: *span, what: "grows an array that ", at, refused: None });
                 continue;
             }
             Rvalue::Mutate(crate::hir::Mutation::Insert, target, ..) => {
-                found.push(Site { local: target.local, span: *span, what: "grows a map that ", at, placed: false });
+                found.push(Site { local: target.local, span: *span, what: "grows a map that ", at, refused: MAPS });
                 continue;
             }
-            Rvalue::Call(Callee::Std(_), _) if types.needs_drop(body.place_ty(types, place)) => "",
+            Rvalue::Call(Callee::Std(_), _) if types.needs_drop(body.place_ty(types, place)) => RUNTIME,
             // An array or a text the runtime makes, as `join` or `concat`
             // does; not an element read out of one.
             Rvalue::ArrayOp(op, ..)
                 if *op != crate::hir::ArrayOp::Get && types.needs_drop(body.place_ty(types, place)) =>
             {
-                ""
+                RUNTIME
             }
             // A text an operation makes, as `replace` or `toUpper` does.
             Rvalue::StrOp(..)
                 if matches!(types.kind(types.repr(body.place_ty(types, place))), crate::types::TyKind::String) =>
             {
-                ""
+                TEXTS
             }
             _ => continue,
         };
         if place.path.is_empty() {
-            found.push(Site { local: place.local, span: *span, what, at, placed });
+            found.push(Site { local: place.local, span: *span, what: "", at, refused });
         }
     }
     found

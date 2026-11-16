@@ -2466,7 +2466,8 @@ imports. Given a directory or file inside a project, its project, and the module
         name: "optimizations",
         description: "What a release build makes of the program's own code, place by place, without building it: \
 the calls it inlines and those it keeps, with why; the texts and closures it makes in the frame, and what keeps the \
-others on the heap; the bounds and overflow checks it drops, and those a loop keeps. To see why code allocates or \
+others on the heap; where what each place allocates goes, in a region or on the heap, and why; the bounds and \
+overflow checks it drops, and those a loop keeps. To see why code allocates or \
 checks more than it should, before measuring it.",
         kind: Kind::Reads,
         params: &[
@@ -2476,8 +2477,7 @@ checks more than it should, before measuring it.",
                 "kind",
                 "string",
                 "Only one kind: inlined, call, frame, heap, unchecked, checked, arithmetic, unrolled, looped, reserved, \
-grown, lent, counted, hoisted, reloaded, or region, told only when asked for: where what each place \
-allocates would go if the program had regions.",
+grown, lent, counted, hoisted, reloaded, or region.",
             ),
             ("tests", "boolean", "The code of the tests and benchmarks, as `test` with `bench` builds it."),
             ("against", "string", "A git revision, as main: only what changed since it, what it had and what is new."),

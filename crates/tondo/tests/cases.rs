@@ -281,24 +281,17 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
     Ok(())
 }
 
-/// Whether `tondo optimizations` tells each remark a case expects; those
-/// of the kind `region`, which it tells only when asked, as asked.
+/// Whether `tondo optimizations` tells each remark a case expects.
 fn optimized(path: &Path, scratch: &Path, expected: &[(String, bool)]) -> Result<(), String> {
-    let regions = expected.iter().any(|(expected, _)| expected.split(' ').nth(1) == Some("region"));
-    let mut found = Vec::new();
-    let kinds: &[Option<&str>] = if regions { &[None, Some("region")] } else { &[None] };
-    for kind in kinds {
-        let told = Command::new(env!("CARGO_BIN_EXE_tondo"))
-            .current_dir(path.parent().unwrap())
-            .args([std::ffi::OsStr::new("optimizations"), path.file_name().unwrap(), std::ffi::OsStr::new("--json")])
-            .args(kind.map(|kind| ["--kind", kind]).into_iter().flatten())
-            .env("XDG_CACHE_HOME", scratch.join("cache"))
-            .output()
-            .map_err(|e| format!("tondo optimizations: {e}"))?;
-        let told: serde_json::Value = serde_json::from_slice(&told.stdout)
-            .map_err(|e| format!("tondo optimizations: {e}\n{}", String::from_utf8_lossy(&told.stderr)))?;
-        found.extend(told["optimizations"].as_array().cloned().unwrap_or_default());
-    }
+    let told = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(path.parent().unwrap())
+        .args([std::ffi::OsStr::new("optimizations"), path.file_name().unwrap(), std::ffi::OsStr::new("--json")])
+        .env("XDG_CACHE_HOME", scratch.join("cache"))
+        .output()
+        .map_err(|e| format!("tondo optimizations: {e}"))?;
+    let told: serde_json::Value = serde_json::from_slice(&told.stdout)
+        .map_err(|e| format!("tondo optimizations: {e}\n{}", String::from_utf8_lossy(&told.stderr)))?;
+    let found = told["optimizations"].as_array().cloned().unwrap_or_default();
     for (expected, told) in expected {
         let (at, rest) = expected.split_once(' ').unwrap_or((expected, ""));
         let (kind, text) = rest.split_once(' ').unwrap_or((rest, ""));

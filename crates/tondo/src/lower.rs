@@ -505,7 +505,7 @@ fn lower_function(
         widest: false,
         region: Vec::new(),
         loops: Vec::new(),
-        takes_region: false,
+        copy_of: None,
         given: Vec::new(),
         region_calls: Vec::new(),
     }

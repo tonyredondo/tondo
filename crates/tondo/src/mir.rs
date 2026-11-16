@@ -190,10 +190,10 @@ pub struct Body {
     /// The loops a region may be of: each one's head, and the blocks that
     /// go back to it.
     pub loops: Vec<(u32, Vec<u32>)>,
-    /// Whether it is the copy of a function that makes what it returns in
-    /// a region its caller gives, as a parameter after its own; and the
-    /// statements that make a value there.
-    pub takes_region: bool,
+    /// The function it is a copy of, when it is one that makes what it
+    /// returns in a region its caller gives, as a parameter after its own;
+    /// and the statements that make a value there.
+    pub copy_of: Option<u32>,
     pub given: Vec<(u32, u32)>,
     /// The calls of copies that take a region, by block and position, and
     /// the region each gives: one of the function's, or none for the one
