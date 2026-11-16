@@ -287,6 +287,7 @@ view is how one knows that the cost is the program's and not an accident.
 | `--function <name>` | one function, and the code written in it wherever it went |
 | `--kind heap` | only what allocates |
 | `--kind region` | where a [region](#where-a-region-would-take-it) would take what each place allocates |
+| `--kind hoisted`, `--kind reloaded` | the [lengths](#a-length-read-once) a loop reads once, and those it reads each turn |
 | `--tests` | the tests and benchmarks instead of the program |
 | `--against <rev>` | only what a change made different |
 | `--json` | the same as data |
@@ -435,6 +436,67 @@ So a benchmark is not always the cost of the program: the build of the
 tests may check what the program's build does not, and `tondo
 optimizations --tests` says where.
 
+### A length read once
+
+A loop that compares its place with the length of an array or of a text
+reads that length once, before the loop, when nothing in the loop can
+change it; `--kind hoisted` lists those, and `--kind reloaded` the ones it
+reads at every turn, with why.
+
+```tondo
+import std.console
+
+/// How many of the values are even: the loop only reads `values`.
+fn evens(values: Array[Int]): Int {
+    var count = 0
+    var i = 0
+    for i < values.length() {
+        if values[i] % 2 == 0 {
+            count += 1
+        }
+        i += 1
+    }
+    count
+}
+
+/// Each even value followed by the number after it: the loop pushes to
+/// what it reads.
+fn spread(values: Array[Int]): Array[Int] {
+    var out = values
+    var i = 0
+    for i < out.length() {
+        if out[i] % 2 == 0 and out.length() < 8 {
+            out.push(out[i] + 1)
+        }
+        i += 1
+    }
+    out
+}
+
+fn main() {
+    console.println("{evens([1, 2, 3, 4])} {spread([2, 5])}")
+}
+```
+
+```text output
+2 [2, 5, 3]
+```
+
+```text
+$ tondo optimizations lengths.to --kind hoisted
+lengths.to:7:13: `values.length()` reads the length once, before the loop (in evens, main)
+$ tondo optimizations lengths.to --kind reloaded --function spread
+lengths.to:21:13: `out.length()` reads the length each turn: the loop may change `out` (in spread)
+lengths.to:21:13: `out.length()` reads the length each turn: the loop may change what it is the length of (in main)
+lengths.to:22:32: `out.length()` reads the length each turn: the loop may change `out` (in spread)
+lengths.to:22:32: `out.length()` reads the length each turn: the loop may change what it is the length of (in main)
+```
+
+`spread` pushes to the array whose length it tests, so the length is read
+each turn, as the program says. A length is also read each turn when it is
+reached through a loan or a lock, where other code may change it, which is
+what a loop that waits for another task to push relies on.
+
 ### The closures of a chain
 
 The adapters of an [iterator](../language/08-collections.md#iterators) keep
@@ -561,23 +623,23 @@ it builds, new, so it would build in a region that its caller gives.
 
 A place stays on the heap when something keeps what it makes beyond the
 call, and the remark names the code that does. The verdict is by call. With
-a function added to the program that keeps a tree, `fn keep(kept: var
-Array[Node], depth: Int) { kept.push(build(depth, 2)) }`, which `main` calls
-after its sum:
+a function added to the program that sends a tree through a channel, `fn
+offer(sender: Sender[Node], depth: Int) { sender.send(build(depth, 2)) }`,
+which `main` calls after its sum:
 
 ```text
 $ tondo optimizations kept.to --kind region --function build
-kept.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: it is stored in what the function was given: `kept.push(build(depth, 2))` at 29:5 (in keep)
+kept.to:13:13: `children.push(build(depth - 1, fan))` grows an array that stays on the heap: it is sent: `sender.send(build(depth, 2))` at 29:5 (in main, offer)
 kept.to:13:13: `children.push(build(depth - 1, fan))` grows an array that would go in a region of `main` (in main)
-kept.to:13:13: `children.push(build(depth - 1, fan))` grows an array that would go in a region that the caller of `build` gives, in a copy of it for the calls that let it go: `main` at 13; `keep` keeps it: it is stored in what the function was given: `kept.push(build(depth, 2))` at 29:5 (in build)
+kept.to:13:13: `children.push(build(depth - 1, fan))` grows an array that would go in a region that the caller of `build` gives, in a copy of it for the calls that let it go: `main` at 33; `main` keeps it: it is sent: `sender.send(build(depth, 2))` at 29:5 (in build)
 ```
 
 The trees that `main` lets go of would still be built in its region, by a
-copy of `build` made for the calls that let its result go; the one that
-`keep` stores stays on the heap, and one caller that keeps does not take
-the region from the others. The other reasons to stay on the heap are that
-a value is stored in a lock's state or in a `Ref`, captured by a closure,
-sent, taken by a task or given to C.
+copy of `build` made for the calls that let its result go; the one that is
+sent stays on the heap, and one call that keeps does not take the region
+from the others. The other reasons to stay on the heap are that a value is
+stored in what the function was given, in a lock's state or in a `Ref`,
+captured by a closure, taken by a task or given to C.
 
 ## The machine code: asm
 
