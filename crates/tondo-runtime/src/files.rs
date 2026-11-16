@@ -349,6 +349,11 @@ struct Watch {
     roots: Vec<(String, PathBuf)>,
     settle: std::time::Duration,
     existing: HashMap<PathBuf, Stamp>,
+    /// Whether the system says each file that was written, as inotify does.
+    told: bool,
+    /// When it does not, the content of each file whose stamp may not show
+    /// its next write, as `content` gives it.
+    racy: HashMap<PathBuf, Option<u64>>,
 }
 
 /// A path the system says changed, and whether it said the file itself was
@@ -359,6 +364,7 @@ type Seen = (PathBuf, bool);
 #[derive(Copy, Clone, PartialEq)]
 struct Stamp {
     directory: bool,
+    regular: bool,
     modified: i64,
     size: u64,
     file: u64,
@@ -369,7 +375,54 @@ fn stamp(path: &Path) -> Option<Stamp> {
     use std::os::unix::fs::MetadataExt;
     let metadata = std::fs::symlink_metadata(path).ok()?;
     let modified = metadata.mtime().saturating_mul(1_000_000_000).saturating_add(metadata.mtime_nsec());
-    Some(Stamp { directory: metadata.is_dir(), modified, size: metadata.len(), file: metadata.ino() })
+    let (directory, regular) = (metadata.is_dir(), metadata.is_file());
+    Some(Stamp { directory, regular, modified, size: metadata.len(), file: metadata.ino() })
+}
+
+/// How soon after a file's last change its stamp is racy: a write of the
+/// same size within the same tick of the file system's clock leaves the
+/// stamp as it was, and the coarsest clock a watch meets, FAT's, ticks
+/// every two seconds.
+const RACY: i64 = 2_000_000_000;
+
+/// The largest file whose content a racy stamp keeps; a larger one whose
+/// racy stamp stays the same counts as modified, without reading it.
+const HASHED: u64 = 1 << 20;
+
+/// The time, as stamps give it.
+fn now() -> i64 {
+    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    i64::try_from(since.as_nanos()).unwrap_or(i64::MAX)
+}
+
+/// Whether a regular file's stamp, read after `now`, may not show its next
+/// write.
+fn racy(now: i64, stamp: &Stamp) -> bool {
+    stamp.regular && now.saturating_sub(stamp.modified) < RACY
+}
+
+/// A hash of what a file of `size` holds, for a racy stamp; `None` past
+/// `HASHED` or when it cannot be read, and then the file counts as modified.
+fn content(path: &Path, size: u64) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    use std::io::Read;
+    if size > HASHED {
+        return None;
+    }
+    let mut held = Vec::new();
+    std::fs::File::open(path).ok()?.take(HASHED + 1).read_to_end(&mut held).ok()?;
+    if held.len() as u64 > HASHED {
+        return None;
+    }
+    let mut hasher = std::hash::DefaultHasher::new();
+    held.hash(&mut hasher);
+    Some(hasher.finish())
+}
+
+/// The content of each entry whose stamp, read after `now`, is racy.
+fn racy_contents(existing: &HashMap<PathBuf, Stamp>, now: i64) -> HashMap<PathBuf, Option<u64>> {
+    let racy = existing.iter().filter(|(_, stamp)| racy(now, stamp));
+    racy.map(|(path, stamp)| (path.clone(), content(path, stamp.size))).collect()
 }
 
 /// The entries under a directory, `depth` levels deep or all of them, with
@@ -692,6 +745,7 @@ pub unsafe extern "C" fn tondo_rt_files_watch(paths: *mut ArrayHeader, settle: i
         // when its batch ends.
         let mut watcher = watcher(send)?;
         let (mut roots, mut existing) = (Vec::new(), HashMap::new());
+        let started = now();
         for path in paths {
             let real = io(std::fs::canonicalize(&path))?;
             if let Some(found) = stamp(&real) {
@@ -703,7 +757,12 @@ pub unsafe extern "C" fn tondo_rt_files_watch(paths: *mut ArrayHeader, settle: i
             watch(&mut watcher, &real)?;
             roots.push((path, real));
         }
-        let watch = Watch { watcher: Some(watcher), changes: Some(changes), roots, settle, existing };
+        // kqueue tells that a directory changed, or a file, not how: a
+        // file's stamp can stay as it was through a write, and its content
+        // decides while it can.
+        let told = cfg!(target_os = "linux");
+        let racy = if told { HashMap::new() } else { racy_contents(&existing, started) };
+        let watch = Watch { watcher: Some(watcher), changes: Some(changes), roots, settle, existing, told, racy };
         Ok(Done { watch: Some(Mutex::new(watch)), ..Done::default() })
     })
 }
@@ -768,8 +827,11 @@ async fn batch<T>(
 /// each with the letter of its change. A directory that changed is read
 /// again for the entries it holds, one made is read whole, and one removed
 /// takes what it held with it; a directory itself is only made or removed,
-/// as what it holds changes on its own.
+/// as what it holds changes on its own. A file whose stamp was racy and is
+/// the same is compared by its content, where the system does not say that
+/// it was written.
 fn settled(watch: &mut Watch, roots: &[(String, PathBuf)], changes: Vec<Seen>) -> Vec<String> {
+    let read = now();
     // A file the system said was written changed, though a write of the
     // same size in the same tick of its clock leaves its stamp as it was.
     let written: HashSet<PathBuf> =
@@ -802,6 +864,15 @@ fn settled(watch: &mut Watch, roots: &[(String, PathBuf)], changes: Vec<Seen>) -
             Some(found) => watch.existing.insert(path.clone(), found),
             None => watch.existing.remove(&path),
         };
+        let kept = watch.racy.remove(&path);
+        let racy_now = !watch.told && after.is_some_and(|found| racy(read, &found));
+        let same = before.is_some() && before == after;
+        let compared = racy_now || (same && kept.is_some_and(|kept| kept.is_some()));
+        let held = after.filter(|_| compared).and_then(|found| content(&path, found.size));
+        let rewritten = same && kept.is_some_and(|kept| kept.is_none() || kept != held);
+        if racy_now {
+            watch.racy.insert(path.clone(), held);
+        }
         let letter = match (before, after) {
             (None, Some(made)) => {
                 if made.directory {
@@ -812,7 +883,7 @@ fn settled(watch: &mut Watch, roots: &[(String, PathBuf)], changes: Vec<Seen>) -
                 "C"
             }
             (Some(_), None) => "R",
-            (Some(old), Some(new)) if (old != new || written.contains(&path)) && !new.directory => "M",
+            (Some(old), Some(new)) if (old != new || written.contains(&path) || rewritten) && !new.directory => "M",
             _ => continue,
         };
         let root = roots.iter().any(|(_, real)| *real == path);
@@ -858,11 +929,20 @@ mod tests {
         dir.canonicalize().unwrap()
     }
 
-    fn watching(dir: &Path) -> Watch {
+    /// A watch of `dir` as it starts, where the system says each file that
+    /// was written, as inotify does, or not, as kqueue.
+    fn watching(dir: &Path, told: bool) -> Watch {
+        let started = now();
         let mut existing = HashMap::new();
         stamps(dir, None, &mut existing);
         let roots = vec![(dir.to_string_lossy().into_owned(), dir.to_path_buf())];
-        Watch { watcher: None, changes: None, roots, settle: std::time::Duration::ZERO, existing }
+        let racy = if told { HashMap::new() } else { racy_contents(&existing, started) };
+        Watch { watcher: None, changes: None, roots, settle: std::time::Duration::ZERO, existing, told, racy }
+    }
+
+    /// Gives `file` the stamp of a change at `at`, as if it changed then.
+    fn changed_at(file: &Path, at: std::time::SystemTime) {
+        std::fs::File::options().write(true).open(file).unwrap().set_modified(at).unwrap();
     }
 
     /// A batch says what became of each path, once, sorted, from what is
@@ -870,8 +950,14 @@ mod tests {
     /// there, nor the temporary file through which `fs` writes one whole.
     #[test]
     fn a_batch_says_what_became_of_each_path() {
+        for told in [true, false] {
+            a_batch_says_what_became_of_each_path_where(told);
+        }
+    }
+
+    fn a_batch_says_what_became_of_each_path_where(told: bool) {
         let dir = directory("batch", &["old.txt", "gone.txt"]);
-        let mut watch = watching(&dir);
+        let mut watch = watching(&dir, told);
         std::fs::write(dir.join("new.txt"), "new").unwrap();
         // Of another size: a write of the same size in the same tick of the
         // file system's clock, in the same file, leaves its stamp as it was.
@@ -902,16 +988,53 @@ mod tests {
     #[test]
     fn a_file_written_is_modified_whatever_its_stamp() {
         let dir = directory("written", &["same.txt"]);
-        let mut watch = watching(&dir);
+        let mut watch = watching(&dir, true);
         let path = dir.join("same.txt");
         let stamped = std::fs::metadata(&path).unwrap().modified().unwrap();
         std::fs::write(&path, "SAME.TXT").unwrap();
-        std::fs::File::options().write(true).open(&path).unwrap().set_modified(stamped).unwrap();
+        changed_at(&path, stamped);
         let roots = watch.roots.clone();
         // Seen only through its directory, as kqueue tells it: the stamp decides.
         assert!(settled(&mut watch, &roots, vec![(path.clone(), false)]).is_empty());
         let at = path.to_string_lossy().into_owned();
         assert_eq!(settled(&mut watch, &roots, vec![(path.clone(), true)]), ["M", &at]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Where the system does not say that a file was written, as kqueue, a
+    /// stamp read within two seconds of the file's last change is racy, and
+    /// while it stays the same the file's content decides: up to a
+    /// mebibyte, and past it the file counts as modified. An older stamp
+    /// decides alone, and nothing is read. The stamps here are put ahead of
+    /// the clock or behind it, so that how long the test takes does not
+    /// change what is racy.
+    #[test]
+    fn a_racy_stamp_is_compared_by_content() {
+        let dir = directory("racy", &["same.txt"]);
+        let (path, big) = (dir.join("same.txt"), dir.join("big.bin"));
+        std::fs::write(&big, vec![0; HASHED as usize + 1]).unwrap();
+        let ahead = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+        changed_at(&path, ahead);
+        changed_at(&big, ahead);
+        let mut watch = watching(&dir, false);
+        let roots = watch.roots.clone();
+        let at = |path: &Path| path.to_string_lossy().into_owned();
+        assert!(settled(&mut watch, &roots, vec![(path.clone(), false)]).is_empty());
+        // Rewritten in place, as a write of the same size in the same tick
+        // of the file system's clock leaves the stamp.
+        std::fs::write(&path, "SAME.TXT").unwrap();
+        changed_at(&path, ahead);
+        assert_eq!(settled(&mut watch, &roots, vec![(path.clone(), false)]), ["M", &at(&path)]);
+        assert!(settled(&mut watch, &roots, vec![(path.clone(), false)]).is_empty());
+        assert_eq!(settled(&mut watch, &roots, vec![(big.clone(), false)]), ["M", &at(&big)]);
+        // Stamps of ten seconds ago: changed, and then not racy.
+        let behind = std::time::SystemTime::now() - std::time::Duration::from_secs(10);
+        changed_at(&path, behind);
+        changed_at(&big, behind);
+        let both = vec![(path.clone(), false), (big.clone(), false)];
+        assert_eq!(settled(&mut watch, &roots, both.clone()), ["M", &at(&big), "M", &at(&path)]);
+        assert!(settled(&mut watch, &roots, both).is_empty());
+        assert!(watch.racy.is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -7467,3 +7467,16 @@ from, so that the test does not depend on the network or on a version of .NET th
 The headers of Windows it includes are stand-ins written for the test with what it takes of
 them, as the PAL that gives them on Linux is part of .NET's build. The test runs on Linux where
 `dotnet` and its SDK are installed, as on CI's runners, and says it was skipped elsewhere.
+
+## `fs.watch` compares a racy stamp by content
+
+A rewrite in place of the same size within one tick of the file system's clock leaves a
+file's stamp as it was, and a watch that decides by stamps misses it: with a `settle` shorter
+than the tick, or as the first write after the watch starts. On Linux inotify says the file
+was written, and that decides. Where the system does not say it, as kqueue on macOS, Tony chose
+what git does for the same problem: a stamp read within two seconds of the file's last change,
+the tick of the coarsest clock a watch meets (FAT's), is racy, and the watch keeps a hash of the
+file's content beside it; while that stamp stays the same, the content decides. A file past a
+mebibyte is not read, and while its racy stamp stays the same it counts as modified when its
+directory changes. A floor under `settle` would have covered the clocks finer than it and not
+the coarser ones, as HFS+ in whole seconds, and changed what `settle` means.
