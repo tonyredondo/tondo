@@ -1639,6 +1639,33 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, types: &crate::types::Types, sou
     after("split again", bodies, types, sources);
     crate::stack::stack(bodies, types);
     after("stack", bodies, types, sources);
+    // Where regions would take what the program makes, for `tondo
+    // optimizations --kind region`, and while it is being measured:
+    // `TONDO_REGIONS=<file>` writes a line for each place, the standard
+    // library's too.
+    let measured = std::env::var_os("TONDO_REGIONS");
+    if crate::regions::asked() || measured.is_some() {
+        let verdicts = crate::regions::regions(bodies, types);
+        let Some(path) = measured else { return };
+        let lines: String = verdicts
+            .iter()
+            .map(|verdict| {
+                let (file, line, _) = sources.position(verdict.span.start);
+                let place = if verdict.span == crate::source::Span::default() {
+                    "-".to_string()
+                } else {
+                    format!("{file}:{line}")
+                };
+                format!(
+                    "{}\t{place}\t{}\t{}\n",
+                    verdict.function,
+                    if verdict.region { "region" } else { "heap" },
+                    verdict.text
+                )
+            })
+            .collect();
+        let _ = std::fs::write(path, lines);
+    }
 }
 
 /// After lowering and each pass: the MIR checked, in a debug build of
@@ -1683,6 +1710,7 @@ pub const OPTIMIZATION_KINDS: &[&str] = &[
     "grown",
     "lent",
     "counted",
+    "region",
 ];
 
 impl Optimization {
@@ -1722,6 +1750,7 @@ pub fn optimizations(
     let sources = &analysis.sources;
     crate::mir_text::ask_remarks(true);
     cpu(analysis, None)?;
+    crate::regions::ask(kind == Some("region"));
     let mut bodies = lower::lower(program, false, false, None);
     let named = |body: &crate::mir::Body| function.is_none_or(|name| body.name.contains(name));
     // Where each function asked for is written, from its name to its last
@@ -1741,6 +1770,7 @@ pub fn optimizations(
         optimize(&mut bodies, &program.types, sources);
     }
     crate::mir_text::ask_remarks(false);
+    crate::regions::ask(false);
     let mut found = Vec::new();
     let inside = |span: crate::source::Span| written.iter().any(|w| w.start <= span.start && span.end <= w.end);
     for body in &bodies {

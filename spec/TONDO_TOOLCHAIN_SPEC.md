@@ -2469,6 +2469,15 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   bucle lee y no cuenta, pues su array lo tiene, o por qué cuenta. `--kind <tipo>` da solo las de ese
   tipo, como `heap` para ver dónde asigna; uno que no existe es un error del
   toolchain (estado 3).
+- `region` solo sale con `--kind region`: dónde iría lo que asigna cada
+  sitio si el programa tuviera regiones, memoria que un marco toma moviendo
+  un puntero y devuelve entera al terminar. Va en la región de la función
+  que lo hace si nada lo guarda más allá de la llamada; en una que le da quien
+  la llama si la función solo lo devuelve, nuevo, y quienes lo toman tampoco
+  lo guardan; o se queda en el heap, y dice por qué: se guarda en lo que la
+  función recibió, en el estado de un lock o en un `Ref`, lo captura una
+  closure, se envía, va a una tarea o a C, o lo guarda una función a la que
+  se pasa. Nada se construye aún de ello: mide lo que alcanzarían.
 - `--function <nombre>` da solo lo de las funciones cuyo nombre lo contiene,
   y lo que se dice de un lugar escrito dentro de ellas, vaya donde vaya su
   código, como la copia de una función que llama a sus closures.

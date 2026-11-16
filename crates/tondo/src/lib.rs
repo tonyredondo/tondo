@@ -66,6 +66,7 @@ pub mod project;
 pub mod proto;
 pub mod protobuf;
 pub mod prove;
+pub mod regions;
 pub mod reserve;
 #[cfg(feature = "rules")]
 pub mod rules;

@@ -7492,3 +7492,20 @@ file's content beside it; while that stamp stays the same, the content decides. 
 mebibyte is not read, and while its racy stamp stays the same it counts as modified when its
 directory changes. A floor under `settle` would have covered the clocks finer than it and not
 the coarser ones, as HFS+ in whole seconds, and changed what `settle` means.
+
+## Regions are measured before they are built
+
+Memory a frame takes by moving a pointer and gives back whole when it ends would spare the
+counts and the frees of what a function makes and lets go. Before building it, Tony chose to know
+how much it would reach: `tondo optimizations --kind region` says, for each place that
+allocates, whether what it makes would go in the region of the function that makes it, in that
+of its caller, or stays on the heap and why, and nothing is built from it. The verdict errs
+toward the heap: a value is in a region only when everything that could keep it past the call is
+seen. A call of the runtime borrows what it is given unless its name says it puts it somewhere,
+as inserting, sending or setting do; C and calls through a function value may keep anything; and
+the result of a function called through a value, or of one with no call left in the program's
+code, as one inlined everywhere, may be kept by callers the analysis does not see. The kind is
+told only when asked for, as the analysis costs a build time and speaks of what does not exist
+yet; `TONDO_REGIONS=<file>` in the environment of a build writes every verdict, the standard
+library's too, so that they can be joined to a memory profile to count allocations rather than
+places.

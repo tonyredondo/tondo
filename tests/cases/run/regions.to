@@ -1,0 +1,76 @@
+// `tondo optimizations --kind region` says where what each place allocates
+// would go if the program had regions: in the region of the function that
+// makes it, when nothing keeps it past the call; in one its caller gives,
+// when the function only returns it and no caller keeps it; or on
+// the heap, with why: stored in what the function was given or in a lock's
+// state, captured by a closure, sent, or taken by a task. Nothing is built
+// from it yet; the program runs as ever.
+
+import std.console
+import std.sync
+
+fn digits(n: Int): Array[Int] {
+    var out: Array[Int] = if n < 10 { [] } else { digits(n / 10) }
+    out.push(n % 10)
+    out
+}
+
+fn fill(into: var Array[Array[Int]], n: Int) {
+    into.push([n, n + 1])
+}
+
+fn counter(n: Int): fn(): Int {
+    var seen: Array[Int] = []
+    seen.push(n)
+    () { seen.length() }
+}
+
+fn send(sender: Sender[Array[Int]], n: Int) {
+    var batch: Array[Int] = []
+    batch.push(n)
+    sender.send(batch)
+}
+
+fn worker(values: Array[Int]): Int {
+    values.length()
+}
+
+fn spawned(n: Int): Int {
+    var values: Array[Int] = []
+    values.push(n)
+    let task = spawn worker(values)
+    task.wait()
+}
+
+fn locked(state: sync.Mutex[Array[Array[Int]]], n: Int) {
+    var kept: Array[Int] = []
+    kept.push(n)
+    state.update((all) { all.push(kept) })
+}
+
+fn main() {
+    var into: Array[Array[Int]] = []
+    fill(var into, 1)
+    let count = counter(2)
+    let (sender, receiver) = channel[Array[Int]]()
+    send(sender, 3)
+    let state = sync.Mutex([[0]])
+    locked(state, 4)
+    var local: Array[Int] = []
+    local.push(digits(1234).length())
+    console.println(
+        "{into.length()} {count()} {receiver.receive()?.length() ?? 0} {spawned(5)} {local}",
+    )
+}
+
+// expect-stdout: 1 1 1 1 [4]
+// expect-optimization: 14:5 region would go in a region that the caller of `digits` gives
+// expect-optimization: 19:15 region stays on the heap: it is stored in what the function was given
+// expect-optimization: 19:15 region would go in a region of `main`
+// expect-optimization: 24:5 region stays on the heap: a closure captures it
+// expect-optimization: 30:5 region stays on the heap: it is sent
+// expect-optimization: 40:5 region stays on the heap: a task takes it
+// expect-optimization: 47:5 region stays on the heap: it is stored in a lock's state
+// expect-optimization: 57:28 region stays on the heap: it is stored in a lock's state
+// expect-optimization: 60:5 region would go in a region of `main`
+// expect-no-optimization: 60:5 region stays on the heap

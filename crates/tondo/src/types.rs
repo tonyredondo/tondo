@@ -1790,7 +1790,7 @@ impl Types {
     }
 
     /// The types a value of this type can refer to, itself included.
-    fn reach(&self, ty: Ty) -> Vec<Ty> {
+    pub(crate) fn reach(&self, ty: Ty) -> Vec<Ty> {
         let (mut seen, mut pending) = (vec![ty], vec![ty]);
         while let Some(current) = pending.pop() {
             let repr = self.repr(current);
