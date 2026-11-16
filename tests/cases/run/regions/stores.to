@@ -1,0 +1,158 @@
+// The stores of the MIR (`Assign`, `Use`, `Aggregate`, `Variant`, `Array`,
+// `Mutate`): a value made in a scope and stored where it outlives the
+// scope, in a field, an element, a variable the next turn writes over, a
+// record, a variant or an array made of it, and by `push`, `insert` and a
+// deque's growth at either end, for the region of a turn, of
+// a function and of a caller, with each kind of value a region makes: an
+// array, an array grown by `push`, and a box. With the memory of each
+// region that ends made unreadable, a value put in a region it outlives
+// faults where the last lines read it; a debug build has no regions and
+// prints the same.
+
+import std.console
+
+enum List {
+    Cons(Int, List)
+    Nil
+}
+
+type Holder = { values: Array[Int], grown: Array[Int], list: List }
+
+fn sum(list: List): Int {
+    match list {
+        List.Cons(head, rest) => head + sum(rest)
+        List.Nil => 0
+    }
+}
+
+fn show(holder: Holder): String {
+    "{holder.values} {holder.grown} {sum(holder.list)}"
+}
+
+/// Some arrays made and let go, so that memory a region gave back is
+/// written again before the values above are read.
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        var junk = [i, i, i, i, i, i, i, i]
+        junk.push(i)
+        total += junk.length()
+    }
+    total
+}
+
+/// The region of a turn: a field, an element, the variable itself.
+fn turns(): String {
+    var holder = Holder { values: [], grown: [], list: List.Nil }
+    var rows: Array[Array[Int]] = [[], []]
+    var lists: Array[List] = [List.Nil, List.Nil]
+    var last: Array[Int] = []
+    for i in 0..3 {
+        holder.values = [i, i + 1]
+        var grown = [i]
+        grown.push(i * 2)
+        holder.grown = grown
+        holder.list = List.Cons(i, List.Cons(i * 10, List.Nil))
+        rows[i % 2] = [i, i * 3]
+        lists[i % 2] = List.Cons(i, List.Nil)
+        var again = [i]
+        again.push(i)
+        last = again
+    }
+    "{show(holder)} {rows} {sum(lists[0])} {sum(lists[1])} {last}"
+}
+
+/// The region of a turn: made of it, a record, a variant, an array.
+fn made(): String {
+    var holders: Array[Holder] = []
+    var wrapped: Array[List] = []
+    var nested: Array[Array[Array[Int]]] = []
+    for i in 0..3 {
+        var grown = [i]
+        grown.push(i)
+        holders.push(Holder { values: [i, i], grown: grown, list: List.Cons(i, List.Nil) })
+        var inner = [i, i + 5]
+        wrapped.push(List.Cons(inner.length() + i, List.Nil))
+        nested.push([[i, i + 7], inner])
+    }
+    "{show(holders[0])} {show(holders[2])} {sum(wrapped[2])} {nested}"
+}
+
+/// The region of a turn: what grows, at its start, inside, and a deque at
+/// either end.
+fn grows(): String {
+    var front: Array[Array[Int]] = []
+    var inside: Array[Array[Int]] = [[]]
+    var queue = Deque[Array[Int]]()
+    for i in 0..3 {
+        var row = [i, i * 4]
+        row.push(i)
+        front.insert(0, row)
+        inside.insert(1, [i, i * 6])
+        queue.push([i, i * 8])
+        queue.pushFront([i, i * 9])
+    }
+    let first = queue.popFront() ?? []
+    let end = queue.pop() ?? []
+    "{front} {inside} {queue.length()} {first} {end}"
+}
+
+/// The region of a function: a value it makes, stored in what it is given.
+fn into(holder: var Holder, rows: var Array[Array[Int]], i: Int) {
+    holder.values = [i, i + 100]
+    var grown = [i]
+    grown.push(i + 200)
+    holder.grown = grown
+    holder.list = List.Cons(i, List.Cons(300, List.Nil))
+    rows.push([i, i + 400])
+}
+
+/// The region a caller gives: a function that returns what it makes, fresh,
+/// called by one that keeps it and by one that lets it go.
+fn fresh(i: Int): Array[Int] {
+    var values = [i, i + 500]
+    values.push(i)
+    values
+}
+
+fn boxedFresh(i: Int): List {
+    List.Cons(i, List.Cons(i + 600, List.Nil))
+}
+
+fn callers(): String {
+    var kept: Array[Array[Int]] = []
+    var lists: Array[List] = []
+    var counted = 0
+    for i in 0..3 {
+        kept.push(fresh(i))
+        lists.push(boxedFresh(i))
+        counted += fresh(i).length() + sum(boxedFresh(i))
+    }
+    "{kept} {sum(lists[0])} {sum(lists[2])} {counted}"
+}
+
+fn main() {
+    let a = turns()
+    let b = made()
+    let c = grows()
+    var holder = Holder { values: [], grown: [], list: List.Nil }
+    var rows: Array[Array[Int]] = []
+    for i in 0..2 {
+        into(var holder, var rows, i)
+    }
+    let d = callers()
+    let quiet = noise()
+    console.println(a)
+    console.println(b)
+    console.println(c)
+    console.println("{show(holder)} {rows}")
+    console.println(d)
+    console.println("{quiet}")
+}
+
+// expect-stdout: [2, 3] [2, 4] 22 [[2, 6], [1, 3]] 2 1 [2, 2]
+// expect-stdout: [0, 0] [0, 0] 0 [2, 2] [2, 2] 2 4 [[[0, 7], [0, 5]], [[1, 8], [1, 6]], [[2, 9], [2, 7]]]
+// expect-stdout: [[2, 8, 2], [1, 4, 1], [0, 0, 0]] [[], [2, 12], [1, 6], [0, 0]] 4 [2, 18] [2, 16]
+// expect-stdout: [1, 101] [1, 201] 301 [[0, 400], [1, 401]]
+// expect-stdout: [[0, 500, 0], [1, 501, 1], [2, 502, 2]] 600 604 1815
+// expect-stdout: 1800

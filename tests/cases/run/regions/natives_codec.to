@@ -1,0 +1,128 @@
+// The runtime's codecs, hashes and ciphers, which read the bytes they are
+// given or copy what they keep (`READING` in regions.rs): each loop gives
+// them an array its turn makes in the turn's region, as the remarks below
+// say, uses what they give within the turn, and uses again after the loop,
+// once the regions ended, what keeps state: hashers, keys, an archive.
+
+import std.archive
+import std.console
+import std.crypto
+import std.encoding
+import std.gzip
+import std.hash
+import std.io
+import std.profile
+import std.zstd
+
+fn b(i: Int): Byte {
+    Byte(i % 256) ?? Byte(0u8)
+}
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        var junk = [i, i, i, i, i, i, i, i]
+        junk.push(i)
+        total += junk.length()
+    }
+    total
+}
+
+fn encoded(): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        var data = [b(i), b(i + 1)]
+        data.push(b(i + 2))
+        lines.push("{encoding.base64Encode(data)} {encoding.hexEncode(data)}")
+        lines.push("{(gzip.decompress(gzip.compress(data)) ?? []).length()}")
+        lines.push("{(zstd.decompress(zstd.compress(data)) ?? []).length()}")
+    }
+    lines.join(" ")
+}
+
+fn hashed(hasher: hash.Hasher, keyed: var Array[hash.Hasher]): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        var data = [b(i), b(i + 3)]
+        data.push(b(i + 4))
+        lines.push("{hash.md5(data).hex()} {hash.hmacSha256(data, data).hex()}")
+        hasher.update(data)
+        keyed.push(hash.hmac(hash.Algorithm.Sha1, data))
+    }
+    lines.join(" ")
+}
+
+fn ciphered(key: crypto.SecretKey, signer: crypto.PrivateKey, public: crypto.PublicKey): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        var data = [b(i), b(i + 5)]
+        data.push(b(i + 6))
+        let opened = key.open(key.seal(data, data), data) ?? []
+        let derived = "{crypto.hkdf(data, data, data, 4)} {crypto.pbkdf2(data, data, 2, 4)}"
+        lines.push("{opened.length()} {derived} {public.verify(data, signer.sign(data))}")
+    }
+    lines.join(" ")
+}
+
+fn archived(zip: archive.Writer): Int {
+    var added = 0
+    for i in 0..3 {
+        var data = [b(i), b(i + 7)]
+        data.push(b(i + 8))
+        _ = zip.add("file{i}", data)
+        added += 1
+    }
+    added
+}
+
+fn labelled(): Int {
+    var set = 0
+    for i in 0..3 {
+        _ = profile.setLabels(["turn": "{i}"])
+        set += 1
+    }
+    set
+}
+
+fn main() {
+    let hasher = hash.hasher(hash.Algorithm.Sha256)
+    var keyed: Array[hash.Hasher] = []
+    var keyBytes: Array[Byte] = []
+    for k in 0..32 {
+        keyBytes.push(b(k))
+    }
+    let key = crypto.SecretKey.fromBytes(keyBytes) ?? crypto.SecretKey.generate()
+    let signer = crypto.PrivateKey.generate()
+    let public = signer.publicKey()
+    let buffer = io.Buffer()
+    let zip = archive.writer(buffer.writer(), archive.Format.Zip)
+    let a = encoded()
+    let c = hashed(hasher, var keyed)
+    let d = ciphered(key, signer, public)
+    let e = archived(zip)
+    let f = labelled()
+    let quiet = noise()
+    _ = zip.finish()
+    var later: Array[String] = []
+    for i in 0..3 {
+        let data = [b(i), b(i + 9)]
+        keyed[i].update(data)
+        later.push(keyed[i].finish().hex())
+        later.push("{public.verify(data, signer.sign(data))} {key.open(key.seal(data), []) ?? []}")
+    }
+    let zipped = archive.read(buffer.bytes()) ?? panic("no zip")
+    for entry in zipped.entries() {
+        later.push("{entry.name} {zipped.readBytes(entry.name) ?? []}")
+    }
+    console.println(a)
+    console.println(c)
+    console.println(d)
+    console.println("{e} {f} {quiet} {hasher.finish().hex()}")
+    console.println(later.join(" "))
+}
+
+// expect-stdout: AAEC 000102 3 3 AQID 010203 3 3 AgME 020304 3 3
+// expect-stdout: 75e811ff46330cd728db9a0849f4cdbb 654d414924e396db607c1469af5193fdce0c3c232c030f33864f93bcc3570594 e163910a75958866393c4003655a05ce 0176f2810014ae5e08fc87cd5a0ddf604136018c34ba263203b30c096204fd1c 7053a9ff81971092aa4d2d190bbd4ce8 d738fcbd79ce5a8f8db23fd6c0d8f995886beaa3a1dde7b19ff4333f843b6621
+// expect-stdout: 3 [142, 75, 206, 23] [38, 14, 80, 149] true 3 [198, 78, 61, 210] [22, 125, 241, 150] true 3 [97, 109, 37, 167] [28, 167, 214, 109] true
+// expect-stdout: 3 3 1800 a18449a7f3f820de89e1a5e00bc79c8bb6d44ce9b7c6ce40c4a174c2b9c60290
+// expect-stdout: c81a98b119f931ee6726358d2e1e8de0c09849a7 true [0, 9] ada0c7e843ab8bf126b0bac85110a07a86aed282 true [1, 10] 668e50e965589c2151403fb4460c89704244a709 true [2, 11] file0 [0, 7, 8] file1 [1, 8, 9] file2 [2, 9, 10]

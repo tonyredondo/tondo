@@ -1238,6 +1238,15 @@ impl Flow {
                         // A call of the program's keeps what it returns of
                         // what it is given, which `fate` sees.
                         Rvalue::Call(Callee::Fn(_), _) => continue,
+                        // A native that reads what it is given gives a value
+                        // the runtime made, which holds none of it.
+                        Rvalue::Call(Callee::Std(crate::hir::StdFn::Native(index)), _)
+                            if crate::hir::NATIVES
+                                .get(*index as usize)
+                                .is_some_and(|native| READING.contains(&native.symbol)) =>
+                        {
+                            continue;
+                        }
                         // What any other operation gives: the value, or what
                         // holds it, as its type can be or refer to it.
                         Rvalue::Unary(..)
@@ -1872,7 +1881,8 @@ fn takes_from_regions(native: &crate::hir::Native) -> bool {
 
 /// The natives that can be given a value a region makes and keep none of
 /// it past the call, as their code shows: each copies what it keeps, as a
-/// reader's or a body's bytes, or reads it only during the call. A native
+/// reader's or a body's bytes, or reads it only during the call, and what
+/// it gives is a value it made. A native
 /// of such a kind that is not here may keep it, and a test holds this list
 /// to the table of natives.
 const READING: &[&str] = &[

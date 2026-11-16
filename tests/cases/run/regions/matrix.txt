@@ -1,0 +1,136 @@
+# The ways a value can leave the scope whose region made it: each statement
+# and operation of the MIR (crates/tondo/src/mir.rs) and each native of the
+# runtime that can be given a value a region makes (`READING` in
+# crates/tondo/src/regions.rs), with the cases under tests/ that run it in
+# the region of a turn, of a function and of a caller, in release with the
+# memory of each region that ends made unreadable and in debug; or `-` and
+# why it can take no value a region makes anywhere. A test,
+# crates/tondo/tests/regions.rs, holds this list to those of the compiler.
+#
+# Where the program's arrays reach a native through functions of the
+# library that keep them, as `http.Client.request`, an archive's writer or
+# a socket's writes, the case runs the native under the check with values
+# on the heap: its reading is the code's, as `READING` says.
+
+Statement::Assign             cases/run/regions/stores.to cases/run/regions/loans.to
+Statement::Retain             - counts a reference
+Statement::Release            - counts a reference
+Statement::DeferPush          cases/run/regions/defers.to
+Statement::DeferPop           - takes a cleanup off, which holds nothing
+Statement::Lend               cases/run/regions/loans.to
+Statement::Clear              - zeroes a local whose value a store moved away
+Statement::Moved              - zeroes a part whose value a store moved away
+Statement::LendAt             cases/run/regions/tasks.to cases/run/regions/closures.to cases/run/regions/defers.to
+Statement::OsrLoad            - live builds only, which have no regions
+Statement::Failing            - debug builds only, which have no regions
+
+Rvalue::Use                   cases/run/regions/stores.to
+Rvalue::Unary                 - gives a number or a Bool
+Rvalue::Binary                - gives a number or a Bool
+Rvalue::Increment             - gives a number
+Rvalue::Exact                 - gives a number
+Rvalue::Call                  cases/run/regions/calls.to cases/run/regions/contexts.to cases/run/regions/natives_codec.to
+Rvalue::FnValue               - gives a function's address
+Rvalue::ExternFn              - gives a C function's address
+Rvalue::Callback              - gives a C function's address
+Rvalue::Layout                - gives a size
+Rvalue::Reflect               cases/run/regions/erased.to cases/run/regions/natives_formats.to
+Rvalue::Fixed                 - copies the elements of an array of C's types, which hold no value
+Rvalue::CallIndirect          cases/run/regions/closures.to
+Rvalue::Erase                 cases/run/regions/closures.to
+Rvalue::Spawn                 cases/run/regions/tasks.to
+Rvalue::TestMembers           - gives the runner a suite's functions, which hold no value
+Rvalue::TaskOp                cases/run/regions/tasks.to
+Rvalue::Select                cases/run/regions/tasks.to
+Rvalue::Cancelled             - gives a Bool
+Rvalue::Unwinding             - gives a Bool
+Rvalue::Restart               - live builds only, which have no regions
+Rvalue::Transfer              - live builds only, which have no regions
+Rvalue::CallOsr               - live builds only, which have no regions
+Rvalue::OsrPoint              - live builds only, which have no regions
+Rvalue::Concat                - makes a text, which regions do not take yet and which holds no value
+Rvalue::Aggregate             cases/run/regions/stores.to
+Rvalue::Variant               cases/run/regions/stores.to
+Rvalue::Discriminant          - gives a variant's index
+Rvalue::Convert               - gives a number
+Rvalue::Array                 cases/run/regions/stores.to cases/run/regions/arrays.to
+Rvalue::ArrayOp               cases/run/regions/arrays.to
+Rvalue::Slice                 cases/run/regions/arrays.to
+Rvalue::AssignSlice           cases/run/regions/arrays.to
+Rvalue::CheckRegion           - checks bounds
+Rvalue::Length                - gives a number
+Rvalue::StrOp                 - makes or reads a text, which holds no value
+Rvalue::Pointer               cases/run/regions/natives_system.to
+Rvalue::MapOp                 cases/run/regions/arrays.to
+Rvalue::Mutate                cases/run/regions/stores.to cases/run/regions/arrays.to
+
+native tondo_rt_base64_encode             cases/run/regions/natives_codec.to
+native tondo_rt_cbor_field                cases/run/regions/natives_formats.to
+native tondo_rt_cbor_parse                cases/run/regions/natives_formats.to
+native tondo_rt_cbor_write_bytes          cases/run/regions/natives_formats.to
+native tondo_rt_crc32                     cases/run/regions/natives_codec.to
+native tondo_rt_crypto_hkdf               cases/run/regions/natives_codec.to
+native tondo_rt_crypto_open               cases/run/regions/natives_codec.to
+native tondo_rt_crypto_pbkdf2             cases/run/regions/natives_codec.to
+native tondo_rt_crypto_public             cases/run/regions/natives_codec.to
+native tondo_rt_crypto_seal               cases/run/regions/natives_codec.to
+native tondo_rt_crypto_sign               cases/run/regions/natives_codec.to
+native tondo_rt_crypto_verify             cases/run/regions/natives_codec.to
+native tondo_rt_deflate                   cases/run/regions/natives_codec.to
+native tondo_rt_files_watch               cases/run/regions/natives_system.to
+native tondo_rt_grpc_frames_of            projects/grpcweb
+native tondo_rt_grpc_open                 projects/grpcweb
+native tondo_rt_grpc_send                 projects/rpc
+native tondo_rt_grpc_start                projects/grpcweb
+native tondo_rt_gzip                      cases/run/regions/natives_codec.to
+native tondo_rt_hash_digest               cases/run/regions/natives_codec.to
+native tondo_rt_hasher                    cases/run/regions/natives_codec.to
+native tondo_rt_hasher_update             cases/run/regions/natives_codec.to
+native tondo_rt_hex_encode                cases/run/regions/natives_codec.to
+native tondo_rt_http_body_bytes           cases/run/regions/natives_net.to
+native tondo_rt_http_form_bytes           cases/run/regions/natives_net.to
+native tondo_rt_http_request_form_of      cases/run/regions/natives_net.to
+native tondo_rt_http_respond              cases/run/regions/natives_net.to
+native tondo_rt_http_respond_bytes        cases/run/regions/natives_net.to
+native tondo_rt_http_respond_file         cases/run/regions/natives_net.to
+native tondo_rt_http_respond_stream       cases/run/regions/natives_net.to
+native tondo_rt_http_respond_text         cases/run/regions/natives_net.to
+native tondo_rt_http_respond_trailed      cases/run/regions/natives_net.to
+native tondo_rt_http_send                 cases/run/regions/natives_net.to
+native tondo_rt_http_windows_1252         cases/run/regions/natives_net.to
+native tondo_rt_http_ws_connect           cases/run/regions/natives_net.to
+native tondo_rt_http_ws_send              cases/run/regions/natives_net.to
+native tondo_rt_image_exif                cases/run/regions/natives_formats.to
+native tondo_rt_image_from_pixels         cases/run/regions/natives_formats.to
+native tondo_rt_image_info                cases/run/regions/natives_formats.to
+native tondo_rt_image_read                cases/run/regions/natives_formats.to
+native tondo_rt_inflate                   cases/run/regions/natives_codec.to
+native tondo_rt_json_field                cases/run/regions/natives_formats.to
+native tondo_rt_labels_push               cases/run/regions/natives_codec.to
+native tondo_rt_math_cycled_f32           cases/run/regions/natives_system.to
+native tondo_rt_math_cycled_f64           cases/run/regions/natives_system.to
+native tondo_rt_math_dot_at_f32           cases/run/regions/natives_system.to
+native tondo_rt_math_dot_at_f64           cases/run/regions/natives_system.to
+native tondo_rt_math_dot_f32              cases/run/regions/natives_system.to
+native tondo_rt_math_dot_f64              cases/run/regions/natives_formats.to
+native tondo_rt_math_sum_f32              cases/run/regions/natives_system.to
+native tondo_rt_math_sum_f64              cases/run/regions/natives_formats.to
+native tondo_rt_memory_from_c_chars       cases/run/regions/natives_system.to
+native tondo_rt_memory_store              cases/run/regions/natives_system.to
+native tondo_rt_msgpack_field             cases/run/regions/natives_formats.to
+native tondo_rt_msgpack_parse             cases/run/regions/natives_formats.to
+native tondo_rt_msgpack_write_bytes       cases/run/regions/natives_formats.to
+native tondo_rt_net_send_to               cases/run/regions/natives_net.to
+native tondo_rt_net_send_to_path          cases/run/regions/natives_net.to
+native tondo_rt_net_write_bytes           cases/run/regions/natives_net.to
+native tondo_rt_pb_reader                 projects/grpcweb
+native tondo_rt_pb_write_bytes            projects/grpcweb
+native tondo_rt_pb_write_raw              projects/grpcweb
+native tondo_rt_reflect_name              cases/run/regions/natives_formats.to
+native tondo_rt_sqlite_run                cases/run/regions/natives_system.to
+native tondo_rt_tls_certificates          cases/run/regions/natives_net.to
+native tondo_rt_toml_field                cases/run/regions/natives_formats.to
+native tondo_rt_unpack                    cases/run/regions/natives_codec.to
+native tondo_rt_yaml_field                cases/run/regions/natives_formats.to
+native tondo_rt_zone_resolve              cases/run/regions/natives_formats.to
+native tondo_rt_zstd                      cases/run/regions/natives_codec.to

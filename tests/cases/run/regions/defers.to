@@ -1,0 +1,90 @@
+// What a `defer` keeps (MIR `DeferPush`): a value made in a scope and read
+// by a `defer` that runs as the scope ends, in the region of a turn, of a
+// function and of a caller, with each kind of value a region makes, and
+// when a panic unwinds the scope and `recover` stops it.
+
+import std.console
+import std.sync
+
+enum List {
+    Cons(Int, List)
+    Nil
+}
+
+fn sum(list: List): Int {
+    match list {
+        List.Cons(head, rest) => head + sum(rest)
+        List.Nil => 0
+    }
+}
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        var junk = [i, i, i, i, i, i, i, i]
+        junk.push(i)
+        total += junk.length()
+    }
+    total
+}
+
+/// The region of a turn: read by the turn's `defer`.
+fn turns(log: sync.Mutex[Array[String]]) {
+    for i in 0..3 {
+        var grown = [i]
+        grown.push(i + 1)
+        let list = List.Cons(i, List.Cons(i + 2, List.Nil))
+        defer {
+            // tondo: allow W1017: no task of this program is cancelled
+            log.update((all) { all.push("{grown}/{sum(list)}") })
+        }
+        _ = noise()
+    }
+}
+
+/// The region of a function: read by its `defer`, as it returns or as a
+/// panic unwinds it.
+fn ends(log: sync.Mutex[Array[String]], i: Int, fails: Bool) {
+    var grown = [i]
+    grown.push(i + 3)
+    let pair = [i, i + 4]
+    defer {
+        // tondo: allow W1017: no task of this program is cancelled
+        log.update((all) { all.push("{grown} {pair}") })
+    }
+    if fails {
+        panic("stopped {i}")
+    }
+}
+
+/// The region a caller gives, to a function that returns what it makes,
+/// fresh, read by the caller's `defer`.
+fn fresh(i: Int): Array[Int] {
+    var values = [i, i + 5]
+    values.push(i)
+    values
+}
+
+fn later(log: sync.Mutex[Array[String]], i: Int) {
+    let made = fresh(i)
+    defer {
+        // tondo: allow W1017: no task of this program is cancelled
+        log.update((all) { all.push("{made}") })
+    }
+    _ = noise()
+}
+
+fn main() {
+    let log = sync.Mutex(Array[String]())
+    turns(log)
+    ends(log, 1, false)
+    match recover { ends(log, 2, true) } {
+        ok(_) => console.println("not stopped")
+        err(stopped) => console.println("{stopped}".lines().first() ?? "")
+    }
+    later(log, 3)
+    console.println(log.get().join(" "))
+}
+
+// expect-stdout: panic[P0008]: explicit-panic: stopped 2
+// expect-stdout: [0, 1]/2 [1, 2]/4 [2, 3]/6 [1, 4] [1, 5] [2, 5] [2, 6] [3, 8, 3]

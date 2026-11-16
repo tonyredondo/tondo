@@ -1,0 +1,153 @@
+// The runtime's servers, clients and sockets, which read what they are
+// given or copy what they keep (`READING` in regions.rs): handlers and
+// loops give them arrays their turns make, in the turns' regions, and the
+// server, the clients, the sockets and the WebSocket are used again after
+// those regions ended.
+
+import std.console
+import std.fs
+import std.http
+import std.net
+import std.time
+
+fn b(i: Int): Byte {
+    Byte(i % 256) ?? Byte(0u8)
+}
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        var junk = [i, i, i, i, i, i, i, i]
+        junk.push(i)
+        total += junk.length()
+    }
+    total
+}
+
+fn routes(file: String): http.App {
+    var app = http.App()
+    app.get(
+        "/bytes/:n",
+        (request) {
+            let n = Int.parse(request.param("n")) ?? 0
+            var data = [b(n), b(n + 1)]
+            data.push(b(n + 2))
+            http.Reply.bytes(data)
+        },
+    )
+    app.get("/text", (_) { http.Reply.text("plain").header("x-kind", "text") })
+    app.get(
+        "/latin",
+        (_) { http.Reply.bytes([b(99), b(97), b(102), b(233)], contentType: "text/plain; charset=windows-1252") },
+    )
+    app.get("/file", (_) { http.Reply.file(file) })
+    app.post(
+        "/echo",
+        (request) {
+            var lines: Array[String] = []
+            for received in request.uploads() {
+                match received {
+                    ok(upload) => {
+                        let bytes: Array[Byte] = upload.bytes() ?? []
+                        lines.push("{upload.name()}={bytes.length()}")
+                    }
+                    err(_) => lines.push("plain")
+                }
+            }
+            http.Reply.text("{lines.join(",")}")
+        },
+    )
+    app.websocket(
+        "/ws",
+        (_, socket) {
+            for message in socket {
+                socket.send(message?)?
+            }
+        },
+    )
+    app
+}
+
+fn clients(client: http.Client, url: String): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        var data = [b(i), b(i + 4)]
+        data.push(b(i + 5))
+        let posted = match client.post("/echo", body: http.Body.bytes(data)) {
+            ok(answer) => answer
+            err(failed) => panic("no post: {failed}")
+        }
+        let form = http.Body.multipart([http.Part.bytes("file", data, "f{i}.bin")])
+        let uploaded = client.post("/echo", body: form) ?? panic("no form")
+        let fetched = client.get("/bytes/{i}", headers: ["x-turn": "{i}"]) ?? panic("no get")
+        lines.push("{posted.text() ?? ""} {uploaded.text() ?? ""} {fetched.bytes() ?? []}")
+    }
+    let socket = http.WebSocket.connect("{url.replace("http", "ws")}/ws", headers: ["x-from": "case"]) ?? panic("no socket")
+    for i in 0..3 {
+        var data = [b(i), b(i + 6)]
+        data.push(b(i + 7))
+        _ = socket.sendBytes(data)
+        lines.push("{socket.receive().isOk()}")
+    }
+    _ = socket.close()
+    lines.join(" ")
+}
+
+fn sockets(stream: net.Stream, socket: net.Socket, to: net.Address): Int {
+    var sent = 0
+    for i in 0..3 {
+        var data = [b(i + 65), b(i + 66)]
+        data.push(b(10))
+        _ = stream.writeBytes(data)
+        _ = socket.sendTo(data, to)
+        sent += data.length()
+    }
+    sent
+}
+
+fn certified(): Int {
+    var made = 0
+    for i in 0..3 {
+        var protocols = ["h2"]
+        protocols.push("p{i}")
+        let certificates = net.Certificates(protocols)
+        made += if certificates.isServing() { 0 } else { 1 }
+    }
+    made
+}
+
+fn main(): !(http.HttpError | net.NetError) {
+    let file = "natives-net.txt"
+    _ = fs.writeText(file, "a file")
+    let server = routes(file).start()?
+    let client = http.Client(baseUrl: server.url())
+    let a = clients(client, server.url())
+    let listener = net.listen("127.0.0.1", 0)?
+    let port = listener.address().port
+    let stream = net.connect("127.0.0.1", port)?
+    let accepted = listener.accept()?
+    let receiver = net.bind("127.0.0.1", 0)?
+    let sender = net.bind("127.0.0.1", 0)?
+    let c = sockets(stream, sender, receiver.address())
+    let d = certified()
+    let quiet = noise()
+    stream.close()?
+    let lines = accepted.readText()?
+    var datagrams: Array[Array[Byte]] = []
+    for _ in 0..3 {
+        let (data, _) = receiver.receive(timeout: time.seconds(5))?
+        datagrams.push(data)
+    }
+    let latin = client.get("/latin")?.text()?
+    let text = client.get("/text")?
+    let served = client.get("/file")?.text()?
+    _ = fs.remove(file)
+    server.stop(grace: time.seconds(1))
+    console.println(a)
+    console.println("{c} {lines.length()} {datagrams} {d} {quiet}")
+    console.println("{latin} {text.header("x-kind") ?? ""} {text.text()?} {served}")
+}
+
+// expect-stdout: plain file=3 [0, 1, 2] plain file=3 [1, 2, 3] plain file=3 [2, 3, 4] true true true
+// expect-stdout: 9 9 [[65, 66, 10], [66, 67, 10], [67, 68, 10]] 3 1800
+// expect-stdout: café text plain a file

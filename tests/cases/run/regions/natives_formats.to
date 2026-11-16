@@ -1,0 +1,148 @@
+// The runtime's parsers, images, numbers and zones, which read what they
+// are given or copy what they keep (`READING` in regions.rs): each loop
+// gives them an array its turn makes in the turn's region, where the
+// remarks below say so, uses what they give within the turn, and uses
+// again after the loop, once the regions ended, what keeps state: an
+// image, a zone, a reflected value.
+
+import std.cbor
+import std.console
+import std.datetime
+import std.image
+import std.json
+import std.math
+import std.messagepack
+import std.reflect
+import std.toml
+import std.yaml
+
+type Packet = { id: Int, data: Array[Byte] }
+
+type Setting = { name: String, level: Int }
+
+fn b(i: Int): Byte {
+    Byte(i % 256) ?? Byte(0u8)
+}
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        var junk = [i, i, i, i, i, i, i, i]
+        junk.push(i)
+        total += junk.length()
+    }
+    total
+}
+
+fn encoded(): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        var data = [b(i), b(i + 1)]
+        data.push(b(i + 2))
+        let packet = Packet { id: i, data: data }
+        let packed: Packet = messagepack.decode(messagepack.encode(packet)) ?? Packet { id: -1, data: [] }
+        let concise: Packet = cbor.decode(cbor.encode(packet)) ?? Packet { id: -1, data: [] }
+        lines.push("{packed.id} {packed.data} {concise.id} {concise.data}")
+        let parsed = messagepack.parse(messagepack.encode(packet)) ?? panic("no value")
+        lines.push("{parsed.get("id")?.asInt() ?? -1}")
+        let packedBytes = messagepack.encode(messagepack.Value.Bytes(data))
+        let conciseBytes = cbor.encode(cbor.Value.Bytes(data))
+        lines.push("{packedBytes.length()} {conciseBytes.length()}")
+    }
+    lines.join(" ")
+}
+
+fn decoded(): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        let fromJson: Setting = json.decode("{{\"name\": \"j{i}\", \"level\": {i}}}") ?? Setting { name: "", level: -1 }
+        let fromToml: Setting = toml.decode("name = \"t{i}\"\nlevel = {i}\n") ?? Setting { name: "", level: -1 }
+        let fromYaml: Setting = yaml.decode("name: y{i}\nlevel: {i}\n") ?? Setting { name: "", level: -1 }
+        lines.push("{fromJson.name} {fromToml.name} {fromYaml.name} {fromJson.level + fromToml.level + fromYaml.level}")
+    }
+    lines.join(" ")
+}
+
+fn pictured(kept: var Array[image.Image]): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        var pixels = [b(i * 40)]
+        for k in 1..16 {
+            pixels.push(b(i * 40 + k))
+        }
+        let made = image.fromPixels(2, 2, pixels) ?? image.blank(1, 1, image.Color.rgb(0, 0, 0))
+        let png = made.encode(image.Format.Png) ?? []
+        let read = image.read(png) ?? made
+        let info = image.info(png) ?? panic("no info")
+        lines.push("{read.width()}x{read.height()} {info.width} {image.exif(png) == none}")
+        kept.push(read)
+    }
+    lines.join(" ")
+}
+
+fn counted(): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        var values = [Float(i), 1.5]
+        values.push(2.5)
+        lines.push("{values.sum()} {math.dot(values, values)}")
+    }
+    lines.join(" ")
+}
+
+fn zoned(zone: datetime.Zone): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        let at = zone.at(2026, 1 + i, 10, 12)
+        lines.push("{at}")
+    }
+    lines.join(" ")
+}
+
+fn reflected(kept: var Array[reflect.Value]): String {
+    var names: Array[String] = []
+    for i in 0..3 {
+        var data = [b(i), b(i + 5)]
+        data.push(b(i))
+        let value = reflect.valueOf(data)
+        names.push(value.typeName())
+        kept.push(reflect.valueOf(i))
+    }
+    names.join(" ")
+}
+
+fn main() {
+    var images: Array[image.Image] = []
+    var values: Array[reflect.Value] = []
+    let zone = datetime.zone("Europe/Madrid") ?? panic("no zone")
+    let a = encoded()
+    let c = decoded()
+    let d = pictured(var images)
+    let e = counted()
+    let f = zoned(zone)
+    let g = reflected(var values)
+    let quiet = noise()
+    var later: Array[String] = []
+    for picture in images {
+        later.push("{picture.width()} {picture.fit(1, 1).width()}")
+    }
+    for value in values {
+        later.push(value.typeName())
+    }
+    console.println(a)
+    console.println(c)
+    console.println(d)
+    console.println(e)
+    console.println(f)
+    console.println(g)
+    console.println("{later.join(" ")} {zone.at(2026, 6, 1)} {quiet}")
+}
+
+
+// expect-stdout: 0 [0, 1, 2] 0 [0, 1, 2] 0 5 4 1 [1, 2, 3] 1 [1, 2, 3] 1 5 4 2 [2, 3, 4] 2 [2, 3, 4] 2 5 4
+// expect-stdout: j0 t0 y0 0 j1 t1 y1 3 j2 t2 y2 6
+// expect-stdout: 2x2 2 true 2x2 2 true 2x2 2 true
+// expect-stdout: 4.0 8.5 5.0 9.5 6.0 12.5
+// expect-stdout: ok(2026-01-10T12:00:00+01:00) ok(2026-02-10T12:00:00+01:00) ok(2026-03-10T12:00:00+01:00)
+// expect-stdout: Array[Byte] Array[Byte] Array[Byte]
+// expect-stdout: 2 1 2 1 2 1 Int Int Int ok(2026-06-01T00:00:00+02:00) 1800

@@ -1,0 +1,135 @@
+// Calls of the program's functions (MIR `Call`): a value made in a scope and
+// given to a function that returns it, that stores it in what it is given,
+// in itself as a method's `var self`, in what it returns, or keeps it by a
+// trait's method or a generic function, in the region of a turn, of a
+// function and of a caller, with each kind of value a region makes. What a
+// call does with its arguments is the callee's summary.
+
+import std.console
+
+enum List {
+    Cons(Int, List)
+    Nil
+}
+
+type Shelf = { items: Array[Array[Int]], lists: Array[List] }
+
+trait Keeper {
+    fn keep(var self, values: Array[Int])
+}
+
+impl Keeper for Shelf {
+    fn keep(var self, values: Array[Int]) {
+        self.items.push(values)
+    }
+}
+
+fn Shelf.add(var self, list: List) {
+    self.lists.push(list)
+}
+
+fn sum(list: List): Int {
+    match list {
+        List.Cons(head, rest) => head + sum(rest)
+        List.Nil => 0
+    }
+}
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        var junk = [i, i, i, i, i, i, i, i]
+        junk.push(i)
+        total += junk.length()
+    }
+    total
+}
+
+fn same(values: Array[Int]): Array[Int] {
+    values
+}
+
+fn first[T](values: Array[T], fallback: T): T {
+    values.first() ?? fallback
+}
+
+fn store(into: var Array[Array[Int]], values: Array[Int]) {
+    into.push(values)
+}
+
+fn wrapped(values: Array[Int], list: List): Shelf {
+    Shelf { items: [values], lists: [list] }
+}
+
+fn deep(values: Array[Int], depth: Int): Array[Int] {
+    if depth == 0 { values } else { deep(values, depth - 1) }
+}
+
+fn keepVia[K: Keeper](keeper: var K, values: Array[Int]) {
+    keeper.keep(values)
+}
+
+fn show(shelf: Shelf): String {
+    var total = 0
+    for list in shelf.lists {
+        total += sum(list)
+    }
+    "{shelf.items}/{total}"
+}
+
+/// The region of a turn: given to each kind of callee, kept past it.
+fn turns(): String {
+    var returned: Array[Array[Int]] = []
+    var firsts: Array[Array[Int]] = []
+    var stored: Array[Array[Int]] = []
+    var shelves: Array[Shelf] = []
+    var shelf = Shelf { items: [], lists: [] }
+    var through: Array[Array[Int]] = []
+    for i in 0..3 {
+        var grown = [i]
+        grown.push(i + 1)
+        returned.push(same(grown))
+        firsts.push(first([[i, i + 2]], []))
+        store(var stored, [i, i + 3])
+        shelves.push(wrapped([i, i + 4], List.Cons(i, List.Nil)))
+        shelf.add(List.Cons(i, List.Cons(i + 5, List.Nil)))
+        keepVia(var shelf, [i, i + 6])
+        through.push(deep([i, i + 7], 3))
+    }
+    "{returned} {firsts} {stored} {show(shelves[2])} {show(shelf)} {through}"
+}
+
+/// The region of a function: what it makes, given to a callee that keeps
+/// it in what the function was given.
+fn fill(shelf: var Shelf, i: Int) {
+    var grown = [i]
+    grown.push(i + 8)
+    keepVia(var shelf, grown)
+    shelf.add(List.Cons(i + 9, List.Nil))
+}
+
+/// The region a caller gives, to a function that returns what it makes,
+/// fresh, given by the caller to a callee that keeps it.
+fn fresh(i: Int): Array[Int] {
+    var values = [i, i + 10]
+    values.push(i)
+    values
+}
+
+fn main() {
+    let a = turns()
+    var shelf = Shelf { items: [], lists: [] }
+    for i in 0..2 {
+        fill(var shelf, i)
+    }
+    var stored: Array[Array[Int]] = []
+    for i in 0..2 {
+        store(var stored, same(fresh(i)))
+    }
+    let quiet = noise()
+    console.println(a)
+    console.println("{show(shelf)} {stored} {quiet}")
+}
+
+// expect-stdout: [[0, 1], [1, 2], [2, 3]] [[0, 2], [1, 3], [2, 4]] [[0, 3], [1, 4], [2, 5]] [[2, 6]]/2 [[0, 6], [1, 7], [2, 8]]/21 [[0, 7], [1, 8], [2, 9]]
+// expect-stdout: [[0, 8], [1, 9]]/19 [[0, 10, 0], [1, 11, 1]] 1800

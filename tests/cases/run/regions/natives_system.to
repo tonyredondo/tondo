@@ -1,0 +1,126 @@
+// The runtime's databases, descriptors, tensors and C characters, which
+// read what they are given or copy what they keep (`READING` in
+// regions.rs): each loop gives them an array its turn makes, uses what
+// they give within the turn, and uses again after the loop, once the
+// regions ended, what keeps state: a database, a pipe, a watch.
+
+import std.console
+import std.ffi
+import std.files
+import std.math
+import std.os.unix
+import std.sql
+
+type Row = { id: Int, data: Array[Byte] }
+
+fn b(i: Int): Byte {
+    Byte(i % 256) ?? Byte(0u8)
+}
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        var junk = [i, i, i, i, i, i, i, i]
+        junk.push(i)
+        total += junk.length()
+    }
+    total
+}
+
+fn stored(db: var sql.Database): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        var data = [b(i), b(i + 1)]
+        data.push(b(i + 2))
+        _ = db.execute("INSERT INTO rows (id, data) VALUES ({i}, {data})")
+        lines.push("{data.length()}")
+    }
+    lines.join(" ")
+}
+
+fn piped(writer: unix.Fd): Int {
+    var written = 0
+    for i in 0..3 {
+        var data = [b(i + 65), b(i + 66)]
+        data.push(b(10))
+        written += unix.write(ref writer, data) ?? 0
+    }
+    written
+}
+
+fn counted(): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        var values = [Float32(i), Float32(2)]
+        values.push(Float32(3))
+        let small = math.Tensor(values)
+        var wide = [Float(i), 1.0, 2.0, 3.0]
+        wide.push(4.0)
+        wide.push(5.0)
+        let square = math.Tensor(wide, shape: [2, 3])
+        let column = math.Tensor([1.0, 2.0, 3.0], shape: [3, 1])
+        var narrow = [Float32(i), Float32(1), Float32(2), Float32(3)]
+        narrow.push(Float32(4))
+        narrow.push(Float32(5))
+        let square32 = math.Tensor(narrow, shape: [2, 3])
+        let column32 = math.Tensor([Float32(1), Float32(2), Float32(3)], shape: [3, 1])
+        let row32 = math.Tensor([Float32(1), Float32(2), Float32(3)], shape: [1, 3])
+        let more = "{square32.matmul(column32).sum()} {(square32 + row32).sum()}"
+        lines.push("{small.sum()} {small.dot(small)} {square.matmul(column).sum()} {(square + square).sum()} {more}")
+    }
+    lines.join(" ")
+}
+
+fn named(): String {
+    var names: Array[String] = []
+    for i in 0..3 {
+        var chars = [b(65 + i), b(66 + i)]
+        chars.push(b(0))
+        names.push(ffi.fromCChars(chars))
+    }
+    names.join(" ")
+}
+
+fn watched(): Int {
+    var started = 0
+    for i in 0..2 {
+        var paths = ["/tmp"]
+        paths.push("/tmp/{i}")
+        match files.watch(paths) {
+            ok(_) => started += 1
+            err(_) => started += 1
+        }
+    }
+    started
+}
+
+fn main(): !sql.SqlError {
+    var db = sql.open("sqlite::memory:")?
+    _ = db.execute("CREATE TABLE rows (id INTEGER, data BLOB)")?
+    let (reader, writer) = unix.pipe() ?? panic("no pipe")
+    let a = stored(var db)
+    let c = piped(writer)
+    let d = counted()
+    let e = named()
+    let f = watched()
+    let quiet = noise()
+    let rows: Array[Row] = db.query("SELECT id, data FROM rows ORDER BY id")?
+    var read = [b(0), b(0), b(0), b(0), b(0), b(0), b(0), b(0), b(0)]
+    let got = unix.read(ref reader, mut read) ?? 0
+    console.println(a)
+    console.println("{c} {got} {read}")
+    console.println(d)
+    console.println("{e} {f} {quiet}")
+    for row in rows {
+        console.println("{row.id} {row.data}")
+    }
+}
+
+
+// expect-stdout: 3 3 3
+// expect-stdout: 9 9 [65, 66, 10, 66, 67, 10, 67, 68, 10]
+// expect-stdout: 5.0 13.0 34.0 30.0 34.0 27.0 6.0 14.0 35.0 32.0 35.0 28.0 7.0 17.0 36.0 34.0 36.0 29.0
+// expect-stdout: AB BC CD 2 1800
+// expect-stdout: 0 [0, 1, 2]
+// expect-stdout: 1 [1, 2, 3]
+// expect-stdout: 2 [2, 3, 4]

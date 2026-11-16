@@ -1,0 +1,93 @@
+// Closures and function values (MIR `Erase`, `CallIndirect`): a value made
+// in a scope and captured by a closure that outlives it, or given to a
+// function value, which may keep it, in the region of a turn, of a function
+// and of a caller, with each kind of value a region makes.
+
+import std.console
+import std.sync
+
+enum List {
+    Cons(Int, List)
+    Nil
+}
+
+fn sum(list: List): Int {
+    match list {
+        List.Cons(head, rest) => head + sum(rest)
+        List.Nil => 0
+    }
+}
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        var junk = [i, i, i, i, i, i, i, i]
+        junk.push(i)
+        total += junk.length()
+    }
+    total
+}
+
+/// The region of a turn: captured by closures kept past it.
+fn turns(): Array[fn(): String] {
+    var shown: Array[fn(): String] = []
+    for i in 0..3 {
+        let values = [i, i + 1]
+        var grown = [i]
+        grown.push(i * 2)
+        let list = List.Cons(i, List.Cons(i * 10, List.Nil))
+        shown.push(() { "{values}/{grown}/{sum(list)}" })
+    }
+    shown
+}
+
+/// The region of a function: captured by the closure it returns.
+fn counter(i: Int): fn(): String {
+    var seen = [i, i + 20]
+    seen.push(i)
+    () { "{seen}" }
+}
+
+/// Given to a function value, which keeps it.
+fn keepAll(keep: fn(Array[Int])) {
+    for i in 0..3 {
+        var values = [i, i + 30]
+        values.push(i)
+        keep(values)
+    }
+}
+
+/// The region a caller gives, to a function that returns what it makes,
+/// fresh, captured by a closure the caller keeps.
+fn fresh(i: Int): Array[Int] {
+    var values = [i, i + 40]
+    values.push(i)
+    values
+}
+
+fn main() {
+    let shown = turns()
+    var counters: Array[fn(): String] = []
+    for i in 0..2 {
+        counters.push(counter(i))
+    }
+    let kept = sync.Mutex(Array[Array[Int]]())
+    keepAll((values) { kept.update((all) { all.push(values) }) })
+    var later: Array[fn(): String] = []
+    for i in 0..2 {
+        let made = fresh(i)
+        later.push(() { "{made}" })
+    }
+    let quiet = noise()
+    var lines: Array[String] = []
+    for show in shown {
+        lines.push(show())
+    }
+    console.println(lines.join(" "))
+    console.println("{counters[0]()} {counters[1]()} {kept.get()}")
+    console.println("{later[0]()} {later[1]()} {quiet}")
+}
+
+// expect-stdout: [0, 1]/[0, 0]/0 [1, 2]/[1, 2]/11 [2, 3]/[2, 4]/22
+// expect-stdout: [0, 20, 0] [1, 21, 1] [[0, 30, 0], [1, 31, 1], [2, 32, 2]]
+// expect-stdout: [0, 40, 0] [1, 41, 1] 1800

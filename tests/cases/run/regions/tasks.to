@@ -1,0 +1,131 @@
+// Tasks and what they share (MIR `Spawn`, `TaskOp`, `Select`): a value made
+// in a scope and given to a task, a group, a channel, by `select`, to a
+// `Ref`, a lock or a shared map or queue, which keep it past the scope, in
+// the region of a turn, of a function and of a caller, with each kind of
+// value a region makes.
+
+import std.console
+import std.sync
+
+enum List {
+    Cons(Int, List)
+    Nil
+}
+
+fn sum(list: List): Int {
+    match list {
+        List.Cons(head, rest) => head + sum(rest)
+        List.Nil => 0
+    }
+}
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        var junk = [i, i, i, i, i, i, i, i]
+        junk.push(i)
+        total += junk.length()
+    }
+    total
+}
+
+fn shown(values: Array[Int], list: List): String {
+    "{values}/{sum(list)}"
+}
+
+/// The region of a turn: given to the tasks of a group.
+fn grouped(): String {
+    var group = Group[String]()
+    for i in 0..3 {
+        var values = [i, i + 1]
+        values.push(i)
+        let list = List.Cons(i, List.Cons(i * 10, List.Nil))
+        group.add(spawn shown(values, list))
+    }
+    var all: Array[String] = []
+    for done in group.wait() {
+        all.push(done)
+    }
+    all.sorted().join(" ")
+}
+
+/// The region of a turn: sent, sent by `select`, and kept by a `Ref`, a
+/// lock and the shared collections.
+fn shared(): String {
+    let (sender, receiver) = channel[Array[Int]](8)
+    let (other, picked) = channel[List](8)
+    var refs: Array[Ref[Array[Int]]] = []
+    let lock = sync.Mutex(Array[Int]())
+    let byKey: sync.Map[Int, Array[Int]] = sync.Map()
+    let queue: sync.Queue[Array[Int]] = sync.Queue()
+    for i in 0..3 {
+        var values = [i, i + 20]
+        values.push(i)
+        sender.send(values)
+        select {
+            other.send(List.Cons(i, List.Cons(i + 30, List.Nil))) => {}
+        }
+        refs.push(Ref([i, i + 40]))
+        var grown = [i]
+        grown.push(i + 50)
+        lock.set(grown)
+        _ = byKey.insert(i, [i, i + 60])
+        queue.push([i, i + 70])
+    }
+    sender.close()
+    other.close()
+    var received: Array[Array[Int]] = []
+    for values in receiver {
+        received.push(values)
+    }
+    var lists = 0
+    for list in picked {
+        lists += sum(list)
+    }
+    "{received} {lists} {refs[0].value} {refs[2].value} {lock.get()} {byKey.get(1)} {queue.popFront()}"
+}
+
+/// The region of a function: what it makes, given to a task it returns.
+fn started(i: Int): Join[String] {
+    var values = [i, i + 80]
+    values.push(i)
+    spawn shown(values, List.Cons(i, List.Nil))
+}
+
+/// The region a caller gives, to a function that returns what it makes,
+/// fresh, sent by the caller.
+fn fresh(i: Int): Array[Int] {
+    var values = [i, i + 90]
+    values.push(i)
+    values
+}
+
+fn main() {
+    let a = grouped()
+    let b = shared()
+    var tasks: Array[Join[String]] = []
+    for i in 0..2 {
+        tasks.push(started(i))
+    }
+    let (sender, receiver) = channel[Array[Int]](4)
+    for i in 0..2 {
+        sender.send(fresh(i))
+    }
+    sender.close()
+    let quiet = noise()
+    var done: Array[String] = []
+    for task in tasks {
+        done.push(task.wait())
+    }
+    var received: Array[Array[Int]] = []
+    for values in receiver {
+        received.push(values)
+    }
+    console.println(a)
+    console.println(b)
+    console.println("{done} {received} {quiet}")
+}
+
+// expect-stdout: [0, 1, 0]/0 [1, 2, 1]/11 [2, 3, 2]/22
+// expect-stdout: [[0, 20, 0], [1, 21, 1], [2, 22, 2]] 96 [0, 40] [2, 42] [2, 52] some([1, 61]) some([0, 70])
+// expect-stdout: [[0, 80, 0]/0, [1, 81, 1]/1] [[0, 90, 0], [1, 91, 1]] 1800

@@ -7642,3 +7642,17 @@ calls of the runtime are told one by one, and those that keep what they are give
 are, a detached task, a context, a panic, keep it. Nothing of bench/tondo or the examples left a
 region; three natives the names took to keep, `memory.store`, `labelsPush` and the sends, now
 let what they are given stay in one.
+
+## The ways out of a region are a matrix of cases
+
+Tony chose to find the next wrong result regions could give by enumeration rather than by chance:
+the ways a value can leave the scope whose region made it are closed lists of the compiler, each
+statement and operation of the MIR and each native that can be given a value a region makes, and
+each has its cases in tests/cases/run/regions, with the region of a turn, of a function and of a
+caller and the kinds of value a region makes, run in release with the memory of each region that
+ends made unreadable and in debug; or `-` and why it can take no such value. `matrix.txt` there
+says which, and a test holds it to `mir.rs` and to the natives `regions.rs` reads, so that a new
+statement, operation or native fails until its cases are written. Writing it found a slice
+assignment whose target the analysis did not follow. A native that only reads what it is given
+gives a value the runtime made, which holds none of it: what it gives no longer keeps its
+arguments on the heap.

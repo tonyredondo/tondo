@@ -1,0 +1,57 @@
+// What contexts keep (`ContextSet`, `ContextRestore`): a value made in a
+// function and given to a context, which `Contexts.current()` captures
+// past the function and a task spawned under it reads after the function
+// returned, in the region of a function and of a turn.
+
+import std.console
+
+context Batch = {
+    ids: Array[Int] = []
+}
+
+fn captured(n: Int): Contexts {
+    var ids = [n, n * 10]
+    ids.push(n)
+    with Batch { ids: ids }
+    Contexts.current()
+}
+
+fn read(saved: Contexts): String {
+    with saved
+    "{Batch.ids}"
+}
+
+fn started(n: Int): Join[String] {
+    var ids = [n, n * 100]
+    ids.push(n)
+    with Batch { ids: ids }
+    spawn later()
+}
+
+fn later(): String {
+    "{Batch.ids}"
+}
+
+fn main() {
+    var saved: Array[Contexts] = []
+    for i in 0..3 {
+        saved.push(captured(i))
+    }
+    var tasks: Array[Join[String]] = []
+    for i in 0..3 {
+        tasks.push(started(i))
+    }
+    var noise = 0
+    for i in 0..200 {
+        var junk = [i, i, i, i, i, i, i, i]
+        junk.push(i)
+        noise += junk.length()
+    }
+    var waited: Array[String] = []
+    for task in tasks {
+        waited.push(task.wait())
+    }
+    console.println("{read(saved[0])} {read(saved[2])} {waited} {noise}")
+}
+
+// expect-stdout: [0, 0, 0] [2, 20, 2] [[0, 0, 0], [1, 100, 1], [2, 200, 2]] 1800

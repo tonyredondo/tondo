@@ -1,0 +1,121 @@
+// Loans (MIR `Lend`): a value written through a loan of a part of what
+// outlives the scope, an element of an array or a value of a map, in the
+// region of a turn, of a function and of a caller, with each kind of value
+// a region makes: an array, an array grown by `push`, and a box. What is
+// written through a loan is written into what it lends.
+
+import std.console
+
+enum List {
+    Cons(Int, List)
+    Nil
+}
+
+type Row = { values: Array[Int], grown: Array[Int], list: List }
+
+fn sum(list: List): Int {
+    match list {
+        List.Cons(head, rest) => head + sum(rest)
+        List.Nil => 0
+    }
+}
+
+fn show(rows: Array[Row]): String {
+    var parts: Array[String] = []
+    for row in rows {
+        parts.push("{row.values}/{row.grown}/{sum(row.list)}")
+    }
+    parts.join(" ")
+}
+
+fn empty(): Row {
+    Row { values: [], grown: [], list: List.Nil }
+}
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        var junk = [i, i, i, i, i, i, i, i]
+        junk.push(i)
+        total += junk.length()
+    }
+    total
+}
+
+/// The region of a turn, through a loan of each element.
+fn turns(): String {
+    var rows = [empty(), empty(), empty()]
+    var turn = 0
+    for mut row in rows {
+        turn += 1
+        row.values = [turn, turn * 10]
+        var grown = [turn]
+        grown.push(turn * 20)
+        row.grown = grown
+        row.list = List.Cons(turn, List.Cons(turn * 30, List.Nil))
+    }
+    show(rows)
+}
+
+/// The region of a turn, through a loan of each value of a map.
+fn mapped(): String {
+    var byName = ["a": empty(), "b": empty()]
+    var turn = 0
+    for (_, mut row) in byName {
+        turn += 1
+        row.values = [turn, turn * 40]
+        row.list = List.Cons(turn * 50, List.Nil)
+    }
+    let a = byName["a"] ?? empty()
+    let b = byName["b"] ?? empty()
+    show([a, b])
+}
+
+/// The region of a function, through loans of what it is given.
+fn fill(rows: var Array[Row], base: Int) {
+    for mut row in rows {
+        row.values = [base, base + 1]
+        var grown = [base]
+        grown.push(base + 2)
+        row.grown = grown
+        row.list = List.Cons(base, List.Nil)
+    }
+}
+
+/// The region a caller gives, to a function that returns what it makes,
+/// written through a loan.
+fn fresh(i: Int): Array[Int] {
+    var values = [i, i + 70]
+    values.push(i)
+    values
+}
+
+fn callers(): String {
+    var rows = [empty(), empty()]
+    var turn = 0
+    for mut row in rows {
+        turn += 1
+        row.values = fresh(turn)
+    }
+    show(rows)
+}
+
+fn main() {
+    let a = turns()
+    let b = mapped()
+    var rows = [empty(), empty()]
+    fill(var rows, 60)
+    let c = callers()
+    let quiet = noise()
+    console.println(a)
+    console.println(b)
+    console.println(show(rows))
+    console.println(c)
+    console.println("{quiet}")
+}
+
+// expect-stdout: [1, 10]/[1, 20]/31 [2, 20]/[2, 40]/62 [3, 30]/[3, 60]/93
+// expect-stdout: [1, 40]/[]/50 [2, 80]/[]/100
+// expect-stdout: [60, 61]/[60, 62]/60 [60, 61]/[60, 62]/60
+// expect-stdout: [1, 71, 1]/[]/0 [2, 72, 2]/[]/0
+// expect-stdout: 1800
