@@ -2237,11 +2237,14 @@ struct Emit<'a, G: ?Sized> {
     /// such fields.
     site: Option<ModuleId>,
     statement: Option<Span>,
+    /// Whether it builds a glue function, which lets go of what a record
+    /// holds, as each node of a tree does: one whose array may be `[]`.
+    glue: bool,
 }
 
 impl<'a, G: ?Sized> Emit<'a, G> {
     fn new(cg: &'a mut G, fb: FunctionBuilder<'a>) -> Self {
-        Emit { cg, fb, data: HashMap::new(), site: None, statement: None }
+        Emit { cg, fb, data: HashMap::new(), site: None, statement: None, glue: false }
     }
 }
 
@@ -3222,6 +3225,26 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
         description
     }
 
+    /// Counts a reference to an array, or lets one go, with `count`; in a
+    /// glue, not one that is null or of the program's data, as `[]` is,
+    /// whose count no one keeps: a leaf of a tree holds `[]`, and its release
+    /// calls nothing. Elsewhere the runtime looks, as most arrays are counted.
+    fn unless_shared_forever(&mut self, pointer: ir::Value, count: impl FnOnce(&mut Self)) {
+        if !self.glue {
+            return count(self);
+        }
+        let (looked, counted, done) = (self.fb.create_block(), self.fb.create_block(), self.fb.create_block());
+        self.fb.ins().brif(pointer, looked, &[], done, &[]);
+        self.fb.switch_to_block(looked);
+        let rc = self.fb.ins().load(types::I64, flags(), pointer, 0);
+        let shared = self.fb.ins().band_imm_u(rc, SHARED_FOREVER as i64);
+        self.fb.ins().brif(shared, done, &[], counted, &[]);
+        self.fb.switch_to_block(counted);
+        count(self);
+        self.fb.ins().jump(done, &[]);
+        self.fb.switch_to_block(done);
+    }
+
     /// Retains or releases every counted value inside `value`.
     fn refcount(&mut self, ty: Ty, value: Val, release: bool) {
         if !self.cg.types().needs_drop(ty) {
@@ -3232,10 +3255,14 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
                 TyKind::Array(element) | TyKind::Deque(element) if release => {
                     let size = self.element_size(element);
                     let glue = self.glue_or_null(Glue::Release, element);
-                    self.call_rt(Rt::ArrayRelease, &[pointer, size, glue]);
+                    self.unless_shared_forever(pointer, |e| {
+                        e.call_rt(Rt::ArrayRelease, &[pointer, size, glue]);
+                    });
                 }
                 TyKind::Array(_) | TyKind::Deque(_) => {
-                    self.call_rt(Rt::ArrayRetain, &[pointer]);
+                    self.unless_shared_forever(pointer, |e| {
+                        e.call_rt(Rt::ArrayRetain, &[pointer]);
+                    });
                 }
                 TyKind::Map(..) | TyKind::Set(_) if release => {
                     let glue = self.map_glue_address(ty);

@@ -55,6 +55,7 @@ pub(super) fn define_glue(
 ) {
     let fb = FunctionBuilder::new(func, fbc);
     let mut e = Emit::new(cg, fb);
+    e.glue = true;
     let entry = e.fb.create_block();
     e.fb.append_block_params_for_function_params(entry);
     e.fb.switch_to_block(entry);
