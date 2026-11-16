@@ -471,7 +471,7 @@ What is under way and what is planned:
 | Work | State |
 | --- | --- |
 | Every row of [`bench/`](bench/README.md) at or under Go's, in time and in memory, and the servers in latency | Under way: that page has the rows still behind, each with its reason |
-| A chain of an iterator at the cost of the loop it stands for | Under way: its values stay in registers, the program's own records too, and the elements it only reads are not counted; the calls of its closures through values are what is left |
+| A chain of an iterator at the cost of the loop it stands for | Under way: its values stay in registers, the program's own records too, the elements it only reads are not counted, and its closures are called directly; the lazy chains of queries are still 3.9× and 8.3× Go's bare loops |
 | A chain of arrays without the arrays between, short texts without the heap | Next in the optimizer |
 | A heap for each task | Research |
 | Vectors of 512 bits with AVX-512; today they are computed by halves | Waits for a machine to test on |
