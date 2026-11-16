@@ -380,6 +380,43 @@ fn the_cache_keeps_a_programs_last_builds() {
     assert_eq!(dirs(&cache.join("tondo/run")).len(), 1);
 }
 
+/// A build taken from the cache says again what its diagnostics said when
+/// it was made, as text and as JSON, for a program and for its tests: a
+/// warning shows until the code that causes it changes.
+#[test]
+fn a_cached_build_says_its_warnings_again() {
+    let dir = scratch("cli-said-again");
+    let cache = dir.join("cache");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"shout\"\n").unwrap();
+    std::fs::write(
+        dir.join("src/main.to"),
+        "import std.console\n\nfn Shout(): String {\n    \"hi\"\n}\n\nfn main() {\n    console.println(Shout())\n}\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/main_test.to"), "test shouts {\n    assert(Shout() == \"hi\")\n}\n").unwrap();
+    let tondo = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(args)
+            .current_dir(&dir)
+            .env("XDG_CACHE_HOME", &cache)
+            .output();
+        let output = output.unwrap();
+        assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        (String::from_utf8_lossy(&output.stdout).into_owned(), String::from_utf8_lossy(&output.stderr).into_owned())
+    };
+    for args in [&["run", "."][..], &["test", "."]] {
+        for time in ["built", "from the cache"] {
+            let (_, stderr) = tondo(args);
+            assert_eq!(stderr.matches("warning[W1004]").count(), 1, "{args:?}, {time}: {stderr}");
+        }
+        let (_, stderr) = tondo(&[args, &["--diagnostic-format", "json"]].concat());
+        let said: Value = serde_json::from_str(stderr.trim()).unwrap_or_else(|e| panic!("{args:?}: {e}: {stderr}"));
+        assert_eq!(said[0]["code"], "W1004", "{args:?}: {stderr}");
+    }
+    assert_eq!(tondo(&["run", "."]).0, "hi\n");
+}
+
 /// A program built again where it runs still runs, and its new build runs
 /// too: written over in place, Linux refuses to write it and macOS kills
 /// the new one, whose file kept the old one's signature.

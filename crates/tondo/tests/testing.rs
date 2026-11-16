@@ -96,7 +96,9 @@ fn selects_and_lists() {
         "test sample::unit::sample::shared::nested::seesBoth ... ok\nok. 1 passed; 0 failed; 0 skipped; 0 blocked\n";
     assert_eq!((untimed(&stdout).as_str(), status), (report, 0));
     let (_, stderr, status) = tondo(&sample(), &["test", "--filter", "missing"]);
-    assert_eq!((stderr.as_str(), status), ("tondo: no test matches --filter \"missing\"\n", 1));
+    // After the warnings of the sample's code, which a build from the cache says again.
+    let said = (stderr.lines().last(), status);
+    assert_eq!(said, (Some("tondo: no test matches --filter \"missing\""), 1), "{stderr}");
     let (_, _, status) = tondo(&sample(), &["test", "--filter", "missing", "--allow-empty"]);
     assert_eq!(status, 0);
     let (_, _, status) = tondo(&sample(), &["test", "--filter", "skipsWithAReason", "--deny-skips"]);
@@ -134,10 +136,8 @@ fn selects_and_lists() {
     );
     let (_, stderr, status) =
         tondo(&sample(), &["test", "--exact", "sample::unit::sample::doublesPrivately", "--exact", "nothing"]);
-    assert_eq!(
-        (stderr.as_str(), status),
-        ("tondo: no suite or test is \"nothing\"; `tondo test --list` lists them\n", 1)
-    );
+    let said = (stderr.lines().last(), status);
+    assert_eq!(said, (Some("tondo: no suite or test is \"nothing\"; `tondo test --list` lists them"), 1), "{stderr}");
     let (_, stderr, status) = tondo(&sample(), &["test", "--exact", "a", "--filter", "b"]);
     assert_eq!(status, 2, "{stderr}");
 }

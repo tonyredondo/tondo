@@ -227,12 +227,42 @@ enum Shown {
 }
 
 fn show(analysis: &driver::Analysis, shown: Shown) {
+    eprint!("{}", shown_text(analysis, shown));
+}
+
+/// What `show` prints of the diagnostics: nothing when there are none.
+fn shown_text(analysis: &driver::Analysis, shown: Shown) -> String {
     if analysis.diags.list.is_empty() {
-        return;
+        return String::new();
     }
     match shown {
-        Shown::Human => eprint!("{}", analysis.diags.render(&analysis.sources)),
-        Shown::Json => eprintln!("{}", analysis.diags.json(&analysis.sources, &analysis.source_id)),
+        Shown::Human => analysis.diags.render(&analysis.sources),
+        Shown::Json => format!("{}\n", analysis.diags.json(&analysis.sources, &analysis.source_id)),
+    }
+}
+
+/// The files where a build in the cache keeps what its diagnostics said,
+/// as people read them and as JSON.
+const SAID: [&str; 2] = [".diagnostics", ".diagnostics.json"];
+
+/// Keeps beside a build in the cache what its diagnostics say, in each
+/// form, so that a build taken from there says it again: a warning shows
+/// until the code that causes it changes.
+fn keep_said(dir: &Path, human: String, json: String) -> Result<(), String> {
+    if human.is_empty() {
+        return Ok(());
+    }
+    for (name, text) in SAID.iter().zip([human, json]) {
+        let path = dir.join(name);
+        std::fs::write(&path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// Says again what a build taken from the cache said when it was made.
+fn say_again(dir: &Path, json: bool) {
+    if let Ok(text) = std::fs::read_to_string(dir.join(SAID[usize::from(json)])) {
+        eprint!("{text}");
     }
 }
 
@@ -1065,6 +1095,7 @@ fn build_tests(path: &Path, build: &TestBuild) -> Result<Option<(PathBuf, tondo:
     drop(finding);
     if let Some(tree) = tondo::runner::Tree::load(&tree_file).filter(|_| build.list || executable.is_file()) {
         tondo::times::cached();
+        say_again(&dir, build.diagnostics_json);
         return Ok(Some((executable, tree)));
     }
     let analysis = driver::analyze_tests(path, build.library)?;
@@ -1078,6 +1109,8 @@ fn build_tests(path: &Path, build: &TestBuild) -> Result<Option<(PathBuf, tondo:
     let machines = tondo::machine::unchecked(&analysis.sources);
     let tree = tondo::runner::Tree { nodes: program.tests.clone(), locations, machines };
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    let (sources, source_id) = (&analysis.sources, &analysis.source_id);
+    keep_said(&dir, analysis.diags.render(sources), analysis.diags.render_json(sources, source_id))?;
     if build.list {
         tree.save(&tree_file)?;
         return Ok(Some((executable, tree)));
@@ -3352,12 +3385,14 @@ fn cached_executable(path: &Path, options: &BuildOptions) -> Result<Option<PathB
     drop(finding);
     if executable.exists() {
         tondo::times::cached();
+        say_again(&dir, options.shown == Shown::Json);
     } else {
         let Some(analysis) = analyze(path, false, options.shown)? else {
             return Ok(None);
         };
         let object = object(&analysis, path, options)?;
         std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        keep_said(&dir, shown_text(&analysis, Shown::Human), shown_text(&analysis, Shown::Json))?;
         let partial = dir.join(format!(".partial-{}", std::process::id()));
         let libraries = [analysis.libraries.clone(), libraries.to_vec()].concat();
         let linking = driver::Linking { strip: false, statically: *statically, target: *target, debug: *debug };
