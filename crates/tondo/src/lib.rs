@@ -33,6 +33,7 @@ pub mod guide;
 pub mod hash;
 pub mod header;
 pub mod hir;
+pub mod hoist;
 pub mod index;
 pub mod inline;
 pub mod instructions;

@@ -7513,3 +7513,18 @@ told only when asked for, as the analysis costs a build time and speaks of what 
 yet; `TONDO_REGIONS=<file>` in the environment of a build writes every verdict, the standard
 library's too, so that they can be joined to a memory profile to count allocations rather than
 places.
+
+## A loop reads a length it cannot change once, before it
+
+A loop over a text's characters or an array's elements tests its position against the length
+each turn, and Cranelift reloads it from memory each turn whenever the loop calls the runtime,
+as for a character outside ASCII, since memory may change there. The `hoist` pass reads it once,
+in the block before the loop, when nothing in the loop can change the value: no statement of
+the loop writes, releases, lends or clears its local, no call takes it as a `var` parameter, and
+no call of the runtime, of C or through a value is given it when it is an array, which such a
+call may change in place. A text the runtime is given it only reads. Only a text's length in
+bytes and an array's are moved: both are a load from a value the loop reads and does not write,
+so it is whole when the loop starts, and reading it there costs one load even when the loop ends
+before reading it. A text's length in characters, or a map's, is a call, and stays where it is.
+`tondo optimizations` tells each length a loop of the program's code reads, `hoisted` or
+`reloaded` with why.

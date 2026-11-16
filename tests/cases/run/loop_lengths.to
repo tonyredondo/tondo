@@ -1,0 +1,67 @@
+// The length of a text or an array that a loop tests each turn is read once,
+// before the loop, when nothing in the loop can change it, as in a loop over
+// a text's characters; a loop that pushes to its array, or that passes it to
+// a call that may change it, reads it each turn, and runs as written.
+
+import std.console
+
+fn letters(text: String): Int {
+    var count = 0
+    for c in text.chars() {
+        if c.isLetter() {
+            count += 1
+        }
+    }
+    count
+}
+
+fn grows(values: Array[Int]): Array[Int] {
+    var out = values
+    var i = 0
+    for i < out.length() {
+        if out[i] % 2 == 0 and out.length() < 10 {
+            out.push(out[i] + 1)
+        }
+        i += 1
+    }
+    out
+}
+
+fn halve(values: var Array[Int]) {
+    if values.length() > 1 {
+        values = values.slice(0, values.length() / 2) ?? values
+    }
+}
+
+fn shrinks(values: Array[Int]): Int {
+    var kept = values
+    var turns = 0
+    for turns < kept.length() {
+        halve(var kept)
+        turns += 1
+    }
+    turns
+}
+
+fn total(values: Array[Int]): Int {
+    var sum = 0
+    var i = 0
+    for i < values.length() {
+        sum += values[i] + letters("a{i}")
+        i += 1
+    }
+    sum
+}
+
+fn main() {
+    console.println(
+        "{letters("añb2 c")} {grows([2, 3, 4])} {shrinks([1, 2, 3, 4, 5, 6, 7, 8])} {total([1, 2, 3])}",
+    )
+}
+
+// expect-stdout: 4 [2, 3, 4, 3, 5] 2 9
+// expect-optimization: 49:13 hoisted reads the length once, before the loop
+// expect-optimization: 21:13 reloaded reads the length each turn: the loop may change `out`
+// expect-optimization: 22:32 reloaded reads the length each turn: the loop may change `out`
+// expect-optimization: 39:17 reloaded reads the length each turn: the loop may change `kept`
+// expect-no-optimization: 39:17 hoisted

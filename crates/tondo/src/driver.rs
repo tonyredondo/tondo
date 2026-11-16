@@ -1640,6 +1640,8 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, program: &crate::hir::Program, s
     after("split again", bodies, types, sources);
     crate::stack::stack(bodies, types);
     after("stack", bodies, types, sources);
+    crate::hoist::hoist(bodies, types);
+    after("hoist", bodies, types, sources);
     // Where regions would take what the program makes, for `tondo
     // optimizations --kind region`, and while it is being measured:
     // `TONDO_REGIONS=<file>` writes a line for each place, the standard
@@ -1725,6 +1727,8 @@ pub const OPTIMIZATION_KINDS: &[&str] = &[
     "grown",
     "lent",
     "counted",
+    "hoisted",
+    "reloaded",
     "region",
 ];
 
@@ -1799,6 +1803,7 @@ pub fn optimizations(
             "unrolled" => "looped",
             "reserved" => "grown",
             "lent" => "counted",
+            "hoisted" => "reloaded",
             _ => "",
         };
         let told: std::collections::HashSet<_> =

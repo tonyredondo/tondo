@@ -2449,8 +2449,8 @@ checks more than it should, before measuring it.",
                 "kind",
                 "string",
                 "Only one kind: inlined, call, frame, heap, unchecked, checked, arithmetic, unrolled, looped, reserved, \
-grown, lent, counted, or region, told only when asked for: where what each place allocates would go if \
-the program had regions.",
+grown, lent, counted, hoisted, reloaded, or region, told only when asked for: where what each place \
+allocates would go if the program had regions.",
             ),
             ("tests", "boolean", "The code of the tests and benchmarks, as `test` with `bench` builds it."),
             ("against", "string", "A git revision, as main: only what changed since it, what it had and what is new."),

@@ -196,8 +196,8 @@ Ask the toolchain before guessing why code is slow or allocates:
   inlined and those it kept, with why; the texts and closures made in the
   frame, and what keeps the others on the heap; the checks dropped, and
   those a loop keeps; the loops run four turns at a time, the arrays given
-  room before the loop that fills them, and the elements a loop reads
-  without counting them, or why not. `--kind heap` gives only what allocates, `--function
+  room before the loop that fills them, the elements a loop reads without
+  counting them, and the lengths a loop reads once before it, or why not. `--kind heap` gives only what allocates, `--function
   <name>` one function, and `--against <commit>` only what a change made
   different; `--tests` reads the tests and benchmarks instead, as
   `bench/tondo`, whose benchmarks are tests. A pass that decides something
