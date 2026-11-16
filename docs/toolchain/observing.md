@@ -47,12 +47,12 @@ Every command after this takes that process ID, or the program's name.
 
 ```text
 $ tondo counters todo --count 1
-todo (pid 4080903), up 11m 40s
+todo (pid 458751), up 1.0 s
 
 memory
-  held                           119.5 KiB
+  held                           116.9 KiB
   allocated                          0 B/s   total 1.5 MiB
-  allocations                        0.0/s   total 3730
+  allocations                        0.0/s   total 3444
   objects                               60
   regions                         32.0 KiB
   regions_kept                         0 B
@@ -67,7 +67,7 @@ collector
 tasks
   live                                   2
   ready                                  0
-  spawned                            0.0/s   total 8
+  spawned                            0.0/s   total 7
 
 workers
   total                                 32
@@ -86,7 +86,7 @@ net
 
 http
   client.requests                    0.0/s   total 0
-  server.requests                    0.0/s   total 6
+  server.requests                    0.0/s   total 5
   server.active                          0
 
 grpc
@@ -113,8 +113,8 @@ processes
   started                            0.0/s   total 0
 
 os
-  cpu                                 0.0%   total 147.7 ms
-  resident                        35.0 MiB
+  cpu                                 0.0%   total 11.3 ms
+  resident                        37.2 MiB
   threads                               53
 ```
 
@@ -131,8 +131,9 @@ gives another pace.
   both growing is a leak, and [dumps](#everything-at-once-dump) find it.
 - `memory regions` is what regions hold now, the values a release build
   lets go of all at once when a scope ends
-  ([Performance](performance.md#what-a-region-takes)); `regions_kept` is
-  what they keep free to use again, and `region_allocations` how many
+  ([Performance](performance.md#what-a-region-takes)), with the few chunks
+  each thread keeps ready for its own; `regions_kept` is what the threads
+  share, kept for the next regions; and `region_allocations` is how many
   values were made in them.
 - A program adds its own with `std.diagnostics`: a counter or a gauge it
   declares shows here beside the runtime's.
