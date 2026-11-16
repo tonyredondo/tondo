@@ -683,6 +683,16 @@ pub fn inner_loops(blocks: &[BlockData], calling: bool) -> Vec<bool> {
 /// The locals each block reads before writing them, on some path from its
 /// start (toolchain 7.10): what a frame must bring to start there.
 pub fn live_in(blocks: &[BlockData], locals: usize) -> Vec<Vec<Local>> {
+    live_in_bits(blocks, locals)
+        .iter()
+        .map(|bits| {
+            (0..locals as u32).map(Local).filter(|l| bits[l.0 as usize / 64] & (1 << (l.0 % 64)) != 0).collect()
+        })
+        .collect()
+}
+
+/// As `live_in`, each block's as bits, 64 locals a word.
+pub fn live_in_bits(blocks: &[BlockData], locals: usize) -> Vec<Vec<u64>> {
     let words = locals.div_ceil(64).max(1);
     let set = |bits: &mut [u64], local: Local| bits[local.0 as usize / 64] |= 1 << (local.0 % 64);
     let unset = |bits: &mut [u64], local: Local| bits[local.0 as usize / 64] &= !(1 << (local.0 % 64));
@@ -735,11 +745,7 @@ pub fn live_in(blocks: &[BlockData], locals: usize) -> Vec<Vec<Local>> {
             }
         }
     }
-    live.iter()
-        .map(|bits| {
-            (0..locals as u32).map(Local).filter(|l| bits[l.0 as usize / 64] & (1 << (l.0 % 64)) != 0).collect()
-        })
-        .collect()
+    live
 }
 
 /// What gives each local a value, if anything does: a parameter has one
