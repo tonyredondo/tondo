@@ -7622,3 +7622,23 @@ in the `[build]` of the root `tondo.toml`, with the MCP tools' `no_regions` and 
 `tondo.build.flags`. Such a build runs every pass but the regions', puts on the heap what the
 program makes and lets go, and is a build of its own in the cache, as one without logpoint sites
 is. `tondo optimizations` does not take it: what it shows is what regions would do.
+
+## What regions do not know of stays on the heap
+
+The two wrong results regions gave came from the analysis taking a value not to be kept where it
+had no rule: a store through a loan, a result whose type does not say what it holds. Tony asked
+that a rule that is missing cost speed, not a wrong result. Every operation and statement of the
+MIR now has its rule in the analysis, written out, so that a new one does not compile until it
+has its own: what follows a value by its type, what keeps it, and what passes nothing on. A
+write through a raw pointer keeps it, as nothing follows that memory; a C array is a copy of the
+elements and keeps nothing.
+
+The calls of the runtime were judged by their names, `insert`, `push`, `send` and the like. A
+native, written in Rust, can be given a value a region makes only in a parameter of such a kind,
+an array or a reflect box: of the 578 natives, 70 have one, and their code was read, each copying
+what it keeps or reading it only during the call. They are listed, and a test holds every native
+that takes such a kind to a word, so that a new one is read before regions trust it; the other
+calls of the runtime are told one by one, and those that keep what they are given by what they
+are, a detached task, a context, a panic, keep it. Nothing of bench/tondo or the examples left a
+region; three natives the names took to keep, `memory.store`, `labelsPush` and the sends, now
+let what they are given stay in one.

@@ -1224,7 +1224,41 @@ impl Flow {
                         // A call of the program's keeps what it returns of
                         // what it is given, which `fate` sees.
                         Rvalue::Call(Callee::Fn(_), _) => continue,
-                        _ => {
+                        // What any other operation gives: the value, or what
+                        // holds it, as its type can be or refer to it.
+                        Rvalue::Unary(..)
+                        | Rvalue::Binary(..)
+                        | Rvalue::Increment(_)
+                        | Rvalue::Exact(..)
+                        | Rvalue::Call(..)
+                        | Rvalue::FnValue(_)
+                        | Rvalue::ExternFn(_)
+                        | Rvalue::Callback(..)
+                        | Rvalue::Layout(..)
+                        | Rvalue::Reflect(..)
+                        | Rvalue::Fixed(..)
+                        | Rvalue::CallIndirect(..)
+                        | Rvalue::Erase(..)
+                        | Rvalue::Spawn(..)
+                        | Rvalue::TestMembers(_)
+                        | Rvalue::TaskOp(..)
+                        | Rvalue::Select(..)
+                        | Rvalue::Cancelled
+                        | Rvalue::Unwinding
+                        | Rvalue::Restart(_)
+                        | Rvalue::Transfer(_)
+                        | Rvalue::CallOsr(..)
+                        | Rvalue::OsrPoint
+                        | Rvalue::Discriminant(_)
+                        | Rvalue::Convert(_)
+                        | Rvalue::ArrayOp(..)
+                        | Rvalue::Slice(..)
+                        | Rvalue::AssignSlice(..)
+                        | Rvalue::CheckRegion(..)
+                        | Rvalue::Length(_)
+                        | Rvalue::StrOp(..)
+                        | Rvalue::Pointer(..)
+                        | Rvalue::MapOp(..) => {
                             let mut used = Vec::new();
                             rvalue_uses(rvalue, &mut used);
                             let ty = body.place_ty(types, place);
@@ -1267,7 +1301,17 @@ impl Flow {
                         from: vec![(*alias, false)],
                     });
                 }
-                _ => {}
+                // Counts, cleanups, zeroings, and a lock's state, which
+                // `outside` follows: none passes a value on.
+                Statement::Retain(_)
+                | Statement::Release(_)
+                | Statement::DeferPush(..)
+                | Statement::DeferPop
+                | Statement::Clear(_)
+                | Statement::Moved(_)
+                | Statement::LendAt(..)
+                | Statement::OsrLoad(_)
+                | Statement::Failing(..) => {}
             }
         }
         let mut readers = vec![Vec::new(); body.locals.len()];
@@ -1493,17 +1537,69 @@ fn fate_of(flow: &Flow, body: &Body, held: &[bool], summaries: &[Summary], bodie
                         return kept(why, *span);
                     }
                     Rvalue::Select(..) => return kept("it is sent", *span),
+                    Rvalue::TestMembers(..) => return kept("a task takes it", *span),
+                    Rvalue::CallOsr(..) => return kept("a live build's call takes it", *span),
+                    // Memory a raw pointer reaches, which nothing here
+                    // follows.
+                    Rvalue::Pointer(crate::hir::PointerOp::Write, ..) => {
+                        return kept("it is written through a raw pointer", *span);
+                    }
                     Rvalue::Mutate(_, target, ..) if given(target.local) => {
                         return kept(where_given(target.local), *span);
                     }
-                    _ => {}
+                    // What grows is followed as what it holds (`Flow`).
+                    Rvalue::Mutate(..) => {}
+                    // These keep nothing of what they read but in what they
+                    // give, which `Flow` follows by its type; a C array is a
+                    // copy of the elements, either way.
+                    Rvalue::Fixed(..)
+                    | Rvalue::Use(_)
+                    | Rvalue::Unary(..)
+                    | Rvalue::Binary(..)
+                    | Rvalue::Increment(_)
+                    | Rvalue::Exact(..)
+                    | Rvalue::FnValue(_)
+                    | Rvalue::ExternFn(_)
+                    | Rvalue::Callback(..)
+                    | Rvalue::Layout(..)
+                    | Rvalue::Reflect(..)
+                    | Rvalue::Cancelled
+                    | Rvalue::Unwinding
+                    | Rvalue::Restart(_)
+                    | Rvalue::Transfer(_)
+                    | Rvalue::OsrPoint
+                    | Rvalue::Concat(_)
+                    | Rvalue::Aggregate(_)
+                    | Rvalue::Variant(..)
+                    | Rvalue::Discriminant(_)
+                    | Rvalue::Convert(_)
+                    | Rvalue::Array(..)
+                    | Rvalue::ArrayOp(..)
+                    | Rvalue::Slice(..)
+                    | Rvalue::AssignSlice(..)
+                    | Rvalue::CheckRegion(..)
+                    | Rvalue::Length(_)
+                    | Rvalue::StrOp(..)
+                    | Rvalue::Pointer(..)
+                    | Rvalue::MapOp(..) => {}
                 }
                 if body.ret == Some(place.local) {
                     returned = true;
                 }
             }
             Statement::DeferPush(_, place) if holds(place.local) => return kept("a `defer` keeps it", Span::default()),
-            _ => {}
+            // Counts, cleanups that hold nothing of it, zeroings, and what
+            // `outside` and `Flow` follow.
+            Statement::DeferPush(..)
+            | Statement::DeferPop
+            | Statement::Retain(_)
+            | Statement::Release(_)
+            | Statement::Lend(..)
+            | Statement::LendAt(..)
+            | Statement::Clear(_)
+            | Statement::Moved(_)
+            | Statement::OsrLoad(_)
+            | Statement::Failing(..) => {}
         }
     }
     for block in &body.blocks {
@@ -1674,17 +1770,170 @@ fn only_made(body: &Body, types: &Types, ret: Local, held: &[Vec<bool>]) -> bool
     true
 }
 
-/// Whether a function of the runtime may keep what it is given: one that
-/// puts it somewhere, by its name, as inserting, sending or setting does.
-/// The others read what they are lent, as the program's calls do.
+/// Whether a function of the runtime may keep what it is given past the
+/// call. A native of the runtime can be given a value a region makes only
+/// in a parameter of such a kind, an array or a reflect box; one that has
+/// none keeps none, and one that has is in `READING`, read from its code,
+/// or may keep it. The rest of the runtime's calls are told one by one.
 fn runtime_keeps(std: &crate::hir::StdFn) -> bool {
-    let crate::hir::StdFn::Native(index) = std else { return false };
-    let Some(native) = crate::hir::NATIVES.get(*index as usize) else { return true };
-    const PUTS: [&str; 12] =
-        ["insert", "push", "send", "set", "store", "put", "spawn", "register", "append", "add", "enqueue", "offer"];
-    let name = native.name.to_ascii_lowercase();
-    PUTS.iter().any(|word| name.contains(word))
+    use crate::hir::StdFn;
+    match std {
+        StdFn::Native(index) => match crate::hir::NATIVES.get(*index as usize) {
+            Some(native) => takes_from_regions(native) && !READING.contains(&native.symbol),
+            None => true,
+        },
+        // A detached task takes its closure; a context keeps its value for
+        // the task and those it starts; a panic carries its values to the
+        // `recover` that stops it.
+        StdFn::SpawnDetached
+        | StdFn::ContextSet(..)
+        | StdFn::ContextRestore
+        | StdFn::PanicUnwind(_)
+        | StdFn::PanicHeld => true,
+        // These copy what they are given, or read it during the call, as
+        // their code does: a file's or a stream's bytes, a command's
+        // arguments and input, an attached artifact, a snapshot.
+        StdFn::ConsolePrint
+        | StdFn::ConsolePrintln
+        | StdFn::ConsoleFlush
+        | StdFn::ConsoleEprint
+        | StdFn::ConsoleEprintln
+        | StdFn::ConsoleReadLine
+        | StdFn::ConsoleStream(_)
+        | StdFn::ConsoleSet(_)
+        | StdFn::Io(_)
+        | StdFn::Env(_)
+        | StdFn::Process(_)
+        | StdFn::CpuHas
+        | StdFn::Cpu(_)
+        | StdFn::Number(_)
+        | StdFn::Simd(_)
+        | StdFn::TimeSleep
+        | StdFn::TimeNow
+        | StdFn::TimeUnix
+        | StdFn::TimeUtcNow
+        | StdFn::TimeUtc
+        | StdFn::Fs(_)
+        | StdFn::Path(_)
+        | StdFn::TestLog
+        | StdFn::TestTags
+        | StdFn::TestWhere
+        | StdFn::WithinEnter
+        | StdFn::WithinLeave
+        | StdFn::WithinCatch
+        | StdFn::ContextGet(_)
+        | StdFn::ContextField(..)
+        | StdFn::RecoverEnter
+        | StdFn::RecoverEnd
+        | StdFn::RecoverLeave
+        | StdFn::RecoverCatch
+        | StdFn::UnwindHold
+        | StdFn::UnwindResume
+        | StdFn::DeferEnd
+        | StdFn::CancelReturn
+        | StdFn::TestAttach
+        | StdFn::TestSnapshot
+        | StdFn::ClockBegin
+        | StdFn::ClockEnd
+        | StdFn::ClockSettle
+        | StdFn::ClockAdvance
+        | StdFn::BenchStart
+        | StdFn::BenchNext
+        | StdFn::BenchEnd
+        | StdFn::Keep
+        | StdFn::AllocationsStart
+        | StdFn::AllocationsSince => false,
+    }
 }
+
+/// Whether a native of the runtime can be given a value a region makes:
+/// an array, or a reflect box, as its receiver or a parameter.
+fn takes_from_regions(native: &crate::hir::Native) -> bool {
+    use crate::hir::NativeTy::*;
+    native
+        .receiver
+        .iter()
+        .chain(native.params)
+        .any(|kind| matches!(kind, Bytes | Ints | Floats | Floats32 | Strings | ReflectBox))
+}
+
+/// The natives that can be given a value a region makes and keep none of
+/// it past the call, as their code shows: each copies what it keeps, as a
+/// reader's or a body's bytes, or reads it only during the call. A native
+/// of such a kind that is not here may keep it, and a test holds this list
+/// to the table of natives.
+const READING: &[&str] = &[
+    "tondo_rt_base64_encode",
+    "tondo_rt_cbor_field",
+    "tondo_rt_cbor_parse",
+    "tondo_rt_cbor_write_bytes",
+    "tondo_rt_crc32",
+    "tondo_rt_crypto_hkdf",
+    "tondo_rt_crypto_open",
+    "tondo_rt_crypto_pbkdf2",
+    "tondo_rt_crypto_public",
+    "tondo_rt_crypto_seal",
+    "tondo_rt_crypto_sign",
+    "tondo_rt_crypto_verify",
+    "tondo_rt_deflate",
+    "tondo_rt_files_watch",
+    "tondo_rt_grpc_frames_of",
+    "tondo_rt_grpc_open",
+    "tondo_rt_grpc_send",
+    "tondo_rt_grpc_start",
+    "tondo_rt_gzip",
+    "tondo_rt_hash_digest",
+    "tondo_rt_hasher",
+    "tondo_rt_hasher_update",
+    "tondo_rt_hex_encode",
+    "tondo_rt_http_body_bytes",
+    "tondo_rt_http_form_bytes",
+    "tondo_rt_http_request_form_of",
+    "tondo_rt_http_respond",
+    "tondo_rt_http_respond_bytes",
+    "tondo_rt_http_respond_file",
+    "tondo_rt_http_respond_stream",
+    "tondo_rt_http_respond_text",
+    "tondo_rt_http_respond_trailed",
+    "tondo_rt_http_send",
+    "tondo_rt_http_windows_1252",
+    "tondo_rt_http_ws_connect",
+    "tondo_rt_http_ws_send",
+    "tondo_rt_image_exif",
+    "tondo_rt_image_from_pixels",
+    "tondo_rt_image_info",
+    "tondo_rt_image_read",
+    "tondo_rt_inflate",
+    "tondo_rt_json_field",
+    "tondo_rt_labels_push",
+    "tondo_rt_math_cycled_f32",
+    "tondo_rt_math_cycled_f64",
+    "tondo_rt_math_dot_at_f32",
+    "tondo_rt_math_dot_at_f64",
+    "tondo_rt_math_dot_f32",
+    "tondo_rt_math_dot_f64",
+    "tondo_rt_math_sum_f32",
+    "tondo_rt_math_sum_f64",
+    "tondo_rt_memory_from_c_chars",
+    "tondo_rt_memory_store",
+    "tondo_rt_msgpack_field",
+    "tondo_rt_msgpack_parse",
+    "tondo_rt_msgpack_write_bytes",
+    "tondo_rt_net_send_to",
+    "tondo_rt_net_send_to_path",
+    "tondo_rt_net_write_bytes",
+    "tondo_rt_pb_reader",
+    "tondo_rt_pb_write_bytes",
+    "tondo_rt_pb_write_raw",
+    "tondo_rt_reflect_name",
+    "tondo_rt_sqlite_run",
+    "tondo_rt_tls_certificates",
+    "tondo_rt_toml_field",
+    "tondo_rt_unpack",
+    "tondo_rt_yaml_field",
+    "tondo_rt_zone_resolve",
+    "tondo_rt_zstd",
+];
 
 /// Whether a local is, or leads to, what outlives the call.
 #[derive(Clone, Copy, PartialEq)]
@@ -1721,4 +1970,36 @@ fn outside(body: &Body) -> Vec<Outside> {
         }
     }
     outside
+}
+
+#[cfg(test)]
+mod natives {
+    use super::*;
+
+    /// The natives that can be given a value a region makes and may keep it
+    /// past the call, as their code shows, which `runtime_keeps` takes as
+    /// any native of such a kind not in `READING`: each such native is in
+    /// one list or the other.
+    const KEEPING: &[&str] = &[];
+
+    /// Every native that can be given a value a region makes says whether
+    /// it keeps it, as its code was read, and the lists name no other: a
+    /// native added with such a parameter fails here until it is read.
+    #[test]
+    fn every_native_that_takes_from_regions_is_read() {
+        let taking: Vec<&str> = crate::hir::NATIVES
+            .iter()
+            .filter(|native| takes_from_regions(native))
+            .map(|native| native.symbol)
+            .collect();
+        let unread: Vec<&&str> =
+            taking.iter().filter(|symbol| !READING.contains(symbol) && !KEEPING.contains(symbol)).collect();
+        assert!(
+            unread.is_empty(),
+            "{unread:?} can be given a value a region makes: read its code and put it in `READING` if it copies \
+             what it keeps or reads it only during the call, else in `KEEPING`"
+        );
+        let stale: Vec<&&str> = READING.iter().chain(KEEPING).filter(|symbol| !taking.contains(symbol)).collect();
+        assert!(stale.is_empty(), "{stale:?} take nothing a region makes: take them out of the lists");
+    }
 }
