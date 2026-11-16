@@ -1,0 +1,127 @@
+// A profiler of .NET: .NET loads it as a library of C when
+// CORECLR_PROFILER_PATH names it, and it prints when .NET starts it, each
+// module .NET loads and when .NET ends. `profiler.corprof` is what
+// `tondo bind` writes of corprof.h.
+
+import profiler.corprof
+import std.console
+import std.ffi
+import std.sync
+
+/// The profiler's identity, which CORECLR_PROFILER names.
+const Clsid: String = "7a4f2c1e-9b3d-4e6a-8c5f-1d2e3f4a5b6c"
+
+/// The class factory of COM, which .NET asks for the profiler.
+@ffi.Interface(id: "00000001-0000-0000-C000-000000000046")
+pub trait ClassFactory: ffi.Unknown {
+    fn createInstance(
+        self,
+        _: Pointer[ffi.Void]?,
+        id: Pointer[ffi.Guid],
+        found: Pointer[Pointer[ffi.Void]],
+    ): ffi.HResult
+
+    fn lockServer(self, _: ffi.CInt): ffi.HResult
+}
+
+type Factory = {}
+
+impl ClassFactory for Factory {
+    fn createInstance(
+        self,
+        _: Pointer[ffi.Void]?,
+        id: Pointer[ffi.Guid],
+        found: Pointer[Pointer[ffi.Void]],
+    ): ffi.HResult {
+        given(ffi.object(Profiler { info: sync.Mutex(none) }), id, found)
+    }
+
+    fn lockServer(self, _: ffi.CInt): ffi.HResult {
+        ffi.HResult.Ok
+    }
+}
+
+/// The object, as the interface `id` asks for, in `found`: held by it alone.
+fn given(
+    object: Pointer[ffi.Void],
+    id: Pointer[ffi.Guid],
+    found: Pointer[Pointer[ffi.Void]],
+): ffi.HResult {
+    unsafe {
+        let unknown = ffi.UnknownObject.of(object)
+        let result = unknown.queryInterface(id, found)
+        _ = unknown.release()
+        result
+    }
+}
+
+type Profiler = {
+    info: sync.Mutex[Pointer[ffi.Void]?]
+}
+
+impl corprof.ICorProfilerCallback for Profiler {
+    fn Initialize(self, pICorProfilerInfoUnk: Pointer[ffi.Void]?): ffi.HResult {
+        let unknown = match pICorProfilerInfoUnk {
+            some(found) => found
+            none => return ffi.HResult.InvalidArgument
+        }
+        let id = ffi.allocate[ffi.Guid]()
+        let found = ffi.allocate[Pointer[ffi.Void]]()
+        unsafe {
+            defer ffi.free(id)
+            defer ffi.free(found)
+            id.write(corprof.ICorProfilerInfoObject.Id)
+            let asked = ffi.UnknownObject.of(unknown).queryInterface(id, found)
+            if asked.isFailure() {
+                return asked
+            }
+            let info = found.read()
+            self.info.set(info)
+            console.println("initialize")
+            corprof.ICorProfilerInfoObject
+                .of(info)
+                .SetEventMask(corprof.COR_PRF_MONITOR_MODULE_LOADS)
+        }
+    }
+
+    fn ModuleLoadFinished(self, moduleId: corprof.ModuleID, _: ffi.HResult): ffi.HResult {
+        let info = match self.info.get() {
+            some(info) => info
+            none => return ffi.HResult.Ok
+        }
+        let name = ffi.allocate[UInt16](1024)
+        let length = ffi.allocate[ffi.CUInt]()
+        unsafe {
+            defer ffi.free(name)
+            defer ffi.free(length)
+            let read = corprof.ICorProfilerInfoObject
+                .of(info)
+                .GetModuleInfo(moduleId, none, 1024, length, name, none)
+            if read.isOk() {
+                console.println("module {ffi.fromWide(name)}")
+            }
+        }
+        ffi.HResult.Ok
+    }
+
+    fn Shutdown(self): ffi.HResult {
+        console.println("shutdown")
+        ffi.HResult.Ok
+    }
+}
+
+impl corprof.ICorProfilerCallback2 for Profiler {}
+
+/// What .NET calls first: the class factory, for the profiler's identity.
+pub extern fn DllGetClassObject(
+    rclsid: Pointer[ffi.Guid],
+    riid: Pointer[ffi.Guid],
+    ppv: Pointer[Pointer[ffi.Void]],
+): ffi.HResult {
+    let ours = ffi.Guid.parse(Clsid) ?? ffi.Guid.Empty
+    if unsafe { rclsid.read() } != ours {
+        // CLASS_E_CLASSNOTAVAILABLE, 0x80040111
+        return ffi.HResult(-2147221231)
+    }
+    given(ffi.object(Factory {}), riid, ppv)
+}

@@ -7456,3 +7456,14 @@ profiler often returns for an event it ignores: on an interface that is a servic
 would take it for success with its out parameters unwritten, and `E_NOTIMPL` is never mistaken
 for success. A method that gives anything else has no body, as no value is right for all.
 
+
+## A profiler of .NET proves the interfaces of C
+
+The interfaces of C are proved where they are used: `tests/dotnet` holds a profiler of .NET in
+Tondo, and `cargo test -p tondo --test dotnet` binds .NET's own `corprof.h`, builds the profiler
+as a library and runs a console program of .NET under it. Tony chose to keep a copy of
+`corprof.h` in the repository, with its MIT notice and the commit of dotnet/runtime it came
+from, so that the test does not depend on the network or on a version of .NET that changes it.
+The headers of Windows it includes are stand-ins written for the test with what it takes of
+them, as the PAL that gives them on Linux is part of .NET's build. The test runs on Linux where
+`dotnet` and its SDK are installed, as on CI's runners, and says it was skipped elsewhere.
