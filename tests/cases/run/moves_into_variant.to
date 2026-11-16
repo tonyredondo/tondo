@@ -1,0 +1,30 @@
+// A value given to the variant that takes its place, as `sum =
+// Expr.Add(sum, part)` gives the old `sum`, moves into it: no count is
+// taken for it nor let go, and every value is let go once, which the
+// cases check. A copy kept elsewhere keeps its own count.
+
+import std.console
+
+enum Expr {
+    Number(Int)
+    Add(Expr, Expr)
+}
+
+fn evaluate(expr: Expr): Int {
+    match expr {
+        Expr.Number(n) => n
+        Expr.Add(a, b) => evaluate(a) + evaluate(b)
+    }
+}
+
+fn main() {
+    var sum = Expr.Number(0)
+    for i in 1..=100 {
+        sum = Expr.Add(sum, Expr.Number(i))
+    }
+    let kept = sum
+    sum = Expr.Add(sum, Expr.Number(1000))
+    console.println("{evaluate(sum)} {evaluate(kept)}")
+}
+
+// expect-stdout: 6050 5050

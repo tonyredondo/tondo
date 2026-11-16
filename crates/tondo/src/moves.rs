@@ -122,20 +122,28 @@ fn overlap(a: &Place, b: &Place) -> bool {
 
 /// Whether, on every way on from the retain at `at` in `block`, `source`
 /// is released, by itself or a place that holds it, before anything reads
-/// it, writes it or the function returns.
+/// it, writes it or the function returns. A local copied whole into
+/// another that then takes its place, as `x = Variant(x, y)` keeps the old
+/// value of `x` to release it once the new one is in, hands the value on:
+/// what is followed then is that other local.
 fn given_up(body: &Body, block: usize, at: usize, source: &Place) -> bool {
-    let mut seen = vec![false; body.blocks.len()];
-    let mut ways = vec![(block, at + 1)];
+    // Each block once for each local followed into it.
+    let mut seen: std::collections::HashSet<(usize, Local)> = std::collections::HashSet::new();
+    let mut ways = vec![(block, at + 1, source.clone())];
     let mut steps = 0;
-    while let Some((block, start)) = ways.pop() {
+    while let Some((block, start, mut source)) = ways.pop() {
         let data = &body.blocks[block];
         let mut released = false;
-        for statement in &data.stmts[start..] {
+        for (index, statement) in data.stmts.iter().enumerate().skip(start) {
             steps += 1;
             if steps > REACH {
                 return false;
             }
-            match step(statement, source) {
+            if let Some(holder) = handed_on(&data.stmts[index..], &source) {
+                source = holder;
+                continue;
+            }
+            match step(statement, &source) {
                 Step::Released => {
                     released = true;
                     break;
@@ -149,16 +157,19 @@ fn given_up(body: &Body, block: usize, at: usize, source: &Place) -> bool {
         }
         let mut read = false;
         crate::inline::visit_terminator(&mut data.terminator.clone(), &mut |place: &mut Place| {
-            read |= overlap(place, source);
+            read |= overlap(place, &source);
         });
         if read {
             return false;
         }
+        let way = |to: usize, seen: &mut std::collections::HashSet<(usize, Local)>| {
+            seen.insert((to, source.local)).then(|| (to, 0, source.clone()))
+        };
         match &data.terminator {
-            Terminator::Goto(to) => ways.extend(next(&mut seen, to.0 as usize)),
+            Terminator::Goto(to) => ways.extend(way(to.0 as usize, &mut seen)),
             Terminator::Branch(_, then, otherwise) => {
-                ways.extend(next(&mut seen, then.0 as usize));
-                ways.extend(next(&mut seen, otherwise.0 as usize));
+                ways.extend(way(then.0 as usize, &mut seen));
+                ways.extend(way(otherwise.0 as usize, &mut seen));
             }
             // Its reference would leave with the function, or the local
             // never owned one.
@@ -169,9 +180,25 @@ fn given_up(body: &Body, block: usize, at: usize, source: &Place) -> bool {
     true
 }
 
-/// A block to follow from its start, once.
-fn next(seen: &mut [bool], block: usize) -> Option<(usize, usize)> {
-    (!std::mem::replace(&mut seen[block], true)).then_some((block, 0))
+/// The local the first of `statements` copies `source` into whole, when
+/// `source` is a whole local that the next statement naming it writes
+/// whole without reading it: its old value is that local's from then on.
+fn handed_on(statements: &[Statement], source: &Place) -> Option<Place> {
+    let Statement::Assign(target, value, _) = &statements[0] else { return None };
+    let Rvalue::Use(Operand::Copy(from)) = &**value else { return None };
+    if !source.path.is_empty() || !target.path.is_empty() || *from != *source || target.local == source.local {
+        return None;
+    }
+    let names = |statement: &Statement| {
+        let (mut used, mut defined) = (Vec::new(), Vec::new());
+        statement_locals(statement, &mut used, &mut defined);
+        (used.contains(&source.local), defined.contains(&source.local))
+    };
+    let next = statements[1..].iter().find(|statement| names(statement) != (false, false))?;
+    match names(next) {
+        (false, true) => Some(Place::local(target.local)),
+        _ => None,
+    }
 }
 
 enum Step {
