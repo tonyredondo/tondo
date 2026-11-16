@@ -248,7 +248,8 @@ $ echo $?
 
 `tondo run` compiles, keeps the build, and runs. A second run of the same
 code starts at once, since the build is found by the content of the files
-it was made from. What follows `--` goes to the program.
+it was made from, and says the code's warnings again: a warning stays until
+the code changes. What follows `--` goes to the program.
 
 A `main` that returns `!E` and fails ends the program with the error and a
 status of 1, as above. A panic prints its message, its code and the stack.
