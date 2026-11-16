@@ -256,15 +256,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             (None, None) => unreachable!(),
         };
         let count = self.e.fb.ins().atomic_load(types::I64, flags(), array);
-        // An array in a region counts below its bit (`REGION` of the
-        // runtime), which a push into the region leaves out.
-        let count = match self.e.region {
-            Some(_) => self.e.fb.ins().band_imm_u(count, !REGION as i64),
-            None => count,
+        // An array a push into a region grows is the region's, whose count
+        // carries its bit (`REGION` of the runtime), or `[]`, which the
+        // runtime grows into the region.
+        let only = match self.e.region {
+            Some(_) => (REGION | 1) as i64,
+            None => 1,
         };
         let length = self.e.fb.ins().load(types::I64, flags(), array, 8);
         let capacity = self.e.fb.ins().load(types::I64, flags(), array, 16);
-        let unique = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, 1);
+        let unique = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, only);
         let room = self.e.fb.ins().icmp(IntCC::UnsignedLessThan, length, capacity);
         let in_place = self.e.fb.ins().band(unique, room);
         let (fast, slow, done) = (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
