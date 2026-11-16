@@ -1,0 +1,32 @@
+// A `reflect.Value` may hold a value of any type, which its own type does
+// not say: what it holds lives as long as it does, and goes in no region
+// that ends before.
+
+import std.console
+import std.reflect
+
+fn boxed(i: Int): reflect.Value {
+    var values = [i, i * 10]
+    values.push(i)
+    reflect.valueOf(values)
+}
+
+fn main() {
+    var kept: Array[reflect.Value] = []
+    for i in 0..3 {
+        kept.push(boxed(i))
+    }
+    var direct: Array[reflect.Value] = []
+    for i in 0..3 {
+        var values = [i, i * 100]
+        values.push(i)
+        direct.push(reflect.valueOf(values))
+    }
+    console.println("{kept[0]} {kept[2]} {direct[0]} {direct[2]}")
+}
+
+// expect-stdout: [0, 0, 0] [2, 20, 2] [0, 0, 0] [2, 200, 2]
+// expect-optimization: 9:18 region stays on the heap
+// expect-no-optimization: 9:18 region goes in
+// expect-optimization: 21:22 region stays on the heap
+// expect-no-optimization: 21:22 region goes in

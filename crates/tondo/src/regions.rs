@@ -20,7 +20,7 @@
 use crate::hir::Callee;
 use crate::mir::*;
 use crate::source::Span;
-use crate::types::{Ty, Types};
+use crate::types::{Handle, Ty, TyKind, Types};
 
 /// What becomes of a value a function made.
 #[derive(Clone, Debug, PartialEq)]
@@ -1172,15 +1172,17 @@ enum How {
     /// What grows: what it reads is put in it.
     Grows,
     /// What another operation gives: the value when it is of its type, or
-    /// what contains it when its type can refer to it.
-    Other { same: Ty, reach: Vec<Ty> },
+    /// what contains it when its type can refer to it, or `anything` can: a
+    /// function value or a `reflect.Value`'s box, as `reflect.valueOf`
+    /// makes, may hold a value of any type.
+    Other { same: Ty, reach: Vec<Ty>, anything: bool },
     /// A loan of a place.
     Lent,
 }
 
 impl Flow {
     pub(crate) fn of(body: &Body, types: &Types) -> Flow {
-        let mut reached: crate::hash::FastMap<Ty, (Ty, Vec<Ty>)> = crate::hash::FastMap::default();
+        let mut reached: crate::hash::FastMap<Ty, (Ty, Vec<Ty>, bool)> = crate::hash::FastMap::default();
         let mut transfers = Vec::new();
         let copies = |operands: &[Operand]| -> Vec<(Local, bool)> {
             operands
@@ -1226,15 +1228,22 @@ impl Flow {
                             let mut used = Vec::new();
                             rvalue_uses(rvalue, &mut used);
                             let ty = body.place_ty(types, place);
-                            let (same, reach) = reached
+                            let (same, reach, anything) = reached
                                 .entry(ty)
                                 .or_insert_with(|| {
-                                    let reach =
-                                        types.reach(ty).into_iter().skip(1).map(|part| types.repr(part)).collect();
-                                    (types.repr(ty), reach)
+                                    let all = types.reach(ty);
+                                    let anything = all.iter().any(|&part| {
+                                        matches!(
+                                            types.kind(part),
+                                            TyKind::Fn(..) | TyKind::Handle(Handle::ReflectBox, _)
+                                        )
+                                    });
+                                    let reach = all.into_iter().skip(1).map(|part| types.repr(part)).collect();
+                                    (types.repr(ty), reach, anything)
                                 })
                                 .clone();
-                            (How::Other { same, reach }, used.into_iter().map(|local| (local, false)).collect())
+                            let how = How::Other { same, reach, anything };
+                            (how, used.into_iter().map(|local| (local, false)).collect())
                         }
                     };
                     if !from.is_empty() {
@@ -1371,10 +1380,10 @@ impl Flow {
                     (How::Made, false) => may_contain |= inside || it,
                     (How::Made, true) => may_contain |= inside || (it && parts),
                     (How::Grows, _) => may_contain |= it || inside,
-                    (How::Other { same, reach }, _) => {
+                    (How::Other { same, reach, anything }, _) => {
                         if it || inside {
                             may_be |= *same == held;
-                            may_contain |= reach.contains(&held);
+                            may_contain |= *anything || reach.contains(&held);
                         }
                     }
                     (How::Lent, false) => {
