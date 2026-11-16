@@ -750,18 +750,32 @@ pub alias REFIID = Pointer[ffi.Guid]?
 
 @ffi.Interface(id: "2a0b2c6e-5f1d-4c3a-9b1e-7d410c559321")
 pub trait ICounter: ffi.Unknown {
-    fn Add(self, amount: Int32): ffi.HResult
+    fn Add(self, amount: Int32): ffi.HResult {
+        ffi.HResult.NotImplemented
+    }
 
-    fn GetTotal(self, total: Pointer[ffi.CInt]?): ffi.HResult
+    fn GetTotal(self, total: Pointer[ffi.CInt]?): ffi.HResult {
+        ffi.HResult.NotImplemented
+    }
 }
 
 @ffi.Interface(id: "6c1e9f02-3b7a-4d5e-8f21-0ab3c4d5e6f7")
 pub trait INamedCounter: ICounter {
-    fn GetName(self, capacity: ULONG, needed: Pointer[ULONG]?, name: Pointer[WCHAR]?): ffi.HResult
+    fn GetName(self, capacity: ULONG, needed: Pointer[ULONG]?, name: Pointer[WCHAR]?): ffi.HResult {
+        ffi.HResult.NotImplemented
+    }
 }
 
 pub extern fn counter_make(made: Pointer[Pointer[ffi.Void]?]?): ffi.HResult
 ```
+
+Each method that gives an `HRESULT` comes with a body that answers
+`HResult.NotImplemented`, which is COM's own answer for a method an object
+does not have. So a Tondo type implements only the methods it cares for, of
+an interface that may have eighty: with an `impl counter.ICounter for Tally`
+that has `Add` and nothing else, `GetTotal` called through the object's
+table answers `0x80004001: Not implemented`. A method with another result
+has no body, and every type that implements the interface writes it.
 
 An interface whose id is in a file that was not given, as the `_i.c` that
 MIDL writes beside a header, takes it from `--id ICounter=<GUID>`, which can
