@@ -456,7 +456,10 @@ pub extern "C" fn tondo_rt_panic_held() -> u8 {
             record.print(false, false);
             record.panic.headline()
         });
-        eprintln!("tondo: task {} waits here: save a fix, and this function starts again", task.id);
+        // One write, so that a reader of the stream, as `run_output`, never
+        // finds half of it: `eprintln!` writes each piece of its format.
+        let said = format!("tondo: task {} waits here: save a fix, and this function starts again\n", task.id);
+        let _ = std::io::Write::write_all(&mut std::io::stderr(), said.as_bytes());
         // A debugger stops here first, and a fix may come while it does.
         let patches = crate::live::patches();
         crate::debugger::panicked(&text);
