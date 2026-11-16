@@ -86,6 +86,19 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// and only a set one calls the runtime, whose answer says where to go.
     /// The check for a panic that asks nothing, after a statement whose
     /// panics went to `then` themselves, is a jump.
+    /// Leaves or empties a region of the function, when it took a chunk:
+    /// one that took none has nothing to give back.
+    pub(super) fn region_call(&mut self, slot: ir::StackSlot, rt: Rt) {
+        let address = self.e.fb.ins().stack_addr(POINTER, slot, 0);
+        let chunks = self.e.fb.ins().load(POINTER, flags(), address, 16);
+        let (call, done) = (self.e.fb.create_block(), self.e.fb.create_block());
+        self.e.fb.ins().brif(chunks, call, &[], done, &[]);
+        self.e.fb.switch_to_block(call);
+        self.e.call_rt(rt, &[address]);
+        self.e.fb.ins().jump(done, &[]);
+        self.e.fb.switch_to_block(done);
+    }
+
     pub(super) fn fused_branch(&mut self, fused: Fused, quiet: bool) {
         let Fused { asked, cancelled, span, then, otherwise, .. } = fused;
         self.probed = None;
@@ -163,9 +176,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             Terminator::Return(value) => match self.operand(value) {
                 // The region goes, after the locals it held went.
-                returned if self.region.is_some() => {
-                    let address = self.e.fb.ins().stack_addr(POINTER, self.region.unwrap(), 0);
-                    self.e.call_rt(Rt::RegionLeave, &[address]);
+                returned if self.regions.iter().any(Option::is_some) => {
+                    for slot in self.regions.clone().into_iter().flatten() {
+                        self.region_call(slot, Rt::RegionLeave);
+                    }
                     match returned {
                         Val::Scalar(value) => self.e.fb.ins().return_(&[value]),
                         Val::Memory(_) | Val::Zero => self.e.fb.ins().return_(&[]),

@@ -504,6 +504,10 @@ fn lower_function(
         needs: function.needs,
         widest: false,
         region: Vec::new(),
+        loops: Vec::new(),
+        takes_region: false,
+        given: Vec::new(),
+        region_calls: Vec::new(),
     }
 }
 

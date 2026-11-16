@@ -182,10 +182,23 @@ pub struct Body {
     /// function with a clone of 256 bits for its version, or the clone,
     /// which only such functions inline, as the others have one width.
     pub widest: bool,
-    /// The statements that make a value in the function's own region, by
-    /// block and position (`regions`): the function has a region then,
-    /// which it leaves at each of its returns.
-    pub region: Vec<(u32, u32)>,
+    /// The statements that make a value in one of the function's regions,
+    /// by block and position (`regions`), and the region: 0, its own,
+    /// which it leaves at each of its returns; n, that of its loop n - 1
+    /// (`loops`), which each turn empties.
+    pub region: Vec<((u32, u32), u32)>,
+    /// The loops a region may be of: each one's head, and the blocks that
+    /// go back to it.
+    pub loops: Vec<(u32, Vec<u32>)>,
+    /// Whether it is the copy of a function that makes what it returns in
+    /// a region its caller gives, as a parameter after its own; and the
+    /// statements that make a value there.
+    pub takes_region: bool,
+    pub given: Vec<(u32, u32)>,
+    /// The calls of copies that take a region, by block and position, and
+    /// the region each gives: one of the function's, or none for the one
+    /// it was given.
+    pub region_calls: Vec<((u32, u32), Option<u32>)>,
 }
 
 /// A call inlined: the function it called and where that function is,

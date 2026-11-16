@@ -1508,6 +1508,10 @@ impl<'t> Shapes<'t> {
                 Class::Memory => signature.params.push(AbiParam::new(POINTER)),
             }
         }
+        // The region a copy that takes its caller's makes its result in.
+        if body.takes_region {
+            signature.params.push(AbiParam::new(POINTER));
+        }
         // A live build's hidden parameter: the state a frame brings from
         // the old code.
         if body.osr.is_some() {
@@ -3665,8 +3669,13 @@ struct FnCodegen<'a, 'b> {
     /// that unwinds the function goes to its caller's way.
     tried: bool,
     returns: bool,
-    /// The function's region, when a statement makes a value in it.
-    region: Option<ir::StackSlot>,
+    /// The function's regions, its own and its loops', by `Body.region`'s
+    /// numbers, each when a statement makes a value in it or a call gives
+    /// it; the region its caller gave, in a copy that takes it; and the
+    /// region the call being built gives.
+    regions: Vec<Option<ir::StackSlot>>,
+    given: Option<ir::Value>,
+    pass_region: Option<ir::Value>,
 }
 
 /// What a function of a debug build keeps for its probes (toolchain 7.6):
@@ -3913,7 +3922,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             quiet_check: false,
             tried: false,
             returns: false,
-            region: None,
+            regions: Vec::new(),
+            given: None,
+            pass_region: None,
         }
     }
 
@@ -3998,18 +4009,32 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Storage::Zero | Storage::Slot(_) => {}
             }
         }
+        if self.body.takes_region {
+            self.given = Some(incoming.next().expect("the region a caller gives"));
+        }
         if let Some(osr) = self.body.osr {
             let state = incoming.next().expect("the hidden parameter");
             self.write(&Place::local(osr), Val::Scalar(state));
         }
-        // The region, empty until its first value.
-        if !self.body.region.is_empty() {
-            let slot = self.e.fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 24, 3));
-            let zero = self.e.fb.ins().iconst(types::I64, 0);
-            for offset in [0, 8, 16] {
-                self.e.fb.ins().stack_store(POINTER, zero, slot, offset);
+        // The regions, each empty until its first value.
+        let used: Vec<u32> = self
+            .body
+            .region
+            .iter()
+            .map(|&(_, region)| region)
+            .chain(self.body.region_calls.iter().filter_map(|&(_, region)| region))
+            .collect();
+        self.regions = vec![None; self.body.loops.len() + 1];
+        for region in used {
+            if self.regions[region as usize].is_none() {
+                let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 24, 3);
+                let slot = self.e.fb.create_sized_stack_slot(data);
+                let zero = self.e.fb.ins().iconst(types::I64, 0);
+                for offset in [0, 8, 16] {
+                    self.e.fb.ins().stack_store(POINTER, zero, slot, offset);
+                }
+                self.regions[region as usize] = Some(slot);
             }
-            self.region = Some(slot);
         }
         if let Some(debug) = &self.debug {
             let zero = self.e.fb.ins().iconst(types::I64, 0);
@@ -4122,19 +4147,39 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.quiet_check = quiet;
                 self.tried = false;
                 quiet = self.inline_only(stmt);
-                self.e.region = match self.region {
-                    Some(slot) if self.body.region.contains(&(index as u32, at as u32)) => {
-                        Some(self.e.fb.ins().stack_addr(POINTER, slot, 0))
-                    }
-                    _ => None,
+                let position = (index as u32, at as u32);
+                let own = |this: &mut Self, region: u32| {
+                    let slot = this.regions[region as usize].expect("a region of the function");
+                    this.e.fb.ins().stack_addr(POINTER, slot, 0)
+                };
+                let made_in = self.body.region.iter().find(|&&(at, _)| at == position).map(|&(_, region)| region);
+                self.e.region = match made_in {
+                    Some(region) => Some(own(&mut self, region)),
+                    None if self.body.given.contains(&position) => self.given,
+                    None => None,
+                };
+                self.pass_region = match self.body.region_calls.iter().find(|&&(at, _)| at == position) {
+                    Some(&(_, Some(region))) => Some(own(&mut self, region)),
+                    Some(&(_, None)) => self.given,
+                    None => None,
                 };
                 self.statement(stmt);
                 self.e.region = None;
+                self.pass_region = None;
                 quiet |= self.tried;
             }
             self.unwind_to = None;
             for at in first.map_or(block.stmts.len(), |first| first + 1)..block.stmts.len() {
                 self.count_ways(index, at);
+            }
+            // A turn of a loop ends here: its region is emptied for the next.
+            let loops = self.body.loops.clone();
+            for (k, (_, back)) in loops.iter().enumerate() {
+                if let Some(slot) = self.regions[k + 1]
+                    && back.contains(&(index as u32))
+                {
+                    self.region_call(slot, Rt::RegionReset);
+                }
             }
             self.count_ways(index, block.stmts.len());
             // A jump back to an earlier block closes a loop: a step.

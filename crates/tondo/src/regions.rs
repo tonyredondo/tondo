@@ -72,6 +72,8 @@ struct Summary {
 #[derive(Clone)]
 struct Call {
     caller: usize,
+    /// The call's statement, by block and position.
+    at: (u32, u32),
     span: Span,
     /// The call as the caller's own code writes it: the call that brought
     /// the code inlined there, when it is in such code.
@@ -118,7 +120,7 @@ pub struct Taking {
 /// each call does with the result of its callee; while remarks are asked
 /// for, the verdicts as remarks.
 pub fn regions(
-    bodies: &mut [Body],
+    bodies: &mut Vec<Body>,
     types: &Types,
     sources: &crate::source::SourceMap,
     roots: &[usize],
@@ -126,8 +128,8 @@ pub fn regions(
     let summaries = summaries(bodies, types, roots);
     let loans: Vec<Vec<bool>> = bodies.iter().map(|body| body.loans.clone()).collect();
     let mut verdicts = Vec::new();
-    // The statements of each function that make a value in its own region.
-    let mut owned: Vec<Vec<(u32, u32)>> = vec![Vec::new(); bodies.len()];
+    // Each function's places and where its verdicts start.
+    let (mut all_sites, mut starts) = (Vec::new(), Vec::new());
     for (index, body) in bodies.iter().enumerate() {
         let sites = sites(body, types);
         let start = verdicts.len();
@@ -193,8 +195,9 @@ pub fn regions(
         }
         // What a region holds must be the region's too, as nothing lets go
         // of it when the region goes.
+        let fresh = |_: (u32, u32), callee: usize| summaries[callee].fresh;
         let mut region: Vec<bool> = verdicts[start..].iter().map(|verdict| verdict.region).collect();
-        for (at, (why, by)) in holding(body, types, &summaries, &loans, &sites, &mut region, false) {
+        for (at, (why, by)) in holding(body, types, &loans, &sites, &mut region, &fresh) {
             let verdict = &mut verdicts[start + at];
             let what = sites[at].what;
             verdict.region = false;
@@ -203,22 +206,11 @@ pub fn regions(
             verdict.text = format!("{what}stays on the heap: {why}");
             verdict.by = Some(by).filter(|by| *by != verdict.span);
         }
-        // What a build puts in the function's region today: what a region
-        // takes now, of those the verdicts give the function's own, holding
-        // only what it puts there too.
-        let mut placed: Vec<bool> =
-            sites.iter().zip(&verdicts[start..]).map(|(site, verdict)| site.placed && verdict.own).collect();
-        holding(body, types, &summaries, &loans, &sites, &mut placed, true);
-        for (site, placed) in sites.iter().zip(placed) {
-            if placed {
-                owned[index].push(site.at);
-            }
-        }
+        all_sites.push(sites);
+        starts.push(start);
     }
     if built() {
-        for (body, owned) in bodies.iter_mut().zip(owned) {
-            body.region = owned;
-        }
+        place(bodies, types, &summaries, &loans, &all_sites, &starts, &verdicts);
     }
     let takings = summaries
         .iter()
@@ -247,6 +239,293 @@ pub fn regions(
     (verdicts, takings)
 }
 
+/// What a build puts in regions today, of what a region takes now: in each
+/// function, what the verdicts give its own region, in the region of the
+/// function or of the innermost loop whose turn it does not outlive; in a
+/// copy of a function whose result some calls let go, which takes its
+/// caller's region, what it returns too. Each holds only what is put in a
+/// region and the results of the calls given one. A copy's result is its
+/// region's when all of it is, which depends on the copies it calls: until
+/// none changes. The calls that let a result go then call the copy, giving
+/// a region of theirs, and the copies' calls that return one, the region
+/// they were given.
+fn place(
+    bodies: &mut Vec<Body>,
+    types: &Types,
+    summaries: &[Summary],
+    loans: &[Vec<bool>],
+    all_sites: &[Vec<Site>],
+    starts: &[usize],
+    verdicts: &[Verdict],
+) {
+    let count = bodies.len();
+    // What each call does with its result, by caller and statement.
+    let mut taking: std::collections::HashMap<(usize, (u32, u32)), bool> = std::collections::HashMap::new();
+    for summary in summaries {
+        for call in &summary.calls {
+            match call.taken {
+                Taken::Drops => _ = taking.insert((call.caller, call.at), true),
+                Taken::Passes => _ = taking.insert((call.caller, call.at), false),
+                Taken::Keeps(..) => {}
+            }
+        }
+    }
+    // While regions are made: only the functions whose names hold
+    // TONDO_REGIONS_ONLY take part, to find one that goes wrong.
+    let only = std::env::var("TONDO_REGIONS_ONLY").ok();
+    let takes_part: Vec<bool> = bodies
+        .iter()
+        .map(|body| only.as_ref().is_none_or(|only| only.split(',').any(|only| body.name.contains(only))))
+        .collect();
+    // A copy for each function whose result a call lets go, through the
+    // callers that return it.
+    let mut copied = vec![false; count];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for index in 0..count {
+            if copied[index] || !summaries[index].fresh || !takes_part[index] {
+                continue;
+            }
+            let lets_go = summaries[index].calls.iter().any(|call| {
+                matches!(call.taken, Taken::Drops) || matches!(call.taken, Taken::Passes) && copied[call.caller]
+            });
+            if lets_go {
+                copied[index] = true;
+                changed = true;
+            }
+        }
+    }
+    let lifetimes: Vec<Lifetimes> = bodies.iter().map(Lifetimes::of).collect();
+    // The region of each call that lets its result go, by statement.
+    let call_regions: Vec<std::collections::HashMap<(u32, u32), u32>> = bodies
+        .iter()
+        .enumerate()
+        .map(|(index, body)| {
+            call_results(body)
+                .into_iter()
+                .filter(|&(block, at, ..)| taking.get(&(index, (block as u32, at as u32))) == Some(&true))
+                .filter_map(|(block, at, local, ..)| {
+                    let region = lifetimes[index].region(body, types, local, block, true, None)?;
+                    Some(((block as u32, at as u32), region))
+                })
+                .collect()
+        })
+        .collect();
+    // Whether a copy's result is all its region's, from all and down.
+    let mut whole = copied.clone();
+    let mut own: Vec<Vec<((u32, u32), u32)>> = vec![Vec::new(); count];
+    let mut copy_own: Vec<Vec<((u32, u32), u32)>> = vec![Vec::new(); count];
+    let mut copy_given: Vec<Vec<(u32, u32)>> = vec![Vec::new(); count];
+    loop {
+        let mut shrunk = false;
+        for index in 0..count {
+            let (body, sites) = (&bodies[index], &all_sites[index]);
+            let verdicts = &verdicts[starts[index]..starts[index] + sites.len()];
+            let regions: Vec<Option<u32>> = sites
+                .iter()
+                .zip(verdicts)
+                .map(|(site, verdict)| match takes_part[index] && site.placed && verdict.own {
+                    true => lifetimes[index].region(body, types, site.local, site.at.0 as usize, false, Some(site)),
+                    false => None,
+                })
+                .collect();
+            let lets_go = |at: (u32, u32), callee: usize| whole[callee] && call_regions[index].contains_key(&at);
+            let mut placed: Vec<bool> = regions.iter().map(Option::is_some).collect();
+            holding(body, types, loans, sites, &mut placed, &lets_go);
+            own[index] = sites
+                .iter()
+                .zip(&regions)
+                .zip(&placed)
+                .filter_map(|((site, region), placed)| region.filter(|_| *placed).map(|region| (site.at, region)))
+                .collect();
+            if !copied[index] {
+                continue;
+            }
+            let gives = |at: (u32, u32), callee: usize| match taking.get(&(index, at)) {
+                Some(true) => whole[callee] && call_regions[index].contains_key(&at),
+                Some(false) => whole[callee],
+                None => false,
+            };
+            let mut placed: Vec<bool> = sites
+                .iter()
+                .zip(verdicts)
+                .zip(&regions)
+                .map(|((site, verdict), region)| site.placed && verdict.region && (!verdict.own || region.is_some()))
+                .collect();
+            holding(body, types, loans, sites, &mut placed, &gives);
+            copy_own[index] = sites
+                .iter()
+                .zip(verdicts)
+                .zip(&regions)
+                .zip(&placed)
+                .filter(|(((_, verdict), _), placed)| **placed && verdict.own)
+                .filter_map(|(((site, _), region), _)| region.map(|region| (site.at, region)))
+                .collect();
+            copy_given[index] = sites
+                .iter()
+                .zip(verdicts)
+                .zip(&placed)
+                .filter(|((_, verdict), placed)| **placed && !verdict.own)
+                .map(|((site, _), _)| site.at)
+                .collect();
+            let made = made(body, types, loans, sites, &placed, &gives);
+            if whole[index] && !body.ret.is_some_and(|ret| made[ret.0 as usize]) {
+                whole[index] = false;
+                shrunk = true;
+            }
+        }
+        if !shrunk {
+            break;
+        }
+    }
+    // The copies, after the functions, and the calls that call them.
+    let mut copy_of = vec![None; count];
+    for index in 0..count {
+        if copied[index] {
+            let mut copy = bodies[index].clone();
+            copy.takes_region = true;
+            copy.region = std::mem::take(&mut copy_own[index]);
+            copy.given = std::mem::take(&mut copy_given[index]);
+            bodies.push(copy);
+            copy_of[index] = Some(bodies.len() - 1);
+        }
+    }
+    let origin: Vec<usize> = (0..count).chain((0..count).filter(|&index| copy_of[index].is_some())).collect();
+    for index in 0..bodies.len() {
+        let of = origin[index];
+        if index < count {
+            bodies[index].region = std::mem::take(&mut own[index]);
+        }
+        bodies[index].loops = lifetimes[of].back_edges(&bodies[of]);
+        let in_copy = index >= count;
+        let mut calls = Vec::new();
+        for (block, data) in bodies[index].blocks.iter_mut().enumerate() {
+            for (at, statement) in data.stmts.iter_mut().enumerate() {
+                let Statement::Assign(_, rvalue, _) = statement else { continue };
+                let Rvalue::Call(Callee::Fn(id), _) = &mut **rvalue else { continue };
+                let Some(copy) = copy_of[id.0 as usize] else { continue };
+                let position = (block as u32, at as u32);
+                let region = match taking.get(&(of, position)) {
+                    Some(true) => match call_regions[of].get(&position) {
+                        Some(&region) => Some(region),
+                        None => continue,
+                    },
+                    Some(false) if in_copy => None,
+                    _ => continue,
+                };
+                *id = crate::hir::FnId(copy as u32);
+                calls.push((position, region));
+            }
+        }
+        bodies[index].region_calls = calls;
+    }
+}
+
+/// Where a value a function lets go may go: its loops, the innermost
+/// first, the locals live at each one's head and where it is left.
+struct Lifetimes {
+    loops: Vec<(usize, Vec<bool>)>,
+    live_head: Vec<Vec<bool>>,
+    live_out: Vec<Vec<bool>>,
+    looped: Vec<bool>,
+}
+
+impl Lifetimes {
+    fn of(body: &Body) -> Lifetimes {
+        let loops = crate::hoist::loops(body);
+        let count = body.locals.len();
+        let live: Vec<Vec<bool>> = crate::mir::live_in(&body.blocks, count)
+            .into_iter()
+            .map(|locals| {
+                let mut set = vec![false; count];
+                for local in locals {
+                    set[local.0 as usize] = true;
+                }
+                set
+            })
+            .collect();
+        let mut looped = vec![false; body.blocks.len()];
+        let (mut live_head, mut live_out) = (Vec::new(), Vec::new());
+        for (head, inside) in &loops {
+            live_head.push(live[*head].clone());
+            let mut out = vec![false; count];
+            for (block, data) in body.blocks.iter().enumerate().filter(|&(block, _)| inside[block]) {
+                looped[block] = true;
+                for to in crate::hoist::targets(&data.terminator).into_iter().filter(|&to| !inside[to]) {
+                    for (out, &live) in out.iter_mut().zip(&live[to]) {
+                        *out |= live;
+                    }
+                }
+            }
+            live_out.push(out);
+        }
+        Lifetimes { loops, live_head, live_out, looped }
+    }
+
+    /// The region a value made in `block` would go in: the function's, 0,
+    /// outside every loop; else that of the innermost loop whose turn it
+    /// does not outlive, nothing that holds it live at the loop's head nor
+    /// where the loop is left, `k + 1`; or the function's for an array that
+    /// lives across the turns and grows (`bounded`); or none.
+    fn region(
+        &self,
+        body: &Body,
+        types: &Types,
+        local: Local,
+        block: usize,
+        parts: bool,
+        grows: Option<&Site>,
+    ) -> Option<u32> {
+        if !self.looped[block] {
+            return Some(0);
+        }
+        let held = holders(body, types, local, parts);
+        let outlives = |live: &[bool]| held.iter().zip(live).any(|(&held, &live)| held && live);
+        for (k, (_, inside)) in self.loops.iter().enumerate() {
+            if inside[block] && !outlives(&self.live_head[k]) && !outlives(&self.live_out[k]) {
+                return Some(k as u32 + 1);
+            }
+        }
+        grows.filter(|site| bounded(body, &self.looped, site)).map(|_| 0)
+    }
+
+    /// Each loop's head and the blocks that go back to it.
+    fn back_edges(&self, body: &Body) -> Vec<(u32, Vec<u32>)> {
+        self.loops
+            .iter()
+            .map(|(head, inside)| {
+                let back = body
+                    .blocks
+                    .iter()
+                    .enumerate()
+                    .filter(|&(block, data)| inside[block] && crate::hoist::targets(&data.terminator).contains(head))
+                    .map(|(block, _)| block as u32)
+                    .collect();
+                (*head as u32, back)
+            })
+            .collect()
+    }
+}
+
+/// Whether what a place makes in the function's own region stays within
+/// what the function does once: a place in a loop makes a value in each
+/// turn, which would gather in the region until the function returns, but
+/// for an array that lives across the turns and grows, given its value
+/// outside any loop, whose old room adds up to no more than what it ends
+/// with.
+fn bounded(body: &Body, looped: &[bool], site: &Site) -> bool {
+    if !looped[site.at.0 as usize] {
+        return true;
+    }
+    site.what.starts_with("grows")
+        && body.blocks.iter().enumerate().filter(|&(block, _)| looped[block]).all(|(_, data)| {
+            data.stmts.iter().all(|statement| {
+                !matches!(statement, Statement::Assign(place, ..) if place.local == site.local && place.path.is_empty())
+            })
+        })
+}
+
 /// The places a region would take that hold a value it did not make, why,
 /// and where they take it, until none is left: a value of a region holds
 /// only values of a region, its own or one that outlives it, or values that
@@ -256,16 +535,15 @@ pub fn regions(
 fn holding(
     body: &Body,
     types: &Types,
-    summaries: &[Summary],
     loans: &[Vec<bool>],
     sites: &[Site],
     region: &mut [bool],
-    placing: bool,
+    call_made: &dyn Fn((u32, u32), usize) -> bool,
 ) -> Vec<(usize, (String, Span))> {
     let counted = |place: &Place| types.needs_drop(body.place_ty(types, place));
     let mut found = Vec::new();
     loop {
-        let made = made(body, types, summaries, loans, sites, region, placing);
+        let made = made(body, types, loans, sites, region, call_made);
         let mut changed = false;
         for (at, site) in sites.iter().enumerate() {
             let (local, span) = (site.local, site.span);
@@ -375,18 +653,16 @@ fn holding(
 }
 
 /// The locals whose values a region made, or that count nothing: each
-/// value written whole into them is a place a region takes, a fresh result
-/// of a call, a constant, or a part or a copy of such a value. While a
-/// build places values (`placing`), a call's result is not a region's, as
-/// no region is given to calls yet.
+/// value written whole into them is a place a region takes, a result of a
+/// call `call_made` says a region makes, a constant, or a part or a copy of
+/// such a value.
 fn made(
     body: &Body,
     types: &Types,
-    summaries: &[Summary],
     loans: &[Vec<bool>],
     sites: &[Site],
     region: &[bool],
-    placing: bool,
+    call_made: &dyn Fn((u32, u32), usize) -> bool,
 ) -> Vec<bool> {
     let counted = |local: Local| types.needs_drop(body.locals[local.0 as usize]);
     let mut made = vec![true; body.locals.len()];
@@ -474,7 +750,7 @@ fn made(
                         || !site
                             && match &**rvalue {
                                 Rvalue::Use(operand) => from(operand),
-                                Rvalue::Call(Callee::Fn(id), _) => !placing && summaries[id.0 as usize].fresh,
+                                Rvalue::Call(Callee::Fn(id), _) => call_made(at, id.0 as usize),
                                 Rvalue::Aggregate(operands)
                                 | Rvalue::Variant(_, operands)
                                 | Rvalue::Array(operands, _) => operands.iter().all(from),
@@ -617,12 +893,13 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
 
 /// The locals that hold what `start` holds: that are it, a copy of it, or
 /// that contain it, as an array it was pushed into or a record made of it,
-/// as copies, parts or values made of it pass it on. An element read out of
-/// the value itself is another value, which it does not hold; one read out
-/// of what contains it may be it. What another operation gives, as the
+/// as copies, parts or values made of it pass it on. A part read out of the
+/// value itself is another value, which it does not hold, unless `parts`
+/// says its parts are its memory; one read out of what contains it may be
+/// it. What another operation gives, as the
 /// runtime's `trim` that may give back the text it was lent, may be it when
 /// it is of its type, and contain it when its type can refer to it.
-fn holders(body: &Body, types: &Types, start: Local) -> Vec<bool> {
+fn holders(body: &Body, types: &Types, start: Local, parts: bool) -> Vec<bool> {
     let count = body.locals.len();
     let (mut is, mut contains) = (vec![false; count], vec![false; count]);
     is[start.0 as usize] = true;
@@ -656,10 +933,10 @@ fn holders(body: &Body, types: &Types, start: Local) -> Vec<bool> {
                             may_be |= it && whole_value;
                             may_contain |= inside || (it && !whole_value);
                         } else if element(from) || !from.path.is_empty() {
-                            // A part: of the value itself, another value; of
+                            // A part: of the value itself, its memory; of
                             // what contains it, maybe the value.
                             may_be |= inside && whole_value;
-                            may_contain |= inside;
+                            may_contain |= inside || (it && parts);
                         }
                     };
                     match &**rvalue {
@@ -728,9 +1005,18 @@ fn holders(body: &Body, types: &Types, start: Local) -> Vec<bool> {
     (0..count).map(|index| is[index] || contains[index]).collect()
 }
 
-/// What becomes of what `start` holds in `body`.
+/// What becomes of what `start` holds in `body`. A parameter and the
+/// result of a call are followed through their parts too: a caller may
+/// give a value of its region, and the copy of a function that makes its
+/// result in a region the caller gives makes its parts there, places this
+/// function does not see.
 fn fate(body: &Body, types: &Types, start: Local, summaries: &[Summary], bodies: &[Body]) -> Fate {
-    let held = holders(body, types, start);
+    let called = body.params.contains(&start)
+        || body.blocks.iter().flat_map(|block| &block.stmts).any(|statement| {
+            matches!(statement, Statement::Assign(place, rvalue, _)
+                if place.local == start && place.path.is_empty() && matches!(**rvalue, Rvalue::Call(Callee::Fn(_), _)))
+        });
+    let held = holders(body, types, start, called);
     let holds = |local: Local| held[local.0 as usize];
     let reads = |operand: &Operand| matches!(operand, Operand::Copy(place) if holds(place.local));
     let outside = outside(body);
@@ -896,7 +1182,7 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize]) -> Vec<Summary> {
             let fresh = body.ret.is_some_and(|ret| {
                 let mut made = sites(body, types).into_iter().map(|site| site.local).collect::<Vec<_>>();
                 made.extend(fresh_calls(body, &summaries));
-                let reached = made.iter().any(|&local| holders(body, types, local)[ret.0 as usize]);
+                let reached = made.iter().any(|&local| holders(body, types, local, false)[ret.0 as usize]);
                 reached
                     && only_made(body, types, ret, &made)
                     && made.iter().all(|&local| !matches!(fate(body, types, local, &summaries, bodies), Fate::Kept(..)))
@@ -910,7 +1196,7 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize]) -> Vec<Summary> {
     }
     // What each call that runs does with the result it takes.
     for (index, body) in bodies.iter().enumerate().filter(|&(index, _)| live[index]) {
-        for (block, local, callee, span) in call_results(body) {
+        for (block, statement, local, callee, span) in call_results(body) {
             let mut written = span;
             let mut scope = body.scopes.get(block).copied().flatten();
             while let Some(at) = scope {
@@ -925,7 +1211,8 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize]) -> Vec<Summary> {
                 }
                 Fate::Kept(why, at) => Taken::Keeps(format!("`{}` keeps it: {why}", body.name), at),
             };
-            summaries[callee].calls.push(Call { caller: index, span, written, taken });
+            let at = (block as u32, statement as u32);
+            summaries[callee].calls.push(Call { caller: index, at, span, written, taken });
         }
     }
     summaries
@@ -933,15 +1220,15 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize]) -> Vec<Summary> {
 
 /// The locals that take the result of a call of the program's, with the
 /// block, the callee and the call.
-fn call_results(body: &Body) -> Vec<(usize, Local, usize, Span)> {
+fn call_results(body: &Body) -> Vec<(usize, usize, Local, usize, Span)> {
     let mut found = Vec::new();
     for (block, data) in body.blocks.iter().enumerate() {
-        for statement in &data.stmts {
+        for (at, statement) in data.stmts.iter().enumerate() {
             if let Statement::Assign(place, rvalue, span) = statement
                 && place.path.is_empty()
                 && let Rvalue::Call(Callee::Fn(id), _) = &**rvalue
             {
-                found.push((block, place.local, id.0 as usize, *span));
+                found.push((block, at, place.local, id.0 as usize, *span));
             }
         }
     }
@@ -952,8 +1239,8 @@ fn call_results(body: &Body) -> Vec<(usize, Local, usize, Span)> {
 fn fresh_calls(body: &Body, summaries: &[Summary]) -> Vec<Local> {
     call_results(body)
         .into_iter()
-        .filter(|&(_, _, callee, _)| summaries[callee].fresh)
-        .map(|(_, local, ..)| local)
+        .filter(|&(_, _, _, callee, _)| summaries[callee].fresh)
+        .map(|(_, _, local, ..)| local)
         .collect()
 }
 
@@ -962,7 +1249,7 @@ fn fresh_calls(body: &Body, summaries: &[Summary]) -> Vec<Local> {
 fn only_made(body: &Body, types: &Types, ret: Local, made: &[Local]) -> bool {
     let mut allowed = vec![false; body.locals.len()];
     for &local in made {
-        for (index, held) in holders(body, types, local).into_iter().enumerate() {
+        for (index, held) in holders(body, types, local, false).into_iter().enumerate() {
             allowed[index] |= held;
         }
     }

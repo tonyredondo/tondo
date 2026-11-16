@@ -42,6 +42,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 Val::Zero => {}
             }
         }
+        // The region a copy that takes its caller's is given.
+        if let (Callee::Fn(_), Some(region)) = (callee, self.pass_region.take()) {
+            values.push(region);
+        }
         let result = match callee {
             Callee::Fn(id) => {
                 let state = self.osr_arg.take();

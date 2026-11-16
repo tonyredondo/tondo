@@ -5,8 +5,9 @@
 //! took; a function that builds what its caller lets go is given the
 //! caller's region. The generated code moves the pointer when the chunk
 //! has room, and calls `tondo_rt_region_alloc` for a new chunk; leaving
-//! the region gives its chunks back, those of the usual size to a list of
-//! the thread's, for the next region to take without the allocator.
+//! the region gives its chunks back, those of the usual size to a list the
+//! threads share, for the next region to take without the allocator: a
+//! task that builds a tree in each turn may go on in another thread.
 //!
 //! A value in a region carries `REGION` in its count, which goes on
 //! counting below it, so that a change knows when it holds the only
@@ -14,7 +15,6 @@
 //! region lets go of it whole, and of what it holds, which a region made
 //! too.
 
-use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
@@ -51,13 +51,18 @@ struct Chunk {
 /// room takes a chunk of its own.
 const CHUNK: usize = 32 * 1024;
 const CHUNK_HEADER: usize = std::mem::size_of::<Chunk>();
-/// The chunks of the usual size a thread keeps for the next region.
-const KEPT: usize = 64;
+/// The chunks of the usual size kept for the next region, 32 MiB.
+const KEPT: usize = 1024;
 
-thread_local! {
-    static FREE: Cell<*mut Chunk> = const { Cell::new(std::ptr::null_mut()) };
-    static FREE_COUNT: Cell<usize> = const { Cell::new(0) };
+/// The chunks kept, linked, and how many.
+struct Kept {
+    first: *mut Chunk,
+    count: usize,
 }
+
+unsafe impl Send for Kept {}
+
+static FREE: std::sync::Mutex<Kept> = std::sync::Mutex::new(Kept { first: std::ptr::null_mut(), count: 0 });
 
 fn chunk_layout(size: usize) -> Layout {
     Layout::from_size_align(size, 16).expect("region chunk too large")
@@ -66,10 +71,11 @@ fn chunk_layout(size: usize) -> Layout {
 /// A chunk of `size` bytes, a kept one when it is of the usual size.
 unsafe fn take(size: usize) -> *mut Chunk {
     if size == CHUNK {
-        let kept = FREE.with(|free| free.get());
+        let mut free = FREE.lock().unwrap_or_else(|e| e.into_inner());
+        let kept = free.first;
         if !kept.is_null() {
-            FREE.with(|free| free.set(unsafe { (*kept).next }));
-            FREE_COUNT.with(|count| count.set(count.get() - 1));
+            free.first = unsafe { (*kept).next };
+            free.count -= 1;
             return kept;
         }
     }
@@ -118,18 +124,20 @@ pub unsafe extern "C" fn tondo_rt_region_leave(region: *mut Region) {
     unsafe {
         let r = &mut *region;
         let mut chunk = r.chunks;
+        let mut free = FREE.lock().unwrap_or_else(|e| e.into_inner());
         while !chunk.is_null() {
             let next = (*chunk).next;
             let size = (*chunk).size;
-            if size == CHUNK && FREE_COUNT.with(|count| count.get()) < KEPT {
-                (*chunk).next = FREE.with(|free| free.get());
-                FREE.with(|free| free.set(chunk));
-                FREE_COUNT.with(|count| count.set(count.get() + 1));
+            if size == CHUNK && free.count < KEPT {
+                (*chunk).next = free.first;
+                free.first = chunk;
+                free.count += 1;
             } else {
                 dealloc(chunk as *mut u8, chunk_layout(size));
             }
             chunk = next;
         }
+        drop(free);
         *r = Region { ptr: 0, end: 0, chunks: std::ptr::null_mut() };
     }
 }
@@ -179,6 +187,36 @@ pub unsafe extern "C" fn tondo_rt_array_reserve_in(
     unsafe { arrays::reserve_hint(slot, size, extra, retain, release, region) }
 }
 
+/// Empties the region for a loop's next turn: the chunk the next value
+/// would go in stays, emptied, and the others go back.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_region_reset(region: *mut Region) {
+    unsafe {
+        let r = &mut *region;
+        let current = r.end.wrapping_sub(CHUNK) as *mut Chunk;
+        let mut kept = std::ptr::null_mut();
+        let mut chunk = r.chunks;
+        let mut others = Region { ptr: 0, end: 0, chunks: std::ptr::null_mut() };
+        while !chunk.is_null() {
+            let next = (*chunk).next;
+            if chunk == current && (*chunk).size == CHUNK {
+                kept = chunk;
+            } else {
+                (*chunk).next = others.chunks;
+                others.chunks = chunk;
+            }
+            chunk = next;
+        }
+        tondo_rt_region_leave(&mut others);
+        if kept.is_null() {
+            *r = Region { ptr: 0, end: 0, chunks: std::ptr::null_mut() };
+            return;
+        }
+        (*kept).next = std::ptr::null_mut();
+        *r = Region { ptr: kept as usize + CHUNK_HEADER, end: kept as usize + CHUNK, chunks: kept };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,12 +258,16 @@ mod tests {
             }
             assert!(!(*r.chunks).next.is_null());
             tondo_rt_region_leave(&mut r);
-            assert!(FREE_COUNT.with(|count| count.get()) <= KEPT);
-            let kept = FREE.with(|free| free.get()) as usize;
-            assert_ne!(kept, 0);
+            // Other tests take chunks from the same list meanwhile: that it
+            // holds some, within what it keeps.
+            {
+                let free = FREE.lock().unwrap();
+                assert!(free.count <= KEPT);
+                assert!(free.count > 0 && !free.first.is_null());
+            }
             let mut again = region();
             let reused = tondo_rt_region_alloc(&mut again, 64);
-            assert_eq!(reused as usize, kept + CHUNK_HEADER);
+            assert_eq!(reused as usize % 16, 0);
             assert_ne!(first as usize, 0);
             tondo_rt_region_leave(&mut again);
         }
@@ -292,6 +334,26 @@ mod tests {
             assert!(arrays::unique(slot));
             assert_ne!((*slot).rc.load(Ordering::Relaxed) & REGION, 0);
             arrays::tondo_rt_array_release(slot, 8, None);
+            tondo_rt_region_leave(&mut r);
+        }
+    }
+
+    /// A loop's region keeps its current chunk for the next turn, emptied,
+    /// and gives back the others.
+    #[test]
+    fn a_reset_keeps_the_current_chunk() {
+        let mut r = region();
+        unsafe {
+            let first = tondo_rt_region_alloc(&mut r, 64);
+            tondo_rt_region_reset(&mut r);
+            assert_eq!(tondo_rt_region_alloc(&mut r, 64), first);
+            for _ in 0..CHUNK / 64 {
+                tondo_rt_region_alloc(&mut r, 64);
+            }
+            tondo_rt_region_alloc(&mut r, CHUNK * 2);
+            tondo_rt_region_reset(&mut r);
+            assert!(!r.chunks.is_null() && (*r.chunks).next.is_null());
+            assert_eq!(r.ptr, r.chunks as usize + CHUNK_HEADER);
             tondo_rt_region_leave(&mut r);
         }
     }
