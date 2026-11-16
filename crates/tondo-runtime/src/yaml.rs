@@ -69,13 +69,16 @@ fn reader(object: *mut NativeObject) -> Option<std::sync::MutexGuard<'static, Re
 /// A collection being read, for the paths of its values.
 enum Frame {
     List(usize),
-    /// A map, whether its next node is a key, its keys so far and the key
-    /// of the value being read; where the value of a merge key `<<` starts
-    /// while it is read, and the entries merged into the map, by key.
+    /// A map, whether its next node is a key, where its keys so far are
+    /// among the events, whether it has a merge key `<<`, which has none,
+    /// and which key the value being read is of; where the value of a merge
+    /// key starts while it is read, and the entries merged into the map, by
+    /// key.
     Map {
         key: bool,
-        keys: Vec<String>,
-        current: String,
+        keys: Vec<usize>,
+        merges: bool,
+        current: usize,
         merge: Option<usize>,
         merged: Vec<(String, Vec<Event>)>,
     },
@@ -94,13 +97,22 @@ struct Builder {
 
 type Failure = (String, String, usize, usize);
 
+/// The key of a map's value being read when it is a merge key `<<`.
+const MERGING: usize = usize::MAX - 1;
+
 impl Builder {
     fn path(&self) -> String {
         let mut path = String::new();
         for frame in &self.frames {
             match frame {
                 Frame::List(index) => path.push_str(&format!("[{index}]")),
-                Frame::Map { current, .. } => path.push_str(&format!(".{current}")),
+                Frame::Map { keys, current, .. } => {
+                    path.push('.');
+                    path.push_str(match *current {
+                        MERGING => "<<",
+                        at => keys.get(at).map_or("", |&event| self.events[event].text.as_str()),
+                    });
+                }
             }
         }
         path
@@ -156,19 +168,22 @@ impl Builder {
     /// gives, whose keys the map's own take over.
     fn key(&mut self, key: String, plain: bool, line: usize, column: usize) -> Result<(), Failure> {
         let start = self.events.len();
-        let Some(Frame::Map { key: expecting, keys, current, merge, .. }) = self.frames.last_mut() else {
+        let Some(Frame::Map { keys, merges, .. }) = self.frames.last() else {
             return Ok(());
         };
-        if keys.contains(&key) {
+        if keys.iter().any(|&event| self.events[event].text == key) || (*merges && key == "<<") {
             return Err(self.failure(format!("the key `{key}` appears twice in this map"), line, column));
         }
-        keys.push(key.clone());
-        *current = key.clone();
+        let Some(Frame::Map { key: expecting, keys, merges, current, merge, .. }) = self.frames.last_mut() else {
+            return Ok(());
+        };
         *expecting = false;
         if plain && key == "<<" {
-            *merge = Some(start);
+            (*merges, *current, *merge) = (true, MERGING, Some(start));
             return Ok(());
         }
+        keys.push(start);
+        *current = keys.len() - 1;
         self.push(KEY, line, column)?.text = key;
         Ok(())
     }
@@ -191,7 +206,7 @@ impl Builder {
                     return self.key(value.into_owned(), style == ScalarStyle::Plain, line, column);
                 }
                 let first = self.events.len();
-                self.scalar(&value, style, tag.as_deref(), line, column)?;
+                self.scalar(value, style, tag.as_deref(), line, column)?;
                 if anchor > 0 {
                     self.anchors.insert(anchor, self.events[first..].to_vec());
                 }
@@ -225,7 +240,9 @@ impl Builder {
                 let map = matches!(closed, Some(Frame::Map { .. }));
                 // The merged entries whose keys the map does not have.
                 if let Some(Frame::Map { keys, merged, .. }) = closed {
-                    for (key, value) in merged.into_iter().filter(|(key, _)| !keys.contains(key)) {
+                    let own = |key: &String| keys.iter().any(|&event| self.events[event].text == *key);
+                    let taken: Vec<(String, Vec<Event>)> = merged.into_iter().filter(|(key, _)| !own(key)).collect();
+                    for (key, value) in taken {
                         if self.events.len() + value.len() >= LIMIT {
                             return Err(self.failure(
                                 format!("the document holds more than {LIMIT} values"),
@@ -278,7 +295,14 @@ impl Builder {
             self.open.push((anchor, first, self.frames.len()));
         }
         self.frames.push(if map {
-            Frame::Map { key: true, keys: Vec::new(), current: String::new(), merge: None, merged: Vec::new() }
+            Frame::Map {
+                key: true,
+                keys: Vec::new(),
+                merges: false,
+                current: usize::MAX,
+                merge: None,
+                merged: Vec::new(),
+            }
         } else {
             Frame::List(0)
         });
@@ -288,7 +312,7 @@ impl Builder {
     /// A scalar value, resolved by its tag or, plain, by the core schema.
     fn scalar(
         &mut self,
-        value: &str,
+        value: Cow<'_, str>,
         style: ScalarStyle,
         tag: Option<&saphyr_parser::Tag>,
         line: usize,
@@ -297,7 +321,7 @@ impl Builder {
         let kind = match tag {
             // The tag decides what the text means, not the schema.
             Some(tag) if !tag.is_yaml_core_schema() => {
-                self.push(TEXT, line, column)?.text = value.to_string();
+                self.push(TEXT, line, column)?.text = value.into_owned();
                 self.events.last_mut().unwrap().tag = own(Some(tag));
                 return Ok(());
             }
@@ -305,26 +329,26 @@ impl Builder {
             None if style != ScalarStyle::Plain => "str",
             None => "",
         };
-        let null = matches!(value, "null" | "Null" | "NULL" | "~" | "");
-        let truth = match value {
+        let null = matches!(&*value, "null" | "Null" | "NULL" | "~" | "");
+        let truth = match &*value {
             "true" | "True" | "TRUE" => Some(true),
             "false" | "False" | "FALSE" => Some(false),
             _ => None,
         };
         match kind {
-            "str" => self.push(TEXT, line, column)?.text = value.to_string(),
+            "str" => self.push(TEXT, line, column)?.text = value.into_owned(),
             "null" | "" if null => {
                 self.push(NULL, line, column)?;
             }
             "bool" | "" if truth.is_some() => {
                 self.push(if truth == Some(true) { TRUE } else { FALSE }, line, column)?;
             }
-            "int" | "float" | "" if is_number(value) => {
-                if let Some(int) = integer(value) {
+            "int" | "float" | "" if is_number(&value) => {
+                if let Some(int) = integer(&value) {
                     self.push(INT, line, column)?.int = int;
-                } else if is_integer(value) {
+                } else if is_integer(&value) {
                     // Too large for an `Int`: kept as written.
-                    self.push(NUMBER, line, column)?.text = value.to_string();
+                    self.push(NUMBER, line, column)?.text = value.into_owned();
                 } else {
                     self.push(FLOAT, line, column)?.float = value.parse().unwrap_or(0.0);
                 }
@@ -337,7 +361,7 @@ impl Builder {
             {
                 return Err(self.failure(format!("`{value}` is not a finite number"), line, column));
             }
-            "" => self.push(TEXT, line, column)?.text = value.to_string(),
+            "" => self.push(TEXT, line, column)?.text = value.into_owned(),
             _ => return Err(self.failure(format!("`{value}` is not a `!!{kind}`"), line, column)),
         }
         Ok(())
@@ -529,13 +553,15 @@ fn current<T>(object: *mut NativeObject, part: impl Fn(&Event) -> T, empty: T) -
 /// The text of the event just read: a string, a key or a number as written.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_yaml_text(object: *mut NativeObject) -> *mut Str {
-    str_new(current(object, |event| event.text.clone(), String::new()).as_bytes())
+    let made = current(object, |event| str_new(event.text.as_bytes()), std::ptr::null_mut());
+    if made.is_null() { str_new(b"") } else { made }
 }
 
 /// The tag of its own the value just read has, or empty.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_yaml_tag(object: *mut NativeObject) -> *mut Str {
-    str_new(current(object, |event| event.tag.clone(), String::new()).as_bytes())
+    let made = current(object, |event| str_new(event.tag.as_bytes()), std::ptr::null_mut());
+    if made.is_null() { str_new(b"") } else { made }
 }
 
 #[unsafe(no_mangle)]
