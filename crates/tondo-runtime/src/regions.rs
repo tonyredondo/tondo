@@ -107,21 +107,34 @@ static FREE: std::sync::Mutex<Kept> = std::sync::Mutex::new(Kept { first: std::p
 /// thread, which allocates nothing more for them.
 const LOCAL: usize = 8;
 
-/// This thread's chunks, lent to `f`.
+/// This thread's chunks, lent to `f`, which takes or gives one. The thread
+/// keeps only the first; how many there are is in it, where a chunk kept
+/// has its size, as each kept one says how many lie from it on.
 fn local<R>(f: impl FnOnce(&mut Kept) -> R) -> R {
     let kept = super::tasks::kept();
-    let (first, count) = kept.chunks.get();
-    let mut local = Kept { first: first as *mut Chunk, count };
+    let first = kept.chunks.get() as *mut Chunk;
+    let count = if first.is_null() { 0 } else { unsafe { (*first).size } };
+    let mut local = Kept { first, count };
     let result = f(&mut local);
-    kept.chunks.set((local.first as *mut u8, local.count));
+    if !local.first.is_null() {
+        unsafe { (*local.first).size = local.count };
+    }
+    kept.chunks.set(local.first as *mut u8);
     result
 }
 
+/// A chunk this thread kept, with its size again.
+unsafe fn local_taken(chunk: *mut Chunk) -> *mut Chunk {
+    unsafe { (*chunk).size = CHUNK };
+    chunk
+}
+
 /// A thread ends: the chunks it kept go to the list the threads share.
-pub(crate) fn thread_ended((first, count): (*mut u8, usize)) {
+pub(crate) fn thread_ended(first: *mut u8) {
+    let count = if first.is_null() { 0 } else { unsafe { (*(first as *mut Chunk)).size } };
     let mut local = Kept { first: first as *mut Chunk, count };
     let mut free = FREE.lock().unwrap_or_else(|e| e.into_inner());
-    while let Some(chunk) = unsafe { local.pop() } {
+    while let Some(chunk) = unsafe { local.pop().map(|chunk| local_taken(chunk)) } {
         super::diagnostics::regions_took(0, -(CHUNK as i64));
         match free.count < KEPT {
             true => unsafe { free.push(chunk) },
@@ -143,7 +156,7 @@ fn chunk_layout(size: usize) -> Layout {
 /// thread's, else the threads'.
 unsafe fn take(size: usize) -> *mut Chunk {
     if size == CHUNK {
-        if let Some(chunk) = local(|kept| unsafe { kept.pop() }) {
+        if let Some(chunk) = local(|kept| unsafe { kept.pop().map(|chunk| local_taken(chunk)) }) {
             super::diagnostics::regions_took(CHUNK as i64, -(CHUNK as i64));
             return chunk;
         }

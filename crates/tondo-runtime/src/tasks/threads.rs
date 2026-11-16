@@ -329,7 +329,7 @@ pub(crate) struct Kept {
     pub(super) blocks: Cell<*mut Vec<*mut Spawned>>,
     /// What other parts of the runtime keep for it, each with what frees
     /// it (`keep_until_end`).
-    ends: std::cell::RefCell<Vec<(Free, *mut u8)>>,
+    ends: Cell<Vec<(Free, *mut u8)>>,
     /// The key's number when it was put under it.
     generation: Cell<usize>,
     /// The bounds of the thread's own stack, once looked up.
@@ -351,9 +351,9 @@ pub(crate) struct Kept {
     pub(super) helds: Cell<*mut Vec<Vec<Held>>>,
     pub(super) turns: Cell<*mut Vec<Arc<dyn Turned>>>,
     pub(super) events: Cell<*mut crate::poll::Events>,
-    /// The chunks of regions it keeps for its next ones, linked, and how
-    /// many (`regions`), which go to the list the threads share as it ends.
-    pub(crate) chunks: Cell<(*mut u8, usize)>,
+    /// The chunks of regions it keeps for its next ones, linked
+    /// (`regions`), which go to the list the threads share as it ends.
+    pub(crate) chunks: Cell<*mut u8>,
 }
 
 /// What frees a value a thread keeps (`keep_until_end`).
@@ -381,7 +381,7 @@ pub(crate) fn kept() -> &'static Kept {
             guarded: Cell::new(false),
             stacks: Cell::new(std::ptr::null_mut()),
             blocks: Cell::new(std::ptr::null_mut()),
-            ends: std::cell::RefCell::new(Vec::new()),
+            ends: Cell::new(Vec::new()),
             generation: Cell::new(0),
             own_stack: Cell::new((0, 0)),
             call: Cell::new(std::ptr::null_mut()),
@@ -395,7 +395,7 @@ pub(crate) fn kept() -> &'static Kept {
             helds: Cell::new(worker(|w| w.helds.get())),
             turns: Cell::new(worker(|w| w.turns.get())),
             events: Cell::new(worker(|w| w.events.get())),
-            chunks: Cell::new((std::ptr::null_mut(), 0)),
+            chunks: Cell::new(std::ptr::null_mut()),
         };
         kept = Box::into_raw(Box::new(new));
         KEPT.with(|cell| cell.set(kept));
@@ -423,7 +423,10 @@ pub(crate) fn kept() -> &'static Kept {
 /// `free(value, false)` frees what `value` holds and leaves `value`, which
 /// the thread-local still points to.
 pub(crate) fn keep_until_end(free: Free, value: *mut u8) {
-    kept().ends.borrow_mut().push((free, value));
+    let kept = kept();
+    let mut ends = kept.ends.take();
+    ends.push((free, value));
+    kept.ends.set(ends);
 }
 
 /// The destructor of the key, as a thread ends.
@@ -474,9 +477,11 @@ pub(super) fn give_back_kept() {
             stacks.clear();
         }
         free_blocks(kept.blocks.get(), false);
-        for &(free, value) in kept.ends.borrow().iter() {
+        let ends = kept.ends.take();
+        for &(free, value) in &ends {
             unsafe { free(value, false) };
         }
+        kept.ends.set(ends);
     }
     SPARE_STACKS.lock().unwrap_or_else(|e| e.into_inner()).clear();
     if let Some(key) = key {

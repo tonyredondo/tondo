@@ -446,7 +446,7 @@ pub(super) fn worker_ended(kept: &Kept) {
     }
     runner_ended(kept);
     in_c_ended(kept);
-    crate::regions::thread_ended(kept.chunks.replace((std::ptr::null_mut(), 0)));
+    crate::regions::thread_ended(kept.chunks.replace(std::ptr::null_mut()));
     free(&kept.waits);
     free(&kept.helds);
     free(&kept.turns);
