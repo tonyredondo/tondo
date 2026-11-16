@@ -162,6 +162,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 };
             }
             Terminator::Return(value) => match self.operand(value) {
+                // The region goes, after the locals it held went.
+                returned if self.region.is_some() => {
+                    let address = self.e.fb.ins().stack_addr(POINTER, self.region.unwrap(), 0);
+                    self.e.call_rt(Rt::RegionLeave, &[address]);
+                    match returned {
+                        Val::Scalar(value) => self.e.fb.ins().return_(&[value]),
+                        Val::Memory(_) | Val::Zero => self.e.fb.ins().return_(&[]),
+                    };
+                }
                 // A debugger stepping shows what the function returned.
                 returned if self.debug.is_some() && self.operand_ty(value) != Ty::UNIT => {
                     let ty = self.operand_ty(value);

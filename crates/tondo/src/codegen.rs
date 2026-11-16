@@ -93,6 +93,8 @@ const STRING_BYTES: i64 = 24;
 /// The count of a static array: so many references that releases never
 /// bring it to one, so that a change copies it, as one of a shared array.
 const SHARED_FOREVER: u64 = 1 << 62;
+/// The bit of the count of a value in a region (`REGION` of the runtime).
+const REGION: u64 = 1 << 61;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Class {
@@ -2240,11 +2242,14 @@ struct Emit<'a, G: ?Sized> {
     /// Whether it builds a glue function, which lets go of what a record
     /// holds, as each node of a tree does: one whose array may be `[]`.
     glue: bool,
+    /// While a statement that makes a value in the function's region is
+    /// built: the region's address (`Body.region`).
+    region: Option<ir::Value>,
 }
 
 impl<'a, G: ?Sized> Emit<'a, G> {
     fn new(cg: &'a mut G, fb: FunctionBuilder<'a>) -> Self {
-        Emit { cg, fb, data: HashMap::new(), site: None, statement: None, glue: false }
+        Emit { cg, fb, data: HashMap::new(), site: None, statement: None, glue: false, region: None }
     }
 }
 
@@ -3060,7 +3065,10 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
     fn init_component(&mut self, base: ir::Value, slot: &Slot, value: Val) {
         if slot.boxed {
             let size = self.fb.ins().iconst(POINTER, self.cg.layout(slot.ty).size as i64);
-            let cell = self.call_rt(Rt::BoxNew, &[size]).unwrap();
+            let cell = match self.region {
+                Some(region) => self.call_rt(Rt::BoxNewIn, &[region, size]).unwrap(),
+                None => self.call_rt(Rt::BoxNew, &[size]).unwrap(),
+            };
             let inner = self.fb.ins().iadd_imm_s(cell, BOX_HEADER);
             self.store_val(inner, slot.ty, value);
             self.fb.ins().store(flags(), cell, base, slot.offset as i32);
@@ -3657,6 +3665,8 @@ struct FnCodegen<'a, 'b> {
     /// that unwinds the function goes to its caller's way.
     tried: bool,
     returns: bool,
+    /// The function's region, when a statement makes a value in it.
+    region: Option<ir::StackSlot>,
 }
 
 /// What a function of a debug build keeps for its probes (toolchain 7.6):
@@ -3903,6 +3913,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             quiet_check: false,
             tried: false,
             returns: false,
+            region: None,
         }
     }
 
@@ -3990,6 +4001,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         if let Some(osr) = self.body.osr {
             let state = incoming.next().expect("the hidden parameter");
             self.write(&Place::local(osr), Val::Scalar(state));
+        }
+        // The region, empty until its first value.
+        if !self.body.region.is_empty() {
+            let slot = self.e.fb.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 24, 3));
+            let zero = self.e.fb.ins().iconst(types::I64, 0);
+            for offset in [0, 8, 16] {
+                self.e.fb.ins().stack_store(POINTER, zero, slot, offset);
+            }
+            self.region = Some(slot);
         }
         if let Some(debug) = &self.debug {
             let zero = self.e.fb.ins().iconst(types::I64, 0);
@@ -4102,7 +4122,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.quiet_check = quiet;
                 self.tried = false;
                 quiet = self.inline_only(stmt);
+                self.e.region = match self.region {
+                    Some(slot) if self.body.region.contains(&(index as u32, at as u32)) => {
+                        Some(self.e.fb.ins().stack_addr(POINTER, slot, 0))
+                    }
+                    _ => None,
+                };
                 self.statement(stmt);
+                self.e.region = None;
                 quiet |= self.tried;
             }
             self.unwind_to = None;

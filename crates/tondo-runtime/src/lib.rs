@@ -71,6 +71,7 @@ mod references;
 mod reflect;
 mod regex;
 mod regex_dialect;
+mod regions;
 mod replay;
 mod server;
 mod shared;

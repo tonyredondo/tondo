@@ -182,6 +182,10 @@ pub struct Body {
     /// function with a clone of 256 bits for its version, or the clone,
     /// which only such functions inline, as the others have one width.
     pub widest: bool,
+    /// The statements that make a value in the function's own region, by
+    /// block and position (`regions`): the function has a region then,
+    /// which it leaves at each of its returns.
+    pub region: Vec<(u32, u32)>,
 }
 
 /// A call inlined: the function it called and where that function is,

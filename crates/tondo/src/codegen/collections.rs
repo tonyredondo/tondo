@@ -192,9 +192,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let out = removes.then(|| self.scratch(element));
         let (slot, spilled) = self.array_slot(target);
         let found = match (mutation, source, out) {
-            (Mutation::Push, Some(source), _) if !deque => {
-                self.e.call_rt(Rt::ArrayPush, &[slot, source, size, retain_glue, release_glue])
-            }
+            (Mutation::Push, Some(source), _) if !deque => match self.e.region {
+                Some(region) => {
+                    self.e.call_rt(Rt::ArrayPushIn, &[region, slot, source, size, retain_glue, release_glue])
+                }
+                None => self.e.call_rt(Rt::ArrayPush, &[slot, source, size, retain_glue, release_glue]),
+            },
             (Mutation::Push | Mutation::PushFront, Some(source), _) => {
                 let front = self.e.fb.ins().iconst(types::I8, (mutation == Mutation::PushFront) as i64);
                 self.e.call_rt(Rt::DequePush, &[slot, source, size, front, retain_glue, release_glue])
@@ -217,7 +220,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             (Mutation::Clear, ..) => self.e.call_rt(Rt::ArrayClear, &[slot, size, release_glue]),
             (Mutation::Reserve, ..) => {
                 let extra = self.scalar_of(values[0]);
-                self.e.call_rt(Rt::ArrayReserve, &[slot, size, extra, retain_glue, release_glue])
+                match self.e.region {
+                    Some(region) => {
+                        self.e.call_rt(Rt::ArrayReserveIn, &[region, slot, size, extra, retain_glue, release_glue])
+                    }
+                    None => self.e.call_rt(Rt::ArrayReserve, &[slot, size, extra, retain_glue, release_glue]),
+                }
             }
             _ => unreachable!("not a sequence mutation"),
         };
@@ -248,6 +256,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             (None, None) => unreachable!(),
         };
         let count = self.e.fb.ins().atomic_load(types::I64, flags(), array);
+        // An array in a region counts below its bit (`REGION` of the
+        // runtime), which a push into the region leaves out.
+        let count = match self.e.region {
+            Some(_) => self.e.fb.ins().band_imm_u(count, !REGION as i64),
+            None => count,
+        };
         let length = self.e.fb.ins().load(types::I64, flags(), array, 8);
         let capacity = self.e.fb.ins().load(types::I64, flags(), array, 16);
         let unique = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, 1);
@@ -276,7 +290,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             (None, Some(address)) => address,
             (None, None) => unreachable!(),
         };
-        self.e.call_rt(Rt::ArrayPush, &[slot, source, size, retain, release]);
+        match self.e.region {
+            Some(region) => self.e.call_rt(Rt::ArrayPushIn, &[region, slot, source, size, retain, release]),
+            None => self.e.call_rt(Rt::ArrayPush, &[slot, source, size, retain, release]),
+        };
         if let Some(var) = var {
             self.unspill(var, slot);
         }

@@ -36,6 +36,15 @@ pub extern "C" fn tondo_rt_box_new(size: usize) -> *mut BoxHeader {
     }
 }
 
+/// A box of `size` bytes in the region, whose count says so.
+pub(crate) unsafe fn box_in(region: *mut super::regions::Region, size: usize) -> *mut BoxHeader {
+    unsafe {
+        let ptr = super::regions::tondo_rt_region_alloc(region, BOX_HEADER + size) as *mut BoxHeader;
+        ptr.write(BoxHeader { rc: AtomicUsize::new(super::regions::LAST_IN_REGION), size });
+        ptr
+    }
+}
+
 pub(crate) fn box_value(b: *mut BoxHeader) -> *mut u8 {
     unsafe { (b as *mut u8).add(BOX_HEADER) }
 }
@@ -78,7 +87,7 @@ pub unsafe extern "C" fn tondo_rt_box_release(b: *mut BoxHeader, release: Option
 pub unsafe extern "C" fn tondo_rt_box_unique(slot: *mut *mut BoxHeader, retain: Option<Glue>, release: Option<Glue>) {
     unsafe {
         let old = *slot;
-        if (*old).rc.load(Ordering::Acquire) == 1 {
+        if super::regions::only(&(*old).rc) {
             return;
         }
         let size = (*old).size;

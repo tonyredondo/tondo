@@ -1649,7 +1649,7 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, program: &crate::hir::Program, s
     // of its callee, to tell apart the calls of a function that returns
     // what it makes.
     let measured = std::env::var_os("TONDO_REGIONS");
-    if crate::regions::asked() || measured.is_some() {
+    if crate::regions::asked() || measured.is_some() || crate::regions::built() {
         // What code outside the program's calls: `main` and the exports.
         let roots: Vec<usize> = program
             .main

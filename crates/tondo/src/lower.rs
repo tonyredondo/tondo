@@ -503,6 +503,7 @@ fn lower_function(
         scopes: Vec::new(),
         needs: function.needs,
         widest: false,
+        region: Vec::new(),
     }
 }
 

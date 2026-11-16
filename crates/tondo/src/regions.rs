@@ -35,6 +35,12 @@ pub fn asked() -> bool {
     ASKED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Whether a build puts values in regions: while regions are made,
+/// `TONDO_REGIONS_BUILD=1` in the environment of a build.
+pub fn built() -> bool {
+    std::env::var_os("TONDO_REGIONS_BUILD").is_some()
+}
+
 /// What becomes of a value a function made.
 #[derive(Clone, Debug, PartialEq)]
 enum Fate {
@@ -91,6 +97,8 @@ pub struct Verdict {
     pub region: bool,
     /// Whether it is in a region only for the calls that let it go.
     pub by_call: bool,
+    /// Whether the region is the function's own.
+    pub own: bool,
     pub text: String,
     /// The code that keeps the value, which the remark names after it.
     pub by: Option<Span>,
@@ -116,12 +124,20 @@ pub fn regions(
     roots: &[usize],
 ) -> (Vec<Verdict>, Vec<Taking>) {
     let summaries = summaries(bodies, types, roots);
+    let loans: Vec<Vec<bool>> = bodies.iter().map(|body| body.loans.clone()).collect();
     let mut verdicts = Vec::new();
+    // The statements of each function that make a value in its own region.
+    let mut owned: Vec<Vec<(u32, u32)>> = vec![Vec::new(); bodies.len()];
     for (index, body) in bodies.iter().enumerate() {
-        for (local, span, what) in sites(body, types) {
+        let sites = sites(body, types);
+        let start = verdicts.len();
+        for site in &sites {
+            let (local, span, what) = (site.local, site.span, site.what);
             let name = &body.name;
             let mut by_call = false;
-            let (region, text, by) = match fate(body, types, local, &summaries, bodies) {
+            let fate = fate(body, types, local, &summaries, bodies);
+            let own = fate == Fate::Here;
+            let (region, text, by) = match fate {
                 Fate::Here => (true, format!("{what}would go in a region of `{name}`"), None),
                 Fate::Returned if !summaries[index].fresh => {
                     (false, format!("{what}stays on the heap: `{name}` returns it with what it was given"), None)
@@ -173,7 +189,35 @@ pub fn regions(
                 }
             };
             let by = by.filter(|by| *by != span);
-            verdicts.push(Verdict { function: body.name.clone(), span, region, by_call, text, by });
+            verdicts.push(Verdict { function: body.name.clone(), span, region, by_call, own, text, by });
+        }
+        // What a region holds must be the region's too, as nothing lets go
+        // of it when the region goes.
+        let mut region: Vec<bool> = verdicts[start..].iter().map(|verdict| verdict.region).collect();
+        for (at, (why, by)) in holding(body, types, &summaries, &loans, &sites, &mut region, false) {
+            let verdict = &mut verdicts[start + at];
+            let what = sites[at].what;
+            verdict.region = false;
+            verdict.by_call = false;
+            verdict.own = false;
+            verdict.text = format!("{what}stays on the heap: {why}");
+            verdict.by = Some(by).filter(|by| *by != verdict.span);
+        }
+        // What a build puts in the function's region today: what a region
+        // takes now, of those the verdicts give the function's own, holding
+        // only what it puts there too.
+        let mut placed: Vec<bool> =
+            sites.iter().zip(&verdicts[start..]).map(|(site, verdict)| site.placed && verdict.own).collect();
+        holding(body, types, &summaries, &loans, &sites, &mut placed, true);
+        for (site, placed) in sites.iter().zip(placed) {
+            if placed {
+                owned[index].push(site.at);
+            }
+        }
+    }
+    if built() {
+        for (body, owned) in bodies.iter_mut().zip(owned) {
+            body.region = owned;
         }
     }
     let takings = summaries
@@ -203,6 +247,254 @@ pub fn regions(
     (verdicts, takings)
 }
 
+/// The places a region would take that hold a value it did not make, why,
+/// and where they take it, until none is left: a value of a region holds
+/// only values of a region, its own or one that outlives it, or values that
+/// count nothing, as when the region goes it goes whole, letting go of
+/// nothing its values hold. A value the function was given, or that a call
+/// keeps a count of, would stay held, and leak.
+fn holding(
+    body: &Body,
+    types: &Types,
+    summaries: &[Summary],
+    loans: &[Vec<bool>],
+    sites: &[Site],
+    region: &mut [bool],
+    placing: bool,
+) -> Vec<(usize, (String, Span))> {
+    let counted = |place: &Place| types.needs_drop(body.place_ty(types, place));
+    let mut found = Vec::new();
+    loop {
+        let made = made(body, types, summaries, loans, sites, region, placing);
+        let mut changed = false;
+        for (at, site) in sites.iter().enumerate() {
+            let (local, span) = (site.local, site.span);
+            if !region[at] {
+                continue;
+            }
+            // The locals that are the value: its copies, whole.
+            let mut is = vec![false; body.locals.len()];
+            is[local.0 as usize] = true;
+            let mut grew = true;
+            while grew {
+                grew = false;
+                for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+                    let into = match statement {
+                        Statement::Assign(place, rvalue, _) if place.path.is_empty() => match &**rvalue {
+                            Rvalue::Use(Operand::Copy(from)) if from.path.is_empty() && is[from.local.0 as usize] => {
+                                place.local
+                            }
+                            _ => continue,
+                        },
+                        Statement::Lend(alias, place) if place.path.is_empty() && is[place.local.0 as usize] => *alias,
+                        _ => continue,
+                    };
+                    if !is[into.0 as usize] {
+                        is[into.0 as usize] = true;
+                        grew = true;
+                    }
+                }
+            }
+            // What is stored in it: by the statement that makes it, an
+            // element or a field written, or what grows it; and an array
+            // that grows here holds what it held before, which a region
+            // must have made too.
+            let mut outside = (site.what.starts_with("grows") && !made[local.0 as usize]).then_some(span);
+            for (at_statement, statement) in positioned(body) {
+                if outside.is_some() {
+                    break;
+                }
+                // A loan of one of its parts makes that part unique first,
+                // which copies a shared one onto the heap, as a change does.
+                if let Statement::Lend(_, lent) = statement
+                    && is[lent.local.0 as usize]
+                    && !lent.path.is_empty()
+                {
+                    outside = Some(span);
+                    break;
+                }
+                let Statement::Assign(place, rvalue, by) = statement else { continue };
+                // A change inside one of its elements or parts copies that
+                // element first when it is shared, as one of the program's
+                // data is, onto the heap, and leaves the copy in it.
+                let inside = |place: &Place| {
+                    is[place.local.0 as usize]
+                        && place.path.len() > 1
+                        && place.path.iter().any(|p| matches!(p, Proj::Index(..) | Proj::InBounds(_) | Proj::Field(_)))
+                };
+                // As does a slice written back into a part, or a part a call
+                // takes as a loan, through which it writes.
+                let part = |operand: &Operand| matches!(operand, Operand::Copy(place) if is[place.local.0 as usize] && !place.path.is_empty());
+                let deep = inside(place)
+                    || match &**rvalue {
+                        Rvalue::Mutate(_, target, ..) | Rvalue::AssignSlice(target, ..) => {
+                            is[target.local.0 as usize] && !target.path.is_empty()
+                        }
+                        Rvalue::Call(Callee::Fn(id), args) => {
+                            args.iter().zip(&loans[id.0 as usize]).any(|(arg, &loan)| loan && part(arg))
+                        }
+                        _ => false,
+                    };
+                if deep {
+                    outside = Some(*by);
+                    break;
+                }
+                let stored: Vec<&Operand> = match &**rvalue {
+                    Rvalue::Mutate(_, target, operands, ..) if is[target.local.0 as usize] => operands.iter().collect(),
+                    Rvalue::Aggregate(operands) | Rvalue::Variant(_, operands) | Rvalue::Array(operands, _)
+                        if place.path.is_empty() && place.local == local && at_statement == site.at =>
+                    {
+                        operands.iter().collect()
+                    }
+                    Rvalue::Use(operand) if !place.path.is_empty() && is[place.local.0 as usize] => vec![operand],
+                    Rvalue::Aggregate(operands) | Rvalue::Variant(_, operands) | Rvalue::Array(operands, _)
+                        if !place.path.is_empty() && is[place.local.0 as usize] =>
+                    {
+                        operands.iter().collect()
+                    }
+                    _ => continue,
+                };
+                let elsewhere = stored.into_iter().find(
+                    |operand| matches!(operand, Operand::Copy(from) if counted(from) && !made[from.local.0 as usize]),
+                );
+                if elsewhere.is_some() {
+                    outside = Some(*by);
+                    break;
+                }
+            }
+            if let Some(by) = outside {
+                region[at] = false;
+                changed = true;
+                found.push((at, ("it holds a value that its region did not make".to_string(), by)));
+            }
+        }
+        if !changed {
+            return found;
+        }
+    }
+}
+
+/// The locals whose values a region made, or that count nothing: each
+/// value written whole into them is a place a region takes, a fresh result
+/// of a call, a constant, or a part or a copy of such a value. While a
+/// build places values (`placing`), a call's result is not a region's, as
+/// no region is given to calls yet.
+fn made(
+    body: &Body,
+    types: &Types,
+    summaries: &[Summary],
+    loans: &[Vec<bool>],
+    sites: &[Site],
+    region: &[bool],
+    placing: bool,
+) -> Vec<bool> {
+    let counted = |local: Local| types.needs_drop(body.locals[local.0 as usize]);
+    let mut made = vec![true; body.locals.len()];
+    for &param in &body.params {
+        made[param.0 as usize] = !counted(param);
+    }
+    let taken = |local: Local, at: (u32, u32)| {
+        sites.iter().zip(region).any(|(site, &region)| region && site.local == local && site.at == at)
+    };
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (at, statement) in positioned(body) {
+            // What may make a local hold an array of the heap: a change of
+            // it, which copies it first when it is shared and may grow it,
+            // unless a region grows it; and a write of one of its elements,
+            // which copies it first too.
+            let changed_here = match statement {
+                Statement::Assign(_, rvalue, _) => match &**rvalue {
+                    Rvalue::Mutate(_, target, ..) => Some((target.local, taken(target.local, at))),
+                    _ => None,
+                },
+                _ => None,
+            }
+            .or(match statement {
+                Statement::Assign(place, ..)
+                    if place
+                        .path
+                        .iter()
+                        .any(|projection| matches!(projection, Proj::Index(..) | Proj::InBounds(_))) =>
+                {
+                    Some((place.local, false))
+                }
+                _ => None,
+            });
+            if let Some((target, kept)) = changed_here
+                && !kept
+                && made[target.0 as usize]
+                && counted(target)
+            {
+                made[target.0 as usize] = false;
+                changed = true;
+            }
+            // A call that takes a local as a loan may leave anything in it.
+            if let Statement::Assign(_, rvalue, _) = statement {
+                let lent: Vec<Local> = match &**rvalue {
+                    Rvalue::Call(Callee::Fn(id), args) => args
+                        .iter()
+                        .zip(&loans[id.0 as usize])
+                        .filter(|&(_, &loan)| loan)
+                        .filter_map(|(arg, _)| match arg {
+                            Operand::Copy(place) => Some(place.local),
+                            Operand::Const(_) => None,
+                        })
+                        .collect(),
+                    // The runtime reads what it is given; C and a function
+                    // value may take anything as a loan.
+                    Rvalue::Call(Callee::Std(_), _) => Vec::new(),
+                    Rvalue::Call(_, args) | Rvalue::CallIndirect(_, args) => args
+                        .iter()
+                        .filter_map(|arg| match arg {
+                            Operand::Copy(place) => Some(place.local),
+                            Operand::Const(_) => None,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                for local in lent {
+                    if made[local.0 as usize] && counted(local) {
+                        made[local.0 as usize] = false;
+                        changed = true;
+                    }
+                }
+            }
+            let (into, from_region) = match statement {
+                Statement::Assign(place, rvalue, _) if place.path.is_empty() && counted(place.local) => {
+                    let from = |operand: &Operand| match operand {
+                        Operand::Copy(from) => made[from.local.0 as usize],
+                        Operand::Const(_) => true,
+                    };
+                    // A place that makes a value on the heap, unless a
+                    // region takes it, whatever its parts are.
+                    let site = sites.iter().any(|site| site.local == place.local && site.at == at);
+                    let from_region = taken(place.local, at)
+                        || !site
+                            && match &**rvalue {
+                                Rvalue::Use(operand) => from(operand),
+                                Rvalue::Call(Callee::Fn(id), _) => !placing && summaries[id.0 as usize].fresh,
+                                Rvalue::Aggregate(operands)
+                                | Rvalue::Variant(_, operands)
+                                | Rvalue::Array(operands, _) => operands.iter().all(from),
+                                _ => false,
+                            };
+                    (place.local, from_region)
+                }
+                Statement::Lend(alias, place) => (*alias, made[place.local.0 as usize]),
+                Statement::LendAt(alias, _) => (*alias, false),
+                _ => continue,
+            };
+            if !from_region && made[into.0 as usize] {
+                made[into.0 as usize] = false;
+                changed = true;
+            }
+        }
+    }
+    made
+}
+
 /// What the calls of a function that returns what it makes do with it: the
 /// calls that let it go and those that keep it, through the callers that
 /// return it in turn, each once.
@@ -228,16 +520,42 @@ fn resolve(
     }
 }
 
-/// The locals the function makes a value on the heap in, where, and what
-/// it is in words: an array of values that are not all constants, a map,
-/// a slice, a box, an array that grows, a text, and the arrays, texts and
-/// other values the runtime gives.
-fn sites(body: &Body, types: &Types) -> Vec<(Local, Span, &'static str)> {
+/// The statements of a body with their block and position.
+fn positioned(body: &Body) -> impl Iterator<Item = ((u32, u32), &Statement)> {
+    body.blocks.iter().enumerate().flat_map(|(block, data)| {
+        data.stmts.iter().enumerate().map(move |(index, statement)| ((block as u32, index as u32), statement))
+    })
+}
+
+/// A place that makes a value on the heap.
+struct Site {
+    /// The local that holds the value.
+    local: Local,
+    span: Span,
+    /// What it is in words, before "would go" or "stays".
+    what: &'static str,
+    /// Its statement, by block and position.
+    at: (u32, u32),
+    /// Whether a region can take it today: an array, a box, an array that
+    /// grows by `push`.
+    placed: bool,
+}
+
+/// The places the function makes a value on the heap in: an array of
+/// values that are not all constants, a map, a slice, a box, an array that
+/// grows, a text, and the arrays, texts and other values the runtime gives.
+fn sites(body: &Body, types: &Types) -> Vec<Site> {
     let mut found = Vec::new();
-    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+    let array =
+        |place: &Place| matches!(types.kind(types.repr(body.place_ty(types, place))), crate::types::TyKind::Array(_));
+    for (at, statement) in positioned(body) {
         let Statement::Assign(place, rvalue, span) = statement else { continue };
+        let mut placed = false;
         let what = match &**rvalue {
-            Rvalue::Array(values, _) if values.iter().any(|value| matches!(value, Operand::Copy(_))) => "",
+            Rvalue::Array(values, _) if values.iter().any(|value| matches!(value, Operand::Copy(_))) => {
+                placed = true;
+                ""
+            }
             Rvalue::MapOp(crate::hir::MapOp::New, ..) => "",
             Rvalue::Slice(..) => "",
             Rvalue::Concat(_) if !body.framed.contains(&place.local) => "",
@@ -250,18 +568,28 @@ fn sites(body: &Body, types: &Types) -> Vec<(Local, Span, &'static str)> {
                 if !boxed {
                     continue;
                 }
+                placed = true;
                 ""
             }
             Rvalue::Mutate(
-                crate::hir::Mutation::Push | crate::hir::Mutation::PushFront | crate::hir::Mutation::InsertAt,
+                mutation @ (crate::hir::Mutation::Push
+                | crate::hir::Mutation::PushFront
+                | crate::hir::Mutation::InsertAt),
                 target,
                 ..,
             ) => {
-                found.push((target.local, *span, "grows an array that "));
+                let placed = *mutation == crate::hir::Mutation::Push && array(target);
+                found.push(Site { local: target.local, span: *span, what: "grows an array that ", at, placed });
+                continue;
+            }
+            // Room a loop is about to push into, which goes where its
+            // pushes go.
+            Rvalue::Mutate(crate::hir::Mutation::Reserve, target, ..) if array(target) => {
+                found.push(Site { local: target.local, span: *span, what: "grows an array that ", at, placed: true });
                 continue;
             }
             Rvalue::Mutate(crate::hir::Mutation::Insert, target, ..) => {
-                found.push((target.local, *span, "grows a map that "));
+                found.push(Site { local: target.local, span: *span, what: "grows a map that ", at, placed: false });
                 continue;
             }
             Rvalue::Call(Callee::Std(_), _) if types.needs_drop(body.place_ty(types, place)) => "",
@@ -281,7 +609,7 @@ fn sites(body: &Body, types: &Types) -> Vec<(Local, Span, &'static str)> {
             _ => continue,
         };
         if place.path.is_empty() {
-            found.push((place.local, *span, what));
+            found.push(Site { local: place.local, span: *span, what, at, placed });
         }
     }
     found
@@ -566,7 +894,7 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize]) -> Vec<Summary> {
             // The result: fresh when what reaches it is made here, or a
             // fresh result of a call.
             let fresh = body.ret.is_some_and(|ret| {
-                let mut made = sites(body, types).into_iter().map(|(local, ..)| local).collect::<Vec<_>>();
+                let mut made = sites(body, types).into_iter().map(|site| site.local).collect::<Vec<_>>();
                 made.extend(fresh_calls(body, &summaries));
                 let reached = made.iter().any(|&local| holders(body, types, local)[ret.0 as usize]);
                 reached

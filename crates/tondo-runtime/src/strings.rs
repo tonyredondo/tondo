@@ -514,6 +514,9 @@ pub(crate) unsafe fn scalar_count(s: *const Str) -> usize {
 pub(crate) fn dropped(rc: &AtomicUsize) -> usize {
     match rc.load(Ordering::Relaxed) {
         1 => 1,
+        // The last reference to a value in a region, which its region lets
+        // go of: nothing to count.
+        super::regions::LAST_IN_REGION => super::regions::LAST_IN_REGION,
         _ => rc.fetch_sub(1, Ordering::Release),
     }
 }

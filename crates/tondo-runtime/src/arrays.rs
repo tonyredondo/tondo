@@ -11,7 +11,7 @@ use super::*;
 /// its elements) when shared.
 #[repr(C)]
 pub struct ArrayHeader {
-    rc: AtomicUsize,
+    pub(crate) rc: AtomicUsize,
     pub(crate) len: usize,
     cap: usize,
     head: usize,
@@ -100,7 +100,7 @@ pub(crate) fn string_array(items: &[String]) -> *mut ArrayHeader {
 /// Whether no other value shares the array, so that a change of an item in
 /// place changes it alone.
 pub(crate) unsafe fn unique(a: *mut ArrayHeader) -> bool {
-    unsafe { (*a).rc.load(Ordering::Acquire) == 1 }
+    unsafe { super::regions::only(&(*a).rc) }
 }
 
 /// Visits an array's elements for the cycle collector.
@@ -129,6 +129,23 @@ fn try_array_alloc(layout: Layout, len: usize, cap: usize) -> Option<*mut ArrayH
         ptr.write(ArrayHeader { rc: AtomicUsize::new(1), len, cap, head: 0 });
         LIVE_OBJECTS.made();
         Some(ptr)
+    }
+}
+
+/// An array of `len` elements and room for `cap` in the region, whose
+/// count says so.
+pub(crate) unsafe fn array_in(
+    region: *mut super::regions::Region,
+    size: usize,
+    len: usize,
+    cap: usize,
+) -> *mut ArrayHeader {
+    let cap = cap.max(len);
+    let bytes = array_layout(size, cap).size();
+    unsafe {
+        let ptr = super::regions::tondo_rt_region_alloc(region, bytes) as *mut ArrayHeader;
+        ptr.write(ArrayHeader { rc: AtomicUsize::new(super::regions::LAST_IN_REGION), len, cap, head: 0 });
+        ptr
     }
 }
 
@@ -175,6 +192,8 @@ pub unsafe extern "C" fn tondo_rt_array_release(a: *mut ArrayHeader, size: usize
     let rc = unsafe { &(*a).rc };
     let before = match rc.load(Ordering::Relaxed) {
         last @ (1 | LAST_IN_BLOCK) => last,
+        // Its region lets go of it, and of its elements.
+        super::regions::LAST_IN_REGION => return,
         shared if shared & SHARED_FOREVER != 0 => return,
         _ => rc.fetch_sub(1, Ordering::Release),
     };
@@ -258,10 +277,25 @@ pub(crate) unsafe fn reserve(
     retain: Option<Glue>,
     release: Option<Glue>,
 ) {
+    unsafe { reserve_in(slot, size, front, back, center, retain, release, std::ptr::null_mut()) }
+}
+
+/// As `reserve`, with new storage in `region` when it is not null.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn reserve_in(
+    slot: *mut *mut ArrayHeader,
+    size: usize,
+    front: usize,
+    back: usize,
+    center: bool,
+    retain: Option<Glue>,
+    release: Option<Glue>,
+    region: *mut super::regions::Region,
+) {
     unsafe {
         let a = *slot;
         let (len, head, cap) = ((*a).len, (*a).head, (*a).cap);
-        let shared = (*a).rc.load(Ordering::Acquire) != 1;
+        let shared = !unique(a);
         if !shared && head >= front && head + len + back <= cap {
             return;
         }
@@ -280,7 +314,10 @@ pub(crate) unsafe fn reserve(
             (*a).head = new_head;
             return;
         }
-        let new = array_alloc(size, len, new_cap);
+        let new = match region.is_null() {
+            true => array_alloc(size, len, new_cap),
+            false => array_in(region, size, len, new_cap),
+        };
         (*new).head = new_head;
         moved_to(slot, new, size, retain, release);
     }
@@ -300,18 +337,19 @@ unsafe fn moved_to(
         let a = *slot;
         let (len, cap) = ((*a).len, (*a).cap);
         std::ptr::copy_nonoverlapping(element(a, size, 0), element(new, size, 0), len * size);
-        if (*a).rc.load(Ordering::Acquire) != 1 {
+        if !unique(a) {
             if let Some(retain) = retain {
                 for index in 0..len {
                     retain(element(new, size, index));
                 }
             }
             tondo_rt_array_release(a, size, release);
-        } else {
+        } else if (*a).rc.load(Ordering::Relaxed) & super::regions::REGION == 0 {
             // Unique: the elements moved; nothing is retained or released.
             LIVE_OBJECTS.gone();
             dealloc(a as *mut u8, array_layout(size, cap));
         }
+        // A region's storage goes with its region.
         *slot = new;
     }
 }
@@ -327,11 +365,24 @@ pub unsafe extern "C" fn tondo_rt_array_reserve(
     retain: Option<Glue>,
     release: Option<Glue>,
 ) {
+    unsafe { reserve_hint(slot, size, extra, retain, release, std::ptr::null_mut()) }
+}
+
+/// As `tondo_rt_array_reserve`, with the room in `region` when it is not
+/// null.
+pub(crate) unsafe fn reserve_hint(
+    slot: *mut *mut ArrayHeader,
+    size: usize,
+    extra: isize,
+    retain: Option<Glue>,
+    release: Option<Glue>,
+    region: *mut super::regions::Region,
+) {
     unsafe {
         let a = *slot;
         let (len, head, cap) = ((*a).len, (*a).head, (*a).cap);
         let Some(needed) = usize::try_from(extra).ok().and_then(|extra| len.checked_add(extra)) else { return };
-        if (*a).rc.load(Ordering::Acquire) == 1 && head + needed <= cap {
+        if unique(a) && head + needed <= cap {
             return;
         }
         // Twice the length at least, as a push grows it: a loop inside
@@ -340,7 +391,11 @@ pub unsafe extern "C" fn tondo_rt_array_reserve(
         let capacity = needed.max(len.saturating_mul(2));
         let room = size.checked_mul(capacity).and_then(|bytes| bytes.checked_add(ARRAY_HEADER));
         let layout = room.and_then(|bytes| Layout::from_size_align(bytes, 8).ok());
-        let Some(new) = layout.and_then(|layout| try_array_alloc(layout, len, capacity)) else { return };
+        let new = match region.is_null() {
+            true => layout.and_then(|layout| try_array_alloc(layout, len, capacity)),
+            false => layout.map(|_| array_in(region, size, len, capacity)),
+        };
+        let Some(new) = new else { return };
         moved_to(slot, new, size, retain, release);
     }
 }
@@ -465,7 +520,7 @@ pub unsafe extern "C" fn tondo_rt_array_remove_at(
 pub unsafe extern "C" fn tondo_rt_array_clear(slot: *mut *mut ArrayHeader, size: usize, release: Option<Glue>) {
     unsafe {
         let a = *slot;
-        if (*a).rc.load(Ordering::Acquire) != 1 {
+        if !unique(a) {
             *slot = array_alloc(size, 0, 0);
             tondo_rt_array_release(a, size, release);
             return;

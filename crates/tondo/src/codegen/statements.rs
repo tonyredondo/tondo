@@ -385,7 +385,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let size = self.e.cg.layout(element).size as i64;
                 let size_value = self.e.fb.ins().iconst(POINTER, size);
                 let count = self.e.fb.ins().iconst(POINTER, values.len() as i64);
-                let array = self.e.call_rt(Rt::ArrayNew, &[size_value, count]).unwrap();
+                let array = match self.e.region {
+                    Some(region) => self.e.call_rt(Rt::ArrayNewIn, &[region, size_value, count]).unwrap(),
+                    None => self.e.call_rt(Rt::ArrayNew, &[size_value, count]).unwrap(),
+                };
                 for (index, (value, retain)) in values.iter().zip(retain).enumerate() {
                     let address = self.e.fb.ins().iadd_imm_s(array, ARRAY_HEADER + index as i64 * size);
                     let value = self.operand(value);
