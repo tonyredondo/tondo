@@ -44,3 +44,42 @@ pub fn ended(child: std::process::Child, what: &str) -> std::process::Output {
         }
     }
 }
+
+/// A program a test started that runs until the test ends it. Dropped, as
+/// when an assertion fails before the end, it ends the program too, which
+/// would otherwise outlive the test.
+pub struct Started(Option<std::process::Child>);
+
+impl Started {
+    pub fn new(child: std::process::Child) -> Started {
+        Started(Some(child))
+    }
+
+    /// The program, for the test to end itself.
+    pub fn take(mut self) -> std::process::Child {
+        self.0.take().expect("a started program")
+    }
+}
+
+impl std::ops::Deref for Started {
+    type Target = std::process::Child;
+
+    fn deref(&self) -> &std::process::Child {
+        self.0.as_ref().expect("a started program")
+    }
+}
+
+impl std::ops::DerefMut for Started {
+    fn deref_mut(&mut self) -> &mut std::process::Child {
+        self.0.as_mut().expect("a started program")
+    }
+}
+
+impl Drop for Started {
+    fn drop(&mut self) {
+        if let Some(child) = &mut self.0 {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}

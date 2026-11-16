@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::until;
+use common::{Started, until};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -1392,8 +1392,9 @@ fn debugger_shows_waiting_tasks_and_returned_values() {
     let tasks = lines.iter().find_map(|l| l["tasks"].as_array()).unwrap();
     // It waits in `receive`, or, sent its value, is ready to go there; or
     // the stop found it on another worker at the line's probe, before it.
-    assert_eq!((&tasks[1]["task"], &tasks[1]["at"]), (&json!(2), &json!("waited.to:8 in waiter")));
-    assert!(["waits", "ready", "held"].contains(&tasks[1]["why"].as_str().unwrap_or_default()), "{tasks:?}");
+    let waiter = tasks.iter().find(|task| task["task"] == 2).unwrap_or_else(|| panic!("no task 2 in {lines:?}"));
+    assert_eq!(waiter["at"], "waited.to:8 in waiter", "{tasks:?}");
+    assert!(["waits", "ready", "held"].contains(&waiter["why"].as_str().unwrap_or_default()), "{tasks:?}");
     assert_eq!(lines.iter().find_map(|l| l["stack"].as_array()).unwrap()[0], "waited.to:8 in waiter");
     assert_eq!(lines.iter().find(|l| l["name"] == "label").unwrap()["value"], "\"waiter\"");
     let stops: Vec<(&str, &Value)> =
@@ -1731,7 +1732,8 @@ fn debugger_reaches_a_program_through_a_relay() {
         .status()
         .unwrap();
     assert!(status.success());
-    let mut program = Command::new(&executable).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap();
+    let mut program =
+        Started::new(Command::new(&executable).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap());
     // It serves the tools from before `main`, which says it is ready.
     let mut line = String::new();
     BufReader::new(program.stdout.take().unwrap()).read_line(&mut line).unwrap();
@@ -3258,11 +3260,13 @@ fn a_server_that_goes_wrong_dumps_itself_and_a_dump_can_be_shared() {
     let built =
         Command::new(tondo_bin).args(["build", "hangs.to", "--output", "hangs"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let mut server = Command::new(dir.join("hangs"))
-        .env("TONDO_DUMP", dir.join("dumps"))
-        .env("TONDO_DUMP_WHEN", "request=1s,stall=2s,keep=10")
-        .spawn()
-        .unwrap();
+    let mut server = Started::new(
+        Command::new(dir.join("hangs"))
+            .env("TONDO_DUMP", dir.join("dumps"))
+            .env("TONDO_DUMP_WHEN", "request=1s,stall=2s,keep=10")
+            .spawn()
+            .unwrap(),
+    );
     let mut client = until("the server's port", || std::net::TcpStream::connect(("127.0.0.1", port)).ok());
     std::io::Write::write_all(&mut client, b"GET /slow/7 HTTP/1.1\r\nHost: here\r\n\r\n").unwrap();
     // A request past its limit, then nothing moving, each with its dump.
@@ -3494,12 +3498,14 @@ fn a_request_is_followed_through_its_tasks() {
         client.read_to_string(&mut answer).unwrap();
         assert!(answer.ends_with('2'), "{answer}");
     };
-    let mut server = Command::new(dir.join("server"))
-        .env("TONDO_DIAGNOSTICS", "1")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut server = Started::new(
+        Command::new(dir.join("server"))
+            .env("TONDO_DIAGNOSTICS", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
     get();
     let pid = server.id().to_string();
     let asked = Command::new(tondo_bin).args(["requests", &pid, "--json"]).output().unwrap();
@@ -3645,12 +3651,14 @@ fn a_breakpoint_stops_one_task_of_a_release_build() {
         Command::new(tondo_bin).args(["build", "orders.to", "--output", "orders"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let printed = dir.join("printed");
-    let mut child = Command::new(dir.join("orders"))
-        .env("TONDO_DIAGNOSTICS", "1")
-        .stdout(std::fs::File::create(&printed).unwrap())
-        .stderr(std::fs::File::create(dir.join("errors")).unwrap())
-        .spawn()
-        .unwrap();
+    let mut child = Started::new(
+        Command::new(dir.join("orders"))
+            .env("TONDO_DIAGNOSTICS", "1")
+            .stdout(std::fs::File::create(&printed).unwrap())
+            .stderr(std::fs::File::create(dir.join("errors")).unwrap())
+            .spawn()
+            .unwrap(),
+    );
     let pid = child.id();
     // It serves the tools from before `main`, which prints as it starts.
     until("the program's first line", || (std::fs::metadata(&printed).unwrap().len() > 0).then_some(()));
@@ -4402,12 +4410,14 @@ fn a_dump_keeps_each_task_s_waits_and_wakes() {
         .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let blocked = |wakes: bool| {
-        let mut child = Command::new(dir.join("waits"))
-            .env("TONDO_DIAGNOSTICS", "1")
-            .env("TONDO_WAKES", if wakes { "1" } else { "0" })
-            .stdout(Stdio::null())
-            .spawn()
-            .unwrap();
+        let mut child = Started::new(
+            Command::new(dir.join("waits"))
+                .env("TONDO_DIAGNOSTICS", "1")
+                .env("TONDO_WAKES", if wakes { "1" } else { "0" })
+                .stdout(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
         let pid = child.id().to_string();
         // Until the task waits for its third value, which only asking sees.
         let graph = until("the task's wait for its third value", || {
@@ -4664,12 +4674,14 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     let built =
         Command::new(tondo_bin).args(["build", "server.to", "--output", "server"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let mut server = Command::new(dir.join("server"))
-        .env("TONDO_DUMP", dir.join("dumps"))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut server = Started::new(
+        Command::new(dir.join("server"))
+            .env("TONDO_DUMP", dir.join("dumps"))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
     let mut handling = BufReader::new(server.stdout.take().unwrap());
     // The client holds its connection open while the handler sleeps.
     let mut client = until("the server's port", || std::net::TcpStream::connect(("127.0.0.1", port)).ok());
@@ -4689,7 +4701,7 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
         read.status.success().then(|| serde_json::from_slice(&read.stdout).unwrap())
     });
     let _ = server.kill();
-    let output = server.wait_with_output().unwrap();
+    let output = server.take().wait_with_output().unwrap();
     let request = &requests["requests"][0];
     assert_eq!(request["method"], "GET", "{requests}");
     assert_eq!(request["path"], "/slow/77", "{requests}");
@@ -5027,11 +5039,13 @@ fn a_debugger_ended_by_a_signal_ends_its_program() {
     soon("the end of the adapter's program", || ended(program));
     // A program it attached to, stopped at a breakpoint, goes on.
     let printed = dir.join("printed");
-    let mut running = Command::new(dir.join("endless"))
-        .env("TONDO_DIAGNOSTICS", "1")
-        .stdout(std::fs::File::create(&printed).unwrap())
-        .spawn()
-        .unwrap();
+    let mut running = Started::new(
+        Command::new(dir.join("endless"))
+            .env("TONDO_DIAGNOSTICS", "1")
+            .stdout(std::fs::File::create(&printed).unwrap())
+            .spawn()
+            .unwrap(),
+    );
     let lines = || std::fs::read_to_string(&printed).unwrap_or_default().lines().count();
     soon("a line of the program", || lines() > 0);
     let mut adapter = Adapter::start();
@@ -5075,11 +5089,13 @@ fn a_held_task_goes_on_when_its_tool_ends() {
         Command::new(tondo).args(["build", "endless.to", "--output", "endless"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let printed = dir.join("printed");
-    let mut running = Command::new(dir.join("endless"))
-        .env("TONDO_DIAGNOSTICS", "1")
-        .stdout(std::fs::File::create(&printed).unwrap())
-        .spawn()
-        .unwrap();
+    let mut running = Started::new(
+        Command::new(dir.join("endless"))
+            .env("TONDO_DIAGNOSTICS", "1")
+            .stdout(std::fs::File::create(&printed).unwrap())
+            .spawn()
+            .unwrap(),
+    );
     let lines = || std::fs::read_to_string(&printed).unwrap_or_default().lines().count();
     soon("a line of the program", || lines() > 0);
     let pid = running.id().to_string();
@@ -5751,12 +5767,14 @@ fn a_debug_build_dumps_the_contexts_it_computes() {
         .output()
         .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let mut child = Command::new(&executable)
-        .env("TONDO_DIAGNOSTICS", "1")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = Started::new(
+        Command::new(&executable)
+            .env("TONDO_DIAGNOSTICS", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
     let mut line = String::new();
     BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
     assert_eq!(line, "ready\n");
@@ -5860,7 +5878,7 @@ fn debugger_logs_counts_changes_and_stops_at_panics() {
 /// The Debug Adapter Protocol for one test: requests in order, and what
 /// comes back.
 struct Adapter {
-    child: std::process::Child,
+    child: Started,
     input: std::process::ChildStdin,
     output: BufReader<std::process::ChildStdout>,
     seq: u64,
@@ -5883,14 +5901,16 @@ impl Adapter {
 
     /// With options of `tondo dap`.
     fn taking(args: &[&str], variables: &[(&str, &std::ffi::OsStr)]) -> Adapter {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
-            .arg("dap")
-            .args(args)
-            .envs(variables.iter().copied())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut child = Started::new(
+            Command::new(env!("CARGO_BIN_EXE_tondo"))
+                .arg("dap")
+                .args(args)
+                .envs(variables.iter().copied())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
         let input = child.stdin.take().unwrap();
         let output = BufReader::new(child.stdout.take().unwrap());
         Adapter { child, input, output, seq: 0, events: Vec::new() }
@@ -6490,12 +6510,14 @@ fn a_dump_stops_a_task_that_computes_at_its_next_line() {
     let built =
         Command::new(tondo_bin).args(["build", "--debug", "--output", "spins"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let mut child = Command::new(dir.join("spins"))
-        .env("TONDO_DIAGNOSTICS", "1")
-        .stdout(Stdio::piped())
-        .current_dir(&dir)
-        .spawn()
-        .unwrap();
+    let mut child = Started::new(
+        Command::new(dir.join("spins"))
+            .env("TONDO_DIAGNOSTICS", "1")
+            .stdout(Stdio::piped())
+            .current_dir(&dir)
+            .spawn()
+            .unwrap(),
+    );
     let mut line = String::new();
     BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
     assert_eq!(line, "ready\n");
@@ -6635,13 +6657,15 @@ fn a_directory_of_dumps_is_a_page_that_stays_up_to_date() {
         let ran = Command::new(dir.join("falls")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
         assert!(!ran.status.success());
     };
-    let mut server = Command::new(tondo_bin)
-        .args(["dump", "serve"])
-        .arg(dir.join("dumps"))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut server = Started::new(
+        Command::new(tondo_bin)
+            .args(["dump", "serve"])
+            .arg(dir.join("dumps"))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
     let mut url = String::new();
     BufReader::new(server.stdout.take().unwrap()).read_line(&mut url).unwrap();
     let address = url.trim().trim_start_matches("http://").trim_end_matches('/').to_string();
@@ -6798,12 +6822,14 @@ fn debug_adapter_takes_an_order_of_tasks() {
     std::fs::write(dir.join("src/main.to"), "fn main() {}\n").unwrap();
     std::fs::write(dir.join("src/main_test.to"), "test holds {\n    assert(1 == 1)\n}\n").unwrap();
     for (order, takes) in [("at:0.1", true), ("2a", true), ("at:x", false), ("not an order", false)] {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
-            .arg("dap")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut child = Started::new(
+            Command::new(env!("CARGO_BIN_EXE_tondo"))
+                .arg("dap")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
         let mut input = child.stdin.take().unwrap();
         let mut output = BufReader::new(child.stdout.take().unwrap());
         let mut asked = |seq: u32, command: &str, arguments: Value| {
