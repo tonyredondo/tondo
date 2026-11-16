@@ -1642,29 +1642,36 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, types: &crate::types::Types, sou
     // Where regions would take what the program makes, for `tondo
     // optimizations --kind region`, and while it is being measured:
     // `TONDO_REGIONS=<file>` writes a line for each place, the standard
-    // library's too.
+    // library's too, and `<file>.calls` what each call does with the result
+    // of its callee, to tell apart the calls of a function that returns
+    // what it makes.
     let measured = std::env::var_os("TONDO_REGIONS");
     if crate::regions::asked() || measured.is_some() {
-        let verdicts = crate::regions::regions(bodies, types);
+        let (verdicts, takings) = crate::regions::regions(bodies, types, sources);
         let Some(path) = measured else { return };
+        let place = |span: crate::source::Span| {
+            let (file, line, _) = sources.position(span.start);
+            if span == crate::source::Span::default() { "-".to_string() } else { format!("{file}:{line}") }
+        };
         let lines: String = verdicts
             .iter()
             .map(|verdict| {
-                let (file, line, _) = sources.position(verdict.span.start);
-                let place = if verdict.span == crate::source::Span::default() {
-                    "-".to_string()
-                } else {
-                    format!("{file}:{line}")
+                let region = match (verdict.region, verdict.by_call) {
+                    (true, true) => "call",
+                    (true, false) => "region",
+                    (false, _) => "heap",
                 };
-                format!(
-                    "{}\t{place}\t{}\t{}\n",
-                    verdict.function,
-                    if verdict.region { "region" } else { "heap" },
-                    verdict.text
-                )
+                format!("{}\t{}\t{region}\t{}\n", verdict.function, place(verdict.span), verdict.text)
             })
             .collect();
+        let calls: String = takings
+            .iter()
+            .map(|taking| format!("{}\t{}\t{}\t{}\n", taking.caller, taking.callee, place(taking.span), taking.taken))
+            .collect();
+        let mut calls_path = path.clone();
+        calls_path.push(".calls");
         let _ = std::fs::write(path, lines);
+        let _ = std::fs::write(calls_path, calls);
     }
 }
 

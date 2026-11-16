@@ -7504,7 +7504,11 @@ toward the heap: a value is in a region only when everything that could keep it 
 seen. A call of the runtime borrows what it is given unless its name says it puts it somewhere,
 as inserting, sending or setting do; C and calls through a function value may keep anything; and
 the result of a function called through a value, or of one with no call left in the program's
-code, as one inlined everywhere, may be kept by callers the analysis does not see. The kind is
+code, as one inlined everywhere, may be kept by callers the analysis does not see. The verdict
+of a function that returns what it makes belongs to its calls, not to it: when some let the
+result go and others keep it, a copy of the function for the first would build in their region,
+as copies are made for closures, so that one caller that keeps a builder's result does not keep
+on the heap what every other one makes and lets go. The kind is
 told only when asked for, as the analysis costs a build time and speaks of what does not exist
 yet; `TONDO_REGIONS=<file>` in the environment of a build writes every verdict, the standard
 library's too, so that they can be joined to a memory profile to count allocations rather than

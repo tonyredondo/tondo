@@ -4,9 +4,12 @@
 //! in the region of the function that makes it when nothing keeps it past
 //! the call; in one its caller gives when the function only returns it,
 //! fresh, and the callers that take it keep it nowhere either; and it
-//! stays on the heap otherwise, for the reason said. Nothing is built from
-//! this yet: `tondo optimizations --kind region` says it, so that what
-//! regions would reach is known before they are made.
+//! stays on the heap otherwise, for the reason said. When some calls let
+//! the result go and others keep it, it would go in a region in a copy of
+//! the function for the first, as copies are made for closures, and the
+//! verdict names both. Nothing is built from this yet: `tondo
+//! optimizations --kind region` says it, so that what regions would reach
+//! is known before they are made.
 //!
 //! What may keep a value is what `stack` and `lends` say keeps one: being
 //! stored in what the function was given, captured by a closure, sent,
@@ -51,12 +54,31 @@ struct Summary {
     /// Whether what it returns is only what it, or the fresh results of
     /// its calls, made: a value no one else holds.
     fresh: bool,
-    /// Whether every call of it keeps its result nowhere, in the caller
-    /// or, when the caller returns it, in the callers of that one.
-    dropped: bool,
-    /// When not, who keeps it and why, to say after "returns it, and ",
-    /// and where.
-    kept_by: Option<(String, Span)>,
+    /// Its calls the program's code makes by its name, and what each does
+    /// with the result.
+    calls: Vec<Call>,
+    /// Why calls of it that are not seen may keep its result: those
+    /// through a function value, or from outside the program's code.
+    unseen: Option<&'static str>,
+}
+
+/// A call of a function by its name.
+#[derive(Clone)]
+struct Call {
+    caller: usize,
+    span: Span,
+    taken: Taken,
+}
+
+/// What a call does with the result it takes.
+#[derive(Clone)]
+enum Taken {
+    /// It lets it go.
+    Drops,
+    /// It returns it, fresh, and the calls of the caller decide.
+    Passes,
+    /// It keeps it: who and why, to say after "returns it, and ", and where.
+    Keeps(String, Span),
 }
 
 /// One verdict, for the remark and for counting.
@@ -64,42 +86,103 @@ pub struct Verdict {
     pub function: String,
     pub span: Span,
     pub region: bool,
+    /// Whether it is in a region only for the calls that let it go.
+    pub by_call: bool,
     pub text: String,
     /// The code that keeps the value, which the remark names after it.
     pub by: Option<Span>,
 }
 
-/// The verdicts for every place that makes a value on the heap, and, while
-/// remarks are asked for, those remarks.
-pub fn regions(bodies: &mut [Body], types: &Types) -> Vec<Verdict> {
+/// What a call of a function of the program does with its result, for
+/// counting: the caller, the callee, the call, and `drops`, `passes` or
+/// `keeps`.
+pub struct Taking {
+    pub caller: String,
+    pub callee: String,
+    pub span: Span,
+    pub taken: &'static str,
+}
+
+/// The verdicts for every place that makes a value on the heap, and what
+/// each call does with the result of its callee; while remarks are asked
+/// for, the verdicts as remarks.
+pub fn regions(bodies: &mut [Body], types: &Types, sources: &crate::source::SourceMap) -> (Vec<Verdict>, Vec<Taking>) {
     let summaries = summaries(bodies, types);
     let mut verdicts = Vec::new();
     for (index, body) in bodies.iter().enumerate() {
         for (local, span, what) in sites(body, types) {
             let name = &body.name;
+            let mut by_call = false;
             let (region, text, by) = match fate(body, types, local, &summaries, bodies) {
                 Fate::Here => (true, format!("{what}would go in a region of `{name}`"), None),
-                Fate::Returned if summaries[index].fresh && summaries[index].dropped => {
-                    (true, format!("{what}would go in a region that the caller of `{name}` gives"), None)
+                Fate::Returned if !summaries[index].fresh => {
+                    (false, format!("{what}stays on the heap: `{name}` returns it with what it was given"), None)
                 }
-                Fate::Returned => match &summaries[index].kept_by {
-                    Some((who, at)) => (
-                        false,
-                        format!("{what}stays on the heap: `{name}` returns it, and {who}"),
-                        Some(*at).filter(|at| *at != Span::default()),
-                    ),
-                    None => {
-                        (false, format!("{what}stays on the heap: `{name}` returns it with what it was given"), None)
+                Fate::Returned => {
+                    let (mut drops, mut keeps) = (Vec::new(), Vec::new());
+                    let mut seen = vec![false; bodies.len()];
+                    resolve(index, &summaries, &mut seen, &mut drops, &mut keeps);
+                    match (drops.is_empty(), keeps.first()) {
+                        (false, None) => {
+                            (true, format!("{what}would go in a region that the caller of `{name}` gives"), None)
+                        }
+                        (false, Some((who, at))) => {
+                            by_call = true;
+                            let mut lets: Vec<String> = Vec::new();
+                            for (caller, at) in &drops {
+                                let (_, line, _) = sources.position(at.start);
+                                let said = format!("`{}` at {line}", bodies[*caller].name);
+                                if !lets.contains(&said) {
+                                    lets.push(said);
+                                }
+                            }
+                            let more = lets.len().saturating_sub(3);
+                            lets.truncate(3);
+                            if more > 0 {
+                                lets.push(format!("{more} more"));
+                            }
+                            let text = format!(
+                                "{what}would go in a region that the caller of `{name}` gives, in a copy of it for the \
+                                 calls that let it go: {}; {who}",
+                                lets.join(", ")
+                            );
+                            (true, text, Some(*at).filter(|at| *at != Span::default()))
+                        }
+                        (true, Some((who, at))) => (
+                            false,
+                            format!("{what}stays on the heap: `{name}` returns it, and {who}"),
+                            Some(*at).filter(|at| *at != Span::default()),
+                        ),
+                        (true, None) => (
+                            false,
+                            format!("{what}stays on the heap: `{name}` returns it, and no call of it lets it go"),
+                            None,
+                        ),
                     }
-                },
+                }
                 Fate::Kept(why, at) => {
                     (false, format!("{what}stays on the heap: {why}"), Some(at).filter(|at| *at != Span::default()))
                 }
             };
             let by = by.filter(|by| *by != span);
-            verdicts.push(Verdict { function: body.name.clone(), span, region, text, by });
+            verdicts.push(Verdict { function: body.name.clone(), span, region, by_call, text, by });
         }
     }
+    let takings = summaries
+        .iter()
+        .enumerate()
+        .flat_map(|(callee, summary)| summary.calls.iter().map(move |call| (callee, call)))
+        .map(|(callee, call)| Taking {
+            caller: bodies[call.caller].name.clone(),
+            callee: bodies[callee].name.clone(),
+            span: call.span,
+            taken: match call.taken {
+                Taken::Drops => "drops",
+                Taken::Passes => "passes",
+                Taken::Keeps(..) => "keeps",
+            },
+        })
+        .collect();
     if crate::mir_text::remarking() {
         for verdict in &verdicts {
             let body = bodies.iter_mut().find(|body| body.name == verdict.function);
@@ -109,7 +192,32 @@ pub fn regions(bodies: &mut [Body], types: &Types) -> Vec<Verdict> {
             }
         }
     }
-    verdicts
+    (verdicts, takings)
+}
+
+/// What the calls of a function that returns what it makes do with it: the
+/// calls that let it go and those that keep it, through the callers that
+/// return it in turn, each once.
+fn resolve(
+    index: usize,
+    summaries: &[Summary],
+    seen: &mut [bool],
+    drops: &mut Vec<(usize, Span)>,
+    keeps: &mut Vec<(String, Span)>,
+) {
+    if std::mem::replace(&mut seen[index], true) {
+        return;
+    }
+    if let Some(why) = summaries[index].unseen {
+        keeps.push((why.to_string(), Span::default()));
+    }
+    for call in &summaries[index].calls {
+        match &call.taken {
+            Taken::Drops => drops.push((call.caller, call.span)),
+            Taken::Keeps(who, at) => keeps.push((who.clone(), *at)),
+            Taken::Passes => resolve(call.caller, summaries, seen, drops, keeps),
+        }
+    }
 }
 
 /// The locals the function makes a value on the heap in, where, and what
@@ -381,9 +489,9 @@ fn fate(body: &Body, types: &Types, start: Local, summaries: &[Summary], bodies:
 }
 
 /// Each function's summary, from the callees up, until none changes: a
-/// parameter is kept when its value may be; a result is fresh when only
-/// what the function made reaches it; and it is dropped when no call
-/// keeps it.
+/// parameter is kept when its value may be, and a result is fresh when
+/// only what the function made reaches it; then what each call does with
+/// the result it takes.
 fn summaries(bodies: &[Body], types: &Types) -> Vec<Summary> {
     // Whether the program's code calls each function by its name, and
     // whether it calls it through a value too, as those calls are not seen.
@@ -415,12 +523,7 @@ fn summaries(bodies: &[Body], types: &Types) -> Vec<Summary> {
                 }
                 (false, true) => None,
             };
-            Summary {
-                keeps: vec![false; body.params.len()],
-                fresh: body.ret.is_some(),
-                dropped: unseen.is_none(),
-                kept_by: unseen.map(|why| (why.to_string(), Span::default())),
-            }
+            Summary { keeps: vec![false; body.params.len()], fresh: body.ret.is_some(), calls: Vec::new(), unseen }
         })
         .collect();
     let mut changed = true;
@@ -454,42 +557,34 @@ fn summaries(bodies: &[Body], types: &Types) -> Vec<Summary> {
                 changed = true;
             }
         }
-        // Whether the callers keep each fresh result.
-        for (index, body) in bodies.iter().enumerate() {
-            for (local, callee) in call_results(body) {
-                if !summaries[callee].dropped {
-                    continue;
+    }
+    // What each call does with the result it takes.
+    for (index, body) in bodies.iter().enumerate() {
+        for (local, callee, span) in call_results(body) {
+            let taken = match fate(body, types, local, &summaries, bodies) {
+                Fate::Here => Taken::Drops,
+                Fate::Returned if summaries[index].fresh => Taken::Passes,
+                Fate::Returned => {
+                    Taken::Keeps(format!("`{}` returns it with what it was given", body.name), Span::default())
                 }
-                let kept_by = match fate(body, types, local, &summaries, bodies) {
-                    Fate::Here => None,
-                    Fate::Returned if summaries[index].fresh && summaries[index].dropped => None,
-                    Fate::Returned => Some(match &summaries[index].kept_by {
-                        Some(kept_by) => kept_by.clone(),
-                        None => (format!("`{}` returns it with what it was given", body.name), Span::default()),
-                    }),
-                    Fate::Kept(why, at) => Some((format!("`{}` keeps it: {why}", body.name), at)),
-                };
-                if let Some(kept_by) = kept_by {
-                    summaries[callee].dropped = false;
-                    summaries[callee].kept_by = Some(kept_by);
-                    changed = true;
-                }
-            }
+                Fate::Kept(why, at) => Taken::Keeps(format!("`{}` keeps it: {why}", body.name), at),
+            };
+            summaries[callee].calls.push(Call { caller: index, span, taken });
         }
     }
     summaries
 }
 
 /// The locals that take the result of a call of the program's, with its
-/// callee.
-fn call_results(body: &Body) -> Vec<(Local, usize)> {
+/// callee and the call.
+fn call_results(body: &Body) -> Vec<(Local, usize, Span)> {
     let mut found = Vec::new();
     for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
-        if let Statement::Assign(place, rvalue, _) = statement
+        if let Statement::Assign(place, rvalue, span) = statement
             && place.path.is_empty()
             && let Rvalue::Call(Callee::Fn(id), _) = &**rvalue
         {
-            found.push((place.local, id.0 as usize));
+            found.push((place.local, id.0 as usize, *span));
         }
     }
     found
@@ -497,7 +592,7 @@ fn call_results(body: &Body) -> Vec<(Local, usize)> {
 
 /// The locals that take a fresh result of a call.
 fn fresh_calls(body: &Body, summaries: &[Summary]) -> Vec<Local> {
-    call_results(body).into_iter().filter(|&(_, callee)| summaries[callee].fresh).map(|(local, _)| local).collect()
+    call_results(body).into_iter().filter(|&(_, callee, _)| summaries[callee].fresh).map(|(local, ..)| local).collect()
 }
 
 /// Whether every value written whole into `ret`, or into a local that
