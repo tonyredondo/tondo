@@ -136,7 +136,9 @@ console.println("{CounterObject.Id} {ffi.HResult.NoInterface}")
 
 - `tondo bind header.h` writes the traits of a header's interfaces, as
   MIDL writes them for C, with their ids from the header; one whose id the
-  header does not give takes `--id Name=<GUID>`.
+  header does not give takes `--id Name=<GUID>`. Each method that gives
+  `ffi.HResult` has a body giving `ffi.HResult.NotImplemented`, so a type
+  implements only the methods it cares for.
 - `ffi.Unknown` is `IUnknown`; an interface that requires it has an `id`,
   its GUID as the header writes it. `counter.unknown()` is the same object
   as an `ffi.Unknown`, and `CounterObject.Id` its identity, to give

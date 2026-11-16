@@ -425,7 +425,11 @@ llama. El `id` de una interfaz sale del texto de los headers que lee:
 `DEFINE_GUID(IID_Nombre, ...)` y `MIDL_DEFINE_GUID(IID, IID_Nombre, ...)`; o
 de `--id Nombre=<GUID>`, que se puede repetir. Una interfaz que llega a
 `ffi.Unknown` sin `id`, o que extiende una que no se escribe, queda fuera del
-módulo con el porqué, que nombra `--id` primero.
+módulo con el porqué, que nombra `--id` primero. Cada método que da
+`ffi.HResult` tiene un cuerpo que da `ffi.HResult.NotImplemented`, el
+`E_NOTIMPL` de COM: un tipo de Tondo implementa solo los que le importan, y
+llamar a un objeto que hizo C no cambia, porque va por su tabla. Un método
+que da otra cosa no tiene cuerpo.
 
 `--fails <file>` nombra, una por línea y con `#` para comentarios, las
 funciones que fallan dando -1 o un puntero nulo con el número de error del

@@ -201,7 +201,7 @@ fn interfaces_of_c() {
     run(Command::new(compiler).arg("build").arg(&project).arg("--output").arg(&executable));
     assert_eq!(
         run(&mut Command::new(&executable)),
-        "true true 0x80070057: The parameter is incorrect true 40\ntrue true true 5 tally\n1 0\n"
+        "true true 0x80070057: The parameter is incorrect true 40\ntrue true true 5 tally\n1 0\nadds 2\ntrue 0x80004001: Not implemented 0\n"
     );
     // An interface whose IID the header does not give is left out, and
     // says how to give it; `--id` gives it.

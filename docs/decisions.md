@@ -7445,3 +7445,14 @@ for. The value says where it came from, and the output for people says `(as line
 it)`; a task that leaves the block another way sends the hit as it was, after at most two
 seconds.
 
+## The traits `tondo bind` writes give `E_NOTIMPL` by default
+
+A trait `bind` wrote had no method bodies, so a Tondo type that implements one, as a profiler of
+.NET implements `ICorProfilerCallback2`, had to write each of its eighty methods to use three.
+Tony chose that each method that gives `ffi.HResult` has a body giving
+`ffi.HResult.NotImplemented`, COM's own answer for a method an object does not implement; calling
+an object C made does not change, as it goes through its table. Not `ffi.HResult.Ok`, which a
+profiler often returns for an event it ignores: on an interface that is a service, its caller
+would take it for success with its out parameters unwritten, and `E_NOTIMPL` is never mistaken
+for success. A method that gives anything else has no body, as no value is right for all.
+

@@ -2,6 +2,17 @@ import std.console
 import std.ffi
 import app.counter
 
+/// A counter of Tondo's, of what it cares for alone: the rest of the
+/// interface answers that it does not implement it.
+type Adds = {}
+
+impl counter.ICounter for Adds {
+    fn Add(self, amount: Int32): ffi.HResult {
+        console.println("adds {amount}")
+        ffi.HResult.Ok
+    }
+}
+
 fn main() {
     let slot = ffi.allocate[Pointer[ffi.Void]?]()
     let made = unsafe { counter.counter_make(slot) }
@@ -25,4 +36,7 @@ fn main() {
     let name = unsafe { ffi.fromWide(buffer) }
     console.println("{asked.isOk()} {small.isFailure()} {whole.isOk()} {unsafe { needed.read() }} {name}")
     console.println("{named.release()} {counting.release()}")
+    let own = unsafe { counter.ICounterObject.of(ffi.object(Adds {})) }
+    let owned = ffi.allocate[ffi.CInt]()
+    console.println("{own.Add(2).isOk()} {own.GetTotal(owned)} {own.release()}")
 }

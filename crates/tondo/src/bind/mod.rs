@@ -2127,7 +2127,10 @@ impl<'c> Emitter<'c> {
                     return None;
                 }
             };
-            lines.push(format!("    fn {}({}){result}", tondo_name(&method), params.join(", ")));
+            // What a Tondo type need not implement: it answers that it does
+            // not, as COM says it.
+            let body = if result == ": ffi.HResult" { " {\n        ffi.HResult.NotImplemented\n    }" } else { "" };
+            lines.push(format!("    fn {}({}){result}{body}", tondo_name(&method), params.join(", ")));
         }
         let annotation = match self.c.ids.get(name) {
             Some(id) => format!("@ffi.Interface(id: {id:?})"),
