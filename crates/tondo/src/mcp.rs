@@ -2015,13 +2015,40 @@ impl Run {
             }
             std::thread::sleep(Duration::from_millis(20));
         }
+        // What follows a stream's last newline is a line still written: a
+        // moment for its end, so that an answer does not stop in its middle
+        // and the next start there; one that stays as it is that long, as a
+        // prompt does, comes as it is, and one that keeps growing waits for
+        // the next answer.
+        let partial = |buffer: &std::sync::Mutex<Vec<u8>>, from: usize| {
+            let bytes = buffer.lock().unwrap_or_else(|e| e.into_inner());
+            bytes.len() > from && bytes.last() != Some(&b'\n')
+        };
+        let (cap, mut seen, mut still) = (Instant::now() + Duration::from_secs(1), self.lengths(), Instant::now());
+        while self.status.is_none()
+            && (partial(&self.stdout, self.read.0) || partial(&self.stderr, self.read.1))
+            && still.elapsed() < Duration::from_millis(100)
+            && Instant::now() < cap
+        {
+            std::thread::sleep(Duration::from_millis(10));
+            self.status = self.child.try_wait().ok().flatten();
+            if self.lengths() != seen {
+                (seen, still) = (self.lengths(), Instant::now());
+            }
+        }
+        let whole_lines = self.status.is_none() && still.elapsed() < Duration::from_millis(100);
         // A last moment for what the program wrote as it ended.
         if self.status.is_some() {
             std::thread::sleep(Duration::from_millis(50));
         }
         let take = |buffer: &std::sync::Mutex<Vec<u8>>, from: usize| {
             let bytes = buffer.lock().unwrap_or_else(|e| e.into_inner());
-            (bounded(bytes[from.min(bytes.len())..].to_vec()), bytes.len())
+            let from = from.min(bytes.len());
+            let end = match whole_lines {
+                true => bytes[from..].iter().rposition(|&byte| byte == b'\n').map_or(from, |at| from + at + 1),
+                false => bytes.len(),
+            };
+            (bounded(bytes[from..end].to_vec()), end)
         };
         let (stdout, out_end) = take(&self.stdout, self.read.0);
         let (stderr, err_end) = take(&self.stderr, self.read.1);
@@ -3222,8 +3249,9 @@ session that run_output, run_input, run_stop and reload take; its output so far,
     },
     Tool {
         name: "run_output",
-        description: "What a session's program printed since the last time, waiting up to `wait` seconds for \
-something; and whether it still runs.",
+        description: "What a session's program printed since the last time, in whole lines, waiting up to \
+`wait` seconds for something; and whether it still runs. A line still written waits for its end, unless it \
+stays as it is, as a prompt does.",
         kind: Kind::Reads,
         params: &[
             ("session", "string!", "The session `run_start` gave."),

@@ -81,7 +81,7 @@ one out, and `update` fetches them again.
 
 `run_start` starts one, a server or anything interactive, and gives a
 session; `watch` reloads it as its files change. `run_output` gives what it
-printed since the last time, `run_input` writes to its input (`close` ends
+printed since the last time, in whole lines, `run_input` writes to its input (`close` ends
 it), `run_stop` ends it, `eval` says what an expression gives in it, on the code as it
 is now, `values` what each line of a file left, and `reload` changes its code while it runs,
 keeping its state: a session's, or a `tondo run --live` program's by
