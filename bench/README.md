@@ -133,8 +133,9 @@ The rows still behind Go, and why:
   place and the text's length once, before it, but checks its count for
   overflow each turn and jumps twice for each ASCII character, out of the
   test and back to the loop's head, where Go's loop jumps once.
-- `texts/parse ints`: a call of the runtime for each number, which counts
-  in 128 bits.
+- `texts/parse ints`: a call of the runtime for each number, which counted
+  in 128 bits; since this table it reads an `Int` in decimal of up to 18
+  digits in 64 bits, 21% faster, 6.49 µs against Go's 6.41.
 - `queries/countBy`: each element's key takes two calls of the runtime,
   one that finds its entry and one for where the entries start, to count
   its position, where Go's takes one; the hash itself takes a word at a

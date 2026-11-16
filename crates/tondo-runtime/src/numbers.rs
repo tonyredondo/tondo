@@ -110,7 +110,25 @@ pub unsafe extern "C" fn tondo_rt_int_parse(
     signed: u8,
     out: *mut [u64; 2],
 ) -> u8 {
-    let parsed = parse(unsafe { super::str_text(s) }, radix, bits, signed != 0);
+    let text = unsafe { super::str_bytes(s) };
+    // An `Int` in decimal of up to 18 digits, as most texts parsed are,
+    // fits in 64 bits as it is read and needs no bounds of 128.
+    if radix == 10 && bits == 64 && signed != 0 {
+        let (negative, digits) = match text.first() {
+            Some(b'-') => (true, &text[1..]),
+            Some(b'+') => (false, &text[1..]),
+            _ => (false, text),
+        };
+        if (1..=18).contains(&digits.len())
+            && let Some(value) = decimal(digits)
+        {
+            let value = if negative { -(value as i64) } else { value as i64 };
+            let wide = i128::from(value) as u128;
+            unsafe { *out = [wide as u64, (wide >> 64) as u64] };
+            return 1;
+        }
+    }
+    let parsed = parse(unsafe { std::str::from_utf8_unchecked(text) }, radix, bits, signed != 0);
     let value = parsed.unwrap_or(0);
     unsafe { *out = [value as u64, (value >> 64) as u64] };
     parsed.is_some() as u8
@@ -329,5 +347,23 @@ mod tests {
         assert_eq!(parse("18446744073709551616", 10, 64, false), None);
         assert_eq!(parse("3402823669209384634633746074317682114560", 10, 128, false), None);
         assert_eq!(parse("-1", 10, 32, false), None);
+    }
+
+    /// An `Int` in decimal, which takes a way of its own, reads as any
+    /// other integer does, at its ends and past them.
+    #[test]
+    fn a_decimal_int_reads_as_the_others() {
+        let texts = ["0", "-0", "+7", "-7", "7919", "-", "+", "", "12a", "1_000", "١٢", "-+5"];
+        let ends = ["999999999999999999", "-999999999999999999", "1000000000000000000", "-1000000000000000000"];
+        let past = ["9223372036854775807", "-9223372036854775808", "9223372036854775808", "-9223372036854775809"];
+        for text in texts.into_iter().chain(ends).chain(past) {
+            let s = super::super::str_new(text.as_bytes());
+            let mut out = [0u64; 2];
+            let read = unsafe { tondo_rt_int_parse(s, 10, 64, 1, &mut out) };
+            unsafe { super::super::tondo_rt_str_release(s) };
+            let expected = parse(text, 10, 64, true);
+            assert_eq!(read != 0, expected.is_some(), "{text}");
+            assert_eq!(wide(out[0], out[1]), expected.unwrap_or(0), "{text}");
+        }
     }
 }
