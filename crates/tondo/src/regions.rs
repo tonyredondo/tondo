@@ -1241,12 +1241,23 @@ impl Flow {
                         transfers.push(Transfer { into, part, how, from });
                     }
                 }
-                Statement::Lend(alias, place) => transfers.push(Transfer {
-                    into: *alias,
-                    part: false,
-                    how: How::Lent,
-                    from: vec![(place.local, !place.path.is_empty())],
-                }),
+                Statement::Lend(alias, place) => {
+                    transfers.push(Transfer {
+                        into: *alias,
+                        part: false,
+                        how: How::Lent,
+                        from: vec![(place.local, !place.path.is_empty())],
+                    });
+                    // What is written through the loan is written into what
+                    // it lends: `row.values = [..]` in `for mut row in rows`
+                    // stores the array in `rows`.
+                    transfers.push(Transfer {
+                        into: place.local,
+                        part: !place.path.is_empty(),
+                        how: How::Whole,
+                        from: vec![(*alias, false)],
+                    });
+                }
                 _ => {}
             }
         }
