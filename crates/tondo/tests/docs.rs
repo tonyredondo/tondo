@@ -120,8 +120,12 @@ fn check(tondo: &str, job: &Job) -> Outcome {
     if !test {
         std::fs::write(job.case.join(&main), &job.code).unwrap();
     }
+    // With the memory of each region that ends made unreadable, so that a
+    // value put in a region it outlives faults.
     let run = |args: &[&str]| {
-        Command::new(tondo).args(args).current_dir(&job.case).env("TONDO_DUMP", "off").output().unwrap()
+        let mut command = Command::new(tondo);
+        command.args(args).current_dir(&job.case).env("TONDO_DUMP", "off").env("TONDO_CHECK_REGIONS", "1");
+        command.output().unwrap()
     };
     let checks: &[&str] = if test { &["test", "--list"] } else { &["check", &main] };
     let mut args = checks.to_vec();

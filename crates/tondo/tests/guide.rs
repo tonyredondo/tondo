@@ -61,10 +61,14 @@ fn examples_compile_and_the_guides_tests_pass() {
                             true => &["test", "--list"],
                             false => &["check", "main.to"],
                         };
+                        // Run with the memory of each region that ends made
+                        // unreadable, so that a value put in a region it
+                        // outlives faults.
                         let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
                             .args(checks)
                             .args(info.ends_with(" library").then_some("--library"))
                             .current_dir(case)
+                            .env("TONDO_CHECK_REGIONS", "1")
                             .output()
                             .unwrap();
                         let stderr = String::from_utf8_lossy(&output.stderr);
