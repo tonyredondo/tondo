@@ -1493,7 +1493,7 @@ pub fn compile(
     after("lower", &bodies, types, sources);
     if !debug && !analysis.meta {
         let _passes = crate::times::part("MIR passes");
-        optimize(&mut bodies, types, sources);
+        optimize(&mut bodies, program, sources);
     }
     let roots = analysis
         .project
@@ -1610,7 +1610,8 @@ pub fn compiler(reference: &str, near: &Path) -> Result<(String, PathBuf), Strin
 
 /// The MIR passes of a release build, in their order, each followed by
 /// what `after` does.
-fn optimize(bodies: &mut Vec<crate::mir::Body>, types: &crate::types::Types, sources: &SourceMap) {
+fn optimize(bodies: &mut Vec<crate::mir::Body>, program: &crate::hir::Program, sources: &SourceMap) {
+    let types = &program.types;
     crate::captured::captured(bodies, types);
     after("captured", bodies, types, sources);
     crate::inline::inline(bodies);
@@ -1647,7 +1648,14 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, types: &crate::types::Types, sou
     // what it makes.
     let measured = std::env::var_os("TONDO_REGIONS");
     if crate::regions::asked() || measured.is_some() {
-        let (verdicts, takings) = crate::regions::regions(bodies, types, sources);
+        // What code outside the program's calls: `main` and the exports.
+        let roots: Vec<usize> = program
+            .main
+            .iter()
+            .chain(program.exports.iter().map(|export| &export.function))
+            .map(|id| id.0 as usize)
+            .collect();
+        let (verdicts, takings) = crate::regions::regions(bodies, types, sources, &roots);
         let Some(path) = measured else { return };
         let place = |span: crate::source::Span| {
             let (file, line, _) = sources.position(span.start);
@@ -1774,7 +1782,7 @@ pub fn optimizations(
         None => Vec::new(),
     };
     if !analysis.meta {
-        optimize(&mut bodies, &program.types, sources);
+        optimize(&mut bodies, program, sources);
     }
     crate::mir_text::ask_remarks(false);
     crate::regions::ask(false);

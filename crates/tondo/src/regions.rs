@@ -67,6 +67,9 @@ struct Summary {
 struct Call {
     caller: usize,
     span: Span,
+    /// The call as the caller's own code writes it: the call that brought
+    /// the code inlined there, when it is in such code.
+    written: Span,
     taken: Taken,
 }
 
@@ -106,8 +109,13 @@ pub struct Taking {
 /// The verdicts for every place that makes a value on the heap, and what
 /// each call does with the result of its callee; while remarks are asked
 /// for, the verdicts as remarks.
-pub fn regions(bodies: &mut [Body], types: &Types, sources: &crate::source::SourceMap) -> (Vec<Verdict>, Vec<Taking>) {
-    let summaries = summaries(bodies, types);
+pub fn regions(
+    bodies: &mut [Body],
+    types: &Types,
+    sources: &crate::source::SourceMap,
+    roots: &[usize],
+) -> (Vec<Verdict>, Vec<Taking>) {
+    let summaries = summaries(bodies, types, roots);
     let mut verdicts = Vec::new();
     for (index, body) in bodies.iter().enumerate() {
         for (local, span, what) in sites(body, types) {
@@ -213,7 +221,7 @@ fn resolve(
     }
     for call in &summaries[index].calls {
         match &call.taken {
-            Taken::Drops => drops.push((call.caller, call.span)),
+            Taken::Drops => drops.push((call.caller, call.written)),
             Taken::Keeps(who, at) => keeps.push((who.clone(), *at)),
             Taken::Passes => resolve(call.caller, summaries, seen, drops, keeps),
         }
@@ -492,36 +500,50 @@ fn fate(body: &Body, types: &Types, start: Local, summaries: &[Summary], bodies:
 /// parameter is kept when its value may be, and a result is fresh when
 /// only what the function made reaches it; then what each call does with
 /// the result it takes.
-fn summaries(bodies: &[Body], types: &Types) -> Vec<Summary> {
-    // Whether the program's code calls each function by its name, and
-    // whether it calls it through a value too, as those calls are not seen.
-    let (mut called, mut valued) = (vec![false; bodies.len()], vec![false; bodies.len()]);
-    for statement in bodies.iter().flat_map(|body| &body.blocks).flat_map(|block| &block.stmts) {
-        let (id, value) = match statement {
-            Statement::Assign(_, rvalue, _) => match &**rvalue {
-                Rvalue::Call(Callee::Fn(id), _) => (id, false),
-                Rvalue::FnValue(id) | Rvalue::Callback(id, _) | Rvalue::Erase(_, id, _) | Rvalue::CallOsr(id, ..) => {
-                    (id, true)
-                }
+fn summaries(bodies: &[Body], types: &Types, roots: &[usize]) -> Vec<Summary> {
+    // The functions that run: those code outside the program's calls, those
+    // called through a value, whose calls are not seen, and what they call
+    // by name in turn. A function inlined in every caller runs no more.
+    let count = bodies.len();
+    let (mut valued, mut callees) = (vec![false; count], vec![Vec::new(); count]);
+    for (index, body) in bodies.iter().enumerate() {
+        for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+            let id = match statement {
+                Statement::Assign(_, rvalue, _) => match &**rvalue {
+                    Rvalue::Call(Callee::Fn(id), _) => {
+                        callees[index].push(id.0 as usize);
+                        continue;
+                    }
+                    Rvalue::FnValue(id)
+                    | Rvalue::Callback(id, _)
+                    | Rvalue::Erase(_, id, _)
+                    | Rvalue::CallOsr(id, ..) => id,
+                    _ => continue,
+                },
+                Statement::DeferPush(id, _) => id,
                 _ => continue,
-            },
-            Statement::DeferPush(id, _) => (id, true),
-            _ => continue,
-        };
-        if let Some(seen) = if value { &mut valued } else { &mut called }.get_mut(id.0 as usize) {
-            *seen = true;
+            };
+            if let Some(valued) = valued.get_mut(id.0 as usize) {
+                *valued = true;
+            }
+        }
+    }
+    let mut live = vec![false; count];
+    let mut pending: Vec<usize> = roots.iter().copied().chain((0..count).filter(|&index| valued[index])).collect();
+    while let Some(index) = pending.pop() {
+        if index < count && !std::mem::replace(&mut live[index], true) {
+            pending.extend(&callees[index]);
         }
     }
     let mut summaries: Vec<Summary> = bodies
         .iter()
         .enumerate()
         .map(|(index, body)| {
-            let unseen = match (valued[index], called[index]) {
-                (true, _) => Some("what calls it through a function value may keep it"),
-                (false, false) => {
-                    Some("no call of it is left in the program's code: each was inlined, or it is called from outside")
-                }
-                (false, true) => None,
+            let unseen = match () {
+                _ if valued[index] => Some("what calls it through a function value may keep it"),
+                _ if roots.contains(&index) => Some("it is called from outside the program's code"),
+                _ if !live[index] => Some("no call of it is left in the program's code: each was inlined"),
+                _ => None,
             };
             Summary { keeps: vec![false; body.params.len()], fresh: body.ret.is_some(), calls: Vec::new(), unseen }
         })
@@ -558,9 +580,15 @@ fn summaries(bodies: &[Body], types: &Types) -> Vec<Summary> {
             }
         }
     }
-    // What each call does with the result it takes.
-    for (index, body) in bodies.iter().enumerate() {
-        for (local, callee, span) in call_results(body) {
+    // What each call that runs does with the result it takes.
+    for (index, body) in bodies.iter().enumerate().filter(|&(index, _)| live[index]) {
+        for (block, local, callee, span) in call_results(body) {
+            let mut written = span;
+            let mut scope = body.scopes.get(block).copied().flatten();
+            while let Some(at) = scope {
+                written = body.inlined[at as usize].call;
+                scope = body.inlined[at as usize].parent;
+            }
             let taken = match fate(body, types, local, &summaries, bodies) {
                 Fate::Here => Taken::Drops,
                 Fate::Returned if summaries[index].fresh => Taken::Passes,
@@ -569,22 +597,24 @@ fn summaries(bodies: &[Body], types: &Types) -> Vec<Summary> {
                 }
                 Fate::Kept(why, at) => Taken::Keeps(format!("`{}` keeps it: {why}", body.name), at),
             };
-            summaries[callee].calls.push(Call { caller: index, span, taken });
+            summaries[callee].calls.push(Call { caller: index, span, written, taken });
         }
     }
     summaries
 }
 
-/// The locals that take the result of a call of the program's, with its
-/// callee and the call.
-fn call_results(body: &Body) -> Vec<(Local, usize, Span)> {
+/// The locals that take the result of a call of the program's, with the
+/// block, the callee and the call.
+fn call_results(body: &Body) -> Vec<(usize, Local, usize, Span)> {
     let mut found = Vec::new();
-    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
-        if let Statement::Assign(place, rvalue, span) = statement
-            && place.path.is_empty()
-            && let Rvalue::Call(Callee::Fn(id), _) = &**rvalue
-        {
-            found.push((place.local, id.0 as usize, *span));
+    for (block, data) in body.blocks.iter().enumerate() {
+        for statement in &data.stmts {
+            if let Statement::Assign(place, rvalue, span) = statement
+                && place.path.is_empty()
+                && let Rvalue::Call(Callee::Fn(id), _) = &**rvalue
+            {
+                found.push((block, place.local, id.0 as usize, *span));
+            }
         }
     }
     found
@@ -592,7 +622,11 @@ fn call_results(body: &Body) -> Vec<(Local, usize, Span)> {
 
 /// The locals that take a fresh result of a call.
 fn fresh_calls(body: &Body, summaries: &[Summary]) -> Vec<Local> {
-    call_results(body).into_iter().filter(|&(_, callee, _)| summaries[callee].fresh).map(|(local, ..)| local).collect()
+    call_results(body)
+        .into_iter()
+        .filter(|&(_, _, callee, _)| summaries[callee].fresh)
+        .map(|(_, local, ..)| local)
+        .collect()
 }
 
 /// Whether every value written whole into `ret`, or into a local that
