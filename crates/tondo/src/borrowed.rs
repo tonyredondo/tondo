@@ -22,7 +22,21 @@ pub fn borrowed(bodies: &mut [Body], types: &Types) {
 }
 
 fn borrowed_in(body: &mut Body, types: &Types, loans: &[Vec<bool>]) {
-    // A copy of an element followed by its retain, in the same block.
+    // How many blocks go to each.
+    let mut entries = vec![0usize; body.blocks.len()];
+    for block in &body.blocks {
+        match &block.terminator {
+            Terminator::Goto(to) => entries[to.0 as usize] += 1,
+            Terminator::Branch(_, then, otherwise) => {
+                entries[then.0 as usize] += 1;
+                entries[otherwise.0 as usize] += 1;
+            }
+            _ => {}
+        }
+    }
+    // A copy of an element followed by its retain, in the same block or in
+    // those it goes on to alone, as a check a pass dropped from between
+    // them leaves the two.
     let mut sources: Vec<(usize, usize, Local, Local)> = Vec::new();
     for (index, block) in body.blocks.iter().enumerate() {
         for (at, statement) in block.stmts.iter().enumerate() {
@@ -32,11 +46,28 @@ fn borrowed_in(body: &mut Body, types: &Types, loans: &[Vec<bool>]) {
             if !place.path.is_empty() || !element || !types.needs_drop(body.locals[place.local.0 as usize]) {
                 continue;
             }
-            let retained = block.stmts[at + 1..]
-                .iter()
-                .position(|s| matches!(s, Statement::Retain(p) if p.path.is_empty() && p.local == place.local));
-            if let Some(after) = retained {
-                sources.push((index, at + 1 + after, place.local, from.local));
+            let (mut here, mut start) = (index, at + 1);
+            for _ in 0..body.blocks.len() {
+                let rest = &body.blocks[here].stmts[start..];
+                let retained = rest
+                    .iter()
+                    .position(|s| matches!(s, Statement::Retain(p) if p.path.is_empty() && p.local == place.local));
+                if let Some(after) = retained {
+                    sources.push((here, start + after, place.local, from.local));
+                    break;
+                }
+                let mut named = Vec::new();
+                for statement in rest {
+                    let mut defined = Vec::new();
+                    statement_locals(statement, &mut named, &mut defined);
+                    named.extend(defined);
+                }
+                match body.blocks[here].terminator {
+                    Terminator::Goto(to) if !named.contains(&place.local) && entries[to.0 as usize] == 1 => {
+                        (here, start) = (to.0 as usize, 0);
+                    }
+                    _ => break,
+                }
             }
         }
     }
