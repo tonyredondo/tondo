@@ -67,3 +67,13 @@ a build with `--no-logpoints`, or `logpoints = false` in the `[build]` of its
 `tondo.toml`, leaves out, and then takes no logpoint: `runbook-running`. `catch panic` stops where a panic starts, with all its
 frames. A run that cannot be had again is recorded and debugged backwards:
 `runbook-once`.
+
+A result that the release build gets wrong and the debug build right, in a
+program that depends on no task's order and on no time, is a bug of tondo's,
+and regions are what only the release build has. `TONDO_CHECK_REGIONS=1` in
+the program's environment makes a value that outlived its region fault where
+it is read, `fatal: SIGSEGV … in the memory of a region that ended: the
+compiler put a value in a region it outlives, a bug of tondo's`, with the
+line. `no_regions` in `run`, `test` and `build`, `--no-regions` in the
+commands, builds without regions: a result that is right again was theirs,
+and that build is the one to go on with while the bug is reported.
