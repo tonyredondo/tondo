@@ -48,6 +48,12 @@ jobs:
       # Every build of the cases does not fit in what the runner leaves free.
       - if: runner.os == 'Linux'
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      # The .NET SDK alone, which the line above takes with the rest, for the
+      # profiler of .NET in tests/dotnet.
+      - if: runner.os == 'Linux' && contains(matrix.run, 'workspace')
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
