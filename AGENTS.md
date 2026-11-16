@@ -299,3 +299,31 @@ Such a hang is found under load, as the benchmarks of `bench/tondo` give,
 by counting with atomics and printing from a thread of its own what stops
 moving: a lock or a print on the path changes the timing that loses the
 wake.
+
+### Waits in a test
+
+A test that fails now and then on a slow machine has most often taken time
+for a signal: it slept and went on, or gave a wait a cap that the machine
+did not meet. Tests and the runtime hold to these rules:
+
+- A test does not sleep to let something happen. It waits for what says
+  that it happened: a line the program prints, an answer, a file, what a
+  tool reports. The program under test says where it is from the place
+  itself, and a tool that a script follows says when it is in place.
+- A cap only bounds a hang. A run that passes never waits for it, so it is
+  as long as the slowest machine needs, and a wait that includes a build
+  has a build's margin.
+- A sleep stays only where time is what is under test, as that nothing
+  happens meanwhile, and a comment saying so starts with "Time is what is
+  under test". What only asking can see, as a port that starts to listen,
+  is waited for with `until` (`crates/tondo/tests/common`), whose pace is
+  not a wait for something to happen.
+- What depends on how events fall in time, as which changes make one
+  batch, is tested with the events and the clock in the test's hands; the
+  test over the real system keeps only what no stall can break.
+- In the runtime, a timeout is the cap of a hang or a time the program
+  asked for, never the way of waiting for something to happen; where
+  nothing can wake a wait, as a lock tried before a fork, it asks at a
+  pace, with a cap.
+
+`cargo test -p tondo --test waits` holds `crates/tondo/tests` to it.
