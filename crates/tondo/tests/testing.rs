@@ -816,9 +816,21 @@ fn names_the_code_that_changed_under_a_row_that_moved() {
     let (stdout, stderr, status) = tondo(&dir, &args);
     assert_eq!(status, 0, "{stdout}{stderr}");
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    let changed = &report["tests"][0]["attempts"][0]["benchmarks"][0]["baseline"]["code_changed"];
+    let baseline = &report["tests"][0]["attempts"][0]["benchmarks"][0]["baseline"];
+    // Where the processor counts no instructions, as on macOS, the code is
+    // named under a row whose time moved, which regions alone may not move.
+    if baseline["instructions_per_op"].is_null() {
+        assert_eq!(baseline["code_changed"].is_null(), baseline["verdict"] == "same", "{baseline}");
+        if baseline["verdict"] == "same" {
+            return;
+        }
+    }
+    let changed = &baseline["code_changed"];
     let names: Vec<&str> = changed.as_array().unwrap().iter().filter_map(|c| c["function"].as_str()).collect();
     assert!(names.contains(&"words"), "{changed}");
+    if baseline["instructions_per_op"].is_null() {
+        return;
+    }
     let (stdout, stderr, status) = tondo(&dir, &["test", "--bench", "--bench-time", "0.05", "--compiler", other]);
     assert_eq!(status, 0, "{stdout}{stderr}");
     assert!(stdout.contains("code changed, in instructions:"), "{stdout}");
