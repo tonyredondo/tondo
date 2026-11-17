@@ -60,17 +60,19 @@ identity=$(security find-identity -v -p codesigning "$keychain" | awk '/Develope
 }
 
 # The secure timestamp comes from Apple's server, which now and then does
-# not answer ("A timestamp was expected but was not found"): five tries,
-# waiting longer each time.
+# not answer for minutes ("A timestamp was expected but was not found"):
+# eight tries over some eleven minutes, waiting longer each time.
 try=1
 until codesign --force --options runtime --timestamp --identifier io.github.tonyredondo.tondo \
     --sign "$identity" --keychain "$keychain" "$executable"; do
-    if [ "$try" -ge 5 ]; then
+    if [ "$try" -ge 8 ]; then
         say "codesign failed $try times: Apple's timestamp server may be down"
         exit 1
     fi
-    say "codesign failed on try $try; trying again in $((try * 15)) seconds"
-    sleep $((try * 15))
+    pause=$((try * 30))
+    [ "$pause" -le 120 ] || pause=120
+    say "codesign failed on try $try; trying again in $pause seconds"
+    sleep "$pause"
     try=$((try + 1))
 done
 codesign --verify --strict --verbose=2 "$executable"
