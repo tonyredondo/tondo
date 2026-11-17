@@ -1,13 +1,15 @@
-// Texts the runtime's operations make, as `toLowerAscii`, `replace` and `join` do,
-// which regions take as they take what an interpolation makes, sent out of
-// the scope that made them by each way of the matrix: stored in a field, an
-// element, a variable the next turn writes over, a map; written through a
-// loan; captured by a closure; sent to a task; returned by a call, or kept
-// by one; joined, sliced or boxed; read by a `defer`; in the region of a
-// turn, of a function and of a caller, short and longer than the 64 bytes
-// from which a text keeps the positions of its characters.
+// Texts the runtime's operations make, as `toLowerAscii`, `replace`, `join`
+// and `path.join` do, which regions take as they take what an interpolation
+// makes, sent out of the scope that made them by each way of the matrix:
+// stored in a field, an element, a variable the next turn writes over, a
+// map; written through a loan; captured by a closure; sent to a task;
+// returned by a call, or kept by one; joined, sliced or boxed; read by a
+// `defer`; in the region of a turn, of a function and of a caller, short
+// and longer than the 64 bytes from which a text keeps the positions of its
+// characters.
 
 import std.console
+import std.path
 import std.reflect
 import std.sync
 
@@ -104,6 +106,7 @@ fn parts(): String {
         kept.push(pieces[3])
         let words = "one two {i}".words()
         kept.push(words[2])
+        kept.push(path.join("dir", "file {i}"))
     }
     sender.close()
     var received: Array[String] = []
@@ -142,5 +145,5 @@ fn main() {
 
 // expect-stdout: field 2 [element 2, element 1] 69 t keyed 1 lent 2
 // expect-stdout: captured 0 captured 2 [sent 0, sent 1, sent 2] [GIVEN 0, GIVEN 1, GIVEN 2] 6 69 boxed 1
-// expect-stdout: [a0, a1, a2] b2 c2 [d0, 0, d1, 1, d2, 2] x
+// expect-stdout: [a0, a1, a2] b2 c2 [d0, 0, dir/file 0, d1, 1, dir/file 1, d2, 2, dir/file 2] x
 // expect-stdout: [pushed 0, pushed 1] [deferred 0, deferred 1] [fresh 0 of 0, fresh 1 of 2, fresh 2 of 4] 36 3560

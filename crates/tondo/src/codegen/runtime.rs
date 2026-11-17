@@ -732,7 +732,7 @@ impl Rt {
             Rt::FsHostError => ("tondo_rt_fs_host_error", &[], &[I64]),
             Rt::StreamRelease => ("tondo_rt_stream_release", &[I64], &[]),
             Rt::BufferRelease => ("tondo_rt_io_buffer_release", &[I64], &[]),
-            Rt::PathJoin => ("tondo_rt_path_join", &[I64, I64], &[I64]),
+            Rt::PathJoin => ("tondo_rt_path_join", &[I64, I64, I64], &[I64]),
             Rt::PathPart => ("tondo_rt_path_part", &[I64, I8], &[I64]),
             Rt::PathIsAbsolute => ("tondo_rt_path_is_absolute", &[I64], &[I8]),
             Rt::StrToBytes => ("tondo_rt_str_to_bytes", &[I64], &[I64]),

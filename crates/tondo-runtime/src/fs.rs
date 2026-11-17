@@ -364,9 +364,13 @@ fn string_or_null(text: Option<&str>) -> *mut Str {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_path_join(base: *const Str, part: *const Str) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_path_join(
+    base: *const Str,
+    part: *const Str,
+    region: *mut super::regions::Region,
+) -> *mut Str {
     let joined = unsafe { std::path::Path::new(&lexical(base)).join(lexical(part)) };
-    str_new(joined.to_string_lossy().as_bytes())
+    super::strings::str_in(region, joined.to_string_lossy().as_bytes())
 }
 
 /// `parent`, `fileName` or `extension` (`which` 0, 1 or 2): null for none.
