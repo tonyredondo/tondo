@@ -120,8 +120,8 @@ native tondo_rt_memory_store              cases/run/regions/natives_system.to
 native tondo_rt_msgpack_field             cases/run/regions/natives_formats.to
 native tondo_rt_msgpack_parse             cases/run/regions/natives_formats.to
 native tondo_rt_msgpack_write_bytes       cases/run/regions/natives_formats.to
-native tondo_rt_net_send_to               cases/run/regions/natives_net.to
-native tondo_rt_net_send_to_path          cases/run/regions/natives_net.to
+native tondo_rt_net_send_to               cases/run/regions/natives_net.to cases/run/regions/natives_sockets.to
+native tondo_rt_net_send_to_path          cases/run/regions/natives_net.to cases/run/regions/natives_sockets.to
 native tondo_rt_net_write_bytes           cases/run/regions/natives_net.to
 native tondo_rt_pb_reader                 projects/grpcweb
 native tondo_rt_pb_write_bytes            projects/grpcweb
@@ -267,3 +267,17 @@ native tondo_rt_http_request_header       cases/run/regions/natives_http.to
 native tondo_rt_http_save_body            cases/run/regions/natives_http.to
 native tondo_rt_http_trailers_set         cases/run/regions/natives_http.to
 native tondo_rt_http_upload_save          cases/run/regions/natives_http.to
+native tondo_rt_net_bind                  cases/run/regions/natives_sockets.to
+native tondo_rt_net_bind_unix             cases/run/regions/natives_sockets.to
+native tondo_rt_net_canonical_ip          cases/run/regions/natives_sockets.to
+native tondo_rt_net_connect               cases/run/regions/natives_sockets.to
+native tondo_rt_net_connect_unix          cases/run/regions/natives_sockets.to
+native tondo_rt_net_contains              cases/run/regions/natives_sockets.to
+native tondo_rt_net_ip                    cases/run/regions/natives_sockets.to
+native tondo_rt_net_ip_kind               cases/run/regions/natives_sockets.to
+native tondo_rt_net_listen                cases/run/regions/natives_sockets.to
+native tondo_rt_net_listen_unix           cases/run/regions/natives_sockets.to
+native tondo_rt_net_network               cases/run/regions/natives_sockets.to
+native tondo_rt_net_resolve               cases/run/regions/natives_sockets.to
+native tondo_rt_net_start_tls             cases/run/regions/natives_sockets.to
+native tondo_rt_net_write                 cases/run/regions/natives_sockets.to

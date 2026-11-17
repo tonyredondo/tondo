@@ -1,0 +1,106 @@
+// The runtime's natives of sockets, addresses and networks read the texts
+// they are given or copy what they keep (`READING_TEXTS` in regions.rs).
+// Loops give them texts their turns make, and the listeners, streams and
+// sockets are used again after those regions ended.
+
+import std.console
+import std.fs
+import std.net
+
+fn addresses(): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        let ip = net.ip("10.0.{i}.1") ?? panic("no ip")
+        let mapped = net.ip("::ffff:10.0.{i}.2") ?? panic("no mapped ip")
+        let network = net.network("10.0.{i}.0/24") ?? panic("no network")
+        let resolved = net.resolve("local{"host"}") ?? []
+        lines.push(
+            "{ip} {mapped} {ip.isPrivate()} {network.contains(mapped)} {network.prefix()} {resolved.length() > 0}",
+        )
+    }
+    lines.join(", ")
+}
+
+fn written(stream: net.Stream): Int {
+    var sent = 0
+    for i in 0..3 {
+        let line = "line {i}\n"
+        _ = stream.write(line)
+        sent += line.length()
+    }
+    sent
+}
+
+fn refused(port: Int): String {
+    var lines: Array[String] = []
+    for i in 0..2 {
+        match net.connectTls("127.0.0.1", port, trust: "not a certificate {i}") {
+            ok(_) => lines.push("connected")
+            err(_) => lines.push("refused {i}")
+        }
+    }
+    lines.join(" ")
+}
+
+fn upgraded(stream: net.Stream): String {
+    match stream.startTls("host{0}.test", trust: "not a certificate {1}") {
+        ok(_) => "upgraded"
+        err(_) => "not upgraded"
+    }
+}
+
+fn datagrams(udp: net.Socket, unix: net.Socket, port: Int, path: String): Int {
+    var sent = 0
+    for i in 0..3 {
+        let data = [Byte(65 + i) ?? Byte(0u8), Byte(10u8)]
+        _ = udp.sendTo(data, net.address("127.0.{0}.1", port) ?? panic("no address"))
+        _ = unix.sendTo(data, net.unixAddress("{path}"))
+        sent += data.length()
+    }
+    sent
+}
+
+fn main(): !net.NetError {
+    let a = addresses()
+    let listener = net.listen("127.0.{0}.1", 0)?
+    let port = listener.address().port
+    let stream = net.connect("127.0.{0}.1", port)?
+    let accepted = listener.accept()?
+    let b = written(stream)
+    let c = refused(port)
+    let second = net.connect("127.0.{0}.1", port)?
+    let secondAccepted = listener.accept()?
+    let d = upgraded(second)
+    secondAccepted.close()?
+    let local = "natives-sockets-{0}.sock"
+    let unixListener = net.listenUnix("{local}")?
+    let unixStream = net.connectUnix("{local}")?
+    let unixAccepted = unixListener.accept()?
+    _ = unixStream.write("over unix\n")
+    let named = "natives-dgram-{0}.sock"
+    let receiver = net.bindUnix("{named}")?
+    let udp = net.bind("127.0.{0}.1", 0)?
+    let udpSender = net.bind("127.0.0.1", 0)?
+    let unixSender = net.bindUnix()?
+    let e = datagrams(udpSender, unixSender, udp.address().port, named)
+    stream.close()?
+    unixStream.close()?
+    let lines = accepted.readText()?
+    let unixLine = unixAccepted.readLine()? ?? ""
+    var received: Array[Int] = []
+    for _ in 0..3 {
+        let (data, _) = receiver.receive()?
+        received.push(data.length())
+        let (other, _) = udp.receive()?
+        received.push(other.length())
+    }
+    listener.close()
+    unixListener.close()
+    _ = fs.remove(local)
+    _ = fs.remove(named)
+    console.println(a)
+    console.println("{b} {lines.length()} {c} {d} {unixLine} {e} {received}")
+}
+
+// expect-stdout: 10.0.0.1 10.0.0.2 true true 24 true, 10.0.1.1 10.0.1.2 true true 24 true, 10.0.2.1 10.0.2.2 true true 24 true
+// expect-stdout: 21 21 refused 0 refused 1 not upgraded over unix 6 [2, 2, 2, 2, 2, 2]
