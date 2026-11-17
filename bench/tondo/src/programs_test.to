@@ -1,0 +1,105 @@
+// Small programs, each a shape programs have, that combine what the other
+// rows measure alone: a change is judged by how they go together too.
+
+import std.io
+import std.json
+import std.testing
+
+/// The words of a text, counted into a map.
+fn wordCounts(text: String): Map[String, Int] {
+    var counts: Map[String, Int] = [:]
+    for word in text.split(" ") {
+        if word.isEmpty() {
+            continue
+        }
+        counts[word, default: 0] += 1
+    }
+    counts
+}
+
+/// The numbers of a text, one a line, read with `?` and summed.
+fn lineSum(text: String): Int ! io.IoError {
+    let reader = io.reader(text)
+    var total = 0
+    for {
+        let line = reader.readLine()? ?? break
+        total += Int.parse(line) ?? 0
+    }
+    total
+}
+
+type Person = {
+    name: String
+    age: Int
+}
+
+/// The adults, by name, as a line of text.
+fn adultLine(people: Array[Person]): String {
+    people
+        .filter((person) { person.age >= 18 })
+        .sortedBy((person) { person.name })
+        .map((person) { "{person.name}:{person.age}" })
+        .join(",")
+}
+
+type Purchase = {
+    id: Int
+    customer: String
+    items: Array[String]
+    total: Float
+    paid: Bool
+}
+
+/// An order read from JSON, changed, and written again.
+fn repriced(document: String): String {
+    var order: Purchase =
+        json.decode(document) ??
+            Purchase { id: 0, customer: "", items: [], total: 0.0, paid: false }
+    order.total = order.total * 1.1
+    order.paid = true
+    json.encode(order)
+}
+
+type Node = {
+    value: Int
+    children: Array[Node]
+}
+
+/// A tree of that depth, each node with `fan` children.
+fn build(depth: Int, fan: Int): Node {
+    var children: Array[Node] = []
+    if depth > 0 {
+        for _ in 0..fan {
+            children.push(build(depth - 1, fan))
+        }
+    }
+    Node { value: depth, children }
+}
+
+fn treeSum(node: Node): Int {
+    var total = node.value
+    for child in node.children {
+        total += treeSum(child)
+    }
+    total
+}
+
+test programs {
+    let text = "to be or not to be ".repeat(100)
+    testing.bench("count words", () { wordCounts(text) })
+    var lines: Array[String] = []
+    for i in 0..1000 {
+        lines.push("{i * 7}")
+    }
+    let column = lines.join("\n")
+    testing.bench("sum lines", () { lineSum(column) ?? 0 })
+    var people: Array[Person] = []
+    for i in 0..1000 {
+        people.push(Person { name: "person {(i * 7919) % 1000}", age: i % 60 })
+    }
+    testing.bench("sort adults", () { adultLine(people) })
+    let document =
+        "{{\"id\": 42, \"customer\": \"ada\", \"items\": [\"lamp\", \"desk\", \"chair\"], \"total\": 199.5, \"paid\": false}}"
+    testing.bench("reprice order", () { repriced(document) })
+    testing.bench("build tree", () { treeSum(build(6, 4)) })
+}

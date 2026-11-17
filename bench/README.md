@@ -31,6 +31,13 @@ tells apart: HTTP/1.1 in the clear and HTTP/2 over TLS, as Tondo's client
 and server negotiate them, with the certificate in `tondo/src/tls`, made
 for these benchmarks alone.
 
+The rows of `programs/` are small programs, each a shape programs have,
+that combine what the other rows measure alone, so that a change is judged
+by how they go together too: a text split and counted into a map; lines
+read with `?`, parsed and summed; records filtered, sorted and joined into
+a text; an order decoded from JSON, changed and encoded again; and a tree
+built, summed and let go of.
+
 The rows of `ffi/` call each side from C: a loop of C that calls a function
 given to it, from the benchmark's own thread, which in Tondo is a task's,
 and from threads that C starts and the runtime has never seen, and a call
