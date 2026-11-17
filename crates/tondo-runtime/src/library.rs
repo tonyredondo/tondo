@@ -3,7 +3,7 @@
 //! its last holder closes when the library may be unloaded.
 
 use super::native::{self, NativeObject};
-use super::{Str, str_bytes, str_new};
+use super::{Str, str_bytes};
 use std::ffi::{CStr, CString, c_void};
 use std::sync::Mutex;
 
@@ -134,10 +134,10 @@ pub extern "C" fn tondo_rt_library_program() -> *mut NativeObject {
 
 /// Why the library did not open, or nothing.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_library_failure(object: *mut NativeObject) -> *mut Str {
+pub extern "C" fn tondo_rt_library_failure(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
     match native::get::<Library>(object) {
-        Some(Library::Failed(why)) => str_new(why.as_bytes()),
-        _ => str_new(b""),
+        Some(Library::Failed(why)) => crate::strings::str_in(region, why.as_bytes()),
+        _ => crate::strings::str_in(region, b""),
     }
 }
 
@@ -164,23 +164,25 @@ pub unsafe extern "C" fn tondo_rt_library_symbol(object: *mut NativeObject, name
 
 /// The file the library was loaded from: the executable for the program.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_library_path(object: *mut NativeObject) -> *mut Str {
+pub extern "C" fn tondo_rt_library_path(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
     match native::get::<Library>(object) {
-        Some(Library::Open(opened)) => str_new(opened.path.as_bytes()),
-        _ => str_new(b""),
+        Some(Library::Open(opened)) => crate::strings::str_in(region, opened.path.as_bytes()),
+        _ => crate::strings::str_in(region, b""),
     }
 }
 
 /// `close`: unloads the library now; what the system said when it refused,
 /// or nothing. The library stays open when it is refused.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_library_close(object: *mut NativeObject) -> *mut Str {
-    let Some(Library::Open(opened)) = native::get::<Library>(object) else { return str_new(b"") };
+pub extern "C" fn tondo_rt_library_close(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
+    let Some(Library::Open(opened)) = native::get::<Library>(object) else {
+        return crate::strings::str_in(region, b"");
+    };
     if opened.program {
-        return str_new(b"the program itself is never unloaded");
+        return crate::strings::str_in(region, b"the program itself is never unloaded");
     }
     let mut held = opened.handle.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(handle) = *held else { return str_new(b"") };
+    let Some(handle) = *held else { return crate::strings::str_in(region, b"") };
     let stop = opened.stop;
     let refused = crate::io::host(true, move || {
         if let Some(stop) = stop {
@@ -190,10 +192,10 @@ pub extern "C" fn tondo_rt_library_close(object: *mut NativeObject) -> *mut Str 
         (status != 0).then(said)
     });
     match refused {
-        Some(why) => str_new(why.as_bytes()),
+        Some(why) => crate::strings::str_in(region, why.as_bytes()),
         None => {
             *held = None;
-            str_new(b"")
+            crate::strings::str_in(region, b"")
         }
     }
 }
@@ -201,7 +203,11 @@ pub extern "C" fn tondo_rt_library_close(object: *mut NativeObject) -> *mut Str 
 /// The file name of a library, as the system names it: `lib<name>.so`,
 /// `lib<name>.so.<version>`; `lib<name>.dylib`, `lib<name>.<version>.dylib`.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_library_file_name(name: *const Str, version: *const Str) -> *mut Str {
+pub extern "C" fn tondo_rt_library_file_name(
+    name: *const Str,
+    version: *const Str,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let (name, version) = (text(name), text(version));
     let file = match (cfg!(target_os = "macos"), version.is_empty()) {
         (true, true) => format!("lib{name}.dylib"),
@@ -209,7 +215,7 @@ pub extern "C" fn tondo_rt_library_file_name(name: *const Str, version: *const S
         (false, true) => format!("lib{name}.so"),
         (false, false) => format!("lib{name}.so.{version}"),
     };
-    str_new(file.as_bytes())
+    crate::strings::str_in(region, file.as_bytes())
 }
 
 /// The address of what a library that offers a plugin answers with (standard

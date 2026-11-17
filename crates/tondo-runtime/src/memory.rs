@@ -54,17 +54,23 @@ pub unsafe extern "C" fn tondo_rt_memory_c_string(text: *const Str) -> *mut u8 {
 
 /// The text of a C string, with bytes that are not UTF-8 replaced.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_memory_from_c_string(text: *const u8) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_memory_from_c_string(
+    text: *const u8,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let bytes = unsafe { std::ffi::CStr::from_ptr(text.cast()) }.to_bytes();
-    str_new(String::from_utf8_lossy(bytes).as_bytes())
+    crate::strings::str_in(region, String::from_utf8_lossy(bytes).as_bytes())
 }
 
 /// The text of a C array of characters, up to its first zero byte.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_memory_from_c_chars(chars: *mut ArrayHeader) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_memory_from_c_chars(
+    chars: *mut ArrayHeader,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let bytes = unsafe { array_items::<u8>(chars) };
     let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-    str_new(String::from_utf8_lossy(&bytes[..end]).as_bytes())
+    crate::strings::str_in(region, String::from_utf8_lossy(&bytes[..end]).as_bytes())
 }
 
 #[unsafe(no_mangle)]

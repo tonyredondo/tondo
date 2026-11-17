@@ -196,9 +196,9 @@ pub extern "C" fn tondo_rt_fuzz_next() -> u8 {
 
 /// The input that runs, as JSON.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_fuzz_input() -> *mut Str {
+pub extern "C" fn tondo_rt_fuzz_input(region: *mut crate::regions::Region) -> *mut Str {
     let json = state().call.as_ref().and_then(|c| c.current.as_ref().map(|(json, _)| json.clone()));
-    crate::str_new(json.unwrap_or_default().as_bytes())
+    crate::strings::str_in(region, json.unwrap_or_default().as_bytes())
 }
 
 /// The input that runs does not read as the call's type: `P2011`, naming

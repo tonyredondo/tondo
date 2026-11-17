@@ -4,7 +4,7 @@
 //! type.
 
 use super::cycles::{Visit, Visitor};
-use super::{Glue, LIVE_OBJECTS, Str, str_bytes, str_new};
+use super::{Glue, LIVE_OBJECTS, Str, str_bytes};
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
 use std::sync::atomic::{AtomicUsize, Ordering, fence};
 
@@ -82,8 +82,11 @@ pub unsafe extern "C" fn tondo_rt_reflect_is(object: *const BoxObject, identity:
 
 /// The name of the type of the boxed value.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_reflect_name(object: *const BoxObject) -> *mut Str {
-    str_new(unsafe { str_bytes((*(*object).identity).name) })
+pub unsafe extern "C" fn tondo_rt_reflect_name(
+    object: *const BoxObject,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
+    crate::strings::str_in(region, unsafe { str_bytes((*(*object).identity).name) })
 }
 
 /// The index a path segment names, or `-1` when it is not one.
@@ -98,7 +101,7 @@ pub unsafe extern "C" fn tondo_rt_reflect_index(text: *const Str) -> i64 {
 
 /// A string as a quoted literal, for a string inside a composite value.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_reflect_quote(text: *const Str) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_reflect_quote(text: *const Str, region: *mut crate::regions::Region) -> *mut Str {
     let text = String::from_utf8_lossy(unsafe { str_bytes(text) });
-    str_new(format!("{text:?}").as_bytes())
+    crate::strings::str_in(region, format!("{text:?}").as_bytes())
 }

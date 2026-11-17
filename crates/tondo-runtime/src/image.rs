@@ -4,7 +4,7 @@
 //! gives a new one.
 
 use super::native::{self, NativeObject};
-use super::{ArrayHeader, Str, str_new};
+use super::{ArrayHeader, Str};
 use crate::array_items;
 use crate::byte_array;
 use crate::int_array;
@@ -69,10 +69,10 @@ pub unsafe extern "C" fn tondo_rt_image_read(data: *mut ArrayHeader) -> *mut Nat
 
 /// Why an image could not be read, or nothing.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_image_failure(object: *mut NativeObject) -> *mut Str {
+pub extern "C" fn tondo_rt_image_failure(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
     match native::get::<Picture>(object) {
-        Some(Picture::Failed(why)) => str_new(why.as_bytes()),
-        _ => str_new(b""),
+        Some(Picture::Failed(why)) => crate::strings::str_in(region, why.as_bytes()),
+        _ => crate::strings::str_in(region, b""),
     }
 }
 
@@ -223,10 +223,13 @@ fn lossy_webp(image: &DynamicImage, quality: i64) -> Option<Vec<u8>> {
 /// each empty when it lacks it, and then each tag's name and value; none
 /// when it has no EXIF.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_image_exif(data: *mut ArrayHeader) -> *mut ArrayHeader {
+pub unsafe extern "C" fn tondo_rt_image_exif(
+    data: *mut ArrayHeader,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let data = unsafe { array_items::<u8>(data) }.to_vec();
     let texts = crate::io::host(true, move || exif_texts(&data)).unwrap_or_default();
-    crate::string_array(&texts)
+    crate::arrays::string_array_in(region, &texts)
 }
 
 fn exif_texts(data: &[u8]) -> Option<Vec<String>> {

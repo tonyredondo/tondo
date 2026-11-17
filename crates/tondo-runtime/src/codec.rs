@@ -4,7 +4,7 @@
 //! seeded generators.
 
 use super::native::{self, NativeObject};
-use super::{ArrayHeader, Str, str_bytes, str_new};
+use super::{ArrayHeader, Str, str_bytes};
 use crate::array_items;
 use crate::byte_array;
 use crate::regions::Region;
@@ -452,7 +452,11 @@ pub unsafe extern "C" fn tondo_rt_path_steps(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_path_key(parent: *const Str, key: *const Str) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_path_key(
+    parent: *const Str,
+    key: *const Str,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let (parent, key) = (String::from_utf8_lossy(text(parent)), String::from_utf8_lossy(text(key)));
-    str_new(path_key(&parent, &key).as_bytes())
+    crate::strings::str_in(region, path_key(&parent, &key).as_bytes())
 }

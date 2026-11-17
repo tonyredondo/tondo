@@ -731,32 +731,32 @@ fn caught<T>(read: impl FnOnce(&Record) -> T, otherwise: T) -> T {
 }
 
 /// A text of the caught panic, or an empty one.
-fn caught_text(read: impl FnOnce(&Record) -> &str) -> *mut Str {
-    str_of(caught(|r| read(r).to_string(), String::new()).as_str())
+fn caught_text(region: *mut crate::regions::Region, read: impl FnOnce(&Record) -> &str) -> *mut Str {
+    str_of(region, caught(|r| read(r).to_string(), String::new()).as_str())
 }
 
-fn str_of(text: &str) -> *mut Str {
-    crate::str_new(text.as_bytes())
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_caught_code() -> *mut Str {
-    caught_text(|r| &r.panic.code)
+fn str_of(region: *mut crate::regions::Region, text: &str) -> *mut Str {
+    crate::strings::str_in(region, text.as_bytes())
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_caught_message() -> *mut Str {
-    caught_text(|r| &r.panic.message)
+pub extern "C" fn tondo_rt_caught_code(region: *mut crate::regions::Region) -> *mut Str {
+    caught_text(region, |r| &r.panic.code)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_caught_location() -> *mut Str {
-    caught_text(|r| &r.panic.location)
+pub extern "C" fn tondo_rt_caught_message(region: *mut crate::regions::Region) -> *mut Str {
+    caught_text(region, |r| &r.panic.message)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_caught_stack() -> *mut Str {
-    caught_text(|r| r.stack.trim_start_matches('\n'))
+pub extern "C" fn tondo_rt_caught_location(region: *mut crate::regions::Region) -> *mut Str {
+    caught_text(region, |r| &r.panic.location)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_caught_stack(region: *mut crate::regions::Region) -> *mut Str {
+    caught_text(region, |r| r.stack.trim_start_matches('\n'))
 }
 
 #[unsafe(no_mangle)]
@@ -765,8 +765,8 @@ pub extern "C" fn tondo_rt_caught_count() -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_caught_key(index: i64) -> *mut Str {
-    caught_text(|r| r.panic.data.get(index as usize).map_or("", |(k, _)| k))
+pub extern "C" fn tondo_rt_caught_key(index: i64, region: *mut crate::regions::Region) -> *mut Str {
+    caught_text(region, |r| r.panic.data.get(index as usize).map_or("", |(k, _)| k))
 }
 
 /// The kind of a datum: 0 `Int`, 1 `Float`, 2 `Bool`, 3 `String`.
@@ -801,18 +801,18 @@ pub extern "C" fn tondo_rt_caught_bool(index: i64) -> u8 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_caught_text(index: i64) -> *mut Str {
+pub extern "C" fn tondo_rt_caught_text(index: i64, region: *mut crate::regions::Region) -> *mut Str {
     let text = datum(index, |d| if let Datum::Text(t) = d { Some(t.clone()) } else { None }, String::new());
-    str_of(&text)
+    str_of(region, &text)
 }
 
 /// The stable name of a code of the language, as `bounds`; empty for the
 /// program's own.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_panic_name(code: *const Str) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_panic_name(code: *const Str, region: *mut crate::regions::Region) -> *mut Str {
     let code = text(code);
     let number = code.strip_prefix('P').and_then(|c| c.parse::<u32>().ok());
-    str_of(number.map_or("", crate::panic_name))
+    str_of(region, number.map_or("", crate::panic_name))
 }
 
 /// `panic.resume()`: the next panic raised is this one again, with its

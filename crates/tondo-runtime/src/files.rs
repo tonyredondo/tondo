@@ -7,7 +7,6 @@ use super::native::{self, NativeObject};
 use super::{ArrayHeader, Str};
 use crate::http::strings;
 use crate::int_array;
-use crate::string_array;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::ErrorKind;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
@@ -119,8 +118,11 @@ pub extern "C" fn tondo_rt_files_host_error(done: *mut NativeObject) -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_files_texts(done: *mut NativeObject) -> *mut ArrayHeader {
-    string_array(native::get::<Done>(done).map_or(&[][..], |d| &d.texts))
+pub extern "C" fn tondo_rt_files_texts(
+    done: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    crate::arrays::string_array_in(region, native::get::<Done>(done).map_or(&[][..], |d| &d.texts))
 }
 
 #[unsafe(no_mangle)]
@@ -773,15 +775,18 @@ pub unsafe extern "C" fn tondo_rt_files_watch(paths: *mut ArrayHeader, settle: i
 /// see whether anyone still receives; nothing when the watch ended or the
 /// task is cancelled.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_files_watch_next(done: *mut NativeObject) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_files_watch_next(
+    done: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let Some(watch) = native::get::<Done>(done).and_then(|d| d.watch.as_ref()) else {
-        return string_array(&[]);
+        return crate::arrays::string_array_in(region, &[]);
     };
     let lock = || watch.lock().unwrap_or_else(|e| e.into_inner());
     loop {
         let (receiver, roots, settle) = {
             let mut watch = lock();
-            let Some(receiver) = watch.changes.take() else { return string_array(&[]) };
+            let Some(receiver) = watch.changes.take() else { return crate::arrays::string_array_in(region, &[]) };
             (receiver, watch.roots.clone(), watch.settle)
         };
         let batch = crate::http::wait(async move {
@@ -789,16 +794,16 @@ pub extern "C" fn tondo_rt_files_watch_next(done: *mut NativeObject) -> *mut Arr
             let changes = batch(&mut receiver, settle).await?;
             Some((changes, receiver))
         });
-        let Some(Some((changes, receiver))) = batch else { return string_array(&[]) };
+        let Some(Some((changes, receiver))) = batch else { return crate::arrays::string_array_in(region, &[]) };
         let mut watch = lock();
         watch.changes = Some(receiver);
         if changes.is_empty() {
-            return string_array(&[String::new()]);
+            return crate::arrays::string_array_in(region, &[String::new()]);
         }
         let out = settled(&mut watch, &roots, changes);
         drop(watch);
         if !out.is_empty() {
-            return string_array(&out);
+            return crate::arrays::string_array_in(region, &out);
         }
     }
 }

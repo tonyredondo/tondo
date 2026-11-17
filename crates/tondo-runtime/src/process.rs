@@ -987,7 +987,7 @@ pub unsafe extern "C" fn tondo_rt_process_signal(process: *mut ProcessObject, ta
 /// `process.which(name)`: the file a shell runs for `name`, with the
 /// program's `PATH`; empty for none.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_process_which(name: *const Str) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_process_which(name: *const Str, region: *mut crate::regions::Region) -> *mut Str {
     let name = os(name);
     let runnable = |path: &std::path::Path| {
         use std::os::unix::fs::PermissionsExt;
@@ -1003,7 +1003,7 @@ pub unsafe extern "C" fn tondo_rt_process_which(name: *const Str) -> *mut Str {
             Some(std::path::Path::new(directory).join(&name)).filter(|path| runnable(path))
         })
     };
-    super::str_new(found.map_or(Vec::new(), |path| path.into_os_string().into_vec()).as_slice())
+    crate::strings::str_in(region, found.map_or(Vec::new(), |path| path.into_os_string().into_vec()).as_slice())
 }
 
 /// `process.signal(pid, signal)`, to a process the program did not start:

@@ -69,20 +69,27 @@ fn entry<T>(table: &HashMap<String, T>, locale: *const Str) -> &T {
 /// sign, percent sign, minimum grouping digits and its patterns of
 /// decimals, percents and currencies.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_text_number_symbols(locale: *const Str) -> *mut ArrayHeader {
-    crate::string_array(&entry(&NUMBERS.locales, locale).0)
+pub unsafe extern "C" fn tondo_rt_text_number_symbols(
+    locale: *const Str,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    crate::arrays::string_array_in(region, &entry(&NUMBERS.locales, locale).0)
 }
 
 /// The symbol a locale writes for a currency, or its code.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_text_currency_symbol(locale: *const Str, code: *const Str) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_text_currency_symbol(
+    locale: *const Str,
+    code: *const Str,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let (tag, language) = tag(locale);
     let code = text(code).to_ascii_uppercase();
     let found = [tag.as_str(), language.as_str(), "en"]
         .into_iter()
         .filter_map(|key| NUMBERS.locales.get(key))
         .find_map(|(_, symbols)| symbols.get(&code));
-    super::str_new(found.unwrap_or(&code).as_bytes())
+    crate::strings::str_in(region, found.unwrap_or(&code).as_bytes())
 }
 
 /// The digits after the point of a currency's amounts.
@@ -94,6 +101,9 @@ pub unsafe extern "C" fn tondo_rt_text_currency_digits(code: *const Str) -> i64 
 /// A language's plural categories, each followed by its condition, in the
 /// order they are tried; a count that meets none is `other`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_text_plural_rules(locale: *const Str) -> *mut ArrayHeader {
-    crate::string_array(entry(&NUMBERS.plurals, locale))
+pub unsafe extern "C" fn tondo_rt_text_plural_rules(
+    locale: *const Str,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    crate::arrays::string_array_in(region, entry(&NUMBERS.plurals, locale))
 }

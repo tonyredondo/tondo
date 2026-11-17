@@ -412,9 +412,12 @@ pub extern "C" fn tondo_rt_profile_since(
 
 /// The kind of a profile, as `cpu` or `memory`, for `since` to check.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_profile_kind(profile: *mut super::native::NativeObject) -> *mut crate::Str {
+pub extern "C" fn tondo_rt_profile_kind(
+    profile: *mut super::native::NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut crate::Str {
     let kind = super::native::get::<Made>(profile).map_or("", |made| made.kept.name.as_str());
-    crate::str_new(kind.as_bytes())
+    crate::strings::str_in(region, kind.as_bytes())
 }
 
 /// A stack, its values, and its labels.
@@ -744,9 +747,12 @@ pub extern "C" fn tondo_rt_profile_pprof(profile: *mut super::native::NativeObje
 
 /// `Profile.folded()`.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_profile_folded(profile: *mut super::native::NativeObject) -> *mut crate::Str {
+pub extern "C" fn tondo_rt_profile_folded(
+    profile: *mut super::native::NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut crate::Str {
     let text = super::native::get::<Made>(profile).map_or("", |made| made.folded.as_str());
-    crate::str_new(text.as_bytes())
+    crate::strings::str_in(region, text.as_bytes())
 }
 
 #[cfg(test)]

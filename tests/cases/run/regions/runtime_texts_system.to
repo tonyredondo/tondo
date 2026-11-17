@@ -1,0 +1,70 @@
+// Texts the runtime's natives of the system, panics, addresses, files,
+// patterns and reflection make, which regions take as they take what
+// `split` makes: the user and the system the program runs as, a caught
+// panic's message and code, an address and a network written out, a
+// failure of the file system, an escaped pattern, a media type, the
+// frames of the stack, where a program is found and a type's name, in the
+// region of a turn, and sent out of it by a store and a channel.
+
+import std.console
+import std.diagnostics
+import std.env
+import std.fs
+import std.http
+import std.net
+import std.process
+import std.reflect
+import std.regex
+
+type Note = {
+    text: String
+}
+
+fn broke(i: Int): Int {
+    if i >= 0 {
+        panic("broke {i}")
+    }
+    i
+}
+
+fn turns(): String {
+    var counted = 0
+    var note = Note { text: "" }
+    var kept: Array[String] = []
+    let (sender, receiver) = channel[String](16)
+    for i in 0..3 {
+        counted += [env.user().home, env.system().name].length()
+        match recover { broke(i) } {
+            ok(_) => counted -= 1000
+            err(stopped) => counted += stopped.message.length()
+        }
+        match recover { [1, 2][i + 5] } {
+            ok(_) => counted -= 1000
+            err(stopped) => note.text = stopped.code
+        }
+        let ip = net.ip("::ffff:10.0.{i}.1") ?? panic("no ip")
+        kept.push("{ip}")
+        counted += "{net.network("10.{i}.0.0/8") ?? panic("no network")}".length()
+        match fs.readText("/nonexistent/{i}") {
+            ok(_) => counted -= 1000
+            err(error) => counted += "{error}".length() * 0 + 1
+        }
+        sender.send(regex.Regex.escape("a.{i}*"))
+        sender.send(http.mediaType("page{i}.html"))
+        counted += diagnostics.stack().length() * 0 + 1
+        counted += (process.which("sh") ?? "").length() * 0 + 1
+        counted += reflect.valueOf(note).typeName().length()
+    }
+    sender.close()
+    var received: Array[String] = []
+    for text in receiver {
+        received.push(text)
+    }
+    "{counted} {note.text} {kept} {received}"
+}
+
+fn main() {
+    console.println(turns())
+}
+
+// expect-stdout: 78 P0001 [10.0.0.1, 10.0.1.1, 10.0.2.1] [a\.0\*, text/html, a\.1\*, text/html, a\.2\*, text/html]

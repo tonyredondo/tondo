@@ -94,9 +94,9 @@ pub(crate) fn pattern(pattern: &str) -> Result<regex::Regex, String> {
 
 /// `Regex.escape(text)`: a pattern that matches the text as it is.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_regex_escape(text: *const Str) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_regex_escape(text: *const Str, region: *mut crate::regions::Region) -> *mut Str {
     let text = String::from_utf8_lossy(unsafe { str_bytes(text) }).into_owned();
-    str_new(regex::escape(&text).as_bytes())
+    crate::strings::str_in(region, regex::escape(&text).as_bytes())
 }
 
 /// `Regex.compile`: the pattern with its options as bits (case-insensitive,
@@ -173,8 +173,8 @@ fn input<'a>(r: &RegexObject, input: *const Str) -> Option<&'a str> {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_regex_pattern(r: *mut RegexObject) -> *mut Str {
-    str_new(object(r).pattern.as_bytes())
+pub unsafe extern "C" fn tondo_rt_regex_pattern(r: *mut RegexObject, region: *mut crate::regions::Region) -> *mut Str {
+    crate::strings::str_in(region, object(r).pattern.as_bytes())
 }
 
 /// The numbered captures, without the whole match.
@@ -185,9 +185,13 @@ pub unsafe extern "C" fn tondo_rt_regex_capture_count(r: *mut RegexObject) -> i6
 
 /// The name of a capture, or `""`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_regex_capture_name(r: *mut RegexObject, index: i64) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_regex_capture_name(
+    r: *mut RegexObject,
+    index: i64,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let name = object(r).regex.capture_names().nth(index.max(0) as usize).flatten().unwrap_or("");
-    str_new(name.as_bytes())
+    crate::strings::str_in(region, name.as_bytes())
 }
 
 /// The index of a named capture, or `-1`.

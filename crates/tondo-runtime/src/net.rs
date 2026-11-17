@@ -1619,26 +1619,29 @@ pub unsafe extern "C" fn tondo_rt_net_resolve(host: *const Str, timeout_ms: i64)
 
 /// The addresses `resolve` found.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_net_names(object: *mut NativeObject) -> *mut ArrayHeader {
+pub unsafe extern "C" fn tondo_rt_net_names(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     match native::get::<Net>(object) {
-        Some(Net::Names(names)) => crate::string_array(names),
-        _ => crate::string_array(&[]),
+        Some(Net::Names(names)) => crate::arrays::string_array_in(region, names),
+        _ => crate::arrays::string_array_in(region, &[]),
     }
 }
 
 /// An IP address in its usual form, or "" when `text` is not one.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_net_ip(text: *const Str) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_net_ip(text: *const Str, region: *mut crate::regions::Region) -> *mut Str {
     let ip = super::http::text(text).parse::<std::net::IpAddr>().map(|ip| ip.to_string());
-    str_new(ip.unwrap_or_default().as_bytes())
+    crate::strings::str_in(region, ip.unwrap_or_default().as_bytes())
 }
 
 /// `net.ip`: an IP address in its canonical form, an IPv4 in an IPv6 as
 /// that IPv4, or "" when `text` is not one.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_net_canonical_ip(text: *const Str) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_net_canonical_ip(text: *const Str, region: *mut crate::regions::Region) -> *mut Str {
     let ip = super::http::text(text).parse::<std::net::IpAddr>().map(|ip| ip.to_canonical().to_string());
-    str_new(ip.unwrap_or_default().as_bytes())
+    crate::strings::str_in(region, ip.unwrap_or_default().as_bytes())
 }
 
 /// What an IP address in its canonical form is, as bits: IPv4 1, IPv6 2,
@@ -1661,13 +1664,13 @@ pub unsafe extern "C" fn tondo_rt_net_ip_kind(text: *const Str) -> i64 {
 /// cut to its prefix; an address alone is its own network; "" when `text`
 /// is not one.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_net_network(text: *const Str) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_net_network(text: *const Str, region: *mut crate::regions::Region) -> *mut Str {
     let text = super::http::text(text);
     let network = match text.parse::<ipnet::IpNet>() {
         Ok(network) => Some(network.trunc()),
         Err(_) => text.parse::<std::net::IpAddr>().ok().map(|ip| ipnet::IpNet::from(ip.to_canonical())),
     };
-    str_new(network.map(|n| n.to_string()).unwrap_or_default().as_bytes())
+    crate::strings::str_in(region, network.map(|n| n.to_string()).unwrap_or_default().as_bytes())
 }
 
 /// Whether the network, as `network` gives it, holds the address.
@@ -1693,12 +1696,16 @@ fn address_of(object: *mut NativeObject, which: i64) -> Option<Endpoint> {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_net_address_ip(object: *mut NativeObject, which: i64) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_net_address_ip(
+    object: *mut NativeObject,
+    which: i64,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let ip = match address_of(object, which) {
         Some(Endpoint::Ip(address)) => address.ip().to_string(),
         _ => String::new(),
     };
-    str_new(ip.as_bytes())
+    crate::strings::str_in(region, ip.as_bytes())
 }
 
 #[unsafe(no_mangle)]
@@ -1711,10 +1718,14 @@ pub unsafe extern "C" fn tondo_rt_net_address_port(object: *mut NativeObject, wh
 
 /// The path of a Unix socket's address, or "".
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_net_address_path(object: *mut NativeObject, which: i64) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_net_address_path(
+    object: *mut NativeObject,
+    which: i64,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     match address_of(object, which) {
-        Some(Endpoint::Path(path)) => str_new(path.as_bytes()),
-        _ => str_new(b""),
+        Some(Endpoint::Path(path)) => crate::strings::str_in(region, path.as_bytes()),
+        _ => crate::strings::str_in(region, b""),
     }
 }
 
@@ -1760,6 +1771,10 @@ pub unsafe extern "C" fn tondo_rt_net_failure(object: *mut NativeObject, which: 
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_net_detail(object: *mut NativeObject, which: i64) -> *mut Str {
-    str_new(failure_of(object, which).detail.as_bytes())
+pub unsafe extern "C" fn tondo_rt_net_detail(
+    object: *mut NativeObject,
+    which: i64,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
+    crate::strings::str_in(region, failure_of(object, which).detail.as_bytes())
 }

@@ -3,7 +3,7 @@
 //! JSON of its own types, which it decodes.
 
 use super::template_syntax::{self as syntax, Code, Node, Op, Spec};
-use super::{Str, str_bytes, str_new};
+use super::{Str, str_bytes};
 use std::fmt::Write;
 use std::ops::Range;
 
@@ -11,7 +11,11 @@ use std::ops::Range;
 /// ..., "nodes": [...]}], "error": null, "at": 0}`, or the error and where
 /// it is.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_template_parse(source: *const Str, html: u8) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_template_parse(
+    source: *const Str,
+    html: u8,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let source = String::from_utf8_lossy(unsafe { str_bytes(source) });
     let mut out = String::new();
     let read = syntax::parse(&source, html != 0).and_then(|template| {
@@ -52,7 +56,7 @@ pub unsafe extern "C" fn tondo_rt_template_parse(source: *const Str, html: u8) -
             let _ = write!(out, "{{\"extends\":null,\"nodes\":[],\"error\":{message},\"at\":{}}}", error.at);
         }
     }
-    str_new(out.as_bytes())
+    crate::strings::str_in(region, out.as_bytes())
 }
 
 fn list(out: &mut String, source: &str, nodes: &[Node]) -> Result<(), syntax::Error> {

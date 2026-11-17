@@ -554,10 +554,10 @@ pub extern "C" fn tondo_rt_metric_value(id: i64) -> i64 {
 /// `diagnostics.metrics()`: each counter `tondo counters` shows, as
 /// `name\tunit\tgauge\tvalue`, `gauge` 1 for a level.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_metrics() -> *mut crate::ArrayHeader {
+pub extern "C" fn tondo_rt_metrics(region: *mut crate::regions::Region) -> *mut crate::ArrayHeader {
     let lines: Vec<String> =
         sample().iter().map(|s| format!("{}\t{}\t{}\t{}", s.name, s.unit, s.gauge as u8, s.value)).collect();
-    crate::string_array(&lines)
+    crate::arrays::string_array_in(region, &lines)
 }
 
 /// Counts for the tools from the start: the `main` of a program that reads
@@ -572,13 +572,13 @@ pub extern "C" fn tondo_rt_metrics_watch() {
 /// innermost first, as `function\tfile\tline\tcolumn`, without those of
 /// `std.diagnostics` itself.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_diagnostics_stack() -> *mut crate::ArrayHeader {
+pub extern "C" fn tondo_rt_diagnostics_stack(region: *mut crate::regions::Region) -> *mut crate::ArrayHeader {
     let frames: Vec<String> = super::trace::here_compiled()
         .into_iter()
         .skip_while(|(_, file, ..)| *file == "<std>/diagnostics.to")
         .map(|(function, file, line, column)| format!("{function}\t{file}\t{line}\t{column}"))
         .collect();
-    crate::string_array(&frames)
+    crate::arrays::string_array_in(region, &frames)
 }
 
 // ---------------------------------------------------------------------------

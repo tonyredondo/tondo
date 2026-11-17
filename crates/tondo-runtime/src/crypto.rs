@@ -3,7 +3,7 @@
 //! with Argon2id and the checking of bcrypt's. Keys come and go as bytes:
 //! PKCS #8 for private keys and each kind's raw form for public ones.
 
-use super::{ArrayHeader, Str, str_bytes, str_new};
+use super::{ArrayHeader, Str, str_bytes};
 use crate::array_items;
 use crate::byte_array;
 use ring::{aead, hkdf, pbkdf2, rand, signature};
@@ -194,13 +194,16 @@ pub unsafe extern "C" fn tondo_rt_crypto_verify(
 /// The password hashed with Argon2id, OWASP's parameters and a random salt
 /// of 16 bytes, in PHC's format.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_crypto_hash_password(password: *const Str) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_crypto_hash_password(
+    password: *const Str,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     use argon2::password_hash::PasswordHasher;
     use ring::rand::SecureRandom;
     let mut salt = [0u8; 16];
     rand::SystemRandom::new().fill(&mut salt).expect("the system's entropy");
     let hashed = argon2::Argon2::default().hash_password_with_salt(text(password).as_bytes(), &salt);
-    str_new(hashed.expect("a password Argon2 hashes").to_string().as_bytes())
+    crate::strings::str_in(region, hashed.expect("a password Argon2 hashes").to_string().as_bytes())
 }
 
 /// Whether the password is the one of an Argon2 or bcrypt hash.

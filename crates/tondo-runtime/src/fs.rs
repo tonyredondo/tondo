@@ -83,8 +83,8 @@ fn os_error(number: i64) -> String {
 
 /// `os.Errno` as it shows (standard library 14.45).
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_os_error_text(number: i64) -> *mut super::Str {
-    super::str_new(os_error(number).as_bytes())
+pub extern "C" fn tondo_rt_os_error_text(number: i64, region: *mut crate::regions::Region) -> *mut super::Str {
+    crate::strings::str_in(region, os_error(number).as_bytes())
 }
 
 /// The system's number of the last `FsError.Host` of this thread.

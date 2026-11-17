@@ -8,7 +8,7 @@ use crate::array_items;
 use crate::byte_array;
 use crate::io::wait_for;
 use crate::native::{self, NativeObject};
-use crate::{ArrayHeader, Str, str_bytes, str_new};
+use crate::{ArrayHeader, Str, str_bytes};
 use bytes::{Buf, Bytes, BytesMut};
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, StreamBody};
@@ -391,11 +391,14 @@ pub unsafe extern "C" fn tondo_rt_grpc_channel(
 
 /// Why a channel could not be made, or empty.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_grpc_channel_error(channel: *mut NativeObject) -> *mut Str {
+pub extern "C" fn tondo_rt_grpc_channel_error(
+    channel: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     match native::get::<Result<Arc<Channel>, String>>(channel) {
-        Some(Err(problem)) => str_new(problem.as_bytes()),
-        Some(Ok(_)) => str_new(b""),
-        None => str_new(b"not a channel"),
+        Some(Err(problem)) => crate::strings::str_in(region, problem.as_bytes()),
+        Some(Ok(_)) => crate::strings::str_in(region, b""),
+        None => crate::strings::str_in(region, b"not a channel"),
     }
 }
 
@@ -848,19 +851,28 @@ pub extern "C" fn tondo_rt_grpc_code(object: *mut NativeObject) -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_grpc_detail(object: *mut NativeObject) -> *mut Str {
-    call(object).map_or_else(|| str_new(b""), |c| str_new(lock(&c.status).1.as_bytes()))
+pub extern "C" fn tondo_rt_grpc_detail(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
+    call(object).map_or_else(
+        || crate::strings::str_in(region, b""),
+        |c| crate::strings::str_in(region, lock(&c.status).1.as_bytes()),
+    )
 }
 
 /// The headers the server answered with, as names and values.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_grpc_headers(object: *mut NativeObject) -> *mut ArrayHeader {
-    crate::string_array(&call(object).map_or(Vec::new(), |c| lock(&c.headers).clone()))
+pub extern "C" fn tondo_rt_grpc_headers(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    crate::arrays::string_array_in(region, &call(object).map_or(Vec::new(), |c| lock(&c.headers).clone()))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_grpc_trailers(object: *mut NativeObject) -> *mut ArrayHeader {
-    crate::string_array(&call(object).map_or(Vec::new(), |c| lock(&c.status).2.clone()))
+pub extern "C" fn tondo_rt_grpc_trailers(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    crate::arrays::string_array_in(region, &call(object).map_or(Vec::new(), |c| lock(&c.status).2.clone()))
 }
 
 // ---------------------------------------------------------------------------
@@ -925,9 +937,12 @@ pub unsafe extern "C" fn tondo_rt_grpc_open(
 /// Waits until a call ends and gives its status: its code, its message and
 /// the trailers' names and values.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_grpc_ended(object: *mut NativeObject) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_grpc_ended(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let Some(ended) = native::get::<Arc<Ended>>(object).cloned() else {
-        return crate::string_array(&[]);
+        return crate::arrays::string_array_in(region, &[]);
     };
     let status = wait_for(async move {
         loop {
@@ -941,7 +956,7 @@ pub extern "C" fn tondo_rt_grpc_ended(object: *mut NativeObject) -> *mut ArrayHe
     let (code, message, trailers) = status.unwrap_or((CANCELLED, "the call was cancelled".into(), Vec::new()));
     let mut list = vec![code.to_string(), message];
     list.extend(trailers);
-    crate::string_array(&list)
+    crate::arrays::string_array_in(region, &list)
 }
 
 /// The call the interceptors made, once `next` made it; or one that ended
@@ -1162,8 +1177,14 @@ pub extern "C" fn tondo_rt_grpc_frame(object: *mut NativeObject) -> *mut ArrayHe
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_grpc_frame_error(object: *mut NativeObject) -> *mut Str {
-    native::get::<Mutex<Frames>>(object).map_or_else(|| str_new(b""), |f| str_new(lock(f).error.as_bytes()))
+pub extern "C" fn tondo_rt_grpc_frame_error(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
+    native::get::<Mutex<Frames>>(object).map_or_else(
+        || crate::strings::str_in(region, b""),
+        |f| crate::strings::str_in(region, lock(f).error.as_bytes()),
+    )
 }
 
 // ---------------------------------------------------------------------------

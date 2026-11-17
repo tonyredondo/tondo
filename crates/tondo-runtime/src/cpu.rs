@@ -1,7 +1,7 @@
 //! The processor (toolchain 7.8): a program checks at its start that it
 //! has what the level it was built for needs.
 
-use super::{Str, str_bytes, str_new};
+use super::{Str, str_bytes};
 use std::io::Write;
 use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, Ordering};
 
@@ -113,10 +113,10 @@ fn features() -> [bool; 23] {
 
 /// `env.build().cpu`: the level the program was built for.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_env_cpu() -> *mut Str {
+pub extern "C" fn tondo_rt_env_cpu(region: *mut crate::regions::Region) -> *mut Str {
     let needed = NEEDED.load(Ordering::Relaxed);
     let text = if needed.is_null() { &[][..] } else { unsafe { str_bytes(needed) } };
-    str_new(text.split(|&b| b == b'\n').next().unwrap_or_default())
+    crate::strings::str_in(region, text.split(|&b| b == b'\n').next().unwrap_or_default())
 }
 
 /// Whether the processor has the feature Rust's detection calls `name`.

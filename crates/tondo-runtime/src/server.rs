@@ -15,7 +15,6 @@ use super::{ArrayHeader, Kept, Str, str_new};
 use crate::array_items;
 use crate::byte_array;
 use crate::io::{Host, Mode, StreamObject};
-use crate::string_array;
 use bytes::{Buf, Bytes};
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Full, StreamBody};
@@ -612,7 +611,10 @@ fn store(name: &str) -> Option<Arc<Certificates>> {
 
 /// `net.Certificates(protocols)`: a new store, and its name.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_tls_certificates(protocols: *mut ArrayHeader) -> *mut Str {
+pub extern "C" fn tondo_rt_tls_certificates(
+    protocols: *mut ArrayHeader,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let offered = strings(protocols).into_iter().map(String::into_bytes).collect();
     let mut stores = lock(&STORES);
     stores.push(Arc::new(Certificates {
@@ -621,7 +623,7 @@ pub extern "C" fn tondo_rt_tls_certificates(protocols: *mut ArrayHeader) -> *mut
         offered,
         serving: Default::default(),
     }));
-    str_new(format!("{STORE}{}", stores.len() - 1).as_bytes())
+    crate::strings::str_in(region, format!("{STORE}{}", stores.len() - 1).as_bytes())
 }
 
 /// The certificate a store shows from now on, or, with a `protocol`, the
@@ -634,35 +636,36 @@ pub unsafe extern "C" fn tondo_rt_tls_certificates_set(
     name: *const Str,
     cert: *const Str,
     key: *const Str,
+    region: *mut crate::regions::Region,
 ) -> *mut Str {
-    let Some(store) = store(&text(named)) else { return str_new(b"") };
+    let Some(store) = store(&text(named)) else { return crate::strings::str_in(region, b"") };
     let (protocol, name, cert) = (text(protocol).into_bytes(), text(name).to_ascii_lowercase(), text(cert));
     if protocol.is_empty() {
         return match certified(&cert, &text(key)) {
             Ok(found) => {
                 *lock(&store.current) = Some(found);
-                str_new(b"")
+                crate::strings::str_in(region, b"")
             }
-            Err(why) => str_new(why.as_bytes()),
+            Err(why) => crate::strings::str_in(region, why.as_bytes()),
         };
     }
     if cert.is_empty() {
         lock(&store.protocols).remove(&(protocol, name));
-        return str_new(b"");
+        return crate::strings::str_in(region, b"");
     }
     if !store.offered.contains(&protocol) {
         let protocol = String::from_utf8_lossy(&protocol);
         let why = format!(
             "these certificates offer no `{protocol}`: make them with `Certificates(protocols: [\"{protocol}\"])`"
         );
-        return str_new(why.as_bytes());
+        return crate::strings::str_in(region, why.as_bytes());
     }
     match certified(&cert, &text(key)) {
         Ok(found) => {
             lock(&store.protocols).insert((protocol, name), found);
-            str_new(b"")
+            crate::strings::str_in(region, b"")
         }
-        Err(why) => str_new(why.as_bytes()),
+        Err(why) => crate::strings::str_in(region, why.as_bytes()),
     }
 }
 
@@ -727,8 +730,8 @@ fn bind(address: &str) -> std::io::Result<mio::net::TcpListener> {
 
 /// The media type a file's name says, or `application/octet-stream`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_http_media_type(path: *const Str) -> *mut Str {
-    str_new(mime_guess::from_path(text(path)).first_or_octet_stream().as_ref().as_bytes())
+pub unsafe extern "C" fn tondo_rt_http_media_type(path: *const Str, region: *mut crate::regions::Region) -> *mut Str {
+    crate::strings::str_in(region, mime_guess::from_path(text(path)).first_or_octet_stream().as_ref().as_bytes())
 }
 
 /// Starts a server on the Unix socket at `path`.
@@ -1198,8 +1201,11 @@ async fn handle(
 
 /// The server's address, with the port it took.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_server_address(server: *mut NativeObject) -> *mut Str {
-    str_new(native::get::<Server>(server).map_or("", |s| s.address.as_str()).as_bytes())
+pub extern "C" fn tondo_rt_http_server_address(
+    server: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
+    crate::strings::str_in(region, native::get::<Server>(server).map_or("", |s| s.address.as_str()).as_bytes())
 }
 
 /// Stops accepting connections and drains those open: each ends the
@@ -1608,10 +1614,13 @@ pub unsafe extern "C" fn tondo_rt_http_trailers_set(object: *mut NativeObject, n
 
 /// The names and values set, in order.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_trailers_list(object: *mut NativeObject) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_http_trailers_list(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let list = native::get::<Arc<Trailers>>(object)
         .map_or(Vec::new(), |t| lock(&t.0).iter().flat_map(|(name, value)| [name.clone(), value.clone()]).collect());
-    string_array(&list)
+    crate::arrays::string_array_in(region, &list)
 }
 
 /// Responds with what a stream gives, as it gives it, and then the
@@ -1688,6 +1697,7 @@ pub unsafe extern "C" fn tondo_rt_http_respond_file(
     headers: *mut ArrayHeader,
     path: *const Str,
     download: *const Str,
+    region: *mut crate::regions::Region,
 ) -> *mut Str {
     let r = request(object);
     let (path, download, mut extra) = (text(path), text(download), strings(headers));
@@ -1708,8 +1718,8 @@ pub unsafe extern "C" fn tondo_rt_http_respond_file(
     };
     let (file, metadata) = match opened {
         Some(Ok(opened)) => opened,
-        Some(Err(error)) => return str_new(error.to_string().as_bytes()),
-        None => return str_new(b"the task was cancelled"),
+        Some(Err(error)) => return crate::strings::str_in(region, error.to_string().as_bytes()),
+        None => return crate::strings::str_in(region, b"the task was cancelled"),
     };
     let length = metadata.len();
     let modified = metadata.modified().ok();
@@ -1753,7 +1763,7 @@ pub unsafe extern "C" fn tondo_rt_http_respond_file(
         });
         BodyExt::boxed_unsync(StreamBody::new(chunks))
     });
-    str_new(b"")
+    crate::strings::str_in(region, b"")
 }
 
 /// A file the server reads or writes, each operation done where work that
@@ -2019,10 +2029,15 @@ pub extern "C" fn tondo_rt_http_form_next(form: *mut NativeObject) -> *mut Nativ
 
 /// `name\tfileName\tcontentType`, or an empty string at the end.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_upload_head(object: *mut NativeObject) -> *mut Str {
+pub extern "C" fn tondo_rt_http_upload_head(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     match native::get::<Upload>(object) {
-        Some(u) if !u.done => str_new(format!("{}\t{}\t{}", u.name, u.file_name, u.content_type).as_bytes()),
-        _ => str_new(b""),
+        Some(u) if !u.done => {
+            crate::strings::str_in(region, format!("{}\t{}\t{}", u.name, u.file_name, u.content_type).as_bytes())
+        }
+        _ => crate::strings::str_in(region, b""),
     }
 }
 

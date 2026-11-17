@@ -5,7 +5,7 @@
 
 use super::native::{self, NativeObject};
 use super::tasks::{CANCELLED, HOST_WORK, Wait, current, notify};
-use super::{ArrayHeader, Str, element, str_new};
+use super::{ArrayHeader, Str, element};
 use crate::array_items;
 use crate::byte_array;
 use crate::io::{Host, Mode, StreamObject};
@@ -455,6 +455,7 @@ pub unsafe extern "C" fn tondo_rt_http_form_file(
     name: *const Str,
     path: *const Str,
     content_type: *const Str,
+    region: *mut crate::regions::Region,
 ) -> *mut Str {
     let path = std::path::PathBuf::from(text(path));
     let opening = path.clone();
@@ -476,10 +477,10 @@ pub unsafe extern "C" fn tondo_rt_http_form_file(
             };
             let content = super::client::Content::Stream(Box::pin(read_file(file)), Some(length));
             add_part(form, part(text(name), file_name, kind, content));
-            str_new(b"")
+            crate::strings::str_in(region, b"")
         }
-        Some(Err(error)) => str_new(error.to_string().as_bytes()),
-        None => str_new(b"the task was cancelled"),
+        Some(Err(error)) => crate::strings::str_in(region, error.to_string().as_bytes()),
+        None => crate::strings::str_in(region, b"the task was cancelled"),
     }
 }
 
@@ -619,12 +620,12 @@ fn response<'a>(object: *mut NativeObject) -> &'a Response {
 /// Why a request or a read of its body failed, as `kind\tmessage`, or an
 /// empty string.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_failure(object: *mut NativeObject) -> *mut Str {
-    let Some(slot) = failure_of(object) else { return str_new(b"") };
+pub extern "C" fn tondo_rt_http_failure(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
+    let Some(slot) = failure_of(object) else { return crate::strings::str_in(region, b"") };
     let failure = slot.lock().unwrap_or_else(|e| e.into_inner());
     match failure.as_ref() {
-        Some((kind, message)) => str_new(format!("{kind}\t{message}").as_bytes()),
-        None => str_new(b""),
+        Some((kind, message)) => crate::strings::str_in(region, format!("{kind}\t{message}").as_bytes()),
+        None => crate::strings::str_in(region, b""),
     }
 }
 
@@ -635,15 +636,15 @@ pub extern "C" fn tondo_rt_http_status(object: *mut NativeObject) -> i64 {
 
 /// The status's reason phrase: `OK`.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_reason(object: *mut NativeObject) -> *mut Str {
+pub extern "C" fn tondo_rt_http_reason(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
     let reason = hyper::StatusCode::from_u16(response(object).status).ok().and_then(|s| s.canonical_reason());
-    str_new(reason.unwrap_or_default().as_bytes())
+    crate::strings::str_in(region, reason.unwrap_or_default().as_bytes())
 }
 
 /// The URL that answered, after redirects.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_final_url(object: *mut NativeObject) -> *mut Str {
-    str_new(response(object).url.as_bytes())
+pub extern "C" fn tondo_rt_http_final_url(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
+    crate::strings::str_in(region, response(object).url.as_bytes())
 }
 
 /// The protocol's version: `HTTP/1.1`.
@@ -771,8 +772,11 @@ fn windows_1252(bytes: &[u8]) -> String {
 
 /// Bytes of Windows-1252 as text.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_http_windows_1252(data: *mut ArrayHeader) -> *mut Str {
-    str_new(windows_1252(unsafe { array_items::<u8>(data) }).as_bytes())
+pub unsafe extern "C" fn tondo_rt_http_windows_1252(
+    data: *mut ArrayHeader,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
+    crate::strings::str_in(region, windows_1252(unsafe { array_items::<u8>(data) }).as_bytes())
 }
 
 // ---------------------------------------------------------------------------
@@ -918,10 +922,11 @@ pub unsafe extern "C" fn tondo_rt_http_ws_send(
     binary: u8,
     message: *const Str,
     data: *mut ArrayHeader,
+    region: *mut crate::regions::Region,
 ) -> *mut Str {
     use futures_util::SinkExt;
     let Some(sink) = native::get::<Socket>(socket).and_then(|s| s.sink.clone()) else {
-        return str_new(b"not an open WebSocket");
+        return crate::strings::str_in(region, b"not an open WebSocket");
     };
     let frame = if binary != 0 {
         Frame::Binary(unsafe { array_items::<u8>(data) }.to_vec().into())
@@ -929,9 +934,9 @@ pub unsafe extern "C" fn tondo_rt_http_ws_send(
         Frame::Text(text(message).into())
     };
     match wait(async move { sink.lock().await.send(frame).await }) {
-        Some(Ok(())) => str_new(b""),
-        Some(Err(error)) => str_new(error.to_string().as_bytes()),
-        None => str_new(b"the task was cancelled"),
+        Some(Ok(())) => crate::strings::str_in(region, b""),
+        Some(Err(error)) => crate::strings::str_in(region, error.to_string().as_bytes()),
+        None => crate::strings::str_in(region, b"the task was cancelled"),
     }
 }
 
@@ -977,8 +982,8 @@ pub extern "C" fn tondo_rt_http_ws_kind(received: *mut NativeObject) -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_ws_text(received: *mut NativeObject) -> *mut Str {
-    str_new(native::get::<Received>(received).map_or("", |r| r.text.as_str()).as_bytes())
+pub extern "C" fn tondo_rt_http_ws_text(received: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
+    crate::strings::str_in(region, native::get::<Received>(received).map_or("", |r| r.text.as_str()).as_bytes())
 }
 
 #[unsafe(no_mangle)]
@@ -988,14 +993,16 @@ pub extern "C" fn tondo_rt_http_ws_data(received: *mut NativeObject) -> *mut Arr
 
 /// Closes a WebSocket, telling the server; the error, or an empty string.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_ws_close(socket: *mut NativeObject) -> *mut Str {
+pub extern "C" fn tondo_rt_http_ws_close(socket: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
     use futures_util::SinkExt;
     let Some(sink) = native::get::<Socket>(socket).and_then(|s| s.sink.clone()) else {
-        return str_new(b"");
+        return crate::strings::str_in(region, b"");
     };
     match wait(async move { sink.lock().await.close().await }) {
-        Some(Ok(())) | Some(Err(tokio_tungstenite::tungstenite::Error::ConnectionClosed)) => str_new(b""),
-        Some(Err(error)) => str_new(error.to_string().as_bytes()),
-        None => str_new(b"the task was cancelled"),
+        Some(Ok(())) | Some(Err(tokio_tungstenite::tungstenite::Error::ConnectionClosed)) => {
+            crate::strings::str_in(region, b"")
+        }
+        Some(Err(error)) => crate::strings::str_in(region, error.to_string().as_bytes()),
+        None => crate::strings::str_in(region, b"the task was cancelled"),
     }
 }

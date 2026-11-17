@@ -4,7 +4,7 @@
 //! are counted, so a budget ends a run at the same point on every machine.
 
 use super::config::config;
-use super::{Str, str_bytes, str_new};
+use super::{Str, str_bytes};
 use std::alloc::{GlobalAlloc, Layout};
 use std::io::Write;
 #[cfg(tondo_staticlib)]
@@ -37,9 +37,9 @@ pub extern "C" fn tondo_rt_meta_step() {
 
 /// The request the toolchain wrote.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_meta_request() -> *mut Str {
+pub extern "C" fn tondo_rt_meta_request(region: *mut crate::regions::Region) -> *mut Str {
     let text = config().meta_request.as_ref().and_then(|p| std::fs::read(p).ok()).unwrap_or_default();
-    str_new(&text)
+    crate::strings::str_in(region, &text)
 }
 
 /// Writes the response for the toolchain.

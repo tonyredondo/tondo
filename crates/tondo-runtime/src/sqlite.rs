@@ -4,7 +4,7 @@
 //! tag and a value each: 0 null, 1 an integer, 2 a float, 3 text, 4 bytes.
 
 use super::native::{self, NativeObject};
-use super::{ArrayHeader, Str, str_new};
+use super::{ArrayHeader, Str};
 use crate::array_items;
 use crate::byte_array;
 use rusqlite::types::ValueRef;
@@ -43,10 +43,10 @@ pub unsafe extern "C" fn tondo_rt_sqlite_open(path: *const Str) -> *mut NativeOb
 
 /// Why the database did not open, or nothing.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_sqlite_failure(object: *mut NativeObject) -> *mut Str {
+pub extern "C" fn tondo_rt_sqlite_failure(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
     match native::get::<Database>(object) {
-        Some(Database::Failed(why)) => str_new(why.as_bytes()),
-        _ => str_new(b""),
+        Some(Database::Failed(why)) => crate::strings::str_in(region, why.as_bytes()),
+        _ => crate::strings::str_in(region, b""),
     }
 }
 

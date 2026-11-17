@@ -5,7 +5,7 @@
 //! `TONDO_ZONES=builtin` takes them all from that copy. A zone is known to
 //! Tondo by its name, which the runtime keeps compiled.
 
-use super::{ArrayHeader, Str, element, str_new};
+use super::{ArrayHeader, Str, element};
 use jiff::Timestamp;
 use jiff::civil::DateTime;
 use jiff::tz::{Offset, TimeZone, TimeZoneDatabase};
@@ -85,7 +85,7 @@ pub unsafe extern "C" fn tondo_rt_zone_known(name: *const Str) -> u8 {
 /// `time.localZone`: the name of the zone `TZ` names, or `/etc/localtime`
 /// is, or `UTC`; `Local` for a zone the system has without a name.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_zone_local() -> *mut Str {
+pub extern "C" fn tondo_rt_zone_local(region: *mut crate::regions::Region) -> *mut Str {
     static LOCAL: LazyLock<String> = LazyLock::new(|| {
         let named = std::env::var("TZ").ok().map(|tz| tz.trim_start_matches(':').to_string());
         let linked = std::fs::read_link("/etc/localtime").ok().and_then(|target| {
@@ -106,7 +106,7 @@ pub extern "C" fn tondo_rt_zone_local() -> *mut Str {
         }
         "UTC".into()
     });
-    str_new(LOCAL.as_bytes())
+    crate::strings::str_in(region, LOCAL.as_bytes())
 }
 
 /// The zone's offset from UTC at a time, in seconds since 1970.
@@ -178,13 +178,20 @@ fn names(locale: &str) -> &'static Names {
 
 /// The names of a locale, as `std/timetext.to` reads them.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_time_names(locale: *const Str) -> *mut ArrayHeader {
-    crate::string_array(&names(text(locale)).0)
+pub unsafe extern "C" fn tondo_rt_time_names(
+    locale: *const Str,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    crate::arrays::string_array_in(region, &names(text(locale)).0)
 }
 
 /// The abbreviation of a zone at a time in seconds since 1970, as `CET`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_zone_abbreviation(name: *const Str, seconds: i64) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_zone_abbreviation(
+    name: *const Str,
+    seconds: i64,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let at = Timestamp::from_second(seconds).unwrap_or(Timestamp::UNIX_EPOCH);
-    str_new(zone_or_utc(text(name)).to_offset_info(at).abbreviation().as_bytes())
+    crate::strings::str_in(region, zone_or_utc(text(name)).to_offset_info(at).abbreviation().as_bytes())
 }
