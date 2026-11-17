@@ -13,14 +13,17 @@ fn sample() -> PathBuf {
 /// Runs `tondo` in `dir`: stdout, stderr and the exit status.
 /// `tondo`, with the memory of each region that ends made unreadable in
 /// the programs it runs, so that a value put in a region it outlives
-/// faults: the tests, providers and generators the cases cannot run.
+/// faults: the tests, providers and generators the cases cannot run. Not a
+/// benchmark's, which measures release code as it runs: the check, which
+/// makes the end of a region a call to the system, would measure itself,
+/// and leave a memory profile too few turns to sample.
 fn tondo(dir: &Path, args: &[&str]) -> (String, String, i32) {
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
-        .args(args)
-        .current_dir(dir)
-        .env("TONDO_CHECK_REGIONS", "1")
-        .output()
-        .unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+    command.args(args).current_dir(dir);
+    if !args.contains(&"--bench") {
+        command.env("TONDO_CHECK_REGIONS", "1");
+    }
+    let output = command.output().unwrap();
     let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
     (text(&output.stdout), text(&output.stderr), output.status.code().unwrap_or(-1))
 }
