@@ -1,0 +1,7 @@
+// An escape the language does not have says which ones it has.
+
+fn main() {
+    let path = "C:\Users"
+}
+
+// expect-error: E0003 unknown escape sequence: the escapes are `\n`, `\r`, `\t`, `\\`, `\0`, `\u{...}`, and `\"` in a string or `\'` in a character

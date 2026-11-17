@@ -1,0 +1,7 @@
+// A brace is written twice, not after a backslash: `\{` is no escape.
+
+fn main() {
+    let doc = "\{\"id\": 1\}"
+}
+
+// expect-error: E0003 unknown escape sequence: a brace is written twice, `{{` or `}}`

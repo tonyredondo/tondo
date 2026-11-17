@@ -753,7 +753,12 @@ copies, and `derive Json for T` writes the rest; an annotation is `@name`"
         if value.is_none() {
             let message = match c {
                 Some('(') => "unknown escape sequence: a string interpolates with braces, `\"total {x}\"`",
-                _ => "unknown escape sequence",
+                Some('{' | '}') if quote == '"' => {
+                    "unknown escape sequence: a brace is written twice, `{{` or `}}`, as `\"{{\\\"a\\\": 1}}\"`"
+                }
+                _ => {
+                    "unknown escape sequence: the escapes are `\\n`, `\\r`, `\\t`, `\\\\`, `\\0`, `\\u{...}`, and `\\\"` in a string or `\\'` in a character"
+                }
             };
             self.error("E0003", start, self.pos, message);
         }
