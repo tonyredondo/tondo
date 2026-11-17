@@ -107,6 +107,7 @@ pub unsafe extern "C" fn tondo_rt_env_vars(glue: *const MapGlue) -> *mut MapObje
                 &value as *const *mut Str as *const u8,
                 old.as_mut_ptr(),
                 glue,
+                std::ptr::null_mut(),
             )
         };
     }

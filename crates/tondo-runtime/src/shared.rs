@@ -745,7 +745,7 @@ pub unsafe extern "C" fn tondo_rt_shared_map_snapshot(map: *mut SharedMap) -> *m
             while !node.is_null() {
                 copy_retained(key_of(node), key, m.value_offset, glue.key_retain);
                 copy_retained(m.value_of(node), value, m.value_size(), glue.value_retain);
-                tondo_rt_map_insert(&mut result, key, value, old, m.glue);
+                tondo_rt_map_insert(&mut result, key, value, old, m.glue, std::ptr::null_mut());
                 node = (*node).next.load(Ordering::Acquire);
             }
         }

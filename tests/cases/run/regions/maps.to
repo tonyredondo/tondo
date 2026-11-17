@@ -1,0 +1,121 @@
+// Maps and sets, which regions take as they grow by their insertions: the
+// first one makes the map where its place goes, and its entries, hashes and
+// table grow there, their rooms doubling, as an array's do. In the region of
+// a function, of a turn and of a caller; holding texts the region made;
+// copied into the region when shared; and on the heap when a function given
+// it on loan keeps it, or when what it holds is not the region's, as texts
+// each turn makes that the map keeps past it: an insertion may replace them,
+// and the region would keep each one replaced. A map of a region that a
+// place on the heap grows moves there, which the runtime's tests run.
+
+import std.console
+
+/// Words counted in the function's region, its keys the region's texts.
+fn counts(text: String): Int {
+    var seen: Map[String, Int] = [:]
+    for word in text.split(" ") {
+        seen[word] = (seen[word] ?? 0) + 1
+    }
+    seen.length() * 10 + (seen["b"] ?? 0)
+}
+
+/// A set in the region of each turn.
+fn distinct(): Int {
+    var total = 0
+    for i in 0..5 {
+        var set: Set[Int] = Set[]
+        for k in 0..(i * 10) {
+            set.insert(k % 7)
+        }
+        total += set.length()
+    }
+    total
+}
+
+/// Returned, in the region its caller gives.
+fn squares(count: Int): Map[Int, Int] {
+    var map: Map[Int, Int] = [:]
+    for i in 0..count {
+        map[i] = i * i
+    }
+    map
+}
+
+/// Grown far, holding a text each turn makes: on the heap.
+fn large(): Int {
+    var map: Map[Int, String] = [:]
+    for i in 0..5000 {
+        map[i] = "v{i}"
+    }
+    map.length() + (map[4999] ?? "").length()
+}
+
+/// Shared before it grows: the insertion copies it, into the region.
+fn shared(): Int {
+    var first: Map[String, Int] = ["a": 1]
+    let second = first
+    first["b"] = 2
+    first.length() * 10 + second.length()
+}
+
+/// Grown by a function given it on loan, which calls itself and so keeps
+/// it: on the heap, and the map it is given too.
+fn grow(map: var Map[Int, Int], from: Int) {
+    if from < 200 {
+        map[from] = from
+        grow(var map, from + 1)
+    }
+}
+
+fn lent(): Int {
+    var map: Map[Int, Int] = [:]
+    for i in 0..10 {
+        map[i] = i
+    }
+    grow(var map, 100)
+    map.length()
+}
+
+/// Holding what the function was given: on the heap.
+fn kept(given: Array[String]): Int {
+    var map: Map[Int, String] = [:]
+    for i in 0..given.length() {
+        map[i] = given[i]
+    }
+    map.length()
+}
+
+fn main() {
+    let text = "a b c a b a"
+    var total = 0
+    for i in 0..3 {
+        total += squares(10 + i).length()
+    }
+    let big = squares(1000)
+    console.println(
+        "{counts(text)} {distinct()} {total} {big[999] ?? 0} {large()} {shared()} {lent()}",
+    )
+    console.println("{kept(["x", "y"])} {numbers()}")
+}
+
+/// Grown far: its table built again in the region as it doubles.
+fn numbers(): Int {
+    var map: Map[Int, Int] = [:]
+    for i in 0..5000 {
+        map[i * 7] = i
+    }
+    map.length() + (map[34993] ?? 0)
+}
+
+// expect-stdout: 32 28 33 998001 5005 21 110
+// expect-stdout: 2 9999
+// expect-optimization: 17:9 region goes in a region of `counts`
+// expect-optimization: 28:13 region goes in the region of a turn of the loop at line 25
+// expect-optimization: 39:9 region goes in the region of a turn of the loop at line 91
+// expect-optimization: 48:9 region stays on the heap: it holds a value that its region did not make
+// expect-optimization: 55:35 region goes in a region of `shared`
+// expect-optimization: 57:5 region goes in a region of `shared`
+// expect-optimization: 65:9 region stays on the heap: it is stored in what the function was given
+// expect-optimization: 73:9 region stays on the heap: it is passed to `grow`, which keeps it
+// expect-optimization: 83:9 region stays on the heap: it holds a value that its region did not make
+// expect-optimization: 105:9 region goes in a region of `numbers`

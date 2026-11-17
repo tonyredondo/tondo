@@ -362,6 +362,8 @@ impl Rt {
             | Rt::ArraySortedStrings => true,
             // `x = "{x}..."`, in the region of its place.
             Rt::StrAppend | Rt::StrAppendInt => true,
+            // A map or a set that grows, in the region of its place.
+            Rt::MapInsert => true,
             _ => false,
         }
     }
@@ -544,7 +546,7 @@ impl Rt {
             Rt::MapRelease => ("tondo_rt_map_release", &[I64, I64], &[]),
             Rt::MapFind => ("tondo_rt_map_find", &[I64, I64, I64], &[I64]),
             Rt::MapPosition => ("tondo_rt_map_position", &[I64, I64, I64], &[I64]),
-            Rt::MapInsert => ("tondo_rt_map_insert", &[I64, I64, I64, I64, I64], &[I8]),
+            Rt::MapInsert => ("tondo_rt_map_insert", &[I64, I64, I64, I64, I64, I64], &[I8]),
             Rt::MapRemove => ("tondo_rt_map_remove", &[I64, I64, I64, I64], &[I8]),
             Rt::MapLen => ("tondo_rt_map_len", &[I64], &[I64]),
             Rt::MapEntry => ("tondo_rt_map_entry", &[I64, I64], &[I64]),

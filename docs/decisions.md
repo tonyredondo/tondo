@@ -7824,3 +7824,29 @@ as before. An append takes a text of another region in place too, as the
 heap takes the text it is given: the analysis has the region of what it
 takes live as long as what it makes. `tondo optimizations` says ", with
 room an append grows into" of a place given the room.
+
+## Maps and sets grow in their region
+
+A map or a set was made on the heap wherever it was used, the third most
+frequent refusal of regions, 1336 places of 597 programs. `[:]` makes no
+map, as it is the runtime's empty one: the first insertion does, so the
+places a region takes are the insertions, as an array's pushes are, and
+a literal is an empty map and one insertion for each entry. A map a
+region makes keeps its entries, hashes and table in the region too, each
+grown as a vector is, its rooms doubling, so that those it leaves add up
+to no more than it ends with; the heap's maps grow as they did, by the
+same steps, and allocate as often.
+
+A change that does not grow a map changes it where it is, in a region or
+on the heap: a removal keeps the table of a map of a region, which has
+room for fewer, as no region is given for it. An insertion that grows a
+map moves it, when it is not where the insertion's place goes, as an
+array's push does: a map of a region that a place on the heap grows goes
+to the heap, and one of the heap that a place of a region grows goes to
+the region. What it holds follows the rule of an array's elements: only
+values of the region, or that count nothing.
+
+A map does not keep across the turns of a loop the values each turn
+makes, as an array the loop only pushes to does: an insertion may
+replace one, and the region would keep each value replaced, at every
+turn.

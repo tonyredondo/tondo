@@ -89,9 +89,9 @@ fn gathered(n: Int): Int {
 }
 
 fn tally(n: Int): Int {
-    var counts = ["a": 1]
-    counts["b"] = n
-    counts.length()
+    let values = [n, n + 1, n + 2]
+    let part = values[1:]
+    part.length()
 }
 
 fn latest(n: Int): Int {
@@ -151,7 +151,7 @@ fn size(node: Node): Int {
 // expect-optimization: 86:19 region goes in a region of `gathered`
 // expect-optimization: 86:9 region goes in a region of `gathered`
 // expect-optimization: 100:16 region stays on the heap: it outlives a turn of the loop at line 99
-// expect-optimization: 92:18 region stays on the heap: regions do not take maps yet
+// expect-optimization: 93:16 region stays on the heap: regions do not take slices yet
 // expect-optimization: 112:22 region stays on the heap: it outlives a turn of the loop at line 110
 // expect-optimization: 123:13 region goes in a region of `main`
 // expect-no-optimization: 123:13 region stays on the heap

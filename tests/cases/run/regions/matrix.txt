@@ -65,8 +65,8 @@ Rvalue::CheckRegion           - checks bounds
 Rvalue::Length                - gives a number
 Rvalue::StrOp                 - makes or reads a text, which holds no value
 Rvalue::Pointer               cases/run/regions/natives_system.to
-Rvalue::MapOp                 cases/run/regions/arrays.to
-Rvalue::Mutate                cases/run/regions/stores.to cases/run/regions/arrays.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_system.to cases/run/regions/runtime_arrays.to
+Rvalue::MapOp                 cases/run/regions/arrays.to cases/run/regions/maps.to
+Rvalue::Mutate                cases/run/regions/stores.to cases/run/regions/arrays.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_system.to cases/run/regions/runtime_arrays.to cases/run/regions/maps.to
 
 native tondo_rt_base64_encode             cases/run/regions/natives_codec.to
 native tondo_rt_cbor_field                cases/run/regions/natives_formats.to

@@ -2511,7 +2511,8 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   su región no hizo, se pasa a una función del runtime cuyo código aún no se
   ha leído, y la nombra,
   o es de una clase que una región no toma aún, y la nombra: una región
-  toma arrays, cajas, arrays que crecen con `push`, los textos que hace una
+  toma arrays, cajas, arrays que crecen con `push`, mapas y sets, que
+  crecen con sus inserciones, los textos que hace una
   interpolación, también el que crece en su sitio, como `x = "{x}..."`, que
   dobla su espacio en la región y, pasado un mebibyte, crece en un trozo
   propio de ella como un bloque del heap, y al que una ampliación en su

@@ -9,17 +9,152 @@ pub type HashGlue = unsafe extern "C" fn(*const u8) -> u64;
 /// An insertion-ordered hash map (10.9). Entries are stored contiguously in
 /// insertion order, each a key followed by its value at `value_offset`; an
 /// open-addressing table maps hashes to entry positions. A set is a map whose
-/// values have size zero.
+/// values have size zero. A map a region makes, as its count says, keeps
+/// them in the region too.
 #[repr(C)]
 pub struct MapObject {
     rc: AtomicUsize,
     pub(crate) entry_size: usize,
     pub(crate) value_offset: usize,
-    pub(crate) entries: Vec<u8>,
-    hashes: Vec<u64>,
+    pub(crate) entries: Room<u8>,
+    hashes: Room<u64>,
     /// Entry position plus one; zero marks an empty slot. Its length is a
     /// power of two at least twice the number of entries.
-    table: Vec<usize>,
+    table: Room<usize>,
+}
+
+// `EMPTY` is shared and never written; every other map is one task's.
+unsafe impl Sync for MapObject {}
+
+/// What a map keeps of its entries, their hashes or its table: on the heap,
+/// grown as a vector is, or in a region, which keeps the room it leaves
+/// when it grows. The map says which, and gives the region it grows in.
+#[repr(C)]
+pub(crate) struct Room<T> {
+    ptr: *mut T,
+    len: usize,
+    cap: usize,
+}
+
+impl<T: Copy> Room<T> {
+    const NONE: Room<T> = Room { ptr: std::ptr::NonNull::dangling().as_ptr(), len: 0, cap: 0 };
+
+    pub(crate) fn as_ptr(&self) -> *const T {
+        self.ptr
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut T {
+        self.ptr
+    }
+
+    fn as_slice(&self) -> &[T] {
+        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [T] {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
+    }
+
+    /// Room for `more` items besides those it has, doubling as a vector
+    /// does: in `region`, or on the heap when it is null.
+    unsafe fn reserve(&mut self, more: usize, region: *mut regions::Region) {
+        let needed = self.len + more;
+        if needed <= self.cap {
+            return;
+        }
+        let least = if size_of::<T>() == 1 { 8 } else { 4 };
+        let cap = needed.max(self.cap * 2).max(least);
+        let layout = Layout::array::<T>(cap).unwrap_or_else(|_| handle_alloc_error(Layout::new::<T>()));
+        let ptr = unsafe {
+            if !region.is_null() {
+                let ptr = regions::tondo_rt_region_alloc(region, layout.size());
+                std::ptr::copy_nonoverlapping(self.ptr, ptr as *mut T, self.len);
+                ptr
+            } else if self.cap == 0 {
+                alloc(layout)
+            } else {
+                std::alloc::realloc(self.ptr as *mut u8, Layout::array::<T>(self.cap).unwrap(), layout.size())
+            }
+        };
+        if ptr.is_null() {
+            handle_alloc_error(layout);
+        }
+        (self.ptr, self.cap) = (ptr as *mut T, cap);
+    }
+
+    unsafe fn push(&mut self, item: T, region: *mut regions::Region) {
+        unsafe {
+            self.reserve(1, region);
+            self.ptr.add(self.len).write(item);
+        }
+        self.len += 1;
+    }
+
+    /// `count` more items of zero bytes, as a vector's `resize`.
+    unsafe fn extend_zeroed(&mut self, count: usize, region: *mut regions::Region) {
+        unsafe {
+            self.reserve(count, region);
+            std::ptr::write_bytes(self.ptr.add(self.len), 0, count);
+        }
+        self.len += count;
+    }
+
+    /// Takes out the items from `start` to `end`, keeping the order of the
+    /// others.
+    fn remove(&mut self, start: usize, end: usize) {
+        unsafe { std::ptr::copy(self.ptr.add(end), self.ptr.add(start), self.len - end) };
+        self.len -= end - start;
+    }
+
+    /// `len` items of zero bytes, with no room besides.
+    unsafe fn zeroed(len: usize, region: *mut regions::Region) -> Room<T> {
+        let mut room = Room::NONE;
+        let layout = Layout::array::<T>(len).unwrap();
+        let ptr = unsafe {
+            match region.is_null() {
+                true => std::alloc::alloc_zeroed(layout),
+                false => {
+                    let ptr = regions::tondo_rt_region_alloc(region, layout.size());
+                    std::ptr::write_bytes(ptr, 0, layout.size());
+                    ptr
+                }
+            }
+        };
+        if ptr.is_null() {
+            handle_alloc_error(layout);
+        }
+        (room.ptr, room.len, room.cap) = (ptr as *mut T, len, len);
+        room
+    }
+
+    /// A copy of the items, with no room besides, as a vector's clone.
+    unsafe fn copied(&self, region: *mut regions::Region) -> Room<T> {
+        let mut room = Room::NONE;
+        if self.len == 0 {
+            return room;
+        }
+        let layout = Layout::array::<T>(self.len).unwrap();
+        let ptr = unsafe {
+            match region.is_null() {
+                true => alloc(layout),
+                false => regions::tondo_rt_region_alloc(region, layout.size()),
+            }
+        };
+        if ptr.is_null() {
+            handle_alloc_error(layout);
+        }
+        unsafe { std::ptr::copy_nonoverlapping(self.ptr, ptr as *mut T, self.len) };
+        (room.ptr, room.len, room.cap) = (ptr as *mut T, self.len, self.len);
+        room
+    }
+
+    /// Lets go of the room of a map on the heap.
+    unsafe fn free(&mut self) {
+        if self.cap > 0 {
+            unsafe { dealloc(self.ptr as *mut u8, Layout::array::<T>(self.cap).unwrap()) };
+        }
+        *self = Room::NONE;
+    }
 }
 
 /// Visits a map's keys and values for the cycle collector.
@@ -69,9 +204,9 @@ pub static EMPTY: MapObject = MapObject {
     rc: AtomicUsize::new(IMMORTAL),
     entry_size: 0,
     value_offset: 0,
-    entries: Vec::new(),
-    hashes: Vec::new(),
-    table: Vec::new(),
+    entries: Room::NONE,
+    hashes: Room::NONE,
+    table: Room::NONE,
 };
 
 /// `EMPTY`, for a live build's patches, which link only the runtime's
@@ -83,7 +218,27 @@ pub extern "C" fn tondo_rt_map_empty_one() -> *mut MapObject {
 
 impl MapObject {
     pub(crate) fn len(&self) -> usize {
-        self.hashes.len()
+        self.hashes.len
+    }
+
+    /// Whether a region made it, and holds its rooms.
+    fn in_region(&self) -> bool {
+        self.rc.load(Ordering::Relaxed) & regions::REGION != 0
+    }
+
+    /// The region its rooms grow in when it is a region's, that of the
+    /// place that changes it, or null on the heap.
+    fn growing_in(&self, region: *mut regions::Region) -> *mut regions::Region {
+        if self.in_region() { region } else { std::ptr::null_mut() }
+    }
+
+    /// Lets go of the rooms of a map on the heap.
+    unsafe fn free_rooms(&mut self) {
+        unsafe {
+            self.entries.free();
+            self.hashes.free();
+            self.table.free();
+        }
     }
 
     fn entry(&self, index: usize) -> *const u8 {
@@ -96,17 +251,18 @@ impl MapObject {
 
     /// The entry position holding `key`, if any.
     unsafe fn find(&self, key: *const u8, hash: u64, glue: &MapGlue) -> Option<usize> {
-        if self.table.is_empty() {
+        let (table, hashes) = (self.table.as_slice(), self.hashes.as_slice());
+        if table.is_empty() {
             return None;
         }
-        let mask = self.table.len() - 1;
+        let mask = table.len() - 1;
         let mut slot = hash as usize & mask;
         loop {
-            match self.table[slot] {
+            match table[slot] {
                 0 => return None,
                 position => {
                     let index = position - 1;
-                    if self.hashes[index] == hash && unsafe { (glue.key_eq)(self.entry(index), key) } != 0 {
+                    if hashes[index] == hash && unsafe { (glue.key_eq)(self.entry(index), key) } != 0 {
                         return Some(index);
                     }
                 }
@@ -115,16 +271,33 @@ impl MapObject {
         }
     }
 
-    fn rebuild(&mut self) {
+    /// The table again, from the hashes. A map of a region keeps its table
+    /// when it has room enough, as after a removal, which so needs no
+    /// region to grow in; one on the heap takes a table of the size.
+    unsafe fn rebuild(&mut self, region: *mut regions::Region) {
         let size = (self.len() * 2).next_power_of_two().max(8);
-        self.table = vec![0; size];
+        unsafe {
+            // A removal, the one change with no region to grow in, leaves
+            // the table room enough.
+            debug_assert!(!self.in_region() || !region.is_null() || self.table.cap >= size);
+            if self.in_region() && self.table.cap >= size {
+                std::ptr::write_bytes(self.table.ptr, 0, size);
+                self.table.len = size;
+            } else {
+                if !self.in_region() {
+                    self.table.free();
+                }
+                self.table = Room::zeroed(size, self.growing_in(region));
+            }
+        }
         let mask = size - 1;
-        for (index, &hash) in self.hashes.iter().enumerate() {
+        let (hashes, table) = (self.hashes.as_slice(), self.table.as_mut_slice());
+        for (index, &hash) in hashes.iter().enumerate() {
             let mut slot = hash as usize & mask;
-            while self.table[slot] != 0 {
+            while table[slot] != 0 {
                 slot = (slot + 1) & mask;
             }
-            self.table[slot] = index + 1;
+            table[slot] = index + 1;
         }
     }
 }
@@ -136,10 +309,29 @@ pub extern "C" fn tondo_rt_map_new(entry_size: usize, value_offset: usize) -> *m
         rc: AtomicUsize::new(1),
         entry_size,
         value_offset,
-        entries: Vec::new(),
-        hashes: Vec::new(),
-        table: Vec::new(),
+        entries: Room::NONE,
+        hashes: Room::NONE,
+        table: Room::NONE,
     }))
+}
+
+/// A new map, empty: in `region`, or on the heap when it is null.
+unsafe fn map_in(entry_size: usize, value_offset: usize, region: *mut regions::Region) -> *mut MapObject {
+    if region.is_null() {
+        return tondo_rt_map_new(entry_size, value_offset);
+    }
+    unsafe {
+        let m = regions::tondo_rt_region_alloc(region, size_of::<MapObject>()) as *mut MapObject;
+        m.write(MapObject {
+            rc: AtomicUsize::new(regions::LAST_IN_REGION),
+            entry_size,
+            value_offset,
+            entries: Room::NONE,
+            hashes: Room::NONE,
+            table: Room::NONE,
+        });
+        m
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -174,6 +366,7 @@ pub unsafe extern "C" fn tondo_rt_map_release(m: *mut MapObject, glue: *const Ma
             unsafe {
                 let mut object = Box::from_raw(m);
                 release_entries(&mut object, &*glue);
+                object.free_rooms();
             }
             LIVE_OBJECTS.gone();
         }
@@ -183,19 +376,26 @@ pub unsafe extern "C" fn tondo_rt_map_release(m: *mut MapObject, glue: *const Ma
 }
 
 /// Makes the map in `slot` unique before a write, copying a shared map and
-/// retaining its keys and values.
-pub(crate) unsafe fn map_unique(slot: *mut *mut MapObject, glue: &MapGlue) -> &'static mut MapObject {
+/// retaining its keys and values: the copy, or the first map of `EMPTY`, in
+/// `region`, the one of the place that writes, or on the heap when it is
+/// null. A map only one reference holds stays where it is, on the heap or
+/// in a region, as an entry changes in place.
+pub(crate) unsafe fn map_unique(
+    slot: *mut *mut MapObject,
+    glue: &MapGlue,
+    region: *mut regions::Region,
+) -> &'static mut MapObject {
     unsafe {
         let m = *slot;
-        if (*m).rc.load(Ordering::Acquire) != 1 {
+        if !regions::only(&(*m).rc) {
             if std::ptr::eq(m, &EMPTY) {
-                *slot = tondo_rt_map_new(glue.entry_size, glue.value_offset);
+                *slot = map_in(glue.entry_size, glue.value_offset, region);
                 return &mut **slot;
             }
-            let copy = tondo_rt_map_new((*m).entry_size, (*m).value_offset);
-            (*copy).entries = (*m).entries.clone();
-            (*copy).hashes = (*m).hashes.clone();
-            (*copy).table = (*m).table.clone();
+            let copy = map_in((*m).entry_size, (*m).value_offset, region);
+            (*copy).entries = (*m).entries.copied(region);
+            (*copy).hashes = (*m).hashes.copied(region);
+            (*copy).table = (*m).table.copied(region);
             for index in 0..(*copy).len() {
                 let entry = (*copy).entry_mut(index);
                 if let Some(retain) = glue.key_retain {
@@ -236,9 +436,32 @@ pub unsafe extern "C" fn tondo_rt_map_position(m: *mut MapObject, key: *const u8
     }
 }
 
+/// Moves the map in `slot`, which only it holds, to `region`, or to the
+/// heap when it is null, before it grows there: the place that grows it
+/// says where it goes, as an array's push does. Its keys and values move
+/// with it, and a map on the heap lets go of its rooms.
+unsafe fn moved(slot: *mut *mut MapObject, region: *mut regions::Region) -> &'static mut MapObject {
+    unsafe {
+        let m = *slot;
+        let new = map_in((*m).entry_size, (*m).value_offset, region);
+        (*new).entries = (*m).entries.copied(region);
+        (*new).hashes = (*m).hashes.copied(region);
+        (*new).table = (*m).table.copied(region);
+        if !(*m).in_region() {
+            let mut object = Box::from_raw(m);
+            object.free_rooms();
+            LIVE_OBJECTS.gone();
+        }
+        *slot = new;
+        &mut *new
+    }
+}
+
 /// Inserts or replaces; the key and value move into the map. Returns 1 and
 /// moves the previous value to `old` when the key was present (its position
-/// is kept and the new key is released), 0 otherwise.
+/// is kept and the new key is released), 0 otherwise. The map grows in
+/// `region`, the one of the place that inserts, or on the heap when it is
+/// null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_map_insert(
     slot: *mut *mut MapObject,
@@ -246,10 +469,11 @@ pub unsafe extern "C" fn tondo_rt_map_insert(
     value: *const u8,
     old: *mut u8,
     glue: *const MapGlue,
+    region: *mut regions::Region,
 ) -> u8 {
     unsafe {
         let glue = &*glue;
-        let m = map_unique(slot, glue);
+        let mut m = map_unique(slot, glue, region);
         let hash = (glue.hash)(key);
         let value_size = m.entry_size - m.value_offset;
         if let Some(index) = m.find(key, hash, glue) {
@@ -262,20 +486,26 @@ pub unsafe extern "C" fn tondo_rt_map_insert(
             return 1;
         }
         let index = m.len();
-        m.entries.resize((index + 1) * m.entry_size, 0);
+        let grows =
+            m.entries.len + m.entry_size > m.entries.cap || index == m.hashes.cap || m.table.len < (index + 1) * 2;
+        if grows && m.in_region() == region.is_null() {
+            m = moved(slot, region);
+        }
+        m.entries.extend_zeroed(m.entry_size, region);
         let entry = m.entry_mut(index);
         std::ptr::copy_nonoverlapping(key, entry, m.value_offset);
         std::ptr::copy_nonoverlapping(value, entry.add(m.value_offset), value_size);
-        m.hashes.push(hash);
-        if m.table.len() < (index + 1) * 2 {
-            m.rebuild();
+        m.hashes.push(hash, region);
+        if m.table.len < (index + 1) * 2 {
+            m.rebuild(region);
         } else {
-            let mask = m.table.len() - 1;
+            let table = m.table.as_mut_slice();
+            let mask = table.len() - 1;
             let mut slot = hash as usize & mask;
-            while m.table[slot] != 0 {
+            while table[slot] != 0 {
                 slot = (slot + 1) & mask;
             }
-            m.table[slot] = index + 1;
+            table[slot] = index + 1;
         }
         0
     }
@@ -296,7 +526,7 @@ pub unsafe extern "C" fn tondo_rt_map_remove(
         if (**slot).find(key, hash, glue).is_none() {
             return 0;
         }
-        let m = map_unique(slot, glue);
+        let m = map_unique(slot, glue, std::ptr::null_mut());
         let index = m.find(key, hash, glue).unwrap();
         let entry = m.entry_mut(index);
         std::ptr::copy_nonoverlapping(entry.add(m.value_offset), out, m.entry_size - m.value_offset);
@@ -304,9 +534,10 @@ pub unsafe extern "C" fn tondo_rt_map_remove(
             release(entry);
         }
         let size = m.entry_size;
-        m.entries.drain(index * size..(index + 1) * size);
-        m.hashes.remove(index);
-        m.rebuild();
+        m.entries.remove(index * size, (index + 1) * size);
+        m.hashes.remove(index, index + 1);
+        // A map of a region keeps its table, which has room for fewer.
+        m.rebuild(std::ptr::null_mut());
         1
     }
 }
@@ -322,9 +553,9 @@ pub unsafe extern "C" fn tondo_rt_map_clear(slot: *mut *mut MapObject, glue: *co
             return;
         }
         release_entries(&mut *m, &*glue);
-        (*m).entries.clear();
-        (*m).hashes.clear();
-        (*m).table.clear();
+        (*m).entries.len = 0;
+        (*m).hashes.len = 0;
+        (*m).table.len = 0;
     }
 }
 
@@ -339,7 +570,7 @@ pub unsafe extern "C" fn tondo_rt_map_len(m: *mut MapObject) -> usize {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_map_unique(slot: *mut *mut MapObject, glue: *const MapGlue) {
     unsafe {
-        map_unique(slot, &*glue);
+        map_unique(slot, &*glue, std::ptr::null_mut());
     }
 }
 
@@ -363,7 +594,7 @@ pub unsafe extern "C" fn tondo_rt_map_eq(
         }
         for index in 0..a.len() {
             let entry = a.entry(index);
-            let Some(other) = b.find(entry, a.hashes[index], glue) else { return 0 };
+            let Some(other) = b.find(entry, a.hashes.as_slice()[index], glue) else { return 0 };
             if let Some(value_eq) = value_eq
                 && value_eq(entry.add(a.value_offset), b.entry(other).add(a.value_offset)) == 0
             {
@@ -469,5 +700,83 @@ mod hashing {
         let hashes: std::collections::HashSet<u64> = keys.iter().map(|key| hash_bytes(key.as_bytes())).collect();
         assert_eq!(hashes.len(), keys.len());
         assert_eq!(hash_bytes(b"north"), hash_bytes(String::from("north").as_bytes()));
+    }
+}
+
+#[cfg(test)]
+mod rooms {
+    use super::*;
+
+    unsafe extern "C" fn hash(key: *const u8) -> u64 {
+        hash_bytes(&unsafe { *(key as *const u64) }.to_le_bytes())
+    }
+
+    unsafe extern "C" fn equal(a: *const u8, b: *const u8) -> u8 {
+        unsafe { (*(a as *const u64) == *(b as *const u64)) as u8 }
+    }
+
+    const GLUE: MapGlue = MapGlue {
+        hash,
+        key_eq: equal,
+        key_retain: None,
+        key_release: None,
+        value_retain: None,
+        value_release: None,
+        key_visit: None,
+        value_visit: None,
+        prompt: 0,
+        entry_size: 16,
+        value_offset: 8,
+    };
+
+    unsafe fn insert(slot: *mut *mut MapObject, key: u64, region: *mut regions::Region) {
+        let (value, mut old) = (key * 3, 0u64);
+        let (key, value) = (&key as *const u64 as *const u8, &value as *const u64 as *const u8);
+        unsafe { tondo_rt_map_insert(slot, key, value, &mut old as *mut u64 as *mut u8, &GLUE, region) };
+    }
+
+    unsafe fn holds(m: *mut MapObject, keys: impl Iterator<Item = u64>) -> bool {
+        keys.into_iter().all(|key| {
+            let found = unsafe { tondo_rt_map_find(m, &key as *const u64 as *const u8, &GLUE) };
+            !found.is_null() && unsafe { *(found as *const u64) } == key * 3
+        })
+    }
+
+    /// A map of a region grows in it; one that a place on the heap grows
+    /// moves there, and one of the heap that a place of a region grows
+    /// moves to the region; a removal from a map of a region, which no
+    /// region is given for, keeps its table.
+    #[test]
+    fn a_map_grows_where_the_place_that_grows_it_says() {
+        unsafe {
+            let mut region: regions::Region = std::mem::zeroed();
+            let region = &mut region as *mut regions::Region;
+            let mut m = (&raw const EMPTY).cast_mut();
+            let slot = &mut m as *mut *mut MapObject;
+            for key in 0..3 {
+                insert(slot, key, region);
+            }
+            assert_eq!((**slot).rc.load(Ordering::Relaxed), regions::LAST_IN_REGION);
+            assert!(regions::holds(region, (**slot).table.as_ptr() as usize));
+            for key in 3..100 {
+                insert(slot, key, std::ptr::null_mut());
+            }
+            assert_eq!((**slot).rc.load(Ordering::Relaxed), 1);
+            assert!(holds(*slot, 0..100));
+            for key in 100..200 {
+                insert(slot, key, region);
+            }
+            assert_eq!((**slot).rc.load(Ordering::Relaxed), regions::LAST_IN_REGION);
+            assert!(regions::holds(region, (**slot).entries.as_ptr() as usize));
+            let table = (**slot).table.as_ptr();
+            let mut out = 0u64;
+            for key in (0..200).step_by(2) {
+                let key = key as u64;
+                tondo_rt_map_remove(slot, &key as *const u64 as *const u8, &mut out as *mut u64 as *mut u8, &GLUE);
+            }
+            assert_eq!(((**slot).len(), (**slot).table.as_ptr()), (100, table));
+            assert!(holds(*slot, (1..200).step_by(2)));
+            regions::tondo_rt_region_leave(region);
+        }
     }
 }

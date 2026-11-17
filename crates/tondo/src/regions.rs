@@ -1398,6 +1398,8 @@ fn made(
                                 Rvalue::Aggregate(operands)
                                 | Rvalue::Variant(_, operands)
                                 | Rvalue::Array(operands, _) => operands.iter().all(from),
+                                // The runtime's empty map, which counts nothing.
+                                Rvalue::MapOp(crate::hir::MapOp::New, ..) => true,
                                 _ => false,
                             };
                     (place.local, from_region)
@@ -1530,14 +1532,15 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
     let mut found = Vec::new();
     let array =
         |place: &Place| matches!(types.kind(types.repr(body.place_ty(types, place))), crate::types::TyKind::Array(_));
-    const MAPS: Option<&str> = Some("regions do not take maps yet");
     const TEXTS: Option<&str> = Some("regions do not take texts yet");
     const RUNTIME: Option<&str> = Some("regions do not take what the runtime makes yet");
     for (at, statement) in positioned(body) {
         let Statement::Assign(place, rvalue, span) = statement else { continue };
         let refused = match &**rvalue {
             Rvalue::Array(values, _) if values.iter().any(|value| matches!(value, Operand::Copy(_))) => None,
-            Rvalue::MapOp(crate::hir::MapOp::New, ..) => MAPS,
+            // The empty map is the runtime's, which nothing makes: the
+            // first insertion makes the map, where its place goes.
+            Rvalue::MapOp(crate::hir::MapOp::New, ..) => continue,
             Rvalue::Slice(..) => Some("regions do not take slices yet"),
             // A text interpolation makes, `x = "{x}..."` too, which grows
             // `x`'s own text in the region, its room doubling.
@@ -1575,7 +1578,7 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
                 continue;
             }
             Rvalue::Mutate(crate::hir::Mutation::Insert, target, ..) => {
-                found.push(Site { local: target.local, span: *span, what: "grows a map that ", at, refused: MAPS });
+                found.push(Site { local: target.local, span: *span, what: "grows a map that ", at, refused: None });
                 continue;
             }
             // What a native makes in the region it is given, or else what
