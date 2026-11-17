@@ -251,18 +251,20 @@ impl MapObject {
 
     /// The entry position holding `key`, if any.
     unsafe fn find(&self, key: *const u8, hash: u64, glue: &MapGlue) -> Option<usize> {
-        let (table, hashes) = (self.table.as_slice(), self.hashes.as_slice());
-        if table.is_empty() {
+        if self.table.len == 0 {
             return None;
         }
-        let mask = table.len() - 1;
+        let mask = self.table.len - 1;
         let mut slot = hash as usize & mask;
+        // The rooms read at each step, from the map, as the comparison of a
+        // key is a call: kept aside, they would be saved and loaded again
+        // around it.
         loop {
-            match table[slot] {
+            match self.table.as_slice()[slot] {
                 0 => return None,
                 position => {
                     let index = position - 1;
-                    if hashes[index] == hash && unsafe { (glue.key_eq)(self.entry(index), key) } != 0 {
+                    if self.hashes.as_slice()[index] == hash && unsafe { (glue.key_eq)(self.entry(index), key) } != 0 {
                         return Some(index);
                     }
                 }
