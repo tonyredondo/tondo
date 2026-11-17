@@ -7702,3 +7702,12 @@ gives what allocates, listed it. Where a region takes a place in every copy of i
 line now says "is not made in the frame" with the same why, of the kind `frame`; a place one
 copy of which stays on the heap keeps its line of the heap.
 
+
+## The frame reads the lists the regions read
+
+A text only read by `contains`, `startsWith` or a native that counts in it was taken by the
+frame's pass as given to what may keep it, and went in a region where the frame, cheaper, could
+hold it. The operations of texts that answer with a scalar, and the natives whose code was read to
+keep none of the texts they are given (`READING_TEXTS`) and that answer with one, are borrows for
+the frame now, as printing is; one that gives a text may give back the one it was given, and
+stays as it was.

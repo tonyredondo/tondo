@@ -2103,6 +2103,12 @@ fn runtime_why(std: &crate::hir::StdFn) -> String {
     }
 }
 
+/// Whether a native of the runtime keeps none of the texts it is given past
+/// the call, but in what it returns, as its code was read.
+pub(crate) fn reads_texts(native: &crate::hir::Native) -> bool {
+    takes_texts(native) && READING_TEXTS.contains(&native.symbol)
+}
+
 /// Whether a native of the runtime can be given a text, which a region may
 /// make: one is taken to keep it until its code is read and it is in
 /// `READING_TEXTS`, which costs a region's text nothing but its place.

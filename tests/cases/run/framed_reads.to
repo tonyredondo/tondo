@@ -1,0 +1,23 @@
+// A text that is only read, by an operation of texts or a native whose
+// code was read to keep none of it, that answers with a scalar, is made in
+// the frame: `contains`, `startsWith`, `count` and the like hold none of it.
+
+import std.console
+
+fn main() {
+    let prefix = "key"
+    var found = 0
+    for i in 0..10 {
+        let label = "{prefix}-{i}"
+        if label.contains("-3") or label.startsWith("x") {
+            found += 1
+        }
+        let line = "{prefix}:{i}:{i * 2}"
+        found += line.count(":")
+    }
+    console.println("{found}")
+}
+
+// expect-stdout: 21
+// expect-optimization: 11:21 frame is made in the frame, without the heap
+// expect-optimization: 15:20 frame is made in the frame, without the heap

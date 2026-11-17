@@ -22,6 +22,7 @@
 //! the local is then made so, under the same rules.
 
 use crate::ast::BinOp;
+use crate::hir::StrOp;
 use crate::mir::*;
 use crate::types::{Ty, Types};
 
@@ -363,6 +364,18 @@ fn framed(body: &Body, index: usize, types: &Types, borrows: &[Vec<bool>]) -> Fo
                     Rvalue::Call(crate::hir::Callee::Std(callee), operands) if reads_only(*callee) => {
                         borrowed(&operands.iter().collect::<Vec<_>>(), &mut read)
                     }
+                    // What a text holds, read and answered with a scalar.
+                    Rvalue::StrOp(
+                        StrOp::At
+                        | StrOp::Get
+                        | StrOp::ByteLength
+                        | StrOp::Contains
+                        | StrOp::StartsWith
+                        | StrOp::EndsWith
+                        | StrOp::Find,
+                        operands,
+                        _,
+                    ) => borrowed(&operands.iter().collect::<Vec<_>>(), &mut read),
                     Rvalue::Binary(BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge, a, b) => {
                         borrowed(&[a, b], &mut read)
                     }
@@ -516,9 +529,13 @@ fn reads_only(callee: crate::hir::StdFn) -> bool {
     use crate::hir::StdFn;
     match callee {
         StdFn::ConsolePrint | StdFn::ConsolePrintln | StdFn::ConsoleEprint | StdFn::ConsoleEprintln => true,
-        StdFn::Native(index) => {
-            crate::hir::NATIVES.get(index as usize).is_some_and(|n| n.symbol == "tondo_rt_net_write")
-        }
+        // A native whose code was read to keep none of the texts it is
+        // given, that answers with a scalar, which holds none of them.
+        StdFn::Native(index) => crate::hir::NATIVES.get(index as usize).is_some_and(|native| {
+            use crate::hir::NativeTy::{Bool, Char, Float, Int, Unit};
+            native.symbol == "tondo_rt_net_write"
+                || crate::regions::reads_texts(native) && matches!(native.result, Int | Bool | Float | Char | Unit)
+        }),
         _ => false,
     }
 }
