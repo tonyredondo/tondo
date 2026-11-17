@@ -846,6 +846,7 @@ Los contadores del runtime, por grupos:
 | `descriptors` | `files`, `pipes` y `total` abiertos |
 | `processes` | `running` y `started`, los procesos que lanzó el programa |
 | `os` | `cpu`, el tiempo de procesador; `resident`, la memoria en RAM; `threads` |
+| `profile` | `samples`, las muestras de los hilos que tomaron un perfil o una traza |
 
 Los del programa (14.25 de la librería estándar) forman el grupo `program`.
 Los sockets del propio canal no cuentan, ni la memoria de su hilo, así que
