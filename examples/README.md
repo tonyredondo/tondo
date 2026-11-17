@@ -25,8 +25,14 @@ warning and passes its own tests on each change to the compiler.
 ```sh
 tondo run examples/todo-api            # a program
 tondo test examples/kvstore            # its tests
+tondo test examples/logstat --bench    # its benchmark
 tondo examples/scripts/cal.to          # a script
 ```
+
+Each project has a benchmark of what it does most, a report of a thousand
+lines of a log or a site of fifty posts built: they are programs that
+combine what the benchmarks of [`bench/`](../bench/README.md) measure a
+piece at a time, and a change to the compiler is measured by them too.
 
 Each README has the commands for its example, with what they print.
 

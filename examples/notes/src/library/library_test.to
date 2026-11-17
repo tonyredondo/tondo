@@ -1,4 +1,5 @@
 import std.fs
+import std.testing
 
 /// A few notes, in memory.
 fn shelf(): fs.FileSystem ! NoteError {
@@ -90,4 +91,25 @@ test aSearchHasALimitAndMayFindNothing {
     assert(search(files, "tea", limit: 1)?.length() == 1)
     assert(search(files, "coffee")?.isEmpty())
     assert(search(files, "   ")?.isEmpty())
+}
+
+/// Two hundred notes of a few lines each, in memory.
+fn archive(): fs.FileSystem ! NoteError {
+    let files = fs.memory()
+    for n in 0..200 {
+        save(
+            files,
+            Note {
+                name: "note-{n}"
+                tags: ["tag{n % 7}", if n % 3 == 0 { "tea" } else { "bread" }]
+                text: "# Note {n}\n\nWater at {60 + n % 40} degrees.\nSteep {n % 5 + 1} minutes, never boiling."
+            },
+        )?
+    }
+    files
+}
+
+test anArchiveIsSearched {
+    let files = archive()?
+    testing.bench("search of 200 notes", () { search(files, "tea boiling degrees") })?
 }

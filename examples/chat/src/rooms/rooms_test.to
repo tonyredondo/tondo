@@ -1,6 +1,7 @@
 import std.executor
 import std.json
 import std.sync
+import std.testing
 
 /// Someone in a test: the mailbox of a connection, and the lines it took.
 type Guest = {
@@ -186,4 +187,25 @@ test aSlowReaderMissesLinesAndIsToldHowMany {
             ["welcome to tea with [ada, leo]", "ada: one", "ada: two", "missed 2", "ada: five"],
     )
     assert(heard(ref ada)?.length() == 7)  // ada was never held up
+}
+
+test aRoomOfTwoHearsTwoHundredLines {
+    testing.bench(
+        "200 lines said in a room of two",
+        () {
+            let hub = start(sync.Map[String, Int]())?
+            let ada = guest(capacity: 512)?
+            let leo = guest(capacity: 512)?
+            let to = hub.reference()
+            to.send(Told.Enter(1, "tea", "ada", ada.mailbox.reference()))?
+            to.send(Told.Enter(2, "tea", "leo", leo.mailbox.reference()))?
+            for n in 0..200 {
+                to.send(Told.Say(1 + n % 2, "line {n}"))?
+            }
+            hub.stop()?
+            ada.mailbox.stop()?
+            leo.mailbox.stop()?
+            ada.seen.get().length() + leo.seen.get().length()
+        },
+    )?
 }

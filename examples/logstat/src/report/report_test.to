@@ -1,4 +1,5 @@
 import logstat.entries
+import std.testing
 import std.time
 
 fn sample(): Array[entries.Entry] {
@@ -43,4 +44,27 @@ test barsAreInProportion {
     assert(bar(1, 1000) == "#")
     assert(bar(0, 10) == "")
     assert(bar(3, 0) == "")
+}
+
+/// A thousand lines as a server writes them: fifty users, a failure in twenty.
+fn written(): Array[String] {
+    (0..1000)
+        .map(
+            (n) {
+                let status = if n % 20 == 0 { 500 } else { 200 }
+                "2026-11-11T10:00:{n % 60}Z GET /users/{n % 50} {status} {n % 90}ms"
+            },
+        )
+        .collect()
+}
+
+test aThousandLinesAreAReport {
+    let lines = written()
+    testing.bench(
+        "report of 1000 lines",
+        () {
+            let found = lines.map((line) { entries.parse(line).expect("a line of the log") })
+            byRoute(found)
+        },
+    )?
 }
