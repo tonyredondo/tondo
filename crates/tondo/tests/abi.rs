@@ -136,6 +136,15 @@ fn defined() -> BTreeMap<String, Signature> {
 
 /// The signatures `codegen.rs` and its modules declare, as
 /// `("tondo_rt_x", &[I64], &[I8])`.
+/// Records what the compiler declares of `name`: the same signature each
+/// time, as `codegen` and `NATIVES` may both name a function.
+fn declare(found: &mut BTreeMap<String, Signature>, name: String, signature: Signature) {
+    if let Some(before) = found.get(&name) {
+        assert_eq!(before, &signature, "the compiler declares {name} with two signatures");
+    }
+    found.insert(name, signature);
+}
+
 fn declared() -> BTreeMap<String, Signature> {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = vec![src.join("codegen.rs")];
@@ -160,7 +169,7 @@ fn declared() -> BTreeMap<String, Signature> {
         }
         let (params, results) = (list(lists[0]), list(lists[1]));
         assert!(results.len() <= 1, "{name} declares more than one result");
-        found.insert(name, (params, results.first().copied()));
+        declare(&mut found, name, (params, results.first().copied()));
     }
     for native in tondo::hir::NATIVES {
         let class = |ty: tondo::hir::NativeTy| match ty {
@@ -175,7 +184,7 @@ fn declared() -> BTreeMap<String, Signature> {
             params.push(Class::I64);
         }
         let result = (native.result != tondo::hir::NativeTy::Unit).then(|| class(native.result));
-        found.insert(native.symbol.to_string(), (params, result));
+        declare(&mut found, native.symbol.to_string(), (params, result));
     }
     found
 }

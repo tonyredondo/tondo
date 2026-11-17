@@ -1274,6 +1274,12 @@ impl Site {
     }
 }
 
+/// Whether an operation of numbers gives a text, which the runtime makes in
+/// the region it is given.
+fn numbers_text(op: crate::numbers::NumOp) -> bool {
+    matches!(op, crate::numbers::NumOp::ToString | crate::numbers::NumOp::ToFixed)
+}
+
 /// Whether a text operation always makes a new text, which the runtime
 /// makes in the region it is given.
 fn makes_text(op: crate::hir::StrOp) -> bool {
@@ -1348,8 +1354,10 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
             {
                 None
             }
-            // The path `path.join` makes in the region it is given.
+            // The path `path.join` makes in the region it is given, and the
+            // text of a number.
             Rvalue::Call(Callee::Std(crate::hir::StdFn::Path(crate::hir::PathFn::Join)), _) => None,
+            Rvalue::Call(Callee::Std(crate::hir::StdFn::Number(op)), _) if numbers_text(*op) => None,
             Rvalue::Call(Callee::Std(_), _) if types.needs_drop(body.place_ty(types, place)) => RUNTIME,
             // The text `join` makes, which its builder makes in a region.
             Rvalue::ArrayOp(crate::hir::ArrayOp::Join, ..) => None,
@@ -1505,6 +1513,7 @@ impl Flow {
                         Rvalue::StrOp(op, ..) if makes_text(*op) => continue,
                         Rvalue::ArrayOp(crate::hir::ArrayOp::Join, ..) => continue,
                         Rvalue::Call(Callee::Std(crate::hir::StdFn::Path(crate::hir::PathFn::Join)), _) => continue,
+                        Rvalue::Call(Callee::Std(crate::hir::StdFn::Number(op)), _) if numbers_text(*op) => continue,
                         // A native that reads what it is given gives a value
                         // the runtime made, which holds none of it: one that
                         // reads arrays says so of all it gives; one that

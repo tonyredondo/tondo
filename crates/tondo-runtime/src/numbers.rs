@@ -2,7 +2,7 @@
 //! does not do inline: powers, text, bytes, and parsing. An integer comes
 //! as 128 bits, extended by its signedness, with its width and signedness.
 
-use super::{ArrayHeader, Str, raise, str_new};
+use super::{ArrayHeader, Str, raise};
 
 /// The bounds of an integer of `bits` bits.
 fn bounds(bits: u32, signed: bool) -> (i128, u128) {
@@ -213,7 +213,13 @@ fn general(digits: &[u8], radix: u32) -> Option<u128> {
 
 /// An integer in `radix`, clamped to 2 to 36, with lowercase digits.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_int_radix(low: u64, high: u64, signed: u8, radix: i64) -> *mut Str {
+pub extern "C" fn tondo_rt_int_radix(
+    low: u64,
+    high: u64,
+    signed: u8,
+    radix: i64,
+    region: *mut super::regions::Region,
+) -> *mut Str {
     let value = wide(low, high);
     let radix = radix.clamp(2, 36) as u128;
     let negative = signed != 0 && (value as i128) < 0;
@@ -230,7 +236,7 @@ pub extern "C" fn tondo_rt_int_radix(low: u64, high: u64, signed: u8, radix: i64
         digits.push(b'-');
     }
     digits.reverse();
-    str_new(&digits)
+    super::strings::str_in(region, &digits)
 }
 
 /// The `count` bytes of an integer, the highest first when `big`.

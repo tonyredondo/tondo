@@ -1144,7 +1144,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let value = self.widest(values[0], signed);
                 let (low, high) = self.e.fb.ins().isplit(value);
                 let signed_flag = self.e.fb.ins().iconst(types::I8, signed as i64);
-                self.e.call_rt(Rt::IntRadix, &[low, high, signed_flag, values[1]]).unwrap()
+                let region = self.region_or_null();
+                self.e.call_rt(Rt::IntRadix, &[low, high, signed_flag, values[1], region]).unwrap()
             }
             Floor => self.e.fb.ins().floor(values[0]),
             Ceil => self.e.fb.ins().ceil(values[0]),
@@ -1177,7 +1178,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             ToFixed => {
                 let value =
                     if clif == types::F32 { self.e.fb.ins().fpromote(types::F64, values[0]) } else { values[0] };
-                self.e.call_rt(Rt::TextFixed, &[value, values[1]]).unwrap()
+                let region = self.region_or_null();
+                self.e.call_rt(Rt::TextFixed, &[value, values[1], region]).unwrap()
             }
             Bits => {
                 let pattern = if clif == types::F32 { types::I32 } else { types::I64 };

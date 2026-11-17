@@ -2,7 +2,7 @@
 //! library 14.1): splitting, Unicode case and classes, and numbers to and
 //! from text. Positions are scalar indexes, as in the language.
 
-use super::{ArrayHeader, Str, element, str_new, tondo_rt_array_new};
+use super::{ArrayHeader, Str, element, tondo_rt_array_new};
 use crate::regions::Region;
 use crate::strings::{Pieces, str_in};
 
@@ -236,7 +236,7 @@ pub unsafe extern "C" fn tondo_rt_text_parse_float(s: *const Str) -> f64 {
 
 /// An integer in `radix` (2 to 36), with lowercase digits.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_text_int(value: i64, radix: i64) -> *mut Str {
+pub extern "C" fn tondo_rt_text_int(value: i64, radix: i64, region: *mut Region) -> *mut Str {
     let radix = radix.clamp(2, 36) as u64;
     let mut magnitude = value.unsigned_abs();
     let mut digits = Vec::new();
@@ -251,17 +251,17 @@ pub extern "C" fn tondo_rt_text_int(value: i64, radix: i64) -> *mut Str {
         digits.push(b'-');
     }
     digits.reverse();
-    str_new(&digits)
+    str_in(region, &digits)
 }
 
 /// A float with exactly `decimals` digits after the point, rounded half to
 /// even as the value is written.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_text_fixed(value: f64, decimals: i64) -> *mut Str {
+pub extern "C" fn tondo_rt_text_fixed(value: f64, decimals: i64, region: *mut Region) -> *mut Str {
     if !value.is_finite() {
-        return str_new(format!("{value:?}").as_bytes());
+        return str_in(region, format!("{value:?}").as_bytes());
     }
-    str_new(format!("{value:.*}", decimals.clamp(0, 64) as usize).as_bytes())
+    str_in(region, format!("{value:.*}", decimals.clamp(0, 64) as usize).as_bytes())
 }
 
 /// A float as the format of an interpolation writes it (language 19.6):
@@ -269,7 +269,13 @@ pub extern "C" fn tondo_rt_text_fixed(value: f64, decimals: i64) -> *mut Str {
 /// as the same value, of a `Float32` when `single`, when `precision` is
 /// negative; in scientific notation, `1.5e3`, when `exponent`.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_text_float(value: f64, precision: i64, exponent: u8, single: u8) -> *mut Str {
+pub extern "C" fn tondo_rt_text_float(
+    value: f64,
+    precision: i64,
+    exponent: u8,
+    single: u8,
+    region: *mut Region,
+) -> *mut Str {
     let text = match (precision, exponent != 0, single != 0) {
         (..0, true, true) => format!("{:e}", value as f32),
         (..0, true, false) => format!("{value:e}"),
@@ -279,13 +285,13 @@ pub extern "C" fn tondo_rt_text_float(value: f64, precision: i64, exponent: u8, 
         (_, false, _) if !value.is_finite() => format!("{value:?}"),
         (_, false, _) => format!("{value:.*}", precision.min(64) as usize),
     };
-    str_new(text.as_bytes())
+    str_in(region, text.as_bytes())
 }
 
 /// The text in a normalization form of Unicode: 0 NFC, 1 NFD, 2 NFKC,
 /// 3 NFKD.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_text_normalize(s: *const Str, form: i64) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_text_normalize(s: *const Str, form: i64, region: *mut Region) -> *mut Str {
     use unicode_normalization::UnicodeNormalization;
     let text = text(s);
     let normal: String = match form {
@@ -294,7 +300,7 @@ pub unsafe extern "C" fn tondo_rt_text_normalize(s: *const Str, form: i64) -> *m
         3 => text.nfkd().collect(),
         _ => text.nfc().collect(),
     };
-    str_new(normal.as_bytes())
+    str_in(region, normal.as_bytes())
 }
 
 /// Whether the text is in a normalization form, as `tondo_rt_text_normalize`
