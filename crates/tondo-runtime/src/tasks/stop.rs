@@ -287,39 +287,41 @@ mod tests {
     /// held copy of a recording once did on a busy machine.
     #[test]
     fn a_fork_makes_no_copy_while_the_scheduler_is_held() {
-        no_copy_while(300, || super::super::QUEUE.lock().unwrap_or_else(|e| e.into_inner()));
+        no_copy_while(|| super::super::QUEUE.lock().unwrap_or_else(|e| e.into_inner()));
     }
 
     /// The same while another thread keeps the objects a tool follows.
     #[test]
     fn a_fork_makes_no_copy_while_the_objects_are_held() {
-        no_copy_while(1500, || crate::heap::objects_held().expect("the objects' shards"));
+        no_copy_while(|| crate::heap::objects_held().expect("the objects' shards"));
     }
 
     /// The same while another thread takes or gives back one of the chunks
     /// regions share: the copy would spin for their lock forever.
     #[test]
     fn a_fork_makes_no_copy_while_the_chunks_of_regions_are_held() {
-        no_copy_while(300, || crate::regions::shared_held().expect("the chunks' lock"));
+        no_copy_while(|| crate::regions::shared_held().expect("the chunks' lock"));
     }
 
     /// The same while another thread indexes or frees a long text: the copy
     /// would wait for the slot of its positions forever.
     #[test]
     fn a_fork_makes_no_copy_while_the_positions_of_a_text_are_held() {
-        no_copy_while(300, || crate::strings::POSITIONS[3].lock().unwrap_or_else(|e| e.into_inner()));
+        no_copy_while(|| crate::strings::POSITIONS[3].lock().unwrap_or_else(|e| e.into_inner()));
     }
 
-    /// A fork while another thread keeps for `ms` what `hold` takes. One at
-    /// a time, as a fork takes what the others hold.
-    fn no_copy_while<G>(ms: u64, hold: impl FnOnce() -> G + Send + 'static) {
+    /// A fork while another thread keeps what `hold` takes until the fork
+    /// answers, however long its waits take on a busy machine. One at a
+    /// time, as a fork takes what the others hold.
+    fn no_copy_while<G>(hold: impl FnOnce() -> G + Send + 'static) {
         static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
         let (held, taken) = std::sync::mpsc::channel();
+        let (answered, heard) = std::sync::mpsc::channel::<()>();
         let holder = std::thread::spawn(move || {
             let guard = hold();
             held.send(()).unwrap();
-            std::thread::sleep(Duration::from_millis(ms));
+            let _ = heard.recv();
             drop(guard);
         });
         taken.recv().unwrap();
@@ -327,6 +329,7 @@ mod tests {
         if let Ok(0) = forked {
             unsafe { libc::_exit(0) };
         }
+        answered.send(()).unwrap();
         assert!(forked.as_ref().is_err_and(|e| e.kind() == std::io::ErrorKind::WouldBlock), "{forked:?}");
         holder.join().unwrap();
     }
