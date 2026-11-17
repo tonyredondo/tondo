@@ -743,10 +743,67 @@ The file's text and its lines are there for the call, and each line in
 lower case for its turn. The `?` gives the error back when the file cannot
 be read, and that error holds nothing of a text, so no text leaves with it.
 An error made with a text in it, as `fail Problem { line }`, takes that
-text where the function's result goes, as a text that is returned. One
-reason is a text's own: a text that grows in place, as `line =
-"{line}[{word}]"` in a loop, stays on the heap, with `a region does not
-grow a text in place yet`.
+text where the function's result goes, as a text that is returned.
+
+A text that grows in place, `line = "{line}[{word}]"`, grows in its region.
+The loop that extends it leaves it in the region of the function, as it
+leaves an array that it only pushes to, or in that of a turn of a loop
+around it:
+
+```tondo
+import std.console
+
+/// How wide a line of the words is, each in brackets.
+fn width(words: Array[String]): Int {
+    var line = ""
+    for word in words {
+        line = "{line}[{word}]"
+    }
+    line.length()
+}
+
+/// The widest of the lines, each started from its name.
+fn widest(names: Array[String], words: Array[String]): Int {
+    var most = 0
+    for name in names {
+        var line = name.trim()
+        for word in words {
+            line = "{line} {word}"
+        }
+        if line.length() > most {
+            most = line.length()
+        }
+    }
+    most
+}
+
+fn main() {
+    console.println("{width(["a", "b", "c"])} {widest([" x ", "yy"], ["a", "b"])}")
+}
+```
+
+```text output
+9 6
+```
+
+```text
+$ tondo optimizations line.to --kind region
+line.to:7:9: `line = "{line}[{word}]"` goes in a region of `main` (in main)
+line.to:7:9: `line = "{line}[{word}]"` goes in a region of `width` (in width)
+line.to:16:20: `name.trim()` in `prelude.trimmed`, `textNative.trim(text, "", true, ends)` goes in the region of a turn of the loop at line 15, with room an append grows into (in widest)
+line.to:16:20: `name.trim()` in `prelude.trimmed`, `textNative.trim(text, set, false, ends)` goes in the region of a turn of the loop at line 15, with room an append grows into (in widest)
+line.to:18:13: `line = "{line} {word}"` goes in the region of a turn of the loop at line 15 (in widest)
+```
+
+The room of such a text doubles as it grows, and past a mebibyte the text
+is alone in a chunk of the region, which grows as a block of the heap does:
+what it leaves behind adds up to no more than it ends with. The text that a
+line starts from, `name.trim()`, is given the room that the heap's block
+would have, `with room an append grows into`, so that it grows by the same
+steps as on the heap and `testing.allocations` counts the same with regions
+and without. A text that something of the turn holds while it grows, as an
+array made in the turn, stays on the heap, with `it outlives a turn of the
+loop`.
 
 A turn's region is emptied when the turn goes back to the head of its
 loop, and let go of when the function returns. So a value does not outlive
