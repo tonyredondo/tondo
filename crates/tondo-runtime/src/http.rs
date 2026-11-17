@@ -5,7 +5,7 @@
 
 use super::native::{self, NativeObject};
 use super::tasks::{CANCELLED, HOST_WORK, Wait, current, notify};
-use super::{ArrayHeader, Str, element, str_new, texts_array};
+use super::{ArrayHeader, Str, element, str_new};
 use crate::array_items;
 use crate::byte_array;
 use crate::io::{Host, Mode, StreamObject};
@@ -654,17 +654,24 @@ pub extern "C" fn tondo_rt_http_version(object: *mut NativeObject) -> *mut Str {
 
 /// The values of a header, by its name in any case.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_header(object: *mut NativeObject, name: *const Str) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_http_header(
+    object: *mut NativeObject,
+    name: *const Str,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let values = response(object).headers.get_all(text(name).as_str());
-    texts_array(values.iter().count(), values.iter().map(|value| value.as_bytes()))
+    crate::arrays::texts_array_in(region, || values.iter().map(|value| value.as_bytes()))
 }
 
 /// The headers' names, lowercase, and values in turn.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_headers(object: *mut NativeObject) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_http_headers(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let headers = &response(object).headers;
-    let pairs = headers.iter().flat_map(|(name, value)| [name.as_str().as_bytes(), value.as_bytes()]);
-    texts_array(headers.len() * 2, pairs)
+    let pairs = || headers.iter().flat_map(|(name, value)| [name.as_str().as_bytes(), value.as_bytes()]);
+    crate::arrays::texts_array_in(region, pairs)
 }
 
 /// Why a second read of a response's body has nothing.

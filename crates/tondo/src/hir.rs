@@ -1321,7 +1321,18 @@ impl Native {
     pub fn makes_in_region(&self) -> bool {
         MAKING_IN_REGION.contains(&self.symbol)
     }
+
+    /// Whether what it gives is kept for good, as the texts of the HTTP
+    /// versions are, which no region needs to take (`GIVING_KEPT`).
+    pub fn gives_kept(&self) -> bool {
+        GIVING_KEPT.contains(&self.symbol)
+    }
 }
+
+/// The natives that give a text the runtime keeps for good, the same each
+/// time, and allocate nothing: what they give holds none of what they are
+/// given, and goes nowhere when a region does.
+pub const GIVING_KEPT: &[&str] = &["tondo_rt_http_request_version", "tondo_rt_http_version"];
 
 /// The natives that make what they give, a new text or an array of new
 /// texts, in the region the analysis chose for it, which codegen passes
@@ -1329,9 +1340,23 @@ impl Native {
 /// give holds none of what they are given.
 pub const MAKING_IN_REGION: &[&str] = &[
     "tondo_rt_base64_encode",
+    "tondo_rt_csv_fields",
     "tondo_rt_hex_encode",
     "tondo_rt_html_escape",
     "tondo_rt_html_unescape",
+    "tondo_rt_http_header",
+    "tondo_rt_http_headers",
+    "tondo_rt_http_request_authority",
+    "tondo_rt_http_request_header",
+    "tondo_rt_http_request_headers",
+    "tondo_rt_http_request_method",
+    "tondo_rt_http_request_path",
+    "tondo_rt_http_request_query",
+    "tondo_rt_http_request_remote",
+    "tondo_rt_net_read_line",
+    "tondo_rt_path_steps",
+    "tondo_rt_regex_replace",
+    "tondo_rt_regex_slice",
     "tondo_rt_text_between",
     "tondo_rt_text_fixed",
     "tondo_rt_text_float",

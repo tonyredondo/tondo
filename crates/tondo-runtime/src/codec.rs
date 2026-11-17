@@ -4,7 +4,7 @@
 //! seeded generators.
 
 use super::native::{self, NativeObject};
-use super::{ArrayHeader, Str, element, str_bytes, str_new};
+use super::{ArrayHeader, Str, str_bytes, str_new};
 use crate::array_items;
 use crate::byte_array;
 use crate::regions::Region;
@@ -351,14 +351,14 @@ pub unsafe extern "C" fn tondo_rt_csv_check(record: *const Str, separator: u32) 
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_csv_fields(record: *const Str, separator: u32) -> *mut ArrayHeader {
+pub unsafe extern "C" fn tondo_rt_csv_fields(
+    record: *const Str,
+    separator: u32,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let separator = char::from_u32(separator).unwrap_or(',');
     let fields = csv_record(&String::from_utf8_lossy(text(record)), separator).unwrap_or_default();
-    let array = super::tondo_rt_array_new(8, fields.len());
-    for (index, field) in fields.iter().enumerate() {
-        unsafe { *(element(array, 8, index) as *mut *mut Str) = str_new(field.as_bytes()) };
-    }
-    array
+    crate::arrays::string_array_in(region, &fields)
 }
 
 // ---------------------------------------------------------------------------
@@ -433,7 +433,10 @@ pub(crate) fn path_key(parent: &str, key: &str) -> String {
 /// The steps of a path: `.key` for a key, `[n` for an index; one `!` when
 /// it is not a path.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_path_steps(path: *const Str) -> *mut ArrayHeader {
+pub unsafe extern "C" fn tondo_rt_path_steps(
+    path: *const Str,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let path = String::from_utf8_lossy(text(path));
     let steps: Vec<String> = match path_steps(&path) {
         Some(steps) => steps
@@ -445,7 +448,7 @@ pub unsafe extern "C" fn tondo_rt_path_steps(path: *const Str) -> *mut ArrayHead
             .collect(),
         None => vec!["!".to_string()],
     };
-    crate::string_array(&steps)
+    crate::arrays::string_array_in(region, &steps)
 }
 
 #[unsafe(no_mangle)]

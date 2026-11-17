@@ -953,6 +953,22 @@ pub(crate) fn made_text(bytes: &[u8]) -> Option<Made> {
     std::str::from_utf8(bytes).is_ok().then(|| Made(str_new(bytes)))
 }
 
+/// The region of a task that waits on an operation, which a thread of the
+/// pool may make its text in: the task touches it meanwhile no more than
+/// it does its frame.
+#[derive(Clone, Copy)]
+pub(crate) struct WaitingRegion(pub(crate) *mut crate::regions::Region);
+
+unsafe impl Send for WaitingRegion {}
+
+impl WaitingRegion {
+    /// `bytes` as a string of the program's in the region, or on the heap
+    /// when it is null, if they are UTF-8.
+    pub(crate) fn made_text(self, bytes: &[u8]) -> Option<Made> {
+        std::str::from_utf8(bytes).is_ok().then(|| Made(crate::strings::str_in(self.0, bytes)))
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_io_write(stream: *mut StreamObject, text: *const Str) -> i64 {
     let data = unsafe { str_bytes(text) };

@@ -1,0 +1,132 @@
+// Texts the runtime's natives of HTTP, sockets, regular expressions, CSV
+// and paths into documents make, which regions take as they take what
+// `split` makes: a request's host, address and headers, a response's
+// headers, a line a socket reads, a replacement, a span's text, the fields
+// of a record, in the region of a turn and of a function, and sent out of
+// it by a store, a capture, a channel and a task; and the versions of
+// HTTP, which the runtime keeps for good and no region takes.
+
+import std.console
+import std.csv
+import std.http
+import std.json
+import std.net
+import std.regex
+import std.sync
+
+type Note = {
+    text: String
+}
+
+/// The texts of a regular expression and of CSV, in the region of a turn
+/// and of the function: stored in a field and an element, sent, captured,
+/// counted.
+fn matched(pattern: regex.Regex): String {
+    var note = Note { text: "" }
+    var rows: Array[String] = ["", ""]
+    var counted = 0
+    let (sender, receiver) = channel[String](8)
+    var shown: Array[fn(): String] = []
+    for i in 0..3 {
+        let line = "abc{i} def{i}"
+        note.text = pattern.replaceAll(line, "$2$1") ?? ""
+        counted += (pattern.replace(line, "-") ?? "").length()
+        let span = (pattern.find(line) ?? none).map((m) { m.span }) ?? regex.RegexSpan { start: 0, end: 0 }
+        rows[i % 2] = span.slice(line) ?? ""
+        counted += (span.slice(line) ?? "").length()
+        sender.send(pattern.replace(line, "x") ?? "")
+        let fields = csv.parse("a{i},b{i},c{i}") ?? []
+        let field = fields[0][1]
+        shown.push(() { field })
+        counted += fields[0][2].length()
+        let document = json.parse("{{\"a\": [{{\"b\": {i}}}]}}") ?? panic("no document")
+        counted += "{document.find("a[0].b")}".length()
+    }
+    sender.close()
+    var received: Array[String] = []
+    for text in receiver {
+        received.push(text)
+    }
+    "{note.text} {rows} {counted} {received} {shown[2]()}"
+}
+
+/// The lines a socket reads, in the region of a turn: stored, counted, sent
+/// to a task.
+fn lines(stream: net.Stream): String {
+    var last = ""
+    var counted = 0
+    var group = Group[String]()
+    for _ in 0..3 {
+        last = (stream.readLine() ?? none) ?? ""
+        counted += ((stream.readLine() ?? none) ?? "").length()
+        let line = (stream.readLine() ?? none) ?? ""
+        group.add(spawn line.toUpper())
+    }
+    "{last} {counted} {group.wait().sorted()}"
+}
+
+/// What a handler reads of its request, in the region of its call, kept
+/// in a log the server outlives.
+fn routes(log: sync.Mutex[Array[String]]): http.App {
+    var app = http.App()
+    app.get(
+        "/seen/:n",
+        (request) {
+            let method = request.method()
+            let path = request.path()
+            let query = request.query("q") ?? ""
+            let host = request.host()
+            let headers = request.headers()
+            let version = request.version()
+            let turn = request.header("x-turn") ?? ""
+            let remote = request.remoteAddress()
+            log.update((all) {
+                all.push("{method} {path} {query} {host.length() > 0} {headers.length() > 0} {version} {turn} {remote.length() > 0}")
+            })
+            http.Reply.text("seen {path}").header("x-seen", path)
+        },
+    )
+    app
+}
+
+/// What a client reads of a response, in the region of a turn: stored,
+/// captured.
+fn fetched(client: http.Client): String ! http.HttpError {
+    var seen: Array[String] = []
+    var shown: Array[fn(): String] = []
+    for i in 0..3 {
+        let response = client.get("/seen/{i}?q=q{i}", headers: ["x-turn": "turn {i}"])?
+        seen.push(response.header("x-seen") ?? "?")
+        let headers = response.headers()
+        let version = response.version()
+        shown.push(() { "{headers.length() > 0} {version}" })
+        _ = response.text()?
+    }
+    "{seen} {shown[2]()}"
+}
+
+fn main(): !(net.NetError | http.HttpError | regex.RegexError) {
+    let a = matched(regex.Regex.compile("([a-z]+)([0-9])")?)
+    let listener = net.listen("127.0.{0}.1", 0)?
+    let stream = net.connect("127.0.{0}.1", listener.address().port)?
+    let accepted = listener.accept()?
+    for i in 0..9 {
+        stream.write("line {i}\n")?
+    }
+    let b = lines(accepted)
+    stream.close()?
+    listener.close()
+    let log = sync.Mutex(Array[String]())
+    let server = routes(log).start(host: "127.0.{0}.1")?
+    let c = fetched(http.Client(baseUrl: server.url()))?
+    server.stop()
+    console.println(a)
+    console.println(b)
+    console.println(c)
+    console.println("{log.get()}")
+}
+
+// expect-stdout: 2abc 2def [abc2, abc1] 57 [x def0, x def1, x def2] b2
+// expect-stdout: line 6 18 [LINE 2, LINE 5, LINE 8]
+// expect-stdout: [/seen/0, /seen/1, /seen/2] true HTTP/1.1
+// expect-stdout: [GET /seen/0 q0 true true HTTP/1.1 turn 0 true, GET /seen/1 q1 true true HTTP/1.1 turn 1 true, GET /seen/2 q2 true true HTTP/1.1 turn 2 true]

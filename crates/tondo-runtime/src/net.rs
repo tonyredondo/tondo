@@ -1088,9 +1088,16 @@ pub unsafe extern "C" fn tondo_rt_net_read(object: *mut NativeObject, max: i64, 
 
 /// `readLine`: the next line without its `\n` or `\r\n`, or none at the end.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_net_read_line(object: *mut NativeObject, timeout_ms: i64) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_net_read_line(
+    object: *mut NativeObject,
+    timeout_ms: i64,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let Some(connection) = connection_of(object) else { return str_new(b"") };
-    let (line, read) = match on(&connection.reader, deadline(timeout_ms), |s| s.read_line(crate::io::made_text)) {
+    let region = crate::io::WaitingRegion(region);
+    let (line, read) = match on(&connection.reader, deadline(timeout_ms), move |s| {
+        s.read_line(move |bytes| region.made_text(bytes))
+    }) {
         Ok(Some(Some(line))) => (line.0, Ok(true)),
         Ok(Some(None)) => (str_new(b""), Err(failure(IO, "a line that is not UTF-8"))),
         Ok(None) => (str_new(b""), Ok(false)),

@@ -1239,7 +1239,10 @@ pub extern "C" fn tondo_rt_http_request_open(object: *mut NativeObject) -> u8 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_request_method(object: *mut NativeObject) -> *mut Str {
+pub extern "C" fn tondo_rt_http_request_method(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     static METHODS: (Kept<3>, Kept<4>, Kept<3>, Kept<6>, Kept<4>, Kept<5>, Kept<7>) = (
         Kept::new(b"GET"),
         Kept::new(b"POST"),
@@ -1258,18 +1261,24 @@ pub extern "C" fn tondo_rt_http_request_method(object: *mut NativeObject) -> *mu
         hyper::Method::HEAD => METHODS.4.get(),
         hyper::Method::PATCH => METHODS.5.get(),
         hyper::Method::OPTIONS => METHODS.6.get(),
-        _ => str_new(method.as_str().as_bytes()),
+        _ => crate::strings::str_in(region, method.as_str().as_bytes()),
     }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_request_path(object: *mut NativeObject) -> *mut Str {
-    str_new(request(object).uri.path().as_bytes())
+pub extern "C" fn tondo_rt_http_request_path(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
+    crate::strings::str_in(region, request(object).uri.path().as_bytes())
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_request_query(object: *mut NativeObject) -> *mut Str {
-    str_new(request(object).uri.query().unwrap_or_default().as_bytes())
+pub extern "C" fn tondo_rt_http_request_query(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
+    crate::strings::str_in(region, request(object).uri.query().unwrap_or_default().as_bytes())
 }
 
 /// `HTTP/1.1`, as `Response.version` says it too.
@@ -1298,17 +1307,24 @@ pub(crate) fn version_text(version: hyper::Version) -> *mut Str {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_request_remote(object: *mut NativeObject) -> *mut Str {
-    str_new(request(object).remote.as_bytes())
+pub extern "C" fn tondo_rt_http_request_remote(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
+    crate::strings::str_in(region, request(object).remote.as_bytes())
 }
 
 /// The host the request was for: `:authority`, or `Host`.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_request_authority(object: *mut NativeObject) -> *mut Str {
+pub extern "C" fn tondo_rt_http_request_authority(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let r = request(object);
     match r.uri.authority() {
-        Some(authority) => str_new(authority.as_str().as_bytes()),
-        None => str_new(
+        Some(authority) => crate::strings::str_in(region, authority.as_str().as_bytes()),
+        None => crate::strings::str_in(
+            region,
             String::from_utf8_lossy(r.headers.get(hyper::header::HOST).map_or(&[][..], |h| h.as_bytes())).as_bytes(),
         ),
     }
@@ -1322,15 +1338,13 @@ pub extern "C" fn tondo_rt_http_request_secure(object: *mut NativeObject) -> u8 
 
 /// Every value of the header `name`, lowercase, in order.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_request_header(object: *mut NativeObject, name: *mut Str) -> *mut ArrayHeader {
-    let name = unsafe { crate::str_text(name) };
-    let values: Vec<String> = request(object)
-        .headers
-        .get_all(name)
-        .iter()
-        .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
-        .collect();
-    string_array(&values)
+pub extern "C" fn tondo_rt_http_request_header(
+    object: *mut NativeObject,
+    name: *mut Str,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    let values = request(object).headers.get_all(unsafe { crate::str_text(name) });
+    crate::arrays::texts_array_in(region, || values.iter().map(|value| value.as_bytes()))
 }
 
 /// The DER of the certificate the client showed, empty without one.
@@ -1340,13 +1354,14 @@ pub extern "C" fn tondo_rt_http_request_certificate(object: *mut NativeObject) -
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_request_headers(object: *mut NativeObject) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_http_request_headers(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let headers = &request(object).headers;
-    let pairs: Vec<String> = headers
-        .iter()
-        .flat_map(|(name, value)| [name.to_string(), String::from_utf8_lossy(value.as_bytes()).into_owned()])
-        .collect();
-    string_array(&pairs)
+    crate::arrays::texts_array_in(region, || {
+        headers.iter().flat_map(|(name, value)| [name.as_str().as_bytes(), value.as_bytes()])
+    })
 }
 
 /// A frame of a request's body, or its end.

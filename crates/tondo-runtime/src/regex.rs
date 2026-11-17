@@ -259,11 +259,16 @@ pub unsafe extern "C" fn tondo_rt_regex_find(
 
 /// The text between two byte offsets, which must fall between scalars.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_regex_slice(text: *const Str, start: i64, end: i64) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_regex_slice(
+    text: *const Str,
+    start: i64,
+    end: i64,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     clear();
     let text = utf8(text);
     match text.get(start.max(0) as usize..end.max(0) as usize) {
-        Some(slice) if start >= 0 && end >= start => str_new(slice.as_bytes()),
+        Some(slice) if start >= 0 && end >= start => crate::strings::str_in(region, slice.as_bytes()),
         _ => {
             fail(Kind::InvalidBoundary, start.max(0) as usize);
             str_new(b"")
@@ -324,6 +329,7 @@ pub unsafe extern "C" fn tondo_rt_regex_replace(
     text: *const Str,
     replacement: *const Str,
     all: u8,
+    region: *mut crate::regions::Region,
 ) -> *mut Str {
     clear();
     let r = object(r);
@@ -370,7 +376,7 @@ pub unsafe extern "C" fn tondo_rt_regex_replace(
         fail(Kind::OutputLimitExceeded, text.len());
         return str_new(b"");
     }
-    str_new(out.as_bytes())
+    crate::strings::str_in(region, out.as_bytes())
 }
 
 /// Whether all of `text` matches `pattern`, 1 or 0, or -1 when the pattern

@@ -1402,6 +1402,12 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
             {
                 None
             }
+            // A text the runtime keeps for good, which nothing makes.
+            Rvalue::Call(Callee::Std(crate::hir::StdFn::Native(index)), _)
+                if crate::hir::NATIVES.get(*index as usize).is_some_and(crate::hir::Native::gives_kept) =>
+            {
+                continue;
+            }
             // The path `path.join` makes in the region it is given, and the
             // text of a number.
             Rvalue::Call(Callee::Std(crate::hir::StdFn::Path(crate::hir::PathFn::Join)), _) => None,
@@ -1573,6 +1579,7 @@ impl Flow {
                                 let texts_read = !takes_texts(native) || READING_TEXTS.contains(&native.symbol);
                                 let made = matches!(native.result, Object | Owned | Regex | BytePointer);
                                 native.makes_in_region()
+                                    || native.gives_kept()
                                     || texts_read
                                         && (READING.contains(&native.symbol)
                                             || made && takes_texts(native) && !takes_from_regions(native))
