@@ -89,6 +89,15 @@ fn shared(): String {
     "{shown[2]()} {received} {group.wait().sorted()} {fresh(2)} {first([5, 6, 7]) ?? -1}"
 }
 
+/// An array `concat` copied, which is not what it gives: what sorts the
+/// result, and may keep it, keeps none of the operands.
+fn copied(): String {
+    let values = [3, 1, 2]
+    let doubled = values.map((n) { n * 2 })
+    let all = values.concat(doubled)
+    "{all.sorted()}"
+}
+
 /// Fresh, returned to the caller, which lets it go or keeps it.
 fn fresh(n: Int): Array[Int] {
     [n, n].concat([n + 1])
@@ -104,6 +113,7 @@ fn main() {
     let a = numbers()
     let c = texts()
     let d = shared()
+    let e = copied()
     var kept: Array[Array[Int]] = []
     var counted = 0
     for i in 0..3 {
@@ -116,12 +126,14 @@ fn main() {
     console.println(a)
     console.println(c)
     console.println(d)
+    console.println(e)
     console.println("{kept} {counted} {log.get()} {quiet}")
 }
 
 // expect-stdout: 45 [2, 3, 4, 9] [[2, 3, 5], [1, 2, 4]] [2, 3]
 // expect-stdout: 54 [z2] [[b, a, c, 0], [b, a, c, 1], [b, a, c, 2]]
 // expect-stdout: [2, 3, 4] [[0, 0, 0], [1, 1, 1], [2, 2, 2]] [2, 2, 2] [2, 2, 3] 1
+// expect-stdout: [1, 2, 2, 3, 4, 6]
 // expect-stdout: [[0, 0, 1], [1, 1, 2], [2, 2, 3]] 9 [[1, 2]] 1000
 // expect-optimization: 40:22 region goes in the region of a turn of the loop at line 38
 // expect-optimization: 42:22 region stays on the heap: it outlives a turn of the loop at line 38
@@ -132,4 +144,6 @@ fn main() {
 // expect-optimization: 64:45 region stays on the heap: it holds a value that its region did not make
 // expect-optimization: 66:46 region goes in the region of a turn of the loop at line 62
 // expect-optimization: 80:21 region stays on the heap: it is sent
-// expect-optimization: 99:16 region goes in a region of `first`
+// expect-optimization: 108:16 region goes in a region of `first`
+// expect-optimization: 96:19 region grows an array that goes in a region of `copied`
+// expect-optimization: 97:15 region stays on the heap: it is passed to `prelude.mergeSort[Int]`, which keeps it
