@@ -3443,8 +3443,11 @@ fn a_dump_says_what_keeps_memory_alive() {
     // more of them say it closer.
     let dump = std::fs::read_dir(dir.join("release")).unwrap().next().unwrap().unwrap().path();
     let heap = tondo(&["dump", "read", dump.to_str().unwrap(), "heap", "--json"]);
-    let kinds = heap["heap"]["kinds"].as_array().unwrap();
-    let strings = kinds.iter().find(|k| k["kind"] == "String").unwrap_or_else(|| panic!("{heap}"));
+    // The strings an interpolation makes go in the region of `main`, which
+    // the samples count beside the heap.
+    let kinds =
+        heap["heap"]["kinds"].as_array().unwrap().iter().chain(heap["heap"]["regions"]["kinds"].as_array().unwrap());
+    let strings = kinds.clone().find(|k| k["kind"] == "String").unwrap_or_else(|| panic!("{heap}"));
     assert!(strings["objects"].as_f64().unwrap() > 1500.0, "{strings}");
 }
 
@@ -4382,7 +4385,7 @@ fn what_is_secret_stays_out_of_dumps_and_the_debugger() {
         fn work(user: User, _wrapped: Wrapped, pair: Pair[Int], login: Login) {\n    \
         with Auth { who: \"ximena\", session: \"s3cr3t\" }\n    console.println(user.password)\n    \
         console.println(\"{pair.first}\")\n    \
-        for _ in user.tokens {\n        panic(\"stop here\")\n    }\n}\n\n\
+        if user.tokens.length() > 0 {\n        panic(\"stop here\")\n    }\n}\n\n\
         fn main() {\n    let tail = \"ter2\"\n    let user = User { name: \"ximena\", password: \"hun{tail}\", \
         token: Token(\"abc{tail}\"), tokens: [Token(\"k1{tail}\")] }\n    \
         work(user, Wrapped(Token(\"xyz{tail}\")), Pair { first: 1, second: 2 }, \

@@ -440,6 +440,21 @@ pub(crate) fn forget_positions(s: *const Str) {
     }
 }
 
+/// Empties the slots of the strings in the memory from `from` to `to`, a
+/// region's chunk that goes back to the allocator, whose next strings must
+/// not find the positions of those its region let go of.
+pub(crate) fn forget_positions_within(from: usize, to: usize) {
+    for slot in 0..POSITION_SLOTS {
+        if (from..to).contains(&POSITIONED[slot].load(Ordering::Relaxed)) {
+            let mut positions = POSITIONS[slot].lock().unwrap_or_else(|e| e.into_inner());
+            if positions.as_ref().is_some_and(|p| (from..to).contains(&p.text)) {
+                *positions = None;
+                POSITIONED[slot].store(0, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
 /// The number of scalars of some bytes: every scalar has exactly one byte
 /// that is not a continuation byte.
 pub(crate) fn scalars(bytes: &[u8]) -> usize {

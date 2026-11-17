@@ -1967,16 +1967,21 @@ fn trends(dumps: &[Value]) -> Value {
     let seconds = (last["time_ms"].as_f64().unwrap_or(0.0) - first["time_ms"].as_f64().unwrap_or(0.0)) / 1000.0;
     let per_minute = |grew: f64| if seconds > 0.0 { grew / seconds * 60.0 } else { 0.0 };
     // Every place of the memory, by what it held in each dump.
+    // What regions hold counts as the heap does, where it is made.
     let mut sites: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
     for (index, dump) in dumps.iter().enumerate() {
-        for site in heap(dump)["sites"].as_array().into_iter().flatten() {
-            let place = format!(
-                "{} from {}",
-                site["kind"].as_str().unwrap_or_default(),
-                site["site"].as_str().unwrap_or_default()
-            );
-            sites.entry(place).or_insert_with(|| vec![0.0; dumps.len()])[index] +=
-                site["bytes"].as_f64().unwrap_or(0.0);
+        let heap = heap(dump);
+        let held = [(&heap["sites"], ""), (&heap["regions"]["sites"], ", in regions")];
+        for (list, in_regions) in held {
+            for site in list.as_array().into_iter().flatten() {
+                let place = format!(
+                    "{} from {}{in_regions}",
+                    site["kind"].as_str().unwrap_or_default(),
+                    site["site"].as_str().unwrap_or_default()
+                );
+                sites.entry(place).or_insert_with(|| vec![0.0; dumps.len()])[index] +=
+                    site["bytes"].as_f64().unwrap_or(0.0);
+            }
         }
     }
     let mut growing: Vec<(String, Vec<f64>)> = sites.into_iter().filter(|(_, series)| rising(series)).collect();

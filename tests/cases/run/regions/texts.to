@@ -1,0 +1,110 @@
+// Texts an interpolation makes, which regions take as they take arrays, sent
+// out of the scope that made them by each way of the matrix: stored in a
+// field, an element, a variable the next turn writes over, a map; written
+// through a loan; captured by a closure; sent to a task; returned by a
+// call, or kept by one; joined, sliced or boxed; read by a `defer`; in the
+// region of a turn, of a function and of a caller, short and longer than
+// the 64 bytes from which a text keeps the positions of its characters.
+
+import std.console
+import std.reflect
+import std.sync
+
+type Note = { text: String }
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        let junk = "junk {i} {i} {i} {i}"
+        total += junk.length()
+    }
+    total
+}
+
+fn long(i: Int): String {
+    "a text of turn {i}, long enough to keep the positions of its characters"
+}
+
+/// The region of a turn: stores of each kind.
+fn stored(): String {
+    var note = Note { text: "" }
+    var rows: Array[String] = ["", ""]
+    var last = ""
+    var byKey: Map[Int, String] = [:]
+    var notes: Array[Note] = [Note { text: "" }, Note { text: "" }]
+    for i in 0..3 {
+        note.text = "field {i}"
+        rows[i % 2] = "element {i}"
+        last = long(i)
+        byKey[i] = "keyed {i}"
+        for mut lent in notes {
+            lent.text = "lent {i}"
+        }
+    }
+    "{note.text} {rows} {last.length()} {last[5]} {byKey[1] ?? ""} {notes[1].text}"
+}
+
+/// The region of a turn: captured, sent, joined, sliced, boxed.
+fn shared(): String {
+    var shown: Array[fn(): String] = []
+    let (sender, receiver) = channel[String](8)
+    var group = Group[String]()
+    var joined: Array[String] = []
+    var boxed: Array[reflect.Value] = []
+    for i in 0..3 {
+        let captured = "captured {i}"
+        shown.push(() { captured })
+        sender.send("sent {i}")
+        let given = "given {i}"
+        group.add(spawn given.toUpper())
+        joined = joined.concat(["joined {i}", long(i)])
+        boxed.push(reflect.valueOf("boxed {i}"))
+    }
+    sender.close()
+    var received: Array[String] = []
+    for text in receiver {
+        received.push(text)
+    }
+    let tail = joined[2:4]
+    "{shown[0]()} {shown[2]()} {received} {group.wait().sorted()} {joined.length()} {tail[1].length()} {boxed[1]}"
+}
+
+/// The region of a function: kept in what it is given, read by a `defer`.
+fn into(notes: var Array[Note], log: sync.Mutex[Array[String]], i: Int) {
+    notes.push(Note { text: "pushed {i}" })
+    let read = "deferred {i}"
+    defer {
+        // tondo: allow W1017: no task of this program is cancelled
+        log.update((all) { all.push(read) })
+    }
+}
+
+/// The region a caller gives, to a function that returns what it makes,
+/// fresh, kept by one caller and let go by another.
+fn fresh(i: Int): String {
+    "fresh {i} of {i * 2}"
+}
+
+fn main() {
+    let a = stored()
+    let b = shared()
+    var notes: Array[Note] = []
+    let log = sync.Mutex(Array[String]())
+    for i in 0..2 {
+        into(var notes, log, i)
+    }
+    var kept: Array[String] = []
+    var counted = 0
+    for i in 0..3 {
+        kept.push(fresh(i))
+        counted += fresh(i).length()
+    }
+    let quiet = noise()
+    console.println(a)
+    console.println(b)
+    console.println("{notes.map((note) { note.text })} {log.get()} {kept} {counted} {quiet}")
+}
+
+// expect-stdout: field 2 [element 2, element 1] 69 t keyed 1 lent 2
+// expect-stdout: captured 0 captured 2 [sent 0, sent 1, sent 2] [GIVEN 0, GIVEN 1, GIVEN 2] 6 69 boxed 1
+// expect-stdout: [pushed 0, pushed 1] [deferred 0, deferred 1] [fresh 0 of 0, fresh 1 of 2, fresh 2 of 4] 36 3560

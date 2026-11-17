@@ -7674,3 +7674,21 @@ A loop inside a benchmark's whose arrays went in the region of the outer turn, b
 of nested loops, now has them in its own turn's, as the rule says, with memory bounded by a chunk:
 one that makes two small arrays a turn runs 8.5 % more instructions, the reset of its region every
 four turns, which an inline reset of a region of one chunk would take back.
+
+## A region takes the texts interpolation makes
+
+The second of the four steps after regions: a text that an interpolation makes and nothing keeps
+past its scope goes in a region, as an array does, built there by the builder that the frame's
+room already had a form of; `x = "{x}..."`, which grows `x`'s own text in place when nothing else
+holds it, stays on the heap. A text in a region is a region's for life, whatever its length: a
+long one keeps the positions of its characters by its address, as one on the heap does, so a
+text a region makes forgets those its address had, and a chunk that goes back to the allocator
+forgets those within it. Texts brought to light two ways out the analysis missed: an
+interpolation of one text is that text, which it took for a copy; and a part of a call's result
+kept through an operation, which held for arrays too and was mended on its own.
+
+A native of the runtime that takes a text is in one of three lists, by Tony's choice: one that
+reads it, one that may keep it, or not read yet, which counts as keeping it, and a test fails for
+a native in none. The 170 that take one start not read yet and leave as each is read, with its
+case, in order of use; a text given to one of them stays on the heap, and `tondo optimizations`
+names the native. Texts in regions are done when that list is empty.

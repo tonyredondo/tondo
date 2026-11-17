@@ -1806,7 +1806,11 @@ test plain {
         assert_eq!(benchmark["samples_ns_per_op"].as_array().unwrap().len() as u64, samples);
         assert_eq!(benchmark["allocations_per_op"].as_f64(), Some(0.0), "{benchmark}");
     }
-    assert!(measured("joins")[0]["allocations_per_op"].as_f64().unwrap() >= 1.0);
+    // What a body makes counts, on the heap or in a region: the text the
+    // join makes goes in the region of the benchmark's turn.
+    let joins = &measured("joins")[0];
+    let made = |field: &str| joins[field].as_f64().unwrap();
+    assert!(made("allocations_per_op") + made("region_allocations_per_op") >= 1.0, "{joins}");
     assert_eq!(measured("fails"), serde_json::json!([]), "a body that fails measures nothing");
     // Benchmarks run alone, optimized and once.
     let (_, stderr, status) = tondo(&dir, &["test", "--bench", "--jobs", "2"]);
@@ -2280,8 +2284,10 @@ test joining {
         (&serde_json::json!("app::unit::app::joining"), &serde_json::json!("join"))
     );
     assert_eq!(profile["profile"], "target/profiles/app.unit.app.joining--join.memory.pprof");
+    // The text the join makes goes in the region of the benchmark's turn,
+    // which the profile samples as it samples the heap.
     let (shown, _, _) =
-        tondo(&dir, &["profile", "show", profile["profile"].as_str().unwrap(), "--sample", "alloc_space", "--json"]);
+        tondo(&dir, &["profile", "show", profile["profile"].as_str().unwrap(), "--sample", "region_space", "--json"]);
     let shown: serde_json::Value = serde_json::from_str(&shown).unwrap();
     assert!(shown["total"].as_i64().unwrap() > 0, "{shown}");
     assert_eq!(

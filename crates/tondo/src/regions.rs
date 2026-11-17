@@ -1235,7 +1235,14 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
             Rvalue::Array(values, _) if values.iter().any(|value| matches!(value, Operand::Copy(_))) => None,
             Rvalue::MapOp(crate::hir::MapOp::New, ..) => MAPS,
             Rvalue::Slice(..) => Some("regions do not take slices yet"),
-            Rvalue::Concat(_) if !body.framed.contains(&place.local) => TEXTS,
+            // A text interpolation makes, but `x = "{x}..."`, which grows
+            // `x`'s own on the heap when nothing else holds it.
+            Rvalue::Concat(pieces) if !body.framed.contains(&place.local) => {
+                match pieces.iter().any(|piece| matches!(piece, Piece::Taken(_))) {
+                    true => Some("a region does not grow a text in place yet"),
+                    false => None,
+                }
+            }
             Rvalue::Aggregate(operands) | Rvalue::Variant(_, operands) => {
                 let ty = body.place_ty(types, place);
                 let boxed = operands.iter().any(|operand| match operand {
@@ -1373,13 +1380,23 @@ impl Flow {
                         Rvalue::Aggregate(operands) | Rvalue::Variant(_, operands) | Rvalue::Array(operands, _) => {
                             (How::Made, copies(operands))
                         }
+                        // What an interpolation takes over, and the text it
+                        // shows when it shows one alone, which it gives as it
+                        // is (`concat` in codegen): it copies the rest.
                         Rvalue::Concat(pieces) => {
+                            let alone = match pieces.as_slice() {
+                                [Piece::Value(Operand::Copy(shown), ty)] if types.repr(*ty) == Ty::STRING => {
+                                    Some((shown.local, !shown.path.is_empty()))
+                                }
+                                _ => None,
+                            };
                             let taken = pieces
                                 .iter()
                                 .filter_map(|piece| match piece {
                                     Piece::Taken(taken) => Some((taken.local, !taken.path.is_empty())),
                                     _ => None,
                                 })
+                                .chain(alone)
                                 .collect();
                             (How::Whole, taken)
                         }
@@ -1409,9 +1426,10 @@ impl Flow {
                         // A native that reads what it is given gives a value
                         // the runtime made, which holds none of it.
                         Rvalue::Call(Callee::Std(crate::hir::StdFn::Native(index)), _)
-                            if crate::hir::NATIVES
-                                .get(*index as usize)
-                                .is_some_and(|native| READING.contains(&native.symbol)) =>
+                            if crate::hir::NATIVES.get(*index as usize).is_some_and(|native| {
+                                READING.contains(&native.symbol)
+                                    && (!takes_texts(native) || READING_TEXTS.contains(&native.symbol))
+                            }) =>
                         {
                             continue;
                         }
@@ -1713,7 +1731,7 @@ fn fate_of(flow: &Flow, body: &Body, held: &[bool], summaries: &[Summary], bodie
                         }
                     }
                     Rvalue::Call(Callee::Std(std), args) if args.iter().any(reads) && runtime_keeps(std) => {
-                        return kept("it is passed to the runtime, which may keep it", *span);
+                        return Fate::Kept(runtime_why(std), *span);
                     }
                     Rvalue::Call(Callee::Std(_), _) => {}
                     Rvalue::Call(..) => return kept("it is passed to C, which may keep it", *span),
@@ -1977,7 +1995,10 @@ fn runtime_keeps(std: &crate::hir::StdFn) -> bool {
     use crate::hir::StdFn;
     match std {
         StdFn::Native(index) => match crate::hir::NATIVES.get(*index as usize) {
-            Some(native) => takes_from_regions(native) && !READING.contains(&native.symbol),
+            Some(native) => {
+                takes_from_regions(native) && !READING.contains(&native.symbol)
+                    || takes_texts(native) && !READING_TEXTS.contains(&native.symbol)
+            }
             None => true,
         },
         // A detached task takes its closure; a context keeps its value for
@@ -2043,6 +2064,211 @@ fn runtime_keeps(std: &crate::hir::StdFn) -> bool {
         | StdFn::AllocationsSince => false,
     }
 }
+
+/// Why a call of the runtime keeps what it is given: a native whose code is
+/// not read yet is named as one.
+fn runtime_why(std: &crate::hir::StdFn) -> String {
+    match std {
+        crate::hir::StdFn::Native(index) => match crate::hir::NATIVES.get(*index as usize) {
+            Some(native) if UNREAD_TEXTS.contains(&native.symbol) => {
+                format!("it is passed to `{}.{}`, a native of the runtime not read yet", native.module, native.name)
+            }
+            _ => "it is passed to the runtime, which may keep it".to_string(),
+        },
+        _ => "it is passed to the runtime, which may keep it".to_string(),
+    }
+}
+
+/// Whether a native of the runtime can be given a text, which a region may
+/// make: one is taken to keep it until its code is read and it is in
+/// `READING_TEXTS`, which costs a region's text nothing but its place.
+fn takes_texts(native: &crate::hir::Native) -> bool {
+    use crate::hir::NativeTy::String;
+    native.receiver.iter().chain(native.params).any(|kind| matches!(kind, String))
+}
+
+/// The natives that can be given a text and keep none of it past the call,
+/// as their code shows. A native that takes a text is in this list, in
+/// `KEEPING_TEXTS` or in `UNREAD_TEXTS`, and a test holds the table of
+/// natives to them; one in either of the others is taken to keep it.
+const READING_TEXTS: &[&str] = &[];
+
+/// The natives that take a text whose code is not read yet, taken to keep
+/// it until it is: each moves to `READING_TEXTS` or `KEEPING_TEXTS` with
+/// its case in tests/cases/run/regions, and texts in regions are done when
+/// this list is empty.
+const UNREAD_TEXTS: &[&str] = &[
+    "tondo_rt_base64_check",
+    "tondo_rt_base64_decode",
+    "tondo_rt_cbor_fail",
+    "tondo_rt_cbor_write_datetime",
+    "tondo_rt_cbor_write_key",
+    "tondo_rt_cbor_write_number",
+    "tondo_rt_cbor_write_text",
+    "tondo_rt_crypto_hash_password",
+    "tondo_rt_crypto_verify_password",
+    "tondo_rt_csv_check",
+    "tondo_rt_csv_fields",
+    "tondo_rt_files_link",
+    "tondo_rt_files_read_symlink",
+    "tondo_rt_files_real_path",
+    "tondo_rt_files_set_modified",
+    "tondo_rt_files_set_permissions",
+    "tondo_rt_files_space",
+    "tondo_rt_files_stat",
+    "tondo_rt_files_symlink",
+    "tondo_rt_files_temporary",
+    "tondo_rt_files_walk",
+    "tondo_rt_fuzz_begin",
+    "tondo_rt_fuzz_encoded",
+    "tondo_rt_fuzz_invalid",
+    "tondo_rt_fuzz_seed",
+    "tondo_rt_grpc_channel",
+    "tondo_rt_grpc_close",
+    "tondo_rt_grpc_frames",
+    "tondo_rt_grpc_frames_of",
+    "tondo_rt_grpc_open",
+    "tondo_rt_grpc_start",
+    "tondo_rt_hex_check",
+    "tondo_rt_hex_decode",
+    "tondo_rt_html_escape",
+    "tondo_rt_html_unescape",
+    "tondo_rt_http_body_bytes",
+    "tondo_rt_http_body_stream",
+    "tondo_rt_http_client",
+    "tondo_rt_http_form_bytes",
+    "tondo_rt_http_form_file",
+    "tondo_rt_http_form_stream",
+    "tondo_rt_http_form_text",
+    "tondo_rt_http_header",
+    "tondo_rt_http_listen",
+    "tondo_rt_http_listen_unix",
+    "tondo_rt_http_media_type",
+    "tondo_rt_http_request_header",
+    "tondo_rt_http_respond_bytes",
+    "tondo_rt_http_respond_file",
+    "tondo_rt_http_respond_text",
+    "tondo_rt_http_save_body",
+    "tondo_rt_http_send",
+    "tondo_rt_http_trailers_set",
+    "tondo_rt_http_upload_save",
+    "tondo_rt_http_ws_connect",
+    "tondo_rt_http_ws_send",
+    "tondo_rt_json_fail",
+    "tondo_rt_json_is_int",
+    "tondo_rt_json_parse_float",
+    "tondo_rt_json_parse_int",
+    "tondo_rt_json_reader",
+    "tondo_rt_json_write_key",
+    "tondo_rt_json_write_number",
+    "tondo_rt_json_write_raw",
+    "tondo_rt_json_write_string",
+    "tondo_rt_library_file_name",
+    "tondo_rt_library_open",
+    "tondo_rt_library_symbol",
+    "tondo_rt_memory_c_string",
+    "tondo_rt_meta_bytes",
+    "tondo_rt_meta_respond",
+    "tondo_rt_metric",
+    "tondo_rt_model_report",
+    "tondo_rt_msgpack_fail",
+    "tondo_rt_msgpack_write_datetime",
+    "tondo_rt_msgpack_write_key",
+    "tondo_rt_msgpack_write_number",
+    "tondo_rt_msgpack_write_text",
+    "tondo_rt_net_bind",
+    "tondo_rt_net_bind_unix",
+    "tondo_rt_net_canonical_ip",
+    "tondo_rt_net_connect",
+    "tondo_rt_net_connect_unix",
+    "tondo_rt_net_contains",
+    "tondo_rt_net_ip",
+    "tondo_rt_net_ip_kind",
+    "tondo_rt_net_listen",
+    "tondo_rt_net_listen_unix",
+    "tondo_rt_net_network",
+    "tondo_rt_net_resolve",
+    "tondo_rt_net_send_to",
+    "tondo_rt_net_send_to_path",
+    "tondo_rt_net_start_tls",
+    "tondo_rt_net_write",
+    "tondo_rt_panic_bool",
+    "tondo_rt_panic_code",
+    "tondo_rt_panic_float",
+    "tondo_rt_panic_int",
+    "tondo_rt_panic_name",
+    "tondo_rt_panic_report",
+    "tondo_rt_panic_restage",
+    "tondo_rt_panic_text",
+    "tondo_rt_path_key",
+    "tondo_rt_path_steps",
+    "tondo_rt_pb_fail",
+    "tondo_rt_pb_write_text",
+    "tondo_rt_process_which",
+    "tondo_rt_reflect_index",
+    "tondo_rt_reflect_quote",
+    "tondo_rt_regex_capture_index",
+    "tondo_rt_regex_check_input",
+    "tondo_rt_regex_compile",
+    "tondo_rt_regex_escape",
+    "tondo_rt_regex_find",
+    "tondo_rt_regex_is_match",
+    "tondo_rt_regex_replace",
+    "tondo_rt_regex_slice",
+    "tondo_rt_regex_whole_match",
+    "tondo_rt_region_show",
+    "tondo_rt_sqlite_open",
+    "tondo_rt_sqlite_run",
+    "tondo_rt_template_parse",
+    "tondo_rt_text_between",
+    "tondo_rt_text_byte_at",
+    "tondo_rt_text_collate",
+    "tondo_rt_text_collator",
+    "tondo_rt_text_count",
+    "tondo_rt_text_currency_digits",
+    "tondo_rt_text_currency_symbol",
+    "tondo_rt_text_find_in",
+    "tondo_rt_text_find_last",
+    "tondo_rt_text_is_float",
+    "tondo_rt_text_is_int",
+    "tondo_rt_text_is_normalized",
+    "tondo_rt_text_lines",
+    "tondo_rt_text_lower",
+    "tondo_rt_text_normalize",
+    "tondo_rt_text_number_symbols",
+    "tondo_rt_text_parse_float",
+    "tondo_rt_text_parse_int",
+    "tondo_rt_text_plural_rules",
+    "tondo_rt_text_repeat",
+    "tondo_rt_text_scalar_at",
+    "tondo_rt_text_split",
+    "tondo_rt_text_trim",
+    "tondo_rt_text_upper",
+    "tondo_rt_text_words",
+    "tondo_rt_time_names",
+    "tondo_rt_tls_certificates_serving",
+    "tondo_rt_tls_certificates_set",
+    "tondo_rt_toml_fail",
+    "tondo_rt_toml_parse",
+    "tondo_rt_toml_write_datetime",
+    "tondo_rt_toml_write_key",
+    "tondo_rt_toml_write_number",
+    "tondo_rt_toml_write_text",
+    "tondo_rt_url_check",
+    "tondo_rt_url_decode",
+    "tondo_rt_url_encode",
+    "tondo_rt_yaml_fail",
+    "tondo_rt_yaml_outline",
+    "tondo_rt_yaml_parse",
+    "tondo_rt_yaml_write_key",
+    "tondo_rt_yaml_write_number",
+    "tondo_rt_yaml_write_tag",
+    "tondo_rt_yaml_write_text",
+    "tondo_rt_zone_abbreviation",
+    "tondo_rt_zone_known",
+    "tondo_rt_zone_offset",
+    "tondo_rt_zone_resolve",
+];
 
 /// Whether a native of the runtime can be given a value a region makes:
 /// an array, or a reflect box, as its receiver or a parameter.
@@ -2181,6 +2407,11 @@ mod natives {
     /// one list or the other.
     const KEEPING: &[&str] = &[];
 
+    /// The natives that can be given a text and may keep it past the call,
+    /// as their code shows, which `runtime_keeps` takes as any native that
+    /// takes a text and is not in `READING_TEXTS`.
+    const KEEPING_TEXTS: &[&str] = &[];
+
     /// Every native that can be given a value a region makes says whether
     /// it keeps it, as its code was read, and the lists name no other: a
     /// native added with such a parameter fails here until it is read.
@@ -2200,5 +2431,26 @@ mod natives {
         );
         let stale: Vec<&&str> = READING.iter().chain(KEEPING).filter(|symbol| !taking.contains(symbol)).collect();
         assert!(stale.is_empty(), "{stale:?} take nothing a region makes: take them out of the lists");
+    }
+
+    /// Every native that takes a text is in one of the three lists of
+    /// texts, and in one only, and the lists name no other.
+    #[test]
+    fn every_native_that_takes_a_text_has_a_word() {
+        let taking: Vec<&str> =
+            crate::hir::NATIVES.iter().filter(|native| takes_texts(native)).map(|native| native.symbol).collect();
+        let lists = [READING_TEXTS, KEEPING_TEXTS, UNREAD_TEXTS];
+        let wordless: Vec<&&str> =
+            taking.iter().filter(|symbol| !lists.iter().any(|list| list.contains(symbol))).collect();
+        assert!(
+            wordless.is_empty(),
+            "{wordless:?} take a text: put each in `UNREAD_TEXTS`, or read its code and put it in `READING_TEXTS` if \
+             it copies the text or reads it only during the call, else in `KEEPING_TEXTS`"
+        );
+        let twice: Vec<&&str> =
+            taking.iter().filter(|symbol| lists.iter().filter(|list| list.contains(symbol)).count() > 1).collect();
+        assert!(twice.is_empty(), "{twice:?} are in more than one list of texts");
+        let stale: Vec<&&str> = lists.iter().flat_map(|list| list.iter()).filter(|s| !taking.contains(s)).collect();
+        assert!(stale.is_empty(), "{stale:?} take no text: take them out of the lists of texts");
     }
 }

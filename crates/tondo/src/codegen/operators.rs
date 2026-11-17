@@ -121,14 +121,19 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             _ => None,
         };
+        // In a region, the text is built there, by the builder: the ways
+        // below make it on the heap, or give one that is.
+        let region = self.e.region;
         if let Some((place, text)) = known
             && (1..=16).contains(&text.len())
+            && region.is_none()
         {
             return self.append_text(place, &text);
         }
         // `x = "{x}{s}"` and `x = "{x}{i}"` in one call.
         if let [Piece::Taken(place), Piece::Value(operand, ty)] = pieces
             && let Some(kind) = plain(self, *ty)
+            && region.is_none()
         {
             let appended = match kind {
                 TyKind::String => Some((Rt::StrAppend, false)),
@@ -149,6 +154,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             && let Some(TyKind::Int(int)) = plain(self, *ty)
             && int.bits() < 128
             && (int.signed() || int.bits() < 64)
+            && region.is_none()
         {
             let value = self.scalar(operand);
             let value = self.wide(value, int.signed());
@@ -161,6 +167,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         if let [Piece::Value(operand, ty)] = pieces
             && plain(self, *ty).is_some()
             && self.e.cg.types().repr(*ty) == Ty::STRING
+            && region.is_none()
         {
             let text = self.scalar(operand);
             self.e.call_rt(Rt::StrRetain, &[text]);
@@ -220,12 +227,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let adopted = self.e.call_rt(Rt::SbAdopt, &[builder, text, room]).unwrap();
                 released = Some((adopted, text));
             }
-            None => match framed {
-                Some(framed) => {
+            None => match (framed, region) {
+                (Some(framed), _) => {
                     let framed_room = self.e.fb.ins().iconst(types::I64, FRAMED_ROOM as i64);
                     self.e.call_rt(Rt::SbStartIn, &[builder, room, framed, framed_room]);
                 }
-                None => {
+                (None, Some(region)) => {
+                    self.e.call_rt(Rt::SbStartRegion, &[builder, room, region]);
+                }
+                (None, None) => {
                     self.e.call_rt(Rt::SbStart, &[builder, room]);
                 }
             },

@@ -494,7 +494,11 @@ fn profiles_for_agents() {
     let (profiled, _) = agent.call("profile", json!({ "bench": true, "kind": "memory" }));
     let profile = &profiled["profiles"][0];
     assert_eq!(profile["type"], "alloc_space", "{profiled}");
-    assert!(profile["total"].as_i64().unwrap() > 0, "{profiled}");
+    // The text the benchmark makes goes in the region of its turn, which
+    // the profile samples beside the heap.
+    let file = dir.join(profile["profile"].as_str().unwrap());
+    let (regions, _) = agent.call("profile_show", json!({ "file": file, "sample": "region_space" }));
+    assert!(regions["report"]["total"].as_i64().unwrap_or(0) > 0, "{regions}");
     // What `tondo profile` says when it fails, which it writes as JSON.
     let arguments = json!({ "program": "999999999", "kind": "tasks", "duration": 1 });
     let failed = agent.request("tools/call", json!({ "name": "profile", "arguments": arguments }));

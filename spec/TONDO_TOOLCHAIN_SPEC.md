@@ -2496,9 +2496,11 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   una tarea o a C, lo guarda una función a la que se pasa, sobrevive a una
   vuelta del bucle en que se hace en algo que el bucle hace más que ampliar,
   como la variable que la vuelta siguiente reescribe, contiene un valor que
-  su región no hizo,
+  su región no hizo, se pasa a una función del runtime cuyo código aún no se
+  ha leído, y la nombra,
   o es de una clase que una región no toma aún, y la nombra: una región
-  toma arrays, cajas y arrays que crecen con `push`. Un valor en una región
+  toma arrays, cajas, arrays que crecen con `push` y los textos que hace una
+  interpolación, salvo el que crece en su sitio, como `x = "{x}..."`. Un valor en una región
   no es una asignación para los contadores, los perfiles de memoria ni las
   asignaciones de un benchmark: la región pide su memoria por trozos. Los
   builds de depuración y los vivos no usan regiones, ni uno con

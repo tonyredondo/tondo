@@ -43,9 +43,34 @@ impl Builder {
         !self.text.is_null() && unsafe { (*self.text).rc.load(Ordering::Relaxed) } == FRAMING
     }
 
+    /// The region it builds in (`tondo_rt_sb_start_region`), whose address
+    /// the text's count holds while it builds, marked.
+    fn region(&self) -> Option<*mut regions::Region> {
+        if self.text.is_null() {
+            return None;
+        }
+        let rc = unsafe { (*self.text).rc.load(Ordering::Relaxed) };
+        (rc & REGION_MARK_BITS == REGION_MARK).then_some((rc & !REGION_MARK_BITS) as *mut regions::Region)
+    }
+
     #[cold]
     fn grow(&mut self, more: usize) {
         let room = (self.len + more).max(self.room() * 2);
+        // A text a region takes grows in it, whatever its length: what the
+        // analysis puts in a region stays a region's.
+        if let Some(region) = self.region() {
+            let text = unsafe { regions::tondo_rt_region_alloc(region, HEADER + room) };
+            unsafe {
+                std::ptr::copy_nonoverlapping((self.text as *const u8).add(HEADER), text.add(HEADER), self.len);
+                (text as *mut Str).write(Str {
+                    rc: AtomicUsize::new(region as usize | REGION_MARK),
+                    len: 0,
+                    cap: room,
+                });
+            }
+            self.text = text as *mut Str;
+            return;
+        }
         let layout = str_layout(room);
         // A new block holds what was asked, as a guess that is seldom
         // short; one that grows takes all the room its block has. What a
@@ -78,6 +103,17 @@ impl Builder {
     pub fn finish(self) -> *mut Str {
         if self.text.is_null() {
             return str_new(&[]);
+        }
+        // Built in a region: the last reference, which its region lets go
+        // of. A long one forgets the positions that a text its region let go
+        // of left for the same address.
+        if self.region().is_some() {
+            unsafe { (*self.text).rc.store(regions::LAST_IN_REGION, Ordering::Relaxed) };
+            unsafe { (*self.text).len = self.len };
+            if self.len >= POSITIONED_FROM {
+                forget_positions(self.text);
+            }
+            return self.text;
         }
         // Built in a frame's room: a text nothing counts.
         if self.framed() {
@@ -161,6 +197,25 @@ pub unsafe extern "C" fn tondo_rt_sb_start_in(b: *mut Builder, room: usize, fram
     unsafe {
         framed.write(Str { rc: AtomicUsize::new(FRAMING), len: 0, cap: framed_room });
         b.write(Builder { text: framed, len: 0 });
+    }
+}
+
+/// The mark in the count of a text a builder builds in a region, beside the
+/// region's address, which a frame aligns to a word: its low bits are free,
+/// and none of the counts a text has otherwise ends in them (`FRAMING`,
+/// `IMMORTAL`, 0 while a builder builds on the heap).
+const REGION_MARK: usize = 0b101;
+const REGION_MARK_BITS: usize = 0b111;
+
+/// Starts the builder at `b` with room for `room` bytes in `region`, for a
+/// text that nothing keeps past it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sb_start_region(b: *mut Builder, room: usize, region: *mut regions::Region) {
+    let room = room.max(16);
+    unsafe {
+        let text = regions::tondo_rt_region_alloc(region, HEADER + room) as *mut Str;
+        text.write(Str { rc: AtomicUsize::new(region as usize | REGION_MARK), len: 0, cap: room });
+        b.write(Builder { text, len: 0 });
     }
 }
 

@@ -174,6 +174,7 @@ fn given_back(chunk: *mut Chunk) {
     HELD.fetch_sub(CHUNK, Ordering::Relaxed);
     let kept = shared(|free| (free.count < KEPT).then(|| unsafe { free.push(chunk) }).is_some());
     if !kept {
+        super::strings::forget_positions_within(chunk as usize, chunk as usize + CHUNK);
         unsafe { super::meta::uncounted_dealloc(chunk as *mut u8, chunk_layout(CHUNK)) };
     }
 }
@@ -323,6 +324,7 @@ pub unsafe extern "C" fn tondo_rt_region_leave(region: *mut Region) {
                 HELD.fetch_sub(size, Ordering::Relaxed);
             } else if size != CHUNK {
                 HELD.fetch_sub(size, Ordering::Relaxed);
+                super::strings::forget_positions_within(chunk as usize, chunk as usize + size);
                 super::meta::uncounted_dealloc(chunk as *mut u8, chunk_layout(size));
             } else if !local(|kept| (kept.count < LOCAL).then(|| kept.push(chunk)).is_some()).unwrap_or(false) {
                 given_back(chunk);
