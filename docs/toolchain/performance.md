@@ -747,7 +747,7 @@ fn main() {
 
 ```text
 $ tondo optimizations rows.to --kind region
-rows.to:9:22: `row.split(",")` in `String.split`, `textNative.split(self, separator, most)` goes in the region of a turn of the loop at rows.to:7 (in largest)
+rows.to:9:22: `row.split(",")` in `String.split`, `textNative.split(self, separator, most)` goes in the region of a turn of the loop at line 7 (in largest)
 rows.to:10:13: `numbers.push(Int.parse(field)?)` grows an array that goes in the region of a turn of the loop at line 7 (in largest)
 ```
 
