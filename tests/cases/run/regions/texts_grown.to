@@ -42,7 +42,7 @@ fn kept(count: Int): String {
     text
 }
 
-/// Grown past what a region takes, a mebibyte: it goes on on the heap.
+/// Grown across the turns of its loop, which it outlives: on the heap.
 fn long(count: Int): Int {
     var text = ""
     for _ in 0..count {
