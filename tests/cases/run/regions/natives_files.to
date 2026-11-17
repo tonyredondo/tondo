@@ -1,0 +1,135 @@
+// The runtime's natives of files, zones, the names of dates, `which`,
+// SQLite, shared libraries and C strings read the texts they are given or
+// copy what they keep (`READING_TEXTS` in regions.rs). Each loop gives them
+// texts its turn makes, and what keeps state, a database, a zone, a
+// library, is used again after the loop, once the regions ended.
+
+import std.console
+import std.ffi
+import std.fs
+import std.path
+import std.process
+import std.sql
+import std.time
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        let junk = "junk {i} {i} {i} {i}"
+        total += junk.length()
+    }
+    total
+}
+
+fn entry(dir: String, i: Int): String ! fs.FsError {
+    let file = path.join(dir, "f{i}.txt")
+    fs.writeText(file, "text {i}")?
+    fs.setPermissions(file, 0o640)?
+    fs.setModified(file, time.utc(time.seconds(1_000_000_000 + i)))?
+    let link = path.join(dir, "l{i}.txt")
+    fs.createSymlink("f{i}.txt", link)?
+    fs.createLink(file, path.join(dir, "h{i}.txt"))?
+    let info = fs.metadata(file)?
+    let real = fs.realPath(link)?
+    let temporary = fs.createTemporaryFile(directory: "{dir}", pattern: "t{i}-*.tmp")?
+    let space = fs.space("{dir}")?
+    "{fs.readSymlink(link)?} {path.fileName(real) ?? "?"} {info.size} {info.permissions == 0o640} {info.links} {info.modified.sinceEpoch().seconds() - 1_000_000_000} {(path.fileName(temporary) ?? "").startsWith("t{i}-")} {space.total > 0}"
+}
+
+fn entries(dir: String): String ! fs.FsError {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        lines.push(entry(dir, i)?)
+    }
+    lines.push("{fs.walk("{dir}")?.length()}")
+    lines.join(" ")
+}
+
+fn shown(i: Int): String ! time.TimeError {
+    let place =
+        time.zone("{if i == 2 { "Asia" } else { "Europe" }}/{["Madrid", "Paris", "Tokyo"][i]}")?
+    let moment = place.at(2026, 1 + i * 5, 15, hour: 12)?
+    moment.format("%B %Z", locale: "{["es", "fr", "ja"][i]}")
+}
+
+fn zoned(zones: var Array[time.Zone]): String ! time.TimeError {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        lines.push(shown(i)?)
+        zones.push(
+            time.zone("{if i == 2 { "Asia" } else { "Europe" }}/{["Madrid", "Paris", "Tokyo"][i]}")?,
+        )
+    }
+    lines.join(", ")
+}
+
+fn opened(dir: String, dbs: var Array[sql.Database]): String ! sql.SqlError {
+    var lines: Array[String] = []
+    for i in 0..2 {
+        var db = sql.open("sqlite:{dir}/d{i}.db")?
+        _ = db.execute(sql.raw("CREATE TABLE t{i} (x INTEGER)"))?
+        _ = db.execute("INSERT INTO {sql.identifier("t{i}")} (x) VALUES ({i * 10})")?
+        lines.push("d{i}")
+        dbs.push(db)
+    }
+    lines.join(" ")
+}
+
+fn loaded(libraries: var Array[ffi.Library]): String {
+    var lines: Array[String] = []
+    let program = ffi.Library.program()
+    for i in 0..3 {
+        let part = if i == 0 { "len" } else { "no_such_{i}" }
+        lines.push("{program.has("str{part}")}")
+        lines.push("{ffi.libraryFileName("lib{i}", version: "{i}").contains("lib{i}")}")
+        match ffi.Library.named("no_such_library_{i}") {
+            ok(library) => libraries.push(library)
+            err(ffi.LibraryError.NotLoaded(_)) => lines.push("missing")
+            err(_) => lines.push("other")
+        }
+        let c = ffi.toCString("c string {i}")
+        lines.push(unsafe { ffi.fromCString(c) })
+        unsafe { ffi.free(c) }
+    }
+    lines.join(" ")
+}
+
+fn main() {
+    let dir = fs.createTemporaryDirectory()?
+    var zones: Array[time.Zone] = []
+    var dbs: Array[sql.Database] = []
+    var libraries: Array[ffi.Library] = []
+    let a = entries(dir)?
+    let b = zoned(var zones)?
+    let c = opened(dir, var dbs)?
+    let d = loaded(var libraries)
+    var found: Array[String] = []
+    for i in 0..2 {
+        found.push("{process.which("s{"h"}").isSome()} {process.which("no-such-program-{i}")}")
+    }
+    let quiet = noise()
+    console.println(a)
+    console.println(b)
+    console.println(c)
+    console.println(d)
+    console.println(found.join(" "))
+    let later = zones.map[String](
+        (place: time.Zone) { (place.at(2026, 7, 1) ?? panic("no date")).format("%Z") },
+    )
+    console.println("{later.join(" ")} {libraries.length()} {quiet}")
+    for i in 0..2 {
+        let rows: Array[Int] = dbs[i].query(sql.raw("SELECT x FROM t{i}")) ?? []
+        console.println("{rows}")
+    }
+    fs.remove(dir, recursive: true)?
+}
+
+// expect-stdout: f0.txt f0.txt 6 true 2 0 true true f1.txt f1.txt 6 true 2 1 true true f2.txt f2.txt 6 true 2 2 true true 12
+// expect-stdout: enero CET, juin CEST, 11月 JST
+// expect-stdout: d0 d1
+// expect-stdout: true true missing c string 0 false true missing c string 1 false true missing c string 2
+// expect-stdout: true none true none
+// expect-stdout: CEST CEST JST 0 3560
+// expect-stdout: [0]
+// expect-stdout: [10]
+// expect-no-static: it loads libraries, which a static executable cannot

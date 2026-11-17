@@ -127,12 +127,12 @@ native tondo_rt_pb_reader                 projects/grpcweb
 native tondo_rt_pb_write_bytes            projects/grpcweb
 native tondo_rt_pb_write_raw              projects/grpcweb
 native tondo_rt_reflect_name              cases/run/regions/natives_formats.to
-native tondo_rt_sqlite_run                cases/run/regions/natives_system.to
+native tondo_rt_sqlite_run                cases/run/regions/natives_system.to cases/run/regions/natives_files.to
 native tondo_rt_tls_certificates          cases/run/regions/natives_net.to
 native tondo_rt_toml_field                cases/run/regions/natives_formats.to
 native tondo_rt_unpack                    cases/run/regions/natives_codec.to
 native tondo_rt_yaml_field                cases/run/regions/natives_formats.to
-native tondo_rt_zone_resolve              cases/run/regions/natives_formats.to
+native tondo_rt_zone_resolve              cases/run/regions/natives_formats.to cases/run/regions/natives_files.to
 native tondo_rt_zstd                      cases/run/regions/natives_codec.to
 
 # The natives read for texts.
@@ -221,3 +221,23 @@ native tondo_rt_yaml_write_key            cases/run/regions/natives_text2.to
 native tondo_rt_yaml_write_number         cases/run/regions/natives_text2.to
 native tondo_rt_yaml_write_tag            cases/run/regions/natives_text2.to
 native tondo_rt_yaml_write_text           cases/run/regions/natives_text2.to
+native tondo_rt_files_link                cases/run/regions/natives_files.to
+native tondo_rt_files_read_symlink        cases/run/regions/natives_files.to
+native tondo_rt_files_real_path           cases/run/regions/natives_files.to
+native tondo_rt_files_set_modified        cases/run/regions/natives_files.to
+native tondo_rt_files_set_permissions     cases/run/regions/natives_files.to
+native tondo_rt_files_space               cases/run/regions/natives_files.to
+native tondo_rt_files_stat                cases/run/regions/natives_files.to
+native tondo_rt_files_symlink             cases/run/regions/natives_files.to
+native tondo_rt_files_temporary           cases/run/regions/natives_files.to
+native tondo_rt_files_walk                cases/run/regions/natives_files.to
+native tondo_rt_library_file_name         cases/run/regions/natives_files.to
+native tondo_rt_library_open              cases/run/regions/natives_files.to
+native tondo_rt_library_symbol            cases/run/regions/natives_files.to
+native tondo_rt_memory_c_string           cases/run/regions/natives_files.to
+native tondo_rt_process_which             cases/run/regions/natives_files.to
+native tondo_rt_sqlite_open               cases/run/regions/natives_files.to
+native tondo_rt_time_names                cases/run/regions/natives_files.to
+native tondo_rt_zone_abbreviation         cases/run/regions/natives_files.to
+native tondo_rt_zone_known                cases/run/regions/natives_files.to
+native tondo_rt_zone_offset               cases/run/regions/natives_files.to
