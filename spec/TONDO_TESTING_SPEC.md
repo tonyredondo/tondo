@@ -2222,7 +2222,7 @@ protocolo es interno al toolchain y no forma parte del contrato.
 Interfaz mínima:
 
 ~~~text
-tondo test [<project> | --project <dir>]
+tondo test [<project>... | --project <dir>]
            [--filter <text> | --glob <pattern> | --exact <node-id>...]
            [--codeowners <auto|none|path>]
            [--shard <index/count>]
@@ -2257,7 +2257,14 @@ tondo test [<project> | --project <dir>]
 ~~~
 
 `--project <dir>`, o el primer argumento, selecciona una raíz convencional. Si
-se omite, se usa el directorio actual. No existe un archivo de plan: los
+se omite, se usa el directorio actual. Con varios proyectos antes de las
+opciones, prueba cada uno a su vez con las mismas opciones, bajo una línea
+`== <proyecto>`, y falla si uno falla: un comando juzga así todos los
+benchmarks de un cambio, como `tondo test bench/tondo examples/* --bench
+--compiler HEAD --regression-by instructions --max-regression 2`. Lo que
+escribe un reporte, una línea base o un flujo de datos (`--report`,
+`--save-baseline`, `--test-format`, `--json`, `--watch`, `--list`) toma un
+proyecto cada vez. No existe un archivo de plan: los
 defaults viven en el toolchain y los flags los cambian para la invocación.
 
 ### 10.1 Defaults y trabajadores

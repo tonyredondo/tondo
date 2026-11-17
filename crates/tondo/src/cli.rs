@@ -148,7 +148,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "test",
         usage: &[
-            "tondo test [<project>] [--filter <text> | --glob <pattern> | --exact <id>... | --affected <rev>]",
+            "tondo test [<project>...] [--filter <text> | --glob <pattern> | --exact <id>... | --affected <rev>]",
             "          [--bisect <commit> [--bisect-with <command>]] [--shard <i/n>] [--watch]",
             "          [--order canonical|random] [--schedules <n>|all|all:<n>|at:<choices>] [--seed <hex>] [--record <dir>] [--list] [--jobs <n>]",
             "          [--timeout <seconds>]",

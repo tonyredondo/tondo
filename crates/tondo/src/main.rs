@@ -374,6 +374,10 @@ fn rest_json(args: &[OsString]) -> bool {
 
 fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     use tondo::runner::{self, Codeowners, Glob, Order, Selector};
+    let projects = args.iter().take_while(|a| !a.to_string_lossy().starts_with('-')).count();
+    if projects > 1 {
+        return several_tests(&args[..projects], &args[projects..]);
+    }
     let (path, rest) = match args.first() {
         Some(first) if !first.to_string_lossy().starts_with('-') => (PathBuf::from(first), &args[1..]),
         _ => source_argument(args),
@@ -895,6 +899,43 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         return watch_tests(&path, &build, &mut options);
     }
     run_tests(&path, &build, &options)
+}
+
+/// `tondo test` of several projects: each in turn, with the same options,
+/// under its name, as one command can judge every benchmark of a change;
+/// it fails if one fails, and as a tool failed if one did. What writes one
+/// report, baseline or stream of data takes one project at a time.
+fn several_tests(projects: &[OsString], options: &[OsString]) -> Result<ExitCode, String> {
+    const ONE: [&str; 6] = ["--report", "--save-baseline", "--test-format", "--json", "--watch", "--list"];
+    if let Some(flag) = options.iter().find(|a| ONE.iter().any(|one| a.to_string_lossy() == *one)) {
+        return Err(format!(
+            "{} takes one project at a time: run `tondo test` once for each\n{USAGE}",
+            flag.to_string_lossy()
+        ));
+    }
+    let (mut failed, mut broke) = (false, false);
+    for (index, project) in projects.iter().enumerate() {
+        if index > 0 {
+            println!();
+        }
+        println!("== {}", project.to_string_lossy());
+        let mut args = vec![project.clone()];
+        args.extend(options.iter().cloned());
+        match test_command(&args) {
+            Ok(code) if code == ExitCode::SUCCESS => {}
+            Ok(code) if code == ExitCode::from(TOOL_FAILURE) => broke = true,
+            Ok(_) => failed = true,
+            Err(why) => {
+                eprintln!("tondo: {}: {why}", project.to_string_lossy());
+                broke = true;
+            }
+        }
+    }
+    Ok(match (broke, failed) {
+        (true, _) => ExitCode::from(TOOL_FAILURE),
+        (false, true) => ExitCode::FAILURE,
+        (false, false) => ExitCode::SUCCESS,
+    })
 }
 
 /// What to write when `tondo test` is given a file: the directory of its

@@ -858,6 +858,23 @@ fn counts_the_regions_a_benchmark_sets_up_and_uses() {
     assert!(!stdout.contains("regions set up"), "{stdout}");
 }
 
+/// `tondo test` of several projects tests each in turn under its name, and
+/// fails if one fails; what writes one report takes one project at a time.
+#[test]
+fn tests_several_projects_in_turn() {
+    let passes = project("several-passes", "test fine {\n    assert(1 + 1 == 2)\n}\n");
+    let fails = project("several-fails", "test broken {\n    assert(1 + 1 == 3)\n}\n");
+    let (first, second) = (passes.to_str().unwrap(), fails.to_str().unwrap());
+    let (stdout, stderr, status) = tondo(&passes, &["test", first, first]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert_eq!(stdout.matches(&format!("== {first}")).count(), 2, "{stdout}");
+    let (stdout, stderr, status) = tondo(&passes, &["test", first, second]);
+    assert_eq!(status, 1, "{stdout}{stderr}");
+    assert!(stdout.contains(&format!("== {second}")) && stdout.contains("broken"), "{stdout}");
+    let (_, stderr, status) = tondo(&passes, &["test", first, second, "--report", "json=out.json"]);
+    assert!(status == 2 && stderr.contains("takes one project at a time"), "{stderr}");
+}
+
 /// An update tasks lose is a warning of the test that shows it, in the report
 /// of the tools and the editor, and a test that does it well has none.
 #[test]
