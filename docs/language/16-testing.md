@@ -360,11 +360,13 @@ test encoding {
 
 A plain `tondo test` runs each closure once, so a benchmark that breaks
 fails like any test. `tondo test --bench` measures them, optimized: the
-time of a run with its spread, what it allocates, and on Linux the
-instructions it executes:
+time of a run with its spread, what it allocates on the heap and, after
+each `+`, in regions
+([Performance](../toolchain/performance.md#what-a-region-takes)), and on
+Linux the instructions it executes:
 
 ```text
-  count 600 words     14.95 µs/op  ±0.2%  7 allocs/op  25712 B/op  277.5k ins/op
+  count 600 words     14.40 µs/op  ±0.3%  6 allocs/op +2 in regions  304 B/op +25392 in regions  265.2k ins/op
 ```
 
 What the closure returns is kept, so the work that made it is not optimized

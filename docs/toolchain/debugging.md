@@ -245,7 +245,12 @@ stack:
 
 That report is of a bug mended since, in a loop that assigned to a slice
 of an array. The check is the runtime's, so the release executable that
-gave the wrong result takes it as it is, with nothing built again.
+gave the wrong result takes it as it is, with nothing built again. `tondo
+test` gives the variable to the tests it runs, as it gives them the rest
+of its environment, and a build gives it to the programs it runs to
+compile, the derive providers and the generators of
+[Metaprogramming](../language/17-meta.md), which otherwise start with an
+empty one.
 
 Its price is by region that ends: a page of memory that is new, and two
 calls to the system. A program that builds a tree of thousands of nodes in
