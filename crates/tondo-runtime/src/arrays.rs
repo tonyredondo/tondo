@@ -307,13 +307,19 @@ pub(crate) unsafe fn array_copy_in(
     cap: usize,
 ) -> *mut ArrayHeader {
     let new = unsafe { array_made(region, size, count, cap) };
-    for k in 0..count {
-        unsafe {
+    // A run of elements in a row, as a copy, a slice or `sorted` takes, at
+    // once: their storage is in a row too.
+    if step == 1 {
+        unsafe { std::ptr::copy_nonoverlapping(element(a, size, from as usize), element(new, size, 0), count * size) };
+    } else {
+        for k in 0..count {
             let index = (from + k as i64 * step) as usize;
-            std::ptr::copy_nonoverlapping(element(a, size, index), element(new, size, k), size);
-            if let Some(retain) = retain {
-                retain(element(new, size, k));
-            }
+            unsafe { std::ptr::copy_nonoverlapping(element(a, size, index), element(new, size, k), size) };
+        }
+    }
+    if let Some(retain) = retain {
+        for k in 0..count {
+            unsafe { retain(element(new, size, k)) };
         }
     }
     new
