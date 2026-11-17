@@ -87,19 +87,19 @@ native tondo_rt_hash_digest               cases/run/regions/natives_codec.to
 native tondo_rt_hasher                    cases/run/regions/natives_codec.to
 native tondo_rt_hasher_update             cases/run/regions/natives_codec.to
 native tondo_rt_hex_encode                cases/run/regions/natives_codec.to
-native tondo_rt_http_body_bytes           cases/run/regions/natives_net.to
-native tondo_rt_http_form_bytes           cases/run/regions/natives_net.to
+native tondo_rt_http_body_bytes           cases/run/regions/natives_net.to cases/run/regions/natives_http.to
+native tondo_rt_http_form_bytes           cases/run/regions/natives_net.to cases/run/regions/natives_http.to
 native tondo_rt_http_request_form_of      cases/run/regions/natives_net.to
 native tondo_rt_http_respond              cases/run/regions/natives_net.to
-native tondo_rt_http_respond_bytes        cases/run/regions/natives_net.to
-native tondo_rt_http_respond_file         cases/run/regions/natives_net.to
+native tondo_rt_http_respond_bytes        cases/run/regions/natives_net.to cases/run/regions/natives_http.to
+native tondo_rt_http_respond_file         cases/run/regions/natives_net.to cases/run/regions/natives_http.to
 native tondo_rt_http_respond_stream       cases/run/regions/natives_net.to
-native tondo_rt_http_respond_text         cases/run/regions/natives_net.to
+native tondo_rt_http_respond_text         cases/run/regions/natives_net.to cases/run/regions/natives_http.to
 native tondo_rt_http_respond_trailed      cases/run/regions/natives_net.to
-native tondo_rt_http_send                 cases/run/regions/natives_net.to
+native tondo_rt_http_send                 cases/run/regions/natives_net.to cases/run/regions/natives_http.to
 native tondo_rt_http_windows_1252         cases/run/regions/natives_net.to
-native tondo_rt_http_ws_connect           cases/run/regions/natives_net.to
-native tondo_rt_http_ws_send              cases/run/regions/natives_net.to
+native tondo_rt_http_ws_connect           cases/run/regions/natives_net.to cases/run/regions/natives_http.to
+native tondo_rt_http_ws_send              cases/run/regions/natives_net.to cases/run/regions/natives_http.to
 native tondo_rt_image_exif                cases/run/regions/natives_formats.to
 native tondo_rt_image_from_pixels         cases/run/regions/natives_formats.to
 native tondo_rt_image_info                cases/run/regions/natives_formats.to
@@ -254,3 +254,16 @@ native tondo_rt_reflect_quote             cases/run/regions/natives_panics.to
 native tondo_rt_region_show               cases/run/regions/natives_panics.to
 native tondo_rt_tls_certificates_serving  cases/run/regions/natives_panics.to
 native tondo_rt_tls_certificates_set      cases/run/regions/natives_panics.to
+native tondo_rt_http_body_stream          cases/run/regions/natives_http.to
+native tondo_rt_http_client               cases/run/regions/natives_http.to
+native tondo_rt_http_form_file            cases/run/regions/natives_http.to
+native tondo_rt_http_form_stream          cases/run/regions/natives_http.to
+native tondo_rt_http_form_text            cases/run/regions/natives_http.to
+native tondo_rt_http_header               cases/run/regions/natives_http.to
+native tondo_rt_http_listen               cases/run/regions/natives_http.to
+native tondo_rt_http_listen_unix          cases/run/regions/natives_http.to
+native tondo_rt_http_media_type           cases/run/regions/natives_http.to
+native tondo_rt_http_request_header       cases/run/regions/natives_http.to
+native tondo_rt_http_save_body            cases/run/regions/natives_http.to
+native tondo_rt_http_trailers_set         cases/run/regions/natives_http.to
+native tondo_rt_http_upload_save          cases/run/regions/natives_http.to

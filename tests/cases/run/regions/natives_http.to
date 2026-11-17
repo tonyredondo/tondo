@@ -1,0 +1,153 @@
+// The runtime's natives of HTTP read the texts they are given or copy what
+// they keep (`READING_TEXTS` in regions.rs), all but the one that replies
+// with a text, whose body is that text itself, sent after the handler
+// returns (`KEEPING_TEXTS`): a text a handler replies with stays on the
+// heap. Handlers and loops give them texts their turns make, and the
+// servers, the clients and the WebSocket are used again after those
+// regions ended.
+
+import std.console
+import std.fs
+import std.http
+import std.io
+import std.path
+
+fn routes(dir: String): http.App {
+    var app = http.App()
+    app.get(
+        "/text/:n",
+        (request) {
+            let n = request.param("n")
+            let turn = request.header("x-{"turn"}") ?? "none"
+            http.Reply.text("reply {n} {turn}").header("x-kind-{n}", "kind {n}")
+        },
+    )
+    app.get(
+        "/bytes/:n",
+        (request) {
+            http.Reply.bytes([Byte(65u8), Byte(66u8)], contentType: "text/x-{request.param("n")}")
+        },
+    )
+    app.get(
+        "/file/:n",
+        (request) {
+            let n = request.param("n")
+            http.Reply.file(path.join(dir, "f{n}.txt"), download: "d{n}.txt")
+        },
+    )
+    app.get(
+        "/stream/:n",
+        (request) {
+            let n = request.param("n")
+            let trailers = http.Trailers()
+            trailers.set("x-check-{n}", "c{n}")
+            http.Reply.stream(
+                io.reader("streamed {n}"),
+                contentType: "text/plain",
+                trailers: trailers,
+            )
+        },
+    )
+    app.post(
+        "/save/:n",
+        (request) {
+            let size = request.saveTo(path.join(dir, "s{request.param("n")}.bin")) ?? -1
+            http.Reply.text("saved {size}")
+        },
+    )
+    app.post(
+        "/upload/:n",
+        (request) {
+            var lines: Array[String] = []
+            for received in request.uploads() {
+                match received {
+                    ok(upload) => {
+                        let size = upload.saveTo(path.join(dir, "u-{upload.name()}.bin")) ?? -1
+                        lines.push("{upload.name()}={size}")
+                    }
+                    err(_) => lines.push("field")
+                }
+            }
+            http.Reply.text(lines.join(","))
+        },
+    )
+    app.websocket(
+        "/ws",
+        (_, socket) {
+            for message in socket {
+                socket.send(message?)?
+            }
+        },
+    )
+    app
+}
+
+fn clients(client: http.Client, dir: String, url: String): String {
+    var lines: Array[String] = []
+    for i in 0..2 {
+        let fetched = client.get("/text/{i}", headers: ["x-turn": "turn {i}"]) ?? panic("no text")
+        lines.push("{fetched.text() ?? ""} {fetched.header("x-kind-{i}") ?? "?"}")
+        let bytes = client.get("/bytes/{i}") ?? panic("no bytes")
+        lines.push(bytes.header("content-type") ?? "?")
+        let file = client.get("/file/{i}") ?? panic("no file")
+        lines.push("{file.text() ?? ""} {file.header("content-disposition") ?? "?"}")
+        let streamed = client.get("/stream/{i}") ?? panic("no stream")
+        lines.push(streamed.text() ?? "")
+        let body = http.Body.text("body {i}", contentType: "text/x-body-{i}")
+        lines.push((client.post("/save/{i}", body: body) ?? panic("no save")).text() ?? "")
+        let flowing = http.Body.stream(io.reader("flowing {i}"), contentType: "text/x-flow-{i}")
+        lines.push((client.post("/save/{i}", body: flowing) ?? panic("no flow")).text() ?? "")
+        let form = http.Body.multipart(
+            [
+                http.Part.field("field{i}", "value {i}"),
+                http.Part.bytes(
+                    "bytes{i}",
+                    [Byte(65u8)],
+                    "b{i}.bin",
+                    contentType: "application/x-{i}",
+                ),
+                http.Part.file("file{i}", path.join(dir, "f{i}.txt")),
+                http.Part.stream(
+                    "stream{i}",
+                    io.reader("s{i}"),
+                    "s{i}.txt",
+                    contentType: "text/x-s{i}",
+                ),
+            ],
+        )
+        lines.push((client.post("/upload/{i}", body: form) ?? panic("no upload")).text() ?? "")
+        lines.push(http.mediaType("page{i}.html"))
+    }
+    let socket = http.WebSocket.connect("{url.replace("http", "ws")}/ws") ?? panic("no socket")
+    for i in 0..2 {
+        _ = socket.sendText("message {i}")
+        lines.push("{socket.receive().isOk()}")
+    }
+    _ = socket.close()
+    lines.join(" ")
+}
+
+fn main(): !(http.HttpError | fs.FsError) {
+    let dir = fs.createTemporaryDirectory()?
+    for i in 0..2 {
+        fs.writeText(path.join(dir, "f{i}.txt"), "file {i}")?
+    }
+    let app = routes(dir)
+    let server = app.start(host: "127.0.{0}.1")?
+    let client = http.Client(baseUrl: server.url())
+    let a = clients(client, dir, server.url())
+    let local = "natives-http-{0}.sock"
+    let unix = app.start(socket: local)?
+    let agent = http.Client(baseUrl: unix.url(), socket: "{local}")
+    let b = agent.get("/text/9")?.text()?
+    let again = client.get("/text/8")?.text()?
+    unix.stop()
+    server.stop()
+    _ = fs.remove(local)
+    fs.remove(dir, recursive: true)?
+    console.println(a)
+    console.println("{b} {again}")
+}
+
+// expect-stdout: reply 0 turn 0 kind 0 text/x-0 file 0 attachment; filename="d0.txt" streamed 0 saved 6 saved 9 field0=7,bytes0=1,file0=6,stream0=2 text/html reply 1 turn 1 kind 1 text/x-1 file 1 attachment; filename="d1.txt" streamed 1 saved 6 saved 9 field1=7,bytes1=1,file1=6,stream1=2 text/html true true
+// expect-stdout: reply 9 none reply 8 none
