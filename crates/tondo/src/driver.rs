@@ -1844,7 +1844,7 @@ pub fn optimizations(
             };
             let sites: Vec<(crate::source::Span, Option<String>)> = match library(remark.span) {
                 false => vec![(remark.span, None)],
-                true if matches!(remark.kind, "checked" | "heap" | "call" | "counted" | "grown") => {
+                true if matches!(remark.kind, "checked" | "heap" | "call" | "counted" | "grown" | "region") => {
                     copied_into(body, remark.span, &library)
                         .into_iter()
                         .map(|(call, function)| (call, Some(format!("in `{function}`, `{}` ", clipped(remark.span)))))
