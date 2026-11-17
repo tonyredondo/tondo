@@ -1,0 +1,135 @@
+// More of the runtime's natives that take a text: writing JSON, TOML and
+// YAML, regular expressions, CSV, paths into a value, passwords, metrics
+// and the outline of YAML read what they are given or copy what they keep
+// (`READING_TEXTS` in regions.rs); a reader of JSON keeps the text it
+// reads (`KEEPING_TEXTS`), so the text it is given stays on the heap. Each
+// loop gives them a text its turn makes, and what keeps state, a compiled
+// expression, a counter, a reader, is used again after the loop.
+
+import std.cbor
+import std.console
+import std.crypto
+import std.csv
+import std.diagnostics
+import std.encoding
+import std.json
+import std.regex
+import std.time
+import std.toml
+import std.validate
+import std.yaml
+
+type Entry = { name: String, count: Int, ratio: Float, raw: json.Value }
+
+type Envelope = { kind: String, payload: json.Raw }
+
+type Stamped = { label: String, at: time.DateTime }
+
+pub type Contact = {
+    @validate.Email
+    email: String
+    @validate.Matches(r"[a-z]+")
+    code: String
+}
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        let junk = "junk {i} {i} {i} {i}"
+        total += junk.length()
+    }
+    total
+}
+
+fn written(): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        let name = "entry {i}"
+        let raw = json.parse("[{i}, \"r{i}\"]") ?? json.Value.Null
+        let entry = Entry { name, count: i, ratio: Float(i) / 2.0, raw }
+        lines.push(json.encode(entry).length().toString())
+        lines.push((toml.encode(entry) ?? "").length().toString())
+        lines.push(yaml.encode(entry).length().toString())
+        let document = yaml.load("a: {i}\nb: [1, 2]\n") ?? panic("no yaml")
+        lines.push("{document}".length().toString())
+        lines.push("{document.find("b[1]").isSome()}")
+        let payload = json.raw("[{i}, \"p{i}\"]") ?? panic("no raw")
+        lines.push(json.encode(Envelope { kind: "k{i}", payload }))
+        let stamped = Stamped { label: "s{i}", at: time.parseDateTime("2026-01-0{i + 1}T10:00:00Z") ?? panic("no time") }
+        lines.push((toml.encode(stamped) ?? "").length().toString())
+        let value = cbor.parse(cbor.encode(entry)) ?? panic("no cbor")
+        lines.push("{value.find("name")?.asText() ?? ""}")
+    }
+    lines.join(" ")
+}
+
+fn matched(compiled: var Array[regex.Regex]): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        let pattern = "(?<word>[a-z]+){i}"
+        let found = regex.Regex.compile(pattern) ?? panic("no regex")
+        let input = "abc{i} def{i}"
+        let first = found.find(input) ?? none
+        let span = first.map((m) { m.captureName("word").map((c) { c.text }) ?? "" }) ?? ""
+        lines.push("{found.isMatch(input) ?? false} {span} {found.replaceAll(input, "<$1>") ?? ""}")
+        lines.push(regex.Regex.escape("a.b{i}"))
+        var all = 0
+        for _ in found.findAll(input) ?? panic("no matches") {
+            all += 1
+        }
+        lines.push("{all}")
+        compiled.push(found)
+    }
+    lines.join(" ")
+}
+
+fn others(counter: diagnostics.Counter): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        let escaped = "&lt;b&gt;{i}&amp;"
+        lines.push(encoding.htmlUnescape(escaped))
+        let rows = "a,b\n{i},\"x{i}\"\n"
+        lines.push("{(csv.parse(rows) ?? []).length()}")
+        let name = "requests {i}"
+        diagnostics.counter(name).add(i)
+        counter.add(1)
+        let contact: Contact = json.decode("{{\"email\": \"a{i}@b.com\", \"code\": \"abc\"}}") ?? panic("no contact")
+        lines.push(contact.email)
+    }
+    lines.join(" ")
+}
+
+fn hashed(): String {
+    let secret = "pass {1 + 1}"
+    let hash = crypto.hashPassword(secret)
+    "{crypto.verifyPassword(secret, hash)} {crypto.verifyPassword("other", hash)}"
+}
+
+fn main() {
+    var compiled: Array[regex.Regex] = []
+    let counter = diagnostics.counter("turns")
+    let a = written()
+    let b = matched(var compiled)
+    let c = others(counter)
+    let d = hashed()
+    var readers: Array[json.Reader] = []
+    for i in 0..2 {
+        let text = "{{\"n\": {i}}}"
+        readers.push(json.reader(text))
+    }
+    let quiet = noise()
+    console.println(a)
+    console.println(b)
+    console.println(c)
+    console.println("{d} {counter.value()} {compiled[2].isMatch("xyz2") ?? false} {quiet}")
+    for reader in readers {
+        console.println("{reader.next() ?? none}")
+    }
+}
+
+// expect-stdout: 53 55 52 68 true {"kind":"k0","payload":[0, "p0"]} 39 entry 0 55 55 52 68 true {"kind":"k1","payload":[1, "p1"]} 39 entry 1 53 55 52 68 true {"kind":"k2","payload":[2, "p2"]} 39 entry 2
+// expect-stdout: true abc <abc> <def> a\.b0 2 true abc <abc> <def> a\.b1 2 true abc <abc> <def> a\.b2 2
+// expect-stdout: <b>0& 2 a0@b.com <b>1& 2 a1@b.com <b>2& 2 a2@b.com
+// expect-stdout: true false 3 true 3560
+// expect-stdout: some(BeginObject)
+// expect-stdout: some(BeginObject)
