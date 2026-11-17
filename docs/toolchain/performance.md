@@ -578,8 +578,8 @@ though. A benchmark of the two over a thousand numbers shows both costs:
 ```text
 $ tondo test --bench
 test squares::unit::squares::aThousand ... ok
-  arrays     1.099 µs/op  ±0.2%  0 allocs/op +9 in regions  0 B/op +12448 in regions  23.7k ins/op
-  chain      1.397 µs/op  ±0.3%  2 allocs/op  80 B/op  38.2k ins/op
+  arrays     1.104 µs/op  ±0.1%  0 allocs/op +9 in regions  0 B/op +12448 in regions  23.6k ins/op
+  chain      1.397 µs/op  ±0.1%  2 allocs/op  80 B/op  38.2k ins/op
 ```
 
 The chain allocates its two closures and nothing else, however long the
@@ -640,15 +640,15 @@ without regions, which `--no-regions` leaves out of a build:
 ```text
 $ tondo test --bench
 test tree::unit::tree::aTree ... ok
-  tree of 87 thousand nodes     771.8 µs/op  ±0.1%  0 allocs/op +21845 in regions  0 B/op +2097120 in regions  15.78M ins/op
+  tree of 87 thousand nodes     758.5 µs/op  ±0.2%  0 allocs/op +21845 in regions  0 B/op +2097120 in regions  15.37M ins/op
 $ tondo test --bench --no-regions
 test tree::unit::tree::aTree ... ok
-  tree of 87 thousand nodes     1.046 ms/op  ±0.7%  21845 allocs/op  2097120 B/op  20.40M ins/op
+  tree of 87 thousand nodes     1.085 ms/op  ±0.6%  21845 allocs/op  2097120 B/op  21.10M ins/op
 ```
 
 The tree's arrays are still made, all 21845 of them: the row counts them
 `in regions`, apart from `allocs/op`, which is the heap's. What is gone is
-the walk that let go of each, and with it 26% of the time.
+the walk that let go of each, and with it 30% of the time.
 `testing.allocations` counts the two together, so a test that holds a
 function to its count does not change when its values move to a region
 ([Testing](testing.md)).
