@@ -5,7 +5,6 @@
 //! headers and status, which its task waits for without holding a worker.
 
 use crate::array_items;
-use crate::byte_array;
 use crate::io::wait_for;
 use crate::native::{self, NativeObject};
 use crate::{ArrayHeader, Str, str_bytes};
@@ -841,8 +840,14 @@ pub extern "C" fn tondo_rt_grpc_next(object: *mut NativeObject) -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_grpc_message(object: *mut NativeObject) -> *mut ArrayHeader {
-    call(object).map_or_else(|| byte_array(&[]), |c| byte_array(&lock(&c.message)))
+pub extern "C" fn tondo_rt_grpc_message(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    call(object).map_or_else(
+        || crate::arrays::byte_array_in(region, &[]),
+        |c| crate::arrays::byte_array_in(region, &lock(&c.message)),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -1172,8 +1177,14 @@ pub extern "C" fn tondo_rt_grpc_read_frame(object: *mut NativeObject) -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_grpc_frame(object: *mut NativeObject) -> *mut ArrayHeader {
-    native::get::<Mutex<Frames>>(object).map_or_else(|| byte_array(&[]), |f| byte_array(&lock(f).message))
+pub extern "C" fn tondo_rt_grpc_frame(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    native::get::<Mutex<Frames>>(object).map_or_else(
+        || crate::arrays::byte_array_in(region, &[]),
+        |f| crate::arrays::byte_array_in(region, &lock(f).message),
+    )
 }
 
 #[unsafe(no_mangle)]

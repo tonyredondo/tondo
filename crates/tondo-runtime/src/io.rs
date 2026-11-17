@@ -4,7 +4,7 @@
 //! worker.
 
 use super::tasks::{HOST_WORK, Wait, current, notify};
-use super::{ArrayHeader, LIVE_OBJECTS, Str, byte_array, str_bytes};
+use super::{ArrayHeader, LIVE_OBJECTS, Str, str_bytes};
 use crate::array_items;
 use std::collections::VecDeque;
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
@@ -1015,10 +1015,17 @@ pub unsafe extern "C" fn tondo_rt_io_read_line(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_io_read(stream: *mut StreamObject, max: i64, out: *mut *mut ArrayHeader) -> i64 {
+pub unsafe extern "C" fn tondo_rt_io_read(
+    stream: *mut StreamObject,
+    max: i64,
+    out: *mut *mut ArrayHeader,
+    region: *mut crate::regions::Region,
+) -> i64 {
     let max = max.max(0) as usize;
     let read = run_ready(stream, StreamState::has_bytes, move |s| s.read(max));
-    status(read, |bytes| unsafe { *out = bytes.map_or(std::ptr::null_mut(), |b| byte_array(&b)) })
+    status(read, |bytes| unsafe {
+        *out = bytes.map_or(std::ptr::null_mut(), |b| crate::arrays::byte_array_in(region, &b))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -1033,9 +1040,13 @@ pub unsafe extern "C" fn tondo_rt_io_read_text(
 
 /// `Reader.readBytes()`: the rest, as bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_io_read_bytes(stream: *mut StreamObject, out: *mut *mut ArrayHeader) -> i64 {
+pub unsafe extern "C" fn tondo_rt_io_read_bytes(
+    stream: *mut StreamObject,
+    out: *mut *mut ArrayHeader,
+    region: *mut crate::regions::Region,
+) -> i64 {
     let read = run(stream, |s| s.read_rest());
-    status(read, |bytes| unsafe { *out = byte_array(&bytes) })
+    status(read, |bytes| unsafe { *out = crate::arrays::byte_array_in(region, &bytes) })
 }
 
 /// `io.reader(text)`
@@ -1094,8 +1105,11 @@ pub unsafe extern "C" fn tondo_rt_io_buffer_text(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_io_buffer_bytes(buffer: *mut BufferObject) -> *mut ArrayHeader {
-    byte_array(&unsafe { (*buffer).data() })
+pub unsafe extern "C" fn tondo_rt_io_buffer_bytes(
+    buffer: *mut BufferObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    crate::arrays::byte_array_in(region, &unsafe { (*buffer).data() })
 }
 
 #[unsafe(no_mangle)]

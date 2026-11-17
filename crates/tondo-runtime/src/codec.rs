@@ -6,7 +6,6 @@
 use super::native::{self, NativeObject};
 use super::{ArrayHeader, Str, str_bytes};
 use crate::array_items;
-use crate::byte_array;
 use crate::regions::Region;
 use crate::strings::str_in;
 use hmac::{HmacReset, KeyInit};
@@ -78,8 +77,12 @@ pub unsafe extern "C" fn tondo_rt_base64_check(input: *const Str, url: u8) -> i6
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_base64_decode(input: *const Str, url: u8) -> *mut ArrayHeader {
-    byte_array(&base64_decode(text(input), url != 0).unwrap_or_default())
+pub unsafe extern "C" fn tondo_rt_base64_decode(
+    input: *const Str,
+    url: u8,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    crate::arrays::byte_array_in(region, &base64_decode(text(input), url != 0).unwrap_or_default())
 }
 
 #[unsafe(no_mangle)]
@@ -108,8 +111,11 @@ pub unsafe extern "C" fn tondo_rt_hex_check(input: *const Str) -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_hex_decode(input: *const Str) -> *mut ArrayHeader {
-    byte_array(&hex_decode(text(input)).unwrap_or_default())
+pub unsafe extern "C" fn tondo_rt_hex_decode(
+    input: *const Str,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    crate::arrays::byte_array_in(region, &hex_decode(text(input)).unwrap_or_default())
 }
 
 /// Percent-encodes the UTF-8 of a text, except the unreserved characters of
@@ -214,11 +220,12 @@ pub unsafe extern "C" fn tondo_rt_hash_digest(
     key: *mut ArrayHeader,
     data: *mut ArrayHeader,
     keyed: u8,
+    region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
     let key = unsafe { array_items::<u8>(key) };
     let mut hasher = hasher(kind, (keyed != 0).then_some(key));
     hasher.update(unsafe { array_items::<u8>(data) });
-    byte_array(&hasher.finalize_reset())
+    crate::arrays::byte_array_in(region, &hasher.finalize_reset())
 }
 
 /// A hasher that takes its data in parts (`hasher`).
@@ -238,16 +245,21 @@ pub unsafe extern "C" fn tondo_rt_hasher_update(object: *mut NativeObject, data:
 
 /// The digest of the data a hasher has had so far; it can take more.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_hasher_finish(object: *mut NativeObject) -> *mut ArrayHeader {
-    let Some(hasher) = native::get::<Mutex<Box<dyn DynDigest + Send>>>(object) else { return byte_array(&[]) };
+pub unsafe extern "C" fn tondo_rt_hasher_finish(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    let Some(hasher) = native::get::<Mutex<Box<dyn DynDigest + Send>>>(object) else {
+        return crate::arrays::byte_array_in(region, &[]);
+    };
     let digest = hasher.lock().unwrap_or_else(|e| e.into_inner()).box_clone().finalize_reset();
-    byte_array(&digest)
+    crate::arrays::byte_array_in(region, &digest)
 }
 
 /// `count` bytes from the system's source of entropy.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_entropy(count: i64) -> *mut ArrayHeader {
-    byte_array(&entropy(count.max(0) as usize))
+pub extern "C" fn tondo_rt_entropy(count: i64, region: *mut crate::regions::Region) -> *mut ArrayHeader {
+    crate::arrays::byte_array_in(region, &entropy(count.max(0) as usize))
 }
 
 /// `count` bytes from the system's source of entropy.
@@ -293,13 +305,18 @@ pub extern "C" fn tondo_rt_random_mix(seed: i64, counter: i64) -> i64 {
 /// `count` bytes from the values of the sequence from the `counter`-th on,
 /// eight from each, in little-endian order.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_random_bytes(seed: i64, counter: i64, count: i64) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_random_bytes(
+    seed: i64,
+    counter: i64,
+    count: i64,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let count = count.max(0) as usize;
     let out: Vec<u8> = (0..count.div_ceil(8) as i64)
         .flat_map(|i| tondo_rt_random_mix(seed, counter + i).to_le_bytes())
         .take(count)
         .collect();
-    byte_array(&out)
+    crate::arrays::byte_array_in(region, &out)
 }
 
 /// The fields of one CSV record (RFC 4180) that may span lines, or where it

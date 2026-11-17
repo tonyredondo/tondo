@@ -68,13 +68,24 @@ pub(crate) fn byte_array(bytes: &[u8]) -> *mut ArrayHeader {
     array
 }
 
-/// An `Array[Int]` of `values`.
-pub(crate) fn int_array(values: &[i64]) -> *mut ArrayHeader {
-    let array = tondo_rt_array_new(8, values.len());
-    for (index, &value) in values.iter().enumerate() {
-        unsafe { *(element(array, 8, index) as *mut i64) = value };
-    }
+/// An array of `items`, values that count nothing, as bytes, integers or
+/// floats, in `region` when it is not null.
+pub(crate) fn plain_array_in<T: Copy>(region: *mut super::regions::Region, items: &[T]) -> *mut ArrayHeader {
+    let size = std::mem::size_of::<T>();
+    let array = unsafe { array_made(region, size, items.len(), items.len()) };
+    let bytes = std::mem::size_of_val(items);
+    unsafe { std::ptr::copy_nonoverlapping(items.as_ptr() as *const u8, element(array, size, 0), bytes) };
     array
+}
+
+/// An `Array[Byte]` of `bytes`, in `region` when it is not null.
+pub(crate) fn byte_array_in(region: *mut super::regions::Region, bytes: &[u8]) -> *mut ArrayHeader {
+    plain_array_in(region, bytes)
+}
+
+/// An `Array[Int]` of `values`, in `region` when it is not null.
+pub(crate) fn int_array_in(region: *mut super::regions::Region, values: &[i64]) -> *mut ArrayHeader {
+    plain_array_in(region, values)
 }
 
 /// An `Array[String]` of `count` texts, each of bytes as UTF-8 reads them,

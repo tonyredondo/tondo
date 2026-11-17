@@ -7,7 +7,6 @@ use super::native::{self, NativeObject};
 use super::tasks::{CANCELLED, HOST_WORK, Wait, current, notify};
 use super::{ArrayHeader, Str, element};
 use crate::array_items;
-use crate::byte_array;
 use crate::io::{Host, Mode, StreamObject};
 use bytes::{Buf, Bytes};
 use std::future::Future;
@@ -681,21 +680,24 @@ const ALREADY_READ: &str = "it was already read, and a response's body is read o
 
 /// The whole body; on a failure, what was read and the failure recorded.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_read_all(object: *mut NativeObject) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_http_read_all(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let response = response(object);
     let Some(body) = response.body.lock().unwrap_or_else(|e| e.into_inner()).take() else {
         *response.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(("body", ALREADY_READ.into()));
-        return byte_array(&[]);
+        return crate::arrays::byte_array_in(region, &[]);
     };
     match super::io::wait_for(async move { body.all().await }) {
-        Some(Ok(bytes)) => byte_array(&bytes),
+        Some(Ok(bytes)) => crate::arrays::byte_array_in(region, &bytes),
         outcome => {
             let failure = match outcome {
                 Some(Err(failure)) => failure,
                 _ => ("protocol", "the task was cancelled".into()),
             };
             *response.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(failure);
-            byte_array(&[])
+            crate::arrays::byte_array_in(region, &[])
         }
     }
 }
@@ -987,8 +989,11 @@ pub extern "C" fn tondo_rt_http_ws_text(received: *mut NativeObject, region: *mu
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_ws_data(received: *mut NativeObject) -> *mut ArrayHeader {
-    byte_array(native::get::<Received>(received).map_or(&[][..], |r| r.data.as_slice()))
+pub extern "C" fn tondo_rt_http_ws_data(
+    received: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    crate::arrays::byte_array_in(region, native::get::<Received>(received).map_or(&[][..], |r| r.data.as_slice()))
 }
 
 /// Closes a WebSocket, telling the server; the error, or an empty string.

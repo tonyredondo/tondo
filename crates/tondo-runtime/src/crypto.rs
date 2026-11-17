@@ -5,7 +5,6 @@
 
 use super::{ArrayHeader, Str, str_bytes};
 use crate::array_items;
-use crate::byte_array;
 use ring::{aead, hkdf, pbkdf2, rand, signature};
 use std::num::NonZeroU32;
 
@@ -29,6 +28,7 @@ pub unsafe extern "C" fn tondo_rt_crypto_seal(
     nonce: *mut ArrayHeader,
     data: *mut ArrayHeader,
     context: *mut ArrayHeader,
+    region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
     let key = aead::LessSafeKey::new(
         aead::UnboundKey::new(cipher(code), unsafe { array_items::<u8>(key) }).expect("a key of 32 bytes"),
@@ -38,7 +38,7 @@ pub unsafe extern "C" fn tondo_rt_crypto_seal(
     let mut sealed = unsafe { array_items::<u8>(data) }.to_vec();
     key.seal_in_place_append_tag(nonce, aead::Aad::from(unsafe { array_items::<u8>(context) }), &mut sealed)
         .expect("data it can seal");
-    byte_array(&sealed)
+    crate::arrays::byte_array_in(region, &sealed)
 }
 
 /// 1 and the data that `seal` sealed, or 0 when it does not open.
@@ -49,17 +49,18 @@ pub unsafe extern "C" fn tondo_rt_crypto_open(
     nonce: *mut ArrayHeader,
     sealed: *mut ArrayHeader,
     context: *mut ArrayHeader,
+    region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
     let key = aead::LessSafeKey::new(
         aead::UnboundKey::new(cipher(code), unsafe { array_items::<u8>(key) }).expect("a key of 32 bytes"),
     );
     let Ok(nonce) = aead::Nonce::try_assume_unique_for_key(unsafe { array_items::<u8>(nonce) }) else {
-        return byte_array(&[0]);
+        return crate::arrays::byte_array_in(region, &[0]);
     };
     let mut data = unsafe { array_items::<u8>(sealed) }.to_vec();
     match key.open_in_place(nonce, aead::Aad::from(unsafe { array_items::<u8>(context) }), &mut data) {
-        Ok(opened) => byte_array(&[&[1], &opened[..]].concat()),
-        Err(_) => byte_array(&[0]),
+        Ok(opened) => crate::arrays::byte_array_in(region, &[&[1], &opened[..]].concat()),
+        Err(_) => crate::arrays::byte_array_in(region, &[0]),
     }
 }
 
@@ -70,6 +71,7 @@ pub unsafe extern "C" fn tondo_rt_crypto_hkdf(
     salt: *mut ArrayHeader,
     info: *mut ArrayHeader,
     length: i64,
+    region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
     struct Length(usize);
     impl hkdf::KeyType for Length {
@@ -83,7 +85,7 @@ pub unsafe extern "C" fn tondo_rt_crypto_hkdf(
     let info = unsafe { array_items::<u8>(info) };
     let mut out = vec![0; length];
     prk.expand(&[info], Length(length)).and_then(|okm| okm.fill(&mut out)).expect("a length HKDF gives");
-    byte_array(&out)
+    crate::arrays::byte_array_in(region, &out)
 }
 
 /// PBKDF2 with HMAC-SHA-256.
@@ -93,6 +95,7 @@ pub unsafe extern "C" fn tondo_rt_crypto_pbkdf2(
     salt: *mut ArrayHeader,
     iterations: i64,
     length: i64,
+    region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
     let iterations = NonZeroU32::new(iterations.clamp(1, u32::MAX as i64) as u32).expect("at least one");
     let mut out = vec![0; length.max(0) as usize];
@@ -103,19 +106,19 @@ pub unsafe extern "C" fn tondo_rt_crypto_pbkdf2(
         unsafe { array_items::<u8>(password) },
         &mut out,
     );
-    byte_array(&out)
+    crate::arrays::byte_array_in(region, &out)
 }
 
 /// A new key's PKCS #8: Ed25519 (0), ECDSA on P-256 (1) or P-384 (2).
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_crypto_generate(kind: i64) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_crypto_generate(kind: i64, region: *mut crate::regions::Region) -> *mut ArrayHeader {
     let random = rand::SystemRandom::new();
     let document = match kind {
         0 => signature::Ed25519KeyPair::generate_pkcs8(&random),
         1 => signature::EcdsaKeyPair::generate_pkcs8(&signature::ECDSA_P256_SHA256_FIXED_SIGNING, &random),
         _ => signature::EcdsaKeyPair::generate_pkcs8(&signature::ECDSA_P384_SHA384_FIXED_SIGNING, &random),
     };
-    byte_array(document.expect("the system's entropy").as_ref())
+    crate::arrays::byte_array_in(region, document.expect("the system's entropy").as_ref())
 }
 
 enum Signer {
@@ -142,13 +145,17 @@ fn signer(kind: i64, pkcs8: &[u8]) -> Option<Signer> {
 /// an uncompressed point, or RSA's PKCS #1; empty when the key is not
 /// valid.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_crypto_public(kind: i64, pkcs8: *mut ArrayHeader) -> *mut ArrayHeader {
+pub unsafe extern "C" fn tondo_rt_crypto_public(
+    kind: i64,
+    pkcs8: *mut ArrayHeader,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     use signature::KeyPair;
     match signer(kind, unsafe { array_items::<u8>(pkcs8) }) {
-        Some(Signer::Ed25519(pair)) => byte_array(pair.public_key().as_ref()),
-        Some(Signer::Ecdsa(pair)) => byte_array(pair.public_key().as_ref()),
-        Some(Signer::Rsa(pair)) => byte_array(pair.public_key().as_ref()),
-        None => byte_array(&[]),
+        Some(Signer::Ed25519(pair)) => crate::arrays::byte_array_in(region, pair.public_key().as_ref()),
+        Some(Signer::Ecdsa(pair)) => crate::arrays::byte_array_in(region, pair.public_key().as_ref()),
+        Some(Signer::Rsa(pair)) => crate::arrays::byte_array_in(region, pair.public_key().as_ref()),
+        None => crate::arrays::byte_array_in(region, &[]),
     }
 }
 
@@ -158,18 +165,21 @@ pub unsafe extern "C" fn tondo_rt_crypto_sign(
     kind: i64,
     pkcs8: *mut ArrayHeader,
     data: *mut ArrayHeader,
+    region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
     let random = rand::SystemRandom::new();
     let data = unsafe { array_items::<u8>(data) };
     match signer(kind, unsafe { array_items::<u8>(pkcs8) }) {
-        Some(Signer::Ed25519(pair)) => byte_array(pair.sign(data).as_ref()),
-        Some(Signer::Ecdsa(pair)) => byte_array(pair.sign(&random, data).expect("the system's entropy").as_ref()),
+        Some(Signer::Ed25519(pair)) => crate::arrays::byte_array_in(region, pair.sign(data).as_ref()),
+        Some(Signer::Ecdsa(pair)) => {
+            crate::arrays::byte_array_in(region, pair.sign(&random, data).expect("the system's entropy").as_ref())
+        }
         Some(Signer::Rsa(pair)) => {
             let mut out = vec![0; pair.public().modulus_len()];
             pair.sign(&signature::RSA_PKCS1_SHA256, &random, data, &mut out).expect("a key that signs");
-            byte_array(&out)
+            crate::arrays::byte_array_in(region, &out)
         }
-        None => byte_array(&[]),
+        None => crate::arrays::byte_array_in(region, &[]),
     }
 }
 

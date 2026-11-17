@@ -1,0 +1,61 @@
+// Arrays of bytes and numbers the runtime's natives and the library's
+// operations make, a digest's bytes, decoded text, compressed data, a
+// regular expression's match, a file's, a stream's and a buffer's bytes,
+// which regions take as they take what `concat` makes: counted in the
+// region of a turn, stored past it, sent and returned.
+
+import std.console
+import std.encoding
+import std.fs
+import std.gzip
+import std.hash
+import std.io
+import std.path
+import std.regex
+
+type Note = {
+    bytes: Array[Byte]
+}
+
+fn turns(pattern: regex.Regex, file: String): String {
+    var counted = 0
+    var note = Note { bytes: [] }
+    var last: Array[Byte] = []
+    let (sender, receiver) = channel[Array[Byte]](8)
+    for i in 0..3 {
+        let data = "data {i}".bytes()
+        counted += hash.sha256(data).bytes().length()
+        note.bytes = hash.md5(data).bytes()
+        last = encoding.hexDecode("0{i}ff") ?? []
+        counted += (encoding.base64Decode("AAE{i}") ?? []).length()
+        let packed = gzip.compress(data)
+        counted += (gzip.decompress(packed) ?? []).length()
+        sender.send(encoding.hexDecode("0{i}") ?? [])
+        counted += ((pattern.find("ab{i}") ?? none).map((m) { m.span.end }) ?? 0)
+        counted += (fs.readBytes(file) ?? []).length()
+        let buffer = io.Buffer()
+        _ = buffer.writer().write("buffer {i}")
+        counted += buffer.bytes().length() + (buffer.reader().readBytes() ?? []).length()
+        counted += ((io.reader("read {i}").read(4) ?? none) ?? []).length()
+    }
+    sender.close()
+    var received: Array[Array[Byte]] = []
+    for bytes in receiver {
+        received.push(bytes)
+    }
+    "{counted} {note.bytes.length()} {last} {received}"
+}
+
+fn main(): !fs.FsError {
+    let dir = fs.createTemporaryDirectory()?
+    let file = path.join(dir, "bytes.bin")
+    fs.writeText(file, "twelve bytes")?
+    console.println(turns(regex.Regex.compile("b[0-9]") ?? panic("no pattern"), file))
+    fs.remove(dir, recursive: true)?
+}
+
+// expect-stdout: 228 16 [2, 255] [[0], [1], [2]]
+// expect-optimization: 27:20 region in `hash.sha256`, `codecNative.digest(256, [], data, false)` goes in the region of a turn of the loop at line 25
+// expect-optimization: 28:22 region stays on the heap: it outlives a turn of the loop at line 25
+// expect-optimization: 33:21 region stays on the heap: it is sent
+// expect-optimization: 35:21 region goes in the region of a turn of the loop at line 25

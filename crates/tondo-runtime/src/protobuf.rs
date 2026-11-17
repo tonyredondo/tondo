@@ -5,7 +5,6 @@
 //! calls them field by field.
 
 use crate::array_items;
-use crate::byte_array;
 use crate::native::{self, NativeObject};
 use crate::{ArrayHeader, Str, str_bytes};
 use std::sync::Mutex;
@@ -167,12 +166,15 @@ pub unsafe extern "C" fn tondo_rt_pb_write_raw(object: *mut NativeObject, bytes:
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_pb_finish(object: *mut NativeObject) -> *mut ArrayHeader {
-    let Some(mut w) = writer(object) else { return byte_array(&[]) };
+pub extern "C" fn tondo_rt_pb_finish(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    let Some(mut w) = writer(object) else { return crate::arrays::byte_array_in(region, &[]) };
     while !w.open.is_empty() {
         w.close();
     }
-    byte_array(&std::mem::take(&mut w.out))
+    crate::arrays::byte_array_in(region, &std::mem::take(&mut w.out))
 }
 
 // ---------------------------------------------------------------------------
@@ -412,8 +414,11 @@ fn read_length(object: *mut NativeObject) -> Vec<u8> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_pb_read_bytes(object: *mut NativeObject) -> *mut ArrayHeader {
-    byte_array(&read_length(object))
+pub extern "C" fn tondo_rt_pb_read_bytes(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    crate::arrays::byte_array_in(region, &read_length(object))
 }
 
 #[unsafe(no_mangle)]
@@ -490,12 +495,12 @@ pub extern "C" fn tondo_rt_pb_skip(object: *mut NativeObject) {
 /// The field read as it is written, its tag with its value, for a message
 /// that keeps the fields it does not know.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_pb_raw(object: *mut NativeObject) -> *mut ArrayHeader {
-    let Some(mut r) = reader(object) else { return byte_array(&[]) };
+pub extern "C" fn tondo_rt_pb_raw(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut ArrayHeader {
+    let Some(mut r) = reader(object) else { return crate::arrays::byte_array_in(region, &[]) };
     let start = r.start;
     r.skip();
     let end = r.position;
-    byte_array(&r.input[start..end])
+    crate::arrays::byte_array_in(region, &r.input[start..end])
 }
 
 #[unsafe(no_mangle)]

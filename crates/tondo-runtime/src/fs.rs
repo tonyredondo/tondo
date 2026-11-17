@@ -180,10 +180,14 @@ pub unsafe extern "C" fn tondo_rt_fs_read_text(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_fs_read_bytes(path_text: *const Str, out: *mut *mut ArrayHeader) -> i64 {
+pub unsafe extern "C" fn tondo_rt_fs_read_bytes(
+    path_text: *const Str,
+    out: *mut *mut ArrayHeader,
+    region: *mut crate::regions::Region,
+) -> i64 {
     let path = unsafe { path(path_text) };
     let read = host(move || io(std::fs::read(path?)));
-    finish(read, |bytes| unsafe { *out = byte_array(&bytes) })
+    finish(read, |bytes| unsafe { *out = crate::arrays::byte_array_in(region, &bytes) })
 }
 
 #[unsafe(no_mangle)]
@@ -310,10 +314,17 @@ pub unsafe extern "C" fn tondo_rt_fs_read_line(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_fs_read(file: *mut StreamObject, max: i64, out: *mut *mut ArrayHeader) -> i64 {
+pub unsafe extern "C" fn tondo_rt_fs_read(
+    file: *mut StreamObject,
+    max: i64,
+    out: *mut *mut ArrayHeader,
+    region: *mut crate::regions::Region,
+) -> i64 {
     let max = max.max(0) as usize;
     let read = run_ready(file, StreamState::has_bytes, move |s| io(s.read(max)));
-    finish(read, |bytes| unsafe { *out = bytes.map_or(std::ptr::null_mut(), |b| byte_array(&b)) })
+    finish(read, |bytes| unsafe {
+        *out = bytes.map_or(std::ptr::null_mut(), |b| crate::arrays::byte_array_in(region, &b))
+    })
 }
 
 #[unsafe(no_mangle)]

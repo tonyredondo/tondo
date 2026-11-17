@@ -3,7 +3,6 @@
 
 use super::{ArrayHeader, Str, str_bytes, str_new};
 use crate::array_items;
-use crate::byte_array;
 
 unsafe extern "C" {
     fn calloc(count: usize, size: usize) -> *mut u8;
@@ -74,8 +73,12 @@ pub unsafe extern "C" fn tondo_rt_memory_from_c_chars(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_memory_bytes(from: *const u8, count: i64) -> *mut ArrayHeader {
-    byte_array(unsafe { std::slice::from_raw_parts(from, count.max(0) as usize) })
+pub unsafe extern "C" fn tondo_rt_memory_bytes(
+    from: *const u8,
+    count: i64,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    crate::arrays::byte_array_in(region, unsafe { std::slice::from_raw_parts(from, count.max(0) as usize) })
 }
 
 /// `store`: the bytes of `bytes` written at `to`, which has room for them.

@@ -6,7 +6,6 @@ use super::ArrayHeader;
 use super::io::{Host, Mode, StreamObject, retain, run, stream, tondo_rt_stream_release};
 use super::native::{self, NativeObject};
 use crate::array_items;
-use crate::byte_array;
 use flate2::Compression;
 use flate2::read::MultiGzDecoder;
 use flate2::write::GzEncoder;
@@ -36,16 +35,23 @@ fn zstd_frames(mut data: &[u8]) -> std::io::Result<Vec<u8>> {
 
 /// `gzip.compress`.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_gzip(data: *mut ArrayHeader, compression: i64) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_gzip(
+    data: *mut ArrayHeader,
+    compression: i64,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let mut encoder = GzEncoder::new(Vec::new(), level(compression));
     let _ = encoder.write_all(unsafe { array_items::<u8>(data) });
-    byte_array(&encoder.finish().unwrap_or_default())
+    crate::arrays::byte_array_in(region, &encoder.finish().unwrap_or_default())
 }
 
 /// `zstd.compress`.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_zstd(data: *mut ArrayHeader) -> *mut ArrayHeader {
-    byte_array(&ruzstd::encoding::compress_to_vec(unsafe { array_items::<u8>(data) }, CompressionLevel::Fastest))
+pub extern "C" fn tondo_rt_zstd(data: *mut ArrayHeader, region: *mut crate::regions::Region) -> *mut ArrayHeader {
+    crate::arrays::byte_array_in(
+        region,
+        &ruzstd::encoding::compress_to_vec(unsafe { array_items::<u8>(data) }, CompressionLevel::Fastest),
+    )
 }
 
 /// `gzip.decompress` (`zstd` 0) or `zstd.decompress` (1): the data, or
@@ -64,10 +70,14 @@ pub extern "C" fn tondo_rt_unpack(data: *mut ArrayHeader, zstd: u8) -> *mut Nati
 
 /// The data deflated without a header, as zip keeps it.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_deflate(data: *mut ArrayHeader, compression: i64) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_deflate(
+    data: *mut ArrayHeader,
+    compression: i64,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), level(compression));
     let _ = encoder.write_all(unsafe { array_items::<u8>(data) });
-    byte_array(&encoder.finish().unwrap_or_default())
+    crate::arrays::byte_array_in(region, &encoder.finish().unwrap_or_default())
 }
 
 /// The data that `deflate` deflated, or nothing when it is not.
@@ -88,8 +98,14 @@ pub extern "C" fn tondo_rt_crc32(data: *mut ArrayHeader) -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_unpacked(unpacked: *mut NativeObject) -> *mut ArrayHeader {
-    byte_array(native::get::<Option<Vec<u8>>>(unpacked).and_then(Option::as_ref).map_or(&[][..], |d| &d[..]))
+pub extern "C" fn tondo_rt_unpacked(
+    unpacked: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    crate::arrays::byte_array_in(
+        region,
+        native::get::<Option<Vec<u8>>>(unpacked).and_then(Option::as_ref).map_or(&[][..], |d| &d[..]),
+    )
 }
 
 #[unsafe(no_mangle)]

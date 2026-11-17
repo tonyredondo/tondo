@@ -740,9 +740,12 @@ pub extern "C" fn tondo_rt_profile_waits(kind: i64) -> *mut super::native::Nativ
 
 /// `Profile.pprof()`.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_profile_pprof(profile: *mut super::native::NativeObject) -> *mut crate::ArrayHeader {
+pub extern "C" fn tondo_rt_profile_pprof(
+    profile: *mut super::native::NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut crate::ArrayHeader {
     let bytes = super::native::get::<Made>(profile).map_or(&[][..], |made| &made.pprof[..]);
-    crate::byte_array(bytes)
+    crate::arrays::byte_array_in(region, bytes)
 }
 
 /// `Profile.folded()`.

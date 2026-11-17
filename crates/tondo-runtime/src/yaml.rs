@@ -1116,7 +1116,10 @@ pub extern "C" fn tondo_rt_yaml_outline_paths(
 /// Eight numbers a node: its kind, start, end, line, column, the end of its
 /// key's `:` or -1, its indent and its style.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_yaml_outline_numbers(object: *mut NativeObject) -> *mut crate::ArrayHeader {
+pub extern "C" fn tondo_rt_yaml_outline_numbers(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut crate::ArrayHeader {
     let numbers: Vec<i64> = native::get::<Outline>(object).map_or(Vec::new(), |o| {
         o.nodes
             .iter()
@@ -1126,7 +1129,7 @@ pub extern "C" fn tondo_rt_yaml_outline_numbers(object: *mut NativeObject) -> *m
             })
             .collect()
     });
-    crate::int_array(&numbers)
+    crate::arrays::int_array_in(region, &numbers)
 }
 
 /// Two texts a node: its tag and its anchor, or empty.

@@ -10,7 +10,6 @@
 
 use super::regex_dialect::{Kind, check};
 use super::{ArrayHeader, LIVE_OBJECTS, Str, str_bytes, str_new};
-use crate::int_array;
 use std::cell::Cell;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -238,13 +237,16 @@ pub unsafe extern "C" fn tondo_rt_regex_find(
     text: *const Str,
     last: i64,
     found: i64,
+    region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
     clear();
     let r = object(r);
-    let Some(text) = input(r, text) else { return int_array(&[]) };
+    let Some(text) = input(r, text) else { return crate::arrays::int_array_in(region, &[]) };
     let mut at = last.max(0) as usize;
     let captures = loop {
-        let Some(captures) = text.get(at..).and_then(|_| r.regex.captures_at(text, at)) else { return int_array(&[]) };
+        let Some(captures) = text.get(at..).and_then(|_| r.regex.captures_at(text, at)) else {
+            return crate::arrays::int_array_in(region, &[]);
+        };
         let whole = captures.get(0).expect("a match has its whole");
         if !whole.is_empty() || whole.end() as i64 != last {
             break captures;
@@ -254,11 +256,11 @@ pub unsafe extern "C" fn tondo_rt_regex_find(
     let start = captures.get(0).expect("a match has its whole").start();
     if found as usize >= r.max_matches {
         fail(Kind::MatchLimitExceeded, start);
-        return int_array(&[]);
+        return crate::arrays::int_array_in(region, &[]);
     }
     let spans: Vec<i64> =
         captures.iter().flat_map(|group| group.map_or([-1, -1], |m| [m.start() as i64, m.end() as i64])).collect();
-    int_array(&spans)
+    crate::arrays::int_array_in(region, &spans)
 }
 
 /// The text between two byte offsets, which must fall between scalars.

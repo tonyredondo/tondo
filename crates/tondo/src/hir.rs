@@ -1249,8 +1249,8 @@ impl StdFn {
         )
     }
 
-    /// Whether it makes the text it gives, or the texts of the array, in
-    /// the region the analysis chose for it, which codegen passes after its
+    /// Whether it makes the text or the array it gives, and the texts of
+    /// an array of texts, in the region the analysis chose for it, which codegen passes after its
     /// arguments, or on the heap when it passes null, as the natives of
     /// `MAKING_IN_REGION` do: what it gives holds none of what it is given.
     pub fn makes_in_region(self) -> bool {
@@ -1263,8 +1263,15 @@ impl StdFn {
                     | EnvFn::Hostname
                     | EnvFn::InvokedAs
                     | EnvFn::Executable
-            ) | StdFn::Fs(FsFn::ReadText | FsFn::List | FsFn::ReadLine | FsFn::ReadRest)
-                | StdFn::Io(IoFn::ReadLine | IoFn::ReadText | IoFn::BufferText)
+            ) | StdFn::Fs(FsFn::ReadText | FsFn::List | FsFn::ReadLine | FsFn::ReadRest | FsFn::ReadBytes | FsFn::Read)
+                | StdFn::Io(
+                    IoFn::ReadLine
+                        | IoFn::ReadText
+                        | IoFn::BufferText
+                        | IoFn::Read
+                        | IoFn::ReadBytes
+                        | IoFn::BufferBytes
+                )
                 | StdFn::Process(ProcessFn::Text | ProcessFn::ReadText | ProcessFn::ReadLines)
                 | StdFn::Path(PathFn::Parent | PathFn::FileName | PathFn::Extension | PathFn::Join)
                 | StdFn::ConsoleReadLine
@@ -1373,6 +1380,7 @@ pub const GIVING_KEPT: &[&str] = &["tondo_rt_http_request_version", "tondo_rt_ht
 /// after their parameters, or on the heap when it passes null: what they
 /// give holds none of what they are given.
 pub const MAKING_IN_REGION: &[&str] = &[
+    "tondo_rt_base64_decode",
     "tondo_rt_base64_encode",
     "tondo_rt_caught_code",
     "tondo_rt_caught_key",
@@ -1380,26 +1388,44 @@ pub const MAKING_IN_REGION: &[&str] = &[
     "tondo_rt_caught_message",
     "tondo_rt_caught_stack",
     "tondo_rt_caught_text",
+    "tondo_rt_cbor_bytes",
     "tondo_rt_cbor_failure",
+    "tondo_rt_cbor_finish",
     "tondo_rt_cbor_text",
     "tondo_rt_cbor_where",
     "tondo_rt_context_logged",
+    "tondo_rt_crypto_generate",
     "tondo_rt_crypto_hash_password",
+    "tondo_rt_crypto_hkdf",
+    "tondo_rt_crypto_open",
+    "tondo_rt_crypto_pbkdf2",
+    "tondo_rt_crypto_public",
+    "tondo_rt_crypto_seal",
+    "tondo_rt_crypto_sign",
     "tondo_rt_csv_fields",
+    "tondo_rt_deflate",
     "tondo_rt_diagnostics_stack",
+    "tondo_rt_entropy",
     "tondo_rt_env_cpu",
     "tondo_rt_env_system",
     "tondo_rt_env_target",
     "tondo_rt_env_user",
+    "tondo_rt_files_numbers",
     "tondo_rt_files_texts",
     "tondo_rt_files_watch_next",
     "tondo_rt_fuzz_input",
     "tondo_rt_grpc_channel_error",
     "tondo_rt_grpc_detail",
     "tondo_rt_grpc_ended",
+    "tondo_rt_grpc_frame",
     "tondo_rt_grpc_frame_error",
     "tondo_rt_grpc_headers",
+    "tondo_rt_grpc_message",
     "tondo_rt_grpc_trailers",
+    "tondo_rt_gzip",
+    "tondo_rt_hash_digest",
+    "tondo_rt_hasher_finish",
+    "tondo_rt_hex_decode",
     "tondo_rt_hex_encode",
     "tondo_rt_html_escape",
     "tondo_rt_html_unescape",
@@ -1409,24 +1435,34 @@ pub const MAKING_IN_REGION: &[&str] = &[
     "tondo_rt_http_header",
     "tondo_rt_http_headers",
     "tondo_rt_http_media_type",
+    "tondo_rt_http_read_all",
     "tondo_rt_http_reason",
     "tondo_rt_http_request_authority",
+    "tondo_rt_http_request_certificate",
     "tondo_rt_http_request_header",
     "tondo_rt_http_request_headers",
     "tondo_rt_http_request_method",
     "tondo_rt_http_request_path",
     "tondo_rt_http_request_query",
+    "tondo_rt_http_request_read",
     "tondo_rt_http_request_remote",
     "tondo_rt_http_respond_file",
     "tondo_rt_http_server_address",
     "tondo_rt_http_trailers_list",
     "tondo_rt_http_upload_head",
+    "tondo_rt_http_upload_read",
     "tondo_rt_http_windows_1252",
     "tondo_rt_http_ws_close",
+    "tondo_rt_http_ws_data",
     "tondo_rt_http_ws_send",
     "tondo_rt_http_ws_text",
+    "tondo_rt_image_colors",
+    "tondo_rt_image_encode",
     "tondo_rt_image_exif",
     "tondo_rt_image_failure",
+    "tondo_rt_image_info",
+    "tondo_rt_image_pixels",
+    "tondo_rt_image_size",
     "tondo_rt_json_finish",
     "tondo_rt_json_raw",
     "tondo_rt_json_text",
@@ -1436,40 +1472,57 @@ pub const MAKING_IN_REGION: &[&str] = &[
     "tondo_rt_library_failure",
     "tondo_rt_library_file_name",
     "tondo_rt_library_path",
+    "tondo_rt_math_cycled_f32",
+    "tondo_rt_math_cycled_f64",
+    "tondo_rt_memory_bytes",
     "tondo_rt_memory_from_c_chars",
     "tondo_rt_memory_from_c_string",
+    "tondo_rt_meta_bytes",
     "tondo_rt_meta_request",
     "tondo_rt_metrics",
+    "tondo_rt_msgpack_bytes",
     "tondo_rt_msgpack_failure",
+    "tondo_rt_msgpack_finish",
     "tondo_rt_msgpack_flush",
     "tondo_rt_msgpack_text",
     "tondo_rt_msgpack_where",
     "tondo_rt_net_address_ip",
     "tondo_rt_net_address_path",
     "tondo_rt_net_canonical_ip",
+    "tondo_rt_net_datagram",
     "tondo_rt_net_detail",
     "tondo_rt_net_ip",
     "tondo_rt_net_names",
     "tondo_rt_net_network",
+    "tondo_rt_net_read",
+    "tondo_rt_net_read_all",
     "tondo_rt_net_read_line",
     "tondo_rt_os_error_text",
     "tondo_rt_panic_name",
     "tondo_rt_path_key",
     "tondo_rt_path_steps",
     "tondo_rt_pb_error",
+    "tondo_rt_pb_finish",
+    "tondo_rt_pb_raw",
+    "tondo_rt_pb_read_bytes",
     "tondo_rt_pb_read_text",
     "tondo_rt_process_which",
     "tondo_rt_profile_folded",
     "tondo_rt_profile_kind",
+    "tondo_rt_profile_pprof",
+    "tondo_rt_random_bytes",
     "tondo_rt_reflect_name",
     "tondo_rt_reflect_quote",
     "tondo_rt_regex_capture_name",
     "tondo_rt_regex_escape",
+    "tondo_rt_regex_find",
     "tondo_rt_regex_pattern",
     "tondo_rt_regex_replace",
     "tondo_rt_regex_slice",
     "tondo_rt_sqlite_failure",
+    "tondo_rt_sqlite_run",
     "tondo_rt_template_parse",
+    "tondo_rt_terminal_size",
     "tondo_rt_text_between",
     "tondo_rt_text_currency_symbol",
     "tondo_rt_text_fixed",
@@ -1492,10 +1545,12 @@ pub const MAKING_IN_REGION: &[&str] = &[
     "tondo_rt_toml_finish",
     "tondo_rt_toml_text",
     "tondo_rt_toml_where",
+    "tondo_rt_unpacked",
     "tondo_rt_url_decode",
     "tondo_rt_url_encode",
     "tondo_rt_yaml_finish",
     "tondo_rt_yaml_outline_error",
+    "tondo_rt_yaml_outline_numbers",
     "tondo_rt_yaml_outline_paths",
     "tondo_rt_yaml_outline_properties",
     "tondo_rt_yaml_tag",
@@ -1503,6 +1558,7 @@ pub const MAKING_IN_REGION: &[&str] = &[
     "tondo_rt_yaml_where",
     "tondo_rt_zone_abbreviation",
     "tondo_rt_zone_local",
+    "tondo_rt_zstd",
 ];
 
 /// The natives the processor does in one instruction, which codegen writes

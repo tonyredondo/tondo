@@ -13,7 +13,6 @@ use super::net::{Polled, Wire};
 use super::poll::{Direction, Registered};
 use super::{ArrayHeader, Kept, Str, str_new};
 use crate::array_items;
-use crate::byte_array;
 use crate::io::{Host, Mode, StreamObject};
 use bytes::{Buf, Bytes};
 use http_body_util::combinators::UnsyncBoxBody;
@@ -1355,8 +1354,11 @@ pub extern "C" fn tondo_rt_http_request_header(
 
 /// The DER of the certificate the client showed, empty without one.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_request_certificate(object: *mut NativeObject) -> *mut ArrayHeader {
-    byte_array(&request(object).client)
+pub extern "C" fn tondo_rt_http_request_certificate(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    crate::arrays::byte_array_in(region, &request(object).client)
 }
 
 #[unsafe(no_mangle)]
@@ -1519,18 +1521,21 @@ pub extern "C" fn tondo_rt_http_request_body(object: *mut NativeObject) -> *mut 
 
 /// The whole body; on a failure, what was read and the failure recorded.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_request_read(object: *mut NativeObject) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_http_request_read(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let r = request(object);
-    let Some(body) = r.take_body() else { return byte_array(&[]) };
+    let Some(body) = r.take_body() else { return crate::arrays::byte_array_in(region, &[]) };
     match wait(async move { body.collect().await }) {
-        Some(Ok(collected)) => byte_array(&collected.to_bytes()),
+        Some(Ok(collected)) => crate::arrays::byte_array_in(region, &collected.to_bytes()),
         outcome => {
             let message = match outcome {
                 Some(Err(error)) => r.body_failed(error.as_ref()),
                 _ => "the task was cancelled".into(),
             };
             *lock(&r.failure) = Some(("body", message));
-            byte_array(&[])
+            crate::arrays::byte_array_in(region, &[])
         }
     }
 }
@@ -2043,18 +2048,21 @@ pub extern "C" fn tondo_rt_http_upload_head(
 
 /// A part's bytes; on a failure, the failure recorded.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_upload_read(object: *mut NativeObject) -> *mut ArrayHeader {
-    let Some(u) = native::get::<Upload>(object) else { return byte_array(&[]) };
-    let Some(field) = lock(&u.field).take() else { return byte_array(&[]) };
+pub extern "C" fn tondo_rt_http_upload_read(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    let Some(u) = native::get::<Upload>(object) else { return crate::arrays::byte_array_in(region, &[]) };
+    let Some(field) = lock(&u.field).take() else { return crate::arrays::byte_array_in(region, &[]) };
     match wait(async move { field.bytes().await }) {
-        Some(Ok(bytes)) => byte_array(&bytes),
+        Some(Ok(bytes)) => crate::arrays::byte_array_in(region, &bytes),
         outcome => {
             let message = match outcome {
                 Some(Err(error)) => error.to_string(),
                 _ => "the task was cancelled".into(),
             };
             *lock(&u.failure) = Some(("body", message));
-            byte_array(&[])
+            crate::arrays::byte_array_in(region, &[])
         }
     }
 }

@@ -191,7 +191,13 @@ pub unsafe extern "C" fn tondo_rt_math_dot_at_f64(
 /// `long`, whose length is a multiple of its own; with `short_first`,
 /// `short op long`. `op` is 0 for `+`, 1 for `-`, 2 for `*` and 3 for `/`:
 /// a loop for each, which the compiler makes with vector instructions.
-fn cycled<F>(long: &[F], short: &[F], op: i64, short_first: bool) -> *mut crate::ArrayHeader
+fn cycled<F>(
+    long: &[F],
+    short: &[F],
+    op: i64,
+    short_first: bool,
+    region: *mut crate::regions::Region,
+) -> *mut crate::ArrayHeader
 where
     F: Copy
         + std::ops::Add<Output = F>
@@ -200,7 +206,7 @@ where
         + std::ops::Div<Output = F>,
 {
     let size = std::mem::size_of::<F>();
-    let result = crate::arrays::array_alloc(size, long.len(), long.len());
+    let result = unsafe { crate::arrays::array_made(region, size, long.len(), long.len()) };
     let out = unsafe { std::slice::from_raw_parts_mut(crate::arrays::element(result, size, 0) as *mut F, long.len()) };
     if short.is_empty() {
         return result;
@@ -229,8 +235,10 @@ pub unsafe extern "C" fn tondo_rt_math_cycled_f64(
     short: *mut crate::ArrayHeader,
     op: i64,
     short_first: bool,
+    region: *mut crate::regions::Region,
 ) -> *mut crate::ArrayHeader {
-    cycled(unsafe { crate::array_items::<f64>(long) }, unsafe { crate::array_items::<f64>(short) }, op, short_first)
+    let (long, short) = unsafe { (crate::array_items::<f64>(long), crate::array_items::<f64>(short)) };
+    cycled(long, short, op, short_first, region)
 }
 
 #[unsafe(no_mangle)]
@@ -239,8 +247,10 @@ pub unsafe extern "C" fn tondo_rt_math_cycled_f32(
     short: *mut crate::ArrayHeader,
     op: i64,
     short_first: bool,
+    region: *mut crate::regions::Region,
 ) -> *mut crate::ArrayHeader {
-    cycled(unsafe { crate::array_items::<f32>(long) }, unsafe { crate::array_items::<f32>(short) }, op, short_first)
+    let (long, short) = unsafe { (crate::array_items::<f32>(long), crate::array_items::<f32>(short)) };
+    cycled(long, short, op, short_first, region)
 }
 
 // A `Float32` goes back as its bits, which a `Float` would change for a NaN.

@@ -6,7 +6,6 @@
 use super::native::{self, NativeObject};
 use super::{ArrayHeader, Str};
 use crate::http::strings;
-use crate::int_array;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::ErrorKind;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
@@ -126,8 +125,11 @@ pub extern "C" fn tondo_rt_files_texts(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_files_numbers(done: *mut NativeObject) -> *mut ArrayHeader {
-    int_array(native::get::<Done>(done).map_or(&[][..], |d| &d.numbers))
+pub extern "C" fn tondo_rt_files_numbers(
+    done: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    crate::arrays::int_array_in(region, native::get::<Done>(done).map_or(&[][..], |d| &d.numbers))
 }
 
 /// The `FileKind` index of a type.

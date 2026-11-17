@@ -13,7 +13,6 @@ use super::native::{self, NativeObject};
 use super::poll::{Direction, Registered};
 use super::{ArrayHeader, Str, str_new};
 use crate::array_items;
-use crate::byte_array;
 use crate::io::{Host, Mode, Ready, StreamObject, retain, run, run_until, wait_for};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr};
@@ -1074,8 +1073,13 @@ fn on<R: Send + 'static>(
 
 /// `read`: up to `max` bytes, or none at the end.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_net_read(object: *mut NativeObject, max: i64, timeout_ms: i64) -> *mut ArrayHeader {
-    let Some(connection) = connection_of(object) else { return byte_array(&[]) };
+pub unsafe extern "C" fn tondo_rt_net_read(
+    object: *mut NativeObject,
+    max: i64,
+    timeout_ms: i64,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    let Some(connection) = connection_of(object) else { return crate::arrays::byte_array_in(region, &[]) };
     let max = max.max(1) as usize;
     let (bytes, read) = match on(&connection.reader, deadline(timeout_ms), |s| s.read(max)) {
         Ok(Some(bytes)) => (bytes, Ok(true)),
@@ -1083,7 +1087,7 @@ pub unsafe extern "C" fn tondo_rt_net_read(object: *mut NativeObject, max: i64, 
         Err(failure) => (Vec::new(), Err(failure)),
     };
     note(connection, false, read);
-    byte_array(&bytes)
+    crate::arrays::byte_array_in(region, &bytes)
 }
 
 /// `readLine`: the next line without its `\n` or `\r\n`, or none at the end.
@@ -1109,14 +1113,18 @@ pub unsafe extern "C" fn tondo_rt_net_read_line(
 
 /// `readAll`: everything until the other side ends.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_net_read_all(object: *mut NativeObject, timeout_ms: i64) -> *mut ArrayHeader {
-    let Some(connection) = connection_of(object) else { return byte_array(&[]) };
+pub unsafe extern "C" fn tondo_rt_net_read_all(
+    object: *mut NativeObject,
+    timeout_ms: i64,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    let Some(connection) = connection_of(object) else { return crate::arrays::byte_array_in(region, &[]) };
     let (bytes, read) = match on(&connection.reader, deadline(timeout_ms), |s| s.read_rest()) {
         Ok(bytes) => (bytes, Ok(true)),
         Err(failure) => (Vec::new(), Err(failure)),
     };
     note(connection, false, read);
-    byte_array(&bytes)
+    crate::arrays::byte_array_in(region, &bytes)
 }
 
 fn write(object: *mut NativeObject, data: &[u8], timeout_ms: i64) -> i64 {
@@ -1588,10 +1596,13 @@ pub unsafe extern "C" fn tondo_rt_net_receive(object: *mut NativeObject, timeout
 
 /// A datagram's bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_net_datagram(object: *mut NativeObject) -> *mut ArrayHeader {
+pub unsafe extern "C" fn tondo_rt_net_datagram(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     match native::get::<Net>(object) {
-        Some(Net::Datagram(datagram)) => byte_array(&datagram.bytes),
-        _ => byte_array(&[]),
+        Some(Net::Datagram(datagram)) => crate::arrays::byte_array_in(region, &datagram.bytes),
+        _ => crate::arrays::byte_array_in(region, &[]),
     }
 }
 

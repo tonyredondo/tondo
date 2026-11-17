@@ -6,8 +6,6 @@
 use super::native::{self, NativeObject};
 use super::{ArrayHeader, Str};
 use crate::array_items;
-use crate::byte_array;
-use crate::int_array;
 use image::{DynamicImage, GenericImageView, ImageFormat, ImageReader, Rgba, RgbaImage, imageops::FilterType};
 use std::io::Cursor;
 
@@ -79,7 +77,10 @@ pub extern "C" fn tondo_rt_image_failure(object: *mut NativeObject, region: *mut
 /// `info`: the format, width and height its header gives, as its EXIF
 /// orientation shows it, without the pixels; empty when it is not an image.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_image_info(data: *mut ArrayHeader) -> *mut ArrayHeader {
+pub unsafe extern "C" fn tondo_rt_image_info(
+    data: *mut ArrayHeader,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     use image::{ImageDecoder, metadata::Orientation};
     let read = || {
         let reader = ImageReader::new(Cursor::new(unsafe { array_items::<u8>(data) })).with_guessed_format().ok()?;
@@ -94,17 +95,22 @@ pub unsafe extern "C" fn tondo_rt_image_info(data: *mut ArrayHeader) -> *mut Arr
         (format >= 0).then_some([format, width as i64, height as i64])
     };
     match read() {
-        Some(found) => int_array(&found),
-        None => int_array(&[]),
+        Some(found) => crate::arrays::int_array_in(region, &found),
+        None => crate::arrays::int_array_in(region, &[]),
     }
 }
 
 /// The width, height and format an image was read from (-1 for one made).
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_image_size(object: *mut NativeObject) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_image_size(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     match native::get::<Picture>(object) {
-        Some(Picture::Ready(image, format)) => int_array(&[image.width() as i64, image.height() as i64, *format]),
-        _ => int_array(&[0, 0, -1]),
+        Some(Picture::Ready(image, format)) => {
+            crate::arrays::int_array_in(region, &[image.width() as i64, image.height() as i64, *format])
+        }
+        _ => crate::arrays::int_array_in(region, &[0, 0, -1]),
     }
 }
 
@@ -183,7 +189,12 @@ pub extern "C" fn tondo_rt_image_pixel(object: *mut NativeObject, x: i64, y: i64
 /// The image in a format, JPEG and WebP at a quality from 1 to 100, WebP
 /// without loss at 100; empty when it cannot be written.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_image_encode(object: *mut NativeObject, format: i64, quality: i64) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_image_encode(
+    object: *mut NativeObject,
+    format: i64,
+    quality: i64,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let written = with(object, move |image| {
         let mut out = Cursor::new(Vec::new());
         let done = match format {
@@ -198,7 +209,7 @@ pub extern "C" fn tondo_rt_image_encode(object: *mut NativeObject, format: i64, 
         };
         done.map(|()| out.into_inner()).unwrap_or_default()
     });
-    byte_array(&written.unwrap_or_default())
+    crate::arrays::byte_array_in(region, &written.unwrap_or_default())
 }
 
 /// WebP with loss at a quality from 1 to 99, with libwebp.
@@ -290,8 +301,11 @@ fn exif_texts(data: &[u8]) -> Option<Vec<String>> {
 /// `pixels`: the red, green, blue and alpha bytes of each pixel, row by row
 /// from the top left.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_image_pixels(object: *mut NativeObject) -> *mut ArrayHeader {
-    byte_array(&with(object, |image| image.to_rgba8().into_raw()).unwrap_or_default())
+pub extern "C" fn tondo_rt_image_pixels(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    crate::arrays::byte_array_in(region, &with(object, |image| image.to_rgba8().into_raw()).unwrap_or_default())
 }
 
 /// `fromPixels`: an image of `width` by `height` of those bytes, four a
@@ -477,7 +491,11 @@ pub extern "C" fn tondo_rt_image_tone(
 /// buckets of similar colors, each given by its most frequent color when it
 /// is far enough from those given before.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_image_colors(object: *mut NativeObject, count: i64) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_image_colors(
+    object: *mut NativeObject,
+    count: i64,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let found = with(object, move |image| {
         // Fewer pixels to count, none of them mixed from others.
         let small = if image.width() > 64 || image.height() > 64 {
@@ -518,5 +536,5 @@ pub extern "C" fn tondo_rt_image_colors(object: *mut NativeObject, count: i64) -
             .map(|&[r, g, b]| (r as i64) << 24 | (g as i64) << 16 | (b as i64) << 8 | 255)
             .collect::<Vec<i64>>()
     });
-    int_array(&found.unwrap_or_default())
+    crate::arrays::int_array_in(region, &found.unwrap_or_default())
 }

@@ -8,9 +8,9 @@
 //! are read from standard input while the top level asks for them, and
 //! decoded here.
 
+use super::ArrayHeader;
 use super::native::{self, NativeObject};
 use super::tasks::{ChannelObject, SenderObject, tondo_rt_channel_new, tondo_rt_sender_new, tondo_rt_sender_release};
-use super::{ArrayHeader, arrays::int_array};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -314,10 +314,10 @@ pub(crate) fn size() -> Option<(i64, i64)> {
 
 /// `terminalSize`: the columns and the rows, or nothing without a terminal.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_terminal_size() -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_terminal_size(region: *mut crate::regions::Region) -> *mut ArrayHeader {
     match size() {
-        Some((columns, rows)) => int_array(&[columns, rows]),
-        None => int_array(&[]),
+        Some((columns, rows)) => crate::arrays::int_array_in(region, &[columns, rows]),
+        None => crate::arrays::int_array_in(region, &[]),
     }
 }
 

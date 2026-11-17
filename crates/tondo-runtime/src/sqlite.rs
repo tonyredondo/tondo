@@ -6,7 +6,6 @@
 use super::native::{self, NativeObject};
 use super::{ArrayHeader, Str};
 use crate::array_items;
-use crate::byte_array;
 use rusqlite::types::ValueRef;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -61,9 +60,10 @@ pub unsafe extern "C" fn tondo_rt_sqlite_run(
     sql: *const Str,
     parameters: *mut ArrayHeader,
     batch: u8,
+    region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
     let Some(Database::Open(connection)) = native::get::<Database>(object) else {
-        return byte_array(&failed(0, "the database is not open", "", ""));
+        return crate::arrays::byte_array_in(region, &failed(0, "the database is not open", "", ""));
     };
     let (sql, parameters) = (text(sql), unsafe { array_items::<u8>(parameters) }.to_vec());
     // The connection outlives the work, which the program waits for.
@@ -76,7 +76,7 @@ pub unsafe extern "C" fn tondo_rt_sqlite_run(
         };
         done.unwrap_or_else(|error| refused(&error))
     });
-    byte_array(&out)
+    crate::arrays::byte_array_in(region, &out)
 }
 
 fn run(connection: &rusqlite::Connection, sql: &str, parameters: &[u8]) -> rusqlite::Result<Vec<u8>> {

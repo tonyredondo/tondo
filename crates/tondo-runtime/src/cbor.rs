@@ -10,7 +10,6 @@
 //! digits.
 
 use crate::array_items;
-use crate::byte_array;
 use crate::native::{self, NativeObject};
 use crate::{ArrayHeader, Str, str_bytes, str_text};
 use std::sync::Mutex;
@@ -413,10 +412,13 @@ pub extern "C" fn tondo_rt_cbor_float(object: *mut NativeObject) -> f64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_cbor_bytes(object: *mut NativeObject) -> *mut ArrayHeader {
-    let Some(reader) = reader(object) else { return byte_array(&[]) };
+pub extern "C" fn tondo_rt_cbor_bytes(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
+    let Some(reader) = reader(object) else { return crate::arrays::byte_array_in(region, &[]) };
     let event = reader.read.checked_sub(1).and_then(|index| reader.events.get(index));
-    byte_array(event.map_or(&[][..], |e| &e.bytes))
+    crate::arrays::byte_array_in(region, event.map_or(&[][..], |e| &e.bytes))
 }
 
 #[unsafe(no_mangle)]
@@ -753,9 +755,12 @@ pub extern "C" fn tondo_rt_cbor_write_close(object: *mut NativeObject) {
 
 /// The bytes written, or none after a failure.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_cbor_finish(object: *mut NativeObject) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_cbor_finish(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut ArrayHeader {
     let out = writer(object).filter(|w| w.error.is_none()).map(|w| w.out.clone()).unwrap_or_default();
-    byte_array(&out)
+    crate::arrays::byte_array_in(region, &out)
 }
 
 /// The first value that could not be written, or empty.
