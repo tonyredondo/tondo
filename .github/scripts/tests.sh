@@ -66,9 +66,11 @@ tr '\n' '\0' < "$work/order" | xargs -0 -n 1 -P "$at_once" sh -c '
                     echo "pid parent state KiB wchan command"
                     group all
                 } >> "$work/$name.log" 2>&1
-                kill -QUIT -- "-$pid" 2> /dev/null
+                # With no "--", which dash takes for a process, and then
+                # signals none.
+                kill -QUIT "-$pid" 2> /dev/null
                 sleep 5
-                kill -KILL -- "-$pid" 2> /dev/null
+                kill -KILL "-$pid" 2> /dev/null
                 break
             fi
             sleep 1
