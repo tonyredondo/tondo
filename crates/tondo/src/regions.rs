@@ -233,6 +233,24 @@ pub fn regions(
     }
     if crate::mir_text::remarking() {
         for (body, verdicts) in bodies.iter_mut().zip(&judged) {
+            // A place a region takes in every copy of it is not made on the
+            // heap: what the frame said of it says why the frame does not
+            // take it.
+            let placed: Vec<Span> = verdicts
+                .iter()
+                .map(|verdict| verdict.span)
+                .filter(|&span| {
+                    verdicts.iter().filter(|v| v.span == span).all(|verdict| verdict.region && !verdict.by_call)
+                })
+                .collect();
+            for remark in
+                body.remarks.iter_mut().filter(|remark| remark.kind == "heap" && placed.contains(&remark.span))
+            {
+                if let Some(why) = remark.text.strip_prefix("is made on the heap: ") {
+                    remark.text = format!("is not made in the frame: {why}");
+                    remark.kind = "frame";
+                }
+            }
             for verdict in verdicts {
                 let text = verdict.text.clone();
                 crate::mir_text::remark_by(body, verdict.span, "region", verdict.by, || text);

@@ -2479,7 +2479,9 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   bucle lee y no cuenta, pues su array lo tiene, o por qué cuenta; y
   `hoisted` o `reloaded`, la longitud de un texto o un array que un bucle
   lee una vez, antes del bucle, porque el bucle no puede cambiarlo, o por
-  qué la lee en cada vuelta. `--kind <tipo>` da solo las de ese
+  qué la lee en cada vuelta. Un sitio que una región toma en todas sus
+  copias no es de `heap`: su cosa de `frame` dice por qué el marco no lo
+  toma, como "no se hace en el marco: se copia". `--kind <tipo>` da solo las de ese
   tipo, como `heap` para ver dónde asigna; uno que no existe es un error del
   toolchain (estado 3).
 - `region`: dónde va lo que asigna cada sitio, en una región, memoria que

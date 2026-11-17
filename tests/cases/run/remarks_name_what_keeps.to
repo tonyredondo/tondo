@@ -24,4 +24,4 @@ fn main() {
 
 // expect-stdout: 2 1
 // expect-optimization: 8:9 counted keeps a count of its own: what it is given to may keep it: `all.push(part)` at 9:9
-// expect-optimization: 16:16 heap is made on the heap: a collection takes it: `all.push(line)` at 17:5
+// expect-optimization: 16:16 frame is not made in the frame: a collection takes it: `all.push(line)` at 17:5

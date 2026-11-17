@@ -23,7 +23,7 @@ fn main() {
 }
 
 // expect-stdout: [1, 2, 3] [3, 6] 2 0 [3] 3
-// expect-optimization: 13:20 heap an array whose values are not all constants
+// expect-optimization: 13:20 frame is not made in the frame: an array whose values are not all constants
 // expect-optimization: 14:17 heap a map
 // expect-optimization: 15:16 heap a set
 // expect-optimization: 16:16 heap a slice copies its part

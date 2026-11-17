@@ -7692,3 +7692,13 @@ reads it, one that may keep it, or not read yet, which counts as keeping it, and
 a native in none. The 170 that take one start not read yet and leave as each is read, with its
 case, in order of use; a text given to one of them stays on the heap, and `tondo optimizations`
 names the native. Texts in regions are done when that list is empty.
+
+## What a region takes is not told as made on the heap
+
+The frame's pass tells of each place that its frame does not take that it is made on the heap,
+with why, and the regions, which come after, tell where it goes: a text a region took said both
+"is made on the heap: it is copied" and "goes in a region of `main`", and `--kind heap`, which
+gives what allocates, listed it. Where a region takes a place in every copy of it, the frame's
+line now says "is not made in the frame" with the same why, of the kind `frame`; a place one
+copy of which stays on the heap keeps its line of the heap.
+
