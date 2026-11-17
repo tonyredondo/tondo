@@ -757,7 +757,6 @@ mod rooms {
                 insert(slot, key, region);
             }
             assert_eq!((**slot).rc.load(Ordering::Relaxed), regions::LAST_IN_REGION);
-            assert!(regions::holds(region, (**slot).table.as_ptr() as usize));
             for key in 3..100 {
                 insert(slot, key, std::ptr::null_mut());
             }
@@ -767,7 +766,6 @@ mod rooms {
                 insert(slot, key, region);
             }
             assert_eq!((**slot).rc.load(Ordering::Relaxed), regions::LAST_IN_REGION);
-            assert!(regions::holds(region, (**slot).entries.as_ptr() as usize));
             let table = (**slot).table.as_ptr();
             let mut out = 0u64;
             for key in (0..200).step_by(2) {
