@@ -1876,11 +1876,17 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize], flows: &[Flow], si
     let all_sites: Vec<Vec<Local>> = sites.iter().map(|sites| sites.iter().map(|site| site.local).collect()).collect();
     let mut queued = vec![true; bodies.len()];
     let mut pending: Vec<usize> = (0..bodies.len()).rev().collect();
-    // As many looks as 16 rounds over all of them, should it not settle.
+    // As many looks as 16 rounds over all of them, should it not settle;
+    // the summaries start from what lets the most go in regions, so that
+    // one that did not settle says nothing goes there.
     let mut looks = 16 * bodies.len();
     while let Some(index) = pending.pop() {
         queued[index] = false;
         if looks == 0 {
+            for summary in &mut summaries {
+                summary.keeps.iter_mut().for_each(|keeps| *keeps = true);
+                summary.fresh = false;
+            }
             break;
         }
         looks -= 1;
