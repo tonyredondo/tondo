@@ -2266,8 +2266,12 @@ test counted {
 }
 
 /// A test is watched, for its dump, and a benchmark is not: a string that
-/// grows makes as many allocations in both, which a benchmark's row and
-/// `testing.allocations` count alike, and a memory profile too.
+/// grows makes as many allocations in both, which `testing.allocations`
+/// counts, the heap's and the regions' together, as a benchmark's row's two
+/// figures added say, and a memory profile's row too. With regions, where
+/// the string grows in one, by the heap's steps, and without: the same
+/// count either way, as a value the compiler moves to a region allocates
+/// as often.
 #[test]
 fn a_test_and_its_benchmark_count_the_same_allocations() {
     let tests = "\
@@ -2290,17 +2294,72 @@ test counted {
 }
 ";
     let dir = project("same_allocations", tests);
-    let (stdout, stderr, status) = tondo(&dir, &["test", "--show-output"]);
-    assert_eq!(status, 0, "{stdout}{stderr}");
-    let counted = stdout.split("allocations: ").nth(1).and_then(|rest| rest.split_whitespace().next());
-    let counted = counted.unwrap_or_else(|| panic!("{stdout}")).to_string();
-    for profile in [&[][..], &["--profile", "memory"]] {
-        let mut args = vec!["test", "--bench", "--bench-time", "0.1"];
-        args.extend(profile);
-        let (stdout, stderr, status) = tondo(&dir, &args);
+    // The row's allocations, the heap's and those it says are in regions.
+    let row = |stdout: &str| -> Option<u64> {
+        let line = stdout.lines().find(|line| line.trim_start().starts_with("receipt"))?;
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let at = words.iter().position(|&word| word == "allocs/op")?;
+        let heap: u64 = words[at - 1].parse().ok()?;
+        let regions = match words.get(at + 1..at + 4) {
+            Some([more, "in", "regions"]) => more.strip_prefix('+')?.parse().ok()?,
+            _ => 0,
+        };
+        Some(heap + regions)
+    };
+    let mut counts = Vec::new();
+    for regions in [&[][..], &["--no-regions"]] {
+        let (stdout, stderr, status) = tondo(&dir, &[&["test", "--show-output"], regions].concat());
         assert_eq!(status, 0, "{stdout}{stderr}");
-        assert!(stdout.contains(&format!("  {counted} allocs/op")), "{counted} counted by the test:\n{stdout}");
+        let counted = stdout.split("allocations: ").nth(1).and_then(|rest| rest.split_whitespace().next());
+        let counted: u64 = counted.and_then(|counted| counted.parse().ok()).unwrap_or_else(|| panic!("{stdout}"));
+        for profile in [&[][..], &["--profile", "memory"]] {
+            let args = [&["test", "--bench", "--bench-time", "0.1"], regions, profile].concat();
+            let (stdout, stderr, status) = tondo(&dir, &args);
+            assert_eq!(status, 0, "{stdout}{stderr}");
+            assert_eq!(row(&stdout), Some(counted), "{counted} counted by the test, {regions:?}:\n{stdout}");
+        }
+        counts.push(counted);
     }
+    assert_eq!(counts[0], counts[1], "with regions and without");
+}
+
+/// A text an append grows in place allocates as often in a region as on
+/// the heap wherever it was made: one a loop extends, one an operation
+/// gives, one a function appends to, one a caller appends to, and one in
+/// a record's field; and the texts no append grows, which a region gives
+/// the room they ask for (tests/cases/run/regions/texts_room.to).
+#[test]
+fn texts_an_append_grows_count_alike_in_regions() {
+    let source =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/cases/run/regions/texts_room.to"))
+            .unwrap();
+    let shapes = source.split("\nfn main()").next().unwrap().replace("import std.console\n", "");
+    let tests = format!(
+        "import std.console\nimport std.testing\n{shapes}\ntest counted {{\n    \
+         let names = [\"  ada  \", \" bob\", \"eve  \", \"  ian \"].repeat(25)\n    \
+         console.println(\"receipt {{testing.allocations(() {{ receipt(100) }})}}\")\n    \
+         console.println(\"trimmed {{testing.allocations(() {{ trimmed(names) }})}}\")\n    \
+         console.println(\"given {{testing.allocations(() {{ given(100) }})}}\")\n    \
+         console.println(\"returned {{testing.allocations(() {{ returned(100) }})}}\")\n    \
+         console.println(\"fielded {{testing.allocations(() {{ fielded(100) }})}}\")\n    \
+         console.println(\"users {{testing.allocations(() {{ users(100) }})}}\")\n}}\n"
+    );
+    let dir = project("texts_room", &tests);
+    let counts = |regions: &[&str]| -> Vec<String> {
+        let (stdout, stderr, status) = tondo(&dir, &[&["test", "--show-output"], regions].concat());
+        assert_eq!(status, 0, "{stdout}{stderr}");
+        let counts: Vec<String> = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| {
+                ["receipt", "trimmed", "given", "returned", "fielded", "users"].iter().any(|s| line.starts_with(s))
+            })
+            .map(String::from)
+            .collect();
+        assert_eq!(counts.len(), 6, "{stdout}");
+        counts
+    };
+    assert_eq!(counts(&[]), counts(&["--no-regions"]));
 }
 
 /// `tondo test` given a file of tests, as one is often given, says the

@@ -7786,3 +7786,31 @@ rooms it left before. It stays its region's for life, as what a region
 takes must: an array of the region that holds it lets go of nothing,
 and a text that had moved to the heap would leak there, as the first
 texts in regions did.
+
+## A text an append may grow takes the heap's room in a region
+
+`testing.allocations` counts the heap's allocations and the regions'
+together so that the count does not move when the compiler puts a value
+elsewhere, and a text grown in place broke it: on the heap a text that
+an append grows takes all the room its block holds, mimalloc's size
+class, while a region gave it the room it asked for, and it grew one
+step more. Giving every text of a region the heap's room kept the count
+but cost a lookup for each text a region makes, up to 4% more
+instructions where a program makes many small texts that nothing grows.
+
+Only a text an append may later grow in place can count otherwise, as
+its room decides how often it grows; one built once and read is one
+allocation whatever its room. The analysis marks the places whose text
+reaches the start of an `x = "{x}..."`: in the function that makes it,
+in a function it is given to, or in a caller that appends to what the
+function returns, following what holds the text at any time and its
+parts, so that where it cannot tell the text has the room. The code says
+so in a word of the region while such a place makes its text, at no cost
+to any other, and the runtime gives the text the room the heap's block
+would hold, as many bytes as it would be given, which mimalloc keeps
+while it shrinks by less than half; a text an append makes, copying or
+growing one, has it always. Every other text has the room it asks for,
+as before. An append takes a text of another region in place too, as the
+heap takes the text it is given: the analysis has the region of what it
+takes live as long as what it makes. `tondo optimizations` says ", with
+room an append grows into" of a place given the room.

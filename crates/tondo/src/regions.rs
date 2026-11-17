@@ -200,6 +200,18 @@ pub fn regions(
     // each turn, or the heap, where no region takes the value.
     let mut judged = judged;
     let outcomes = place(bodies, types, &summaries, &all_sites, &judged, &flows, clones);
+    // The texts an append may grow, by the statements of each function,
+    // its copies' as its own.
+    let growable = growable(bodies, types, &flows);
+    for body in bodies.iter_mut() {
+        let of = body.copy_of.map_or(usize::MAX, |of| of as usize);
+        if let Some(growable) = growable.get(of) {
+            body.growable = growable.clone();
+        }
+    }
+    for (body, growable) in bodies.iter_mut().zip(growable) {
+        body.growable = growable;
+    }
     for (((verdicts, outcomes), sites), body) in judged.iter_mut().zip(&outcomes).zip(&all_sites).zip(bodies.iter()) {
         for ((verdict, outcome), site) in verdicts.iter_mut().zip(outcomes).zip(sites) {
             let what = site.what;
@@ -256,7 +268,11 @@ pub fn regions(
                 }
             }
             for (site, verdict) in all_sites[index].iter().zip(verdicts) {
-                let text = verdict.text.clone();
+                // A text an append may grow says it has the heap's room.
+                let text = match verdict.region && body.growable.contains(&site.at) {
+                    true => format!("{}, with room an append grows into", verdict.text),
+                    false => verdict.text.clone(),
+                };
                 let given = !library(verdict.span) || reaches_program(&flows[index], body, types, site, &library);
                 let scope = body.scopes.get(site.at.0 as usize).copied().flatten();
                 crate::mir_text::remark_by(body, verdict.span, "region", verdict.by, given, scope, || text);
@@ -763,6 +779,120 @@ impl Lifetimes {
             })
             .collect()
     }
+}
+
+/// The statements of each function, of those that make a value in a region,
+/// whose text an append may later grow in place, `x = "{x}..."`: what
+/// they make reaches the start of one, in the function, in a function it
+/// is given to, or in a caller that takes what the function returns. They
+/// make it with the room the heap's block would hold, so that it grows by
+/// the heap's steps and allocates as often as it would on the heap; every
+/// other text has the room it asks for, which no append grows into. What
+/// may hold the text at any time counts, and its parts: where the analysis
+/// cannot tell, a text has the room.
+fn growable(bodies: &[Body], types: &Types, flows: &[Flow]) -> Vec<Vec<(u32, u32)>> {
+    let count = flows.len();
+    // The locals each function appends to in place, and its calls by name
+    // with the locals each gives.
+    let appended: Vec<Vec<bool>> = bodies[..count]
+        .iter()
+        .map(|body| {
+            let mut appended = vec![false; body.locals.len()];
+            for (_, statement) in positioned(body) {
+                if let Statement::Assign(_, rvalue, _) = statement
+                    && let Rvalue::Concat(pieces) = &**rvalue
+                    && let Some(Piece::Taken(taken)) = pieces.first()
+                {
+                    appended[taken.local.0 as usize] = true;
+                }
+            }
+            appended
+        })
+        .collect();
+    type Calls = Vec<(usize, Vec<Option<Local>>)>;
+    let calls: Vec<Calls> = bodies[..count]
+        .iter()
+        .map(|body| {
+            positioned(body)
+                .filter_map(|(_, statement)| match statement {
+                    Statement::Assign(_, rvalue, _) => match &**rvalue {
+                        Rvalue::Call(Callee::Fn(id), args) if (id.0 as usize) < count => {
+                            let given = args
+                                .iter()
+                                .map(|arg| match arg {
+                                    Operand::Copy(place) => Some(place.local),
+                                    Operand::Const(_) => None,
+                                })
+                                .collect();
+                            Some((id.0 as usize, given))
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect()
+        })
+        .collect();
+    // Whether what `held` says hold reaches an append in function `index`:
+    // there, given to a function whose parameter does, or returned to a
+    // caller that appends to it.
+    let reaches = |index: usize, held: &[bool], params: &[Vec<bool>], result: &[bool]| {
+        let ours = |local: Local| held.get(local.0 as usize).copied().unwrap_or(false);
+        held.iter().zip(&appended[index]).any(|(&held, &appended)| held && appended)
+            || calls[index].iter().any(|(callee, given)| {
+                given.iter().zip(&params[*callee]).any(|(given, &appends)| appends && given.is_some_and(ours))
+            })
+            || bodies[index].ret.is_some_and(|ret| result[index] && ours(ret))
+    };
+    // What each parameter, and what each function returns, reaches: from
+    // none, until nothing changes.
+    let mut params: Vec<Vec<bool>> = bodies[..count].iter().map(|body| vec![false; body.params.len()]).collect();
+    let mut result = vec![false; count];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for index in 0..count {
+            let (body, flow) = (&bodies[index], &flows[index]);
+            for (at, &param) in body.params.iter().enumerate() {
+                if !params[index][at] && reaches(index, &flow.holders(types, body, param, true), &params, &result) {
+                    params[index][at] = true;
+                    changed = true;
+                }
+            }
+            for &(_, _, local, callee, _) in &flow.results {
+                if !result[callee] && reaches(index, &flow.holders(types, body, local, true), &params, &result) {
+                    result[callee] = true;
+                    changed = true;
+                }
+            }
+        }
+    }
+    // The statements that make a value in a region, of the function and of
+    // its copies, whose value reaches one.
+    (0..count)
+        .map(|index| {
+            let (body, flow) = (&bodies[index], &flows[index]);
+            let mut made: Vec<(u32, u32)> = body.region.iter().map(|&(at, _)| at).collect();
+            for copy in bodies[count..].iter().filter(|copy| copy.copy_of == Some(index as u32)) {
+                made.extend(&copy.given);
+                made.extend(copy.region.iter().map(|&(at, _)| at));
+            }
+            made.sort_unstable();
+            made.dedup();
+            made.into_iter()
+                .filter(|&(block, at)| {
+                    let statement = body.blocks.get(block as usize).and_then(|data| data.stmts.get(at as usize));
+                    match statement {
+                        Some(Statement::Assign(place, rvalue, _)) if place.path.is_empty() => {
+                            !matches!(&**rvalue, Rvalue::Concat(pieces) if matches!(pieces.first(), Some(Piece::Taken(_))))
+                                && reaches(index, &flow.holders(types, body, place.local, true), &params, &result)
+                        }
+                        _ => false,
+                    }
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// The loops of a body, the innermost first: each one's head and its

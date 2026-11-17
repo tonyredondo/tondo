@@ -80,6 +80,7 @@ unsafe extern "C" {
     fn mi_malloc(size: usize) -> *mut u8;
     fn mi_realloc(block: *mut u8, size: usize) -> *mut u8;
     fn mi_usable_size(block: *const u8) -> usize;
+    fn mi_good_size(size: usize) -> usize;
 }
 
 /// Memory none of the hooks counts, for the chunks of regions: what a
@@ -132,6 +133,43 @@ pub(crate) fn usable(block: *const u8, asked: usize) -> usize {
 
 #[cfg(not(tondo_staticlib))]
 pub(crate) fn usable(_: *const u8, asked: usize) -> usize {
+    asked
+}
+
+/// The bytes a block of `asked` would hold, as `usable` says of one made:
+/// the room a region gives a text, so that it grows by the steps it would
+/// on the heap and allocates as often. A region makes a text often, so
+/// what mimalloc says of each size up to 4 KiB is kept, a word at a time,
+/// as its size classes are: they do not change while a program runs.
+#[cfg(tondo_staticlib)]
+#[inline]
+pub(crate) fn good(asked: usize) -> usize {
+    match GOOD.get((asked + 7) >> 3).map(|known| known.load(Ordering::Relaxed)) {
+        Some(known) if known != 0 => known as usize,
+        _ => good_now(asked),
+    }
+}
+
+#[cfg(tondo_staticlib)]
+static GOOD: [std::sync::atomic::AtomicU32; 513] = [const { std::sync::atomic::AtomicU32::new(0) }; 513];
+
+#[cfg(tondo_staticlib)]
+#[cold]
+fn good_now(asked: usize) -> usize {
+    let word = (asked + 7) >> 3;
+    match GOOD.get(word) {
+        // Every size of a word has the class of the word's last byte.
+        Some(known) => {
+            let size = unsafe { mi_good_size(word << 3) };
+            known.store(size as u32, Ordering::Relaxed);
+            size
+        }
+        None => unsafe { mi_good_size(asked) },
+    }
+}
+
+#[cfg(not(tondo_staticlib))]
+pub(crate) fn good(asked: usize) -> usize {
     asked
 }
 

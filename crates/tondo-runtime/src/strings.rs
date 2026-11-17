@@ -69,15 +69,22 @@ pub fn str_new(bytes: &[u8]) -> *mut Str {
 
 /// A copy of `bytes` in `region`, the last reference its region lets go
 /// of, or on the heap when there is none: the text an operation gives where
-/// the analysis put it in a region. A long one forgets the positions a text
-/// its region let go of left at the same address.
+/// the analysis put it in a region. For a place whose text an append may
+/// grow (`Region.grows`), with all the room the heap's block would hold
+/// (`meta::good`), as an append on the heap takes all of its block. A long
+/// one forgets the positions a text its region let go of left at the same
+/// address.
 pub(crate) fn str_in(region: *mut super::regions::Region, bytes: &[u8]) -> *mut Str {
     if region.is_null() || bytes.is_empty() {
         return str_new(bytes);
     }
     unsafe {
-        let text = super::regions::tondo_rt_region_alloc(region, HEADER + bytes.len()) as *mut Str;
-        text.write(Str { rc: AtomicUsize::new(super::regions::LAST_IN_REGION), len: bytes.len(), cap: bytes.len() });
+        let size = match super::regions::grows(region) {
+            true => super::meta::good(HEADER + bytes.len()),
+            false => HEADER + bytes.len(),
+        };
+        let text = super::regions::tondo_rt_region_alloc(region, size) as *mut Str;
+        text.write(Str { rc: AtomicUsize::new(super::regions::LAST_IN_REGION), len: bytes.len(), cap: size - HEADER });
         copy_short(bytes, (text as *mut u8).add(HEADER));
         if bytes.len() >= POSITIONED_FROM {
             forget_positions(text);
@@ -112,7 +119,7 @@ impl RegionPieces {
         let text = self.at as *mut Str;
         unsafe {
             text.write(Str {
-                rc: AtomicUsize::new(super::regions::LAST_IN_REGION),
+                rc: AtomicUsize::new(super::regions::PIECE_IN_REGION),
                 len: bytes.len(),
                 cap: bytes.len(),
             });

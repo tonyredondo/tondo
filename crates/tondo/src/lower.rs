@@ -508,6 +508,7 @@ fn lower_function(
         copy_of: None,
         given: Vec::new(),
         region_calls: Vec::new(),
+        growable: Vec::new(),
     }
 }
 

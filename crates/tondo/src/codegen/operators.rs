@@ -241,6 +241,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     let framed_room = self.e.fb.ins().iconst(types::I64, FRAMED_ROOM as i64);
                     self.e.call_rt(Rt::SbStartIn, &[builder, room, framed, framed_room]);
                 }
+                (None, Some(region)) if self.e.growing => {
+                    self.e.call_rt(Rt::SbStartRegionGrowing, &[builder, room, region]);
+                }
                 (None, Some(region)) => {
                     self.e.call_rt(Rt::SbStartRegion, &[builder, room, region]);
                 }

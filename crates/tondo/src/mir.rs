@@ -211,6 +211,10 @@ pub struct Body {
     /// the region each gives: one of the function's, or none for the one
     /// it was given.
     pub region_calls: Vec<((u32, u32), Option<u32>)>,
+    /// The statements of `region` and `given` whose text an append may
+    /// later grow in place, which take the room the heap's block would
+    /// hold, so that they grow by the heap's steps (`regions::growable`).
+    pub growable: Vec<(u32, u32)>,
 }
 
 /// A call inlined: the function it called and where that function is,

@@ -95,6 +95,10 @@ const STRING_BYTES: i64 = 24;
 const SHARED_FOREVER: u64 = 1 << 62;
 /// The bit of the count of a value in a region (`REGION` of the runtime).
 const REGION: u64 = 1 << 61;
+/// The bytes of a region a frame keeps, and where its word `grows` is
+/// (`Region` of the runtime).
+const REGION_BYTES: u32 = 32;
+const REGION_GROWS: i32 = 24;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Class {
@@ -2256,11 +2260,14 @@ struct Emit<'a, G: ?Sized> {
     /// While a statement that makes a value in the function's region is
     /// built: the region's address (`Body.region`).
     region: Option<ir::Value>,
+    /// Whether that statement's text is one an append may grow, which its
+    /// region says too while it is made (`Body.growable`).
+    growing: bool,
 }
 
 impl<'a, G: ?Sized> Emit<'a, G> {
     fn new(cg: &'a mut G, fb: FunctionBuilder<'a>) -> Self {
-        Emit { cg, fb, data: HashMap::new(), site: None, statement: None, glue: false, region: None }
+        Emit { cg, fb, data: HashMap::new(), site: None, statement: None, glue: false, region: None, growing: false }
     }
 }
 
@@ -4045,10 +4052,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.regions = vec![None; self.body.loops.len() + 1];
         for region in used {
             if self.regions[region as usize].is_none() {
-                let data = StackSlotData::new(StackSlotKind::ExplicitSlot, 24, 3);
+                let data = StackSlotData::new(StackSlotKind::ExplicitSlot, REGION_BYTES, 3);
                 let slot = self.e.fb.create_sized_stack_slot(data);
                 let zero = self.e.fb.ins().iconst(types::I64, 0);
-                for offset in [0, 8, 16] {
+                for offset in [0, 8, 16, REGION_GROWS] {
                     self.e.fb.ins().stack_store(POINTER, zero, slot, offset);
                 }
                 self.regions[region as usize] = Some(slot);
@@ -4182,13 +4189,27 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     None if self.body.given.contains(&position) => self.given,
                     None => None,
                 };
+                // A text an append may grow takes the room the heap's block
+                // would hold: the region says so while the statement makes
+                // it (`Region.grows` of the runtime).
+                let growing = self.e.region.filter(|_| self.body.growable.contains(&position));
+                if let Some(region) = growing {
+                    let one = self.e.fb.ins().iconst(types::I64, 1);
+                    self.e.fb.ins().store(flags(), one, region, REGION_GROWS);
+                    self.e.growing = true;
+                }
                 self.pass_region = match self.body.region_calls.iter().find(|&&(at, _)| at == position) {
                     Some(&(_, Some(region))) => Some(own(&mut self, region)),
                     Some(&(_, None)) => self.given,
                     None => None,
                 };
                 self.statement(stmt);
+                if let Some(region) = growing {
+                    let zero = self.e.fb.ins().iconst(types::I64, 0);
+                    self.e.fb.ins().store(flags(), zero, region, REGION_GROWS);
+                }
                 self.e.region = None;
+                self.e.growing = false;
                 self.pass_region = None;
                 quiet |= self.tried;
             }

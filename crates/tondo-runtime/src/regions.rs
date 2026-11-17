@@ -38,6 +38,18 @@ pub(crate) const REGION: usize = 1 << 61;
 /// The count of the last reference to a value in a region.
 pub(crate) const LAST_IN_REGION: usize = REGION | 1;
 
+/// Whether the statement that makes a text in the region now makes one an
+/// append may later grow in place (`Region.grows`).
+#[inline]
+pub(crate) fn grows(region: *mut Region) -> bool {
+    unsafe { (*region).grows != 0 }
+}
+
+/// The count of a piece of a room of pieces of a region (`RegionPieces`):
+/// never the only reference, as a piece of a block of the heap never is,
+/// so that an append copies it rather than grow it over the next piece.
+pub(crate) const PIECE_IN_REGION: usize = LAST_IN_REGION | 1 << 60;
+
 /// Whether a count is that of a value's only reference, in a region or not.
 #[inline(always)]
 pub(crate) fn only(rc: &AtomicUsize) -> bool {
@@ -52,7 +64,17 @@ pub struct Region {
     ptr: usize,
     end: usize,
     chunks: *mut Chunk,
+    /// 1 while a statement makes a text an append may later grow in place
+    /// (`growable` of the compiler's `regions.rs`), which the code says
+    /// before it and unsays after: the text takes the room the heap's
+    /// block would hold, so that it grows by the heap's steps and counts as
+    /// many allocations (`meta::good`).
+    grows: usize,
 }
+
+// The code keeps a frame's region in as many bytes, its word `grows` the
+// fourth (`REGION_BYTES` and `REGION_GROWS` of the compiler's codegen).
+const _: () = assert!(size_of::<Region>() == 32 && std::mem::offset_of!(Region, grows) == 24);
 
 /// A chunk of a region, its bytes after it: its size, and `SAMPLED` when a
 /// sample of what is alive lies in it, which goes with it.
@@ -369,7 +391,7 @@ unsafe fn leave(region: *mut Region) {
             }
             chunk = next;
         }
-        *r = Region { ptr: 0, end: 0, chunks: std::ptr::null_mut() };
+        *r = Region { ptr: 0, end: 0, chunks: std::ptr::null_mut(), grows: 0 };
     }
 }
 
@@ -396,6 +418,12 @@ pub(crate) unsafe fn grow_alone(region: *mut Region, block: *mut u8, keep: usize
                 (*grown).size = CHUNK_HEADER + size;
                 HELD.fetch_add(CHUNK_HEADER + size - old, Ordering::Relaxed);
                 *link = grown;
+                // An allocation, as the heap's growing realloc counts one.
+                use super::diagnostics::{COUNTED, MEASURED, WATCHED, hooks};
+                let hooks = hooks() & (MEASURED | COUNTED | WATCHED);
+                if hooks != 0 {
+                    counted(hooks, grown as usize + CHUNK_HEADER, size, grown);
+                }
                 return (grown as *mut u8).add(CHUNK_HEADER);
             }
             link = &mut (*chunk).next;
@@ -404,19 +432,6 @@ pub(crate) unsafe fn grow_alone(region: *mut Region, block: *mut u8, keep: usize
         std::ptr::copy_nonoverlapping(block, moved, keep);
         moved
     }
-}
-
-/// Whether `address` is in memory `region` holds, one of its chunks.
-pub(crate) fn holds(region: *mut Region, address: usize) -> bool {
-    let mut chunk = unsafe { (*region).chunks };
-    while !chunk.is_null() {
-        let (start, size) = (chunk as usize, unsafe { (*chunk).bytes() });
-        if (start..start + size).contains(&address) {
-            return true;
-        }
-        chunk = unsafe { (*chunk).next };
-    }
-    false
 }
 
 /// A new array of `len` elements, for the caller to write, in the region.
@@ -495,7 +510,7 @@ pub unsafe extern "C" fn tondo_rt_region_reset(region: *mut Region) {
         let current = if r.ptr != 0 { r.chunks } else { std::ptr::null_mut() };
         let mut kept = std::ptr::null_mut();
         let mut chunk = r.chunks;
-        let mut others = Region { ptr: 0, end: 0, chunks: std::ptr::null_mut() };
+        let mut others = Region { ptr: 0, end: 0, chunks: std::ptr::null_mut(), grows: 0 };
         while !chunk.is_null() {
             let next = (*chunk).next;
             if chunk == current && (*chunk).bytes() == CHUNK {
@@ -508,14 +523,14 @@ pub unsafe extern "C" fn tondo_rt_region_reset(region: *mut Region) {
         }
         leave(&mut others);
         if kept.is_null() {
-            *r = Region { ptr: 0, end: 0, chunks: std::ptr::null_mut() };
+            *r = Region { ptr: 0, end: 0, chunks: std::ptr::null_mut(), grows: r.grows };
             return;
         }
         emptied(kept);
         (*kept).next = std::ptr::null_mut();
         let ptr = kept as usize + CHUNK_HEADER;
         let end = if counting { ptr } else { kept as usize + CHUNK };
-        *r = Region { ptr, end, chunks: kept };
+        *r = Region { ptr, end, chunks: kept, grows: r.grows };
     }
 }
 
@@ -665,7 +680,7 @@ mod tests {
     }
 
     fn region() -> Region {
-        Region { ptr: 0, end: 0, chunks: std::ptr::null_mut() }
+        Region { ptr: 0, end: 0, chunks: std::ptr::null_mut(), grows: 0 }
     }
 
     /// Values follow one another in a chunk, aligned; a large one takes a

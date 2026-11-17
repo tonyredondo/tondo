@@ -1,0 +1,134 @@
+// The room a region gives a text: the room the heap's block would hold to
+// a text an append may later grow in place, `x = "{x}..."`, so that it
+// grows by the heap's steps and allocates as often as it would there, and
+// to every other text the room it asks for. One that a loop extends; one
+// an operation gives, then appended to; one given to a function that
+// appends to it, and one it grows past its room, in its own region, as
+// the caller gave it away; one a function returns, appended to by its
+// caller; one kept in a record's field and appended to through it, which
+// the analysis follows by the record that holds it; and texts no append
+// grows, which keep their room. testing.rs counts their allocations with
+// regions and without.
+import std.console
+
+/// Extended by a loop.
+fn receipt(count: Int): Int {
+    var text = ""
+    for line in 0..count {
+        text = "{text}thing {line}: {line * 5}\n"
+    }
+    text.length()
+}
+
+/// Given by an operation, then appended to.
+fn trimmed(names: Array[String]): Int {
+    var total = 0
+    for name in names {
+        var shown = name.trim()
+        shown = "{shown}!"
+        total += shown.length()
+    }
+    total
+}
+
+/// Appends to what it is given; it calls itself, and so stays a function
+/// of its own.
+fn shout(said: String, times: Int): Int {
+    if times > 0 {
+        return shout(said, times - 1)
+    }
+    var loud = said
+    loud = "{loud}!"
+    loud.length()
+}
+
+fn given(count: Int): Int {
+    var total = 0
+    for i in 0..count {
+        total += shout("call {i % 10}", 1)
+    }
+    total
+}
+
+/// Grows what it is given past its room, in its own region: the text was
+/// its caller's, which gave it away and names it no more.
+fn lengthen(said: String, times: Int): Int {
+    if times > 0 {
+        return lengthen(said, times - 1)
+    }
+    var long = said
+    long = "{long}, and then again, and again, and once more"
+    long.length()
+}
+
+fn lengthened(count: Int): Int {
+    var total = 0
+    for i in 0..count {
+        total += lengthen("call {i % 10}", 1)
+    }
+    total
+}
+
+/// Returns a text its caller appends to; it calls itself too.
+fn label(i: Int, times: Int): String {
+    if times > 0 {
+        return label(i, times - 1)
+    }
+    "item {i % 10}"
+}
+
+fn returned(count: Int): Int {
+    var total = 0
+    for i in 0..count {
+        var named = label(i, 1)
+        named = "{named}?"
+        total += named.length()
+    }
+    total
+}
+
+type Person = {
+    name: String
+    age: Int
+}
+
+/// Kept in a field, then appended to through it.
+fn fielded(count: Int): Int {
+    var total = 0
+    for i in 0..count {
+        var person = Person { name: "who {i % 10}", age: i }
+        person.name = "{person.name}."
+        total += person.name.length()
+    }
+    total
+}
+
+/// Never appended to: their room is the one they ask for.
+fn users(count: Int): Int {
+    var people: Array[Person] = []
+    for i in 0..count {
+        people.push(Person { name: "user {i}", age: i })
+    }
+    var total = 0
+    for person in people {
+        total += person.name.length()
+    }
+    total
+}
+
+fn main() {
+    let names = ["  ada  ", " bob", "eve  ", "  ian "].repeat(25)
+    console.println(
+        "{receipt(100)} {trimmed(names)} {given(100)} {returned(100)} {fielded(100)} {users(100)} {lengthened(10)}",
+    )
+}
+
+// expect-stdout: 1368 400 700 700 600 690 480
+// expect-optimization: 27:21 region goes in the region of a turn of the loop at line 26, with room an append grows into
+// expect-optimization: 48:24 region goes in the region of a turn of the loop at line 47, with room an append grows into
+// expect-optimization: 67:27 region goes in the region of a turn of the loop at line 66, with room an append grows into
+// expect-optimization: 60:5 region goes in a region of `lengthen`
+// expect-optimization: 77:5 region goes in a region that the caller of `label` gives, with room an append grows into
+// expect-optimization: 99:37 region goes in the region of a turn of the loop at line 98, with room an append grows into
+// expect-optimization: 110:36 region goes in a region of `users`
+// expect-no-optimization: 110:36 region with room
