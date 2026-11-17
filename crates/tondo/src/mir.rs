@@ -853,15 +853,24 @@ pub(crate) fn operand_uses(operand: &Operand, used: &mut Vec<Local>) {
     }
 }
 
-fn operands_uses(operands: &[Operand], used: &mut Vec<Local>) {
-    operands.iter().for_each(|operand| operand_uses(operand, used));
-}
-
-fn bounds_uses(bounds: &[Option<Operand>; 3], used: &mut Vec<Local>) {
-    bounds.iter().flatten().for_each(|operand| operand_uses(operand, used));
-}
-
 pub(crate) fn rvalue_uses(rvalue: &Rvalue, used: &mut Vec<Local>) {
+    rvalue_places(rvalue, &mut |place| place_uses(place, used));
+}
+
+/// Each place an rvalue reads, or writes through, as `rvalue_uses` takes
+/// the locals of.
+pub(crate) fn rvalue_places(rvalue: &Rvalue, visit: &mut impl FnMut(&Place)) {
+    fn operand(operand: &Operand, visit: &mut impl FnMut(&Place)) {
+        if let Operand::Copy(place) = operand {
+            visit(place);
+        }
+    }
+    fn operands(list: &[Operand], visit: &mut impl FnMut(&Place)) {
+        list.iter().for_each(|o| operand(o, visit));
+    }
+    fn bounds(range: &[Option<Operand>; 3], visit: &mut impl FnMut(&Place)) {
+        range.iter().flatten().for_each(|o| operand(o, visit));
+    }
     match rvalue {
         Rvalue::Use(o)
         | Rvalue::Unary(_, o)
@@ -870,57 +879,57 @@ pub(crate) fn rvalue_uses(rvalue: &Rvalue, used: &mut Vec<Local>) {
         | Rvalue::Length(o)
         | Rvalue::Fixed(o, _)
         | Rvalue::Erase(o, ..)
-        | Rvalue::Spawn(o, _) => operand_uses(o, used),
+        | Rvalue::Spawn(o, _) => operand(o, visit),
         Rvalue::Binary(_, a, b) | Rvalue::Exact(_, a, b) => {
-            operand_uses(a, used);
-            operand_uses(b, used);
+            operand(a, visit);
+            operand(b, visit);
         }
-        Rvalue::Call(_, operands)
-        | Rvalue::Array(operands, _)
-        | Rvalue::Aggregate(operands)
-        | Rvalue::Variant(_, operands)
-        | Rvalue::Reflect(_, _, operands, _)
-        | Rvalue::TaskOp(_, operands, ..)
-        | Rvalue::ArrayOp(_, operands, _)
-        | Rvalue::StrOp(_, operands, _)
-        | Rvalue::Pointer(_, operands, _)
-        | Rvalue::MapOp(_, operands, _) => operands_uses(operands, used),
-        Rvalue::CallIndirect(callee, operands) => {
-            operand_uses(callee, used);
-            operands_uses(operands, used);
+        Rvalue::Call(_, list)
+        | Rvalue::Array(list, _)
+        | Rvalue::Aggregate(list)
+        | Rvalue::Variant(_, list)
+        | Rvalue::Reflect(_, _, list, _)
+        | Rvalue::TaskOp(_, list, ..)
+        | Rvalue::ArrayOp(_, list, _)
+        | Rvalue::StrOp(_, list, _)
+        | Rvalue::Pointer(_, list, _)
+        | Rvalue::MapOp(_, list, _) => operands(list, visit),
+        Rvalue::CallIndirect(callee, list) => {
+            operand(callee, visit);
+            operands(list, visit);
         }
-        Rvalue::CallOsr(_, operands, state) => {
-            operands_uses(operands, used);
-            operand_uses(state, used);
+        Rvalue::CallOsr(_, list, state) => {
+            operands(list, visit);
+            operand(state, visit);
         }
-        Rvalue::TestMembers(members) => members.iter().for_each(|(_, o, _)| operand_uses(o, used)),
-        Rvalue::Select(cases, ..) => cases.iter().for_each(|case| operands_uses(&case.operands, used)),
+        Rvalue::TestMembers(members) => members.iter().for_each(|(_, o, _)| operand(o, visit)),
+        Rvalue::Select(cases, ..) => cases.iter().for_each(|case| operands(&case.operands, visit)),
         Rvalue::Concat(pieces) => pieces.iter().for_each(|piece| match piece {
-            Piece::Value(o, _) => operand_uses(o, used),
-            Piece::Taken(place) => place_uses(place, used),
+            Piece::Value(o, _) => operand(o, visit),
+            Piece::Taken(place) => visit(place),
             Piece::Text(_) => {}
         }),
-        Rvalue::Discriminant(place) => place_uses(place, used),
-        Rvalue::Slice(o, bounds, _) => {
-            operand_uses(o, used);
-            bounds_uses(bounds, used);
+        Rvalue::Discriminant(place) => visit(place),
+        Rvalue::Slice(o, range, _) => {
+            operand(o, visit);
+            bounds(range, visit);
         }
-        Rvalue::AssignSlice(place, bounds, o, _) => {
-            place_uses(place, used);
-            bounds_uses(bounds, used);
-            operand_uses(o, used);
+        Rvalue::AssignSlice(place, range, o, _) => {
+            visit(place);
+            bounds(range, visit);
+            operand(o, visit);
         }
-        Rvalue::CheckRegion(o, bounds, overlap, _) => {
-            operand_uses(o, used);
-            bounds_uses(bounds, used);
+        Rvalue::CheckRegion(o, range, overlap, _) => {
+            operand(o, visit);
+            bounds(range, visit);
             match overlap {
-                Overlap::Region(bounds) => bounds_uses(bounds, used),
-                Overlap::Index(o) => operand_uses(o, used),
+                Overlap::Region(range) => bounds(range, visit),
+                Overlap::Index(o) => operand(o, visit),
             }
         }
-        Rvalue::Mutate(_, place, operands, ..) => {
-            place_uses(place, used);
-            operands_uses(operands, used);
+        Rvalue::Mutate(_, place, list, ..) => {
+            visit(place);
+            operands(list, visit);
         }
         Rvalue::FnValue(_)
         | Rvalue::ExternFn(_)

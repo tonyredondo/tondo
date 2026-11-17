@@ -1457,6 +1457,10 @@ pub(crate) struct Flow {
     /// Whether each local is a parameter or takes a call's result, which
     /// `fate` follows through its parts.
     called: Vec<bool>,
+    /// Whether each local takes the result, `T ! E`, of an operation of the
+    /// library that makes its value in a region, whose region holds only
+    /// the success: the error the runtime gives is made of none of it.
+    succeeds: Vec<bool>,
     /// The statements that read each local, as an assignment does, or put
     /// it in a `defer`, by their index in the body's order.
     users: Vec<Vec<u32>>,
@@ -1477,8 +1481,25 @@ struct Transfer {
     /// Whether it writes a part of `into`, which then contains it.
     part: bool,
     how: How,
-    /// What it reads, and whether through a path, a part of the local.
-    from: Vec<(Local, bool)>,
+    /// What it reads, whether through a path, a part of the local, and the
+    /// variant of a union the path reads first, as the error a `?` returns.
+    from: Vec<(Local, bool, Option<u32>)>,
+    /// The variant of a union it makes `into`, which holds what it reads
+    /// in that variant alone.
+    variant: Option<u32>,
+}
+
+/// A variant's bit in a set of them, all of them past 64.
+fn variant_bit(variant: u32) -> u64 {
+    1u64.checked_shl(variant).unwrap_or(u64::MAX)
+}
+
+/// The variant of a union a place reads first, if it reads one.
+fn variant_read(place: &Place) -> Option<u32> {
+    match place.path.first() {
+        Some(Proj::Variant(variant, _)) => Some(*variant),
+        _ => None,
+    }
 }
 
 /// How a statement passes what it reads.
@@ -1502,11 +1523,11 @@ impl Flow {
     pub(crate) fn of(body: &Body, types: &Types) -> Flow {
         let mut reached: crate::hash::FastMap<Ty, (Ty, Vec<Ty>, bool)> = crate::hash::FastMap::default();
         let mut transfers = Vec::new();
-        let copies = |operands: &[Operand]| -> Vec<(Local, bool)> {
+        let copies = |operands: &[Operand]| -> Vec<(Local, bool, Option<u32>)> {
             operands
                 .iter()
                 .filter_map(|operand| match operand {
-                    Operand::Copy(place) => Some((place.local, !place.path.is_empty())),
+                    Operand::Copy(place) => Some((place.local, !place.path.is_empty(), variant_read(place))),
                     Operand::Const(_) => None,
                 })
                 .collect()
@@ -1515,6 +1536,10 @@ impl Flow {
             match statement {
                 Statement::Assign(place, rvalue, _) => {
                     let (into, part) = (place.local, !place.path.is_empty());
+                    let variant = match &**rvalue {
+                        Rvalue::Variant(variant, _) => Some(*variant),
+                        _ => None,
+                    };
                     let (how, from) = match &**rvalue {
                         Rvalue::Use(operand) => (How::Whole, copies(std::slice::from_ref(operand))),
                         Rvalue::Aggregate(operands) | Rvalue::Variant(_, operands) | Rvalue::Array(operands, _) => {
@@ -1526,14 +1551,16 @@ impl Flow {
                         Rvalue::Concat(pieces) => {
                             let alone = match pieces.as_slice() {
                                 [Piece::Value(Operand::Copy(shown), ty)] if types.repr(*ty) == Ty::STRING => {
-                                    Some((shown.local, !shown.path.is_empty()))
+                                    Some((shown.local, !shown.path.is_empty(), variant_read(shown)))
                                 }
                                 _ => None,
                             };
                             let taken = pieces
                                 .iter()
                                 .filter_map(|piece| match piece {
-                                    Piece::Taken(taken) => Some((taken.local, !taken.path.is_empty())),
+                                    Piece::Taken(taken) => {
+                                        Some((taken.local, !taken.path.is_empty(), variant_read(taken)))
+                                    }
                                     _ => None,
                                 })
                                 .chain(alone)
@@ -1546,6 +1573,7 @@ impl Flow {
                                 part: true,
                                 how: How::Grows,
                                 from: copies(operands),
+                                variant: None,
                             });
                             continue;
                         }
@@ -1557,6 +1585,7 @@ impl Flow {
                                 part: true,
                                 how: How::Grows,
                                 from: copies(std::slice::from_ref(operand)),
+                                variant: None,
                             });
                             continue;
                         }
@@ -1640,11 +1669,11 @@ impl Flow {
                                 })
                                 .clone();
                             let how = How::Other { same, reach, anything };
-                            (how, used.into_iter().map(|local| (local, false)).collect())
+                            (how, used.into_iter().map(|local| (local, false, None)).collect())
                         }
                     };
                     if !from.is_empty() {
-                        transfers.push(Transfer { into, part, how, from });
+                        transfers.push(Transfer { into, part, how, from, variant });
                     }
                 }
                 Statement::Lend(alias, place) => {
@@ -1652,7 +1681,8 @@ impl Flow {
                         into: *alias,
                         part: false,
                         how: How::Lent,
-                        from: vec![(place.local, !place.path.is_empty())],
+                        from: vec![(place.local, !place.path.is_empty(), variant_read(place))],
+                        variant: None,
                     });
                     // What is written through the loan is written into what
                     // it lends: `row.values = [..]` in `for mut row in rows`
@@ -1661,7 +1691,8 @@ impl Flow {
                         into: place.local,
                         part: !place.path.is_empty(),
                         how: How::Whole,
-                        from: vec![(*alias, false)],
+                        from: vec![(*alias, false, None)],
+                        variant: None,
                     });
                 }
                 // Counts, cleanups, zeroings, and a lock's state, which
@@ -1679,7 +1710,7 @@ impl Flow {
         }
         let mut readers = vec![Vec::new(); body.locals.len()];
         for (index, transfer) in transfers.iter().enumerate() {
-            for &(local, _) in &transfer.from {
+            for &(local, ..) in &transfer.from {
                 if readers[local.0 as usize].last() != Some(&(index as u32)) {
                     readers[local.0 as usize].push(index as u32);
                 }
@@ -1699,6 +1730,7 @@ impl Flow {
             })
             .collect();
         let mut called = vec![false; body.locals.len()];
+        let mut succeeds = vec![false; body.locals.len()];
         for &param in &body.params {
             called[param.0 as usize] = true;
         }
@@ -1738,6 +1770,8 @@ impl Flow {
                             if place.path.is_empty() && function.makes_in_region() =>
                         {
                             called[place.local.0 as usize] = true;
+                            let ty = body.place_ty(types, place);
+                            succeeds[place.local.0 as usize] = matches!(types.kind(types.repr(ty)), TyKind::Result(..));
                         }
                         Rvalue::FnValue(id)
                         | Rvalue::Callback(id, _)
@@ -1766,6 +1800,7 @@ impl Flow {
             outside: outside(body),
             spawned,
             called,
+            succeeds,
             users,
             at,
             callees,
@@ -1783,6 +1818,18 @@ impl Flow {
     /// runtime's `trim` that may give back the text it was lent, may be it
     /// when it is of its type, and contain it when its type can refer to it.
     fn holders(&self, types: &Types, body: &Body, start: Local, parts: bool) -> Vec<bool> {
+        self.holders_in(types, body, start, parts, self.start_variants(start)).0
+    }
+
+    /// The variants of `start`, a union, that hold what it makes: the
+    /// success of an operation of the library's result, or all.
+    fn start_variants(&self, start: Local) -> u64 {
+        if self.succeeds[start.0 as usize] { variant_bit(0) } else { u64::MAX }
+    }
+
+    /// The locals that hold what `start` holds in the variants `held_in` of
+    /// it, a union, and the variants of each that may hold it.
+    fn holders_in(&self, types: &Types, body: &Body, start: Local, parts: bool, held_in: u64) -> (Vec<bool>, Vec<u64>) {
         let count = self.readers.len();
         let (mut is, mut contains) = (vec![false; count], vec![false; count]);
         is[start.0 as usize] = true;
@@ -1793,11 +1840,20 @@ impl Flow {
             true => types.reach(held).into_iter().map(|part| types.repr(part)).collect(),
             false => Vec::new(),
         };
+        // The variants of each local, a union, that may be or hold it: the
+        // one a transfer made it, or all. The success alone of what an
+        // operation of the library made, so that the error a `?` returns
+        // takes none of the text it read.
+        let mut variants = vec![0u64; count];
+        variants[start.0 as usize] = held_in;
         let mut pending: Vec<u32> = self.readers[start.0 as usize].clone();
         while let Some(index) = pending.pop() {
             let transfer = &self.transfers[index as usize];
             let (mut may_be, mut may_contain) = (false, false);
-            for &(from, through) in &transfer.from {
+            for &(from, through, read) in &transfer.from {
+                if read.is_some_and(|read| variants[from.0 as usize] & variant_bit(read) == 0) {
+                    continue;
+                }
                 let (it, inside) = (is[from.0 as usize], contains[from.0 as usize]);
                 match (&transfer.how, through) {
                     (How::Whole, false) => {
@@ -1843,11 +1899,19 @@ impl Flow {
                 contains[into] = true;
                 grew = true;
             }
+            let made = match transfer.variant {
+                Some(variant) if !transfer.part => variant_bit(variant),
+                _ => u64::MAX,
+            };
+            if (may_be || may_contain) && variants[into] | made != variants[into] {
+                variants[into] |= made;
+                grew = true;
+            }
             if grew {
                 pending.extend(&self.readers[into]);
             }
         }
-        (0..count).map(|index| is[index] || contains[index]).collect()
+        ((0..count).map(|index| is[index] || contains[index]).collect(), variants)
     }
 }
 
@@ -1857,14 +1921,36 @@ impl Flow {
 /// result in a region the caller gives makes its parts there, places this
 /// function does not see.
 fn fate(flow: &Flow, body: &Body, types: &Types, start: Local, summaries: &[Summary], bodies: &[Body]) -> Fate {
-    let held = flow.holders(types, body, start, flow.called[start.0 as usize]);
-    fate_of(flow, body, &held, summaries, bodies)
+    let parts = flow.called[start.0 as usize];
+    let (held, variants) = flow.holders_in(types, body, start, parts, flow.start_variants(start));
+    fate_of(flow, body, &held, &variants, summaries, bodies)
+}
+
+/// Whether a call's result, `T ! E`, leaves the function only by its
+/// error: what a `?` passes on, which the function that made the result
+/// may have made in the region it made the success in.
+fn returned_by_error(
+    flow: &Flow,
+    body: &Body,
+    types: &Types,
+    start: Local,
+    summaries: &[Summary],
+    bodies: &[Body],
+) -> bool {
+    let (held, variants) = flow.holders_in(types, body, start, true, variant_bit(0));
+    !matches!(fate_of(flow, body, &held, &variants, summaries, bodies), Fate::Returned)
 }
 
 /// What becomes of what the locals `held` hold.
-fn fate_of(flow: &Flow, body: &Body, held: &[bool], summaries: &[Summary], bodies: &[Body]) -> Fate {
+fn fate_of(flow: &Flow, body: &Body, held: &[bool], variants: &[u64], summaries: &[Summary], bodies: &[Body]) -> Fate {
     let holds = |local: Local| held[local.0 as usize];
-    let reads = |operand: &Operand| matches!(operand, Operand::Copy(place) if holds(place.local));
+    // A place that reads what it holds: not a variant of a union that holds
+    // none of it, as the error a `?` returns.
+    let passes = |place: &Place| {
+        holds(place.local)
+            && variant_read(place).is_none_or(|variant| variants[place.local.0 as usize] & variant_bit(variant) != 0)
+    };
+    let reads = |operand: &Operand| matches!(operand, Operand::Copy(place) if passes(place));
     let outside = &flow.outside;
     let given = |local: Local| outside[local.0 as usize] != Outside::No;
     let where_given = |local: Local| match outside[local.0 as usize] {
@@ -1887,6 +1973,11 @@ fn fate_of(flow: &Flow, body: &Body, held: &[bool], summaries: &[Summary], bodie
         let kept = |why: &str, span: Span| Fate::Kept(why.to_string(), span);
         match statement {
             Statement::Assign(place, rvalue, span) => {
+                let mut read = false;
+                crate::mir::rvalue_places(rvalue, &mut |place| read |= passes(place));
+                if !read && !holds(place.local) {
+                    continue;
+                }
                 if given(place.local) {
                     return kept(where_given(place.local), *span);
                 }
@@ -1976,7 +2067,7 @@ fn fate_of(flow: &Flow, body: &Body, held: &[bool], summaries: &[Summary], bodie
                     returned = true;
                 }
             }
-            Statement::DeferPush(_, place) if holds(place.local) => return kept("a `defer` keeps it", Span::default()),
+            Statement::DeferPush(_, place) if passes(place) => return kept("a `defer` keeps it", Span::default()),
             // Counts, cleanups that hold nothing of it, zeroings, and what
             // `outside` and `Flow` follow.
             Statement::DeferPush(..)
@@ -2082,13 +2173,16 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize], flows: &[Flow], si
                 made.sort_unstable_by_key(|local| local.0);
                 made.dedup();
                 let flow = &flows[index];
-                let held: Vec<Vec<bool>> = made.iter().map(|&local| flow.holders(types, body, local, false)).collect();
+                let (held, variants): (Vec<Vec<bool>>, Vec<Vec<u64>>) = made
+                    .iter()
+                    .map(|&local| flow.holders_in(types, body, local, false, flow.start_variants(local)))
+                    .unzip();
                 held.iter().any(|held| held[ret.0 as usize])
                     && only_made(body, types, ret, &held)
-                    && made.iter().zip(&held).all(|(&local, held)| {
+                    && made.iter().zip(held.iter().zip(&variants)).all(|(&local, (held, variants))| {
                         let fate = match flow.called[local.0 as usize] {
                             true => fate(flow, body, types, local, &summaries, bodies),
-                            false => fate_of(flow, body, held, &summaries, bodies),
+                            false => fate_of(flow, body, held, variants, &summaries, bodies),
                         };
                         !matches!(fate, Fate::Kept(..))
                     })
@@ -2120,6 +2214,14 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize], flows: &[Flow], si
             let taken = match fate(&flows[index], body, types, local, &summaries, bodies) {
                 Fate::Here => Taken::Drops,
                 Fate::Returned if summaries[index].fresh => Taken::Passes,
+                Fate::Returned if returned_by_error(&flows[index], body, types, local, &summaries, bodies) => {
+                    let callee = &bodies[callee].name;
+                    let why = format!(
+                        "`{}` passes on the error of `{callee}`, which `{callee}` may make in the region of what it returns",
+                        body.name
+                    );
+                    Taken::Keeps(why, Span::default())
+                }
                 Fate::Returned => {
                     Taken::Keeps(format!("`{}` returns it with what it was given", body.name), Span::default())
                 }

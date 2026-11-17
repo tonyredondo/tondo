@@ -1,0 +1,127 @@
+// A text read with `?` in a function that returns an error: the error the
+// `?` returns takes none of the text, which goes in a region of the
+// function or of a turn; an error made of the text, or of a part of it,
+// takes it out of the function, and the text, or the part, stays on the
+// heap. Each is run with the memory of every region that ends made
+// unreadable, where a text that left by the error would fault.
+
+import std.console
+import std.fs
+import std.path
+
+type Problem = {
+    word: String
+}
+
+/// The text `fs.readText` gives, counted: in the function's region.
+fn counted(file: String): Int ! fs.FsError {
+    let text = fs.readText(file)?
+    text.length()
+}
+
+/// The text of each turn, counted: in the turn's region.
+fn turns(file: String): Int ! fs.FsError {
+    var total = 0
+    for _ in 0..3 {
+        let text = fs.readText(file)?
+        total += text.length()
+    }
+    total
+}
+
+/// The text itself, as the error: on the heap.
+fn whole(file: String): Int ! Problem {
+    let text = fs.readText(file) ?? ""
+    if text.startsWith("first") {
+        fail Problem { word: text }
+    }
+    text.length()
+}
+
+/// A part of the text, as the error: the part on the heap.
+fn part(file: String): Int ! Problem {
+    let text = fs.readText(file) ?? ""
+    if text.startsWith("first") {
+        fail Problem { word: text.split(" ")[0] }
+    }
+    text.length()
+}
+
+/// The error of a `?` in a turn, which a text of the turn made.
+fn found(files: Array[String]): Int ! Problem {
+    var total = 0
+    for file in files {
+        let text = fs.readText(file) ?? ""
+        let words = text.split(" ")
+        if words.length() > 3 {
+            fail Problem { word: words[1] }
+        }
+        total += words.length()
+    }
+    total
+}
+
+/// The longest word, which a function of the program makes and returns
+/// with its error: the error a `?` passes on may be in the region that word
+/// is in, and so the word stays on the heap.
+fn longest(file: String): String ! fs.FsError {
+    let text = fs.readText(file)?
+    var best = ""
+    for word in text.split(" ") {
+        if word.length() > best.length() {
+            best = word
+        }
+    }
+    best.toUpper()
+}
+
+fn shout(file: String): Int ! fs.FsError {
+    let loud = longest(file)?
+    loud.length()
+}
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        let junk = "junk {i} {i} {i} {i}"
+        total += junk.length()
+    }
+    total
+}
+
+fn main(): !fs.FsError {
+    let dir = fs.createTemporaryDirectory()?
+    let first = path.join(dir, "first.txt")
+    let second = path.join(dir, "second.txt")
+    fs.writeText(first, "first line of words")?
+    fs.writeText(second, "two words")?
+    let a = counted(first)?
+    let b = turns(second)?
+    let c = match whole(first) {
+        ok(length) => "{length}"
+        err(problem) => problem.word
+    }
+    let d = match part(first) {
+        ok(length) => "{length}"
+        err(problem) => problem.word
+    }
+    let e = match found([second, first, second]) {
+        ok(total) => "{total}"
+        err(problem) => problem.word
+    }
+    let f = shout(first)?
+    let quiet = noise()
+    fs.remove(dir, recursive: true)?
+    console.println("{a} {b} {c}, {d}, {e} {f} {quiet}")
+}
+
+// expect-stdout: 19 27 first line of words, first, line 5 3560
+// expect-optimization: 18:16 region goes in a region of `counted`
+// expect-optimization: 26:20 region goes in the region of a turn of the loop at line 25
+// expect-optimization: 34:16 region stays on the heap: `whole` returns it
+// expect-optimization: 43:16 region goes in a region of `part`
+// expect-optimization: 45:30 region stays on the heap: `part` returns it
+// expect-optimization: 54:20 region goes in the region of a turn of the loop at line 53
+// expect-optimization: 55:21 region stays on the heap: `found` returns it
+// expect-optimization: 68:16 region goes in a region of `longest`
+// expect-optimization: 75:5 region stays on the heap: `longest` returns it, and `main` passes on the error of `longest`, which `longest` may make in the region of what it returns
