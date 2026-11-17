@@ -1030,7 +1030,7 @@ fn Run.index(
     }
     let position = self.integer(scope, key, at)?
     let items = if kind == "String" {
-        textNative.split(target.to[String]() ?? "", "").map((c) { __reflect.valueOf(c) })
+        textNative.split(target.to[String]() ?? "", "", 0).map((c) { __reflect.valueOf(c) })
     } else {
         target.elements()
     }

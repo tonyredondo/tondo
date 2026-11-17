@@ -31,17 +31,28 @@ fn strings<'a>(parts: impl ExactSizeIterator<Item = &'a str> + Clone, region: *m
 }
 
 /// The pieces between each `separator`; the characters, when it is empty.
-/// In `region` when it is not null.
+/// At most `limit` of them when it is above 0, the last with the rest of
+/// the text. In `region` when it is not null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_split(
     s: *const Str,
     separator: *const Str,
+    limit: i64,
     region: *mut Region,
 ) -> *mut ArrayHeader {
     let (s, separator) = (text(s), text(separator));
+    let limit = usize::try_from(limit).ok().filter(|&limit| limit > 0);
     if separator.is_empty() {
-        let chars: Vec<String> = s.chars().map(String::from).collect();
-        return strings(chars.iter().map(String::as_str), region);
+        let mut chars: Vec<&str> = s.char_indices().map(|(at, c)| &s[at..at + c.len_utf8()]).collect();
+        if let Some(limit) = limit.filter(|&limit| chars.len() > limit) {
+            let rest = chars[limit - 1..].iter().map(|c| c.len()).sum::<usize>();
+            chars.truncate(limit - 1);
+            chars.push(&s[s.len() - rest..]);
+        }
+        return strings(chars.into_iter(), region);
+    }
+    if let Some(limit) = limit {
+        return strings(s.splitn(limit, separator).collect::<Vec<&str>>().into_iter(), region);
     }
     if !region.is_null() {
         return strings(s.split(separator).collect::<Vec<&str>>().into_iter(), region);

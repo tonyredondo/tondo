@@ -113,7 +113,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let builder = self.e.fb.ins().stack_addr(POINTER, slot, 0);
                 let size = self.e.element_size(element);
                 let display = self.e.glue_address(self.e.display_glue(element), element);
-                self.e.call_rt(Rt::SbJoin, &[builder, array, size, display, separator]);
+                let region = self.region_or_null();
+                self.e.call_rt(Rt::SbJoin, &[builder, array, size, display, separator, region]);
                 Val::Scalar(self.e.call_rt(Rt::SbFinish, &[builder]).unwrap())
             }
             ArrayOp::NativeOrder | ArrayOp::SortedNatively => {

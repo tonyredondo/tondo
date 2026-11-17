@@ -1349,8 +1349,10 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
                 None
             }
             Rvalue::Call(Callee::Std(_), _) if types.needs_drop(body.place_ty(types, place)) => RUNTIME,
-            // An array or a text the runtime makes, as `join` or `concat`
-            // does; not an element read out of one.
+            // The text `join` makes, which its builder makes in a region.
+            Rvalue::ArrayOp(crate::hir::ArrayOp::Join, ..) => None,
+            // An array the runtime makes, as `concat` does; not an element
+            // read out of one.
             Rvalue::ArrayOp(op, ..)
                 if *op != crate::hir::ArrayOp::Get && types.needs_drop(body.place_ty(types, place)) =>
             {
@@ -1499,6 +1501,7 @@ impl Flow {
                         // A text operation that makes a new text gives one
                         // that holds none of what it is given.
                         Rvalue::StrOp(op, ..) if makes_text(*op) => continue,
+                        Rvalue::ArrayOp(crate::hir::ArrayOp::Join, ..) => continue,
                         // A native that reads what it is given gives a value
                         // the runtime made, which holds none of it: one that
                         // reads arrays says so of all it gives; one that

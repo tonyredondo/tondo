@@ -158,10 +158,16 @@ pub unsafe extern "C" fn tondo_rt_sb_join(
     size: usize,
     display: DisplayGlue,
     separator: *const Str,
+    region: *mut regions::Region,
 ) {
     unsafe {
         let separator = str_bytes(separator);
-        b.write(Builder::new((*a).len * (8 + separator.len())));
+        let room = (*a).len * (8 + separator.len());
+        // In the region the analysis chose for the text, when it chose one.
+        match region.is_null() {
+            true => b.write(Builder::new(room)),
+            false => tondo_rt_sb_start_region(b, room, region),
+        }
         for k in 0..(*a).len {
             if k > 0 {
                 (*b).extend(separator);

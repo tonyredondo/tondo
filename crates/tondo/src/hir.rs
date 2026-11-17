@@ -1533,7 +1533,7 @@ pub const NATIVES: &[Native] = {
         meta("request", &[], String, "tondo_rt_meta_request"),
         meta("respond", &[String], Unit, "tondo_rt_meta_respond"),
         meta("bytes", &[String], Bytes, "tondo_rt_meta_bytes"),
-        text("split", &[String, String], Strings, "tondo_rt_text_split"),
+        text("split", &[String, String, Int], Strings, "tondo_rt_text_split"),
         text("lines", &[String], Strings, "tondo_rt_text_lines"),
         text("words", &[String], Strings, "tondo_rt_text_words"),
         text("repeat", &[String, Int], String, "tondo_rt_text_repeat"),

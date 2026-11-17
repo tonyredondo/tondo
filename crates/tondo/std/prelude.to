@@ -299,18 +299,13 @@ impl Ordered for Float {
 /// With a `limit`, at most that many, the last with the rest of the text:
 /// `"a=b=c".split("=", limit: 2)` is `["a", "b=c"]`.
 pub fn String.split(self, separator: String, limit: Int? = none): Array[String] {
-    let pieces = textNative.split(self, separator)
+    // At most `limit` pieces, 0 for any number.
     let most = match limit {
         some(most) if most < 1 => 1
         some(most) => most
-        none => return pieces
+        none => 0
     }
-    if pieces.length() <= most {
-        return pieces
-    }
-    var kept = pieces.slice(0, most - 1) ?? []
-    kept.push((pieces.slice(most - 1, pieces.length()) ?? []).join(separator))
-    kept
+    textNative.split(self, separator, most)
 }
 
 /// The text before the first `separator` and the text after it, or `none`

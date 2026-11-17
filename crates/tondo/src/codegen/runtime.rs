@@ -374,7 +374,7 @@ impl Rt {
             Rt::SbStart => ("tondo_rt_sb_start", &[I64, I64], &[]),
             Rt::SbStartIn => ("tondo_rt_sb_start_in", &[I64, I64, I64, I64], &[]),
             Rt::SbStartRegion => ("tondo_rt_sb_start_region", &[I64, I64, I64], &[]),
-            Rt::SbJoin => ("tondo_rt_sb_join", &[I64, I64, I64, I64, I64], &[]),
+            Rt::SbJoin => ("tondo_rt_sb_join", &[I64, I64, I64, I64, I64, I64], &[]),
             Rt::SbAdopt => ("tondo_rt_sb_adopt", &[I64, I64, I64], &[I8]),
             Rt::StrAppend => ("tondo_rt_str_append", &[I64, I64], &[I64]),
             Rt::StrAppendInt => ("tondo_rt_str_append_int", &[I64, I64], &[I64]),

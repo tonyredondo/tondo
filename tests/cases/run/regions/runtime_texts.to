@@ -1,4 +1,4 @@
-// Texts the runtime's operations make, as `toLowerAscii` and `replace` do,
+// Texts the runtime's operations make, as `toLowerAscii`, `replace` and `join` do,
 // which regions take as they take what an interpolation makes, sent out of
 // the scope that made them by each way of the matrix: stored in a field, an
 // element, a variable the next turn writes over, a map; written through a
@@ -37,7 +37,7 @@ fn stored(): String {
     var notes: Array[Note] = [Note { text: "" }, Note { text: "" }]
     for i in 0..3 {
         note.text = "field {i}".toLowerAscii()
-        rows[i % 2] = "element {i}".replace("element", "element")
+        rows[i % 2] = ["element", "{i}"].join(" ")
         last = long(i)
         byKey[i] = "keyed {i}".toLowerAscii()
         for mut lent in notes {
