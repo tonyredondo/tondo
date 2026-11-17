@@ -1866,12 +1866,16 @@ pub fn optimizations(
                     true => format!("{}, in one copy of the code; another keeps the check", remark.text),
                     false => remark.text.clone(),
                 };
-                // The code that keeps it, as the program writes it: the call
-                // that brought it, for the standard library's code.
+                // The code that keeps it, as the program writes it: for the
+                // standard library's code, the call that brought it, of the
+                // copy it is in when its scope is known.
                 let by =
-                    remark.by.filter(|by| *by != crate::source::Span::default()).and_then(|by| match library(by) {
-                        false => Some(by),
-                        true => copied_into(body, by, &library).first().map(|(call, _)| *call),
+                    remark.by.filter(|(by, _)| *by != crate::source::Span::default()).and_then(|(by, scope)| {
+                        match (library(by), scope) {
+                            (false, _) => Some(by),
+                            (true, Some(scope)) => called_for(body, scope, &library),
+                            (true, None) => copied_into(body, by, &library).first().map(|(call, _)| *call),
+                        }
                     });
                 if let Some(by) = by {
                     let (_, line, column) = sources.position(by.start);
@@ -1906,6 +1910,24 @@ pub fn optimizations(
         }
     }
     Ok(grouped)
+}
+
+/// The call of the program's code that the inlined scope `scope` is a copy
+/// for, through the copies of the library's code it is in.
+fn called_for(
+    body: &crate::mir::Body,
+    scope: u32,
+    library: &impl Fn(crate::source::Span) -> bool,
+) -> Option<crate::source::Span> {
+    let mut scope = Some(scope);
+    while let Some(at) = scope {
+        let inlined = body.inlined.get(at as usize)?;
+        if !library(inlined.call) {
+            return Some(inlined.call);
+        }
+        scope = inlined.parent;
+    }
+    None
 }
 
 /// The program's calls whose inlined code holds a statement at `span`, of

@@ -49,7 +49,7 @@ pub fn remark_by(
     body: &mut Body,
     span: crate::source::Span,
     kind: &'static str,
-    by: Option<crate::source::Span>,
+    by: Option<crate::mir::By>,
     text: impl FnOnce() -> String,
 ) {
     if remarking() && !(span.start == 0 && span.end == 0) {

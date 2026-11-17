@@ -84,7 +84,7 @@ pub struct Verdict {
     pub own: bool,
     pub text: String,
     /// The code that keeps the value, which the remark names after it.
-    pub by: Option<Span>,
+    pub by: Option<crate::mir::By>,
 }
 
 /// What a call of a function of the program does with its result, for
@@ -177,7 +177,8 @@ pub fn regions(
                     (false, format!("{what}stays on the heap: {why}"), Some(at).filter(|at| *at != Span::default()))
                 }
             };
-            let by = by.filter(|by| *by != span);
+            // A fate names its code by place alone: the remark looks for its copy.
+            let by = by.filter(|by| *by != span).map(|by| (by, None));
             verdicts.push(Verdict { function: body.name.clone(), span, region, by_call, own, text, by });
         }
         // What a region holds must be the region's too, as nothing lets go
@@ -191,7 +192,7 @@ pub fn regions(
             verdict.by_call = false;
             verdict.own = false;
             verdict.text = format!("{what}stays on the heap: {why}");
-            verdict.by = Some(by).filter(|by| *by != verdict.span);
+            verdict.by = Some(by).filter(|(by, _)| *by != verdict.span);
         }
         verdicts
     });
@@ -228,7 +229,7 @@ pub fn regions(
                     verdict.by = *by;
                 }
             }
-            verdict.by = verdict.by.filter(|by| *by != Span::default() && *by != verdict.span);
+            verdict.by = verdict.by.filter(|(by, _)| *by != Span::default() && *by != verdict.span);
         }
     }
     if crate::mir_text::remarking() {
@@ -545,7 +546,7 @@ enum Outcome {
     /// On the heap, as it outlives a turn of the loop written there.
     Outlives(Span),
     /// On the heap, as no region takes it: why, and the code that keeps it.
-    Heap(String, Option<Span>),
+    Heap(String, Option<crate::mir::By>),
 }
 
 /// Where a value a function lets go may go: its loops, the innermost
@@ -959,7 +960,7 @@ fn holding(
     sites: &[Site],
     region: &mut [bool],
     call_made: &dyn Fn((u32, u32), usize) -> bool,
-) -> Vec<(usize, (String, Span))> {
+) -> Vec<(usize, (String, crate::mir::By))> {
     let counted = |place: &Place| match place.path.is_empty() {
         true => flow.counted[place.local.0 as usize],
         false => types.needs_drop(body.place_ty(types, place)),
@@ -1021,7 +1022,10 @@ fn holding(
             // element or a field written, or what grows it; and an array
             // that grows here holds what it held before, which a region
             // must have made too.
-            let mut outside = (site.what.starts_with("grows") && !made[local.0 as usize]).then_some(span);
+            // Where the code that keeps it is, with its inlined scope.
+            let scope = |block: u32| body.scopes.get(block as usize).copied().flatten();
+            let mut outside =
+                (site.what.starts_with("grows") && !made[local.0 as usize]).then_some((span, scope(site.at.0)));
             for &(at_statement, statement) in &storing {
                 if outside.is_some() {
                     break;
@@ -1032,7 +1036,7 @@ fn holding(
                     && is[lent.local.0 as usize]
                     && !lent.path.is_empty()
                 {
-                    outside = Some(span);
+                    outside = Some((span, scope(site.at.0)));
                     break;
                 }
                 let Statement::Assign(place, rvalue, by) = statement else { continue };
@@ -1058,7 +1062,7 @@ fn holding(
                         _ => false,
                     };
                 if deep {
-                    outside = Some(*by);
+                    outside = Some((*by, scope(at_statement.0)));
                     break;
                 }
                 let stored: Vec<&Operand> = match &**rvalue {
@@ -1083,7 +1087,7 @@ fn holding(
                     |operand| matches!(operand, Operand::Copy(from) if counted(from) && !made[from.local.0 as usize]),
                 );
                 if elsewhere.is_some() {
-                    outside = Some(*by);
+                    outside = Some((*by, scope(at_statement.0)));
                     break;
                 }
             }

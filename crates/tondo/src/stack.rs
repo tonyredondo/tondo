@@ -165,10 +165,13 @@ fn allocations(body: &Body, types: &Types) -> Vec<(crate::source::Span, String)>
     found
 }
 
+/// The code that keeps a value, when a statement does.
+type By = Option<crate::mir::By>;
+
 /// What `framed` finds: the locals made in the frame; while the MIR is to
 /// be written, why the others that could be are not; and, while remarks
 /// are asked for, what is made where, at the source that makes it.
-type Found = (Vec<Local>, Vec<String>, Vec<(crate::source::Span, &'static str, String, Option<crate::source::Span>)>);
+type Found = (Vec<Local>, Vec<String>, Vec<(crate::source::Span, &'static str, String, By)>);
 
 const COPIED: &str = "it is copied";
 const READ: &str = "it is read in a way that may keep it";
@@ -297,24 +300,25 @@ fn framed(body: &Body, index: usize, types: &Types, borrows: &[Vec<bool>]) -> Fo
     let mut kept: Vec<Option<&'static str>> = vec![None; count];
     // And the statement that keeps it, when it is one: the code a remark
     // names.
-    let mut kept_by: Vec<Option<crate::source::Span>> = vec![None; count];
-    let keep = |locals: Vec<Local>,
-                kept: &mut Vec<Option<&'static str>>,
-                kept_by: &mut Vec<Option<crate::source::Span>>,
-                why: &'static str,
-                by: Option<crate::source::Span>| {
-        for local in locals {
-            if told(&mut kept[local.0 as usize], why) {
-                kept_by[local.0 as usize] = by;
+    let mut kept_by: Vec<By> = vec![None; count];
+    let keep =
+        |locals: Vec<Local>, kept: &mut Vec<Option<&'static str>>, kept_by: &mut Vec<By>, why: &'static str, by: By| {
+            for local in locals {
+                if told(&mut kept[local.0 as usize], why) {
+                    kept_by[local.0 as usize] = by;
+                }
             }
-        }
-    };
+        };
     // Where each local is copied to, first, whose keeping says why.
     let mut copied: Vec<Option<Local>> = vec![None; count];
-    for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+    let statements = body.blocks.iter().enumerate().flat_map(|(block, data)| {
+        let scope = body.scopes.get(block).copied().flatten();
+        data.stmts.iter().map(move |statement| (statement, scope))
+    });
+    for (statement, scope) in statements {
         let why = keeping(statement);
         let by = match statement {
-            Statement::Assign(_, _, span) => Some(*span),
+            Statement::Assign(_, _, span) => Some((*span, scope)),
             _ => None,
         };
         if let Statement::Assign(to, rvalue, _) = statement

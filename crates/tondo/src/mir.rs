@@ -43,8 +43,12 @@ pub struct Remark {
     pub text: String,
     /// The code the remark is of, when another place than its own: the
     /// call that keeps a value, which the text names after it.
-    pub by: Option<Span>,
+    pub by: Option<By>,
 }
+
+/// The code a remark names, and the inlined scope it is in, so that the
+/// library's code copied in two places names the call of the copy it is in.
+pub type By = (Span, Option<u32>);
 
 /// A local or a path inside it.
 #[derive(Clone, Debug, PartialEq, Eq)]

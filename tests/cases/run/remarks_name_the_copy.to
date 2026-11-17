@@ -1,0 +1,15 @@
+// A text kept by the library's code copied twice into one function: the
+// remark names the call of the copy that keeps it, not the first copy.
+
+import std.console
+
+fn main() {
+    let first = "First {1}".toLower()
+    let shown = "Second {2}"
+    let second = shown.toLower()
+    console.println("{first} {second} {shown}")
+}
+
+// expect-optimization: 8:17 frame `shown.toLower()` at 9:18
+
+// expect-stdout: first 1 second 2 Second 2
