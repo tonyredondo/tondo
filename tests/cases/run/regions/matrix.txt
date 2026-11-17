@@ -16,7 +16,7 @@
 # runs is run by the toolchain's own tests, named from the repository's
 # root, as crates/tondo/tests/testing.rs, which run `tondo` with the check.
 
-Statement::Assign             cases/run/regions/stores.to cases/run/regions/loans.to cases/run/regions/texts.to cases/run/regions/exits.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to cases/run/regions/runtime_texts_system.to cases/run/regions/runtime_texts_library.to cases/run/regions/errors.to
+Statement::Assign             cases/run/regions/stores.to cases/run/regions/loans.to cases/run/regions/texts.to cases/run/regions/exits.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to cases/run/regions/runtime_texts_system.to cases/run/regions/runtime_texts_library.to cases/run/regions/errors.to cases/run/regions/runtime_arrays.to
 Statement::Retain             - counts a reference
 Statement::Release            - counts a reference
 Statement::DeferPush          cases/run/regions/defers.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to
@@ -33,7 +33,7 @@ Rvalue::Unary                 - gives a number or a Bool
 Rvalue::Binary                - gives a number or a Bool
 Rvalue::Increment             - gives a number
 Rvalue::Exact                 - gives a number
-Rvalue::Call                  cases/run/regions/calls.to cases/run/regions/contexts.to cases/run/regions/natives_codec.to cases/run/regions/texts.to cases/run/regions/parts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to cases/run/regions/runtime_texts_system.to cases/run/regions/runtime_texts_library.to cases/run/regions/errors.to
+Rvalue::Call                  cases/run/regions/calls.to cases/run/regions/contexts.to cases/run/regions/natives_codec.to cases/run/regions/texts.to cases/run/regions/parts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to cases/run/regions/runtime_texts_system.to cases/run/regions/runtime_texts_library.to cases/run/regions/errors.to cases/run/regions/runtime_arrays.to
 Rvalue::FnValue               - gives a function's address
 Rvalue::ExternFn              - gives a C function's address
 Rvalue::Callback              - gives a C function's address
@@ -41,10 +41,10 @@ Rvalue::Layout                - gives a size
 Rvalue::Reflect               cases/run/regions/erased.to cases/run/regions/natives_formats.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to
 Rvalue::Fixed                 - copies the elements of an array of C's types, which hold no value
 Rvalue::CallIndirect          cases/run/regions/closures.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to
-Rvalue::Erase                 cases/run/regions/closures.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to
-Rvalue::Spawn                 cases/run/regions/tasks.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to
+Rvalue::Erase                 cases/run/regions/closures.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to cases/run/regions/runtime_arrays.to
+Rvalue::Spawn                 cases/run/regions/tasks.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_arrays.to
 Rvalue::TestMembers           - gives the runner a suite's functions, which hold no value
-Rvalue::TaskOp                cases/run/regions/tasks.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to cases/run/regions/runtime_texts_system.to cases/run/regions/runtime_texts_library.to
+Rvalue::TaskOp                cases/run/regions/tasks.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to cases/run/regions/runtime_texts_system.to cases/run/regions/runtime_texts_library.to cases/run/regions/runtime_arrays.to
 Rvalue::Select                cases/run/regions/tasks.to
 Rvalue::Cancelled             - gives a Bool
 Rvalue::Unwinding             - gives a Bool
@@ -54,11 +54,11 @@ Rvalue::CallOsr               - live builds only, which have no regions
 Rvalue::OsrPoint              - live builds only, which have no regions
 Rvalue::Concat                cases/run/regions/texts.to cases/run/regions/exits.to cases/run/regions/runtime_texts.to
 Rvalue::Aggregate             cases/run/regions/stores.to
-Rvalue::Variant               cases/run/regions/stores.to cases/run/regions/errors.to
+Rvalue::Variant               cases/run/regions/stores.to cases/run/regions/errors.to cases/run/regions/runtime_arrays.to
 Rvalue::Discriminant          - gives a variant's index
 Rvalue::Convert               - gives a number
 Rvalue::Array                 cases/run/regions/stores.to cases/run/regions/arrays.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_library.to
-Rvalue::ArrayOp               cases/run/regions/arrays.to cases/run/regions/texts.to cases/run/regions/parts.to cases/run/regions/runtime_texts.to
+Rvalue::ArrayOp               cases/run/regions/arrays.to cases/run/regions/texts.to cases/run/regions/parts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_arrays.to
 Rvalue::Slice                 cases/run/regions/arrays.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to
 Rvalue::AssignSlice           cases/run/regions/arrays.to
 Rvalue::CheckRegion           - checks bounds
@@ -66,7 +66,7 @@ Rvalue::Length                - gives a number
 Rvalue::StrOp                 - makes or reads a text, which holds no value
 Rvalue::Pointer               cases/run/regions/natives_system.to
 Rvalue::MapOp                 cases/run/regions/arrays.to
-Rvalue::Mutate                cases/run/regions/stores.to cases/run/regions/arrays.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_system.to
+Rvalue::Mutate                cases/run/regions/stores.to cases/run/regions/arrays.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_system.to cases/run/regions/runtime_arrays.to
 
 native tondo_rt_base64_encode             cases/run/regions/natives_codec.to
 native tondo_rt_cbor_field                cases/run/regions/natives_formats.to

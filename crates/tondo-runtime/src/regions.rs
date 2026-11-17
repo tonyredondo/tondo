@@ -73,6 +73,11 @@ impl Chunk {
 /// The usual size of a chunk, header included; a value larger than its
 /// room takes a chunk of its own.
 const CHUNK: usize = 32 * 1024;
+
+/// The most room `Array.withCapacity` takes in a region: a larger hint,
+/// which the heap may refuse and so leave the array with no room, which
+/// a region cannot, stays on the heap.
+pub(crate) const REGION_ROOM_MAX: usize = 1 << 20;
 const CHUNK_HEADER: usize = std::mem::size_of::<Chunk>();
 /// The chunks of the usual size kept for the next region, 32 MiB.
 const KEPT: usize = 1024;

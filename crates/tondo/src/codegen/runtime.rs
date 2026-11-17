@@ -335,9 +335,10 @@ pub(super) enum Rt {
 impl Rt {
     /// Whether it makes what it gives in the region of the statement it
     /// builds, the last parameter its signature lists, as
-    /// `StdFn::makes_in_region` says: `call_rt` passes it. The ways of
-    /// running a command share one function of the runtime with `text()`
-    /// and `lines()`, and so its region.
+    /// `StdFn::makes_in_region` and `ArrayOp::makes_in_region` say:
+    /// `call_rt` passes it. The ways of running a command share one
+    /// function of the runtime with `text()` and `lines()`, and so its
+    /// region.
     pub(super) fn makes_in_region(self) -> bool {
         use crate::hir::{PathFn, StdFn};
         match self {
@@ -349,6 +350,13 @@ impl Rt {
             Rt::PathPart => StdFn::Path(PathFn::FileName).makes_in_region(),
             Rt::PathJoin => StdFn::Path(PathFn::Join).makes_in_region(),
             Rt::ConsoleReadLine => StdFn::ConsoleReadLine.makes_in_region(),
+            // The arrays the runtime makes (`ArrayOp::makes_in_region`).
+            Rt::ArrayReserved
+            | Rt::ArraySliceChecked
+            | Rt::ArrayConcat
+            | Rt::ArrayRepeat
+            | Rt::ArraySortedInts
+            | Rt::ArraySortedStrings => true,
             _ => false,
         }
     }
@@ -490,7 +498,7 @@ impl Rt {
             Rt::MetaStep => ("tondo_rt_meta_step", &[], &[]),
             Rt::ArrayNew => ("tondo_rt_array_new", &[I64, I64], &[I64]),
             Rt::ArrayNewIn => ("tondo_rt_array_new_in", &[I64, I64, I64], &[I64]),
-            Rt::ArrayReserved => ("tondo_rt_array_reserved", &[I64, I64], &[I64]),
+            Rt::ArrayReserved => ("tondo_rt_array_reserved", &[I64, I64, I64], &[I64]),
             Rt::ArrayReserve => ("tondo_rt_array_reserve", &[I64, I64, I64, I64, I64], &[]),
             Rt::ArrayReserveIn => ("tondo_rt_array_reserve_in", &[I64, I64, I64, I64, I64, I64], &[]),
             Rt::ArrayRetain => ("tondo_rt_array_retain", &[I64], &[]),
@@ -500,13 +508,13 @@ impl Rt {
             Rt::ArrayPushIn => ("tondo_rt_array_push_in", &[I64, I64, I64, I64, I64, I64], &[]),
             Rt::ArrayPop => ("tondo_rt_array_pop", &[I64, I64, I64, I64, I64], &[I8]),
             Rt::ArraySlice => ("tondo_rt_array_slice", &[I64, I64, I64, I64, I8, I64, I8, I64, I64], &[I64]),
-            Rt::ArraySliceChecked => ("tondo_rt_array_slice_checked", &[I64, I64, I64, I64, I64], &[I64]),
-            Rt::ArrayConcat => ("tondo_rt_array_concat", &[I64, I64, I64, I64, I64], &[I64]),
-            Rt::ArraySortedInts => ("tondo_rt_array_sorted_ints", &[I64], &[I64]),
+            Rt::ArraySliceChecked => ("tondo_rt_array_slice_checked", &[I64, I64, I64, I64, I64, I64], &[I64]),
+            Rt::ArrayConcat => ("tondo_rt_array_concat", &[I64, I64, I64, I64, I64, I64], &[I64]),
+            Rt::ArraySortedInts => ("tondo_rt_array_sorted_ints", &[I64, I64], &[I64]),
             Rt::IntText => ("tondo_rt_int_text", &[I64], &[I64]),
             Rt::IntTextInto => ("tondo_rt_int_text_into", &[I64, I64], &[I64]),
-            Rt::ArraySortedStrings => ("tondo_rt_array_sorted_strings", &[I64], &[I64]),
-            Rt::ArrayRepeat => ("tondo_rt_array_repeat", &[I64, I64, I64, I64, I64], &[I64]),
+            Rt::ArraySortedStrings => ("tondo_rt_array_sorted_strings", &[I64, I64], &[I64]),
+            Rt::ArrayRepeat => ("tondo_rt_array_repeat", &[I64, I64, I64, I64, I64, I64], &[I64]),
             Rt::ArrayEq => ("tondo_rt_array_eq", &[I64, I64, I64, I64], &[I8]),
             Rt::BytesEq => ("tondo_rt_bytes_eq", &[I64, I64], &[I8]),
             Rt::ArrayContains => ("tondo_rt_array_contains", &[I64, I64, I64, I64], &[I8]),

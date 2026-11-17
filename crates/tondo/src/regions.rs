@@ -994,7 +994,8 @@ fn holding(
                 | Rvalue::Call(Callee::Fn(_), _)
                 | Rvalue::Aggregate(..)
                 | Rvalue::Variant(..)
-                | Rvalue::Array(..) => storing.push((at, statement)),
+                | Rvalue::Array(..)
+                | Rvalue::ArrayOp(..) => storing.push((at, statement)),
                 _ if place.path.len() > 1 => storing.push((at, statement)),
                 _ => {}
             },
@@ -1083,6 +1084,20 @@ fn holding(
                         if place.path.is_empty() && place.local == local && at_statement == site.at =>
                     {
                         operands.iter().collect()
+                    }
+                    // The arrays whose elements an array the runtime makes
+                    // takes, when they count: the region must have made them.
+                    Rvalue::ArrayOp(op, operands, _)
+                        if op.makes_in_region() && place.local == local && at_statement == site.at =>
+                    {
+                        let counts = |operand: &&Operand| match operand {
+                            Operand::Copy(from) => match types.kind(types.repr(body.place_ty(types, from))) {
+                                TyKind::Array(element) | TyKind::Deque(element) => types.needs_drop(*element),
+                                _ => false,
+                            },
+                            Operand::Const(_) => false,
+                        };
+                        operands.iter().filter(counts).collect()
                     }
                     Rvalue::Use(operand) if !place.path.is_empty() && is[place.local.0 as usize] => vec![operand],
                     Rvalue::Aggregate(operands) | Rvalue::Variant(_, operands) | Rvalue::Array(operands, _)
@@ -1416,8 +1431,13 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
             Rvalue::Call(Callee::Std(_), _) if types.needs_drop(body.place_ty(types, place)) => RUNTIME,
             // The text `join` makes, which its builder makes in a region.
             Rvalue::ArrayOp(crate::hir::ArrayOp::Join, ..) => None,
-            // An array the runtime makes, as `concat` does; not an element
-            // read out of one.
+            // An empty array, the program's data, which the first change
+            // makes one of its own, where its growth says.
+            Rvalue::ArrayOp(crate::hir::ArrayOp::New, ..) => continue,
+            // An array the runtime makes, as `concat` does, in the region it
+            // is given.
+            Rvalue::ArrayOp(op, ..) if op.makes_in_region() => None,
+            // Not an element read out of one.
             Rvalue::ArrayOp(op, ..)
                 if *op != crate::hir::ArrayOp::Get && types.needs_drop(body.place_ty(types, place)) =>
             {
@@ -1538,6 +1558,17 @@ impl Flow {
                     let (into, part) = (place.local, !place.path.is_empty());
                     let variant = match &**rvalue {
                         Rvalue::Variant(variant, _) => Some(*variant),
+                        // The array the runtime makes is the success of its
+                        // result, when it has one, as a slice's does.
+                        Rvalue::ArrayOp(op, ..)
+                            if op.makes_in_region()
+                                && matches!(
+                                    types.kind(types.repr(body.place_ty(types, place))),
+                                    TyKind::Result(..)
+                                ) =>
+                        {
+                            Some(0)
+                        }
                         _ => None,
                     };
                     let (how, from) = match &**rvalue {
@@ -1596,6 +1627,13 @@ impl Flow {
                         // that holds none of what it is given.
                         Rvalue::StrOp(op, ..) if makes_text(*op) => continue,
                         Rvalue::ArrayOp(crate::hir::ArrayOp::Join, ..) => continue,
+                        // A new array of the elements of those it is given,
+                        // which holds none of them but what they hold.
+                        Rvalue::ArrayOp(op, operands, _) if op.makes_in_region() => {
+                            let elements =
+                                copies(operands).into_iter().map(|(local, _, variant)| (local, true, variant));
+                            (How::Made, elements.collect())
+                        }
                         Rvalue::Call(Callee::Std(function), _) if function.makes_in_region() => continue,
                         Rvalue::Call(Callee::Std(crate::hir::StdFn::Number(op)), _) if numbers_text(*op) => continue,
                         // A native that reads what it is given gives a value
@@ -1772,6 +1810,16 @@ impl Flow {
                             called[place.local.0 as usize] = true;
                             let ty = body.place_ty(types, place);
                             succeeds[place.local.0 as usize] = matches!(types.kind(types.repr(ty)), TyKind::Result(..));
+                        }
+                        // An array the runtime makes as the success of a
+                        // result, as a slice's, which is a part of it, followed
+                        // as a call's result is: its error, out of bounds,
+                        // holds none of it.
+                        Rvalue::ArrayOp(op, ..) if place.path.is_empty() && op.makes_in_region() => {
+                            let ty = body.place_ty(types, place);
+                            let result = matches!(types.kind(types.repr(ty)), TyKind::Result(..));
+                            called[place.local.0 as usize] |= result;
+                            succeeds[place.local.0 as usize] = result;
                         }
                         Rvalue::FnValue(id)
                         | Rvalue::Callback(id, _)

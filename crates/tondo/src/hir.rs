@@ -615,6 +615,18 @@ pub enum ArrayOp {
     SortedNatively,
 }
 
+impl ArrayOp {
+    /// Whether it makes a new array, whose elements are those of the arrays
+    /// it is given, in the region the analysis chose for it, which codegen
+    /// passes after its arguments, or on the heap when it passes null.
+    pub fn makes_in_region(self) -> bool {
+        matches!(
+            self,
+            ArrayOp::WithCapacity | ArrayOp::SliceChecked | ArrayOp::Concat | ArrayOp::Repeat | ArrayOp::SortedNatively
+        )
+    }
+}
+
 /// How `LockSync` takes a lock.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum LockMode {

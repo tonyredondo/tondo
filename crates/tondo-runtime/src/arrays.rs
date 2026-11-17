@@ -176,8 +176,17 @@ pub extern "C" fn tondo_rt_array_new(size: usize, len: usize) -> *mut ArrayHeade
 /// or for none when that room cannot be had, as the capacity is a hint and
 /// storage grows on demand.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_array_reserved(size: usize, capacity: usize) -> *mut ArrayHeader {
+pub extern "C" fn tondo_rt_array_reserved(
+    size: usize,
+    capacity: usize,
+    region: *mut super::regions::Region,
+) -> *mut ArrayHeader {
     let room = size.checked_mul(capacity).and_then(|bytes| bytes.checked_add(ARRAY_HEADER));
+    // In the region when the room is no more than a region gives at once:
+    // a hint larger than that the heap may refuse, which leaves no room.
+    if !region.is_null() && room.is_some_and(|bytes| bytes <= super::regions::REGION_ROOM_MAX) {
+        return unsafe { array_in(region, size, 0, capacity) };
+    }
     room.and_then(|bytes| Layout::from_size_align(bytes, 8).ok())
         .and_then(|layout| try_array_alloc(layout, 0, capacity))
         .unwrap_or_else(|| array_alloc(size, 0, 0))
@@ -268,7 +277,36 @@ pub(crate) unsafe fn array_copy(
     count: usize,
     cap: usize,
 ) -> *mut ArrayHeader {
-    let new = array_alloc(size, count, cap);
+    unsafe { array_copy_in(std::ptr::null_mut(), a, size, retain, from, step, count, cap) }
+}
+
+/// A new array of `len` elements and room for `cap`, for the caller to
+/// write, in `region`, or on the heap when it is null.
+pub(crate) unsafe fn array_made(
+    region: *mut super::regions::Region,
+    size: usize,
+    len: usize,
+    cap: usize,
+) -> *mut ArrayHeader {
+    match region.is_null() {
+        true => array_alloc(size, len, cap),
+        false => unsafe { array_in(region, size, len, cap) },
+    }
+}
+
+/// `array_copy`, in `region` when it is not null.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn array_copy_in(
+    region: *mut super::regions::Region,
+    a: *mut ArrayHeader,
+    size: usize,
+    retain: Option<Glue>,
+    from: i64,
+    step: i64,
+    count: usize,
+    cap: usize,
+) -> *mut ArrayHeader {
+    let new = unsafe { array_made(region, size, count, cap) };
     for k in 0..count {
         unsafe {
             let index = (from + k as i64 * step) as usize;
@@ -1004,22 +1042,27 @@ pub unsafe extern "C" fn tondo_rt_array_slice_checked(
     retain: Option<Glue>,
     start: i64,
     end: i64,
+    region: *mut super::regions::Region,
 ) -> *mut ArrayHeader {
     let len = unsafe { (*a).len } as i64;
     if start < 0 || start > end || end > len {
         return std::ptr::null_mut();
     }
-    unsafe { array_copy(a, size, retain, start, 1, (end - start) as usize, (end - start) as usize) }
+    let count = (end - start) as usize;
+    unsafe { array_copy_in(region, a, size, retain, start, 1, count, count) }
 }
 
 /// `Array[Int].sorted()`: the integers in order, in a new array. Equal
 /// integers cannot be told apart, so the sort need not keep them as they
 /// were, and pattern-defeating quicksort is faster than a merge.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_array_sorted_ints(a: *mut ArrayHeader) -> *mut ArrayHeader {
+pub unsafe extern "C" fn tondo_rt_array_sorted_ints(
+    a: *mut ArrayHeader,
+    region: *mut super::regions::Region,
+) -> *mut ArrayHeader {
     unsafe {
         let len = (*a).len;
-        let new = array_copy(a, 8, None, 0, 1, len, len);
+        let new = array_copy_in(region, a, 8, None, 0, 1, len, len);
         std::slice::from_raw_parts_mut(element(new, 8, 0) as *mut i64, len).sort_unstable();
         new
     }
@@ -1028,10 +1071,13 @@ pub unsafe extern "C" fn tondo_rt_array_sorted_ints(a: *mut ArrayHeader) -> *mut
 /// `Array[String].sorted()`: the strings in order, in a new array that
 /// holds them too; equal strings cannot be told apart either.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_array_sorted_strings(a: *mut ArrayHeader) -> *mut ArrayHeader {
+pub unsafe extern "C" fn tondo_rt_array_sorted_strings(
+    a: *mut ArrayHeader,
+    region: *mut super::regions::Region,
+) -> *mut ArrayHeader {
     unsafe {
         let len = (*a).len;
-        let new = array_copy(a, 8, Some(tondo_rt_str_retain_glue), 0, 1, len, len);
+        let new = array_copy_in(region, a, 8, Some(tondo_rt_str_retain_glue), 0, 1, len, len);
         let strings = std::slice::from_raw_parts_mut(element(new, 8, 0) as *mut *const Str, len);
         strings.sort_unstable_by(|a, b| str_bytes(*a).cmp(str_bytes(*b)));
         new
@@ -1049,6 +1095,7 @@ pub unsafe extern "C" fn tondo_rt_array_concat(
     size: usize,
     retain: Option<Glue>,
     location: *const Str,
+    region: *mut super::regions::Region,
 ) -> *mut ArrayHeader {
     unsafe {
         let (la, lb) = ((*a).len, (*b).len);
@@ -1057,7 +1104,7 @@ pub unsafe extern "C" fn tondo_rt_array_concat(
             raise(5, &message, location);
             return std::ptr::null_mut();
         }
-        let new = array_copy(a, size, retain, 0, 1, la, la + lb);
+        let new = array_copy_in(region, a, size, retain, 0, 1, la, la + lb);
         for k in 0..lb {
             std::ptr::copy_nonoverlapping(element(b, size, k), element(new, size, la + k), size);
             if let Some(retain) = retain {
@@ -1076,6 +1123,7 @@ pub unsafe extern "C" fn tondo_rt_array_repeat(
     size: usize,
     retain: Option<Glue>,
     location: *const Str,
+    region: *mut super::regions::Region,
 ) -> *mut ArrayHeader {
     unsafe {
         if count < 0 {
@@ -1090,7 +1138,7 @@ pub unsafe extern "C" fn tondo_rt_array_repeat(
             return std::ptr::null_mut();
         }
         let total = total as usize;
-        let new = array_alloc(size, total, total);
+        let new = array_made(region, size, total, total);
         // The whole array at a time, then each element retained once.
         for copy in 0..count as usize {
             std::ptr::copy_nonoverlapping(element(a, size, 0), element(new, size, copy * len), len * size);

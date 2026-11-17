@@ -1,0 +1,135 @@
+// Arrays the runtime makes, `concat`, `slice`, `repeat`, `sorted` and
+// `withCapacity`, which regions take as they take a literal: of numbers
+// and bytes, whose elements count nothing, and of texts, whose elements a
+// region must have made too, else the array stays on the heap. Each sent
+// out of the scope that made it by each way of the matrix: stored in a
+// field, an element, a variable the next turn writes over; captured by a
+// closure; sent to a task; returned by a call, or kept by one; read with
+// `?`; in the region of a turn, of a function and of a caller.
+
+import std.collections
+import std.console
+import std.sync
+
+type Note = {
+    bytes: Array[Byte]
+    words: Array[String]
+}
+
+fn b(i: Int): Byte {
+    Byte(i % 256) ?? Byte(0u8)
+}
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        let junk = [i, i, i].concat([i, i])
+        total += junk.length()
+    }
+    total
+}
+
+/// The region of a turn: arrays of numbers, counted or stored past it.
+fn numbers(): String {
+    var note = Note { bytes: [], words: [] }
+    var rows: Array[Array[Int]] = [[], []]
+    var last: Array[Int] = []
+    var counted = 0
+    for i in 0..3 {
+        let head = [b(i), b(i + 1)]
+        let joined = head.concat([b(i + 2)])
+        counted += joined.length()
+        note.bytes = joined.concat([b(9)])
+        let ints = [i + 3, i, i + 1]
+        counted += ints.sorted().length() + ints.repeat(2).length()
+        rows[i % 2] = ints.sorted()
+        last = ints.slice(1, 3) ?? []
+        counted += (ints.slice(0, 2) ?? []).length()
+        var room = Array.withCapacity[Int](4) ?? []
+        room.push(i)
+        counted += room.length()
+    }
+    "{counted} {note.bytes} {rows} {last}"
+}
+
+/// The region of a turn: arrays of texts, of texts the turn made, and of
+/// texts made before the loop, which the region did not make.
+fn texts(): String {
+    let fixed = ["b", "a", "c"]
+    var kept: Array[Array[String]] = []
+    var counted = 0
+    var last: Array[String] = []
+    for i in 0..3 {
+        let made = ["z{i}", "y{i}", "x{i}"]
+        counted += made.sorted().length() + made.concat(made).length()
+        last = made.slice(0, 1) ?? []
+        counted += fixed.sorted().length() + fixed.repeat(2).length()
+        kept.push(fixed.concat(["{i}"]))
+    }
+    "{counted} {last} {kept}"
+}
+
+/// Captured, sent, given to a task, and returned.
+fn shared(): String {
+    var shown: Array[fn(): String] = []
+    let (sender, receiver) = channel[Array[Int]](8)
+    var group = Group[Int]()
+    for i in 0..3 {
+        let captured = [i, i + 1].concat([i + 2])
+        shown.push(() { "{captured}" })
+        sender.send([i].repeat(3))
+        let given = [i + 1, i].sorted()
+        group.add(spawn given.length())
+    }
+    sender.close()
+    var received: Array[Array[Int]] = []
+    for array in receiver {
+        received.push(array)
+    }
+    "{shown[2]()} {received} {group.wait().sorted()} {fresh(2)} {first([5, 6, 7]) ?? -1}"
+}
+
+/// Fresh, returned to the caller, which lets it go or keeps it.
+fn fresh(n: Int): Array[Int] {
+    [n, n].concat([n + 1])
+}
+
+/// Read with `?`, which returns the error and none of the slice.
+fn first(values: Array[Int]): Int ! collections.CollectionError {
+    let head = values.slice(0, 1)?
+    head.length()
+}
+
+fn main() {
+    let a = numbers()
+    let c = texts()
+    let d = shared()
+    var kept: Array[Array[Int]] = []
+    var counted = 0
+    for i in 0..3 {
+        kept.push(fresh(i))
+        counted += fresh(i).length()
+    }
+    let log = sync.Mutex(Array[Array[Int]]())
+    log.update((all) { all.push([1].concat([2])) })
+    let quiet = noise()
+    console.println(a)
+    console.println(c)
+    console.println(d)
+    console.println("{kept} {counted} {log.get()} {quiet}")
+}
+
+// expect-stdout: 45 [2, 3, 4, 9] [[2, 3, 5], [1, 2, 4]] [2, 3]
+// expect-stdout: 54 [z2] [[b, a, c, 0], [b, a, c, 1], [b, a, c, 2]]
+// expect-stdout: [2, 3, 4] [[0, 0, 0], [1, 1, 1], [2, 2, 2]] [2, 2, 2] [2, 2, 3] 1
+// expect-stdout: [[0, 0, 1], [1, 1, 2], [2, 2, 3]] 9 [[1, 2]] 1000
+// expect-optimization: 40:22 region goes in the region of a turn of the loop at line 38
+// expect-optimization: 42:22 region stays on the heap: it outlives a turn of the loop at line 38
+// expect-optimization: 44:45 region goes in the region of a turn of the loop at line 38
+// expect-optimization: 46:16 region stays on the heap: it outlives a turn of the loop at line 38
+// expect-optimization: 47:21 region goes in the region of a turn of the loop at line 38
+// expect-optimization: 48:20 region goes in the region of a turn of the loop at line 38
+// expect-optimization: 64:45 region stays on the heap: it holds a value that its region did not make
+// expect-optimization: 66:46 region goes in the region of a turn of the loop at line 62
+// expect-optimization: 80:21 region stays on the heap: it is sent
+// expect-optimization: 99:16 region goes in a region of `first`

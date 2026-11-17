@@ -7745,3 +7745,27 @@ program's code holds or reads it, or its function returns it; what the inliner m
 copies is no one's code. Each region line names the program's call of the copy it is of, as a
 remark's code that keeps a value does: the library's code copied twice into one function had both
 lines told at both calls.
+
+## What the runtime makes goes in the region it is given
+
+The texts and arrays that the runtime's operations make, `split`, `replace`, `toUpper`, the text
+of a number, `fs.readText`, a request's headers, a decoded document's fields, `concat`, a slice,
+`repeat`, `sorted`, `withCapacity`, are made in the region the analysis chose for them, which the
+compiler passes after their arguments, or on the heap when it passes none: a native or an
+operation says so by being in one list, `MAKING_IN_REGION`, `StdFn::makes_in_region` or
+`ArrayOp::makes_in_region`, and the signature it is declared with lists the region, which a test
+holds to the runtime's definition. Tony chose the texts first, then the arrays before the bounded
+arrays of the frame. What such an operation gives holds none of what it is given, so the analysis
+follows it as a new value; an array it makes holds the elements of those it is given, so one
+whose elements count stays on the heap unless a region made them too, by the rule that holds for
+a literal. A text or an array the runtime makes and keeps for good, as the versions of HTTP, or an
+empty array of the program's data, is no place of a region at all. An operation that runs on a
+thread of the pool while its task waits, as a socket's read, makes its value in that task's
+region, which the task touches meanwhile no more than its frame.
+
+A text read with `?` in a function that returns `T ! E` stayed on the heap, as the analysis took
+the error the `?` returns for the whole result: it now tells the variants of a union apart, so the
+error of an operation of the library takes none of its success, and an error made of the text,
+or of a part of it, still takes that out. The result of a function of the program passed on by a
+`?` stays on the heap, as that function may make its error in the region of its result, and the
+remark says so.
