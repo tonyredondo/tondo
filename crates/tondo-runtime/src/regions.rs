@@ -373,6 +373,19 @@ unsafe fn leave(region: *mut Region) {
     }
 }
 
+/// Whether `address` is in memory `region` holds, one of its chunks.
+pub(crate) fn holds(region: *mut Region, address: usize) -> bool {
+    let mut chunk = unsafe { (*region).chunks };
+    while !chunk.is_null() {
+        let (start, size) = (chunk as usize, unsafe { (*chunk).bytes() });
+        if (start..start + size).contains(&address) {
+            return true;
+        }
+        chunk = unsafe { (*chunk).next };
+    }
+    false
+}
+
 /// A new array of `len` elements, for the caller to write, in the region.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_array_new_in(region: *mut Region, size: usize, len: usize) -> *mut ArrayHeader {

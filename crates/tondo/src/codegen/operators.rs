@@ -222,9 +222,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let builder = self.e.fb.ins().stack_addr(POINTER, slot, 0);
         match taken {
             // The string goes on in its own block when nothing else holds
-            // it; else it is copied, and released once the text is built.
+            // it, in a region when it is that region's; else it is copied,
+            // and released once the text is built.
             Some((_, text)) => {
-                let adopted = self.e.call_rt(Rt::SbAdopt, &[builder, text, room]).unwrap();
+                let adopted = match region {
+                    Some(region) => self.e.call_rt(Rt::SbAdoptRegion, &[builder, text, room, region]).unwrap(),
+                    None => self.e.call_rt(Rt::SbAdopt, &[builder, text, room]).unwrap(),
+                };
                 released = Some((adopted, text));
             }
             None => match (framed, region) {

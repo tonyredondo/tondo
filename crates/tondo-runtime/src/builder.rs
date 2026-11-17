@@ -56,8 +56,23 @@ impl Builder {
     #[cold]
     fn grow(&mut self, more: usize) {
         let room = (self.len + more).max(self.room() * 2);
-        // A text a region takes grows in it, whatever its length: what the
-        // analysis puts in a region stays a region's.
+        // A text a region takes grows in it, its old rooms the region's
+        // until it ends; past a mebibyte it goes on on the heap, where it
+        // grows in its own block, so that a long text holds no more than
+        // the heap would.
+        if self.region().is_some() && HEADER + room > regions::REGION_ROOM_MAX {
+            let layout = str_layout(room);
+            let text = unsafe { alloc(layout) };
+            if text.is_null() {
+                handle_alloc_error(layout);
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping((self.text as *const u8).add(HEADER), text.add(HEADER), self.len);
+                (text as *mut Str).write(Str { rc: AtomicUsize::new(0), len: 0, cap: room });
+            }
+            self.text = text as *mut Str;
+            return;
+        }
         if let Some(region) = self.region() {
             let text = unsafe { regions::tondo_rt_region_alloc(region, HEADER + room) };
             unsafe {
@@ -365,6 +380,42 @@ pub unsafe extern "C" fn tondo_rt_sb_adopt(b: *mut Builder, s: *mut Str, room: u
             return 1;
         }
         b.write(Builder::new((*s).len + room));
+        (*b).extend(str_bytes(s));
+        0
+    }
+}
+
+/// Starts the builder at `b` with the string `s` and room for `room` bytes
+/// more, in `region`: in the string's own room when it is that region's
+/// and nothing else holds it, which the builder grows into the region from
+/// then on (1), or else in the region with a copy of it (0). `x = "{x}..."`
+/// so grows a text a region takes, its room doubling, the copies it leaves
+/// the region's until it ends.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_sb_adopt_region(
+    b: *mut Builder,
+    s: *mut Str,
+    room: usize,
+    region: *mut regions::Region,
+) -> u8 {
+    unsafe {
+        // A text on the heap that nothing else holds, as one grown past what
+        // a region takes, goes on in its block there.
+        if (*s).rc.load(Ordering::Acquire) == 1 {
+            return tondo_rt_sb_adopt(b, s, room);
+        }
+        let only = (*s).rc.load(Ordering::Acquire) == regions::LAST_IN_REGION;
+        if only && regions::holds(region, s as usize) {
+            forget_positions(s);
+            let len = (*s).len;
+            (*s).rc.store(region as usize | REGION_MARK, Ordering::Relaxed);
+            b.write(Builder { text: s, len });
+            if len + room > (*b).room() {
+                (*b).grow(room);
+            }
+            return 1;
+        }
+        tondo_rt_sb_start_region(b, (*s).len + room, region);
         (*b).extend(str_bytes(s));
         0
     }

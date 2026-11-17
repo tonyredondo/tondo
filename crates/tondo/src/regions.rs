@@ -1366,14 +1366,9 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
             Rvalue::Array(values, _) if values.iter().any(|value| matches!(value, Operand::Copy(_))) => None,
             Rvalue::MapOp(crate::hir::MapOp::New, ..) => MAPS,
             Rvalue::Slice(..) => Some("regions do not take slices yet"),
-            // A text interpolation makes, but `x = "{x}..."`, which grows
-            // `x`'s own on the heap when nothing else holds it.
-            Rvalue::Concat(pieces) if !body.framed.contains(&place.local) => {
-                match pieces.iter().any(|piece| matches!(piece, Piece::Taken(_))) {
-                    true => Some("a region does not grow a text in place yet"),
-                    false => None,
-                }
-            }
+            // A text interpolation makes, `x = "{x}..."` too, which grows
+            // `x`'s own text in the region, its room doubling.
+            Rvalue::Concat(_) if !body.framed.contains(&place.local) => None,
             Rvalue::Aggregate(operands) | Rvalue::Variant(_, operands) => {
                 let ty = body.place_ty(types, place);
                 let boxed = operands.iter().any(|operand| match operand {

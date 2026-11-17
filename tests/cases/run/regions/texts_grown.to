@@ -1,0 +1,86 @@
+// Texts that grow in place, `x = "{x}..."`, which regions take: the text
+// goes on in its own room, in the region, while nothing else holds it,
+// its room doubling as it grows, and is copied into the region when
+// something does. In the region of a function, of a turn and of a caller,
+// short and longer than the 64 bytes from which a text keeps the
+// positions of its characters, and read by index once grown.
+
+import std.console
+
+/// In the region of the function: one line grown for each turn.
+fn built(count: Int): Int {
+    var line = ""
+    for i in 0..count {
+        line = "{line}[{i}]"
+    }
+    line.length()
+}
+
+/// In the region of a turn: a row grown in each, let go of at its end.
+fn turns(): Int {
+    var total = 0
+    for i in 0..3 {
+        var row = "row {i}:"
+        for k in 0..30 {
+            row = "{row} {k}"
+        }
+        total += row.length()
+        total += "{row[row.length() - 1]}".length()
+    }
+    total
+}
+
+/// Returned, in the region its caller gives.
+fn kept(count: Int): String {
+    var text = ""
+    for i in 0..count {
+        text = "{text}{i % 10}"
+    }
+    text
+}
+
+/// Grown past what a region takes, a mebibyte: it goes on on the heap.
+fn long(count: Int): Int {
+    var text = ""
+    for _ in 0..count {
+        text = "{text}0123456789abcdef"
+    }
+    text.length() + "{text[count * 16 - 1]}".length()
+}
+
+/// Held twice: the first is copied, the second stays as it was.
+fn shared(): String {
+    var first = "a"
+    let second = first
+    first = "{first}b"
+    first = "{first}c"
+    "{first}/{second}"
+}
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        let junk = "junk {i} {i} {i} {i}"
+        total += junk.length()
+    }
+    total
+}
+
+fn main() {
+    let a = built(100)
+    let b = turns()
+    var lengths = 0
+    for i in 0..3 {
+        lengths += kept(50 + i).length()
+    }
+    let c = kept(70)
+    let d = shared()
+    let e = long(100_000)
+    let quiet = noise()
+    console.println("{a} {b} {lengths} {c.length()} {c[69]} {d} {e} {quiet}")
+}
+
+// expect-stdout: 390 261 153 70 9 abc/a 1600001 3560
+// expect-optimization: 14:9 region goes in a region of `main`
+// expect-optimization: 25:13 region goes in the region of a turn of the loop at line 22
+// expect-optimization: 47:5 region goes in a region of `shared`

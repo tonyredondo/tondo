@@ -7769,3 +7769,17 @@ error of an operation of the library takes none of its success, and an error mad
 or of a part of it, still takes that out. The result of a function of the program passed on by a
 `?` stays on the heap, as that function may make its error in the region of its result, and the
 remark says so.
+
+## A text that grows in place grows in its region, up to a mebibyte
+
+`x = "{x}..."` grew `x`'s own text on the heap when nothing else held it,
+and a region took none: the most frequent refusal of the analysis, at
+17482 places of 597 programs, most of them the library's own, building a
+text a piece at a time. Such a text now grows in the region the
+analysis chose for it: in its own room while it is that region's and
+nothing else holds it, its room doubling as it grows, and copied into
+the region when something does; the rooms it leaves are the region's
+until it ends. Past a mebibyte the text moves to the heap and grows
+there in its own block, as before, and a later append takes it as it
+is: a long text holds what the heap would, and at most about two
+mebibytes more of the rooms it left in its region.

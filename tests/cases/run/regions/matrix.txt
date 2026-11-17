@@ -16,7 +16,7 @@
 # runs is run by the toolchain's own tests, named from the repository's
 # root, as crates/tondo/tests/testing.rs, which run `tondo` with the check.
 
-Statement::Assign             cases/run/regions/stores.to cases/run/regions/loans.to cases/run/regions/texts.to cases/run/regions/exits.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to cases/run/regions/runtime_texts_system.to cases/run/regions/runtime_texts_library.to cases/run/regions/errors.to cases/run/regions/runtime_arrays.to cases/run/regions/runtime_arrays_natives.to
+Statement::Assign             cases/run/regions/stores.to cases/run/regions/loans.to cases/run/regions/texts.to cases/run/regions/exits.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to cases/run/regions/runtime_texts_system.to cases/run/regions/runtime_texts_library.to cases/run/regions/errors.to cases/run/regions/runtime_arrays.to cases/run/regions/runtime_arrays_natives.to cases/run/regions/texts_grown.to
 Statement::Retain             - counts a reference
 Statement::Release            - counts a reference
 Statement::DeferPush          cases/run/regions/defers.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to
@@ -52,7 +52,7 @@ Rvalue::Restart               - live builds only, which have no regions
 Rvalue::Transfer              - live builds only, which have no regions
 Rvalue::CallOsr               - live builds only, which have no regions
 Rvalue::OsrPoint              - live builds only, which have no regions
-Rvalue::Concat                cases/run/regions/texts.to cases/run/regions/exits.to cases/run/regions/runtime_texts.to
+Rvalue::Concat                cases/run/regions/texts.to cases/run/regions/exits.to cases/run/regions/runtime_texts.to cases/run/regions/texts_grown.to
 Rvalue::Aggregate             cases/run/regions/stores.to
 Rvalue::Variant               cases/run/regions/stores.to cases/run/regions/errors.to cases/run/regions/runtime_arrays.to
 Rvalue::Discriminant          - gives a variant's index
