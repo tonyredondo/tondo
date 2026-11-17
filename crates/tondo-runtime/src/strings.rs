@@ -86,6 +86,46 @@ pub(crate) fn str_in(region: *mut super::regions::Region, bytes: &[u8]) -> *mut 
     }
 }
 
+/// Texts in one room of a region, each a text of its own, which the region
+/// lets go of with the rest: the pieces `split` makes, as `Pieces` makes
+/// them in one block on the heap.
+pub(crate) struct RegionPieces {
+    at: usize,
+    end: usize,
+    region: *mut super::regions::Region,
+}
+
+impl RegionPieces {
+    /// Room in `region` for `count` pieces of `bytes` bytes in all.
+    pub(crate) fn new(region: *mut super::regions::Region, count: usize, bytes: usize) -> RegionPieces {
+        let room = count * (HEADER + 8) + bytes;
+        let at = unsafe { super::regions::tondo_rt_region_alloc(region, room.max(8)) } as usize;
+        RegionPieces { at, end: at + room, region }
+    }
+
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> *mut Str {
+        let size = (HEADER + bytes.len()).next_multiple_of(8);
+        // More than it was given room for, which its caller never asks.
+        if bytes.is_empty() || self.at + size > self.end {
+            return str_in(self.region, bytes);
+        }
+        let text = self.at as *mut Str;
+        unsafe {
+            text.write(Str {
+                rc: AtomicUsize::new(super::regions::LAST_IN_REGION),
+                len: bytes.len(),
+                cap: bytes.len(),
+            });
+            copy_short(bytes, (text as *mut u8).add(HEADER));
+        }
+        if bytes.len() >= POSITIONED_FROM {
+            forget_positions(text);
+        }
+        self.at += size;
+        text
+    }
+}
+
 /// The bytes of a string. The caller keeps the string alive.
 pub unsafe fn str_bytes<'a>(s: *const Str) -> &'a [u8] {
     unsafe { std::slice::from_raw_parts((s as *const u8).add(HEADER), (*s).len) }

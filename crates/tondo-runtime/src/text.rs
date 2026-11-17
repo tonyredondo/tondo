@@ -4,7 +4,7 @@
 
 use super::{ArrayHeader, Str, element, tondo_rt_array_new};
 use crate::regions::Region;
-use crate::strings::{Pieces, str_in};
+use crate::strings::{Pieces, RegionPieces, str_in};
 
 fn text<'a>(s: *const Str) -> &'a str {
     unsafe { super::str_text(s) }
@@ -13,14 +13,15 @@ fn text<'a>(s: *const Str) -> &'a str {
 /// An `Array[String]` of the parts, in one block of pieces, or in `region`
 /// when it is not null, each part a text of its own.
 fn strings<'a>(parts: impl ExactSizeIterator<Item = &'a str> + Clone, region: *mut Region) -> *mut ArrayHeader {
+    let bytes = parts.clone().map(str::len).sum();
     if !region.is_null() {
         let array = unsafe { crate::regions::tondo_rt_array_new_in(region, 8, parts.len()) };
+        let mut pieces = RegionPieces::new(region, parts.len(), bytes);
         for (index, part) in parts.enumerate() {
-            unsafe { *(element(array, 8, index) as *mut *mut Str) = str_in(region, part.as_bytes()) };
+            unsafe { *(element(array, 8, index) as *mut *mut Str) = pieces.push(part.as_bytes()) };
         }
         return array;
     }
-    let bytes = parts.clone().map(str::len).sum();
     let array = tondo_rt_array_new(8, parts.len());
     let mut pieces = Pieces::new(parts.len(), bytes);
     for (index, part) in parts.enumerate() {
@@ -54,9 +55,6 @@ pub unsafe extern "C" fn tondo_rt_text_split(
     if let Some(limit) = limit {
         return strings(s.splitn(limit, separator).collect::<Vec<&str>>().into_iter(), region);
     }
-    if !region.is_null() {
-        return strings(s.split(separator).collect::<Vec<&str>>().into_iter(), region);
-    }
     let (s, separator) = (s.as_bytes(), separator.as_bytes());
     let finder = memchr::memmem::Finder::new(separator);
     // Counted first, so that the array is made once at its length.
@@ -64,12 +62,26 @@ pub unsafe extern "C" fn tondo_rt_text_split(
         [byte] => memchr::memchr_iter(*byte, s).count(),
         _ => finder.find_iter(s).count(),
     };
-    // The pieces in one block, which holds the text but its separators,
-    // and the array of them.
-    let (mut pieces, array) = Pieces::with_array(count + 1, s.len() - count * separator.len());
+    // In a region, the array and each piece there; else the pieces in one
+    // block, which holds the text but its separators, and the array of them.
+    let bytes = s.len() - count * separator.len();
+    let (mut pieces, array) = match region.is_null() {
+        true => {
+            let (pieces, array) = Pieces::with_array(count + 1, bytes);
+            (Ok(pieces), array)
+        }
+        false => {
+            let array = unsafe { crate::regions::tondo_rt_array_new_in(region, 8, count + 1) };
+            (Err(RegionPieces::new(region, count + 1, bytes)), array)
+        }
+    };
     let (mut index, mut start) = (0, 0);
     let mut piece = |end: usize| {
-        unsafe { *(element(array, 8, index) as *mut *mut Str) = pieces.push(&s[start..end]) };
+        let text = match &mut pieces {
+            Ok(pieces) => pieces.push(&s[start..end]),
+            Err(pieces) => pieces.push(&s[start..end]),
+        };
+        unsafe { *(element(array, 8, index) as *mut *mut Str) = text };
         index += 1;
         start = end + separator.len();
     };
@@ -80,7 +92,9 @@ pub unsafe extern "C" fn tondo_rt_text_split(
         _ => finder.find_iter(s).for_each(&mut piece),
     }
     piece(s.len());
-    pieces.finish();
+    if let Ok(pieces) = pieces {
+        pieces.finish();
+    }
     array
 }
 
