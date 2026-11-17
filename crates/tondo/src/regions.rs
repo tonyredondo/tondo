@@ -200,12 +200,14 @@ pub fn regions(
     // each turn, or the heap, where no region takes the value.
     let mut judged = judged;
     let outcomes = place(bodies, types, &summaries, &all_sites, &judged, &flows, clones);
-    for ((verdicts, outcomes), sites) in judged.iter_mut().zip(&outcomes).zip(&all_sites) {
+    for (((verdicts, outcomes), sites), body) in judged.iter_mut().zip(&outcomes).zip(&all_sites).zip(bodies.iter()) {
         for ((verdict, outcome), site) in verdicts.iter_mut().zip(outcomes).zip(sites) {
             let what = site.what;
-            // A loop by its line, and its file when it is another.
+            // A loop by its line, and its file when it is another than the
+            // one the line is told in.
+            let told = told_at(body, site, sources);
             let line = |at: &Span| {
-                let ((file, line, _), (here, ..)) = (sources.position(at.start), sources.position(verdict.span.start));
+                let ((file, line, _), (here, ..)) = (sources.position(at.start), sources.position(told.start));
                 match file == here {
                     true => format!("line {line}"),
                     false => format!("{file}:{line}"),
@@ -233,11 +235,7 @@ pub fn regions(
         }
     }
     if crate::mir_text::remarking() {
-        // The standard library's code or a dependency's.
-        let library = |span: Span| {
-            let file = sources.file_of(span.start);
-            file.dependency || file.logical.starts_with("<std>/")
-        };
+        let library = |span: Span| library(sources, span);
         for (index, (body, verdicts)) in bodies.iter_mut().zip(&judged).enumerate() {
             // A place a region takes in every copy of it is not made on the
             // heap: what the frame said of it says why the frame does not
@@ -1279,6 +1277,29 @@ impl Site {
     fn placed(&self) -> bool {
         self.refused.is_none()
     }
+}
+
+/// Whether a place is the standard library's code or a dependency's.
+fn library(sources: &crate::source::SourceMap, span: Span) -> bool {
+    let file = sources.file_of(span.start);
+    file.dependency || file.logical.starts_with("<std>/")
+}
+
+/// Where the line of a place is told: at its place, or, of the library's
+/// code copied into `body`, at the program's call of the copy it is of.
+fn told_at(body: &Body, site: &Site, sources: &crate::source::SourceMap) -> Span {
+    if !library(sources, site.span) {
+        return site.span;
+    }
+    let mut scope = body.scopes.get(site.at.0 as usize).copied().flatten();
+    while let Some(at) = scope {
+        let Some(inlined) = body.inlined.get(at as usize) else { break };
+        if !library(sources, inlined.call) {
+            return inlined.call;
+        }
+        scope = inlined.parent;
+    }
+    site.span
 }
 
 /// Whether what a place of the library's code copied into `body` makes
