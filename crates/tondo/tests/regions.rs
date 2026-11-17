@@ -77,8 +77,13 @@ fn the_matrix_names_every_way_out() {
             None if rest.is_empty() => problems.push(format!("{way} names no case")),
             None => {
                 for case in rest.split_whitespace() {
-                    if !root().join("tests").join(case).exists() {
-                        problems.push(format!("{way}: tests/{case} does not exist"));
+                    // A test of the toolchain is named from the root.
+                    let path = match case.starts_with("crates/") {
+                        true => root().join(case),
+                        false => root().join("tests").join(case),
+                    };
+                    if !path.exists() {
+                        problems.push(format!("{way}: {} does not exist", path.display()));
                     }
                     named.insert(case.to_string());
                 }

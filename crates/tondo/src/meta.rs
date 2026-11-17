@@ -939,6 +939,9 @@ fn run(program: &Path, entry: Entry, request: &str, budgets: Budgets) -> Result<
         .env("TONDO_META_RESPONSE", &response_file)
         .env("TONDO_META_STEPS", budgets.steps.to_string())
         .env("TONDO_META_MEMORY", budgets.memory.to_string())
+        // The check of regions, which changes nothing a provider gives,
+        // reaches it as it reaches every program the build's user runs.
+        .envs(std::env::var_os("TONDO_CHECK_REGIONS").map(|check| ("TONDO_CHECK_REGIONS", check)))
         .current_dir(&dir)
         .output();
     let response = std::fs::read(&response_file);

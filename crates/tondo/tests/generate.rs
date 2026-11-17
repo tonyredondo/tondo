@@ -5,8 +5,16 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// `tondo`, with the memory of each region that ends made unreadable in
+/// the programs it runs, so that a value put in a region it outlives
+/// faults: the tests, providers and generators the cases cannot run.
 fn tondo(dir: &Path, args: &[&str]) -> (String, String, i32) {
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(args)
+        .current_dir(dir)
+        .env("TONDO_CHECK_REGIONS", "1")
+        .output()
+        .unwrap();
     let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
     (text(&output.stdout), text(&output.stderr), output.status.code().unwrap_or(-1))
 }
