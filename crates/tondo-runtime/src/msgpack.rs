@@ -10,7 +10,7 @@
 use crate::array_items;
 use crate::byte_array;
 use crate::native::{self, NativeObject};
-use crate::{ArrayHeader, Str, str_new, str_text};
+use crate::{ArrayHeader, Str, str_text};
 use std::sync::Mutex;
 
 const END: i64 = 0;
@@ -387,10 +387,10 @@ pub(crate) fn path_of<'a, E>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_msgpack_text(object: *mut NativeObject) -> *mut Str {
-    let Some(reader) = reader(object) else { return str_new(b"") };
+pub extern "C" fn tondo_rt_msgpack_text(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
+    let Some(reader) = reader(object) else { return crate::strings::str_in(region, b"") };
     let event = reader.read.checked_sub(1).and_then(|index| reader.events.get(index));
-    str_new(event.map_or(&b""[..], |e| e.text.as_bytes()))
+    crate::strings::str_in(region, event.map_or(&b""[..], |e| e.text.as_bytes()))
 }
 
 #[unsafe(no_mangle)]
@@ -515,9 +515,13 @@ pub unsafe extern "C" fn tondo_rt_msgpack_fail(object: *mut NativeObject, messag
 
 /// The failure's message (0) or path (1).
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_msgpack_where(object: *mut NativeObject, part: i64) -> *mut Str {
+pub extern "C" fn tondo_rt_msgpack_where(
+    object: *mut NativeObject,
+    part: i64,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let failure = reader(object).and_then(|r| r.error.clone()).unwrap_or_default();
-    str_new(if part == 0 { failure.0 } else { failure.1 }.as_bytes())
+    crate::strings::str_in(region, if part == 0 { failure.0 } else { failure.1 }.as_bytes())
 }
 
 // ---------------------------------------------------------------------------
@@ -624,10 +628,10 @@ pub extern "C" fn tondo_rt_msgpack_write_header(object: *mut NativeObject, map: 
 
 /// Passes what is pending to the stream: its first failure, or empty.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_msgpack_flush(object: *mut NativeObject) -> *mut Str {
-    let Some(mut writer) = writer(object) else { return str_new(b"") };
+pub extern "C" fn tondo_rt_msgpack_flush(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
+    let Some(mut writer) = writer(object) else { return crate::strings::str_in(region, b"") };
     writer.deliver(true);
-    str_new(writer.failed.clone().unwrap_or_default().as_bytes())
+    crate::strings::str_in(region, writer.failed.clone().unwrap_or_default().as_bytes())
 }
 
 #[unsafe(no_mangle)]
@@ -770,7 +774,7 @@ pub extern "C" fn tondo_rt_msgpack_finish(object: *mut NativeObject) -> *mut Arr
 
 /// The first value that could not be written, or empty.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_msgpack_failure(object: *mut NativeObject) -> *mut Str {
+pub extern "C" fn tondo_rt_msgpack_failure(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
     let message = writer(object).and_then(|w| w.error.clone()).unwrap_or_default();
-    str_new(message.as_bytes())
+    crate::strings::str_in(region, message.as_bytes())
 }

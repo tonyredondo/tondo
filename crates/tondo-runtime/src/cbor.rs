@@ -12,7 +12,7 @@
 use crate::array_items;
 use crate::byte_array;
 use crate::native::{self, NativeObject};
-use crate::{ArrayHeader, Str, str_bytes, str_new, str_text};
+use crate::{ArrayHeader, Str, str_bytes, str_text};
 use std::sync::Mutex;
 
 const END: i64 = 0;
@@ -396,10 +396,10 @@ fn current<T>(object: *mut NativeObject, part: impl Fn(&Event) -> T, empty: T) -
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_cbor_text(object: *mut NativeObject) -> *mut Str {
-    let Some(reader) = reader(object) else { return str_new(b"") };
+pub extern "C" fn tondo_rt_cbor_text(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
+    let Some(reader) = reader(object) else { return crate::strings::str_in(region, b"") };
     let event = reader.read.checked_sub(1).and_then(|index| reader.events.get(index));
-    str_new(event.map_or(&b""[..], |e| e.text.as_bytes()))
+    crate::strings::str_in(region, event.map_or(&b""[..], |e| e.text.as_bytes()))
 }
 
 #[unsafe(no_mangle)]
@@ -473,9 +473,13 @@ pub unsafe extern "C" fn tondo_rt_cbor_field(object: *mut NativeObject, names: *
 
 /// The failure's message (0) or path (1).
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_cbor_where(object: *mut NativeObject, part: i64) -> *mut Str {
+pub extern "C" fn tondo_rt_cbor_where(
+    object: *mut NativeObject,
+    part: i64,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let failure = reader(object).and_then(|r| r.error.clone()).unwrap_or_default();
-    str_new(if part == 0 { failure.0 } else { failure.1 }.as_bytes())
+    crate::strings::str_in(region, if part == 0 { failure.0 } else { failure.1 }.as_bytes())
 }
 
 // ---------------------------------------------------------------------------
@@ -756,9 +760,9 @@ pub extern "C" fn tondo_rt_cbor_finish(object: *mut NativeObject) -> *mut ArrayH
 
 /// The first value that could not be written, or empty.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_cbor_failure(object: *mut NativeObject) -> *mut Str {
+pub extern "C" fn tondo_rt_cbor_failure(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
     let message = writer(object).and_then(|w| w.error.clone()).unwrap_or_default();
-    str_new(message.as_bytes())
+    crate::strings::str_in(region, message.as_bytes())
 }
 
 #[cfg(test)]

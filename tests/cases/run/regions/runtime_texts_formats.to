@@ -1,0 +1,113 @@
+// Texts the runtime's readers and writers of JSON, YAML, TOML, CBOR,
+// MessagePack and protocol buffers make, which regions take as they take
+// what `split` makes: the texts a document is decoded into, the document a
+// value is encoded into, and where a document fails, in the region of a
+// turn and of a function, and sent out of it by a store, a capture, a
+// channel and a return.
+
+import std.cbor
+import std.console
+import std.json
+import std.messagepack
+import std.protobuf
+import std.toml
+import std.yaml
+
+type Setting = { name: String, level: Int }
+
+type Note = {
+    text: String
+}
+
+fn unset(): Setting {
+    Setting { name: "", level: -1 }
+}
+
+/// What each reader decodes, counted in the region of a turn, or stored
+/// past it.
+fn decoded(): String {
+    var counted = 0
+    var note = Note { text: "" }
+    var kept: Array[String] = []
+    let (sender, receiver) = channel[String](8)
+    var shown: Array[fn(): String] = []
+    for i in 0..3 {
+        let fromJson: Setting = json.decode("{{\"name\": \"j{i}\", \"level\": {i}}}") ?? unset()
+        counted += fromJson.name.length()
+        let fromToml: Setting = toml.decode("name = \"t{i}\"\nlevel = {i}\n") ?? unset()
+        note.text = fromToml.name
+        let fromYaml: Setting = yaml.decode("name: y{i}\nlevel: {i}\n") ?? unset()
+        kept.push(fromYaml.name)
+        let packed: Setting = messagepack.decode(messagepack.encode(Setting { name: "m{i}", level: i })) ?? unset()
+        sender.send(packed.name)
+        let concise: Setting = cbor.decode(cbor.encode(Setting { name: "c{i}", level: i })) ?? unset()
+        let name = concise.name
+        shown.push(() { name })
+        let tree = json.parse("[\"p{i}\", {{\"k{i}\": \"v{i}\"}}]") ?? json.Value.Null
+        counted += "{tree}".length()
+    }
+    sender.close()
+    var received: Array[String] = []
+    for text in receiver {
+        received.push(text)
+    }
+    "{counted} {note.text} {kept} {received} {shown[2]()}"
+}
+
+/// What each writer makes, counted in the region of a turn, or kept.
+fn encoded(): String {
+    var counted = 0
+    var last = ""
+    for i in 0..3 {
+        let setting = Setting { name: "e{i}", level: i }
+        counted += json.encode(setting).length()
+        counted += yaml.encode(setting).length()
+        last = toml.encode(setting) ?? ""
+        counted += messagepack.encode(setting).length() + cbor.encode(setting).length()
+    }
+    "{counted} {last.trim()}"
+}
+
+/// Where each reader fails, counted in the region of a turn, or returned.
+fn failed(): String {
+    var counted = 0
+    var last = ""
+    for i in 0..3 {
+        match json.decode[Setting]("{{\"name\": {i}}}") {
+            ok(_) => counted -= 1
+            err(error) => counted += "{error}".length()
+        }
+        match yaml.decode[Setting]("name: [{i}") {
+            ok(_) => counted -= 1
+            err(error) => counted += "{error}".length()
+        }
+        match toml.decode[Setting]("name = {i}\n") {
+            ok(_) => counted -= 1
+            err(error) => last = "{error}"
+        }
+        match messagepack.decode[Setting]([Byte(0xc1u8)]) {
+            ok(_) => counted -= 1
+            err(error) => counted += "{error}".length()
+        }
+        match cbor.decode[Setting]([Byte(0xffu8)]) {
+            ok(_) => counted -= 1
+            err(error) => counted += "{error}".length()
+        }
+        match protobuf.decode[protobuf.Empty]([Byte(0x0au8), Byte(0x05u8)]) {
+            ok(_) => counted -= 1
+            err(error) => counted += "{error}".length()
+        }
+    }
+    "{counted > 0} {last.length() > 0}"
+}
+
+fn main() {
+    console.println(decoded())
+    console.println(encoded())
+    console.println(failed())
+}
+
+// expect-stdout: 60 t2 [y0, y1, y2] [m0, m1, m2] c2
+// expect-stdout: 219 name = "e2"
+// expect-stdout: level = 2
+// expect-stdout: true true

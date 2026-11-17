@@ -4,7 +4,7 @@
 //! choosing tables, arrays of tables and inline tables as TOML needs.
 
 use crate::native::{self, NativeObject};
-use crate::{Str, str_new, str_text};
+use crate::{Str, str_text};
 use std::sync::Mutex;
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, Value};
 
@@ -149,11 +149,11 @@ fn current<T>(object: *mut NativeObject, part: impl Fn(&Event) -> T, empty: T) -
 
 /// The text of the event just read: a string, a key or a date-time.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_toml_text(object: *mut NativeObject) -> *mut Str {
-    let Some(reader) = reader(object) else { return str_new(b"") };
+pub extern "C" fn tondo_rt_toml_text(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
+    let Some(reader) = reader(object) else { return crate::strings::str_in(region, b"") };
     let reader = reader.lock().unwrap_or_else(|e| e.into_inner());
     let event = reader.read.checked_sub(1).and_then(|index| reader.events.get(index));
-    str_new(event.map_or(&b""[..], |event| event.text.as_bytes()))
+    crate::strings::str_in(region, event.map_or(&b""[..], |event| event.text.as_bytes()))
 }
 
 #[unsafe(no_mangle)]
@@ -229,10 +229,14 @@ pub unsafe extern "C" fn tondo_rt_toml_field(
 
 /// Where the failure is: its message (0), path (1), line (2) or column (3).
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_toml_where(object: *mut NativeObject, part: i64) -> *mut Str {
-    let Some(reader) = reader(object) else { return str_new(b"") };
+pub extern "C" fn tondo_rt_toml_where(
+    object: *mut NativeObject,
+    part: i64,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
+    let Some(reader) = reader(object) else { return crate::strings::str_in(region, b"") };
     let reader = reader.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((message, at, path)) = &reader.error else { return str_new(b"") };
+    let Some((message, at, path)) = &reader.error else { return crate::strings::str_in(region, b"") };
     let before = &reader.source[..(*at).min(reader.source.len())];
     let line = before.matches('\n').count() + 1;
     let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
@@ -242,7 +246,7 @@ pub extern "C" fn tondo_rt_toml_where(object: *mut NativeObject, part: i64) -> *
         2 => line.to_string(),
         _ => column.to_string(),
     };
-    str_new(shown.as_bytes())
+    crate::strings::str_in(region, shown.as_bytes())
 }
 
 // ---------------------------------------------------------------------------
@@ -444,19 +448,23 @@ pub extern "C" fn tondo_rt_toml_write_close(object: *mut NativeObject) {
 
 /// The document written, or empty after a failure.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_toml_finish(object: *mut NativeObject) -> *mut Str {
-    let Some(mut writer) = writer(object) else { return str_new(b"") };
+pub extern "C" fn tondo_rt_toml_finish(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
+    let Some(mut writer) = writer(object) else { return crate::strings::str_in(region, b"") };
     if writer.error.is_some() {
-        return str_new(b"");
+        return crate::strings::str_in(region, b"");
     }
     let mut document = DocumentMut::new();
     *document.as_table_mut() = writer.root.take().unwrap_or_default();
-    str_new(document.to_string().as_bytes())
+    crate::strings::str_in(region, document.to_string().as_bytes())
 }
 
 /// Why the first value could not be written (0) and where (1), or empty.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_toml_failure(object: *mut NativeObject, part: i64) -> *mut Str {
+pub extern "C" fn tondo_rt_toml_failure(
+    object: *mut NativeObject,
+    part: i64,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let failure = writer(object).and_then(|w| w.error.clone()).unwrap_or_default();
-    str_new(if part == 0 { failure.0 } else { failure.1 }.as_bytes())
+    crate::strings::str_in(region, if part == 0 { failure.0 } else { failure.1 }.as_bytes())
 }

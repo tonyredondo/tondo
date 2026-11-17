@@ -7,7 +7,7 @@
 use crate::array_items;
 use crate::byte_array;
 use crate::native::{self, NativeObject};
-use crate::{ArrayHeader, Str, str_bytes, str_new};
+use crate::{ArrayHeader, Str, str_bytes};
 use std::sync::Mutex;
 
 const VARINT: u8 = 0;
@@ -417,15 +417,15 @@ pub extern "C" fn tondo_rt_pb_read_bytes(object: *mut NativeObject) -> *mut Arra
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_pb_read_text(object: *mut NativeObject) -> *mut Str {
+pub extern "C" fn tondo_rt_pb_read_text(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
     let bytes = read_length(object);
     match std::str::from_utf8(&bytes) {
-        Ok(text) => str_new(text.as_bytes()),
+        Ok(text) => crate::strings::str_in(region, text.as_bytes()),
         Err(_) => {
             if let Some(mut r) = reader(object) {
                 r.fail("a string is not UTF-8");
             }
-            str_new(b"")
+            crate::strings::str_in(region, b"")
         }
     }
 }
@@ -513,9 +513,9 @@ pub unsafe extern "C" fn tondo_rt_pb_fail(object: *mut NativeObject, message: *c
 
 /// Why reading failed, or empty.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_pb_error(object: *mut NativeObject) -> *mut Str {
+pub extern "C" fn tondo_rt_pb_error(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
     let message = reader(object).map_or("not a reader".to_string(), |r| r.error.clone().unwrap_or_default());
-    str_new(message.as_bytes())
+    crate::strings::str_in(region, message.as_bytes())
 }
 
 /// The byte where the field read starts.

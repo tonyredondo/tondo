@@ -10,7 +10,7 @@
 //! value, up to a limit that stops documents that expand without end.
 
 use crate::native::{self, NativeObject};
-use crate::{Str, str_bytes, str_new};
+use crate::{Str, str_bytes};
 use saphyr::{Mapping, Scalar, Yaml, YamlEmitter};
 use saphyr_parser::{Event as Parsed, Parser, ScalarStyle};
 use std::borrow::Cow;
@@ -552,16 +552,16 @@ fn current<T>(object: *mut NativeObject, part: impl Fn(&Event) -> T, empty: T) -
 
 /// The text of the event just read: a string, a key or a number as written.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_yaml_text(object: *mut NativeObject) -> *mut Str {
-    let made = current(object, |event| str_new(event.text.as_bytes()), std::ptr::null_mut());
-    if made.is_null() { str_new(b"") } else { made }
+pub extern "C" fn tondo_rt_yaml_text(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
+    let made = current(object, |event| crate::strings::str_in(region, event.text.as_bytes()), std::ptr::null_mut());
+    if made.is_null() { crate::strings::str_in(region, b"") } else { made }
 }
 
 /// The tag of its own the value just read has, or empty.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_yaml_tag(object: *mut NativeObject) -> *mut Str {
-    let made = current(object, |event| str_new(event.tag.as_bytes()), std::ptr::null_mut());
-    if made.is_null() { str_new(b"") } else { made }
+pub extern "C" fn tondo_rt_yaml_tag(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
+    let made = current(object, |event| crate::strings::str_in(region, event.tag.as_bytes()), std::ptr::null_mut());
+    if made.is_null() { crate::strings::str_in(region, b"") } else { made }
 }
 
 #[unsafe(no_mangle)]
@@ -639,16 +639,20 @@ pub unsafe extern "C" fn tondo_rt_yaml_field(
 
 /// Where the failure is: its message (0), path (1), line (2) or column (3).
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_yaml_where(object: *mut NativeObject, part: i64) -> *mut Str {
-    let Some(reader) = reader(object) else { return str_new(b"") };
-    let Some((message, path, line, column)) = &reader.error else { return str_new(b"") };
+pub extern "C" fn tondo_rt_yaml_where(
+    object: *mut NativeObject,
+    part: i64,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
+    let Some(reader) = reader(object) else { return crate::strings::str_in(region, b"") };
+    let Some((message, path, line, column)) = &reader.error else { return crate::strings::str_in(region, b"") };
     let shown = match part {
         0 => message.clone(),
         1 => path.clone(),
         2 => line.to_string(),
         _ => column.to_string(),
     };
-    str_new(shown.as_bytes())
+    crate::strings::str_in(region, shown.as_bytes())
 }
 
 // ---------------------------------------------------------------------------
@@ -826,8 +830,8 @@ pub extern "C" fn tondo_rt_yaml_write_close(object: *mut NativeObject) {
 
 /// The documents written, each after `---` when there are several.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_yaml_finish(object: *mut NativeObject) -> *mut Str {
-    let Some(writer) = writer(object) else { return str_new(b"") };
+pub extern "C" fn tondo_rt_yaml_finish(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
+    let Some(writer) = writer(object) else { return crate::strings::str_in(region, b"") };
     let several = writer.documents.len() > 1;
     let mut out = String::new();
     for document in &writer.documents {
@@ -856,7 +860,7 @@ pub extern "C" fn tondo_rt_yaml_finish(object: *mut NativeObject) -> *mut Str {
         }
         out.push('\n');
     }
-    str_new(out.as_bytes())
+    crate::strings::str_in(region, out.as_bytes())
 }
 
 // ---------------------------------------------------------------------------
@@ -1100,10 +1104,13 @@ pub unsafe extern "C" fn tondo_rt_yaml_outline(source: *const Str) -> *mut Nativ
 
 /// Each node's path, in order.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_yaml_outline_paths(object: *mut NativeObject) -> *mut crate::ArrayHeader {
+pub extern "C" fn tondo_rt_yaml_outline_paths(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut crate::ArrayHeader {
     let paths: Vec<String> =
         native::get::<Outline>(object).map_or(Vec::new(), |o| o.nodes.iter().map(|n| n.path.clone()).collect());
-    crate::string_array(&paths)
+    crate::arrays::string_array_in(region, &paths)
 }
 
 /// Eight numbers a node: its kind, start, end, line, column, the end of its
@@ -1124,17 +1131,23 @@ pub extern "C" fn tondo_rt_yaml_outline_numbers(object: *mut NativeObject) -> *m
 
 /// Two texts a node: its tag and its anchor, or empty.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_yaml_outline_properties(object: *mut NativeObject) -> *mut crate::ArrayHeader {
+pub extern "C" fn tondo_rt_yaml_outline_properties(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut crate::ArrayHeader {
     let texts: Vec<String> = native::get::<Outline>(object)
         .map_or(Vec::new(), |o| o.nodes.iter().flat_map(|n| [n.tag.clone(), n.anchor.clone()]).collect());
-    crate::string_array(&texts)
+    crate::arrays::string_array_in(region, &texts)
 }
 
 /// Why the text is not a document, or empty.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_yaml_outline_error(object: *mut NativeObject) -> *mut Str {
+pub extern "C" fn tondo_rt_yaml_outline_error(
+    object: *mut NativeObject,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let error = native::get::<Outline>(object).map_or(String::new(), |o| o.error.clone());
-    str_new(error.as_bytes())
+    crate::strings::str_in(region, error.as_bytes())
 }
 
 #[cfg(test)]

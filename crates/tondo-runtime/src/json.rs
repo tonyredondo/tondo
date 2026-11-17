@@ -771,12 +771,18 @@ pub unsafe extern "C" fn tondo_rt_json_integer(object: *mut ReaderObject) -> i64
 /// The text of the last string, key or number: a short one a piece of the
 /// reader's block, as large as the input left, up to `PIECES_ROOM`; one that
 /// follows a full block, of a document that makes more texts than that,
-/// three times as large.
+/// three times as large. In a region, one of it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_json_text(object: *mut ReaderObject) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_json_text(
+    object: *mut ReaderObject,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let mut reader = reader(object);
     let r = &mut *reader;
     let len = r.text.len();
+    if !region.is_null() {
+        return crate::strings::str_in(region, r.text.as_bytes());
+    }
     if len == 0 || len >= POSITIONED_FROM {
         return str_new(r.text.as_bytes());
     }
@@ -842,17 +848,21 @@ pub unsafe extern "C" fn tondo_rt_json_field(
 /// The text of the value whose first event was `event`, skipping the rest
 /// of it; empty after a failure.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_json_raw(object: *mut ReaderObject, event: i64) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_json_raw(
+    object: *mut ReaderObject,
+    event: i64,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let mut r = reader(object);
     let begin = r.start;
     r.pinned = Some(begin);
     let skipped = r.skip(event);
     r.pinned = None;
     if skipped < 0 {
-        return str_new(b"");
+        return crate::strings::str_in(region, b"");
     }
     let text = r.input[begin - r.offset..r.position].to_vec();
-    str_new(&text)
+    crate::strings::str_in(region, &text)
 }
 
 /// Records a failure the caller found at the current position.
@@ -865,7 +875,11 @@ pub unsafe extern "C" fn tondo_rt_json_fail(object: *mut ReaderObject, message: 
 /// The failure, if any: its message; or the path, line and column of the
 /// current position (`which` 0, 1, 2, 3).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_json_where(object: *mut ReaderObject, which: i64) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_json_where(
+    object: *mut ReaderObject,
+    which: i64,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let r = reader(object);
     let offset = r.error.as_ref().map_or(r.offset + r.position, |(_, at)| *at);
     let (line, column) = r.line_column(offset);
@@ -875,7 +889,7 @@ pub unsafe extern "C" fn tondo_rt_json_where(object: *mut ReaderObject, which: i
         2 => line.to_string(),
         _ => column.to_string(),
     };
-    str_new(text.as_bytes())
+    crate::strings::str_in(region, text.as_bytes())
 }
 
 #[unsafe(no_mangle)]
@@ -1260,8 +1274,11 @@ pub unsafe extern "C" fn tondo_rt_json_stream_writer(
 
 /// The first failure to write a stream writer's stream, or empty.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_json_writer_error(object: *mut WriterObject) -> *mut Str {
-    str_new(writer(object).failed.clone().unwrap_or_default().as_bytes())
+pub unsafe extern "C" fn tondo_rt_json_writer_error(
+    object: *mut WriterObject,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
+    crate::strings::str_in(region, writer(object).failed.clone().unwrap_or_default().as_bytes())
 }
 
 /// Writes a scalar: 0 null, 1 true, 2 false.
@@ -1369,10 +1386,13 @@ pub unsafe extern "C" fn tondo_rt_json_write_bracket(object: *mut WriterObject, 
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_json_finish(object: *mut WriterObject) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_json_finish(
+    object: *mut WriterObject,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let mut writer = writer(object);
     let mut out = writer.finish();
-    let text = str_new(out.as_bytes());
+    let text = crate::strings::str_in(region, out.as_bytes());
     // The writer keeps its room, empty, as a writer let go may serve again.
     out.clear();
     writer.out = out;
