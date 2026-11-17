@@ -7,6 +7,8 @@ use super::native::{self, NativeObject};
 use super::{ArrayHeader, Str, element, str_bytes, str_new};
 use crate::array_items;
 use crate::byte_array;
+use crate::regions::Region;
+use crate::strings::str_in;
 use hmac::{HmacReset, KeyInit};
 use sha2::digest::DynDigest;
 use std::sync::Mutex;
@@ -21,8 +23,8 @@ const URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 /// Base64 of RFC 4648: the standard alphabet with `=` padding, or the URL
 /// one without it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_base64_encode(data: *mut ArrayHeader, url: u8) -> *mut Str {
-    str_new(&base64_encode(unsafe { array_items::<u8>(data) }, url != 0))
+pub unsafe extern "C" fn tondo_rt_base64_encode(data: *mut ArrayHeader, url: u8, region: *mut Region) -> *mut Str {
+    str_in(region, &base64_encode(unsafe { array_items::<u8>(data) }, url != 0))
 }
 
 /// Base64 of RFC 4648, as `tondo_rt_base64_encode` writes it.
@@ -81,9 +83,9 @@ pub unsafe extern "C" fn tondo_rt_base64_decode(input: *const Str, url: u8) -> *
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_hex_encode(data: *mut ArrayHeader) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_hex_encode(data: *mut ArrayHeader, region: *mut Region) -> *mut Str {
     let out: String = unsafe { array_items::<u8>(data) }.iter().map(|b| format!("{b:02x}")).collect();
-    str_new(out.as_bytes())
+    str_in(region, out.as_bytes())
 }
 
 fn hex_decode(input: &[u8]) -> Result<Vec<u8>, usize> {
@@ -114,7 +116,7 @@ pub unsafe extern "C" fn tondo_rt_hex_decode(input: *const Str) -> *mut ArrayHea
 /// `encoding.htmlEscape`: `&`, `<`, `>`, `"` and `'` as references, which
 /// HTML's content and quoted attributes take.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_html_escape(input: *const Str) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_html_escape(input: *const Str, region: *mut Region) -> *mut Str {
     let mut out = Vec::new();
     for &b in text(input) {
         match b {
@@ -126,20 +128,20 @@ pub unsafe extern "C" fn tondo_rt_html_escape(input: *const Str) -> *mut Str {
             b => out.push(b),
         }
     }
-    str_new(&out)
+    str_in(region, &out)
 }
 
 /// `encoding.htmlUnescape`: HTML5's named and numeric references read; what
 /// is not one stays as it is.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_html_unescape(input: *const Str) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_html_unescape(input: *const Str, region: *mut Region) -> *mut Str {
     let input = String::from_utf8_lossy(text(input));
-    str_new(html_escape::decode_html_entities(&input).as_bytes())
+    str_in(region, html_escape::decode_html_entities(&input).as_bytes())
 }
 
 /// RFC 3986: letters, digits, `-`, `.`, `_` and `~`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_url_encode(input: *const Str) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_url_encode(input: *const Str, region: *mut Region) -> *mut Str {
     let mut out = Vec::new();
     for &b in text(input) {
         if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
@@ -148,7 +150,7 @@ pub unsafe extern "C" fn tondo_rt_url_encode(input: *const Str) -> *mut Str {
             out.extend_from_slice(format!("%{b:02X}").as_bytes());
         }
     }
-    str_new(&out)
+    str_in(region, &out)
 }
 
 fn url_decode(input: &[u8]) -> Result<Vec<u8>, usize> {
@@ -180,8 +182,8 @@ pub unsafe extern "C" fn tondo_rt_url_check(input: *const Str) -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_url_decode(input: *const Str) -> *mut Str {
-    str_new(&url_decode(text(input)).unwrap_or_default())
+pub unsafe extern "C" fn tondo_rt_url_decode(input: *const Str, region: *mut Region) -> *mut Str {
+    str_in(region, &url_decode(text(input)).unwrap_or_default())
 }
 
 /// A hasher of `kind`: MD5, SHA-1, SHA-256, SHA-384 or SHA-512 as it is 5,

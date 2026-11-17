@@ -1328,6 +1328,10 @@ impl Native {
 /// after their parameters, or on the heap when it passes null: what they
 /// give holds none of what they are given.
 pub const MAKING_IN_REGION: &[&str] = &[
+    "tondo_rt_base64_encode",
+    "tondo_rt_hex_encode",
+    "tondo_rt_html_escape",
+    "tondo_rt_html_unescape",
     "tondo_rt_text_between",
     "tondo_rt_text_lines",
     "tondo_rt_text_lower",
@@ -1336,6 +1340,8 @@ pub const MAKING_IN_REGION: &[&str] = &[
     "tondo_rt_text_trim",
     "tondo_rt_text_upper",
     "tondo_rt_text_words",
+    "tondo_rt_url_decode",
+    "tondo_rt_url_encode",
 ];
 
 /// The natives the processor does in one instruction, which codegen writes
