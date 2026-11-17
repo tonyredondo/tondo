@@ -2489,7 +2489,10 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   heap. Va en la región de la función que lo hace si nada lo guarda más
   allá de la llamada, aunque lo guarde de una vuelta a otra un array al que
   el bucle solo añade con `push`, o en la de una vuelta de un bucle si no
-  sobrevive a la vuelta, y nombra el bucle por su línea; en una que le da quien la llama
+  sobrevive a la vuelta, o solo la sobrevive por una salida del bucle que no
+  vuelve a él, como la de un `?` o un `return`, pues la región de una vuelta
+  se vacía al volver a la cabeza del bucle y se deja al volver la función,
+  y nombra el bucle por su línea; en una que le da quien la llama
   si la función solo lo devuelve, nuevo, y quienes lo toman tampoco lo
   guardan, y si unas llamadas lo sueltan y otras lo guardan, en una copia
   de la función para las primeras, y nombra unas y otras; o se queda en el

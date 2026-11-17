@@ -1,0 +1,119 @@
+// A turn's region is emptied only as the turn goes back to the loop's
+// head, and left as the function returns. What a turn makes may still be
+// held where the loop is left for code that never comes back to it: on
+// the way out of a `?` or a `return`, and after a `break` at the end of the
+// function's loops. It goes in the turn's region, and lives until the
+// function returns. What is held where the loop is left for code that
+// comes back to it, as an outer loop that runs the inner one again, stays
+// on the heap.
+
+import std.console
+
+enum Stop {
+    At(Int)
+}
+
+fn checked(text: String, stop: Bool, at: Int): Int ! Stop {
+    if stop {
+        fail Stop.At(at)
+    }
+    text.length()
+}
+
+fn total(count: Int, stop: Int): Int ! Stop {
+    var sum = 0
+    for i in 0..count {
+        let keys = ["key-{i}-{i * i}", "{i}"]
+        sum += checked(keys[0], i == stop, i)?
+        sum += keys[1].length()
+    }
+    sum
+}
+
+fn deep(stop: Int): Int ! Stop {
+    var sum = 0
+    for j in 0..3 {
+        for i in 0..3 {
+            let keys = ["deep-{j}-{i}", "{j}{i}"]
+            sum += checked(keys[0], j * 3 + i == stop, j * 3 + i)?
+            sum += keys[1].length()
+        }
+    }
+    sum
+}
+
+fn early(words: Array[String]): Int {
+    for (i, word) in words.enumerate() {
+        let marks = ["<{word}>", "{i}"]
+        if marks[0].length() > 5 {
+            console.println("early {marks[0]} at {marks[1]}")
+            return i
+        }
+    }
+    -1
+}
+
+fn first(limit: Int): Int {
+    var found = "none"
+    for i in 0..10 {
+        let t = "t-{i}-{i * 3}"
+        if i * i > limit {
+            found = t
+            break
+        }
+    }
+    console.println("found {found}")
+    found.length()
+}
+
+fn nested(): Int {
+    var kept = "none"
+    var sum = 0
+    for j in 0..3 {
+        for i in 0..4 {
+            let t = "n-{j}-{i}"
+            if i == j {
+                kept = t
+                break
+            }
+        }
+        sum += kept.length()
+    }
+    console.println("kept {kept} {sum}")
+    sum
+}
+
+fn shown(result: Int ! Stop): String {
+    match result {
+        ok(n) => "{n}"
+        err(Stop.At(at)) => "stopped at {at}"
+    }
+}
+
+fn main() {
+    for round in 0..2 {
+        console.println(
+            "{shown(total(5, 9))} {shown(total(5, 3))} {shown(deep(9))} {shown(deep(4))}",
+        )
+        console.println("{early(["a", "bb", "cccc", "d"])} {early(["a"])}")
+        console.println("{first(10 + round)} {nested()}")
+    }
+}
+
+// expect-optimization: 26:21 region goes in the region of a turn of the loop at line 25
+// expect-optimization: 37:25 region goes in the region of a turn of the loop at line 36
+// expect-optimization: 47:22 region goes in the region of a turn of the loop at line 46
+// expect-optimization: 59:17 region goes in the region of a turn of the loop at line 58
+// expect-optimization: 74:21 region stays on the heap: it outlives a turn of the loop at line 73
+// expect-stdout: 41 stopped at 3 90 stopped at 4
+// expect-stdout: early <cccc> at 2
+// expect-stdout: 2 -1
+// expect-stdout: found t-4-12
+// expect-stdout: kept n-2-2 15
+// expect-stdout: 6 15
+// expect-stdout: 41 stopped at 3 90 stopped at 4
+// expect-stdout: early <cccc> at 2
+// expect-stdout: 2 -1
+// expect-stdout: found t-4-12
+// expect-stdout: kept n-2-2 15
+// expect-stdout: 6 15

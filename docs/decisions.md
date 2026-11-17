@@ -7711,3 +7711,23 @@ hold it. The operations of texts that answer with a scalar, and the natives whos
 keep none of the texts they are given (`READING_TEXTS`) and that answer with one, are borrows for
 the frame now, as printing is; one that gives a text may give back the one it was given, and
 stays as it was.
+
+## What only a way out of the loop keeps goes in the turn's region
+
+A value a turn makes stayed on the heap when a variable held it where the loop is left, by any way
+out: the body of a loop that ends its steps with `?`, as reading lines, parsing or handling
+requests do, released its texts on the `?`'s way out, below the loop, and so kept every text of
+its turns on the heap, where the same body in a function of its own put them in that function's
+region. A turn's region is emptied only as the turn goes back to the loop's head, and left as the
+function returns, after its locals went: what a turn makes and only a way out that never comes
+back to the loop holds, as a `?`'s, a `return`'s or a `break` of a loop that no outer loop runs
+again, lives in memory the region still has. The analysis now counts only the ways out from which
+the loop's head can be reached again, as an outer loop's next turn; those keep a value on the heap
+as before. Tony chose this, the compiler doing the work by itself, over naming the `?` in the
+remark and leaving the code to the user.
+
+Its cost: after such a way out, what the last turn made is held until the function returns, at
+most what one turn makes, and felt only in a function that goes on long after its loop. Measured
+by instructions against the compiler before it, every benchmark the same or fewer: users 1000
+40.8 % fewer, inserting 1000 strings 19.6 %, interpolating 19.0 %, points 1.1 %, and the
+network's JSON row puts in regions 6400 allocations an operation that were on the heap.

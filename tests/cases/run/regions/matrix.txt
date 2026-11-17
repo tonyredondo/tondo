@@ -12,7 +12,7 @@
 # a socket's writes, the case runs the native under the check with values
 # on the heap: its reading is the code's, as `READING` says.
 
-Statement::Assign             cases/run/regions/stores.to cases/run/regions/loans.to cases/run/regions/texts.to
+Statement::Assign             cases/run/regions/stores.to cases/run/regions/loans.to cases/run/regions/texts.to cases/run/regions/exits.to
 Statement::Retain             - counts a reference
 Statement::Release            - counts a reference
 Statement::DeferPush          cases/run/regions/defers.to cases/run/regions/texts.to
@@ -48,7 +48,7 @@ Rvalue::Restart               - live builds only, which have no regions
 Rvalue::Transfer              - live builds only, which have no regions
 Rvalue::CallOsr               - live builds only, which have no regions
 Rvalue::OsrPoint              - live builds only, which have no regions
-Rvalue::Concat                cases/run/regions/texts.to
+Rvalue::Concat                cases/run/regions/texts.to cases/run/regions/exits.to
 Rvalue::Aggregate             cases/run/regions/stores.to
 Rvalue::Variant               cases/run/regions/stores.to
 Rvalue::Discriminant          - gives a variant's index

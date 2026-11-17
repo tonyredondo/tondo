@@ -552,16 +552,29 @@ enum Outcome {
 /// first, the locals live at each one's head and where it is left.
 struct Lifetimes {
     loops: Vec<(usize, Vec<bool>)>,
-    /// The locals live at each loop's head and where it is left, as bits.
+    /// The locals live at each loop's head and where it is left for a block
+    /// that may come back to it, as bits.
     live_head: Vec<Vec<u64>>,
     live_out: Vec<Vec<u64>>,
+    /// The blocks from which each loop's head is reached again. A turn's
+    /// region is emptied only as a turn goes back to the head, and left as
+    /// the function returns, after the locals it held went: what is still
+    /// held where the loop is left for a block that never comes back, as on
+    /// the way out of a `?`, outlives no turn.
+    back: Vec<Vec<bool>>,
     looped: Vec<bool>,
 }
 
 impl Lifetimes {
     /// Of a function with nothing to put in a region by loops.
     fn none() -> Lifetimes {
-        Lifetimes { loops: Vec::new(), live_head: Vec::new(), live_out: Vec::new(), looped: Vec::new() }
+        Lifetimes {
+            loops: Vec::new(),
+            live_head: Vec::new(),
+            live_out: Vec::new(),
+            back: Vec::new(),
+            looped: Vec::new(),
+        }
     }
 
     /// Of a function that puts something in a region in `blocks`; what is
@@ -575,23 +588,39 @@ impl Lifetimes {
             }
         }
         if !blocks.any(|block| looped[block as usize]) {
-            return Lifetimes { loops, live_head: Vec::new(), live_out: Vec::new(), looped };
+            return Lifetimes { loops, live_head: Vec::new(), live_out: Vec::new(), back: Vec::new(), looped };
         }
         let live = crate::mir::live_in_bits(&body.blocks, body.locals.len());
-        let (mut live_head, mut live_out) = (Vec::new(), Vec::new());
+        let mut before = vec![Vec::new(); body.blocks.len()];
+        for (from, data) in body.blocks.iter().enumerate() {
+            for to in crate::hoist::targets(&data.terminator) {
+                before[to].push(from);
+            }
+        }
+        let (mut live_head, mut live_out, mut back) = (Vec::new(), Vec::new(), Vec::new());
         for (head, inside) in &loops {
             live_head.push(live[*head].clone());
+            let mut reaches = vec![false; body.blocks.len()];
+            let mut next = vec![*head];
+            while let Some(block) = next.pop() {
+                for &from in &before[block] {
+                    if !std::mem::replace(&mut reaches[from], true) {
+                        next.push(from);
+                    }
+                }
+            }
             let mut out = vec![0u64; live[*head].len()];
             for (_, data) in body.blocks.iter().enumerate().filter(|&(block, _)| inside[block]) {
-                for to in crate::hoist::targets(&data.terminator).into_iter().filter(|&to| !inside[to]) {
+                for to in crate::hoist::targets(&data.terminator).into_iter().filter(|&to| !inside[to] && reaches[to]) {
                     for (out, &live) in out.iter_mut().zip(&live[to]) {
                         *out |= live;
                     }
                 }
             }
             live_out.push(out);
+            back.push(reaches);
         }
-        Lifetimes { loops, live_head, live_out, looped }
+        Lifetimes { loops, live_head, live_out, back, looped }
     }
 
     /// The innermost loop `block` is in.
@@ -685,7 +714,7 @@ impl Lifetimes {
             let inside = &self.loops[k].1;
             let mut exits = vec![0u64; words];
             for (from, data) in body.blocks.iter().enumerate().filter(|&(from, _)| inside[from]) {
-                if crate::hoist::targets(&data.terminator).into_iter().any(|to| !inside[to]) {
+                if crate::hoist::targets(&data.terminator).into_iter().any(|to| !inside[to] && self.back[k][to]) {
                     exits.iter_mut().zip(&exit[from]).for_each(|(all, out)| *all |= out);
                 }
             }
