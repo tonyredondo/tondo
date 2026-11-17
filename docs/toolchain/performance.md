@@ -212,8 +212,6 @@ stats.to:19:5: `"{sensor}: {value:.1}"` stays on the heap: `label` returns it wi
 stats.to:19:17: `value` in `formats.formatFloat`, `formatNumber(` stays a call of `formats.formatNumber`: its body costs 31, more than the 30 inlining takes (in label)
 stats.to:19:17: `value` stays a call of `formats.formatFloat`: its body costs 80, more than the 30 inlining takes (in main)
 stats.to:19:17: `value` is inlined: the body of `formats.formatFloat` is copied here (in label)
-stats.to:19:17: `value` in `formats.formatFloat`, `textNative.float(value, precision, exponent, sing…` stays on the heap: it is passed to `formats.formatNumber`, which keeps it: `value` at 19:17 (in label)
-stats.to:19:17: `value` in `formats.formatFloat`, `written.replace("e", "E")` stays on the heap: it is passed to `formats.formatNumber`, which keeps it: `value` at 19:17 (in label)
 stats.to:24:14: `0..1000` runs four turns at a time (in main)
 stats.to:25:9: `readings.push(Reading { sensor: if n % 2 == 0 { "a" } else …` grows an array that goes in a region of `main` (in main)
 stats.to:25:9: `readings.push(Reading { sensor: if n % 2 == 0 { "a" } else …` takes room for every turn before the loop (in main)
@@ -243,10 +241,7 @@ from the bottom:
   ([What a region takes](#what-a-region-takes)). So does the label where
   `main` inlined `label`: the frame does not take it, and the line says
   why, and the region does. Each place has a line for each copy of its
-  code, named at its end. The two lines that begin `` `value` in
-  `formats.formatFloat` `` are of the library's code that writes the
-  number, copied into `label`: the texts it makes on the way, which go to
-  the function that finishes the number.
+  code, named at its end.
 - **Checks.** The compiler proved that `count += 1` cannot overflow in one
   copy of the loop, which has no check; the copy it could not prove it for
   keeps it. A check that stays says so too.
@@ -306,7 +301,7 @@ was inlined in `main`, which lets go of it, it goes in a region of `main`.
 | --- | --- |
 | `--function <name>` | one function, and the code written in it wherever it went |
 | `--kind heap` | only what allocates |
-| `--kind region` | what goes in a [region](#what-a-region-takes), and what stays on the heap and why |
+| `--kind region` | what goes in a [region](#what-a-region-takes), and what stays on the heap and why; with it, also what the library's code copied into a function makes on its way and lets go of inside the call, as the texts that write `{value:.1}` |
 | `--kind hoisted`, `--kind reloaded` | the [lengths](#a-length-read-once) a loop reads once, and those it reads each turn |
 | `--tests` | the tests and benchmarks instead of the program |
 | `--against <rev>` | only what a change made different |
@@ -752,18 +747,21 @@ fn main() {
 
 ```text
 $ tondo optimizations rows.to --kind region
+rows.to:9:22: `row.split(",")` in `String.split`, `textNative.split(self, separator, most)` goes in the region of a turn of the loop at rows.to:7 (in largest)
 rows.to:10:13: `numbers.push(Int.parse(field)?)` grows an array that goes in the region of a turn of the loop at line 7 (in largest)
 ```
 
-The `?` leaves both loops with a row's numbers still to let go of, and
-they are in the region of the row's turn all the same, which is there until
-`largest` returns. The price is that what the last turn made is held from
-such a way out to the function's return: at most what one turn makes, and
-felt only in a function that goes on long after its loop. The `break` of a
-loop inside another is a way out that comes back, since the loop around it
-runs the inner one again: what it carries does outlive the inner loop's
-turn, and goes in the region of a turn of the loop around it when it does
-not outlive that one too.
+The `?` leaves both loops with a row's numbers still to let go of, and they
+are in the region of the row's turn all the same, which is there until
+`largest` returns. So are the fields of the row: the first line is of the
+library's code that `split` copied into `largest`, told at the program's
+call, as is what such code gives back to the program. The price is that what
+the last turn made is held from such a way out to the function's return: at
+most what one turn makes, and felt only in a function that goes on long
+after its loop. The `break` of a loop inside another is a way out that comes
+back, since the loop around it runs the inner one again: what it carries
+does outlive the inner loop's turn, and goes in the region of a turn of the
+loop around it when it does not outlive that one too.
 
 What regions hold is seen where the heap is: a memory profile has
 `region_objects` and `region_space` beside the heap's samples, `tondo
