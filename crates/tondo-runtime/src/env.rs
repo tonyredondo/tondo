@@ -3,7 +3,7 @@
 //! `setenv` is not safe while other threads run, so changes reach the host
 //! only through `syncNative`.
 
-use super::{ArrayHeader, MapGlue, MapObject, Str, element, str_bytes, str_new, tondo_rt_array_new};
+use super::{ArrayHeader, MapGlue, MapObject, Str, str_bytes};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
@@ -26,8 +26,9 @@ pub(crate) fn environment() -> Vec<(OsString, OsString)> {
     table.iter().map(|(k, v)| (OsString::from_vec(k.clone()), OsString::from_vec(v.clone()))).collect()
 }
 
-fn text(bytes: &[u8]) -> *mut Str {
-    str_new(String::from_utf8_lossy(bytes).as_bytes())
+/// `bytes` as UTF-8 reads them, in `region` when it is not null.
+fn text(region: *mut crate::regions::Region, bytes: &[u8]) -> *mut Str {
+    crate::strings::str_in(region, String::from_utf8_lossy(bytes).as_bytes())
 }
 
 /// What is wrong with a variable, or nothing (`P0015`).
@@ -60,13 +61,8 @@ fn check(name: &[u8], value: &[u8], location: *const Str) -> bool {
 
 /// `env.args()`: without the program's name.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_env_args() -> *mut ArrayHeader {
-    let args: Vec<OsString> = arguments().iter().skip(1).cloned().collect();
-    let array = tondo_rt_array_new(8, args.len());
-    for (index, arg) in args.iter().enumerate() {
-        unsafe { *(element(array, 8, index) as *mut *mut Str) = text(arg.as_bytes()) };
-    }
-    array
+pub extern "C" fn tondo_rt_env_args(region: *mut crate::regions::Region) -> *mut ArrayHeader {
+    crate::arrays::texts_array_in(region, || arguments().iter().skip(1).map(|arg| arg.as_bytes()))
 }
 
 /// The program's arguments, its name first, as `main` was given them:
@@ -92,9 +88,9 @@ pub(crate) fn arguments() -> &'static [OsString] {
 
 /// `env.get(name)`: null for none.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_env_get(name: *const Str) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_env_get(name: *const Str, region: *mut crate::regions::Region) -> *mut Str {
     let name = unsafe { str_bytes(name) };
-    table().as_ref().unwrap().get(name).map_or(std::ptr::null_mut(), |value| text(value))
+    table().as_ref().unwrap().get(name).map_or(std::ptr::null_mut(), |value| text(region, value))
 }
 
 /// `env.vars()`, by name, as a `Map[String, String]` with `glue`.
@@ -103,7 +99,7 @@ pub unsafe extern "C" fn tondo_rt_env_vars(glue: *const MapGlue) -> *mut MapObje
     let mut map = super::tondo_rt_map_new(16, 8);
     let mut old = [0u8; 16];
     for (name, value) in table().as_ref().unwrap() {
-        let (key, value) = (text(name), text(value));
+        let (key, value) = (text(std::ptr::null_mut(), name), text(std::ptr::null_mut(), value));
         unsafe {
             super::tondo_rt_map_insert(
                 &mut map,
@@ -149,19 +145,19 @@ pub unsafe extern "C" fn tondo_rt_env_remove(name: *const Str, location: *const 
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_env_current_directory() -> *mut Str {
-    std::env::current_dir().map_or_else(|_| str_new(b""), |path| text(path.as_os_str().as_bytes()))
+pub extern "C" fn tondo_rt_env_current_directory(region: *mut crate::regions::Region) -> *mut Str {
+    std::env::current_dir().map_or_else(|_| text(region, b""), |path| text(region, path.as_os_str().as_bytes()))
 }
 
 /// `env.hostname()`: the machine's name, as the system gives it.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_env_hostname() -> *mut Str {
+pub extern "C" fn tondo_rt_env_hostname(region: *mut crate::regions::Region) -> *mut Str {
     let mut name = [0u8; 256];
     let length = match unsafe { libc::gethostname(name.as_mut_ptr().cast(), name.len()) } {
         0 => name.iter().position(|&b| b == 0).unwrap_or(name.len()),
         _ => 0,
     };
-    text(&name[..length])
+    text(region, &name[..length])
 }
 
 /// `env.processId()`.
@@ -173,17 +169,17 @@ pub extern "C" fn tondo_rt_env_process_id() -> i64 {
 /// `env.executable()`: the absolute path of the program's executable, its
 /// links resolved.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_env_executable() -> *mut Str {
+pub extern "C" fn tondo_rt_env_executable(region: *mut crate::regions::Region) -> *mut Str {
     let path = std::env::current_exe().and_then(|path| path.canonicalize());
-    path.map_or_else(|_| str_new(b""), |path| text(path.as_os_str().as_bytes()))
+    path.map_or_else(|_| text(region, b""), |path| text(region, path.as_os_str().as_bytes()))
 }
 
 /// `env.invokedAs()`: the name the program was run by, `argv[0]`, as
 /// given: a link's own name, not its target's.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_env_invoked_as() -> *mut Str {
+pub extern "C" fn tondo_rt_env_invoked_as(region: *mut crate::regions::Region) -> *mut Str {
     let invoked = arguments().first().cloned().unwrap_or_default();
-    text(invoked.as_bytes())
+    text(region, invoked.as_bytes())
 }
 
 /// `env.processors()`: the processors the program may run on, as its

@@ -3,8 +3,8 @@
 //! worker. Each operation returns 0, or 1 plus the index of the `FsError`
 //! variant, and writes its value to `out`.
 
-use super::io::{Mode, StreamObject, StreamState, made_text, run, run_ready, stream};
-use super::{ArrayHeader, Str, element, str_bytes, str_new, tondo_rt_array_new};
+use super::io::{Mode, StreamObject, StreamState, run, run_ready, stream};
+use super::{ArrayHeader, Str, str_bytes, str_new};
 use crate::array_items;
 use crate::byte_array;
 use std::io::{ErrorKind, Write};
@@ -169,10 +169,14 @@ fn write_atomically(path: &str, data: &[u8]) -> Outcome<()> {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_fs_read_text(path_text: *const Str, out: *mut *mut Str) -> i64 {
+pub unsafe extern "C" fn tondo_rt_fs_read_text(
+    path_text: *const Str,
+    out: *mut *mut Str,
+    region: *mut crate::regions::Region,
+) -> i64 {
     let path = unsafe { path(path_text) };
     let read = host(move || text(io(std::fs::read(path?))?));
-    finish(read, |text| unsafe { *out = str_new(text.as_bytes()) })
+    finish(read, |text| unsafe { *out = crate::strings::str_in(region, text.as_bytes()) })
 }
 
 #[unsafe(no_mangle)]
@@ -212,7 +216,11 @@ pub unsafe extern "C" fn tondo_rt_fs_exists(path_text: *const Str) -> u8 {
 
 /// `list`: the names of the entries, sorted by bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_fs_list(path_text: *const Str, out: *mut *mut ArrayHeader) -> i64 {
+pub unsafe extern "C" fn tondo_rt_fs_list(
+    path_text: *const Str,
+    out: *mut *mut ArrayHeader,
+    region: *mut crate::regions::Region,
+) -> i64 {
     let path = unsafe { path(path_text) };
     let listed = host(move || {
         let mut names = Vec::new();
@@ -223,13 +231,7 @@ pub unsafe extern "C" fn tondo_rt_fs_list(path_text: *const Str, out: *mut *mut 
         names.sort();
         Ok(names)
     });
-    finish(listed, |names| unsafe {
-        let array = tondo_rt_array_new(8, names.len());
-        for (index, name) in names.iter().enumerate() {
-            *(element(array, 8, index) as *mut *mut Str) = str_new(name.as_bytes());
-        }
-        *out = array;
-    })
+    finish(listed, |names| unsafe { *out = crate::arrays::string_array_in(region, &names) })
 }
 
 /// An operation on one or two paths that gives nothing back.
@@ -295,9 +297,14 @@ pub unsafe extern "C" fn tondo_rt_fs_open(path_text: *const Str, mode: i64, out:
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_fs_read_line(file: *mut StreamObject, out: *mut *mut Str) -> i64 {
-    let line = run_ready(file, StreamState::has_line, |s| {
-        io(s.read_line(made_text))?.map(|line| line.ok_or(FsError::InvalidData)).transpose()
+pub unsafe extern "C" fn tondo_rt_fs_read_line(
+    file: *mut StreamObject,
+    out: *mut *mut Str,
+    region: *mut crate::regions::Region,
+) -> i64 {
+    let region = crate::io::WaitingRegion(region);
+    let line = run_ready(file, StreamState::has_line, move |s| {
+        io(s.read_line(move |bytes| region.made_text(bytes)))?.map(|line| line.ok_or(FsError::InvalidData)).transpose()
     });
     finish(line, |line| unsafe { *out = line.map_or(std::ptr::null_mut(), |l| l.0) })
 }
@@ -310,9 +317,13 @@ pub unsafe extern "C" fn tondo_rt_fs_read(file: *mut StreamObject, max: i64, out
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_fs_read_rest(file: *mut StreamObject, out: *mut *mut Str) -> i64 {
+pub unsafe extern "C" fn tondo_rt_fs_read_rest(
+    file: *mut StreamObject,
+    out: *mut *mut Str,
+    region: *mut crate::regions::Region,
+) -> i64 {
     let read = run(file, |s| text(io(s.read_rest())?));
-    finish(read, |text| unsafe { *out = str_new(text.as_bytes()) })
+    finish(read, |text| unsafe { *out = crate::strings::str_in(region, text.as_bytes()) })
 }
 
 #[unsafe(no_mangle)]
@@ -359,8 +370,8 @@ unsafe fn lexical(text: *const Str) -> String {
     unsafe { super::str_text(text) }.to_owned()
 }
 
-fn string_or_null(text: Option<&str>) -> *mut Str {
-    text.map_or(std::ptr::null_mut(), |t| str_new(t.as_bytes()))
+fn string_or_null(region: *mut crate::regions::Region, text: Option<&str>) -> *mut Str {
+    text.map_or(std::ptr::null_mut(), |t| crate::strings::str_in(region, t.as_bytes()))
 }
 
 #[unsafe(no_mangle)]
@@ -375,7 +386,11 @@ pub unsafe extern "C" fn tondo_rt_path_join(
 
 /// `parent`, `fileName` or `extension` (`which` 0, 1 or 2): null for none.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_path_part(path: *const Str, which: u8) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_path_part(
+    path: *const Str,
+    which: u8,
+    region: *mut crate::regions::Region,
+) -> *mut Str {
     let text = unsafe { lexical(path) };
     let path = std::path::Path::new(&text);
     let part = match which {
@@ -384,7 +399,7 @@ pub unsafe extern "C" fn tondo_rt_path_part(path: *const Str, which: u8) -> *mut
         1 => path.file_name().map(|p| p.to_string_lossy().into_owned()),
         _ => path.extension().map(|p| p.to_string_lossy().into_owned()),
     };
-    string_or_null(part.as_deref())
+    string_or_null(region, part.as_deref())
 }
 
 #[unsafe(no_mangle)]

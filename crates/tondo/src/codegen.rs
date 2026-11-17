@@ -2283,6 +2283,17 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
         }
         let id = self.cg.runtime(rt);
         let callee = self.cg.declare_func_in_func(id, self.fb.func);
+        // What it makes, in the region the analysis chose for the
+        // statement's value, or on the heap.
+        let given;
+        let args = match rt.makes_in_region() {
+            true => {
+                let region = self.region.unwrap_or_else(|| self.fb.ins().iconst(POINTER, 0));
+                given = [args, &[region]].concat();
+                &given[..]
+            }
+            false => args,
+        };
         let call = self.fb.ins().call(callee, args);
         self.fb.inst_results(call).first().copied()
     }

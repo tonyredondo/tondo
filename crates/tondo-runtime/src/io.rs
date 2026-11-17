@@ -4,7 +4,7 @@
 //! worker.
 
 use super::tasks::{HOST_WORK, Wait, current, notify};
-use super::{ArrayHeader, LIVE_OBJECTS, Str, byte_array, str_bytes, str_new};
+use super::{ArrayHeader, LIVE_OBJECTS, Str, byte_array, str_bytes};
 use crate::array_items;
 use std::collections::VecDeque;
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
@@ -948,11 +948,6 @@ pub(crate) struct Made(pub(crate) *mut Str);
 
 unsafe impl Send for Made {}
 
-/// `bytes` as a string of the program's, if they are UTF-8.
-pub(crate) fn made_text(bytes: &[u8]) -> Option<Made> {
-    std::str::from_utf8(bytes).is_ok().then(|| Made(str_new(bytes)))
-}
-
 /// The region of a task that waits on an operation, which a thread of the
 /// pool may make its text in: the task touches it meanwhile no more than
 /// it does its frame.
@@ -965,7 +960,12 @@ impl WaitingRegion {
     /// `bytes` as a string of the program's in the region, or on the heap
     /// when it is null, if they are UTF-8.
     pub(crate) fn made_text(self, bytes: &[u8]) -> Option<Made> {
-        std::str::from_utf8(bytes).is_ok().then(|| Made(crate::strings::str_in(self.0, bytes)))
+        std::str::from_utf8(bytes).is_ok().then(|| self.made(bytes))
+    }
+
+    /// `bytes`, UTF-8 already, as a string of the program's in the region.
+    pub(crate) fn made(self, bytes: &[u8]) -> Made {
+        Made(crate::strings::str_in(self.0, bytes))
     }
 }
 
@@ -1000,9 +1000,16 @@ pub unsafe extern "C" fn tondo_rt_io_close(stream: *mut StreamObject) -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_io_read_line(stream: *mut StreamObject, out: *mut *mut Str) -> i64 {
-    let line = run_ready(stream, StreamState::has_line, |s| {
-        s.read_line(made_text)?.map(|line| line.ok_or_else(|| ErrorKind::InvalidData.into())).transpose()
+pub unsafe extern "C" fn tondo_rt_io_read_line(
+    stream: *mut StreamObject,
+    out: *mut *mut Str,
+    region: *mut crate::regions::Region,
+) -> i64 {
+    let region = WaitingRegion(region);
+    let line = run_ready(stream, StreamState::has_line, move |s| {
+        s.read_line(move |bytes| region.made_text(bytes))?
+            .map(|line| line.ok_or_else(|| ErrorKind::InvalidData.into()))
+            .transpose()
     });
     status(line, |line| unsafe { *out = line.map_or(std::ptr::null_mut(), |l| l.0) })
 }
@@ -1015,9 +1022,13 @@ pub unsafe extern "C" fn tondo_rt_io_read(stream: *mut StreamObject, max: i64, o
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_io_read_text(stream: *mut StreamObject, out: *mut *mut Str) -> i64 {
+pub unsafe extern "C" fn tondo_rt_io_read_text(
+    stream: *mut StreamObject,
+    out: *mut *mut Str,
+    region: *mut crate::regions::Region,
+) -> i64 {
     let read = run(stream, |s| utf8(s.read_rest()?));
-    status(read, |text| unsafe { *out = str_new(text.as_bytes()) })
+    status(read, |text| unsafe { *out = crate::strings::str_in(region, text.as_bytes()) })
 }
 
 /// `Reader.readBytes()`: the rest, as bytes.
@@ -1073,9 +1084,13 @@ pub unsafe extern "C" fn tondo_rt_io_buffer_reader(buffer: *mut BufferObject) ->
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_io_buffer_text(buffer: *mut BufferObject, out: *mut *mut Str) -> i64 {
+pub unsafe extern "C" fn tondo_rt_io_buffer_text(
+    buffer: *mut BufferObject,
+    out: *mut *mut Str,
+    region: *mut crate::regions::Region,
+) -> i64 {
     let bytes = unsafe { (*buffer).data().clone() };
-    status(utf8(bytes), |text| unsafe { *out = str_new(text.as_bytes()) })
+    status(utf8(bytes), |text| unsafe { *out = crate::strings::str_in(region, text.as_bytes()) })
 }
 
 #[unsafe(no_mangle)]
@@ -1194,10 +1209,11 @@ pub extern "C" fn tondo_rt_console_flush() -> i64 {
 /// `console.readLine()`: invalid UTF-8 becomes U+FFFD and a failure ends
 /// the input.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_console_read_line() -> *mut Str {
+pub extern "C" fn tondo_rt_console_read_line(region: *mut crate::regions::Region) -> *mut Str {
     let stream = console_stream(2);
-    let line = run_ready(stream, StreamState::has_line, |s| {
-        s.read_line(|line| Made(str_new(String::from_utf8_lossy(line).as_bytes()))).ok().flatten()
+    let region = WaitingRegion(region);
+    let line = run_ready(stream, StreamState::has_line, move |s| {
+        s.read_line(move |line| region.made(String::from_utf8_lossy(line).as_bytes())).ok().flatten()
     });
     unsafe { tondo_rt_stream_release(stream) };
     // The line typed ended the prompt's: the live region comes back.

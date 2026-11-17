@@ -1,0 +1,62 @@
+// Texts the library's operations on the environment, paths, files,
+// streams and commands make, which regions take as they take what `split`
+// makes: a variable, the arguments, the parts of a path, a file's text,
+// names and lines, a stream's and a buffer's text, and what a command
+// prints, in the region of a turn, and sent out of it by a store and a
+// channel.
+
+import std.console
+import std.env
+import std.fs
+import std.io
+import std.path
+import std.process
+
+type Note = {
+    text: String
+}
+
+fn turns(dir: String): String {
+    var counted = 0
+    var note = Note { text: "" }
+    let (sender, receiver) = channel[String](16)
+    for i in 0..3 {
+        env.set("REGION_TEXT_{i}", "value {i}")
+        counted += (env.get("REGION_TEXT_{i}") ?? "").length()
+        counted += env.args().length() + 1
+        counted += [env.currentDirectory(), env.executable(), env.hostname(), env.invokedAs()].length()
+        let file = path.join(dir, "file{i}.txt")
+        _ = fs.writeText(file, "first {i}\nsecond {i}\n")
+        counted += (path.fileName(file) ?? "").length() + (path.extension(file) ?? "").length()
+        note.text = path.parent(file).map((parent) { "{parent.length() > 0}" }) ?? ""
+        counted += (fs.readText(file) ?? "").length()
+        counted += (fs.list(dir) ?? []).length()
+        var opened = fs.open(file, fs.OpenMode.Read) ?? panic("no file")
+        counted += ((opened.readLine() ?? none) ?? "").length()
+        sender.send((opened.readText() ?? "").trim())
+        _ = opened.close()
+        let reader = io.reader("one {i}\ntwo {i}")
+        counted += ((reader.readLine() ?? none) ?? "").length()
+        counted += (reader.readText() ?? "").length()
+        let buffer = io.Buffer()
+        _ = buffer.writer().write("buffered {i}")
+        counted += (buffer.text() ?? "").length()
+        counted += (process.shell("echo said {i}").text() ?? "").length()
+        counted += (process.shell("printf 'a\\nb\\n'").lines() ?? []).length()
+    }
+    sender.close()
+    var received: Array[String] = []
+    for text in receiver {
+        received.push(text)
+    }
+    "{counted} {note.text} {received}"
+}
+
+fn main(): !fs.FsError {
+    let dir = fs.createTemporaryDirectory()?
+    let shown = turns(dir)
+    fs.remove(dir, recursive: true)?
+    console.println(shown)
+}
+
+// expect-stdout: 234 true [second 0, second 1, second 2]

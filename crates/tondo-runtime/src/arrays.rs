@@ -88,15 +88,6 @@ pub(crate) fn texts_array<'a>(count: usize, items: impl Iterator<Item = &'a [u8]
     array
 }
 
-/// An `Array[String]` of `items`.
-pub(crate) fn string_array(items: &[String]) -> *mut ArrayHeader {
-    let array = tondo_rt_array_new(8, items.len());
-    for (index, item) in items.iter().enumerate() {
-        unsafe { *(element(array, 8, index) as *mut *mut Str) = str_new(item.as_bytes()) };
-    }
-    array
-}
-
 /// An `Array[String]` of the texts `items` gives, as `texts_array`, in
 /// `region` when it is not null: the array and its texts in one room of
 /// it, counted first, with no list of them between.
@@ -118,8 +109,7 @@ pub(crate) fn texts_array_in<'a, I: Iterator<Item = &'a [u8]>>(
     array
 }
 
-/// An `Array[String]` of `items`, as `string_array`, in `region` when it is
-/// not null.
+/// An `Array[String]` of `items`, in `region` when it is not null.
 pub(crate) fn string_array_in(region: *mut super::regions::Region, items: &[String]) -> *mut ArrayHeader {
     texts_array_in(region, || items.iter().map(|item| item.as_bytes()))
 }

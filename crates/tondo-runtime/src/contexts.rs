@@ -333,7 +333,7 @@ pub(crate) fn shown(label: bool) -> Vec<(String, String)> {
 /// `std.log`'s fields of the contexts: those marked `@log`, each name and
 /// text followed by a zero character.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_context_logged() -> *mut Str {
+pub extern "C" fn tondo_rt_context_logged(region: *mut crate::regions::Region) -> *mut Str {
     let mut text = Vec::new();
     for (name, value) in shown(false) {
         text.extend_from_slice(name.as_bytes());
@@ -341,7 +341,7 @@ pub extern "C" fn tondo_rt_context_logged() -> *mut Str {
         text.extend_from_slice(value.as_bytes());
         text.push(0);
     }
-    super::str_new(&text)
+    crate::strings::str_in(region, &text)
 }
 
 /// Whether a context has fields marked `@label`.

@@ -1237,6 +1237,28 @@ impl StdFn {
         )
     }
 
+    /// Whether it makes the text it gives, or the texts of the array, in
+    /// the region the analysis chose for it, which codegen passes after its
+    /// arguments, or on the heap when it passes null, as the natives of
+    /// `MAKING_IN_REGION` do: what it gives holds none of what it is given.
+    pub fn makes_in_region(self) -> bool {
+        matches!(
+            self,
+            StdFn::Env(
+                EnvFn::Get
+                    | EnvFn::Args
+                    | EnvFn::CurrentDirectory
+                    | EnvFn::Hostname
+                    | EnvFn::InvokedAs
+                    | EnvFn::Executable
+            ) | StdFn::Fs(FsFn::ReadText | FsFn::List | FsFn::ReadLine | FsFn::ReadRest)
+                | StdFn::Io(IoFn::ReadLine | IoFn::ReadText | IoFn::BufferText)
+                | StdFn::Process(ProcessFn::Text | ProcessFn::ReadText | ProcessFn::ReadLines)
+                | StdFn::Path(PathFn::Parent | PathFn::FileName | PathFn::Extension | PathFn::Join)
+                | StdFn::ConsoleReadLine
+        )
+    }
+
     /// How each argument is passed: the methods of a `File` change it
     /// through a `var` loan, except `close`, which takes it.
     pub fn modes(self) -> Vec<crate::ast::Mode> {
@@ -1349,6 +1371,7 @@ pub const MAKING_IN_REGION: &[&str] = &[
     "tondo_rt_cbor_failure",
     "tondo_rt_cbor_text",
     "tondo_rt_cbor_where",
+    "tondo_rt_context_logged",
     "tondo_rt_crypto_hash_password",
     "tondo_rt_csv_fields",
     "tondo_rt_diagnostics_stack",

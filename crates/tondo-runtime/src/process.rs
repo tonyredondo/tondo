@@ -873,6 +873,7 @@ pub unsafe extern "C" fn tondo_rt_process_output(
     size: i64,
     success_offset: i64,
     out: *mut i64,
+    region: *mut crate::regions::Region,
 ) -> i64 {
     let layout = StatusLayout { size: size as usize, success: success_offset as usize };
     let run = check == 2;
@@ -904,11 +905,9 @@ pub unsafe extern "C" fn tondo_rt_process_output(
     let Ok(text) = text else { return INVALID_DATA };
     unsafe {
         *words = if check == 3 {
-            super::str_new(text.as_bytes()) as i64
+            crate::strings::str_in(region, text.as_bytes()) as i64
         } else {
-            let lines: Vec<String> =
-                if text.is_empty() { Vec::new() } else { text.lines().map(str::to_string).collect() };
-            super::arrays::string_array(&lines) as i64
+            crate::arrays::texts_array_in(region, || text.lines().map(str::as_bytes)) as i64
         };
     }
     0
@@ -1147,9 +1146,13 @@ pub unsafe extern "C" fn tondo_rt_process_release(process: *mut ProcessObject) {
 
 /// `ProcessOutput.text()`: the stdout as UTF-8 into `out`, or `InvalidData`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_process_text(bytes: *mut ArrayHeader, out: *mut *mut Str) -> i64 {
+pub unsafe extern "C" fn tondo_rt_process_text(
+    bytes: *mut ArrayHeader,
+    out: *mut *mut Str,
+    region: *mut crate::regions::Region,
+) -> i64 {
     let text = std::str::from_utf8(unsafe { array_items::<u8>(bytes) });
-    crate::status(text, |_| INVALID_DATA, |text| unsafe { *out = super::str_new(text.as_bytes()) })
+    crate::status(text, |_| INVALID_DATA, |text| unsafe { *out = crate::strings::str_in(region, text.as_bytes()) })
 }
 
 /// `process.exit(code)`: delivers the console's output and ends the program.

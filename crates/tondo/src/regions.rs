@@ -1408,9 +1408,10 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
             {
                 continue;
             }
-            // The path `path.join` makes in the region it is given, and the
-            // text of a number.
-            Rvalue::Call(Callee::Std(crate::hir::StdFn::Path(crate::hir::PathFn::Join)), _) => None,
+            // What an operation of the library makes in the region it is
+            // given, as `path.join` or `fs.readText` does, and the text of
+            // a number.
+            Rvalue::Call(Callee::Std(function), _) if function.makes_in_region() => None,
             Rvalue::Call(Callee::Std(crate::hir::StdFn::Number(op)), _) if numbers_text(*op) => None,
             Rvalue::Call(Callee::Std(_), _) if types.needs_drop(body.place_ty(types, place)) => RUNTIME,
             // The text `join` makes, which its builder makes in a region.
@@ -1566,7 +1567,7 @@ impl Flow {
                         // that holds none of what it is given.
                         Rvalue::StrOp(op, ..) if makes_text(*op) => continue,
                         Rvalue::ArrayOp(crate::hir::ArrayOp::Join, ..) => continue,
-                        Rvalue::Call(Callee::Std(crate::hir::StdFn::Path(crate::hir::PathFn::Join)), _) => continue,
+                        Rvalue::Call(Callee::Std(function), _) if function.makes_in_region() => continue,
                         Rvalue::Call(Callee::Std(crate::hir::StdFn::Number(op)), _) if numbers_text(*op) => continue,
                         // A native that reads what it is given gives a value
                         // the runtime made, which holds none of it: one that
@@ -1728,6 +1729,13 @@ impl Flow {
                                 && crate::hir::NATIVES
                                     .get(*index as usize)
                                     .is_some_and(crate::hir::Native::makes_in_region) =>
+                        {
+                            called[place.local.0 as usize] = true;
+                        }
+                        // And what an operation of the library makes so, as
+                        // the names `fs.list` gives.
+                        Rvalue::Call(Callee::Std(function), _)
+                            if place.path.is_empty() && function.makes_in_region() =>
                         {
                             called[place.local.0 as usize] = true;
                         }

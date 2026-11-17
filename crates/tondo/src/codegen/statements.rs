@@ -273,11 +273,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Rvalue::Call(Callee::Std(StdFn::Path(function)), args) => {
                 let values: Vec<ir::Value> = args.iter().map(|a| self.scalar(a)).collect();
                 match function {
-                    // In the region the analysis chose for it, or null.
-                    PathFn::Join => {
-                        let region = self.region_or_null();
-                        Val::Scalar(self.e.call_rt(Rt::PathJoin, &[values[0], values[1], region]).unwrap())
-                    }
+                    PathFn::Join => Val::Scalar(self.e.call_rt(Rt::PathJoin, &values).unwrap()),
                     PathFn::IsAbsolute => Val::Scalar(self.e.call_rt(Rt::PathIsAbsolute, &values).unwrap()),
                     _ => {
                         let which = match function {

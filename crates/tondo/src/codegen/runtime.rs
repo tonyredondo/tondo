@@ -333,6 +333,26 @@ pub(super) enum Rt {
 }
 
 impl Rt {
+    /// Whether it makes what it gives in the region of the statement it
+    /// builds, the last parameter its signature lists, as
+    /// `StdFn::makes_in_region` says: `call_rt` passes it. The ways of
+    /// running a command share one function of the runtime with `text()`
+    /// and `lines()`, and so its region.
+    pub(super) fn makes_in_region(self) -> bool {
+        use crate::hir::{PathFn, StdFn};
+        match self {
+            Rt::Env(function) => StdFn::Env(function).makes_in_region(),
+            Rt::Fs(function) => StdFn::Fs(function).makes_in_region(),
+            Rt::Io(function) => StdFn::Io(function).makes_in_region(),
+            Rt::Process(ProcessFn::Run | ProcessFn::Output | ProcessFn::Check) => true,
+            Rt::Process(function) => StdFn::Process(function).makes_in_region(),
+            Rt::PathPart => StdFn::Path(PathFn::FileName).makes_in_region(),
+            Rt::PathJoin => StdFn::Path(PathFn::Join).makes_in_region(),
+            Rt::ConsoleReadLine => StdFn::ConsoleReadLine.makes_in_region(),
+            _ => false,
+        }
+    }
+
     /// Whether it reaches outside the program, where the orders of a test
     /// cannot tell what tasks share (testing 8.10).
     pub(super) fn outside(self) -> bool {
@@ -405,7 +425,7 @@ impl Rt {
             Rt::ConsoleFlush => ("tondo_rt_console_flush", &[], &[I64]),
             Rt::ConsoleEprint => ("tondo_rt_console_eprint", &[I64], &[]),
             Rt::ConsoleEprintln => ("tondo_rt_console_eprintln", &[I64], &[]),
-            Rt::ConsoleReadLine => ("tondo_rt_console_read_line", &[], &[I64]),
+            Rt::ConsoleReadLine => ("tondo_rt_console_read_line", &[I64], &[I64]),
             Rt::ConsoleStream => ("tondo_rt_console_stream", &[I64], &[I64]),
             Rt::ConsoleSet => ("tondo_rt_console_set", &[I64, I64], &[]),
             Rt::Panic => ("tondo_rt_panic", &[I32, I64, I64], &[]),
@@ -632,21 +652,21 @@ impl Rt {
             Rt::AtomicExchange => ("tondo_rt_atomic_exchange", &[I64, I8, I64, I64], &[I64]),
             Rt::AtomicAdd => ("tondo_rt_atomic_add", &[I64, I8, I8, I64, I64], &[I64]),
             Rt::Fs(function) => match function {
-                FsFn::ReadText => ("tondo_rt_fs_read_text", &[I64, I64], &[I64]),
+                FsFn::ReadText => ("tondo_rt_fs_read_text", &[I64, I64, I64], &[I64]),
                 FsFn::ReadBytes => ("tondo_rt_fs_read_bytes", &[I64, I64], &[I64]),
                 FsFn::WriteText => ("tondo_rt_fs_write_text", &[I64, I64], &[I64]),
                 FsFn::WriteBytes => ("tondo_rt_fs_write_bytes", &[I64, I64], &[I64]),
                 FsFn::AppendText => ("tondo_rt_fs_append_text", &[I64, I64], &[I64]),
                 FsFn::Exists => ("tondo_rt_fs_exists", &[I64], &[I8]),
-                FsFn::List => ("tondo_rt_fs_list", &[I64, I64], &[I64]),
+                FsFn::List => ("tondo_rt_fs_list", &[I64, I64, I64], &[I64]),
                 FsFn::CreateDirectory => ("tondo_rt_fs_create_directory", &[I64], &[I64]),
                 FsFn::Rename => ("tondo_rt_fs_rename", &[I64, I64], &[I64]),
                 FsFn::Copy => ("tondo_rt_fs_copy", &[I64, I64], &[I64]),
                 FsFn::Remove => ("tondo_rt_fs_remove", &[I64, I64], &[I64]),
                 FsFn::Open => ("tondo_rt_fs_open", &[I64, I64, I64], &[I64]),
-                FsFn::ReadLine => ("tondo_rt_fs_read_line", &[I64, I64], &[I64]),
+                FsFn::ReadLine => ("tondo_rt_fs_read_line", &[I64, I64, I64], &[I64]),
                 FsFn::Read => ("tondo_rt_fs_read", &[I64, I64, I64], &[I64]),
-                FsFn::ReadRest => ("tondo_rt_fs_read_rest", &[I64, I64], &[I64]),
+                FsFn::ReadRest => ("tondo_rt_fs_read_rest", &[I64, I64, I64], &[I64]),
                 FsFn::Write => ("tondo_rt_fs_write", &[I64, I64], &[I64]),
                 FsFn::WriteBytesTo => ("tondo_rt_fs_write_bytes_to", &[I64, I64], &[I64]),
                 FsFn::Flush => ("tondo_rt_fs_flush", &[I64], &[I64]),
@@ -660,34 +680,34 @@ impl Rt {
                 IoFn::WriteBytes => ("tondo_rt_io_write_bytes", &[I64, I64], &[I64]),
                 IoFn::Flush => ("tondo_rt_io_flush", &[I64], &[I64]),
                 IoFn::Close => ("tondo_rt_io_close", &[I64], &[I64]),
-                IoFn::ReadLine => ("tondo_rt_io_read_line", &[I64, I64], &[I64]),
+                IoFn::ReadLine => ("tondo_rt_io_read_line", &[I64, I64, I64], &[I64]),
                 IoFn::Read => ("tondo_rt_io_read", &[I64, I64, I64], &[I64]),
-                IoFn::ReadText => ("tondo_rt_io_read_text", &[I64, I64], &[I64]),
+                IoFn::ReadText => ("tondo_rt_io_read_text", &[I64, I64, I64], &[I64]),
                 IoFn::ReadBytes => ("tondo_rt_io_read_bytes", &[I64, I64], &[I64]),
                 IoFn::Reader => ("tondo_rt_io_reader", &[I64], &[I64]),
                 IoFn::Discard => ("tondo_rt_io_discard", &[], &[I64]),
                 IoFn::BufferNew => ("tondo_rt_io_buffer_new", &[], &[I64]),
                 IoFn::BufferWriter => ("tondo_rt_io_buffer_writer", &[I64], &[I64]),
                 IoFn::BufferReader => ("tondo_rt_io_buffer_reader", &[I64], &[I64]),
-                IoFn::BufferText => ("tondo_rt_io_buffer_text", &[I64, I64], &[I64]),
+                IoFn::BufferText => ("tondo_rt_io_buffer_text", &[I64, I64, I64], &[I64]),
                 IoFn::BufferBytes => ("tondo_rt_io_buffer_bytes", &[I64], &[I64]),
                 IoFn::BufferLength => ("tondo_rt_io_buffer_length", &[I64], &[I64]),
                 IoFn::BufferClear => ("tondo_rt_io_buffer_clear", &[I64], &[]),
             },
             Rt::Env(function) => match function {
-                EnvFn::Args => ("tondo_rt_env_args", &[], &[I64]),
-                EnvFn::Get => ("tondo_rt_env_get", &[I64], &[I64]),
+                EnvFn::Args => ("tondo_rt_env_args", &[I64], &[I64]),
+                EnvFn::Get => ("tondo_rt_env_get", &[I64, I64], &[I64]),
                 EnvFn::Vars => ("tondo_rt_env_vars", &[I64], &[I64]),
                 EnvFn::Set => ("tondo_rt_env_set", &[I64, I64, I64], &[]),
                 EnvFn::SetAll => ("tondo_rt_env_set_all", &[I64, I64], &[]),
                 EnvFn::Remove => ("tondo_rt_env_remove", &[I64, I64], &[]),
-                EnvFn::CurrentDirectory => ("tondo_rt_env_current_directory", &[], &[I64]),
+                EnvFn::CurrentDirectory => ("tondo_rt_env_current_directory", &[I64], &[I64]),
                 EnvFn::SetCurrentDirectory => ("tondo_rt_env_set_current_directory", &[I64], &[I64]),
                 EnvFn::SyncNative => ("tondo_rt_env_sync_native", &[], &[]),
-                EnvFn::Hostname => ("tondo_rt_env_hostname", &[], &[I64]),
+                EnvFn::Hostname => ("tondo_rt_env_hostname", &[I64], &[I64]),
                 EnvFn::ProcessId => ("tondo_rt_env_process_id", &[], &[I64]),
-                EnvFn::InvokedAs => ("tondo_rt_env_invoked_as", &[], &[I64]),
-                EnvFn::Executable => ("tondo_rt_env_executable", &[], &[I64]),
+                EnvFn::InvokedAs => ("tondo_rt_env_invoked_as", &[I64], &[I64]),
+                EnvFn::Executable => ("tondo_rt_env_executable", &[I64], &[I64]),
             },
             Rt::Process(function) => match function {
                 ProcessFn::Command => ("tondo_rt_process_command", &[I64, I64], &[I64]),
@@ -697,11 +717,11 @@ impl Rt {
                 ProcessFn::Configure(_) => ("tondo_rt_process_configure", &[I64, I64, I64, I64], &[I64]),
                 ProcessFn::Status => ("tondo_rt_process_run", &[I64, I8, I64], &[I64]),
                 ProcessFn::Run | ProcessFn::Output | ProcessFn::Check | ProcessFn::ReadText | ProcessFn::ReadLines => {
-                    ("tondo_rt_process_output", &[I64, I8, I64, I64, I64], &[I64])
+                    ("tondo_rt_process_output", &[I64, I8, I64, I64, I64, I64], &[I64])
                 }
                 ProcessFn::Start => ("tondo_rt_process_start", &[I64, I64], &[I64]),
                 ProcessFn::Exec => ("tondo_rt_process_exec", &[I64, I64], &[I64]),
-                ProcessFn::Text => ("tondo_rt_process_text", &[I64, I64], &[I64]),
+                ProcessFn::Text => ("tondo_rt_process_text", &[I64, I64, I64], &[I64]),
                 ProcessFn::Stream(_) => ("tondo_rt_process_stream", &[I64, I64], &[I64]),
                 ProcessFn::Id => ("tondo_rt_process_id", &[I64], &[I64]),
                 ProcessFn::Wait | ProcessFn::Cancel => ("tondo_rt_process_wait", &[I64, I8, I64], &[I64]),
@@ -733,7 +753,7 @@ impl Rt {
             Rt::StreamRelease => ("tondo_rt_stream_release", &[I64], &[]),
             Rt::BufferRelease => ("tondo_rt_io_buffer_release", &[I64], &[]),
             Rt::PathJoin => ("tondo_rt_path_join", &[I64, I64, I64], &[I64]),
-            Rt::PathPart => ("tondo_rt_path_part", &[I64, I8], &[I64]),
+            Rt::PathPart => ("tondo_rt_path_part", &[I64, I8, I64], &[I64]),
             Rt::PathIsAbsolute => ("tondo_rt_path_is_absolute", &[I64], &[I8]),
             Rt::StrToBytes => ("tondo_rt_str_to_bytes", &[I64], &[I64]),
             Rt::StrFromBytes => ("tondo_rt_str_from_bytes", &[I64], &[I64]),
