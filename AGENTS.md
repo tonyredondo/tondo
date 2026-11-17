@@ -119,6 +119,12 @@ TONDO_CASES_REPLAY=1 cargo test --workspace --test cases cases
 mode the other variables of `crates/tondo/tests/cases.rs` choose: one
 case in every mode is a loop over them.
 
+A change to the optimizer, the regions or the runtime is measured before it
+lands, not after: `tondo test bench/tondo --bench --compiler HEAD
+--regression-by instructions --max-regression 2` judges it by every
+benchmark, and a row that does over 2% more work lands only with its reason
+written in the commit.
+
 `.github/scripts/local.sh` runs what CI and the Nightly add, in containers
 on this machine: the servers, no C compiler, musl, emulation, and the tests that
 race with little CPU, which is where a failure otherwise shows hours later.

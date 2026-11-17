@@ -694,16 +694,16 @@ the others. The reasons a value stays on the heap are that it is stored in
 what the function was given, in a lock's state or in a `Ref`; that a
 closure captures it, that it is sent, taken by a task or given to C; that
 it outlives a turn of its loop; that it holds a value its region did not
-make; and that regions do not take that kind of value yet, as maps, slices
-and the arrays that an operation of the runtime makes, `concat` or
-`sorted`.
+make; and that regions do not take that kind of value yet, as maps and
+slices.
 
 A text goes in a region as an array does, whatever its length, when the
 frame does not take it first: one that an interpolation makes, as the
 label of the first program of this chapter where `main` inlined it, and one
 that an operation of the runtime or of the library gives, as `split`,
-`replace` or `fs.readText`. This function reads a file, and none of its
-texts is on the heap:
+`replace` or `fs.readText`. So does an array that such an operation gives,
+as `sorted` or `repeat`. This function reads a file, and none of its texts
+is on the heap:
 
 ```tondo
 import std.console
