@@ -205,10 +205,10 @@ $ tondo optimizations stats.to
 stats.to:9:9: `reading` is lent, with no count of its own: its array holds it (in main, mean)
 stats.to:9:20: `readings` runs four turns at a time (in main, mean)
 stats.to:12:13: `count += 1` cannot overflow: no check, in one copy of the code; another keeps the check (in main, mean)
-stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is copied (in main)
+stats.to:19:5: `"{sensor}: {value:.1}"` is not made in the frame: it is copied (in main)
 stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in label)
+stats.to:19:5: `"{sensor}: {value:.1}"` goes in a region of `main` (in main)
 stats.to:19:5: `"{sensor}: {value:.1}"` stays on the heap: `label` returns it with what it was given (in label)
-stats.to:19:5: `"{sensor}: {value:.1}"` stays on the heap: regions do not take texts yet (in main)
 stats.to:19:17: `value` in `formats.formatFloat`, `formatNumber(` stays a call of `formats.formatNumber`: its body costs 31, more than the 30 inlining takes (in label)
 stats.to:19:17: `value` stays a call of `formats.formatFloat`: its body costs 80, more than the 30 inlining takes (in main)
 stats.to:19:17: `value` is inlined: the body of `formats.formatFloat` is copied here (in label)
@@ -231,15 +231,17 @@ from the bottom:
 - **Loops.** Both loops run four turns at a time, and the array is given
   room for all thousand elements before the loop that fills it starts, so
   `push` never grows it.
-- **The heap.** The label is a string that is returned, so it is made on
-  the heap. A string, a closure or a record that does not outlive its
-  function stays in the function's frame, and the line says which of the
-  two happened and what decided it.
+- **The heap.** In `label`, the label is a string that is returned, so it
+  is made on the heap. A string, a closure or a record that does not
+  outlive its function stays in the function's frame, and the line says
+  which of the two happened and what decided it.
 - **Regions.** The array of readings never leaves `main`, and its size is
   not known when compiling, so it goes in a region of `main`: it is made
   by moving a pointer and goes with the region when `main` ends
-  ([What a region takes](#what-a-region-takes)). The label stays on the
-  heap, and the line says why.
+  ([What a region takes](#what-a-region-takes)). So does the label where
+  `main` inlined `label`: the frame does not take it, and the line says
+  why, and the region does. Each place has a line for each copy of its
+  code, named at its end.
 - **Checks.** The compiler proved that `count += 1` cannot overflow in one
   copy of the loop, which has no check; the copy it could not prove it for
   keeps it. A check that stays says so too.
@@ -307,9 +309,11 @@ was inlined in `main`, which lets go of it, it goes in a region of `main`.
 
 ```text
 $ tondo optimizations stats.to --kind heap
-stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is copied (in main)
 stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in label)
 ```
+
+Only the `label` that stays a function allocates on the heap, and its one
+call was inlined: the copy in `main` has the label in a region.
 
 `tondo check --performance` warns, while writing, of costs that the
 compiler cannot take away, because doing so would change what the program
@@ -690,8 +694,19 @@ the others. The reasons a value stays on the heap are that it is stored in
 what the function was given, in a lock's state or in a `Ref`; that a
 closure captures it, that it is sent, taken by a task or given to C; that
 it outlives a turn of its loop; that it holds a value its region did not
-make; and that regions do not take that kind of value yet, as texts and
-maps.
+make; and that regions do not take that kind of value yet, as maps, slices
+and the texts that an operation of the runtime makes, `replace` or
+`toUpper`.
+
+A text that an interpolation makes goes in a region as an array does,
+whatever its length, when the frame does not take it first: the label of
+the first program of this chapter, where `main` inlined it. Two reasons
+are a text's own. One that grows in place, as `line = "{line}[{word}]"` in
+a loop, stays on the heap: `a region does not grow a text in place yet`.
+And one given to a function of the runtime whose code has not been read
+yet for whether it keeps the text stays there too: the remark names the
+function and says `a native of the runtime not read yet`. That list gets
+shorter with each version, and nothing in the program is to change for it.
 
 What regions hold is seen where the heap is: a memory profile has
 `region_objects` and `region_space` beside the heap's samples, `tondo
