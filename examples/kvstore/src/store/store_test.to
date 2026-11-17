@@ -1,5 +1,6 @@
 import kvstore.protocol
 import std.model
+import std.testing
 
 /// A store after several lines, and what the last one answered.
 fn run(lines: Array[String]): Applied {
@@ -75,4 +76,27 @@ test theCountOfNumbersIsAlwaysRight {
         model.machine(Store {}, after, events: some(commands), holds: [counted]),
     )
     assert(checked.states > 10)
+}
+
+/// A thousand lines a client sends: it sets, counts, reads and deletes over
+/// fifty keys.
+fn session(): Array[String] {
+    (0..1000)
+        .map(
+            (n) {
+                let key = "key{n % 50}"
+                match n % 4 {
+                    0 => "SET {key} value{n}"
+                    1 => "INCR hits{n % 5}"
+                    2 => "GET {key}"
+                    _ => "DEL {key}"
+                }
+            },
+        )
+        .collect()
+}
+
+test aThousandCommandsAreApplied {
+    let lines = session()
+    testing.bench("1000 commands", () { protocol.format(run(lines).reply) })?
 }

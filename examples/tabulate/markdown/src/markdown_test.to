@@ -1,4 +1,5 @@
 import renderer.api
+import std.testing
 
 test aTableAsMarkdown {
     let table = api.Table {
@@ -8,4 +9,20 @@ test aTableAsMarkdown {
     }
     let text = Markdown {}.render(table) ?? ""
     assert(text == "## Sales\n\n| region | amount |\n| --- | --- |\n| north | 120.50 |")
+}
+
+/// A table of two hundred rows of four columns.
+fn sales(): api.Table {
+    api.Table {
+        title: "Sales"
+        columns: ["region", "month", "units", "amount"]
+        rows: (0..200)
+            .map((n) { ["region {n % 7}", "2026-{n % 12 + 1:02}", "{n * 3}", "{n}.50"] })
+            .collect()
+    }
+}
+
+test aTableOfTwoHundredRowsIsRendered {
+    let table = sales()
+    testing.bench("table of 200 rows", () { Markdown {}.render(table) })?
 }

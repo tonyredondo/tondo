@@ -1,3 +1,4 @@
+import std.testing
 import std.url
 
 test findsWhatAPageLinksTo {
@@ -40,4 +41,27 @@ test aSiteIsASchemeAHostAndAPort {
     assert(sameSite(home, url.parse("http://localhost:8080/deep/page")?))
     assert(not sameSite(home, url.parse("http://localhost:9090/")?))
     assert(not sameSite(home, url.parse("https://localhost:8080/")?))
+}
+
+/// A page with two hundred links, of the kinds a site has.
+fn linked(): String {
+    (0..200)
+        .map(
+            (n) {
+                match n % 4 {
+                    0 => "<a href='/docs/page{n}.html'>Page {n}</a>"
+                    1 => "<a href='../up{n}.html#part'>Up</a>"
+                    2 => "<img src='img/{n}.png'>"
+                    _ => "<a href='mailto:someone{n}@example.com'>Write</a>"
+                }
+            },
+        )
+        .collect()
+        .join("\n")
+}
+
+test aPageOfTwoHundredLinksIsRead {
+    let html = linked()
+    let home = url.parse("https://example.com/blog/2026/post.html")?
+    testing.bench("links of a page", () { targets(home, html) })?
 }

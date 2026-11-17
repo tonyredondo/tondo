@@ -1,6 +1,7 @@
 import profiler.api
 import profiler.recorder
 import std.ffi
+import std.testing
 
 fn program(): Host {
     Host { modules: [1: "kernel", 2: "café.dll"] }
@@ -49,4 +50,21 @@ test aLongNameIsAskedForAgainWithItsRoom {
     let info = unsafe { api.InfoObject.of(object) }
     assert(recorder.name(info, 7) == ok(long))
     assert(api.released(object) == 0)
+}
+
+test aProgramOfAHundredModulesIsProfiled {
+    var modules: Map[UInt, String] = [:]
+    var id: UInt = 1
+    for n in 0..100 {
+        modules[id] = "module{n}.dll"
+        id += 1
+    }
+    let host = Host { modules }
+    testing.bench(
+        "100 modules through the interfaces",
+        () {
+            let heard = recorder.Recorder()
+            host.run(ffi.object(heard)).isOk() and heard.events().length() == 102
+        },
+    )?
 }
