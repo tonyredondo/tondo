@@ -366,7 +366,7 @@ each `+`, in regions
 Linux the instructions it executes:
 
 ```text
-  count 600 words     14.40 µs/op  ±0.3%  6 allocs/op +2 in regions  304 B/op +25392 in regions  265.2k ins/op
+  count 600 words     14.17 µs/op  ±1.4%  6 allocs/op +2 in regions  304 B/op +25392 in regions  249.0k ins/op
 ```
 
 What the closure returns is kept, so the work that made it is not optimized

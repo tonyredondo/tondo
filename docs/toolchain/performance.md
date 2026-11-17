@@ -578,7 +578,7 @@ though. A benchmark of the two over a thousand numbers shows both costs:
 ```text
 $ tondo test --bench
 test squares::unit::squares::aThousand ... ok
-  arrays     1.099 µs/op  ±0.2%  0 allocs/op +9 in regions  0 B/op +12448 in regions  23.9k ins/op
+  arrays     1.099 µs/op  ±0.2%  0 allocs/op +9 in regions  0 B/op +12448 in regions  23.7k ins/op
   chain      1.397 µs/op  ±0.3%  2 allocs/op  80 B/op  38.2k ins/op
 ```
 
@@ -695,18 +695,55 @@ what the function was given, in a lock's state or in a `Ref`; that a
 closure captures it, that it is sent, taken by a task or given to C; that
 it outlives a turn of its loop; that it holds a value its region did not
 make; and that regions do not take that kind of value yet, as maps, slices
-and the texts that an operation of the runtime makes, `replace` or
-`toUpper`.
+and the arrays that an operation of the runtime makes, `concat` or
+`sorted`.
 
-A text that an interpolation makes goes in a region as an array does,
-whatever its length, when the frame does not take it first: the label of
-the first program of this chapter, where `main` inlined it. Two reasons
-are a text's own. One that grows in place, as `line = "{line}[{word}]"` in
-a loop, stays on the heap: `a region does not grow a text in place yet`.
-And one given to a function of the runtime whose code has not been read
-yet for whether it keeps the text stays there too: the remark names the
-function and says `a native of the runtime not read yet`. That list gets
-shorter with each version, and nothing in the program is to change for it.
+A text goes in a region as an array does, whatever its length, when the
+frame does not take it first: one that an interpolation makes, as the
+label of the first program of this chapter where `main` inlined it, and one
+that an operation of the runtime or of the library gives, as `split`,
+`replace` or `fs.readText`. This function reads a file, and none of its
+texts is on the heap:
+
+```tondo
+import std.console
+import std.fs
+
+/// How many lines of a file hold the word.
+fn holding(file: String, word: String): Int ! fs.FsError {
+    let text = fs.readText(file)?
+    var count = 0
+    for line in text.lines() {
+        if line.toLower().contains(word) {
+            count += 1
+        }
+    }
+    count
+}
+
+fn main() {
+    match holding("notes.txt", "region") {
+        ok(count) => console.println("{count}")
+        err(_) => console.println("no notes")
+    }
+}
+```
+
+```text
+$ tondo optimizations holding.to --kind region
+holding.to:6:16: `fs.readText(file)` goes in a region of `holding` (in holding)
+holding.to:8:17: `text.lines()` in `String.lines`, `textNative.lines(self)` goes in a region of `holding` (in holding)
+holding.to:9:12: `line.toLower()` in `String.toLower`, `textNative.lower(self)` goes in the region of a turn of the loop at line 8 (in holding)
+```
+
+The file's text and its lines are there for the call, and each line in
+lower case for its turn. The `?` gives the error back when the file cannot
+be read, and that error holds nothing of a text, so no text leaves with it.
+An error made with a text in it, as `fail Problem { line }`, takes that
+text where the function's result goes, as a text that is returned. One
+reason is a text's own: a text that grows in place, as `line =
+"{line}[{word}]"` in a loop, stays on the heap, with `a region does not
+grow a text in place yet`.
 
 A turn's region is emptied when the turn goes back to the head of its
 loop, and let go of when the function returns. So a value does not outlive
