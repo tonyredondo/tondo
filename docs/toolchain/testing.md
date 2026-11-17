@@ -30,12 +30,13 @@ test kvstore::unit::protocol::anyLineIsACommandOrAnError ... ok
 test kvstore::unit::protocol::readsEachCommand ... ok
 test kvstore::unit::protocol::repliesAreOneLineEach ... ok
 test kvstore::unit::protocol::saysWhatIsWrongWithALine ... ok
+test kvstore::unit::store::aThousandCommandsAreApplied ... ok
 test kvstore::unit::store::counts ... ok
 test kvstore::unit::store::deletes ... ok
 test kvstore::unit::store::listsKeysInTheOrderTheyCame ... ok
 test kvstore::unit::store::setsAndGets ... ok
 test kvstore::unit::store::theCountOfNumbersIsAlwaysRight ... ok
-ok. 12 passed; 0 failed; 0 skipped; 0 blocked; 0.04s
+ok. 13 passed; 0 failed; 0 skipped; 0 blocked; 0.05s
 note: 3 tests that start tasks and reached outside the program ran in one order: `--schedules all` tries the others, if each leaves the outside as it found it
 ```
 
