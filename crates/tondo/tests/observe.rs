@@ -198,23 +198,39 @@ fn counters_and_dumps_show_what_regions_hold() {
     assert!(child.wait().unwrap().success());
 }
 
+/// A program that computes until the profile of a tool has sampled it,
+/// as its metrics say, rather than for a time a busy machine may outlast;
+/// the turns are bounded only against a hang.
 const TRACED: &str = r#"import std.console
+import std.diagnostics
 
 fn fib(n: Int): Int {
     if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
 }
 
+fn main() {
+    let job = spawn crunch()
+    console.println("{job.wait()}")
+}
+
 fn crunch(): Int {
     var total = 0
-    for i in 0..300 {
+    for i in 0..100_000 {
         total = total + fib(20 + i % 4)
+        if i % 16 == 15 and sampled() >= 20 {
+            break
+        }
     }
     total
 }
 
-fn main() {
-    let job = spawn crunch()
-    console.println("{job.wait()}")
+fn sampled(): Int {
+    for metric in diagnostics.metrics() {
+        if metric.name == "profile.samples" {
+            return metric.value
+        }
+    }
+    0
 }
 "#;
 
@@ -237,9 +253,9 @@ fn trace_of_a_started_program() {
     let said = String::from_utf8_lossy(&output.stderr);
     assert!(missing.is_empty() && !said.contains("the program"), "missing {missing:?} among {names:?}; {said}");
     let waits = events.iter().find(|e| e["name"] == "main" && e["args"]["then"] != "finished").unwrap();
-    assert_eq!(waits["args"]["then"], "waits at traced.to:17 in main");
+    assert_eq!(waits["args"]["then"], "waits at traced.to:10 in main");
     let profile = std::fs::read_to_string(dir.join("out.folded")).unwrap();
-    assert!(profile.lines().any(|line| line.contains(";crunch;fib")), "{profile}");
+    assert!(profile.lines().any(|line| line.contains(";crunch;fib")), "{profile}{said}");
     // A program that does not end well says how it ended; the name of one
     // of the files names both, its dots kept.
     std::fs::write(dir.join("fails.to"), "fn main() {\n    panic(\"no\")\n}\n").unwrap();
@@ -293,18 +309,11 @@ fn profiles_time_memory_and_tasks() {
     let show = |args: &[&str]| -> Value {
         serde_json::from_str(&run(&[&["profile", "show"], args, &["--json"]].concat())).unwrap()
     };
-    // Processor time, by function and by the program's own lines; a run this
-    // short may end between two samples on a machine that is busy.
-    // `crunch`, inlined, has no time of its own, so it ranks after every
-    // function that has some, which an emulator gives more of.
-    let mut cpu = Value::Null;
-    for _ in 0..5 {
-        run(&["profile", "--output", "cpu.pprof", "--", "busy.to"]);
-        cpu = show(&["cpu.pprof", "--top", "1000"]);
-        if cpu["functions"].as_array().is_some_and(|functions| !functions.is_empty()) {
-            break;
-        }
-    }
+    // Processor time, by function and by the program's own lines.
+    // `crunch` has little time of its own, so it ranks after most functions
+    // that have some, which an emulator gives more of.
+    run(&["profile", "--output", "cpu.pprof", "--", "busy.to"]);
+    let cpu = show(&["cpu.pprof", "--top", "1000"]);
     assert_eq!(
         (&cpu["format"], &cpu["type"], &cpu["unit"]),
         (&json!("tondo-profile-show-0.1/1"), &json!("cpu"), &json!("nanoseconds"))
@@ -316,10 +325,10 @@ fn profiles_time_memory_and_tasks() {
     // symbols, on macOS as elsewhere.
     assert!(functions.iter().any(|f| f.starts_with("tondo_runtime::")), "{cpu}");
     let fib = cpu["lines"].as_array().unwrap().iter().find(|l| l["function"] == "fib").expect("a line of fib");
-    assert_eq!((&fib["file"], &fib["line"]), (&json!("busy.to"), &json!(4)), "{cpu}");
+    assert_eq!((&fib["file"], &fib["line"]), (&json!("busy.to"), &json!(5)), "{cpu}");
     assert!(fib["source"].as_str().unwrap().contains("fib(n - 1) + fib(n - 2)"), "{fib}");
     let text = run(&["profile", "show", "cpu.pprof", "--lines", "--top", "3"]);
-    assert!(text.contains("busy.to:4 in fib  if n < 2 { n } else { fib(n - 1) + fib(n - 2) }"), "{text}");
+    assert!(text.contains("busy.to:5 in fib  if n < 2 { n } else { fib(n - 1) + fib(n - 2) }"), "{text}");
     run(&["profile", "show", "cpu.pprof", "--html", "flame.html"]);
     let page = std::fs::read_to_string(dir.join("flame.html")).unwrap();
     assert!(page.contains("<svg") && page.contains("<title>fib") && !page.contains("<script"), "{page}");
@@ -338,7 +347,7 @@ fn profiles_time_memory_and_tasks() {
         let instructions = show(&["instructions.pprof", "--top", "1000"]);
         assert_eq!((&instructions["type"], &instructions["unit"]), (&json!("instructions"), &json!("count")));
         let fib = instructions["lines"].as_array().unwrap().iter().find(|l| l["function"] == "fib");
-        assert!(fib.is_some_and(|l| l["line"] == 4), "{instructions}");
+        assert!(fib.is_some_and(|l| l["line"] == 5), "{instructions}");
     }
     // Memory, as the program left it: what it holds and what it allocated.
     // A sample every 64 KiB: at the default 512 KiB, the 11 MB it holds are

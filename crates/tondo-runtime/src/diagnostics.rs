@@ -616,6 +616,7 @@ fn sample() -> Vec<Sample> {
     add("tasks.live", true, "", scheduler.live as i64);
     add("tasks.ready", true, "", scheduler.ready as i64);
     add("tasks.spawned", false, "", TASKS_SPAWNED.get());
+    add("profile.samples", false, "", super::recorder::taken() as i64);
     add("workers.total", true, "", scheduler.workers as i64);
     add("workers.idle", true, "", scheduler.idle as i64);
     add("workers.in_c", true, "", scheduler.in_c as i64);

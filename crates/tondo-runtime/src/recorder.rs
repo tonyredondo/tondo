@@ -187,6 +187,11 @@ fn ring() -> &'static [Slot] {
 /// The sequence number of the next sample, and of the next one to read.
 static NEXT: AtomicU64 = AtomicU64::new(0);
 static READ: Mutex<u64> = Mutex::new(0);
+
+/// The samples a profile or a trace took of the threads, since the start.
+pub(crate) fn taken() -> u64 {
+    NEXT.load(Ordering::Relaxed)
+}
 const BUSY: u64 = u64::MAX;
 
 /// The handler of `SIGPROF`, which the processor time of the process
