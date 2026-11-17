@@ -1877,7 +1877,9 @@ pub fn optimizations(
                             (true, None) => copied_into(body, by, &library).first().map(|(call, _)| *call),
                         }
                     });
-                if let Some(by) = by {
+                // The call the remark is told at names no code that keeps
+                // the value: what keeps it is the library's, in that call.
+                if let Some(by) = by.filter(|by| *by != site) {
                     let (_, line, column) = sources.position(by.start);
                     text = format!("{text}: `{}` at {line}:{column}", clipped(by));
                 }

@@ -1,0 +1,21 @@
+// A text the library makes on its way, kept by the library's own code: the
+// remark says which function keeps it, and names no code of the program,
+// whose `value` at the call keeps nothing.
+
+import std.console
+
+fn label(sensor: String, value: Float): String {
+    "{sensor}: {value:.1}"
+}
+
+fn main() {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        lines.push(label("s{i}", Float(i) * 1.5))
+    }
+    console.println("{lines}")
+}
+
+// expect-optimization: 8:17 region it is passed to `formats.formatNumber`, which keeps it
+// expect-no-optimization: 8:17 region which keeps it: `value`
+// expect-stdout: [s0: 0.0, s1: 1.5, s2: 3.0]
