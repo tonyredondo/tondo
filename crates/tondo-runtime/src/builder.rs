@@ -56,20 +56,16 @@ impl Builder {
     #[cold]
     fn grow(&mut self, more: usize) {
         let room = (self.len + more).max(self.room() * 2);
-        // A text a region takes grows in it, its old rooms the region's
-        // until it ends; past a mebibyte it goes on on the heap, where it
-        // grows in its own block, so that a long text holds no more than
-        // the heap would.
-        if self.region().is_some() && HEADER + room > regions::REGION_ROOM_MAX {
-            let layout = str_layout(room);
-            let text = unsafe { alloc(layout) };
-            if text.is_null() {
-                handle_alloc_error(layout);
-            }
-            unsafe {
-                std::ptr::copy_nonoverlapping((self.text as *const u8).add(HEADER), text.add(HEADER), self.len);
-                (text as *mut Str).write(Str { rc: AtomicUsize::new(0), len: 0, cap: room });
-            }
+        // A text a region takes grows in it, whatever its length: what the
+        // analysis puts in a region stays a region's, as what holds it lets
+        // go of nothing. Its old rooms are the region's until it ends; past
+        // a mebibyte it is alone in a chunk of its own, which grows as a
+        // block on the heap does, so that a long text holds no more.
+        if let Some(region) = self.region()
+            && HEADER + room > regions::REGION_ROOM_MAX
+        {
+            let text = unsafe { regions::grow_alone(region, self.text as *mut u8, HEADER + self.len, HEADER + room) };
+            unsafe { (*(text as *mut Str)).cap = room };
             self.text = text as *mut Str;
             return;
         }
@@ -399,11 +395,6 @@ pub unsafe extern "C" fn tondo_rt_sb_adopt_region(
     region: *mut regions::Region,
 ) -> u8 {
     unsafe {
-        // A text on the heap that nothing else holds, as one grown past what
-        // a region takes, goes on in its block there.
-        if (*s).rc.load(Ordering::Acquire) == 1 {
-            return tondo_rt_sb_adopt(b, s, room);
-        }
         let only = (*s).rc.load(Ordering::Acquire) == regions::LAST_IN_REGION;
         if only && regions::holds(region, s as usize) {
             forget_positions(s);

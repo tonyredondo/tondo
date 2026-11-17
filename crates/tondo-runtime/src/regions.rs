@@ -373,6 +373,39 @@ unsafe fn leave(region: *mut Region) {
     }
 }
 
+/// Room of `size` bytes in `region` for the block at `block`, of which the
+/// first `keep` bytes are kept: the same chunk grown when the block is
+/// alone in one of its own, as a large value is, which the allocator may
+/// move; else a new block, a chunk of its own when large, with them
+/// copied. A text that grows long so stays its region's and holds what
+/// one on the heap would.
+pub(crate) unsafe fn grow_alone(region: *mut Region, block: *mut u8, keep: usize, size: usize) -> *mut u8 {
+    unsafe {
+        let mut link: *mut *mut Chunk = &mut (*region).chunks;
+        while !(*link).is_null() {
+            let chunk = *link;
+            let alone = chunk as usize + CHUNK_HEADER == block as usize && (*chunk).size & !SAMPLED != CHUNK;
+            if alone && (*chunk).size & SAMPLED == 0 && !checked::on() {
+                let old = (*chunk).size;
+                super::strings::forget_positions_within(chunk as usize, chunk as usize + old);
+                let grown = super::meta::uncounted_realloc(chunk as *mut u8, chunk_layout(old), CHUNK_HEADER + size);
+                if grown.is_null() {
+                    handle_alloc_error(chunk_layout(CHUNK_HEADER + size));
+                }
+                let grown = grown as *mut Chunk;
+                (*grown).size = CHUNK_HEADER + size;
+                HELD.fetch_add(CHUNK_HEADER + size - old, Ordering::Relaxed);
+                *link = grown;
+                return (grown as *mut u8).add(CHUNK_HEADER);
+            }
+            link = &mut (*chunk).next;
+        }
+        let moved = tondo_rt_region_alloc(region, size);
+        std::ptr::copy_nonoverlapping(block, moved, keep);
+        moved
+    }
+}
+
 /// Whether `address` is in memory `region` holds, one of its chunks.
 pub(crate) fn holds(region: *mut Region, address: usize) -> bool {
     let mut chunk = unsafe { (*region).chunks };

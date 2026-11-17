@@ -3,7 +3,10 @@
 // its room doubling as it grows, and is copied into the region when
 // something does. In the region of a function, of a turn and of a caller,
 // short and longer than the 64 bytes from which a text keeps the
-// positions of its characters, and read by index once grown.
+// positions of its characters, and read by index once grown; and past a
+// mebibyte, alone in a chunk of its own that grows as a block on the heap
+// does, still its region's while an array of the region holds it, which
+// the run checks for leaks as every case does.
 
 import std.console
 
@@ -48,6 +51,33 @@ fn long(count: Int): Int {
     text.length() + "{text[count * 16 - 1]}".length()
 }
 
+/// Grown past the mebibyte while an array of the function's region holds
+/// it: it stays the region's, in a chunk of its own, and nothing leaks.
+fn held(count: Int): Int {
+    var rows: Array[String] = []
+    let half = "0123456789abcdef".repeat(count)
+    var text = "{half}"
+    text = "{text}{half}"
+    rows.push(text)
+    rows.push("{text}!")
+    rows[0].length() + rows[1].length()
+}
+
+/// The same in the region of each turn.
+fn heldInTurns(): Int {
+    var total = 0
+    for i in 0..2 {
+        var rows: Array[String] = []
+        var text = "{i}"
+        for _ in 0..70_000 {
+            text = "{text}0123456789abcdef"
+        }
+        rows.push(text)
+        total += rows[0].length()
+    }
+    total
+}
+
 /// Held twice: the first is copied, the second stays as it was.
 fn shared(): String {
     var first = "a"
@@ -76,11 +106,17 @@ fn main() {
     let c = kept(70)
     let d = shared()
     let e = long(100_000)
+    let f = held(40_000)
+    let g = heldInTurns()
     let quiet = noise()
-    console.println("{a} {b} {lengths} {c.length()} {c[69]} {d} {e} {quiet}")
+    console.println("{a} {b} {lengths} {c.length()} {c[69]} {d} {e} {f} {g} {quiet}")
 }
 
-// expect-stdout: 390 261 153 70 9 abc/a 1600001 3560
-// expect-optimization: 14:9 region goes in a region of `main`
-// expect-optimization: 25:13 region goes in the region of a turn of the loop at line 22
-// expect-optimization: 47:5 region goes in a region of `shared`
+// expect-stdout: 390 261 153 70 9 abc/a 1600001 2560001 2240002 3560
+// expect-optimization: 17:9 region goes in a region of `main`
+// expect-optimization: 28:13 region goes in the region of a turn of the loop at line 25
+// expect-optimization: 86:5 region goes in a region of `shared`
+// expect-optimization: 60:5 region goes in a region of `held`
+// expect-optimization: 61:5 region grows an array that goes in a region of `held`
+// expect-optimization: 73:13 region goes in the region of a turn of the loop at line 69
+// expect-optimization: 75:9 region grows an array that goes in the region of a turn of the loop at line 69

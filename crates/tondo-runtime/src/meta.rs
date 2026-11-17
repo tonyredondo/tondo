@@ -92,6 +92,14 @@ pub(crate) unsafe fn uncounted_alloc(layout: Layout) -> *mut u8 {
     return unsafe { std::alloc::System.alloc(layout) };
 }
 
+/// A chunk of a region grown to `size` bytes, moved if it must.
+pub(crate) unsafe fn uncounted_realloc(block: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+    #[cfg(tondo_staticlib)]
+    return unsafe { Heap.realloc(block, layout, size) };
+    #[cfg(not(tondo_staticlib))]
+    return unsafe { std::alloc::System.realloc(block, layout, size) };
+}
+
 pub(crate) unsafe fn uncounted_dealloc(block: *mut u8, layout: Layout) {
     #[cfg(tondo_staticlib)]
     unsafe {

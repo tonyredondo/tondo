@@ -7770,7 +7770,7 @@ or of a part of it, still takes that out. The result of a function of the progra
 `?` stays on the heap, as that function may make its error in the region of its result, and the
 remark says so.
 
-## A text that grows in place grows in its region, up to a mebibyte
+## A text that grows in place grows in its region
 
 `x = "{x}..."` grew `x`'s own text on the heap when nothing else held it,
 and a region took none: the most frequent refusal of the analysis, at
@@ -7779,7 +7779,10 @@ text a piece at a time. Such a text now grows in the region the
 analysis chose for it: in its own room while it is that region's and
 nothing else holds it, its room doubling as it grows, and copied into
 the region when something does; the rooms it leaves are the region's
-until it ends. Past a mebibyte the text moves to the heap and grows
-there in its own block, as before, and a later append takes it as it
-is: a long text holds what the heap would, and at most about two
-mebibytes more of the rooms it left in its region.
+until it ends. Past a mebibyte the text is alone in a chunk of its own,
+which grows as a block on the heap does, moving if it must: a long text
+holds what the heap would, and at most about two mebibytes more of the
+rooms it left before. It stays its region's for life, as what a region
+takes must: an array of the region that holds it lets go of nothing,
+and a text that had moved to the heap would leak there, as the first
+texts in regions did.
