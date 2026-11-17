@@ -241,3 +241,16 @@ native tondo_rt_time_names                cases/run/regions/natives_files.to
 native tondo_rt_zone_abbreviation         cases/run/regions/natives_files.to
 native tondo_rt_zone_known                cases/run/regions/natives_files.to
 native tondo_rt_zone_offset               cases/run/regions/natives_files.to
+native tondo_rt_panic_bool                cases/run/regions/natives_panics.to
+native tondo_rt_panic_code                cases/run/regions/natives_panics.to
+native tondo_rt_panic_float               cases/run/regions/natives_panics.to
+native tondo_rt_panic_int                 cases/run/regions/natives_panics.to
+native tondo_rt_panic_name                cases/run/regions/natives_panics.to
+native tondo_rt_panic_report              cases/run/regions/natives_panics.to
+native tondo_rt_panic_restage             cases/run/regions/natives_panics.to
+native tondo_rt_panic_text                cases/run/regions/natives_panics.to
+native tondo_rt_reflect_index             cases/run/regions/natives_panics.to
+native tondo_rt_reflect_quote             cases/run/regions/natives_panics.to
+native tondo_rt_region_show               cases/run/regions/natives_panics.to
+native tondo_rt_tls_certificates_serving  cases/run/regions/natives_panics.to
+native tondo_rt_tls_certificates_set      cases/run/regions/natives_panics.to

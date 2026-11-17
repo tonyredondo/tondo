@@ -1,0 +1,107 @@
+// The runtime's natives of panics, of reflection, of a live region of the
+// terminal and of certificates read the texts they are given or copy what
+// they keep (`READING_TEXTS` in regions.rs). Each loop gives them texts its
+// turn makes, and what keeps state, a live region, certificates, is used
+// again after the loop, once the regions ended.
+
+import std.cli
+import std.console
+import std.net
+import std.panics
+import std.reflect
+
+type Tagged = {
+    name: String
+    tags: Array[String]
+}
+
+fn failing(i: Int): Int {
+    panic(
+        "failed {i}",
+        code: "case.failed{i}",
+        data: ["key": "k{i}", "turn": i, "ratio": 0.5, "even": i % 2 == 0],
+    )
+}
+
+fn resumed(stopped: panics.Panic): Int {
+    stopped.resume()
+}
+
+fn caught(): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        match recover { failing(i) } {
+            ok(_) => lines.push("no")
+            err(stopped) => {
+                lines.push("{stopped.code} {stopped.data.length()}")
+                panics.report(stopped, ["turn": "t{i}"])
+            }
+        }
+    }
+    lines.join(", ")
+}
+
+fn made(): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        let stopped = panics.Panic {
+            code: if i == 0 { "P000{i + 1}" } else { "case.made{i}" }
+            message: "made {i}"
+            data: ["n": i]
+            location: "made.to:{i + 1}:1"
+            stack: "stack:\n  made.to:{i + 1}:1 in made"
+        }
+        lines.push("{stopped}".split("\n").first() ?? "")
+        match recover { resumed(stopped) } {
+            ok(_) => lines.push("no")
+            err(again) => lines.push("again {again.code} {again.location}")
+        }
+    }
+    lines.join(", ")
+}
+
+fn reflected(): String {
+    var lines: Array[String] = []
+    let tagged = Tagged { name: "kept", tags: ["a", "b", "c"] }
+    for i in 0..3 {
+        let tag: String = reflect.get(tagged, "tags.{i}") ?? "?"
+        let turn = Tagged { name: "turn {i}", tags: ["t{i}"] }
+        lines.push("{tag} {reflect.valueOf(turn)}")
+    }
+    lines.join(", ")
+}
+
+fn certified(certificates: net.Certificates): String {
+    var lines: Array[String] = []
+    for i in 0..2 {
+        match certificates.set("not a certificate {i}", "not a key {i}") {
+            ok(_) => lines.push("set")
+            err(_) => lines.push("refused {i}")
+        }
+    }
+    lines.join(" ")
+}
+
+fn main() {
+    let live = cli.Live()
+    for i in 0..3 {
+        live.show("step {i} of 3")
+    }
+    let certificates = net.Certificates()
+    let a = caught()
+    let b = made()
+    let c = reflected()
+    let d = certified(certificates)
+    console.println(a)
+    console.println(b)
+    console.println(c)
+    console.println("{d} {certificates.isServing()}")
+    live.show("done")
+    live.end()
+}
+
+// expect-stdout: case.failed0 4, case.failed1 4, case.failed2 4
+// expect-stdout: panic[P0001]: bounds: made 0, again P0001 made.to:1:1, panic[case.made1]: made 1, again case.made1 made.to:2:1, panic[case.made2]: made 2, again case.made2 made.to:3:1
+// expect-stdout: a Tagged { name: "turn 0", tags: ["t0"] }, b Tagged { name: "turn 1", tags: ["t1"] }, c Tagged { name: "turn 2", tags: ["t2"] }
+// expect-stdout: refused 0 refused 1 false
+// expect-stdout: done
