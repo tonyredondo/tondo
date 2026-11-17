@@ -212,6 +212,8 @@ stats.to:19:5: `"{sensor}: {value:.1}"` stays on the heap: `label` returns it wi
 stats.to:19:17: `value` in `formats.formatFloat`, `formatNumber(` stays a call of `formats.formatNumber`: its body costs 31, more than the 30 inlining takes (in label)
 stats.to:19:17: `value` stays a call of `formats.formatFloat`: its body costs 80, more than the 30 inlining takes (in main)
 stats.to:19:17: `value` is inlined: the body of `formats.formatFloat` is copied here (in label)
+stats.to:19:17: `value` in `formats.formatFloat`, `textNative.float(value, precision, exponent, sing…` stays on the heap: it is passed to `formats.formatNumber`, which keeps it: `value` at 19:17 (in label)
+stats.to:19:17: `value` in `formats.formatFloat`, `written.replace("e", "E")` stays on the heap: it is passed to `formats.formatNumber`, which keeps it: `value` at 19:17 (in label)
 stats.to:24:14: `0..1000` runs four turns at a time (in main)
 stats.to:25:9: `readings.push(Reading { sensor: if n % 2 == 0 { "a" } else …` grows an array that goes in a region of `main` (in main)
 stats.to:25:9: `readings.push(Reading { sensor: if n % 2 == 0 { "a" } else …` takes room for every turn before the loop (in main)
@@ -241,7 +243,10 @@ from the bottom:
   ([What a region takes](#what-a-region-takes)). So does the label where
   `main` inlined `label`: the frame does not take it, and the line says
   why, and the region does. Each place has a line for each copy of its
-  code, named at its end.
+  code, named at its end. The two lines that begin `` `value` in
+  `formats.formatFloat` `` are of the library's code that writes the
+  number, copied into `label`: the texts it makes on the way, which go to
+  the function that finishes the number.
 - **Checks.** The compiler proved that `count += 1` cannot overflow in one
   copy of the loop, which has no check; the copy it could not prove it for
   keeps it. A check that stays says so too.
