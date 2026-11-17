@@ -295,6 +295,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.call_rt(Rt::ArrayArith, &args).unwrap()
     }
 
+    /// The region the analysis put what the statement makes in, for the
+    /// runtime to make it there, or null for the heap.
+    pub(super) fn region_or_null(&mut self) -> ir::Value {
+        match self.e.region {
+            Some(region) => region,
+            None => self.e.fb.ins().iconst(POINTER, 0),
+        }
+    }
+
     /// Stack space for a value of `ty` that the runtime writes.
     pub(super) fn scratch(&mut self, ty: Ty) -> ir::Value {
         let size = self.e.cg.layout(ty).size.max(1);

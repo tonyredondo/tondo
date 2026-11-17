@@ -1270,6 +1270,13 @@ impl Site {
     }
 }
 
+/// Whether a text operation always makes a new text, which the runtime
+/// makes in the region it is given.
+fn makes_text(op: crate::hir::StrOp) -> bool {
+    use crate::hir::StrOp::*;
+    matches!(op, Replace | LowerAscii | UpperAscii | FromChars)
+}
+
 /// The places the function makes a value on the heap in: an array of
 /// values that are not all constants, a map, a slice, a box, an array that
 /// grows, a text, and the arrays, texts and other values the runtime gives.
@@ -1338,11 +1345,15 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
             {
                 RUNTIME
             }
-            // A text an operation makes, as `replace` or `toUpper` does.
-            Rvalue::StrOp(..)
+            // A text an operation makes, as `replace` or `toUpper` does: in
+            // a region when the runtime makes it there.
+            Rvalue::StrOp(op, ..)
                 if matches!(types.kind(types.repr(body.place_ty(types, place))), crate::types::TyKind::String) =>
             {
-                TEXTS
+                match makes_text(*op) {
+                    true => None,
+                    false => TEXTS,
+                }
             }
             _ => continue,
         };
@@ -1474,6 +1485,9 @@ impl Flow {
                         // A call of the program's keeps what it returns of
                         // what it is given, which `fate` sees.
                         Rvalue::Call(Callee::Fn(_), _) => continue,
+                        // A text operation that makes a new text gives one
+                        // that holds none of what it is given.
+                        Rvalue::StrOp(op, ..) if makes_text(*op) => continue,
                         // A native that reads what it is given gives a value
                         // the runtime made, which holds none of it: one that
                         // reads arrays says so of all it gives; one that

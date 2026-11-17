@@ -67,6 +67,25 @@ pub fn str_new(bytes: &[u8]) -> *mut Str {
     }
 }
 
+/// A copy of `bytes` in `region`, the last reference its region lets go
+/// of, or on the heap when there is none: the text an operation gives where
+/// the analysis put it in a region. A long one forgets the positions a text
+/// its region let go of left at the same address.
+pub(crate) fn str_in(region: *mut super::regions::Region, bytes: &[u8]) -> *mut Str {
+    if region.is_null() || bytes.is_empty() {
+        return str_new(bytes);
+    }
+    unsafe {
+        let text = super::regions::tondo_rt_region_alloc(region, HEADER + bytes.len()) as *mut Str;
+        text.write(Str { rc: AtomicUsize::new(super::regions::LAST_IN_REGION), len: bytes.len(), cap: bytes.len() });
+        copy_short(bytes, (text as *mut u8).add(HEADER));
+        if bytes.len() >= POSITIONED_FROM {
+            forget_positions(text);
+        }
+        text
+    }
+}
+
 /// The bytes of a string. The caller keeps the string alive.
 pub unsafe fn str_bytes<'a>(s: *const Str) -> &'a [u8] {
     unsafe { std::slice::from_raw_parts((s as *const u8).add(HEADER), (*s).len) }
@@ -666,19 +685,30 @@ pub(crate) fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     memchr::memmem::find(&haystack[at..], needle).map(|offset| at + offset)
 }
 
+/// `replace`, in `region` when it is not null.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_str_replace(s: *const Str, old: *const Str, new: *const Str) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_str_replace(
+    s: *const Str,
+    old: *const Str,
+    new: *const Str,
+    region: *mut super::regions::Region,
+) -> *mut Str {
     let replaced = unsafe { str_text(s).replace(str_text(old), str_text(new)) };
-    str_new(replaced.as_bytes())
+    str_in(region, replaced.as_bytes())
 }
 
-/// `toLowerAscii` (1) or `toUpperAscii` (2).
+/// `toLowerAscii` (1) or `toUpperAscii` (2), in `region` when it is not
+/// null.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_str_transform(s: *const Str, transform: u32) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_str_transform(
+    s: *const Str,
+    transform: u32,
+    region: *mut super::regions::Region,
+) -> *mut Str {
     let text = unsafe { str_text(s) };
     match transform {
-        1 => str_new(text.to_ascii_lowercase().as_bytes()),
-        _ => str_new(text.to_ascii_uppercase().as_bytes()),
+        1 => str_in(region, text.to_ascii_lowercase().as_bytes()),
+        _ => str_in(region, text.to_ascii_uppercase().as_bytes()),
     }
 }
 
@@ -703,14 +733,18 @@ pub unsafe extern "C" fn tondo_rt_str_slice_checked(s: *const Str, start: i64, e
     }
 }
 
-/// A string holding the characters of an `Array[Char]`.
+/// A string holding the characters of an `Array[Char]`, in `region` when it
+/// is not null.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_str_from_chars(chars: *mut ArrayHeader) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_str_from_chars(
+    chars: *mut ArrayHeader,
+    region: *mut super::regions::Region,
+) -> *mut Str {
     unsafe {
         let text: String = (0..(*chars).len)
             .map(|k| char::from_u32((element(chars, 4, k) as *const u32).read()).unwrap_or('\u{FFFD}'))
             .collect();
-        str_new(text.as_bytes())
+        str_in(region, text.as_bytes())
     }
 }
 

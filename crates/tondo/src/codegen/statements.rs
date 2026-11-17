@@ -485,16 +485,25 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         let test = self.e.fb.ins().iconst(types::I32, test);
                         Val::Scalar(self.e.call_rt(Rt::StrTest, &[values[0], values[1], test]).unwrap())
                     }
+                    // A new text, in the region the analysis put it in, or
+                    // on the heap when the region is null.
                     StrOp::LowerAscii | StrOp::UpperAscii => {
                         let transform = match op {
                             StrOp::LowerAscii => 1,
                             _ => 2,
                         };
                         let transform = self.e.fb.ins().iconst(types::I32, transform);
-                        Val::Scalar(self.e.call_rt(Rt::StrTransform, &[values[0], transform]).unwrap())
+                        let region = self.region_or_null();
+                        Val::Scalar(self.e.call_rt(Rt::StrTransform, &[values[0], transform, region]).unwrap())
                     }
-                    StrOp::Replace => Val::Scalar(self.e.call_rt(Rt::StrReplace, &values).unwrap()),
-                    StrOp::FromChars => Val::Scalar(self.e.call_rt(Rt::StrFromChars, &values).unwrap()),
+                    StrOp::Replace => {
+                        let region = self.region_or_null();
+                        Val::Scalar(self.e.call_rt(Rt::StrReplace, &[values[0], values[1], values[2], region]).unwrap())
+                    }
+                    StrOp::FromChars => {
+                        let region = self.region_or_null();
+                        Val::Scalar(self.e.call_rt(Rt::StrFromChars, &[values[0], region]).unwrap())
+                    }
                     StrOp::SliceChecked => {
                         let error = self.scratch(Ty::BYTE);
                         let slice = self.e.call_rt(Rt::StrSliceChecked, &[values[0], values[1], values[2], error]);
