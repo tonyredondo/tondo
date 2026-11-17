@@ -190,13 +190,17 @@ pub unsafe extern "C" fn tondo_rt_sb_join(
 
 /// `x = "{x}{t}"`: `s` with `t` after it, in `s`'s own block when nothing
 /// else holds it and the block has room, or else in a new one, `s` then
-/// released.
+/// released; in `region`, when not null, as `append_in` does.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_str_append(s: *mut Str, t: *const Str) -> *mut Str {
-    unsafe { append(s, str_bytes(t)) }
+pub unsafe extern "C" fn tondo_rt_str_append(s: *mut Str, t: *const Str, region: *mut regions::Region) -> *mut Str {
+    unsafe {
+        match region.is_null() {
+            true => append(s, str_bytes(t)),
+            false => append_in(s, str_bytes(t), region),
+        }
+    }
 }
 
-/// `x = "{x}{i}"`, as `tondo_rt_str_append`.
 /// The count of the text a builder builds in room a frame keeps.
 const FRAMING: usize = usize::MAX - 1;
 
@@ -295,15 +299,21 @@ pub extern "C" fn tondo_rt_int_text(value: i64) -> *mut Str {
     str_new(&digits[start..])
 }
 
+/// `x = "{x}{i}"`, as `tondo_rt_str_append`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_str_append_int(s: *mut Str, value: i64) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_str_append_int(s: *mut Str, value: i64, region: *mut regions::Region) -> *mut Str {
     let mut digits = [0; 21];
     let text = decimal(value.unsigned_abs(), (&mut digits[1..]).try_into().unwrap());
     let start = 21 - text.len() - usize::from(value < 0);
     if value < 0 {
         digits[start] = b'-';
     }
-    unsafe { append(s, &digits[start..]) }
+    unsafe {
+        match region.is_null() {
+            true => append(s, &digits[start..]),
+            false => append_in(s, &digits[start..], region),
+        }
+    }
 }
 
 /// Copies `bytes` to `to`: a few bytes, as a string's usual piece, in two
@@ -352,6 +362,29 @@ pub(crate) unsafe fn append(s: *mut Str, bytes: &[u8]) -> *mut Str {
             tondo_rt_str_release(s);
         }
         builder.extend(bytes);
+        builder.finish()
+    }
+}
+
+/// `append` in `region`: in `s`'s own room when it is a region's and
+/// nothing else holds it, which the analysis lets live as long as what it
+/// makes, or else by the builder, in the region, as
+/// `tondo_rt_sb_adopt_region` starts it.
+unsafe fn append_in(s: *mut Str, bytes: &[u8], region: *mut regions::Region) -> *mut Str {
+    unsafe {
+        let len = (*s).len;
+        if (*s).rc.load(Ordering::Acquire) == regions::LAST_IN_REGION && len + bytes.len() <= (*s).cap {
+            copy_short(bytes, (s as *mut u8).add(HEADER + len));
+            (*s).len = len + bytes.len();
+            return s;
+        }
+        let mut builder = std::mem::MaybeUninit::<Builder>::uninit();
+        let adopted = tondo_rt_sb_adopt_region(builder.as_mut_ptr(), s, bytes.len(), region);
+        let mut builder = builder.assume_init();
+        builder.extend(bytes);
+        if adopted == 0 {
+            tondo_rt_str_release(s);
+        }
         builder.finish()
     }
 }

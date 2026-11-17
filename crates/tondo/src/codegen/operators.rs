@@ -52,7 +52,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let length = self.e.fb.ins().load(types::I64, flags(), string, STRING_LENGTH);
         let room = self.e.fb.ins().load(types::I64, flags(), string, STRING_ROOM);
         let longer = self.e.fb.ins().iadd_imm_s(length, text.len() as i64);
-        let unique = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, 1);
+        // The last reference: on the heap, or in a region, whose analysis has
+        // the text live as long as what the append makes. A text on the heap
+        // at a region's place is copied there, by the call.
+        let last = match self.e.region {
+            Some(_) => (REGION | 1) as i64,
+            None => 1,
+        };
+        let unique = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, last);
         let fits = self.e.fb.ins().icmp(IntCC::UnsignedLessThanOrEqual, longer, room);
         let in_place = self.e.fb.ins().band(unique, fits);
         let (fast, slow, done) = (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
@@ -121,19 +128,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             _ => None,
         };
-        // In a region, the text is built there, by the builder: the ways
-        // below make it on the heap, or give one that is.
-        let region = self.e.region;
         if let Some((place, text)) = known
             && (1..=16).contains(&text.len())
-            && region.is_none()
         {
             return self.append_text(place, &text);
         }
-        // `x = "{x}{s}"` and `x = "{x}{i}"` in one call.
+        // `x = "{x}{s}"` and `x = "{x}{i}"` in one call, in the region too.
         if let [Piece::Taken(place), Piece::Value(operand, ty)] = pieces
             && let Some(kind) = plain(self, *ty)
-            && region.is_none()
         {
             let appended = match kind {
                 TyKind::String => Some((Rt::StrAppend, false)),
@@ -149,6 +151,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 return self.e.call_rt(rt, &[text, value]).unwrap();
             }
         }
+        // In a region, a new text is built there, by the builder: the ways
+        // below make it on the heap, or give one that is.
+        let region = self.e.region;
         // An integer alone, `"{i}"`, in one call.
         if let [Piece::Value(operand, ty)] = pieces
             && let Some(TyKind::Int(int)) = plain(self, *ty)

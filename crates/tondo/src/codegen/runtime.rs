@@ -359,6 +359,8 @@ impl Rt {
             | Rt::ArrayRepeat
             | Rt::ArraySortedInts
             | Rt::ArraySortedStrings => true,
+            // `x = "{x}..."`, in the region of its place.
+            Rt::StrAppend | Rt::StrAppendInt => true,
             _ => false,
         }
     }
@@ -407,8 +409,8 @@ impl Rt {
             Rt::SbJoin => ("tondo_rt_sb_join", &[I64, I64, I64, I64, I64, I64], &[]),
             Rt::SbAdopt => ("tondo_rt_sb_adopt", &[I64, I64, I64], &[I8]),
             Rt::SbAdoptRegion => ("tondo_rt_sb_adopt_region", &[I64, I64, I64, I64], &[I8]),
-            Rt::StrAppend => ("tondo_rt_str_append", &[I64, I64], &[I64]),
-            Rt::StrAppendInt => ("tondo_rt_str_append_int", &[I64, I64], &[I64]),
+            Rt::StrAppend => ("tondo_rt_str_append", &[I64, I64, I64], &[I64]),
+            Rt::StrAppendInt => ("tondo_rt_str_append_int", &[I64, I64, I64], &[I64]),
             Rt::SbStr => ("tondo_rt_sb_str", &[I64, I64], &[]),
             Rt::SbI64 => ("tondo_rt_sb_i64", &[I64, I64], &[]),
             Rt::SbU64 => ("tondo_rt_sb_u64", &[I64, I64], &[]),
