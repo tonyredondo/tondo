@@ -413,6 +413,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         max_regression: None,
         by_instructions: false,
         layouts: Vec::new(),
+        counting_regions: None,
         profile: None,
         fuzz: None,
     };
@@ -871,6 +872,17 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     if let Some(reference) = compiler {
         options.baseline = Some(compiler_baseline(&reference, &path, args)?);
     }
+    // The same tests counting the regions their functions set up, which
+    // the build that measures does not pay for; not for another tondo's
+    // baseline, which says nothing of them.
+    if options.bench.is_some() && !driver::regions_off() && std::env::var_os("TONDO_REGIONS_UNCOUNTED").is_none() {
+        driver::set_count_regions(true);
+        let built = build_tests(&path, &build);
+        driver::set_count_regions(false);
+        if let Some((executable, _)) = built? {
+            options.counting_regions = Some(executable);
+        }
+    }
     // The same tests with their functions in other orders.
     for seed in 1..layouts {
         driver::set_layout_seed(Some(Some(seed)));
@@ -954,6 +966,7 @@ fn compiler_baseline(reference: &str, path: &Path, args: &[OsString]) -> Result<
         .args(&forwarded)
         .arg("--save-baseline")
         .arg(&saved)
+        .env("TONDO_REGIONS_UNCOUNTED", "1")
         .stdout(std::process::Stdio::null())
         .status()
         .map_err(|e| format!("cannot run {}: {e}", executable.display()))?;

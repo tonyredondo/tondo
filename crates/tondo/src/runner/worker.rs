@@ -716,6 +716,8 @@ impl Session<'_> {
                         bytes: bytes.parse().unwrap_or_default(),
                         region_allocations: region(0),
                         region_bytes: region(1),
+                        regions_set_up: region(2),
+                        regions_used: region(3),
                         instructions: instructions.parse().ok(),
                         cycles: cycles.parse().ok(),
                         branch_misses: branches.parse().ok(),

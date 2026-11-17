@@ -3021,7 +3021,8 @@ pub fn compiler_identity() -> String {
     let layout = layout_seed().map(|seed| format!(":layout {seed}")).unwrap_or_default();
     let sites = if NO_LOGPOINTS.load(std::sync::atomic::Ordering::Relaxed) { ":no logpoint sites" } else { "" };
     let regions = if NO_REGIONS.load(std::sync::atomic::Ordering::Relaxed) { ":no regions" } else { "" };
-    format!("{VERSION}:{}:{stamp}{layout}{sites}{regions}", RUNTIME_HASH)
+    let counted = if counting_regions() { ":counted regions" } else { "" };
+    format!("{VERSION}:{}:{stamp}{layout}{sites}{regions}{counted}", RUNTIME_HASH)
 }
 
 /// Whether `--no-logpoints` asked for builds without a place at the start of
@@ -3052,6 +3053,27 @@ static NO_REGIONS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 /// `--no-regions` asks.
 pub fn set_no_regions() {
     NO_REGIONS.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether builds count the regions each call sets up, for a benchmark's
+/// row: a call of the runtime where a function starts, which a build that
+/// measures must not pay, so that only the build that counts has it.
+static COUNT_REGIONS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Makes this command's builds count the regions their functions set up,
+/// or stop.
+pub fn set_count_regions(on: bool) {
+    COUNT_REGIONS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether `--no-regions` put nothing in a region.
+pub fn regions_off() -> bool {
+    NO_REGIONS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Whether builds count the regions their functions set up.
+pub fn counting_regions() -> bool {
+    COUNT_REGIONS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Whether a release build of `analysis` puts in regions what the program

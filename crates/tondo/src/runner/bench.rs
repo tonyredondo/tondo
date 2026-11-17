@@ -86,6 +86,8 @@ pub(super) fn json(
         ("bytes_per_op", decimal(benchmark.bytes)),
         ("region_allocations_per_op", decimal(benchmark.region_allocations)),
         ("region_bytes_per_op", decimal(benchmark.region_bytes)),
+        ("regions_set_up_per_op", decimal(benchmark.regions_set_up)),
+        ("regions_used_per_op", decimal(benchmark.regions_used)),
         ("instructions_per_op", counted(benchmark.instructions)),
         ("cycles_per_op", counted(benchmark.cycles)),
         ("branch_misses_per_op", counted(benchmark.branch_misses)),
@@ -151,6 +153,9 @@ pub(super) struct Baselines {
     /// With another `tondo`, the functions each test reaches whose code it
     /// makes otherwise, by the test's name.
     pub code: Vec<(String, Vec<crate::driver::ChangedCode>)>,
+    /// The regions a run of each benchmark set up and used, by test and
+    /// benchmark, as the build that counts them measured.
+    pub counted: HashMap<(String, String), (f64, f64)>,
 }
 
 /// The machine's load as the benchmarks started and as they ended.
@@ -356,6 +361,8 @@ pub(super) fn baseline(environment: Value, measured: &[(String, &Benchmark)]) ->
                 ("bytes_per_op", decimal(benchmark.bytes)),
                 ("region_allocations_per_op", decimal(benchmark.region_allocations)),
                 ("region_bytes_per_op", decimal(benchmark.region_bytes)),
+                ("regions_set_up_per_op", decimal(benchmark.regions_set_up)),
+                ("regions_used_per_op", decimal(benchmark.regions_used)),
                 ("instructions_per_op", counted(benchmark.instructions)),
                 ("cycles_per_op", counted(benchmark.cycles)),
                 ("branch_misses_per_op", counted(benchmark.branch_misses)),
@@ -397,6 +404,8 @@ pub(super) fn read_baseline(path: &Path) -> Result<Baselines, String> {
             bytes: number("bytes_per_op"),
             region_allocations: number("region_allocations_per_op"),
             region_bytes: number("region_bytes_per_op"),
+            regions_set_up: number("regions_set_up_per_op"),
+            regions_used: number("regions_used_per_op"),
             instructions: entry["instructions_per_op"].as_f64(),
             cycles: entry["cycles_per_op"].as_f64(),
             branch_misses: entry["branch_misses_per_op"].as_f64(),
@@ -423,7 +432,7 @@ pub(super) fn read_baseline(path: &Path) -> Result<Baselines, String> {
         ("cpu", str(machine("cpu"))),
         ("load", busy.map_or(Value::Null, |(load, _)| decimal(load))),
     ]);
-    Ok(Baselines { measures, source: Some(source), busy, code: Vec::new() })
+    Ok(Baselines { measures, source: Some(source), busy, code: Vec::new(), counted: HashMap::new() })
 }
 
 /// Where benchmarks ran, as people read it.
@@ -560,8 +569,15 @@ pub(super) fn lines(
             }
             false => String::new(),
         };
+        // The regions a run set up and used, where it set up any.
+        let regions = match baselines.counted.get(&(test.to_string(), benchmark.name.clone())) {
+            Some(&(set_up, used)) if set_up > 0.0 => {
+                format!("  {} regions set up/op, {} used", amount(set_up), amount(used))
+            }
+            _ => String::new(),
+        };
         text.push_str(&format!(
-            "  {:<width$}  {:>11}/op  ±{spread:.1}%  {} allocs/op{}  {} B/op{}{instructions}{layouts}{compared}\n",
+            "  {:<width$}  {:>11}/op  ±{spread:.1}%  {} allocs/op{}  {} B/op{}{regions}{instructions}{layouts}{compared}\n",
             benchmark.name,
             time(stats.median),
             amount(benchmark.allocations),

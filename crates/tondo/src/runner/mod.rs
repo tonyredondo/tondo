@@ -113,6 +113,10 @@ pub struct Options {
     /// in which each benchmark measures too, to tell how much of its time
     /// is where its code lies.
     pub layouts: Vec<PathBuf>,
+    /// Under `--bench`, the tests built to count the regions their
+    /// functions set up, which run briefly before the others to tell each
+    /// row's regions set up and used.
+    pub counting_regions: Option<PathBuf>,
     /// `--profile`: a profile of each test, or of each benchmark (10.5).
     pub profile: Option<crate::profile::Kind>,
     /// `--fuzz`: searches for inputs that fail the calls of
@@ -403,6 +407,10 @@ pub struct Benchmark {
     pub bytes: f64,
     pub region_allocations: f64,
     pub region_bytes: f64,
+    /// The regions a run set up, as a build that counts them says, and
+    /// those that took memory.
+    pub regions_set_up: f64,
+    pub regions_used: f64,
     pub instructions: Option<f64>,
     pub cycles: Option<f64>,
     pub branch_misses: Option<f64>,
@@ -626,6 +634,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         Some(Baseline::Revision(revision)) => bench::Baselines {
             busy: None,
             code: Vec::new(),
+            counted: Default::default(),
             measures: Default::default(),
             source: Some(json::obj(vec![
                 ("kind", json::str("revision")),
@@ -682,6 +691,22 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         order: None,
     };
     interrupt::listen();
+    // The regions each benchmark's run sets up and uses, from the build
+    // that counts them, run first and briefly: the rows print them.
+    if let (Some(counting), Some(_)) = (&options.counting_regions, options.bench) {
+        let stores = worker::Stores { update: false, counts: None, ..run.stores };
+        let briefly = std::time::Duration::from_millis(10);
+        let other = worker::Run { executable: counting, stores, bench: Some(briefly), targets: &[], ..run };
+        let context = Context { round: 0, iteration: 1, unit: None, target: None };
+        for unit in units(tree, &plan) {
+            for attempt in worker::execute(&other, vec![(unit, context)], |_| {}) {
+                for benchmark in &attempt.benchmarks {
+                    let key = (tree.id(attempt.node).to_string(), benchmark.name.clone());
+                    printer.baselines.counted.insert(key, (benchmark.regions_set_up, benchmark.regions_used));
+                }
+            }
+        }
+    }
     let (attempts, rounds) = match &options.baseline {
         Some(Baseline::Revision(revision)) => (against(&run, revision, &plan, &mut printer), Vec::new()),
         _ if !options.layouts.is_empty() => (layouts(&run, &plan, &mut printer), Vec::new()),

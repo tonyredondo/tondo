@@ -2505,15 +2505,24 @@ El reporte (15.11) da por cada benchmark las ejecuciones de cada muestra, los
 nanosegundos por ejecución de cada muestra, su mediana, media, mínimo, máximo y
 desviación (la mediana de las distancias a la mediana, que una muestra
 retrasada por otra cosa no estira), las asignaciones y bytes por ejecución,
-los del heap y los de las regiones, y las instrucciones y ciclos por ejecución
+los del heap y los de las regiones, las regiones que una ejecución prepara y
+las que llegaron a tener memoria, y las instrucciones y ciclos por ejecución
 donde se contaron; y una vez por invocación, el tiempo de cada benchmark y la
-máquina. La salida para personas pone bajo la línea de cada test una línea por
-benchmark, con lo que hizo en regiones tras lo del heap cuando hizo algo:
+máquina. Preparar una región son unas escrituras en el código de la función,
+que el build que mide no cuenta sin pagarlas: `--bench` construye además los
+tests con una llamada al runtime donde una función prepara sus regiones, y
+los ejecuta un momento antes que los otros para contarlas; sin regiones
+(`--no-regions`) no hay qué contar. Una región que se prepara y no se usa
+cuesta a cada llamada sin ahorrar nada. La salida para personas pone bajo la
+línea de cada test una línea por benchmark, con lo que hizo en regiones tras
+lo del heap cuando hizo algo, y las regiones que preparó cuando preparó
+alguna:
 
 ~~~text
 test app::unit::app::parsing ... ok
   parse 10       1.973 µs/op  ±0.5%  51 allocs/op  1685 B/op  24.1k ins/op
   parse 1000     173.3 µs/op  ±0.4%  4017 allocs/op +2000 in regions  85613 B/op +224000 in regions  2.13M ins/op
+  decode struct  1.164 µs/op  ±0.2%  2 allocs/op  280 B/op  26 regions set up/op, 0 used  18.1k ins/op
 ~~~
 
 Las medidas se comparan con una línea base:
@@ -4357,6 +4366,8 @@ benchmark de un intento tiene esta forma:
   "bytes_per_op": 0.000,
   "region_allocations_per_op": 0.000,
   "region_bytes_per_op": 0.000,
+  "regions_set_up_per_op": 0.000,
+  "regions_used_per_op": 0.000,
   "instructions_per_op": 61.000,
   "cycles_per_op": 72.412,
   "branch_misses_per_op": 0.012,
@@ -4424,6 +4435,8 @@ orden del reporte:
       "bytes_per_op": 0.000,
       "region_allocations_per_op": 0.000,
       "region_bytes_per_op": 0.000,
+      "regions_set_up_per_op": 0.000,
+      "regions_used_per_op": 0.000,
       "instructions_per_op": 61.000,
       "cycles_per_op": 72.412,
       "branch_misses_per_op": 0.012,

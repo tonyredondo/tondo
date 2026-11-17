@@ -340,6 +340,11 @@ unsafe fn emptied(chunk: *mut Chunk) {
 /// leaves it empty.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_region_leave(region: *mut Region) {
+    // Left holding memory, as only a region that held some is: one used,
+    // while a benchmark counts.
+    if super::diagnostics::hooks() & super::diagnostics::MEASURED != 0 {
+        super::bench::region_used();
+    }
     unsafe {
         let r = &mut *region;
         let mut chunk = r.chunks;

@@ -4054,6 +4054,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.regions[region as usize] = Some(slot);
             }
         }
+        // In a build that counts them, the regions this call sets up.
+        let set_up = self.regions.iter().flatten().count();
+        if set_up > 0 && crate::driver::counting_regions() {
+            let count = self.e.fb.ins().iconst(types::I64, set_up as i64);
+            self.e.call_rt(Rt::RegionsSetUp, &[count]);
+        }
         if let Some(debug) = &self.debug {
             let zero = self.e.fb.ins().iconst(types::I64, 0);
             let (shown, captured, alive) = (debug.shown.len(), debug.captured.len(), debug.alive);

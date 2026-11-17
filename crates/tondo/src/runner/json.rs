@@ -486,7 +486,12 @@ impl Context<'_> {
         let benchmarks = attempt.benchmarks.iter().map(|b| {
             let base = self.baselines.measures.get(&(id.to_string(), b.name.clone()));
             let changed = super::bench::changed_for(id, b, self.baselines);
-            super::bench::json(b, base.map(|base| super::bench::compare(b, base, max, by)).as_ref(), changed)
+            let mut b = b.clone();
+            if let Some(&(set_up, used)) = self.baselines.counted.get(&(id.to_string(), b.name.clone())) {
+                (b.regions_set_up, b.regions_used) = (set_up, used);
+            }
+            let compared = base.map(|base| super::bench::compare(&b, base, max, by));
+            super::bench::json(&b, compared.as_ref(), changed)
         });
         fields.push(("benchmarks", Value::Array(benchmarks.collect())));
         fields.push(("fuzz", Value::Array(attempt.fuzz.iter().map(fuzzed).collect())));

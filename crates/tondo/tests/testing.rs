@@ -824,6 +824,40 @@ fn names_the_code_that_changed_under_a_row_that_moved() {
     assert!(stdout.contains("code changed, in instructions:"), "{stdout}");
 }
 
+/// Each benchmark says the regions a run sets up, which a build that counts
+/// them measures, and those it used: a region on a branch the run does not
+/// take is set up and never used.
+#[test]
+fn counts_the_regions_a_benchmark_sets_up_and_uses() {
+    // `maybe` is too large to inline, so each run sets its region up; what
+    // it is given is read each run, so no run is spared.
+    let tests = "import std.env\nimport std.testing\n\nfn maybe(i: Int): Int {\n    if i < 0 {\n        \
+        let parts = \"a b {i}\".split(\" \")\n        return parts.length()\n    }\n    var total = i\n    \
+        for k in 0..i {\n        total += k * k + (k ^ i) - (k & 3) * (i | 5)\n    }\n    total\n}\n\n\
+        fn unset(): Int {\n    (env.get(\"TONDO_NOT_SET\") ?? \"\").length()\n}\n\n\
+        test counting {\n    testing.bench(\"unused\", () { maybe(1 - unset()) })\n    \
+        testing.bench(\"used\", () { maybe(-1 - unset()) })\n}\n";
+    let dir = project("counted-regions", tests);
+    let args = ["test", "--bench", "--bench-time", "0.05", "--test-format", "json"];
+    let (stdout, stderr, status) = tondo(&dir, &args);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let benchmarks = report["tests"][0]["attempts"][0]["benchmarks"].as_array().unwrap().clone();
+    let counted = |name: &str, key: &str| {
+        let benchmark = benchmarks.iter().find(|b| b["name"] == name).unwrap();
+        benchmark[key].as_f64().unwrap()
+    };
+    assert!(counted("unused", "regions_set_up_per_op") >= 1.0, "{benchmarks:?}");
+    assert_eq!(counted("unused", "regions_used_per_op"), 0.0, "{benchmarks:?}");
+    assert!(counted("used", "regions_used_per_op") >= 1.0, "{benchmarks:?}");
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--bench", "--bench-time", "0.05"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(stdout.contains("regions set up/op, 0 used"), "{stdout}");
+    // Without regions, nothing is counted, and nothing said.
+    let (stdout, _, _) = tondo(&dir, &["test", "--bench", "--bench-time", "0.05", "--no-regions"]);
+    assert!(!stdout.contains("regions set up"), "{stdout}");
+}
+
 /// An update tasks lose is a warning of the test that shows it, in the report
 /// of the tools and the editor, and a test that does it well has none.
 #[test]

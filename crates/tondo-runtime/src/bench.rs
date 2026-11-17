@@ -36,7 +36,7 @@ enum Phase {
     Priming(u64),
     /// One more batch, counting its allocations: on the heap and in
     /// regions, and their bytes, before it.
-    Counting([u64; 4]),
+    Counting([u64; 6]),
     Done,
 }
 
@@ -52,6 +52,10 @@ struct Bench {
     bytes: f64,
     region_allocations: f64,
     region_bytes: f64,
+    /// The regions a run set up and those that took memory, in a build that
+    /// counts them (`tondo_rt_regions_set_up`).
+    regions_set_up: f64,
+    regions_used: f64,
     /// What counts the instructions and cycles of the runs that count
     /// them; what a run took of them, once they are done.
     counters: Option<super::counters::Counters>,
@@ -72,6 +76,24 @@ static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
 static BYTES: AtomicU64 = AtomicU64::new(0);
 static REGION_ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
 static REGION_BYTES: AtomicU64 = AtomicU64::new(0);
+/// The regions functions set up while a batch counts, in a build that
+/// counts them, and those that took memory.
+static REGIONS_SET_UP: AtomicU64 = AtomicU64::new(0);
+static REGIONS_USED: AtomicU64 = AtomicU64::new(0);
+
+/// A function of a build that counts its regions starts, setting `count`
+/// of them up: counted while a batch counts.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_regions_set_up(count: i64) {
+    if crate::diagnostics::hooks() & crate::diagnostics::MEASURED != 0 {
+        REGIONS_SET_UP.fetch_add(count as u64, Ordering::Relaxed);
+    }
+}
+
+/// A region that held memory ended while a batch counts.
+pub(crate) fn region_used() {
+    REGIONS_USED.fetch_add(1, Ordering::Relaxed);
+}
 
 /// After a value a region made while a batch counts them.
 pub(crate) fn region_allocated(size: usize) {
@@ -85,8 +107,9 @@ pub(crate) fn region_counts() -> (u64, u64) {
     (REGION_ALLOCATIONS.load(Ordering::Relaxed), REGION_BYTES.load(Ordering::Relaxed))
 }
 
-fn counts() -> [u64; 4] {
-    [&ALLOCATIONS, &BYTES, &REGION_ALLOCATIONS, &REGION_BYTES].map(|count| count.load(Ordering::Relaxed))
+fn counts() -> [u64; 6] {
+    [&ALLOCATIONS, &BYTES, &REGION_ALLOCATIONS, &REGION_BYTES, &REGIONS_SET_UP, &REGIONS_USED]
+        .map(|count| count.load(Ordering::Relaxed))
 }
 
 /// After an allocation while a batch counts them.
@@ -175,6 +198,8 @@ pub unsafe extern "C" fn tondo_rt_bench_start(name: *const Str, location: *const
         allocations: 0.0,
         bytes: 0.0,
         region_allocations: 0.0,
+        regions_set_up: 0.0,
+        regions_used: 0.0,
         region_bytes: 0.0,
         counters: None,
         counted: None,
@@ -247,10 +272,11 @@ pub extern "C" fn tondo_rt_bench_next() -> i64 {
         Phase::Counting(before) => {
             crate::diagnostics::unhook(crate::diagnostics::MEASURED);
             let runs = bench.batch as f64;
-            let [allocations, bytes, region_allocations, region_bytes] =
+            let [allocations, bytes, region_allocations, region_bytes, set_up, used] =
                 std::array::from_fn(|at| (counts()[at] - before[at]) as f64 / runs);
             (bench.allocations, bench.bytes) = (allocations, bytes);
             (bench.region_allocations, bench.region_bytes) = (region_allocations, region_bytes);
+            (bench.regions_set_up, bench.regions_used) = (set_up, used);
             Phase::Done
         }
         Phase::Done => Phase::Done,
@@ -276,7 +302,8 @@ fn count_allocations(bench: &mut Bench) -> Phase {
 /// and their bytes, and the instructions, cycles, mispredicted branches
 /// and first-cache misses of data and of instructions of a run, each empty
 /// when not counted, then the values a run made in regions and their
-/// bytes, separated by NUL.
+/// bytes, and the regions it set up, in a build that counts them, and
+/// those that took memory, separated by NUL.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_bench_end(completed: u8) {
     let bench = STATE.lock().unwrap_or_else(|e| e.into_inner()).bench.take();
@@ -292,8 +319,9 @@ pub extern "C" fn tondo_rt_bench_end(completed: u8) {
         .collect();
     let (name, batch, allocations, bytes) = (&bench.name, bench.batch, bench.allocations, bench.bytes);
     let (region_allocations, region_bytes) = (bench.region_allocations, bench.region_bytes);
+    let (set_up, used) = (bench.regions_set_up, bench.regions_used);
     let payload = format!(
-        "{name}\0{batch}\0{}\0{allocations:.3}\0{bytes:.3}\0{}\0{region_allocations:.3}\0{region_bytes:.3}",
+        "{name}\0{batch}\0{}\0{allocations:.3}\0{bytes:.3}\0{}\0{region_allocations:.3}\0{region_bytes:.3}\0{set_up:.3}\0{used:.3}",
         samples.join(" "),
         counted.join("\0")
     );
