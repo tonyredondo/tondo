@@ -120,12 +120,13 @@ mode the other variables of `crates/tondo/tests/cases.rs` choose: one
 case in every mode is a loop over them.
 
 A change to the optimizer, the regions or the runtime is measured before it
-lands, not after: `tondo test bench/tondo --bench --compiler HEAD
---regression-by instructions --max-regression 2` judges it by every
-benchmark, and a row that does over 2% more work lands only with its reason
-written in the commit. Under a row that moved it names the code that
-changed, the runtime's too, and beside a row the regions its runs set up and
-how many of them were used.
+lands, not after: `tondo test bench/tondo <projects> --bench --compiler HEAD
+--regression-by instructions --max-regression 2`, with every project of
+`examples/` that has a benchmark, judges it by the benchmarks of single
+operations and by those of whole programs, and a row that does over 2% more
+work lands only with its reason written in the commit. Under a row that
+moved it names the code that changed, the runtime's too, and beside a row
+the regions its runs set up and how many of them were used.
 
 `.github/scripts/local.sh` runs what CI and the Nightly add, in containers
 on this machine: the servers, no C compiler, musl, emulation, and the tests that
