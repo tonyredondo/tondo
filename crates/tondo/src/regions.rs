@@ -410,7 +410,11 @@ fn place(
             .iter()
             .zip(verdicts)
             .map(|(site, verdict)| match site.placed() && verdict.own {
-                true => lifetimes[index].region(&flows[index], body, types, site.local, site.at, false, Some(site)),
+                true => {
+                    // What a site made has parts, followed as they are.
+                    let parts = flows[index].called[site.local.0 as usize];
+                    lifetimes[index].region(&flows[index], body, types, site.local, site.at, parts, Some(site))
+                }
                 false => None,
             })
             .collect();
@@ -1337,6 +1341,13 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
                 found.push(Site { local: target.local, span: *span, what: "grows a map that ", at, refused: MAPS });
                 continue;
             }
+            // What a native makes in the region it is given, or else what
+            // the runtime makes on the heap.
+            Rvalue::Call(Callee::Std(crate::hir::StdFn::Native(index)), _)
+                if crate::hir::NATIVES.get(*index as usize).is_some_and(crate::hir::Native::makes_in_region) =>
+            {
+                None
+            }
             Rvalue::Call(Callee::Std(_), _) if types.needs_drop(body.place_ty(types, place)) => RUNTIME,
             // An array or a text the runtime makes, as `join` or `concat`
             // does; not an element read out of one.
@@ -1498,9 +1509,10 @@ impl Flow {
                                 use crate::hir::NativeTy::{BytePointer, Object, Owned, Regex};
                                 let texts_read = !takes_texts(native) || READING_TEXTS.contains(&native.symbol);
                                 let made = matches!(native.result, Object | Owned | Regex | BytePointer);
-                                texts_read
-                                    && (READING.contains(&native.symbol)
-                                        || made && takes_texts(native) && !takes_from_regions(native))
+                                native.makes_in_region()
+                                    || texts_read
+                                        && (READING.contains(&native.symbol)
+                                            || made && takes_texts(native) && !takes_from_regions(native))
                             }) =>
                         {
                             continue;
@@ -1637,6 +1649,17 @@ impl Flow {
                                 let (block, at) = (position.0 as usize, position.1 as usize);
                                 results.push((block, at, place.local, id.0 as usize, *span));
                             }
+                        }
+                        // What a native makes in a region, its parts too, as
+                        // the texts of an array `split` gives: followed
+                        // through its parts as a call's result is.
+                        Rvalue::Call(Callee::Std(crate::hir::StdFn::Native(index)), _)
+                            if place.path.is_empty()
+                                && crate::hir::NATIVES
+                                    .get(*index as usize)
+                                    .is_some_and(crate::hir::Native::makes_in_region) =>
+                        {
+                            called[place.local.0 as usize] = true;
                         }
                         Rvalue::FnValue(id)
                         | Rvalue::Callback(id, _)

@@ -2239,7 +2239,7 @@ test slow {
 }
 
 test joining {
-    testing.bench(\"join\", () { \"{[1, 2, 3]}\" })
+    testing.bench(\"join\", () { \"{[1, 2, 3]}\".repeat(64) })
 }
 ";
     let dir = project("profiles", tests);
@@ -2293,7 +2293,8 @@ test joining {
     );
     assert_eq!(profile["profile"], "target/profiles/app.unit.app.joining--join.memory.pprof");
     // The text the join makes goes in the region of the benchmark's turn,
-    // which the profile samples as it samples the heap.
+    // which the profile samples as it samples the heap: long enough to be
+    // sampled in the few turns the check of regions leaves 0.2 s.
     let (shown, _, _) =
         tondo(&dir, &["profile", "show", profile["profile"].as_str().unwrap(), "--sample", "region_space", "--json"]);
     let shown: serde_json::Value = serde_json::from_str(&shown).unwrap();

@@ -754,7 +754,11 @@ pub(super) fn runtime_signature(rt: Rt, mut signature: ir::Signature) -> (&'stat
                 crate::hir::NativeTy::Char => types::I32,
                 _ => types::I64,
             };
-            let params: Vec<ir::Type> = function.receiver.iter().chain(function.params).map(|&t| clif(t)).collect();
+            let mut params: Vec<ir::Type> = function.receiver.iter().chain(function.params).map(|&t| clif(t)).collect();
+            // The region it makes what it gives in, or null.
+            if function.makes_in_region() {
+                params.push(types::I64);
+            }
             let returns: Vec<ir::Type> =
                 (function.result != crate::hir::NativeTy::Unit).then(|| clif(function.result)).into_iter().collect();
             native = (params, returns);

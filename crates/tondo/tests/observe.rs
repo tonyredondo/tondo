@@ -253,6 +253,9 @@ fn trace_of_a_started_program() {
     assert!(dir.join("fails.trace.json").is_file() && dir.join("fails.trace.folded").is_file(), "{said}");
 }
 
+// Its texts are sent to a channel, which keeps them on the heap that the
+// tools measure: in an array that `main` only pushes to, a region of
+// `main` would take them.
 const ALLOCATING: &str = r#"import std.console
 import std.time
 
@@ -265,12 +268,12 @@ fn sleeper() {
 }
 
 fn main() {
-    var kept: Array[String] = []
+    let (keep, kept) = channel[String](20000)
     for i in 0..20000 {
-        kept.push(chunk(i))
+        keep.send(chunk(i))
     }
     let jobs = [spawn sleeper(), spawn sleeper()]
-    console.println("{kept.length()}")
+    console.println("{kept.isClosed()}")
     time.sleep(time.seconds(10))
     _ = jobs
 }
@@ -429,6 +432,9 @@ fn profiles_carry_labels() {
     assert!(text.contains("by label:\n") && text.contains("%  endpoint=/users\n"), "{text}");
 }
 
+// Its texts are sent to a channel, which keeps them on the heap that the
+// tools measure: in an array that `main` only pushes to, a region of
+// `main` would take them.
 const DUMPED: &str = r#"import std.console
 
 context Request = {
@@ -440,14 +446,14 @@ fn sleeper(woken: Receiver[Int]) {
 }
 
 fn main() {
-    var kept: Array[String] = []
+    let (keep, kept) = channel[String](80000)
     for i in 0..80000 {
-        kept.push("entry {i} ".repeat(10))
+        keep.send("entry {i} ".repeat(10))
     }
     let (wake, woken) = channel[Int]()
     with Request { id: "r9" }
     let job = spawn sleeper(woken)
-    console.println("ready {kept.length()}")
+    console.println("ready {kept.isClosed()}")
     let _ = console.flush()
     let _ = console.readLine()
     wake.send(0)
@@ -5803,7 +5809,7 @@ fn every_object_of_a_debug_build() {
     let types = tondo(&["dump", "read", file, "objects", "--json"])["objects"].clone();
     let strings = types["types"].as_array().unwrap().iter().find(|t| t["type"] == "String").unwrap();
     assert!(strings["objects"].as_u64().unwrap() >= 20000, "{types}");
-    // One of the strings the array keeps, and what keeps it.
+    // One of the strings the channel keeps, and what keeps it.
     let dump: Value = serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
     let entry = dump["objects"]["list"]
         .as_array()
@@ -5815,7 +5821,7 @@ fn every_object_of_a_debug_build() {
     assert_eq!(object["type"], "String");
     let chain = object["chain"].as_array().unwrap();
     assert_eq!(chain[0], "task 1");
-    assert!(chain[1].as_str().unwrap().starts_with("Array[String]"), "{object}");
+    assert!(chain[1].as_str().unwrap().starts_with("(Sender[String], Receiver[String])"), "{object}");
 }
 
 /// A dump of a debug build shows each task's contexts, and computes a

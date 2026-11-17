@@ -1315,6 +1315,29 @@ pub struct Native {
     pub symbol: &'static str,
 }
 
+impl Native {
+    /// Whether it makes what it gives in a region, given after its
+    /// parameters (`MAKING_IN_REGION`).
+    pub fn makes_in_region(&self) -> bool {
+        MAKING_IN_REGION.contains(&self.symbol)
+    }
+}
+
+/// The natives that make what they give, a new text or an array of new
+/// texts, in the region the analysis chose for it, which codegen passes
+/// after their parameters, or on the heap when it passes null: what they
+/// give holds none of what they are given.
+pub const MAKING_IN_REGION: &[&str] = &[
+    "tondo_rt_text_between",
+    "tondo_rt_text_lines",
+    "tondo_rt_text_lower",
+    "tondo_rt_text_repeat",
+    "tondo_rt_text_split",
+    "tondo_rt_text_trim",
+    "tondo_rt_text_upper",
+    "tondo_rt_text_words",
+];
+
 /// The natives the processor does in one instruction, which codegen writes
 /// in place of a call (`codegen/calls.rs`): a loop that calls only these
 /// calls nothing.

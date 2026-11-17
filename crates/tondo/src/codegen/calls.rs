@@ -120,6 +120,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     "tondo_rt_math_fma" if fused => Some(ins.fma(values[0], values[1], values[2])),
                     // What a model's marks need, only in a build of tests.
                     "tondo_rt_model_recording" => Some(ins.iconst(types::I8, self.e.cg.testing() as i64)),
+                    // What it gives, in the region the analysis chose, or
+                    // on the heap.
+                    _ if crate::hir::NATIVES[index as usize].makes_in_region() => {
+                        let region = self.region_or_null();
+                        values.push(region);
+                        self.e.call_rt(Rt::Native(index), &values)
+                    }
                     _ => self.e.call_rt(Rt::Native(index), &values),
                 }
             }

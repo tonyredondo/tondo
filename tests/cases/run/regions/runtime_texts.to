@@ -88,9 +88,40 @@ fn fresh(i: Int): String {
     "fresh {i} of {i * 2}".replace("of", "of")
 }
 
+/// The parts of an array a native makes in a region, its texts too: each
+/// sent, captured, stored, kept or given back on its own.
+fn parts(): String {
+    let (sender, receiver) = channel[String](8)
+    var shown: Array[fn(): String] = []
+    var note = Note { text: "" }
+    var kept: Array[String] = []
+    for i in 0..3 {
+        let pieces = "a{i},b{i},c{i},d{i}".split(",")
+        sender.send(pieces[0])
+        let captured = pieces[1]
+        shown.push(() { captured })
+        note.text = pieces[2]
+        kept.push(pieces[3])
+        let words = "one two {i}".words()
+        kept.push(words[2])
+    }
+    sender.close()
+    var received: Array[String] = []
+    for text in receiver {
+        received.push(text)
+    }
+    "{received} {shown[2]()} {note.text} {kept} {first("x,y,z")}"
+}
+
+/// A part given back to the caller.
+fn first(line: String): String {
+    line.split(",")[0]
+}
+
 fn main() {
     let a = stored()
     let b = shared()
+    let c = parts()
     var notes: Array[Note] = []
     let log = sync.Mutex(Array[String]())
     for i in 0..2 {
@@ -105,9 +136,11 @@ fn main() {
     let quiet = noise()
     console.println(a)
     console.println(b)
+    console.println(c)
     console.println("{notes.map((note) { note.text })} {log.get()} {kept} {counted} {quiet}")
 }
 
 // expect-stdout: field 2 [element 2, element 1] 69 t keyed 1 lent 2
 // expect-stdout: captured 0 captured 2 [sent 0, sent 1, sent 2] [GIVEN 0, GIVEN 1, GIVEN 2] 6 69 boxed 1
+// expect-stdout: [a0, a1, a2] b2 c2 [d0, 0, d1, 1, d2, 2] x
 // expect-stdout: [pushed 0, pushed 1] [deferred 0, deferred 1] [fresh 0 of 0, fresh 1 of 2, fresh 2 of 4] 36 3560

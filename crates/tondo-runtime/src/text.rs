@@ -3,14 +3,23 @@
 //! from text. Positions are scalar indexes, as in the language.
 
 use super::{ArrayHeader, Str, element, str_new, tondo_rt_array_new};
-use crate::strings::Pieces;
+use crate::regions::Region;
+use crate::strings::{Pieces, str_in};
 
 fn text<'a>(s: *const Str) -> &'a str {
     unsafe { super::str_text(s) }
 }
 
-/// An `Array[String]` of the parts, in one block of pieces.
-fn strings<'a>(parts: impl ExactSizeIterator<Item = &'a str> + Clone) -> *mut ArrayHeader {
+/// An `Array[String]` of the parts, in one block of pieces, or in `region`
+/// when it is not null, each part a text of its own.
+fn strings<'a>(parts: impl ExactSizeIterator<Item = &'a str> + Clone, region: *mut Region) -> *mut ArrayHeader {
+    if !region.is_null() {
+        let array = unsafe { crate::regions::tondo_rt_array_new_in(region, 8, parts.len()) };
+        for (index, part) in parts.enumerate() {
+            unsafe { *(element(array, 8, index) as *mut *mut Str) = str_in(region, part.as_bytes()) };
+        }
+        return array;
+    }
     let bytes = parts.clone().map(str::len).sum();
     let array = tondo_rt_array_new(8, parts.len());
     let mut pieces = Pieces::new(parts.len(), bytes);
@@ -22,12 +31,20 @@ fn strings<'a>(parts: impl ExactSizeIterator<Item = &'a str> + Clone) -> *mut Ar
 }
 
 /// The pieces between each `separator`; the characters, when it is empty.
+/// In `region` when it is not null.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_text_split(s: *const Str, separator: *const Str) -> *mut ArrayHeader {
+pub unsafe extern "C" fn tondo_rt_text_split(
+    s: *const Str,
+    separator: *const Str,
+    region: *mut Region,
+) -> *mut ArrayHeader {
     let (s, separator) = (text(s), text(separator));
     if separator.is_empty() {
         let chars: Vec<String> = s.chars().map(String::from).collect();
-        return strings(chars.iter().map(String::as_str));
+        return strings(chars.iter().map(String::as_str), region);
+    }
+    if !region.is_null() {
+        return strings(s.split(separator).collect::<Vec<&str>>().into_iter(), region);
     }
     let (s, separator) = (s.as_bytes(), separator.as_bytes());
     let finder = memchr::memmem::Finder::new(separator);
@@ -73,8 +90,8 @@ pub unsafe extern "C" fn tondo_rt_text_byte_at(s: *const Str, offset: i64) -> i6
 /// The text between two byte offsets that start characters; empty when
 /// they do not.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_text_between(s: *const Str, start: i64, end: i64) -> *mut Str {
-    str_new(text(s).get(start.max(0) as usize..end.max(0) as usize).unwrap_or_default().as_bytes())
+pub unsafe extern "C" fn tondo_rt_text_between(s: *const Str, start: i64, end: i64, region: *mut Region) -> *mut Str {
+    str_in(region, text(s).get(start.max(0) as usize..end.max(0) as usize).unwrap_or_default().as_bytes())
 }
 
 /// The byte offset of the first `needle` between two byte offsets, or -1.
@@ -87,21 +104,21 @@ pub unsafe extern "C" fn tondo_rt_text_find_in(s: *const Str, needle: *const Str
 
 /// The lines, without their `\n` or `\r\n`; no last empty line.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_text_lines(s: *const Str) -> *mut ArrayHeader {
+pub unsafe extern "C" fn tondo_rt_text_lines(s: *const Str, region: *mut Region) -> *mut ArrayHeader {
     let lines: Vec<&str> = text(s).lines().collect();
-    strings(lines.into_iter())
+    strings(lines.into_iter(), region)
 }
 
 /// The pieces between runs of Unicode whitespace.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_text_words(s: *const Str) -> *mut ArrayHeader {
+pub unsafe extern "C" fn tondo_rt_text_words(s: *const Str, region: *mut Region) -> *mut ArrayHeader {
     let words: Vec<&str> = text(s).split_whitespace().collect();
-    strings(words.into_iter())
+    strings(words.into_iter(), region)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_text_repeat(s: *const Str, count: i64) -> *mut Str {
-    str_new(text(s).repeat(count.max(0) as usize).as_bytes())
+pub unsafe extern "C" fn tondo_rt_text_repeat(s: *const Str, count: i64, region: *mut Region) -> *mut Str {
+    str_in(region, text(s).repeat(count.max(0) as usize).as_bytes())
 }
 
 /// The text without whitespace, or without the scalars of `characters`
@@ -113,6 +130,7 @@ pub unsafe extern "C" fn tondo_rt_text_trim(
     characters: *const Str,
     whitespace: u8,
     ends: i64,
+    region: *mut Region,
 ) -> *mut Str {
     let (s, characters) = (text(s), text(characters));
     let trimmed = |c: char| if whitespace != 0 { c.is_whitespace() } else { characters.contains(c) };
@@ -121,7 +139,7 @@ pub unsafe extern "C" fn tondo_rt_text_trim(
         2 => s.trim_end_matches(trimmed),
         _ => s.trim_matches(trimmed),
     };
-    str_new(kept.as_bytes())
+    str_in(region, kept.as_bytes())
 }
 
 /// The scalar index of the last `needle`, or `-1`.
@@ -142,13 +160,13 @@ pub unsafe extern "C" fn tondo_rt_text_count(s: *const Str, needle: *const Str) 
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_text_lower(s: *const Str) -> *mut Str {
-    str_new(text(s).to_lowercase().as_bytes())
+pub unsafe extern "C" fn tondo_rt_text_lower(s: *const Str, region: *mut Region) -> *mut Str {
+    str_in(region, text(s).to_lowercase().as_bytes())
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_text_upper(s: *const Str) -> *mut Str {
-    str_new(text(s).to_uppercase().as_bytes())
+pub unsafe extern "C" fn tondo_rt_text_upper(s: *const Str, region: *mut Region) -> *mut Str {
+    str_in(region, text(s).to_uppercase().as_bytes())
 }
 
 /// The integer a text writes in `radix` (2 to 36), with an optional sign

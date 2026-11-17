@@ -169,7 +169,11 @@ fn declared() -> BTreeMap<String, Signature> {
             tondo::hir::NativeTy::Char => Class::I32,
             _ => Class::I64,
         };
-        let params = native.receiver.iter().chain(native.params).map(|&t| class(t)).collect();
+        let mut params: Vec<Class> = native.receiver.iter().chain(native.params).map(|&t| class(t)).collect();
+        // The region it makes what it gives in.
+        if native.makes_in_region() {
+            params.push(Class::I64);
+        }
         let result = (native.result != tondo::hir::NativeTy::Unit).then(|| class(native.result));
         found.insert(native.symbol.to_string(), (params, result));
     }
