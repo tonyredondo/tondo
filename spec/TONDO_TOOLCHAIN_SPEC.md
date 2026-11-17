@@ -2493,7 +2493,9 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   un marco toma moviendo un puntero y devuelve entera al terminar, o en el
   heap. Va en la región de la función que lo hace si nada lo guarda más
   allá de la llamada, aunque lo guarde de una vuelta a otra un array al que
-  el bucle solo añade con `push`, o en la de una vuelta de un bucle si no
+  el bucle solo añade con `push`, o sea el texto que el bucle amplía en su
+  sitio, `x = "{x}..."`, si mientras crece no lo guarda nada más que su
+  variable y esos arrays, o en la de una vuelta de un bucle si no
   sobrevive a la vuelta, o solo la sobrevive por una salida del bucle que no
   vuelve a él, como la de un `?` o un `return`, pues la región de una vuelta
   se vacía al volver a la cabeza del bucle y se deja al volver la función,
@@ -2510,7 +2512,9 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   ha leído, y la nombra,
   o es de una clase que una región no toma aún, y la nombra: una región
   toma arrays, cajas, arrays que crecen con `push`, los textos que hace una
-  interpolación, salvo el que crece en su sitio, como `x = "{x}..."`, y los
+  interpolación, también el que crece en su sitio, como `x = "{x}..."`, que
+  dobla su espacio en la región y, pasado un mebibyte, crece en un trozo
+  propio de ella como un bloque del heap, y los
   textos y arrays que hacen las operaciones del runtime y de la biblioteca,
   como `split`, `replace`, `fs.readText`, `concat` o `sorted`. Un valor en una región
   no es una asignación para los contadores, los perfiles de memoria ni las
