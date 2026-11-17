@@ -281,3 +281,6 @@ native tondo_rt_net_network               cases/run/regions/natives_sockets.to
 native tondo_rt_net_resolve               cases/run/regions/natives_sockets.to
 native tondo_rt_net_start_tls             cases/run/regions/natives_sockets.to
 native tondo_rt_net_write                 cases/run/regions/natives_sockets.to
+native tondo_rt_grpc_channel              projects/interceptors projects/balancing
+native tondo_rt_grpc_close                projects/interceptors
+native tondo_rt_grpc_frames               projects/grpcweb
