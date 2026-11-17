@@ -1,0 +1,70 @@
+// A part of a call's result kept through an operation that makes a new
+// value of it (MIR `ArrayOp`): an array a function that is not inlined
+// makes in the region its caller gives, returned inside an `Option`, taken
+// out of it and joined into what the caller returns. What holds a part of
+// the result holds the region's memory, as what holds the whole does.
+
+import std.console
+
+type Held = { values: Array[Int] }
+
+fn made(i: Int): Held? {
+    var values = [i, i + 1]
+    for k in 0..i {
+        values.push(i * 10 + k)
+    }
+    if values.length() > 100 {
+        return none
+    }
+    var checked = 0
+    for value in values {
+        if value % 7 == 3 {
+            checked += value * 3 - 1
+        } else if value % 5 == 2 {
+            checked -= value / 2
+        } else {
+            checked += 1
+        }
+    }
+    if checked == -12345 {
+        return none
+    }
+    Held { values }
+}
+
+fn gathered(n: Int): Array[Held] {
+    var outcomes: Array[Held?] = []
+    for i in 0..n {
+        outcomes.push(made(i))
+    }
+    var found: Array[Held] = []
+    for outcome in outcomes {
+        match outcome {
+            some(held) => found.push(held)
+            none => {}
+        }
+    }
+    found.concat([])
+}
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        var junk = [i, i, i, i, i, i, i, i]
+        junk.push(i)
+        total += junk.length()
+    }
+    total
+}
+
+fn main() {
+    let all = gathered(4)
+    let quiet = noise()
+    var shown: Array[Array[Int]] = []
+    for held in all {
+        shown.push(held.values)
+    }
+    console.println("{shown} {quiet}")
+}
+
+// expect-stdout: [[0, 1], [1, 2, 10], [2, 3, 20, 21], [3, 4, 30, 31, 32]] 1800

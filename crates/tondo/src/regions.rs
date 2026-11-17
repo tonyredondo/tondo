@@ -1596,6 +1596,12 @@ impl Flow {
         let (mut is, mut contains) = (vec![false; count], vec![false; count]);
         is[start.0 as usize] = true;
         let held = types.repr(body.locals[start.0 as usize]);
+        // With its parts, what it is made of: a value that holds one of
+        // them holds the memory they share, as a field of a call's result.
+        let made_of: Vec<Ty> = match parts {
+            true => types.reach(held).into_iter().map(|part| types.repr(part)).collect(),
+            false => Vec::new(),
+        };
         let mut pending: Vec<u32> = self.readers[start.0 as usize].clone();
         while let Some(index) = pending.pop() {
             let transfer = &self.transfers[index as usize];
@@ -1617,7 +1623,9 @@ impl Flow {
                     (How::Other { same, reach, anything }, _) => {
                         if it || inside {
                             may_be |= *same == held;
-                            may_contain |= *anything || reach.contains(&held);
+                            may_contain |= *anything
+                                || reach.contains(&held)
+                                || reach.iter().chain([same]).any(|ty| made_of.contains(ty));
                         }
                     }
                     (How::Lent, false) => {

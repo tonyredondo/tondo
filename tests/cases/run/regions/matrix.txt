@@ -29,7 +29,7 @@ Rvalue::Unary                 - gives a number or a Bool
 Rvalue::Binary                - gives a number or a Bool
 Rvalue::Increment             - gives a number
 Rvalue::Exact                 - gives a number
-Rvalue::Call                  cases/run/regions/calls.to cases/run/regions/contexts.to cases/run/regions/natives_codec.to
+Rvalue::Call                  cases/run/regions/calls.to cases/run/regions/contexts.to cases/run/regions/natives_codec.to cases/run/regions/parts.to
 Rvalue::FnValue               - gives a function's address
 Rvalue::ExternFn              - gives a C function's address
 Rvalue::Callback              - gives a C function's address
@@ -54,7 +54,7 @@ Rvalue::Variant               cases/run/regions/stores.to
 Rvalue::Discriminant          - gives a variant's index
 Rvalue::Convert               - gives a number
 Rvalue::Array                 cases/run/regions/stores.to cases/run/regions/arrays.to
-Rvalue::ArrayOp               cases/run/regions/arrays.to
+Rvalue::ArrayOp               cases/run/regions/arrays.to cases/run/regions/parts.to
 Rvalue::Slice                 cases/run/regions/arrays.to
 Rvalue::AssignSlice           cases/run/regions/arrays.to
 Rvalue::CheckRegion           - checks bounds
