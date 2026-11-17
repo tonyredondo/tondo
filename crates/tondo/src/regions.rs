@@ -1442,11 +1442,18 @@ impl Flow {
                         // what it is given, which `fate` sees.
                         Rvalue::Call(Callee::Fn(_), _) => continue,
                         // A native that reads what it is given gives a value
-                        // the runtime made, which holds none of it.
+                        // the runtime made, which holds none of it: one that
+                        // reads arrays says so of all it gives; one that
+                        // reads only texts, of a value of the runtime, as
+                        // a text it gives may be one it was given.
                         Rvalue::Call(Callee::Std(crate::hir::StdFn::Native(index)), _)
                             if crate::hir::NATIVES.get(*index as usize).is_some_and(|native| {
-                                READING.contains(&native.symbol)
-                                    && (!takes_texts(native) || READING_TEXTS.contains(&native.symbol))
+                                use crate::hir::NativeTy::{BytePointer, Object, Owned, Regex};
+                                let texts_read = !takes_texts(native) || READING_TEXTS.contains(&native.symbol);
+                                let made = matches!(native.result, Object | Owned | Regex | BytePointer);
+                                texts_read
+                                    && (READING.contains(&native.symbol)
+                                        || made && takes_texts(native) && !takes_from_regions(native))
                             }) =>
                         {
                             continue;

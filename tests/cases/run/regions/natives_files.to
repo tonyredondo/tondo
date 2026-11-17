@@ -124,6 +124,9 @@ fn main() {
     fs.remove(dir, recursive: true)?
 }
 
+// expect-optimization: 30:22 region goes in a region of `entry`
+// expect-optimization: 34:73 region goes in a region of `entry`
+// expect-optimization: 35:26 region goes in a region of `entry`
 // expect-stdout: f0.txt f0.txt 6 true 2 0 true true f1.txt f1.txt 6 true 2 1 true true f2.txt f2.txt 6 true 2 2 true true 12
 // expect-stdout: enero CET, juin CEST, 11月 JST
 // expect-stdout: d0 d1
