@@ -129,6 +129,28 @@ fn shared<R>(f: impl FnOnce(&mut Kept) -> R) -> R {
     result
 }
 
+/// The threads' chunks, held across a fork so that the copy has them free
+/// (`tasks::fork_copy`): a copy that found them taken by a thread it does
+/// not have would spin for them forever when a region of its own needs one.
+/// None when another thread keeps them longer than a fork waits.
+pub(crate) fn shared_held() -> Option<SharedHeld> {
+    for _ in 0..50 {
+        if !FREE.locked.swap(true, Ordering::Acquire) {
+            return Some(SharedHeld);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    None
+}
+
+pub(crate) struct SharedHeld;
+
+impl Drop for SharedHeld {
+    fn drop(&mut self) {
+        FREE.locked.store(false, Ordering::Release);
+    }
+}
+
 /// The chunks a thread keeps for its next regions, before the list the
 /// threads share, so that a function that enters and leaves a region at
 /// each call takes no lock: kept with what the runtime keeps for the

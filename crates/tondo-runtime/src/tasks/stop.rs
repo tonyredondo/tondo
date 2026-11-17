@@ -226,19 +226,30 @@ pub(crate) fn soon<T>(lock: &'static Mutex<T>) -> Option<MutexGuard<'static, T>>
 
 /// Forks a copy of the process that goes on running, on this thread alone.
 /// What another thread is in the middle of stays so in the copy, with no
-/// one to end it: the scheduler's locks, and those of the objects a tool
-/// may follow, are held across the fork, so that the copy has them free,
-/// and a stop of the world ends there. When another thread keeps one of
-/// them longer than a fork waits, as on a machine too busy to run it, there
-/// is no copy, which would wait for it forever.
+/// one to end it: the scheduler's locks, those of the objects a tool may
+/// follow, of the positions of long texts and of the chunks regions share,
+/// are held across the fork, so that the copy has them free, and a stop of
+/// the world ends there. When another thread keeps one of them longer than
+/// a fork waits, as on a machine too busy to run it, there is no copy,
+/// which would wait for it forever.
 pub(crate) fn fork_copy() -> std::io::Result<i32> {
-    let held = (soon(&QUEUE), soon(&IN_TONDO), soon(crate::cycles::wanted()), crate::heap::objects_held());
-    let (Some(queue), Some(in_tondo), Some(wanted), Some(objects)) = held else {
+    // In order, and none after one that does not come.
+    let held = (|| {
+        Some((
+            soon(&QUEUE)?,
+            soon(&IN_TONDO)?,
+            soon(crate::cycles::wanted())?,
+            crate::strings::positions_held()?,
+            crate::heap::objects_held()?,
+            crate::regions::shared_held()?,
+        ))
+    })();
+    let Some(held) = held else {
         let why = "another thread holds the scheduler, which a copy could never have: try again";
         return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, why));
     };
     let pid = unsafe { libc::fork() };
-    drop((queue, in_tondo, wanted, objects));
+    drop(held);
     if pid < 0 {
         return Err(std::io::Error::last_os_error());
     }
@@ -276,31 +287,40 @@ mod tests {
     /// held copy of a recording once did on a busy machine.
     #[test]
     fn a_fork_makes_no_copy_while_the_scheduler_is_held() {
-        let (held, taken) = std::sync::mpsc::channel();
-        let holder = std::thread::spawn(move || {
-            let queue = super::super::QUEUE.lock().unwrap_or_else(|e| e.into_inner());
-            held.send(()).unwrap();
-            std::thread::sleep(Duration::from_millis(300));
-            drop(queue);
-        });
-        taken.recv().unwrap();
-        let forked = super::fork_copy();
-        if let Ok(0) = forked {
-            unsafe { libc::_exit(0) };
-        }
-        assert!(forked.as_ref().is_err_and(|e| e.kind() == std::io::ErrorKind::WouldBlock), "{forked:?}");
-        holder.join().unwrap();
+        no_copy_while(300, || super::super::QUEUE.lock().unwrap_or_else(|e| e.into_inner()));
     }
 
     /// The same while another thread keeps the objects a tool follows.
     #[test]
     fn a_fork_makes_no_copy_while_the_objects_are_held() {
+        no_copy_while(1500, || crate::heap::objects_held().expect("the objects' shards"));
+    }
+
+    /// The same while another thread takes or gives back one of the chunks
+    /// regions share: the copy would spin for their lock forever.
+    #[test]
+    fn a_fork_makes_no_copy_while_the_chunks_of_regions_are_held() {
+        no_copy_while(300, || crate::regions::shared_held().expect("the chunks' lock"));
+    }
+
+    /// The same while another thread indexes or frees a long text: the copy
+    /// would wait for the slot of its positions forever.
+    #[test]
+    fn a_fork_makes_no_copy_while_the_positions_of_a_text_are_held() {
+        no_copy_while(300, || crate::strings::POSITIONS[3].lock().unwrap_or_else(|e| e.into_inner()));
+    }
+
+    /// A fork while another thread keeps for `ms` what `hold` takes. One at
+    /// a time, as a fork takes what the others hold.
+    fn no_copy_while<G>(ms: u64, hold: impl FnOnce() -> G + Send + 'static) {
+        static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
         let (held, taken) = std::sync::mpsc::channel();
         let holder = std::thread::spawn(move || {
-            let objects = crate::heap::objects_held().expect("the objects' shards");
+            let guard = hold();
             held.send(()).unwrap();
-            std::thread::sleep(Duration::from_millis(1500));
-            drop(objects);
+            std::thread::sleep(Duration::from_millis(ms));
+            drop(guard);
         });
         taken.recv().unwrap();
         let forked = super::fork_copy();

@@ -428,6 +428,24 @@ pub(crate) fn position_slot(s: *const Str) -> usize {
     (s as usize >> 4) % POSITION_SLOTS
 }
 
+/// The slots, held across a fork so that the copy has them free
+/// (`tasks::fork_copy`): a copy that found one taken by a thread it does
+/// not have would wait for it forever as it indexes or frees a long text.
+/// None when another thread keeps one longer than a fork waits.
+pub(crate) fn positions_held() -> Option<[std::sync::MutexGuard<'static, Option<Positions>>; POSITION_SLOTS]> {
+    // A `Mutex` that makes its lock the first time it is taken, as on
+    // macOS, allocates: each is taken alone first, as the objects' shards.
+    for slot in &POSITIONS {
+        drop(slot.try_lock());
+    }
+    let mut held: [Option<std::sync::MutexGuard<'static, Option<Positions>>>; POSITION_SLOTS] =
+        [const { None }; POSITION_SLOTS];
+    for (guard, slot) in held.iter_mut().zip(&POSITIONS) {
+        *guard = Some(super::tasks::soon(slot)?);
+    }
+    Some(held.map(|guard| guard.expect("every slot is held")))
+}
+
 /// Empties the slot of a string whose block is freed or taken.
 pub(crate) fn forget_positions(s: *const Str) {
     let slot = position_slot(s);
