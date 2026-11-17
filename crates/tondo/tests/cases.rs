@@ -23,7 +23,9 @@
 //! - `// expect-optimization: <line>:<column> <kind> [text]` — `tondo
 //!   optimizations` tells, at that place of the case, a remark of that
 //!   kind whose text contains `text` when given: what a release build
-//!   makes of the code, which a change to the passes must keep.
+//!   makes of the code, which a change to the passes must keep. One of the
+//!   kind `region` is looked for with `--kind region`, which tells too what
+//!   the library's code makes on its way.
 //! - `// expect-no-optimization: <line>:<column> <kind> [text]` — it tells
 //!   no such remark there: of a place a copy of the code would hide, as
 //!   one kept checked beside one that lost its check.
@@ -293,18 +295,36 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
 
 /// Whether `tondo optimizations` tells each remark a case expects.
 fn optimized(path: &Path, scratch: &Path, expected: &[(String, bool)]) -> Result<(), String> {
-    let told = Command::new(env!("CARGO_BIN_EXE_tondo"))
-        .current_dir(path.parent().unwrap())
-        .args([std::ffi::OsStr::new("optimizations"), path.file_name().unwrap(), std::ffi::OsStr::new("--json")])
-        .env("XDG_CACHE_HOME", scratch.join("cache"))
-        .output()
-        .map_err(|e| format!("tondo optimizations: {e}"))?;
-    let told: serde_json::Value = serde_json::from_slice(&told.stdout)
-        .map_err(|e| format!("tondo optimizations: {e}\n{}", String::from_utf8_lossy(&told.stderr)))?;
-    let found = told["optimizations"].as_array().cloned().unwrap_or_default();
+    // What the view tells, by default or of one kind.
+    let view = |kind: Option<&str>| -> Result<Vec<serde_json::Value>, String> {
+        let mut args = vec![std::ffi::OsStr::new("optimizations"), path.file_name().unwrap()];
+        args.push(std::ffi::OsStr::new("--json"));
+        if let Some(kind) = kind {
+            args.extend([std::ffi::OsStr::new("--kind"), std::ffi::OsStr::new(kind)]);
+        }
+        let told = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .current_dir(path.parent().unwrap())
+            .args(args)
+            .env("XDG_CACHE_HOME", scratch.join("cache"))
+            .output()
+            .map_err(|e| format!("tondo optimizations: {e}"))?;
+        let told: serde_json::Value = serde_json::from_slice(&told.stdout)
+            .map_err(|e| format!("tondo optimizations: {e}\n{}", String::from_utf8_lossy(&told.stderr)))?;
+        Ok(told["optimizations"].as_array().cloned().unwrap_or_default())
+    };
+    let shown = view(None)?;
+    // Where a region puts what the library's code makes the view tells by
+    // default only of what reaches the program: an expectation of the kind
+    // `region` is held to the view of that kind, which tells all of it.
+    let of_regions = |(expected, _): &(String, bool)| expected.split(' ').nth(1) == Some("region");
+    let regions = match expected.iter().any(of_regions) {
+        true => view(Some("region"))?,
+        false => Vec::new(),
+    };
     for (expected, told) in expected {
         let (at, rest) = expected.split_once(' ').unwrap_or((expected, ""));
         let (kind, text) = rest.split_once(' ').unwrap_or((rest, ""));
+        let found = if kind == "region" { &regions } else { &shown };
         let place = at
             .split_once(':')
             .and_then(|(line, column)| Some((line.parse::<u64>().ok()?, column.parse::<u64>().ok()?)));

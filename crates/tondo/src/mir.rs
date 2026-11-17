@@ -44,6 +44,14 @@ pub struct Remark {
     /// The code the remark is of, when another place than its own: the
     /// call that keeps a value, which the text names after it.
     pub by: Option<By>,
+    /// Of the library's code copied into the program: whether what it
+    /// makes reaches the program's own code, which the view tells by
+    /// default; the rest it tells when asked for its kind.
+    pub given: bool,
+    /// The inlined scope of the remark's own place, when its pass knows it,
+    /// so that the library's code copied in two places is told at the
+    /// program's call of the copy it is of.
+    pub scope: Option<u32>,
 }
 
 /// The code a remark names, and the inlined scope it is in, so that the

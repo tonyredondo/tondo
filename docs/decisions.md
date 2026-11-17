@@ -7731,3 +7731,17 @@ most what one turn makes, and felt only in a function that goes on long after it
 by instructions against the compiler before it, every benchmark the same or fewer: users 1000
 40.8 % fewer, inserting 1000 strings 19.6 %, interpolating 19.0 %, points 1.1 %, and the
 network's JSON row puts in regions 6400 allocations an operation that were on the heap.
+
+## Of the library's copied code, the view tells what reaches the program
+
+`tondo optimizations` tells of the standard library's code and a dependency's, where it is copied
+into the program, at the program's call that brings it. Once texts the runtime makes went in
+regions, it told there too where a region puts each of them, and a program that writes a number
+read two lines on texts the formatting makes on its way, which its author cannot change. Tony chose
+that the view tells by default where a region puts what reaches the program's own code, as the
+text of `line.trim()` or the array of `row.split(",")`, and keeps for `--kind region` what the
+library makes and lets go of inside the call. A place reaches the program when a statement of the
+program's code holds or reads it, or its function returns it; what the inliner moves between its
+copies is no one's code. Each region line names the program's call of the copy it is of, as a
+remark's code that keeps a value does: the library's code copied twice into one function had both
+lines told at both calls.

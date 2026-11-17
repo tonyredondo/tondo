@@ -392,6 +392,6 @@ fn told(body: &mut Body, uses: &[Uses], gone: &[bool]) {
         remarks.push((*span, kind, text, by));
     }
     for (span, kind, text, by) in remarks {
-        crate::mir_text::remark_by(body, span, kind, by.map(|by| (by, None)), || text.to_string());
+        crate::mir_text::remark_by(body, span, kind, by.map(|by| (by, None)), true, None, || text.to_string());
     }
 }

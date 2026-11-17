@@ -1883,3 +1883,32 @@ fn what_a_release_build_makes_of_the_code() {
     assert_eq!(said["ok"], false);
     assert!(said["diagnostics"].to_string().contains("E"), "{said}");
 }
+
+/// Of a dependency's code copied into the program, the view tells where a
+/// region puts what reaches the program's own code, and what the
+/// dependency makes and lets go of inside the call only with `--kind
+/// region`, where all of it is.
+#[test]
+fn the_library_lines_of_regions_are_what_reaches_the_program() {
+    let main = "import std.console\nimport words\n\nfn main() {\n    var total = 0\n    for i in 0..10 {\n        total += words.width(i)\n        let loud = words.shout(\"x{i}\")\n        total += loud.length()\n    }\n    console.println(\"{total}\")\n}\n";
+    let library = "/// The width of a number's text, made louder first.\npub fn width(n: Int): Int {\n    let text = \"{n}\".toUpper()\n    text.length()\n}\n\n/// The text, louder.\npub fn shout(text: String): String {\n    text.toUpper()\n}\n";
+    let dir = project_at(
+        "library-regions",
+        &[
+            ("tondo.toml", b"[package]\nname = \"app\"\n\n[dependencies]\nwords = { path = \"libs/words\" }\n"),
+            ("src/main.to", main.as_bytes()),
+            ("libs/words/tondo.toml", b"[package]\nname = \"words\"\n"),
+            ("libs/words/src/words.to", library.as_bytes()),
+        ],
+    );
+    let lines = |args: &[&str]| -> Vec<String> {
+        said_by(&dir, args).lines().filter(|line| line.contains("goes in")).map(String::from).collect()
+    };
+    // The text `shout` gives the program, and the one `width` only measures.
+    let (shout, width) = ("`words.shout(\"x{i}\")` in `String.toUpper`", "`words.width(i)` in `String.toUpper`");
+    let told = lines(&["optimizations"]);
+    assert!(told.iter().any(|line| line.contains(shout)), "{told:?}");
+    assert!(!told.iter().any(|line| line.contains(width)), "{told:?}");
+    let all = lines(&["optimizations", "--kind", "region"]);
+    assert!(all.iter().any(|line| line.contains(width)), "{all:?}");
+}

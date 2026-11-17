@@ -39,7 +39,7 @@ pub fn remarking() -> bool {
 /// A remark of a pass on the source at `span`, when they are asked for:
 /// `text` is only made then.
 pub fn remark(body: &mut Body, span: crate::source::Span, kind: &'static str, text: impl FnOnce() -> String) {
-    remark_by(body, span, kind, None, text);
+    remark_by(body, span, kind, None, true, None, text);
 }
 
 /// A remark that names another place's code after its text, as the call
@@ -50,10 +50,12 @@ pub fn remark_by(
     span: crate::source::Span,
     kind: &'static str,
     by: Option<crate::mir::By>,
+    given: bool,
+    scope: Option<u32>,
     text: impl FnOnce() -> String,
 ) {
     if remarking() && !(span.start == 0 && span.end == 0) {
-        body.remarks.push(Remark { span, kind, text: text(), by });
+        body.remarks.push(Remark { span, kind, text: text(), by, given, scope });
     }
 }
 

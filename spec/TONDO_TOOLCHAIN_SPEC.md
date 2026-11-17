@@ -2466,6 +2466,10 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   inglés como los demás textos del compilador, y las funciones en cuyo código
   está: la suya y aquellas en las que se inlineó. Van en el orden del código,
   y solo las del código del programa, no las de sus dependencias ni de `std`.
+  Del código de la biblioteca que se copia en el del programa dice, en la
+  llamada del programa que lo trae, lo que hace en el heap y dónde pone una
+  región lo que llega al código del programa; lo que la biblioteca hace por
+  el camino y suelta dentro de la llamada lo dice con `--kind region`.
 - Lo que se hace en una copia de un sitio y no en otra, de un bucle
   desenrollado o de un código inlineado dos veces, se dice como no hecho si
   es la llamada que queda, el heap, el bucle de una vuelta, el array que

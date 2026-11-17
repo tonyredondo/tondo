@@ -38,7 +38,7 @@ pub fn stack(bodies: &mut [Body], types: &Types) {
         body.framed = framed;
         body.notes.append(&mut notes);
         for (span, kind, text, by) in remarks {
-            crate::mir_text::remark_by(body, span, kind, by, || text);
+            crate::mir_text::remark_by(body, span, kind, by, true, None, || text);
         }
         if crate::mir_text::remarking() {
             for (span, text) in allocations(body, types) {

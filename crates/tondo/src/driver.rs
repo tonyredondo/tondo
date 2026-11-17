@@ -1844,8 +1844,17 @@ pub fn optimizations(
             };
             let sites: Vec<(crate::source::Span, Option<String>)> = match library(remark.span) {
                 false => vec![(remark.span, None)],
+                // Where a region puts what the library makes: what reaches
+                // the program, or all of it when the kind is asked for.
+                true if remark.kind == "region" && !remark.given && kind != Some("region") => Vec::new(),
                 true if matches!(remark.kind, "checked" | "heap" | "call" | "counted" | "grown" | "region") => {
-                    copied_into(body, remark.span, &library)
+                    // The copy it is of, when its pass knows it; else every
+                    // copy of its place.
+                    let copies = match remark.scope {
+                        Some(scope) => called_for(body, scope, &library).into_iter().collect(),
+                        None => copied_into(body, remark.span, &library),
+                    };
+                    copies
                         .into_iter()
                         .map(|(call, function)| (call, Some(format!("in `{function}`, `{}` ", clipped(remark.span)))))
                         .collect()
@@ -1873,7 +1882,7 @@ pub fn optimizations(
                     remark.by.filter(|(by, _)| *by != crate::source::Span::default()).and_then(|(by, scope)| {
                         match (library(by), scope) {
                             (false, _) => Some(by),
-                            (true, Some(scope)) => called_for(body, scope, &library),
+                            (true, Some(scope)) => called_for(body, scope, &library).map(|(call, _)| call),
                             (true, None) => copied_into(body, by, &library).first().map(|(call, _)| *call),
                         }
                     });
@@ -1915,17 +1924,19 @@ pub fn optimizations(
 }
 
 /// The call of the program's code that the inlined scope `scope` is a copy
-/// for, through the copies of the library's code it is in.
+/// for, through the copies of the library's code it is in, with the
+/// function of the innermost copy.
 fn called_for(
     body: &crate::mir::Body,
     scope: u32,
     library: &impl Fn(crate::source::Span) -> bool,
-) -> Option<crate::source::Span> {
-    let mut scope = Some(scope);
+) -> Option<(crate::source::Span, String)> {
+    let (mut scope, mut function) = (Some(scope), None);
     while let Some(at) = scope {
         let inlined = body.inlined.get(at as usize)?;
+        function.get_or_insert_with(|| inlined.name.clone());
         if !library(inlined.call) {
-            return Some(inlined.call);
+            return Some((inlined.call, function.unwrap_or_default()));
         }
         scope = inlined.parent;
     }

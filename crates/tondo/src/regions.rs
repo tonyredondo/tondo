@@ -233,7 +233,12 @@ pub fn regions(
         }
     }
     if crate::mir_text::remarking() {
-        for (body, verdicts) in bodies.iter_mut().zip(&judged) {
+        // The standard library's code or a dependency's.
+        let library = |span: Span| {
+            let file = sources.file_of(span.start);
+            file.dependency || file.logical.starts_with("<std>/")
+        };
+        for (index, (body, verdicts)) in bodies.iter_mut().zip(&judged).enumerate() {
             // A place a region takes in every copy of it is not made on the
             // heap: what the frame said of it says why the frame does not
             // take it.
@@ -252,9 +257,11 @@ pub fn regions(
                     remark.kind = "frame";
                 }
             }
-            for verdict in verdicts {
+            for (site, verdict) in all_sites[index].iter().zip(verdicts) {
                 let text = verdict.text.clone();
-                crate::mir_text::remark_by(body, verdict.span, "region", verdict.by, || text);
+                let given = !library(verdict.span) || reaches_program(&flows[index], body, types, site, &library);
+                let scope = body.scopes.get(site.at.0 as usize).copied().flatten();
+                crate::mir_text::remark_by(body, verdict.span, "region", verdict.by, given, scope, || text);
             }
         }
     }
@@ -1272,6 +1279,26 @@ impl Site {
     fn placed(&self) -> bool {
         self.refused.is_none()
     }
+}
+
+/// Whether what a place of the library's code copied into `body` makes
+/// reaches the program's own code: a statement of the program's holds or
+/// reads it, or the function returns it.
+fn reaches_program(flow: &Flow, body: &Body, types: &Types, site: &Site, library: &impl Fn(Span) -> bool) -> bool {
+    let held = flow.holders(types, body, site.local, flow.called[site.local.0 as usize]);
+    if body.ret.is_some_and(|ret| held[ret.0 as usize]) {
+        return true;
+    }
+    body.blocks.iter().flat_map(|block| &block.stmts).any(|statement| {
+        let Statement::Assign(place, rvalue, span) = statement else { return false };
+        // What the inliner moves between its copies is no one's code.
+        if library(*span) || *span == Span::default() {
+            return false;
+        }
+        let mut used = vec![place.local];
+        rvalue_uses(rvalue, &mut used);
+        used.iter().any(|local| held[local.0 as usize])
+    })
 }
 
 /// Whether an operation of numbers gives a text, which the runtime makes in
