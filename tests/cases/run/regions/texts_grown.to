@@ -6,7 +6,10 @@
 // positions of its characters, and read by index once grown; and past a
 // mebibyte, alone in a chunk of its own that grows as a block on the heap
 // does, still its region's while an array of the region holds it, which
-// the run checks for leaks as every case does.
+// the run checks for leaks as every case does. Grown across the turns of a
+// loop, it goes in the function's region while only its own local and
+// arrays the loop only pushes to hold it, and stays on the heap when a
+// value of the turn holds it as it grows, or the loop writes it otherwise.
 
 import std.console
 
@@ -42,7 +45,8 @@ fn kept(count: Int): String {
     text
 }
 
-/// Grown across the turns of its loop, which it outlives: on the heap.
+/// Grown across the turns of its loop past a mebibyte: in the function's
+/// region, its room doubling, then alone in a chunk of its own.
 fn long(count: Int): Int {
     var text = ""
     for _ in 0..count {
@@ -96,6 +100,45 @@ fn noise(): Int {
     total
 }
 
+/// Grown across the turns while an array the loop only pushes to holds it:
+/// in the function's region, each copy it then makes the array's.
+fn pushedEachTurn(): Int {
+    var rows: Array[String] = []
+    var text = ""
+    for i in 0..20 {
+        text = "{text}{i % 10}"
+        rows.push(text)
+    }
+    rows.length() + rows[19].length() + text.length()
+}
+
+/// Held as it grows by what a turn lets go of: a copy at every turn, which
+/// the heap frees and a region would keep, so it stays on the heap.
+fn snapshots(): Int {
+    var text = ""
+    var total = 0
+    for i in 0..20 {
+        let before = text
+        text = "{text}{i % 10}"
+        total += before.length()
+    }
+    total + text.length()
+}
+
+/// Written whole otherwise in the loop, starting again: on the heap.
+fn restarted(): Int {
+    var text = ""
+    var total = 0
+    for i in 0..30 {
+        if i % 10 == 0 {
+            text = ""
+        }
+        text = "{text}{i}"
+        total += text.length()
+    }
+    total
+}
+
 fn main() {
     let a = built(100)
     let b = turns()
@@ -110,13 +153,20 @@ fn main() {
     let g = heldInTurns()
     let quiet = noise()
     console.println("{a} {b} {lengths} {c.length()} {c[69]} {d} {e} {f} {g} {quiet}")
+    console.println("{pushedEachTurn()} {snapshots()} {restarted()}")
 }
 
 // expect-stdout: 390 261 153 70 9 abc/a 1600001 2560001 2240002 3560
-// expect-optimization: 17:9 region goes in a region of `main`
-// expect-optimization: 28:13 region goes in the region of a turn of the loop at line 25
-// expect-optimization: 86:5 region goes in a region of `shared`
-// expect-optimization: 60:5 region goes in a region of `held`
-// expect-optimization: 61:5 region grows an array that goes in a region of `held`
-// expect-optimization: 73:13 region goes in the region of a turn of the loop at line 69
-// expect-optimization: 75:9 region grows an array that goes in the region of a turn of the loop at line 69
+// expect-stdout: 60 210 275
+// expect-optimization: 20:9 region goes in a region of `main`
+// expect-optimization: 31:13 region goes in the region of a turn of the loop at line 28
+// expect-optimization: 53:9 region goes in a region of `long`
+// expect-optimization: 64:5 region goes in a region of `held`
+// expect-optimization: 65:5 region grows an array that goes in a region of `held`
+// expect-optimization: 77:13 region goes in the region of a turn of the loop at line 73
+// expect-optimization: 79:9 region grows an array that goes in the region of a turn of the loop at line 73
+// expect-optimization: 89:5 region goes in a region of `shared`
+// expect-optimization: 109:9 region goes in a region of `pushedEachTurn`
+// expect-optimization: 110:9 region grows an array that goes in a region of `pushedEachTurn`
+// expect-optimization: 122:9 region stays on the heap: it outlives a turn of the loop at line 120
+// expect-optimization: 136:9 region stays on the heap: it outlives a turn of the loop at line 132

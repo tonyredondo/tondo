@@ -735,7 +735,7 @@ impl Lifetimes {
         // from where it is made: a local a move zeroes, or that a whole value
         // of another writes over, holds it no more, as a tree's array once its
         // node took it.
-        let (entry, exit) = held_from(body, &bits, local, at);
+        let (entry, exit, again) = held_from(body, &bits, local, at);
         let at = |k: usize| {
             let inside = &self.loops[k].1;
             let mut exits = vec![0u64; words];
@@ -755,10 +755,22 @@ impl Lifetimes {
         // What only arrays that each loop does nothing to but push keeps
         // past its turns lives as long as they do, and adds nothing to throw
         // away: the function's region, as a tree's children each turn makes.
+        // So does a text that grows in place across the turns, `x =
+        // "{x}..."`, held past them by its own local alone, which the loops
+        // write whole only so: its room doubles, so the rooms it leaves add
+        // up to no more than it ends with, as an array's that grows. Each
+        // time it grows, nothing else may hold it but those arrays, which
+        // keep the copy it then makes as they would on the heap: a value a
+        // turn lets go of would leave a copy in the region at every turn.
+        let appended = grows.is_some_and(|site| appends(body, site));
         let kept = |k: usize| {
             let (head, exits) = at(k);
             let inside = &self.loops[k].1;
-            keepers(k, head, &exits).into_iter().all(|keeper| only_pushed(body, types, inside, Local(keeper as u32)))
+            let pushed = |keeper: usize| only_pushed(body, types, inside, Local(keeper as u32));
+            let alone = |keeper: usize| keeper == local.0 as usize || pushed(keeper);
+            keepers(k, head, &exits).into_iter().all(|keeper| {
+                pushed(keeper) || appended && keeper == local.0 as usize && only_appended(body, inside, local)
+            }) && (!appended || (0..held.len()).filter(|&index| again[index / 64] & 1 << (index % 64) != 0).all(alone))
         };
         containing.into_iter().all(kept).then_some(0)
     }
@@ -982,7 +994,7 @@ fn bounded(body: &Body, looped: &[bool], site: &Site) -> bool {
 /// what is written through a loan to what it lends; a local a move or
 /// `clear` zeroes, or that a whole value of none of them writes over, holds
 /// it no more.
-fn held_from(body: &Body, held: &[u64], local: Local, at: (u32, u32)) -> (Vec<Vec<u64>>, Vec<Vec<u64>>) {
+fn held_from(body: &Body, held: &[u64], local: Local, at: (u32, u32)) -> (Vec<Vec<u64>>, Vec<Vec<u64>>, Vec<u64>) {
     let words = held.len();
     let has = |set: &[u64], l: Local| set[l.0 as usize / 64] & (1 << (l.0 % 64)) != 0;
     let set = |set: &mut [u64], l: Local, on: bool| {
@@ -1034,6 +1046,7 @@ fn held_from(body: &Body, held: &[u64], local: Local, at: (u32, u32)) -> (Vec<Ve
     };
     let count = body.blocks.len();
     let (mut entry, mut exit) = (vec![vec![0u64; words]; count], vec![vec![0u64; words]; count]);
+    let mut again = vec![0u64; words];
     let mut pending = vec![at.0 as usize];
     let mut queued = vec![false; count];
     queued[at.0 as usize] = true;
@@ -1041,6 +1054,9 @@ fn held_from(body: &Body, held: &[u64], local: Local, at: (u32, u32)) -> (Vec<Ve
         queued[block] = false;
         let mut state = entry[block].clone();
         for (index, statement) in body.blocks[block].stmts.iter().enumerate() {
+            if (block as u32, index as u32) == at {
+                again.iter_mut().zip(&state).for_each(|(into, from)| *into |= from);
+            }
             step(&mut state, statement);
             if (block as u32, index as u32) == at {
                 set(&mut state, local, true);
@@ -1055,7 +1071,34 @@ fn held_from(body: &Body, held: &[u64], local: Local, at: (u32, u32)) -> (Vec<Ve
             }
         }
     }
-    (entry, exit)
+    (entry, exit, again)
+}
+
+/// Whether a site's statement grows its local's own text in place, `x =
+/// "{x}..."`.
+fn appends(body: &Body, site: &Site) -> bool {
+    let statement = body.blocks.get(site.at.0 as usize).and_then(|block| block.stmts.get(site.at.1 as usize));
+    matches!(statement, Some(Statement::Assign(place, rvalue, _))
+        if place.local == site.local && place.path.is_empty() && taken_first(rvalue, site.local))
+}
+
+/// Whether an rvalue appends to the text of `local`, taken whole.
+fn taken_first(rvalue: &Rvalue, local: Local) -> bool {
+    matches!(rvalue, Rvalue::Concat(pieces)
+        if matches!(pieces.first(), Some(Piece::Taken(taken)) if taken.local == local && taken.path.is_empty()))
+}
+
+/// Whether the blocks `inside` a loop write the text of `local` whole only
+/// by appending to it, and move, clear and lend it nowhere.
+fn only_appended(body: &Body, inside: &[bool], local: Local) -> bool {
+    body.blocks.iter().enumerate().filter(|&(block, _)| inside[block]).all(|(_, data)| {
+        data.stmts.iter().all(|statement| match statement {
+            Statement::Assign(place, rvalue, _) => place.local != local || taken_first(rvalue, local),
+            Statement::Moved(place) | Statement::Lend(_, place) => place.local != local,
+            Statement::Clear(cleared) => *cleared != local,
+            _ => true,
+        })
+    })
 }
 
 /// Whether `local` is an array that the blocks `inside` a loop only push

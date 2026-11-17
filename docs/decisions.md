@@ -7787,6 +7787,16 @@ takes must: an array of the region that holds it lets go of nothing,
 and a text that had moved to the heap would leak there, as the first
 texts in regions did.
 
+A text grown across the turns of a loop, the commonest shape, outlives
+each turn, and goes in the function's region as an array that grows
+does: its rooms double, so those it leaves add up to no more than it
+ends with. It does while the loop writes it whole only by appending to
+it, and while nothing holds it as it grows but its own local and arrays
+the loop only pushes to, which keep the copy it then makes as they would
+on the heap. A value of the turn that held it would have it copied at
+every turn, which the heap frees and a region would keep: such a text
+stays on the heap.
+
 ## A text an append may grow takes the heap's room in a region
 
 `testing.allocations` counts the heap's allocations and the regions'
