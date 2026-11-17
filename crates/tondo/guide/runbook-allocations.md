@@ -12,9 +12,11 @@ tondo init
 ```tondo file=src/main.to
 type Line = { name: String, cents: Int }
 
-/// A receipt, a line for each thing bought.
-fn receipt(lines: Array[Line]): String {
-    lines.map((line) { "{line.name}: {line.cents}\n" }).join("")
+/// Counts each thing bought, by its name and its price, into `seen`.
+fn tally(seen: var Map[String, Int], lines: Array[Line]) {
+    for line in lines {
+        seen["{line.name} at {line.cents}", default: 0] += 1
+    }
 }
 
 fn main() {}
@@ -24,13 +26,15 @@ fn main() {}
 import std.testing
 
 fn bought(): Array[Line] {
-    (0..100).map((n) { Line { name: "thing {n}", cents: n * 5 } }).collect()
+    (0..100).map((n) { Line { name: "thing {n % 10}", cents: n % 10 * 5 } }).collect()
 }
 
-test everyLineIsThere {
+test everyThingIsCounted {
     let lines = bought()
-    assert(receipt(lines).startsWith("thing 0: 0\nthing 1: 5\n"))
-    testing.bench("receipt", () { receipt(lines) })?
+    var seen: Map[String, Int] = [:]
+    tally(var seen, lines)
+    assert(seen["thing 3 at 15"] == 10)
+    testing.bench("tally", () { tally(var seen, lines) })?
 }
 ```
 
@@ -39,81 +43,88 @@ its time. `save_baseline` keeps the row, to compare with after the change.
 
 ```mcp
 test {"bench": true, "bench_time": 1, "save_baseline": "before"}
-=> 103 allocs/op
+=> 100 allocs/op
 ```
 
-A hundred lines, and a hundred and three allocations. `profile` with `bench`
-and the kind `memory` measures what the benchmark runs and gives the lines that
-allocate, the program's own first.
+A hundred lines, and a hundred allocations, though the map already has every
+key. `allocs/op` is the heap's. What a release build can let go of all at
+once it puts in a region by itself, and a row counts that apart, as `+101 in
+regions` after its `allocs/op`: those are cheap, and nothing in the program
+is to change for them.
+`profile` with `bench` and the kind `memory` measures what the benchmark runs
+and gives the lines that allocate, the program's own first.
 
 ```mcp
 profile {"bench": true, "kind": "memory"}
-=> src/main.to:5
+=> src/main.to:6
 ```
 
-Line 5 makes them all. `optimizations` says what the compiler made of it:
+Line 6 makes them all. `optimizations` says what the compiler made of it:
 `kind` `heap` keeps what is made on the heap, each with what keeps it there,
 `function` the lines of one function, and `tests` reads the code as the tests
 and benchmarks build it, which is how a function that only they call is seen.
 
 ```mcp
-optimizations {"tests": true, "function": "receipt", "kind": "heap"}
-=> `"{line.name}: {line.cents}\n"` is made on the heap: a collection takes it
+optimizations {"tests": true, "function": "tally", "kind": "heap"}
+=> `"{line.name} at {line.cents}"` is made on the heap: a collection takes it
 ```
 
-Each line's text is made to be put in an array, which `join` then copies into
-one more text: the array and its hundred texts live only to be copied. A
-`format.Builder` is one text that grows, and takes each part as it comes.
+Each line's text is made to be a key of a map that the caller keeps, so it
+has to be on the heap, and it is made again for a key the map already has.
+The text adds nothing to its two parts: a map takes them as its key, in a
+tuple, and nothing is made.
 
 ```edit src/main.to
--type Line = { name: String, cents: Int }
-+import std.format
-+
-+type Line = { name: String, cents: Int }
+-fn tally(seen: var Map[String, Int], lines: Array[Line]) {
++fn tally(seen: var Map[(String, Int), Int], lines: Array[Line]) {
 ```
 
 ```edit src/main.to
--    lines.map((line) { "{line.name}: {line.cents}\n" }).join("")
-+    var text = format.Builder()
-+    for line in lines {
-+        text.addLine("{line.name}: {line.cents}")
-+    }
-+    text.text()
+-        seen["{line.name} at {line.cents}", default: 0] += 1
++        seen[(line.name, line.cents), default: 0] += 1
 ```
 
-`baseline` compares with the row kept: the allocations that are left are the
-builder's text as it doubles, whatever the number of lines. The text of each
-line is still written, and no longer allocated: the builder only reads it,
-so it is made in the frame.
+```edit src/main_test.to
+-    var seen: Map[String, Int] = [:]
++    var seen: Map[(String, Int), Int] = [:]
+```
+
+```edit src/main_test.to
+-    assert(seen["thing 3 at 15"] == 10)
++    assert(seen[("thing 3", 15)] == 10)
+```
+
+`baseline` compares with the row kept, and `optimizations` has nothing left
+to say of the function's heap.
 
 ```mcp
 test {"bench": true, "bench_time": 1, "baseline": "before"}
-=> 7 allocs/op
-optimizations {"tests": true, "function": "receipt", "kind": "heap"}
+=> 0 allocs/op
+optimizations {"tests": true, "function": "tally", "kind": "heap"}
 => nothing to tell
-optimizations {"tests": true, "function": "receipt", "kind": "frame"}
-=> is made in the frame, without the heap
 ```
 
 A benchmark is looked at now and then, and a test runs at every change. So
 the number goes into a test: `testing.allocations` gives how many times a
 call allocates, on the heap and in regions: the benchmark's `allocs/op` and
 what its row says `in regions`, added. A plain `test` fails the day the
-receipt allocates for each line again, wherever those texts would go.
+tally makes a text for each line again, wherever those texts would go.
 
 ```edit src/main_test.to
--test everyLineIsThere {
-+test theReceiptAllocatesNoMore {
+-test everyThingIsCounted {
++test theTallyAllocatesNothing {
 +    let lines = bought()
-+    assert(testing.allocations(() { receipt(lines) }) <= 7)
++    var seen: Map[(String, Int), Int] = [:]
++    tally(var seen, lines)
++    assert(testing.allocations(() { tally(var seen, lines) }) == 0)
 +}
 +
-+test everyLineIsThere {
++test everyThingIsCounted {
 ```
 
 ```mcp
 test {}
-=> theReceiptAllocatesNoMore ... ok
+=> theTallyAllocatesNothing ... ok
 ```
 
 What the view says of a value on the heap, and what it asks for; after the
@@ -121,8 +132,9 @@ reason, the code that keeps the value and where it is, as `` `all.push(line)`
 at 6:5 ``, when it is the program's:
 
 - **it is returned**, **a collection takes it**: the value outlives the code
-  that makes it, so the allocation is the program's. Make fewer of them, as
-  here, not none.
+  that makes it, so the allocation is the program's. Ask whether the value
+  has to be made: here the text was only a key, and its parts were key
+  enough.
 - **a value holds it**: a record or a closure keeps it, as the adapters of a
   chain keep their closures. A function that only calls a closure leaves it in
   the frame.
