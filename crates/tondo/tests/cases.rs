@@ -18,6 +18,8 @@
 //!   recorded, for the reason given.
 //! - `// expect-no-schedule: <why>` — with `TONDO_CASES_SCHEDULE`, its tasks
 //!   run as ever, for the reason given.
+//! - `// expect-no-static: <why>` — with `TONDO_CASES_STATIC`, it is built
+//!   as ever, for the reason given, as one that loads libraries.
 //! - `// expect-optimization: <line>:<column> <kind> [text]` — `tondo
 //!   optimizations` tells, at that place of the case, a remark of that
 //!   kind whose text contains `text` when given: what a release build
@@ -68,6 +70,7 @@ struct Expect {
     env: Vec<(String, String)>,
     no_replay: bool,
     no_schedule: bool,
+    no_static: bool,
     /// Each remark expected, and whether it is to be told or not.
     optimizations: Vec<(String, bool)>,
 }
@@ -89,6 +92,7 @@ fn expectations(source: &str) -> Expect {
             "platform" => expect.platforms.extend(value.split_whitespace().map(String::from)),
             "no-replay" => expect.no_replay = true,
             "no-schedule" => expect.no_schedule = true,
+            "no-static" => expect.no_static = true,
             "optimization" => expect.optimizations.push((value.trim().into(), true)),
             "no-optimization" => expect.optimizations.push((value.trim().into(), false)),
             "env" => {
@@ -137,7 +141,7 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
         .arg(path.file_name().unwrap())
         .arg("--output")
         .arg(&binary)
-        .args(std::env::var_os("TONDO_CASES_STATIC").map(|_| "--static"))
+        .args(std::env::var_os("TONDO_CASES_STATIC").filter(|_| !expect.no_static).map(|_| "--static"))
         .args(std::env::var_os("TONDO_CASES_DEBUG").or(std::env::var_os("TONDO_CASES_REPLAY")).map(|_| "--debug"))
         .args(std::env::var_os("TONDO_CASES_LIVE").map(|_| "--live"))
         .args(extra)
