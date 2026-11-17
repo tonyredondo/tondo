@@ -340,11 +340,17 @@ unsafe fn emptied(chunk: *mut Chunk) {
 /// leaves it empty.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_region_leave(region: *mut Region) {
-    // Left holding memory, as only a region that held some is: one used,
-    // while a benchmark counts.
+    // Left holding memory, as only a region that held some is, where the
+    // code that set it up ends: one used, while a benchmark counts.
     if super::diagnostics::hooks() & super::diagnostics::MEASURED != 0 {
         super::bench::region_used();
     }
+    unsafe { leave(region) }
+}
+
+/// Gives a region's chunks back and empties it, as leaving it or, the
+/// slow way, a turn's end does.
+unsafe fn leave(region: *mut Region) {
     unsafe {
         let r = &mut *region;
         let mut chunk = r.chunks;
@@ -437,7 +443,7 @@ pub unsafe extern "C" fn tondo_rt_region_reset(region: *mut Region) {
         // Checked, a turn's chunks all go, so that the next turn writes
         // nothing where a value of this one was.
         if checked::on() {
-            tondo_rt_region_leave(r);
+            leave(r);
             return;
         }
         let current = if r.ptr != 0 { r.chunks } else { std::ptr::null_mut() };
@@ -454,7 +460,7 @@ pub unsafe extern "C" fn tondo_rt_region_reset(region: *mut Region) {
             }
             chunk = next;
         }
-        tondo_rt_region_leave(&mut others);
+        leave(&mut others);
         if kept.is_null() {
             *r = Region { ptr: 0, end: 0, chunks: std::ptr::null_mut() };
             return;
