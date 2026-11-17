@@ -3883,12 +3883,10 @@ mod tests {
     #[test]
     fn a_process_nobody_collected_has_ended() {
         let mut child = std::process::Command::new("true").spawn().unwrap();
-        for _ in 0..500 {
-            if !super::alive(child.id()) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        // Its end, with the process left for `wait` to collect.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let waited = unsafe { libc::waitid(libc::P_PID, child.id(), &mut info, libc::WEXITED | libc::WNOWAIT) };
+        assert_eq!(waited, 0, "{}", std::io::Error::last_os_error());
         assert!(!super::alive(child.id()));
         child.wait().unwrap();
     }
