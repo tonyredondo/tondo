@@ -62,7 +62,11 @@ fn counted(value: Option<f64>) -> Value {
 
 /// A benchmark in the report (15.11), with how it compares with its
 /// baseline, if it has one.
-pub(super) fn json(benchmark: &Benchmark, compared: Option<&Compared>) -> Value {
+pub(super) fn json(
+    benchmark: &Benchmark,
+    compared: Option<&Compared>,
+    changed: Option<&[crate::driver::ChangedCode]>,
+) -> Value {
     let stats = stats(&benchmark.samples);
     let mut fields = vec![
         ("name", str(benchmark.name.clone())),
@@ -109,6 +113,24 @@ pub(super) fn json(benchmark: &Benchmark, compared: Option<&Compared>) -> Value 
             ("interval_percent", Value::Array(vec![decimal(c.low * 100.0), decimal(c.high * 100.0)])),
             ("verdict", str(c.verdict)),
             ("regressed", c.regressed.as_ref().map_or(Value::Null, |why| str(why.clone()))),
+            (
+                "code_changed",
+                changed.map_or(Value::Null, |changed| {
+                    Value::Array(
+                        changed
+                            .iter()
+                            .map(|c| {
+                                obj(vec![
+                                    ("function", str(c.function.clone())),
+                                    ("instructions_before", int(c.before)),
+                                    ("instructions_after", int(c.after)),
+                                    ("runtime", Value::Bool(c.runtime)),
+                                ])
+                            })
+                            .collect(),
+                    )
+                }),
+            ),
         ])
     });
     fields.push(("baseline", baseline));
@@ -126,6 +148,9 @@ pub(super) struct Baselines {
     /// The load and the processors of the machine they were measured on,
     /// when it was busy.
     pub busy: Option<(f64, usize)>,
+    /// With another `tondo`, the functions each test reaches whose code it
+    /// makes otherwise, by the test's name.
+    pub code: Vec<(String, Vec<crate::driver::ChangedCode>)>,
 }
 
 /// The machine's load as the benchmarks started and as they ended.
@@ -398,7 +423,7 @@ pub(super) fn read_baseline(path: &Path) -> Result<Baselines, String> {
         ("cpu", str(machine("cpu"))),
         ("load", busy.map_or(Value::Null, |(load, _)| decimal(load))),
     ]);
-    Ok(Baselines { measures, source: Some(source), busy })
+    Ok(Baselines { measures, source: Some(source), busy, code: Vec::new() })
 }
 
 /// Where benchmarks ran, as people read it.
@@ -544,8 +569,53 @@ pub(super) fn lines(
             amount(benchmark.bytes),
             in_regions(benchmark.region_bytes),
         ));
+        text.push_str(&changed_code(test, benchmark, baselines));
     }
     text
+}
+
+/// With another `tondo`, under a row whose instructions moved, the
+/// functions its test reaches whose code changed, most changed first:
+/// where to look, with `tondo asm --compiler`.
+fn changed_code(test: &str, benchmark: &Benchmark, baselines: &Baselines) -> String {
+    let Some(changed) = changed_for(test, benchmark, baselines) else { return String::new() };
+    if changed.is_empty() {
+        return "      no code it reaches changed: what moved is where its code lies, or what it reads\n".to_string();
+    }
+    const SHOWN: usize = 6;
+    let listed: Vec<String> = changed
+        .iter()
+        .take(SHOWN)
+        .map(|c| {
+            let whose = if c.runtime { " (runtime)" } else { "" };
+            format!("{}{whose} {} → {}", c.function, c.before, c.after)
+        })
+        .collect();
+    let more = match changed.len() > SHOWN {
+        true => format!(", and {} more", changed.len() - SHOWN),
+        false => String::new(),
+    };
+    format!("      code changed, in instructions: {}{more}\n", listed.join(", "))
+}
+
+/// With another `tondo`, for a row whose instructions moved by half a
+/// percent or more, or whose time moved where the processor counts no
+/// instructions, the functions its test reaches whose code changed.
+pub(super) fn changed_for<'a>(
+    test: &str,
+    benchmark: &Benchmark,
+    baselines: &'a Baselines,
+) -> Option<&'a [crate::driver::ChangedCode]> {
+    let base = baselines.measures.get(&(test.to_string(), benchmark.name.clone()))?;
+    let moved = match (benchmark.instructions, base.instructions) {
+        (Some(now), Some(was)) if was > 0.0 => ((now - was) / was).abs() >= 0.005,
+        _ => compare(benchmark, base, None, false).verdict != "same",
+    };
+    if !moved || baselines.code.is_empty() {
+        return None;
+    }
+    let name = test.rsplit("::").next().unwrap_or(test);
+    Some(baselines.code.iter().find(|(test, _)| test == name).map_or(&[][..], |(_, changed)| changed))
 }
 
 /// A large count per run, in thousands, millions or billions.

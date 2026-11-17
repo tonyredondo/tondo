@@ -142,6 +142,8 @@ pub enum Baseline {
         name: String,
         commit: String,
         saved: PathBuf,
+        /// The functions each test reaches whose code it makes otherwise.
+        code: Vec<(String, Vec<crate::driver::ChangedCode>)>,
     },
 }
 
@@ -610,8 +612,9 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     let mut printer = human::Printer::new(tree, &plan, options);
     printer.baselines = match &options.baseline {
         Some(Baseline::Saved(path)) => bench::read_baseline(path).map_err(Failure::Input)?,
-        Some(Baseline::Compiler { name, commit, saved }) => {
+        Some(Baseline::Compiler { name, commit, saved, code }) => {
             let mut read = bench::read_baseline(saved).map_err(Failure::Input)?;
+            read.code = code.clone();
             let _ = std::fs::remove_file(saved);
             read.source = Some(json::obj(vec![
                 ("kind", json::str("compiler")),
@@ -622,6 +625,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         }
         Some(Baseline::Revision(revision)) => bench::Baselines {
             busy: None,
+            code: Vec::new(),
             measures: Default::default(),
             source: Some(json::obj(vec![
                 ("kind", json::str("revision")),

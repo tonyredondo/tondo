@@ -2538,7 +2538,14 @@ Las medidas se comparan con una línea base:
   pidió, con `--save-baseline` a un archivo de la caché, y estos se comparan
   con ella como con `--baseline`; el reporte la nombra `compiler`. Es la
   comparación de un cambio del compilador, con `--regression-by instructions`
-  para no depender del ruido de la máquina.
+  para no depender del ruido de la máquina. Bajo cada benchmark cuyas
+  instrucciones se movieron medio por ciento o más, o cuyo tiempo cambió
+  donde el procesador no las cuenta, nombra las funciones que
+  su test alcanza cuyo código el otro `tondo` hace distinto, del programa y
+  entradas del runtime, con sus instrucciones antes y ahora, las que más
+  cambiaron primero, como las da `tondo asm --compiler`; o dice que ninguna
+  cambió, y entonces lo que se movió es dónde está su código o lo que lee. El
+  reporte las da en `code_changed`.
 
 Con una línea base, cada benchmark dice cuánto cambió la mediana, el intervalo
 en que está ese cambio con un 95% de confianza (de mil remuestreos con

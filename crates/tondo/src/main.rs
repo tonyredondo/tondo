@@ -961,7 +961,13 @@ fn compiler_baseline(reference: &str, path: &Path, args: &[OsString]) -> Result<
         return Err(format!("the tondo of {reference} measured nothing (it ended with {ran}): run it to see why"));
     }
     let commit = if Path::new(reference).is_file() { String::new() } else { name };
-    Ok(tondo::runner::Baseline::Compiler { name: reference.to_string(), commit, saved })
+    // Where to look beside a row that moved: the code each test reaches
+    // that the other makes otherwise.
+    let code = driver::changed_by_test(path, &executable).unwrap_or_else(|why| {
+        eprintln!("tondo: cannot tell what code changed: {why}");
+        Vec::new()
+    });
+    Ok(tondo::runner::Baseline::Compiler { name: reference.to_string(), commit, saved, code })
 }
 
 /// The tests of the project as a git revision has it, for `--against`
@@ -2356,19 +2362,30 @@ fn compiler_command(args: &[OsString]) -> Result<ExitCode, String> {
 /// `tondo asm --runtime <function>` (toolchain 7.19): the machine code of a
 /// function of the runtime this `tondo` links into programs, or what
 /// changed in it from another's with `--compiler`.
-fn runtime_asm(args: &[OsString], compiler: Option<String>, json: bool, other: bool) -> Result<ExitCode, String> {
-    let [function] = args else {
-        return Err(format!("asm --runtime takes a function of the runtime, as `tondo_rt_array_push`\n{USAGE}"));
+fn runtime_asm(
+    args: &[OsString],
+    compiler: Option<String>,
+    json: bool,
+    all: bool,
+    other: bool,
+) -> Result<ExitCode, String> {
+    let function = match (args, all) {
+        ([function], false) => Some(function.to_string_lossy().to_string()),
+        ([], true) => None,
+        _ => {
+            return Err(format!(
+                "asm --runtime takes a function of the runtime, as `tondo_rt_array_push`, or --all\n{USAGE}"
+            ));
+        }
     };
     if other {
         return Err(format!(
-            "--runtime goes with --compiler and --json alone: the runtime is not the program's\n{USAGE}"
+            "--runtime goes with --all, --compiler and --json alone: the runtime is not the program's\n{USAGE}"
         ));
     }
-    let function = function.to_string_lossy();
     if let Some(reference) = compiler {
         let (compiler, executable) = driver::compiler(&reference, Path::new("."))?;
-        let (changes, same) = driver::runtime_assembly_compiler(&executable, &function)?;
+        let (changes, same) = driver::runtime_assembly_compiler(&executable, function.as_deref())?;
         if json {
             let changes: Vec<serde_json::Value> =
                 changes.iter().map(|(name, lines)| serde_json::json!({ "function": name, "diff": lines })).collect();
@@ -2381,7 +2398,10 @@ fn runtime_asm(args: &[OsString], compiler: Option<String>, json: bool, other: b
         }
         return Ok(ExitCode::SUCCESS);
     }
-    let assemblies = driver::runtime_assembly(&function)?;
+    let assemblies = match &function {
+        Some(function) => driver::runtime_assembly(function)?,
+        None => driver::runtime_assembly_own()?,
+    };
     if json {
         let functions: Vec<serde_json::Value> = assemblies.iter().map(driver::Assembly::json).collect();
         print_json("asm", true, serde_json::json!({ "functions": functions }));
@@ -2426,7 +2446,7 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
         return Err(format!("--against compares with a revision, --compiler with another tondo: choose one\n{USAGE}"));
     }
     if runtime {
-        return runtime_asm(&args, compiler, json, all || ir || rules || tests || against.is_some());
+        return runtime_asm(&args, compiler, json, all, ir || rules || tests || against.is_some());
     }
     let (path, function) = match (args.as_slice(), all) {
         ([], true) => (PathBuf::from("."), None),

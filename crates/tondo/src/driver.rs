@@ -2108,9 +2108,27 @@ pub fn changed_text(reference: &str, commit: &str, gone: &[Optimization], new: &
 /// or by a part of the names of a few. What each calls or reads is named
 /// by its relocation, so that a diff compares what it calls.
 pub fn runtime_assembly(function: &str) -> Result<Vec<Assembly>, String> {
+    runtime_assembly_of(Some(function))
+}
+
+/// The machine code of all the runtime's own functions, its `tondo_rt_`
+/// entries and the crate's functions they did not inline, as `asm
+/// --runtime --all` lists them; not those of the crates it uses.
+pub fn runtime_assembly_own() -> Result<Vec<Assembly>, String> {
+    runtime_assembly_of(None)
+}
+
+/// The machine code of the runtime's functions named `function`, or of
+/// all its own with none.
+fn runtime_assembly_of(function: Option<&str>) -> Result<Vec<Assembly>, String> {
+    runtime_assembly_in(&carried("libtondo_runtime", RUNTIME)?, function)
+}
+
+/// The machine code of the functions named `function`, or of all the
+/// runtime's own, in the runtime's archive at `path`.
+fn runtime_assembly_in(path: &Path, function: Option<&str>) -> Result<Vec<Assembly>, String> {
     use object::{Object, ObjectSection, ObjectSymbol};
-    let path = carried("libtondo_runtime", RUNTIME)?;
-    let bytes = std::fs::read(&path).map_err(|e| format!("cannot read the runtime: {e}"))?;
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read the runtime: {e}"))?;
     let archive = object::read::archive::ArchiveFile::parse(&*bytes).map_err(|e| format!("the runtime: {e}"))?;
     let mut found: Vec<Assembly> = Vec::new();
     let mut named: Vec<String> = Vec::new();
@@ -2135,16 +2153,22 @@ pub fn runtime_assembly(function: &str) -> Result<Vec<Assembly>, String> {
             }
             let Ok(raw) = symbol.name() else { continue };
             let shown = name(raw);
-            let exact = shown == function || plain(raw) == function;
-            if !exact && !shown.contains(function) {
-                continue;
-            }
-            if exact {
-                (found, named) = (Vec::new(), vec![shown.clone()]);
-            } else if named.len() == 1 && (named[0] == function) {
-                continue;
-            } else {
-                named.push(shown.clone());
+            match function {
+                None if !(shown.starts_with("tondo_rt_") || shown.starts_with("tondo_runtime::")) => continue,
+                None => {}
+                Some(function) => {
+                    let exact = shown == function || plain(raw) == function;
+                    if !exact && !shown.contains(function) {
+                        continue;
+                    }
+                    if exact {
+                        (found, named) = (Vec::new(), vec![shown.clone()]);
+                    } else if named.len() == 1 && (named[0] == function) {
+                        continue;
+                    } else {
+                        named.push(shown.clone());
+                    }
+                }
             }
             let Some(section) = symbol.section_index().and_then(|index| file.section_by_index(index).ok()) else {
                 continue;
@@ -2199,6 +2223,7 @@ pub fn runtime_assembly(function: &str) -> Result<Vec<Assembly>, String> {
             });
         }
     }
+    let Some(function) = function else { return Ok(found) };
     match found.len() {
         0 => Err(format!("the runtime has no function named `{function}`")),
         1..=8 => Ok(found),
@@ -2606,14 +2631,120 @@ pub fn assembly_compiler(
     Ok(assembly_changes(&then, &now))
 }
 
-/// What changed in the machine code of the runtime's functions named
-/// `function` from the runtime of the `tondo` at `compiler` to this one's.
-pub fn runtime_assembly_compiler(compiler: &Path, function: &str) -> Result<(Vec<Changed>, usize), String> {
-    let now = runtime_assembly(function)?;
+/// A function whose machine code another `tondo` makes otherwise: its
+/// name, its instructions there and here, and whether it is the runtime's.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChangedCode {
+    pub function: String,
+    pub before: usize,
+    pub after: usize,
+    pub runtime: bool,
+}
+
+/// For each test of the code at `path`, by its name, the functions it
+/// reaches whose machine code the `tondo` at `compiler` makes otherwise:
+/// the program's, as its code calls them or makes closures of them, and
+/// the runtime's entries it calls. What `test --bench --compiler` names
+/// beside a row whose instructions moved.
+pub fn changed_by_test(path: &Path, compiler: &Path) -> Result<Vec<(String, Vec<ChangedCode>)>, String> {
+    let now = compiled_assembly(path, None, "the code", true)?;
     let mut command = std::process::Command::new(compiler);
-    command.args(["asm", "--runtime", function]);
+    command.arg("asm").arg(path).arg("--tests").arg("--all");
     let then = told_assembly(command, compiler)?;
+    let (program, _) = assembly_changes(&then, &now);
+    let (runtime, _) = runtime_assembly_compiler(compiler, None)?;
+    let changed = |(name, lines): &Changed, runtime: bool| ChangedCode {
+        function: name.clone(),
+        before: lines.iter().filter(|line| !line.starts_with('+')).count(),
+        after: lines.iter().filter(|line| !line.starts_with('-')).count(),
+        runtime,
+    };
+    let changed: std::collections::HashMap<&str, ChangedCode> = program
+        .iter()
+        .map(|change| (change.0.as_str(), changed(change, false)))
+        .chain(runtime.iter().map(|change| (change.0.as_str(), changed(change, true))))
+        .collect();
+    let mut calls: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    for assembly in &now {
+        let called = calls.entry(assembly.function.as_str()).or_default();
+        called.extend(assembly.instructions.iter().filter_map(|i| i.target.as_deref()));
+        // A closure is made where the function that holds it runs.
+        if let Some(holder) = assembly.function.strip_prefix("closure in ") {
+            calls.entry(holder).or_default().push(assembly.function.as_str());
+        }
+    }
+    let mut tests: Vec<(String, Vec<ChangedCode>)> = Vec::new();
+    for test in now.iter().filter_map(|a| a.function.strip_prefix("test ")) {
+        let start = format!("test {test}");
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut pending: Vec<&str> = vec![calls.get_key_value(start.as_str()).map_or("", |(k, _)| *k)];
+        let mut found: Vec<ChangedCode> = Vec::new();
+        while let Some(function) = pending.pop() {
+            if function.is_empty() || !seen.insert(function) {
+                continue;
+            }
+            if let Some(change) = changed.get(function) {
+                found.push(change.clone());
+            }
+            pending.extend(calls.get(function).into_iter().flatten());
+        }
+        found.sort_by_key(|change| std::cmp::Reverse(change.after.abs_diff(change.before)));
+        if !found.is_empty() && !tests.iter().any(|(name, _)| name == test) {
+            tests.push((test.to_string(), found));
+        }
+    }
+    Ok(tests)
+}
+
+/// What changed in the machine code of the runtime's functions named
+/// `function`, or of all its own with none, from the runtime of the
+/// `tondo` at `compiler` to this one's.
+pub fn runtime_assembly_compiler(compiler: &Path, function: Option<&str>) -> Result<(Vec<Changed>, usize), String> {
+    let now = runtime_assembly_of(function)?;
+    let then = match function {
+        Some(function) => {
+            let mut command = std::process::Command::new(compiler);
+            command.args(["asm", "--runtime", function]);
+            told_assembly(command, compiler)?
+        }
+        None => match runtime_archive_of(compiler)? {
+            Some(archive) => runtime_assembly_in(&archive, None)?,
+            // The same runtime, made of the same sources.
+            None => return Ok((Vec::new(), now.len())),
+        },
+    };
     Ok(assembly_changes(&then, &now))
+}
+
+/// The runtime's archive the `tondo` at `compiler` links, which it puts in
+/// the cache beside this one's as it reads a function of it: any `tondo`
+/// with `asm --runtime` tells the archive so, by the one it used last.
+/// None when it is this one's.
+fn runtime_archive_of(compiler: &Path) -> Result<Option<PathBuf>, String> {
+    let ran = std::process::Command::new(compiler)
+        .args(["asm", "--runtime", "tondo_rt_array_push", "--json"])
+        .output()
+        .map_err(|e| format!("cannot run {}: {e}", compiler.display()))?;
+    if !ran.status.success() {
+        return Err(format!(
+            "{} reads no runtime: {}",
+            compiler.display(),
+            String::from_utf8_lossy(&ran.stderr).trim()
+        ));
+    }
+    let dir = cache_dir().join("runtime");
+    let archives = std::fs::read_dir(&dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+    let newest = archives
+        .flatten()
+        .filter(|entry| {
+            entry.file_name().to_str().is_some_and(|f| f.starts_with("libtondo_runtime-") && f.ends_with(".a"))
+        })
+        .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.path())))
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, path)| path)
+        .ok_or(format!("{} left no runtime in {}", compiler.display(), dir.display()))?;
+    let own = newest.file_name().and_then(|f| f.to_str()).is_some_and(|f| f.contains(RUNTIME_HASH));
+    Ok((!own).then_some(newest))
 }
 
 /// The machine code another `tondo` says it makes, with `asm --json`.

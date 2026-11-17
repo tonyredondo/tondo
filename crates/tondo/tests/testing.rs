@@ -795,6 +795,35 @@ fn compares_benchmarks_with_another_compiler() {
     assert!(status == 2 && stderr.contains("it goes with --bench"), "{stderr}");
 }
 
+/// Under a row whose instructions moved, `--compiler` names the functions
+/// its test reaches whose code the other tondo makes otherwise: here the
+/// same tondo without regions, where the arrays `split` gives go on the heap.
+#[test]
+fn names_the_code_that_changed_under_a_row_that_moved() {
+    let tests = "import std.testing\n\nfn words(): Int {\n    var total = 0\n    for i in 0..100 {\n        \
+        let parts = \"a b {i}\".split(\" \")\n        total += parts.length()\n    }\n    total\n}\n\n\
+        test counting {\n    testing.bench(\"words\", () { words() })\n}\n";
+    let dir = project("changed-code", tests);
+    let other = dir.join("without-regions");
+    let script = format!(
+        "#!/bin/sh\ncase \"$1 $2\" in\n  \"asm --runtime\"*) exec {tondo} \"$@\" ;;\n  test*|asm*) exec {tondo} \"$@\" --no-regions ;;\n  *) exec {tondo} \"$@\" ;;\nesac\n",
+        tondo = env!("CARGO_BIN_EXE_tondo")
+    );
+    std::fs::write(&other, script).unwrap();
+    std::fs::set_permissions(&other, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let other = other.to_str().unwrap();
+    let args = ["test", "--bench", "--bench-time", "0.05", "--compiler", other, "--test-format", "json"];
+    let (stdout, stderr, status) = tondo(&dir, &args);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let changed = &report["tests"][0]["attempts"][0]["benchmarks"][0]["baseline"]["code_changed"];
+    let names: Vec<&str> = changed.as_array().unwrap().iter().filter_map(|c| c["function"].as_str()).collect();
+    assert!(names.contains(&"words"), "{changed}");
+    let (stdout, stderr, status) = tondo(&dir, &["test", "--bench", "--bench-time", "0.05", "--compiler", other]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    assert!(stdout.contains("code changed, in instructions:"), "{stdout}");
+}
+
 /// An update tasks lose is a warning of the test that shows it, in the report
 /// of the tools and the editor, and a test that does it well has none.
 #[test]

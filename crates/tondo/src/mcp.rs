@@ -257,7 +257,6 @@ impl Server {
                 };
                 // A function of the runtime, as this tondo links it.
                 if args.flag("runtime") {
-                    let function = function.ok_or("give the runtime's `function`, as tondo_rt_array_push")?;
                     if let Some(reference) = args.text("compiler") {
                         let (compiler, executable) = driver::compiler(&reference, &args.path())?;
                         let (changes, same) = driver::runtime_assembly_compiler(&executable, function)?;
@@ -268,7 +267,10 @@ impl Server {
                             json!({ "compiler": compiler, "changes": listed(&changes), "same": same }),
                         ));
                     }
-                    let assemblies = driver::runtime_assembly(function)?;
+                    let assemblies = match function {
+                        Some(function) => driver::runtime_assembly(function)?,
+                        None => driver::runtime_assembly_own()?,
+                    };
                     let text = assemblies.iter().map(driver::Assembly::text).collect::<Vec<_>>().join("\n");
                     let functions: Vec<Value> = assemblies.iter().map(driver::Assembly::json).collect();
                     return Ok(Reply::new(text, json!({ "functions": functions })));
@@ -2543,7 +2545,11 @@ instruction by instruction.",
         params: &[
             ("path", "string", "A project or a .to file; the server's directory by default."),
             ("function", "string", "The function, by its name, or a part of the names of several."),
-            ("all", "boolean", "Every function of the program's own code instead of one."),
+            (
+                "all",
+                "boolean",
+                "Every function of the program's own code instead of one; with `runtime`, every one of the runtime's own.",
+            ),
             ("tests", "boolean", "The code of the tests and benchmarks, as `test` with `bench` builds it."),
             (
                 "runtime",

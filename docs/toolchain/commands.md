@@ -198,7 +198,7 @@ usage:
                                                        without the heap, the checks it drops and those it keeps
   tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--against <rev> | --compiler <tondo|rev>]
             [--cpu <level>] [--no-logpoints] [--no-regions] [--json]
-  tondo asm --runtime <function> [--compiler <tondo|rev>] [--json]
+  tondo asm --runtime <function>|--all [--compiler <tondo|rev>] [--json]
                                                        the machine code a release build makes of a function, by
                                                        the lines of the program, with what the passes did there;
                                                        its IR before and after Cranelift optimizes it

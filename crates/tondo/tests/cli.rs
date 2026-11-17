@@ -1691,6 +1691,15 @@ fn the_machine_code_of_the_runtime() {
     let (said, stderr, status) = tondo(&dir, &["asm", "--runtime", "tondo_rt_array_push", "--compiler", other]);
     assert_eq!(status, 0, "{stderr}");
     assert!(said.contains("makes the same code"), "{said}");
+    // All its own, which the same runtime makes the same.
+    let (data, _) = json(&dir, &["asm", "--runtime", "--all", "--json"]);
+    let names: Vec<&str> =
+        data["functions"].as_array().unwrap().iter().filter_map(|f| f["function"].as_str()).collect();
+    assert!(names.contains(&"tondo_rt_array_push") && names.len() > 500, "{}", names.len());
+    assert!(names.iter().all(|n| n.starts_with("tondo_rt_") || n.starts_with("tondo_runtime::")), "{names:?}");
+    let (said, stderr, status) = tondo(&dir, &["asm", "--runtime", "--all", "--compiler", other]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(said.contains("makes the same code"), "{said}");
     let (_, stderr, status) = tondo(&dir, &["asm", "--runtime", "nothing_of_the_runtime"]);
     assert!(status == 3 && stderr.contains("has no function named"), "{stderr}");
     let (_, stderr, status) = tondo(&dir, &["asm", "--runtime", "tondo_rt_array_push", "--clif"]);

@@ -485,7 +485,8 @@ impl Context<'_> {
         let id = self.tree.id(attempt.node);
         let benchmarks = attempt.benchmarks.iter().map(|b| {
             let base = self.baselines.measures.get(&(id.to_string(), b.name.clone()));
-            super::bench::json(b, base.map(|base| super::bench::compare(b, base, max, by)).as_ref())
+            let changed = super::bench::changed_for(id, b, self.baselines);
+            super::bench::json(b, base.map(|base| super::bench::compare(b, base, max, by)).as_ref(), changed)
         });
         fields.push(("benchmarks", Value::Array(benchmarks.collect())));
         fields.push(("fuzz", Value::Array(attempt.fuzz.iter().map(fuzzed).collect())));
@@ -666,7 +667,10 @@ pub(super) fn note_event(tree: &Tree, note: &Note, options: &Options) -> Value {
             ("warnings", Value::Array(attempt.warnings.iter().map(|w| str(w.clone())).collect())),
             ("stdout", stream(&attempt.stdout)),
             ("stderr", stream(&attempt.stderr)),
-            ("benchmarks", Value::Array(attempt.benchmarks.iter().map(|b| super::bench::json(b, None)).collect())),
+            (
+                "benchmarks",
+                Value::Array(attempt.benchmarks.iter().map(|b| super::bench::json(b, None, None)).collect()),
+            ),
             ("fuzz", Value::Array(attempt.fuzz.iter().map(fuzzed).collect())),
         ]);
     }
