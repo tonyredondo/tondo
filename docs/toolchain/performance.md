@@ -708,6 +708,58 @@ yet for whether it keeps the text stays there too: the remark names the
 function and says `a native of the runtime not read yet`. That list gets
 shorter with each version, and nothing in the program is to change for it.
 
+A turn's region is emptied when the turn goes back to the head of its
+loop, and let go of when the function returns. So a value does not outlive
+its turn by a way out of the loop that never comes back to it: a `?`, a
+`return`, or the `break` of a loop that no loop around it runs again. This
+function reads rows of numbers, and any of them may be no number:
+
+```tondo
+import std.console
+import std.text
+
+/// The largest sum of a row of numbers, each row a line of them between commas.
+fn largest(rows: Array[String]): Int ! text.TextError {
+    var most = 0
+    for row in rows {
+        var numbers: Array[Int] = []
+        for field in row.split(",") {
+            numbers.push(Int.parse(field)?)
+        }
+        if numbers.sum() > most {
+            most = numbers.sum()
+        }
+    }
+    most
+}
+
+fn main() {
+    match largest(["3,4", "10,2,1", "5"]) {
+        ok(most) => console.println("{most}")
+        err(error) => console.println("{error}")
+    }
+}
+```
+
+```text output
+13
+```
+
+```text
+$ tondo optimizations rows.to --kind region
+rows.to:10:13: `numbers.push(Int.parse(field)?)` grows an array that goes in the region of a turn of the loop at line 7 (in largest)
+```
+
+The `?` leaves both loops with a row's numbers still to let go of, and
+they are in the region of the row's turn all the same, which is there until
+`largest` returns. The price is that what the last turn made is held from
+such a way out to the function's return: at most what one turn makes, and
+felt only in a function that goes on long after its loop. The `break` of a
+loop inside another is a way out that comes back, since the loop around it
+runs the inner one again: what it carries does outlive the inner loop's
+turn, and goes in the region of a turn of the loop around it when it does
+not outlive that one too.
+
 What regions hold is seen where the heap is: a memory profile has
 `region_objects` and `region_space` beside the heap's samples, `tondo
 counters` has the bytes regions hold now, and a dump lists the memory in
