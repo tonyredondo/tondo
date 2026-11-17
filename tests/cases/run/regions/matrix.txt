@@ -11,6 +11,10 @@
 # library that keep them, as `http.Client.request`, an archive's writer or
 # a socket's writes, the case runs the native under the check with values
 # on the heap: its reading is the code's, as `READING` says.
+#
+# A native that only `tondo test`, a provider of `derive` or a generator
+# runs is run by the toolchain's own tests, named from the repository's
+# root, as crates/tondo/tests/testing.rs, which run `tondo` with the check.
 
 Statement::Assign             cases/run/regions/stores.to cases/run/regions/loans.to cases/run/regions/texts.to cases/run/regions/exits.to
 Statement::Retain             - counts a reference
@@ -284,3 +288,10 @@ native tondo_rt_net_write                 cases/run/regions/natives_sockets.to
 native tondo_rt_grpc_channel              projects/interceptors projects/balancing
 native tondo_rt_grpc_close                projects/interceptors
 native tondo_rt_grpc_frames               projects/grpcweb
+native tondo_rt_fuzz_begin                crates/tondo/tests/testing.rs
+native tondo_rt_fuzz_encoded              crates/tondo/tests/testing.rs
+native tondo_rt_fuzz_invalid              crates/tondo/tests/testing.rs
+native tondo_rt_fuzz_seed                 crates/tondo/tests/testing.rs
+native tondo_rt_meta_bytes                crates/tondo/tests/generate.rs
+native tondo_rt_meta_respond              crates/tondo/tests/derive.rs crates/tondo/tests/generate.rs
+native tondo_rt_model_report              crates/tondo/tests/testing.rs

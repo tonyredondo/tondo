@@ -2179,6 +2179,10 @@ const READING_TEXTS: &[&str] = &[
     "tondo_rt_files_symlink",
     "tondo_rt_files_temporary",
     "tondo_rt_files_walk",
+    "tondo_rt_fuzz_begin",
+    "tondo_rt_fuzz_encoded",
+    "tondo_rt_fuzz_invalid",
+    "tondo_rt_fuzz_seed",
     "tondo_rt_grpc_channel",
     "tondo_rt_grpc_close",
     "tondo_rt_grpc_frames",
@@ -2221,7 +2225,10 @@ const READING_TEXTS: &[&str] = &[
     "tondo_rt_library_open",
     "tondo_rt_library_symbol",
     "tondo_rt_memory_c_string",
+    "tondo_rt_meta_bytes",
+    "tondo_rt_meta_respond",
     "tondo_rt_metric",
+    "tondo_rt_model_report",
     "tondo_rt_msgpack_fail",
     "tondo_rt_msgpack_write_datetime",
     "tondo_rt_msgpack_write_key",
@@ -2322,18 +2329,10 @@ const READING_TEXTS: &[&str] = &[
 ];
 
 /// The natives that take a text whose code is not read yet, taken to keep
-/// it until it is: each moves to `READING_TEXTS` or `KEEPING_TEXTS` with
-/// its case in tests/cases/run/regions, and texts in regions are done when
-/// this list is empty.
-const UNREAD_TEXTS: &[&str] = &[
-    "tondo_rt_fuzz_begin",
-    "tondo_rt_fuzz_encoded",
-    "tondo_rt_fuzz_invalid",
-    "tondo_rt_fuzz_seed",
-    "tondo_rt_meta_bytes",
-    "tondo_rt_meta_respond",
-    "tondo_rt_model_report",
-];
+/// it until it is. Every one was read: a native added that takes a text is
+/// read with it, into `READING_TEXTS` or `KEEPING_TEXTS` with its case, or
+/// waits here, keeping what it is given, until it is.
+const UNREAD_TEXTS: &[&str] = &[];
 
 /// Whether a native of the runtime can be given a value a region makes:
 /// an array, or a reflect box, as its receiver or a parameter.
