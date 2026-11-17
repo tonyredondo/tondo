@@ -364,7 +364,7 @@ time of a run with its spread, what it allocates, and on Linux the
 instructions it executes:
 
 ```text
-  count 600 words     14.90 µs/op  ±0.1%  10 allocs/op  26032 B/op  274.6k ins/op
+  count 600 words     14.95 µs/op  ±0.2%  7 allocs/op  25712 B/op  277.5k ins/op
 ```
 
 What the closure returns is kept, so the work that made it is not optimized
