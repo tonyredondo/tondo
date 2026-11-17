@@ -578,14 +578,17 @@ though. A benchmark of the two over a thousand numbers shows both costs:
 ```text
 $ tondo test --bench
 test squares::unit::squares::aThousand ... ok
-  arrays     1.099 µs/op  ±0.2%  0 allocs/op +9 in regions  0 B/op +12448 in regions  23.9k ins/op
-  chain      1.397 µs/op  ±0.3%  2 allocs/op  80 B/op  38.2k ins/op
+  arrays     1.112 µs/op  ±0.2%  0 allocs/op +9 in regions  0 B/op +12448 in regions  1 regions set up/op, 1 used  23.7k ins/op
+  chain      1.414 µs/op  ±0.1%  2 allocs/op  80 B/op  38.2k ins/op
 ```
 
 The chain allocates its two closures and nothing else, however long the
 array is: less than a hundredth of the memory here. The arrays' form makes
 its arrays in a region, which the row counts apart from the heap, and is
-still the faster of the two, with two thirds of the instructions.
+still the faster of the two, with two thirds of the instructions. The row
+also says how many regions a run sets up and how many of them end holding
+something: one that is set up at every run and never used is a cost with
+nothing against it.
 
 ### What a region takes
 
@@ -640,15 +643,15 @@ without regions, which `--no-regions` leaves out of a build:
 ```text
 $ tondo test --bench
 test tree::unit::tree::aTree ... ok
-  tree of 87 thousand nodes     771.8 µs/op  ±0.1%  0 allocs/op +21845 in regions  0 B/op +2097120 in regions  15.78M ins/op
+  tree of 87 thousand nodes     758.5 µs/op  ±0.2%  0 allocs/op +21845 in regions  0 B/op +2097120 in regions  15.37M ins/op
 $ tondo test --bench --no-regions
 test tree::unit::tree::aTree ... ok
-  tree of 87 thousand nodes     1.046 ms/op  ±0.7%  21845 allocs/op  2097120 B/op  20.40M ins/op
+  tree of 87 thousand nodes     1.085 ms/op  ±0.6%  21845 allocs/op  2097120 B/op  21.10M ins/op
 ```
 
 The tree's arrays are still made, all 21845 of them: the row counts them
 `in regions`, apart from `allocs/op`, which is the heap's. What is gone is
-the walk that let go of each, and with it 26% of the time.
+the walk that let go of each, and with it 30% of the time.
 `testing.allocations` counts the two together, so a test that holds a
 function to its count does not change when its values move to a region
 ([Testing](testing.md)).
@@ -694,19 +697,56 @@ the others. The reasons a value stays on the heap are that it is stored in
 what the function was given, in a lock's state or in a `Ref`; that a
 closure captures it, that it is sent, taken by a task or given to C; that
 it outlives a turn of its loop; that it holds a value its region did not
-make; and that regions do not take that kind of value yet, as maps, slices
-and the texts that an operation of the runtime makes, `replace` or
-`toUpper`.
+make; and that regions do not take that kind of value yet, as maps and
+slices.
 
-A text that an interpolation makes goes in a region as an array does,
-whatever its length, when the frame does not take it first: the label of
-the first program of this chapter, where `main` inlined it. Two reasons
-are a text's own. One that grows in place, as `line = "{line}[{word}]"` in
-a loop, stays on the heap: `a region does not grow a text in place yet`.
-And one given to a function of the runtime whose code has not been read
-yet for whether it keeps the text stays there too: the remark names the
-function and says `a native of the runtime not read yet`. That list gets
-shorter with each version, and nothing in the program is to change for it.
+A text goes in a region as an array does, whatever its length, when the
+frame does not take it first: one that an interpolation makes, as the
+label of the first program of this chapter where `main` inlined it, and one
+that an operation of the runtime or of the library gives, as `split`,
+`replace` or `fs.readText`. So does an array that such an operation gives,
+as `sorted` or `repeat`. This function reads a file, and none of its texts
+is on the heap:
+
+```tondo
+import std.console
+import std.fs
+
+/// How many lines of a file hold the word.
+fn holding(file: String, word: String): Int ! fs.FsError {
+    let text = fs.readText(file)?
+    var count = 0
+    for line in text.lines() {
+        if line.toLower().contains(word) {
+            count += 1
+        }
+    }
+    count
+}
+
+fn main() {
+    match holding("notes.txt", "region") {
+        ok(count) => console.println("{count}")
+        err(_) => console.println("no notes")
+    }
+}
+```
+
+```text
+$ tondo optimizations holding.to --kind region
+holding.to:6:16: `fs.readText(file)` goes in a region of `holding` (in holding)
+holding.to:8:17: `text.lines()` in `String.lines`, `textNative.lines(self)` goes in a region of `holding` (in holding)
+holding.to:9:12: `line.toLower()` in `String.toLower`, `textNative.lower(self)` goes in the region of a turn of the loop at line 8 (in holding)
+```
+
+The file's text and its lines are there for the call, and each line in
+lower case for its turn. The `?` gives the error back when the file cannot
+be read, and that error holds nothing of a text, so no text leaves with it.
+An error made with a text in it, as `fail Problem { line }`, takes that
+text where the function's result goes, as a text that is returned. One
+reason is a text's own: a text that grows in place, as `line =
+"{line}[{word}]"` in a loop, stays on the heap, with `a region does not
+grow a text in place yet`.
 
 A turn's region is emptied when the turn goes back to the head of its
 loop, and let go of when the function returns. So a value does not outlive
@@ -922,7 +962,23 @@ do more work.
 
 `--compiler <tondo|rev>` in the same three commands compares what two
 versions of Tondo itself make of the same program, which is how a change to
-the compiler is judged.
+the compiler is judged. Under each row whose instructions moved, the
+benchmarks name the code the test reaches that the other Tondo makes
+differently, the program's and the runtime's, with its instructions before
+and after. The tree of [regions](#what-a-region-takes) against the Tondo of
+57ef8277, from before it had them:
+
+```text
+$ tondo test --bench --compiler <the tondo of 57ef8277>
+test tree::unit::tree::aTree ... ok
+  tree of 87 thousand nodes     773.8 µs/op  ±0.2%  0 allocs/op +21845 in regions  0 B/op +2097120 in regions  15.37M ins/op  -29.4% faster, -25.0% ins, cycles -28.4%, l1d misses -35.5%, 0 allocs/op, was 21845, 0 B/op, was 2097120, 21845 allocs/op in regions, was 0, 2097120 B/op in regions, was 0
+      code changed, in instructions: tondo_rt_array_push_in (runtime) 0 → 131, tondo_rt_region_reset (runtime) 0 → 125, tondo_rt_array_reserve_in (runtime) 0 → 112, tondo_rt_bench_next (runtime) 1479 → 1566, test aTree 359 → 381, tondo_rt_bench_end (runtime) 456 → 476, and 5 more
+```
+
+A row that moved with no such code changed says so: what moved is where
+its code lies, or what it reads. `tondo asm --runtime --all --compiler
+<tondo|rev>` lists every function of the runtime that the two make
+differently.
 
 ## The processor a build is for
 
