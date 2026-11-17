@@ -49,6 +49,9 @@ note: 3 tests that start tasks and reached outside the program ran in one order:
 - The status is 0 when everything passed and 1 otherwise. A selection that
   matches no test is an error unless the run says `--allow-empty`, and
   `--deny-skips` fails a run that skipped a test.
+- Several projects run one after another, each under a line `== <project>`,
+  and the run fails if one of them does: `tondo test examples/kvstore
+  examples/logstat`.
 - The last line, the `note`, says what the run did not try. More on it
   below.
 
@@ -340,7 +343,9 @@ optimized as the benchmarks are. It is the two figures of the benchmark's
 row added, `allocs/op` and what it says `in regions`
 ([Performance](performance.md#what-a-region-takes)), so the number stays
 the same when the compiler moves a value from the heap to a region.
-`testing.heapAllocations` counts the heap's alone, which is `allocs/op`.
+`testing.heapAllocations` counts the heap's alone, which is `allocs/op`. A
+row whose runs set regions up also says how many, and how many of them
+ended holding something, as `1 regions set up/op, 1 used`.
 
 ```tondo test
 import std.testing

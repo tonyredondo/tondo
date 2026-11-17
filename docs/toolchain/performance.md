@@ -578,14 +578,17 @@ though. A benchmark of the two over a thousand numbers shows both costs:
 ```text
 $ tondo test --bench
 test squares::unit::squares::aThousand ... ok
-  arrays     1.104 µs/op  ±0.1%  0 allocs/op +9 in regions  0 B/op +12448 in regions  23.6k ins/op
-  chain      1.397 µs/op  ±0.1%  2 allocs/op  80 B/op  38.2k ins/op
+  arrays     1.112 µs/op  ±0.2%  0 allocs/op +9 in regions  0 B/op +12448 in regions  1 regions set up/op, 1 used  23.7k ins/op
+  chain      1.414 µs/op  ±0.1%  2 allocs/op  80 B/op  38.2k ins/op
 ```
 
 The chain allocates its two closures and nothing else, however long the
 array is: less than a hundredth of the memory here. The arrays' form makes
 its arrays in a region, which the row counts apart from the heap, and is
-still the faster of the two, with two thirds of the instructions.
+still the faster of the two, with two thirds of the instructions. The row
+also says how many regions a run sets up and how many of them end holding
+something: one that is set up at every run and never used is a cost with
+nothing against it.
 
 ### What a region takes
 
@@ -959,7 +962,23 @@ do more work.
 
 `--compiler <tondo|rev>` in the same three commands compares what two
 versions of Tondo itself make of the same program, which is how a change to
-the compiler is judged.
+the compiler is judged. Under each row whose instructions moved, the
+benchmarks name the code the test reaches that the other Tondo makes
+differently, the program's and the runtime's, with its instructions before
+and after. The tree of [regions](#what-a-region-takes) against the Tondo of
+57ef8277, from before it had them:
+
+```text
+$ tondo test --bench --compiler <the tondo of 57ef8277>
+test tree::unit::tree::aTree ... ok
+  tree of 87 thousand nodes     773.8 µs/op  ±0.2%  0 allocs/op +21845 in regions  0 B/op +2097120 in regions  15.37M ins/op  -29.4% faster, -25.0% ins, cycles -28.4%, l1d misses -35.5%, 0 allocs/op, was 21845, 0 B/op, was 2097120, 21845 allocs/op in regions, was 0, 2097120 B/op in regions, was 0
+      code changed, in instructions: tondo_rt_array_push_in (runtime) 0 → 131, tondo_rt_region_reset (runtime) 0 → 125, tondo_rt_array_reserve_in (runtime) 0 → 112, tondo_rt_bench_next (runtime) 1479 → 1566, test aTree 359 → 381, tondo_rt_bench_end (runtime) 456 → 476, and 5 more
+```
+
+A row that moved with no such code changed says so: what moved is where
+its code lies, or what it reads. `tondo asm --runtime --all --compiler
+<tondo|rev>` lists every function of the runtime that the two make
+differently.
 
 ## The processor a build is for
 
