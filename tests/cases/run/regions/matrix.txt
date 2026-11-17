@@ -134,3 +134,31 @@ native tondo_rt_unpack                    cases/run/regions/natives_codec.to
 native tondo_rt_yaml_field                cases/run/regions/natives_formats.to
 native tondo_rt_zone_resolve              cases/run/regions/natives_formats.to
 native tondo_rt_zstd                      cases/run/regions/natives_codec.to
+
+# The natives read for texts.
+native tondo_rt_template_parse            cases/run/regions/natives_text.to
+native tondo_rt_text_between              cases/run/regions/natives_net.to
+native tondo_rt_text_byte_at              - codegen reads it in place: no call of it is left
+native tondo_rt_text_collate              cases/run/regions/natives_text.to
+native tondo_rt_text_collator             cases/run/regions/natives_text.to
+native tondo_rt_text_count                cases/run/regions/natives_text.to
+native tondo_rt_text_currency_digits      cases/run/regions/natives_text.to
+native tondo_rt_text_currency_symbol      cases/run/regions/natives_text.to
+native tondo_rt_text_find_in              cases/run/regions/natives_text.to
+native tondo_rt_text_find_last            cases/run/regions/natives_text.to
+native tondo_rt_text_is_float             - no function of the library calls it
+native tondo_rt_text_is_int               - no function of the library calls it
+native tondo_rt_text_is_normalized        cases/run/regions/natives_text.to
+native tondo_rt_text_lines                cases/run/regions/natives_text.to
+native tondo_rt_text_lower                cases/run/regions/natives_text.to
+native tondo_rt_text_normalize            cases/run/regions/natives_text.to
+native tondo_rt_text_number_symbols       cases/run/regions/natives_text.to
+native tondo_rt_text_parse_float          cases/run/regions/natives_text.to
+native tondo_rt_text_parse_int            - no function of the library calls it
+native tondo_rt_text_plural_rules         cases/run/regions/natives_text.to
+native tondo_rt_text_repeat               cases/run/regions/natives_text.to
+native tondo_rt_text_scalar_at            cases/run/regions/natives_text.to
+native tondo_rt_text_split                cases/run/regions/natives_text.to
+native tondo_rt_text_trim                 cases/run/regions/natives_text.to
+native tondo_rt_text_upper                cases/run/regions/natives_text.to
+native tondo_rt_text_words                cases/run/regions/natives_text.to

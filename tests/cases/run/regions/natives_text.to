@@ -1,0 +1,102 @@
+// The runtime's text functions, which read what they are given or copy
+// what they keep (`READING_TEXTS` in regions.rs): each loop gives them a
+// text its turn makes in the turn's region, uses what they give within the
+// turn, and uses again after the loop, once the regions ended, what keeps
+// state: a collator, a template, an element of XML.
+
+import std.console
+import std.format
+import std.template
+import std.text
+import std.xml
+import std.yaml
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        let junk = "junk {i} {i} {i} {i}"
+        total += junk.length()
+    }
+    total
+}
+
+fn split(): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        let made = "a,b {i},c\nnext {i} line"
+        lines.push("{made.split(",").length()} {made.lines().length()} {made.words().length()}")
+        lines.push("{made.repeat(2).length()} {"  {made}  ".trim().length()} {made.trim("a").length()}")
+        lines.push("{made.findLast(",") ?? -1} {made.count(",")} {made.toLower()} {made.toUpper().length()}")
+        lines.push("{made[2]} {made.slice(2, 5) ?? ""}")
+    }
+    lines.join(" | ")
+}
+
+fn parsed(): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        let number = "{i * 7}"
+        let fraction = "{i}.5"
+        lines.push("{Int.parse(number) ?? -1} {Float.parse(fraction) ?? -1.0}")
+        let measured: Measure = yaml.decode("value: {i}.25\n") ?? Measure { value: -1.0 }
+        lines.push("{measured.value}")
+        let written = "cafe\u{301} {i}"
+        lines.push("{text.normalize(written).length()} {text.isNormalized(written)}")
+    }
+    lines.join(" | ")
+}
+
+fn local(collator: text.Collator): String {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        let locale = "es"
+        let a = "apple {i}"
+        let b = "Apple {i}"
+        lines.push("{collator.compare(a, b)} {format.number(1234.5 + Float(i), locale: locale)}")
+        lines.push("{format.currency(10 + i, "EUR", locale: locale)} {format.plural(i, locale: "{locale}")}")
+    }
+    lines.join(" | ")
+}
+
+fn templated(set: var template.Set): Int {
+    var added = 0
+    for i in 0..2 {
+        let source = "{{{{ name }}}} number {i}"
+        _ = set.add("t{i}", source)
+        added += 1
+    }
+    added
+}
+
+type Named = { name: String }
+
+type Measure = { value: Float }
+
+fn main() {
+    let collator = text.collator("en")
+    var set = template.Set.text()
+    let a = split()
+    let b = parsed()
+    let c = local(collator)
+    let d = templated(var set)
+    var elements: Array[xml.Element] = []
+    for i in 0..2 {
+        let source = "<root><item id=\"{i}\">value {i}</item></root>"
+        elements.push(xml.parse(source) ?? panic("no xml"))
+    }
+    let quiet = noise()
+    console.println(a)
+    console.println(b)
+    console.println(c)
+    console.println("{d} {set.render("t1", Named { name: "ada" }) ?? ""} {collator.compare("a", "b")} {quiet}")
+    console.println("{elements[1].child("item")?.attribute("id") ?? ""} {elements[0].child("item")?.text() ?? ""}")
+}
+
+// expect-stdout: 3 2 5 | 38 19 18 | 5 2 a,b 0,c
+// expect-stdout: next 0 line 19 | b b 0 | 3 2 5 | 38 19 18 | 5 2 a,b 1,c
+// expect-stdout: next 1 line 19 | b b 1 | 3 2 5 | 38 19 18 | 5 2 a,b 2,c
+// expect-stdout: next 2 line 19 | b b 2
+// expect-stdout: 0 0.5 | 0.25 | 6 false | 7 1.5 | 1.25 | 6 false | 14 2.5 | 2.25 | 6 false
+// expect-stdout: -1 1234,5 | 10,00 € other | -1 1235,5 | 11,00 € one | -1 1236,5 | 12,00 € other
+// expect-stdout: 2 ada number 1 -1 3560
+// expect-stdout: 1 value 0
