@@ -2526,7 +2526,8 @@ fn counts_of(name: &str, tests: &str) -> Vec<(String, i64)> {
 }
 
 /// A text with nothing to trim comes back as it is, without a copy, and
-/// one with whitespace at an end is copied (tests/cases/run/trim_ends.to).
+/// one with whitespace at an end is copied, when what is left is longer
+/// than a short text (tests/cases/run/trim_ends.to).
 #[test]
 fn trimming_nothing_allocates_nothing() {
     let tests = "\
@@ -2534,8 +2535,8 @@ import std.console
 import std.testing
 
 test counted {
-    let words = (0..100).map((n) { \"word{n}\" }).collect()
-    let padded = (0..100).map((n) { \" word{n} \" }).collect()
+    let words = (0..100).map((n) { \"a word {n}\" }).collect()
+    let padded = (0..100).map((n) { \" a word {n} \" }).collect()
     console.println(\"same {testing.allocations(() { trimmed(words) })}\")
     console.println(\"padded {testing.allocations(() { trimmed(padded) })}\")
 }
@@ -2550,6 +2551,55 @@ fn trimmed(texts: Array[String]): Int {
 ";
     let counts = counts_of("trimmed_counted", tests);
     assert_eq!(counts, [("same".to_string(), 0), ("padded".to_string(), 300)]);
+}
+
+/// A text of up to seven bytes is held in its word and allocates nothing,
+/// however it is made: a slice, a trim, an integer's digits, an
+/// interpolation, a change of case, a replacement, and the pieces of a
+/// split, whose block and array are its only allocation; with regions as
+/// without them.
+#[test]
+fn short_texts_allocate_nothing() {
+    let tests = "\
+import std.console
+import std.testing
+
+test counted {
+    let texts = (0..100).map((n) { \" key {n} and more\" }).collect()
+    // The first replacement, which may take room a thread keeps.
+    _ = texts[0].replace(\"key\", \"k\")
+    console.println(\"sliced {testing.allocations(() { lengths(texts, (t) { t.slice(1, 6) ?? \"\" }) })}\")
+    console.println(\"trimmed {testing.allocations(() { lengths(texts, (t) { (t.slice(0, 5) ?? \"\").trim() }) })}\")
+    console.println(\"digits {testing.allocations(() { lengths(texts, (t) { \"{t.byteLength() * 1000}\" }) })}\")
+    console.println(\"made {testing.allocations(() { lengths(texts, (t) { \"k={t.byteLength()}\" }) })}\")
+    console.println(\"shouted {testing.allocations(() { lengths(texts, (t) { (t.slice(1, 4) ?? \"\").toUpperAscii() }) })}\")
+    console.println(\"swapped {testing.allocations(() { lengths(texts, (t) { (t.slice(1, 6) ?? \"\").replace(\"key\", \"k\") }) })}\")
+    console.println(\"split {testing.allocations(() { pieces(texts) })}\")
+}
+
+fn lengths(texts: Array[String], made: fn(String): String): Int {
+    var total = 0
+    for text in texts {
+        total += made(text).byteLength()
+    }
+    total
+}
+
+fn pieces(texts: Array[String]): Int {
+    var total = 0
+    for text in texts {
+        for piece in text.split(\" \") {
+            total += piece.byteLength()
+        }
+    }
+    total
+}
+";
+    let counts = counts_of("short_texts_counted", tests);
+    let names = ["sliced", "trimmed", "digits", "made", "shouted", "swapped"];
+    let mut expected: Vec<(String, i64)> = names.iter().map(|name| (name.to_string(), 0)).collect();
+    expected.push(("split".to_string(), 100));
+    assert_eq!(counts, expected);
 }
 
 /// The runtime's operations on texts allocate what they give and none of
@@ -2574,7 +2624,7 @@ test counted {
     console.println(\"words {testing.allocations(() { lines.map((line) { line.words().length() }).sum() })}\")
     console.println(\"splitLines {testing.allocations(() { text.split(\"\\n\").length() })}\")
     console.println(\"lines {testing.allocations(() { text.lines().length() })}\")
-    console.println(\"sliced {testing.allocations(() { lines.map((line) { (line.slice(4, 9) ?? \"\").byteLength() }).sum() })}\")
+    console.println(\"sliced {testing.allocations(() { lines.map((line) { (line.slice(4, 14) ?? \"\").byteLength() }).sum() })}\")
     console.println(\"lowered {testing.allocations(() { lines.map((line) { line.toLower().byteLength() }).sum() })}\")
     console.println(
         \"replaced {testing.allocations(() { lines.map((line) { (digits.replaceAll(line, \"N\") ?? \"\").byteLength() }).sum() })}\",
@@ -2616,7 +2666,8 @@ fn slices_count_alike_in_regions() {
 /// A function that returns a part of a collection it made copies it out at
 /// its return: with regions, each call allocates one text more than
 /// without them, the copy, while its pieces and its map count as the
-/// heap's would (tests/cases/run/regions/copied_out.to).
+/// heap's would (tests/cases/run/regions/copied_out.to). The part is
+/// longer than a short text, which is copied in its word.
 #[test]
 fn a_part_copied_out_costs_one_text() {
     let tests = "\
@@ -2624,7 +2675,7 @@ import std.console
 import std.testing
 
 test counted {
-    let text = \"to be or not to be that is the question\"
+    let text = \"tomorrow and tomorrow and tomorrow creeps in this petty pace\"
     let counted = testing.allocations(() {
         var total = 0
         for _ in 0..10 {

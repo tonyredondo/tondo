@@ -673,6 +673,13 @@ fn decoded(ty: &str, word: u64, memory: &Memory) -> Option<String> {
         "Float" | "Float64" => format!("{:?}", f64::from_bits(word)),
         "Float32" => format!("{:?}", f32::from_bits(word as u32)),
         "Char" => format!("{:?}", char::from_u32(word as u32)?),
+        // A short text is its word: its sign marks it, its length is in bits
+        // 56 to 62 and its bytes are the low ones, the first lowest.
+        "String" if (word as i64) < 0 => {
+            let bytes = word.to_le_bytes();
+            let length = (word >> 56 & 0x7f).min(7) as usize;
+            serde_json::to_string(&String::from_utf8_lossy(&bytes[..length])).ok()?
+        }
         "String" => {
             let length = memory.word(word.checked_add(8)?)?;
             let bytes = memory.read(word.checked_add(STRING_HEADER)?, length.min(SHOWN) as usize)?;

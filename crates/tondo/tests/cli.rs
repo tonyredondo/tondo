@@ -723,7 +723,7 @@ fn cpu_has_answers_from_the_level_or_the_processor() {
         false => ("Sse42", "Avx2", "Neon"),
     };
     let program = format!(
-        "import std.console\nimport std.cpu\n\nfn level(): String {{\n    if cpu.has(cpu.Feature.{level}) {{ \"level\" }} else {{ \"lacking\" }}\n}}\n\nfn above(): String {{\n    if cpu.has(cpu.Feature.{above}) {{ \"above\" }} else {{ \"not above\" }}\n}}\n\nfn other(): String {{\n    if cpu.has(cpu.Feature.{other}) {{ \"other\" }} else {{ \"not other\" }}\n}}\n\nfn main() {{\n    console.println(\"{{level()}} {{other()}} {{above()}} {{cpu.features()}}\")\n}}\n"
+        "import std.console\nimport std.cpu\n\nfn level(): String {{\n    if cpu.has(cpu.Feature.{level}) {{ \"at the level\" }} else {{ \"lacking it\" }}\n}}\n\nfn above(): String {{\n    if cpu.has(cpu.Feature.{above}) {{ \"above the level\" }} else {{ \"not above it\" }}\n}}\n\nfn other(): String {{\n    if cpu.has(cpu.Feature.{other}) {{ \"the other one\" }} else {{ \"not the other\" }}\n}}\n\nfn main() {{\n    console.println(\"{{level()}} {{other()}} {{above()}} {{cpu.features()}}\")\n}}\n"
     );
     std::fs::write(dir.join("has.to"), program).unwrap();
     let asked = |function: &str| {
@@ -732,7 +732,8 @@ fn cpu_has_answers_from_the_level_or_the_processor() {
         (out.contains("tondo_rt_cpu_has"), out)
     };
     // One text of the two: the way that runs. arm64 names a text at each
-    // of the two instructions that load its address.
+    // of the two instructions that load its address. Each is longer than a
+    // short text, which is a constant, not data.
     let texts = |code: &str| {
         let mut named: Vec<&str> = code.split_whitespace().filter(|word| word.starts_with("tondo_str")).collect();
         named.sort_unstable();
@@ -747,7 +748,7 @@ fn cpu_has_answers_from_the_level_or_the_processor() {
     assert!(tested && texts(&code) == 2, "{code}");
     let (out, err, code) = tondo(&dir, &["run", "has.to"]);
     assert_eq!(code, 0, "{err}");
-    assert!(out.starts_with("level not other "), "{out}");
+    assert!(out.starts_with("at the level not the other "), "{out}");
     // What the system says the processor has, by the names it gives them.
     #[cfg(target_os = "linux")]
     {

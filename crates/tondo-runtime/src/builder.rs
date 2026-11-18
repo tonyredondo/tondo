@@ -8,42 +8,75 @@ use super::*;
 /// that interpolates keeps it on its stack.
 #[repr(C)]
 pub struct Builder {
-    /// A string whose header's `cap` is its room; null while it has none;
-    /// a short text while what it builds fits in its word.
+    /// A string whose header's `cap` is its room, or a short text while
+    /// what it builds fits in its word.
     text: *mut Str,
+    /// Its length; in its word, where it goes once it outgrows it: 0 for
+    /// the heap, or a region, marked with `GROWING` for a place whose text
+    /// an append grows.
     len: usize,
 }
 
+/// The mark of a region that a builder in its word goes to, beside its
+/// address, for a place whose text an append grows (`start_growing`).
+const GROWING: usize = 1;
+
 impl Builder {
+    /// A builder with room for `room` bytes: in its word when they fit,
+    /// as a short text needs no block.
     pub fn new(room: usize) -> Builder {
-        let mut builder = Builder { text: std::ptr::null_mut(), len: 0 };
-        if room > 0 {
+        let mut builder = Builder { text: SHORT as *mut Str, len: 0 };
+        if room > SHORT_MAX {
+            builder.text = std::ptr::null_mut();
             builder.grow(room);
         }
         builder
     }
 
     fn room(&self) -> usize {
-        match self.text as isize {
-            0 => 0,
-            ..0 => SHORT_MAX,
-            _ => unsafe { (*self.text).cap },
-        }
+        if self.text.is_null() { 0 } else { unsafe { (*self.text).cap } }
     }
 
     pub fn extend(&mut self, bytes: &[u8]) {
+        if short(self.text) {
+            let len = short_len(self.text);
+            if len + bytes.len() <= SHORT_MAX {
+                let mut word = (self.text as usize).to_le_bytes();
+                word[len..len + bytes.len()].copy_from_slice(bytes);
+                word[7] = (SHORT >> 56) as u8 | (len + bytes.len()) as u8;
+                self.text = usize::from_le_bytes(word) as *mut Str;
+                return;
+            }
+            self.out_of_word(bytes.len());
+        }
         if self.len + bytes.len() > self.room() {
             self.grow(bytes.len());
         }
-        match short(self.text) {
-            true => {
-                let mut word = (self.text as usize).to_le_bytes();
-                word[self.len..self.len + bytes.len()].copy_from_slice(bytes);
-                self.text = usize::from_le_bytes(word) as *mut Str;
-            }
-            false => unsafe { copy_short(bytes, (self.text as *mut u8).add(HEADER + self.len)) },
-        }
+        unsafe { copy_short(bytes, (self.text as *mut u8).add(HEADER + self.len)) }
         self.len += bytes.len();
+    }
+
+    /// Out of its word, with room for `more` bytes after its own: on the
+    /// heap, or in the region it was started in, as it would have started
+    /// there with that room.
+    #[cold]
+    #[inline(never)]
+    fn out_of_word(&mut self, more: usize) {
+        let (word, len, goes) = ((self.text as usize).to_le_bytes(), short_len(self.text), self.len);
+        let room = (len + more).max(2 * SHORT_MAX);
+        let region = (goes & !GROWING) as *mut regions::Region;
+        unsafe {
+            match (region.is_null(), goes & GROWING != 0) {
+                (true, _) => {
+                    self.text = std::ptr::null_mut();
+                    self.grow(room);
+                }
+                (false, false) => start_region(self, room, region),
+                (false, true) => start_growing(self, room, region),
+            }
+            std::ptr::copy_nonoverlapping(word.as_ptr(), (self.text as *mut u8).add(HEADER), len);
+        }
+        self.len = len;
     }
 
     pub fn push(&mut self, byte: u8) {
@@ -68,11 +101,6 @@ impl Builder {
 
     #[cold]
     fn grow(&mut self, more: usize) {
-        // A few bytes on the heap are built in the word, with no block.
-        if self.text.is_null() && more <= SHORT_MAX {
-            self.text = SHORT as *mut Str;
-            return;
-        }
         let room = (self.len + more).max(self.room() * 2);
         // A text a region takes grows in it, whatever its length: what the
         // analysis puts in a region stays a region's, as what holds it lets
@@ -108,10 +136,9 @@ impl Builder {
         let layout = str_layout(room);
         // A new block holds what was asked, as a guess that is seldom
         // short; one that grows takes all the room its block has. What a
-        // frame's room or the word held moves to the heap.
+        // frame's room held moves to the heap.
         let framed = self.framed();
-        let word = short(self.text).then(|| (self.text as usize).to_le_bytes());
-        let grown = (self.text as isize) > 0 && !framed;
+        let grown = !self.text.is_null() && !framed;
         let text = unsafe {
             match grown {
                 false => alloc(layout),
@@ -123,9 +150,6 @@ impl Builder {
         }
         if framed {
             unsafe { std::ptr::copy_nonoverlapping((self.text as *const u8).add(HEADER), text.add(HEADER), self.len) };
-        }
-        if let Some(word) = word {
-            unsafe { std::ptr::copy_nonoverlapping(word.as_ptr(), text.add(HEADER), self.len) };
         }
         self.text = text as *mut Str;
         unsafe {
@@ -139,11 +163,8 @@ impl Builder {
     /// to in place grows into. While a budget counts memory, that room is
     /// what was asked for, and counted (`meta::usable`).
     pub fn finish(self) -> *mut Str {
-        if self.text.is_null() || self.len == 0 && short(self.text) {
-            return str_new(&[]);
-        }
         if short(self.text) {
-            return (self.text as usize | self.len << 56) as *mut Str;
+            return if short_len(self.text) == 0 { str_new(&[]) } else { self.text };
         }
         // Built in a region: the last reference, which its region lets go
         // of. A long one forgets the positions that a text its region let go
@@ -304,6 +325,14 @@ const REGION_HELD: usize = 0b010;
 /// as the builder knows its region by its text.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_start_region(b: *mut Builder, room: usize, region: *mut regions::Region) {
+    // In its word while what it builds fits there, as on the heap.
+    match room <= SHORT_MAX {
+        true => unsafe { b.write(Builder { text: SHORT as *mut Str, len: region as usize }) },
+        false => unsafe { start_region(b, room, region) },
+    }
+}
+
+unsafe fn start_region(b: *mut Builder, room: usize, region: *mut regions::Region) {
     unsafe {
         let room = room.max(16);
         let text = regions::tondo_rt_region_alloc(region, HEADER + room) as *mut Str;
@@ -317,7 +346,16 @@ pub unsafe extern "C" fn tondo_rt_sb_start_region(b: *mut Builder, room: usize, 
 /// which the text takes once built.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_start_region_growing(b: *mut Builder, room: usize, region: *mut regions::Region) {
-    unsafe { start_growing(b, if room == 0 { 16 } else { room }, region) }
+    unsafe { start_growing_or_word(b, room, region) }
+}
+
+/// `start_growing`, or in the builder's word while what it builds fits
+/// there, as on the heap.
+unsafe fn start_growing_or_word(b: *mut Builder, room: usize, region: *mut regions::Region) {
+    match room <= SHORT_MAX {
+        true => unsafe { b.write(Builder { text: SHORT as *mut Str, len: region as usize | GROWING }) },
+        false => unsafe { start_growing(b, room, region) },
+    }
 }
 
 unsafe fn start_growing(b: *mut Builder, room: usize, region: *mut regions::Region) {
@@ -502,7 +540,7 @@ pub unsafe extern "C" fn tondo_rt_sb_adopt_region(
             return 1;
         }
         // A copy, as the heap makes one, which the append grows.
-        start_growing(b, str_len(s) + room, region);
+        start_growing_or_word(b, str_len(s) + room, region);
         (*b).extend(str_bytes(&s));
         0
     }

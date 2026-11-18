@@ -242,8 +242,9 @@ mod tests {
 
     #[test]
     fn strings_compare_by_scalar_order_and_free_at_zero() {
-        let a = str_new("abc".as_bytes());
-        let b = str_new("abd".as_bytes());
+        // Longer than a short text, which counts nothing.
+        let a = str_new("abcdefgh".as_bytes());
+        let b = str_new("abdefghi".as_bytes());
         unsafe {
             assert_eq!(tondo_rt_str_cmp(a, b), -1);
             assert_eq!(tondo_rt_str_eq(a, a), 1);
@@ -253,6 +254,27 @@ mod tests {
             tondo_rt_str_release(a);
             tondo_rt_str_release(b);
         }
+    }
+
+    /// A short text, in its word, is the text its bytes are in a block:
+    /// equal, in the same order and with the same hash, counting nothing.
+    #[test]
+    fn short_texts_are_the_texts_of_their_bytes() {
+        static LONG: strings::Kept<3> = strings::Kept::new(b"abc");
+        let (short, long) = (str_new(b"abc"), LONG.get());
+        assert!(strings::short(short) && !strings::short(long));
+        unsafe {
+            assert_eq!(str_bytes(&short), b"abc");
+            assert_eq!(tondo_rt_str_eq(short, long), 1);
+            assert_eq!(tondo_rt_str_cmp(short, long), 0);
+            assert_eq!(tondo_rt_str_cmp(short, str_new(b"abd")), -1);
+            assert_eq!(maps::tondo_rt_str_hash(short), maps::tondo_rt_str_hash(long));
+            tondo_rt_str_retain(short);
+            tondo_rt_str_release(short);
+            tondo_rt_str_release(short);
+        }
+        assert_eq!(str_new(b"abc"), short);
+        assert!(!strings::short(str_new(b"abcdefgh")));
     }
 
     #[test]
