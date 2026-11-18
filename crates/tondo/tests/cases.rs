@@ -523,6 +523,7 @@ fn run_all(mut paths: Vec<PathBuf>, name: &str, extra: &[String]) {
     let _ = writeln!(std::io::stderr(), "{name}: {} to run", paths.len());
 
     let scratch = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _held = hold(&scratch);
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(&scratch).unwrap();
 
@@ -546,6 +547,26 @@ fn run_all(mut paths: Vec<PathBuf>, name: &str, extra: &[String]) {
         handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
     });
     assert!(failures.is_empty(), "{} of {} cases failed:\n\n{}", failures.len(), paths.len(), failures.join("\n\n"));
+}
+
+/// A lock on a scratch directory for a run of the cases, held while the
+/// file it gives is open: a second run on the same directory, as two
+/// `cargo test` in one tree, would clear it under the first, whose
+/// programs would vanish as they start. That second run fails at once,
+/// saying which run holds it.
+fn hold(scratch: &Path) -> std::fs::File {
+    use std::io::{Read, Write};
+    let path = scratch.with_extension("lock");
+    let mut file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path).unwrap();
+    if let Err(std::fs::TryLockError::WouldBlock) = file.try_lock() {
+        let mut holder = String::new();
+        let _ = file.read_to_string(&mut holder);
+        panic!("another run of the cases uses {}: {}; wait for its end", scratch.display(), holder.trim());
+    }
+    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    file.set_len(0).unwrap();
+    write!(file, "process {}, since {since} seconds after the epoch", std::process::id()).unwrap();
+    file
 }
 
 /// The k-th of n shares of `paths`: those whose index modulo n is k - 1.
