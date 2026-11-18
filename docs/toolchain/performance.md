@@ -578,8 +578,8 @@ though. A benchmark of the two over a thousand numbers shows both costs:
 ```text
 $ tondo test --bench
 test squares::unit::squares::aThousand ... ok
-  arrays     1.112 µs/op  ±0.2%  0 allocs/op +9 in regions  0 B/op +12448 in regions  1 regions set up/op, 1 used  23.7k ins/op
-  chain      1.414 µs/op  ±0.1%  2 allocs/op  80 B/op  38.2k ins/op
+  arrays     1.084 µs/op  ±0.3%  0 allocs/op +9 in regions  0 B/op +12448 in regions  1 regions set up/op, 1 used  23.9k ins/op
+  chain      1.641 µs/op  ±0.2%  2 allocs/op  80 B/op  38.2k ins/op
 ```
 
 The chain allocates its two closures and nothing else, however long the
@@ -697,8 +697,9 @@ the others. The reasons a value stays on the heap are that it is stored in
 what the function was given, in a lock's state or in a `Ref`; that a
 closure captures it, that it is sent, taken by a task or given to C; that
 it outlives a turn of its loop; that it holds a value its region did not
-make; and that regions do not take that kind of value yet, as maps and
-slices.
+make; that it is changed in a way a region does not take yet, as a map
+that an entry is removed from, where the remark names the change; and that
+regions do not take that kind of value yet, as slices.
 
 A text goes in a region as an array does, whatever its length, when the
 frame does not take it first: one that an interpolation makes, as the
@@ -804,6 +805,73 @@ steps as on the heap and `testing.allocations` counts the same with regions
 and without. A text that something of the turn holds while it grows, as an
 array made in the turn, stays on the heap, with `it outlives a turn of the
 loop`.
+
+A map or a set goes in a region too, as it is inserted into, and so does
+one whose entries change in place, which is how a program counts. An array
+that is written by index stays in its region as one that is pushed to
+does:
+
+```tondo
+import std.console
+
+/// How many times a text says the word it says most.
+fn mostTimes(text: String): Int {
+    var counts: Map[String, Int] = [:]
+    for word in text.split(" ") {
+        counts[word, default: 0] += 1
+    }
+    var most = 0
+    for (_, count) in counts {
+        if count > most {
+            most = count
+        }
+    }
+    most
+}
+
+/// The squares up to a number, added, with the odd ones left at zero.
+fn evenSquares(most: Int): Int {
+    var table = [0].repeat(most)
+    for i in 0..most {
+        if i % 2 == 0 {
+            table[i] = i * i
+        }
+    }
+    table.sum()
+}
+
+fn main() {
+    console.println("{mostTimes("to be or not to be")} {evenSquares(10)}")
+}
+```
+
+```text output
+2 120
+```
+
+```text
+$ tondo optimizations tally.to --kind region
+tally.to:6:17: `text.split(" ")` in `String.split`, `textNative.split(self, separator, most)` goes in a region of `mostTimes` (in mostTimes)
+tally.to:7:9: `counts[word, default: 0] += 1` changes a map that goes in a region of `mostTimes` (in mostTimes)
+tally.to:7:16: `word` grows a map that goes in a region of `mostTimes` (in mostTimes)
+tally.to:20:17: `[0].repeat(most)` goes in a region of `evenSquares` (in evenSquares)
+tally.to:20:17: `[0].repeat(most)` goes in a region of `main` (in main)
+tally.to:23:13: `table[i] = i * i` changes an array that goes in a region of `evenSquares` (in evenSquares)
+tally.to:23:13: `table[i] = i * i` changes an array that goes in a region of `main` (in main)
+```
+
+The map, its keys, which are the pieces that `split` made in the same
+region, and the table are all let go of at once when their function ends.
+What is written into a map or an array of a region has to be the region's
+own or a value that counts nothing, as a number: a map that is given a text
+from elsewhere stays on the heap, with `it holds a value that its region
+did not make`. And a change other than these keeps the value on the heap
+for now, and the remark names it: a map that an entry is removed from says
+``a region changes a map only by its insertions and the values of its
+entries yet: `seen.remove(n)` at 11:13``, and an array that is popped or
+inserted into in the middle, ``a region changes an array only by `push`
+and the writes of its elements yet``. An array sorted in place is given to
+the library's sort, which may keep it, and stays on the heap for that.
 
 A turn's region is emptied when the turn goes back to the head of its
 loop, and let go of when the function returns. So a value does not outlive
