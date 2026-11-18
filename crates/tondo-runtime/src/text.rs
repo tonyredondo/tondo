@@ -282,6 +282,10 @@ pub unsafe extern "C" fn tondo_rt_text_upper(s: *const Str, region: *mut Region)
 /// between, as a text of another case would be. The empty text, kept for
 /// good, has no bytes to change.
 fn cased(text: *mut Str, change: fn(&mut [u8])) -> *mut Str {
+    // A short copy is changed in its word.
+    if crate::strings::short(text) {
+        return crate::strings::short_changed(text, change);
+    }
     let len = unsafe { (*text).len };
     if len > 0 {
         unsafe { change(std::slice::from_raw_parts_mut((text as *mut u8).add(crate::strings::HEADER), len)) };

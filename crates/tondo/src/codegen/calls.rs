@@ -87,20 +87,34 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     let address = this.e.fb.ins().iadd(text, offset);
                     this.e.fb.ins().uload8(types::I64, flags(), address, STRING_BYTES as i32)
                 };
-                if crate::hir::NATIVES[index as usize].name == "byteWithin" {
-                    return Some(read(self));
-                }
-                let (inside, done) = (self.e.fb.create_block(), self.e.fb.create_block());
-                self.e.fb.append_block_param(done, types::I64);
-                let length = self.e.fb.ins().load(types::I64, flags(), text, STRING_LENGTH);
-                let within = self.e.fb.ins().icmp(IntCC::UnsignedLessThan, offset, length);
-                let outside = self.e.fb.ins().iconst(types::I64, 256);
-                self.e.fb.ins().brif(within, inside, &[], done, &[outside.into()]);
-                self.e.fb.switch_to_block(inside);
-                let byte = read(self);
-                self.e.fb.ins().jump(done, &[byte.into()]);
-                self.e.fb.switch_to_block(done);
-                Some(self.e.fb.block_params(done)[0])
+                let within = crate::hir::NATIVES[index as usize].name == "byteWithin";
+                let short = |this: &mut Self| {
+                    let byte = this.short_byte(text, offset, types::I64);
+                    if within {
+                        return vec![byte];
+                    }
+                    let length = this.short_length(text);
+                    let inside = this.e.fb.ins().icmp(IntCC::UnsignedLessThan, offset, length);
+                    let outside = this.e.fb.ins().iconst(types::I64, 256);
+                    vec![this.e.fb.ins().select(inside, byte, outside)]
+                };
+                let long = |this: &mut Self| {
+                    if within {
+                        return vec![read(this)];
+                    }
+                    let (inside, done) = (this.e.fb.create_block(), this.e.fb.create_block());
+                    this.e.fb.append_block_param(done, types::I64);
+                    let length = this.e.fb.ins().load(types::I64, flags(), text, STRING_LENGTH);
+                    let inside_text = this.e.fb.ins().icmp(IntCC::UnsignedLessThan, offset, length);
+                    let outside = this.e.fb.ins().iconst(types::I64, 256);
+                    this.e.fb.ins().brif(inside_text, inside, &[], done, &[outside.into()]);
+                    this.e.fb.switch_to_block(inside);
+                    let byte = read(this);
+                    this.e.fb.ins().jump(done, &[byte.into()]);
+                    this.e.fb.switch_to_block(done);
+                    vec![this.e.fb.block_params(done)[0]]
+                };
+                Some(self.by_form(text, &[types::I64], short, long)[0])
             }
             Callee::Std(StdFn::Native(index)) => {
                 // Arithmetic the processor does in one instruction, as

@@ -63,10 +63,13 @@ impl Codegen<'_> {
                 Const::Float(bits, _) => bytes.extend_from_slice(&bits.to_le_bytes()),
                 Const::Bool(value) => bytes.push(*value as u8),
                 Const::Char(c) => bytes.extend_from_slice(&(*c as u32).to_le_bytes()),
-                Const::Str(text) => {
-                    texts.push((at, self.string(text)));
-                    bytes.extend_from_slice(&[0; 8]);
-                }
+                Const::Str(text) => match super::short_text(text.as_bytes()) {
+                    Some(word) => bytes.extend_from_slice(&word.to_le_bytes()),
+                    None => {
+                        texts.push((at, self.string(text)));
+                        bytes.extend_from_slice(&[0; 8]);
+                    }
+                },
                 Const::Bytes(contents, _) => {
                     texts.push((at, self.bytes(contents)));
                     bytes.extend_from_slice(&[0; 8]);

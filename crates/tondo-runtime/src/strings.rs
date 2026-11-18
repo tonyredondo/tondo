@@ -54,6 +54,9 @@ pub fn str_new(bytes: &[u8]) -> *mut Str {
     if bytes.is_empty() {
         return EMPTY.get();
     }
+    if bytes.len() <= SHORT_MAX {
+        return short_text(bytes);
+    }
     let layout = str_layout(bytes.len());
     unsafe {
         let ptr = alloc(layout) as *mut Str;
@@ -75,7 +78,7 @@ pub fn str_new(bytes: &[u8]) -> *mut Str {
 /// one forgets the positions a text its region let go of left at the same
 /// address.
 pub(crate) fn str_in(region: *mut super::regions::Region, bytes: &[u8]) -> *mut Str {
-    if region.is_null() || bytes.is_empty() {
+    if region.is_null() || bytes.len() <= SHORT_MAX {
         return str_new(bytes);
     }
     unsafe {
@@ -120,13 +123,13 @@ impl RegionPieces {
         }
     }
 
-    /// The next piece, in the room: in the loop of each caller, as a
-    /// split's pieces are many and short.
+    /// The next piece, in the room, or in its word when it is short: in the
+    /// loop of each caller, as a split's pieces are many and short.
     #[inline(always)]
     pub(crate) fn push(&mut self, bytes: &[u8]) -> *mut Str {
         let size = (HEADER + bytes.len()).next_multiple_of(8);
         // More than it was given room for, which its caller never asks.
-        if bytes.is_empty() || self.at + size > self.end {
+        if bytes.len() <= SHORT_MAX || self.at + size > self.end {
             return str_in(self.region, bytes);
         }
         let text = self.at as *mut Str;
@@ -149,7 +152,60 @@ impl RegionPieces {
 /// The bytes of a string. The caller keeps the string alive.
 pub unsafe fn str_bytes<'a>(s: &'a impl Word) -> &'a [u8] {
     let word = s.word();
+    if short(word) {
+        // In the word itself: its first bytes, as the processor keeps the
+        // lowest first.
+        return unsafe { std::slice::from_raw_parts(s as *const _ as *const u8, short_len(word)) };
+    }
     unsafe { std::slice::from_raw_parts((word as *const u8).add(HEADER), (*word).len) }
+}
+
+/// A short text: up to `SHORT_MAX` bytes held in its word instead of a
+/// block, the lowest first, and in its top byte the mark `SHORT`, its
+/// sign, which no address a program is given has, and its length. It
+/// counts nothing, is never freed and never changes.
+pub(crate) const SHORT: usize = 1 << 63;
+pub(crate) const SHORT_MAX: usize = 7;
+
+/// Whether a text is a short one, held in its word.
+#[inline(always)]
+pub(crate) fn short(s: *const Str) -> bool {
+    (s as isize) < 0
+}
+
+/// The length of a short text.
+#[inline(always)]
+pub(crate) fn short_len(s: *const Str) -> usize {
+    (s as usize >> 56) & 0x7f
+}
+
+/// The short text of `bytes`, at most `SHORT_MAX` of them.
+#[inline]
+pub(crate) fn short_text(bytes: &[u8]) -> *mut Str {
+    debug_assert!(bytes.len() <= SHORT_MAX);
+    let mut word = [0u8; 8];
+    word[..bytes.len()].copy_from_slice(bytes);
+    (usize::from_le_bytes(word) | SHORT | bytes.len() << 56) as *mut Str
+}
+
+/// A short text's bytes as `change` leaves them, in a short text.
+pub(crate) fn short_changed(s: *const Str, change: impl FnOnce(&mut [u8])) -> *mut Str {
+    let mut bytes = (s as usize).to_le_bytes();
+    let len = short_len(s);
+    change(&mut bytes[..len]);
+    short_text(&bytes[..len])
+}
+
+// A short text's bytes are read where its word is, the lowest first.
+const _: () = assert!(cfg!(target_endian = "little"));
+
+/// A text's length in bytes, short or not.
+#[inline(always)]
+pub(crate) unsafe fn str_len(s: *const Str) -> usize {
+    match short(s) {
+        true => short_len(s),
+        false => unsafe { (*s).len },
+    }
 }
 
 /// Where a text's word is: what its bytes are read through, so that they
@@ -241,11 +297,15 @@ impl Pieces {
     }
 
     /// The next piece, with one reference; the empty string kept for good
-    /// when it is empty. In the loop of each caller, as `RegionPieces`'s.
+    /// when it is empty, and a short one in its word. In the loop of each
+    /// caller, as `RegionPieces`'s.
     #[inline(always)]
     pub(crate) fn push(&mut self, bytes: &[u8]) -> *mut Str {
-        if bytes.is_empty() {
-            return EMPTY.get();
+        if bytes.len() <= SHORT_MAX {
+            return match bytes.is_empty() {
+                true => EMPTY.get(),
+                false => short_text(bytes),
+            };
         }
         unsafe {
             let at = self.used;
@@ -429,7 +489,7 @@ pub(crate) struct Releasing {
 impl Releasing {
     pub(crate) unsafe fn release(&mut self, s: *mut Str) {
         unsafe {
-            if s.is_null() {
+            if (s as isize) <= 0 {
                 return;
             }
             let rc = (*s).rc.load(Ordering::Relaxed);
@@ -457,7 +517,9 @@ impl Releasing {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_retain(s: *const Str) {
-    if s.is_null() {
+    // None and a short text, marked by its sign, count nothing: one
+    // comparison.
+    if (s as isize) <= 0 {
         return;
     }
     let rc = unsafe { &(*s).rc };
@@ -472,7 +534,8 @@ pub unsafe extern "C" fn tondo_rt_str_retain(s: *const Str) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_release(s: *mut Str) {
     // Releasing a binding whose value moved away does nothing: it is zero.
-    if s.is_null() {
+    // Nor does releasing a short text, marked by its sign.
+    if (s as isize) <= 0 {
         return;
     }
     let rc = unsafe { &(*s).rc };
@@ -506,7 +569,7 @@ pub unsafe extern "C" fn tondo_rt_str_release(s: *mut Str) {
 /// another, empties its slot first.
 pub(crate) struct Positions {
     text: usize,
-    len: usize,
+    pub(crate) len: usize,
     ascii: bool,
     count: usize,
     index: usize,
@@ -810,15 +873,18 @@ pub unsafe extern "C" fn tondo_rt_str_transform(
     transform: u32,
     region: *mut super::regions::Region,
 ) -> *mut Str {
+    let change = |bytes: &mut [u8]| match transform {
+        1 => bytes.make_ascii_lowercase(),
+        _ => bytes.make_ascii_uppercase(),
+    };
     // The copy changed in place: no text of Rust's between.
     let copy = str_in(region, unsafe { str_bytes(&s) });
+    if short(copy) {
+        return short_changed(copy, change);
+    }
     let len = unsafe { (*copy).len };
     if len > 0 {
-        let bytes = unsafe { std::slice::from_raw_parts_mut((copy as *mut u8).add(HEADER), len) };
-        match transform {
-            1 => bytes.make_ascii_lowercase(),
-            _ => bytes.make_ascii_uppercase(),
-        }
+        change(unsafe { std::slice::from_raw_parts_mut((copy as *mut u8).add(HEADER), len) });
     }
     copy
 }
@@ -859,7 +925,7 @@ pub unsafe extern "C" fn tondo_rt_str_slice_checked(
 /// unwinds gives, stays none.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_copy_out(s: *mut Str, region: *mut super::regions::Region) -> *mut Str {
-    if s.is_null() || unsafe { (*s).rc.load(Ordering::Relaxed) } == IMMORTAL {
+    if (s as isize) <= 0 || unsafe { (*s).rc.load(Ordering::Relaxed) } == IMMORTAL {
         return s;
     }
     let copy = str_in(region, unsafe { str_bytes(&s) });

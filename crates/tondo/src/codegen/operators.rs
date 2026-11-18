@@ -45,9 +45,15 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
 
     /// `x = "{x}text"`: the text's bytes written after the string's own,
     /// as `push` adds an element, when nothing else holds the string and
-    /// its room takes them; or else the runtime's append.
+    /// its room takes them; or else the runtime's append, as for a short
+    /// string, which has no room.
     pub(super) fn append_text(&mut self, place: &Place, text: &str) -> ir::Value {
         let string = self.scalar(&Operand::Copy(place.clone()));
+        let (in_block, fast, slow, done) =
+            (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
+        let short = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, string, 0);
+        self.e.fb.ins().brif(short, slow, &[], in_block, &[]);
+        self.e.fb.switch_to_block(in_block);
         let count = self.e.fb.ins().atomic_load(types::I64, flags(), string);
         let length = self.e.fb.ins().load(types::I64, flags(), string, STRING_LENGTH);
         let room = self.e.fb.ins().load(types::I64, flags(), string, STRING_ROOM);
@@ -62,7 +68,6 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let unique = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, last);
         let fits = self.e.fb.ins().icmp(IntCC::UnsignedLessThanOrEqual, longer, room);
         let in_place = self.e.fb.ins().band(unique, fits);
-        let (fast, slow, done) = (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
         let result = self.e.fb.append_block_param(done, POINTER);
         self.e.fb.ins().brif(in_place, fast, &[], slow, &[]);
         self.e.fb.switch_to_block(fast);
@@ -193,7 +198,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     let value = self.operand(operand);
                     match (self.e.cg.types().kind(self.e.cg.types().repr(*ty)), value) {
                         (TyKind::String, Val::Scalar(text)) => {
-                            let length = self.e.fb.ins().load(types::I64, flags(), text, STRING_LENGTH);
+                            let length = self.text_length(text);
                             room = Some(room.map_or(length, |room| self.e.fb.ins().iadd(room, length)));
                         }
                         (TyKind::Int(int), _) if int.bits() == 128 => known += 40,

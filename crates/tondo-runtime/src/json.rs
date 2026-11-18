@@ -80,8 +80,13 @@ impl Input {
         input
     }
 
-    /// A string, held, not copied: one shared is never changed in place.
+    /// A string, held, not copied: one shared is never changed in place. A
+    /// short one is copied, as its bytes are in its word, which the caller
+    /// has.
     fn held(text: *mut Str) -> Input {
+        if crate::strings::short(text) {
+            return Input::owned(unsafe { str_bytes(&text) }.to_vec());
+        }
         unsafe { super::tondo_rt_str_retain(text) };
         let bytes = unsafe { str_bytes(&text) };
         Input { at: bytes.as_ptr(), len: bytes.len(), owned: Vec::new(), held: text }
@@ -783,7 +788,7 @@ pub unsafe extern "C" fn tondo_rt_json_text(
     if !region.is_null() {
         return crate::strings::str_in(region, r.text.as_bytes());
     }
-    if len == 0 || len >= POSITIONED_FROM {
+    if len <= crate::strings::SHORT_MAX || len >= POSITIONED_FROM {
         return str_new(r.text.as_bytes());
     }
     if !r.pieces.as_ref().is_some_and(|pieces| pieces.fits(len)) {

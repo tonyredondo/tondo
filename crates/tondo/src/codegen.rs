@@ -90,6 +90,23 @@ const SYNC_VALUE: i32 = 16;
 const STRING_LENGTH: i32 = 8;
 const STRING_ROOM: i32 = 16;
 const STRING_BYTES: i64 = 24;
+/// A text of one to seven bytes is its word, with no block: its sign marks
+/// it, as no address of user space has it, its length is in bits 56 to 62
+/// and its bytes are the low ones, the first lowest (`strings::short_text`
+/// of the runtime).
+const SHORT_TEXT_MAX: usize = 7;
+
+/// The word of a short text of these bytes.
+fn short_text(bytes: &[u8]) -> Option<i64> {
+    if bytes.is_empty() || bytes.len() > SHORT_TEXT_MAX {
+        return None;
+    }
+    let mut word = 1u64 << 63 | (bytes.len() as u64) << 56;
+    for (at, &byte) in bytes.iter().enumerate() {
+        word |= (byte as u64) << (8 * at);
+    }
+    Some(word as i64)
+}
 /// The count of a static array: so many references that releases never
 /// bring it to one, so that a change copies it, as one of a shared array.
 const SHARED_FOREVER: u64 = 1 << 62;
@@ -3047,7 +3064,12 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
         }
     }
 
+    /// A literal text: its word when it is short, else the address of its
+    /// header and bytes in the data.
     fn string_ptr(&mut self, text: &str) -> ir::Value {
+        if let Some(word) = short_text(text.as_bytes()) {
+            return self.fb.ins().iconst(POINTER, word);
+        }
         let id = self.cg.string(text);
         let global = self.global(id);
         self.fb.ins().symbol_value(POINTER, global)
@@ -3994,7 +4016,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             }
             *place = match constant {
                 Fixed::Array(id) => DumpPlace::Data(*id),
-                Fixed::Const(Const::Str(text)) => DumpPlace::Data(self.e.cg.string(text)),
+                Fixed::Const(Const::Str(text)) => match short_text(text.as_bytes()) {
+                    Some(word) => DumpPlace::Word(word as u64),
+                    None => DumpPlace::Data(self.e.cg.string(text)),
+                },
                 Fixed::Const(Const::Bytes(contents, _)) => DumpPlace::Data(self.e.cg.bytes(contents)),
                 Fixed::Const(Const::Int(value, _)) => DumpPlace::Word(*value as u64),
                 Fixed::Const(Const::Float(bits, _)) if size == 4 => {

@@ -299,19 +299,15 @@ unsafe fn start_growing(b: *mut Builder, room: usize, region: *mut regions::Regi
     }
 }
 
-/// `"{i}"` in room a frame keeps for it, which it always fits.
+/// `"{i}"` in room a frame keeps for it, which it always fits, or in its
+/// word when it is short.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_int_text_into(value: i64, framed: *mut Str) -> *mut Str {
-    if (0..100).contains(&value) {
-        return tondo_rt_int_text(value);
-    }
     let mut digits = [0; 21];
-    let text = decimal(value.unsigned_abs(), (&mut digits[1..]).try_into().unwrap());
-    let start = 21 - text.len() - usize::from(value < 0);
-    if value < 0 {
-        digits[start] = b'-';
+    let bytes = signed_decimal(value, &mut digits);
+    if bytes.len() <= SHORT_MAX {
+        return short_text(bytes);
     }
-    let bytes = &digits[start..];
     unsafe {
         framed.write(Str { rc: AtomicUsize::new(IMMORTAL), len: bytes.len(), cap: bytes.len() });
         copy_short(bytes, (framed as *mut u8).add(HEADER));
@@ -319,58 +315,33 @@ pub unsafe extern "C" fn tondo_rt_int_text_into(value: i64, framed: *mut Str) ->
     framed
 }
 
-/// `"{i}"`: an integer's digits, in a string of their own; those of 0 to
-/// 99, as Go's, from strings the program keeps, which take no allocation.
+/// `"{i}"`: an integer's digits, in a string of their own, a short one
+/// from -999999 to 9999999, which takes no allocation.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_int_text(value: i64) -> *mut Str {
-    #[repr(C)]
-    struct Small {
-        header: Str,
-        digits: [u8; 8],
-    }
-    static SMALL: [Small; 100] = {
-        let mut table =
-            [const { Small { header: Str { rc: AtomicUsize::new(IMMORTAL), len: 1, cap: 1 }, digits: [0; 8] } }; 100];
-        let mut n = 0;
-        while n < 100 {
-            match n < 10 {
-                true => table[n].digits[0] = b'0' + n as u8,
-                false => {
-                    table[n].header.len = 2;
-                    table[n].header.cap = 2;
-                    table[n].digits[0] = b'0' + (n / 10) as u8;
-                    table[n].digits[1] = b'0' + (n % 10) as u8;
-                }
-            }
-            n += 1;
-        }
-        table
-    };
-    if (0..100).contains(&value) {
-        return &SMALL[value as usize] as *const Small as *mut Str;
-    }
     let mut digits = [0; 21];
-    let text = decimal(value.unsigned_abs(), (&mut digits[1..]).try_into().unwrap());
-    let start = 21 - text.len() - usize::from(value < 0);
+    str_new(signed_decimal(value, &mut digits))
+}
+
+/// The decimal digits of `value`, after its sign, at the end of `digits`.
+fn signed_decimal(value: i64, digits: &mut [u8; 21]) -> &[u8] {
+    let len = decimal(value.unsigned_abs(), (&mut digits[1..]).try_into().unwrap()).len();
+    let start = 21 - len - usize::from(value < 0);
     if value < 0 {
         digits[start] = b'-';
     }
-    str_new(&digits[start..])
+    &digits[start..]
 }
 
 /// `x = "{x}{i}"`, as `tondo_rt_str_append`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_append_int(s: *mut Str, value: i64, region: *mut regions::Region) -> *mut Str {
     let mut digits = [0; 21];
-    let text = decimal(value.unsigned_abs(), (&mut digits[1..]).try_into().unwrap());
-    let start = 21 - text.len() - usize::from(value < 0);
-    if value < 0 {
-        digits[start] = b'-';
-    }
+    let digits = signed_decimal(value, &mut digits);
     unsafe {
         match region.is_null() {
-            true => append(s, &digits[start..]),
-            false => append_in(s, &digits[start..], region),
+            true => append(s, digits),
+            false => append_in(s, digits, region),
         }
     }
 }
@@ -403,8 +374,8 @@ pub(crate) unsafe fn copy_short(bytes: &[u8], to: *mut u8) {
 
 pub(crate) unsafe fn append(s: *mut Str, bytes: &[u8]) -> *mut Str {
     unsafe {
-        let len = (*s).len;
-        if (*s).rc.load(Ordering::Acquire) == 1 {
+        let len = str_len(s);
+        if !short(s) && (*s).rc.load(Ordering::Acquire) == 1 {
             // The room its header knows, and once that is used, the room
             // its block has besides, which the allocator may have given.
             if len + bytes.len() > (*s).cap {
@@ -431,8 +402,8 @@ pub(crate) unsafe fn append(s: *mut Str, bytes: &[u8]) -> *mut Str {
 /// `tondo_rt_sb_adopt_region` starts it.
 unsafe fn append_in(s: *mut Str, bytes: &[u8], region: *mut regions::Region) -> *mut Str {
     unsafe {
-        let len = (*s).len;
-        if (*s).rc.load(Ordering::Acquire) == regions::LAST_IN_REGION && len + bytes.len() <= (*s).cap {
+        let len = str_len(s);
+        if !short(s) && (*s).rc.load(Ordering::Acquire) == regions::LAST_IN_REGION && len + bytes.len() <= (*s).cap {
             copy_short(bytes, (s as *mut u8).add(HEADER + len));
             (*s).len = len + bytes.len();
             return s;
@@ -454,7 +425,7 @@ unsafe fn append_in(s: *mut Str, bytes: &[u8], region: *mut regions::Region) -> 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_adopt(b: *mut Builder, s: *mut Str, room: usize) -> u8 {
     unsafe {
-        if (*s).rc.load(Ordering::Acquire) == 1 {
+        if !short(s) && (*s).rc.load(Ordering::Acquire) == 1 {
             // Its block becomes the builder's, which may move it.
             forget_positions(s);
             // The block may hold more than the string: room it grows into.
@@ -467,7 +438,7 @@ pub unsafe extern "C" fn tondo_rt_sb_adopt(b: *mut Builder, s: *mut Str, room: u
             LIVE_OBJECTS.gone();
             return 1;
         }
-        b.write(Builder::new((*s).len + room));
+        b.write(Builder::new(str_len(s) + room));
         (*b).extend(str_bytes(&s));
         0
     }
@@ -490,7 +461,7 @@ pub unsafe extern "C" fn tondo_rt_sb_adopt_region(
         // A text of another region too, as one a caller made and gave: the
         // analysis has its region live as long as what the append makes,
         // and the heap takes the text it is given as it is.
-        if (*s).rc.load(Ordering::Acquire) == regions::LAST_IN_REGION {
+        if !short(s) && (*s).rc.load(Ordering::Acquire) == regions::LAST_IN_REGION {
             forget_positions(s);
             let len = (*s).len;
             (*s).rc.store(region as usize | REGION_HELD, Ordering::Relaxed);
@@ -501,7 +472,7 @@ pub unsafe extern "C" fn tondo_rt_sb_adopt_region(
             return 1;
         }
         // A copy, as the heap makes one, which the append grows.
-        start_growing(b, (*s).len + room, region);
+        start_growing(b, str_len(s) + room, region);
         (*b).extend(str_bytes(&s));
         0
     }

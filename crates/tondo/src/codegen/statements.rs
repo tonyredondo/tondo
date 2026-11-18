@@ -515,7 +515,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         self.write_checked(place, ty, slice.unwrap(), code);
                         return;
                     }
-                    StrOp::ByteLength => Val::Scalar(self.e.fb.ins().load(types::I64, flags(), values[0], 8)),
+                    StrOp::ByteLength => Val::Scalar(self.text_length(values[0])),
                     StrOp::Decode => Val::Scalar(self.decoded(values[0], values[1], Rt::StrDecode, false)),
                     StrOp::Next => Val::Scalar(self.stepped(values[0], values[1])),
                 }
@@ -862,19 +862,84 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.write(place, value);
     }
 
-    /// `a / divisor` or `a % divisor` for an `a` not below zero, as one of
-    /// its type's bits fewer than it has holds it: a multiplication by a
-    /// constant that needs no correction, as Go makes it, where one of any
-    /// unsigned value needs one (Granlund and Montgomery): with
-    /// `s = ceil(log2(divisor)) - 1` and `m = ceil(2^(bits + s) / divisor)`,
-    /// `umulhi(a, m) >> s` is the quotient of every `a` below `2^(bits - 1)`.
+    /// `long` for a text in a block of its own, `short` for one in its
+    /// word (`short_text`), in a cold block: each gives the values of
+    /// `types` that follow.
+    pub(super) fn by_form(
+        &mut self,
+        text: ir::Value,
+        types: &[types::Type],
+        short: impl FnOnce(&mut Self) -> Vec<ir::Value>,
+        long: impl FnOnce(&mut Self) -> Vec<ir::Value>,
+    ) -> Vec<ir::Value> {
+        let (in_word, in_block, done) = (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
+        for &ty in types {
+            self.e.fb.append_block_param(done, ty);
+        }
+        let marked = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, text, 0);
+        self.e.fb.ins().brif(marked, in_word, &[], in_block, &[]);
+        self.e.fb.set_cold_block(in_word);
+        self.e.fb.switch_to_block(in_word);
+        let values: Vec<ir::BlockArg> = short(self).into_iter().map(ir::BlockArg::from).collect();
+        self.e.fb.ins().jump(done, &values);
+        self.e.fb.switch_to_block(in_block);
+        let values: Vec<ir::BlockArg> = long(self).into_iter().map(ir::BlockArg::from).collect();
+        self.e.fb.ins().jump(done, &values);
+        self.e.fb.switch_to_block(done);
+        self.e.fb.block_params(done).to_vec()
+    }
+
+    /// A text's length in bytes, from its header or a short text's word.
+    pub(super) fn text_length(&mut self, text: ir::Value) -> ir::Value {
+        let short = |this: &mut Self| vec![this.short_length(text)];
+        let long = |this: &mut Self| vec![this.e.fb.ins().load(types::I64, flags(), text, STRING_LENGTH)];
+        self.by_form(text, &[types::I64], short, long)[0]
+    }
+
+    /// The length of a short text, in bits 56 to 62 of its word.
+    pub(super) fn short_length(&mut self, word: ir::Value) -> ir::Value {
+        let top = self.e.fb.ins().ushr_imm_u(word, 56);
+        self.e.fb.ins().band_imm_u(top, 0x7f)
+    }
+
+    /// The byte at an offset of a short text, as `ty`: the offset's byte of
+    /// its word, the first lowest. An offset outside it gives a byte of
+    /// another, or of its length.
+    pub(super) fn short_byte(&mut self, word: ir::Value, offset: ir::Value, ty: types::Type) -> ir::Value {
+        let bits = self.e.fb.ins().ishl_imm_u(offset, 3);
+        let shifted = self.e.fb.ins().ushr(word, bits);
+        let byte = self.e.fb.ins().band_imm_u(shifted, 0xff);
+        if ty == types::I64 { byte } else { self.e.fb.ins().ireduce(ty, byte) }
+    }
+
     /// The scalar at a byte offset of a text, read in place when it is
     /// ASCII, as most are; `slow` decodes the others. With `guard`, an
     /// offset outside the text goes to `slow` too, which says what it is.
     pub(super) fn decoded(&mut self, text: ir::Value, offset: ir::Value, slow: Rt, guard: bool) -> ir::Value {
-        let (read, ascii, other, done) =
-            (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
+        let (in_word, in_block, read, ascii, other, done) = (
+            self.e.fb.create_block(),
+            self.e.fb.create_block(),
+            self.e.fb.create_block(),
+            self.e.fb.create_block(),
+            self.e.fb.create_block(),
+            self.e.fb.create_block(),
+        );
         self.e.fb.append_block_param(done, types::I32);
+        let marked = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, text, 0);
+        self.e.fb.ins().brif(marked, in_word, &[], in_block, &[]);
+        // A short text's byte, or 0x80 outside it, which goes to `slow`.
+        self.e.fb.set_cold_block(in_word);
+        self.e.fb.switch_to_block(in_word);
+        let mut byte = self.short_byte(text, offset, types::I32);
+        if guard {
+            let length = self.short_length(text);
+            let inside = self.e.fb.ins().icmp(IntCC::UnsignedLessThan, offset, length);
+            let outside = self.e.fb.ins().iconst(types::I32, 0x80);
+            byte = self.e.fb.ins().select(inside, byte, outside);
+        }
+        let below = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedLessThan, byte, 0x80);
+        self.e.fb.ins().brif(below, done, &[byte.into()], other, &[]);
+        self.e.fb.switch_to_block(in_block);
         if guard {
             let length = self.e.fb.ins().load(types::I64, flags(), text, STRING_LENGTH);
             let inside = self.e.fb.ins().icmp(IntCC::UnsignedLessThan, offset, length);
@@ -904,8 +969,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     fn stepped(&mut self, text: ir::Value, offset: ir::Value) -> ir::Value {
         let (other, done) = (self.e.fb.create_block(), self.e.fb.create_block());
         self.e.fb.append_block_param(done, types::I64);
-        let address = self.e.fb.ins().iadd(text, offset);
-        let lead = self.e.fb.ins().uload8(types::I64, flags(), address, STRING_BYTES as i32);
+        let short = |this: &mut Self| vec![this.short_byte(text, offset, types::I64)];
+        let long = |this: &mut Self| {
+            let address = this.e.fb.ins().iadd(text, offset);
+            vec![this.e.fb.ins().uload8(types::I64, flags(), address, STRING_BYTES as i32)]
+        };
+        let lead = self.by_form(text, &[types::I64], short, long)[0];
         let one = self.e.fb.ins().iadd_imm_s(offset, 1);
         let ascii = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedLessThan, lead, 0x80);
         self.e.fb.ins().brif(ascii, done, &[one.into()], other, &[]);
@@ -921,6 +990,12 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.block_params(done)[0]
     }
 
+    /// `a / divisor` or `a % divisor` for an `a` not below zero, as one of
+    /// its type's bits fewer than it has holds it: a multiplication by a
+    /// constant that needs no correction, as Go makes it, where one of any
+    /// unsigned value needs one (Granlund and Montgomery): with
+    /// `s = ceil(log2(divisor)) - 1` and `m = ceil(2^(bits + s) / divisor)`,
+    /// `umulhi(a, m) >> s` is the quotient of every `a` below `2^(bits - 1)`.
     fn divided_unsigned(&mut self, op: BinOp, a: ir::Value, divisor: u64) -> ir::Value {
         let ty = self.e.fb.func.dfg.value_type(a);
         let bits = ty.bits();
