@@ -279,20 +279,22 @@ example that compiles for each of its types.
 Tondo compiles to native code with Cranelift, of which it keeps its own copy
 for the optimizations it adds. The goal is every benchmark of
 [`bench/`](bench/README.md) at or under Go's time and allocations. Measured
-on 2026-11-18 at `f3c26634`, on an AMD Ryzen 9 5950X against Go 1.27, each
-for its default processor, Tondo's x86-64-v2 and Go's v1, 62 of the 74 are
-at or under Go's time, from 58 at `448c06a7`, and 21 allocate more on the
-heap than Go. `texts/trim` went from 4.1× to 2.8× as trim reads ASCII by
+on 2026-11-18 at `9e7b747b`, on an AMD Ryzen 9 5950X against Go 1.27, each
+for its default processor, Tondo's x86-64-v2 and Go's v1, 55 of the 74 are
+at or under Go's time, the same rows in three runs, and 19 allocate more
+on the heap than Go; the table before, which gave 62, had time off the
+processor in Go's side, as on a busy machine. `texts/trim` went from 4.1× to 2.9× as trim reads ASCII by
 bytes, and the runtime's text operations stopped making copies of their
 own on the way. Behind in time: `texts/trim`, as Go's trimmed text is a
 view of the old one and Tondo's a new one, in a region; the lazy chains of
-queries, 1.9× and 2.3× Go's bare loops, with three times their
+queries, 1.9× and 2.4× Go's bare loops, with three times their
 instructions though no allocation, and ahead of C#'s; `programs/sum
-lines`, 2.3×, a text for each line where Go's scanner lends its buffer; the
-characters of a text, 2.1×; `loops/collatz`, 1.08×, with 1.7 times Go's
-instructions in its cycles; the calls from threads of C, within 1.06×; and
-within 1.04×, as much as a row moves from one run to the next,
-`queries/countBy`, `tasks/spawn`, `floats/sqrt` and `programs/count words`.
+lines`, 2.5×, a text for each line where Go's scanner lends its buffer; the
+characters of a text, 2.2× and 1.5×; `queries/countBy`, 1.4×, and
+`programs/count words`, 1.3×; `json/decode struct`, 1.16×; the calls from
+threads of C, within 1.09×; and within 1.07×, `texts/toUpper other`,
+`tasks/spawn`, `texts/parse ints`, `net/tls echo`, `loops/collatz`,
+`runtime/mutex`, `floats/sqrt` and `queries/uniqueBy`.
 What Tondo makes in regions, which Go would give its heap where a value
 leaves its function, is counted beside its heap's allocations.
 On 2026-10-26, with the 27 benchmarks there were then,
