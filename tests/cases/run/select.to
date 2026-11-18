@@ -14,6 +14,12 @@ fn slow(n: Int): Int {
     n * 2
 }
 
+/// `n * 2` once `gate` lets it go on.
+fn held(n: Int, gate: Receiver[Bool]): Int {
+    _ = gate.receive()
+    n * 2
+}
+
 fn describe(event: Event): String {
     match event {
         Event.Message(some(text)) => "message {text}"
@@ -32,13 +38,16 @@ fn nap(n: Int): Int {
 
 fn main() {
     let (outbox, inbox) = channel[String](1)
-    let job = spawn slow(21)
+    let (open, gate) = channel[Bool](1)
+    let job = spawn held(21, gate)
     let first = select {
-        // The sleep wins: the job takes 30 milliseconds.
+        // The sleep wins on any machine, however late its timer: the job
+        // goes on only once the select is done.
         let message = inbox.receive() => Event.Message(message)
         let result = job.wait() => Event.Done(result)
         time.sleep(time.milliseconds(5)) => Event.Timeout
     }
+    open.close()
     console.println(describe(first))
     let second = select {
         outbox.send("hi") => Event.Sent
