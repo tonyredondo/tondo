@@ -283,7 +283,7 @@ in the `cum` column.
 | --- | --- |
 | `--cpu` | where processor time goes |
 | `--memory` | what is allocated, and what is held, by the line that made it |
-| `--tasks` | where the tasks are: thousands of them, grouped by stack |
+| `--tasks` | where the tasks are, at once or when `--duration` ends: thousands of them, grouped by stack |
 | `tondo profile -- <program>` | profiles a program from its start |
 | `tondo profile show <file> --lines` | by line instead of by function |
 | `tondo profile show <file> --asm` | the instructions of the hottest function, each with its share |
@@ -299,11 +299,12 @@ such a thread is: there the profiler signals each thread, and one of C's
 may get the signal as it ends. On Linux both have them.
 
 A profile of the tasks is a picture of one moment too, and the program
-stands still for the instant it is taken:
+stands still for the instant it is taken: at once for a program that runs,
+or when `--duration` ends:
 
 ```text
-$ tondo profile todo --tasks --duration 1 --output tasks.pb.gz --json
-{"duration_ms":1066,"ended":null,"format":"tondo-profile-0.1/1","kind":"tasks","lost":0,"ok":true,"profile":"tasks.pb.gz","samples":2,"stopped":true}
+$ tondo profile todo --tasks --output tasks.pb.gz --json
+{"duration_ms":82,"ended":null,"format":"tondo-profile-0.1/1","kind":"tasks","lost":0,"ok":true,"profile":"tasks.pb.gz","samples":2,"stopped":true}
 ```
 
 `stopped` says whether it did. A program that does not stop within its
@@ -315,6 +316,14 @@ wrote the file, `the program did not stop within its wait: tasks that were
 running are shown where the system had them`, and so does the tool
 `profile` of the MCP server, which gives `stopped` with each profile of
 tasks. Asking again is the way to a picture that names the program's lines.
+
+A program that `tondo profile` starts itself has only `main` at first, so
+its tasks need a moment to be named:
+
+```text
+$ tondo profile --tasks -- ./todo
+tondo: a program that has just started has only `main`: give `--duration <seconds>` to say when its tasks are to be seen, as `tondo profile --tasks --duration 1 -- <program>`
+```
 
 ## Everything at once: dump
 

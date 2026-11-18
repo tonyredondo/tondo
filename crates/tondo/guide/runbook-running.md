@@ -58,17 +58,18 @@ takes the time.
 ## Where it waits
 
 `profile` on a running program samples it for `duration` seconds: `cpu` where
-it computes, `memory` what it allocates, and `tasks` where its tasks wait,
-which is the one for a program that is slow without being busy.
+it computes and `memory` what it allocates. `tasks`, where its tasks wait, is
+the one for a program that is slow without being busy, and needs no
+`duration`: it is a picture of one moment, taken at once.
 
 ```mcp
-profile {"program": "<pid>", "kind": "tasks", "duration": 1}
+profile {"program": "<pid>", "kind": "tasks"}
 => mailer.to:8 in send
 ```
 
-The tasks are read at one moment, for which the program stands still an
-instant. When the result's `stopped` is false it did not in time, and a task
-that was running is shown where the system had it: ask again.
+The program stands still an instant for that picture. When the result's
+`stopped` is false it did not in time, and a task that was running is shown
+where the system had it: ask again.
 
 ## What changed between two moments
 
