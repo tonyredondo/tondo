@@ -8044,3 +8044,12 @@ Tony chose the names, `TONDO_CHECK_LIFETIMES`, `--no-lifetimes` and
 `[build] lifetimes = false`, and to rename outright, as Tondo has no
 users yet: the old names are not kept. Until loans land the switch turns
 off regions alone.
+
+## A profile of the tasks with no duration is taken at once
+
+`tondo profile --tasks` saw the tasks when `--duration` ended, and with
+none it waited for the program to end, when it has no tasks, and a server
+never does. Tony chose that a program that runs is seen at once, and that
+one the command starts asks for `--duration`, with what to write: as it
+starts it has only `main`, so a picture of that instant would show nothing
+of its tasks.

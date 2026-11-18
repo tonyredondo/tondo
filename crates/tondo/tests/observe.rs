@@ -148,6 +148,68 @@ fn main() {
 }
 "#;
 
+/// A program that waits, with a task that waits too, until a line comes.
+const WAITING: &str = r#"import std.console
+
+fn waits(stop: Receiver[Bool]) {
+    _ = stop.receive()
+}
+
+fn main() {
+    let (tell, stop) = channel[Bool](1)
+    let job = spawn waits(stop)
+    console.println("ready")
+    let _ = console.flush()
+    let _ = console.readLine()
+    tell.close()
+    job.wait()
+}
+"#;
+
+/// A profile of the tasks with no `--duration` shows those of a program
+/// that runs at once; for one the command starts, which has only `main`
+/// yet, it says to give one.
+#[test]
+fn a_tasks_profile_without_a_duration() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("tasks_at_once");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("waiting.to"), WAITING).unwrap();
+    let executable = dir.join("waiting");
+    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "waiting.to", "--output"])
+        .arg(&executable)
+        .current_dir(&dir)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let mut child = Started::new(
+        Command::new(&executable)
+            .env("TONDO_DIAGNOSTICS", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut line = String::new();
+    BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
+    assert_eq!(line, "ready\n");
+    let file = dir.join("now.pprof");
+    let pid = child.id().to_string();
+    tondo(&["profile", &pid, "--tasks", "--output", file.to_str().unwrap(), "--json"]);
+    let tasks = tondo(&["profile", "show", file.to_str().unwrap(), "--json"]);
+    assert_eq!(tasks["total"], 2, "{tasks}");
+    drop(child.stdin.take());
+    assert!(child.wait().unwrap().success());
+    let started = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["profile", "--tasks", "--", "waiting.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&started.stderr);
+    assert!(!started.status.success() && said.contains("give `--duration <seconds>`"), "{said}");
+}
+
 /// What regions hold shows beside the heap: the counters give the bytes
 /// regions hold now and the values they made, and a dump what they hold
 /// by site, sampled.

@@ -123,6 +123,17 @@ pub fn profile(
     as_json: bool,
 ) -> Result<(), String> {
     kind.here("--cpu")?;
+    // Where the tasks are with no `--duration`: at once in a program that
+    // runs; one this command starts has only `main` yet.
+    let duration = match (kind, duration, &traced) {
+        (Kind::Tasks, None, Traced::Running(_)) => Some(Duration::ZERO),
+        (Kind::Tasks, None, Traced::Started(..)) => {
+            return Err("a program that has just started has only `main`: give `--duration <seconds>` to say when \
+                        its tasks are to be seen, as `tondo profile --tasks --duration 1 -- <program>`"
+                .into());
+        }
+        _ => duration,
+    };
     let ask = match kind {
         Kind::Cpu | Kind::Instructions => None,
         Kind::Memory => Some("memory"),

@@ -2314,7 +2314,9 @@ instrucciones, qué memoria asigna y retiene, o dónde están sus tareas, nombra
   cada pila desde que empezó a muestrear, al terminar `--duration` o
   Ctrl-C, o al acabar el programa. Cada muestra cuenta como las
   asignaciones y bytes que representa, `1 / (1 − e^(−n / 512 KiB))` de ellas.
-- `--tasks`: dónde está cada tarea, como en `dump`, al terminar `--duration`.
+- `--tasks`: dónde está cada tarea, como en `dump`, al terminar `--duration`, o
+  en cuanto se pide sin él en un programa que ya corre; uno que arranca la
+  orden pide `--duration`, pues al empezar solo tiene `main`.
 
 Escribe el perfil en el formato de pprof (`profile.proto`), comprimido con
 gzip, en `<output>` o en `<programa>-<pid>.<cpu|instructions|memory|tasks>.pprof`, que
