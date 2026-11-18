@@ -96,7 +96,7 @@ fn said() -> String {
 }
 
 fn text(value: *const Str) -> String {
-    String::from_utf8_lossy(unsafe { str_bytes(value) }).into_owned()
+    String::from_utf8_lossy(unsafe { str_bytes(&value) }).into_owned()
 }
 
 /// `open`: the library at `path`, with its symbols bound now, and offered

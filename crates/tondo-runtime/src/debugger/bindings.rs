@@ -146,7 +146,7 @@ pub(super) fn shown_here(glue: Show, address: usize) -> String {
     let mut builder = crate::Builder::new(0);
     unsafe { glue(&mut builder, address as *const u8) };
     let text = builder.finish();
-    let shown = String::from_utf8_lossy(unsafe { str_bytes(text) }).into_owned();
+    let shown = String::from_utf8_lossy(unsafe { str_bytes(&text) }).into_owned();
     unsafe { crate::tondo_rt_str_release(text) };
     SHOWING.set(before);
     shown

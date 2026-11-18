@@ -47,7 +47,7 @@ pub(crate) fn on() -> bool {
 fn place(location: *const Str) -> String {
     match location.is_null() {
         true => "somewhere".to_string(),
-        false => String::from_utf8_lossy(unsafe { super::str_bytes(location) }).into_owned(),
+        false => String::from_utf8_lossy(unsafe { super::str_bytes(&location) }).into_owned(),
     }
 }
 

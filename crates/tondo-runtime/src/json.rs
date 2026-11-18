@@ -83,7 +83,7 @@ impl Input {
     /// A string, held, not copied: one shared is never changed in place.
     fn held(text: *mut Str) -> Input {
         unsafe { super::tondo_rt_str_retain(text) };
-        let bytes = unsafe { str_bytes(text) };
+        let bytes = unsafe { str_bytes(&text) };
         Input { at: bytes.as_ptr(), len: bytes.len(), owned: Vec::new(), held: text }
     }
 
@@ -825,7 +825,7 @@ pub unsafe extern "C" fn tondo_rt_json_field(
     }
     let count = unsafe { (*names).len };
     for index in 0..count {
-        let name = unsafe { str_bytes(*(crate::element(names, 8, index) as *const *const Str)) };
+        let name = unsafe { str_bytes(&*(crate::element(names, 8, index) as *const *const Str)) };
         if name == r.text.as_bytes() {
             return index as i64;
         }
@@ -868,7 +868,7 @@ pub unsafe extern "C" fn tondo_rt_json_raw(
 /// Records a failure the caller found at the current position.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_fail(object: *mut ReaderObject, message: *const Str) {
-    let message = String::from_utf8_lossy(unsafe { str_bytes(message) }).into_owned();
+    let message = String::from_utf8_lossy(unsafe { str_bytes(&message) }).into_owned();
     reader(object).fail(message);
 }
 
@@ -1353,14 +1353,14 @@ impl std::fmt::Write for Short {
 /// a double, as RFC 8785 requires.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_write_number(object: *mut WriterObject, text: *const Str) {
-    let text = unsafe { str_text(text) };
+    let text = unsafe { str_text(&text) };
     let mut w = writer(object);
     if w.canonical { w.leaf(float_text(text.parse().unwrap_or(f64::NAN))) } else { w.leaf_text(text) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_write_string(object: *mut WriterObject, text: *const Str) {
-    let text = unsafe { str_text(text) };
+    let text = unsafe { str_text(&text) };
     let mut w = writer(object);
     if w.canonical {
         let mut quoted = String::new();
@@ -1375,7 +1375,7 @@ pub unsafe extern "C" fn tondo_rt_json_write_string(object: *mut WriterObject, t
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_write_key(object: *mut WriterObject, text: *const Str) {
-    writer(object).key(unsafe { str_text(text) });
+    writer(object).key(unsafe { str_text(&text) });
 }
 
 /// Opens (`begin` 1) or closes an object (`object` 1) or an array.
@@ -1433,7 +1433,7 @@ pub unsafe extern "C" fn tondo_rt_json_writer_release(object: *mut WriterObject)
 pub unsafe extern "C" fn tondo_rt_json_write_raw(object: *mut WriterObject, text: *const Str) {
     let mut w = writer(object);
     if !w.canonical {
-        return w.leaf_text(unsafe { str_text(text) });
+        return w.leaf_text(unsafe { str_text(&text) });
     }
     // Replayed event by event, so that keys sort and numbers normalize.
     let mut r = Reader::new(Input::held(text as *mut Str), None, true);
@@ -1467,17 +1467,17 @@ pub unsafe extern "C" fn tondo_rt_json_write_raw(object: *mut WriterObject, text
 /// `jsonnative.isInt(text)`: whether a JSON number is an `Int`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_is_int(text: *const Str) -> u8 {
-    unsafe { str_text(text) }.parse::<i64>().is_ok() as u8
+    unsafe { str_text(&text) }.parse::<i64>().is_ok() as u8
 }
 
 /// `jsonnative.parseInt(text)`, of a number `isInt` accepts.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_parse_int(text: *const Str) -> i64 {
-    unsafe { str_text(text) }.parse().unwrap_or(0)
+    unsafe { str_text(&text) }.parse().unwrap_or(0)
 }
 
 /// `jsonnative.parseFloat(text)`: the nearest `Float`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_json_parse_float(text: *const Str) -> f64 {
-    unsafe { str_text(text) }.parse().unwrap_or(f64::NAN)
+    unsafe { str_text(&text) }.parse().unwrap_or(f64::NAN)
 }

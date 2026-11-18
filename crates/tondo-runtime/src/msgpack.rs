@@ -487,7 +487,7 @@ pub(crate) fn next_field<E>(
         _ => return (ERROR, Some("expected a key".into())),
     }
     let key = text(event);
-    if let Some(index) = names.iter().position(|&name| unsafe { str_text(name) } == key) {
+    if let Some(index) = names.iter().position(|&name| unsafe { str_text(&name) } == key) {
         return (index as i64, None);
     }
     let Some(first) = events.get(*read).map(&code) else { return ended() };
@@ -514,7 +514,7 @@ pub(crate) fn next_field<E>(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_msgpack_fail(object: *mut NativeObject, message: *const Str) {
     if let Some(mut reader) = reader(object) {
-        fail(&mut reader, unsafe { str_text(message) }.to_owned());
+        fail(&mut reader, unsafe { str_text(&message) }.to_owned());
     }
 }
 
@@ -665,7 +665,7 @@ pub extern "C" fn tondo_rt_msgpack_write_int(object: *mut NativeObject, value: i
 /// none, and writing fails. A float when the digits are not an integer's.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_msgpack_write_number(object: *mut NativeObject, digits: *const Str) {
-    let text = String::from_utf8_lossy(unsafe { crate::str_bytes(digits) }).into_owned();
+    let text = String::from_utf8_lossy(unsafe { crate::str_bytes(&digits) }).into_owned();
     match crate::numbers::integer_digits(&text) {
         Some((false, magnitude)) if magnitude <= u64::MAX as u128 => write(object, |out| {
             let _ = rmp::encode::write_uint(out, magnitude as u64);
@@ -696,7 +696,7 @@ pub extern "C" fn tondo_rt_msgpack_write_float(object: *mut NativeObject, value:
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_msgpack_write_text(object: *mut NativeObject, value: *const Str) {
-    let value = unsafe { str_text(value) };
+    let value = unsafe { str_text(&value) };
     write(object, |out| {
         let _ = rmp::encode::write_str(out, value);
     });
@@ -713,7 +713,7 @@ pub extern "C" fn tondo_rt_msgpack_write_bytes(object: *mut NativeObject, value:
 /// A date and time as a timestamp extension, in its shortest form.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_msgpack_write_datetime(object: *mut NativeObject, value: *const Str) {
-    let value = unsafe { str_text(value) };
+    let value = unsafe { str_text(&value) };
     let Some((seconds, nanos)) = crate::civil::parse(value) else {
         if let Some(mut writer) = writer(object) {
             writer.fail(format!("`{value}` is not a date and time"));
@@ -737,7 +737,7 @@ pub unsafe extern "C" fn tondo_rt_msgpack_write_datetime(object: *mut NativeObje
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_msgpack_write_key(object: *mut NativeObject, key: *const Str) {
-    let key = unsafe { str_text(key) };
+    let key = unsafe { str_text(&key) };
     let Some(mut writer) = writer(object) else { return };
     match writer.open.last_mut() {
         Some(open) if open.map && !open.keyed => open.keyed = true,

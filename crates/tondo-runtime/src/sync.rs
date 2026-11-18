@@ -334,7 +334,7 @@ fn reentrant(o: &SyncObject, task: *mut Task, exclusive: bool, location: *const 
         how(exclusive)
     );
     if !taken.is_null() {
-        message.push_str(&format!(": it took it at {}", String::from_utf8_lossy(unsafe { super::str_bytes(taken) })));
+        message.push_str(&format!(": it took it at {}", String::from_utf8_lossy(unsafe { super::str_bytes(&taken) })));
     }
     // A `recover` stops it: the code unwinds and lets the lock go.
     super::raise(14, &message, location);

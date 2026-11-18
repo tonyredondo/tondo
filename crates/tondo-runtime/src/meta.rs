@@ -46,7 +46,7 @@ pub extern "C" fn tondo_rt_meta_request(region: *mut crate::regions::Region) -> 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_meta_respond(text: *const Str) {
     if let Some(path) = &config().meta_response {
-        let _ = std::fs::write(path, unsafe { str_bytes(text) });
+        let _ = std::fs::write(path, unsafe { str_bytes(&text) });
     }
 }
 
@@ -56,7 +56,7 @@ pub unsafe extern "C" fn tondo_rt_meta_bytes(
     hex: *const Str,
     region: *mut crate::regions::Region,
 ) -> *mut super::ArrayHeader {
-    let hex = unsafe { str_bytes(hex) };
+    let hex = unsafe { str_bytes(&hex) };
     let bytes: Vec<u8> = hex
         .chunks(2)
         .filter_map(|pair| std::str::from_utf8(pair).ok().and_then(|p| u8::from_str_radix(p, 16).ok()))

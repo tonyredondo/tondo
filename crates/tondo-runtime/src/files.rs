@@ -12,7 +12,7 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsE
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-fn text<'a>(s: *const Str) -> &'a str {
+fn text<'a>(s: &'a *const Str) -> &'a str {
     unsafe { crate::str_text(s) }
 }
 
@@ -150,7 +150,7 @@ fn kind(file: std::fs::FileType) -> i64 {
 /// the hard links and the ids of the owner and the group.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_files_stat(path: *const Str) -> *mut NativeObject {
-    let path = text(path).to_string();
+    let path = text(&path).to_string();
     done(move || {
         let metadata = io(std::fs::symlink_metadata(path))?;
         let size = i64::try_from(metadata.len()).map_err(|_| 8)?;
@@ -219,7 +219,7 @@ fn walk(root: &str, depth: Option<usize>, skip: bool, out: &mut Vec<(String, i64
 /// when it is negative.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_files_walk(root: *const Str, depth: i64, skip: u8) -> *mut NativeObject {
-    let root = text(root).to_string();
+    let root = text(&root).to_string();
     done(move || {
         let mut entries = Vec::new();
         walk(&root, usize::try_from(depth).ok(), skip != 0, &mut entries)?;
@@ -238,7 +238,7 @@ pub unsafe extern "C" fn tondo_rt_files_temporary(
     place: *const Str,
     pattern: *const Str,
 ) -> *mut NativeObject {
-    let (place, pattern) = (text(place).to_string(), text(pattern).to_string());
+    let (place, pattern) = (text(&place).to_string(), text(&pattern).to_string());
     done(move || {
         let base = if place.is_empty() { std::env::temp_dir() } else { PathBuf::from(place) };
         let pattern = if pattern.is_empty() { "tondo-*".to_string() } else { pattern };
@@ -268,7 +268,7 @@ pub unsafe extern "C" fn tondo_rt_files_temporary(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_files_set_permissions(path: *const Str, mode: i64) -> *mut NativeObject {
-    let path = text(path).to_string();
+    let path = text(&path).to_string();
     done(move || {
         io(std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode as u32 & 0o7777)))?;
         Ok(Done::default())
@@ -277,7 +277,7 @@ pub unsafe extern "C" fn tondo_rt_files_set_permissions(path: *const Str, mode: 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_files_symlink(target: *const Str, link: *const Str) -> *mut NativeObject {
-    let (target, link) = (text(target).to_string(), text(link).to_string());
+    let (target, link) = (text(&target).to_string(), text(&link).to_string());
     done(move || {
         io(std::os::unix::fs::symlink(target, link))?;
         Ok(Done::default())
@@ -287,7 +287,7 @@ pub unsafe extern "C" fn tondo_rt_files_symlink(target: *const Str, link: *const
 /// `fs.createLink`: a hard link.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_files_link(target: *const Str, link: *const Str) -> *mut NativeObject {
-    let (target, link) = (text(target).to_string(), text(link).to_string());
+    let (target, link) = (text(&target).to_string(), text(&link).to_string());
     done(move || {
         io(std::fs::hard_link(target, link))?;
         Ok(Done::default())
@@ -298,7 +298,7 @@ pub unsafe extern "C" fn tondo_rt_files_link(target: *const Str, link: *const St
 /// content.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_files_set_modified(path: *const Str, nanos: i64) -> *mut NativeObject {
-    let path = text(path).to_string();
+    let path = text(&path).to_string();
     done(move || {
         let since = std::time::Duration::from_nanos(nanos.unsigned_abs());
         let at = if nanos >= 0 { std::time::UNIX_EPOCH + since } else { std::time::UNIX_EPOCH - since };
@@ -312,7 +312,7 @@ pub unsafe extern "C" fn tondo_rt_files_set_modified(path: *const Str, nanos: i6
 /// those free that the program may use.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_files_space(path: *const Str) -> *mut NativeObject {
-    let path = text(path).to_string();
+    let path = text(&path).to_string();
     done(move || {
         let named = std::ffi::CString::new(path).map_err(|_| INVALID_NAME)?;
         let mut found: libc::statvfs = unsafe { std::mem::zeroed() };
@@ -327,13 +327,13 @@ pub unsafe extern "C" fn tondo_rt_files_space(path: *const Str) -> *mut NativeOb
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_files_read_symlink(path: *const Str) -> *mut NativeObject {
-    let path = text(path).to_string();
+    let path = text(&path).to_string();
     done(move || Ok(texts(vec![utf8(io(std::fs::read_link(path))?)?])))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_files_real_path(path: *const Str) -> *mut NativeObject {
-    let path = text(path).to_string();
+    let path = text(&path).to_string();
     done(move || Ok(texts(vec![utf8(io(std::fs::canonicalize(path))?)?])))
 }
 

@@ -86,13 +86,13 @@ pub unsafe extern "C" fn tondo_rt_reflect_name(
     object: *const BoxObject,
     region: *mut crate::regions::Region,
 ) -> *mut Str {
-    crate::strings::str_in(region, unsafe { str_bytes((*(*object).identity).name) })
+    crate::strings::str_in(region, unsafe { str_bytes(&(*(*object).identity).name) })
 }
 
 /// The index a path segment names, or `-1` when it is not one.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_reflect_index(text: *const Str) -> i64 {
-    let text = unsafe { str_bytes(text) };
+    let text = unsafe { str_bytes(&text) };
     if text.is_empty() || !text.iter().all(u8::is_ascii_digit) || (text.len() > 1 && text[0] == b'0') {
         return -1;
     }
@@ -102,6 +102,6 @@ pub unsafe extern "C" fn tondo_rt_reflect_index(text: *const Str) -> i64 {
 /// A string as a quoted literal, for a string inside a composite value.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_reflect_quote(text: *const Str, region: *mut crate::regions::Region) -> *mut Str {
-    let text = String::from_utf8_lossy(unsafe { str_bytes(text) });
+    let text = String::from_utf8_lossy(unsafe { str_bytes(&text) });
     crate::strings::str_in(region, format!("{text:?}").as_bytes())
 }

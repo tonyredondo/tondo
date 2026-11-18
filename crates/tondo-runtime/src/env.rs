@@ -89,7 +89,7 @@ pub(crate) fn arguments() -> &'static [OsString] {
 /// `env.get(name)`: null for none.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_env_get(name: *const Str, region: *mut crate::regions::Region) -> *mut Str {
-    let name = unsafe { str_bytes(name) };
+    let name = unsafe { str_bytes(&name) };
     table().as_ref().unwrap().get(name).map_or(std::ptr::null_mut(), |value| text(region, value))
 }
 
@@ -116,7 +116,7 @@ pub unsafe extern "C" fn tondo_rt_env_vars(glue: *const MapGlue) -> *mut MapObje
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_env_set(name: *const Str, value: *const Str, location: *const Str) {
-    let (name, value) = unsafe { (str_bytes(name), str_bytes(value)) };
+    let (name, value) = unsafe { (str_bytes(&name), str_bytes(&value)) };
     if check(name, value, location) {
         table().as_mut().unwrap().insert(name.to_vec(), value.to_vec());
     }
@@ -129,7 +129,7 @@ pub unsafe extern "C" fn tondo_rt_env_set_all(values: *mut MapObject, location: 
     let entries: Vec<(Vec<u8>, Vec<u8>)> = (0..unsafe { super::tondo_rt_map_len(values) })
         .map(|index| unsafe {
             let entry = super::tondo_rt_map_entry(values, index) as *const *const Str;
-            (str_bytes(*entry).to_vec(), str_bytes(*entry.add(1)).to_vec())
+            (str_bytes(&*entry).to_vec(), str_bytes(&*entry.add(1)).to_vec())
         })
         .collect();
     if entries.iter().all(|(name, value)| check(name, value, location)) {
@@ -139,7 +139,7 @@ pub unsafe extern "C" fn tondo_rt_env_set_all(values: *mut MapObject, location: 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_env_remove(name: *const Str, location: *const Str) {
-    let name = unsafe { str_bytes(name) };
+    let name = unsafe { str_bytes(&name) };
     if check(name, b"", location) {
         table().as_mut().unwrap().remove(name);
     }
@@ -278,7 +278,7 @@ pub extern "C" fn tondo_rt_env_target(region: *mut crate::regions::Region) -> *m
 /// `env.setCurrentDirectory(path)`: 0, or 1 plus the `EnvError` variant.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_env_set_current_directory(path: *const Str) -> i64 {
-    let path = std::ffi::OsStr::from_bytes(unsafe { str_bytes(path) }).to_owned();
+    let path = std::ffi::OsStr::from_bytes(unsafe { str_bytes(&path) }).to_owned();
     let changed = super::io::host(false, move || std::env::set_current_dir(path));
     match changed {
         Ok(()) => 0,

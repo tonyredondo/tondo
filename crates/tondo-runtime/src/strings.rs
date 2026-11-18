@@ -147,8 +147,29 @@ impl RegionPieces {
 }
 
 /// The bytes of a string. The caller keeps the string alive.
-pub unsafe fn str_bytes<'a>(s: *const Str) -> &'a [u8] {
-    unsafe { std::slice::from_raw_parts((s as *const u8).add(HEADER), (*s).len) }
+pub unsafe fn str_bytes<'a>(s: &'a impl Word) -> &'a [u8] {
+    let word = s.word();
+    unsafe { std::slice::from_raw_parts((word as *const u8).add(HEADER), (*word).len) }
+}
+
+/// Where a text's word is: what its bytes are read through, so that they
+/// live as long as it, as a short text's live in the word itself.
+pub trait Word {
+    fn word(&self) -> *const Str;
+}
+
+impl Word for *const Str {
+    #[inline(always)]
+    fn word(&self) -> *const Str {
+        *self
+    }
+}
+
+impl Word for *mut Str {
+    #[inline(always)]
+    fn word(&self) -> *const Str {
+        *self
+    }
 }
 
 /// The `rc` of a piece of a block, beside how far before it the block
@@ -556,7 +577,7 @@ pub(crate) fn scalars(bytes: &[u8]) -> usize {
 
 /// The byte where the scalar at `index` starts, or `None` past the end.
 pub(crate) unsafe fn scalar_offset(s: *const Str, index: usize) -> Option<usize> {
-    let text = unsafe { str_text(s) };
+    let text = unsafe { str_text(&s) };
     let bytes = text.as_bytes();
     if bytes.len() < POSITIONED_FROM {
         return text.char_indices().nth(index).map(|(offset, _)| offset);
@@ -604,7 +625,7 @@ pub(crate) unsafe fn scalar_offset(s: *const Str, index: usize) -> Option<usize>
 
 /// The number of scalars, from the string's slot when it has one.
 pub(crate) unsafe fn scalar_count(s: *const Str) -> usize {
-    let bytes = unsafe { str_bytes(s) };
+    let bytes = unsafe { str_bytes(&s) };
     if bytes.len() >= POSITIONED_FROM && POSITIONED[position_slot(s)].load(Ordering::Relaxed) == s as usize {
         let held = POSITIONS[position_slot(s)].lock().unwrap_or_else(|e| e.into_inner());
         if let Some(positions) = held.as_ref().filter(|p| p.text == s as usize && p.len == bytes.len()) {
@@ -631,17 +652,17 @@ pub(crate) fn dropped(rc: &AtomicUsize) -> usize {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_eq(a: *const Str, b: *const Str) -> u8 {
-    unsafe { (str_bytes(a) == str_bytes(b)) as u8 }
+    unsafe { (str_bytes(&a) == str_bytes(&b)) as u8 }
 }
 
 /// Orders strings by Unicode scalar values; for UTF-8 this is byte order.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_cmp(a: *const Str, b: *const Str) -> i32 {
-    unsafe { str_bytes(a).cmp(str_bytes(b)) as i32 }
+    unsafe { str_bytes(&a).cmp(str_bytes(&b)) as i32 }
 }
 
 /// The text of a string; strings always hold valid UTF-8.
-pub(crate) unsafe fn str_text<'a>(s: *const Str) -> &'a str {
+pub(crate) unsafe fn str_text<'a>(s: &'a impl Word) -> &'a str {
     unsafe { std::str::from_utf8_unchecked(str_bytes(s)) }
 }
 
@@ -654,7 +675,7 @@ pub unsafe extern "C" fn tondo_rt_str_length(s: *const Str) -> i64 {
 /// The scalar at `index`, counting from the end when negative, or -1.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_get(s: *const Str, index: i64) -> i64 {
-    let text = unsafe { str_text(s) };
+    let text = unsafe { str_text(&s) };
     let index = if index >= 0 {
         index as usize
     } else {
@@ -697,7 +718,7 @@ pub unsafe extern "C" fn tondo_rt_str_slice(
     region: *mut super::regions::Region,
 ) -> *mut Str {
     unsafe {
-        let text = str_text(s);
+        let text = str_text(&s);
         let (first, count) = slice_range(scalar_count(s), start, has_start, end, has_end, step, location);
         // A run of scalars is the bytes between where they start.
         if step == 1 {
@@ -714,7 +735,7 @@ pub unsafe extern "C" fn tondo_rt_str_slice(
 /// `contains` (0), `startsWith` (1) or `endsWith` (2).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_test(s: *const Str, other: *const Str, test: u32) -> u8 {
-    let (text, other) = unsafe { (str_bytes(s), str_bytes(other)) };
+    let (text, other) = unsafe { (str_bytes(&s), str_bytes(&other)) };
     (match test {
         0 => find(text, other).is_some(),
         1 => text.starts_with(other),
@@ -725,7 +746,7 @@ pub unsafe extern "C" fn tondo_rt_str_test(s: *const Str, other: *const Str, tes
 /// The scalar position of the first occurrence of `needle`, or -1.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_find(s: *const Str, needle: *const Str) -> i64 {
-    let (text, needle) = unsafe { (str_text(s), str_bytes(needle)) };
+    let (text, needle) = unsafe { (str_text(&s), str_bytes(&needle)) };
     find(text.as_bytes(), needle).map_or(-1, |offset| text[..offset].chars().count() as i64)
 }
 
@@ -752,7 +773,7 @@ pub unsafe extern "C" fn tondo_rt_str_replace(
     new: *const Str,
     region: *mut super::regions::Region,
 ) -> *mut Str {
-    let (s, old, new) = unsafe { (str_text(s), str_text(old), str_text(new)) };
+    let (s, old, new) = unsafe { (str_text(&s), str_text(&old), str_text(&new)) };
     REPLACING.with_borrow_mut(|out| {
         out.clear();
         let mut last = 0;
@@ -790,7 +811,7 @@ pub unsafe extern "C" fn tondo_rt_str_transform(
     region: *mut super::regions::Region,
 ) -> *mut Str {
     // The copy changed in place: no text of Rust's between.
-    let copy = str_in(region, unsafe { str_bytes(s) });
+    let copy = str_in(region, unsafe { str_bytes(&s) });
     let len = unsafe { (*copy).len };
     if len > 0 {
         let bytes = unsafe { std::slice::from_raw_parts_mut((copy as *mut u8).add(HEADER), len) };
@@ -820,7 +841,7 @@ pub unsafe extern "C" fn tondo_rt_str_slice_checked(
             1
         } else {
             // A run of scalars is the bytes between where they start.
-            let bytes = str_bytes(s);
+            let bytes = str_bytes(&s);
             let from = scalar_offset(s, start as usize).unwrap_or(bytes.len());
             let to = scalar_offset(s, end as usize).unwrap_or(bytes.len());
             *error = -1;
@@ -841,7 +862,7 @@ pub unsafe extern "C" fn tondo_rt_str_copy_out(s: *mut Str, region: *mut super::
     if s.is_null() || unsafe { (*s).rc.load(Ordering::Relaxed) } == IMMORTAL {
         return s;
     }
-    let copy = str_in(region, unsafe { str_bytes(s) });
+    let copy = str_in(region, unsafe { str_bytes(&s) });
     unsafe { tondo_rt_str_release(s) };
     copy
 }
@@ -865,5 +886,5 @@ pub unsafe extern "C" fn tondo_rt_str_from_chars(
 /// offsets.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_decode(s: *const Str, offset: i64) -> u32 {
-    unsafe { str_text(s).get_unchecked(offset as usize..) }.chars().next().map_or(0, |c| c as u32)
+    unsafe { str_text(&s).get_unchecked(offset as usize..) }.chars().next().map_or(0, |c| c as u32)
 }

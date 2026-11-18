@@ -20,7 +20,7 @@ pub unsafe extern "C" fn tondo_rt_cpu(needed: *mut Str) {
     NEEDED.store(needed, Ordering::Relaxed);
     let found = features().iter().enumerate().fold(0, |mask, (bit, &has)| mask | (u64::from(has) << bit));
     FEATURES.store(found, Ordering::Relaxed);
-    let text = String::from_utf8_lossy(unsafe { str_bytes(needed) }).into_owned();
+    let text = String::from_utf8_lossy(unsafe { str_bytes(&needed) }).into_owned();
     let mut lines = text.lines();
     let level = lines.next().unwrap_or_default();
     let lacking: Vec<&str> = lines.filter(|name| !detected(name)).map(shown).collect();
@@ -50,7 +50,7 @@ pub static VERSIONS: AtomicU8 = AtomicU8::new(0);
 /// the build's level, as a processor without it would.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_cpu_versions(needed: *mut Str) {
-    let text = String::from_utf8_lossy(unsafe { str_bytes(needed) }).into_owned();
+    let text = String::from_utf8_lossy(unsafe { str_bytes(&needed) }).into_owned();
     let off = crate::config::config().versions.as_ref().is_some_and(|value| value == "0");
     let has = text.lines().skip(1).all(detected);
     VERSIONS.store(u8::from(has && !off), Ordering::Relaxed);
@@ -115,7 +115,7 @@ fn features() -> [bool; 23] {
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_env_cpu(region: *mut crate::regions::Region) -> *mut Str {
     let needed = NEEDED.load(Ordering::Relaxed);
-    let text = if needed.is_null() { &[][..] } else { unsafe { str_bytes(needed) } };
+    let text = if needed.is_null() { &[][..] } else { unsafe { str_bytes(&needed) } };
     crate::strings::str_in(region, text.split(|&b| b == b'\n').next().unwrap_or_default())
 }
 

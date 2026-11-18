@@ -73,7 +73,7 @@ pub extern "C" fn tondo_rt_source_roots(text: *mut super::Str) {
 pub(crate) fn roots() -> String {
     match ROOTS.load(Ordering::Relaxed) {
         text if text.is_null() => String::new(),
-        text => String::from_utf8_lossy(unsafe { super::str_bytes(text) }).into_owned(),
+        text => String::from_utf8_lossy(unsafe { super::str_bytes(&text) }).into_owned(),
     }
 }
 
@@ -521,7 +521,7 @@ static METRICS: Mutex<Vec<&'static Metric>> = Mutex::new(Vec::new());
 /// time; 0 when the name is the other kind's.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_metric(name: *const Str, kind: i64) -> i64 {
-    let name = String::from_utf8_lossy(unsafe { super::str_bytes(name) }).into_owned();
+    let name = String::from_utf8_lossy(unsafe { super::str_bytes(&name) }).into_owned();
     let gauge = kind == 1;
     let mut metrics = METRICS.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(metric) = metrics.iter().find(|m| m.name == name) {

@@ -445,7 +445,7 @@ pub extern "C" fn tondo_rt_cbor_skip(object: *mut NativeObject, code: i64) -> i6
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_cbor_fail(object: *mut NativeObject, message: *const Str) {
     if let Some(mut reader) = reader(object) {
-        fail(&mut reader, unsafe { str_text(message) }.to_owned());
+        fail(&mut reader, unsafe { str_text(&message) }.to_owned());
     }
 }
 
@@ -505,7 +505,7 @@ fn negative(n: u128) -> String {
 /// digits are not an integer's. Whether it could.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_cbor_write_number(object: *mut NativeObject, digits: *const Str) {
-    let text = String::from_utf8_lossy(unsafe { str_bytes(digits) }).into_owned();
+    let text = String::from_utf8_lossy(unsafe { str_bytes(&digits) }).into_owned();
     let Some((negative, magnitude)) = crate::numbers::integer_digits(&text) else {
         let value = crate::text::parse_float(&text).unwrap_or(0.0);
         return write(object, |out| float(out, value));
@@ -676,7 +676,7 @@ pub extern "C" fn tondo_rt_cbor_write_float(object: *mut NativeObject, value: f6
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_cbor_write_text(object: *mut NativeObject, value: *const Str) {
-    let value = unsafe { str_bytes(value) };
+    let value = unsafe { str_bytes(&value) };
     write(object, |out| {
         head(out, 3, value.len() as u64);
         out.extend_from_slice(value);
@@ -695,7 +695,7 @@ pub extern "C" fn tondo_rt_cbor_write_bytes(object: *mut NativeObject, value: *m
 /// A date and time as tag 0 and its RFC 3339 text.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_cbor_write_datetime(object: *mut NativeObject, value: *const Str) {
-    let value = unsafe { str_text(value) };
+    let value = unsafe { str_text(&value) };
     let Some((seconds, nanos)) = crate::civil::parse(value) else {
         if let Some(mut writer) = writer(object) {
             writer.fail(format!("`{value}` is not a date and time"));
@@ -712,7 +712,7 @@ pub unsafe extern "C" fn tondo_rt_cbor_write_datetime(object: *mut NativeObject,
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_cbor_write_key(object: *mut NativeObject, key: *const Str) {
-    let key = unsafe { str_bytes(key) };
+    let key = unsafe { str_bytes(&key) };
     let Some(mut writer) = writer(object) else { return };
     let mut encoded = Vec::new();
     head(&mut encoded, 3, key.len() as u64);

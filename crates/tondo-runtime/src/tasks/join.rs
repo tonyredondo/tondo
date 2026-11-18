@@ -133,7 +133,7 @@ pub(crate) fn unread_failures() -> Vec<(u64, Vec<usize>, String)> {
                     let mut builder = crate::Builder::new(0);
                     show(&mut builder, (*join).result);
                     let text = builder.finish();
-                    let whole = String::from_utf8_lossy(crate::str_bytes(text)).into_owned();
+                    let whole = String::from_utf8_lossy(crate::str_bytes(&text)).into_owned();
                     crate::tondo_rt_str_release(text);
                     whole
                 },

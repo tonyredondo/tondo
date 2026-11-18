@@ -6,7 +6,7 @@ use super::{ArrayHeader, Str, element};
 use crate::regions::Region;
 use crate::strings::{Pieces, RegionPieces, str_in};
 
-fn text<'a>(s: *const Str) -> &'a str {
+fn text<'a>(s: &'a *const Str) -> &'a str {
     unsafe { super::str_text(s) }
 }
 
@@ -66,7 +66,7 @@ pub unsafe extern "C" fn tondo_rt_text_split(
     limit: i64,
     region: *mut Region,
 ) -> *mut ArrayHeader {
-    let (s, separator) = (text(s), text(separator));
+    let (s, separator) = (text(&s), text(&separator));
     let limit = usize::try_from(limit).ok().filter(|&limit| limit > 0);
     if separator.is_empty() || limit.is_some() {
         return split_rarely(s, separator, limit, region);
@@ -134,7 +134,7 @@ fn split_rarely(s: &str, separator: &str, limit: Option<usize>, region: *mut Reg
 /// The scalar that starts at a byte offset of a string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_scalar_at(s: *const Str, offset: i64) -> u32 {
-    let rest = text(s).get(offset.max(0) as usize..).unwrap_or_default();
+    let rest = text(&s).get(offset.max(0) as usize..).unwrap_or_default();
     rest.chars().next().map_or(0xFFFD, |c| c as u32)
 }
 
@@ -142,41 +142,41 @@ pub unsafe extern "C" fn tondo_rt_text_scalar_at(s: *const Str, offset: i64) -> 
 /// place.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_byte_at(s: *const Str, offset: i64) -> i64 {
-    text(s).as_bytes().get(usize::try_from(offset).unwrap_or(usize::MAX)).map_or(256, |&byte| i64::from(byte))
+    text(&s).as_bytes().get(usize::try_from(offset).unwrap_or(usize::MAX)).map_or(256, |&byte| i64::from(byte))
 }
 
 /// The text between two byte offsets that start characters; empty when
 /// they do not.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_between(s: *const Str, start: i64, end: i64, region: *mut Region) -> *mut Str {
-    str_in(region, text(s).get(start.max(0) as usize..end.max(0) as usize).unwrap_or_default().as_bytes())
+    str_in(region, text(&s).get(start.max(0) as usize..end.max(0) as usize).unwrap_or_default().as_bytes())
 }
 
 /// The byte offset of the first `needle` between two byte offsets, or -1.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_find_in(s: *const Str, needle: *const Str, from: i64, to: i64) -> i64 {
     let from = from.max(0) as usize;
-    let found = text(s).get(from..to.max(0) as usize).and_then(|part| part.find(text(needle)));
+    let found = text(&s).get(from..to.max(0) as usize).and_then(|part| part.find(text(&needle)));
     found.map_or(-1, |at| (from + at) as i64)
 }
 
 /// The lines, without their `\n` or `\r\n`; no last empty line.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_lines(s: *const Str, region: *mut Region) -> *mut ArrayHeader {
-    let s = text(s);
+    let s = text(&s);
     strings(s, s.lines(), region)
 }
 
 /// The pieces between runs of Unicode whitespace.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_words(s: *const Str, region: *mut Region) -> *mut ArrayHeader {
-    let s = text(s);
+    let s = text(&s);
     strings(s, s.split_whitespace(), region)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_repeat(s: *const Str, count: i64, region: *mut Region) -> *mut Str {
-    str_in(region, text(s).repeat(count.max(0) as usize).as_bytes())
+    str_in(region, text(&s).repeat(count.max(0) as usize).as_bytes())
 }
 
 /// The text without whitespace, or without the scalars of `characters`
@@ -190,7 +190,7 @@ pub unsafe extern "C" fn tondo_rt_text_trim(
     ends: i64,
     region: *mut Region,
 ) -> *mut Str {
-    let (s, characters) = (text(s), text(characters));
+    let (s, characters) = (text(&s), text(&characters));
     let kept = match whitespace != 0 {
         true => without_whitespace(s, ends),
         false => {
@@ -210,7 +210,7 @@ pub unsafe extern "C" fn tondo_rt_text_trim(
 /// ends alone tell.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_untrimmed(s: *const Str, ends: i64) -> u8 {
-    let s = text(s);
+    let s = text(&s);
     let kept = |end: Option<char>| end.is_none_or(|c| !c.is_whitespace());
     ((ends == 2 || kept(s.chars().next())) && (ends == 1 || kept(s.chars().next_back()))) as u8
 }
@@ -246,23 +246,23 @@ fn without_whitespace(s: &str, ends: i64) -> &str {
 /// The scalar index of the last `needle`, or `-1`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_find_last(s: *const Str, needle: *const Str) -> i64 {
-    let s = text(s);
-    s.rfind(text(needle)).map_or(-1, |at| s[..at].chars().count() as i64)
+    let s = text(&s);
+    s.rfind(text(&needle)).map_or(-1, |at| s[..at].chars().count() as i64)
 }
 
 /// How many times `needle` appears, without overlapping.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_count(s: *const Str, needle: *const Str) -> i64 {
-    let needle = text(needle);
+    let needle = text(&needle);
     if needle.is_empty() {
-        return text(s).chars().count() as i64 + 1;
+        return text(&s).chars().count() as i64 + 1;
     }
-    text(s).matches(needle).count() as i64
+    text(&s).matches(needle).count() as i64
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_lower(s: *const Str, region: *mut Region) -> *mut Str {
-    let s = text(s);
+    let s = text(&s);
     match s.is_ascii() {
         true => cased(str_in(region, s.as_bytes()), <[u8]>::make_ascii_lowercase),
         false => str_in(region, s.to_lowercase().as_bytes()),
@@ -271,7 +271,7 @@ pub unsafe extern "C" fn tondo_rt_text_lower(s: *const Str, region: *mut Region)
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_upper(s: *const Str, region: *mut Region) -> *mut Str {
-    let s = text(s);
+    let s = text(&s);
     match s.is_ascii() {
         true => cased(str_in(region, s.as_bytes()), <[u8]>::make_ascii_uppercase),
         false => str_in(region, s.to_uppercase().as_bytes()),
@@ -308,12 +308,12 @@ fn parse_int(s: &str, radix: i64) -> Option<i64> {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_is_int(s: *const Str, radix: i64) -> u8 {
-    parse_int(text(s), radix).is_some() as u8
+    parse_int(text(&s), radix).is_some() as u8
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_parse_int(s: *const Str, radix: i64) -> i64 {
-    parse_int(text(s), radix).unwrap_or(0)
+    parse_int(text(&s), radix).unwrap_or(0)
 }
 
 /// A decimal float, `inf`, `-inf` or `NaN`, as Tondo writes them.
@@ -335,12 +335,12 @@ pub(crate) fn parse_float(s: &str) -> Option<f64> {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_is_float(s: *const Str) -> u8 {
-    parse_float(text(s)).is_some() as u8
+    parse_float(text(&s)).is_some() as u8
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_parse_float(s: *const Str) -> f64 {
-    parse_float(text(s)).unwrap_or(0.0)
+    parse_float(text(&s)).unwrap_or(0.0)
 }
 
 /// An integer in `radix` (2 to 36), with lowercase digits.
@@ -402,7 +402,7 @@ pub extern "C" fn tondo_rt_text_float(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_normalize(s: *const Str, form: i64, region: *mut Region) -> *mut Str {
     use unicode_normalization::UnicodeNormalization;
-    let text = text(s);
+    let text = text(&s);
     let normal: String = match form {
         1 => text.nfd().collect(),
         2 => text.nfkc().collect(),
@@ -417,7 +417,7 @@ pub unsafe extern "C" fn tondo_rt_text_normalize(s: *const Str, form: i64, regio
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_is_normalized(s: *const Str, form: i64) -> u8 {
     use unicode_normalization::{is_nfc, is_nfd, is_nfkc, is_nfkd};
-    let text = text(s);
+    let text = text(&s);
     (match form {
         1 => is_nfd(text),
         2 => is_nfkc(text),
@@ -707,7 +707,7 @@ pub extern "C" fn tondo_rt_text_collator(
 ) -> *mut super::native::NativeObject {
     use icu_collator::options::{CollatorOptions, Strength};
     use icu_collator::preferences::CollationNumericOrdering;
-    let locale = icu_locale_core::Locale::try_from_str(text(locale)).unwrap_or(icu_locale_core::Locale::UNKNOWN);
+    let locale = icu_locale_core::Locale::try_from_str(text(&locale)).unwrap_or(icu_locale_core::Locale::UNKNOWN);
     let mut preferences = icu_collator::CollatorPreferences::from(&locale);
     preferences.numeric_ordering =
         Some(if numeric != 0 { CollationNumericOrdering::True } else { CollationNumericOrdering::False });
@@ -727,8 +727,8 @@ pub extern "C" fn tondo_rt_text_collator(
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_text_collate(object: *mut super::native::NativeObject, a: *const Str, b: *const Str) -> i64 {
     match super::native::get::<icu_collator::CollatorBorrowed<'static>>(object) {
-        Some(collator) => collator.compare(text(a), text(b)) as i64,
-        None => text(a).cmp(text(b)) as i64,
+        Some(collator) => collator.compare(text(&a), text(&b)) as i64,
+        None => text(&a).cmp(text(&b)) as i64,
     }
 }
 

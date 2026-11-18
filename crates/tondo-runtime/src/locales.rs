@@ -5,7 +5,7 @@ use super::{ArrayHeader, Str};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-fn text<'a>(s: *const Str) -> &'a str {
+fn text<'a>(s: &'a *const Str) -> &'a str {
     unsafe { super::str_text(s) }
 }
 
@@ -54,7 +54,7 @@ static NUMBERS: LazyLock<Numbers> = LazyLock::new(|| {
 
 /// The tag of a BCP 47 locale in the data's form, and its language.
 fn tag(locale: *const Str) -> (String, String) {
-    let tag = text(locale).replace('_', "-").to_ascii_lowercase();
+    let tag = text(&locale).replace('_', "-").to_ascii_lowercase();
     let language = tag.split('-').next().unwrap_or_default().to_string();
     (tag, language)
 }
@@ -84,7 +84,7 @@ pub unsafe extern "C" fn tondo_rt_text_currency_symbol(
     region: *mut crate::regions::Region,
 ) -> *mut Str {
     let (tag, language) = tag(locale);
-    let code = text(code).to_ascii_uppercase();
+    let code = text(&code).to_ascii_uppercase();
     let found = [tag.as_str(), language.as_str(), "en"]
         .into_iter()
         .filter_map(|key| NUMBERS.locales.get(key))
@@ -95,7 +95,7 @@ pub unsafe extern "C" fn tondo_rt_text_currency_symbol(
 /// The digits after the point of a currency's amounts.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_currency_digits(code: *const Str) -> i64 {
-    NUMBERS.fractions.get(&text(code).to_ascii_uppercase()).copied().unwrap_or(2)
+    NUMBERS.fractions.get(&text(&code).to_ascii_uppercase()).copied().unwrap_or(2)
 }
 
 /// A language's plural categories, each followed by its condition, in the

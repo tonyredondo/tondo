@@ -267,7 +267,7 @@ mod tests {
             tondo_rt_sb_u64(b, 1_000_000);
             tondo_rt_sb_bool(b, 1);
             let out = tondo_rt_sb_finish(b);
-            assert_eq!(str_bytes(out), b"x=-42-92233720368547758081000000true");
+            assert_eq!(str_bytes(&out), b"x=-42-92233720368547758081000000true");
             tondo_rt_str_release(out);
             tondo_rt_str_release(s);
         }

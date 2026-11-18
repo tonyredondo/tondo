@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 fn text(s: *const Str) -> String {
-    unsafe { crate::str_text(s) }.to_owned()
+    unsafe { crate::str_text(&s) }.to_owned()
 }
 
 /// A connection, or why there is none.

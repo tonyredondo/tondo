@@ -123,7 +123,7 @@ pub unsafe extern "C" fn tondo_rt_test_start(table: *const Node, count: usize) {
         None => (1..count as u32).filter(|&n| !suites[n as usize]).collect(),
     };
     let nonce = config().test_nonce.clone().unwrap_or_else(|| "tondo".into());
-    let ids = nodes.iter().map(|n| String::from_utf8_lossy(unsafe { str_bytes(n.id) }).into_owned()).collect();
+    let ids = nodes.iter().map(|n| String::from_utf8_lossy(unsafe { str_bytes(&n.id) }).into_owned()).collect();
     let snapshots = config().test_snapshots.as_ref().map(|p| read_store(p)).unwrap_or_default();
     let runner = Runner {
         ids,
@@ -341,8 +341,8 @@ impl State {
 /// its description and where it left, separated by NUL.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_test_error(description: *const Str, error_type: *const Str) {
-    let text = String::from_utf8_lossy(unsafe { str_bytes(description) }).into_owned();
-    let error_type = String::from_utf8_lossy(unsafe { str_bytes(error_type) }).into_owned();
+    let text = String::from_utf8_lossy(unsafe { str_bytes(&description) }).into_owned();
+    let error_type = String::from_utf8_lossy(unsafe { str_bytes(&error_type) }).into_owned();
     with(|r| {
         let location = r.location.take().unwrap_or_default();
         r.error = Some(format!("{error_type}\0{text}\0{location}"));
@@ -352,14 +352,14 @@ pub unsafe extern "C" fn tondo_rt_test_error(description: *const Str, error_type
 /// Where an error leaves a test or a setup: its `fail` or its `?`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_test_where(location: *const Str) {
-    let text = String::from_utf8_lossy(unsafe { str_bytes(location) }).into_owned();
+    let text = String::from_utf8_lossy(unsafe { str_bytes(&location) }).into_owned();
     with(|r| r.location = Some(text));
 }
 
 /// `testing.log(message)`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_test_log(message: *const Str) {
-    let bytes = unsafe { str_bytes(message) };
+    let bytes = unsafe { str_bytes(&message) };
     with(|r| {
         let node = r.current();
         r.frame("log", node, bytes)
@@ -433,7 +433,7 @@ fn valid_media(media: &str) -> bool {
 }
 
 fn text(s: *const Str) -> String {
-    unsafe { crate::str_text(s) }.to_owned()
+    unsafe { crate::str_text(&s) }.to_owned()
 }
 
 /// The entries of a `Map[String, String]`, in order.
@@ -617,5 +617,5 @@ pub extern "C" fn tondo_rt_model_recording() -> u8 {
 /// What a model came to, as JSON, for `tondo test` to show and report.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_model_report(json: *const crate::Str) {
-    report("model", unsafe { crate::str_bytes(json) });
+    report("model", unsafe { crate::str_bytes(&json) });
 }

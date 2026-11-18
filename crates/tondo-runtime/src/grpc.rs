@@ -30,7 +30,7 @@ const UNAVAILABLE: i64 = 14;
 const UNKNOWN: i64 = 2;
 
 fn text(s: *const Str) -> String {
-    String::from_utf8_lossy(unsafe { str_bytes(s) }).into_owned()
+    String::from_utf8_lossy(unsafe { str_bytes(&s) }).into_owned()
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {

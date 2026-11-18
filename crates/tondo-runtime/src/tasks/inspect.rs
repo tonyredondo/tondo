@@ -181,7 +181,7 @@ fn snapshot_once(here: Option<Vec<usize>>) -> Vec<Shot> {
             };
             let locks = crate::sync::locks_of(shown)
                 .iter()
-                .map(|&(_, _, at)| String::from_utf8_lossy(crate::str_bytes(at)).into_owned())
+                .map(|&(_, _, at)| String::from_utf8_lossy(crate::str_bytes(&at)).into_owned())
                 .collect();
             Shot {
                 id: shown.id,
@@ -392,7 +392,7 @@ pub(crate) fn holders(object: usize) -> Vec<(u64, bool, String)> {
     for task in all {
         let task = unsafe { &*task };
         for (_, exclusive, at) in crate::sync::locks_of(task).into_iter().filter(|&(held, ..)| held == object) {
-            out.push((task.id, exclusive, String::from_utf8_lossy(unsafe { crate::str_bytes(at) }).into_owned()));
+            out.push((task.id, exclusive, String::from_utf8_lossy(unsafe { crate::str_bytes(&at) }).into_owned()));
         }
     }
     out

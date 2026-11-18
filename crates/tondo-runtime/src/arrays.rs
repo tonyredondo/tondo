@@ -1098,7 +1098,7 @@ pub unsafe extern "C" fn tondo_rt_array_sorted_strings(
         let len = (*a).len;
         let new = array_copy_in(region, a, 8, Some(tondo_rt_str_retain_glue), 0, 1, len, len);
         let strings = std::slice::from_raw_parts_mut(element(new, 8, 0) as *mut *const Str, len);
-        strings.sort_unstable_by(|a, b| str_bytes(*a).cmp(str_bytes(*b)));
+        strings.sort_unstable_by(|a, b| str_bytes(&*a).cmp(str_bytes(&*b)));
         new
     }
 }

@@ -125,8 +125,8 @@ fn read_store() -> Store {
 /// a control character or that the test already used is `P2010`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fuzz_begin(name: *const Str, shape: *const Str) {
-    let name = String::from_utf8_lossy(unsafe { crate::str_bytes(name) }).into_owned();
-    let shape = String::from_utf8_lossy(unsafe { crate::str_bytes(shape) }).into_owned();
+    let name = String::from_utf8_lossy(unsafe { crate::str_bytes(&name) }).into_owned();
+    let shape = String::from_utf8_lossy(unsafe { crate::str_bytes(&shape) }).into_owned();
     if name.is_empty() || name.chars().any(char::is_control) {
         fail(2010, format!("{name:?} cannot name a call of `testing.fuzz`: it is empty or has a control character"));
     }
@@ -151,7 +151,7 @@ pub unsafe extern "C" fn tondo_rt_fuzz_begin(name: *const Str, shape: *const Str
 /// A seed, as the JSON `json.encode` wrote for it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fuzz_seed(json: *const Str) {
-    let json = String::from_utf8_lossy(unsafe { crate::str_bytes(json) }).into_owned();
+    let json = String::from_utf8_lossy(unsafe { crate::str_bytes(&json) }).into_owned();
     if let Some(call) = state().call.as_mut() {
         call.seeds.push(json);
     }
@@ -205,7 +205,7 @@ pub extern "C" fn tondo_rt_fuzz_input(region: *mut crate::regions::Region) -> *m
 /// where it is.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fuzz_invalid(message: *const Str) {
-    let message = String::from_utf8_lossy(unsafe { crate::str_bytes(message) }).into_owned();
+    let message = String::from_utf8_lossy(unsafe { crate::str_bytes(&message) }).into_owned();
     let (name, origin) = {
         let mut state = state();
         let Some(call) = state.call.as_mut() else { return };
@@ -236,7 +236,7 @@ pub extern "C" fn tondo_rt_fuzz_replaying() -> u8 {
 /// The input that runs, as `json.encode` writes it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fuzz_encoded(json: *const Str) {
-    let json = String::from_utf8_lossy(unsafe { crate::str_bytes(json) }).into_owned();
+    let json = String::from_utf8_lossy(unsafe { crate::str_bytes(&json) }).into_owned();
     if let Some(call) = state().call.as_mut() {
         call.encoded = Some(json);
     }

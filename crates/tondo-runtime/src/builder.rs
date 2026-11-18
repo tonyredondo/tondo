@@ -203,7 +203,7 @@ pub unsafe extern "C" fn tondo_rt_sb_join(
     region: *mut regions::Region,
 ) {
     unsafe {
-        let separator = str_bytes(separator);
+        let separator = str_bytes(&separator);
         let room = (*a).len * (8 + separator.len());
         // In the region the analysis chose for the text, when it chose one.
         match region.is_null() {
@@ -226,8 +226,8 @@ pub unsafe extern "C" fn tondo_rt_sb_join(
 pub unsafe extern "C" fn tondo_rt_str_append(s: *mut Str, t: *const Str, region: *mut regions::Region) -> *mut Str {
     unsafe {
         match region.is_null() {
-            true => append(s, str_bytes(t)),
-            false => append_in(s, str_bytes(t), region),
+            true => append(s, str_bytes(&t)),
+            false => append_in(s, str_bytes(&t), region),
         }
     }
 }
@@ -468,7 +468,7 @@ pub unsafe extern "C" fn tondo_rt_sb_adopt(b: *mut Builder, s: *mut Str, room: u
             return 1;
         }
         b.write(Builder::new((*s).len + room));
-        (*b).extend(str_bytes(s));
+        (*b).extend(str_bytes(&s));
         0
     }
 }
@@ -502,7 +502,7 @@ pub unsafe extern "C" fn tondo_rt_sb_adopt_region(
         }
         // A copy, as the heap makes one, which the append grows.
         start_growing(b, (*s).len + room, region);
-        (*b).extend(str_bytes(s));
+        (*b).extend(str_bytes(&s));
         0
     }
 }
@@ -515,7 +515,7 @@ pub unsafe extern "C" fn tondo_rt_sb_start(b: *mut Builder, room: usize) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_str(b: *mut Builder, s: *const Str) {
-    unsafe { (*b).extend(str_bytes(s)) }
+    unsafe { (*b).extend(str_bytes(&s)) }
 }
 
 #[unsafe(no_mangle)]
@@ -651,7 +651,7 @@ pub unsafe extern "C" fn tondo_rt_sb_char(b: *mut Builder, value: u32) {
 /// A text in quotes, escaped as JSON escapes it, as a debugger shows it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_quoted(b: *mut Builder, s: *const Str) {
-    let text = String::from_utf8_lossy(unsafe { str_bytes(s) });
+    let text = String::from_utf8_lossy(unsafe { str_bytes(&s) });
     unsafe { write!(*b, "{text:?}").unwrap() }
 }
 

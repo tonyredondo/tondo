@@ -101,7 +101,7 @@ fn plan(stages: Vec<Stage>) -> *mut PlanObject {
 }
 
 fn os(text: *const Str) -> OsString {
-    OsStr::from_bytes(unsafe { str_bytes(text) }).to_owned()
+    OsStr::from_bytes(unsafe { str_bytes(&text) }).to_owned()
 }
 
 fn stage(program: OsString, arguments: Vec<OsString>) -> Stage {
@@ -190,7 +190,10 @@ unsafe fn input(tag: i64, payload: *const u8) -> Input {
     match tag {
         0 => Input::Inherit,
         1 => Input::Null,
-        2 => Input::Bytes(Arc::new(unsafe { str_bytes(payload as *const Str) }.to_vec())),
+        2 => {
+            let text = payload as *const Str;
+            Input::Bytes(Arc::new(unsafe { str_bytes(&text) }.to_vec()))
+        }
         3 => Input::Bytes(Arc::new(unsafe { array_items::<u8>(payload as *mut ArrayHeader) }.to_vec())),
         4 => Input::File(PathBuf::from(os(payload as *const Str))),
         5 => Input::Reader(Held(retain(payload as *mut StreamObject))),
@@ -1234,7 +1237,10 @@ pub unsafe extern "C" fn tondo_rt_sb_process_error(b: *mut super::Builder, tag: 
         2 => "invalid data".to_string(),
         3 => format!("exited with code {code}"),
         // `InvalidCommand`, whose text is what `code` points to.
-        5 => String::from_utf8_lossy(unsafe { str_bytes(code as *const Str) }).into_owned(),
+        5 => {
+            let text = code as *const Str;
+            String::from_utf8_lossy(unsafe { str_bytes(&text) }).into_owned()
+        }
         _ => "host".to_string(),
     };
     unsafe { (*b).extend(text.as_bytes()) }

@@ -9,7 +9,7 @@ use ring::{aead, hkdf, pbkdf2, rand, signature};
 use std::num::NonZeroU32;
 
 fn text(s: *const Str) -> String {
-    String::from_utf8_lossy(unsafe { str_bytes(s) }).into_owned()
+    String::from_utf8_lossy(unsafe { str_bytes(&s) }).into_owned()
 }
 
 fn cipher(code: i64) -> &'static aead::Algorithm {

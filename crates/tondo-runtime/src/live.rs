@@ -152,7 +152,7 @@ pub(crate) fn eval(rest: &str, client: &std::os::unix::net::UnixStream) -> Strin
             (Some(panic), _) => Err(panic),
             (None, true) => Err("the expression gave nothing".to_string()),
             (None, false) => {
-                let text = String::from_utf8_lossy(unsafe { super::str_bytes(made) }).into_owned();
+                let text = String::from_utf8_lossy(unsafe { super::str_bytes(&made) }).into_owned();
                 unsafe { super::tondo_rt_str_release(made) };
                 Ok(text)
             }
@@ -181,7 +181,7 @@ pub(crate) fn describe() -> String {
         return "{\"error\":\"the program is not a live build: build it with --live\"}".into();
     }
     let info = unsafe { &*info };
-    let build = String::from_utf8_lossy(unsafe { str_bytes(info.build) }).into_owned();
+    let build = String::from_utf8_lossy(unsafe { str_bytes(&info.build) }).into_owned();
     format!(
         "{{\"live\":true,\"build\":\"{build}\",\"capacity\":{},\"used\":{},\"sites\":{},\"patches\":{}}}",
         info.capacity,

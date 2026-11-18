@@ -129,7 +129,7 @@ pub unsafe extern "C" fn tondo_rt_pb_write_bytes(object: *mut NativeObject, numb
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_pb_write_text(object: *mut NativeObject, number: i64, text: *const Str) {
-    write_length(object, number, unsafe { str_bytes(text) });
+    write_length(object, number, unsafe { str_bytes(&text) });
 }
 
 /// Opens a nested message, a packed field or a map entry of field
@@ -508,7 +508,7 @@ pub extern "C" fn tondo_rt_pb_failed(object: *mut NativeObject) -> u8 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_pb_fail(object: *mut NativeObject, message: *const Str) {
-    let message = String::from_utf8_lossy(unsafe { str_bytes(message) }).into_owned();
+    let message = String::from_utf8_lossy(unsafe { str_bytes(&message) }).into_owned();
     if let Some(mut r) = reader(object) {
         r.fail(message);
     }

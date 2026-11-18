@@ -177,7 +177,7 @@ pub unsafe extern "C" fn tondo_rt_context_register(
     name: *const Str,
     show: Option<Show>,
 ) {
-    let name = String::from_utf8_lossy(unsafe { super::str_bytes(name) }).into_owned();
+    let name = String::from_utf8_lossy(unsafe { super::str_bytes(&name) }).into_owned();
     let mut registered = REGISTERED.lock().unwrap_or_else(|e| e.into_inner());
     if registered.len() <= index {
         registered.resize(index + 1, None);
@@ -190,7 +190,7 @@ pub unsafe extern "C" fn tondo_rt_context_register(
 /// offset in the record, how it shows, and its name.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_context_shows(index: usize, offset: usize, show: Option<Show>, name: *const Str) {
-    let name = String::from_utf8_lossy(unsafe { super::str_bytes(name) }).into_owned();
+    let name = String::from_utf8_lossy(unsafe { super::str_bytes(&name) }).into_owned();
     let mut registered = REGISTERED.lock().unwrap_or_else(|e| e.into_inner());
     let entry = registered[index].as_mut().expect("the context is registered first");
     entry.fields.push((name, offset, show));
@@ -200,7 +200,7 @@ pub unsafe extern "C" fn tondo_rt_context_shows(index: usize, offset: usize, sho
 /// the function that computes it, as the program starts.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_context_computed(index: usize, field: usize, maker: Maker, name: *const Str) {
-    let name = String::from_utf8_lossy(unsafe { super::str_bytes(name) }).into_owned();
+    let name = String::from_utf8_lossy(unsafe { super::str_bytes(&name) }).into_owned();
     let mut registered = REGISTERED.lock().unwrap_or_else(|e| e.into_inner());
     let entry = registered[index].as_mut().expect("the context is registered first");
     entry.computed.push(Arc::new(Computed { field, maker, name, state: Mutex::new(State::Pending) }));
@@ -242,7 +242,7 @@ pub(crate) unsafe fn described(task: *mut crate::tasks::Task) -> Vec<Described> 
         let mut builder = super::Builder::new(0);
         unsafe { show(&mut builder, super::ref_payload(slot as *mut u8)) };
         let text = builder.finish();
-        let whole = String::from_utf8_lossy(unsafe { super::str_bytes(text) }).into_owned();
+        let whole = String::from_utf8_lossy(unsafe { super::str_bytes(&text) }).into_owned();
         unsafe { super::tondo_rt_str_release(text) };
         let parsed = super::shown::parse(&whole);
         let origin = unsafe { (&(*table).origins)[index].clone() };
@@ -284,7 +284,7 @@ unsafe fn fields(entry: &Entry, slot: *mut RefHeader, set: u64, origin: Option<A
                 let mut builder = super::Builder::new(0);
                 unsafe { show(&mut builder, (super::ref_payload(holder as *mut u8) as *const u8).add(*offset)) };
                 let text = builder.finish();
-                let value = String::from_utf8_lossy(unsafe { super::str_bytes(text) }).into_owned();
+                let value = String::from_utf8_lossy(unsafe { super::str_bytes(&text) }).into_owned();
                 unsafe { super::tondo_rt_str_release(text) };
                 value
             }
@@ -320,7 +320,7 @@ pub(crate) fn shown(label: bool) -> Vec<(String, String)> {
     for entry in entries() {
         let Some(show) = (if label { entry.label } else { entry.log }) else { continue };
         let text = unsafe { show(std::ptr::null()) };
-        let mut parts = unsafe { super::str_bytes(text) }.split(|&b| b == 0);
+        let mut parts = unsafe { super::str_bytes(&text) }.split(|&b| b == 0);
         while let (Some(name), Some(value)) = (parts.next(), parts.next()) {
             out.push((String::from_utf8_lossy(name).into_owned(), String::from_utf8_lossy(value).into_owned()));
         }
@@ -441,7 +441,7 @@ pub unsafe extern "C" fn tondo_rt_context_set(
     let mut set = unsafe { (*base).set.clone() };
     set[index] |= fields;
     let mut origins = unsafe { (*base).origins.clone() };
-    let at = String::from_utf8_lossy(unsafe { super::str_bytes(at) }).into_owned();
+    let at = String::from_utf8_lossy(unsafe { super::str_bytes(&at) }).into_owned();
     let previous = origins[index].take();
     origins[index] = Some(Arc::new(Origin { at, fields, task: super::tasks::current_id(), previous }));
     let made = Box::into_raw(Box::new(Table { count: AtomicUsize::new(1), slots, set, labels: Vec::new(), origins }));

@@ -651,7 +651,7 @@ pub unsafe extern "C" fn tondo_rt_sb_map(
 /// FNV-1a over the bytes of a string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_hash(s: *const Str) -> u64 {
-    hash_bytes(unsafe { str_bytes(s) })
+    hash_bytes(unsafe { str_bytes(&s) })
 }
 
 /// A hash of bytes for the program's maps, eight at a time: a long key, as a

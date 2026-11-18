@@ -1136,7 +1136,7 @@ fn write(object: *mut NativeObject, data: &[u8], timeout_ms: i64) -> i64 {
 /// `write`: 0, or the code of a failure.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_net_write(object: *mut NativeObject, text: *const Str, timeout_ms: i64) -> i64 {
-    write(object, unsafe { super::str_bytes(text) }, timeout_ms)
+    write(object, unsafe { super::str_bytes(&text) }, timeout_ms)
 }
 
 /// `writeBytes`: 0, or the code of a failure.

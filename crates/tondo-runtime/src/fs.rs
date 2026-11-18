@@ -114,7 +114,7 @@ fn io<T>(result: std::io::Result<T>) -> Outcome<T> {
 
 /// The path a string names; NUL cannot appear in a host path.
 unsafe fn path(text: *const Str) -> Outcome<String> {
-    let bytes = unsafe { str_bytes(text) };
+    let bytes = unsafe { str_bytes(&text) };
     if bytes.contains(&0) {
         return Err(FsError::InvalidName);
     }
@@ -192,7 +192,7 @@ pub unsafe extern "C" fn tondo_rt_fs_read_bytes(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fs_write_text(path_text: *const Str, contents: *const Str) -> i64 {
-    let (path, data) = unsafe { (path(path_text), str_bytes(contents)) };
+    let (path, data) = unsafe { (path(path_text), str_bytes(&contents)) };
     finish(host(move || write_atomically(&path?, data)), |_| ())
 }
 
@@ -204,7 +204,7 @@ pub unsafe extern "C" fn tondo_rt_fs_write_bytes(path_text: *const Str, contents
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fs_append_text(path_text: *const Str, contents: *const Str) -> i64 {
-    let (path, data) = unsafe { (path(path_text), str_bytes(contents)) };
+    let (path, data) = unsafe { (path(path_text), str_bytes(&contents)) };
     let appended = host(move || {
         let mut file = io(std::fs::OpenOptions::new().append(true).create(true).open(path?))?;
         io(file.write_all(data))
@@ -344,7 +344,7 @@ pub unsafe extern "C" fn tondo_rt_fs_read_rest(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fs_write(file: *mut StreamObject, contents: *const Str) -> i64 {
-    let data = unsafe { str_bytes(contents) };
+    let data = unsafe { str_bytes(&contents) };
     finish(run_ready(file, |s| s.has_room(data.len()), |s| io(s.write(data))), |_| ())
 }
 
@@ -383,7 +383,7 @@ pub unsafe extern "C" fn tondo_rt_fs_close(file: *mut StreamObject) -> i64 {
 // ---------------------------------------------------------------------------
 
 unsafe fn lexical(text: *const Str) -> String {
-    unsafe { super::str_text(text) }.to_owned()
+    unsafe { super::str_text(&text) }.to_owned()
 }
 
 fn string_or_null(region: *mut crate::regions::Region, text: Option<&str>) -> *mut Str {
@@ -430,7 +430,7 @@ pub unsafe extern "C" fn tondo_rt_path_is_absolute(path: *const Str) -> u8 {
 /// `text.bytes()`
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_to_bytes(text: *const Str) -> *mut ArrayHeader {
-    byte_array(unsafe { str_bytes(text) })
+    byte_array(unsafe { str_bytes(&text) })
 }
 
 /// `String.fromBytes(bytes)`: null when the bytes are not UTF-8.

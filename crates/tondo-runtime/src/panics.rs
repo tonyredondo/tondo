@@ -77,7 +77,7 @@ thread_local! {
 }
 
 fn text(s: *const Str) -> String {
-    unsafe { crate::str_text(s) }.to_owned()
+    unsafe { crate::str_text(&s) }.to_owned()
 }
 
 #[unsafe(no_mangle)]
@@ -1004,8 +1004,8 @@ pub(crate) unsafe fn end_in_panic(mut code: u32, message: *const Str, location: 
     }
     flush_stdout();
     terminal::give_back();
-    let message = (!message.is_null()).then(|| String::from_utf8_lossy(unsafe { str_bytes(message) }).into_owned());
-    let mut location = String::from_utf8_lossy(unsafe { str_bytes(location) }).into_owned();
+    let message = (!message.is_null()).then(|| String::from_utf8_lossy(unsafe { str_bytes(&message) }).into_owned());
+    let mut location = String::from_utf8_lossy(unsafe { str_bytes(&location) }).into_owned();
     // A panic inside the standard library points at the program's call.
     if location.starts_with("<std>/") {
         location = trace::caller().unwrap_or(location);
@@ -1147,7 +1147,7 @@ pub(crate) unsafe fn values_message(code: u32, detail: u32, values: *const [u64;
     let show = |value: i128, signed: bool| if signed { value.to_string() } else { (value as u128).to_string() };
     let (left, right) = (show(a, detail & 0x100 != 0), show(b, detail & 0x200 != 0));
     let (a, b) = (a as i64, b as i64);
-    let ty = String::from_utf8_lossy(unsafe { str_bytes(ty) });
+    let ty = String::from_utf8_lossy(unsafe { str_bytes(&ty) });
     let operator =
         ["+", "-", "*", "/", "%", "-", "<<", ">>", "pow", "nextPowerOfTwo"].get(op as usize).copied().unwrap_or("?");
     let range = || {
@@ -1198,9 +1198,9 @@ pub(crate) unsafe fn values_message(code: u32, detail: u32, values: *const [u64;
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_report_error(description: *const Str, ty: *const Str) {
     flush_stdout();
-    let text = String::from_utf8_lossy(unsafe { str_bytes(description) });
+    let text = String::from_utf8_lossy(unsafe { str_bytes(&description) });
     if panics::json_reports() {
-        let ty = String::from_utf8_lossy(unsafe { str_bytes(ty) });
+        let ty = String::from_utf8_lossy(unsafe { str_bytes(&ty) });
         let _ = writeln!(
             std::io::stderr(),
             "{{\"code\":null,\"data\":null,\"error_type\":{},\"format\":\"tondo-panic-0.1/1\",\"kind\":\"error\",\"message\":{},\"name\":null,\"recovered\":false,\"source\":null,\"stack\":[]}}",

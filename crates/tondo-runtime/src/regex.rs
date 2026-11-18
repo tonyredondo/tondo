@@ -54,7 +54,7 @@ pub struct RegexObject {
     max_replacement: usize,
 }
 
-fn utf8<'a>(s: *const Str) -> &'a str {
+fn utf8<'a>(s: &'a *const Str) -> &'a str {
     std::str::from_utf8(unsafe { str_bytes(s) }).unwrap_or_default()
 }
 
@@ -94,7 +94,7 @@ pub(crate) fn pattern(pattern: &str) -> Result<regex::Regex, String> {
 /// `Regex.escape(text)`: a pattern that matches the text as it is.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_regex_escape(text: *const Str, region: *mut crate::regions::Region) -> *mut Str {
-    let text = String::from_utf8_lossy(unsafe { str_bytes(text) }).into_owned();
+    let text = String::from_utf8_lossy(unsafe { str_bytes(&text) }).into_owned();
     crate::strings::str_in(region, regex::escape(&text).as_bytes())
 }
 
@@ -117,7 +117,7 @@ pub unsafe extern "C" fn tondo_rt_regex_compile(
     region: *mut super::regions::Region,
 ) -> *mut RegexObject {
     clear();
-    let pattern = utf8(pattern);
+    let pattern = utf8(&pattern);
     if pattern.len() as i64 > max_pattern {
         fail(Kind::PatternLimitExceeded, max_pattern as usize);
         return std::ptr::null_mut();
@@ -170,7 +170,7 @@ fn object<'a>(object: *mut RegexObject) -> &'a RegexObject {
 }
 
 /// The input, unless it is longer than the limit.
-fn input<'a>(r: &RegexObject, input: *const Str) -> Option<&'a str> {
+fn input<'a>(r: &RegexObject, input: &'a *const Str) -> Option<&'a str> {
     let input = utf8(input);
     if input.len() > r.max_input {
         fail(Kind::InputLimitExceeded, r.max_input);
@@ -204,7 +204,7 @@ pub unsafe extern "C" fn tondo_rt_regex_capture_name(
 /// The index of a named capture, or `-1`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_regex_capture_index(r: *mut RegexObject, name: *const Str) -> i64 {
-    let name = utf8(name);
+    let name = utf8(&name);
     object(r).regex.capture_names().position(|n| n == Some(name)).map_or(-1, |i| i as i64)
 }
 
@@ -213,7 +213,7 @@ pub unsafe extern "C" fn tondo_rt_regex_capture_index(r: *mut RegexObject, name:
 pub unsafe extern "C" fn tondo_rt_regex_is_match(r: *mut RegexObject, text: *const Str, full: u8) -> u8 {
     clear();
     let r = object(r);
-    let Some(text) = input(r, text) else { return 0 };
+    let Some(text) = input(r, &text) else { return 0 };
     if full == 0 {
         return r.regex.is_match(text) as u8;
     }
@@ -231,7 +231,7 @@ pub unsafe extern "C" fn tondo_rt_regex_is_match(r: *mut RegexObject, text: *con
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_regex_check_input(r: *mut RegexObject, text: *const Str) {
     clear();
-    input(object(r), text);
+    input(object(r), &text);
 }
 
 /// The next match after one that ended at `last` (`-1` before the first),
@@ -249,7 +249,7 @@ pub unsafe extern "C" fn tondo_rt_regex_find(
 ) -> *mut ArrayHeader {
     clear();
     let r = object(r);
-    let Some(text) = input(r, text) else { return crate::arrays::int_array_in(region, &[]) };
+    let Some(text) = input(r, &text) else { return crate::arrays::int_array_in(region, &[]) };
     let mut at = last.max(0) as usize;
     let captures = loop {
         let Some(captures) = text.get(at..).and_then(|_| r.regex.captures_at(text, at)) else {
@@ -280,7 +280,7 @@ pub unsafe extern "C" fn tondo_rt_regex_slice(
     region: *mut crate::regions::Region,
 ) -> *mut Str {
     clear();
-    let text = utf8(text);
+    let text = utf8(&text);
     match text.get(start.max(0) as usize..end.max(0) as usize) {
         Some(slice) if start >= 0 && end >= start => crate::strings::str_in(region, slice.as_bytes()),
         _ => {
@@ -347,8 +347,8 @@ pub unsafe extern "C" fn tondo_rt_regex_replace(
 ) -> *mut Str {
     clear();
     let r = object(r);
-    let Some(text) = input(r, text) else { return str_new(b"") };
-    let replacement = utf8(replacement);
+    let Some(text) = input(r, &text) else { return str_new(b"") };
+    let replacement = utf8(&replacement);
     if replacement.len() > r.max_replacement {
         fail(Kind::ReplacementLimitExceeded, r.max_replacement);
         return str_new(b"");
@@ -457,7 +457,7 @@ pub unsafe extern "C" fn tondo_rt_regex_whole_match(pattern: *const Str, text: *
     use std::collections::HashMap;
     use std::sync::Mutex;
     static KEPT: OnceLock<Mutex<HashMap<String, Option<regex::Regex>>>> = OnceLock::new();
-    let pattern = utf8(pattern);
+    let pattern = utf8(&pattern);
     let mut kept = KEPT.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
     if kept.len() >= 1024 {
         kept.clear();
@@ -465,7 +465,7 @@ pub unsafe extern "C" fn tondo_rt_regex_whole_match(pattern: *const Str, text: *
     let compiled =
         kept.entry(pattern.to_string()).or_insert_with(|| regex::Regex::new(&format!("^(?:{pattern})$")).ok());
     match compiled {
-        Some(regex) => regex.is_match(utf8(text)) as i64,
+        Some(regex) => regex.is_match(utf8(&text)) as i64,
         None => -1,
     }
 }

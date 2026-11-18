@@ -110,7 +110,7 @@ pub unsafe extern "C" fn tondo_rt_int_parse(
     signed: u8,
     out: *mut [u64; 2],
 ) -> u8 {
-    let text = unsafe { super::str_bytes(s) };
+    let text = unsafe { super::str_bytes(&s) };
     // An `Int` in decimal of up to 18 digits, as most texts parsed are,
     // fits in 64 bits as it is read and needs no bounds of 128.
     if radix == 10 && bits == 64 && signed != 0 {
@@ -302,7 +302,7 @@ pub(crate) fn integer_digits(text: &str) -> Option<(bool, u128)> {
 /// whether it is one.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_float_parse(s: *const Str, single: u8, out: *mut f64) -> u8 {
-    let text = String::from_utf8_lossy(unsafe { super::str_bytes(s) });
+    let text = String::from_utf8_lossy(unsafe { super::str_bytes(&s) });
     let parsed = super::text::parse_float(&text).and_then(|value| match single != 0 {
         // Read again as 32 bits, so that it is rounded once.
         true if value.is_finite() => text.parse::<f32>().ok().map(f64::from),

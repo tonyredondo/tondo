@@ -12,7 +12,7 @@ use jiff::tz::{Offset, TimeZone, TimeZoneDatabase};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
-fn text<'a>(s: *const Str) -> &'a str {
+fn text<'a>(s: &'a *const Str) -> &'a str {
     unsafe { crate::str_text(s) }
 }
 
@@ -79,7 +79,7 @@ fn zone_or_utc(name: &str) -> TimeZone {
 /// `time.zone`: whether the name is a zone's.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_zone_known(name: *const Str) -> u8 {
-    zone(text(name)).is_some() as u8
+    zone(text(&name)).is_some() as u8
 }
 
 /// `time.localZone`: the name of the zone `TZ` names, or `/etc/localtime`
@@ -113,7 +113,7 @@ pub extern "C" fn tondo_rt_zone_local(region: *mut crate::regions::Region) -> *m
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_zone_offset(name: *const Str, seconds: i64) -> i64 {
     let at = Timestamp::from_second(seconds).unwrap_or(Timestamp::UNIX_EPOCH);
-    zone_or_utc(text(name)).to_offset(at).seconds() as i64
+    zone_or_utc(text(&name)).to_offset(at).seconds() as i64
 }
 
 /// The time, in seconds since 1970, when the zone's clocks show a date and
@@ -123,7 +123,7 @@ pub unsafe extern "C" fn tondo_rt_zone_offset(name: *const Str, seconds: i64) ->
 pub unsafe extern "C" fn tondo_rt_zone_resolve(name: *const Str, fields: *mut ArrayHeader) -> i64 {
     let fields = ints_of(fields);
     let Some(civil) = civil(&fields) else { return i64::MIN };
-    match zone_or_utc(text(name)).to_ambiguous_timestamp(civil).compatible() {
+    match zone_or_utc(text(&name)).to_ambiguous_timestamp(civil).compatible() {
         Ok(at) => at.as_second(),
         Err(_) => i64::MIN,
     }
@@ -182,7 +182,7 @@ pub unsafe extern "C" fn tondo_rt_time_names(
     locale: *const Str,
     region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
-    crate::arrays::string_array_in(region, &names(text(locale)).0)
+    crate::arrays::string_array_in(region, &names(text(&locale)).0)
 }
 
 /// The abbreviation of a zone at a time in seconds since 1970, as `CET`.
@@ -193,5 +193,5 @@ pub unsafe extern "C" fn tondo_rt_zone_abbreviation(
     region: *mut crate::regions::Region,
 ) -> *mut Str {
     let at = Timestamp::from_second(seconds).unwrap_or(Timestamp::UNIX_EPOCH);
-    crate::strings::str_in(region, zone_or_utc(text(name)).to_offset_info(at).abbreviation().as_bytes())
+    crate::strings::str_in(region, zone_or_utc(text(&name)).to_offset_info(at).abbreviation().as_bytes())
 }

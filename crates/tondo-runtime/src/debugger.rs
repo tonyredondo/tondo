@@ -849,7 +849,7 @@ pub(crate) fn sites() -> usize {
 /// `base`, after those of the tables before it.
 unsafe fn parse(raw: *const Raw, base: usize) -> (Vec<Function>, Vec<Site>, Vec<Layout>) {
     let raw = unsafe { &*raw };
-    let text = String::from_utf8_lossy(unsafe { str_bytes(raw.text) }).into_owned();
+    let text = String::from_utf8_lossy(unsafe { str_bytes(&raw.text) }).into_owned();
     let glues = unsafe { std::slice::from_raw_parts(raw.glues, raw.count as usize) };
     let (mut functions, mut sites, mut layouts, mut next) = (Vec::new(), Vec::new(), Vec::new(), 0);
     let number = |text: &str| text.parse::<usize>().unwrap_or(0);

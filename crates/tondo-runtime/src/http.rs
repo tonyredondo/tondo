@@ -248,7 +248,7 @@ pub(crate) fn wait<T: Send + 'static>(future: impl Future<Output = T> + Send + '
 }
 
 pub(crate) fn text(s: *const Str) -> String {
-    unsafe { crate::str_text(s) }.to_owned()
+    unsafe { crate::str_text(&s) }.to_owned()
 }
 
 pub(crate) fn strings(array: *mut ArrayHeader) -> Vec<String> {

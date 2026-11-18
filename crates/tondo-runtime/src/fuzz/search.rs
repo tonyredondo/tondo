@@ -153,7 +153,7 @@ pub unsafe extern "C" fn tondo_rt_fuzz_compare_text(a: *const crate::Str, b: *co
     if !SEARCHING.load(Ordering::Relaxed) {
         return;
     }
-    let (a, b) = unsafe { (crate::str_bytes(a), crate::str_bytes(b)) };
+    let (a, b) = unsafe { (crate::str_bytes(&a), crate::str_bytes(&b)) };
     if a == b {
         return;
     }

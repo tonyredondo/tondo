@@ -28,7 +28,7 @@ pub unsafe extern "C" fn tondo_rt_memory_release(block: *mut u8, _size: i64) {
 /// Text with a zero byte inside has no C string (`P0016`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_c_string(text: *const Str, location: *const Str) -> *mut u8 {
-    let bytes = unsafe { str_bytes(text) };
+    let bytes = unsafe { str_bytes(&text) };
     if let Some(at) = bytes.iter().position(|&b| b == 0) {
         super::raise(16, &format!("the text has a zero byte at {at}, so C would see it end there"), location);
         return std::ptr::null_mut();
@@ -47,7 +47,7 @@ pub unsafe extern "C" fn tondo_rt_c_string_free(copy: *mut u8) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_memory_c_string(text: *const Str) -> *mut u8 {
     // The location only exists to report a panic.
-    let location = if unsafe { str_bytes(text) }.contains(&0) { str_new(b"ffi.toCString") } else { text };
+    let location = if unsafe { str_bytes(&text) }.contains(&0) { str_new(b"ffi.toCString") } else { text };
     unsafe { tondo_rt_c_string(text, location) }
 }
 

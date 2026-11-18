@@ -986,13 +986,13 @@ impl WaitingRegion {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_io_write(stream: *mut StreamObject, text: *const Str) -> i64 {
-    let data = unsafe { str_bytes(text) };
+    let data = unsafe { str_bytes(&text) };
     status(run_ready(stream, |s| s.has_room(data.len()), |s| s.write(data)), |_| ())
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_io_write_line(stream: *mut StreamObject, text: *const Str) -> i64 {
-    let mut data = unsafe { str_bytes(text).to_vec() };
+    let mut data = unsafe { str_bytes(&text).to_vec() };
     data.push(b'\n');
     let count = data.len();
     status(run_ready(stream, |s| s.has_room(count), move |s| s.write(&data)), |_| ())
@@ -1070,7 +1070,7 @@ pub unsafe extern "C" fn tondo_rt_io_reader(
     text: *const Str,
     region: *mut crate::regions::Region,
 ) -> *mut StreamObject {
-    let bytes = unsafe { str_bytes(text).to_vec() };
+    let bytes = unsafe { str_bytes(&text).to_vec() };
     unsafe { stream_in(region, Box::new(std::io::Cursor::new(bytes)), Mode::Inline, false) }
 }
 
@@ -1194,7 +1194,7 @@ fn console_stream(index: usize) -> *mut StreamObject {
 /// Writes to the console output or error: failures wait for `flush`.
 fn console_write(index: usize, text: *const Str, newline: bool) {
     let stream = console_stream(index);
-    let mut data = unsafe { str_bytes(text).to_vec() };
+    let mut data = unsafe { str_bytes(&text).to_vec() };
     if newline {
         data.push(b'\n');
     }

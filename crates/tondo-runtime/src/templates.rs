@@ -16,7 +16,7 @@ pub unsafe extern "C" fn tondo_rt_template_parse(
     html: u8,
     region: *mut crate::regions::Region,
 ) -> *mut Str {
-    let source = String::from_utf8_lossy(unsafe { str_bytes(source) });
+    let source = String::from_utf8_lossy(unsafe { str_bytes(&source) });
     let mut out = String::new();
     let read = syntax::parse(&source, html != 0).and_then(|template| {
         let mut nodes = String::new();

@@ -59,7 +59,7 @@ struct Reader {
 }
 
 fn text(s: *const Str) -> String {
-    String::from_utf8_lossy(unsafe { str_bytes(s) }).into_owned()
+    String::from_utf8_lossy(unsafe { str_bytes(&s) }).into_owned()
 }
 
 fn reader(object: *mut NativeObject) -> Option<std::sync::MutexGuard<'static, Reader>> {
@@ -756,7 +756,7 @@ pub extern "C" fn tondo_rt_yaml_write_int(object: *mut NativeObject, value: i64)
 /// which YAML reads as the integer they are.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_yaml_write_number(object: *mut NativeObject, digits: *const Str) {
-    let text = String::from_utf8_lossy(unsafe { crate::str_bytes(digits) }).into_owned();
+    let text = String::from_utf8_lossy(unsafe { crate::str_bytes(&digits) }).into_owned();
     match (text.parse::<i64>(), crate::numbers::integer_digits(&text)) {
         (Ok(value), _) => scalar(object, Scalar::Integer(value)),
         (Err(_), Some(_)) => {

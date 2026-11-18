@@ -169,7 +169,7 @@ fn measuring() -> Option<Duration> {
 /// or that the test already measured is the panic `P2009`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_bench_start(name: *const Str, location: *const Str) {
-    let name = String::from_utf8_lossy(unsafe { crate::str_bytes(name) }).into_owned();
+    let name = String::from_utf8_lossy(unsafe { crate::str_bytes(&name) }).into_owned();
     let node = crate::testing::current();
     let fail = |message: String| {
         let message = crate::str_new(message.as_bytes());

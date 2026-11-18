@@ -52,7 +52,7 @@ pub unsafe extern "C" fn tondo_rt_toml_parse(
     source: *const Str,
     region: *mut crate::regions::Region,
 ) -> *mut NativeObject {
-    let source = unsafe { str_text(source) };
+    let source = unsafe { str_text(&source) };
     let mut events = Vec::new();
     let mut error = None;
     match toml_edit::Document::parse(source) {
@@ -193,7 +193,7 @@ pub extern "C" fn tondo_rt_toml_skip(object: *mut NativeObject, code: i64) -> i6
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_toml_fail(object: *mut NativeObject, message: *const Str) {
     let Some(reader) = reader(object) else { return };
-    fail(&mut reader.lock().unwrap_or_else(|e| e.into_inner()), unsafe { str_text(message) }.to_owned());
+    fail(&mut reader.lock().unwrap_or_else(|e| e.into_inner()), unsafe { str_text(&message) }.to_owned());
 }
 
 /// A failure at the event just read, which `where` says.
@@ -368,7 +368,7 @@ pub extern "C" fn tondo_rt_toml_write_int(object: *mut NativeObject, value: i64)
 /// and one past them cannot be written.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_toml_write_number(object: *mut NativeObject, digits: *const Str) {
-    let text = unsafe { str_text(digits) };
+    let text = unsafe { str_text(&digits) };
     match (text.parse::<i64>(), crate::numbers::integer_digits(text)) {
         (Ok(value), _) => scalar(object, Value::from(value)),
         (Err(_), Some(_)) => {
@@ -387,12 +387,12 @@ pub extern "C" fn tondo_rt_toml_write_float(object: *mut NativeObject, value: f6
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_toml_write_text(object: *mut NativeObject, value: *const Str) {
-    scalar(object, Value::from(unsafe { str_text(value) }));
+    scalar(object, Value::from(unsafe { str_text(&value) }));
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_toml_write_datetime(object: *mut NativeObject, value: *const Str) {
-    let written = unsafe { str_text(value) };
+    let written = unsafe { str_text(&value) };
     match written.parse::<toml_edit::Datetime>() {
         Ok(datetime) => scalar(object, Value::from(datetime)),
         Err(_) => {
@@ -408,7 +408,7 @@ pub unsafe extern "C" fn tondo_rt_toml_write_key(object: *mut NativeObject, key:
     if let Some(mut writer) = writer(object)
         && let Some(Frame::Table(_, pending)) = writer.stack.last_mut()
     {
-        *pending = Some(unsafe { str_text(key) }.to_owned());
+        *pending = Some(unsafe { str_text(&key) }.to_owned());
     }
 }
 

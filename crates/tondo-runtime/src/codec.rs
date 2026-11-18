@@ -12,7 +12,7 @@ use hmac::{HmacReset, KeyInit};
 use sha2::digest::DynDigest;
 use std::sync::Mutex;
 
-fn text<'a>(s: *const Str) -> &'a [u8] {
+fn text<'a>(s: &'a *const Str) -> &'a [u8] {
     unsafe { str_bytes(s) }
 }
 
@@ -73,7 +73,7 @@ pub(crate) fn base64_decode(input: &[u8], url: bool) -> Result<Vec<u8>, usize> {
 /// Where Base64 text is wrong, or `-1`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_base64_check(input: *const Str, url: u8) -> i64 {
-    base64_decode(text(input), url != 0).err().map_or(-1, |offset| offset as i64)
+    base64_decode(text(&input), url != 0).err().map_or(-1, |offset| offset as i64)
 }
 
 #[unsafe(no_mangle)]
@@ -82,7 +82,7 @@ pub unsafe extern "C" fn tondo_rt_base64_decode(
     url: u8,
     region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
-    crate::arrays::byte_array_in(region, &base64_decode(text(input), url != 0).unwrap_or_default())
+    crate::arrays::byte_array_in(region, &base64_decode(text(&input), url != 0).unwrap_or_default())
 }
 
 #[unsafe(no_mangle)]
@@ -107,7 +107,7 @@ fn hex_decode(input: &[u8]) -> Result<Vec<u8>, usize> {
 /// Where hexadecimal text is wrong, or `-1`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_hex_check(input: *const Str) -> i64 {
-    hex_decode(text(input)).err().map_or(-1, |offset| offset as i64)
+    hex_decode(text(&input)).err().map_or(-1, |offset| offset as i64)
 }
 
 #[unsafe(no_mangle)]
@@ -115,7 +115,7 @@ pub unsafe extern "C" fn tondo_rt_hex_decode(
     input: *const Str,
     region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
-    crate::arrays::byte_array_in(region, &hex_decode(text(input)).unwrap_or_default())
+    crate::arrays::byte_array_in(region, &hex_decode(text(&input)).unwrap_or_default())
 }
 
 /// Percent-encodes the UTF-8 of a text, except the unreserved characters of
@@ -124,7 +124,7 @@ pub unsafe extern "C" fn tondo_rt_hex_decode(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_html_escape(input: *const Str, region: *mut Region) -> *mut Str {
     let mut out = Vec::new();
-    for &b in text(input) {
+    for &b in text(&input) {
         match b {
             b'&' => out.extend_from_slice(b"&amp;"),
             b'<' => out.extend_from_slice(b"&lt;"),
@@ -141,7 +141,7 @@ pub unsafe extern "C" fn tondo_rt_html_escape(input: *const Str, region: *mut Re
 /// is not one stays as it is.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_html_unescape(input: *const Str, region: *mut Region) -> *mut Str {
-    let input = String::from_utf8_lossy(text(input));
+    let input = String::from_utf8_lossy(text(&input));
     str_in(region, html_escape::decode_html_entities(&input).as_bytes())
 }
 
@@ -149,7 +149,7 @@ pub unsafe extern "C" fn tondo_rt_html_unescape(input: *const Str, region: *mut 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_url_encode(input: *const Str, region: *mut Region) -> *mut Str {
     let mut out = Vec::new();
-    for &b in text(input) {
+    for &b in text(&input) {
         if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
             out.push(b);
         } else {
@@ -180,7 +180,7 @@ fn url_decode(input: &[u8]) -> Result<Vec<u8>, usize> {
 /// UTF-8, or `-1`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_url_check(input: *const Str) -> i64 {
-    match url_decode(text(input)) {
+    match url_decode(text(&input)) {
         Ok(decoded) if std::str::from_utf8(&decoded).is_ok() => -1,
         Ok(_) => -2,
         Err(offset) => offset as i64,
@@ -189,7 +189,7 @@ pub unsafe extern "C" fn tondo_rt_url_check(input: *const Str) -> i64 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_url_decode(input: *const Str, region: *mut Region) -> *mut Str {
-    str_in(region, &url_decode(text(input)).unwrap_or_default())
+    str_in(region, &url_decode(text(&input)).unwrap_or_default())
 }
 
 /// A hasher of `kind`: MD5, SHA-1, SHA-256, SHA-384 or SHA-512 as it is 5,
@@ -365,7 +365,7 @@ fn csv_record(record: &str, separator: char) -> Result<Vec<String>, Option<usize
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_csv_check(record: *const Str, separator: u32) -> i64 {
     let separator = char::from_u32(separator).unwrap_or(',');
-    match csv_record(&String::from_utf8_lossy(text(record)), separator) {
+    match csv_record(&String::from_utf8_lossy(text(&record)), separator) {
         Ok(_) => -1,
         Err(None) => -2,
         Err(Some(index)) => index as i64,
@@ -379,7 +379,7 @@ pub unsafe extern "C" fn tondo_rt_csv_fields(
     region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
     let separator = char::from_u32(separator).unwrap_or(',');
-    let fields = csv_record(&String::from_utf8_lossy(text(record)), separator).unwrap_or_default();
+    let fields = csv_record(&String::from_utf8_lossy(text(&record)), separator).unwrap_or_default();
     crate::arrays::string_array_in(region, &fields)
 }
 
@@ -459,7 +459,7 @@ pub unsafe extern "C" fn tondo_rt_path_steps(
     path: *const Str,
     region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
-    let path = String::from_utf8_lossy(text(path));
+    let path = String::from_utf8_lossy(text(&path));
     let steps: Vec<String> = match path_steps(&path) {
         Some(steps) => steps
             .into_iter()
@@ -479,6 +479,6 @@ pub unsafe extern "C" fn tondo_rt_path_key(
     key: *const Str,
     region: *mut crate::regions::Region,
 ) -> *mut Str {
-    let (parent, key) = (String::from_utf8_lossy(text(parent)), String::from_utf8_lossy(text(key)));
+    let (parent, key) = (String::from_utf8_lossy(text(&parent)), String::from_utf8_lossy(text(&key)));
     crate::strings::str_in(region, path_key(&parent, &key).as_bytes())
 }

@@ -128,7 +128,7 @@ pub extern "C" fn tondo_rt_region_new() -> *mut super::native::NativeObject {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_region_show(part: *mut super::native::NativeObject, text: *const Str) {
     let Some(&RegionPart(id)) = super::native::get::<RegionPart>(part) else { return };
-    let text = String::from_utf8_lossy(unsafe { str_bytes(text) }).into_owned();
+    let text = String::from_utf8_lossy(unsafe { str_bytes(&text) }).into_owned();
     let mut out = stdout();
     out.terminal.get_or_insert_with(|| std::io::IsTerminal::is_terminal(&std::io::stdout()));
     match out.region.iter_mut().find(|(known, _)| *known == id) {

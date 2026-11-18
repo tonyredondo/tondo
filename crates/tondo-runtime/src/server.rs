@@ -1348,7 +1348,7 @@ pub extern "C" fn tondo_rt_http_request_header(
     name: *mut Str,
     region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
-    let values = request(object).headers.get_all(unsafe { crate::str_text(name) });
+    let values = request(object).headers.get_all(unsafe { crate::str_text(&name) });
     crate::arrays::texts_array_in(region, || values.iter().map(|value| value.as_bytes()))
 }
 
@@ -1573,7 +1573,7 @@ unsafe impl Send for Held {}
 
 impl AsRef<[u8]> for Held {
     fn as_ref(&self) -> &[u8] {
-        unsafe { super::strings::str_bytes(self.0) }
+        unsafe { super::strings::str_bytes(&self.0) }
     }
 }
 

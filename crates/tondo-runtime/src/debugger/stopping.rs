@@ -827,7 +827,7 @@ pub(crate) fn latent_sites() -> Vec<LatentSite> {
     if raw.is_null() {
         return Vec::new();
     }
-    let text = table_text(unsafe { str_bytes((*raw).text) });
+    let text = table_text(unsafe { str_bytes(&(*raw).text) });
     let (mut sites, mut function) = (Vec::new(), None);
     for line in text.lines() {
         let fields: Vec<&str> = line.split('\t').collect();
@@ -1311,7 +1311,7 @@ pub(super) fn dump_functions() -> std::collections::HashMap<usize, DumpFunction>
         return functions;
     }
     let raw = unsafe { &*raw };
-    let text = table_text(unsafe { str_bytes(raw.text) });
+    let text = table_text(unsafe { str_bytes(&raw.text) });
     let glues = unsafe { std::slice::from_raw_parts(raw.glues, raw.count as usize) };
     let (mut current, mut next) = (0, 0);
     for line in text.lines() {
@@ -2258,7 +2258,7 @@ pub(super) fn hold(mut state: std::sync::MutexGuard<'static, State>, mut stop: S
             CALLING.store(task, Ordering::Relaxed);
             let made = call(addresses.as_ptr() as u64, 0);
             CALLING.store(0, Ordering::Relaxed);
-            let text = (!made.is_null()).then(|| String::from_utf8_lossy(unsafe { str_bytes(made) }).into_owned());
+            let text = (!made.is_null()).then(|| String::from_utf8_lossy(unsafe { str_bytes(&made) }).into_owned());
             unsafe { crate::tondo_rt_str_release(made) };
             if paused {
                 crate::tasks::pause_here();
@@ -2334,7 +2334,7 @@ pub unsafe extern "C" fn tondo_rt_debug_failed(
         return;
     }
     let shown = show(glue, error as usize);
-    if !caught_error(&String::from_utf8_lossy(unsafe { str_bytes(ty) }), &shown) {
+    if !caught_error(&String::from_utf8_lossy(unsafe { str_bytes(&ty) }), &shown) {
         return;
     }
     let frame = unsafe { *(crate::trace::frame_pointer() as *const usize) };
