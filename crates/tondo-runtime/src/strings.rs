@@ -103,11 +103,21 @@ pub(crate) struct RegionPieces {
 }
 
 impl RegionPieces {
-    /// Room in `region` for `count` pieces of `bytes` bytes in all.
-    pub(crate) fn new(region: *mut super::regions::Region, count: usize, bytes: usize) -> RegionPieces {
+    /// Room in `region` for `count` pieces of `bytes` bytes in all, after
+    /// an array of `count` texts for them, in one allocation, as
+    /// `Pieces::with_array` makes them in one block on the heap.
+    pub(crate) fn with_array(
+        region: *mut super::regions::Region,
+        count: usize,
+        bytes: usize,
+    ) -> (RegionPieces, *mut ArrayHeader) {
+        let array = super::arrays::ARRAY_HEADER + count * 8;
         let room = count * (HEADER + 8) + bytes;
-        let at = unsafe { super::regions::tondo_rt_region_alloc(region, room.max(8)) } as usize;
-        RegionPieces { at, end: at + room, region }
+        unsafe {
+            let at = super::regions::tondo_rt_region_alloc(region, array + room);
+            let pieces = RegionPieces { at: at as usize + array, end: at as usize + array + room, region };
+            (pieces, super::arrays::array_at_in(at, count))
+        }
     }
 
     pub(crate) fn push(&mut self, bytes: &[u8]) -> *mut Str {
@@ -179,11 +189,6 @@ pub(crate) struct Pieces {
 }
 
 impl Pieces {
-    /// Room for `count` pieces of `bytes` bytes in all.
-    pub(crate) fn new(count: usize, bytes: usize) -> Pieces {
-        Pieces::after(0, count, bytes)
-    }
-
     /// Room for `count` pieces of `bytes` bytes in all, after `before`
     /// bytes of the block's header.
     fn after(before: usize, count: usize, bytes: usize) -> Pieces {

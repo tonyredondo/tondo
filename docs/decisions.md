@@ -7825,6 +7825,19 @@ heap takes the text it is given: the analysis has the region of what it
 takes live as long as what it makes. `tondo optimizations` says ", with
 room an append grows into" of a place given the room.
 
+## An array of texts and its texts are one allocation, on the heap and in a region
+
+`split` made the array of its pieces and the pieces in one block on the
+heap, one allocation, and in a region in two, one for the array and one
+for the room of the pieces; the arrays of texts other operations give,
+as lines or the names of a directory, took an allocation for each text
+and one for the array on the heap, and two in a region. A test that
+counts allocations moved when the analysis put one of them elsewhere.
+Each makes the array and its texts in one allocation now, a block on the
+heap as `split` did, or one room of the region: fewer allocations on the
+heap, and the same count on both. A text of such a block keeps the
+block while something holds it, as `split`'s pieces did.
+
 ## Maps and sets grow in their region
 
 A map or a set was made on the heap wherever it was used, the third most

@@ -2,7 +2,7 @@
 //! library 14.1): splitting, Unicode case and classes, and numbers to and
 //! from text. Positions are scalar indexes, as in the language.
 
-use super::{ArrayHeader, Str, element, tondo_rt_array_new};
+use super::{ArrayHeader, Str, element};
 use crate::regions::Region;
 use crate::strings::{Pieces, RegionPieces, str_in};
 
@@ -15,15 +15,13 @@ fn text<'a>(s: *const Str) -> &'a str {
 fn strings<'a>(parts: impl ExactSizeIterator<Item = &'a str> + Clone, region: *mut Region) -> *mut ArrayHeader {
     let bytes = parts.clone().map(str::len).sum();
     if !region.is_null() {
-        let array = unsafe { crate::regions::tondo_rt_array_new_in(region, 8, parts.len()) };
-        let mut pieces = RegionPieces::new(region, parts.len(), bytes);
+        let (mut pieces, array) = RegionPieces::with_array(region, parts.len(), bytes);
         for (index, part) in parts.enumerate() {
             unsafe { *(element(array, 8, index) as *mut *mut Str) = pieces.push(part.as_bytes()) };
         }
         return array;
     }
-    let array = tondo_rt_array_new(8, parts.len());
-    let mut pieces = Pieces::new(parts.len(), bytes);
+    let (mut pieces, array) = Pieces::with_array(parts.len(), bytes);
     for (index, part) in parts.enumerate() {
         unsafe { *(element(array, 8, index) as *mut *mut Str) = pieces.push(part.as_bytes()) };
     }
@@ -62,8 +60,8 @@ pub unsafe extern "C" fn tondo_rt_text_split(
         [byte] => memchr::memchr_iter(*byte, s).count(),
         _ => finder.find_iter(s).count(),
     };
-    // In a region, the array and each piece there; else the pieces in one
-    // block, which holds the text but its separators, and the array of them.
+    // The pieces and the array of them in one block, which holds the text
+    // but its separators, or in one room of the region.
     let bytes = s.len() - count * separator.len();
     let (mut pieces, array) = match region.is_null() {
         true => {
@@ -71,8 +69,8 @@ pub unsafe extern "C" fn tondo_rt_text_split(
             (Ok(pieces), array)
         }
         false => {
-            let array = unsafe { crate::regions::tondo_rt_array_new_in(region, 8, count + 1) };
-            (Err(RegionPieces::new(region, count + 1, bytes)), array)
+            let (pieces, array) = RegionPieces::with_array(region, count + 1, bytes);
+            (Err(pieces), array)
         }
     };
     let (mut index, mut start) = (0, 0);

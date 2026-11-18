@@ -88,31 +88,28 @@ pub(crate) fn int_array_in(region: *mut super::regions::Region, values: &[i64]) 
     plain_array_in(region, values)
 }
 
-/// An `Array[String]` of `count` texts, each of bytes as UTF-8 reads them,
-/// with no Rust string between where they are UTF-8 already.
-pub(crate) fn texts_array<'a>(count: usize, items: impl Iterator<Item = &'a [u8]>) -> *mut ArrayHeader {
-    let array = tondo_rt_array_new(8, count);
-    for (index, item) in items.take(count).enumerate() {
-        let text = String::from_utf8_lossy(item);
-        unsafe { *(element(array, 8, index) as *mut *mut Str) = str_new(text.as_bytes()) };
-    }
-    array
-}
-
-/// An `Array[String]` of the texts `items` gives, as `texts_array`, in
-/// `region` when it is not null: the array and its texts in one room of
-/// it, counted first, with no list of them between.
+/// An `Array[String]` of the texts `items` gives, each of bytes as UTF-8
+/// reads them, in `region` when it is not null: the array and its texts in
+/// one room of it, or in one block of the heap, counted first, with no list
+/// of them between.
 pub(crate) fn texts_array_in<'a, I: Iterator<Item = &'a [u8]>>(
     region: *mut super::regions::Region,
     items: impl Fn() -> I,
 ) -> *mut ArrayHeader {
     let (count, bytes) =
         items().fold((0, 0), |(count, bytes), item| (count + 1, bytes + String::from_utf8_lossy(item).len()));
+    // The array and its texts in one allocation, on the heap as in a
+    // region, so that a test counts alike wherever the analysis puts it.
     if region.is_null() {
-        return texts_array(count, items());
+        let (mut pieces, array) = super::strings::Pieces::with_array(count, bytes);
+        for (index, item) in items().take(count).enumerate() {
+            let text = String::from_utf8_lossy(item);
+            unsafe { *(element(array, 8, index) as *mut *mut Str) = pieces.push(text.as_bytes()) };
+        }
+        pieces.finish();
+        return array;
     }
-    let array = unsafe { super::regions::tondo_rt_array_new_in(region, 8, count) };
-    let mut pieces = super::strings::RegionPieces::new(region, count, bytes);
+    let (mut pieces, array) = super::strings::RegionPieces::with_array(region, count, bytes);
     for (index, item) in items().take(count).enumerate() {
         let text = String::from_utf8_lossy(item);
         unsafe { *(element(array, 8, index) as *mut *mut Str) = pieces.push(text.as_bytes()) };
@@ -175,6 +172,17 @@ pub(crate) unsafe fn array_in(
         ptr.write(ArrayHeader { rc: AtomicUsize::new(super::regions::LAST_IN_REGION), len, cap, head: 0 });
         ptr
     }
+}
+
+/// An array of `len` elements of 8 bytes at `at`, room a region gave with
+/// more after it, as `RegionPieces::with_array` takes for an array and its
+/// texts: the last reference its region lets go of.
+pub(crate) unsafe fn array_at_in(at: *mut u8, len: usize) -> *mut ArrayHeader {
+    let array = at as *mut ArrayHeader;
+    unsafe {
+        array.write(ArrayHeader { rc: AtomicUsize::new(super::regions::LAST_IN_REGION), len, cap: len, head: 0 });
+    }
+    array
 }
 
 /// A new array with `len` elements for the caller to initialize.

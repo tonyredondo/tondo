@@ -2362,6 +2362,42 @@ fn texts_an_append_grows_count_alike_in_regions() {
     assert_eq!(counts(&[]), counts(&["--no-regions"]));
 }
 
+/// A map or a set allocates as often in a region as on the heap: made by
+/// its first insertion, grown room by room as a vector is, copied when it
+/// is shared (tests/cases/run/regions/maps.to).
+#[test]
+fn maps_count_alike_in_regions() {
+    let source =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/cases/run/regions/maps.to")).unwrap();
+    let (before, after) = source.split_once("\nfn main() {").unwrap();
+    let after = after.split_once("\n}\n").unwrap().1;
+    let shapes = format!("{before}\n{after}").replace("import std.console\n", "");
+    let shapes = shapes.lines().filter(|line| !line.starts_with("// expect")).collect::<Vec<_>>().join("\n");
+    let tests = format!(
+        "import std.console\nimport std.testing\n{shapes}\ntest counted {{\n    \
+         let text = \"a b c a b a\"\n    \
+         console.println(\"counts {{testing.allocations(() {{ counts(text) }})}}\")\n    \
+         console.println(\"distinct {{testing.allocations(() {{ distinct() }})}}\")\n    \
+         console.println(\"squares {{testing.allocations(() {{ squares(1000).length() }})}}\")\n    \
+         console.println(\"shared {{testing.allocations(() {{ shared() }})}}\")\n    \
+         console.println(\"numbers {{testing.allocations(() {{ numbers() }})}}\")\n}}\n"
+    );
+    let dir = project("maps_counted", &tests);
+    let counts = |regions: &[&str]| -> Vec<String> {
+        let (stdout, stderr, status) = tondo(&dir, &[&["test", "--show-output"], regions].concat());
+        assert_eq!(status, 0, "{stdout}{stderr}");
+        let counts: Vec<String> = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| ["counts", "distinct", "squares", "shared", "numbers"].iter().any(|s| line.starts_with(s)))
+            .map(String::from)
+            .collect();
+        assert_eq!(counts.len(), 5, "{stdout}");
+        counts
+    };
+    assert_eq!(counts(&[]), counts(&["--no-regions"]));
+}
+
 /// `tondo test` given a file of tests, as one is often given, says the
 /// directory of its project to give instead.
 #[test]
