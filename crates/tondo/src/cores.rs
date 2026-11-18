@@ -730,20 +730,10 @@ impl Bound {
     }
 }
 
-/// Where the pointer and the length of a `Vec` are: the runtime and this
-/// are built by the same compiler, so one here says.
-fn vec_words() -> Option<(usize, usize)> {
-    let mut sample: Vec<u8> = Vec::with_capacity(5);
-    sample.extend([1, 2]);
-    let words: [u64; 3] = unsafe { std::mem::transmute_copy(&sample) };
-    let pointer = words.iter().position(|&word| word == sample.as_ptr() as u64)?;
-    Some((pointer, words.iter().position(|&word| word == 2)?))
-}
-
-/// The pointer and length of the `Vec` at `at`.
-fn vec_at(memory: &Memory, at: u64) -> Option<(u64, u64)> {
-    let (pointer, length) = vec_words()?;
-    Some((memory.word(at + pointer as u64 * 8)?, memory.word(at + length as u64 * 8)?))
+/// The pointer and length of the room of a map at `at`, its pointer then
+/// its length (`Room` of the runtime's maps).
+fn room_at(memory: &Memory, at: u64) -> Option<(u64, u64)> {
+    Some((memory.word(at)?, memory.word(at.checked_add(8)?)?))
 }
 
 /// What is shown of an array, and how deep a value goes.
@@ -798,7 +788,7 @@ fn shown(id: usize, value: Place, shapes: &[String], memory: &Memory, depth: usi
             let entry: Option<usize> = words.next().and_then(|shape| shape.parse().ok());
             let map = value.word(memory)?;
             let (size, offset) = (memory.word(map.checked_add(8)?)?, memory.word(map.checked_add(16)?)?);
-            let (pointer, bytes) = vec_at(memory, map.checked_add(MAP_ENTRIES)?)?;
+            let (pointer, bytes) = room_at(memory, map.checked_add(MAP_ENTRIES)?)?;
             let length = bytes.checked_div(size).unwrap_or(0);
             let pairs: Vec<String> = (0..length.min(ELEMENTS))
                 .map(|index| {
