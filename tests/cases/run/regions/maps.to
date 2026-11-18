@@ -95,7 +95,7 @@ fn main() {
     console.println(
         "{counts(text)} {distinct()} {total} {big[999] ?? 0} {large()} {shared()} {lent()}",
     )
-    console.println("{kept(["x", "y"])} {numbers()} {tally("a b c a b a")} {churn()}")
+    console.println("{kept(["x", "y"])} {numbers()} {tally("a b c a b a")} {churn()} {removed()}")
 }
 
 /// Grown far: its table built again in the region as it doubles.
@@ -117,9 +117,19 @@ fn tally(text: String): Int {
     (seen["a"] ?? 0) * 10 + seen.length()
 }
 
-/// Changed by a removal, which a region does not take yet: on the heap,
-/// and the remark names it.
+/// Emptied, which a region does not take yet: on the heap, and the remark
+/// names it.
 fn churn(): Int {
+    var map: Map[Int, Int] = [:]
+    for i in 0..10 {
+        map[i] = i
+    }
+    map.clear()
+    map.length()
+}
+
+/// An entry removed: in the function's region.
+fn removed(): Int {
     var map: Map[Int, Int] = [:]
     for i in 0..10 {
         map[i] = i
@@ -129,7 +139,7 @@ fn churn(): Int {
 }
 
 // expect-stdout: 32 28 33 998001 5005 21 110
-// expect-stdout: 2 9999 33 9
+// expect-stdout: 2 9999 33 0 9
 // expect-optimization: 17:9 region goes in a region of `counts`
 // expect-optimization: 28:13 region goes in the region of a turn of the loop at line 25
 // expect-optimization: 39:9 region goes in the region of a turn of the loop at line 91
@@ -142,4 +152,5 @@ fn churn(): Int {
 // expect-optimization: 105:9 region goes in a region of `numbers`
 // expect-optimization: 115:9 region changes a map that goes in a region of `tally`
 // expect-optimization: 115:14 region grows a map that goes in a region of `tally`
-// expect-optimization: 125:9 region stays on the heap: a region changes a map only by its insertions and the values of its entries yet
+// expect-optimization: 125:9 region stays on the heap: a region changes a map only by its insertions, its removals and the values of its entries yet
+// expect-optimization: 137:5 region changes a map that goes in a region of `removed`

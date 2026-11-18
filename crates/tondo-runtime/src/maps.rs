@@ -514,13 +514,16 @@ pub unsafe extern "C" fn tondo_rt_map_insert(
 }
 
 /// Removes `key`, moving its value to `out`; keeps the order of the other
-/// entries. Returns 1 when the key was present.
+/// entries. Returns 1 when the key was present. A shared map is copied
+/// first, in `region`, the one of the place that removes, or on the heap
+/// when it is null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_map_remove(
     slot: *mut *mut MapObject,
     key: *const u8,
     out: *mut u8,
     glue: *const MapGlue,
+    region: *mut regions::Region,
 ) -> u8 {
     unsafe {
         let glue = &*glue;
@@ -528,7 +531,7 @@ pub unsafe extern "C" fn tondo_rt_map_remove(
         if (**slot).find(key, hash, glue).is_none() {
             return 0;
         }
-        let m = map_unique(slot, glue, std::ptr::null_mut());
+        let m = map_unique(slot, glue, region);
         let index = m.find(key, hash, glue).unwrap();
         let entry = m.entry_mut(index);
         std::ptr::copy_nonoverlapping(entry.add(m.value_offset), out, m.entry_size - m.value_offset);
@@ -777,7 +780,13 @@ mod rooms {
             let mut out = 0u64;
             for key in (0..200).step_by(2) {
                 let key = key as u64;
-                tondo_rt_map_remove(slot, &key as *const u64 as *const u8, &mut out as *mut u64 as *mut u8, &GLUE);
+                tondo_rt_map_remove(
+                    slot,
+                    &key as *const u64 as *const u8,
+                    &mut out as *mut u64 as *mut u8,
+                    &GLUE,
+                    std::ptr::null_mut(),
+                );
             }
             assert_eq!(((**slot).len(), (**slot).table.as_ptr()), (100, table));
             assert!(holds(*slot, (1..200).step_by(2)));

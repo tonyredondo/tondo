@@ -519,12 +519,13 @@ pub unsafe extern "C" fn tondo_rt_array_pop(
     size: usize,
     retain: Option<Glue>,
     release: Option<Glue>,
+    region: *mut super::regions::Region,
 ) -> u8 {
     unsafe {
         if (**slot).len == 0 {
             return 0;
         }
-        reserve(slot, size, 0, 0, false, retain, release);
+        reserve_in(slot, size, 0, 0, false, retain, release, region);
         let a = *slot;
         (*a).len -= 1;
         std::ptr::copy_nonoverlapping(element(a, size, (*a).len), out, size);

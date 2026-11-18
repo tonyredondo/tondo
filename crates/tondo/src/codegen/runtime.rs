@@ -365,9 +365,10 @@ impl Rt {
             // A map or a set that grows, or whose entry changes in place, in
             // the region of its place.
             Rt::MapInsert | Rt::MapUnique => true,
-            // An array whose element changes in place, in the region of
-            // its place.
-            Rt::ArrayUnique => true,
+            // An array whose element changes in place, or that loses its
+            // last, and a map that loses an entry, in the region of their
+            // place.
+            Rt::ArrayUnique | Rt::ArrayPop | Rt::MapRemove => true,
             _ => false,
         }
     }
@@ -520,7 +521,7 @@ impl Rt {
             Rt::ArrayUnique => ("tondo_rt_array_unique", &[I64, I64, I64, I64, I64, I64], &[]),
             Rt::ArrayPush => ("tondo_rt_array_push", &[I64, I64, I64, I64, I64], &[]),
             Rt::ArrayPushIn => ("tondo_rt_array_push_in", &[I64, I64, I64, I64, I64, I64], &[]),
-            Rt::ArrayPop => ("tondo_rt_array_pop", &[I64, I64, I64, I64, I64], &[I8]),
+            Rt::ArrayPop => ("tondo_rt_array_pop", &[I64, I64, I64, I64, I64, I64], &[I8]),
             Rt::ArraySlice => ("tondo_rt_array_slice", &[I64, I64, I64, I64, I8, I64, I8, I64, I64], &[I64]),
             Rt::ArraySliceChecked => ("tondo_rt_array_slice_checked", &[I64, I64, I64, I64, I64, I64], &[I64]),
             Rt::ArrayConcat => ("tondo_rt_array_concat", &[I64, I64, I64, I64, I64, I64], &[I64]),
@@ -551,7 +552,7 @@ impl Rt {
             Rt::MapFind => ("tondo_rt_map_find", &[I64, I64, I64], &[I64]),
             Rt::MapPosition => ("tondo_rt_map_position", &[I64, I64, I64], &[I64]),
             Rt::MapInsert => ("tondo_rt_map_insert", &[I64, I64, I64, I64, I64, I64], &[I8]),
-            Rt::MapRemove => ("tondo_rt_map_remove", &[I64, I64, I64, I64], &[I8]),
+            Rt::MapRemove => ("tondo_rt_map_remove", &[I64, I64, I64, I64, I64], &[I8]),
             Rt::MapLen => ("tondo_rt_map_len", &[I64], &[I64]),
             Rt::MapEntry => ("tondo_rt_map_entry", &[I64, I64], &[I64]),
             Rt::MapUnique => ("tondo_rt_map_unique", &[I64, I64, I64], &[]),

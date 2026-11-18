@@ -7857,10 +7857,11 @@ changed in place, as the guide's `m[k, default: 0] += 1` does, is a
 place a region takes, as an insertion is: the map, made unique first
 when it is shared, in the region of its place, and the value written
 held to what the region made or counts nothing, as an element pushed is.
-Any other change, a removal or `clear`, may copy a shared map onto the
-heap and is not taken yet: its map stays on the heap, and the remark
-names the change, "a region changes a map only by its insertions and the
-values of its entries yet", as it names an array's other changes. An
+A removal is taken too, as a change in place: the map, unique first, in
+the region of its place. `clear` may copy a shared map onto the heap and
+is not taken yet: its map stays on the heap, and the remark names the
+change, "a region changes a map only by its insertions, its removals and
+the values of its entries yet", as it names an array's other changes. An
 insertion that grows a map moves it, when it is not where the
 insertion's place goes, as an array's push does: a map of a region that
 a place on the heap grows goes to the heap, and one of the heap that a
@@ -7885,6 +7886,6 @@ data, in the region of its place, and the value written held to what the
 region made or counts nothing. The code that writes an element of an
 array of a region compares its count with that of a region's last
 reference, as a push does, and no longer calls the runtime at each
-write to learn the array is its own. `insert(at:)`, `removeAt`, `pop`,
-`clear`, a slice written back and a call's loan are not taken yet, and
-the remark names the change.
+write to learn the array is its own. `pop` is taken too, as a write is.
+`insert(at:)`, `removeAt`, `clear`, a slice written back and a call's
+loan are not taken yet, and the remark names the change.

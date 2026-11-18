@@ -2509,14 +2509,14 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   vuelta del bucle en que se hace en algo que el bucle hace más que ampliar,
   como la variable que la vuelta siguiente reescribe, contiene un valor que
   su región no hizo, se cambia de un modo que una región no toma aún, como
-  un mapa del que se quita una entrada o un array que cambia más que con
-  `push` y la escritura de sus elementos, y nombra el cambio, se pasa a una
-  función del runtime cuyo código aún no se ha leído, y la nombra,
+  un mapa que se vacía con `clear` o un array que cambia más que con
+  `push`, `pop` y la escritura de sus elementos, y nombra el cambio, se pasa
+  a una función del runtime cuyo código aún no se ha leído, y la nombra,
   o es de una clase que una región no toma aún, y la nombra: una región
-  toma arrays, cajas, arrays que crecen con `push` y cambian en su sitio
-  sus elementos, mapas y sets, que
-  crecen con sus inserciones y cambian en su sitio los valores de sus
-  entradas, los textos que hace una
+  toma arrays, cajas, arrays que crecen con `push`, pierden el último con
+  `pop` y cambian en su sitio sus elementos, mapas y sets, que crecen con
+  sus inserciones, pierden entradas y cambian en su sitio los valores de
+  sus entradas, los textos que hace una
   interpolación, también el que crece en su sitio, como `x = "{x}..."`, que
   dobla su espacio en la región y, pasado un mebibyte, crece en un trozo
   propio de ella como un bloque del heap, y al que una ampliación en su

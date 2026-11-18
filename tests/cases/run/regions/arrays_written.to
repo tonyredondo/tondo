@@ -3,8 +3,8 @@
 // data, goes where the write's place goes, and the value written is held
 // to what the region made or counts nothing. A table filled in place, an
 // array that grows and is written, a literal of constants sorted by swaps,
-// and an array changed in a way a region does not take yet, whose remark
-// names the change.
+// a stack, which `pop` changes too, and an array changed in a way a region
+// does not take yet, whose remark names the change.
 
 import std.console
 
@@ -42,6 +42,16 @@ fn sorted(): Int {
     values[0] * 1000 + values[3]
 }
 
+/// A stack: pushed to and popped from.
+fn stack(): Int {
+    var items: Array[Int] = []
+    for i in 0..10 {
+        items.push(i)
+    }
+    let top = items.pop() ?? 0
+    top + items.length()
+}
+
 /// Changed by `insert(at:)`, which a region does not take yet.
 fn inserted(): Int {
     var table: Array[Int] = []
@@ -53,12 +63,13 @@ fn inserted(): Int {
 }
 
 fn main() {
-    console.println("{squares()} {pushed()} {sorted()} {inserted()}")
+    console.println("{squares()} {pushed()} {sorted()} {stack()} {inserted()}")
 }
 
-// expect-stdout: 9801 107 1009 42
+// expect-stdout: 9801 107 1009 18 42
 // expect-optimization: 15:9 region changes an array that goes in a region of `squares`
 // expect-optimization: 24:9 region grows an array that goes in a region of `pushed`
 // expect-optimization: 26:5 region changes an array that goes in a region of `pushed`
 // expect-optimization: 37:17 region changes an array that goes in a region of `sorted`
-// expect-optimization: 49:9 region stays on the heap: a region changes an array only by `push` and the writes of its elements yet
+// expect-optimization: 51:15 region changes an array that goes in a region of `stack`
+// expect-optimization: 59:9 region stays on the heap: a region changes an array only by `push`, `pop` and the writes of its elements yet

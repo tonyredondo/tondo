@@ -1316,7 +1316,11 @@ fn unchanged(body: &Body, types: &Types, local: Local) -> Option<(String, Span, 
         let taken = match &**rvalue {
             Rvalue::Mutate(mutation, target, ..) if target.local == local => matches!(
                 mutation,
-                crate::hir::Mutation::Push | crate::hir::Mutation::Reserve | crate::hir::Mutation::Insert
+                crate::hir::Mutation::Push
+                    | crate::hir::Mutation::Reserve
+                    | crate::hir::Mutation::Pop
+                    | crate::hir::Mutation::Insert
+                    | crate::hir::Mutation::Remove
             ),
             _ if place.local == local && !place.path.is_empty() => match map {
                 true => entry_value(place),
@@ -1325,8 +1329,8 @@ fn unchanged(body: &Body, types: &Types, local: Local) -> Option<(String, Span, 
             _ => return None,
         };
         let why = match map {
-            true => "a region changes a map only by its insertions and the values of its entries yet",
-            false => "a region changes an array only by `push` and the writes of its elements yet",
+            true => "a region changes a map only by its insertions, its removals and the values of its entries yet",
+            false => "a region changes an array only by `push`, `pop` and the writes of its elements yet",
         };
         (!taken).then(|| (why.to_string(), *span, block))
     })
@@ -1638,6 +1642,26 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
             }
             Rvalue::Mutate(crate::hir::Mutation::Insert, target, ..) => {
                 found.push(Site { local: target.local, span: *span, what: "grows a map that ", at, refused: None });
+                continue;
+            }
+            // A removal, which takes nothing in: the collection, made unique
+            // first when it is shared, goes where its place goes, as one an
+            // insertion or a push grows.
+            Rvalue::Mutate(crate::hir::Mutation::Pop, target, ..) if array(target) && target.path.is_empty() => {
+                found.push(Site {
+                    local: target.local,
+                    span: *span,
+                    what: "changes an array that ",
+                    at,
+                    refused: None,
+                });
+                continue;
+            }
+            Rvalue::Mutate(crate::hir::Mutation::Remove, target, ..)
+                if target.path.is_empty()
+                    && matches!(kind(target.local), crate::types::TyKind::Map(..) | crate::types::TyKind::Set(_)) =>
+            {
+                found.push(Site { local: target.local, span: *span, what: "changes a map that ", at, refused: None });
                 continue;
             }
             // What a native makes in the region it is given, or else what
