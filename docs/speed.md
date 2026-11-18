@@ -753,6 +753,14 @@ heap, four groups are the analysis's, not their kind's:
 | 162 | "`f` returns it, and what calls it through a function value may keep it": nearly all on the way to a failure, as the errors of derived code | examples/todo-api/src/api/api.to:56, `"there is no task {id}"` |
 | 30 | "it holds a value that its region did not make" | examples/notes/src/library/library.to:84, `files.glob("*.md")…?.sorted()`, a sorted copy of the texts the runtime gave; and texts sorted in place, where the copy and the array each wait for the other to be known as the region's |
 
+Some of the 30 of the last row could be held without a count: a value known to outlive the region,
+as a parameter the function does not change or a value of a region around it, needs no release when
+the region goes, as its holder dies first. A region's array could then hold the pieces of a text it
+was given, and a region's closure capture a parameter. Of the closures a value holds, none stays on
+the heap today for what it captures (the same sweep after closures went into regions: 4 places in a
+region, 10 kept by what they are given to, routes and services, or captured), so the gain is in
+arrays and maps first.
+
 The first is the one to look at first. The rest left the function for good: stored in what it was
 given (65), sent to a task (16), read in a way that may keep it (19). By kind there was little:
 closures a value holds, as an iterator's adapters (12), the objects of the runtime (6), slices (2),
