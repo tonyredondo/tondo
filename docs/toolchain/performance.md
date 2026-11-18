@@ -954,8 +954,9 @@ is passed to the runtime, which may keep it`. The readers and writers of
 JSON stay there too: the runtime keeps spare ones, which cost the heap no
 allocation. Of the other formats, the writer that `yaml.encode` or
 `toml.encode` writes into goes in a region, as a hasher and what unpacks
-compressed bytes do; a document read with `decode` is on the heap, since
-the library keeps its parser in a record, and the view says nothing of it.
+compressed bytes do. What a `decode` makes on its way is made in the
+library's own function, which is too large to be copied into the program's,
+so the view of a program does not show it.
 
 A turn's region is emptied when the turn goes back to the head of its
 loop, and let go of when the function returns. So a value does not outlive
