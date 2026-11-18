@@ -884,6 +884,76 @@ entries yet: `seen.clear()` at 9:13``, and an array that is inserted into
 in the middle or has an element taken out of it, ``a region changes an
 array only by `push`, `pop` and the writes of its elements yet``.
 
+An object of the runtime goes in a region as well when only variables hold
+it: a reader, a buffer, a file that is opened, a pattern that is compiled.
+It is let go of where it would be on the heap, at the end of the block that
+holds it, so a file closes when it did; what the region takes is the
+object's memory.
+
+```tondo
+import std.console
+import std.io
+import std.regex
+
+/// The numbers of a text, one a line, added.
+fn added(text: String): Int ! io.IoError {
+    let reader = io.reader(text)
+    var total = 0
+    for {
+        let line = reader.readLine()? ?? break
+        total += Int.parse(line) ?? 0
+    }
+    total
+}
+
+/// How many numbers a text has, wherever they are.
+fn numbers(text: String): Int ! regex.RegexError {
+    let digits = regex.Regex.compile("[0-9]+")?
+    digits.findAll(text)?.count()
+}
+
+/// The readers of several texts, kept together.
+fn readers(texts: Array[String]): Int {
+    var all: Array[io.Reader] = []
+    for text in texts {
+        all.push(io.reader(text))
+    }
+    all.length()
+}
+
+fn main() {
+    let text = "3\n4\n5\n"
+    match added(text) {
+        ok(total) => console.println("{total} {numbers(text) ?? 0} {readers([text, text])}")
+        err(_) => console.println("unread")
+    }
+}
+```
+
+```text output
+12 3 2
+```
+
+```text
+$ tondo optimizations lines.to --kind region
+lines.to:7:18: `io.reader(text)` goes in a region of `added` (in added)
+lines.to:10:20: `reader.readLine()` goes in the region of a turn of the loop at line 10 (in added)
+lines.to:18:18: `regex.Regex.compile("[0-9]+")` in `regex.Regex.compile`, `regexNative.compile(` goes in a region of `numbers` (in numbers)
+lines.to:26:9: `all.push(io.reader(text))` grows an array that stays on the heap: it holds an object of the runtime, which a region's value would never let go of (in main, readers)
+lines.to:26:18: `io.reader(text)` goes in a region of `main` (in main)
+lines.to:26:18: `io.reader(text)` goes in a region of `readers` (in readers)
+lines.to:34:77: `[text, text]` goes in a region of `main` (in main)
+```
+
+A region lets go of its values without looking at them, so an array of a
+region cannot hold an object, which has something to close or to give
+back: the array of readers stays on the heap, where it lets go of each when
+it goes. An object that is returned stays on the heap, and so does one
+given to what may keep it, as `console.setInput(io.reader(text))`, with `it
+is passed to the runtime, which may keep it`. The readers and writers of
+JSON stay there too: the runtime keeps spare ones, which cost the heap no
+allocation.
+
 A turn's region is emptied when the turn goes back to the head of its
 loop, and let go of when the function returns. So a value does not outlive
 its turn by a way out of the loop that never comes back to it: a `?`, a
