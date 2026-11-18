@@ -2554,8 +2554,8 @@ fn trimmed(texts: Array[String]): Int {
 
 /// The runtime's operations on texts allocate what they give and none of
 /// their own on the way: `words` and `lines` as `split` does, one block of
-/// pieces and their array, and a slice, an ASCII text's change of case and
-/// a replacement of plain text one text each.
+/// pieces and their array, and a slice, an ASCII text's change of case,
+/// `toUpperAscii`, a replacement of plain text and `replace` one text each.
 #[test]
 fn text_operations_allocate_only_what_they_give() {
     let tests = "\
@@ -2569,6 +2569,7 @@ test counted {
     let digits = regex.Regex.compile(r\"\\d+\") ?? panic(\"a pattern\")
     // The first of each, which may take room a thread keeps.
     _ = (text.lines().length(), lines[0].words().length(), digits.replaceAll(lines[0], \"N\") ?? \"\")
+    _ = lines[99].replace(\"users\", \"u\")
     console.println(\"split {testing.allocations(() { lines.map((line) { line.split(\" \").length() }).sum() })}\")
     console.println(\"words {testing.allocations(() { lines.map((line) { line.words().length() }).sum() })}\")
     console.println(\"splitLines {testing.allocations(() { text.split(\"\\n\").length() })}\")
@@ -2578,6 +2579,8 @@ test counted {
     console.println(
         \"replaced {testing.allocations(() { lines.map((line) { (digits.replaceAll(line, \"N\") ?? \"\").byteLength() }).sum() })}\",
     )
+    console.println(\"swapped {testing.allocations(() { lines.map((line) { line.replace(\"users\", \"u\").byteLength() }).sum() })}\")
+    console.println(\"shouted {testing.allocations(() { lines.map((line) { line.toUpperAscii().byteLength() }).sum() })}\")
 }
 ";
     let counts = counts_of("text_operations_counted", tests);
@@ -2586,7 +2589,7 @@ test counted {
     assert_eq!(of("lines"), of("splitLines"), "{counts:?}");
     // The array `map` makes, and one text for each line.
     let mapped = of("split") - 100;
-    for name in ["sliced", "lowered", "replaced"] {
+    for name in ["sliced", "lowered", "replaced", "swapped", "shouted"] {
         assert_eq!(of(name), mapped + 100, "{name}: {counts:?}");
     }
 }

@@ -752,9 +752,34 @@ pub unsafe extern "C" fn tondo_rt_str_replace(
     new: *const Str,
     region: *mut super::regions::Region,
 ) -> *mut Str {
-    let replaced = unsafe { str_text(s).replace(str_text(old), str_text(new)) };
-    str_in(region, replaced.as_bytes())
+    let (s, old, new) = unsafe { (str_text(s), str_text(old), str_text(new)) };
+    REPLACING.with_borrow_mut(|out| {
+        out.clear();
+        let mut last = 0;
+        for (at, _) in s.match_indices(old) {
+            out.push_str(&s[last..at]);
+            out.push_str(new);
+            last = at + old.len();
+        }
+        out.push_str(&s[last..]);
+        let made = str_in(region, out.as_bytes());
+        if out.capacity() > REPLACING_KEPT {
+            *out = String::new();
+        }
+        made
+    })
 }
+
+thread_local! {
+    /// The text `replace` writes before it is copied where it goes, one for
+    /// each thread, as each replacement ends before the next: it allocates
+    /// only the text it gives, where a `String` that grows from nothing
+    /// took eight steps for a kibibyte.
+    static REPLACING: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// The most room `REPLACING` keeps once a replacement is done.
+const REPLACING_KEPT: usize = 64 * 1024;
 
 /// `toLowerAscii` (1) or `toUpperAscii` (2), in `region` when it is not
 /// null.
@@ -764,11 +789,17 @@ pub unsafe extern "C" fn tondo_rt_str_transform(
     transform: u32,
     region: *mut super::regions::Region,
 ) -> *mut Str {
-    let text = unsafe { str_text(s) };
-    match transform {
-        1 => str_in(region, text.to_ascii_lowercase().as_bytes()),
-        _ => str_in(region, text.to_ascii_uppercase().as_bytes()),
+    // The copy changed in place: no text of Rust's between.
+    let copy = str_in(region, unsafe { str_bytes(s) });
+    let len = unsafe { (*copy).len };
+    if len > 0 {
+        let bytes = unsafe { std::slice::from_raw_parts_mut((copy as *mut u8).add(HEADER), len) };
+        match transform {
+            1 => bytes.make_ascii_lowercase(),
+            _ => bytes.make_ascii_uppercase(),
+        }
     }
+    copy
 }
 
 /// The checked `slice(start, end)`: null with `error` set to 0
