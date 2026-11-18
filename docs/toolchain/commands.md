@@ -192,7 +192,7 @@ usage:
                                                        program's code, the standard library's, the runtime,
                                                        the data and the tables, and the functions that weigh most
   tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>]
-            [--cpu <level>] [--against <rev> | --compiler <tondo|rev>] [--json]
+            [--into <function>] [--cpu <level>] [--against <rev> | --compiler <tondo|rev>] [--json]
                                                        what a release build makes of the code: the calls it
                                                        inlines and those it keeps, the texts and closures made
                                                        without the heap, the checks it drops and those it keeps

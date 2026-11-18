@@ -351,7 +351,8 @@ impl Server {
                     let data = json!({ "compiles": false, "diagnostics": diagnostics });
                     return Ok(Reply::new(report(&analysis, &diagnostics), data));
                 }
-                let found = driver::optimizations(&analysis, function.as_deref(), kind.as_deref())?;
+                let into = args.text("into");
+                let found = driver::optimizations(&analysis, function.as_deref(), kind.as_deref(), into.as_deref())?;
                 let text = match found.is_empty() {
                     true => "nothing to tell of the program's own code".to_string(),
                     false => found.iter().map(|o| o.line() + "\n").collect(),
@@ -2505,6 +2506,12 @@ checks more than it should, before measuring it.",
 grown, lent, counted, hoisted, reloaded, or region.",
             ),
             ("tests", "boolean", "The code of the tests and benchmarks, as `test` with `bench` builds it."),
+            (
+                "into",
+                "string",
+                "A function of the standard library or a dependency, as `json.decode`: its own code told place by \
+place, as the program's is, where a call of it that stays a call sums what its places make.",
+            ),
             ("against", "string", "A git revision, as main: only what changed since it, what it had and what is new."),
             (
                 "compiler",

@@ -297,6 +297,7 @@ pub fn regions(
                 crate::mir_text::remark_by(body, verdict.span, "region", verdict.by, given, scope, || text);
             }
         }
+        summed(bodies, &judged);
     }
     let verdicts: Vec<Verdict> = judged.into_iter().flatten().collect();
     let takings = summaries
@@ -315,6 +316,112 @@ pub fn regions(
         })
         .collect();
     (verdicts, takings)
+}
+
+/// Sums, at each call that stays a call, what the places of the function
+/// called and of those it calls make, each function once, as places in the
+/// code rather than allocations of a run: how many make values on the heap,
+/// in regions of their own, and in the region the caller gives. A native's
+/// own allocations are not code the view reads, and a call through a
+/// function value names no function.
+fn summed(bodies: &mut [Body], judged: &[Vec<Verdict>]) {
+    // A copy a region's caller calls is its function's.
+    let originals: Vec<usize> =
+        bodies.iter().enumerate().map(|(index, body)| body.copy_of.map_or(index, |of| of as usize)).collect();
+    let original = |index: usize| originals[index];
+    // Each place once, as the copies of an unrolled loop or of code
+    // inlined twice are one place: on the heap if any copy is, else in a
+    // region of its own if any is.
+    let own: Vec<[usize; 3]> = judged
+        .iter()
+        .map(|verdicts| {
+            let mut places: std::collections::HashMap<Span, usize> = std::collections::HashMap::new();
+            for verdict in verdicts {
+                let at = match (verdict.region, verdict.own) {
+                    (false, _) => 0,
+                    (true, true) => 1,
+                    (true, false) => 2,
+                };
+                let held = places.entry(verdict.span).or_insert(at);
+                *held = (*held).min(at);
+            }
+            let mut sum = [0; 3];
+            for at in places.into_values() {
+                sum[at] += 1;
+            }
+            sum
+        })
+        .collect();
+    let calls: Vec<Vec<usize>> = bodies
+        .iter()
+        .map(|body| {
+            let mut called: Vec<usize> = body
+                .blocks
+                .iter()
+                .flat_map(|block| &block.stmts)
+                .filter_map(|statement| match statement {
+                    Statement::Assign(_, rvalue, _) => match &**rvalue {
+                        Rvalue::Call(Callee::Fn(id), _) => Some(id.0 as usize),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect();
+            called.sort_unstable();
+            called.dedup();
+            called
+        })
+        .collect();
+    let mut sums: std::collections::HashMap<usize, [usize; 3]> = std::collections::HashMap::new();
+    for index in 0..bodies.len() {
+        for at in 0..bodies[index].remarks.len() {
+            let Some(callee) = bodies[index].remarks[at].callee else { continue };
+            let callee = original(callee as usize);
+            let sum = *sums.entry(callee).or_insert_with(|| {
+                let (mut seen, mut pending, mut sum) = (vec![false; bodies.len()], vec![callee], [0; 3]);
+                seen[callee] = true;
+                while let Some(function) = pending.pop() {
+                    if let Some(places) = own.get(function) {
+                        for (total, places) in sum.iter_mut().zip(places) {
+                            *total += places;
+                        }
+                    }
+                    for &next in &calls[function] {
+                        let next = original(next);
+                        if !std::mem::replace(&mut seen[next], true) {
+                            pending.push(next);
+                        }
+                    }
+                }
+                sum
+            });
+            if sum == [0; 3] {
+                continue;
+            }
+            let remark = &mut bodies[index].remarks[at];
+            remark.places = Some(sum);
+            remark.text = format!("{}; {}", remark.text, places_text(sum));
+        }
+    }
+}
+
+/// How a call's sum of places reads, of those that are not none: "2 places
+/// in it make values on the heap and 4 in regions of its own".
+fn places_text([heap, own, given]: [usize; 3]) -> String {
+    let wheres = [(heap, "on the heap"), (own, "in regions of its own"), (given, "in the region its caller gives")];
+    let told: Vec<(usize, &str)> = wheres.into_iter().filter(|&(count, _)| count > 0).collect();
+    let mut parts: Vec<String> = Vec::new();
+    for (at, (count, place)) in told.iter().enumerate() {
+        parts.push(match (at, count) {
+            (0, 1) => format!("1 place in it makes values {place}"),
+            (0, _) => format!("{count} places in it make values {place}"),
+            _ => format!("{count} {place}"),
+        });
+    }
+    match parts.len() {
+        0 | 1 => parts.concat(),
+        count => format!("{} and {}", parts[..count - 1].join(", "), parts[count - 1]),
+    }
 }
 
 /// Copies out the text a function returns where it may be a part of a

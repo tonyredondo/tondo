@@ -8008,3 +8008,21 @@ with regions than without them, the one place where the two differ, which
 the testing specification says. Only a text is copied out: a part that
 is not one, as an array or a record read out of a collection and
 returned, still takes the collection to the heap, a known limit.
+
+## A call that stays a call sums what the function it calls makes
+
+The view told the program's places and what the library's code makes
+where it is copied into them, and nothing of a call that stays a call: a
+program whose time went into `json.decode` learned nothing of what it
+allocates. Tony chose that the line the view already writes of such a
+call, "stays a call of `json.whole[Config]`: its body costs 78, more than
+the 30 inlining takes", ends with a sum rather than a line of its own, so
+that the view keeps its length: how many places in the function called,
+and in those it calls, each function once and each place once across the
+copies of an unrolled loop, make values on the heap, in regions of its
+own and in the region its caller gives. They are places in the code, not
+allocations of a run, and the line says "places" so that it is not read
+as a profile; a native's own allocations are not code the view reads,
+and a call through a function value names no function. `--json` carries
+the three numbers, and `--into <function>` opens the function called, its
+own places told as the program's are.

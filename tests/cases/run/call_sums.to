@@ -1,0 +1,41 @@
+// A call that stays a call says, after why, how many places in the
+// function it calls, and in the functions that one calls, each counted
+// once, make values on the heap, in regions of its own and in the region
+// its caller gives: places in the code, not allocations of a run.
+
+import std.console
+
+fn tally(words: Array[String], into: var Array[String]): Int {
+    var seen: Map[String, Int] = [:]
+    for word in words {
+        seen[word, default: 0] += 1
+        into.push("{word}!")
+    }
+    var total = 0
+    for (word, count) in seen {
+        total += count * word.byteLength()
+    }
+    total + shout(words)
+}
+
+fn shout(words: Array[String]): Int {
+    var loud: Array[String] = []
+    for word in words {
+        loud.push("{word}?")
+    }
+    var total = 0
+    for word in loud {
+        total += word.byteLength()
+    }
+    total
+}
+
+fn main() {
+    var kept: Array[String] = []
+    let words = ["to", "be", "or", "not", "to", "be"]
+    console.println("{tally(words, var kept)} {kept.length()}")
+}
+
+// expect-stdout: 32 6
+// expect-optimization: 18:13 call stays a call of `shout`: its body costs 32, more than the 30 inlining takes; 2 places in it make values in regions of its own
+// expect-optimization: 36:23 call stays a call of `tally`: its body costs 43, more than the 30 inlining takes; 4 places in it make values on the heap and 2 in regions of its own

@@ -2558,6 +2558,20 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
 - `--function <nombre>` da solo lo de las funciones cuyo nombre lo contiene,
   y lo que se dice de un lugar escrito dentro de ellas, vaya donde vaya su
   código, como la copia de una función que llama a sus closures.
+- Una llamada que se queda llamada dice al final cuántos sitios de la
+  función que llama, y de las que esta llama, cada una una vez, hacen
+  valores en el heap, en regiones suyas y en la región que le da quien la
+  llama: `…; 2 places in it make values on the heap and 4 in regions of its
+  own`, y nada si no hacen ninguno. Son sitios del código, no asignaciones de
+  una ejecución; lo que un nativo asigna por dentro no es código que la vista
+  lea, y una llamada a través de un valor de función no nombra función. Con
+  `--json`, `places` da las tres cifras: `heap`, `regions` y `caller`.
+- `--into <función>` abre una función de la librería estándar o de una
+  dependencia, por su nombre como lo da la línea de una llamada,
+  `json.whole[Config]`, o como lo escribe el programa, `json.decode`: dice de
+  su propio código, en sus sitios, lo que dice del código del programa, y
+  nada más; una que el build no tiene es un error del toolchain (estado 3),
+  y no va con `--against` ni con `--compiler`.
 - `--tests` lee el código de los tests y los benchmarks del proyecto, como
   `tondo test --bench` lo compila, en vez del programa: los benchmarks son
   tests (10 de testing). `asm --tests` hace lo mismo.

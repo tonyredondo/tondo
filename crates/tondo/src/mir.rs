@@ -52,6 +52,13 @@ pub struct Remark {
     /// so that the library's code copied in two places is told at the
     /// program's call of the copy it is of.
     pub scope: Option<u32>,
+    /// Of a call that stays a call: the function it calls, whose places
+    /// the view sums after the regions decide them.
+    pub callee: Option<u32>,
+    /// That sum: how many places in the function called and what it calls
+    /// make values on the heap, in regions of their own, and in the region
+    /// the caller gives (`regions::summed`).
+    pub places: Option<[usize; 3]>,
 }
 
 /// The code a remark names, and the inlined scope it is in, so that the

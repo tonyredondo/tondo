@@ -55,7 +55,15 @@ pub fn remark_by(
     text: impl FnOnce() -> String,
 ) {
     if remarking() && !(span.start == 0 && span.end == 0) {
-        body.remarks.push(Remark { span, kind, text: text(), by, given, scope });
+        body.remarks.push(Remark { span, kind, text: text(), by, given, scope, callee: None, places: None });
+    }
+}
+
+/// A call that stays a call of `callee`, whose places the view sums.
+pub fn remark_call(body: &mut Body, span: crate::source::Span, callee: u32, text: impl FnOnce() -> String) {
+    remark(body, span, "call", text);
+    if let Some(remark) = body.remarks.last_mut().filter(|remark| remark.span == span && remark.kind == "call") {
+        remark.callee = Some(callee);
     }
 }
 

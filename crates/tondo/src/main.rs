@@ -2260,12 +2260,17 @@ fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
         Ok(Some(value))
     };
     let (function, kind, against) = (valued("--function")?, valued("--kind")?, valued("--against")?);
-    let compiler = valued("--compiler")?;
+    let (compiler, into) = (valued("--compiler")?, valued("--into")?);
     if let Some(level) = valued("--cpu")? {
         driver::set_cpu(&level);
     }
     if against.is_some() && compiler.is_some() {
         return Err(format!("--against compares with a revision, --compiler with another tondo: choose one\n{USAGE}"));
+    }
+    if into.is_some() && (against.is_some() || compiler.is_some()) {
+        return Err(format!(
+            "--into opens one function of the code as it is: leave out --against and --compiler\n{USAGE}"
+        ));
     }
     if let Some(flag) = args.iter().find(|a| a.to_string_lossy().starts_with('-') && *a != "--project") {
         return Err(format!("optimizations does not take {}\n{USAGE}", flag.display()));
@@ -2320,7 +2325,7 @@ fn optimizations_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
         return Ok(ExitCode::FAILURE);
     }
-    let found = driver::optimizations(&analysis, function.as_deref(), kind.as_deref())?;
+    let found = driver::optimizations(&analysis, function.as_deref(), kind.as_deref(), into.as_deref())?;
     if json {
         let found: Vec<serde_json::Value> = found.iter().map(driver::Optimization::json).collect();
         print_json("optimizations", true, serde_json::json!({ "optimizations": found }));

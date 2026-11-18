@@ -75,12 +75,12 @@ fn note_calls(bodies: &mut [Body]) {
                 true => "the function calls itself".to_string(),
                 false => why,
             };
-            remarks.push((*span, format!("stays a call of `{name}`: {why}")));
+            remarks.push((*span, callee as u32, format!("stays a call of `{name}`: {why}")));
         }
         notes.dedup();
         bodies[index].notes.append(&mut notes);
-        for (span, text) in remarks {
-            crate::mir_text::remark(&mut bodies[index], span, "call", || text);
+        for (span, callee, text) in remarks {
+            crate::mir_text::remark_call(&mut bodies[index], span, callee, || text);
         }
     }
 }

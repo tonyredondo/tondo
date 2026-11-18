@@ -1723,6 +1723,10 @@ pub struct Optimization {
     pub text: String,
     /// The first line of the code it is about.
     pub source: String,
+    /// Of a call that stays a call: how many places in the function called
+    /// and what it calls make values on the heap, in regions of its own and
+    /// in the region its caller gives.
+    pub places: Option<[usize; 3]>,
 }
 
 /// The kinds of `Optimization`, a pass's done and its not done side by side.
@@ -1754,10 +1758,14 @@ impl Optimization {
 
     /// As data (toolchain 7.12).
     pub fn json(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut json = serde_json::json!({
             "file": self.file, "line": self.line, "column": self.column, "functions": self.functions,
             "kind": self.kind, "text": self.text, "source": self.source,
-        })
+        });
+        if let Some([heap, regions, caller]) = self.places {
+            json["places"] = serde_json::json!({ "heap": heap, "regions": regions, "caller": caller });
+        }
+        json
     }
 }
 
@@ -1774,6 +1782,7 @@ pub fn optimizations(
     analysis: &Analysis,
     function: Option<&str>,
     kind: Option<&str>,
+    into: Option<&str>,
 ) -> Result<Vec<Optimization>, String> {
     if let Some(kind) = kind.filter(|kind| !OPTIMIZATION_KINDS.contains(kind)) {
         return Err(format!("no kind `{kind}`: {}", OPTIMIZATION_KINDS.join(", ")));
@@ -1784,6 +1793,17 @@ pub fn optimizations(
     cpu(analysis, None)?;
     let mut bodies = lower::lower(program, false, false, None);
     let named = |body: &crate::mir::Body| function.is_none_or(|name| body.name.contains(name));
+    // A function `--into` opens: its own code told at its own places, the
+    // library's as the program's, and nothing else.
+    // By its name as the line of a call gives it, `json.whole[Config]`, or
+    // as the program writes it, `json.decode`, or its last part.
+    let opened = |body: &crate::mir::Body| {
+        let base = body.name.split('[').next().unwrap_or_default();
+        into.is_some_and(|name| {
+            let dotted = format!(".{name}");
+            body.name == name || base == name || base.ends_with(&dotted) || body.name.ends_with(&dotted)
+        })
+    };
     // Where each function asked for is written, from its name to its last
     // statement, known before inlining mixes other functions' code in.
     let written: Vec<crate::source::Span> = match function {
@@ -1801,9 +1821,18 @@ pub fn optimizations(
         optimize(&mut bodies, program, sources, regions(analysis));
     }
     crate::mir_text::ask_remarks(false);
+    if let Some(name) = into.filter(|_| !bodies.iter().any(|body| opened(body) && body.copy_of.is_none())) {
+        return Err(format!(
+            "no function `{name}` in a release build of the code: `--into` takes a function it calls, by its name as \
+             the line of the call gives it, as `json.whole[Config]`, or as the program writes it, as `json.decode`"
+        ));
+    }
     let mut found = Vec::new();
     let inside = |span: crate::source::Span| written.iter().any(|w| w.start <= span.start && span.end <= w.end);
     for body in &bodies {
+        if into.is_some() && (!opened(body) || body.copy_of.is_some()) {
+            continue;
+        }
         // What a loop unrolled or code inlined twice does in one copy of
         // a place and not in another: a call or the heap is told as such,
         // and a check one copy drops and another keeps as both.
@@ -1844,6 +1873,7 @@ pub fn optimizations(
             };
             let sites: Vec<(crate::source::Span, Option<String>)> = match library(remark.span) {
                 false => vec![(remark.span, None)],
+                true if into.is_some() => vec![(remark.span, None)],
                 // Where a region puts what the library makes: what reaches
                 // the program, or all of it when the kind is asked for.
                 true if remark.kind == "region" && !remark.given && kind != Some("region") => Vec::new(),
@@ -1862,7 +1892,7 @@ pub fn optimizations(
                 true => Vec::new(),
             };
             for (site, of) in sites {
-                if !named(body) && !inside(site) {
+                if into.is_none() && !named(body) && !inside(site) {
                     continue;
                 }
                 let (name, line, column) = sources.position(site.start);
@@ -1903,6 +1933,7 @@ pub fn optimizations(
                     kind: remark.kind,
                     text,
                     source,
+                    places: remark.places,
                 });
             }
         }
@@ -1991,7 +2022,7 @@ pub fn optimizations_against(
     if now.program.is_none() {
         return Err(format!("{} does not compile: `tondo check` says why", path.display()));
     }
-    let now = optimizations(&now, function, kind)?;
+    let now = optimizations(&now, function, kind, None)?;
     let (commit, dir) = revision(path, reference)?;
     let then = analyzed(&dir, tests)?;
     if then.program.is_none() {
@@ -1999,7 +2030,7 @@ pub fn optimizations_against(
     }
     // A file on its own is named as given, the revision's in the cache.
     let (cached, given) = (dir.display().to_string(), path.display().to_string());
-    let mut then = optimizations(&then, function, kind)?;
+    let mut then = optimizations(&then, function, kind, None)?;
     for optimization in &mut then {
         if let Some(rest) = optimization.file.strip_prefix(&cached) {
             optimization.file = format!("{given}{rest}");
@@ -2045,7 +2076,7 @@ pub fn optimizations_compiler(
     if now.program.is_none() {
         return Err(format!("{} does not compile: `tondo check` says why", path.display()));
     }
-    let now = optimizations(&now, function, kind)?;
+    let now = optimizations(&now, function, kind, None)?;
     let mut command = std::process::Command::new(compiler);
     command.arg("optimizations").arg(path).arg("--json");
     if tests {
@@ -2075,6 +2106,10 @@ pub fn optimizations_compiler(
                 kind,
                 text: text(&o["text"]),
                 source: text(&o["source"]),
+                places: o["places"].as_object().map(|places| {
+                    ["heap", "regions", "caller"]
+                        .map(|key| places.get(key).and_then(|n| n.as_u64()).unwrap_or(0) as usize)
+                }),
             })
         })
         .collect();
@@ -2310,7 +2345,7 @@ pub fn assembly_with(
     }
     kept.sort_by(|a, b| a.name.cmp(&b.name));
     let sources = &analysis.sources;
-    let told = optimizations(analysis, None, None)?;
+    let told = optimizations(analysis, None, None, None)?;
     let mut assemblies = Vec::new();
     for kept in kept {
         let place = |start: u32| {

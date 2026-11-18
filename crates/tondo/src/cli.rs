@@ -402,7 +402,7 @@ pub const COMMANDS: &[Command] = &[
         name: "optimizations",
         usage: &[
             "tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>]",
-            "          [--cpu <level>] [--against <rev> | --compiler <tondo|rev>] [--json]",
+            "          [--into <function>] [--cpu <level>] [--against <rev> | --compiler <tondo|rev>] [--json]",
         ],
         summary: &[
             "what a release build makes of the code: the calls it",

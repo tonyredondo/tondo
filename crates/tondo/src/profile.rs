@@ -648,7 +648,7 @@ pub fn remarks(profile: &Profile, base: &Path) -> Result<Remarks, String> {
     if let Some(file) = built.keys().chain(here.keys()).find(|file| built.get(*file) != here.get(*file)) {
         return Err(format!("{file} changed since its build: profile it again to see them"));
     }
-    let found = crate::driver::with_cpu(&cpu, || crate::driver::optimizations(&analysis, None, None))?;
+    let found = crate::driver::with_cpu(&cpu, || crate::driver::optimizations(&analysis, None, None, None))?;
     let mut remarks = Remarks::new();
     for remark in found {
         let file = single.clone().unwrap_or_else(|| remark.file.clone());

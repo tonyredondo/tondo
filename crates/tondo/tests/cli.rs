@@ -1456,6 +1456,43 @@ fn compares_with_another_compiler() {
     assert_eq!(status, 2, "{stderr}");
 }
 
+/// A call of the library that stays a call says what the places in the
+/// function it calls make, as words and as data, and `--into` opens that
+/// function: its own places, told as the program's are, and no other.
+#[test]
+fn opens_a_library_call_and_sums_its_places() {
+    let source = "import std.console\nimport std.json\n\ntype Config = {\n    name: String\n    tags: Array[String]\n}\n\n\
+        fn main() {\n    let config: Config = json.decode(\"{{\\\"name\\\": \\\"app\\\", \\\"tags\\\": []}}\") ?? panic(\"no\")\n    \
+        console.println(config.name)\n}\n";
+    let dir = project_at("into", &[("main.to", source.as_bytes())]);
+    let (said, stderr, status) = tondo(&dir, &["optimizations", "main.to", "--kind", "call"]);
+    assert_eq!(status, 0, "{stderr}");
+    let call = said
+        .lines()
+        .find(|line| line.contains("stays a call of `json.whole[Config]`"))
+        .unwrap_or_else(|| panic!("{said}"));
+    assert!(call.contains("places in it make values"), "{call}");
+    let (data, _) = json(&dir, &["optimizations", "main.to", "--kind", "call", "--json"]);
+    let found = data["optimizations"].as_array().unwrap();
+    let call = found.iter().find(|o| o["text"].as_str().unwrap_or_default().contains("json.whole")).unwrap();
+    let places = &call["places"];
+    let total: u64 = ["heap", "regions", "caller"].iter().map(|key| places[key].as_u64().unwrap()).sum();
+    assert!(total > 0, "{call}");
+    // The function opened, at its own places, and nothing of `main`.
+    let (said, stderr, status) = tondo(&dir, &["optimizations", "main.to", "--into", "json.whole"]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(!said.is_empty() && said.lines().all(|line| line.starts_with("<std>/json.to:")), "{said}");
+    assert!(said.lines().all(|line| line.ends_with("(in json.whole[Config])")), "{said}");
+    // By its name as the line gives it, too, and none that the build has.
+    let (same, _, status) = tondo(&dir, &["optimizations", "main.to", "--into", "json.whole[Config]"]);
+    assert_eq!((status, &same), (0, &said));
+    let (_, stderr, status) = tondo(&dir, &["optimizations", "main.to", "--into", "nothing.here"]);
+    assert_eq!(status, 3, "{stderr}");
+    assert!(stderr.contains("no function `nothing.here`"), "{stderr}");
+    let (_, stderr, status) = tondo(&dir, &["optimizations", "main.to", "--into", "json.whole", "--against", "HEAD"]);
+    assert_eq!(status, 2, "{stderr}");
+}
+
 /// `check --performance` names what a loop costs that the compiler cannot
 /// take away: `removeAt(0)` on an array in a loop (W1024), a written
 /// pattern compiled where it runs each time (W1025); not in `main`, which
