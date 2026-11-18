@@ -47,16 +47,16 @@ Every command after this takes that process ID, or the program's name.
 
 ```text
 $ tondo counters todo --count 1
-todo (pid 458751), up 1.0 s
+todo (pid 3640370), up 2.4 s
 
 memory
-  held                           116.9 KiB
+  held                           121.5 KiB
   allocated                          0 B/s   total 1.5 MiB
-  allocations                        0.0/s   total 3444
+  allocations                        0.0/s   total 3183
   objects                               60
-  regions                         32.0 KiB
+  regions                        864.0 KiB
   regions_kept                         0 B
-  region_allocations                 0.0/s   total 8
+  region_allocations                 0.0/s   total 364
 
 collector
   collections                        0.0/s   total 0
@@ -68,6 +68,9 @@ tasks
   live                                   2
   ready                                  0
   spawned                            0.0/s   total 7
+
+profile
+  samples                            0.0/s   total 0
 
 workers
   total                                 32
@@ -113,9 +116,9 @@ processes
   started                            0.0/s   total 0
 
 os
-  cpu                                 0.0%   total 11.3 ms
-  resident                        37.2 MiB
-  threads                               53
+  cpu                                 0.0%   total 18.9 ms
+  resident                        42.5 MiB
+  threads                               54
 ```
 
 One screen of what matters in a server: memory held and the rate it is
@@ -135,6 +138,10 @@ gives another pace.
   each thread keeps ready for its own; `regions_kept` is what the threads
   share, kept for the next regions; and `region_allocations` is how many
   values were made in them.
+- `profile samples` counts the samples that a
+  [profile](#where-the-time-goes-profile) or a trace took of the program's
+  threads, so that the program itself, or whoever watches it, can tell
+  that one is being taken and how far it got.
 - A program adds its own with `std.diagnostics`: a counter or a gauge it
   declares shows here beside the runtime's.
 
