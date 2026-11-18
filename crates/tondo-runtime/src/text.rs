@@ -6,7 +6,7 @@ use super::{ArrayHeader, Str, element};
 use crate::regions::Region;
 use crate::strings::{Pieces, RegionPieces, str_in};
 
-fn text<'a>(s: &'a *const Str) -> &'a str {
+fn text(s: &*const Str) -> &str {
     unsafe { super::str_text(s) }
 }
 

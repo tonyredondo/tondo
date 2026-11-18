@@ -54,7 +54,7 @@ pub struct RegexObject {
     max_replacement: usize,
 }
 
-fn utf8<'a>(s: &'a *const Str) -> &'a str {
+fn utf8(s: &*const Str) -> &str {
     std::str::from_utf8(unsafe { str_bytes(s) }).unwrap_or_default()
 }
 

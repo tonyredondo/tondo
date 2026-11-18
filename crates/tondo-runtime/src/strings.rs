@@ -150,7 +150,7 @@ impl RegionPieces {
 }
 
 /// The bytes of a string. The caller keeps the string alive.
-pub unsafe fn str_bytes<'a>(s: &'a impl Word) -> &'a [u8] {
+pub unsafe fn str_bytes(s: &impl Word) -> &[u8] {
     let word = s.word();
     if short(word) {
         // In the word itself: its first bytes, as the processor keeps the
@@ -725,7 +725,7 @@ pub unsafe extern "C" fn tondo_rt_str_cmp(a: *const Str, b: *const Str) -> i32 {
 }
 
 /// The text of a string; strings always hold valid UTF-8.
-pub(crate) unsafe fn str_text<'a>(s: &'a impl Word) -> &'a str {
+pub(crate) unsafe fn str_text(s: &impl Word) -> &str {
     unsafe { std::str::from_utf8_unchecked(str_bytes(s)) }
 }
 

@@ -12,7 +12,7 @@ use hmac::{HmacReset, KeyInit};
 use sha2::digest::DynDigest;
 use std::sync::Mutex;
 
-fn text<'a>(s: &'a *const Str) -> &'a [u8] {
+fn text(s: &*const Str) -> &[u8] {
     unsafe { str_bytes(s) }
 }
 

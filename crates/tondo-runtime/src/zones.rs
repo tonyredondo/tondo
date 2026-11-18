@@ -12,7 +12,7 @@ use jiff::tz::{Offset, TimeZone, TimeZoneDatabase};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
-fn text<'a>(s: &'a *const Str) -> &'a str {
+fn text(s: &*const Str) -> &str {
     unsafe { crate::str_text(s) }
 }
 

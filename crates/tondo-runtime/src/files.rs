@@ -12,7 +12,7 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsE
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-fn text<'a>(s: &'a *const Str) -> &'a str {
+fn text(s: &*const Str) -> &str {
     unsafe { crate::str_text(s) }
 }
 

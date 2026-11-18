@@ -5,7 +5,7 @@ use super::{ArrayHeader, Str};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-fn text<'a>(s: &'a *const Str) -> &'a str {
+fn text(s: &*const Str) -> &str {
     unsafe { super::str_text(s) }
 }
 
