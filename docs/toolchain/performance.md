@@ -952,7 +952,10 @@ it goes. An object that is returned stays on the heap, and so does one
 given to what may keep it, as `console.setInput(io.reader(text))`, with `it
 is passed to the runtime, which may keep it`. The readers and writers of
 JSON stay there too: the runtime keeps spare ones, which cost the heap no
-allocation.
+allocation. Of the other formats, the writer that `yaml.encode` or
+`toml.encode` writes into goes in a region, as a hasher and what unpacks
+compressed bytes do; a document read with `decode` is on the heap, since
+the library keeps its parser in a record, and the view says nothing of it.
 
 A turn's region is emptied when the turn goes back to the head of its
 loop, and let go of when the function returns. So a value does not outlive
