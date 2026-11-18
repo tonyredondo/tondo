@@ -354,6 +354,8 @@ impl Rt {
             Rt::PathPart => StdFn::Path(PathFn::FileName).makes_in_region(),
             Rt::PathJoin => StdFn::Path(PathFn::Join).makes_in_region(),
             Rt::ConsoleReadLine => StdFn::ConsoleReadLine.makes_in_region(),
+            // A slice, of a text or an array, in the region of its place.
+            Rt::StrSlice | Rt::StrSliceChecked | Rt::ArraySlice => true,
             // The arrays the runtime makes (`ArrayOp::makes_in_region`).
             Rt::ArrayReserved
             | Rt::ArraySliceChecked
@@ -407,13 +409,13 @@ impl Rt {
             Rt::StrLength => ("tondo_rt_str_length", &[I64], &[I64]),
             Rt::StrGet => ("tondo_rt_str_get", &[I64, I64], &[I64]),
             Rt::StrAt => ("tondo_rt_str_at", &[I64, I64, I64], &[I32]),
-            Rt::StrSlice => ("tondo_rt_str_slice", &[I64, I64, I8, I64, I8, I64, I64], &[I64]),
+            Rt::StrSlice => ("tondo_rt_str_slice", &[I64, I64, I8, I64, I8, I64, I64, I64], &[I64]),
             Rt::StrDecode => ("tondo_rt_str_decode", &[I64, I64], &[I32]),
             Rt::StrTest => ("tondo_rt_str_test", &[I64, I64, I32], &[I8]),
             Rt::StrFind => ("tondo_rt_str_find", &[I64, I64], &[I64]),
             Rt::StrReplace => ("tondo_rt_str_replace", &[I64, I64, I64, I64], &[I64]),
             Rt::StrTransform => ("tondo_rt_str_transform", &[I64, I32, I64], &[I64]),
-            Rt::StrSliceChecked => ("tondo_rt_str_slice_checked", &[I64, I64, I64, I64], &[I64]),
+            Rt::StrSliceChecked => ("tondo_rt_str_slice_checked", &[I64, I64, I64, I64, I64], &[I64]),
             Rt::StrFromChars => ("tondo_rt_str_from_chars", &[I64, I64], &[I64]),
             Rt::SbStart => ("tondo_rt_sb_start", &[I64, I64], &[]),
             Rt::SbStartIn => ("tondo_rt_sb_start_in", &[I64, I64, I64, I64], &[]),
@@ -526,7 +528,7 @@ impl Rt {
             Rt::ArrayPush => ("tondo_rt_array_push", &[I64, I64, I64, I64, I64], &[]),
             Rt::ArrayPushIn => ("tondo_rt_array_push_in", &[I64, I64, I64, I64, I64, I64], &[]),
             Rt::ArrayPop => ("tondo_rt_array_pop", &[I64, I64, I64, I64, I64, I64], &[I8]),
-            Rt::ArraySlice => ("tondo_rt_array_slice", &[I64, I64, I64, I64, I8, I64, I8, I64, I64], &[I64]),
+            Rt::ArraySlice => ("tondo_rt_array_slice", &[I64, I64, I64, I64, I8, I64, I8, I64, I64, I64], &[I64]),
             Rt::ArraySliceChecked => ("tondo_rt_array_slice_checked", &[I64, I64, I64, I64, I64, I64], &[I64]),
             Rt::ArrayConcat => ("tondo_rt_array_concat", &[I64, I64, I64, I64, I64, I64], &[I64]),
             Rt::ArraySortedInts => ("tondo_rt_array_sorted_ints", &[I64, I64], &[I64]),

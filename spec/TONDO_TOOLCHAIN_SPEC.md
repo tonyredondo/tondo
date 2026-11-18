@@ -2534,7 +2534,9 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   propio de ella como un bloque del heap, y al que una ampliación en su
   sitio puede hacer crecer después le da el espacio que le daría el bloque
   del heap, para que crezca por los mismos pasos y `testing.allocations`
-  cuente lo mismo, lo que dice con `with room an append grows into`, y los
+  cuente lo mismo, lo que dice con `with room an append grows into`, los
+  slices de un array o de un texto, `a[i:j]` y `slice(inicio, fin)`, que
+  copian su parte en ella, y los
   textos y arrays que hacen las operaciones del runtime y de la biblioteca,
   como `split`, `replace`, `fs.readText`, `concat` o `sorted`. Un valor en una región
   no es una asignación para los contadores, los perfiles de memoria ni las

@@ -2591,6 +2591,25 @@ test counted {
     }
 }
 
+/// Slices, of arrays and of texts, allocate as often in a region as on the
+/// heap: read within a turn, returned to a caller, kept past their turn,
+/// and of texts the region did not make (tests/cases/run/regions/slices.to).
+#[test]
+fn slices_count_alike_in_regions() {
+    counted_alike(
+        "slices",
+        "    let numbers = (0..50).collect()\n    let words = [\"alpha\", \"bravo\", \"charlie\"].repeat(2)\n",
+        &[
+            ("windows", "windows(numbers)"),
+            ("prefixes", "prefixes(words)"),
+            ("middle", "middle(words).length()"),
+            ("heads", "heads(words).length()"),
+            ("pairs", "pairs(20)"),
+            ("afterFirst", "afterFirst(numbers.map((n) { \"number {n}\" }))"),
+        ],
+    );
+}
+
 /// `tondo test` given a file of tests, as one is often given, says the
 /// directory of its project to give instead.
 #[test]

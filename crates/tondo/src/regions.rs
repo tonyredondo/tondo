@@ -1211,7 +1211,8 @@ fn holding(
                 | Rvalue::Variant(..)
                 | Rvalue::Array(..)
                 | Rvalue::Erase(..)
-                | Rvalue::ArrayOp(..) => storing.push((at, statement)),
+                | Rvalue::ArrayOp(..)
+                | Rvalue::Slice(..) => storing.push((at, statement)),
                 _ if place.path.len() > 1 => storing.push((at, statement)),
                 _ => {}
             },
@@ -1330,6 +1331,15 @@ fn holding(
                             Operand::Const(_) => false,
                         };
                         operands.iter().filter(counts).collect()
+                    }
+                    // So does a slice of an array: its elements are the
+                    // array's, which the region must have made when they
+                    // count.
+                    Rvalue::Slice(operand, ..) if place.local == local && at_statement == site.at => {
+                        let counts = matches!(operand, Operand::Copy(from)
+                            if matches!(types.kind(types.repr(body.place_ty(types, from))),
+                                TyKind::Array(element) if types.needs_drop(*element)));
+                        if counts { vec![operand] } else { Vec::new() }
                     }
                     Rvalue::Use(operand) if !place.path.is_empty() && is[place.local.0 as usize] => vec![operand],
                     Rvalue::Aggregate(operands) | Rvalue::Variant(_, operands) | Rvalue::Array(operands, _)
@@ -1706,7 +1716,8 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
             // The empty map is the runtime's, which nothing makes: the
             // first insertion makes the map, where its place goes.
             Rvalue::MapOp(crate::hir::MapOp::New, ..) => continue,
-            Rvalue::Slice(..) => Some("regions do not take slices yet"),
+            // A slice, which copies its part, in the region of its place.
+            Rvalue::Slice(..) => None,
             // A function's value a closure makes, which the frame does not
             // keep: as a box, where its holder's place goes.
             Rvalue::Erase(..) if !body.framed.contains(&place.local) => None,
@@ -1818,6 +1829,9 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
             // An array the runtime makes, as `concat` does, in the region it
             // is given.
             Rvalue::ArrayOp(op, ..) if op.makes_in_region() => None,
+            // The text `slice(start, end)` copies, the success of its result,
+            // in the region it is given.
+            Rvalue::StrOp(crate::hir::StrOp::SliceChecked, ..) => None,
             // Not an element read out of one.
             Rvalue::ArrayOp(op, ..)
                 if *op != crate::hir::ArrayOp::Get && types.needs_drop(body.place_ty(types, place)) =>
@@ -1980,6 +1994,7 @@ impl Flow {
                         {
                             Some(0)
                         }
+                        Rvalue::StrOp(crate::hir::StrOp::SliceChecked, ..) => Some(0),
                         _ => None,
                     };
                     let (how, from) = match &**rvalue {
@@ -2035,8 +2050,22 @@ impl Flow {
                         // what it is given, which `fate` sees.
                         Rvalue::Call(Callee::Fn(_), _) => continue,
                         // A text operation that makes a new text gives one
-                        // that holds none of what it is given.
-                        Rvalue::StrOp(op, ..) if makes_text(*op) => continue,
+                        // that holds none of what it is given, as a slice of
+                        // a text does.
+                        Rvalue::StrOp(op, ..) if makes_text(*op) || *op == crate::hir::StrOp::SliceChecked => continue,
+                        Rvalue::Slice(..)
+                            if matches!(types.kind(types.repr(body.place_ty(types, place))), TyKind::String) =>
+                        {
+                            continue;
+                        }
+                        // A slice of an array, a new array of its elements,
+                        // which holds none of it but what they hold.
+                        Rvalue::Slice(operand, ..) => {
+                            let elements = copies(std::slice::from_ref(operand))
+                                .into_iter()
+                                .map(|(local, _, variant)| (local, true, variant));
+                            (How::Made, elements.collect())
+                        }
                         Rvalue::ArrayOp(crate::hir::ArrayOp::Join, ..) => continue,
                         // A new array of the elements of those it is given,
                         // which holds none of them but what they hold.
@@ -2094,7 +2123,6 @@ impl Flow {
                         | Rvalue::Discriminant(_)
                         | Rvalue::Convert(_)
                         | Rvalue::ArrayOp(..)
-                        | Rvalue::Slice(..)
                         | Rvalue::CheckRegion(..)
                         | Rvalue::Length(_)
                         | Rvalue::StrOp(..)
@@ -2233,6 +2261,11 @@ impl Flow {
                             let result = matches!(types.kind(types.repr(ty)), TyKind::Result(..));
                             called[place.local.0 as usize] |= result;
                             succeeds[place.local.0 as usize] = result;
+                        }
+                        // And the text a slice of one copies, so.
+                        Rvalue::StrOp(crate::hir::StrOp::SliceChecked, ..) if place.path.is_empty() => {
+                            called[place.local.0 as usize] = true;
+                            succeeds[place.local.0 as usize] = true;
                         }
                         Rvalue::FnValue(id)
                         | Rvalue::Callback(id, _)

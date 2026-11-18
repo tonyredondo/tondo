@@ -682,7 +682,9 @@ pub unsafe extern "C" fn tondo_rt_str_at(s: *const Str, index: i64, location: *c
     }
 }
 
-/// `text[start:end:step]` by scalar positions (19.3).
+/// `text[start:end:step]` by scalar positions (19.3), in `region` when it
+/// is not null.
+#[allow(clippy::too_many_arguments)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_slice(
     s: *const Str,
@@ -692,6 +694,7 @@ pub unsafe extern "C" fn tondo_rt_str_slice(
     has_end: u8,
     step: i64,
     location: *const Str,
+    region: *mut super::regions::Region,
 ) -> *mut Str {
     unsafe {
         let text = str_text(s);
@@ -700,11 +703,11 @@ pub unsafe extern "C" fn tondo_rt_str_slice(
         if step == 1 {
             let from = scalar_offset(s, first as usize).unwrap_or(text.len());
             let to = scalar_offset(s, first as usize + count).unwrap_or(text.len());
-            return str_new(&text.as_bytes()[from..to]);
+            return str_in(region, &text.as_bytes()[from..to]);
         }
         let chars: Vec<char> = text.chars().collect();
         let selected: String = (0..count as i64).map(|k| chars[(first + k * step) as usize]).collect();
-        str_new(selected.as_bytes())
+        str_in(region, selected.as_bytes())
     }
 }
 
@@ -771,7 +774,13 @@ pub unsafe extern "C" fn tondo_rt_str_transform(
 /// The checked `slice(start, end)`: null with `error` set to 0
 /// (`InvalidIndex`) or 1 (`InvalidBoundary`) when the bounds are invalid.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_str_slice_checked(s: *const Str, start: i64, end: i64, error: *mut i8) -> *mut Str {
+pub unsafe extern "C" fn tondo_rt_str_slice_checked(
+    s: *const Str,
+    start: i64,
+    end: i64,
+    error: *mut i8,
+    region: *mut super::regions::Region,
+) -> *mut Str {
     unsafe {
         let length = scalar_count(s) as i64;
         let code = if start < 0 || end < 0 || start > length || end > length {
@@ -784,7 +793,7 @@ pub unsafe extern "C" fn tondo_rt_str_slice_checked(s: *const Str, start: i64, e
             let from = scalar_offset(s, start as usize).unwrap_or(bytes.len());
             let to = scalar_offset(s, end as usize).unwrap_or(bytes.len());
             *error = -1;
-            return str_new(&bytes[from..to]);
+            return str_in(region, &bytes[from..to]);
         };
         *error = code;
         std::ptr::null_mut()

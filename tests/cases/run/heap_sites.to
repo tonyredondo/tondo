@@ -26,5 +26,5 @@ fn main() {
 // expect-optimization: 13:20 frame is not made in the frame: an array whose values are not all constants
 // expect-optimization: 14:17 heap a map
 // expect-optimization: 15:16 heap a set
-// expect-optimization: 16:16 heap a slice copies its part
+// expect-optimization: 16:16 frame is not made in the frame: a slice copies its part
 // expect-optimization: 17:39 heap the `Node` in it holds itself

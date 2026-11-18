@@ -7972,3 +7972,17 @@ region of the function, as one pushed into an array does. The empty
 deque `Deque[T]()` is the program's data, which counts nothing, as the
 empty array and the empty map are.
 
+
+## Slices copy their part in their region
+
+A slice, `a[i:j]` of an array or of a text and the text `slice(start,
+end)` gives, stayed on the heap in every function, "regions do not take
+slices yet", and the text of `slice(start, end)` went there without a
+remark, as did the parts `splitOnce`, `removePrefix` and `removeSuffix`
+cut with it. A slice is a copy of its part, a new array or a new text, so
+the runtime makes it in the region of its place as it makes the arrays of
+`concat` and `sorted`. The copy of an array holds the array's elements:
+when they count references, its region must have made them, or the slice
+stays on the heap, "it holds a value that its region did not make", as
+the region lets go of the slice whole and would never let go of them. A
+text's copy holds nothing of its text.

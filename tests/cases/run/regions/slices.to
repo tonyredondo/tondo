@@ -1,0 +1,83 @@
+// Slices, which copy their part, in the region of their place, as other
+// copies are: of an array and of a text, read within a turn of a loop; one
+// a function returns, in the region its caller gives; and slices kept past
+// their turn, which go where what keeps them goes. The text
+// `slice(start, end)` gives, and the parts `splitOnce` cuts with it, go
+// there too. A slice of an array of texts holds the array's texts, which
+// its region must have made, or it stays on the heap.
+
+import std.console
+
+/// Slices of an array, read within each turn.
+fn windows(values: Array[Int]): Int {
+    var total = 0
+    for i in 0..values.length() - 2 {
+        let window = values[i:i + 3]
+        total += window[0] + window[2]
+    }
+    total
+}
+
+/// A slice of each text, read within its turn, by both ways of slicing.
+fn prefixes(words: Array[String]): Int {
+    var total = 0
+    for word in words {
+        let head = word[0:2]
+        let tail = word.slice(1, word.length()) ?? ""
+        total += head.byteLength() + tail.byteLength()
+    }
+    total
+}
+
+/// A slice the caller keeps, of an array of texts.
+fn middle(values: Array[String]): Array[String] {
+    values[1:values.length() - 1]
+}
+
+/// Slices kept past their turn, in an array the function returns.
+fn heads(words: Array[String]): Array[String] {
+    var kept: Array[String] = []
+    for word in words {
+        kept.push(word[0:1])
+        let (key, _) = word.splitOnce("l") ?? (word, "")
+        kept.push(key)
+    }
+    kept
+}
+
+/// A slice of texts made in each turn, read within it.
+fn pairs(count: Int): Int {
+    var total = 0
+    for i in 0..count {
+        let made = ["a{i}", "b{i}", "c{i}"]
+        let two = made[1:]
+        total += two[0].byteLength() + two[1].byteLength()
+    }
+    total
+}
+
+/// A slice of texts its region did not make, which stays on the heap: a
+/// region lets go of the slice whole, and would never let go of the texts.
+fn afterFirst(texts: Array[String]): Int {
+    let rest = texts[1:]
+    rest[0].byteLength()
+}
+
+fn main() {
+    let numbers = (0..50).collect()
+    let words = ["alpha", "bravo", "charlie", "delta", "echo"].repeat(2)
+    let kept = middle(words)
+    console.println("{windows(numbers)} {prefixes(words)} {kept.length()} {kept[0]} {pairs(20)}")
+    console.println(heads(words).join(","))
+    console.println("{afterFirst(numbers.map((n) { "number {n}" }))}")
+}
+
+// expect-stdout: 2352 62 8 bravo 100
+// expect-stdout: a,a,b,bravo,c,char,d,de,e,echo,a,a,b,bravo,c,char,d,de,e,echo
+// expect-stdout: 8
+// expect-optimization: 15:22 region goes in the region of a turn of the loop at line 14
+// expect-optimization: 25:20 region goes in the region of a turn of the loop at line 24
+// expect-optimization: 26:20 region goes in the region of a turn of the loop at line 24
+// expect-optimization: 41:19 region goes in a region that the caller of `heads` gives
+// expect-optimization: 53:19 region goes in the region of a turn of the loop at line 51
+// expect-optimization: 62:16 region stays on the heap: it holds a value that its region did not make

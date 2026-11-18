@@ -59,7 +59,7 @@ Rvalue::Discriminant          - gives a variant's index
 Rvalue::Convert               - gives a number
 Rvalue::Array                 cases/run/regions/stores.to cases/run/regions/arrays.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_library.to
 Rvalue::ArrayOp               cases/run/regions/arrays.to cases/run/regions/texts.to cases/run/regions/parts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_arrays.to
-Rvalue::Slice                 cases/run/regions/arrays.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to
+Rvalue::Slice                 cases/run/regions/arrays.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/slices.to
 Rvalue::AssignSlice           cases/run/regions/arrays.to cases/run/regions/arrays_written.to
 Rvalue::CheckRegion           - checks bounds
 Rvalue::Length                - gives a number

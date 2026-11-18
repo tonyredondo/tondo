@@ -285,20 +285,6 @@ pub(crate) unsafe fn release_elements(a: *mut ArrayHeader, size: usize, release:
     }
 }
 
-/// Copies `count` elements starting at `from`, stepping `step` elements,
-/// into a new array, retaining each copied element.
-pub(crate) unsafe fn array_copy(
-    a: *mut ArrayHeader,
-    size: usize,
-    retain: Option<Glue>,
-    from: i64,
-    step: i64,
-    count: usize,
-    cap: usize,
-) -> *mut ArrayHeader {
-    unsafe { array_copy_in(std::ptr::null_mut(), a, size, retain, from, step, count, cap) }
-}
-
 /// A new array of `len` elements and room for `cap`, for the caller to
 /// write, in `region`, or on the heap when it is null.
 pub(crate) unsafe fn array_made(
@@ -313,7 +299,9 @@ pub(crate) unsafe fn array_made(
     }
 }
 
-/// `array_copy`, in `region` when it is not null.
+/// Copies `count` elements starting at `from`, stepping `step` elements,
+/// into a new array, retaining each copied element: in `region` when it is
+/// not null.
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn array_copy_in(
     region: *mut super::regions::Region,
@@ -778,10 +766,11 @@ pub unsafe extern "C" fn tondo_rt_array_slice(
     has_end: u8,
     step: i64,
     location: *const Str,
+    region: *mut super::regions::Region,
 ) -> *mut ArrayHeader {
     unsafe {
         let (first, count) = slice_range((*a).len, start, has_start, end, has_end, step, location);
-        array_copy(a, size, retain, first, step, count, count)
+        array_copy_in(region, a, size, retain, first, step, count, count)
     }
 }
 
