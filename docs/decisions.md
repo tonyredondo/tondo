@@ -7915,3 +7915,34 @@ What it captures must count nothing, as numbers do: a closure that
 captures a text or an array keeps that value on the heap ("a closure
 captures it"), as the code it runs later may keep it, and stays there
 with it, since its region would otherwise hold what it did not make.
+
+## The objects of the runtime a function lets go of go in its region
+
+A file a function opens, a reader over a text, a buffer, a regex it
+compiles: each was made on the heap even in a function that let go of
+it. Such an object goes in the region of its place now, where only
+locals hold it. Its last reference drops its value as the heap's does,
+closing a file, and leaves its memory to the region, whose end drops
+nothing; so a file a block writes is closed when the block lets it go,
+as on the heap, and can be read back by its path after the block.
+
+No value of a region holds an object: an array, a record, a map or a
+closure of a region is let go of all at once and would never drop it,
+so one that would stays on the heap, "it holds an object of the
+runtime, which a region's value would never let go of". And the
+runtime must keep no reference of its own past a call: an object given
+to an operation of the runtime is taken to be kept, and stays on the
+heap, unless the operation's code was read for it, as those of a
+stream, a file and a regex were. The list of what only copies what it
+is given was true of texts, not of objects: `console.setInput` keeps
+the stream it is given. What an operation gives, when it is an object,
+may hold any object it was given, as a buffer's writer holds the
+buffer.
+
+An object allocates as often in a region as on the heap: its header and
+its value are one allocation on both sides, and what it holds inside, a
+stream's buffers, a regex's automata, stays the runtime's. JSON readers
+and writers stay on the heap: the runtime gives spares it keeps, which
+cost the heap no allocation and would cost a region one. The objects of
+the other natives wait for their code to be read for it, and a test
+holds every native that gives one to a side.

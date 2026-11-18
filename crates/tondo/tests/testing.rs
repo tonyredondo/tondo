@@ -2331,7 +2331,7 @@ fn counted_alike(case: &str, setup: &str, calls: &[(&str, &str)]) {
     let source =
         std::fs::read_to_string(format!("{}/../../tests/cases/run/regions/{case}.to", env!("CARGO_MANIFEST_DIR")))
             .unwrap();
-    let (before, after) = source.split_once("\nfn main() {").unwrap();
+    let (before, after) = source.split_once("\nfn main(").unwrap();
     let after = after.split_once("\n}\n").unwrap().1;
     let shapes = format!("{before}\n{after}").replace("import std.console\n", "");
     let shapes = shapes.lines().filter(|line| !line.starts_with("// expect")).collect::<Vec<_>>().join("\n");
@@ -2410,6 +2410,27 @@ fn closures_held_count_alike_in_regions() {
             ("ended", "ended(amounts)"),
             ("handled", "handled(5)"),
             ("locked", "locked(3)"),
+        ],
+    );
+}
+
+/// An object of the runtime allocates as often in a region as on the heap:
+/// a file, a reader over a text, a buffer and a regex a function makes and
+/// lets go of, and readers an array would hold, which stay on the heap
+/// (tests/cases/run/regions/objects.to).
+#[test]
+fn objects_count_alike_in_regions() {
+    counted_alike(
+        "objects",
+        // A first write starts the runtime's threads for files, which a
+        // count would take in the run that came first.
+        "    let dir = fs.createTemporaryDirectory() ?? \"/tmp\"\n    _ = written(dir)\n",
+        &[
+            ("written", "written(dir) ?? 0"),
+            ("summed", "summed(\"1\\n2\\n3\\n\") ?? 0"),
+            ("buffered", "buffered(5) ?? 0"),
+            ("matched", "matched(\"a1 b22 c333\")"),
+            ("kept", "kept([\"p\", \"q\"])"),
         ],
     );
 }

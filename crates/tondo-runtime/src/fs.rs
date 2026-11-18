@@ -3,7 +3,7 @@
 //! worker. Each operation returns 0, or 1 plus the index of the `FsError`
 //! variant, and writes its value to `out`.
 
-use super::io::{Mode, StreamObject, StreamState, run, run_ready, stream};
+use super::io::{Mode, StreamObject, StreamState, run, run_ready};
 use super::{ArrayHeader, Str, str_bytes, str_new};
 use crate::array_items;
 use crate::byte_array;
@@ -284,7 +284,12 @@ pub unsafe extern "C" fn tondo_rt_fs_remove(path: *const Str, recursive: i64) ->
 /// `open(path, mode)`, `mode` the index of the `OpenMode` variant. A `File`
 /// is a stream of `std.io` (10.3).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_fs_open(path_text: *const Str, mode: i64, out: *mut *mut StreamObject) -> i64 {
+pub unsafe extern "C" fn tondo_rt_fs_open(
+    path_text: *const Str,
+    mode: i64,
+    out: *mut *mut StreamObject,
+    region: *mut crate::regions::Region,
+) -> i64 {
     let path = unsafe { path(path_text) };
     let opened = host(move || {
         let mut options = std::fs::OpenOptions::new();
@@ -297,7 +302,7 @@ pub unsafe extern "C" fn tondo_rt_fs_open(path_text: *const Str, mode: i64, out:
         };
         io(options.open(path?))
     });
-    finish(opened, |file| unsafe { *out = stream(Box::new(file), Mode::Host, true) })
+    finish(opened, |file| unsafe { *out = crate::io::stream_in(region, Box::new(file), Mode::Host, true) })
 }
 
 #[unsafe(no_mangle)]

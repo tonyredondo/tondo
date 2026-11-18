@@ -953,7 +953,7 @@ pub unsafe extern "C" fn tondo_rt_process_stream(process: *mut ProcessObject, wh
     match &running.streams[which as usize] {
         Some(held) => retain(held.0),
         None => {
-            let closed = super::io::tondo_rt_io_discard();
+            let closed = unsafe { super::io::tondo_rt_io_discard(std::ptr::null_mut()) };
             super::io::run(closed, |s| {
                 let _ = s.close();
             });

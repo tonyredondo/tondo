@@ -2510,14 +2510,17 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   cuyo resultado se sigue en su lugar, sobrevive a una
   vuelta del bucle en que se hace en algo que el bucle hace más que ampliar,
   como la variable que la vuelta siguiente reescribe, contiene un valor que
-  su región no hizo, se cambia de un modo que una región no toma aún, como
+  su región no hizo, contiene un objeto del runtime, que un valor de una
+  región nunca soltaría, se cambia de un modo que una región no toma aún, como
   un mapa que se vacía con `clear` o un array que cambia más que con
   `push`, `pop` y la escritura de sus elementos, y nombra el cambio, se pasa
   a una función del runtime cuyo código aún no se ha leído, y la nombra,
   o es de una clase que una región no toma aún, y la nombra: una región
   toma arrays, cajas, los closures que guarda un valor, como los de los
   adaptadores de un iterador, si no capturan un valor con cuenta de
-  referencias, como un texto o un array, arrays que crecen con `push`,
+  referencias, como un texto o un array, los objetos del runtime guardados
+  solo por variables, como un fichero abierto, un lector o un buffer, que
+  se sueltan donde se soltarían en el heap, arrays que crecen con `push`,
   pierden el último con
   `pop` y cambian en su sitio sus elementos, uno a uno o por tramos, como
   hacen `sort()` y `reverse()`, mapas y sets, que crecen con

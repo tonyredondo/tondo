@@ -49,6 +49,8 @@ fn the_matrix_names_every_way_out() {
     // The natives read for texts too; those not read yet have no case.
     natives.extend(listed(&regions, "READING_TEXTS"));
     natives.extend(listed(&regions, "KEEPING_TEXTS"));
+    // And those read for the objects a region makes.
+    natives.extend(listed(&regions, "READING_OBJECTS"));
     ways.extend(natives.iter().map(|symbol| format!("native {symbol}")));
     assert!(ways.len() > 100, "the lists were not read: {ways:?}");
 

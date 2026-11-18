@@ -1166,13 +1166,15 @@ pub unsafe extern "C" fn tondo_rt_net_close(object: *mut NativeObject, both: u8,
 /// `reader()`: the stream the connection's reads go through.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_net_reader(object: *mut NativeObject) -> *mut StreamObject {
-    connection_of(object).map_or_else(|| crate::io::tondo_rt_io_discard(), |c| retain(c.reader.0))
+    connection_of(object)
+        .map_or_else(|| unsafe { crate::io::tondo_rt_io_discard(std::ptr::null_mut()) }, |c| retain(c.reader.0))
 }
 
 /// `writer()`: the stream the connection's writes go through.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_net_writer(object: *mut NativeObject) -> *mut StreamObject {
-    connection_of(object).map_or_else(|| crate::io::tondo_rt_io_discard(), |c| retain(c.writer.0))
+    connection_of(object)
+        .map_or_else(|| unsafe { crate::io::tondo_rt_io_discard(std::ptr::null_mut()) }, |c| retain(c.writer.0))
 }
 
 // ---------------------------------------------------------------------------

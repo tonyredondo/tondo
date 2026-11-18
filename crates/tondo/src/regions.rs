@@ -1308,11 +1308,22 @@ fn holding(
                     }
                     _ => continue,
                 };
-                let elsewhere = stored.into_iter().find(
+                let elsewhere = stored.iter().find(
                     |operand| matches!(operand, Operand::Copy(from) if counted(from) && !made[from.local.0 as usize]),
                 );
                 if elsewhere.is_some() {
                     outside = Some((*by, scope(at_statement.0), None));
+                    break;
+                }
+                // An object of the runtime, whose last reference must
+                // drop it where it would on the heap: a region's value is
+                // let go of all at once, and would never drop it.
+                let object = stored.iter().find(
+                    |operand| matches!(operand, Operand::Copy(from) if holds_object(types, body.place_ty(types, from))),
+                );
+                if object.is_some() {
+                    let why = "it holds an object of the runtime, which a region's value would never let go of";
+                    outside = Some((*by, scope(at_statement.0), Some(why.to_string())));
                     break;
                 }
             }
@@ -1734,6 +1745,14 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
             // a number.
             Rvalue::Call(Callee::Std(function), _) if function.makes_in_region() => None,
             Rvalue::Call(Callee::Std(crate::hir::StdFn::Number(op)), _) if numbers_text(*op) => None,
+            // A spare the runtime keeps, which costs the heap nothing.
+            Rvalue::Call(Callee::Std(crate::hir::StdFn::Native(index)), _)
+                if crate::hir::NATIVES.get(*index as usize).is_some_and(|native| {
+                    matches!(native.result, crate::hir::NativeTy::JsonReader | crate::hir::NativeTy::JsonWriter)
+                }) =>
+            {
+                Some("the runtime gives a spare JSON reader or writer it keeps, which costs the heap no allocation")
+            }
             Rvalue::Call(Callee::Std(_), _) if types.needs_drop(body.place_ty(types, place)) => RUNTIME,
             // The text `join` makes, which its builder makes in a region.
             Rvalue::ArrayOp(crate::hir::ArrayOp::Join, ..) => None,
@@ -2032,11 +2051,13 @@ impl Flow {
                                 .entry(ty)
                                 .or_insert_with(|| {
                                     let all = types.reach(ty);
-                                    let anything = all.iter().any(|&part| {
-                                        matches!(
-                                            types.kind(part),
-                                            TyKind::Fn(..) | TyKind::Handle(Handle::ReflectBox, _)
-                                        )
+                                    // A function value, a reflected value or an
+                                    // object of the runtime may hold anything
+                                    // it was given.
+                                    let anything = all.iter().any(|&part| match types.kind(part) {
+                                        TyKind::Fn(..) | TyKind::Handle(Handle::ReflectBox, _) => true,
+                                        TyKind::Handle(handle, _) => runtime_object(*handle),
+                                        _ => false,
                                     });
                                     let reach = all.into_iter().skip(1).map(|part| types.repr(part)).collect();
                                     (types.repr(ty), reach, anything)
@@ -2448,6 +2469,18 @@ fn fate_of(
                             }
                         }
                     }
+                    // An object of the runtime given to the runtime, which
+                    // may keep it unless its code was read for it.
+                    Rvalue::Call(Callee::Std(std), args)
+                        if !reads_objects(std)
+                            && args.iter().any(|arg| {
+                                reads(arg)
+                                    && matches!(arg, Operand::Copy(place)
+                                        if holds_object(types, body.place_ty(types, place)))
+                            }) =>
+                    {
+                        return Fate::Kept(keeps_objects_why(std), *span);
+                    }
                     Rvalue::Call(Callee::Std(std), args) if args.iter().any(reads) && runtime_keeps(std) => {
                         return Fate::Kept(runtime_why(std), *span);
                     }
@@ -2843,6 +2876,193 @@ fn takes_texts(native: &crate::hir::Native) -> bool {
     native.receiver.iter().chain(native.params).any(|kind| matches!(kind, String))
 }
 
+/// Whether a handle is an object of the runtime that a region may make: a
+/// stream, a buffer, a regex, a value of the runtime; not shared state,
+/// a task or a channel, which others hold.
+fn runtime_object(handle: Handle) -> bool {
+    matches!(
+        handle,
+        Handle::File
+            | Handle::Writer
+            | Handle::Reader
+            | Handle::Buffer
+            | Handle::Command
+            | Handle::Pipeline
+            | Handle::Process
+            | Handle::JsonReader
+            | Handle::JsonWriter
+            | Handle::Regex
+            | Handle::Native
+            | Handle::Owned
+    )
+}
+
+/// Whether a value of the type may hold an object of the runtime.
+fn holds_object(types: &Types, ty: Ty) -> bool {
+    types
+        .reach(ty)
+        .into_iter()
+        .any(|part| matches!(types.kind(part), TyKind::Handle(handle, _) if runtime_object(*handle)))
+}
+
+/// Whether an operation of the runtime keeps none of the objects it is
+/// given past the call but in what it gives: the operations of a stream
+/// and of a file, which read and write it during the call, and the natives
+/// of `READING_OBJECTS`. Any other may keep one, as `console.setInput`
+/// keeps the stream it is given.
+fn reads_objects(std: &crate::hir::StdFn) -> bool {
+    use crate::hir::StdFn;
+    match std {
+        StdFn::Io(_) | StdFn::Fs(_) => true,
+        StdFn::Native(index) => {
+            crate::hir::NATIVES.get(*index as usize).is_some_and(|native| READING_OBJECTS.contains(&native.symbol))
+        }
+        _ => false,
+    }
+}
+
+/// Why an object given to an operation of the runtime stays on the heap.
+fn keeps_objects_why(std: &crate::hir::StdFn) -> String {
+    match std {
+        crate::hir::StdFn::Native(index) => match crate::hir::NATIVES.get(*index as usize) {
+            Some(native) => {
+                format!("it is passed to `{}.{}`, which may keep the objects it is given", native.module, native.name)
+            }
+            None => "it is passed to the runtime, which may keep it".to_string(),
+        },
+        _ => "it is passed to the runtime, which may keep it".to_string(),
+    }
+}
+
+/// The natives that can be given an object of the runtime and keep none of
+/// it past the call but in what they give, as their code shows: the
+/// methods of a regex read it during the call. An object given to any
+/// other stays on the heap.
+const READING_OBJECTS: &[&str] = &[
+    "tondo_rt_regex_capture_count",
+    "tondo_rt_regex_capture_index",
+    "tondo_rt_regex_capture_name",
+    "tondo_rt_regex_check_input",
+    "tondo_rt_regex_find",
+    "tondo_rt_regex_is_match",
+    "tondo_rt_regex_pattern",
+    "tondo_rt_regex_replace",
+    "tondo_rt_regex_slice",
+    "tondo_rt_regex_whole_match",
+];
+
+/// The natives that give an object of the runtime a region does not make
+/// yet, which stays on the heap: each kind waits for its code to be read
+/// for one, as the natives of `MAKING_IN_REGION` that give one were. The
+/// runtime's spare JSON readers and writers cost the heap no allocation,
+/// which one of a region would. A test holds this list and that one to
+/// the table of natives.
+#[cfg(test)]
+const OBJECTS_ON_THE_HEAP: &[&str] = &[
+    "tondo_rt_cbor_parse",
+    "tondo_rt_cbor_writer",
+    "tondo_rt_contexts_capture",
+    "tondo_rt_counter",
+    "tondo_rt_files_link",
+    "tondo_rt_files_read_symlink",
+    "tondo_rt_files_real_path",
+    "tondo_rt_files_set_modified",
+    "tondo_rt_files_set_permissions",
+    "tondo_rt_files_space",
+    "tondo_rt_files_stat",
+    "tondo_rt_files_symlink",
+    "tondo_rt_files_temporary",
+    "tondo_rt_files_walk",
+    "tondo_rt_files_watch",
+    "tondo_rt_grpc_channel",
+    "tondo_rt_grpc_frames",
+    "tondo_rt_grpc_frames_of",
+    "tondo_rt_grpc_open",
+    "tondo_rt_grpc_signal",
+    "tondo_rt_grpc_slot",
+    "tondo_rt_grpc_start",
+    "tondo_rt_grpc_take",
+    "tondo_rt_hasher",
+    "tondo_rt_http_accept",
+    "tondo_rt_http_accept_websocket",
+    "tondo_rt_http_body",
+    "tondo_rt_http_body_bytes",
+    "tondo_rt_http_body_empty",
+    "tondo_rt_http_body_form",
+    "tondo_rt_http_body_stream",
+    "tondo_rt_http_client",
+    "tondo_rt_http_connection_next",
+    "tondo_rt_http_form",
+    "tondo_rt_http_form_next",
+    "tondo_rt_http_listen",
+    "tondo_rt_http_listen_unix",
+    "tondo_rt_http_request_body",
+    "tondo_rt_http_request_form",
+    "tondo_rt_http_request_form_of",
+    "tondo_rt_http_send",
+    "tondo_rt_http_trailers",
+    "tondo_rt_http_ws_connect",
+    "tondo_rt_http_ws_receive",
+    "tondo_rt_image_adjust",
+    "tondo_rt_image_blank",
+    "tondo_rt_image_blur",
+    "tondo_rt_image_change",
+    "tondo_rt_image_from_pixels",
+    "tondo_rt_image_overlay",
+    "tondo_rt_image_read",
+    "tondo_rt_image_tone",
+    "tondo_rt_inflate",
+    "tondo_rt_json_reader",
+    "tondo_rt_json_stream_reader",
+    "tondo_rt_json_stream_writer",
+    "tondo_rt_json_writer",
+    "tondo_rt_library_open",
+    "tondo_rt_library_program",
+    "tondo_rt_msgpack_parse",
+    "tondo_rt_msgpack_stream_writer",
+    "tondo_rt_msgpack_writer",
+    "tondo_rt_net_accept",
+    "tondo_rt_net_bind",
+    "tondo_rt_net_bind_unix",
+    "tondo_rt_net_connect",
+    "tondo_rt_net_connect_unix",
+    "tondo_rt_net_listen",
+    "tondo_rt_net_listen_unix",
+    "tondo_rt_net_reader",
+    "tondo_rt_net_receive",
+    "tondo_rt_net_resolve",
+    "tondo_rt_net_start_tls",
+    "tondo_rt_net_writer",
+    "tondo_rt_os_descriptor",
+    "tondo_rt_os_mapping",
+    "tondo_rt_pack_writer",
+    "tondo_rt_pb_reader",
+    "tondo_rt_pb_writer",
+    "tondo_rt_pipe",
+    "tondo_rt_pipe_reader",
+    "tondo_rt_pipe_writer",
+    "tondo_rt_process_alone",
+    "tondo_rt_profile_cpu_period",
+    "tondo_rt_profile_cpu_stop",
+    "tondo_rt_profile_memory",
+    "tondo_rt_profile_since",
+    "tondo_rt_profile_tasks",
+    "tondo_rt_profile_waits",
+    "tondo_rt_region_new",
+    "tondo_rt_sqlite_open",
+    "tondo_rt_tee",
+    "tondo_rt_terminal_keys",
+    "tondo_rt_terminal_take",
+    "tondo_rt_text_collator",
+    "tondo_rt_toml_parse",
+    "tondo_rt_toml_writer",
+    "tondo_rt_unpack",
+    "tondo_rt_unpack_reader",
+    "tondo_rt_yaml_outline",
+    "tondo_rt_yaml_parse",
+    "tondo_rt_yaml_writer",
+];
+
 /// The natives that can be given a text and keep none of it past the call,
 /// as their code shows. A native that takes a text is in this list, in
 /// `KEEPING_TEXTS` or in `UNREAD_TEXTS`, and a test holds the table of
@@ -3189,6 +3409,35 @@ mod natives {
 
     /// Every native that takes a text is in one of the three lists of
     /// texts, and in one only, and the lists name no other.
+    #[test]
+    fn every_native_that_gives_an_object_has_a_place() {
+        use crate::hir::NativeTy::*;
+        let giving: Vec<&crate::hir::Native> = crate::hir::NATIVES
+            .iter()
+            .filter(|native| {
+                matches!(
+                    native.result,
+                    Regex | Object | Owned | Command | Pipeline | IoReader | IoWriter | JsonReader | JsonWriter
+                )
+            })
+            .collect();
+        let placeless: Vec<&str> = giving
+            .iter()
+            .filter(|native| native.makes_in_region() == OBJECTS_ON_THE_HEAP.contains(&native.symbol))
+            .map(|native| native.symbol)
+            .collect();
+        assert!(
+            placeless.is_empty(),
+            "{placeless:?} give an object of the runtime: put each in `OBJECTS_ON_THE_HEAP`, or read its code and \
+             put it in `MAKING_IN_REGION` if what it gives can be made in a region, and in neither both"
+        );
+        let stale: Vec<&&str> = OBJECTS_ON_THE_HEAP
+            .iter()
+            .filter(|symbol| !giving.iter().any(|native| native.symbol == **symbol))
+            .collect();
+        assert!(stale.is_empty(), "{stale:?} give no object: take them out of `OBJECTS_ON_THE_HEAP`");
+    }
+
     #[test]
     fn every_native_that_takes_a_text_has_a_word() {
         let taking: Vec<&str> =

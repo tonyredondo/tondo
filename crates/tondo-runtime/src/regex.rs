@@ -12,7 +12,7 @@ use super::regex_dialect::{Kind, check};
 use super::{ArrayHeader, LIVE_OBJECTS, Str, str_bytes, str_new};
 use std::cell::Cell;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 
 thread_local! {
     static ERROR: Cell<(i64, i64)> = const { Cell::new((0, 0)) };
@@ -114,6 +114,7 @@ pub unsafe extern "C" fn tondo_rt_regex_compile(
     max_matches: i64,
     max_output: i64,
     max_replacement: i64,
+    region: *mut super::regions::Region,
 ) -> *mut RegexObject {
     clear();
     let pattern = utf8(pattern);
@@ -130,9 +131,8 @@ pub unsafe extern "C" fn tondo_rt_regex_compile(
             return std::ptr::null_mut();
         }
     };
-    LIVE_OBJECTS.made();
     let limit = |n: i64| usize::try_from(n).unwrap_or(usize::MAX);
-    Box::into_raw(Box::new(RegexObject {
+    let object = RegexObject {
         rc: AtomicUsize::new(1),
         pattern: pattern.to_string(),
         flags,
@@ -144,17 +144,25 @@ pub unsafe extern "C" fn tondo_rt_regex_compile(
         max_matches: limit(max_matches),
         max_output: limit(max_output),
         max_replacement: limit(max_replacement),
-    }))
+    };
+    unsafe { super::objects::make(region, object) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_regex_release(object: *mut RegexObject) {
-    if object.is_null() || unsafe { (*object).rc.fetch_sub(1, Ordering::Release) } != 1 {
+    if object.is_null() {
         return;
     }
-    std::sync::atomic::fence(Ordering::Acquire);
-    drop(unsafe { Box::from_raw(object) });
-    LIVE_OBJECTS.gone();
+    unsafe {
+        match super::objects::dropped(&(*object).rc) {
+            Some(true) => {
+                drop(Box::from_raw(object));
+                LIVE_OBJECTS.gone();
+            }
+            Some(false) => std::ptr::drop_in_place(object),
+            None => {}
+        }
+    }
 }
 
 fn object<'a>(object: *mut RegexObject) -> &'a RegexObject {

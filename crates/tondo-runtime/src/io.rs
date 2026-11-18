@@ -663,7 +663,17 @@ impl StreamState {
 
 /// A new stream over `host`, with one reference.
 pub(crate) fn stream(host: Box<dyn Host>, mode: Mode, buffered: bool) -> *mut StreamObject {
-    LIVE_OBJECTS.made();
+    unsafe { stream_in(std::ptr::null_mut(), host, mode, buffered) }
+}
+
+/// A new stream over `host`, with one reference, in `region` when it is
+/// given, or on the heap.
+pub(crate) unsafe fn stream_in(
+    region: *mut crate::regions::Region,
+    host: Box<dyn Host>,
+    mode: Mode,
+    buffered: bool,
+) -> *mut StreamObject {
     let sized = host.left().is_some();
     let state = StreamState {
         host: Some(host),
@@ -676,7 +686,7 @@ pub(crate) fn stream(host: Box<dyn Host>, mode: Mode, buffered: bool) -> *mut St
         failed: None,
         sized,
     };
-    Box::into_raw(Box::new(StreamObject { rc: AtomicUsize::new(1), mode, state: Mutex::new(state) }))
+    unsafe { crate::objects::make(region, StreamObject { rc: AtomicUsize::new(1), mode, state: Mutex::new(state) }) }
 }
 
 /// A stream shared with a host thread for one operation.
@@ -806,10 +816,9 @@ pub unsafe extern "C" fn tondo_rt_stream_release(stream: *mut StreamObject) {
         return;
     }
     unsafe {
-        if (*stream).rc.fetch_sub(1, Ordering::Release) != 1 {
+        if crate::objects::dropped(&(*stream).rc).is_none() {
             return;
         }
-        std::sync::atomic::fence(Ordering::Acquire);
         // Inside a poll `wait_for` makes, closing may wait, which would move
         // the task to another thread in the middle of the poll: it waits
         // until the poll returns.
@@ -820,7 +829,8 @@ pub unsafe extern "C" fn tondo_rt_stream_release(stream: *mut StreamObject) {
     }
 }
 
-/// Closes a stream no one holds any more, and frees it.
+/// Closes a stream no one holds any more, and frees it: one of a region,
+/// whose count stays its last reference's, is dropped where it is.
 unsafe fn free(stream: *mut StreamObject) {
     unsafe {
         // A `Ready` host delivers what it holds on its own, so letting it
@@ -830,8 +840,13 @@ unsafe fn free(stream: *mut StreamObject) {
                 let _ = state.close();
             });
         }
-        drop(Box::from_raw(stream));
-        LIVE_OBJECTS.gone();
+        match (*stream).rc.load(Ordering::Relaxed) == crate::regions::LAST_IN_REGION {
+            true => std::ptr::drop_in_place(stream),
+            false => {
+                drop(Box::from_raw(stream));
+                LIVE_OBJECTS.gone();
+            }
+        }
     }
 }
 
@@ -1051,15 +1066,18 @@ pub unsafe extern "C" fn tondo_rt_io_read_bytes(
 
 /// `io.reader(text)`
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_io_reader(text: *const Str) -> *mut StreamObject {
+pub unsafe extern "C" fn tondo_rt_io_reader(
+    text: *const Str,
+    region: *mut crate::regions::Region,
+) -> *mut StreamObject {
     let bytes = unsafe { str_bytes(text).to_vec() };
-    stream(Box::new(std::io::Cursor::new(bytes)), Mode::Inline, false)
+    unsafe { stream_in(region, Box::new(std::io::Cursor::new(bytes)), Mode::Inline, false) }
 }
 
 /// `io.discard()`
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_io_discard() -> *mut StreamObject {
-    stream(Box::new(Discard), Mode::Inline, false)
+pub unsafe extern "C" fn tondo_rt_io_discard(region: *mut crate::regions::Region) -> *mut StreamObject {
+    unsafe { stream_in(region, Box::new(Discard), Mode::Inline, false) }
 }
 
 /// `Buffer`: bytes in memory that writers append to.
@@ -1077,9 +1095,8 @@ impl BufferObject {
 
 /// `io.Buffer()`
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_io_buffer_new() -> *mut BufferObject {
-    LIVE_OBJECTS.made();
-    Box::into_raw(Box::new(BufferObject { rc: AtomicUsize::new(1), data: Mutex::new(Vec::new()) }))
+pub unsafe extern "C" fn tondo_rt_io_buffer_new(region: *mut crate::regions::Region) -> *mut BufferObject {
+    unsafe { crate::objects::make(region, BufferObject { rc: AtomicUsize::new(1), data: Mutex::new(Vec::new()) }) }
 }
 
 #[unsafe(no_mangle)]
@@ -1089,9 +1106,12 @@ pub unsafe extern "C" fn tondo_rt_io_buffer_writer(buffer: *mut BufferObject) ->
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_io_buffer_reader(buffer: *mut BufferObject) -> *mut StreamObject {
+pub unsafe extern "C" fn tondo_rt_io_buffer_reader(
+    buffer: *mut BufferObject,
+    region: *mut crate::regions::Region,
+) -> *mut StreamObject {
     let bytes = unsafe { (*buffer).data().clone() };
-    stream(Box::new(std::io::Cursor::new(bytes)), Mode::Inline, false)
+    unsafe { stream_in(region, Box::new(std::io::Cursor::new(bytes)), Mode::Inline, false) }
 }
 
 #[unsafe(no_mangle)]
@@ -1128,12 +1148,14 @@ pub unsafe extern "C" fn tondo_rt_io_buffer_release(buffer: *mut BufferObject) {
         return;
     }
     unsafe {
-        if (*buffer).rc.fetch_sub(1, Ordering::Release) != 1 {
-            return;
+        match crate::objects::dropped(&(*buffer).rc) {
+            Some(true) => {
+                drop(Box::from_raw(buffer));
+                LIVE_OBJECTS.gone();
+            }
+            Some(false) => std::ptr::drop_in_place(buffer),
+            None => {}
         }
-        std::sync::atomic::fence(Ordering::Acquire);
-        drop(Box::from_raw(buffer));
-        LIVE_OBJECTS.gone();
     }
 }
 

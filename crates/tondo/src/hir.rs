@@ -1263,16 +1263,26 @@ impl StdFn {
                     | EnvFn::Hostname
                     | EnvFn::InvokedAs
                     | EnvFn::Executable
-            ) | StdFn::Fs(FsFn::ReadText | FsFn::List | FsFn::ReadLine | FsFn::ReadRest | FsFn::ReadBytes | FsFn::Read)
-                | StdFn::Io(
-                    IoFn::ReadLine
-                        | IoFn::ReadText
-                        | IoFn::BufferText
-                        | IoFn::Read
-                        | IoFn::ReadBytes
-                        | IoFn::BufferBytes
-                )
-                | StdFn::Process(ProcessFn::Text | ProcessFn::ReadText | ProcessFn::ReadLines)
+            ) | StdFn::Fs(
+                FsFn::ReadText
+                    | FsFn::List
+                    | FsFn::ReadLine
+                    | FsFn::ReadRest
+                    | FsFn::ReadBytes
+                    | FsFn::Read
+                    | FsFn::Open
+            ) | StdFn::Io(
+                IoFn::ReadLine
+                    | IoFn::ReadText
+                    | IoFn::BufferText
+                    | IoFn::Read
+                    | IoFn::ReadBytes
+                    | IoFn::BufferBytes
+                    | IoFn::Reader
+                    | IoFn::Discard
+                    | IoFn::BufferNew
+                    | IoFn::BufferReader
+            ) | StdFn::Process(ProcessFn::Text | ProcessFn::ReadText | ProcessFn::ReadLines)
                 | StdFn::Path(PathFn::Parent | PathFn::FileName | PathFn::Extension | PathFn::Join)
                 | StdFn::ConsoleReadLine
         )
@@ -1514,6 +1524,7 @@ pub const MAKING_IN_REGION: &[&str] = &[
     "tondo_rt_reflect_name",
     "tondo_rt_reflect_quote",
     "tondo_rt_regex_capture_name",
+    "tondo_rt_regex_compile",
     "tondo_rt_regex_escape",
     "tondo_rt_regex_find",
     "tondo_rt_regex_pattern",

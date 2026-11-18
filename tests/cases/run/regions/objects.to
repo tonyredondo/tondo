@@ -1,0 +1,98 @@
+// Objects of the runtime in a region: a file, a reader over a text, a
+// buffer and a regex a function makes and lets go of go in its region,
+// where only its locals hold them, and each is dropped at its last
+// reference, as on the heap: the file a block writes is closed when the
+// block lets it go, and read back by its path after it. One returned,
+// one an array of the region would hold, and one given to the runtime
+// that keeps it, as `console.setInput` does, stay on the heap.
+
+import std.console
+import std.fs
+import std.io
+import std.path
+import std.regex
+
+/// A file written in a block and read back by its path after it: closed
+/// when the block lets it go, as on the heap.
+fn written(dir: String): Int ! fs.FsError {
+    let file = path.join(dir, "notes.txt")
+    {
+        var out = fs.open(file, fs.OpenMode.Write)?
+        out.write("first\nsecond\n")?
+    }
+    fs.readText(file)?.length()
+}
+
+/// A reader over a text, the numbers of its lines summed.
+fn summed(text: String): Int ! io.IoError {
+    let reader = io.reader(text)
+    var total = 0
+    for {
+        let line = reader.readLine()? ?? break
+        total += Int.parse(line) ?? 0
+    }
+    total
+}
+
+/// A buffer written and read back.
+fn buffered(n: Int): Int ! io.IoError {
+    let buffer = io.Buffer()
+    let out = buffer.writer()
+    for i in 0..n {
+        out.write("{i},")?
+    }
+    out.flush()?
+    buffer.text()?.length()
+}
+
+/// A regex compiled for one call.
+fn matched(text: String): Int {
+    let digits = regex.Regex.compile("(?<n>[0-9]+)") ?? panic("a pattern")
+    var count = 0
+    for _ in digits.findAll(text) ?? panic("a text") {
+        count += 1
+    }
+    count * 100 + digits.captureCount() * 10 + digits.captureNames().length() + digits.pattern().length()
+}
+
+/// A reader returned: on the heap.
+fn opened(text: String): io.Reader {
+    io.reader(text)
+}
+
+/// A reader the console keeps past the call: on the heap.
+fn typed(): String {
+    console.setInput(io.reader("typed\n"))
+    console.readLine() ?? ""
+}
+
+/// Readers an array of the region would hold: on the heap.
+fn kept(texts: Array[String]): Int {
+    var readers: Array[io.Reader] = []
+    for text in texts {
+        readers.push(io.reader(text))
+    }
+    readers.length()
+}
+
+fn main(): !(fs.FsError | io.IoError) {
+    let dir = fs.createTemporaryDirectory()?
+    let a = written(dir)?
+    let b = summed("1\n2\n3\n")?
+    let c = buffered(5)?
+    let d = matched("a1 b22 c333")
+    let e = opened("x\ny\n").readText()?.length()
+    let f = kept(["p", "q"])
+    let g = typed()
+    fs.remove(dir, recursive: true)?
+    console.println("{a} {b} {c} {d} {e} {f} {g}")
+}
+
+// expect-stdout: 13 6 10 323 4 2 typed
+// expect-optimization: 20:19 region goes in a region of `written`
+// expect-optimization: 28:18 region goes in a region of `summed`
+// expect-optimization: 39:18 region goes in a region of `buffered`
+// expect-optimization: 50:18 region goes in a region of `matched`
+// expect-optimization: 60:5 region stays on the heap: `opened` returns it
+// expect-optimization: 65:22 region stays on the heap: it is passed to the runtime, which may keep it
+// expect-optimization: 73:9 region grows an array that stays on the heap: it holds an object of the runtime, which a region's value would never let go of
