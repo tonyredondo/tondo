@@ -819,7 +819,8 @@ loop`.
 A map or a set goes in a region too, as it is inserted into and removed
 from, and so does one whose entries change in place, which is how a program
 counts. An array stays in its region as it is pushed to and popped, written
-by index or by a slice, and sorted or reversed in place. And a closure that
+by index or by a slice, and sorted or reversed in place, and a deque as it
+is pushed to and taken from at either end. And a closure that
 a value holds goes where that value goes, when it captures nothing that
 counts, as [those of a chain](#the-closures-of-a-chain) do:
 
@@ -882,7 +883,8 @@ for now, and the remark names it: a map that is emptied says ``a region
 changes a map only by its insertions, its removals and the values of its
 entries yet: `seen.clear()` at 9:13``, and an array that is inserted into
 in the middle or has an element taken out of it, ``a region changes an
-array only by `push`, `pop` and the writes of its elements yet``.
+array only by `push`, `pop` and the writes of its elements yet``. A deque
+that is emptied says the same of deques.
 
 An object of the runtime goes in a region as well when only variables hold
 it: a reader, a buffer, a file that is opened, a pattern that is compiled.
