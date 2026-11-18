@@ -1732,6 +1732,8 @@ fn profile(args: &Args) -> Result<Reply, String> {
     let top = args.number("top").map_or(15, |n| n.max(1.0) as usize);
     let path = args.path().display().to_string();
     let mut argv: Vec<String> = Vec::new();
+    // Whether a program profiled for its tasks stood still for it.
+    let mut stopped = None;
     let (profiles, base): (Vec<PathBuf>, PathBuf) = if args.text("test").is_some() || args.flag("bench") {
         if kind == "tasks" {
             return Err("tests are profiled for cpu, instructions or memory".into());
@@ -1781,6 +1783,9 @@ fn profile(args: &Args) -> Result<Reply, String> {
         if ran.code != Some(0) {
             return Err(why_failed(&argv, &ran, limit));
         }
+        // A program that did not stand still for its tasks to be seen.
+        let told: Value = serde_json::from_str(&ran.stdout).unwrap_or(Value::Null);
+        stopped = told["stopped"].as_bool();
         let base = if Path::new(&path).is_dir() {
             PathBuf::from(&path)
         } else {
@@ -1795,11 +1800,17 @@ fn profile(args: &Args) -> Result<Reply, String> {
     }
     let mut summaries = Vec::new();
     let mut text = String::new();
+    if stopped == Some(false) {
+        text.push_str(&format!("{}\n", crate::profile::NOT_STOPPED));
+    }
     for file in &profiles {
         let read = crate::profile::read(file)?;
         let hot = crate::profile::hot(&read, None)?;
         let remarks = crate::profile::remarks(&read, &base);
-        let summary = crate::profile::summary(file, &read, &hot, top, &base, &remarks);
+        let mut summary = crate::profile::summary(file, &read, &hot, top, &base, &remarks);
+        if let Some(stopped) = stopped {
+            summary["stopped"] = json!(stopped);
+        }
         text.push_str(&format!(
             "{} of {}, {} in all\n",
             hot.kind,

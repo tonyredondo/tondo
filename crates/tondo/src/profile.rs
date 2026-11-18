@@ -145,8 +145,12 @@ pub fn profile(
         PathBuf::from(format!("{}-{}.{}.pprof", observe::program_name(&recorded.info), recorded.pid, kind.name()))
     });
     std::fs::write(&path, bytes).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    // Whether the program stood still for its tasks to be seen: one that
+    // did not within its wait shows a task that ran where the system had
+    // it then, as in a call of the system's library.
+    let stopped = (kind == Kind::Tasks).then(|| recorded.asked.as_ref().and_then(|a| a["stopped"].as_bool())).flatten();
     if as_json {
-        let fields = json!({
+        let mut fields = json!({
             "profile": path,
             "kind": kind.name(),
             "samples": count,
@@ -154,6 +158,9 @@ pub fn profile(
             "lost": recorded.recording.lost,
             "ended": recorded.end,
         });
+        if let Some(stopped) = stopped {
+            fields["stopped"] = json!(stopped);
+        }
         crate::cli::print_json("profile", true, fields);
         return Ok(());
     }
@@ -167,9 +174,17 @@ pub fn profile(
     if let Some(end) = &recorded.end {
         said.push_str(&format!("; {end}"));
     }
+    if stopped == Some(false) {
+        said.push_str(&format!("; {NOT_STOPPED}"));
+    }
     eprintln!("tondo: {said}");
     Ok(())
 }
+
+/// What a profile of the tasks says of a program that did not stand still
+/// for it.
+pub const NOT_STOPPED: &str =
+    "the program did not stop within its wait: tasks that were running are shown where the system had them";
 
 /// The profile of `kind` of what a program said: the samples of its
 /// threads, or the answer it gave to what it was asked, `memory` or

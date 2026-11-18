@@ -374,6 +374,16 @@ fn profiles_time_memory_and_tasks() {
     assert_eq!(tasks["total"], 3, "{tasks}");
     let sleeping = tasks["lines"].as_array().unwrap().iter().find(|l| l["line"] == 9).expect("the sleepers' line");
     assert_eq!(sleeping["flat"], 2, "{tasks}");
+    // Whether the program stood still for its tasks to be seen, as data.
+    let told = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["profile", "--tasks", "--duration", "1", "--output", "still.pprof", "--json", "--", "allocating.to"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    // The program's own output comes first.
+    let said = String::from_utf8_lossy(&told.stdout);
+    let told: Value = serde_json::from_str(said.lines().last().unwrap_or_default()).unwrap_or_default();
+    assert_eq!(told["stopped"], true, "{said}");
     // What goes with what.
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .args(["profile", "--cpu", "--memory", "--", "busy.to"])
