@@ -2415,18 +2415,17 @@ fn closures_held_count_alike_in_regions() {
 }
 
 /// An object of the runtime allocates as often in a region as on the heap:
-/// a file, a reader over a text, a buffer and a regex a function makes and
-/// lets go of, and readers an array would hold, which stay on the heap
-/// (tests/cases/run/regions/objects.to).
+/// a reader over a text, a buffer and a regex a function makes and lets
+/// go of, and readers an array would hold, which stay on the heap
+/// (tests/cases/run/regions/objects.to). Its file is left out: what a
+/// file's operations allocate on the runtime's threads moves with the
+/// load of the machine, region or not.
 #[test]
 fn objects_count_alike_in_regions() {
     counted_alike(
         "objects",
-        // A first write starts the runtime's threads for files, which a
-        // count would take in the run that came first.
-        "    let dir = fs.createTemporaryDirectory() ?? \"/tmp\"\n    _ = written(dir)\n",
+        "",
         &[
-            ("written", "written(dir) ?? 0"),
             ("summed", "summed(\"1\\n2\\n3\\n\") ?? 0"),
             ("buffered", "buffered(5) ?? 0"),
             ("matched", "matched(\"a1 b22 c333\")"),
