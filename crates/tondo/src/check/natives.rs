@@ -1265,7 +1265,7 @@ impl<'a> Checker<'a> {
                         tail: None,
                         ty: Ty::UNIT,
                     };
-                    let wait = hir::Stmt::Loop { condition: None, body };
+                    let wait = hir::Stmt::Loop { condition: None, body, span: Span::default() };
                     let call = lock.mk(hir::ExprKind::CallValue(Box::new(lock.arg(1)), vec![lock.loan()]), result);
                     (vec![wait], call)
                 })

@@ -683,7 +683,29 @@ impl Lifetimes {
         };
         let mine: std::collections::HashSet<Span> = spans(k).collect();
         let nested = |j: usize| self.loops[j].1[self.loops[k].0] || self.loops[k].1[self.loops[j].0];
-        head(k)
+        // A loop without a condition, `for { … }`, by where its `for` is: the
+        // smallest of those written that holds all its statements, unless
+        // it holds all of a loop around it too, whose `for` it is then.
+        // Of loop `j`, the statements of the code its head is of, not of what
+        // was inlined into it, which is written elsewhere.
+        let own = |j: usize| {
+            let inside = &self.loops[j].1;
+            let scope = |block: usize| body.scopes.get(block).copied().flatten();
+            let head = scope(self.loops[j].0);
+            (0..body.blocks.len())
+                .filter(move |&block| inside[block] && scope(block) == head)
+                .flat_map(|block| &body.blocks[block].stmts)
+                .filter_map(placed)
+        };
+        let holds = |outer: &Span, j: usize| own(j).all(|span| outer.start <= span.start && span.end <= outer.end);
+        let written = |k: usize| {
+            let found = body.loop_spans.iter().filter(|outer| own(k).next().is_some() && holds(outer, k));
+            let smallest = found.min_by_key(|outer| outer.end - outer.start).copied()?;
+            let around = |j: usize| j != k && self.loops[j].1[self.loops[k].0] && holds(&smallest, j);
+            (!(0..self.loops.len()).any(around)).then_some(smallest)
+        };
+        written(k)
+            .or_else(|| head(k))
             .or_else(|| {
                 (0..self.loops.len())
                     .filter(|&j| j != k && !nested(j) && spans(j).any(|span| mine.contains(&span)))

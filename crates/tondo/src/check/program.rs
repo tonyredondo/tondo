@@ -934,7 +934,7 @@ impl<'a> Checker<'a> {
             hir::Stmt::Let(left, int(0)),
             hir::Stmt::Let(completed, mk(hir::ExprKind::Bool(true), Ty::BOOL)),
             hir::Stmt::Let(outcome, ok),
-            hir::Stmt::Loop { condition: None, body: turn },
+            hir::Stmt::Loop { condition: None, body: turn, span: Span::default() },
             hir::Stmt::Expr(std(StdFn::BenchEnd, vec![read(completed, Ty::BOOL)], Ty::UNIT)),
         ];
         let block = hir::Block { stmts, tail: Some(Box::new(read(outcome, ty))), ty };

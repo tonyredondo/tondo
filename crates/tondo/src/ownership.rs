@@ -219,7 +219,7 @@ impl Checker<'_> {
                 *exits = merge(exits.take(), Some(flow));
                 None
             }
-            Stmt::Loop { condition, body } => self.repeat(flow, condition.is_some(), |this, flow| {
+            Stmt::Loop { condition, body, .. } => self.repeat(flow, condition.is_some(), |this, flow| {
                 let flow = match condition {
                     Some(condition) => this.consume(condition, flow)?,
                     None => flow,

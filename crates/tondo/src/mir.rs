@@ -181,6 +181,10 @@ pub struct Body {
     /// (testing 10.3).
     pub span: Span,
     pub starts: Vec<(BlockId, usize, Span)>,
+    /// Where each loop without a condition, `for { … }`, is written, from
+    /// its `for` to its end: what names such a loop, whose code tells
+    /// nothing of its `for`, by the one that holds all of its statements.
+    pub loop_spans: Vec<Span>,
     pub ways: Vec<Way>,
     /// The calls inlined into the function, and the one each block's code
     /// comes from, when it comes from one (`inline`).

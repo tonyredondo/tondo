@@ -692,6 +692,7 @@ fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Bo
             // The call, and the calls inlined into the callee, inside it.
             let call = body.inlined.len() as u32;
             body.inlined.push(Inlined { name: callee.name.clone(), span: callee.span, call: *span, parent: scope });
+            body.loop_spans.extend(callee.loop_spans.iter().copied());
             let base = body.inlined.len() as u32;
             // Its bindings, and those of what was inlined into it.
             let local_of = |local: Local| match rename.places.get(&local) {

@@ -345,6 +345,7 @@ struct Builder<'a> {
     /// Where each statement starts, and the ways each branch can go, for
     /// coverage.
     starts: Vec<(BlockId, usize, Span)>,
+    loop_spans: Vec<Span>,
     ways: Vec<Way>,
     path: Vec<u32>,
     blocks_of: HashMap<Vec<u32>, u32>,
@@ -406,6 +407,7 @@ fn lower_function(
         again: None,
         pauses: Vec::new(),
         starts: Vec::new(),
+        loop_spans: Vec::new(),
         ways: Vec::new(),
         path: Vec::new(),
         blocks_of: HashMap::new(),
@@ -498,6 +500,7 @@ fn lower_function(
         pauses: b.pauses,
         span: function.span,
         starts: b.starts,
+        loop_spans: b.loop_spans,
         ways: b.ways,
         inlined: Vec::new(),
         scopes: Vec::new(),
@@ -1971,7 +1974,12 @@ impl Builder<'_> {
                 self.cleanup_to(scope_depth, frame_depth);
                 self.goto(target);
             }
-            hir::Stmt::Loop { condition, body } => {
+            hir::Stmt::Loop { condition, body, span } => {
+                // Where a loop without a condition is written, which
+                // nothing in its code tells (`Body::loop_spans`).
+                if condition.is_none() && *span != Span::default() {
+                    self.loop_spans.push(*span);
+                }
                 let head = self.new_block();
                 let body_block = self.new_block();
                 let exit = self.new_block();

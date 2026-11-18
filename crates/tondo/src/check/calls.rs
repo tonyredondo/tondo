@@ -1350,7 +1350,7 @@ impl<'a> Checker<'a> {
         ];
         let step = Self::mk(hir::ExprKind::Match(Box::new(next), arms), Ty::UNIT, span);
         let body = hir::Block { stmts: vec![hir::Stmt::Expr(step)], tail: None, ty: Ty::UNIT };
-        let stmts = vec![hir::Stmt::Let(cursor, source), hir::Stmt::Loop { condition: None, body }];
+        let stmts = vec![hir::Stmt::Let(cursor, source), hir::Stmt::Loop { condition: None, body, span }];
         hir::Stmt::Expr(Self::mk(hir::ExprKind::Block(hir::Block { stmts, tail: None, ty: Ty::UNIT }), Ty::UNIT, span))
     }
 

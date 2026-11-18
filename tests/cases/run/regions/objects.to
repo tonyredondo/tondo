@@ -109,3 +109,4 @@ fn main(): !(fs.FsError | io.IoError) {
 // expect-optimization: 66:22 region stays on the heap: it is passed to the runtime, which may keep it
 // expect-optimization: 74:9 region grows an array that stays on the heap: it holds an object of the runtime, which a region's value would never let go of
 // expect-optimization: 84:22 region stays on the heap: `handed` returns it
+// expect-optimization: 32:20 region goes in the region of a turn of the loop at line 31

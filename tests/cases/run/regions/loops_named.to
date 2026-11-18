@@ -1,0 +1,50 @@
+// A loop without a condition, `for { … }`, named by the line of its `for`
+// in the region of a turn: alone, copied into the function that calls it,
+// and one inside another, a text in the region of the inner loop's turn
+// and the one made of it in that of the outer's.
+
+import std.console
+
+fn small(n: Int): Int {
+    var i = 0
+    var total = 0
+    for {
+        let label = "{i}".toUpper()
+        total += label.length()
+        i += 1
+        if i >= n {
+            break
+        }
+    }
+    total
+}
+
+fn nested(n: Int): Int {
+    var total = 0
+    var i = 0
+    for {
+        var j = 0
+        for {
+            let label = "{i}{j}".toUpper()
+            total += label.length()
+            j += 1
+            if j >= n {
+                break
+            }
+        }
+        i += 1
+        if i >= n {
+            break
+        }
+    }
+    total
+}
+
+fn main() {
+    console.println("{small(3)} {nested(3)}")
+}
+
+// expect-stdout: 3 18
+// expect-optimization: 12:21 region goes in the region of a turn of the loop at line 11
+// expect-optimization: 28:25 region goes in the region of a turn of the loop at line 27
+// expect-optimization: 28:25 region in `String.toUpper`, `textNative.upper(self)` goes in the region of a turn of the loop at line 25

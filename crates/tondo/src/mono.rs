@@ -527,7 +527,7 @@ impl Mono<'_> {
                 }
                 self.expr(value, map);
             }
-            Stmt::Loop { condition, body } => {
+            Stmt::Loop { condition, body, .. } => {
                 if let Some(condition) = condition {
                     self.expr(condition, map);
                 }

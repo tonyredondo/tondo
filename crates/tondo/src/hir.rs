@@ -371,10 +371,13 @@ pub enum Stmt {
     Fail(Expr),
     Break,
     Continue,
-    /// `for {}` when `condition` is `None`, otherwise `for condition {}`.
+    /// `for {}` when `condition` is `None`, otherwise `for condition {}`;
+    /// `span` is where the `for` is written, which a loop without a
+    /// condition has nothing else to tell.
     Loop {
         condition: Option<Expr>,
         body: Block,
+        span: Span,
     },
     /// `for pattern in source` over an array, map or set: iterates a
     /// snapshot by value, in order (10.12).
@@ -2505,7 +2508,7 @@ fn written_block(block: &Block, out: &mut Vec<LocalId>) {
             Stmt::ContextsActivate { activate, .. } => written(activate, out),
             Stmt::Return(value) => value.iter().for_each(|value| written(value, out)),
             Stmt::AwaitChange(..) | Stmt::Break | Stmt::Continue => {}
-            Stmt::Loop { condition, body } => {
+            Stmt::Loop { condition, body, .. } => {
                 condition.iter().for_each(|condition| written(condition, out));
                 written_block(body, out);
             }

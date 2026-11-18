@@ -407,7 +407,7 @@ impl<'a> Checker<'a> {
                 cx.diverged = true;
                 Some(if is_break { hir::Stmt::Break } else { hir::Stmt::Continue })
             }
-            ast::StmtKind::For { header, body } => self.for_loop(cx, header, body),
+            ast::StmtKind::For { header, body } => self.for_loop(cx, header, body, stmt.span),
         }
     }
 
@@ -1232,9 +1232,15 @@ impl<'a> Checker<'a> {
         }
     }
 
-    pub(super) fn for_loop(&mut self, cx: &mut FnCx, header: &ast::ForHeader, body: &ast::Block) -> Option<hir::Stmt> {
+    pub(super) fn for_loop(
+        &mut self,
+        cx: &mut FnCx,
+        header: &ast::ForHeader,
+        body: &ast::Block,
+        span: Span,
+    ) -> Option<hir::Stmt> {
         cx.turn_arrays.push(TurnArrays { start: cx.locals.len(), ..TurnArrays::default() });
-        let looped = self.for_loop_of(cx, header, body);
+        let looped = self.for_loop_of(cx, header, body, span);
         let turns = cx.turn_arrays.pop().unwrap_or_default();
         for (local, span, array) in turns.searched {
             if turns.grown.contains(&local) {
@@ -1248,14 +1254,20 @@ impl<'a> Checker<'a> {
         looped
     }
 
-    fn for_loop_of(&mut self, cx: &mut FnCx, header: &ast::ForHeader, body: &ast::Block) -> Option<hir::Stmt> {
+    fn for_loop_of(
+        &mut self,
+        cx: &mut FnCx,
+        header: &ast::ForHeader,
+        body: &ast::Block,
+        span: Span,
+    ) -> Option<hir::Stmt> {
         match header {
             ast::ForHeader::Infinite => {
                 cx.loops.push(false);
                 let body = self.block(cx, body, Some(Ty::UNIT));
                 let saw_break = cx.loops.pop().unwrap();
                 cx.diverged |= !saw_break;
-                Some(hir::Stmt::Loop { condition: None, body })
+                Some(hir::Stmt::Loop { condition: None, body, span })
             }
             ast::ForHeader::Condition(condition) => {
                 let condition = self.expr(cx, condition, Some(Ty::BOOL));
@@ -1263,7 +1275,7 @@ impl<'a> Checker<'a> {
                 cx.loops.push(false);
                 let body = self.block(cx, body, Some(Ty::UNIT));
                 cx.loops.pop();
-                Some(hir::Stmt::Loop { condition: Some(condition), body })
+                Some(hir::Stmt::Loop { condition: Some(condition), body, span })
             }
             ast::ForHeader::In { pattern, source } => {
                 let ast::ExprKind::Binary(op @ (BinOp::Range | BinOp::RangeInclusive), start, end) = &source.kind

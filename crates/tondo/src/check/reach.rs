@@ -207,7 +207,7 @@ pub(crate) fn each_expr(block: &hir::Block, f: &mut impl FnMut(&hir::Expr)) {
                 bounds.iter().flatten().for_each(|bound| expr(bound, f));
                 expr(value, f);
             }
-            hir::Stmt::Loop { condition, body } => {
+            hir::Stmt::Loop { condition, body, .. } => {
                 condition.iter().for_each(|condition| expr(condition, f));
                 each_expr(body, f);
             }
