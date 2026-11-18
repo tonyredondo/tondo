@@ -343,7 +343,11 @@ allocates, on the heap and in regions together, since the tests are built
 optimized as the benchmarks are. It is the two figures of the benchmark's
 row added, `allocs/op` and what it says `in regions`
 ([Performance](performance.md#what-a-region-takes)), so the number stays
-the same when the compiler moves a value from the heap to a region.
+the same when the compiler moves a value from the heap to a region. The
+one exception is a text that a function copies out at its return so that a
+collection it made stays in its region
+([Performance](performance.md#a-part-that-is-returned)): the copy is one
+allocation more.
 `testing.heapAllocations` counts the heap's alone, which is `allocs/op`. A
 row whose runs set regions up also says how many, and how many of them
 ended holding something, as `1 regions set up/op, 1 used`.
