@@ -2548,7 +2548,8 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   de su región, y lo dice con `is copied out at its return`: la colección y
   lo que guarda sus partes se quedan en la región, y la vuelta cuesta la
   copia del texto, una asignación más que en el heap; un literal que devuelve
-  no se copia. Un valor en una región
+  no se copia, ni un texto de hasta siete bytes, que va en su palabra. Un
+  valor en una región
   no es una asignación para los contadores, los perfiles de memoria ni las
   asignaciones de un benchmark: la región pide su memoria por trozos. Los
   builds de depuración y los vivos no usan regiones, ni uno con

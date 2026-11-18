@@ -8053,3 +8053,31 @@ never does. Tony chose that a program that runs is seen at once, and that
 one the command starts asks for `--duration`, with what to write: as it
 starts it has only `main`, so a picture of that instant would show nothing
 of its tasks.
+
+## A text of up to seven bytes is its word
+
+Most texts a program makes are short, as a split's pieces, a map's keys
+or an integer's digits, and each took a block of at least 32 bytes and a
+count. A text of one to seven bytes is now its word, with no block: the
+sign marks it, as no address of user space has it, bits 56 to 62 hold its
+length and the low bytes its bytes, the first lowest. Retain and release
+test the sign where they tested null, with one comparison, and a short
+text counts nothing and is never freed. Tony chose the sign over a low
+bit (thirteen rows over 2% in its door, as every count tested it), over a
+mark in the count or the room, and the four rows the sign leaves over 2%
+land with their reason.
+
+The door measured a short path that trapped, and Cranelift merges traps
+of the same condition: it said 2.5% where the first build cost up to 55%,
+as a short path that goes on merges nothing. What won it back: a short
+text made without a call of memcpy, inline where it is asked for; the
+builder starting in its word and appending a short text with one store;
+equality, order and hashes testing both forms at once; and a loop that
+reads a text in place putting it in place once before it
+(`StrOp::InPlace`), a short one in a header the frame keeps, so that the
+loop does not test each turn, which needed the hoist pass to take a
+loop's blocks as its natural loop rather than every block of the loops
+around it. Four rows stay over 2% by the test at a read outside a loop:
+contains 1000 +3.1%, builder 100 +2.6%, parse ints 1000 +2.6% and sort
+adults +2.2%; 17 are 2% or more under, and every example allocates fewer
+and holds fewer bytes.

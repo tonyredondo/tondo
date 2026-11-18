@@ -768,6 +768,13 @@ and deques.
 
 ---
 
+
+Short texts left four rows over 2% (contains 1000 +3.1%, builder 100 +2.6%, parse ints 1000 +2.6%,
+sort adults +2.2%), each by the test of a text's form at a read outside a loop, where a loop's reads
+have it once before the loop (`StrOp::InPlace`). The weighing of each place is where that test can be
+taken out too: a text the function knows to be in a block, as one it made with more than seven bytes
+or a parameter already tested, needs no test at its reads, and two reads of one text in a block need
+one.
 ## Status
 
 | Phase | State |

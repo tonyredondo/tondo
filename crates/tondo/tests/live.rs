@@ -405,6 +405,12 @@ fn values_a_running_frame_holds_convert() {
     let (done, said) = reload(&dir, &server.pid());
     assert!(done, "{said}");
     assert_eq!(server.answer("d"), "d 4 +++ true");
+    // The label, a short text in its word in the state that moved, grows
+    // past seven bytes into a block.
+    for (count, line) in ["e", "f", "g", "h", "i"].into_iter().enumerate() {
+        let label = "+".repeat(count + 4);
+        assert_eq!(server.answer(line), format!("{line} {} {label} true", count + 5));
+    }
     server.stop();
 }
 

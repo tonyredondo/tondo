@@ -1,0 +1,133 @@
+// A text of up to seven bytes is held in its word, with no block: every
+// operation gives the same at 0, 1, 7 and 8 bytes as for the same bytes in
+// a block, made each way a text is made, compared, hashed as a map's key,
+// grown, shrunk, carried by a channel and a closure, and through JSON.
+import std.console
+import std.ffi
+import std.json
+
+extern fn strlen(text: ffi.CString): ffi.CSize
+
+type Named = {
+    name: String
+    tag: String
+}
+
+fn echo(texts: Receiver[String], back: Sender[String]) {
+    for text in texts {
+        back.send("{text}|")
+    }
+}
+
+/// A map whose keys its region keeps in blocks, asked with words.
+fn keyedByBlocks(): Int {
+    var byBlock: Map[String, Int] = [:]
+    byBlock["{1.5}"] = 1
+    byBlock["{2.25}"] = 2
+    (byBlock["1.5"] ?? 0) * 10 + (byBlock["2.25"] ?? 0)
+}
+
+fn main() {
+    let long = "abcdefghij"
+    let sizes = ["", "a", "abcdefg", "abcdefgh"]
+    var seen: Map[String, Int] = [:]
+    for text in sizes {
+        let n = text.byteLength()
+        // A literal, an interpolation, a slice, a trim, a piece of a split
+        // and a copy of case: the same text.
+        let made = "{text}"
+        let sliced = long.slice(0, n) ?? "?"
+        let trimmed = "  {text}  ".trim()
+        let piece = "x,{text},y".split(",")[1]
+        let cased = text.toUpperAscii().toLowerAscii()
+        let same =
+            text == made and
+                made == sliced and
+                sliced == trimmed and
+                trimmed == piece and
+                piece == cased
+        for each in [text, made, sliced, trimmed, piece, cased] {
+            seen[each, default: 0] += 1
+        }
+        console.println("{n}: {same} {text.length()} {text < "abcdefgh"} [{made}]")
+    }
+    // As keys, each made six ways, one entry each.
+    console.println(
+        "{seen.length()} {seen[""] ?? 0} {seen["a"] ?? 0} {seen["abcdefg"] ?? 0} {seen["abcdefgh"] ?? 0}",
+    )
+    // Grown a byte at a time, across seven to eight, and shrunk back.
+    var grown = ""
+    var lengths: Array[String] = []
+    for c in long.chars() {
+        grown = "{grown}{c}"
+        let prefix = grown == (long.slice(0, grown.byteLength()) ?? "")
+        lengths.push("{grown.byteLength()}{if prefix { "" } else { "!" }}")
+    }
+    console.println(lengths.join(" "))
+    console.println(
+        "[{" abcdefg ".trim()}] [{"abcdefgh".removeSuffix("h")}] [{"abcdefg".replace("g", "gh")}] [{"abcdefgh".replace("h", "")}]",
+    )
+    console.println(
+        "[{long.slice(1, 8) ?? ""}] [{long.slice(1, 9) ?? ""}] [{"abcdefg".toUpper()}] [{"abcdefgh".toUpper()}]",
+    )
+    // In order, the short ones beside the others.
+    var sorted = ["abcdefgh", "abcdefg", "b", "", "a", "abcdefgi", "ab"]
+    sorted.sort()
+    console.println(sorted.join(","))
+    // Digits and parses at the edge.
+    console.println(
+        "{1234567} {12345678} {-123456} {-1234567} {Int.parse("1234567") ?? 0} {Int.parse("12345678") ?? 0}",
+    )
+    // Through a channel and a task, and in a closure's capture.
+    let (out, texts) = channel[String](4)
+    let (back, answers) = channel[String](4)
+    let job = spawn echo(texts, back)
+    for text in sizes {
+        out.send(text)
+    }
+    out.close()
+    var echoed: Array[String] = []
+    for _ in sizes {
+        echoed.push(answers.receive() ?? "?")
+    }
+    job.wait()
+    let tag = "abcdefg"
+    let tagged = (name: String) { "{name}#{tag}" }
+    console.println("{echoed.join(",")} {tagged("a")}")
+    // The two forms against each other: a float's text is given room for
+    // 24 bytes, so one a region takes keeps its block, as one built in the
+    // frame keeps the frame's: map keys of either form asked with the
+    // other, compared and ordered.
+    let byWord: Map[String, Int] = ["1.5": 1, "2.25": 2]
+    let asked = [byWord["{1.5}"] ?? 0, byWord["{2.25}"] ?? 0, keyedByBlocks()]
+    console.println("{asked} {"{1.5}" == "1.5"} {"{2.25}" < "2.5"} {"{1.5}{0.5}" == "1.50.5"}")
+    // To C, a copy with its NUL, of each size.
+    var copied: Array[String] = []
+    unsafe {
+        for text in sizes {
+            let copy = ffi.toCString(text)
+            copied.push("{strlen(text)}:{ffi.fromCString(copy) == text}")
+            ffi.free(copy)
+        }
+    }
+    console.println(copied.join(" "))
+    // JSON both ways.
+    let written = json.encode(Named { name: "abcdefg", tag: "abcdefgh" })
+    let read = json.decode[Named](written) ?? Named { name: "?", tag: "?" }
+    console.println("{written} {read.name == "abcdefg" and read.tag == "abcdefgh"}")
+}
+
+// expect-stdout: 0: true 0 true []
+// expect-stdout: 1: true 1 true [a]
+// expect-stdout: 7: true 7 true [abcdefg]
+// expect-stdout: 8: true 8 false [abcdefgh]
+// expect-stdout: 4 6 6 6 6
+// expect-stdout: 1 2 3 4 5 6 7 8 9 10
+// expect-stdout: [abcdefg] [abcdefg] [abcdefgh] [abcdefg]
+// expect-stdout: [bcdefgh] [bcdefghi] [ABCDEFG] [ABCDEFGH]
+// expect-stdout: ,a,ab,abcdefg,abcdefgh,abcdefgi,b
+// expect-stdout: 1234567 12345678 -123456 -1234567 1234567 12345678
+// expect-stdout: |,a|,abcdefg|,abcdefgh| a#abcdefg
+// expect-stdout: [1, 2, 12] true true true
+// expect-stdout: 0:true 1:true 7:true 8:true
+// expect-stdout: {"name":"abcdefg","tag":"abcdefgh"} true
