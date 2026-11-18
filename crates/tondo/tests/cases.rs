@@ -410,7 +410,12 @@ fn a_case_that_hangs_says_why() {
 fn run_with_timeout(command: &mut Command, seconds: u64) -> Result<std::process::Output, String> {
     use std::io::Read;
     use std::process::Stdio;
-    let mut child = command.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    // A program that cannot start fails its case, which says which.
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("{} does not start: {e}", command.get_program().to_string_lossy()))?;
     let (mut out, mut err) = (child.stdout.take().unwrap(), child.stderr.take().unwrap());
     let stdout = std::thread::spawn(move || {
         let mut bytes = Vec::new();
