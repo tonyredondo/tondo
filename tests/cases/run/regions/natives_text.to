@@ -28,6 +28,9 @@ fn split(): String {
         lines.push("{made.repeat(2).length()} {"  {made}  ".trim().length()} {made.trim("a").length()}")
         lines.push("{made.findLast(",") ?? -1} {made.count(",")} {made.toLower()} {made.toUpper().length()}")
         lines.push("{made[2]} {made.slice(2, 5) ?? ""}")
+        // A text with nothing to trim is itself, which outlives the turn.
+        let word = "w{i}"
+        lines.push(word.trim())
     }
     lines.join(" | ")
 }
@@ -93,9 +96,9 @@ fn main() {
 }
 
 // expect-stdout: 3 2 5 | 38 19 18 | 5 2 a,b 0,c
-// expect-stdout: next 0 line 19 | b b 0 | 3 2 5 | 38 19 18 | 5 2 a,b 1,c
-// expect-stdout: next 1 line 19 | b b 1 | 3 2 5 | 38 19 18 | 5 2 a,b 2,c
-// expect-stdout: next 2 line 19 | b b 2
+// expect-stdout: next 0 line 19 | b b 0 | w0 | 3 2 5 | 38 19 18 | 5 2 a,b 1,c
+// expect-stdout: next 1 line 19 | b b 1 | w1 | 3 2 5 | 38 19 18 | 5 2 a,b 2,c
+// expect-stdout: next 2 line 19 | b b 2 | w2
 // expect-stdout: 0 0.5 | 0.25 | 6 false | 7 1.5 | 1.25 | 6 false | 14 2.5 | 2.25 | 6 false
 // expect-stdout: -1 1234,5 | 10,00 € other | -1 1235,5 | 11,00 € one | -1 1236,5 | 12,00 € other
 // expect-stdout: 2 ada number 1 -1 3560

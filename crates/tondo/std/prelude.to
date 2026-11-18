@@ -382,6 +382,8 @@ pub fn String.trimEnd(self, characters: String? = none): String {
 fn trimmed(text: String, characters: String?, ends: Int): String {
     match characters {
         some(set) => textNative.trim(text, set, false, ends)
+        // Nothing to take off: the text itself, without a copy.
+        none if textNative.untrimmed(text, ends) => text
         none => textNative.trim(text, "", true, ends)
     }
 }

@@ -3403,6 +3403,7 @@ const READING_TEXTS: &[&str] = &[
     "tondo_rt_text_scalar_at",
     "tondo_rt_text_split",
     "tondo_rt_text_trim",
+    "tondo_rt_text_untrimmed",
     "tondo_rt_text_upper",
     "tondo_rt_text_words",
     "tondo_rt_time_names",

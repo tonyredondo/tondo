@@ -1799,6 +1799,7 @@ pub const NATIVES: &[Native] = {
         text("words", &[String], Strings, "tondo_rt_text_words"),
         text("repeat", &[String, Int], String, "tondo_rt_text_repeat"),
         text("trim", &[String, String, Bool, Int], String, "tondo_rt_text_trim"),
+        text("untrimmed", &[String, Int], Bool, "tondo_rt_text_untrimmed"),
         text("findLast", &[String, String], Int, "tondo_rt_text_find_last"),
         text("count", &[String, String], Int, "tondo_rt_text_count"),
         text("lower", &[String], String, "tondo_rt_text_lower"),

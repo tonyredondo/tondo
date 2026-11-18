@@ -1,0 +1,23 @@
+// `trim` takes off Unicode's whitespace at the ends, ASCII's and the rest;
+// what it allocates, crates/tondo/tests/testing.rs counts.
+import std.console
+
+fn main() {
+    let ideographic = "\u{3000}"
+    console.println("[{" \t\n a b \r\u{0B}\u{0C}".trim()}]")
+    console.println("[{"{ideographic}\u{A0} a {ideographic}\u{85}".trim()}]")
+    let em = " \u{2003}x\u{2003} "
+    console.println(
+        "[{em.trimStart().replace("\u{2003}", "_")}] [{em.trimEnd().replace("\u{2003}", "_")}]",
+    )
+    // A control character is not whitespace, and a last byte past ASCII
+    // may be a letter's.
+    console.println(
+        "{"\u{1F}x\u{1F}".trim().byteLength()} [{"añ".trim()}] [{"ñ ".trim()}] [{"".trim()}] [{" \t ".trim()}]",
+    )
+}
+
+// expect-stdout: [a b]
+// expect-stdout: [a]
+// expect-stdout: [x_ ] [ _x]
+// expect-stdout: 3 [añ] [ñ] [] []

@@ -178,6 +178,7 @@ native tondo_rt_text_repeat               cases/run/regions/natives_text.to
 native tondo_rt_text_scalar_at            cases/run/regions/natives_text.to
 native tondo_rt_text_split                cases/run/regions/natives_text.to
 native tondo_rt_text_trim                 cases/run/regions/natives_text.to
+native tondo_rt_text_untrimmed            cases/run/regions/natives_text.to
 native tondo_rt_text_upper                cases/run/regions/natives_text.to
 native tondo_rt_text_words                cases/run/regions/natives_text.to
 native tondo_rt_base64_check              cases/run/regions/natives_text2.to

@@ -156,13 +156,56 @@ pub unsafe extern "C" fn tondo_rt_text_trim(
     region: *mut Region,
 ) -> *mut Str {
     let (s, characters) = (text(s), text(characters));
-    let trimmed = |c: char| if whitespace != 0 { c.is_whitespace() } else { characters.contains(c) };
-    let kept = match ends {
-        1 => s.trim_start_matches(trimmed),
-        2 => s.trim_end_matches(trimmed),
-        _ => s.trim_matches(trimmed),
+    let kept = match whitespace != 0 {
+        true => without_whitespace(s, ends),
+        false => {
+            let trimmed = |c: char| characters.contains(c);
+            match ends {
+                1 => s.trim_start_matches(trimmed),
+                2 => s.trim_end_matches(trimmed),
+                _ => s.trim_matches(trimmed),
+            }
+        }
     };
     str_in(region, kept.as_bytes())
+}
+
+/// Whether trimming whitespace, Unicode's as `tondo_rt_text_trim` takes
+/// it, leaves `s` as it is at the ends `ends` says: the characters at those
+/// ends alone tell.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_text_untrimmed(s: *const Str, ends: i64) -> u8 {
+    let s = text(s);
+    let kept = |end: Option<char>| end.is_none_or(|c| !c.is_whitespace());
+    ((ends == 2 || kept(s.chars().next())) && (ends == 1 || kept(s.chars().next_back()))) as u8
+}
+
+/// `s` without Unicode's whitespace at the ends `ends` says, as
+/// `tondo_rt_text_trim`: ASCII's a byte at a time, and from the first byte
+/// that is not ASCII, Unicode's.
+fn without_whitespace(s: &str, ends: i64) -> &str {
+    let bytes = s.as_bytes();
+    // `\t` to `\r`, and the space, as bits of a word.
+    const SPACES: u64 = 0b1_1111 << 9 | 1 << 32;
+    let space = |byte: u8| byte <= b' ' && SPACES >> byte & 1 != 0;
+    let (mut start, mut end) = (0, bytes.len());
+    if ends != 2 {
+        while start < end && space(bytes[start]) {
+            start += 1;
+        }
+        if start < end && bytes[start] >= 0x80 {
+            start = end - s[start..end].trim_start().len();
+        }
+    }
+    if ends != 1 {
+        while end > start && space(bytes[end - 1]) {
+            end -= 1;
+        }
+        if end > start && bytes[end - 1] >= 0x80 {
+            end = start + s[start..end].trim_end().len();
+        }
+    }
+    &s[start..end]
 }
 
 /// The scalar index of the last `needle`, or `-1`.

@@ -2504,6 +2504,54 @@ fn arrays_changed_count_alike_in_regions() {
     );
 }
 
+/// The counts `testing.allocations` gives of each call of a test that
+/// prints them as `<name> <count>`, with regions and without them, which
+/// must be alike: what a region takes counts as the heap's would.
+fn counts_of(name: &str, tests: &str) -> Vec<(String, i64)> {
+    let dir = project(name, tests);
+    let counts = |regions: &[&str]| -> Vec<(String, i64)> {
+        let (stdout, stderr, status) = tondo(&dir, &[&["test", "--show-output"], regions].concat());
+        assert_eq!(status, 0, "{stdout}{stderr}");
+        stdout
+            .lines()
+            .filter_map(|line| {
+                let (name, count) = line.trim().split_once(' ')?;
+                Some((name.to_string(), count.parse().ok()?))
+            })
+            .collect()
+    };
+    let counted = counts(&[]);
+    assert_eq!(counted, counts(&["--no-regions"]));
+    counted
+}
+
+/// A text with nothing to trim comes back as it is, without a copy, and
+/// one with whitespace at an end is copied (tests/cases/run/trim_ends.to).
+#[test]
+fn trimming_nothing_allocates_nothing() {
+    let tests = "\
+import std.console
+import std.testing
+
+test counted {
+    let words = (0..100).map((n) { \"word{n}\" }).collect()
+    let padded = (0..100).map((n) { \" word{n} \" }).collect()
+    console.println(\"same {testing.allocations(() { trimmed(words) })}\")
+    console.println(\"padded {testing.allocations(() { trimmed(padded) })}\")
+}
+
+fn trimmed(texts: Array[String]): Int {
+    var total = 0
+    for text in texts {
+        total += text.trim().byteLength() + text.trimStart().byteLength() + text.trimEnd().byteLength()
+    }
+    total
+}
+";
+    let counts = counts_of("trimmed_counted", tests);
+    assert_eq!(counts, [("same".to_string(), 0), ("padded".to_string(), 300)]);
+}
+
 /// `tondo test` given a file of tests, as one is often given, says the
 /// directory of its project to give instead.
 #[test]
