@@ -800,6 +800,7 @@ pub unsafe extern "C" fn tondo_rt_array_assign_slice(
     retain: Option<Glue>,
     release: Option<Glue>,
     location: *const Str,
+    region: *mut super::regions::Region,
 ) {
     unsafe {
         let (first, count) = slice_range((**slot).len, start, has_start, end, has_end, step, location);
@@ -819,7 +820,7 @@ pub unsafe extern "C" fn tondo_rt_array_assign_slice(
             }
             std::ptr::copy_nonoverlapping(value, snapshot.as_mut_ptr().add(k * size), size);
         }
-        reserve(slot, size, 0, 0, false, retain, release);
+        reserve_in(slot, size, 0, 0, false, retain, release, region);
         let a = *slot;
         for k in 0..count {
             let target = element(a, size, (first + k as i64 * step) as usize);

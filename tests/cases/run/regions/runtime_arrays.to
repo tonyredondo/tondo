@@ -90,7 +90,7 @@ fn shared(): String {
 }
 
 /// An array `concat` copied, which is not what it gives: what sorts the
-/// result, and may keep it, keeps none of the operands.
+/// result gives it back at most, and keeps none of the operands.
 fn copied(): String {
     let values = [3, 1, 2]
     let doubled = values.map((n) { n * 2 })
@@ -146,4 +146,4 @@ fn main() {
 // expect-optimization: 80:21 region stays on the heap: it is sent
 // expect-optimization: 108:16 region goes in a region of `first`
 // expect-optimization: 96:19 region grows an array that goes in a region of `copied`
-// expect-optimization: 97:15 region stays on the heap: it is passed to `prelude.mergeSort[Int]`, which keeps it
+// expect-optimization: 97:15 region goes in a region of `copied`

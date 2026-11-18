@@ -1,6 +1,6 @@
-// A text the library makes on its way, kept by the library's own code: the
-// remark says which function keeps it, and names no code of the program,
-// whose `value` at the call keeps nothing.
+// A text the library makes on its way, which the library's own code gives
+// back to the program's: the remark follows it to what keeps it, and
+// names no code of the program, whose `value` at the call keeps nothing.
 
 import std.console
 
@@ -16,6 +16,6 @@ fn main() {
     console.println("{lines}")
 }
 
-// expect-optimization: 8:17 region it is passed to `formats.formatNumber`, which keeps it
+// expect-optimization: 8:17 region stays on the heap: `label` returns it with what it was given
 // expect-no-optimization: 8:17 region which keeps it: `value`
 // expect-stdout: [s0: 0.0, s1: 1.5, s2: 3.0]

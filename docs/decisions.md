@@ -7886,6 +7886,18 @@ data, in the region of its place, and the value written held to what the
 region made or counts nothing. The code that writes an element of an
 array of a region compares its count with that of a region's last
 reference, as a push does, and no longer calls the runtime at each
-write to learn the array is its own. `pop` is taken too, as a write is.
-`insert(at:)`, `removeAt`, `clear`, a slice written back and a call's
-loan are not taken yet, and the remark names the change.
+write to learn the array is its own. `pop` is taken too, as a write is,
+and a slice written back, as `values[2:5] = x` writes and `sort()` and
+`reverse()` write their array whole. `insert(at:)`, `removeAt`, `clear`
+and a call's loan are not taken yet, and the remark names the change.
+
+For `sort()` to keep its array in its region, the analysis tells a
+function that may give back what it was given, and keep it no other
+way, from one that keeps it: the library's merge sort gives back the
+array it was given when it has fewer than two elements. Such a call
+keeps none of its arguments, and what holds its result holds them
+instead, in the caller and in the summaries of the functions that call
+it. A call that might return its argument was taken before for one that
+keeps it, and the array sorted, the operands of a `concat` sorted after,
+and a text a library function formats and gives back stayed on the heap
+for it.

@@ -3,8 +3,10 @@
 // data, goes where the write's place goes, and the value written is held
 // to what the region made or counts nothing. A table filled in place, an
 // array that grows and is written, a literal of constants sorted by swaps,
-// a stack, which `pop` changes too, and an array changed in a way a region
-// does not take yet, whose remark names the change.
+// a stack, which `pop` changes too, arrays that `sort()`, `reverse()` and a
+// slice written back change, texts sorted in place, which stay on the heap
+// yet, and an array changed in a way a region does not take yet, whose
+// remark names the change.
 
 import std.console
 
@@ -52,6 +54,37 @@ fn stack(): Int {
     top + items.length()
 }
 
+/// Sorted and reversed in place, which write the array back whole.
+fn ordered(): Int {
+    var values: Array[Int] = []
+    for i in 0..100 {
+        values.push((i * 37) % 101)
+    }
+    values.sort()
+    let least = values[0]
+    values.reverse()
+    least * 1000 + values[0]
+}
+
+/// Texts sorted in place, which stay on the heap yet: what the sort gives
+/// back holds the array's own texts, and each of the two waits for the
+/// other to be known as the region's.
+fn texts(): Int {
+    var names: Array[String] = []
+    for i in 0..20 {
+        names.push("n{(i * 7) % 20}")
+    }
+    names.sort()
+    names[0].length() * 100 + names[19].length()
+}
+
+/// A slice of it written.
+fn sliced(): Int {
+    var table = [0].repeat(10)
+    table[2:5] = [7, 8, 9]
+    table[2] + table[4] + table.length()
+}
+
 /// Changed by `insert(at:)`, which a region does not take yet.
 fn inserted(): Int {
     var table: Array[Int] = []
@@ -63,13 +96,18 @@ fn inserted(): Int {
 }
 
 fn main() {
-    console.println("{squares()} {pushed()} {sorted()} {stack()} {inserted()}")
+    console.println("{squares()} {pushed()} {sorted()} {stack()} {ordered()} {texts()} {sliced()} {inserted()}")
 }
 
-// expect-stdout: 9801 107 1009 18 42
-// expect-optimization: 15:9 region changes an array that goes in a region of `squares`
-// expect-optimization: 24:9 region grows an array that goes in a region of `pushed`
-// expect-optimization: 26:5 region changes an array that goes in a region of `pushed`
-// expect-optimization: 37:17 region changes an array that goes in a region of `sorted`
-// expect-optimization: 51:15 region changes an array that goes in a region of `stack`
-// expect-optimization: 59:9 region stays on the heap: a region changes an array only by `push`, `pop` and the writes of its elements yet
+// expect-stdout: 9801 107 1009 18 100 202 26 42
+// expect-optimization: 17:9 region changes an array that goes in a region of `squares`
+// expect-optimization: 26:9 region grows an array that goes in a region of `pushed`
+// expect-optimization: 28:5 region changes an array that goes in a region of `pushed`
+// expect-optimization: 39:17 region changes an array that goes in a region of `sorted`
+// expect-optimization: 53:15 region changes an array that goes in a region of `stack`
+// expect-optimization: 63:5 region in `Array.sort[Int]`, `self[:] = sorted` changes an array that goes in a region of `ordered`
+// expect-optimization: 63:5 region in `Array.sorted[Int]`, `textNative.sortedNatively(self)` goes in a region of `ordered`
+// expect-optimization: 65:5 region in `Array.reverse[Int]`, `self[:] = reversed` changes an array that goes in a region of `ordered`
+// expect-optimization: 75:9 region grows an array that stays on the heap: it holds a value that its region did not make: `names.sort()` at 77:5
+// expect-optimization: 84:5 region changes an array that goes in a region of `sliced`
+// expect-optimization: 92:9 region stays on the heap: a region changes an array only by `push`, `pop` and the writes of its elements yet

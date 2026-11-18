@@ -368,7 +368,7 @@ impl Rt {
             // An array whose element changes in place, or that loses its
             // last, and a map that loses an entry, in the region of their
             // place.
-            Rt::ArrayUnique | Rt::ArrayPop | Rt::MapRemove => true,
+            Rt::ArrayUnique | Rt::ArrayPop | Rt::ArrayAssignSlice | Rt::MapRemove => true,
             _ => false,
         }
     }
@@ -534,7 +534,7 @@ impl Rt {
             Rt::BytesEq => ("tondo_rt_bytes_eq", &[I64, I64], &[I8]),
             Rt::ArrayContains => ("tondo_rt_array_contains", &[I64, I64, I64, I64], &[I8]),
             Rt::ArrayAssignSlice => {
-                ("tondo_rt_array_assign_slice", &[I64, I64, I8, I64, I8, I64, I64, I64, I64, I64, I64], &[])
+                ("tondo_rt_array_assign_slice", &[I64, I64, I8, I64, I8, I64, I64, I64, I64, I64, I64, I64], &[])
             }
             Rt::ArrayCheckRegion => {
                 ("tondo_rt_array_check_region", &[I64, I64, I8, I64, I8, I64, I8, I64, I8, I64, I8, I64, I64], &[])

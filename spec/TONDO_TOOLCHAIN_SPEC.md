@@ -2505,7 +2505,9 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   de la función para las primeras, y nombra unas y otras; o se queda en el
   heap, y dice por qué: se guarda en lo que la función recibió, en el
   estado de un lock o en un `Ref`, lo captura una closure, se envía, va a
-  una tarea o a C, lo guarda una función a la que se pasa, sobrevive a una
+  una tarea o a C, lo guarda una función a la que se pasa, y no una que
+  solo lo devuelve, como `sorted` un array de menos de dos elementos,
+  cuyo resultado se sigue en su lugar, sobrevive a una
   vuelta del bucle en que se hace en algo que el bucle hace más que ampliar,
   como la variable que la vuelta siguiente reescribe, contiene un valor que
   su región no hizo, se cambia de un modo que una región no toma aún, como
@@ -2514,7 +2516,8 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   a una función del runtime cuyo código aún no se ha leído, y la nombra,
   o es de una clase que una región no toma aún, y la nombra: una región
   toma arrays, cajas, arrays que crecen con `push`, pierden el último con
-  `pop` y cambian en su sitio sus elementos, mapas y sets, que crecen con
+  `pop` y cambian en su sitio sus elementos, uno a uno o por tramos, como
+  hacen `sort()` y `reverse()`, mapas y sets, que crecen con
   sus inserciones, pierden entradas y cambian en su sitio los valores de
   sus entradas, los textos que hace una
   interpolación, también el que crece en su sitio, como `x = "{x}..."`, que
