@@ -7986,3 +7986,25 @@ when they count references, its region must have made them, or the slice
 stays on the heap, "it holds a value that its region did not make", as
 the region lets go of the slice whole and would never let go of them. A
 text's copy holds nothing of its text.
+
+## A text a function returns is copied out of its region
+
+A function that returned one of the pieces of a `split` it made, as the
+word a count of words finds most often, kept the whole block of pieces
+on the heap, "returns it with what it was given", and with it the map
+that counted them, which held its pieces: the return of one small text
+cost the collection its region. Tony chose that such a function copies
+the text out at its return instead. When the function's result is a
+text, what it returns is not only what it made, and the return is all
+that keeps a collection it made, an array, a map, a set or a deque, from
+its region, each return copies its text, in the region its caller gives
+or on the heap, and lets go of the one it copied: the collection, and
+what holds its parts, stay in the function's region, and the remark at
+the return says "is copied out at its return". A literal returned is
+not copied, nor is anything in a function whose every call was inlined,
+where the caller's own region decides. The copy costs one allocation a
+return that the heap did not make: `testing.allocations` counts one more
+with regions than without them, the one place where the two differ, which
+the testing specification says. Only a text is copied out: a part that
+is not one, as an array or a record read out of a collection and
+returned, still takes the collection to the heap, a known limit.

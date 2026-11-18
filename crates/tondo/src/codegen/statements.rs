@@ -504,6 +504,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         let region = self.region_or_null();
                         Val::Scalar(self.e.call_rt(Rt::StrFromChars, &[values[0], region]).unwrap())
                     }
+                    StrOp::CopyOut => {
+                        let region = self.region_or_null();
+                        Val::Scalar(self.e.call_rt(Rt::StrCopyOut, &[values[0], region]).unwrap())
+                    }
                     StrOp::SliceChecked => {
                         let error = self.scratch(Ty::BYTE);
                         let slice = self.e.call_rt(Rt::StrSliceChecked, &[values[0], values[1], values[2], error]);

@@ -114,14 +114,23 @@ pub fn regions(
 ) -> (Vec<Verdict>, Vec<Taking>) {
     // What each function's statements pass on, and its places, on every
     // core: each function is read on its own.
-    let flows: Vec<(Flow, Vec<Site>)> =
-        crate::parallel::map(bodies, 16, |body| (Flow::of(body, types), sites(body, types)));
-    let (mut flows, all_sites): (Vec<Flow>, Vec<Vec<Site>>) = flows.into_iter().unzip();
-    let summaries = summaries(bodies, types, roots, &flows, &all_sites);
-    // What a call that may give back what it was given gives holds it, for
-    // every reading of the flows from here on.
-    for (flow, body) in flows.iter_mut().zip(bodies.iter()) {
-        flow.through(body, &summaries);
+    let read = |bodies: &[Body]| {
+        let flows: Vec<(Flow, Vec<Site>)> =
+            crate::parallel::map(bodies, 16, |body| (Flow::of(body, types), sites(body, types)));
+        let (mut flows, all_sites): (Vec<Flow>, Vec<Vec<Site>>) = flows.into_iter().unzip();
+        let summaries = summaries(bodies, types, roots, &flows, &all_sites);
+        // What a call that may give back what it was given gives holds it,
+        // for every reading of the flows from here on.
+        for (flow, body) in flows.iter_mut().zip(bodies.iter()) {
+            flow.through(body, &summaries);
+        }
+        (flows, all_sites, summaries)
+    };
+    let (mut flows, mut all_sites, mut summaries) = read(bodies);
+    // A function that copies out what it returns reads anew, and so do its
+    // callers, whose calls of it now give a fresh text.
+    if copied_out(bodies, types, roots, &flows, &all_sites, &summaries) {
+        (flows, all_sites, summaries) = read(bodies);
     }
     let loans: Vec<Vec<bool>> = bodies.iter().map(|body| body.loans.clone()).collect();
     // Each function's places and their verdicts, on every core.
@@ -306,6 +315,86 @@ pub fn regions(
         })
         .collect();
     (verdicts, takings)
+}
+
+/// Copies out the text a function returns where it may be a part of a
+/// collection the function made, as the word a count of words finds among
+/// the pieces of a `split`, when the return is all that keeps that
+/// collection from the function's region: the collection, and what holds
+/// it, stay there, and the return costs one copy of the text. Whether any
+/// function changed.
+fn copied_out(
+    bodies: &mut [Body],
+    types: &Types,
+    roots: &[usize],
+    flows: &[Flow],
+    all_sites: &[Vec<Site>],
+    summaries: &[Summary],
+) -> bool {
+    let text = |ty: Ty| matches!(types.kind(types.repr(ty)), TyKind::String);
+    // What holds texts a return may be one of: a text alone, or wrapped in
+    // a result, is the copy itself.
+    let collection = |ty: Ty| {
+        matches!(types.kind(types.repr(ty)), TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_))
+    };
+    // The functions something still calls: one whose every call was
+    // inlined runs as none.
+    let mut called = vec![false; bodies.len()];
+    for &root in roots {
+        called[root] = true;
+    }
+    for statement in bodies.iter().flat_map(|body| &body.blocks).flat_map(|block| &block.stmts) {
+        let Statement::Assign(_, rvalue, _) = statement else { continue };
+        match &**rvalue {
+            Rvalue::Call(Callee::Fn(id), _)
+            | Rvalue::FnValue(id)
+            | Rvalue::Callback(id, _)
+            | Rvalue::Erase(_, id, _)
+            | Rvalue::CallOsr(id, ..) => called[id.0 as usize] = true,
+            _ => {}
+        }
+    }
+    let copying: Vec<usize> = (0..bodies.len())
+        .filter(|&index| {
+            let body = &bodies[index];
+            !summaries[index].fresh
+                && called[index]
+                && body.ret.is_some()
+                && text(body.result)
+                && all_sites[index].iter().any(|site| {
+                    collection(body.locals[site.local.0 as usize])
+                        && fate(&flows[index], body, types, site.local, summaries, bodies) == Fate::Returned
+                })
+        })
+        .collect();
+    for &index in &copying {
+        let body = &mut bodies[index];
+        let Some(ret) = body.ret else { continue };
+        let copied = Local(body.locals.len() as u32);
+        body.locals.push(body.result);
+        for block in &mut body.blocks {
+            let Terminator::Return(Operand::Copy(place)) = &block.terminator else { continue };
+            if place.local != ret || !place.path.is_empty() {
+                continue;
+            }
+            // Where the code says what it returns: the last write of the
+            // result in the block. A literal it returns is the program's
+            // own, which needs no copy.
+            let last = block.stmts.iter().rev().find_map(|statement| match statement {
+                Statement::Assign(place, rvalue, span) if place.local == ret => Some((rvalue, *span)),
+                _ => None,
+            });
+            let span = last.map(|(_, span)| span).unwrap_or_default();
+            let copy = match last {
+                Some((rvalue, _)) if matches!(&**rvalue, Rvalue::Use(Operand::Const(_))) => (**rvalue).clone(),
+                _ => Rvalue::StrOp(crate::hir::StrOp::CopyOut, vec![Operand::local(ret)], span),
+            };
+            block.stmts.push(Statement::Assign(Place::local(copied), Box::new(copy), span));
+            block.terminator = Terminator::Return(Operand::local(copied));
+        }
+        body.ret = Some(copied);
+    }
+    !copying.is_empty()
 }
 
 /// What a build puts in regions today, of what a region takes now: in each
@@ -1667,7 +1756,7 @@ fn numbers_text(op: crate::numbers::NumOp) -> bool {
 /// makes in the region it is given.
 fn makes_text(op: crate::hir::StrOp) -> bool {
     use crate::hir::StrOp::*;
-    matches!(op, Replace | LowerAscii | UpperAscii | FromChars)
+    matches!(op, Replace | LowerAscii | UpperAscii | FromChars | CopyOut)
 }
 
 /// Whether a place is the value of an entry of the collection its local
@@ -1832,6 +1921,12 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
             // The text `slice(start, end)` copies, the success of its result,
             // in the region it is given.
             Rvalue::StrOp(crate::hir::StrOp::SliceChecked, ..) => None,
+            // The text a function returns, copied out (`copied_out`).
+            Rvalue::StrOp(crate::hir::StrOp::CopyOut, ..) => {
+                let what = "is copied out at its return, and ";
+                found.push(Site { local: place.local, span: *span, what, at, refused: None });
+                continue;
+            }
             // Not an element read out of one.
             Rvalue::ArrayOp(op, ..)
                 if *op != crate::hir::ArrayOp::Get && types.needs_drop(body.place_ty(types, place)) =>
@@ -2643,7 +2738,10 @@ fn fate_of(
                     | Rvalue::Pointer(..)
                     | Rvalue::MapOp(..) => {}
                 }
-                if body.ret == Some(place.local) {
+                // A new text an operation makes of it holds none of it, as
+                // the one a return copies out.
+                let fresh = matches!(&**rvalue, Rvalue::StrOp(op, ..) if makes_text(*op));
+                if body.ret == Some(place.local) && !fresh {
                     returned = true;
                 }
             }

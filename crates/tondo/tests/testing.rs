@@ -2610,6 +2610,57 @@ fn slices_count_alike_in_regions() {
     );
 }
 
+/// A function that returns a part of a collection it made copies it out at
+/// its return: with regions, each call allocates one text more than
+/// without them, the copy, while its pieces and its map count as the
+/// heap's would (tests/cases/run/regions/copied_out.to).
+#[test]
+fn a_part_copied_out_costs_one_text() {
+    let tests = "\
+import std.console
+import std.testing
+
+test counted {
+    let text = \"to be or not to be that is the question\"
+    let counted = testing.allocations(() {
+        var total = 0
+        for _ in 0..10 {
+            total += commonest(text).byteLength()
+        }
+        total
+    })
+    console.println(\"commonest {counted}\")
+}
+
+fn commonest(text: String): String {
+    var counts: Map[String, Int] = [:]
+    for word in text.split(\" \") {
+        counts[word, default: 0] += 1
+    }
+    var best = \"\"
+    var most = 0
+    for (word, count) in counts {
+        if count > most {
+            best = word
+            most = count
+        }
+    }
+    best
+}
+";
+    let dir = project("copied_out_counted", tests);
+    let count = |regions: &[&str]| -> i64 {
+        let (stdout, stderr, status) = tondo(&dir, &[&["test", "--show-output"], regions].concat());
+        assert_eq!(status, 0, "{stdout}{stderr}");
+        let line = stdout
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("commonest "))
+            .unwrap_or_else(|| panic!("{stdout}"));
+        line.parse().unwrap()
+    };
+    assert_eq!(count(&[]), count(&["--no-regions"]) + 10);
+}
+
 /// `tondo test` given a file of tests, as one is often given, says the
 /// directory of its project to give instead.
 #[test]

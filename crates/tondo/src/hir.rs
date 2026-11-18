@@ -831,6 +831,10 @@ pub enum StrOp {
     SliceChecked,
     /// `String.fromChars(chars)`, wrapped in `ok` by the checker.
     FromChars,
+    /// The text a function returns, copied, letting go of the one copied:
+    /// what returns a part of a value the function made, so that the value
+    /// stays in its region (`regions::copied_out`).
+    CopyOut,
     /// The scalar at a byte offset; used by iteration.
     Decode,
     /// The byte offset after the scalar at a byte offset; used by iteration.

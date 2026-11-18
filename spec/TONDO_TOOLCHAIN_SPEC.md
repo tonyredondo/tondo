@@ -2538,7 +2538,14 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   slices de un array o de un texto, `a[i:j]` y `slice(inicio, fin)`, que
   copian su parte en ella, y los
   textos y arrays que hacen las operaciones del runtime y de la biblioteca,
-  como `split`, `replace`, `fs.readText`, `concat` o `sorted`. Un valor en una región
+  como `split`, `replace`, `fs.readText`, `concat` o `sorted`. Una función
+  que devuelve un texto que puede ser parte de una colección que ella hizo,
+  como la palabra que más se repite entre las piezas de un `split` que
+  cuenta un mapa, lo copia al volver, si solo esa vuelta saca la colección
+  de su región, y lo dice con `is copied out at its return`: la colección y
+  lo que guarda sus partes se quedan en la región, y la vuelta cuesta la
+  copia del texto, una asignación más que en el heap; un literal que devuelve
+  no se copia. Un valor en una región
   no es una asignación para los contadores, los perfiles de memoria ni las
   asignaciones de un benchmark: la región pide su memoria por trozos. Los
   builds de depuración y los vivos no usan regiones, ni uno con

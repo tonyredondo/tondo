@@ -1,0 +1,54 @@
+// A function that returns a text that may be a part of a collection it
+// made copies it out at its return, so that the collection, and what
+// holds its parts, stay in its region: the word a count of words finds
+// among the pieces of a `split`, the keys of a map, and the first long
+// piece, of a function called through a function value. A literal it
+// returns is not copied, and the copy goes where the caller lets it.
+
+import std.console
+
+fn commonest(text: String): String {
+    var counts: Map[String, Int] = [:]
+    for word in text.split(" ") {
+        counts[word, default: 0] += 1
+    }
+    var best = ""
+    var most = 0
+    for (word, count) in counts {
+        if count > most {
+            best = word
+            most = count
+        }
+    }
+    best
+}
+
+fn firstLong(text: String, least: Int): String {
+    for word in text.split(" ") {
+        if word.byteLength() > least {
+            return word
+        }
+    }
+    "none"
+}
+
+fn main() {
+    let text = "to be or not to be that is the question"
+    let find = firstLong
+    var said: Array[String] = []
+    for i in 0..3 {
+        said.push(commonest("{text} {i}"))
+        said.push(find(text, i + 3))
+    }
+    console.println(said.join(" "))
+    console.println("{find(text, 20)} [{commonest("")}]")
+}
+
+// expect-stdout: to that to question to question
+// expect-stdout: none []
+// expect-optimization: 12:17 region goes in a region of `commonest`
+// expect-optimization: 13:9 region changes a map that goes in a region of `commonest`
+// expect-optimization: 23:5 region is copied out at its return, and goes in a region that the caller of `commonest` gives
+// expect-optimization: 27:17 region goes in a region of `firstLong`
+// expect-optimization: 29:20 region is copied out at its return, and stays on the heap
+// expect-no-optimization: 32:5 region is copied out

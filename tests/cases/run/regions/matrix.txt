@@ -33,7 +33,7 @@ Rvalue::Unary                 - gives a number or a Bool
 Rvalue::Binary                - gives a number or a Bool
 Rvalue::Increment             - gives a number
 Rvalue::Exact                 - gives a number
-Rvalue::Call                  cases/run/regions/calls.to cases/run/regions/contexts.to cases/run/regions/natives_codec.to cases/run/regions/texts.to cases/run/regions/parts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to cases/run/regions/runtime_texts_system.to cases/run/regions/runtime_texts_library.to cases/run/regions/errors.to cases/run/regions/runtime_arrays.to cases/run/regions/runtime_arrays_natives.to
+Rvalue::Call                  cases/run/regions/calls.to cases/run/regions/contexts.to cases/run/regions/natives_codec.to cases/run/regions/texts.to cases/run/regions/parts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to cases/run/regions/runtime_texts_system.to cases/run/regions/runtime_texts_library.to cases/run/regions/errors.to cases/run/regions/runtime_arrays.to cases/run/regions/runtime_arrays_natives.to cases/run/regions/copied_out.to
 Rvalue::FnValue               - gives a function's address
 Rvalue::ExternFn              - gives a C function's address
 Rvalue::Callback              - gives a C function's address

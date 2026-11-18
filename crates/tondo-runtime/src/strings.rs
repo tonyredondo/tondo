@@ -800,6 +800,21 @@ pub unsafe extern "C" fn tondo_rt_str_slice_checked(
     }
 }
 
+/// The text a function returns where it could be a part of a value the
+/// function made: a copy, in `region` when it is not null, and `s` let go
+/// of, so that the value it is a part of stays in the function's region.
+/// One kept for good is given back as it is, and none, as a return a panic
+/// unwinds gives, stays none.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_copy_out(s: *mut Str, region: *mut super::regions::Region) -> *mut Str {
+    if s.is_null() || unsafe { (*s).rc.load(Ordering::Relaxed) } == IMMORTAL {
+        return s;
+    }
+    let copy = str_in(region, unsafe { str_bytes(s) });
+    unsafe { tondo_rt_str_release(s) };
+    copy
+}
+
 /// A string holding the characters of an `Array[Char]`, in `region` when it
 /// is not null.
 #[unsafe(no_mangle)]
