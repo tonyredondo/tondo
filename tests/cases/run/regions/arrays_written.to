@@ -1,0 +1,64 @@
+// Arrays written by index, `a[i] = x`, which regions take as they take a
+// push: the array, made unique first when it is shared or the program's
+// data, goes where the write's place goes, and the value written is held
+// to what the region made or counts nothing. A table filled in place, an
+// array that grows and is written, a literal of constants sorted by swaps,
+// and an array changed in a way a region does not take yet, whose remark
+// names the change.
+
+import std.console
+
+/// Filled in place.
+fn squares(): Int {
+    var table = [0].repeat(100)
+    for i in 0..100 {
+        table[i] = i * i
+    }
+    table[99]
+}
+
+/// Grown by `push`, then written.
+fn pushed(): Int {
+    var table: Array[Int] = []
+    for i in 0..100 {
+        table.push(i)
+    }
+    table[3] = 7
+    table[3] + table.length()
+}
+
+/// The program's data, copied into the region by its first write.
+fn sorted(): Int {
+    var values = [5, 3, 9, 1]
+    for i in 0..values.length() {
+        for k in 0..(values.length() - 1 - i) {
+            if values[k] > values[k + 1] {
+                let t = values[k]
+                values[k] = values[k + 1]
+                values[k + 1] = t
+            }
+        }
+    }
+    values[0] * 1000 + values[3]
+}
+
+/// Changed by `insert(at:)`, which a region does not take yet.
+fn inserted(): Int {
+    var table: Array[Int] = []
+    for i in 0..10 {
+        table.push(i)
+    }
+    table.insert(0, 42)
+    table[0]
+}
+
+fn main() {
+    console.println("{squares()} {pushed()} {sorted()} {inserted()}")
+}
+
+// expect-stdout: 9801 107 1009 42
+// expect-optimization: 15:9 region changes an array that goes in a region of `squares`
+// expect-optimization: 24:9 region grows an array that goes in a region of `pushed`
+// expect-optimization: 26:5 region changes an array that goes in a region of `pushed`
+// expect-optimization: 37:17 region changes an array that goes in a region of `sorted`
+// expect-optimization: 49:9 region stays on the heap: a region changes an array only by `push` and the writes of its elements yet

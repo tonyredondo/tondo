@@ -489,8 +489,9 @@ pub unsafe extern "C" fn tondo_rt_array_unique(
     extra: usize,
     retain: Option<Glue>,
     release: Option<Glue>,
+    region: *mut super::regions::Region,
 ) {
-    unsafe { reserve(slot, size, 0, extra, false, retain, release) }
+    unsafe { reserve_in(slot, size, 0, extra, false, retain, release, region) }
 }
 
 /// Appends the value at `value` (its ownership moves into the array).
@@ -503,7 +504,7 @@ pub unsafe extern "C" fn tondo_rt_array_push(
     release: Option<Glue>,
 ) {
     unsafe {
-        tondo_rt_array_unique(slot, size, 1, retain, release);
+        reserve(slot, size, 0, 1, false, retain, release);
         let a = *slot;
         std::ptr::copy_nonoverlapping(value, element(a, size, (*a).len), size);
         (*a).len += 1;
@@ -523,7 +524,7 @@ pub unsafe extern "C" fn tondo_rt_array_pop(
         if (**slot).len == 0 {
             return 0;
         }
-        tondo_rt_array_unique(slot, size, 0, retain, release);
+        reserve(slot, size, 0, 0, false, retain, release);
         let a = *slot;
         (*a).len -= 1;
         std::ptr::copy_nonoverlapping(element(a, size, (*a).len), out, size);
@@ -560,7 +561,7 @@ pub unsafe extern "C" fn tondo_rt_array_insert(
         }
         let at = position;
         let at = at as usize;
-        tondo_rt_array_unique(slot, size, 1, retain, release);
+        reserve(slot, size, 0, 1, false, retain, release);
         let a = *slot;
         std::ptr::copy(element(a, size, at), element(a, size, at + 1), (len - at) * size);
         std::ptr::copy_nonoverlapping(value, element(a, size, at), size);
@@ -586,7 +587,7 @@ pub unsafe extern "C" fn tondo_rt_array_remove_at(
             return 0;
         }
         let at = at as usize;
-        tondo_rt_array_unique(slot, size, 0, retain, release);
+        reserve(slot, size, 0, 0, false, retain, release);
         let a = *slot;
         std::ptr::copy_nonoverlapping(element(a, size, at), out, size);
         std::ptr::copy(element(a, size, at + 1), element(a, size, at), (len - at - 1) * size);
@@ -653,7 +654,7 @@ pub unsafe extern "C" fn tondo_rt_deque_pop_front(
         if (**slot).len == 0 {
             return 0;
         }
-        tondo_rt_array_unique(slot, size, 0, retain, release);
+        reserve(slot, size, 0, 0, false, retain, release);
         let a = *slot;
         std::ptr::copy_nonoverlapping(element(a, size, 0), out, size);
         (*a).head += 1;
@@ -817,7 +818,7 @@ pub unsafe extern "C" fn tondo_rt_array_assign_slice(
             }
             std::ptr::copy_nonoverlapping(value, snapshot.as_mut_ptr().add(k * size), size);
         }
-        tondo_rt_array_unique(slot, size, 0, retain, release);
+        reserve(slot, size, 0, 0, false, retain, release);
         let a = *slot;
         for k in 0..count {
             let target = element(a, size, (first + k as i64 * step) as usize);

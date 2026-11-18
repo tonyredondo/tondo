@@ -1318,12 +1318,15 @@ fn unchanged(body: &Body, types: &Types, local: Local) -> Option<(String, Span, 
                 mutation,
                 crate::hir::Mutation::Push | crate::hir::Mutation::Reserve | crate::hir::Mutation::Insert
             ),
-            _ if place.local == local && !place.path.is_empty() => map && entry_value(place),
+            _ if place.local == local && !place.path.is_empty() => match map {
+                true => entry_value(place),
+                false => element(place),
+            },
             _ => return None,
         };
         let why = match map {
             true => "a region changes a map only by its insertions and the values of its entries yet",
-            false => "a region changes an array only by `push` yet",
+            false => "a region changes an array only by `push` and the writes of its elements yet",
         };
         (!taken).then(|| (why.to_string(), *span, block))
     })
@@ -1561,6 +1564,12 @@ fn entry_value(place: &Place) -> bool {
     matches!(place.path.as_slice(), [Proj::Index(..) | Proj::InBounds(_), Proj::Field(1)])
 }
 
+/// Whether a place is an element of the array its local holds, written in
+/// place whole, `a[i] = x`.
+fn element(place: &Place) -> bool {
+    matches!(place.path.as_slice(), [Proj::Index(..) | Proj::InBounds(_)])
+}
+
 /// The places the function makes a value on the heap in: an array of
 /// values that are not all constants, a map, a slice, a box, an array that
 /// grows, a text, and the arrays, texts and other values the runtime gives.
@@ -1570,15 +1579,20 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
         |place: &Place| matches!(types.kind(types.repr(body.place_ty(types, place))), crate::types::TyKind::Array(_));
     const TEXTS: Option<&str> = Some("regions do not take texts yet");
     const RUNTIME: Option<&str> = Some("regions do not take what the runtime makes yet");
-    let map =
-        |local: Local| matches!(types.kind(types.repr(body.locals[local.0 as usize])), crate::types::TyKind::Map(..));
+    let kind = |local: Local| types.kind(types.repr(body.locals[local.0 as usize])).clone();
     for (at, statement) in positioned(body) {
         let Statement::Assign(place, rvalue, span) = statement else { continue };
         // A change of an entry of a map in place, as `m[k, default: 0] += 1`
-        // makes: the map, made unique first when it is shared, goes where
-        // its place goes, as one an insertion grows.
-        if entry_value(place) && map(place.local) {
-            found.push(Site { local: place.local, span: *span, what: "changes a map that ", at, refused: None });
+        // makes, or of an element of an array, `a[i] = x`: the collection,
+        // made unique first when it is shared, goes where its place goes, as
+        // one an insertion or a push grows.
+        let what = match kind(place.local) {
+            crate::types::TyKind::Map(..) if entry_value(place) => "changes a map that ",
+            crate::types::TyKind::Array(_) if element(place) => "changes an array that ",
+            _ => "",
+        };
+        if !what.is_empty() {
+            found.push(Site { local: place.local, span: *span, what, at, refused: None });
             continue;
         }
         let refused = match &**rvalue {

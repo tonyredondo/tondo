@@ -1174,7 +1174,7 @@ pub(super) fn located(
                         let message = "another value shares this array, which a change here would change too";
                         return Err(format!("{message}: change the binding that holds it"));
                     }
-                    unsafe { crate::tondo_rt_array_unique(slot, *size, 0, None, None) };
+                    unsafe { crate::tondo_rt_array_unique(slot, *size, 0, None, None, std::ptr::null_mut()) };
                 }
                 address = unsafe { crate::element(*slot, *size, at) } as usize;
                 layout = *inner;

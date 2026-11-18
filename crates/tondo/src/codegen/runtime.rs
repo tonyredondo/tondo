@@ -365,6 +365,9 @@ impl Rt {
             // A map or a set that grows, or whose entry changes in place, in
             // the region of its place.
             Rt::MapInsert | Rt::MapUnique => true,
+            // An array whose element changes in place, in the region of
+            // its place.
+            Rt::ArrayUnique => true,
             _ => false,
         }
     }
@@ -514,7 +517,7 @@ impl Rt {
             Rt::ArrayReserveIn => ("tondo_rt_array_reserve_in", &[I64, I64, I64, I64, I64, I64], &[]),
             Rt::ArrayRetain => ("tondo_rt_array_retain", &[I64], &[]),
             Rt::ArrayRelease => ("tondo_rt_array_release", &[I64, I64, I64], &[]),
-            Rt::ArrayUnique => ("tondo_rt_array_unique", &[I64, I64, I64, I64, I64], &[]),
+            Rt::ArrayUnique => ("tondo_rt_array_unique", &[I64, I64, I64, I64, I64, I64], &[]),
             Rt::ArrayPush => ("tondo_rt_array_push", &[I64, I64, I64, I64, I64], &[]),
             Rt::ArrayPushIn => ("tondo_rt_array_push_in", &[I64, I64, I64, I64, I64, I64], &[]),
             Rt::ArrayPop => ("tondo_rt_array_pop", &[I64, I64, I64, I64, I64], &[I8]),

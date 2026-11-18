@@ -312,12 +312,19 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.ins().stack_addr(POINTER, slot, 0)
     }
 
-    /// Makes the array stored at `slot` unique before a write (copy-on-write).
+    /// Makes the array stored at `slot` unique before a write (copy-on-write):
+    /// a copy of a shared one in the region of the statement's place, when
+    /// it has one, or on the heap.
     pub(super) fn make_unique(&mut self, slot: ir::Value, element: Ty) {
-        // Nearly always the only reference already: no call.
+        // Nearly always the only reference already: no call. In a region,
+        // the last reference of one.
         let array = self.e.fb.ins().load(POINTER, flags(), slot, 0);
         let count = self.e.fb.ins().atomic_load(types::I64, flags(), array);
-        let unique = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, 1);
+        let last = match self.e.region {
+            Some(_) => (REGION | 1) as i64,
+            None => 1,
+        };
+        let unique = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, last);
         let (copy, done) = (self.e.fb.create_block(), self.e.fb.create_block());
         self.e.fb.ins().brif(unique, done, &[], copy, &[]);
         self.e.fb.set_cold_block(copy);

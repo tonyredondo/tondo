@@ -7860,7 +7860,7 @@ held to what the region made or counts nothing, as an element pushed is.
 Any other change, a removal or `clear`, may copy a shared map onto the
 heap and is not taken yet: its map stays on the heap, and the remark
 names the change, "a region changes a map only by its insertions and the
-values of its entries yet", as it names an array's other than `push`. An
+values of its entries yet", as it names an array's other changes. An
 insertion that grows a map moves it, when it is not where the
 insertion's place goes, as an array's push does: a map of a region that
 a place on the heap grows goes to the heap, and one of the heap that a
@@ -7872,3 +7872,19 @@ A map does not keep across the turns of a loop the values each turn
 makes, as an array the loop only pushes to does: an insertion may
 replace one, and the region would keep each value replaced, at every
 turn.
+
+## An array written by index stays in its region
+
+`a[i] = x` was taken for a change that may copy its array onto the heap,
+as a write of a shared array copies it, so that an array that grew by
+`push` and was written by index stayed there, and a literal of constants
+written, the program's data, was copied onto the heap at its first
+write. A write of an element is a place a region takes now, as a push
+is: the array, made unique first when it is shared or the program's
+data, in the region of its place, and the value written held to what the
+region made or counts nothing. The code that writes an element of an
+array of a region compares its count with that of a region's last
+reference, as a push does, and no longer calls the runtime at each
+write to learn the array is its own. `insert(at:)`, `removeAt`, `pop`,
+`clear`, a slice written back and a call's loan are not taken yet, and
+the remark names the change.
