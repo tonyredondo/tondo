@@ -1,12 +1,13 @@
 // The objects of the runtime that formats, hashes and archives make, in
 // the region of the function that lets go of them: the writers of YAML,
-// TOML, CBOR and MessagePack that encode a record, a hasher, and what
-// unpacks a compressed text.
+// TOML, CBOR and MessagePack that encode a record, a hasher, what unpacks
+// a compressed text, and an image blurred.
 
 import std.cbor
 import std.console
 import std.gzip
 import std.hash
+import std.image
 import std.messagepack
 import std.toml
 import std.yaml
@@ -57,14 +58,20 @@ fn unpacked(text: String): Int {
     (gzip.decompress(packed) ?? []).length()
 }
 
-fn main() {
-    console.println("{yamlLength(1)} {tomlLength(1)} {cborLength(1)} {packLength(1)} {digested("abc")} {unpacked("hello hello")}")
+/// An image blurred, made and changed in the function.
+fn blurred(size: Int): Int {
+    image.blank(size, size, image.Color.rgb(10, 20, 30)).blur(1.0).width()
 }
 
-// expect-stdout: 64 68 43 49 32 11
-// expect-optimization: 28:5 region goes in a region of `yamlLength`
-// expect-optimization: 33:6 region goes in a region of `tomlLength`
-// expect-optimization: 38:5 region goes in a region of `cborLength`
-// expect-optimization: 43:5 region goes in a region of `packLength`
-// expect-optimization: 48:18 region goes in a region of `digested`
-// expect-optimization: 57:6 region goes in a region of `unpacked`
+fn main() {
+    console.println("{yamlLength(1)} {tomlLength(1)} {cborLength(1)} {packLength(1)} {digested("abc")} {unpacked("hello hello")} {blurred(8)}")
+}
+
+// expect-stdout: 64 68 43 49 32 11 8
+// expect-optimization: 29:5 region goes in a region of `yamlLength`
+// expect-optimization: 34:6 region goes in a region of `tomlLength`
+// expect-optimization: 39:5 region goes in a region of `cborLength`
+// expect-optimization: 44:5 region goes in a region of `packLength`
+// expect-optimization: 49:18 region goes in a region of `digested`
+// expect-optimization: 58:6 region goes in a region of `unpacked`
+// expect-optimization: 63:5 region goes in a region of `blurred`
