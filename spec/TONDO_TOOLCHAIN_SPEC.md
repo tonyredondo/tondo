@@ -2508,11 +2508,14 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   una tarea o a C, lo guarda una función a la que se pasa, sobrevive a una
   vuelta del bucle en que se hace en algo que el bucle hace más que ampliar,
   como la variable que la vuelta siguiente reescribe, contiene un valor que
-  su región no hizo, se pasa a una función del runtime cuyo código aún no se
-  ha leído, y la nombra,
+  su región no hizo, se cambia de un modo que una región no toma aún, como
+  un mapa del que se quita una entrada o un array que cambia más que con
+  `push`, y nombra el cambio, se pasa a una función del runtime cuyo
+  código aún no se ha leído, y la nombra,
   o es de una clase que una región no toma aún, y la nombra: una región
   toma arrays, cajas, arrays que crecen con `push`, mapas y sets, que
-  crecen con sus inserciones, los textos que hace una
+  crecen con sus inserciones y cambian en su sitio los valores de sus
+  entradas, los textos que hace una
   interpolación, también el que crece en su sitio, como `x = "{x}..."`, que
   dobla su espacio en la región y, pasado un mebibyte, crece en un trozo
   propio de ella como un bloque del heap, y al que una ampliación en su

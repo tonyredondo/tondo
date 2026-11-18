@@ -979,7 +979,7 @@ fn bounded(body: &Body, looped: &[bool], site: &Site) -> bool {
     if !looped[site.at.0 as usize] {
         return true;
     }
-    site.what.starts_with("grows")
+    (site.what.starts_with("grows") || site.what.starts_with("changes"))
         && body.blocks.iter().enumerate().filter(|&(block, _)| looped[block]).all(|(_, data)| {
             data.stmts.iter().all(|statement| {
                 !matches!(statement, Statement::Assign(place, ..) if place.local == site.local && place.path.is_empty())
@@ -1151,6 +1151,7 @@ fn holding(
     if !region.contains(&true) {
         return found;
     }
+    let map = |local: Local| matches!(types.kind(types.repr(body.locals[local.0 as usize])), TyKind::Map(..));
     // The copies of a local, whole, by the local copied.
     let mut copies: Vec<(u32, u32)> = Vec::new();
     // The statements that may store into a value or change it inside.
@@ -1207,8 +1208,11 @@ fn holding(
             // must have made too.
             // Where the code that keeps it is, with its inlined scope.
             let scope = |block: u32| body.scopes.get(block as usize).copied().flatten();
-            let mut outside =
-                (site.what.starts_with("grows") && !made[local.0 as usize]).then_some((span, scope(site.at.0)));
+            let grows = site.what.starts_with("grows") || site.what.starts_with("changes");
+            let mut outside = (grows && !made[local.0 as usize]).then(|| match unchanged(body, types, local) {
+                Some((why, by, block)) => (by, scope(block), Some(why)),
+                None => (span, scope(site.at.0), None),
+            });
             for &(at_statement, statement) in &storing {
                 if outside.is_some() {
                     break;
@@ -1219,7 +1223,7 @@ fn holding(
                     && is[lent.local.0 as usize]
                     && !lent.path.is_empty()
                 {
-                    outside = Some((span, scope(site.at.0)));
+                    outside = Some((span, scope(site.at.0), None));
                     break;
                 }
                 let Statement::Assign(place, rvalue, by) = statement else { continue };
@@ -1230,6 +1234,7 @@ fn holding(
                     is[place.local.0 as usize]
                         && place.path.len() > 1
                         && place.path.iter().any(|p| matches!(p, Proj::Index(..) | Proj::InBounds(_) | Proj::Field(_)))
+                        && !(entry_value(place) && map(place.local))
                 };
                 // As does a slice written back into a part, or a part a call
                 // takes as a loan, through which it writes.
@@ -1245,7 +1250,7 @@ fn holding(
                         _ => false,
                     };
                 if deep {
-                    outside = Some((*by, scope(at_statement.0)));
+                    outside = Some((*by, scope(at_statement.0), None));
                     break;
                 }
                 let stored: Vec<&Operand> = match &**rvalue {
@@ -1284,20 +1289,44 @@ fn holding(
                     |operand| matches!(operand, Operand::Copy(from) if counted(from) && !made[from.local.0 as usize]),
                 );
                 if elsewhere.is_some() {
-                    outside = Some((*by, scope(at_statement.0)));
+                    outside = Some((*by, scope(at_statement.0), None));
                     break;
                 }
             }
-            if let Some(by) = outside {
+            if let Some((by, scope, why)) = outside {
                 region[at] = false;
                 changed = true;
-                found.push((at, ("it holds a value that its region did not make".to_string(), by)));
+                let why = why.unwrap_or_else(|| "it holds a value that its region did not make".to_string());
+                found.push((at, (why, (by, scope))));
             }
         }
         if !changed {
             return found;
         }
     }
+}
+
+/// Of a map or an array a region would grow, the first change of it that a
+/// region does not take yet, which may copy it onto the heap when it is
+/// shared, as it is the heap's: why, the code, and its block.
+fn unchanged(body: &Body, types: &Types, local: Local) -> Option<(String, Span, u32)> {
+    let map = matches!(types.kind(types.repr(body.locals[local.0 as usize])), TyKind::Map(..) | TyKind::Set(_));
+    positioned(body).find_map(|((block, _), statement)| {
+        let Statement::Assign(place, rvalue, span) = statement else { return None };
+        let taken = match &**rvalue {
+            Rvalue::Mutate(mutation, target, ..) if target.local == local => matches!(
+                mutation,
+                crate::hir::Mutation::Push | crate::hir::Mutation::Reserve | crate::hir::Mutation::Insert
+            ),
+            _ if place.local == local && !place.path.is_empty() => map && entry_value(place),
+            _ => return None,
+        };
+        let why = match map {
+            true => "a region changes a map only by its insertions and the values of its entries yet",
+            false => "a region changes an array only by `push` yet",
+        };
+        (!taken).then(|| (why.to_string(), *span, block))
+    })
 }
 
 /// The locals whose values a region made, or that count nothing: each
@@ -1347,7 +1376,7 @@ fn made(
                         .iter()
                         .any(|projection| matches!(projection, Proj::Index(..) | Proj::InBounds(_))) =>
                 {
-                    Some((place.local, false))
+                    Some((place.local, taken(place.local)))
                 }
                 _ => None,
             });
@@ -1525,6 +1554,13 @@ fn makes_text(op: crate::hir::StrOp) -> bool {
     matches!(op, Replace | LowerAscii | UpperAscii | FromChars)
 }
 
+/// Whether a place is the value of an entry of the collection its local
+/// holds, written in place, `m.in_bounds(p).field(1)`: the entry is the
+/// collection's own memory, which a change of its value leaves where it is.
+fn entry_value(place: &Place) -> bool {
+    matches!(place.path.as_slice(), [Proj::Index(..) | Proj::InBounds(_), Proj::Field(1)])
+}
+
 /// The places the function makes a value on the heap in: an array of
 /// values that are not all constants, a map, a slice, a box, an array that
 /// grows, a text, and the arrays, texts and other values the runtime gives.
@@ -1534,8 +1570,17 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
         |place: &Place| matches!(types.kind(types.repr(body.place_ty(types, place))), crate::types::TyKind::Array(_));
     const TEXTS: Option<&str> = Some("regions do not take texts yet");
     const RUNTIME: Option<&str> = Some("regions do not take what the runtime makes yet");
+    let map =
+        |local: Local| matches!(types.kind(types.repr(body.locals[local.0 as usize])), crate::types::TyKind::Map(..));
     for (at, statement) in positioned(body) {
         let Statement::Assign(place, rvalue, span) = statement else { continue };
+        // A change of an entry of a map in place, as `m[k, default: 0] += 1`
+        // makes: the map, made unique first when it is shared, goes where
+        // its place goes, as one an insertion grows.
+        if entry_value(place) && map(place.local) {
+            found.push(Site { local: place.local, span: *span, what: "changes a map that ", at, refused: None });
+            continue;
+        }
         let refused = match &**rvalue {
             Rvalue::Array(values, _) if values.iter().any(|value| matches!(value, Operand::Copy(_))) => None,
             // The empty map is the runtime's, which nothing makes: the

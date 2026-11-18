@@ -2380,7 +2380,8 @@ fn maps_count_alike_in_regions() {
          console.println(\"distinct {{testing.allocations(() {{ distinct() }})}}\")\n    \
          console.println(\"squares {{testing.allocations(() {{ squares(1000).length() }})}}\")\n    \
          console.println(\"shared {{testing.allocations(() {{ shared() }})}}\")\n    \
-         console.println(\"numbers {{testing.allocations(() {{ numbers() }})}}\")\n}}\n"
+         console.println(\"numbers {{testing.allocations(() {{ numbers() }})}}\")\n    \
+         console.println(\"tally {{testing.allocations(() {{ tally(text) }})}}\")\n}}\n"
     );
     let dir = project("maps_counted", &tests);
     let counts = |regions: &[&str]| -> Vec<String> {
@@ -2389,10 +2390,12 @@ fn maps_count_alike_in_regions() {
         let counts: Vec<String> = stdout
             .lines()
             .map(str::trim)
-            .filter(|line| ["counts", "distinct", "squares", "shared", "numbers"].iter().any(|s| line.starts_with(s)))
+            .filter(|line| {
+                ["counts", "distinct", "squares", "shared", "numbers", "tally"].iter().any(|s| line.starts_with(s))
+            })
             .map(String::from)
             .collect();
-        assert_eq!(counts.len(), 5, "{stdout}");
+        assert_eq!(counts.len(), 6, "{stdout}");
         counts
     };
     assert_eq!(counts(&[]), counts(&["--no-regions"]));

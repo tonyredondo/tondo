@@ -566,16 +566,21 @@ pub unsafe extern "C" fn tondo_rt_map_len(m: *mut MapObject) -> usize {
     unsafe { (*m).len() }
 }
 
-/// The address of the entry at `index` in insertion order.
 /// Gives the map in the slot its own storage before an entry changes in
-/// place.
+/// place: a copy of a shared one in `region`, the one of the place that
+/// changes it, or on the heap when it is null.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_map_unique(slot: *mut *mut MapObject, glue: *const MapGlue) {
+pub unsafe extern "C" fn tondo_rt_map_unique(
+    slot: *mut *mut MapObject,
+    glue: *const MapGlue,
+    region: *mut regions::Region,
+) {
     unsafe {
-        map_unique(slot, &*glue, std::ptr::null_mut());
+        map_unique(slot, &*glue, region);
     }
 }
 
+/// The address of the entry at `index` in insertion order.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_map_entry(m: *mut MapObject, index: usize) -> *const u8 {
     unsafe { (*m).entry(index) }
