@@ -2936,9 +2936,30 @@ fn keeps_objects_why(std: &crate::hir::StdFn) -> String {
 
 /// The natives that can be given an object of the runtime and keep none of
 /// it past the call but in what they give, as their code shows: the
-/// methods of a regex read it during the call. An object given to any
-/// other stays on the heap.
+/// methods of a regex, and those of a JSON reader or writer, read it or
+/// write it during the call. An object given to any other stays on the
+/// heap.
 const READING_OBJECTS: &[&str] = &[
+    "tondo_rt_json_fail",
+    "tondo_rt_json_field",
+    "tondo_rt_json_finish",
+    "tondo_rt_json_integer",
+    "tondo_rt_json_next",
+    "tondo_rt_json_next_event",
+    "tondo_rt_json_raw",
+    "tondo_rt_json_several",
+    "tondo_rt_json_skip",
+    "tondo_rt_json_text",
+    "tondo_rt_json_where",
+    "tondo_rt_json_write_bracket",
+    "tondo_rt_json_write_float",
+    "tondo_rt_json_write_int",
+    "tondo_rt_json_write_key",
+    "tondo_rt_json_write_number",
+    "tondo_rt_json_write_raw",
+    "tondo_rt_json_write_string",
+    "tondo_rt_json_write_word",
+    "tondo_rt_json_writer_error",
     "tondo_rt_regex_capture_count",
     "tondo_rt_regex_capture_index",
     "tondo_rt_regex_capture_name",

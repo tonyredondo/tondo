@@ -110,6 +110,20 @@ native tondo_rt_image_info                cases/run/regions/natives_formats.to
 native tondo_rt_image_read                cases/run/regions/natives_formats.to
 native tondo_rt_inflate                   cases/run/regions/natives_codec.to
 native tondo_rt_json_field                cases/run/regions/natives_formats.to
+native tondo_rt_json_finish               - a JSON reader's or writer's, never a region's (the runtime keeps spares), which nothing that a region makes reaches: a stream given to `json.streamReader` or `streamWriter` stays on the heap
+native tondo_rt_json_integer              - a JSON reader's or writer's, never a region's (the runtime keeps spares), which nothing that a region makes reaches: a stream given to `json.streamReader` or `streamWriter` stays on the heap
+native tondo_rt_json_next                 - a JSON reader's or writer's, never a region's (the runtime keeps spares), which nothing that a region makes reaches: a stream given to `json.streamReader` or `streamWriter` stays on the heap
+native tondo_rt_json_next_event           - a JSON reader's or writer's, never a region's (the runtime keeps spares), which nothing that a region makes reaches: a stream given to `json.streamReader` or `streamWriter` stays on the heap
+native tondo_rt_json_raw                  - a JSON reader's or writer's, never a region's (the runtime keeps spares), which nothing that a region makes reaches: a stream given to `json.streamReader` or `streamWriter` stays on the heap
+native tondo_rt_json_several              - a JSON reader's or writer's, never a region's (the runtime keeps spares), which nothing that a region makes reaches: a stream given to `json.streamReader` or `streamWriter` stays on the heap
+native tondo_rt_json_skip                 - a JSON reader's or writer's, never a region's (the runtime keeps spares), which nothing that a region makes reaches: a stream given to `json.streamReader` or `streamWriter` stays on the heap
+native tondo_rt_json_text                 - a JSON reader's or writer's, never a region's (the runtime keeps spares), which nothing that a region makes reaches: a stream given to `json.streamReader` or `streamWriter` stays on the heap
+native tondo_rt_json_where                - a JSON reader's or writer's, never a region's (the runtime keeps spares), which nothing that a region makes reaches: a stream given to `json.streamReader` or `streamWriter` stays on the heap
+native tondo_rt_json_write_bracket        - a JSON reader's or writer's, never a region's (the runtime keeps spares), which nothing that a region makes reaches: a stream given to `json.streamReader` or `streamWriter` stays on the heap
+native tondo_rt_json_write_float          - a JSON reader's or writer's, never a region's (the runtime keeps spares), which nothing that a region makes reaches: a stream given to `json.streamReader` or `streamWriter` stays on the heap
+native tondo_rt_json_write_int            - a JSON reader's or writer's, never a region's (the runtime keeps spares), which nothing that a region makes reaches: a stream given to `json.streamReader` or `streamWriter` stays on the heap
+native tondo_rt_json_write_word           - a JSON reader's or writer's, never a region's (the runtime keeps spares), which nothing that a region makes reaches: a stream given to `json.streamReader` or `streamWriter` stays on the heap
+native tondo_rt_json_writer_error         - a JSON reader's or writer's, never a region's (the runtime keeps spares), which nothing that a region makes reaches: a stream given to `json.streamReader` or `streamWriter` stays on the heap
 native tondo_rt_labels_push               cases/run/regions/natives_codec.to
 native tondo_rt_math_cycled_f32           cases/run/regions/natives_system.to
 native tondo_rt_math_cycled_f64           cases/run/regions/natives_system.to
