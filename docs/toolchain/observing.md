@@ -283,7 +283,7 @@ in the `cum` column.
 | --- | --- |
 | `--cpu` | where processor time goes |
 | `--memory` | what is allocated, and what is held, by the line that made it |
-| `--tasks` | where the tasks are: thousands of them, grouped by stack |
+| `--tasks` | where the tasks are, at once or when `--duration` ends: thousands of them, grouped by stack |
 | `tondo profile -- <program>` | profiles a program from its start |
 | `tondo profile show <file> --lines` | by line instead of by function |
 | `tondo profile show <file> --asm` | the instructions of the hottest function, each with its share |
@@ -298,26 +298,67 @@ C made runs when it calls into the program, and a dump does not say where
 such a thread is: there the profiler signals each thread, and one of C's
 may get the signal as it ends. On Linux both have them.
 
+A profile of the tasks is a picture of one moment too, and the program
+stands still for the instant it is taken: at once for a program that runs,
+or when `--duration` ends:
+
+```text
+$ tondo profile todo --tasks --output tasks.pb.gz --json
+{"duration_ms":82,"ended":null,"format":"tondo-profile-0.1/1","kind":"tasks","lost":0,"ok":true,"profile":"tasks.pb.gz","samples":2,"stopped":true}
+```
+
+`stopped` says whether it did. A program that does not stop within its
+wait, as one on a machine too loaded to give its threads their turn, is
+profiled as it runs: a task that was running then is shown where the system
+had it, which may be a call of the system's library with none of the
+program's functions under it. The command then says so beside where it
+wrote the file, `the program did not stop within its wait: tasks that were
+running are shown where the system had them`, and so does the tool
+`profile` of the MCP server, which gives `stopped` with each profile of
+tasks. Asking again is the way to a picture that names the program's lines.
+
+A program that `tondo profile` starts itself has only `main` at first, so
+its tasks need a moment to be named:
+
+```text
+$ tondo profile --tasks -- ./todo
+tondo: a program that has just started has only `main`: give `--duration <seconds>` to say when its tasks are to be seen, as `tondo profile --tasks --duration 1 -- <program>`
+```
+
 ## Everything at once: dump
 
 ```text
 $ tondo dump todo --output live.dump.json
+todo (pid 962902), dumped on request, after 24.1 s
+built from github.com/tonyredondo/tondo at 9e7b747b8f
+signature: 04dbb707bf2a
+3 of its files are not here as it was built: `dump read <file> sources`
+memory: 96.9 KiB held, 57 objects, 24.2 MiB resident
+tasks: 2 (2 waits)
+  1 waits <std>/http/server.to:166 in http.askedOrEnded
+  1 waits <std>/http/server.to:377 in http.serve
+live memory, sampled: about 0 B
 tondo: the dump is in live.dump.json; `tondo dump read live.dump.json` shows it
 
 $ tondo dump read live.dump.json tasks
-task 1 (main) waits at <std>/http/server.to:358 in http.serve
-    <std>/http/server.to:358 in http.serve
-    <std>/http/server.to:33 in http.App.listen
+task 1 (main) waits at <std>/http/server.to:166 in http.askedOrEnded
+    <std>/http/server.to:166 in http.askedOrEnded
+    <std>/http/server.to:148 in http.Server.wait
+    <std>/http/server.to:30 in http.App.listen
     src/main.to:14 in main
 
-task 2 (http.drainWhenAsked) waits at <std>/http/server.to:53 in http.drainWhenAsked
-  waited 23.8 s for a value of a channel that holds 0 of 16
-    <std>/http/server.to:53 in http.drainWhenAsked
+task 2 (http.serve) waits at <std>/http/server.to:377 in http.serve
+    <std>/http/server.to:377 in http.serve
+    <std>/http/server.to:370 in http.serveThenSignal
+    <std>/http/server.to:45 in spawn http.serveThenSignal
+  spawned at <std>/http/server.to:45 in http.App.start
 ```
 
-A dump of a running program is its state at one moment, written without
-stopping it: every task with its stack and what it waits for, the
-counters, and the live memory by the line that allocated it. It is the
+A dump of a running program is its state at one moment, for which it
+stands still an instant and then goes on: every task with its stack and
+what it waits for, the counters, and the live memory by the line that
+allocated it. The command prints a summary of it, and `dump read` shows
+each part. It is the
 same file a crash leaves, read with the same commands
 ([Debugging](debugging.md#a-failure-somewhere-else-dumps)).
 
