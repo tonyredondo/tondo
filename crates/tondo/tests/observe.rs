@@ -148,16 +148,20 @@ fn main() {
 }
 "#;
 
-/// A program that waits, with a task that waits too, until a line comes.
+/// A program that waits, with a task that waits too, until a line comes:
+/// it says it is ready once its task has run.
 const WAITING: &str = r#"import std.console
 
-fn waits(stop: Receiver[Bool]) {
+fn waits(started: Sender[Bool], stop: Receiver[Bool]) {
+    started.send(true)
     _ = stop.receive()
 }
 
 fn main() {
+    let (started, running) = channel[Bool](1)
     let (tell, stop) = channel[Bool](1)
-    let job = spawn waits(stop)
+    let job = spawn waits(started, stop)
+    _ = running.receive()
     console.println("ready")
     let _ = console.flush()
     let _ = console.readLine()
