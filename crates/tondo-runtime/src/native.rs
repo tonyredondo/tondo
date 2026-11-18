@@ -35,12 +35,13 @@ unsafe fn drop_inner<T>(object: *mut NativeObject, free: bool) {
 
 /// A new object holding `value`, with one reference.
 pub(crate) fn new<T: Any + Send + Sync>(value: T) -> *mut NativeObject {
-    unsafe { new_in(std::ptr::null_mut(), value) }
+    new_in(std::ptr::null_mut(), value)
 }
 
 /// A new object holding `value`, with one reference, in `region` when it
-/// is given, or on the heap.
-pub(crate) unsafe fn new_in<T: Any + Send + Sync>(region: *mut super::regions::Region, value: T) -> *mut NativeObject {
+/// is given, or on the heap: the region the compiled code passed a native
+/// that makes its object in one, or null.
+pub(crate) fn new_in<T: Any + Send + Sync>(region: *mut super::regions::Region, value: T) -> *mut NativeObject {
     let header = NativeObject { rc: AtomicUsize::new(1), drop: drop_inner::<T>, id: TypeId::of::<T>() };
     unsafe { super::objects::make(region, Inner { header, value }) as *mut NativeObject }
 }

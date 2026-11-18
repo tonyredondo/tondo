@@ -291,7 +291,10 @@ fn reader(object: *mut NativeObject) -> Option<std::sync::MutexGuard<'static, Re
 
 /// The events of one value in `input`, or the first failure.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_msgpack_parse(input: *mut ArrayHeader) -> *mut NativeObject {
+pub extern "C" fn tondo_rt_msgpack_parse(
+    input: *mut ArrayHeader,
+    region: *mut crate::regions::Region,
+) -> *mut NativeObject {
     let input = unsafe { array_items::<u8>(input) };
     let mut decoder = Decoder { input, at: 0, frames: Vec::with_capacity(8), events: Vec::with_capacity(16) };
     let mut error = None;
@@ -309,7 +312,7 @@ pub extern "C" fn tondo_rt_msgpack_parse(input: *mut ArrayHeader) -> *mut Native
     if error.is_none() && decoder.at < input.len() {
         error = Some((format!("unexpected data after the value (byte {})", decoder.at), "$".to_string()));
     }
-    native::new(Mutex::new(Reader { events: decoder.events, read: 0, error }))
+    native::new_in(region, Mutex::new(Reader { events: decoder.events, read: 0, error }))
 }
 
 #[unsafe(no_mangle)]
@@ -637,8 +640,8 @@ pub extern "C" fn tondo_rt_msgpack_flush(object: *mut NativeObject, region: *mut
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_msgpack_writer() -> *mut NativeObject {
-    native::new(Mutex::new(Writer::default()))
+pub extern "C" fn tondo_rt_msgpack_writer(region: *mut crate::regions::Region) -> *mut NativeObject {
+    native::new_in(region, Mutex::new(Writer::default()))
 }
 
 #[unsafe(no_mangle)]

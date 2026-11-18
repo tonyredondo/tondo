@@ -606,6 +606,7 @@ pub extern "C" fn tondo_rt_text_collator(
     locale: *const Str,
     strength: i64,
     numeric: u8,
+    region: *mut crate::regions::Region,
 ) -> *mut super::native::NativeObject {
     use icu_collator::options::{CollatorOptions, Strength};
     use icu_collator::preferences::CollationNumericOrdering;
@@ -622,7 +623,7 @@ pub extern "C" fn tondo_rt_text_collator(
     let collator = icu_collator::Collator::try_new(preferences, options)
         .or_else(|_| icu_collator::Collator::try_new(Default::default(), options))
         .expect("the root collation is compiled in");
-    super::native::new(collator)
+    super::native::new_in(region, collator)
 }
 
 /// `Collator.compare`: -1, 0 or 1.

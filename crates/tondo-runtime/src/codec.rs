@@ -230,9 +230,14 @@ pub unsafe extern "C" fn tondo_rt_hash_digest(
 
 /// A hasher that takes its data in parts (`hasher`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_hasher(kind: i64, key: *mut ArrayHeader, keyed: u8) -> *mut NativeObject {
+pub unsafe extern "C" fn tondo_rt_hasher(
+    kind: i64,
+    key: *mut ArrayHeader,
+    keyed: u8,
+    region: *mut crate::regions::Region,
+) -> *mut NativeObject {
     let key = unsafe { array_items::<u8>(key) };
-    native::new(Mutex::new(hasher(kind, (keyed != 0).then_some(key))))
+    native::new_in(region, Mutex::new(hasher(kind, (keyed != 0).then_some(key))))
 }
 
 /// Gives a hasher the next part of its data.

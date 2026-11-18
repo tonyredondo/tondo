@@ -1,0 +1,70 @@
+// The objects of the runtime that formats, hashes and archives make, in
+// the region of the function that lets go of them: the writers of YAML,
+// TOML, CBOR and MessagePack that encode a record, a hasher, and what
+// unpacks a compressed text.
+
+import std.cbor
+import std.console
+import std.gzip
+import std.hash
+import std.messagepack
+import std.toml
+import std.yaml
+
+type Config = {
+    name: String
+    port: Int
+    ratio: Float
+    on: Bool
+    tags: Array[String]
+}
+
+fn sample(n: Int): Config {
+    Config { name: "api{n}", port: 8000 + n, ratio: 0.5, on: n % 2 == 0, tags: ["a", "b{n}"] }
+}
+
+/// A record written as YAML.
+fn yamlLength(n: Int): Int {
+    yaml.encode(sample(n)).length()
+}
+
+/// A record written as TOML.
+fn tomlLength(n: Int): Int {
+    (toml.encode(sample(n)) ?? "").length()
+}
+
+/// A record written as CBOR.
+fn cborLength(n: Int): Int {
+    cbor.encode(sample(n)).length()
+}
+
+/// A record written as MessagePack.
+fn packLength(n: Int): Int {
+    messagepack.encode(sample(n)).length()
+}
+
+/// The digest of some bytes, hashed in two parts.
+fn digested(text: String): Int {
+    let hasher = hash.hasher(hash.Algorithm.Sha256)
+    hasher.update(text.bytes())
+    hasher.update(text.bytes())
+    hasher.finish().bytes().length()
+}
+
+/// A text compressed and unpacked.
+fn unpacked(text: String): Int {
+    let packed = gzip.compress(text.bytes())
+    (gzip.decompress(packed) ?? []).length()
+}
+
+fn main() {
+    console.println("{yamlLength(1)} {tomlLength(1)} {cborLength(1)} {packLength(1)} {digested("abc")} {unpacked("hello hello")}")
+}
+
+// expect-stdout: 64 68 43 49 32 11
+// expect-optimization: 28:5 region goes in a region of `yamlLength`
+// expect-optimization: 33:6 region goes in a region of `tomlLength`
+// expect-optimization: 38:5 region goes in a region of `cborLength`
+// expect-optimization: 43:5 region goes in a region of `packLength`
+// expect-optimization: 48:18 region goes in a region of `digested`
+// expect-optimization: 57:6 region goes in a region of `unpacked`

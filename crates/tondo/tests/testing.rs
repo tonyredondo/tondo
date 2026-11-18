@@ -2434,6 +2434,26 @@ fn objects_count_alike_in_regions() {
     );
 }
 
+/// The objects of the runtime that formats, hashes and archives make
+/// allocate as often in a region as on the heap: the writers of YAML,
+/// TOML, CBOR and MessagePack, a hasher, and what unpacks a compressed text
+/// (tests/cases/run/regions/objects_formats.to).
+#[test]
+fn format_objects_count_alike_in_regions() {
+    counted_alike(
+        "objects_formats",
+        "",
+        &[
+            ("yaml", "yamlLength(1)"),
+            ("toml", "tomlLength(1)"),
+            ("cbor", "cborLength(1)"),
+            ("pack", "packLength(1)"),
+            ("digest", "digested(\"abc\")"),
+            ("unpacked", "unpacked(\"hello hello\")"),
+        ],
+    );
+}
+
 /// An array changed in place allocates as often in a region as on the
 /// heap: written by index, pushed and popped, sorted, reversed and written
 /// by a slice, and the program's data copied by its first write

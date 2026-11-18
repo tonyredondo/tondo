@@ -3,8 +3,9 @@
 // where only its locals hold them, and each is dropped at its last
 // reference, as on the heap: the file a block writes is closed when the
 // block lets it go, and read back by its path after it. One returned,
-// one an array of the region would hold, and one given to the runtime
-// that keeps it, as `console.setInput` does, stay on the heap.
+// one an array of the region would hold, one given to the runtime that
+// keeps it, as `console.setInput` does, and those an array holds that
+// its function returns stay on the heap.
 
 import std.console
 import std.fs
@@ -75,6 +76,16 @@ fn kept(texts: Array[String]): Int {
     readers.length()
 }
 
+/// Readers an array returned holds: on the heap with it, as the array
+/// leaves the function the region is of.
+fn handed(texts: Array[String]): Array[io.Reader] {
+    var readers: Array[io.Reader] = []
+    for text in texts {
+        readers.push(io.reader(text))
+    }
+    readers
+}
+
 fn main(): !(fs.FsError | io.IoError) {
     let dir = fs.createTemporaryDirectory()?
     let a = written(dir)?
@@ -84,15 +95,17 @@ fn main(): !(fs.FsError | io.IoError) {
     let e = opened("x\ny\n").readText()?.length()
     let f = kept(["p", "q"])
     let g = typed()
+    let h = handed(["r", "s"]).length()
     fs.remove(dir, recursive: true)?
-    console.println("{a} {b} {c} {d} {e} {f} {g}")
+    console.println("{a} {b} {c} {d} {e} {f} {g} {h}")
 }
 
-// expect-stdout: 13 6 10 323 4 2 typed
-// expect-optimization: 20:19 region goes in a region of `written`
-// expect-optimization: 28:18 region goes in a region of `summed`
-// expect-optimization: 39:18 region goes in a region of `buffered`
-// expect-optimization: 50:18 region goes in a region of `matched`
-// expect-optimization: 60:5 region stays on the heap: `opened` returns it
-// expect-optimization: 65:22 region stays on the heap: it is passed to the runtime, which may keep it
-// expect-optimization: 73:9 region grows an array that stays on the heap: it holds an object of the runtime, which a region's value would never let go of
+// expect-stdout: 13 6 10 323 4 2 typed 2
+// expect-optimization: 21:19 region goes in a region of `written`
+// expect-optimization: 29:18 region goes in a region of `summed`
+// expect-optimization: 40:18 region goes in a region of `buffered`
+// expect-optimization: 51:18 region goes in a region of `matched`
+// expect-optimization: 61:5 region stays on the heap: `opened` returns it
+// expect-optimization: 66:22 region stays on the heap: it is passed to the runtime, which may keep it
+// expect-optimization: 74:9 region grows an array that stays on the heap: it holds an object of the runtime, which a region's value would never let go of
+// expect-optimization: 84:22 region stays on the heap: `handed` returns it

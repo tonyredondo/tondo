@@ -77,8 +77,8 @@ fn write(object: *mut NativeObject, number: i64, wire: u8, bytes: &[u8]) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_pb_writer(deterministic: u8) -> *mut NativeObject {
-    native::new(Mutex::new(Writer { out: Vec::new(), open: Vec::new(), deterministic: deterministic != 0 }))
+pub extern "C" fn tondo_rt_pb_writer(deterministic: u8, region: *mut crate::regions::Region) -> *mut NativeObject {
+    native::new_in(region, Mutex::new(Writer { out: Vec::new(), open: Vec::new(), deterministic: deterministic != 0 }))
 }
 
 #[unsafe(no_mangle)]
@@ -351,17 +351,15 @@ impl Reader {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_pb_reader(bytes: *mut ArrayHeader) -> *mut NativeObject {
+pub unsafe extern "C" fn tondo_rt_pb_reader(
+    bytes: *mut ArrayHeader,
+    region: *mut crate::regions::Region,
+) -> *mut NativeObject {
     let input = unsafe { array_items::<u8>(bytes) }.to_vec();
-    native::new(Mutex::new(Reader {
-        input,
-        position: 0,
-        bounds: Vec::new(),
-        number: 0,
-        wire: 0,
-        start: 0,
-        error: None,
-    }))
+    native::new_in(
+        region,
+        Mutex::new(Reader { input, position: 0, bounds: Vec::new(), number: 0, wire: 0, start: 0, error: None }),
+    )
 }
 
 /// The number of the next field, 0 at the end of the message or group

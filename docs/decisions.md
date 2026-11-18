@@ -7946,3 +7946,16 @@ and writers stay on the heap: the runtime gives spares it keeps, which
 cost the heap no allocation and would cost a region one. The objects of
 the other natives wait for their code to be read for it, and a test
 holds every native that gives one to a side.
+
+The documents and writers of YAML, TOML, protobuf, MessagePack and CBOR,
+images, hashers and what unpacks an archive or a compressed text came
+next: each of their constructors makes its object in the region it is
+given. A method of theirs is in the list of those that only use an
+object during the call once a case runs it with an object a region made:
+the methods of the writers are, as each `encode` keeps its writer in a
+local; those of a parser are not, as each `decode` puts its parser in a
+field of a record, which no region makes yet, and an object given to one
+of them would stay on the heap. An image's operations run on the
+runtime's threads, which the call waits for, so a count of what they
+allocate moves with the machine's load: images, like files, are left
+out of the test that holds objects to the heap's counts.

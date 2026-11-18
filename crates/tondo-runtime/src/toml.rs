@@ -48,7 +48,10 @@ fn reader(object: *mut NativeObject) -> Option<&'static Mutex<Reader>> {
 
 /// The events of a document of `text`, or the failure to parse it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_toml_parse(source: *const Str) -> *mut NativeObject {
+pub unsafe extern "C" fn tondo_rt_toml_parse(
+    source: *const Str,
+    region: *mut crate::regions::Region,
+) -> *mut NativeObject {
     let source = unsafe { str_text(source) };
     let mut events = Vec::new();
     let mut error = None;
@@ -59,7 +62,7 @@ pub unsafe extern "C" fn tondo_rt_toml_parse(source: *const Str) -> *mut NativeO
             error = Some((failure.message().trim_end().to_string(), at, "$".to_string()));
         }
     }
-    native::new(Mutex::new(Reader { source: source.to_owned(), events, read: 0, error }))
+    native::new_in(region, Mutex::new(Reader { source: source.to_owned(), events, read: 0, error }))
 }
 
 fn push(events: &mut Vec<Event>, code: i64, at: usize) -> &mut Event {
@@ -334,8 +337,8 @@ fn inline(built: Built) -> Value {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_toml_writer() -> *mut NativeObject {
-    native::new(Mutex::new(Writer::default()))
+pub extern "C" fn tondo_rt_toml_writer(region: *mut crate::regions::Region) -> *mut NativeObject {
+    native::new_in(region, Mutex::new(Writer::default()))
 }
 
 fn scalar(object: *mut NativeObject, value: Value) {

@@ -57,7 +57,11 @@ pub extern "C" fn tondo_rt_zstd(data: *mut ArrayHeader, region: *mut crate::regi
 /// `gzip.decompress` (`zstd` 0) or `zstd.decompress` (1): the data, or
 /// nothing when it is not of the format.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_unpack(data: *mut ArrayHeader, zstd: u8) -> *mut NativeObject {
+pub extern "C" fn tondo_rt_unpack(
+    data: *mut ArrayHeader,
+    zstd: u8,
+    region: *mut crate::regions::Region,
+) -> *mut NativeObject {
     let data = unsafe { array_items::<u8>(data) };
     let unpacked = if zstd != 0 {
         zstd_frames(data).ok()
@@ -65,7 +69,7 @@ pub extern "C" fn tondo_rt_unpack(data: *mut ArrayHeader, zstd: u8) -> *mut Nati
         let mut out = Vec::new();
         MultiGzDecoder::new(data).read_to_end(&mut out).ok().map(|_| out)
     };
-    native::new(unpacked)
+    native::new_in(region, unpacked)
 }
 
 /// The data deflated without a header, as zip keeps it.
@@ -82,11 +86,11 @@ pub extern "C" fn tondo_rt_deflate(
 
 /// The data that `deflate` deflated, or nothing when it is not.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_inflate(data: *mut ArrayHeader) -> *mut NativeObject {
+pub extern "C" fn tondo_rt_inflate(data: *mut ArrayHeader, region: *mut crate::regions::Region) -> *mut NativeObject {
     let mut out = Vec::new();
     let inflated =
         flate2::read::DeflateDecoder::new(unsafe { array_items::<u8>(data) }).read_to_end(&mut out).ok().map(|_| out);
-    native::new(inflated)
+    native::new_in(region, inflated)
 }
 
 /// The CRC-32 of the data, as zip and gzip check it.

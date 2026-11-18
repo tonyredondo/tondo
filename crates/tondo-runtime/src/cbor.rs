@@ -361,7 +361,10 @@ fn reader(object: *mut NativeObject) -> Option<std::sync::MutexGuard<'static, Re
 
 /// The events of one data item in `input`, or the first failure.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_cbor_parse(input: *mut ArrayHeader) -> *mut NativeObject {
+pub extern "C" fn tondo_rt_cbor_parse(
+    input: *mut ArrayHeader,
+    region: *mut crate::regions::Region,
+) -> *mut NativeObject {
     let input = unsafe { array_items::<u8>(input) };
     let mut decoder = Decoder { input, at: 0, frames: Vec::with_capacity(8), events: Vec::with_capacity(16) };
     let mut error = if input.is_empty() { Some(("the input is empty".to_string(), "$".to_string())) } else { None };
@@ -373,7 +376,7 @@ pub extern "C" fn tondo_rt_cbor_parse(input: *mut ArrayHeader) -> *mut NativeObj
     if error.is_none() && decoder.at < input.len() {
         error = Some((format!("unexpected data after the item (byte {})", decoder.at), "$".to_string()));
     }
-    native::new(Mutex::new(Reader { events: decoder.events, read: 0, error }))
+    native::new_in(region, Mutex::new(Reader { events: decoder.events, read: 0, error }))
 }
 
 #[unsafe(no_mangle)]
@@ -641,8 +644,8 @@ fn write(object: *mut NativeObject, encode: impl FnOnce(&mut Vec<u8>)) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_cbor_writer(deterministic: u8) -> *mut NativeObject {
-    native::new(Mutex::new(Writer { deterministic: deterministic != 0, ..Writer::default() }))
+pub extern "C" fn tondo_rt_cbor_writer(deterministic: u8, region: *mut crate::regions::Region) -> *mut NativeObject {
+    native::new_in(region, Mutex::new(Writer { deterministic: deterministic != 0, ..Writer::default() }))
 }
 
 #[unsafe(no_mangle)]

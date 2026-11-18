@@ -71,7 +71,7 @@ Rvalue::Mutate                cases/run/regions/stores.to cases/run/regions/arra
 native tondo_rt_base64_encode             cases/run/regions/natives_codec.to
 native tondo_rt_cbor_field                cases/run/regions/natives_formats.to
 native tondo_rt_cbor_parse                cases/run/regions/natives_formats.to
-native tondo_rt_cbor_write_bytes          cases/run/regions/natives_formats.to
+native tondo_rt_cbor_write_bytes          cases/run/regions/natives_formats.to cases/run/cbor.to
 native tondo_rt_crc32                     cases/run/regions/natives_codec.to
 native tondo_rt_crypto_hkdf               cases/run/regions/natives_codec.to
 native tondo_rt_crypto_open               cases/run/regions/natives_codec.to
@@ -137,19 +137,19 @@ native tondo_rt_memory_from_c_chars       cases/run/regions/natives_system.to
 native tondo_rt_memory_store              cases/run/regions/natives_system.to
 native tondo_rt_msgpack_field             cases/run/regions/natives_formats.to
 native tondo_rt_msgpack_parse             cases/run/regions/natives_formats.to
-native tondo_rt_msgpack_write_bytes       cases/run/regions/natives_formats.to
+native tondo_rt_msgpack_write_bytes       cases/run/regions/natives_formats.to cases/run/messagepack.to
 native tondo_rt_net_send_to               cases/run/regions/natives_net.to cases/run/regions/natives_sockets.to
 native tondo_rt_net_send_to_path          cases/run/regions/natives_net.to cases/run/regions/natives_sockets.to
 native tondo_rt_net_write_bytes           cases/run/regions/natives_net.to
 native tondo_rt_pb_reader                 projects/grpcweb
-native tondo_rt_pb_write_bytes            projects/grpcweb
-native tondo_rt_pb_write_raw              projects/grpcweb
+native tondo_rt_pb_write_bytes            projects/grpcweb cases/run/protobuf_wire.to
+native tondo_rt_pb_write_raw              projects/grpcweb cases/run/protobuf.to
 native tondo_rt_reflect_name              cases/run/regions/natives_formats.to
 native tondo_rt_sqlite_run                cases/run/regions/natives_system.to cases/run/regions/natives_files.to
 native tondo_rt_tls_certificates          cases/run/regions/natives_net.to
-native tondo_rt_toml_field                cases/run/regions/natives_formats.to
+native tondo_rt_toml_field                cases/run/regions/natives_formats.to cases/run/regions/runtime_texts_formats.to
 native tondo_rt_unpack                    cases/run/regions/natives_codec.to
-native tondo_rt_yaml_field                cases/run/regions/natives_formats.to
+native tondo_rt_yaml_field                cases/run/regions/natives_formats.to cases/run/regions/runtime_texts_formats.to
 native tondo_rt_zone_resolve              cases/run/regions/natives_formats.to cases/run/regions/natives_files.to
 native tondo_rt_zstd                      cases/run/regions/natives_codec.to
 
@@ -182,10 +182,10 @@ native tondo_rt_text_upper                cases/run/regions/natives_text.to
 native tondo_rt_text_words                cases/run/regions/natives_text.to
 native tondo_rt_base64_check              cases/run/regions/natives_text2.to
 native tondo_rt_base64_decode             cases/run/regions/natives_text2.to
-native tondo_rt_cbor_fail                 cases/run/regions/natives_text2.to
-native tondo_rt_cbor_write_datetime       cases/run/regions/natives_formats.to
-native tondo_rt_cbor_write_key            cases/run/regions/natives_text2.to
-native tondo_rt_cbor_write_number         cases/run/regions/natives_text2.to
+native tondo_rt_cbor_fail                 cases/run/regions/natives_text2.to cases/run/regions/natives_formats.to
+native tondo_rt_cbor_write_datetime       cases/run/regions/natives_formats.to cases/run/cbor.to
+native tondo_rt_cbor_write_key            cases/run/regions/natives_text2.to cases/run/regions/natives_formats.to
+native tondo_rt_cbor_write_number         cases/run/regions/natives_text2.to cases/run/number_serialization.to
 native tondo_rt_cbor_write_text           cases/run/regions/natives_text2.to
 native tondo_rt_crypto_hash_password      cases/run/regions/natives_text2.to
 native tondo_rt_crypto_verify_password    cases/run/regions/natives_text2.to
@@ -206,14 +206,14 @@ native tondo_rt_json_write_raw            cases/run/regions/natives_text2.to
 native tondo_rt_json_write_string         cases/run/regions/natives_text2.to
 native tondo_rt_metric                    cases/run/regions/natives_text2.to
 native tondo_rt_msgpack_fail              cases/run/regions/natives_formats.to
-native tondo_rt_msgpack_write_datetime    cases/run/regions/natives_formats.to
+native tondo_rt_msgpack_write_datetime    cases/run/regions/natives_formats.to cases/run/messagepack.to
 native tondo_rt_msgpack_write_key         cases/run/regions/natives_formats.to
-native tondo_rt_msgpack_write_number      cases/run/regions/natives_formats.to
-native tondo_rt_msgpack_write_text        cases/run/regions/natives_formats.to
+native tondo_rt_msgpack_write_number      cases/run/regions/natives_formats.to cases/run/messagepack_uint.to
+native tondo_rt_msgpack_write_text        cases/run/regions/natives_formats.to cases/run/regions/runtime_texts_formats.to
 native tondo_rt_path_key                  cases/run/regions/natives_text2.to
 native tondo_rt_path_steps                cases/run/regions/natives_text2.to
 native tondo_rt_pb_fail                   - no function of the library calls it
-native tondo_rt_pb_write_text             projects/messages
+native tondo_rt_pb_write_text             projects/messages cases/run/protobuf.to
 native tondo_rt_regex_capture_count       cases/run/regions/objects.to
 native tondo_rt_regex_capture_index       cases/run/regions/natives_text2.to
 native tondo_rt_regex_capture_name        cases/run/regions/objects.to
@@ -226,20 +226,20 @@ native tondo_rt_regex_pattern             cases/run/regions/objects.to
 native tondo_rt_regex_replace             cases/run/regions/natives_text2.to
 native tondo_rt_regex_slice               cases/run/regions/natives_text2.to
 native tondo_rt_regex_whole_match         cases/run/regions/natives_text2.to
-native tondo_rt_toml_fail                 cases/run/regions/natives_formats.to
+native tondo_rt_toml_fail                 cases/run/regions/natives_formats.to cases/run/regions/runtime_texts_formats.to
 native tondo_rt_toml_parse                cases/run/regions/natives_formats.to
 native tondo_rt_toml_write_datetime       cases/run/regions/natives_text2.to
 native tondo_rt_toml_write_key            cases/run/regions/natives_text2.to
-native tondo_rt_toml_write_number         cases/run/regions/natives_text2.to
+native tondo_rt_toml_write_number         cases/run/regions/natives_text2.to cases/run/number_serialization.to
 native tondo_rt_toml_write_text           cases/run/regions/natives_text2.to
 native tondo_rt_url_check                 cases/run/regions/natives_system.to
 native tondo_rt_url_decode                cases/run/regions/natives_system.to
 native tondo_rt_url_encode                cases/run/regions/natives_net.to
-native tondo_rt_yaml_fail                 cases/run/regions/natives_text2.to
+native tondo_rt_yaml_fail                 cases/run/regions/natives_text2.to cases/run/regions/runtime_texts_formats.to
 native tondo_rt_yaml_outline              cases/run/regions/natives_text2.to
 native tondo_rt_yaml_parse                cases/run/regions/natives_text2.to
 native tondo_rt_yaml_write_key            cases/run/regions/natives_text2.to
-native tondo_rt_yaml_write_number         cases/run/regions/natives_text2.to
+native tondo_rt_yaml_write_number         cases/run/regions/natives_text2.to cases/run/number_serialization.to
 native tondo_rt_yaml_write_tag            cases/run/regions/natives_text2.to
 native tondo_rt_yaml_write_text           cases/run/regions/natives_text2.to
 native tondo_rt_files_link                cases/run/regions/natives_files.to
@@ -312,3 +312,73 @@ native tondo_rt_fuzz_seed                 crates/tondo/tests/testing.rs
 native tondo_rt_meta_bytes                crates/tondo/tests/generate.rs
 native tondo_rt_meta_respond              crates/tondo/tests/derive.rs crates/tondo/tests/generate.rs
 native tondo_rt_model_report              crates/tondo/tests/testing.rs
+native tondo_rt_cbor_failure              cases/run/regions/natives_formats.to cases/run/regions/natives_text2.to
+native tondo_rt_cbor_finish               cases/run/regions/natives_formats.to cases/run/regions/natives_text2.to
+native tondo_rt_cbor_where                cases/run/regions/natives_formats.to cases/run/regions/runtime_texts_formats.to
+native tondo_rt_cbor_write_close          cases/run/regions/natives_formats.to cases/run/regions/natives_text2.to
+native tondo_rt_cbor_write_float          cases/run/regions/natives_text2.to cases/run/cbor.to
+native tondo_rt_cbor_write_int            cases/run/regions/natives_formats.to cases/run/regions/natives_text2.to
+native tondo_rt_cbor_write_null           cases/run/cbor.to
+native tondo_rt_cbor_write_open           cases/run/regions/natives_formats.to cases/run/regions/natives_text2.to
+native tondo_rt_hasher_finish             cases/run/regions/natives_codec.to cases/run/hash_algorithms.to
+native tondo_rt_image_adjust              cases/run/image_colors.to
+native tondo_rt_image_change              cases/run/image.to
+native tondo_rt_image_colors              cases/run/image_colors.to
+native tondo_rt_image_failure             cases/run/regions/natives_formats.to cases/run/image.to
+native tondo_rt_image_overlay             cases/run/image.to cases/run/image_colors.to
+native tondo_rt_image_pixel               cases/run/image.to cases/run/image_webp.to
+native tondo_rt_image_pixels              cases/run/image_colors.to
+native tondo_rt_image_tone                cases/run/image_colors.to
+native tondo_rt_msgpack_failure           cases/run/regions/natives_formats.to cases/run/regions/runtime_texts_formats.to
+native tondo_rt_msgpack_finish            cases/run/regions/natives_formats.to cases/run/regions/runtime_texts_formats.to
+native tondo_rt_msgpack_flush             cases/run/messagepack_writer.to
+native tondo_rt_msgpack_where             cases/run/regions/natives_formats.to cases/run/regions/runtime_texts_formats.to
+native tondo_rt_msgpack_write_close       cases/run/regions/natives_formats.to cases/run/regions/runtime_texts_formats.to
+native tondo_rt_msgpack_write_float       cases/run/messagepack.to
+native tondo_rt_msgpack_write_header      cases/run/messagepack_writer.to
+native tondo_rt_msgpack_write_int         cases/run/regions/natives_formats.to cases/run/regions/runtime_texts_formats.to
+native tondo_rt_msgpack_write_null        cases/run/messagepack.to cases/run/messagepack_writer.to
+native tondo_rt_msgpack_write_open        cases/run/regions/natives_formats.to cases/run/regions/runtime_texts_formats.to
+native tondo_rt_pb_begin                  cases/run/protobuf.to cases/run/protobuf_aliases.to
+native tondo_rt_pb_deterministic          cases/run/protobuf.to
+native tondo_rt_pb_end                    cases/run/protobuf.to cases/run/protobuf_aliases.to
+native tondo_rt_pb_enter                  cases/run/protobuf.to cases/run/protobuf_wire.to
+native tondo_rt_pb_error                  cases/run/protobuf.to cases/run/protobuf_aliases.to
+native tondo_rt_pb_failed                 cases/run/protobuf.to cases/run/protobuf_aliases.to
+native tondo_rt_pb_finish                 cases/run/protobuf.to cases/run/protobuf_aliases.to
+native tondo_rt_pb_is_packed              cases/run/protobuf.to cases/run/protobuf_wire.to
+native tondo_rt_pb_more                   cases/run/protobuf.to cases/run/protobuf_wire.to
+native tondo_rt_pb_next                   cases/run/protobuf.to cases/run/protobuf_aliases.to
+native tondo_rt_pb_offset                 cases/run/protobuf.to cases/run/protobuf_aliases.to
+native tondo_rt_pb_raw                    cases/run/protobuf.to
+native tondo_rt_pb_read_bytes             cases/run/protobuf_wire.to
+native tondo_rt_pb_read_fixed32           cases/run/protobuf_wire.to
+native tondo_rt_pb_read_fixed64           cases/run/protobuf_wire.to
+native tondo_rt_pb_read_text              cases/run/protobuf.to cases/run/protobuf_aliases.to
+native tondo_rt_pb_read_varint            cases/run/protobuf.to cases/run/protobuf_aliases.to
+native tondo_rt_pb_read_zigzag            cases/run/protobuf.to cases/run/protobuf_aliases.to
+native tondo_rt_pb_skip                   cases/run/protobuf.to cases/run/protobuf_aliases.to
+native tondo_rt_pb_write_fixed32          cases/run/protobuf_wire.to
+native tondo_rt_pb_write_fixed64          cases/run/protobuf_wire.to
+native tondo_rt_pb_write_group            cases/run/protobuf_wire.to
+native tondo_rt_pb_write_varint           cases/run/protobuf.to cases/run/protobuf_aliases.to
+native tondo_rt_pb_write_zigzag           cases/run/protobuf.to cases/run/protobuf_aliases.to
+native tondo_rt_toml_failure              cases/run/regions/natives_text2.to cases/run/regions/runtime_texts_formats.to
+native tondo_rt_toml_finish               cases/run/regions/natives_text2.to cases/run/regions/runtime_texts_formats.to
+native tondo_rt_toml_write_bool           cases/run/toml.to
+native tondo_rt_toml_write_close          cases/run/regions/natives_text2.to cases/run/regions/runtime_texts_formats.to
+native tondo_rt_toml_write_float          cases/run/regions/natives_text2.to cases/run/toml.to
+native tondo_rt_toml_write_int            cases/run/regions/natives_text2.to cases/run/regions/runtime_texts_formats.to
+native tondo_rt_toml_write_null           cases/run/toml.to
+native tondo_rt_toml_write_open           cases/run/regions/natives_text2.to cases/run/regions/runtime_texts_formats.to
+native tondo_rt_unpack_failed             cases/run/regions/natives_codec.to cases/run/regions/runtime_arrays_natives.to
+native tondo_rt_unpacked                  cases/run/regions/natives_codec.to cases/run/regions/runtime_arrays_natives.to
+native tondo_rt_yaml_finish               cases/run/regions/natives_text2.to cases/run/regions/runtime_texts_formats.to
+native tondo_rt_yaml_write_bool           cases/run/yaml.to
+native tondo_rt_yaml_write_close          cases/run/regions/natives_text2.to cases/run/regions/runtime_texts_formats.to
+native tondo_rt_yaml_write_float          cases/run/regions/natives_text2.to cases/run/number_serialization.to
+native tondo_rt_yaml_write_int            cases/run/regions/natives_text2.to cases/run/regions/runtime_texts_formats.to
+native tondo_rt_yaml_write_null           cases/run/json_omit_none.to cases/run/yaml.to
+native tondo_rt_yaml_write_open           cases/run/regions/natives_text2.to cases/run/regions/runtime_texts_formats.to
+native tondo_rt_cbor_write_bool           cases/run/regions/objects_formats.to
+native tondo_rt_msgpack_write_bool        cases/run/regions/objects_formats.to

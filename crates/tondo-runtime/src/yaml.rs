@@ -477,10 +477,13 @@ fn is_number(text: &str) -> bool {
 
 /// The documents of `text` as events, or the first failure.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_yaml_parse(source: *const Str) -> *mut NativeObject {
+pub unsafe extern "C" fn tondo_rt_yaml_parse(
+    source: *const Str,
+    region: *mut crate::regions::Region,
+) -> *mut NativeObject {
     let (documents, error) = documents(&text(source));
     let reader = Reader { documents, document: 0, read: 0, error };
-    native::new(Mutex::new(reader))
+    native::new_in(region, Mutex::new(reader))
 }
 
 /// The events of each document of `source`, as far as it reads, and the
@@ -723,8 +726,8 @@ fn scalar(object: *mut NativeObject, value: Scalar<'static>) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_yaml_writer() -> *mut NativeObject {
-    native::new(Mutex::new(Writer::default()))
+pub extern "C" fn tondo_rt_yaml_writer(region: *mut crate::regions::Region) -> *mut NativeObject {
+    native::new_in(region, Mutex::new(Writer::default()))
 }
 
 /// `null`, which reads better than the emitter's `~`.
@@ -1093,13 +1096,16 @@ fn finished(open: &mut [Opened], nodes: &mut [Outlined], end: usize) {
 
 /// The outline of the first document of `source`, or its failure.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_yaml_outline(source: *const Str) -> *mut NativeObject {
+pub unsafe extern "C" fn tondo_rt_yaml_outline(
+    source: *const Str,
+    region: *mut crate::regions::Region,
+) -> *mut NativeObject {
     let source = text(source);
     let outlined = match outline(&source) {
         Ok(nodes) => Outline { nodes, error: String::new() },
         Err(error) => Outline { nodes: Vec::new(), error },
     };
-    native::new(outlined)
+    native::new_in(region, outlined)
 }
 
 /// Each node's path, in order.

@@ -39,16 +39,22 @@ fn with<R: Send + 'static>(
     Some(crate::io::host(true, move || work(image)))
 }
 
-fn made(image: Option<DynamicImage>, format: i64) -> *mut NativeObject {
-    native::new(match image {
-        Some(image) => Picture::Ready(image, format),
-        None => Picture::Failed("the image is not there".into()),
-    })
+fn made(image: Option<DynamicImage>, format: i64, region: *mut crate::regions::Region) -> *mut NativeObject {
+    native::new_in(
+        region,
+        match image {
+            Some(image) => Picture::Ready(image, format),
+            None => Picture::Failed("the image is not there".into()),
+        },
+    )
 }
 
 /// `read`: the image of the bytes, turned as its EXIF orientation says.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_image_read(data: *mut ArrayHeader) -> *mut NativeObject {
+pub unsafe extern "C" fn tondo_rt_image_read(
+    data: *mut ArrayHeader,
+    region: *mut crate::regions::Region,
+) -> *mut NativeObject {
     let data = unsafe { array_items::<u8>(data) }.to_vec();
     let read = crate::io::host(true, move || {
         let reader = ImageReader::new(Cursor::new(data)).with_guessed_format()?;
@@ -59,10 +65,13 @@ pub unsafe extern "C" fn tondo_rt_image_read(data: *mut ArrayHeader) -> *mut Nat
         image.apply_orientation(orientation);
         Ok::<_, image::ImageError>((image, format))
     });
-    native::new(match read {
-        Ok((image, format)) => Picture::Ready(image, format),
-        Err(error) => Picture::Failed(error.to_string()),
-    })
+    native::new_in(
+        region,
+        match read {
+            Ok((image, format)) => Picture::Ready(image, format),
+            Err(error) => Picture::Failed(error.to_string()),
+        },
+    )
 }
 
 /// Why an image could not be read, or nothing.
@@ -116,10 +125,15 @@ pub extern "C" fn tondo_rt_image_size(
 
 /// `blank`: an image of one color, as `0xRRGGBBAA`.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_image_blank(width: i64, height: i64, color: i64) -> *mut NativeObject {
+pub extern "C" fn tondo_rt_image_blank(
+    width: i64,
+    height: i64,
+    color: i64,
+    region: *mut crate::regions::Region,
+) -> *mut NativeObject {
     let pixel = Rgba((color as u32).to_be_bytes());
     let image = RgbaImage::from_pixel(width.max(0) as u32, height.max(0) as u32, pixel);
-    made(Some(DynamicImage::ImageRgba8(image)), -1)
+    made(Some(DynamicImage::ImageRgba8(image)), -1, region)
 }
 
 /// Changes an image: `operation` 0 resizes to `a` by `b` with the filter
@@ -133,6 +147,7 @@ pub extern "C" fn tondo_rt_image_change(
     b: i64,
     c: i64,
     d: i64,
+    region: *mut crate::regions::Region,
 ) -> *mut NativeObject {
     let (a, b, c, d) = (a.max(0) as u32, b.max(0) as u32, c.max(0) as u32, d.max(0) as u32);
     let changed = with(object, move |image| match operation {
@@ -148,13 +163,17 @@ pub extern "C" fn tondo_rt_image_change(
         6 => image.flipv(),
         _ => image.grayscale(),
     });
-    made(changed, -1)
+    made(changed, -1, region)
 }
 
 /// A Gaussian blur of `sigma` pixels.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_image_blur(object: *mut NativeObject, sigma: f64) -> *mut NativeObject {
-    made(with(object, move |image| image.fast_blur(sigma.max(0.0) as f32)), -1)
+pub extern "C" fn tondo_rt_image_blur(
+    object: *mut NativeObject,
+    sigma: f64,
+    region: *mut crate::regions::Region,
+) -> *mut NativeObject {
+    made(with(object, move |image| image.fast_blur(sigma.max(0.0) as f32)), -1, region)
 }
 
 /// `top` drawn over the image at (`x`, `y`), blended by its alpha.
@@ -164,15 +183,16 @@ pub extern "C" fn tondo_rt_image_overlay(
     top: *mut NativeObject,
     x: i64,
     y: i64,
+    region: *mut crate::regions::Region,
 ) -> *mut NativeObject {
-    let Some(top) = picture(top) else { return made(None, -1) };
+    let Some(top) = picture(top) else { return made(None, -1, region) };
     let top: &'static DynamicImage = unsafe { &*(top as *const DynamicImage) };
     let drawn = with(object, move |image| {
         let mut base = image.to_rgba8();
         image::imageops::overlay(&mut base, &top.to_rgba8(), x, y);
         DynamicImage::ImageRgba8(base)
     });
-    made(drawn, -1)
+    made(drawn, -1, region)
 }
 
 /// The color of the pixel at (`x`, `y`) as `0xRRGGBBAA`, or -1 outside.
@@ -315,15 +335,21 @@ pub unsafe extern "C" fn tondo_rt_image_from_pixels(
     width: i64,
     height: i64,
     data: *mut ArrayHeader,
+    region: *mut crate::regions::Region,
 ) -> *mut NativeObject {
     let data = unsafe { array_items::<u8>(data) }.to_vec();
     let (wide, high) = (width.max(0) as u32, height.max(0) as u32);
     match RgbaImage::from_raw(wide, high, data) {
-        Some(image) if width >= 0 && height >= 0 => native::new(Picture::Ready(DynamicImage::ImageRgba8(image), -1)),
-        _ => native::new(Picture::Failed(format!(
-            "{width} by {height} pixels take {} bytes, four a pixel",
-            width.max(0) * height.max(0) * 4
-        ))),
+        Some(image) if width >= 0 && height >= 0 => {
+            native::new_in(region, Picture::Ready(DynamicImage::ImageRgba8(image), -1))
+        }
+        _ => native::new_in(
+            region,
+            Picture::Failed(format!(
+                "{width} by {height} pixels take {} bytes, four a pixel",
+                width.max(0) * height.max(0) * 4
+            )),
+        ),
     }
 }
 
@@ -391,6 +417,7 @@ pub extern "C" fn tondo_rt_image_adjust(
     saturation: f64,
     gamma: f64,
     hue: f64,
+    region: *mut crate::regions::Region,
 ) -> *mut NativeObject {
     let shift = brightness.clamp(-100.0, 100.0) as f32 / 100.0;
     let percent = contrast.clamp(-100.0, 100.0) as f32;
@@ -409,7 +436,7 @@ pub extern "C" fn tondo_rt_image_adjust(
             rgb([(h + turn).rem_euclid(1.0), (s * saturated).min(1.0), l])
         })
     });
-    made(changed, -1)
+    made(changed, -1, region)
 }
 
 /// The tones of an image: `operation` 0 inverts it, 1 makes it sepia by
@@ -422,6 +449,7 @@ pub extern "C" fn tondo_rt_image_tone(
     operation: i64,
     amount: f64,
     sigma: f64,
+    region: *mut crate::regions::Region,
 ) -> *mut NativeObject {
     let amount = amount as f32;
     let changed = with(object, move |image| match operation {
@@ -483,7 +511,7 @@ pub extern "C" fn tondo_rt_image_tone(
             DynamicImage::ImageRgba8(pixels)
         }
     });
-    made(changed, -1)
+    made(changed, -1, region)
 }
 
 /// `colors`: up to `count` colors that cover most of an image, as
