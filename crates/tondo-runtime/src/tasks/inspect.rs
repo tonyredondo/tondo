@@ -383,6 +383,32 @@ pub(crate) fn channel_fill(object: usize) -> (usize, Option<usize>) {
     (channel.count, (channel.capacity != usize::MAX).then_some(channel.capacity))
 }
 
+/// The tasks inside a call of C, which run no line of Tondo until it
+/// returns: each one's number, the frame of the code that called C, where
+/// in it it called, and its stack's bounds, for the debugger to show where
+/// each is.
+pub(crate) fn calling_c() -> Vec<(u64, usize, usize, (usize, usize))> {
+    let callers: Vec<&InC> = CALLERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let all = tasks();
+    let mut out = Vec::new();
+    for caller in callers {
+        let depth = caller.depth.load(Ordering::SeqCst);
+        let task = caller.task.load(Ordering::SeqCst);
+        if depth == 0 || task.is_null() || !all.iter().any(|&t| t as *mut Task == task) {
+            continue;
+        }
+        // While the set is locked no task in it is freed.
+        let shown = unsafe { &*task };
+        let Some(stack) = shown.stack.as_ref() else { continue };
+        let deepest = (depth - 1).min(caller.frames.len() - 1);
+        let (frame, called) =
+            (caller.frames[deepest].load(Ordering::Relaxed), caller.returns[deepest].load(Ordering::Relaxed));
+        out.push((shown.id, frame, called, (stack.base as usize + GUARD, stack.top() as usize)));
+    }
+    out.sort_by_key(|(id, ..)| *id);
+    out
+}
+
 /// The tasks switched out that wait, or are ready to run again: each
 /// one's number, which of the two, the frame pointer it saved and its
 /// stack's bounds, for the debugger to show where each is.

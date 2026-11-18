@@ -68,6 +68,9 @@ pub(super) struct Stop {
     pub(super) bounds: (usize, usize),
     pub(super) addresses: usize,
     pub(super) alive: usize,
+    /// Where in the function of `frame` a task inside a call of C called
+    /// it, which no probe's site says; 0 for a task stopped otherwise.
+    pub(super) pc: usize,
     pub(super) why: String,
 }
 
@@ -434,6 +437,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
             bounds: (0, 0),
             addresses: addresses as usize,
             alive: alive as usize,
+            pc: 0,
             why: String::new(),
         };
         if let Some(stop) = periodic(&table, here, every) {
@@ -458,7 +462,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     if recording {
         let bounds = crate::tasks::stack_bounds().unwrap_or((0, 0));
         let (addresses, alive) = (addresses as usize, alive as usize);
-        record(&table, &Stop { task, site, frame, bounds, addresses, alive, why: String::new() });
+        record(&table, &Stop { task, site, frame, bounds, addresses, alive, pc: 0, why: String::new() });
     }
     let mut state = state();
     // A replay going to a probe (`seek`), or through the run to it, keeping
@@ -472,7 +476,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
         let at = (addresses as usize, alive as usize);
         tracking(
             &table,
-            Stop { task, site, frame, bounds: (0, 0), addresses: at.0, alive: at.1, why: String::new() },
+            Stop { task, site, frame, bounds: (0, 0), addresses: at.0, alive: at.1, pc: 0, why: String::new() },
             tick,
         );
         if AIM.load(Ordering::Relaxed) == tick {
@@ -481,7 +485,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
             drop(table);
             let bounds = crate::tasks::stack_bounds().unwrap_or((0, 0));
             let (addresses, alive) = (addresses as usize, alive as usize);
-            let stop = Stop { task, site, frame, bounds, addresses, alive, why: String::new() };
+            let stop = Stop { task, site, frame, bounds, addresses, alive, pc: 0, why: String::new() };
             drop(quiet);
             hold(state, stop, Some(if scanning { "scanned" } else { "replayed" }.to_string()));
             return restarting(frame, task, site);
@@ -551,6 +555,7 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
             bounds,
             addresses: addresses as usize,
             alive: alive as usize,
+            pc: 0,
             why: String::new(),
         };
         let stack = std::cell::OnceCell::new();
@@ -625,8 +630,16 @@ pub unsafe extern "C" fn tondo_rt_debug_line(site: i64, addresses: *const usize,
     // A patch may come while the task waits.
     drop(table);
     let bounds = crate::tasks::stack_bounds().unwrap_or((0, 0));
-    let stop =
-        Stop { task, site, frame, bounds, addresses: addresses as usize, alive: alive as usize, why: String::new() };
+    let stop = Stop {
+        task,
+        site,
+        frame,
+        bounds,
+        addresses: addresses as usize,
+        alive: alive as usize,
+        pc: 0,
+        why: String::new(),
+    };
     drop(quiet);
     hold(state, stop, why);
     restarting(frame, task, site)
@@ -963,7 +976,7 @@ pub(super) fn render(
         // Past the frames of the Rust library, which may have no pointers.
         let frame = if pc.is_none() { crate::trace::through(frame, bounds) } else { frame };
         if let Some(table) = table {
-            let stop = Stop { task, site: WAITING, frame, bounds, addresses: 0, alive: 0, why: String::new() };
+            let stop = Stop { task, site: WAITING, frame, bounds, addresses: 0, alive: 0, pc: 0, why: String::new() };
             let mut stack = frames(table, &stop);
             stack.splice(0..0, pc.and_then(|pc| frame_at(table, pc, frame)));
             for at in 0..stack.len() {
@@ -1481,7 +1494,7 @@ pub(super) fn copied(site: usize, frame: usize, addresses: usize, alive: usize) 
         let debugger = kept(&table);
         crate::replay::replay_from(segment, debugger);
         let bounds = crate::tasks::stack_bounds().unwrap_or((0, 0));
-        here = Some(Stop { task, site, frame, bounds, addresses, alive, why: String::new() });
+        here = Some(Stop { task, site, frame, bounds, addresses, alive, pc: 0, why: String::new() });
     });
     here
 }
@@ -2097,7 +2110,7 @@ pub(super) fn scanned(
         kept_last(&mut scan.2, tick);
     }
     let bounds = crate::tasks::stack_bounds().unwrap_or((0, 0));
-    let here = Stop { task, site, frame, bounds, addresses, alive, why: String::new() };
+    let here = Stop { task, site, frame, bounds, addresses, alive, pc: 0, why: String::new() };
     let stack = std::cell::OnceCell::new();
     let stack = || stack.get_or_init(|| frames(table, &here));
     for breakpoint in state.breakpoints.iter_mut().filter(|b| b.log.is_none() && !b.capture && b.event.is_none()) {
@@ -2328,7 +2341,7 @@ pub unsafe extern "C" fn tondo_rt_debug_failed(
     let task = crate::tasks::current_id();
     let bounds = crate::tasks::stack_bounds().unwrap_or((0, 0));
     let (addresses, alive) = (addresses as usize, alive as usize);
-    let stop = Stop { task, site: site as usize, frame, bounds, addresses, alive, why: String::new() };
+    let stop = Stop { task, site: site as usize, frame, bounds, addresses, alive, pc: 0, why: String::new() };
     let why = format!("error: {}", clipped(&shown));
     hold(state(), stop, Some(why));
 }
@@ -2492,7 +2505,7 @@ pub(super) fn stop_here(why: String) -> bool {
             continue;
         }
         let (addresses, alive) = ((frame as isize + addressed) as usize, (frame as isize + living) as usize);
-        found = Some(Stop { task, site, frame, bounds, addresses, alive, why: String::new() });
+        found = Some(Stop { task, site, frame, bounds, addresses, alive, pc: 0, why: String::new() });
         break;
     }
     drop(table);
@@ -2579,7 +2592,7 @@ pub(crate) fn deadlocked(headline: &str) {
         None => headline.to_string(),
     };
     let headline = headline.as_str();
-    let stop = Stop { task, site: WAITING, frame, bounds, addresses: 0, alive: 0, why: headline.to_string() };
+    let stop = Stop { task, site: WAITING, frame, bounds, addresses: 0, alive: 0, pc: 0, why: headline.to_string() };
     let at = frames(&table, &stop).first().map_or(String::new(), |f| f.place.clone());
     drop(table);
     let mut state = state();

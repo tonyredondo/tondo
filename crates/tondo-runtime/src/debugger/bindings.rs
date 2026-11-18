@@ -29,7 +29,10 @@ pub(super) fn frames(table: &Table, held: &Stop) -> Vec<Frame> {
     if held.site == usize::MAX {
         return out;
     }
-    for (fp, address) in crate::trace::callers(held.frame, held.bounds) {
+    // A task inside a call of C is in its frame where it called C, and its
+    // callers are above it.
+    let called = (held.pc != 0).then_some((held.frame, held.pc));
+    for (fp, address) in called.into_iter().chain(crate::trace::callers(held.frame, held.bounds)) {
         let Some(described) = crate::trace::describe(address) else { continue };
         let Some((file, line)) = described.at else { continue };
         if described.function.starts_with("spawn") {

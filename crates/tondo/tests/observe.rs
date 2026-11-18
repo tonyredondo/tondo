@@ -1495,6 +1495,58 @@ fn debugger_shows_waiting_tasks_and_returned_values() {
     );
 }
 
+const NAPPED: &str = r#"import std.console
+import std.ffi
+
+extern fn usleep(micros: ffi.CUInt): ffi.CInt
+
+fn napper(ready: Sender[Bool]) {
+    ready.send(true)
+    _ = unsafe { usleep(3000000) }
+    console.println("woke")
+}
+
+fn main() {
+    let (ready, started) = channel[Bool](1)
+    spawn napper(ready)
+    _ = started.receive()
+    let mark = 1
+    console.println("{mark}")
+}
+"#;
+
+/// A task inside a call of C stands as still as one that waits while the
+/// program is stopped: `tasks` lists it, where it called C, and `stack`
+/// shows its frames, without waiting for it to come to a line.
+#[test]
+fn debugger_shows_tasks_inside_calls_of_c() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-c");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("napped.to"), NAPPED).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["debug", "--json", "napped.to"])
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(
+        child.stdin.as_mut().unwrap(),
+        b"break napped.to:16\ncontinue\ntasks\nstack 2\ncontinue\n",
+    )
+    .unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let lines: Vec<Value> =
+        String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let tasks = lines.iter().find_map(|l| l["tasks"].as_array()).unwrap();
+    let napper = tasks.iter().find(|task| task["task"] == 2).unwrap_or_else(|| panic!("no task 2 in {lines:?}"));
+    assert_eq!(napper["why"], "in a call of C", "{tasks:?}");
+    assert_eq!(napper["at"], "napped.to:8 in napper", "{tasks:?}");
+    assert_eq!(lines.iter().find_map(|l| l["stack"].as_array()).unwrap()[0], "napped.to:8 in napper", "{lines:?}");
+}
+
 const CHANGED: &str = r#"import std.console
 
 enum Role {

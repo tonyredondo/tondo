@@ -213,6 +213,12 @@ pub(crate) fn alive() -> std::collections::HashSet<usize> {
     tasks().iter().copied().filter(|&task| !serves(task)).collect()
 }
 
+/// The numbers of the tasks alive now, but those that serve the standard
+/// library itself: read while the set is locked, so that none is freed.
+pub(crate) fn alive_ids() -> Vec<u64> {
+    tasks().iter().copied().filter(|&task| !serves(task)).map(|task| unsafe { (*(task as *mut Task)).id }).collect()
+}
+
 /// Whether a task serves the standard library itself, which a test leaves
 /// running without fault.
 fn serves(task: usize) -> bool {

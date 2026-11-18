@@ -179,7 +179,7 @@ fn held_frames(table: &Table, task: u64, probe: super::tasks::Probe) -> Vec<Fram
         addressed.store(addresses as isize - frame as isize, Ordering::Relaxed);
         living.store(alive as isize - frame as isize, Ordering::Relaxed);
     }
-    frames(table, &Stop { task, site, frame, bounds: (0, 0), addresses, alive, why: String::new() })
+    frames(table, &Stop { task, site, frame, bounds: (0, 0), addresses, alive, pc: 0, why: String::new() })
 }
 
 /// The bindings of a frame a panic holds, as JSON, each with its type.
@@ -236,7 +236,7 @@ fn line_values(site: usize, frame: usize, addresses: usize, alive: usize) {
         addressed.store(addresses as isize - frame as isize, Ordering::Relaxed);
         living.store(alive as isize - frame as isize, Ordering::Relaxed);
     }
-    let stop = Stop { task, site, frame, bounds: (0, 0), addresses, alive, why: String::new() };
+    let stop = Stop { task, site, frame, bounds: (0, 0), addresses, alive, pc: 0, why: String::new() };
     let frames = frames(&table, &stop);
     let bindings = visible(&table, &frames, 0).into_iter();
     let found = bindings.map(|(binding, address, _)| (binding.name.clone(), clipped(&show(binding.show, address))));

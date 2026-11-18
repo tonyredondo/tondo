@@ -20,8 +20,16 @@ pub(crate) fn attach(client: &UnixStream) -> String {
     // A program that waits for the debugger stands still before `main`
     // from now on, until it says go on.
     if WAIT.load(Ordering::Relaxed) && BEFORE_MAIN.load(Ordering::Relaxed) {
-        let stop =
-            Stop { task: 1, site: usize::MAX, frame: 0, bounds: (0, 0), addresses: 0, alive: 0, why: "start".into() };
+        let stop = Stop {
+            task: 1,
+            site: usize::MAX,
+            frame: 0,
+            bounds: (0, 0),
+            addresses: 0,
+            alive: 0,
+            pc: 0,
+            why: "start".into(),
+        };
         tell(&stopped_event(&stop));
         state().stopped = Some(stop);
     }
@@ -548,6 +556,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
             format!("{{\"catch\":[{}]}}", kinds.join(","))
         }
         "select" => {
+            settle();
             // A task and its frame, or a frame of the task looked at.
             let numbers: Vec<Option<u64>> = rest.split_whitespace().map(|w| w.parse().ok()).collect();
             let mut state = state();
@@ -723,6 +732,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
             format!("{{\"stack\":[{}]}}", frames.join(","))
         }
         "stack" => {
+            settle();
             let state = state();
             let task = match rest.parse::<u64>() {
                 Ok(task) => Some(task),
@@ -756,6 +766,7 @@ pub(crate) fn command(line: &str) -> Option<String> {
             Err(message) => format!("{{\"error\":{}}}", quoted(&message)),
         },
         "tasks" => {
+            settle();
             let state = state();
             let held: Vec<String> = state
                 .held
@@ -779,7 +790,8 @@ pub(crate) fn command(line: &str) -> Option<String> {
             // ready to run again, too: where in the program each is.
             let mut waiting = Vec::new();
             if state.stopped.is_some() {
-                for (task, ..) in crate::tasks::waiting() {
+                let calling = crate::tasks::calling_c().into_iter().map(|(task, ..)| task);
+                for task in crate::tasks::waiting().into_iter().map(|(task, ..)| task).chain(calling) {
                     let Some(stop) = stop_of(&state, task).filter(|s| s.site == WAITING) else { continue };
                     let at = frames(table, &stop).first().map_or(String::new(), |f| f.place.clone());
                     let (at, why) = (quoted(&at), quoted(&stop.why));
@@ -1239,13 +1251,52 @@ pub(super) unsafe fn write(ty: &str, address: usize, value: &expression::Value) 
 
 /// Where a task the debugger looks at is: held at a probe, or, while the
 /// program stands still, waiting.
+/// Waits, while the program stands still, until the stop holds every task:
+/// the others stop at their next line or as they wait (toolchain 7.6),
+/// and one on its way there, as between a send and a receive of one line,
+/// is not yet where `tasks` and `stack` would show it. One inside a call
+/// of C stands as still, as it runs no line until the call returns, when it
+/// stops at its next. A task that is still on its way after a second, as
+/// one a busy machine does not run, is left out.
+fn settle() {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        let mut still: std::collections::HashSet<u64> = {
+            let state = state();
+            if state.stopped.is_none() || state.past.is_some() {
+                return;
+            }
+            state.held.iter().map(|held| held.task).collect()
+        };
+        still.extend(crate::tasks::waiting().into_iter().map(|(id, ..)| id));
+        still.extend(crate::tasks::calling_c().into_iter().map(|(id, ..)| id));
+        let running = crate::tasks::alive_ids().into_iter().any(|id| !still.contains(&id));
+        if !running || std::time::Instant::now() >= deadline {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_micros(200));
+    }
+}
+
+/// Why `tasks` says a task inside a call of C stands where it is.
+const CALLING_C: &str = "in a call of C";
+
 pub(super) fn stop_of(state: &State, task: u64) -> Option<Stop> {
     if let Some(held) = state.held.iter().chain(&state.stopped).find(|h| h.task == task) {
         return Some(held.clone());
     }
     state.stopped.as_ref()?;
-    let (_, why, frame, bounds) = crate::tasks::waiting().into_iter().find(|(id, ..)| *id == task)?;
-    Some(Stop { task, site: WAITING, frame, bounds, addresses: 0, alive: 0, why: why.into() })
+    let found = crate::tasks::waiting()
+        .into_iter()
+        .find(|(id, ..)| *id == task)
+        .map(|(_, why, frame, bounds)| (why, frame, 0, bounds));
+    let (why, frame, pc, bounds) = found.or_else(|| {
+        crate::tasks::calling_c()
+            .into_iter()
+            .find(|(id, ..)| *id == task)
+            .map(|(_, frame, called, bounds)| (CALLING_C, frame, called, bounds))
+    })?;
+    Some(Stop { task, site: WAITING, frame, bounds, addresses: 0, alive: 0, pc, why: why.into() })
 }
 
 /// The frame `locals` and `print` look at: the one `select` chose, or the
