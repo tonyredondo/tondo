@@ -110,6 +110,27 @@ pub(super) fn ask_where(runners: &[&Runner]) -> Vec<(*mut Task, Vec<usize>)> {
 /// runs on is asked with a signal. The running task of this thread, if
 /// any, is where `here` says.
 pub(crate) fn snapshot(here: Option<Vec<usize>>) -> Vec<Shot> {
+    // A task a worker took off the queue and has not yet run, or one that
+    // is parking, is where no runner, queue or wait says: it would show no
+    // stack, and a profile of the tasks would leave it out. A worker is out
+    // of that in microseconds, or stops where it is when the world stands
+    // still, unless a busy machine leaves it unrun a while; so the snapshot
+    // is taken again until no other task is so, for as long as a stop of
+    // the world waits for its workers.
+    let me = unsafe { current().as_ref() }.map(|task| task.id);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(100);
+    loop {
+        let shots = snapshot_once(here.clone());
+        let between = shots.iter().any(|shot| shot.state == "runs" && shot.stack.is_empty() && Some(shot.id) != me);
+        if !between || std::time::Instant::now() >= deadline {
+            return shots;
+        }
+        std::thread::sleep(std::time::Duration::from_micros(100));
+    }
+}
+
+/// Every task and where it is, once.
+fn snapshot_once(here: Option<Vec<usize>>) -> Vec<Shot> {
     let runners: Vec<&Runner> = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let me_runner = worker(|w| w.runner.get());
     let others: Vec<&Runner> = runners
@@ -129,12 +150,21 @@ pub(crate) fn snapshot(here: Option<Vec<usize>>) -> Vec<Shot> {
         .map(|task| unsafe {
             let shown = &*task;
             let bounds = shown.stack.as_ref().map_or((0, 0), |s| (s.base as usize + GUARD, s.top() as usize));
-            let paused = runners.iter().find(|r| r.task.load(Ordering::SeqCst) == task);
+            // A worker the stop holds, which knows the frame it stopped at:
+            // what it answers a signal with is where it waits for the stop's
+            // end, in the system's code.
+            let paused =
+                runners.iter().find(|r| r.task.load(Ordering::SeqCst) == task && !r.running.load(Ordering::SeqCst));
             let in_c =
                 callers.iter().find(|c| c.depth.load(Ordering::SeqCst) > 0 && c.task.load(Ordering::SeqCst) == task);
             let answered = answers.iter().find(|(t, _)| *t == task);
             let (state, stack): (&str, Vec<usize>) = if task == me {
                 ("runs", here.take().unwrap_or_default())
+            } else if let Some(runner) = paused {
+                // A worker that stopped as it was about to run the task, still
+                // on its own stack: the task is where it switched out.
+                let stack: Vec<usize> = crate::trace::walk(runner.frame.load(Ordering::SeqCst), bounds).collect();
+                ("runs", if stack.is_empty() { parked_walk(task).collect() } else { stack })
             } else if let Some((_, stack)) = answered {
                 ("runs", stack.clone())
             } else if let Some(caller) = in_c {
@@ -142,8 +172,6 @@ pub(crate) fn snapshot(here: Option<Vec<usize>>) -> Vec<Shot> {
                 let (frame, from) =
                     (caller.frames[depth].load(Ordering::Relaxed), caller.returns[depth].load(Ordering::Relaxed));
                 ("in C", std::iter::once(from).chain(crate::trace::walk(frame, bounds)).collect())
-            } else if let Some(runner) = paused {
-                ("runs", crate::trace::walk(runner.frame.load(Ordering::SeqCst), bounds).collect())
             } else if shown.state.load(Ordering::Acquire) == PARKED {
                 ("waits", parked_walk(task).collect())
             } else if ready.contains(&(task as usize)) {

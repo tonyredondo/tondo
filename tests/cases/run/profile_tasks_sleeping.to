@@ -1,0 +1,34 @@
+// A profile of the tasks shows every task somewhere in every snapshot: a
+// task that sleeps a millisecond at a time too, also when the world stops
+// as a worker has taken it off the queue to run it and has not, or as it
+// parks. A sample with no frame is a task shown nowhere.
+import std.console
+import std.profile
+import std.time
+
+fn sleeper(started: Sender[Bool], stop: Receiver[Bool]) {
+    started.send(true)
+    for not stop.isClosed() {
+        time.sleep(time.milliseconds(1))
+    }
+}
+
+fn main() {
+    let (started, ready) = channel[Bool](1)
+    let (tell, stop) = channel[Bool](1)
+    let job = spawn sleeper(started, stop)
+    _ = ready.receive()
+    var nowhere = 0
+    for _ in 0..1000 {
+        for line in profile.tasks().folded().lines() {
+            if line.startsWith(" ") {
+                nowhere += 1
+            }
+        }
+    }
+    tell.close()
+    job.wait()
+    console.println("tasks shown nowhere: {nowhere}")
+}
+
+// expect-stdout: tasks shown nowhere: 0
