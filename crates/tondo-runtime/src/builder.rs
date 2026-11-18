@@ -8,7 +8,8 @@ use super::*;
 /// that interpolates keeps it on its stack.
 #[repr(C)]
 pub struct Builder {
-    /// A string whose header's `cap` is its room; null while it has none.
+    /// A string whose header's `cap` is its room; null while it has none;
+    /// a short text while what it builds fits in its word.
     text: *mut Str,
     len: usize,
 }
@@ -23,14 +24,25 @@ impl Builder {
     }
 
     fn room(&self) -> usize {
-        if self.text.is_null() { 0 } else { unsafe { (*self.text).cap } }
+        match self.text as isize {
+            0 => 0,
+            ..0 => SHORT_MAX,
+            _ => unsafe { (*self.text).cap },
+        }
     }
 
     pub fn extend(&mut self, bytes: &[u8]) {
         if self.len + bytes.len() > self.room() {
             self.grow(bytes.len());
         }
-        unsafe { copy_short(bytes, (self.text as *mut u8).add(HEADER + self.len)) }
+        match short(self.text) {
+            true => {
+                let mut word = (self.text as usize).to_le_bytes();
+                word[self.len..self.len + bytes.len()].copy_from_slice(bytes);
+                self.text = usize::from_le_bytes(word) as *mut Str;
+            }
+            false => unsafe { copy_short(bytes, (self.text as *mut u8).add(HEADER + self.len)) },
+        }
         self.len += bytes.len();
     }
 
@@ -40,13 +52,13 @@ impl Builder {
 
     /// Whether it builds in room a frame keeps (`tondo_rt_sb_start_in`).
     fn framed(&self) -> bool {
-        !self.text.is_null() && unsafe { (*self.text).rc.load(Ordering::Relaxed) } == FRAMING
+        (self.text as isize) > 0 && unsafe { (*self.text).rc.load(Ordering::Relaxed) } == FRAMING
     }
 
     /// The region it builds in (`tondo_rt_sb_start_region`), whose address
     /// the text's count holds while it builds, marked.
     fn region(&self) -> Option<*mut regions::Region> {
-        if self.text.is_null() {
+        if (self.text as isize) <= 0 {
             return None;
         }
         let rc = unsafe { (*self.text).rc.load(Ordering::Relaxed) };
@@ -56,6 +68,11 @@ impl Builder {
 
     #[cold]
     fn grow(&mut self, more: usize) {
+        // A few bytes on the heap are built in the word, with no block.
+        if self.text.is_null() && more <= SHORT_MAX {
+            self.text = SHORT as *mut Str;
+            return;
+        }
         let room = (self.len + more).max(self.room() * 2);
         // A text a region takes grows in it, whatever its length: what the
         // analysis puts in a region stays a region's, as what holds it lets
@@ -91,9 +108,10 @@ impl Builder {
         let layout = str_layout(room);
         // A new block holds what was asked, as a guess that is seldom
         // short; one that grows takes all the room its block has. What a
-        // frame's room held moves to the heap.
+        // frame's room or the word held moves to the heap.
         let framed = self.framed();
-        let grown = !self.text.is_null() && !framed;
+        let word = short(self.text).then(|| (self.text as usize).to_le_bytes());
+        let grown = (self.text as isize) > 0 && !framed;
         let text = unsafe {
             match grown {
                 false => alloc(layout),
@@ -105,6 +123,9 @@ impl Builder {
         }
         if framed {
             unsafe { std::ptr::copy_nonoverlapping((self.text as *const u8).add(HEADER), text.add(HEADER), self.len) };
+        }
+        if let Some(word) = word {
+            unsafe { std::ptr::copy_nonoverlapping(word.as_ptr(), text.add(HEADER), self.len) };
         }
         self.text = text as *mut Str;
         unsafe {
@@ -118,8 +139,11 @@ impl Builder {
     /// to in place grows into. While a budget counts memory, that room is
     /// what was asked for, and counted (`meta::usable`).
     pub fn finish(self) -> *mut Str {
-        if self.text.is_null() {
+        if self.text.is_null() || self.len == 0 && short(self.text) {
             return str_new(&[]);
+        }
+        if short(self.text) {
+            return (self.text as usize | self.len << 56) as *mut Str;
         }
         // Built in a region: the last reference, which its region lets go
         // of. A long one forgets the positions that a text its region let go
@@ -150,6 +174,12 @@ impl Builder {
         }
         let mut text = self.text as *mut u8;
         let mut cap = self.room();
+        // A few bytes built in a block go in the word, and the block goes.
+        if (1..=SHORT_MAX).contains(&self.len) {
+            let built = short_text(unsafe { std::slice::from_raw_parts(text.add(HEADER), self.len) });
+            unsafe { dealloc(text, str_layout(cap)) };
+            return built;
+        }
         if cap - self.len > self.len.max(16) {
             let layout = str_layout(self.len);
             text = unsafe { std::alloc::realloc(text, str_layout(cap), layout.size()) };
