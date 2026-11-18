@@ -7596,7 +7596,7 @@ room, and every row read the last one, `[3, 30] [3, 30] [3, 30]`, which looks li
 and the examples passed with it. A value in a region that ends too soon does not fail; it reads
 what the next region writes there, often a value of the same shape.
 
-`TONDO_CHECK_REGIONS=1` in a program's environment makes such a value fail where it is read. The
+`TONDO_CHECK_LIFETIMES=1` in a program's environment makes such a value fail where it is read. The
 runtime sets apart, as the program starts, an area of address space that costs no memory until a
 chunk is in it; regions take their chunks from it one after another, never the same addresses
 twice, and a chunk that goes is made unreadable and its memory given back to the system, as is
@@ -7616,9 +7616,9 @@ thread's list a chunk goes to and the hooks a turn already reads.
 ## A release build can leave regions out
 
 After two wrong results regions gave in one day, Tony chose that a user who meets one can go on
-working while it is mended, and compare a program with and without them: `--no-regions` on the
-commands that take `--no-logpoints`, `run`, `build`, `test`, `asm` and `size`, and `regions = false`
-in the `[build]` of the root `tondo.toml`, with the MCP tools' `no_regions` and the editor's
+working while it is mended, and compare a program with and without them: `--no-lifetimes` on the
+commands that take `--no-logpoints`, `run`, `build`, `test`, `asm` and `size`, and `lifetimes = false`
+in the `[build]` of the root `tondo.toml`, with the MCP tools' `no_lifetimes` and the editor's
 `tondo.build.flags`. Such a build runs every pass but the regions', puts on the heap what the
 program makes and lets go, and is a build of its own in the cache, as one without logpoint sites
 is. `tondo optimizations` does not take it: what it shows is what regions would do.
@@ -8026,3 +8026,21 @@ as a profile; a native's own allocations are not code the view reads,
 and a call through a function value names no function. `--json` carries
 the three numbers, and `--into <function>` opens the function called, its
 own places told as the program's are.
+
+## One variable checks the lives the compiler gives values, one switch turns them off
+
+`TONDO_CHECK_REGIONS` was named for the one check it turned on, that of
+a region's memory once the region ends, and `--no-regions` for the one
+way out it gave. A part of a text that its frame reads where its source
+keeps it, a loan (7.18), is the next way a release build can read a value
+past the life the compiler gave it. Its check is to be turned on by the
+same variable and it is to be turned off by the same switch: a program
+that gives another result in a release build then has one thing to set
+to find why, whichever of the two it was, and the report says which, and
+one to build without both meanwhile. Under that switch a part costs its
+copy again, so a program counts alike with and without it except for the
+parts a loan saves, which only the builds that ask for the way out see.
+Tony chose the names, `TONDO_CHECK_LIFETIMES`, `--no-lifetimes` and
+`[build] lifetimes = false`, and to rename outright, as Tondo has no
+users yet: the old names are not kept. Until loans land the switch turns
+off regions alone.

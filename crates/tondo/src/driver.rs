@@ -256,7 +256,7 @@ pub struct Analysis {
     /// Whether the root package's `[build] logpoints` leaves a place at
     /// each line for a logpoint, as it does unless it says `false`.
     pub logpoints: bool,
-    /// Whether the root package's `[build] regions` lets a release build
+    /// Whether the root package's `[build] lifetimes` lets a release build
     /// put values in regions, as it does unless it says `false`.
     pub regions: bool,
 }
@@ -3055,7 +3055,7 @@ pub fn compiler_identity() -> String {
     let stamp = exe.map(|m| format!("{}:{:?}", m.len(), m.modified().ok())).unwrap_or_default();
     let layout = layout_seed().map(|seed| format!(":layout {seed}")).unwrap_or_default();
     let sites = if NO_LOGPOINTS.load(std::sync::atomic::Ordering::Relaxed) { ":no logpoint sites" } else { "" };
-    let regions = if NO_REGIONS.load(std::sync::atomic::Ordering::Relaxed) { ":no regions" } else { "" };
+    let regions = if NO_LIFETIMES.load(std::sync::atomic::Ordering::Relaxed) { ":no regions" } else { "" };
     let counted = if counting_regions() { ":counted regions" } else { "" };
     format!("{VERSION}:{}:{stamp}{layout}{sites}{regions}{counted}", RUNTIME_HASH)
 }
@@ -3080,14 +3080,14 @@ pub fn logpoints(analysis: &Analysis) -> bool {
     analysis.logpoints && !NO_LOGPOINTS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Whether `--no-regions` asked for release builds that put nothing in a
+/// Whether `--no-lifetimes` asked for release builds that put nothing in a
 /// region.
-static NO_REGIONS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static NO_LIFETIMES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Makes this command's release builds put nothing in a region, as
-/// `--no-regions` asks.
-pub fn set_no_regions() {
-    NO_REGIONS.store(true, std::sync::atomic::Ordering::Relaxed);
+/// `--no-lifetimes` asks.
+pub fn set_no_lifetimes() {
+    NO_LIFETIMES.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Whether builds count the regions each call sets up, for a benchmark's
@@ -3101,9 +3101,9 @@ pub fn set_count_regions(on: bool) {
     COUNT_REGIONS.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Whether `--no-regions` put nothing in a region.
+/// Whether `--no-lifetimes` put nothing in a region.
 pub fn regions_off() -> bool {
-    NO_REGIONS.load(std::sync::atomic::Ordering::Relaxed)
+    NO_LIFETIMES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Whether builds count the regions their functions set up.
@@ -3112,11 +3112,11 @@ pub fn counting_regions() -> bool {
 }
 
 /// Whether a release build of `analysis` puts in regions what the program
-/// makes and lets go: unless `--no-regions` or the project's `[build]
-/// regions = false` say otherwise, to go on with a program while a wrong
+/// makes and lets go: unless `--no-lifetimes` or the project's `[build]
+/// lifetimes = false` say otherwise, to go on with a program while a wrong
 /// result regions gave is mended, or to compare a program with and without.
 pub fn regions(analysis: &Analysis) -> bool {
-    analysis.regions && !NO_REGIONS.load(std::sync::atomic::Ordering::Relaxed)
+    analysis.regions && !NO_LIFETIMES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// `TONDO_LAYOUT_SEED`: the order a build lays the program's functions out

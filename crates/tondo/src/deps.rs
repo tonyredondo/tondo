@@ -47,7 +47,7 @@ pub struct Package {
     /// (`[build] logpoints`).
     pub logpoints: bool,
     /// Whether its release builds put in regions what the program makes and
-    /// lets go (`[build] regions`).
+    /// lets go (`[build] lifetimes`).
     pub regions: bool,
 }
 
@@ -237,10 +237,10 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
                                 return Err(at(line, usage.into()));
                             }
                         },
-                        ("regions", _) => match &value {
+                        ("lifetimes", _) => match &value {
                             crate::toml::Value::Boolean(on) => manifest.regions = *on,
                             _ => {
-                                let usage = "`regions = false` builds the program without regions: what it makes \
+                                let usage = "`lifetimes = false` builds the program without regions: what it makes \
                                              and lets go goes on the heap";
                                 return Err(at(line, usage.into()));
                             }
@@ -248,7 +248,9 @@ fn manifest(dir: &Path) -> Result<Manifest, String> {
                         _ => {
                             return Err(at(
                                 line,
-                                format!("unknown key `{key}` in `[build]`, which has `cpu`, `logpoints` and `regions`"),
+                                format!(
+                                    "unknown key `{key}` in `[build]`, which has `cpu`, `logpoints` and `lifetimes`"
+                                ),
                             ));
                         }
                     }

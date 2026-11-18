@@ -2522,7 +2522,7 @@ máquina. Preparar una región son unas escrituras en el código de la función,
 que el build que mide no cuenta sin pagarlas: `--bench` construye además los
 tests con una llamada al runtime donde una función prepara sus regiones, y
 los ejecuta un momento antes que los otros para contarlas; sin regiones
-(`--no-regions`) no hay qué contar. Una región que se prepara y no se usa
+(`--no-lifetimes`) no hay qué contar. Una región que se prepara y no se usa
 cuesta a cada llamada sin ahorrar nada. La salida para personas pone bajo la
 línea de cada test una línea por benchmark, con lo que hizo en regiones tras
 lo del heap cuando hizo algo, y las regiones que preparó cuando preparó

@@ -1146,7 +1146,7 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
             let _ = out.write_str("{\"code\":null,\"data\":null,\"error_type\":null,\"format\":\"tondo-panic-0.1/1\",\"kind\":\"fault\",\"message\":\"");
         }
         let overflow = (bounds.0.saturating_sub(crate::tasks::GUARD)..bounds.0).contains(&address);
-        // Under `TONDO_CHECK_REGIONS`, in a chunk of a region that ended.
+        // Under `TONDO_CHECK_LIFETIMES`, in a chunk of a region that ended.
         let ended_region = matches!(signal, libc::SIGSEGV | libc::SIGBUS) && crate::regions::checked::ended_at(address);
         if overflow {
             let size = (bounds.1 - bounds.0 + crate::tasks::GUARD) >> 20;

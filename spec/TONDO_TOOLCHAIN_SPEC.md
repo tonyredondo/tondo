@@ -110,9 +110,9 @@ outputs = ["proto.user"]
 - `[build]` dice cómo se compila el programa. Sus claves son `cpu`, el
   nivel de procesador para el que se compila (7.8), que `--cpu` reemplaza, y
   `logpoints`, que con `false` compila sin el sitio de cada línea donde un
-  logpoint escribe su llamada (7.5), como `--no-logpoints`, y `regions`, que
+  logpoint escribe su llamada (7.5), como `--no-logpoints`, y `lifetimes`, que
   con `false` compila un build de release sin regiones (7.18), como
-  `--no-regions`.
+  `--no-lifetimes`.
   Solo cuenta el `[build]` del paquete raíz: el de una dependencia no se lee,
   porque decide el programa. `systems` y `architectures` siguen en
   `[package]`: dicen qué admite el paquete, no cómo se compila.
@@ -266,9 +266,9 @@ completos no se ejecuta ninguna.
 ## 7. Comandos
 
 ~~~text
-tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch] [--target <target>] [--cpu <level>] [--no-logpoints] [--no-regions] [--diagnostic-format human|json] [-- <argument>...]
-tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug | --live] [--target <target>] [--cpu <level>] [--no-logpoints] [--no-regions] [--diagnostic-format human|json] [--json]
-tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--cpu <level>] [--no-logpoints] [--no-regions] [--json]
+tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch] [--target <target>] [--cpu <level>] [--no-logpoints] [--no-lifetimes] [--diagnostic-format human|json] [-- <argument>...]
+tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--debug | --live] [--target <target>] [--cpu <level>] [--no-logpoints] [--no-lifetimes] [--diagnostic-format human|json] [--json]
+tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--cpu <level>] [--no-logpoints] [--no-lifetimes] [--json]
 tondo check [<project>|<file.to>] [--library] [--json]
 tondo expand [<project>|<file.to>] [--json]
 tondo fmt [--check | --compact] [--json] <file.to>...
@@ -276,7 +276,7 @@ tondo api [<module>|<module>.<declaration>|<file.to>] [--private] [--list] [--pr
 tondo api --search <palabras> [--project <dir>] [--json]
 tondo graph [<project>|<dir>|<file.to>] [--packages | --files] [--module <module> [--reverse]] [--json | --dot | --mermaid]
 tondo optimizations [<project>|<file.to>] [--tests] [--function <name>] [--kind <kind>] [--cpu <level>] [--against <revision> | --compiler <tondo|revision>] [--json]
-tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--cpu <level>] [--no-logpoints] [--no-regions] [--against <revision> | --compiler <tondo|revision>] [--json]
+tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--cpu <level>] [--no-logpoints] [--no-lifetimes] [--against <revision> | --compiler <tondo|revision>] [--json]
 tondo asm --runtime <function>|--all [--compiler <tondo|revision>] [--json]
 tondo compiler <tondo|revision> [--json]
 tondo guide [<topic>] [--list] [--skill] [--json]
@@ -289,7 +289,7 @@ tondo fix [<project>|<file.to>] [--library] [--json]
 tondo explain [<code>] [--json]
 tondo clean [--all | --list] [--json]
 tondo bind [<header.h>...] [--package <name>] [--library <library>]... [--project <dir>] [--output <file.to>] [--included] [--fails <file>] [--id <interface>=<GUID>]... [-I <dir>] [-D <name[=value]>] [--json]
-tondo test [<project>] [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--no-logpoints] [--no-regions] [--watch] [--coverage] [--bench [--bench-time <seconds>]] [--fuzz [--fuzz-time <seconds>]] [--test-format human|json|events] [--json] [--diagnostic-format human|json]
+tondo test [<project>] [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--no-logpoints] [--no-lifetimes] [--watch] [--coverage] [--bench [--bench-time <seconds>]] [--fuzz [--fuzz-time <seconds>]] [--test-format human|json|events] [--json] [--diagnostic-format human|json]
 tondo doc-test [--edition 0.1] <markdown>
 tondo target pack [<dir>] [--json]
 tondo lsp
@@ -2410,7 +2410,7 @@ significan lo de siempre.
 | `TONDO_VERSIONS` | Quien lo ejecuta | `0` corre el código del nivel del build y no las versiones de sus funciones para uno mayor (7.8), como en un procesador sin ese nivel. |
 | `TONDO_CACHE_DOMAINS` | Quien lo ejecuta | `0` toma todos los núcleos como un dominio: los workers no se quedan entre los núcleos que comparten una caché. |
 | `TONDO_ZONES` | Quien lo ejecuta | `builtin` usa las zonas horarias que lleva el programa y no las del sistema. |
-| `TONDO_CHECK_REGIONS` | Quien lo ejecuta, y los tests del toolchain | `1` da a las regiones memoria que no se vuelve a usar y la hace ilegible cuando la región acaba: un valor que la sobrevive falla al leerse, con dónde. |
+| `TONDO_CHECK_LIFETIMES` | Quien lo ejecuta, y los tests del toolchain | `1` da a las regiones memoria que no se vuelve a usar y la hace ilegible cuando la región acaba: un valor que la sobrevive falla al leerse, con dónde. |
 | `TONDO_DEBUG` | `tondo debug`, el editor y un programa depurado a los hijos que sigue | `1` espera al depurador antes de `main`. |
 | `TONDO_TRACE` | `tondo trace` | `1` traza desde el principio; `cpu` muestrea el procesador sin contar la memoria. |
 | `TONDO_RACE` | `tondo test`, salvo con `--bench`, y `tondo debug` de un test | `1` busca actualizaciones perdidas. |
@@ -2550,8 +2550,8 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   no es una asignación para los contadores, los perfiles de memoria ni las
   asignaciones de un benchmark: la región pide su memoria por trozos. Los
   builds de depuración y los vivos no usan regiones, ni uno con
-  `--no-regions` en `run`, `build`, `test`, `asm` o `size`, o con
-  `regions = false` en el `[build]` del `tondo.toml` raíz, que es otro build
+  `--no-lifetimes` en `run`, `build`, `test`, `asm` o `size`, o con
+  `lifetimes = false` en el `[build]` del `tondo.toml` raíz, que es otro build
   en la caché y pone en el heap lo que el programa hace y suelta: para seguir
   con un programa al que una región da un resultado erróneo mientras se
   arregla, o para compararlo con y sin ellas.

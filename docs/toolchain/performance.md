@@ -652,13 +652,13 @@ fn main() {
 ```
 
 A benchmark of `sum(build(8, 4))`, as a release build makes it and then
-without regions, which `--no-regions` leaves out of a build:
+without regions, which `--no-lifetimes` leaves out of a build:
 
 ```text
 $ tondo test --bench
 test tree::unit::tree::aTree ... ok
   tree of 87 thousand nodes     758.5 µs/op  ±0.2%  0 allocs/op +21845 in regions  0 B/op +2097120 in regions  15.37M ins/op
-$ tondo test --bench --no-regions
+$ tondo test --bench --no-lifetimes
 test tree::unit::tree::aTree ... ok
   tree of 87 thousand nodes     1.085 ms/op  ±0.6%  21845 allocs/op  2097120 B/op  21.10M ins/op
 ```
@@ -1077,8 +1077,8 @@ What regions hold is seen where the heap is: a memory profile has
 counters` has the bytes regions hold now, and a dump lists the memory in
 regions by the place that made it ([Observing](observing.md)).
 
-`--no-regions` on `tondo build`, `run`, `test`, `size` and `asm`, or `regions =
-false` under `[build]` in `tondo.toml`, builds without them: every value
+`--no-lifetimes` on `tondo build`, `run`, `test`, `size` and `asm`, or
+`lifetimes = false` under `[build]` in `tondo.toml`, builds without them: every value
 that a region would take is on the heap, as in a debug build. It is how the
 second row above was measured, and what to build with when a release build
 gives a result that a debug build does not

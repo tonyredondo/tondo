@@ -33,7 +33,7 @@ New to Tondo, or a model writing it? Start with `tondo guide`.
 
 usage:
   tondo run [<project>|<file.to>] [--link <library>]... [--static] [--debug | --live | --watch [--tests]]
-            [--target <target>] [--cpu <level>] [--no-logpoints] [--no-regions] [--timings] [--diagnostic-format human|json] [-- <argument>...]
+            [--target <target>] [--cpu <level>] [--no-logpoints] [--no-lifetimes] [--timings] [--diagnostic-format human|json] [-- <argument>...]
   tondo run --record <recording> [--last <duration> [--hold <duration>]] [<project>|<file.to>]
             [--link <library>]...
             [-- <argument>...]                         compile and run a program (under qemu for another
@@ -41,13 +41,13 @@ usage:
                                                        `tondo reload`, or by itself as its files change;
                                                        recorded, for `tondo debug --replay`)
   tondo build [<project>|<file.to>] [--output <path>] [--link <library>]... [--static] [--strip] [--no-source-links]
-            [--debug | --live] [--target <target>] [--cpu <level>] [--no-logpoints] [--no-regions] [--timings] [--diagnostic-format human|json] [--json]
+            [--debug | --live] [--target <target>] [--cpu <level>] [--no-logpoints] [--no-lifetimes] [--timings] [--diagnostic-format human|json] [--json]
                                                        compile a native executable (static on Linux;
                                                        without its symbol table; static for a target:
                                                        x86_64-linux or aarch64-linux; for a level of
                                                        processor: baseline, x86-64-v3, x86-64-v4, native);
                                                        --timings, where the build's time went
-  tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--cpu <level>] [--no-logpoints] [--no-regions] [--json]
+  tondo build --library [<project>|<file.to>] [--output <dir>] [--debug] [--cpu <level>] [--no-logpoints] [--no-lifetimes] [--json]
                                                        compile a library for C, lib<name>.so (.dylib)
                                                        and lib<name>.a, with its header <name>.h
   tondo check [<project>|<file.to>] [--library] [--unreached] [--docs] [--performance] [--timings] [--json]
@@ -94,7 +94,7 @@ usage:
             [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>] [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]
             [--models]
             [--diagnostic-format human|json] [--artifacts <dir>] [--update-snapshots]
-            [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--no-logpoints] [--no-regions] [--exec <command>] [--timings]
+            [--static] [--debug] [--library] [--target <target>] [--cpu <level>] [--no-logpoints] [--no-lifetimes] [--exec <command>] [--timings]
                                                        run the tests of a project (of a library); with --watch,
                                                        again as its files change; --bench measures its benchmarks,
                                                        --fuzz searches for inputs that fail its fuzz tests, and
@@ -187,7 +187,7 @@ usage:
                                                        tasks are, in pprof's format; show reads one: the
                                                        functions and lines that take the most
   tondo size [<project>|<file.to>] [--tests] [--function <name>] [--top <n>] [--against <rev>]
-            [--static] [--strip] [--debug] [--target <target>] [--cpu <level>] [--no-logpoints] [--no-regions] [--json]
+            [--static] [--strip] [--debug] [--target <target>] [--cpu <level>] [--no-logpoints] [--no-lifetimes] [--json]
                                                        what an executable of a build weighs: by part, the
                                                        program's code, the standard library's, the runtime,
                                                        the data and the tables, and the functions that weigh most
@@ -197,7 +197,7 @@ usage:
                                                        inlines and those it keeps, the texts and closures made
                                                        without the heap, the checks it drops and those it keeps
   tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--against <rev> | --compiler <tondo|rev>]
-            [--cpu <level>] [--no-logpoints] [--no-regions] [--json]
+            [--cpu <level>] [--no-logpoints] [--no-lifetimes] [--json]
   tondo asm --runtime <function>|--all [--compiler <tondo|rev>] [--json]
                                                        the machine code a release build makes of a function, by
                                                        the lines of the program, with what the passes did there;

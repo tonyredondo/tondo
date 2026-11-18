@@ -68,7 +68,7 @@ fn examples_compile_and_the_guides_tests_pass() {
                             .args(checks)
                             .args(info.ends_with(" library").then_some("--library"))
                             .current_dir(case)
-                            .env("TONDO_CHECK_REGIONS", "1")
+                            .env("TONDO_CHECK_LIFETIMES", "1")
                             .output()
                             .unwrap();
                         let stderr = String::from_utf8_lossy(&output.stderr);

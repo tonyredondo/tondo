@@ -12,7 +12,7 @@ fn tondo(dir: &Path, args: &[&str]) -> (String, String, i32) {
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .args(args)
         .current_dir(dir)
-        .env("TONDO_CHECK_REGIONS", "1")
+        .env("TONDO_CHECK_LIFETIMES", "1")
         .output()
         .unwrap();
     let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();

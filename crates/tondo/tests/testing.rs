@@ -21,7 +21,7 @@ fn tondo(dir: &Path, args: &[&str]) -> (String, String, i32) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
     command.args(args).current_dir(dir);
     if !args.contains(&"--bench") {
-        command.env("TONDO_CHECK_REGIONS", "1");
+        command.env("TONDO_CHECK_LIFETIMES", "1");
     }
     let output = command.output().unwrap();
     let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
@@ -806,7 +806,7 @@ fn names_the_code_that_changed_under_a_row_that_moved() {
     let dir = project("changed-code", tests);
     let other = dir.join("without-regions");
     let script = format!(
-        "#!/bin/sh\ncase \"$1 $2\" in\n  \"asm --runtime\"*) exec {tondo} \"$@\" ;;\n  test*|asm*) exec {tondo} \"$@\" --no-regions ;;\n  *) exec {tondo} \"$@\" ;;\nesac\n",
+        "#!/bin/sh\ncase \"$1 $2\" in\n  \"asm --runtime\"*) exec {tondo} \"$@\" ;;\n  test*|asm*) exec {tondo} \"$@\" --no-lifetimes ;;\n  *) exec {tondo} \"$@\" ;;\nesac\n",
         tondo = env!("CARGO_BIN_EXE_tondo")
     );
     std::fs::write(&other, script).unwrap();
@@ -866,7 +866,7 @@ fn counts_the_regions_a_benchmark_sets_up_and_uses() {
     assert_eq!(status, 0, "{stdout}{stderr}");
     assert!(stdout.contains("regions set up/op, 0 used"), "{stdout}");
     // Without regions, nothing is counted, and nothing said.
-    let (stdout, _, _) = tondo(&dir, &["test", "--bench", "--bench-time", "0.05", "--no-regions"]);
+    let (stdout, _, _) = tondo(&dir, &["test", "--bench", "--bench-time", "0.05", "--no-lifetimes"]);
     assert!(!stdout.contains("regions set up"), "{stdout}");
 }
 
@@ -2307,7 +2307,7 @@ test counted {
         Some(heap + regions)
     };
     let mut counts = Vec::new();
-    for regions in [&[][..], &["--no-regions"]] {
+    for regions in [&[][..], &["--no-lifetimes"]] {
         let (stdout, stderr, status) = tondo(&dir, &[&["test", "--show-output"], regions].concat());
         assert_eq!(status, 0, "{stdout}{stderr}");
         let counted = stdout.split("allocations: ").nth(1).and_then(|rest| rest.split_whitespace().next());
@@ -2354,7 +2354,7 @@ fn counted_alike(case: &str, setup: &str, calls: &[(&str, &str)]) -> Vec<String>
         counts
     };
     let counted = counts(&[]);
-    assert_eq!(counted, counts(&["--no-regions"]));
+    assert_eq!(counted, counts(&["--no-lifetimes"]));
     counted
 }
 
@@ -2521,7 +2521,7 @@ fn counts_of(name: &str, tests: &str) -> Vec<(String, i64)> {
             .collect()
     };
     let counted = counts(&[]);
-    assert_eq!(counted, counts(&["--no-regions"]));
+    assert_eq!(counted, counts(&["--no-lifetimes"]));
     counted
 }
 
@@ -2661,7 +2661,7 @@ fn commonest(text: String): String {
             .unwrap_or_else(|| panic!("{stdout}"));
         line.parse().unwrap()
     };
-    assert_eq!(count(&[]), count(&["--no-regions"]) + 10);
+    assert_eq!(count(&[]), count(&["--no-lifetimes"]) + 10);
 }
 
 /// `tondo test` given a file of tests, as one is often given, says the
@@ -2822,7 +2822,7 @@ fn the_comparison_with_go_builds() {
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .args(["test", "bench/tondo"])
         .current_dir(&root)
-        .env("TONDO_CHECK_REGIONS", "1")
+        .env("TONDO_CHECK_LIFETIMES", "1")
         .env("TONDO_DUMP", "off")
         .output()
         .unwrap();

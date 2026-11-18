@@ -245,13 +245,13 @@ compiler put in a region it outlives does not fail. It reads what the next
 region wrote in its place, which is often a value of the same shape, and
 the program goes on with data that looks right.
 
-`TONDO_CHECK_REGIONS=1` in the program's environment makes it fail. The
+`TONDO_CHECK_LIFETIMES=1` in the program's environment makes it fail. The
 memory of each region that ends becomes unreadable and its addresses are
 not used again, so the first read of such a value is a fault, and the
 report says what it is and the line that read:
 
 ```text
-$ TONDO_CHECK_REGIONS=1 ./slices
+$ TONDO_CHECK_LIFETIMES=1 ./slices
 fatal: SIGSEGV: invalid memory access at 0x7e5839008238, in the memory of a region that ended: the compiler put a value in a region it outlives, a bug of tondo's
 stack:
   main  slices.to:9:21
@@ -272,13 +272,13 @@ each region ran twice as slow with it. A loop of three million turns that
 makes an array of three numbers in each went from 0.02 s to 4 s. It is a
 check for the run that shows the wrong result, not one to leave on.
 
-`--no-regions` builds the program without regions, every value on the
-heap as a debug build has it, and `regions = false` under `[build]` in
+`--no-lifetimes` builds the program without regions, every value on the
+heap as a debug build has it, and `lifetimes = false` under `[build]` in
 `tondo.toml` does so for every build of the project:
 
 ```text
-$ tondo build --no-regions
-$ tondo test --no-regions
+$ tondo build --no-lifetimes
+$ tondo test --no-lifetimes
 ```
 
 A wrong result that goes away without them is the regions', whether or not

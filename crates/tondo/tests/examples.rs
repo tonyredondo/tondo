@@ -11,7 +11,7 @@ fn tondo(dir: &Path, args: &[&str]) -> (String, bool) {
         .args(args)
         .current_dir(dir)
         .env("TONDO_DUMP", "off")
-        .env("TONDO_CHECK_REGIONS", "1")
+        .env("TONDO_CHECK_LIFETIMES", "1")
         .output()
         .unwrap();
     let said = String::from_utf8_lossy(&output.stdout).into_owned() + &String::from_utf8_lossy(&output.stderr);

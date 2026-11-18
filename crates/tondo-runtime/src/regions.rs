@@ -24,7 +24,7 @@
 //! loop's region from its next turn. A program nobody watches never takes
 //! that path for a value.
 //!
-//! With `TONDO_CHECK_REGIONS=1` (`checked`), a chunk that goes is made
+//! With `TONDO_CHECK_LIFETIMES=1` (`checked`), a chunk that goes is made
 //! unreadable and its addresses are never given again, so that a value
 //! that outlived its region faults where it is read.
 
@@ -546,7 +546,7 @@ pub unsafe extern "C" fn tondo_rt_region_reset(region: *mut Region) {
     }
 }
 
-/// `TONDO_CHECK_REGIONS=1`: chunks come from an area of address space set
+/// `TONDO_CHECK_LIFETIMES=1`: chunks come from an area of address space set
 /// apart as the program starts, one after another and never again, and a
 /// chunk that goes becomes unreadable, its memory given back to the system,
 /// so that a value read after its region ended faults where it is read, and
@@ -565,7 +565,7 @@ pub(crate) mod checked {
 
     /// Sets the area apart when the program's environment asks for it.
     pub(crate) fn start() {
-        if crate::config::on(&crate::config::config().check_regions) {
+        if crate::config::on(&crate::config::config().check_lifetimes) {
             reserve();
         }
     }
@@ -594,7 +594,7 @@ pub(crate) mod checked {
         }
         let _ = writeln!(
             std::io::stderr(),
-            "tondo: TONDO_CHECK_REGIONS: the system set no address space apart; regions go unchecked"
+            "tondo: TONDO_CHECK_LIFETIMES: the system set no address space apart; regions go unchecked"
         );
     }
 
@@ -622,7 +622,7 @@ pub(crate) mod checked {
             Ok(at) => {
                 let readable = libc::PROT_READ | libc::PROT_WRITE;
                 if unsafe { libc::mprotect(at as *mut libc::c_void, bytes, readable) } != 0 {
-                    crate::runtime_fault("TONDO_CHECK_REGIONS: a chunk of the area could not be made readable");
+                    crate::runtime_fault("TONDO_CHECK_LIFETIMES: a chunk of the area could not be made readable");
                 }
                 Some(at as *mut u8)
             }
@@ -630,7 +630,7 @@ pub(crate) mod checked {
                 if !USED_UP.swap(true, Ordering::Relaxed) {
                     let _ = writeln!(
                         std::io::stderr(),
-                        "tondo: TONDO_CHECK_REGIONS: the area of regions is used up; regions from now on go unchecked"
+                        "tondo: TONDO_CHECK_LIFETIMES: the area of regions is used up; regions from now on go unchecked"
                     );
                 }
                 None
@@ -647,7 +647,7 @@ pub(crate) mod checked {
         let flags = libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_NORESERVE | libc::MAP_FIXED;
         let gone = unsafe { libc::mmap(at as *mut libc::c_void, rounded(size), libc::PROT_NONE, flags, -1, 0) };
         if gone == libc::MAP_FAILED {
-            crate::runtime_fault("TONDO_CHECK_REGIONS: a chunk of the area could not be made unreadable");
+            crate::runtime_fault("TONDO_CHECK_LIFETIMES: a chunk of the area could not be made unreadable");
         }
         true
     }

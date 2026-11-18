@@ -33,7 +33,7 @@
 //! Executables run with `TONDO_RT_CHECK_LEAKS=1`, so every case also checks
 //! that reference counting frees each string exactly once, and, but with
 //! `TONDO_CASES_STATIC`, which keeps the runtime's usual way, with
-//! `TONDO_CHECK_REGIONS=1`, so that a value a release build puts in a region
+//! `TONDO_CHECK_LIFETIMES=1`, so that a value a release build puts in a region
 //! it outlives faults where it is read. With
 //! `TONDO_CASES_STATIC` set, cases build static executables (`--static`);
 //! with `TONDO_CASES_DEBUG`, debug builds (`--debug`); with
@@ -219,7 +219,7 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
         command.envs(expect.env.iter().map(|(name, value)| (name, value)));
         command.env("TONDO_RT_CHECK_LEAKS", "1").current_dir(scratch);
         if std::env::var_os("TONDO_CASES_STATIC").is_none() {
-            command.env("TONDO_CHECK_REGIONS", "1");
+            command.env("TONDO_CHECK_LIFETIMES", "1");
         }
         if let Some(dir) = &coverage {
             command.env("TONDO_TEST_COVERAGE", dir.join("counts"));

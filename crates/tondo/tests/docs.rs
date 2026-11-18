@@ -124,7 +124,7 @@ fn check(tondo: &str, job: &Job) -> Outcome {
     // value put in a region it outlives faults.
     let run = |args: &[&str]| {
         let mut command = Command::new(tondo);
-        command.args(args).current_dir(&job.case).env("TONDO_DUMP", "off").env("TONDO_CHECK_REGIONS", "1");
+        command.args(args).current_dir(&job.case).env("TONDO_DUMP", "off").env("TONDO_CHECK_LIFETIMES", "1");
         command.output().unwrap()
     };
     let checks: &[&str] = if test { &["test", "--list"] } else { &["check", &main] };

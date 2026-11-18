@@ -181,7 +181,7 @@ The rows still behind Go, and why:
   At fccc97c3 the ASCII row takes 681 ns, against 459 ns at 80fc037a,
   with the same instructions and the same code of the benchmark's
   functions (`tondo asm --compiler`): only its cycles grew. A build with
-  `--no-regions` takes 461 ns, the text at other places in memory changes
+  `--no-lifetimes` takes 461 ns, the text at other places in memory changes
   nothing, and the loop alone, out of the benchmarks' executable, runs as
   fast with either compiler: where the loop's code lies is the likely
   cause, not yet shown.

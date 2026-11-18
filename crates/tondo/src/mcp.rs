@@ -1306,7 +1306,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
         option(argv, "--target", "target");
         option(argv, "--cpu", "cpu");
         switch(argv, "--no-logpoints", "no_logpoints");
-        switch(argv, "--no-regions", "no_regions");
+        switch(argv, "--no-lifetimes", "no_lifetimes");
         for library in args.list("link") {
             argv.extend(["--link".to_string(), library]);
         }
@@ -1490,7 +1490,7 @@ fn command(name: &str, args: &Args) -> Result<Reply, String> {
             option(&mut argv, "--target", "target");
             option(&mut argv, "--cpu", "cpu");
             switch(&mut argv, "--no-logpoints", "no_logpoints");
-            switch(&mut argv, "--no-regions", "no_regions");
+            switch(&mut argv, "--no-lifetimes", "no_lifetimes");
         }
         "dump_plugin" => push(&["dump", "plugin", &args.need("debugger")?, "--json"]),
         "profile_show" => {
@@ -2384,10 +2384,10 @@ const NO_LOGPOINTS: (&str, &str, &str) = (
 faster in code that does little but call, and no `logpoint` or Release breakpoint in it (`--no-logpoints`).",
 );
 const NO_REGIONS: (&str, &str, &str) = (
-    "no_regions",
+    "no_lifetimes",
     "boolean",
     "A release build that puts nothing in a region: what the program makes and lets go goes on the heap, to go on \
-with a program a region gives a wrong result in, or to compare (`--no-regions`).",
+with a program a region gives a wrong result in, or to compare (`--no-lifetimes`).",
 );
 const LINK: (&str, &str, &str) = ("link", "strings", "Native libraries to link, by name (-l) or file (`--link`).");
 const TIMINGS: (&str, &str, &str) = (
