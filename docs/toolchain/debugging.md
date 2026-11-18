@@ -83,13 +83,27 @@ break on spawn|send|receive|lock|request|recover|wait 100
 | `locals`, `print <expression>`, `children items 100 50` | what the line can use; one value; a page of a large one |
 | `context` | the program's contexts, and the `with` that set each field |
 | `stack`, `frame 1` | the calls, and looking at another one |
-| `tasks`, `task 2`, `blocked` | every task, also those that wait; one of them; who waits for whom |
+| `tasks`, `task 2`, `blocked` | every task, also those that wait or are inside a call of C; one of them; who waits for whom |
 | `set count = 3` | changes a binding |
 | `snapshot` | everything about a stop at once: why, every frame with its bindings, the other tasks, the last lines run |
 
 `locals` gives more than the function's bindings: also what a closure
 captured, and the bindings of the functions it is written in that are on
 the stack.
+
+`tasks` answers once the stop holds every task: each is at a line, waits,
+or is inside a call of C, where it stands as still as one that waits until
+the call returns. It is listed where it called C, and `stack` shows its
+frames from there:
+
+```text
+> tasks
+task 1 at napped.to:16 in main (breakpoint 1)
+task 2 at napped.to:8 in napper (in a call of C)
+> stack 2
+#0 napped.to:8 in napper
+   spawned at napped.to:14 in main
+```
 
 A logpoint needs no stop and no rebuild. `tondo logpoint <name>
 src/main.to:11 "{word}: {counts.length()}"` writes a line each time a
