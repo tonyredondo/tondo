@@ -120,6 +120,9 @@ impl RegionPieces {
         }
     }
 
+    /// The next piece, in the room: in the loop of each caller, as a
+    /// split's pieces are many and short.
+    #[inline(always)]
     pub(crate) fn push(&mut self, bytes: &[u8]) -> *mut Str {
         let size = (HEADER + bytes.len()).next_multiple_of(8);
         // More than it was given room for, which its caller never asks.
@@ -217,7 +220,8 @@ impl Pieces {
     }
 
     /// The next piece, with one reference; the empty string kept for good
-    /// when it is empty.
+    /// when it is empty. In the loop of each caller, as `RegionPieces`'s.
+    #[inline(always)]
     pub(crate) fn push(&mut self, bytes: &[u8]) -> *mut Str {
         if bytes.is_empty() {
             return EMPTY.get();
@@ -769,16 +773,18 @@ pub unsafe extern "C" fn tondo_rt_str_transform(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_slice_checked(s: *const Str, start: i64, end: i64, error: *mut i8) -> *mut Str {
     unsafe {
-        let text = str_text(s);
-        let length = text.chars().count() as i64;
+        let length = scalar_count(s) as i64;
         let code = if start < 0 || end < 0 || start > length || end > length {
             0
         } else if start > end {
             1
         } else {
-            let selected: String = text.chars().skip(start as usize).take((end - start) as usize).collect();
+            // A run of scalars is the bytes between where they start.
+            let bytes = str_bytes(s);
+            let from = scalar_offset(s, start as usize).unwrap_or(bytes.len());
+            let to = scalar_offset(s, end as usize).unwrap_or(bytes.len());
             *error = -1;
-            return str_new(selected.as_bytes());
+            return str_new(&bytes[from..to]);
         };
         *error = code;
         std::ptr::null_mut()

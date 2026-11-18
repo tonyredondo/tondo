@@ -353,44 +353,100 @@ pub unsafe extern "C" fn tondo_rt_regex_replace(
         fail(Kind::ReplacementLimitExceeded, r.max_replacement);
         return str_new(b"");
     }
-    let parts = match template(r, replacement) {
-        Ok(parts) => parts,
-        Err(offset) => {
-            fail(Kind::InvalidReplacement, offset);
-            return str_new(b"");
+    // A replacement without `$` is its text alone: its matches need no
+    // groups, which cost an allocation each.
+    let parts = match replacement.contains('$') {
+        false => None,
+        true => match template(r, replacement) {
+            Ok(parts) => Some(parts),
+            Err(offset) => {
+                fail(Kind::InvalidReplacement, offset);
+                return str_new(b"");
+            }
+        },
+    };
+    let made = REPLACED.with_borrow_mut(|out| {
+        out.clear();
+        let made = replaced(r, text, replacement, parts.as_deref(), all != 0, out)
+            .map(|()| crate::strings::str_in(region, out.as_bytes()));
+        if out.capacity() > REPLACED_KEPT {
+            *out = String::new();
+        }
+        made
+    });
+    made.unwrap_or_else(|(kind, offset)| {
+        fail(kind, offset);
+        str_new(b"")
+    })
+}
+
+thread_local! {
+    /// The text a replacement writes before it is copied where it goes,
+    /// one for each thread, as each replacement ends before the next: a
+    /// replacement allocates only the text it gives.
+    static REPLACED: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// The most room `REPLACED` keeps once a replacement is done.
+const REPLACED_KEPT: usize = 64 * 1024;
+
+/// Writes `text` with its first match, or each, replaced into `out`: the
+/// replacement's text alone without `parts`, or the parts with the groups
+/// of each match; the limit passed and where, when one is.
+fn replaced(
+    r: &RegexObject,
+    text: &str,
+    replacement: &str,
+    parts: Option<&[Part]>,
+    all: bool,
+    out: &mut String,
+) -> Result<(), (Kind, usize)> {
+    let mut last = 0;
+    let mut write = |count: usize, start: usize, end: usize, out: &mut String, written: &dyn Fn(&mut String)| {
+        if count >= r.max_matches {
+            return Err((Kind::MatchLimitExceeded, start));
+        }
+        out.push_str(&text[last..start]);
+        written(out);
+        last = end;
+        match out.len() > r.max_output {
+            true => Err((Kind::OutputLimitExceeded, last)),
+            false => Ok(()),
         }
     };
-    let mut out = String::new();
-    let mut last = 0;
-    for (count, captures) in r.regex.captures_iter(text).enumerate() {
-        let whole = captures.get(0).expect("a match has its whole");
-        if count >= r.max_matches {
-            fail(Kind::MatchLimitExceeded, whole.start());
-            return str_new(b"");
-        }
-        out.push_str(&text[last..whole.start()]);
-        for part in &parts {
-            match part {
-                Part::Text(t) => out.push_str(t),
-                Part::Index(i) => out.push_str(captures.get(*i).map_or("", |m| m.as_str())),
-                Part::Name(n) => out.push_str(captures.name(n).map_or("", |m| m.as_str())),
+    match parts {
+        None => {
+            for (count, found) in r.regex.find_iter(text).enumerate() {
+                write(count, found.start(), found.end(), out, &|out| out.push_str(replacement))?;
+                if !all {
+                    break;
+                }
             }
         }
-        last = whole.end();
-        if out.len() > r.max_output {
-            fail(Kind::OutputLimitExceeded, last);
-            return str_new(b"");
-        }
-        if all == 0 {
-            break;
+        Some(parts) => {
+            for (count, captures) in r.regex.captures_iter(text).enumerate() {
+                let whole = captures.get(0).expect("a match has its whole");
+                let written = |out: &mut String| {
+                    for part in parts {
+                        match part {
+                            Part::Text(t) => out.push_str(t),
+                            Part::Index(i) => out.push_str(captures.get(*i).map_or("", |m| m.as_str())),
+                            Part::Name(n) => out.push_str(captures.name(n).map_or("", |m| m.as_str())),
+                        }
+                    }
+                };
+                write(count, whole.start(), whole.end(), out, &written)?;
+                if !all {
+                    break;
+                }
+            }
         }
     }
     out.push_str(&text[last..]);
-    if out.len() > r.max_output {
-        fail(Kind::OutputLimitExceeded, text.len());
-        return str_new(b"");
+    match out.len() > r.max_output {
+        true => Err((Kind::OutputLimitExceeded, text.len())),
+        false => Ok(()),
     }
-    crate::strings::str_in(region, out.as_bytes())
 }
 
 /// Whether all of `text` matches `pattern`, 1 or 0, or -1 when the pattern

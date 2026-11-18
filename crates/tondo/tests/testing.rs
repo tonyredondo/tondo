@@ -2552,6 +2552,45 @@ fn trimmed(texts: Array[String]): Int {
     assert_eq!(counts, [("same".to_string(), 0), ("padded".to_string(), 300)]);
 }
 
+/// The runtime's operations on texts allocate what they give and none of
+/// their own on the way: `words` and `lines` as `split` does, one block of
+/// pieces and their array, and a slice, an ASCII text's change of case and
+/// a replacement of plain text one text each.
+#[test]
+fn text_operations_allocate_only_what_they_give() {
+    let tests = "\
+import std.console
+import std.regex
+import std.testing
+
+test counted {
+    let lines = (0..100).map((n) { \"GET /users/{n} 200 {n}ms\" }).collect()
+    let text = lines.join(\"\\n\")
+    let digits = regex.Regex.compile(r\"\\d+\") ?? panic(\"a pattern\")
+    // The first of each, which may take room a thread keeps.
+    _ = (text.lines().length(), lines[0].words().length(), digits.replaceAll(lines[0], \"N\") ?? \"\")
+    console.println(\"split {testing.allocations(() { lines.map((line) { line.split(\" \").length() }).sum() })}\")
+    console.println(\"words {testing.allocations(() { lines.map((line) { line.words().length() }).sum() })}\")
+    console.println(\"splitLines {testing.allocations(() { text.split(\"\\n\").length() })}\")
+    console.println(\"lines {testing.allocations(() { text.lines().length() })}\")
+    console.println(\"sliced {testing.allocations(() { lines.map((line) { (line.slice(4, 9) ?? \"\").byteLength() }).sum() })}\")
+    console.println(\"lowered {testing.allocations(() { lines.map((line) { line.toLower().byteLength() }).sum() })}\")
+    console.println(
+        \"replaced {testing.allocations(() { lines.map((line) { (digits.replaceAll(line, \"N\") ?? \"\").byteLength() }).sum() })}\",
+    )
+}
+";
+    let counts = counts_of("text_operations_counted", tests);
+    let of = |name: &str| counts.iter().find(|(n, _)| n == name).map(|&(_, count)| count).unwrap();
+    assert_eq!(of("words"), of("split"), "{counts:?}");
+    assert_eq!(of("lines"), of("splitLines"), "{counts:?}");
+    // The array `map` makes, and one text for each line.
+    let mapped = of("split") - 100;
+    for name in ["sliced", "lowered", "replaced"] {
+        assert_eq!(of(name), mapped + 100, "{name}: {counts:?}");
+    }
+}
+
 /// `tondo test` given a file of tests, as one is often given, says the
 /// directory of its project to give instead.
 #[test]

@@ -44,6 +44,8 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("recorder.rs", "BUFFER", "events kept per thread, whichever task they are of"),
     ("recorder.rs", "THREAD", "a thread's number in a trace"),
     ("regex.rs", "ERROR", "written by a call and read by the next, with no wait between"),
+    ("regex.rs", "REPLACED", "a replacement's output, written and copied out within one call"),
+    ("text.rs", "PARTS", "where a split's parts are, written and read within one call"),
     ("replay.rs", "PROGRAM", "a recording's threads, of the program and of C, not its tasks"),
     ("replay.rs", "INSIDE", "set inside a wrapper of a call of C, which a task does not leave"),
     ("replay.rs", "NUMBER", "a recording's threads, of the program and of C, not its tasks"),

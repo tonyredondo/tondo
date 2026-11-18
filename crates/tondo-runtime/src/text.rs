@@ -10,20 +10,47 @@ fn text<'a>(s: *const Str) -> &'a str {
     unsafe { super::str_text(s) }
 }
 
-/// An `Array[String]` of the parts, in one block of pieces, or in `region`
-/// when it is not null, each part a text of its own.
-fn strings<'a>(parts: impl ExactSizeIterator<Item = &'a str> + Clone, region: *mut Region) -> *mut ArrayHeader {
-    let bytes = parts.clone().map(str::len).sum();
+/// An `Array[String]` of the parts of `s`, in one block of pieces, or in
+/// `region` when it is not null, each part a text of its own. Where each
+/// part begins and ends is kept in `PARTS` on the way: the text is read
+/// once, and nothing is allocated but what is given.
+fn strings<'a>(s: &'a str, parts: impl Iterator<Item = &'a str>, region: *mut Region) -> *mut ArrayHeader {
+    PARTS.with_borrow_mut(|kept| {
+        kept.clear();
+        let base = s.as_ptr() as usize;
+        kept.extend(parts.map(|part| (part.as_ptr() as usize - base, part.len())));
+        let made = pieces(s, kept, region);
+        if kept.capacity() > PARTS_KEPT {
+            *kept = Vec::new();
+        }
+        made
+    })
+}
+
+thread_local! {
+    /// Where the parts of the last split by lines, by words, into
+    /// characters or into a limit of pieces begin, and their lengths: one
+    /// for each thread, as each split ends before the next.
+    static PARTS: std::cell::RefCell<Vec<(usize, usize)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The most parts `PARTS` keeps room for once a split is done.
+const PARTS_KEPT: usize = 4096;
+
+/// The pieces of `s` that `parts` says, and the array of them.
+fn pieces(s: &str, parts: &[(usize, usize)], region: *mut Region) -> *mut ArrayHeader {
+    let bytes = parts.iter().map(|&(_, len)| len).sum();
+    let part = |&(at, len): &(usize, usize)| &s.as_bytes()[at..at + len];
     if !region.is_null() {
         let (mut pieces, array) = RegionPieces::with_array(region, parts.len(), bytes);
-        for (index, part) in parts.enumerate() {
-            unsafe { *(element(array, 8, index) as *mut *mut Str) = pieces.push(part.as_bytes()) };
+        for (index, at) in parts.iter().enumerate() {
+            unsafe { *(element(array, 8, index) as *mut *mut Str) = pieces.push(part(at)) };
         }
         return array;
     }
     let (mut pieces, array) = Pieces::with_array(parts.len(), bytes);
-    for (index, part) in parts.enumerate() {
-        unsafe { *(element(array, 8, index) as *mut *mut Str) = pieces.push(part.as_bytes()) };
+    for (index, at) in parts.iter().enumerate() {
+        unsafe { *(element(array, 8, index) as *mut *mut Str) = pieces.push(part(at)) };
     }
     pieces.finish();
     array
@@ -41,17 +68,8 @@ pub unsafe extern "C" fn tondo_rt_text_split(
 ) -> *mut ArrayHeader {
     let (s, separator) = (text(s), text(separator));
     let limit = usize::try_from(limit).ok().filter(|&limit| limit > 0);
-    if separator.is_empty() {
-        let mut chars: Vec<&str> = s.char_indices().map(|(at, c)| &s[at..at + c.len_utf8()]).collect();
-        if let Some(limit) = limit.filter(|&limit| chars.len() > limit) {
-            let rest = chars[limit - 1..].iter().map(|c| c.len()).sum::<usize>();
-            chars.truncate(limit - 1);
-            chars.push(&s[s.len() - rest..]);
-        }
-        return strings(chars.into_iter(), region);
-    }
-    if let Some(limit) = limit {
-        return strings(s.splitn(limit, separator).collect::<Vec<&str>>().into_iter(), region);
+    if separator.is_empty() || limit.is_some() {
+        return split_rarely(s, separator, limit, region);
     }
     let (s, separator) = (s.as_bytes(), separator.as_bytes());
     let finder = memchr::memmem::Finder::new(separator);
@@ -96,6 +114,23 @@ pub unsafe extern "C" fn tondo_rt_text_split(
     array
 }
 
+/// `tondo_rt_text_split` into characters, or into at most `limit` pieces:
+/// apart, so that the code of a split by a separator stays as small as it
+/// is.
+#[inline(never)]
+fn split_rarely(s: &str, separator: &str, limit: Option<usize>, region: *mut Region) -> *mut ArrayHeader {
+    if separator.is_empty() {
+        let mut chars: Vec<&str> = s.char_indices().map(|(at, c)| &s[at..at + c.len_utf8()]).collect();
+        if let Some(limit) = limit.filter(|&limit| chars.len() > limit) {
+            let rest = chars[limit - 1..].iter().map(|c| c.len()).sum::<usize>();
+            chars.truncate(limit - 1);
+            chars.push(&s[s.len() - rest..]);
+        }
+        return strings(s, chars.into_iter(), region);
+    }
+    strings(s, s.splitn(limit.unwrap_or(usize::MAX), separator), region)
+}
+
 /// The scalar that starts at a byte offset of a string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_scalar_at(s: *const Str, offset: i64) -> u32 {
@@ -128,15 +163,15 @@ pub unsafe extern "C" fn tondo_rt_text_find_in(s: *const Str, needle: *const Str
 /// The lines, without their `\n` or `\r\n`; no last empty line.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_lines(s: *const Str, region: *mut Region) -> *mut ArrayHeader {
-    let lines: Vec<&str> = text(s).lines().collect();
-    strings(lines.into_iter(), region)
+    let s = text(s);
+    strings(s, s.lines(), region)
 }
 
 /// The pieces between runs of Unicode whitespace.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_words(s: *const Str, region: *mut Region) -> *mut ArrayHeader {
-    let words: Vec<&str> = text(s).split_whitespace().collect();
-    strings(words.into_iter(), region)
+    let s = text(s);
+    strings(s, s.split_whitespace(), region)
 }
 
 #[unsafe(no_mangle)]
@@ -227,12 +262,31 @@ pub unsafe extern "C" fn tondo_rt_text_count(s: *const Str, needle: *const Str) 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_lower(s: *const Str, region: *mut Region) -> *mut Str {
-    str_in(region, text(s).to_lowercase().as_bytes())
+    let s = text(s);
+    match s.is_ascii() {
+        true => cased(str_in(region, s.as_bytes()), <[u8]>::make_ascii_lowercase),
+        false => str_in(region, s.to_lowercase().as_bytes()),
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_upper(s: *const Str, region: *mut Region) -> *mut Str {
-    str_in(region, text(s).to_uppercase().as_bytes())
+    let s = text(s);
+    match s.is_ascii() {
+        true => cased(str_in(region, s.as_bytes()), <[u8]>::make_ascii_uppercase),
+        false => str_in(region, s.to_uppercase().as_bytes()),
+    }
+}
+
+/// An ASCII text just copied, its case changed in place: no text of Rust's
+/// between, as a text of another case would be. The empty text, kept for
+/// good, has no bytes to change.
+fn cased(text: *mut Str, change: fn(&mut [u8])) -> *mut Str {
+    let len = unsafe { (*text).len };
+    if len > 0 {
+        unsafe { change(std::slice::from_raw_parts_mut((text as *mut u8).add(crate::strings::HEADER), len)) };
+    }
+    text
 }
 
 /// The integer a text writes in `radix` (2 to 36), with an optional sign
