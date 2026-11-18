@@ -66,12 +66,17 @@ profile {"program": "<pid>", "kind": "tasks", "duration": 1}
 => mailer.to:8 in send
 ```
 
+The tasks are read at one moment, for which the program stands still an
+instant. When the result's `stopped` is false it did not in time, and a task
+that was running is shown where the system had it: ask again.
+
 ## What changed between two moments
 
-`dump` writes the whole program down without stopping it: every task with
-where it is and what it holds, the counters, the live memory. `dump_diff`
-compares two of them: the counters that moved, the memory by the place that
-made it, the tasks that started and ended, and the bindings that changed.
+`dump` writes the whole program down while it goes on running: every task
+with where it is and what it holds, the counters, the live memory.
+`dump_diff` compares two of them: the counters that moved, the memory by the
+place that made it, the tasks that started and ended, and the bindings that
+changed.
 
 ```mcp
 dump {"program": "<pid>", "output": "before.dump.json"}
