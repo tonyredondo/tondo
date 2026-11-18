@@ -1,0 +1,103 @@
+// What still leaves its function beside what the analysis lets go in a
+// region: a number read out of an array carries nothing, but a text read
+// out of one and given to a closure that keeps it stays on the heap; a
+// function value that is called keeps nothing of itself, but one given to
+// another as an argument may be kept, and what a call of it stores stays;
+// a parameter changed in place holds only what it was given, but what a
+// `mut self` method stores into `self`, and a new value written into a
+// `var` parameter, leave with the parameter.
+
+import std.console
+import std.sync
+
+/// A text read out of an array and given to a closure that keeps it.
+fn given(n: Int, keep: fn(String)): Int {
+    var words: Array[String] = []
+    for i in 0..n {
+        words.push("w{i}")
+    }
+    keep(words[0])
+    words.length()
+}
+
+/// A number read out of an array and given to the same closure: the
+/// number carries nothing of the array, which goes in a region.
+fn looked(n: Int, look: fn(Int)): Int {
+    var numbers: Array[Int] = []
+    for i in 0..n {
+        numbers.push(i * 2)
+    }
+    look(numbers[1])
+    numbers.length()
+}
+
+/// An element lent to a function value whose type lends it, `var`: the
+/// call may leave a text of the heap in the array, which stays there.
+fn lent(n: Int, fix: fn(var String)): Int {
+    var words: Array[String] = []
+    for i in 0..n {
+        words.push("w{i}")
+    }
+    fix(var words[0])
+    words[0].length() + words.length()
+}
+
+/// A closure given as an argument to a function value, which may keep it.
+fn handed(run: fn(fn(Int): Int): Int): Int {
+    run((x) { x + 1 })
+}
+
+/// A text a call of a function value stores.
+fn stored(n: Int, save: fn(String)): Int {
+    let label = "s{n}"
+    save(label)
+    n
+}
+
+type Shelf = {
+    items: Array[String]
+}
+
+/// Stores what it is given into `self`.
+fn Shelf.add(mut self, item: String) {
+    self.items.push(item)
+}
+
+/// A text a `mut self` method stores into what the function was given.
+fn shelved(shelf: var Shelf, n: Int) {
+    let label = "item {n}"
+    shelf.add(label)
+}
+
+/// A new value written into a `var` parameter, as `sql.write` does.
+fn renamed(name: var String, n: Int) {
+    for i in 0..n {
+        name = "{name}-{i}"
+    }
+}
+
+fn main() {
+    let sink = sync.Mutex(Array[String]())
+    let a = given(3, (word) { sink.update((all) { all.push(word) }) })
+    let seen = sync.Mutex(0)
+    let d = looked(3, (number) { seen.update((total) { total += number }) })
+    let e = lent(2, (word: var String) { word = "fixed" })
+    let b = handed((f) { f(41) })
+    let saved = sync.Mutex(Array[String]())
+    let c = stored(7, (text) { saved.update((all) { all.push(text) }) })
+    var shelf = Shelf { items: [] }
+    shelved(var shelf, 2)
+    var name = "n"
+    renamed(var name, 3)
+    console.println("{a} {b} {c} {d} {seen.get()} {e} {sink.get()} {saved.get()} {shelf.items} {name}")
+}
+
+// expect-stdout: 3 42 7 3 2 7 [w0] [s7] [item 2] n-0-1-2
+// expect-optimization: 17:20 region stays on the heap: it is passed to a function value, which may keep it
+// expect-optimization: 28:9 region grows an array that goes in a region of `looked`
+// expect-optimization: 39:20 region stays on the heap: it is passed to a function value, which may keep it
+// expect-optimization: 47:9 region stays on the heap: it is passed to a function value, which may keep it
+// expect-optimization: 52:17 region stays on the heap: it is passed to a function value, which may keep it
+// expect-optimization: 63:5 region grows an array that stays on the heap: it is stored in what the function was given
+// expect-optimization: 68:17 region stays on the heap: it is stored in what the function was given
+// expect-optimization: 75:9 region stays on the heap: it is stored in what the function was given

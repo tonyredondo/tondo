@@ -40,7 +40,7 @@ Rvalue::Callback              - gives a C function's address
 Rvalue::Layout                - gives a size
 Rvalue::Reflect               cases/run/regions/erased.to cases/run/regions/natives_formats.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to
 Rvalue::Fixed                 - copies the elements of an array of C's types, which hold no value
-Rvalue::CallIndirect          cases/run/regions/closures.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to
+Rvalue::CallIndirect          cases/run/regions/closures.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/kept_still.to
 Rvalue::Erase                 cases/run/regions/closures.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to cases/run/regions/runtime_arrays.to cases/run/regions/closures_held.to
 Rvalue::Spawn                 cases/run/regions/tasks.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_arrays.to
 Rvalue::TestMembers           - gives the runner a suite's functions, which hold no value

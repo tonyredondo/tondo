@@ -517,7 +517,7 @@ fn place(
             .filter(|((_, verdict), placed)| **placed && !verdict.own)
             .map(|((site, _), _)| site.at)
             .collect();
-        let made = made(&flows[index], body, loans, sites, &placed, &gives);
+        let made = made(&flows[index], body, types, loans, sites, &placed, &gives);
         if whole[index] && !body.ret.is_some_and(|ret| made[ret.0 as usize]) {
             whole[index] = false;
             for call in &summaries[index].calls {
@@ -1194,7 +1194,7 @@ fn holding(
         if !region.contains(&true) {
             return found;
         }
-        let made = made(flow, body, loans, sites, region, call_made);
+        let made = made(flow, body, types, loans, sites, region, call_made);
         let mut changed = false;
         for (at, site) in sites.iter().enumerate() {
             let (local, span) = (site.local, site.span);
@@ -1367,6 +1367,7 @@ fn unchanged(body: &Body, types: &Types, local: Local) -> Option<(String, Span, 
 fn made(
     flow: &Flow,
     body: &Body,
+    types: &Types,
     loans: &[Vec<bool>],
     sites: &[Site],
     region: &[bool],
@@ -1436,10 +1437,29 @@ fn made(
                     Rvalue::Call(Callee::Fn(id), args) => {
                         args.iter().zip(&loans[id.0 as usize]).filter(|&(_, &loan)| loan).for_each(|(arg, _)| lend(arg))
                     }
-                    // The runtime reads what it is given; C and a function
-                    // value may take anything as a loan.
+                    // The runtime reads what it is given; C may take anything
+                    // as a loan, and a function value what its type lends.
                     Rvalue::Call(Callee::Std(_), _) => {}
-                    Rvalue::Call(_, args) | Rvalue::CallIndirect(_, args) => args.iter().for_each(lend),
+                    Rvalue::CallIndirect(callee, args) => {
+                        let modes = match callee {
+                            Operand::Copy(place) => match types.kind(types.repr(body.place_ty(types, place))) {
+                                TyKind::Fn(_, _, _, modes, _) => Some(modes.clone()),
+                                _ => None,
+                            },
+                            Operand::Const(_) => None,
+                        };
+                        for (at, arg) in args.iter().enumerate() {
+                            let lent = modes.as_ref().is_none_or(|modes| {
+                                modes
+                                    .get(at)
+                                    .is_none_or(|mode| matches!(mode, crate::ast::Mode::Mut | crate::ast::Mode::Var))
+                            });
+                            if lent {
+                                lend(arg);
+                            }
+                        }
+                    }
+                    Rvalue::Call(_, args) => args.iter().for_each(lend),
                     _ => {}
                 }
             }
@@ -2288,7 +2308,7 @@ fn fate(flow: &Flow, body: &Body, types: &Types, start: Local, summaries: &[Summ
     let parts = flow.called[start.0 as usize];
     let (mut held, mut variants) = flow.holders_in(types, body, start, parts, flow.start_variants(start));
     through(flow, body, types, &mut held, &mut variants, summaries);
-    fate_of(flow, body, &held, &variants, summaries, bodies)
+    fate_of(flow, body, types, &held, &variants, summaries, bodies)
 }
 
 /// Adds to the locals `held` that may hold a value the results of the
@@ -2340,17 +2360,27 @@ fn returned_by_error(
 ) -> bool {
     let (mut held, mut variants) = flow.holders_in(types, body, start, true, variant_bit(0));
     through(flow, body, types, &mut held, &mut variants, summaries);
-    !matches!(fate_of(flow, body, &held, &variants, summaries, bodies), Fate::Returned)
+    !matches!(fate_of(flow, body, types, &held, &variants, summaries, bodies), Fate::Returned)
 }
 
 /// What becomes of what the locals `held` hold.
-fn fate_of(flow: &Flow, body: &Body, held: &[bool], variants: &[u64], summaries: &[Summary], bodies: &[Body]) -> Fate {
+fn fate_of(
+    flow: &Flow,
+    body: &Body,
+    types: &Types,
+    held: &[bool],
+    variants: &[u64],
+    summaries: &[Summary],
+    bodies: &[Body],
+) -> Fate {
     let holds = |local: Local| held[local.0 as usize];
     // A place that reads what it holds: not a variant of a union that holds
-    // none of it, as the error a `?` returns.
+    // none of it, as the error a `?` returns, nor a part that counts
+    // nothing, as a number read out of an array, which can carry none of it.
     let passes = |place: &Place| {
         holds(place.local)
             && variant_read(place).is_none_or(|variant| variants[place.local.0 as usize] & variant_bit(variant) != 0)
+            && (place.path.is_empty() || types.needs_drop(body.place_ty(types, place)))
     };
     let reads = |operand: &Operand| matches!(operand, Operand::Copy(place) if passes(place));
     let outside = &flow.outside;
@@ -2401,9 +2431,13 @@ fn fate_of(flow: &Flow, body: &Body, held: &[bool], variants: &[u64], summaries:
                     }
                     Rvalue::Call(Callee::Std(_), _) => {}
                     Rvalue::Call(..) => return kept("it is passed to C, which may keep it", *span),
-                    Rvalue::CallIndirect(..) => {
+                    // A function value that is called keeps nothing of
+                    // itself: what it captured, a closure captured for good
+                    // (`Erase`), and only what it is given may stay.
+                    Rvalue::CallIndirect(_, args) if args.iter().any(reads) => {
                         return kept("it is passed to a function value, which may keep it", *span);
                     }
+                    Rvalue::CallIndirect(..) => {}
                     Rvalue::Erase(..) if spawned.contains(&place.local) => return kept("a task takes it", *span),
                     Rvalue::Erase(..) => return kept("a closure captures it", *span),
                     Rvalue::Spawn(..) => return kept("a task takes it", *span),
@@ -2593,7 +2627,7 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize], flows: &[Flow], si
                     && made.iter().zip(held.iter().zip(&variants)).all(|(&local, (held, variants))| {
                         let fate = match flow.called[local.0 as usize] {
                             true => fate(flow, body, types, local, &summaries, bodies),
-                            false => fate_of(flow, body, held, variants, &summaries, bodies),
+                            false => fate_of(flow, body, types, held, variants, &summaries, bodies),
                         };
                         !matches!(fate, Fate::Kept(..))
                     })

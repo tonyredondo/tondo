@@ -107,6 +107,7 @@ fn main() {
 // expect-optimization: 53:15 region changes an array that goes in a region of `stack`
 // expect-optimization: 63:5 region in `Array.sort[Int]`, `self[:] = sorted` changes an array that goes in a region of `ordered`
 // expect-optimization: 63:5 region in `Array.sorted[Int]`, `textNative.sortedNatively(self)` goes in a region of `ordered`
+// expect-no-optimization: 63:5 region stays on the heap
 // expect-optimization: 65:5 region in `Array.reverse[Int]`, `self[:] = reversed` changes an array that goes in a region of `ordered`
 // expect-optimization: 75:9 region grows an array that stays on the heap: it holds a value that its region did not make: `names.sort()` at 77:5
 // expect-optimization: 84:5 region changes an array that goes in a region of `sliced`

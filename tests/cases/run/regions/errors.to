@@ -62,8 +62,8 @@ fn found(files: Array[String]): Int ! Problem {
 }
 
 /// The longest word, which a function of the program makes and returns
-/// with its error: the error a `?` passes on may be in the region that word
-/// is in, and so the word stays on the heap.
+/// with an error that holds no text: the word goes in a region its caller
+/// gives.
 fn longest(file: String): String ! fs.FsError {
     let text = fs.readText(file)?
     var best = ""
@@ -78,6 +78,33 @@ fn longest(file: String): String ! fs.FsError {
 fn shout(file: String): Int ! fs.FsError {
     let loud = longest(file)?
     loud.length()
+}
+
+/// The longest word, returned with an error that holds a text the function
+/// makes: the error a `?` passes on may be in the region the word is in,
+/// and so the word stays on the heap.
+fn loudest(file: String): String ! Problem {
+    let text = fs.readText(file) ?? ""
+    var best = ""
+    for word in text.split(" ") {
+        if word.length() > best.length() {
+            best = word
+        }
+    }
+    if best.length() > 4 {
+        fail Problem { word: "{best}!" }
+    }
+    best.toUpper()
+}
+
+/// The error of `loudest`, passed on out of a turn.
+fn shouted(files: Array[String]): Int ! Problem {
+    var total = 0
+    for file in files {
+        let loud = loudest(file)?
+        total += loud.length()
+    }
+    total
 }
 
 fn noise(): Int {
@@ -110,12 +137,16 @@ fn main(): !fs.FsError {
         err(problem) => problem.word
     }
     let f = shout(first)?
+    let g = match shouted([second, first]) {
+        ok(total) => "{total}"
+        err(problem) => problem.word
+    }
     let quiet = noise()
     fs.remove(dir, recursive: true)?
-    console.println("{a} {b} {c}, {d}, {e} {f} {quiet}")
+    console.println("{a} {b} {c}, {d}, {e} {f} {g} {quiet}")
 }
 
-// expect-stdout: 19 27 first line of words, first, line 5 3560
+// expect-stdout: 19 27 first line of words, first, line 5 words! 3560
 // expect-optimization: 18:16 region goes in a region of `counted`
 // expect-optimization: 26:20 region goes in the region of a turn of the loop at line 25
 // expect-optimization: 34:16 region stays on the heap: `whole` returns it
@@ -124,4 +155,6 @@ fn main(): !fs.FsError {
 // expect-optimization: 54:20 region goes in the region of a turn of the loop at line 53
 // expect-optimization: 55:21 region stays on the heap: `found` returns it
 // expect-optimization: 68:16 region goes in a region of `longest`
-// expect-optimization: 75:5 region stays on the heap: `longest` returns it, and `main` passes on the error of `longest`, which `longest` may make in the region of what it returns
+// expect-optimization: 75:5 region goes in a region that the caller of `longest` gives
+// expect-optimization: 95:30 region stays on the heap: `loudest` returns it, and `shouted` passes on the error of `loudest`, which `loudest` may make in the region of what it returns
+// expect-optimization: 97:5 region stays on the heap: `loudest` returns it, and `shouted` passes on the error of `loudest`, which `loudest` may make in the region of what it returns
