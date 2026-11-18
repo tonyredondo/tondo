@@ -58,6 +58,7 @@ mod msgpack;
 mod native;
 mod net;
 mod numbers;
+mod objects;
 mod panics;
 mod pipes;
 mod poll;
