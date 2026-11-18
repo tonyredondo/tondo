@@ -285,7 +285,7 @@ impl Facts {
     /// Adds `a - b <= k` and what follows from it; false when the facts
     /// contradict each other, on a way the program never takes.
     fn add(&mut self, a: Node, b: Node, k: i128) -> bool {
-        if k.abs() >= LIMIT {
+        if k.unsigned_abs() >= LIMIT as u128 {
             return true;
         }
         if self.bound(a, b).is_some_and(|old| old <= k) {
@@ -313,7 +313,7 @@ impl Facts {
                     }
                     continue;
                 }
-                if k.abs() < LIMIT && self.bound(x, y).is_none_or(|old| k < old) {
+                if k.unsigned_abs() < LIMIT as u128 && self.bound(x, y).is_none_or(|old| k < old) {
                     self.0.insert((x, y), k);
                 }
             }
@@ -351,7 +351,7 @@ impl Facts {
                 };
                 ((a, b), k)
             })
-            .filter(|&(_, k)| k.abs() < LIMIT)
+            .filter(|&(_, k)| k.unsigned_abs() < LIMIT as u128)
             .collect();
         self.0 = shifted;
     }
@@ -877,7 +877,7 @@ impl Prover<'_> {
                         }
                         Write::Other => unreachable!("skipped above"),
                     };
-                    if low.abs() >= LIMIT / 4 || high.abs() >= LIMIT / 4 {
+                    if low.unsigned_abs() >= (LIMIT / 4) as u128 || high.unsigned_abs() >= (LIMIT / 4) as u128 {
                         bounded = false;
                         break;
                     }
@@ -924,7 +924,7 @@ impl Prover<'_> {
                 let additions = arrivals.saturating_mul(each);
                 let low = low.saturating_add(additions.saturating_mul(least));
                 let high = high.saturating_add(additions.saturating_mul(most));
-                if low.abs() >= LIMIT || high.abs() >= LIMIT {
+                if low.unsigned_abs() >= LIMIT as u128 || high.unsigned_abs() >= LIMIT as u128 {
                     continue;
                 }
                 if noting {
@@ -1365,7 +1365,7 @@ fn arithmetic(op: crate::ast::BinOp, (a_low, a_high): (i128, i128), (b_low, b_hi
         BinOp::Sub => (clamp(a_low - b_high), clamp(a_high - b_low)),
         _ => {
             // Bounds at the limit stand for none: so does a product of one.
-            if [a_low, a_high, b_low, b_high].iter().any(|v| v.abs() >= LIMIT) {
+            if [a_low, a_high, b_low, b_high].iter().any(|v| v.unsigned_abs() >= LIMIT as u128) {
                 return (-LIMIT, LIMIT);
             }
             let products = [(a_low, b_low), (a_low, b_high), (a_high, b_low), (a_high, b_high)]

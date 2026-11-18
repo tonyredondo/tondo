@@ -1,0 +1,53 @@
+// Running totals that a loop both adds to and subtracts from, by values
+// nothing bounds: the prover's bound of such a total has no end, which it
+// says, and keeps both overflow checks. A total over the numbers that
+// leaves out the large ones, one that takes off the last of a list, and
+// one over a sliding window of a deque.
+
+import std.console
+
+fn drained(numbers: Array[Int]): Int {
+    var sum = 0
+    for n in numbers {
+        sum += n
+        if n > 3 {
+            sum -= n
+        }
+    }
+    sum
+}
+
+fn trailing(numbers: Array[Int]): Int {
+    var sum = 0
+    for n in numbers {
+        sum += n
+        sum -= numbers.last() ?? 0
+    }
+    sum
+}
+
+fn windowed(numbers: Array[Int], size: Int): Int {
+    var window = Deque[Int]()
+    var sum = 0
+    var best = 0
+    for n in numbers {
+        window.push(n)
+        sum += n
+        if window.length() > size {
+            sum -= window.popFront() ?? 0
+        }
+        if sum > best {
+            best = sum
+        }
+    }
+    best
+}
+
+fn main() {
+    console.println("{drained([1, 5, 2, 8])} {trailing([1, 2, 3])} {windowed([1, 5, 2, 8, 3, 1], 2)}")
+}
+
+// expect-stdout: 3 -3 11
+// expect-optimization: 12:9 checked keeps its overflow check, in a loop
+// expect-optimization: 14:13 checked keeps its overflow check, in a loop
+// expect-optimization: 37:13 checked keeps its overflow check, in a loop
