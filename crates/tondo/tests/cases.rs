@@ -134,7 +134,8 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
         return Ok(());
     }
     let compiler = env!("CARGO_BIN_EXE_tondo");
-    let binary = scratch.join(path.file_stem().unwrap());
+    let binary = scratch.join(own(path)).join(path.file_stem().unwrap());
+    std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
     // From its directory, so that locations read `case.to:4:5`.
     let mut build = Command::new(compiler);
     build
@@ -149,7 +150,7 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
         .args(extra)
         .env("XDG_CACHE_HOME", scratch.join("cache"));
     let coverage = std::env::var_os("TONDO_CASES_COVERAGE")
-        .map(|dir| Path::new(&dir).join(scratch.file_name().unwrap()).join(path.file_stem().unwrap()));
+        .map(|dir| Path::new(&dir).join(scratch.file_name().unwrap()).join(own(path)));
     if let Some(dir) = &coverage {
         std::fs::create_dir_all(dir.join("counts")).unwrap();
         build.env("TONDO_COVERAGE_STD", dir.join("counted"));
@@ -291,6 +292,17 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
         once().map_err(|e| if repeat > 1 { format!("run {round} of {repeat}: {e}") } else { e })?;
     }
     Ok(())
+}
+
+/// A case's own directory under a scratch directory, which its executable
+/// goes in: its path under `tests`, as `cases/run/regions/tasks.to`, which
+/// no directory of cases is named as. Cases of one name in two
+/// directories, as run/tasks.to and run/regions/tasks.to, run on two
+/// threads at once, and one built where the other ran would find its
+/// executable busy, or run the other's.
+fn own(path: &Path) -> PathBuf {
+    let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests");
+    path.strip_prefix(&tests).unwrap_or(path).to_path_buf()
 }
 
 /// Whether `tondo optimizations` tells each remark a case expects.
