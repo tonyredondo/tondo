@@ -937,7 +937,7 @@ fn main() {
 ```text
 $ tondo optimizations lines.to --kind region
 lines.to:7:18: `io.reader(text)` goes in a region of `added` (in added)
-lines.to:10:20: `reader.readLine()` goes in the region of a turn of the loop at line 10 (in added)
+lines.to:10:20: `reader.readLine()` goes in the region of a turn of the loop at line 9 (in added)
 lines.to:18:18: `regex.Regex.compile("[0-9]+")` in `regex.Regex.compile`, `regexNative.compile(` goes in a region of `numbers` (in numbers)
 lines.to:26:9: `all.push(io.reader(text))` grows an array that stays on the heap: it holds an object of the runtime, which a region's value would never let go of (in main, readers)
 lines.to:26:18: `io.reader(text)` goes in a region of `main` (in main)
