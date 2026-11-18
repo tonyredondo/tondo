@@ -43,6 +43,23 @@ pub extern "C" fn tondo_rt_fn_new(
     }
 }
 
+/// A function value whose `size` bytes of captures the caller initializes,
+/// in a region: its last release lets go of nothing, as the region lets go
+/// of it and of its captures, which the region made or count nothing.
+pub(crate) unsafe fn fn_in_region(
+    region: *mut super::regions::Region,
+    code: *const u8,
+    size: usize,
+    release: Option<Glue>,
+    visit: Option<cycles::Visit>,
+) -> *mut FnObject {
+    unsafe {
+        let ptr = super::regions::tondo_rt_region_alloc(region, FN_HEADER + size) as *mut FnObject;
+        ptr.write(FnObject { rc: AtomicUsize::new(super::regions::LAST_IN_REGION), release, code, size, visit });
+        ptr
+    }
+}
+
 /// A function value in room `room` of a frame, which only the frame reads
 /// (`stack.rs`): nothing counts it, as a named function's value, and the
 /// frame lets go of its captures (`tondo_rt_fn_let_go`).

@@ -707,7 +707,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         let room = self.e.fb.ins().stack_addr(POINTER, slot, 0);
                         self.e.call_rt(Rt::FnIn, &[room, code, size, release, visit]).unwrap()
                     }
-                    false => self.e.call_rt(Rt::FnNew, &[code, size, release, visit]).unwrap(),
+                    // A value its holder keeps no longer than a region lives.
+                    false => match self.e.region {
+                        Some(region) => self.e.call_rt(Rt::FnNewIn, &[region, code, size, release, visit]).unwrap(),
+                        None => self.e.call_rt(Rt::FnNew, &[code, size, release, visit]).unwrap(),
+                    },
                 };
                 let captures = self.e.fb.ins().iadd_imm_s(object, FN_HEADER);
                 self.e.store_val(captures, env, value);

@@ -446,6 +446,18 @@ pub unsafe extern "C" fn tondo_rt_box_new_in(region: *mut Region, size: usize) -
     unsafe { boxes::box_in(region, size) }
 }
 
+/// A new function value, as `tondo_rt_fn_new` makes, in the region.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_fn_new_in(
+    region: *mut Region,
+    code: *const u8,
+    size: usize,
+    release: Option<super::Glue>,
+    visit: Option<super::cycles::Visit>,
+) -> *mut super::functions::FnObject {
+    unsafe { super::functions::fn_in_region(region, code, size, release, visit) }
+}
+
 /// Appends the value at `value` to the array in `slot`, as
 /// `tondo_rt_array_push` does, growing it in the region.
 #[unsafe(no_mangle)]

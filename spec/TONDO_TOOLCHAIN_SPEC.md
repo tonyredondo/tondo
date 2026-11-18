@@ -2515,7 +2515,10 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   `push`, `pop` y la escritura de sus elementos, y nombra el cambio, se pasa
   a una función del runtime cuyo código aún no se ha leído, y la nombra,
   o es de una clase que una región no toma aún, y la nombra: una región
-  toma arrays, cajas, arrays que crecen con `push`, pierden el último con
+  toma arrays, cajas, las closures que guarda un valor, como las de los
+  adaptadores de un iterador, si no capturan un valor con cuenta de
+  referencias, como un texto o un array, arrays que crecen con `push`,
+  pierden el último con
   `pop` y cambian en su sitio sus elementos, uno a uno o por tramos, como
   hacen `sort()` y `reverse()`, mapas y sets, que crecen con
   sus inserciones, pierden entradas y cambian en su sitio los valores de

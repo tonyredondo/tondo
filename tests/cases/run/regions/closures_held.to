@@ -1,0 +1,59 @@
+// Closures a value holds, which the frame does not keep: their values go
+// where their holder's place goes, in a region when nothing keeps the
+// holder past it, as a box does, if what they capture counts nothing. A
+// lazy chain, whose adapters hold the closures, in a function and in each
+// turn of a loop; a record of handlers, one of which captures a text and
+// stays on the heap with it; and handlers a lock's state keeps.
+
+import std.console
+import std.sync
+
+/// A lazy chain: its adapters hold the closures.
+fn chained(amounts: Array[Int]): Int {
+    amounts.iter().map((n) { n * 2 }).filter((n) { n % 3 == 0 }).sumBy((n) { n })
+}
+
+/// A chain in each turn, whose region each turn lets go of.
+fn turns(amounts: Array[Int]): Int {
+    var total = 0
+    for k in 1..4 {
+        total += amounts.iter().filter((n) { n % k == 0 }).sumBy((n) { n })
+    }
+    total
+}
+
+type Handlers = {
+    double: fn(Int): Int,
+    label: fn(Int): String,
+}
+
+/// A record of handlers, one capturing a text: the text stays on the heap,
+/// as a closure captures it, and the closure that holds it with it.
+fn handled(n: Int): Int {
+    let prefix = "n{n}"
+    let handlers = Handlers { double: (x) { x * 2 }, label: (x) { "{prefix}:{x}" } }
+    handlers.double(n) + handlers.label(n).length()
+}
+
+/// A closure a lock's state keeps.
+fn locked(k: Int): Int {
+    let handler = sync.Mutex(Handlers { double: (x) { x * k }, label: (x) { "{x}" } })
+    handler.get().double(2)
+}
+
+fn main() {
+    var amounts: Array[Int] = []
+    for i in 0..100 {
+        amounts.push(i)
+    }
+    console.println("{chained(amounts)} {turns(amounts)} {handled(5)} {locked(3)}")
+}
+
+// expect-stdout: 3366 9083 14 6
+// expect-optimization: 13:24 region goes in a region of `chained`
+// expect-optimization: 13:46 region goes in a region of `chained`
+// expect-optimization: 20:40 region goes in the region of a turn of the loop at line 19
+// expect-optimization: 34:39 region goes in a region of `handled`
+// expect-optimization: 33:18 region stays on the heap: a closure captures it
+// expect-optimization: 34:61 region stays on the heap: it holds a value that its region did not make
+// expect-optimization: 40:49 region stays on the heap: it is stored in a lock's state

@@ -2396,6 +2396,23 @@ fn maps_count_alike_in_regions() {
     );
 }
 
+/// A closure a value holds allocates as often in a region as on the heap:
+/// in a lazy chain, in each turn of a loop, in a record of handlers, and
+/// one a lock's state keeps (tests/cases/run/regions/closures_held.to).
+#[test]
+fn closures_held_count_alike_in_regions() {
+    counted_alike(
+        "closures_held",
+        "    var amounts: Array[Int] = []\n    for i in 0..100 {\n        amounts.push(i)\n    }\n",
+        &[
+            ("chained", "chained(amounts)"),
+            ("turns", "turns(amounts)"),
+            ("handled", "handled(5)"),
+            ("locked", "locked(3)"),
+        ],
+    );
+}
+
 /// An array changed in place allocates as often in a region as on the
 /// heap: written by index, pushed and popped, sorted, reversed and written
 /// by a slice, and the program's data copied by its first write

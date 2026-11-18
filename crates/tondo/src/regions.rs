@@ -1179,6 +1179,7 @@ fn holding(
                 | Rvalue::Aggregate(..)
                 | Rvalue::Variant(..)
                 | Rvalue::Array(..)
+                | Rvalue::Erase(..)
                 | Rvalue::ArrayOp(..) => storing.push((at, statement)),
                 _ if place.path.len() > 1 => storing.push((at, statement)),
                 _ => {}
@@ -1277,6 +1278,13 @@ fn holding(
                         if place.path.is_empty() && place.local == local && at_statement == site.at =>
                     {
                         operands.iter().collect()
+                    }
+                    // A closure's captures, which its region lets go of with
+                    // it: the region must have made them.
+                    Rvalue::Erase(captures, ..)
+                        if place.path.is_empty() && place.local == local && at_statement == site.at =>
+                    {
+                        vec![captures]
                     }
                     // The arrays whose elements an array the runtime makes
                     // takes, when they count: the region must have made them.
@@ -1623,6 +1631,9 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
             // first insertion makes the map, where its place goes.
             Rvalue::MapOp(crate::hir::MapOp::New, ..) => continue,
             Rvalue::Slice(..) => Some("regions do not take slices yet"),
+            // A function's value a closure makes, which the frame does not
+            // keep: as a box, where its holder's place goes.
+            Rvalue::Erase(..) if !body.framed.contains(&place.local) => None,
             // A text interpolation makes, `x = "{x}..."` too, which grows
             // `x`'s own text in the region, its room doubling.
             Rvalue::Concat(_) if !body.framed.contains(&place.local) => None,

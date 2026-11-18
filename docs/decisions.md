@@ -7901,3 +7901,17 @@ it. A call that might return its argument was taken before for one that
 keeps it, and the array sorted, the operands of a `concat` sorted after,
 and a text a library function formats and gives back stayed on the heap
 for it.
+
+## A closure a value holds goes in its region
+
+A closure the frame cannot keep, because a value holds it, as the
+adapters of a lazy chain hold theirs (`amounts.iter().map(f).filter(g)`)
+or a record holds its handlers, was made on the heap even in a function
+it never leaves: such a chain allocated a block for each closure at each
+call. It is a place a region takes now, as a box is: its value goes
+where its holder's place goes, made in the region with the count of a
+region's last reference, so that its last release lets go of nothing.
+What it captures must count nothing, as numbers do: a closure that
+captures a text or an array keeps that value on the heap ("a closure
+captures it"), as the code it runs later may keep it, and stays there
+with it, since its region would otherwise hold what it did not make.
