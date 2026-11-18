@@ -568,12 +568,16 @@ the functions of the standard library where those calls are, and
 `--function byChain` gives them because the closures are written in
 `byChain`.
 
-The two closures are still allocated, each time `byChain` runs:
+The two closures are values that the adapters hold, so the frame does not
+take them. They go in a [region](#what-a-region-takes) of `byChain`, and
+nothing of the chain is on the heap:
 
 ```text
-$ tondo optimizations squares.to --function byChain --kind heap
-squares.to:10:27: `(n) { n % 2 == 0 }` is made on the heap: a value holds it: `numbers.iter().filter((n) { n % 2 == 0 }).map((n)…` at 10:5 (in byChain, main)
-squares.to:10:51: `(n) { n * n }` is made on the heap: a value holds it: `numbers.iter().filter((n) { n % 2 == 0 }).map((n)…` at 10:5 (in byChain, main)
+$ tondo optimizations squares.to --function byChain --kind region
+squares.to:10:27: `(n) { n % 2 == 0 }` goes in a region of `byChain` (in byChain)
+squares.to:10:27: `(n) { n % 2 == 0 }` goes in a region of `main` (in main)
+squares.to:10:51: `(n) { n * n }` goes in a region of `byChain` (in byChain)
+squares.to:10:51: `(n) { n * n }` goes in a region of `main` (in main)
 ```
 
 Those of `byArrays` are made in the frame, since its methods only call
@@ -583,17 +587,18 @@ though. A benchmark of the two over a thousand numbers shows both costs:
 ```text
 $ tondo test --bench
 test squares::unit::squares::aThousand ... ok
-  arrays     1.084 µs/op  ±0.3%  0 allocs/op +9 in regions  0 B/op +12448 in regions  1 regions set up/op, 1 used  23.9k ins/op
-  chain      1.641 µs/op  ±0.2%  2 allocs/op  80 B/op  38.2k ins/op
+  arrays     1.121 µs/op  ±0.4%  0 allocs/op +9 in regions  0 B/op +12448 in regions  1 regions set up/op, 1 used  23.9k ins/op
+  chain      1.396 µs/op  ±0.2%  0 allocs/op +2 in regions  0 B/op +96 in regions  1 regions set up/op, 1 used  38.2k ins/op
 ```
 
-The chain allocates its two closures and nothing else, however long the
-array is: less than a hundredth of the memory here. The arrays' form makes
-its arrays in a region, which the row counts apart from the heap, and is
-still the faster of the two, with two thirds of the instructions. The row
-also says how many regions a run sets up and how many of them end holding
-something: one that is set up at every run and never used is a cost with
-nothing against it.
+The chain makes its two closures and nothing else, however long the array
+is: less than a hundredth of the memory here. Neither form touches the
+heap: the arrays' form makes its arrays in a region and the chain its
+closures, which the rows count apart from the heap, and the arrays' form
+is still the faster of the two, with two thirds of the instructions. The
+rows also say how many regions a run sets up and how many of them end
+holding something: one that is set up at every run and never used is a
+cost with nothing against it.
 
 ### What a region takes
 
@@ -814,7 +819,9 @@ loop`.
 A map or a set goes in a region too, as it is inserted into and removed
 from, and so does one whose entries change in place, which is how a program
 counts. An array stays in its region as it is pushed to and popped, written
-by index or by a slice:
+by index or by a slice, and sorted or reversed in place. And a closure that
+a value holds goes where that value goes, when it captures nothing that
+counts, as [those of a chain](#the-closures-of-a-chain) do:
 
 ```tondo
 import std.console
