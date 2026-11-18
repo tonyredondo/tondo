@@ -6315,8 +6315,8 @@ fn reads_a_core_with_the_tasks_that_waited() {
     let program = "import std.console\n\nfn deep(rounds: Int): Int {\n    let _ = console.readLine()\n    rounds + 1\n}\n\n\
         fn middle(rounds: Int): Int {\n    let value = deep(rounds)\n    console.println(\"{value}\")\n    value\n}\n\n\
         enum Way { Fast, Slow(Int) }\n\n\
-        type Order = { id: Int, tags: Array[String], note: String?, @secret pin: Int, way: Way, stock: Map[String, Int] }\n\n\
-        fn main() {\n    let order = Order { id: 7, tags: [\"a\", \"b\"], note: some(\"hi\"), pin: 1234, way: Way.Slow(3), stock: [\"tea\": 2] }\n    \
+        type Order = { id: Int, tags: Array[String], note: String?, @secret pin: Int, way: Way, stock: Map[String, Int], kinds: Set[String] }\n\n\
+        fn main() {\n    let order = Order { id: 7, tags: [\"a\", \"b\"], note: some(\"hi\"), pin: 1234, way: Way.Slow(3), stock: [\"tea\": 2], kinds: Set[\"x\"] }\n    \
         let other = spawn middle(2)\n    console.println(\"ready\")\n    let _ = console.flush()\n    \
         console.println(\"{other.wait()} {order.id} {order.tags.length()}\")\n}\n";
     std::fs::write(dir.join("waits.to"), program).unwrap();
@@ -6367,7 +6367,7 @@ fn reads_a_core_with_the_tasks_that_waited() {
     assert!(locals.contains("rounds") && locals.contains("\"2\""), "{locals}");
     // A value of the program's own type, with its secrets kept.
     let locals = tondo(&["dump", "read", core, "locals", "1", "--json"]).to_string();
-    let shown = "Order { id: 7, tags: [\\\"a\\\", \\\"b\\\"], note: some(\\\"hi\\\"), pin: <secret>, way: Way.Slow(3), stock: [\\\"tea\\\": 2] }";
+    let shown = "Order { id: 7, tags: [\\\"a\\\", \\\"b\\\"], note: some(\\\"hi\\\"), pin: <secret>, way: Way.Slow(3), stock: [\\\"tea\\\": 2], kinds: Set[\\\"x\\\"] }";
     assert!(locals.contains(shown), "{locals}");
 
     // In the editor, as any dump.
