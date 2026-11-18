@@ -2305,10 +2305,29 @@ impl Flow {
 /// result in a region the caller gives makes its parts there, places this
 /// function does not see.
 fn fate(flow: &Flow, body: &Body, types: &Types, start: Local, summaries: &[Summary], bodies: &[Body]) -> Fate {
+    fate_from(flow, body, types, start, None, summaries, bodies)
+}
+
+/// What becomes of the value a parameter was given: as `fate`, but a
+/// parameter changed in place, as `mut self` is, still holds only what it
+/// was given, which stays where it was.
+fn given_fate(flow: &Flow, body: &Body, types: &Types, param: Local, summaries: &[Summary], bodies: &[Body]) -> Fate {
+    fate_from(flow, body, types, param, Some(param), summaries, bodies)
+}
+
+fn fate_from(
+    flow: &Flow,
+    body: &Body,
+    types: &Types,
+    start: Local,
+    param: Option<Local>,
+    summaries: &[Summary],
+    bodies: &[Body],
+) -> Fate {
     let parts = flow.called[start.0 as usize];
     let (mut held, mut variants) = flow.holders_in(types, body, start, parts, flow.start_variants(start));
     through(flow, body, types, &mut held, &mut variants, summaries);
-    fate_of(flow, body, types, &held, &variants, summaries, bodies)
+    fate_of(flow, body, types, param, &held, &variants, summaries, bodies)
 }
 
 /// Adds to the locals `held` that may hold a value the results of the
@@ -2360,14 +2379,17 @@ fn returned_by_error(
 ) -> bool {
     let (mut held, mut variants) = flow.holders_in(types, body, start, true, variant_bit(0));
     through(flow, body, types, &mut held, &mut variants, summaries);
-    !matches!(fate_of(flow, body, types, &held, &variants, summaries, bodies), Fate::Returned)
+    !matches!(fate_of(flow, body, types, None, &held, &variants, summaries, bodies), Fate::Returned)
 }
 
-/// What becomes of what the locals `held` hold.
+/// What becomes of what the locals `held` hold; with `param`, the value
+/// that parameter was given (`given_fate`).
+#[allow(clippy::too_many_arguments)]
 fn fate_of(
     flow: &Flow,
     body: &Body,
     types: &Types,
+    param: Option<Local>,
     held: &[bool],
     variants: &[u64],
     summaries: &[Summary],
@@ -2410,7 +2432,7 @@ fn fate_of(
                 if !read && !holds(place.local) {
                     continue;
                 }
-                if given(place.local) {
+                if given(place.local) && param != Some(place.local) {
                     return kept(where_given(place.local), *span);
                 }
                 if place.path.iter().any(|projection| matches!(projection, Proj::Deref)) {
@@ -2599,7 +2621,7 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize], flows: &[Flow], si
                 .params
                 .iter()
                 .map(|&param| match types.needs_drop(body.locals[param.0 as usize]) {
-                    true => fate(&flows[index], body, types, param, &summaries, bodies),
+                    true => given_fate(&flows[index], body, types, param, &summaries, bodies),
                     false => Fate::Here,
                 })
                 .collect();
@@ -2627,7 +2649,7 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize], flows: &[Flow], si
                     && made.iter().zip(held.iter().zip(&variants)).all(|(&local, (held, variants))| {
                         let fate = match flow.called[local.0 as usize] {
                             true => fate(flow, body, types, local, &summaries, bodies),
-                            false => fate_of(flow, body, types, held, variants, &summaries, bodies),
+                            false => fate_of(flow, body, types, None, held, variants, &summaries, bodies),
                         };
                         !matches!(fate, Fate::Kept(..))
                     })

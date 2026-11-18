@@ -2407,6 +2407,7 @@ fn closures_held_count_alike_in_regions() {
         &[
             ("chained", "chained(amounts)"),
             ("turns", "turns(amounts)"),
+            ("ended", "ended(amounts)"),
             ("handled", "handled(5)"),
             ("locked", "locked(3)"),
         ],
