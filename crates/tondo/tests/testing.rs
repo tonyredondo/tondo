@@ -2327,7 +2327,7 @@ test counted {
 /// `testing.allocations` by a test after `setup`, count the same with
 /// regions as without them: what a region takes is counted as the heap's
 /// would be.
-fn counted_alike(case: &str, setup: &str, calls: &[(&str, &str)]) {
+fn counted_alike(case: &str, setup: &str, calls: &[(&str, &str)]) -> Vec<String> {
     let source =
         std::fs::read_to_string(format!("{}/../../tests/cases/run/regions/{case}.to", env!("CARGO_MANIFEST_DIR")))
             .unwrap();
@@ -2353,7 +2353,9 @@ fn counted_alike(case: &str, setup: &str, calls: &[(&str, &str)]) {
         assert_eq!(counts.len(), calls.len(), "{stdout}");
         counts
     };
-    assert_eq!(counts(&[]), counts(&["--no-regions"]));
+    let counted = counts(&[]);
+    assert_eq!(counted, counts(&["--no-regions"]));
+    counted
 }
 
 /// A text an append grows in place allocates as often in a region as on
@@ -2452,6 +2454,32 @@ fn format_objects_count_alike_in_regions() {
             ("unpacked", "unpacked(\"hello hello\")"),
         ],
     );
+}
+
+/// A deque allocates as often in a region as on the heap: a queue that
+/// slides through its storage, one grown at both ends and written, one of
+/// texts, and one cleared, which stays on the heap; and one that keeps a
+/// window of a steady size slides in the room it took, as many
+/// allocations after ten thousand turns as after a hundred, so that a
+/// queue a server's loop keeps does not grow its region turn by turn
+/// (tests/cases/run/regions/deques.to).
+#[test]
+fn deques_count_alike_in_regions() {
+    let counts = counted_alike(
+        "deques",
+        "",
+        &[
+            ("slid", "slid(30)"),
+            ("hundred", "steady(100)"),
+            ("thousands", "steady(10000)"),
+            ("ends", "ends(10)"),
+            ("words", "words(12)"),
+            ("cleared", "cleared(5)"),
+        ],
+    );
+    let of =
+        |name: &str| counts.iter().find(|line| line.starts_with(&format!("{name} "))).map(|line| &line[name.len()..]);
+    assert_eq!(of("hundred"), of("thousands"), "{counts:?}");
 }
 
 /// An array changed in place allocates as often in a region as on the

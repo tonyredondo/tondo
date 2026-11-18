@@ -1,0 +1,103 @@
+// Deques in a region: grown at either end, emptied from the front and the
+// back and written by index, as a queue that slides through its storage,
+// one that keeps a window of a steady size in the room it has, however
+// many turns it slides, and one of texts the region made; one its function returns stays on the
+// heap, and so does one emptied by `clear()`, which a region does not take
+// yet and the remark names.
+
+import std.console
+
+/// A queue of numbers that slides through its storage.
+fn slid(n: Int): Int {
+    var queue = Deque[Int]()
+    var total = 0
+    for i in 0..n {
+        queue.push(i)
+        if i % 3 != 0 {
+            total += queue.popFront() ?? 0
+        }
+    }
+    total + queue.length()
+}
+
+/// A window of eight that slides `n` turns: its room stays the one it
+/// took, whatever `n` is.
+fn steady(n: Int): Int {
+    var window = Deque[Int]()
+    for i in 0..8 {
+        window.push(i)
+    }
+    var total = 0
+    for i in 0..n {
+        window.push(i)
+        total += window.popFront() ?? 0
+    }
+    total + window.length()
+}
+
+/// Both ends, and a write by index.
+fn ends(n: Int): Int {
+    var numbers = Deque[Int]()
+    for i in 0..n {
+        if i % 2 == 0 {
+            numbers.pushFront(i)
+        } else {
+            numbers.push(i)
+        }
+    }
+    numbers[0] = 100
+    let last = numbers.pop() ?? 0
+    numbers[0] + last + numbers.length()
+}
+
+/// Texts the region made, taken from the front.
+fn words(n: Int): Int {
+    var queue = Deque[String]()
+    for i in 0..n {
+        queue.push("w{i}")
+    }
+    var length = 0
+    for {
+        let word = queue.popFront() ?? break
+        length += word.length()
+    }
+    length
+}
+
+/// A deque returned: on the heap.
+fn made(n: Int): Deque[Int] {
+    var numbers = Deque[Int]()
+    for i in 0..n {
+        numbers.push(i)
+    }
+    numbers
+}
+
+/// Emptied by `clear()`, which a region does not take yet.
+fn cleared(n: Int): Int {
+    var numbers = Deque[Int]()
+    for i in 0..n {
+        numbers.push(i)
+    }
+    numbers.clear()
+    numbers.length()
+}
+
+fn main() {
+    console.println("{slid(30)} {ends(10)} {words(12)} {made(4).length()} {cleared(5)} {steady(100)}")
+}
+
+// expect-stdout: 200 118 26 4 0 4222
+// expect-optimization: 15:9 region grows a deque that goes in a region of `slid`
+// expect-optimization: 17:22 region changes a deque that goes in a region of `slid`
+// expect-optimization: 32:9 region grows a deque that goes in a region of `steady`
+// expect-optimization: 33:18 region changes a deque that goes in a region of `steady`
+// expect-optimization: 43:13 region grows a deque that goes in a region of `ends`
+// expect-optimization: 45:13 region grows a deque that goes in a region of `ends`
+// expect-optimization: 48:5 region changes a deque that goes in a region of `ends`
+// expect-optimization: 49:16 region changes a deque that goes in a region of `ends`
+// expect-optimization: 57:9 region grows a deque that goes in a region of `words`
+// expect-optimization: 57:20 region goes in a region of `words`
+// expect-optimization: 61:20 region changes a deque that goes in a region of `words`
+// expect-optimization: 71:9 region grows a deque that stays on the heap: `made` returns it
+// expect-optimization: 80:9 region grows a deque that stays on the heap: a region changes a deque only by `push`, `pushFront`, `pop`, `popFront` and the writes of its elements yet

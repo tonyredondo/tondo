@@ -1133,11 +1133,15 @@ fn only_appended(body: &Body, inside: &[bool], local: Local) -> bool {
     })
 }
 
-/// Whether `local` is an array that the blocks `inside` a loop only push
-/// to: given its value outside them, never written whole there, nor an
-/// element of it, nor changed otherwise, nor lent, nor passed to a call.
+/// Whether `local` is an array or a deque that the blocks `inside` a loop
+/// only push to: given its value outside them, never written whole there,
+/// nor an element of it, nor changed otherwise, nor lent, nor passed to a
+/// call.
 fn only_pushed(body: &Body, types: &Types, inside: &[bool], local: Local) -> bool {
-    let array = matches!(types.kind(types.repr(body.locals[local.0 as usize])), crate::types::TyKind::Array(_));
+    let array = matches!(
+        types.kind(types.repr(body.locals[local.0 as usize])),
+        crate::types::TyKind::Array(_) | crate::types::TyKind::Deque(_)
+    );
     let ours = |operand: &Operand| matches!(operand, Operand::Copy(place) if place.local == local);
     array
         && body.blocks.iter().enumerate().filter(|&(block, _)| inside[block]).all(|(_, data)| {
@@ -1147,7 +1151,12 @@ fn only_pushed(body: &Body, types: &Types, inside: &[bool], local: Local) -> boo
                         && match &**rvalue {
                             Rvalue::Mutate(mutation, target, ..) if target.local == local => {
                                 target.path.is_empty()
-                                    && matches!(mutation, crate::hir::Mutation::Push | crate::hir::Mutation::Reserve)
+                                    && matches!(
+                                        mutation,
+                                        crate::hir::Mutation::Push
+                                            | crate::hir::Mutation::PushFront
+                                            | crate::hir::Mutation::Reserve
+                                    )
                             }
                             Rvalue::AssignSlice(target, ..) => target.local != local,
                             Rvalue::Call(_, args) | Rvalue::CallIndirect(_, args) => !args.iter().any(ours),
@@ -1367,6 +1376,7 @@ fn holding(
 /// shared, as it is the heap's: why, the code, and its block.
 fn unchanged(body: &Body, types: &Types, local: Local) -> Option<(String, Span, u32)> {
     let map = matches!(types.kind(types.repr(body.locals[local.0 as usize])), TyKind::Map(..) | TyKind::Set(_));
+    let deque = matches!(types.kind(types.repr(body.locals[local.0 as usize])), TyKind::Deque(_));
     positioned(body).find_map(|((block, _), statement)| {
         let Statement::Assign(place, rvalue, span) = statement else { return None };
         let taken = match &**rvalue {
@@ -1374,8 +1384,10 @@ fn unchanged(body: &Body, types: &Types, local: Local) -> Option<(String, Span, 
             Rvalue::Mutate(mutation, target, ..) if target.local == local => matches!(
                 mutation,
                 crate::hir::Mutation::Push
+                    | crate::hir::Mutation::PushFront
                     | crate::hir::Mutation::Reserve
                     | crate::hir::Mutation::Pop
+                    | crate::hir::Mutation::PopFront
                     | crate::hir::Mutation::Insert
                     | crate::hir::Mutation::Remove
             ),
@@ -1385,9 +1397,15 @@ fn unchanged(body: &Body, types: &Types, local: Local) -> Option<(String, Span, 
             },
             _ => return None,
         };
-        let why = match map {
-            true => "a region changes a map only by its insertions, its removals and the values of its entries yet",
-            false => "a region changes an array only by `push`, `pop` and the writes of its elements yet",
+        let why = match (map, deque) {
+            (true, _) => {
+                "a region changes a map only by its insertions, its removals and the values of its entries yet"
+            }
+            (_, true) => {
+                "a region changes a deque only by `push`, `pushFront`, `pop`, `popFront` and the writes of its \
+                 elements yet"
+            }
+            _ => "a region changes an array only by `push`, `pop` and the writes of its elements yet",
         };
         (!taken).then(|| (why.to_string(), *span, block))
     })
@@ -1513,8 +1531,10 @@ fn made(
                                 Rvalue::Aggregate(operands)
                                 | Rvalue::Variant(_, operands)
                                 | Rvalue::Array(operands, _) => operands.iter().all(from),
-                                // The runtime's empty map, which counts nothing.
-                                Rvalue::MapOp(crate::hir::MapOp::New, ..) => true,
+                                // The runtime's empty map, and the program's empty
+                                // array or deque, which count nothing.
+                                Rvalue::MapOp(crate::hir::MapOp::New, ..)
+                                | Rvalue::ArrayOp(crate::hir::ArrayOp::New, ..) => true,
                                 _ => false,
                             };
                     (place.local, from_region)
@@ -1660,6 +1680,8 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
     let mut found = Vec::new();
     let array =
         |place: &Place| matches!(types.kind(types.repr(body.place_ty(types, place))), crate::types::TyKind::Array(_));
+    let deque =
+        |place: &Place| matches!(types.kind(types.repr(body.place_ty(types, place))), crate::types::TyKind::Deque(_));
     const TEXTS: Option<&str> = Some("regions do not take texts yet");
     const RUNTIME: Option<&str> = Some("regions do not take what the runtime makes yet");
     let kind = |local: Local| types.kind(types.repr(body.locals[local.0 as usize])).clone();
@@ -1672,6 +1694,7 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
         let what = match kind(place.local) {
             crate::types::TyKind::Map(..) if entry_value(place) => "changes a map that ",
             crate::types::TyKind::Array(_) if element(place) => "changes an array that ",
+            crate::types::TyKind::Deque(_) if element(place) => "changes a deque that ",
             _ => "",
         };
         if !what.is_empty() {
@@ -1708,12 +1731,16 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
                 target,
                 ..,
             ) => {
-                let refused = match (array(target), mutation) {
-                    (true, crate::hir::Mutation::Push) => None,
-                    (true, _) => Some("a region grows an array only at its end yet"),
-                    (false, _) => Some("regions do not take deques yet"),
+                // A deque grows at either end, in the region of its place.
+                let (what, refused) = match (array(target), mutation) {
+                    (true, crate::hir::Mutation::Push) => ("grows an array that ", None),
+                    (true, _) => ("grows an array that ", Some("a region grows an array only at its end yet")),
+                    (false, crate::hir::Mutation::InsertAt) => {
+                        ("grows a deque that ", Some("a region grows a deque only at its ends yet"))
+                    }
+                    (false, _) => ("grows a deque that ", None),
                 };
-                found.push(Site { local: target.local, span: *span, what: "grows an array that ", at, refused });
+                found.push(Site { local: target.local, span: *span, what, at, refused });
                 continue;
             }
             // Room a loop is about to push into, which goes where its
@@ -1730,6 +1757,13 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
             // `sort()` and `reverse()` do: the collection, made unique first
             // when it is shared, goes where its place goes, as one an
             // insertion or a push grows.
+            Rvalue::AssignSlice(target, ..)
+            | Rvalue::Mutate(crate::hir::Mutation::Pop | crate::hir::Mutation::PopFront, target, ..)
+                if deque(target) && target.path.is_empty() =>
+            {
+                found.push(Site { local: target.local, span: *span, what: "changes a deque that ", at, refused: None });
+                continue;
+            }
             Rvalue::AssignSlice(target, ..) | Rvalue::Mutate(crate::hir::Mutation::Pop, target, ..)
                 if array(target) && target.path.is_empty() =>
             {

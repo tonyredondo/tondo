@@ -627,10 +627,11 @@ pub unsafe extern "C" fn tondo_rt_deque_push(
     front: u8,
     retain: Option<Glue>,
     release: Option<Glue>,
+    region: *mut super::regions::Region,
 ) {
     unsafe {
         let front = front != 0;
-        reserve(slot, size, front as usize, !front as usize, true, retain, release);
+        reserve_in(slot, size, front as usize, !front as usize, true, retain, release, region);
         let a = *slot;
         if front {
             (*a).head -= 1;
@@ -650,12 +651,13 @@ pub unsafe extern "C" fn tondo_rt_deque_pop_front(
     size: usize,
     retain: Option<Glue>,
     release: Option<Glue>,
+    region: *mut super::regions::Region,
 ) -> u8 {
     unsafe {
         if (**slot).len == 0 {
             return 0;
         }
-        reserve(slot, size, 0, 0, false, retain, release);
+        reserve_in(slot, size, 0, 0, false, retain, release, region);
         let a = *slot;
         std::ptr::copy_nonoverlapping(element(a, size, 0), out, size);
         (*a).head += 1;

@@ -370,6 +370,9 @@ impl Rt {
             // last, and a map that loses an entry, in the region of their
             // place.
             Rt::ArrayUnique | Rt::ArrayPop | Rt::ArrayAssignSlice | Rt::MapRemove => true,
+            // A deque that grows at either end, or loses its first, in the
+            // region of its place.
+            Rt::DequePush | Rt::DequePopFront => true,
             _ => false,
         }
     }
@@ -544,8 +547,8 @@ impl Rt {
             Rt::ArrayInsert => ("tondo_rt_array_insert", &[I64, I64, I64, I64, I64, I64, I64], &[]),
             Rt::ArrayRemoveAt => ("tondo_rt_array_remove_at", &[I64, I64, I64, I64, I64, I64], &[I8]),
             Rt::ArrayClear => ("tondo_rt_array_clear", &[I64, I64, I64], &[]),
-            Rt::DequePush => ("tondo_rt_deque_push", &[I64, I64, I64, I8, I64, I64], &[]),
-            Rt::DequePopFront => ("tondo_rt_deque_pop_front", &[I64, I64, I64, I64, I64], &[I8]),
+            Rt::DequePush => ("tondo_rt_deque_push", &[I64, I64, I64, I8, I64, I64, I64], &[]),
+            Rt::DequePopFront => ("tondo_rt_deque_pop_front", &[I64, I64, I64, I64, I64, I64], &[I8]),
             Rt::SbArray => ("tondo_rt_sb_array", &[I64, I64, I64, I64], &[]),
             Rt::MapEmpty => ("tondo_rt_map_empty_one", &[], &[I64]),
             Rt::MapRetain => ("tondo_rt_map_retain", &[I64], &[]),

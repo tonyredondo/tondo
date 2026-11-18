@@ -7957,3 +7957,18 @@ parser goes in the region of `decode` now. An image's operations run on the
 runtime's threads, which the call waits for, so a count of what they
 allocate moves with the machine's load: images, like files, are left
 out of the test that holds objects to the heap's counts.
+
+## Deques grow in their region
+
+A deque, which grows at both ends, stayed on the heap in every function,
+"regions do not take deques yet". Its storage is an array's, the same
+header and the same growth into room of its own, so it is a place a
+region takes as an array is: grown by `push` or `pushFront`, emptied by
+`pop` or `popFront` and written by index, made unique first when it is
+shared, in the region of its place. `clear()` is not taken yet, and the
+remark names it, as an array's other changes. A value a loop's turn
+makes and pushes into a deque that the loop only grows goes in the
+region of the function, as one pushed into an array does. The empty
+deque `Deque[T]()` is the program's data, which counts nothing, as the
+empty array and the empty map are.
+
