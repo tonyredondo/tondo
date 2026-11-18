@@ -1407,7 +1407,8 @@ y cada evento como una línea de JSON, para una herramienta o un modelo:
   recientes, y cuántas hubo.
 - Cuando una tarea para, las demás paran en su siguiente línea, y todas
   siguen juntas. `tasks` dice dónde está cada una, también las que esperan,
-  en un canal, un lock o un `sleep`, o están listas para seguir: `task` y
+  en un canal, un lock o un `sleep`, o están listas para seguir, o dentro de
+  una llamada de C, donde la llamaron: `task` y
   `stack` muestran sus marcos y sus bindings como los de una parada. De
   una que espera, `for` dice qué: un lock de `std.sync` y la tarea que lo
   tiene, con dónde lo tomó; un valor de un canal o sitio en él, con lo que
