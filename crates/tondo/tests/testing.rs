@@ -2323,6 +2323,39 @@ test counted {
     assert_eq!(counts[0], counts[1], "with regions and without");
 }
 
+/// The functions of a case of `tests/cases/run/regions`, called under
+/// `testing.allocations` by a test after `setup`, count the same with
+/// regions as without them: what a region takes is counted as the heap's
+/// would be.
+fn counted_alike(case: &str, setup: &str, calls: &[(&str, &str)]) {
+    let source =
+        std::fs::read_to_string(format!("{}/../../tests/cases/run/regions/{case}.to", env!("CARGO_MANIFEST_DIR")))
+            .unwrap();
+    let (before, after) = source.split_once("\nfn main() {").unwrap();
+    let after = after.split_once("\n}\n").unwrap().1;
+    let shapes = format!("{before}\n{after}").replace("import std.console\n", "");
+    let shapes = shapes.lines().filter(|line| !line.starts_with("// expect")).collect::<Vec<_>>().join("\n");
+    let mut tests = format!("import std.console\nimport std.testing\n{shapes}\ntest counted {{\n{setup}");
+    for (name, call) in calls {
+        tests += &format!("    console.println(\"{name} {{testing.allocations(() {{ {call} }})}}\")\n");
+    }
+    tests += "}\n";
+    let dir = project(&format!("{case}_counted"), &tests);
+    let counts = |regions: &[&str]| -> Vec<String> {
+        let (stdout, stderr, status) = tondo(&dir, &[&["test", "--show-output"], regions].concat());
+        assert_eq!(status, 0, "{stdout}{stderr}");
+        let counts: Vec<String> = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| calls.iter().any(|(name, _)| line.starts_with(&format!("{name} "))))
+            .map(String::from)
+            .collect();
+        assert_eq!(counts.len(), calls.len(), "{stdout}");
+        counts
+    };
+    assert_eq!(counts(&[]), counts(&["--no-regions"]));
+}
+
 /// A text an append grows in place allocates as often in a region as on
 /// the heap wherever it was made: one a loop extends, one an operation
 /// gives, one a function appends to, one a caller appends to, and one in
@@ -2330,36 +2363,18 @@ test counted {
 /// the room they ask for (tests/cases/run/regions/texts_room.to).
 #[test]
 fn texts_an_append_grows_count_alike_in_regions() {
-    let source =
-        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/cases/run/regions/texts_room.to"))
-            .unwrap();
-    let shapes = source.split("\nfn main()").next().unwrap().replace("import std.console\n", "");
-    let tests = format!(
-        "import std.console\nimport std.testing\n{shapes}\ntest counted {{\n    \
-         let names = [\"  ada  \", \" bob\", \"eve  \", \"  ian \"].repeat(25)\n    \
-         console.println(\"receipt {{testing.allocations(() {{ receipt(100) }})}}\")\n    \
-         console.println(\"trimmed {{testing.allocations(() {{ trimmed(names) }})}}\")\n    \
-         console.println(\"given {{testing.allocations(() {{ given(100) }})}}\")\n    \
-         console.println(\"returned {{testing.allocations(() {{ returned(100) }})}}\")\n    \
-         console.println(\"fielded {{testing.allocations(() {{ fielded(100) }})}}\")\n    \
-         console.println(\"users {{testing.allocations(() {{ users(100) }})}}\")\n}}\n"
+    counted_alike(
+        "texts_room",
+        "    let names = [\"  ada  \", \" bob\", \"eve  \", \"  ian \"].repeat(25)\n",
+        &[
+            ("receipt", "receipt(100)"),
+            ("trimmed", "trimmed(names)"),
+            ("given", "given(100)"),
+            ("returned", "returned(100)"),
+            ("fielded", "fielded(100)"),
+            ("users", "users(100)"),
+        ],
     );
-    let dir = project("texts_room", &tests);
-    let counts = |regions: &[&str]| -> Vec<String> {
-        let (stdout, stderr, status) = tondo(&dir, &[&["test", "--show-output"], regions].concat());
-        assert_eq!(status, 0, "{stdout}{stderr}");
-        let counts: Vec<String> = stdout
-            .lines()
-            .map(str::trim)
-            .filter(|line| {
-                ["receipt", "trimmed", "given", "returned", "fielded", "users"].iter().any(|s| line.starts_with(s))
-            })
-            .map(String::from)
-            .collect();
-        assert_eq!(counts.len(), 6, "{stdout}");
-        counts
-    };
-    assert_eq!(counts(&[]), counts(&["--no-regions"]));
 }
 
 /// A map or a set allocates as often in a region as on the heap: made by
@@ -2367,38 +2382,40 @@ fn texts_an_append_grows_count_alike_in_regions() {
 /// is shared (tests/cases/run/regions/maps.to).
 #[test]
 fn maps_count_alike_in_regions() {
-    let source =
-        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/cases/run/regions/maps.to")).unwrap();
-    let (before, after) = source.split_once("\nfn main() {").unwrap();
-    let after = after.split_once("\n}\n").unwrap().1;
-    let shapes = format!("{before}\n{after}").replace("import std.console\n", "");
-    let shapes = shapes.lines().filter(|line| !line.starts_with("// expect")).collect::<Vec<_>>().join("\n");
-    let tests = format!(
-        "import std.console\nimport std.testing\n{shapes}\ntest counted {{\n    \
-         let text = \"a b c a b a\"\n    \
-         console.println(\"counts {{testing.allocations(() {{ counts(text) }})}}\")\n    \
-         console.println(\"distinct {{testing.allocations(() {{ distinct() }})}}\")\n    \
-         console.println(\"squares {{testing.allocations(() {{ squares(1000).length() }})}}\")\n    \
-         console.println(\"shared {{testing.allocations(() {{ shared() }})}}\")\n    \
-         console.println(\"numbers {{testing.allocations(() {{ numbers() }})}}\")\n    \
-         console.println(\"tally {{testing.allocations(() {{ tally(text) }})}}\")\n}}\n"
+    counted_alike(
+        "maps",
+        "    let text = \"a b c a b a\"\n",
+        &[
+            ("counts", "counts(text)"),
+            ("distinct", "distinct()"),
+            ("squares", "squares(1000).length()"),
+            ("shared", "shared()"),
+            ("numbers", "numbers()"),
+            ("tally", "tally(text)"),
+        ],
     );
-    let dir = project("maps_counted", &tests);
-    let counts = |regions: &[&str]| -> Vec<String> {
-        let (stdout, stderr, status) = tondo(&dir, &[&["test", "--show-output"], regions].concat());
-        assert_eq!(status, 0, "{stdout}{stderr}");
-        let counts: Vec<String> = stdout
-            .lines()
-            .map(str::trim)
-            .filter(|line| {
-                ["counts", "distinct", "squares", "shared", "numbers", "tally"].iter().any(|s| line.starts_with(s))
-            })
-            .map(String::from)
-            .collect();
-        assert_eq!(counts.len(), 6, "{stdout}");
-        counts
-    };
-    assert_eq!(counts(&[]), counts(&["--no-regions"]));
+}
+
+/// An array changed in place allocates as often in a region as on the
+/// heap: written by index, pushed and popped, sorted, reversed and written
+/// by a slice, and the program's data copied by its first write
+/// (tests/cases/run/regions/arrays_written.to).
+#[test]
+fn arrays_changed_count_alike_in_regions() {
+    counted_alike(
+        "arrays_written",
+        "",
+        &[
+            ("squares", "squares()"),
+            ("pushed", "pushed()"),
+            ("sorted", "sorted()"),
+            ("stack", "stack()"),
+            ("ordered", "ordered()"),
+            ("texts", "texts()"),
+            ("sliced", "sliced()"),
+            ("inserted", "inserted()"),
+        ],
+    );
 }
 
 /// `tondo test` given a file of tests, as one is often given, says the
