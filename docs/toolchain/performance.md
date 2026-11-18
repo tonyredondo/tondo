@@ -209,9 +209,10 @@ stats.to:19:5: `"{sensor}: {value:.1}"` is not made in the frame: it is copied (
 stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in label)
 stats.to:19:5: `"{sensor}: {value:.1}"` goes in a region of `main` (in main)
 stats.to:19:5: `"{sensor}: {value:.1}"` stays on the heap: `label` returns it with what it was given (in label)
-stats.to:19:17: `value` in `formats.formatFloat`, `formatNumber(` stays a call of `formats.formatNumber`: its body costs 31, more than the 30 inlining takes (in label)
-stats.to:19:17: `value` stays a call of `formats.formatFloat`: its body costs 80, more than the 30 inlining takes (in main)
+stats.to:19:17: `value` in `formats.formatFloat`, `formatNumber(` stays a call of `formats.formatNumber`: its body costs 31, more than the 30 inlining takes; 3 places in it make values on the heap, 2 in regions of its own and 4 in the region its caller gives (in label)
+stats.to:19:17: `value` stays a call of `formats.formatFloat`: its body costs 80, more than the 30 inlining takes; 6 places in it make values in regions of its own and 6 in the region its caller gives (in main)
 stats.to:19:17: `value` is inlined: the body of `formats.formatFloat` is copied here (in label)
+stats.to:19:17: `value` in `String.removePrefix`, `self.slice(prefix.length(), self.length())` stays on the heap: `label` returns it with what it was given (in label)
 stats.to:19:17: `value` in `formats.formatFloat`, `textNative.float(value, precision, exponent, sing…` stays on the heap: `label` returns it with what it was given (in label)
 stats.to:19:17: `value` in `formats.formatFloat`, `written.replace("e", "E")` stays on the heap: `label` returns it with what it was given (in label)
 stats.to:24:14: `0..1000` runs four turns at a time (in main)
@@ -227,7 +228,9 @@ from the bottom:
 
 - **Calls.** `mean` and `label` were inlined into `main`: their bodies are
   copied where they are called, and the call costs nothing. A call that is
-  kept says what its body costs against the limit.
+  kept says what its body costs against the limit, and how many places in
+  the function it calls, and in those that one calls, make values, and
+  where: they are places of the code, not the allocations of a run.
 - **Arithmetic.** `n % 2` became a mask, since `n` is known not to be
   negative.
 - **Loops.** Both loops run four turns at a time, and the array is given
@@ -243,10 +246,10 @@ from the bottom:
   ([What a region takes](#what-a-region-takes)). So does the label where
   `main` inlined `label`: the frame does not take it, and the line says
   why, and the region does. Each place has a line for each copy of its
-  code, named at its end. The two lines that begin `` `value` in
-  `formats.formatFloat` `` are of the library's code that writes the
-  number, copied into `label`: the text it makes may be the one that
-  `label` returns, so it is told with the program's own.
+  code, named at its end. The last three lines at 19:17 are of the
+  library's code that writes the number, copied into `label`: the text it
+  makes may be the one that `label` returns, so it is told with the
+  program's own.
 - **Checks.** The compiler proved that `count += 1` cannot overflow in one
   copy of the loop, which has no check; the copy it could not prove it for
   keeps it. A check that stays says so too.
@@ -305,6 +308,7 @@ was inlined in `main`, which lets go of it, it goes in a region of `main`.
 | | |
 | --- | --- |
 | `--function <name>` | one function, and the code written in it wherever it went |
+| `--into <function>` | a function of the library or of a dependency that a call names, as `formats.formatFloat`: its own places, told as the program's are |
 | `--kind heap` | only what allocates |
 | `--kind region` | what goes in a [region](#what-a-region-takes), and what stays on the heap and why; with it, also what the library's code copied into a function makes on its way and lets go of inside the call |
 | `--kind hoisted`, `--kind reloaded` | the [lengths](#a-length-read-once) a loop reads once, and those it reads each turn |
@@ -664,7 +668,8 @@ The tree's arrays are still made, all 21845 of them: the row counts them
 the walk that let go of each, and with it 30% of the time.
 `testing.allocations` counts the two together, so a test that holds a
 function to its count does not change when its values move to a region
-([Testing](testing.md)).
+([Testing](testing.md)), but for a text that is
+[copied out at a return](#a-part-that-is-returned).
 
 ```text
 $ tondo optimizations tree.to --kind region
@@ -708,8 +713,8 @@ what the function was given, in a lock's state or in a `Ref`; that a
 closure captures it, that it is sent, taken by a task or given to C; that
 it outlives a turn of its loop; that it holds a value its region did not
 make; that it is changed in a way a region does not take yet, as a map
-that an entry is removed from, where the remark names the change; and that
-regions do not take that kind of value yet, as slices.
+that is emptied, where the remark names the change; and that regions do not
+take that kind of value yet, as a process, a pipe or a logger.
 
 A text goes in a region as an array does, whatever its length, when the
 frame does not take it first: one that an interpolation makes, as the
@@ -820,7 +825,9 @@ A map or a set goes in a region too, as it is inserted into and removed
 from, and so does one whose entries change in place, which is how a program
 counts. An array stays in its region as it is pushed to and popped, written
 by index or by a slice, and sorted or reversed in place, and a deque as it
-is pushed to and taken from at either end. And a closure that
+is pushed to and taken from at either end. A slice of an array or of a
+text, `a[i:j]` or `slice(start, end)`, makes its copy in the region of its
+place. And a closure that
 a value holds goes where that value goes, when it captures nothing that
 counts, as [those of a chain](#the-closures-of-a-chain) do:
 
@@ -885,6 +892,56 @@ entries yet: `seen.clear()` at 9:13``, and an array that is inserted into
 in the middle or has an element taken out of it, ``a region changes an
 array only by `push`, `pop` and the writes of its elements yet``. A deque
 that is emptied says the same of deques.
+
+#### A part that is returned
+
+A function that returns one of the pieces it made would take them all out
+of its region with it. It copies that text at its return instead, and the
+rest stays:
+
+```tondo
+import std.console
+
+/// The word a text says most.
+fn commonest(text: String): String {
+    var counts: Map[String, Int] = [:]
+    for word in text.split(" ") {
+        counts[word, default: 0] += 1
+    }
+    var best = ""
+    var most = 0
+    for (word, count) in counts {
+        if count > most {
+            best = word
+            most = count
+        }
+    }
+    best
+}
+
+fn main() {
+    console.println(commonest("to be or not to be"))
+}
+```
+
+```text output
+to
+```
+
+```text
+$ tondo optimizations commonest.to --kind region
+commonest.to:6:17: `text.split(" ")` in `String.split`, `textNative.split(self, separator, most)` goes in a region of `commonest` (in commonest)
+commonest.to:7:9: `counts[word, default: 0] += 1` changes a map that goes in a region of `commonest` (in commonest)
+commonest.to:7:16: `word` grows a map that goes in a region of `commonest` (in commonest)
+commonest.to:17:5: `best` is copied out at its return, and goes in a region that the caller of `commonest` gives (in commonest)
+```
+
+The copy is one allocation that the heap did not make, where the piece was
+a part of its block: it is the one case in which `testing.allocations`
+counts one more with regions than without, while `testing.heapAllocations`
+counts fewer, the pieces and the map having left the heap. It is done for a
+text; an array or a record that is read out of a collection and returned
+still takes the collection to the heap.
 
 An object of the runtime goes in a region as well when only variables hold
 it: a reader, a buffer, a file that is opened, a pattern that is compiled.
