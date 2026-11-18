@@ -212,6 +212,8 @@ stats.to:19:5: `"{sensor}: {value:.1}"` stays on the heap: `label` returns it wi
 stats.to:19:17: `value` in `formats.formatFloat`, `formatNumber(` stays a call of `formats.formatNumber`: its body costs 31, more than the 30 inlining takes (in label)
 stats.to:19:17: `value` stays a call of `formats.formatFloat`: its body costs 80, more than the 30 inlining takes (in main)
 stats.to:19:17: `value` is inlined: the body of `formats.formatFloat` is copied here (in label)
+stats.to:19:17: `value` in `formats.formatFloat`, `textNative.float(value, precision, exponent, sing…` stays on the heap: `label` returns it with what it was given (in label)
+stats.to:19:17: `value` in `formats.formatFloat`, `written.replace("e", "E")` stays on the heap: `label` returns it with what it was given (in label)
 stats.to:24:14: `0..1000` runs four turns at a time (in main)
 stats.to:25:9: `readings.push(Reading { sensor: if n % 2 == 0 { "a" } else …` grows an array that goes in a region of `main` (in main)
 stats.to:25:9: `readings.push(Reading { sensor: if n % 2 == 0 { "a" } else …` takes room for every turn before the loop (in main)
@@ -241,7 +243,10 @@ from the bottom:
   ([What a region takes](#what-a-region-takes)). So does the label where
   `main` inlined `label`: the frame does not take it, and the line says
   why, and the region does. Each place has a line for each copy of its
-  code, named at its end.
+  code, named at its end. The two lines that begin `` `value` in
+  `formats.formatFloat` `` are of the library's code that writes the
+  number, copied into `label`: the text it makes may be the one that
+  `label` returns, so it is told with the program's own.
 - **Checks.** The compiler proved that `count += 1` cannot overflow in one
   copy of the loop, which has no check; the copy it could not prove it for
   keeps it. A check that stays says so too.
@@ -301,7 +306,7 @@ was inlined in `main`, which lets go of it, it goes in a region of `main`.
 | --- | --- |
 | `--function <name>` | one function, and the code written in it wherever it went |
 | `--kind heap` | only what allocates |
-| `--kind region` | what goes in a [region](#what-a-region-takes), and what stays on the heap and why; with it, also what the library's code copied into a function makes on its way and lets go of inside the call, as the texts that write `{value:.1}` |
+| `--kind region` | what goes in a [region](#what-a-region-takes), and what stays on the heap and why; with it, also what the library's code copied into a function makes on its way and lets go of inside the call |
 | `--kind hoisted`, `--kind reloaded` | the [lengths](#a-length-read-once) a loop reads once, and those it reads each turn |
 | `--tests` | the tests and benchmarks instead of the program |
 | `--against <rev>` | only what a change made different |
@@ -806,10 +811,10 @@ and without. A text that something of the turn holds while it grows, as an
 array made in the turn, stays on the heap, with `it outlives a turn of the
 loop`.
 
-A map or a set goes in a region too, as it is inserted into, and so does
-one whose entries change in place, which is how a program counts. An array
-that is written by index stays in its region as one that is pushed to
-does:
+A map or a set goes in a region too, as it is inserted into and removed
+from, and so does one whose entries change in place, which is how a program
+counts. An array stays in its region as it is pushed to and popped, written
+by index or by a slice:
 
 ```tondo
 import std.console
@@ -866,12 +871,11 @@ What is written into a map or an array of a region has to be the region's
 own or a value that counts nothing, as a number: a map that is given a text
 from elsewhere stays on the heap, with `it holds a value that its region
 did not make`. And a change other than these keeps the value on the heap
-for now, and the remark names it: a map that an entry is removed from says
-``a region changes a map only by its insertions and the values of its
-entries yet: `seen.remove(n)` at 11:13``, and an array that is popped or
-inserted into in the middle, ``a region changes an array only by `push`
-and the writes of its elements yet``. An array sorted in place is given to
-the library's sort, which may keep it, and stays on the heap for that.
+for now, and the remark names it: a map that is emptied says ``a region
+changes a map only by its insertions, its removals and the values of its
+entries yet: `seen.clear()` at 9:13``, and an array that is inserted into
+in the middle or has an element taken out of it, ``a region changes an
+array only by `push`, `pop` and the writes of its elements yet``.
 
 A turn's region is emptied when the turn goes back to the head of its
 loop, and let go of when the function returns. So a value does not outlive
