@@ -3706,6 +3706,9 @@ struct FnCodegen<'a, 'b> {
     literal: HashMap<Local, Option<String>>,
     /// The room in the frame of each text made there (`Body.framed`).
     framed: HashMap<Local, ir::StackSlot>,
+    /// The locals that hold a text in place (`StrOp::InPlace`), which a read
+    /// in place does not test for a short one.
+    in_place: Vec<bool>,
     /// While a statement that a check for a panic follows is built: where
     /// its panics unwind to (15.9). And whether that check follows one
     /// whose panics all jumped there, so that it asks nothing.
@@ -3965,6 +3968,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             ways: HashMap::new(),
             literal: literals(body),
             framed: HashMap::new(),
+            in_place: in_place(body),
             unwind_to: None,
             quiet_check: false,
             tried: false,
@@ -4388,6 +4392,57 @@ impl Fixed<'_> {
             _ => false,
         }
     }
+}
+
+/// The locals that hold a text in place: assigned only by `StrOp::InPlace`,
+/// or copied from one that is, as a loop around the loop that reads it
+/// moves the operation before it (`hoist`).
+fn in_place(body: &Body) -> Vec<bool> {
+    let mut held = vec![false; body.locals.len()];
+    let assignments = || {
+        body.blocks.iter().flat_map(|block| &block.stmts).filter_map(|statement| match statement {
+            Statement::Assign(place, rvalue, _) => Some((place, &**rvalue)),
+            _ => None,
+        })
+    };
+    for (place, rvalue) in assignments() {
+        if place.path.is_empty() && matches!(rvalue, Rvalue::StrOp(StrOp::InPlace, ..)) {
+            held[place.local.0 as usize] = true;
+        }
+    }
+    if !held.contains(&true) {
+        return held;
+    }
+    // Copies of those, as long as every one of their assignments is.
+    let mut copied = vec![false; body.locals.len()];
+    for (place, rvalue) in assignments() {
+        if let Rvalue::Use(Operand::Copy(from)) = rvalue
+            && place.path.is_empty()
+            && from.path.is_empty()
+            && held[from.local.0 as usize]
+        {
+            copied[place.local.0 as usize] = true;
+        }
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (place, rvalue) in assignments() {
+            let at = place.local.0 as usize;
+            let keeps = place.path.is_empty()
+                && match rvalue {
+                    Rvalue::StrOp(StrOp::InPlace, ..) => true,
+                    Rvalue::Use(Operand::Copy(from)) => {
+                        from.path.is_empty() && (held[from.local.0 as usize] || copied[from.local.0 as usize])
+                    }
+                    _ => false,
+                };
+            if (held[at] || copied[at]) && !keeps {
+                (held[at], copied[at], changed) = (false, false, true);
+            }
+        }
+    }
+    (0..held.len()).map(|at| held[at] || copied[at]).collect()
 }
 
 /// The locals a function assigns a string literal and nothing else, nor

@@ -33,25 +33,47 @@ impl Builder {
         builder
     }
 
+    /// The room of its block, which it has unless it builds in its word.
     fn room(&self) -> usize {
-        if self.text.is_null() { 0 } else { unsafe { (*self.text).cap } }
+        unsafe { (*self.text).cap }
     }
 
+    #[inline]
     pub fn extend(&mut self, bytes: &[u8]) {
         if short(self.text) {
-            let len = short_len(self.text);
-            if len + bytes.len() <= SHORT_MAX {
-                let mut word = (self.text as usize).to_le_bytes();
-                word[len..len + bytes.len()].copy_from_slice(bytes);
-                word[7] = (SHORT >> 56) as u8 | (len + bytes.len()) as u8;
-                self.text = usize::from_le_bytes(word) as *mut Str;
-                return;
-            }
-            self.out_of_word(bytes.len());
+            return self.extend_word(bytes);
         }
         if self.len + bytes.len() > self.room() {
             self.grow(bytes.len());
         }
+        unsafe { copy_short(bytes, (self.text as *mut u8).add(HEADER + self.len)) }
+        self.len += bytes.len();
+    }
+
+    /// `extend` with the bytes of a short text: one store of its whole word
+    /// when the block has room for eight bytes more, as the bytes past the
+    /// length are room the next ones write over.
+    #[inline]
+    pub(crate) fn extend_short(&mut self, s: *const Str) {
+        if (self.text as isize) > 0 && self.len + 8 <= self.room() {
+            unsafe { (self.text as *mut u8).add(HEADER + self.len).cast::<usize>().write_unaligned(s as usize) };
+            self.len += short_len(s);
+            return;
+        }
+        self.extend(unsafe { str_bytes(&s) });
+    }
+
+    /// `extend` of a builder in its word: the bytes after its own, and its
+    /// length counted on, or out of it when they do not fit.
+    #[inline(never)]
+    fn extend_word(&mut self, bytes: &[u8]) {
+        let len = short_len(self.text);
+        if len + bytes.len() <= SHORT_MAX {
+            let word = (self.text as usize + (bytes.len() << 56)) | (short_bytes(bytes) << (8 * len));
+            self.text = word as *mut Str;
+            return;
+        }
+        self.out_of_word(bytes.len());
         unsafe { copy_short(bytes, (self.text as *mut u8).add(HEADER + self.len)) }
         self.len += bytes.len();
     }
@@ -101,7 +123,8 @@ impl Builder {
 
     #[cold]
     fn grow(&mut self, more: usize) {
-        let room = (self.len + more).max(self.room() * 2);
+        let held = if self.text.is_null() { 0 } else { self.room() };
+        let room = (self.len + more).max(held * 2);
         // A text a region takes grows in it, whatever its length: what the
         // analysis puts in a region stays a region's, as what holds it lets
         // go of nothing. Its old rooms are the region's until it ends; past
@@ -193,13 +216,17 @@ impl Builder {
             unsafe { (*self.text).len = self.len };
             return self.text;
         }
+        self.on_heap()
+    }
+
+    /// The string built in a block on the heap: apart, so that what is
+    /// built in a region or a frame does not keep the registers it takes.
+    #[inline(never)]
+    fn on_heap(self) -> *mut Str {
         let mut text = self.text as *mut u8;
         let mut cap = self.room();
-        // A few bytes built in a block go in the word, and the block goes.
         if (1..=SHORT_MAX).contains(&self.len) {
-            let built = short_text(unsafe { std::slice::from_raw_parts(text.add(HEADER), self.len) });
-            unsafe { dealloc(text, str_layout(cap)) };
-            return built;
+            return self.into_word();
         }
         if cap - self.len > self.len.max(16) {
             let layout = str_layout(self.len);
@@ -217,6 +244,16 @@ impl Builder {
 }
 
 impl Builder {
+    /// The few bytes built in a block on the heap, in a short text's word;
+    /// the block goes.
+    #[inline(never)]
+    fn into_word(self) -> *mut Str {
+        let text = self.text as *mut u8;
+        let built = short_text(unsafe { std::slice::from_raw_parts(text.add(HEADER), self.len) });
+        unsafe { dealloc(text, str_layout(self.room())) };
+        built
+    }
+
     /// The text built in a region, the last reference to it.
     #[inline(always)]
     fn built_in_region(self) -> *mut Str {
@@ -332,6 +369,7 @@ pub unsafe extern "C" fn tondo_rt_sb_start_region(b: *mut Builder, room: usize, 
     }
 }
 
+#[inline]
 unsafe fn start_region(b: *mut Builder, room: usize, region: *mut regions::Region) {
     unsafe {
         let room = room.max(16);
@@ -554,7 +592,12 @@ pub unsafe extern "C" fn tondo_rt_sb_start(b: *mut Builder, room: usize) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_str(b: *mut Builder, s: *const Str) {
-    unsafe { (*b).extend(str_bytes(&s)) }
+    unsafe {
+        match short(s) {
+            true => (*b).extend_short(s),
+            false => (*b).extend(long_bytes(s)),
+        }
+    }
 }
 
 #[unsafe(no_mangle)]

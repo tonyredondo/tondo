@@ -49,14 +49,20 @@ impl<const N: usize> Kept<N> {
 static EMPTY: Kept<0> = Kept::new(b"");
 
 /// Allocates a string with refcount 1 holding a copy of `bytes`; the empty
-/// string is the one kept for good.
+/// string is the one kept for good, and a short one is its word, made where
+/// it is asked for.
+#[inline]
 pub fn str_new(bytes: &[u8]) -> *mut Str {
-    if bytes.is_empty() {
-        return EMPTY.get();
+    match bytes.len() {
+        0 => EMPTY.get(),
+        1..=SHORT_MAX => short_text(bytes),
+        _ => str_block(bytes),
     }
-    if bytes.len() <= SHORT_MAX {
-        return short_text(bytes);
-    }
+}
+
+/// A string of more than `SHORT_MAX` bytes in a block of its own.
+#[inline(never)]
+fn str_block(bytes: &[u8]) -> *mut Str {
     let layout = str_layout(bytes.len());
     unsafe {
         let ptr = alloc(layout) as *mut Str;
@@ -77,10 +83,17 @@ pub fn str_new(bytes: &[u8]) -> *mut Str {
 /// (`meta::good`), as an append on the heap takes all of its block. A long
 /// one forgets the positions a text its region let go of left at the same
 /// address.
+#[inline]
 pub(crate) fn str_in(region: *mut super::regions::Region, bytes: &[u8]) -> *mut Str {
     if region.is_null() || bytes.len() <= SHORT_MAX {
         return str_new(bytes);
     }
+    str_in_region(region, bytes)
+}
+
+/// `str_in` of more than `SHORT_MAX` bytes in a region.
+#[inline(never)]
+fn str_in_region(region: *mut super::regions::Region, bytes: &[u8]) -> *mut Str {
     unsafe {
         let size = match super::regions::grows(region) {
             true => super::meta::good(HEADER + bytes.len()),
@@ -128,8 +141,11 @@ impl RegionPieces {
     #[inline(always)]
     pub(crate) fn push(&mut self, bytes: &[u8]) -> *mut Str {
         let size = (HEADER + bytes.len()).next_multiple_of(8);
+        if bytes.len() <= SHORT_MAX {
+            return str_new(bytes);
+        }
         // More than it was given room for, which its caller never asks.
-        if bytes.len() <= SHORT_MAX || self.at + size > self.end {
+        if self.at + size > self.end {
             return str_in(self.region, bytes);
         }
         let text = self.at as *mut Str;
@@ -160,6 +176,13 @@ pub unsafe fn str_bytes(s: &impl Word) -> &[u8] {
     unsafe { std::slice::from_raw_parts((word as *const u8).add(HEADER), (*word).len) }
 }
 
+/// The bytes of a string that is not short, where its header is. The
+/// caller keeps the string alive.
+#[inline(always)]
+pub(crate) unsafe fn long_bytes<'a>(s: *const Str) -> &'a [u8] {
+    unsafe { std::slice::from_raw_parts((s as *const u8).add(HEADER), (*s).len) }
+}
+
 /// A short text: up to `SHORT_MAX` bytes held in its word instead of a
 /// block, the lowest first, and in its top byte the mark `SHORT`, its
 /// sign, which no address a program is given has, and its length. It
@@ -180,12 +203,34 @@ pub(crate) fn short_len(s: *const Str) -> usize {
 }
 
 /// The short text of `bytes`, at most `SHORT_MAX` of them.
-#[inline]
+#[inline(always)]
 pub(crate) fn short_text(bytes: &[u8]) -> *mut Str {
+    (short_bytes(bytes) | SHORT | bytes.len() << 56) as *mut Str
+}
+
+/// Up to `SHORT_MAX` bytes as the low bytes of a word, the first lowest:
+/// in two loads that may overlap, as `copy_short` copies, rather than a
+/// call of `memcpy`.
+#[inline(always)]
+pub(crate) fn short_bytes(bytes: &[u8]) -> usize {
     debug_assert!(bytes.len() <= SHORT_MAX);
-    let mut word = [0u8; 8];
-    word[..bytes.len()].copy_from_slice(bytes);
-    (usize::from_le_bytes(word) | SHORT | bytes.len() << 56) as *mut Str
+    let (from, n) = (bytes.as_ptr(), bytes.len());
+    unsafe {
+        match n {
+            4..=7 => {
+                let low = from.cast::<u32>().read_unaligned() as usize;
+                let high = from.add(n - 4).cast::<u32>().read_unaligned() as usize;
+                low | high << (8 * (n - 4))
+            }
+            2..=3 => {
+                let low = from.cast::<u16>().read_unaligned() as usize;
+                let high = from.add(n - 2).cast::<u16>().read_unaligned() as usize;
+                low | high << (8 * (n - 2))
+            }
+            1 => *from as usize,
+            _ => 0,
+        }
+    }
 }
 
 /// A short text's bytes as `change` leaves them, in a short text.
@@ -713,15 +758,38 @@ pub(crate) fn dropped(rc: &AtomicUsize) -> usize {
     }
 }
 
+/// Whether two strings hold the same bytes. Two short ones do when their
+/// words are the same, as the bytes past a short text's length are zero.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_eq(a: *const Str, b: *const Str) -> u8 {
-    unsafe { (str_bytes(&a) == str_bytes(&b)) as u8 }
+    if a == b {
+        return 1;
+    }
+    unsafe {
+        match (short(a), short(b)) {
+            (false, false) => (long_bytes(a) == long_bytes(b)) as u8,
+            (true, true) => 0,
+            _ => (str_bytes(&a) == str_bytes(&b)) as u8,
+        }
+    }
 }
 
 /// Orders strings by Unicode scalar values; for UTF-8 this is byte order.
+/// Two short ones are ordered by their words, the first byte highest, and
+/// then by their lengths, as the bytes past a length are zero.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_cmp(a: *const Str, b: *const Str) -> i32 {
-    unsafe { str_bytes(&a).cmp(str_bytes(&b)) as i32 }
+    let bytes = |s: *const Str| ((s as usize) & !(0xff << 56)).swap_bytes();
+    unsafe {
+        // Neither short, in one test of both signs.
+        if !short((a as usize | b as usize) as *const Str) {
+            return long_bytes(a).cmp(long_bytes(b)) as i32;
+        }
+        match short(a) && short(b) {
+            true => (bytes(a), short_len(a)).cmp(&(bytes(b), short_len(b))) as i32,
+            false => str_bytes(&a).cmp(str_bytes(&b)) as i32,
+        }
+    }
 }
 
 /// The text of a string; strings always hold valid UTF-8.

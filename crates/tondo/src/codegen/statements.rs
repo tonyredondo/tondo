@@ -515,9 +515,19 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         self.write_checked(place, ty, slice.unwrap(), code);
                         return;
                     }
-                    StrOp::ByteLength => Val::Scalar(self.text_length(values[0])),
-                    StrOp::Decode => Val::Scalar(self.decoded(values[0], values[1], Rt::StrDecode, false)),
-                    StrOp::Next => Val::Scalar(self.stepped(values[0], values[1])),
+                    StrOp::ByteLength => {
+                        let in_place = self.held_in_place(&operands[0]);
+                        Val::Scalar(self.text_length(values[0], in_place))
+                    }
+                    StrOp::Decode => {
+                        let in_place = self.held_in_place(&operands[0]);
+                        Val::Scalar(self.decoded(values[0], values[1], Rt::StrDecode, false, in_place))
+                    }
+                    StrOp::Next => {
+                        let in_place = self.held_in_place(&operands[0]);
+                        Val::Scalar(self.stepped(values[0], values[1], in_place))
+                    }
+                    StrOp::InPlace => Val::Scalar(self.in_place(values[0])),
                 }
             }
             Rvalue::MapOp(op, operands, _) => match op {
@@ -865,13 +875,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// `long` for a text in a block of its own, `short` for one in its
     /// word (`short_text`), in a cold block: each gives the values of
     /// `types` that follow.
+    /// A text held in place (`held_in_place`) is never short: only `long`.
     pub(super) fn by_form(
         &mut self,
         text: ir::Value,
+        in_place: bool,
         types: &[types::Type],
         short: impl FnOnce(&mut Self) -> Vec<ir::Value>,
         long: impl FnOnce(&mut Self) -> Vec<ir::Value>,
     ) -> Vec<ir::Value> {
+        if in_place {
+            return long(self);
+        }
         let (in_word, in_block, done) = (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
         for &ty in types {
             self.e.fb.append_block_param(done, ty);
@@ -890,10 +905,34 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     }
 
     /// A text's length in bytes, from its header or a short text's word.
-    pub(super) fn text_length(&mut self, text: ir::Value) -> ir::Value {
+    pub(super) fn text_length(&mut self, text: ir::Value, in_place: bool) -> ir::Value {
         let short = |this: &mut Self| vec![this.short_length(text)];
         let long = |this: &mut Self| vec![this.e.fb.ins().load(types::I64, flags(), text, STRING_LENGTH)];
-        self.by_form(text, &[types::I64], short, long)[0]
+        self.by_form(text, in_place, &[types::I64], short, long)[0]
+    }
+
+    /// Whether an operand is a local that holds a text in place.
+    pub(super) fn held_in_place(&self, operand: &Operand) -> bool {
+        matches!(operand, Operand::Copy(place) if place.path.is_empty() && self.in_place[place.local.0 as usize])
+    }
+
+    /// `StrOp::InPlace`: a text of its own as it is, and a short one in a
+    /// header the frame keeps, whose bytes are its word, as a literal's
+    /// header that counts nothing.
+    fn in_place(&mut self, text: ir::Value) -> ir::Value {
+        let data = StackSlotData::new(StackSlotKind::ExplicitSlot, STRING_BYTES as u32 + 8, 3);
+        let slot = self.e.fb.create_sized_stack_slot(data);
+        let short = |this: &mut Self| {
+            let header = this.e.fb.ins().stack_addr(POINTER, slot, 0);
+            let length = this.short_length(text);
+            let immortal = this.e.fb.ins().iconst(types::I64, IMMORTAL as i64);
+            this.e.fb.ins().store(flags(), immortal, header, 0);
+            this.e.fb.ins().store(flags(), length, header, STRING_LENGTH);
+            this.e.fb.ins().store(flags(), length, header, STRING_ROOM);
+            this.e.fb.ins().store(flags(), text, header, STRING_BYTES as i32);
+            vec![header]
+        };
+        self.by_form(text, false, &[POINTER], short, |_| vec![text])[0]
     }
 
     /// The length of a short text, in bits 56 to 62 of its word.
@@ -915,7 +954,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// The scalar at a byte offset of a text, read in place when it is
     /// ASCII, as most are; `slow` decodes the others. With `guard`, an
     /// offset outside the text goes to `slow` too, which says what it is.
-    pub(super) fn decoded(&mut self, text: ir::Value, offset: ir::Value, slow: Rt, guard: bool) -> ir::Value {
+    pub(super) fn decoded(
+        &mut self,
+        text: ir::Value,
+        offset: ir::Value,
+        slow: Rt,
+        guard: bool,
+        in_place: bool,
+    ) -> ir::Value {
         let (in_word, in_block, read, ascii, other, done) = (
             self.e.fb.create_block(),
             self.e.fb.create_block(),
@@ -925,20 +971,24 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             self.e.fb.create_block(),
         );
         self.e.fb.append_block_param(done, types::I32);
-        let marked = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, text, 0);
-        self.e.fb.ins().brif(marked, in_word, &[], in_block, &[]);
-        // A short text's byte, or 0x80 outside it, which goes to `slow`.
-        self.e.fb.set_cold_block(in_word);
-        self.e.fb.switch_to_block(in_word);
-        let mut byte = self.short_byte(text, offset, types::I32);
-        if guard {
-            let length = self.short_length(text);
-            let inside = self.e.fb.ins().icmp(IntCC::UnsignedLessThan, offset, length);
-            let outside = self.e.fb.ins().iconst(types::I32, 0x80);
-            byte = self.e.fb.ins().select(inside, byte, outside);
+        if in_place {
+            self.e.fb.ins().jump(in_block, &[]);
+        } else {
+            let marked = self.e.fb.ins().icmp_imm_s(IntCC::SignedLessThan, text, 0);
+            self.e.fb.ins().brif(marked, in_word, &[], in_block, &[]);
+            // A short text's byte, or 0x80 outside it, which goes to `slow`.
+            self.e.fb.set_cold_block(in_word);
+            self.e.fb.switch_to_block(in_word);
+            let mut byte = self.short_byte(text, offset, types::I32);
+            if guard {
+                let length = self.short_length(text);
+                let inside = self.e.fb.ins().icmp(IntCC::UnsignedLessThan, offset, length);
+                let outside = self.e.fb.ins().iconst(types::I32, 0x80);
+                byte = self.e.fb.ins().select(inside, byte, outside);
+            }
+            let below = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedLessThan, byte, 0x80);
+            self.e.fb.ins().brif(below, done, &[byte.into()], other, &[]);
         }
-        let below = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedLessThan, byte, 0x80);
-        self.e.fb.ins().brif(below, done, &[byte.into()], other, &[]);
         self.e.fb.switch_to_block(in_block);
         if guard {
             let length = self.e.fb.ins().load(types::I64, flags(), text, STRING_LENGTH);
@@ -966,7 +1016,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     /// 0xF0, else four. Iteration only visits offsets inside the text.
     /// ASCII takes a branch, which the processor predicts, so that the next
     /// offset does not wait for this byte as arithmetic on it would.
-    fn stepped(&mut self, text: ir::Value, offset: ir::Value) -> ir::Value {
+    fn stepped(&mut self, text: ir::Value, offset: ir::Value, in_place: bool) -> ir::Value {
         let (other, done) = (self.e.fb.create_block(), self.e.fb.create_block());
         self.e.fb.append_block_param(done, types::I64);
         let short = |this: &mut Self| vec![this.short_byte(text, offset, types::I64)];
@@ -974,7 +1024,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             let address = this.e.fb.ins().iadd(text, offset);
             vec![this.e.fb.ins().uload8(types::I64, flags(), address, STRING_BYTES as i32)]
         };
-        let lead = self.by_form(text, &[types::I64], short, long)[0];
+        let lead = self.by_form(text, in_place, &[types::I64], short, long)[0];
         let one = self.e.fb.ins().iadd_imm_s(offset, 1);
         let ascii = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedLessThan, lead, 0x80);
         self.e.fb.ins().brif(ascii, done, &[one.into()], other, &[]);

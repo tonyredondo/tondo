@@ -648,10 +648,31 @@ pub unsafe extern "C" fn tondo_rt_sb_map(
     }
 }
 
-/// FNV-1a over the bytes of a string.
+/// `hash_bytes` of the bytes of a string; of a short one, from its word,
+/// with the same result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_hash(s: *const Str) -> u64 {
-    hash_bytes(unsafe { str_bytes(&s) })
+    match crate::strings::short(s) {
+        true => hash_short(s as u64),
+        false => hash_bytes(unsafe { crate::strings::long_bytes(s) }),
+    }
+}
+
+/// `hash_bytes` of the bytes of a short text, read out of its word: its
+/// length in bits 56 to 62, its bytes the low ones, the first lowest.
+fn hash_short(word: u64) -> u64 {
+    const K: u64 = 0x9e37_79b9_7f4a_7c15;
+    let n = (word >> 56 & 0x7f) as u32;
+    let byte = |at: u32| word >> (8 * at) & 0xff;
+    let tail = match n >= 4 {
+        true => (word & 0xffff_ffff) | (word >> (8 * (n - 4)) & 0xffff_ffff) << 32,
+        false => byte(0) | byte(n / 2) << 8 | byte(n - 1) << 16,
+    };
+    let hash = (0xcbf2_9ce4_8422_2325u64 ^ u64::from(n)).wrapping_mul(K);
+    let mut hash = (hash ^ tail).wrapping_mul(K).rotate_left(29);
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    hash ^ (hash >> 33)
 }
 
 /// A hash of bytes for the program's maps, eight at a time: a long key, as a
@@ -689,7 +710,16 @@ pub(crate) fn hash_bytes(bytes: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod hashing {
-    use super::hash_bytes;
+    use super::{hash_bytes, hash_short};
+
+    /// A short text's hash, from its word, is that of its bytes.
+    #[test]
+    fn a_short_text_hashes_as_its_bytes() {
+        for key in ["a", "ab", "abc", "abcd", "north", "abcdef", "abcdefg", "\0", "a\0", "ñu"] {
+            let word = crate::strings::short_text(key.as_bytes()) as u64;
+            assert_eq!(hash_short(word), hash_bytes(key.as_bytes()), "{key:?}");
+        }
+    }
 
     /// Keys of every length a tail can have, and some that read alike in
     /// part, hash apart; the same key, alike.

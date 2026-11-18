@@ -75,7 +75,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 if crate::hir::NATIVES[index as usize].symbol == "tondo_rt_text_scalar_at" =>
             {
                 let guard = crate::hir::NATIVES[index as usize].name != "scalarWithin";
-                Some(self.decoded(values[0], values[1], Rt::Native(index), guard))
+                let in_place = self.held_in_place(&args[0]);
+                Some(self.decoded(values[0], values[1], Rt::Native(index), guard, in_place))
             }
             // A byte of a text, read in place: 256 outside it, unless
             // `prove` showed the offset within.
@@ -114,7 +115,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     this.e.fb.switch_to_block(done);
                     vec![this.e.fb.block_params(done)[0]]
                 };
-                Some(self.by_form(text, &[types::I64], short, long)[0])
+                let in_place = self.held_in_place(&args[0]);
+                Some(self.by_form(text, in_place, &[types::I64], short, long)[0])
             }
             Callee::Std(StdFn::Native(index)) => {
                 // Arithmetic the processor does in one instruction, as

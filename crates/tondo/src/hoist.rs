@@ -46,16 +46,15 @@ fn hoist_body(body: &mut Body, types: &Types, loans: &[Vec<bool>]) {
             predecessors[to].push(block);
         }
     }
-    // Each loop: its head, its blocks, those the head reaches that reach it
-    // again, and the one block before it that goes only to it, if there is
-    // one; the innermost first, so that a length leaves an inner loop and
-    // then, from the block before it, the loops around it.
-    let heads = heads(&successors);
+    // Each loop: its head, its blocks, and the one block before it that
+    // goes only to it, if there is one; the innermost first, so that a
+    // length leaves an inner loop and then, from the block before it, the
+    // loops around it.
+    let latches = latches(&successors);
     let mut loops: Vec<(usize, Vec<bool>, Option<usize>)> = (0..count)
-        .filter(|&block| heads[block])
+        .filter(|&block| !latches[block].is_empty())
         .map(|head| {
-            let (forward, backward) = (reach(head, &successors), reach(head, &predecessors));
-            let inside: Vec<bool> = (0..count).map(|block| forward[block] && backward[block]).collect();
+            let inside = natural(head, &latches[head], &predecessors);
             let outside: Vec<usize> = predecessors[head].iter().copied().filter(|&block| !inside[block]).collect();
             let before = match outside[..] {
                 [before] if matches!(body.blocks[before].terminator, Terminator::Goto(_)) => Some(before),
@@ -136,6 +135,9 @@ fn hoist_body(body: &mut Body, types: &Types, loans: &[Vec<bool>]) {
                 format!("loop at b{head}: {count} length(s) read once before it, in b{before}")
             });
         }
+        if let Some(before) = before {
+            in_place(body, types, inside, *head, *before, &written, &addressed);
+        }
     }
     let mut said = Vec::new();
     for (.., span) in left {
@@ -146,6 +148,81 @@ fn hoist_body(body: &mut Body, types: &Types, loans: &[Vec<bool>]) {
     }
     for ((.., span), why) in stays {
         crate::mir_text::remark(body, span, "reloaded", || format!("reads the length each turn: {why}"));
+    }
+}
+
+/// The texts the loop reads in place and does not change, as a loop over a
+/// text's characters reads its bytes: each is put in place once, before
+/// the loop (`StrOp::InPlace`), and the loop reads that, which the code
+/// generator then does not ask each turn whether it is short. A text put
+/// in place for a loop inside this one is put in place before this one.
+fn in_place(
+    body: &mut Body,
+    types: &Types,
+    inside: &[bool],
+    head: usize,
+    before: usize,
+    written: &[bool],
+    addressed: &[bool],
+) {
+    let mut placed: Vec<(Local, Local)> = Vec::new();
+    for block in (0..body.blocks.len()).filter(|&block| inside[block]) {
+        for index in 0..body.blocks[block].stmts.len() {
+            let Statement::Assign(_, rvalue, span) = &body.blocks[block].stmts[index] else { continue };
+            let Some(text) = read_in_place(rvalue) else { continue };
+            let at = text.0 as usize;
+            // A local made since `written` and `addressed` were, as one a loop
+            // inside this one put in place, is written in this loop.
+            let changed = written.get(at).is_none_or(|&written| written) || addressed.get(at).is_some_and(|&at| at);
+            if changed || !matches!(types.kind(types.repr(body.locals[at])), TyKind::String) {
+                continue;
+            }
+            let span = *span;
+            let held = match placed.iter().find(|(of, _)| *of == text) {
+                Some(&(_, held)) => held,
+                None => {
+                    let held = Local(body.locals.len() as u32);
+                    body.locals.push(body.locals[at]);
+                    body.names.push(None);
+                    let rvalue = Rvalue::StrOp(StrOp::InPlace, vec![Operand::local(text)], span);
+                    body.blocks[before].stmts.push(Statement::Assign(Place::local(held), Box::new(rvalue), span));
+                    placed.push((text, held));
+                    held
+                }
+            };
+            let Statement::Assign(_, rvalue, _) = &mut body.blocks[block].stmts[index] else { unreachable!() };
+            match &mut **rvalue {
+                Rvalue::StrOp(StrOp::InPlace, ..) => **rvalue = Rvalue::Use(Operand::local(held)),
+                Rvalue::StrOp(_, operands, _) | Rvalue::Call(_, operands) => operands[0] = Operand::local(held),
+                _ => unreachable!("a read in place"),
+            }
+        }
+    }
+    if !placed.is_empty() {
+        let count = placed.len();
+        crate::mir_text::note(body, "hoist", || format!("loop at b{head}: {count} text(s) put in place in b{before}"));
+    }
+}
+
+/// The text a statement reads in place, a whole local: its length, a byte
+/// or a scalar at an offset, or the offset after one; or the text a loop
+/// inside this one put in place.
+fn read_in_place(rvalue: &Rvalue) -> Option<Local> {
+    let operands = match rvalue {
+        Rvalue::StrOp(StrOp::ByteLength | StrOp::Decode | StrOp::Next | StrOp::InPlace, operands, _) => operands,
+        Rvalue::Call(Callee::Std(crate::hir::StdFn::Native(index)), operands)
+            if matches!(
+                crate::hir::NATIVES[*index as usize].symbol,
+                "tondo_rt_text_byte_at" | "tondo_rt_text_scalar_at"
+            ) =>
+        {
+            operands
+        }
+        _ => return None,
+    };
+    match operands.first() {
+        Some(Operand::Copy(place)) if place.path.is_empty() => Some(place.local),
+        _ => None,
     }
 }
 
@@ -241,11 +318,11 @@ fn successors(terminator: &Terminator) -> Vec<usize> {
     }
 }
 
-/// The blocks an edge goes back to, from a block being visited from the
-/// entry: the heads of loops.
-fn heads(successors: &[Vec<usize>]) -> Vec<bool> {
+/// For each block, the blocks whose edge goes back to it, from a block
+/// being visited from the entry: those of the head of a loop.
+fn latches(successors: &[Vec<usize>]) -> Vec<Vec<usize>> {
     let count = successors.len();
-    let (mut state, mut heads) = (vec![0u8; count], vec![false; count]);
+    let (mut state, mut latches) = (vec![0u8; count], vec![Vec::new(); count]);
     let mut stack = vec![(0usize, 0usize)];
     state[0] = 1;
     while let Some(&mut (block, ref mut next)) = stack.last_mut() {
@@ -256,7 +333,7 @@ fn heads(successors: &[Vec<usize>]) -> Vec<bool> {
                     state[to] = 1;
                     stack.push((to, 0));
                 }
-                1 => heads[to] = true,
+                1 => latches[to].push(block),
                 _ => {}
             }
         } else {
@@ -264,18 +341,20 @@ fn heads(successors: &[Vec<usize>]) -> Vec<bool> {
             stack.pop();
         }
     }
-    heads
+    latches
 }
 
-/// The blocks reached from `from` along `edges`, not counting `from` unless
-/// a path comes back to it.
-fn reach(from: usize, edges: &[Vec<usize>]) -> Vec<bool> {
-    let mut seen = vec![false; edges.len()];
-    let mut pending = edges[from].clone();
+/// The blocks of the loop at `head`: the head, and those that reach one of
+/// its edges back without passing through it. Not those of a loop around
+/// it, which reach it again only through the blocks before it.
+fn natural(head: usize, latches: &[usize], predecessors: &[Vec<usize>]) -> Vec<bool> {
+    let mut inside = vec![false; predecessors.len()];
+    inside[head] = true;
+    let mut pending = latches.to_vec();
     while let Some(block) = pending.pop() {
-        if !std::mem::replace(&mut seen[block], true) {
-            pending.extend(&edges[block]);
+        if !std::mem::replace(&mut inside[block], true) {
+            pending.extend(&predecessors[block]);
         }
     }
-    seen
+    inside
 }

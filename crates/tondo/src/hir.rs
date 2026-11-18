@@ -839,6 +839,10 @@ pub enum StrOp {
     Decode,
     /// The byte offset after the scalar at a byte offset; used by iteration.
     Next,
+    /// The same text, with its bytes where a read in place finds them: a
+    /// short one in a header the frame keeps (`hoist`), so that a loop that
+    /// reads it does not ask each turn which it is.
+    InPlace,
     /// `text.bytes()`: its UTF-8 bytes.
     Bytes,
     /// `String.fromBytes(bytes)` as `String?`: `none` when not UTF-8.

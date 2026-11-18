@@ -198,7 +198,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                     let value = self.operand(operand);
                     match (self.e.cg.types().kind(self.e.cg.types().repr(*ty)), value) {
                         (TyKind::String, Val::Scalar(text)) => {
-                            let length = self.text_length(text);
+                            let in_place = self.held_in_place(operand);
+                            let length = self.text_length(text, in_place);
                             room = Some(room.map_or(length, |room| self.e.fb.ins().iadd(room, length)));
                         }
                         (TyKind::Int(int), _) if int.bits() == 128 => known += 40,
