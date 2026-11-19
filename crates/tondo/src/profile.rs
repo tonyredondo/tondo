@@ -311,7 +311,14 @@ pub(crate) fn build(
             let tasks = dump["tasks"].as_array().cloned().unwrap_or_default();
             for task in &tasks {
                 let state = task["state"].as_str().unwrap_or_default().to_string();
-                add(&mut builder, &task["stack"], &[1], &[("state", &state)]);
+                // A task that has not run yet has no stack: it is where it
+                // was spawned, which its own chain says, so that a backlog
+                // of tasks ready to run shows.
+                let stack = match task["stack"].as_array() {
+                    Some(stack) if !stack.is_empty() => &task["stack"],
+                    _ => &task["spawned"],
+                };
+                add(&mut builder, stack, &[1], &[("state", &state)]);
             }
             Ok((builder, tasks.len()))
         }
@@ -1127,6 +1134,31 @@ mod tests {
         assert_eq!(amount(2 * PERIOD, "nanoseconds"), "2ms");
         let page = flame_page("cpu", &hot);
         assert!(page.contains("<title>parse — 2ms (66.7%)</title>") && !page.contains("<script"), "{page}");
+    }
+
+    /// A task that has not run yet, which has no stack, is where it was
+    /// spawned, so that a backlog of tasks ready to run shows.
+    #[test]
+    fn a_task_not_run_yet_is_where_it_was_spawned() {
+        let frames: serde_json::Map<String, Value> = serde_json::from_value(json!({
+            "10": { "function": "main", "file": "src/main.to", "line": 5 },
+            "20": { "function": "main", "file": "src/main.to", "line": 3 },
+        }))
+        .unwrap();
+        let dump = json!({ "tasks": [
+            { "state": "waits", "stack": ["10"], "spawned": [] },
+            { "state": "ready", "stack": [], "spawned": ["20"] },
+        ] });
+        let (builder, count) = build(Kind::Tasks, "app", &frames, &serde_json::Map::new(), &[], Some(&dump)).unwrap();
+        assert_eq!(count, 2);
+        let path = std::env::temp_dir().join(format!("tondo-tasks-test-{}.pprof", std::process::id()));
+        std::fs::write(&path, builder.finish(0, 0)).unwrap();
+        let read = read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let hot = hot(&read, None).unwrap();
+        let mut lines: Vec<(i64, i64)> = hot.lines.iter().map(|(_, line, _, flat, _)| (*line, *flat)).collect();
+        lines.sort_unstable();
+        assert_eq!(lines, [(3, 1), (5, 1)]);
     }
 
     /// Code of no line, as a function's prologue, counts as its function's.
