@@ -347,7 +347,9 @@ the same when the compiler moves a value from the heap to a region. The
 one exception is a text that a function copies out at its return so that a
 collection it made stays in its region
 ([Performance](performance.md#a-part-that-is-returned)): the copy is one
-allocation more.
+allocation more. A text of up to seven bytes allocates nothing, however it
+is made, so it is in neither count
+([Performance](performance.md#a-text-of-a-few-bytes)).
 `testing.heapAllocations` counts the heap's alone, which is `allocs/op`. A
 row whose runs set regions up also says how many, and how many of them
 ended holding something, as `1 regions set up/op, 1 used`.
