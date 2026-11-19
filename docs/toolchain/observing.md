@@ -325,8 +325,10 @@ $ tondo profile --tasks -- ./todo
 tondo: a program that has just started has only `main`: give `--duration <seconds>` to say when its tasks are to be seen, as `tondo profile --tasks --duration 1 -- <program>`
 ```
 
-A task that has not run yet is in the picture too, where it was spawned.
-Three long sums started as tasks, by a program held to one core:
+A task that is ready and has not run yet is in the picture too, where it
+was spawned, and in the one a program takes of itself with
+[`profile.tasks()`](../std/profile.md) as well. Three long sums started as
+tasks, by a program held to one core:
 
 ```tondo
 import std.console
