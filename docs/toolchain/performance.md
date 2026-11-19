@@ -312,6 +312,7 @@ was inlined in `main`, which lets go of it, it goes in a region of `main`.
 | `--kind heap` | only what allocates |
 | `--kind region` | what goes in a [region](#what-a-region-takes), and what stays on the heap and why; with it, also what the library's code copied into a function makes on its way and lets go of inside the call |
 | `--kind hoisted`, `--kind reloaded` | the [lengths](#a-length-read-once) a loop reads once, and those it reads each turn |
+| `--kind given`, `--kind retained` | the arguments [given](#a-value-that-is-given) to a function that takes them, and those it has to count first |
 | `--tests` | the tests and benchmarks instead of the program |
 | `--against <rev>` | only what a change made different |
 | `--json` | the same as data |
@@ -603,6 +604,93 @@ is still the faster of the two, with two thirds of the instructions. The
 rows also say how many regions a run sets up and how many of them end
 holding something: one that is set up at every run and never used is a
 cost with nothing against it.
+
+### A value that is given
+
+A function that takes a value, changes its own copy and returns it is how
+a value type is written, and it would cost a copy of the storage at every
+call if the caller's variable and the function's shared it. A release
+build sees that the function changes what it was given and makes the
+parameter its own: the call gives the value instead of sharing it when the
+caller has no more use for it, and the change is made in place.
+
+```tondo
+import std.console
+
+type Ledger = {
+    held: Map[String, Int]
+    moves: Int
+    refused: Int
+}
+
+/// The ledger after an amount goes from one account to another, or after
+/// the move is refused for want of funds.
+fn moved(ledger: Ledger, from: String, to: String, amount: Int): Ledger {
+    var next = ledger
+    let has = next.held[from] ?? 0
+    if has < amount {
+        next.refused += 1
+        return next
+    }
+    next.held[from] = has - amount
+    next.held[to, default: 0] += amount
+    next.moves += 1
+    next
+}
+
+fn main() {
+    var ledger = Ledger { held: ["ana": 100, "luis": 20], moves: 0, refused: 0 }
+    for round in 0..4 {
+        ledger = moved(ledger, "ana", "luis", 30)
+        ledger = moved(ledger, "luis", "eva", 10 * round)
+    }
+    console.println(
+        "{ledger.held["ana"] ?? 0} {ledger.held["luis"] ?? 0} {ledger.held["eva"] ?? 0}, {ledger.moves} moves, {ledger.refused} refused",
+    )
+}
+```
+
+```text output
+10 50 60, 7 moves, 1 refused
+```
+
+```text
+$ tondo optimizations ledger.to --kind given
+ledger.to:27:18: `moved(ledger, "ana", "luis", 30)` gives `ledger` without a count: `moved` takes it, and nothing reads it after the call (in main)
+ledger.to:28:18: `moved(ledger, "luis", "eva", 10 * round)` gives `ledger` without a count: `moved` takes it, and nothing reads it after the call (in main)
+```
+
+`ledger = moved(ledger, …)` writes over the variable with what the call
+returns, so nothing reads what was passed, and the map inside is never
+held twice. A benchmark of a thousand such moves allocates what the map
+needed once:
+
+```text
+$ tondo test --bench
+test ledger::unit::ledger::aThousandMoves ... ok
+  a thousand moves     38.15 µs/op  ±0.1%  6 allocs/op +5 in regions  304 B/op +240 in regions  671.1k ins/op
+```
+
+A caller that reads its value after the call keeps it, and the call counts
+it first; the remark is of the kind `retained` and says where it is read:
+
+```text
+$ tondo optimizations read_after.to --kind retained
+read_after.to:26:19: `moved(opening, "ana", "luis", 30)` retains `ledger` first: `moved` takes it, and the argument is read after the call, at 27:23 (in main)
+```
+
+Then the first change inside copies the map, once, as it must: the caller
+still has the old one. And a function does not take its parameter where
+the compiler cannot see every call of it, as one that is called through a
+value. The copy is then told where it happens, with who else holds the
+map and why:
+
+```text
+$ tondo optimizations as_value.to --kind heap
+as_value.to:18:5: `next.held[from] = has - amount` copies the map, which `ledger` holds too: a parameter its caller keeps, as `moved` is called as a value (in moved)
+as_value.to:25:17: `[moved, moved]` is made on the heap: an array whose values are not all constants (in main)
+as_value.to:26:33: `["ana": 100, "luis": 20]` is made on the heap with its first entry: a map (in main)
+```
 
 ### What a region takes
 
