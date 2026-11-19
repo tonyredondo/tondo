@@ -586,9 +586,11 @@ pub unsafe extern "C" fn tondo_rt_array_remove_at(
 }
 
 /// Removes every element of the array or deque in `slot`, keeping its room
-/// when nothing else holds it and the room is at most `kept` bytes; else,
-/// and when `slot` holds none, as a local whose array moved away, `slot`
-/// takes `empty`, the program's empty array, or a new one when it is null.
+/// when nothing else holds it and the room is at most `kept` bytes, or the
+/// array is a region's, which would keep a room given back to its end;
+/// else, and when `slot` holds none, as a local whose array moved away,
+/// `slot` takes `empty`, the program's empty array, or a new one when it is
+/// null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_array_clear(
     slot: *mut *mut ArrayHeader,
@@ -601,7 +603,9 @@ pub unsafe extern "C" fn tondo_rt_array_clear(
         let a = *slot;
         // A local whose array moved away holds none, which `x = []` gives
         // the empty array, as `[]` did.
-        let keeps = !a.is_null() && unique(a) && (*a).cap.saturating_mul(size) <= kept;
+        let keeps = !a.is_null()
+            && unique(a)
+            && ((*a).cap.saturating_mul(size) <= kept || (*a).rc.load(Ordering::Relaxed) & super::regions::REGION != 0);
         if !keeps {
             *slot = if empty.is_null() { array_alloc(size, 0, 0) } else { empty };
             tondo_rt_array_release(a, size, release);

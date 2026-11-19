@@ -1669,7 +1669,8 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, program: &crate::hir::Program, s
         .collect();
     let clones: Vec<(usize, usize)> =
         program.clones.iter().map(|(base, clone)| (base.0 as usize, clone.0 as usize)).collect();
-    let (verdicts, takings) = crate::regions::regions(bodies, types, sources, &roots, &clones);
+    let main = program.main.map(|id| id.0 as usize);
+    let (verdicts, takings) = crate::regions::regions(bodies, types, sources, &roots, main, &clones);
     after("regions", bodies, types, sources);
     if let Some(path) = std::env::var_os("TONDO_REGIONS") {
         let place = |span: crate::source::Span| {

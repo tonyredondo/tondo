@@ -1,0 +1,203 @@
+// An array that a loop empties with `x = []` and fills again (MIR `Mutate`,
+// the emptying): in the region of a turn of the loop around it, in its
+// function's region, given to an array the function returns before it is
+// emptied, moved away just before it, as `map` takes an array it reads
+// last, with texts taken out of it by index and read after it is emptied
+// and filled again in its room, and past 64 KiB, whose room a region
+// keeps; and in `main` and in
+// the body of a task and a function C calls, whose regions last as long as
+// the program, the task and maybe the program, where it stays on the heap. What each made holds what it held once
+// the regions that made the rest are gone and their memory reused.
+
+import std.console
+import std.ffi
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        var junk = [i, i, i, i, i, i, i, i]
+        junk.push(i)
+        total += junk.length()
+    }
+    total
+}
+
+fn counted(text: String): Array[String] {
+    var out: Array[String] = []
+    for line in text.lines() {
+        var part: Array[Char] = []
+        var words = 0
+        for letter in line.chars() {
+            if letter == ' ' {
+                words += 1
+                part = []
+            } else {
+                part.push(letter)
+            }
+        }
+        out.push("{words}:{part.join("")}")
+    }
+    out
+}
+
+fn slug(text: String): String {
+    var parts: Array[String] = []
+    var part: Array[Char] = []
+    for letter in text.chars() {
+        if letter == ' ' {
+            parts.push(part.join(""))
+            part = []
+        } else {
+            part.push(letter)
+        }
+    }
+    parts.push(part.join(""))
+    parts.join("-")
+}
+
+fn groups(items: Array[String]): Array[Array[String]] {
+    var all: Array[Array[String]] = []
+    var group: Array[String] = []
+    var longest = 0
+    for item in items {
+        if item == "|" {
+            longest = longest.max(group.length())
+            all.push(group)
+            group = []
+        } else if item.isEmpty() {
+            continue
+        } else {
+            group.push("<{item}>")
+        }
+    }
+    all.push(group)
+    if longest > 100 {
+        console.println("long groups: {longest}")
+    }
+    all
+}
+
+fn listed(lines: Array[String]): String {
+    var out: Array[String] = []
+    var items: Array[String] = []
+    for line in lines.concat([""]) {
+        if not line.startsWith("- ") and not items.isEmpty() {
+            out.push("<ul>{items.map((item) { "<li>{item}</li>" }).join("")}</ul>")
+            items = []
+        }
+        if line.startsWith("- ") {
+            items.push("{line.removePrefix("- ")}!")
+        } else if not line.isEmpty() {
+            out.push("<p>{line}</p>")
+        }
+    }
+    out.join("")
+}
+
+fn taken(lines: Array[String]): String {
+    var kept: Array[String] = []
+    var words: Array[String] = []
+    for line in lines {
+        words.push("[{line}]")
+        words.push("<{line}>")
+        if words.length() < 4 {
+            continue
+        }
+        let first = words[0]
+        let last = words[words.length() - 1]
+        words = []
+        words.push("({noise()})")
+        words.push("{first}{last}")
+        kept.push("{first}+{last}+{words[1]}")
+        words = []
+    }
+    kept.join(" ")
+}
+
+fn large(rounds: Int): Int {
+    var total = 0
+    var numbers: Array[Int] = []
+    for round in 0..rounds {
+        for n in 0..10000 {
+            numbers.push(n + round)
+        }
+        total += numbers[9999] + numbers.length()
+        if numbers[0] != round {
+            console.println("wrong first: {numbers[0]}")
+        }
+        numbers = []
+    }
+    if total < 0 {
+        console.println("negative: {total}")
+    }
+    total
+}
+
+fn worker(text: String): Int {
+    var longest = 0
+    var word: Array[Char] = []
+    for letter in "{text} ".chars() {
+        if letter == ' ' {
+            longest = longest.max(word.length())
+            word = []
+        } else {
+            word.push(letter)
+        }
+    }
+    longest
+}
+
+/// The longest word of a few, which C may call.
+extern fn widest(count: ffi.CInt): ffi.CInt {
+    var longest = 0
+    var word: Array[Char] = []
+    for letter in "ab cde f {count} ".chars() {
+        if letter == ' ' {
+            longest = longest.max(word.length())
+            word = []
+        } else {
+            word.push(letter)
+        }
+    }
+    Int32(longest) ?? 0
+}
+
+fn main() {
+    let lines = counted("a bb ccc\nd ee\nfff")
+    let slugged = slug("one two three")
+    let grouped = groups(["a", "b", "|", "c", "|", "|", "d"])
+    let summed = large(3)
+    let html = listed(["- a", "- b", "x", "- c"])
+    let out = taken(["a", "b", "c", "d", "e"])
+    console.println("{noise()} {lines} {slugged} {grouped} {summed} {html} {out}")
+    var total = 0
+    var line: Array[Char] = []
+    for letter in "ab cd efg".chars() {
+        if letter == ' ' {
+            total += line.length()
+            line = []
+        } else {
+            line.push(letter)
+        }
+    }
+    let task = spawn worker("xy zwv q")
+    console.println("{total + line.length()} {task.wait()} {widest(1234)} {noise()} {lines} {grouped}")
+}
+
+// expect-stdout: 1800 [2:ccc, 1:ee, 0:fff] one-two-three [[<a>, <b>], [<c>], [], [<d>]] 60000 <ul><li>a!</li><li>b!</li></ul><p>x</p><ul><li>c!</li></ul> [a]+<b>+[a]<b> [c]+<d>+[c]<d>
+// expect-stdout: 7 3 4 1800 [2:ccc, 1:ee, 0:fff] [[<a>, <b>], [<c>], [], [<d>]]
+// expect-optimization: 33:17 reserved empties the array in place
+// expect-optimization: 35:17 region goes in the region of a turn of the loop at line 27
+// expect-optimization: 51:13 region goes in a region of `slug`
+// expect-optimization: 70:13 region goes in a region that the caller of `groups` gives
+// expect-optimization: 86:13 reserved empties the array in place
+// expect-optimization: 89:13 region goes in a region of `listed`
+// expect-optimization: 89:24 region goes in a region of `listed`
+// expect-optimization: 101:9 region goes in a region of `taken`
+// expect-optimization: 101:20 region goes in a region of `taken`
+// expect-optimization: 108:9 reserved empties the array in place
+// expect-optimization: 122:13 region goes in a region of `large`
+// expect-optimization: 144:13 region goes in a region of `worker`
+// expect-optimization: 144:13 region it is emptied in `spawn worker`, the body of a task, whose region lasts as long as the task
+// expect-optimization: 159:13 region it is emptied in `widest`, which code outside the program calls
+// expect-optimization: 180:13 region it is emptied in `main`, whose region lasts as long as the program

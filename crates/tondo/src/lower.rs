@@ -508,6 +508,7 @@ fn lower_function(
         scopes: Vec::new(),
         needs: function.needs,
         widest: false,
+        lasting: None,
         region: Vec::new(),
         loops: Vec::new(),
         copy_of: None,

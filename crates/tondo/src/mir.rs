@@ -205,6 +205,11 @@ pub struct Body {
     /// function with a clone of 256 bits for its version, or the clone,
     /// which only such functions inline, as the others have one width.
     pub widest: bool,
+    /// Why the function's region may last as long as the program or a
+    /// task: it is `main`, an export or the body of a task. The regions
+    /// pass leaves on the heap there an array that a loop empties to fill
+    /// again, whose room a region would keep to its end (`regions`).
+    pub lasting: Option<String>,
     /// The statements that make a value in one of the function's regions,
     /// by block and position (`regions`), and the region: 0, its own,
     /// which it leaves at each of its returns; n, that of its loop n - 1

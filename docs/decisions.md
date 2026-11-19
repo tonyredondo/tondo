@@ -8139,3 +8139,34 @@ example: `slug` is called once a word and its `part = []` runs only
 between the parts of one. That share is the regions pass's, which leaves
 an array that a loop empties on the heap; whether it may take it, and in
 which functions, is its own decision.
+
+## An array that a loop empties and fills again goes in its function's region
+
+F left textkit as it was: its `part` was made anew in each call of `slug`,
+and the regions pass kept on the heap any array a loop emptied with
+`x = []`, as one changed in a way a region did not take. The emptying is
+now such a change: it empties the array in place or gives it the constant
+empty array, and copies nothing onto the heap, so the array goes in its
+function's region, or in a turn's when it is made in a loop around it; and
+what such an array keeps from turn to turn may stay in the function's
+region, as what an array the loop only pushes to keeps. In a region the
+room is kept whatever its size: a room given back would stay in the region
+to its end, one more each turn.
+
+That keeps the largest room an array took, about twice with what its
+growth left behind, until its function returns, where on the heap `x = []`
+gives back what is past 64 KiB. So the pass does not take it in `main`, in
+a function C calls or in the body of a task, whose regions may last as
+long as the program or the task, and says so at the push. A function that
+is none of those and still lives long, as a `serve` that `main` calls,
+keeps its region's memory to its end, as every value of its region does.
+A room past a chunk is already a chunk of its own in a region, which the
+emptying could give back; if it did, the exception and the caveat would
+go.
+
+Against F, both built as releases: textkit's 3203 heap allocations a run
+became 3 and its 173536 bytes 736, its regions' 6414 allocations 9614 and
+455088 bytes 627888, with 4.1% fewer instructions; sitegen's heap 100
+allocations and 5168 bytes fewer, its regions 100 and 5600 more. No other
+example moves, and no row of bench/tondo by more than 0.5% in
+instructions.

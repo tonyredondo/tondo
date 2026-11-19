@@ -2503,8 +2503,9 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   un marco toma moviendo un puntero y devuelve entera al terminar, o en el
   heap. Va en la región de la función que lo hace si nada lo guarda más
   allá de la llamada, aunque lo guarde de una vuelta a otra un array o un
-  deque al que el bucle solo añade con `push` o `pushFront`, o sea el texto
-  que el bucle amplía en su
+  deque al que el bucle solo añade con `push` o `pushFront`, o un array que
+  el bucle vacía con `x = []` y vuelve a llenar, que en una región guarda su
+  sitio sea cual sea, o sea el texto que el bucle amplía en su
   sitio, `x = "{x}..."`, si mientras crece no lo guarda nada más que su
   variable y esos arrays, o en la de una vuelta de un bucle si no
   sobrevive a la vuelta, o solo la sobrevive por una salida del bucle que no
@@ -2524,7 +2525,10 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   su región no hizo, contiene un objeto del runtime, que un valor de una
   región nunca soltaría, se cambia de un modo que una región no toma aún, como
   un mapa o un deque que se vacía con `clear` o un array que cambia más que
-  con `push`, `pop` y la escritura de sus elementos, y nombra el cambio, se pasa
+  con `push`, `pop`, `x = []` y la escritura de sus elementos, y nombra el
+  cambio, se vacía con `x = []` en `main`, en una función que se exporta o en
+  el cuerpo de una tarea, donde el pase no lo pone en una región, que duraría
+  lo que el programa o la tarea, y nombra la función, se pasa
   a una función del runtime cuyo código aún no se ha leído, y la nombra,
   o es de una clase que una región no toma aún, y la nombra: una región
   toma arrays, cajas, los closures que guarda un valor, como los de los

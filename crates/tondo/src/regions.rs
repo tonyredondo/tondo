@@ -110,8 +110,10 @@ pub fn regions(
     types: &Types,
     sources: &crate::source::SourceMap,
     roots: &[usize],
+    main: Option<usize>,
     clones: &[(usize, usize)],
 ) -> (Vec<Verdict>, Vec<Taking>) {
+    lasting(bodies, roots, main);
     // What each function's statements pass on, and its places, on every
     // core: each function is read on its own.
     let read = |bodies: &[Body]| {
@@ -1330,9 +1332,9 @@ fn only_appended(body: &Body, inside: &[bool], local: Local) -> bool {
 }
 
 /// Whether `local` is an array or a deque that the blocks `inside` a loop
-/// only push to: given its value outside them, never written whole there,
-/// nor an element of it, nor changed otherwise, nor lent, nor passed to a
-/// call.
+/// only push to, or empty to fill again: given its value outside them,
+/// never written whole there, nor an element of it, nor changed otherwise,
+/// nor lent, nor passed to a call.
 fn only_pushed(body: &Body, types: &Types, inside: &[bool], local: Local) -> bool {
     let array = matches!(
         types.kind(types.repr(body.locals[local.0 as usize])),
@@ -1347,12 +1349,16 @@ fn only_pushed(body: &Body, types: &Types, inside: &[bool], local: Local) -> boo
                         && match &**rvalue {
                             Rvalue::Mutate(mutation, target, ..) if target.local == local => {
                                 target.path.is_empty()
-                                    && matches!(
-                                        mutation,
+                                    && match mutation {
                                         crate::hir::Mutation::Push
-                                            | crate::hir::Mutation::PushFront
-                                            | crate::hir::Mutation::Reserve
-                                    )
+                                        | crate::hir::Mutation::PushFront
+                                        | crate::hir::Mutation::Reserve => true,
+                                        // Emptied to be filled again, where
+                                        // its function's region does not
+                                        // last long.
+                                        crate::hir::Mutation::Empty => body.lasting.is_none(),
+                                        _ => false,
+                                    }
                             }
                             Rvalue::AssignSlice(target, ..) => target.local != local,
                             Rvalue::Call(_, args) | Rvalue::CallIndirect(_, args) => !args.iter().any(ours),
@@ -1577,6 +1583,49 @@ fn holding(
     }
 }
 
+/// Marks the functions whose region may last as long as the program or a
+/// task, and why: `main`, the exports, which code outside the program
+/// calls, and the bodies of the tasks the program starts.
+fn lasting(bodies: &mut [Body], roots: &[usize], main: Option<usize>) {
+    let mut tasks = Vec::new();
+    for body in bodies.iter() {
+        let made = |local: Local| {
+            body.blocks.iter().flat_map(|block| &block.stmts).find_map(|statement| match statement {
+                Statement::Assign(place, rvalue, _) if place.path.is_empty() && place.local == local => match &**rvalue
+                {
+                    Rvalue::Erase(_, id, _) | Rvalue::FnValue(id) => Some(id.0 as usize),
+                    _ => None,
+                },
+                _ => None,
+            })
+        };
+        for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+            if let Statement::Assign(_, rvalue, _) = statement
+                && let Rvalue::Spawn(Operand::Copy(task), _) = &**rvalue
+                && task.path.is_empty()
+                && let Some(id) = made(task.local)
+            {
+                tasks.push(id);
+            }
+        }
+    }
+    for id in tasks {
+        let name = &bodies[id].name;
+        bodies[id].lasting =
+            Some(format!("it is emptied in `{name}`, the body of a task, whose region lasts as long as the task"));
+    }
+    for &root in roots {
+        let name = &bodies[root].name;
+        bodies[root].lasting = Some(match Some(root) == main {
+            true => format!("it is emptied in `{name}`, whose region lasts as long as the program"),
+            false => format!(
+                "it is emptied in `{name}`, which code outside the program calls, and whose region may last as long \
+                 as the program"
+            ),
+        });
+    }
+}
+
 /// Of a map or an array a region would grow, the first change of it that a
 /// region does not take yet, which may copy it onto the heap when it is
 /// shared, as it is the heap's: why, the code, and its block.
@@ -1587,6 +1636,9 @@ fn unchanged(body: &Body, types: &Types, local: Local) -> Option<(String, Span, 
         let Statement::Assign(place, rvalue, span) = statement else { return None };
         let taken = match &**rvalue {
             Rvalue::AssignSlice(target, ..) if target.local == local => !map,
+            Rvalue::Mutate(crate::hir::Mutation::Empty, target, ..) if target.local == local => {
+                return body.lasting.as_ref().map(|why| (why.clone(), *span, block));
+            }
             Rvalue::Mutate(mutation, target, ..) if target.local == local => matches!(
                 mutation,
                 crate::hir::Mutation::Push
@@ -1653,6 +1705,10 @@ fn made(
             // which copies it first too.
             let changed_here = match statement {
                 Statement::Assign(_, rvalue, _) => match &**rvalue {
+                    // The emptying of an array to fill again, which empties
+                    // it in place or gives it the constant empty array, as
+                    // `[]` does, and copies nothing onto the heap.
+                    Rvalue::Mutate(crate::hir::Mutation::Empty, ..) if body.lasting.is_none() => None,
                     Rvalue::Mutate(_, target, ..) | Rvalue::AssignSlice(target, ..) => {
                         Some((target.local, taken(target.local)))
                     }

@@ -2507,9 +2507,19 @@ fn arrays_changed_count_alike_in_regions() {
 /// The counts `testing.allocations` gives of each call of a test that
 /// prints them as `<name> <count>`, with regions and without them, which
 /// must be alike: what a region takes counts as the heap's would.
-fn counts_of(name: &str, tests: &str) -> Vec<(String, i64)> {
+fn counts_of(name: &str, tests: &str) -> Counts {
+    let (with, without) = counts_both(name, tests);
+    assert_eq!(with, without);
+    with
+}
+
+/// What `testing.allocations` counted of each call, by its name.
+type Counts = Vec<(String, i64)>;
+
+/// The counts of `counts_of`, with regions and without them.
+fn counts_both(name: &str, tests: &str) -> (Counts, Counts) {
     let dir = project(name, tests);
-    let counts = |regions: &[&str]| -> Vec<(String, i64)> {
+    let counts = |regions: &[&str]| -> Counts {
         let (stdout, stderr, status) = tondo(&dir, &[&["test", "--show-output"], regions].concat());
         assert_eq!(status, 0, "{stdout}{stderr}");
         stdout
@@ -2520,9 +2530,7 @@ fn counts_of(name: &str, tests: &str) -> Vec<(String, i64)> {
             })
             .collect()
     };
-    let counted = counts(&[]);
-    assert_eq!(counted, counts(&["--no-lifetimes"]));
-    counted
+    (counts(&[]), counts(&["--no-lifetimes"]))
 }
 
 /// A text with nothing to trim comes back as it is, without a copy, and
@@ -2723,8 +2731,8 @@ fn cased(letters: Array[Char]): Int {
 /// of eight letters, each emptied and filled again, allocate the room of
 /// one; where the array was pushed to another, it starts from nothing each
 /// time, as a new one does, and so does `clear()`, which takes `[]` rather
-/// than a new empty array; and room past 64 KiB is given back
-/// (tests/cases/run/arrays_emptied.to).
+/// than a new empty array; and room past 64 KiB is given back, but in a
+/// region (tests/cases/run/arrays_emptied.to, regions/emptied.to).
 #[test]
 fn an_array_emptied_and_filled_again_keeps_its_room() {
     let tests = "\
@@ -2809,13 +2817,17 @@ fn rounds(length: Int): Int {
     count
 }
 ";
-    let counts = counts_of("emptied_counted", tests);
-    let of = |name: &str| counts.iter().find(|(n, _)| n == name).map(|&(_, count)| count).unwrap();
     // Before, `kept` was `fresh`, `cleared` one more for each word, and
-    // `small` one for each round.
-    assert_eq!(of("kept") * 100, of("fresh"), "{counts:?}");
-    assert_eq!((of("given"), of("cleared")), (of("pushed"), of("pushed")), "{counts:?}");
-    assert_eq!((of("small"), of("large")), (1, 3), "{counts:?}");
+    // `small` one for each round. Room past the bound is given back on the
+    // heap, one allocation a round, and kept in a region, which would keep
+    // a room given back to its end.
+    let (regions, heap) = counts_both("emptied_counted", tests);
+    for (counts, large) in [(regions, 1), (heap, 3)] {
+        let of = |name: &str| counts.iter().find(|(n, _)| n == name).map(|&(_, count)| count).unwrap();
+        assert_eq!(of("kept") * 100, of("fresh"), "{counts:?}");
+        assert_eq!((of("given"), of("cleared")), (of("pushed"), of("pushed")), "{counts:?}");
+        assert_eq!((of("small"), of("large")), (1, large), "{counts:?}");
+    }
 }
 
 /// Slices, of arrays and of texts, allocate as often in a region as on the
