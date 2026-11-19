@@ -2886,9 +2886,7 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
             TyKind::Float(FloatTy::F32) => {
                 self.call_rt(Rt::SbF32, &[builder, value]);
             }
-            TyKind::Char => {
-                self.call_rt(Rt::SbChar, &[builder, value]);
-            }
+            TyKind::Char => self.push_char(builder, value),
             TyKind::Byte => {
                 let wide = self.fb.ins().uextend(types::I64, value);
                 self.call_rt(Rt::SbU64, &[builder, wide]);
@@ -3328,6 +3326,127 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
         self.fb.switch_to_block(done);
     }
 
+    /// Appends a character to the builder at `builder` (the runtime's
+    /// `Builder`: its text and its length) where the code is when it is
+    /// ASCII and has room, as `Builder::extend` does with one byte: in its
+    /// block, after its length, or in its word, a short text's, after the
+    /// bytes its top byte counts; any other calls the runtime.
+    fn push_char(&mut self, builder: ir::Value, value: ir::Value) {
+        let [looked, block, stored, word, put, call, done] = [(); 7].map(|_| self.fb.create_block());
+        let ascii = self.fb.ins().icmp_imm_u(IntCC::UnsignedLessThan, value, 0x80);
+        self.fb.ins().brif(ascii, looked, &[], call, &[]);
+        self.fb.switch_to_block(looked);
+        let text = self.fb.ins().load(POINTER, flags(), builder, 0);
+        let in_block = self.fb.ins().icmp_imm_s(IntCC::SignedGreaterThan, text, 0);
+        self.fb.ins().brif(in_block, block, &[], word, &[]);
+        self.fb.switch_to_block(block);
+        let length = self.fb.ins().load(POINTER, flags(), builder, 8);
+        let room = self.fb.ins().load(POINTER, flags(), text, 16);
+        let fits = self.fb.ins().icmp(IntCC::UnsignedLessThan, length, room);
+        self.fb.ins().brif(fits, stored, &[], call, &[]);
+        self.fb.switch_to_block(stored);
+        let at = self.fb.ins().iadd(text, length);
+        let byte = self.fb.ins().ireduce(types::I8, value);
+        self.fb.ins().store(flags(), byte, at, 24);
+        let longer = self.fb.ins().iadd_imm_s(length, 1);
+        self.fb.ins().store(flags(), longer, builder, 8);
+        self.fb.ins().jump(done, &[]);
+        // A short text: `SHORT`, its length in its top byte and its bytes.
+        self.fb.switch_to_block(word);
+        let shifted = self.fb.ins().ushr_imm_u(text, 56);
+        let held = self.fb.ins().band_imm_u(shifted, 0x7f);
+        let short = self.fb.ins().icmp_imm_s(IntCC::SignedLessThan, text, 0);
+        let room = self.fb.ins().icmp_imm_u(IntCC::UnsignedLessThan, held, 7);
+        let fits = self.fb.ins().band(short, room);
+        self.fb.ins().brif(fits, put, &[], call, &[]);
+        self.fb.switch_to_block(put);
+        let wide = self.fb.ins().uextend(types::I64, value);
+        let bits = self.fb.ins().imul_imm_s(held, 8);
+        let placed = self.fb.ins().ishl(wide, bits);
+        let counted = self.fb.ins().iadd_imm_s(text, 1i64 << 56);
+        let grown = self.fb.ins().bor(counted, placed);
+        self.fb.ins().store(flags(), grown, builder, 0);
+        self.fb.ins().jump(done, &[]);
+        self.fb.set_cold_block(call);
+        self.fb.switch_to_block(call);
+        self.call_rt(Rt::SbChar, &[builder, value]);
+        self.fb.ins().jump(done, &[]);
+        self.fb.switch_to_block(done);
+    }
+
+    /// Retains a text where the code is: one with a count of its own takes
+    /// the add here, and an immortal one nothing; none and a short text,
+    /// not positive, count nothing; a piece of a block, whose block holds
+    /// its count, calls the runtime.
+    fn retain_text(&mut self, text: ir::Value) {
+        let (looked, add, other, call, done) = (
+            self.fb.create_block(),
+            self.fb.create_block(),
+            self.fb.create_block(),
+            self.fb.create_block(),
+            self.fb.create_block(),
+        );
+        let counted = self.fb.ins().icmp_imm_s(IntCC::SignedGreaterThan, text, 0);
+        self.fb.ins().brif(counted, looked, &[], done, &[]);
+        self.fb.switch_to_block(looked);
+        let rc = self.fb.ins().load(types::I64, flags(), text, 0);
+        let own = self.fb.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, rc, 0);
+        self.fb.ins().brif(own, add, &[], other, &[]);
+        self.fb.switch_to_block(add);
+        let one = self.fb.ins().iconst(types::I64, 1);
+        self.fb.ins().atomic_rmw(types::I64, flags(), ir::AtomicRmwOp::Add, text, one);
+        self.fb.ins().jump(done, &[]);
+        self.fb.switch_to_block(other);
+        let immortal = self.fb.ins().icmp_imm_s(IntCC::Equal, rc, -1);
+        self.fb.ins().brif(immortal, done, &[], call, &[]);
+        self.fb.set_cold_block(call);
+        self.fb.switch_to_block(call);
+        self.call_rt(Rt::StrRetain, &[text]);
+        self.fb.ins().jump(done, &[]);
+        self.fb.switch_to_block(done);
+    }
+
+    /// Releases a text where the code is when others hold it too, a count
+    /// from two up to the marks of the high bits, by taking one off; and if
+    /// another thread let go of it meanwhile, so that this was the last,
+    /// frees it. The last reference is freed at once, as the runtime would;
+    /// the last of a text in a region, which its region lets go of, and an
+    /// immortal text count nothing. Others in a region and a piece of a
+    /// block call the runtime, which knows them.
+    fn release_text(&mut self, text: ir::Value) {
+        let [looked, shared, other, alone, last, call, freed, done] = [(); 8].map(|_| self.fb.create_block());
+        let counted = self.fb.ins().icmp_imm_s(IntCC::SignedGreaterThan, text, 0);
+        self.fb.ins().brif(counted, looked, &[], done, &[]);
+        self.fb.switch_to_block(looked);
+        let rc = self.fb.ins().load(types::I64, flags(), text, 0);
+        let others = self.fb.ins().iadd_imm_s(rc, -2);
+        let held = self.fb.ins().icmp_imm_u(IntCC::UnsignedLessThan, others, (1i64 << 60) - 2);
+        self.fb.ins().brif(held, shared, &[], other, &[]);
+        self.fb.switch_to_block(shared);
+        let minus = self.fb.ins().iconst(types::I64, -1);
+        let before = self.fb.ins().atomic_rmw(types::I64, flags(), ir::AtomicRmwOp::Add, text, minus);
+        let lost = self.fb.ins().icmp_imm_s(IntCC::Equal, before, 1);
+        self.fb.ins().brif(lost, freed, &[], done, &[]);
+        self.fb.switch_to_block(freed);
+        self.call_rt(Rt::StrFree, &[text]);
+        self.fb.ins().jump(done, &[]);
+        // One reference: on the heap, which this frees, or in a region.
+        self.fb.switch_to_block(other);
+        let unmarked = self.fb.ins().band_imm_u(rc, !REGION as i64);
+        let only = self.fb.ins().icmp_imm_s(IntCC::Equal, unmarked, 1);
+        self.fb.ins().brif(only, alone, &[], last, &[]);
+        self.fb.switch_to_block(alone);
+        let heap = self.fb.ins().icmp_imm_s(IntCC::Equal, rc, 1);
+        self.fb.ins().brif(heap, freed, &[], done, &[]);
+        self.fb.switch_to_block(last);
+        let immortal = self.fb.ins().icmp_imm_s(IntCC::Equal, rc, -1);
+        self.fb.ins().brif(immortal, done, &[], call, &[]);
+        self.fb.switch_to_block(call);
+        self.call_rt(Rt::StrRelease, &[text]);
+        self.fb.ins().jump(done, &[]);
+        self.fb.switch_to_block(done);
+    }
+
     /// Retains or releases every counted value inside `value`.
     fn refcount(&mut self, ty: Ty, value: Val, release: bool) {
         if !self.cg.types().needs_drop(ty) {
@@ -3397,9 +3516,14 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
                 TyKind::Handle(..) => {
                     self.call_rt(Rt::HandleRetain, &[pointer]);
                 }
-                _ => {
+                // Inline in glue alone, which counts every text of the
+                // values it is given: at every site the code would weigh a
+                // half more.
+                _ if !self.glue => {
                     self.call_rt(if release { Rt::StrRelease } else { Rt::StrRetain }, &[pointer]);
                 }
+                _ if release => self.release_text(pointer),
+                _ => self.retain_text(pointer),
             },
             (Val::Memory(base), Shape::Struct(_)) => {
                 let count = self.cg.types().components(ty).unwrap().len() as u32;

@@ -590,19 +590,25 @@ pub unsafe extern "C" fn tondo_rt_str_release(s: *mut Str) {
         _ => {}
     }
     match dropped(rc) {
-        1 => {
-            fence(Ordering::Acquire);
-            LIVE_OBJECTS.gone();
-            // Only a long string's positions are kept, and its room never
-            // shrinks, even if it does.
-            if unsafe { (*s).cap } >= POSITIONED_FROM {
-                forget_positions(s);
-            }
-            unsafe { dealloc(s as *mut u8, str_layout((*s).cap)) }
-        }
+        1 => unsafe { tondo_rt_str_free(s) },
         0 => runtime_fault("string released after it was freed"),
         _ => {}
     }
+}
+
+/// Frees a string whose last reference went: one `tondo_rt_str_release`
+/// let go of, or one whose count the generated code took from one to
+/// nothing, as another thread let go of it after the code read it shared.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_free(s: *mut Str) {
+    fence(Ordering::Acquire);
+    LIVE_OBJECTS.gone();
+    // Only a long string's positions are kept, and its room never shrinks,
+    // even if it does.
+    if unsafe { (*s).cap } >= POSITIONED_FROM {
+        forget_positions(s);
+    }
+    unsafe { dealloc(s as *mut u8, str_layout((*s).cap)) }
 }
 
 /// Where the scalars of the long strings a program indexes are (19.2), a

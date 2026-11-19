@@ -1,0 +1,82 @@
+// The glue that retains and releases a record takes its texts' counts
+// where its code is, and calls the runtime only for what it alone knows:
+// tasks on every worker hold and let go of one record and its texts at
+// once, so that the counts race, and the leak check of every case sees
+// each freed once; a literal, immortal, counts nothing; a short text, in
+// its word, has no count. Characters appended to a text are written where
+// the code is when they are ASCII and fit, in a short text's word and in a
+// block, and the others by the runtime.
+
+import std.console
+import std.env
+
+type Pair = { name: String, note: String }
+
+fn pairs(pair: Pair, rounds: Int): Int {
+    var kept: Array[Pair] = []
+    var total = 0
+    for round in 0..rounds {
+        kept.push(pair)
+        if kept.length() > 3 {
+            kept = []
+        }
+        total += pair.name.length() + pair.note.length() + round % 2
+    }
+    total
+}
+
+fn held(text: String, rounds: Int): Int {
+    var kept: Array[String] = []
+    var total = 0
+    for round in 0..rounds {
+        kept.push(text)
+        if kept.length() > 3 {
+            kept = []
+        }
+        total += text.length() + round % 2
+    }
+    total
+}
+
+fn main() {
+    let shared = "a text long enough to be counted, {env.args().length()}"
+    var group = Group[Int]()
+    for _ in 0..16 {
+        group.add(spawn held(shared, 2000))
+    }
+    var sum = 0
+    for total in group.wait() {
+        sum += total
+    }
+    console.println("{sum}")
+    let pair = Pair { name: "{shared} named", note: "a note of more than seven bytes" }
+    var paired = Group[Int]()
+    for _ in 0..16 {
+        paired.add(spawn pairs(pair, 2000))
+    }
+    var both = 0
+    for total in paired.wait() {
+        both += total
+    }
+    console.println("{both}")
+    let literal = "an immortal literal of more than seven bytes"
+    console.println("{held(literal, 3)} {held("short", 3)}")
+    var out = ""
+    for c in "héllo wörld, 日本 ok".chars() {
+        out = "{out}{c}"
+    }
+    var word = ""
+    for c in "abcdefg".chars() {
+        word = "{word}{c}"
+    }
+    var long = ""
+    for n in 0..40 {
+        long = "{long}{Char.from(97 + n % 26) ?? '?'}"
+    }
+    console.println("{out} {word} {word.length()} {long.length()} {long}")
+}
+
+// expect-stdout: 1136000
+// expect-stdout: 2320000
+// expect-stdout: 133 16
+// expect-stdout: héllo wörld, 日本 ok abcdefg 7 40 abcdefghijklmnopqrstuvwxyzabcdefghijklmn

@@ -8294,3 +8294,35 @@ glue comes before it. A call of glue is compared by what the glue does,
 not by its name, so that the code of a function that calls glue is the
 same against a `tondo` that numbered it. Copies of a function the passes
 made share its name and pair in their order.
+
+## The glue takes texts' counts where its code is
+
+Every retain and release of a text was a call of the runtime, about half
+of whose cost was the call itself (S5's door). Now a retain of a text
+whose count is not negative is an atomic add where the code is, and one
+of an immortal text nothing; a release of a text others hold too, a
+count from two up to the marks of the high bits, takes one off
+atomically, and frees it when another thread let go of it meanwhile; the
+last reference is freed at once, by an entry of the runtime that does
+only that, and the last of a text in a region, which its region lets go
+of, counts nothing. Pieces of a block, and the counts of a region's text
+others hold, call the runtime, which knows them.
+
+Written at every site, it took 1% to 9% fewer instructions from the
+examples, but the program's code grew by 24% to 64% and the standard
+library's by 35% to 59%, executables by up to 13%. So only the glue does
+it, the code that retains and releases the texts of a record, a tuple
+or an enum, and it keeps most of the gain: against 531f45b9, chat runs
+6.5% fewer instructions, kvstore 4.4%, linkcheck 7.8%, notes 2.5%,
+profiler 7.5%, sitegen 3.2%, textkit 6.3%, warehouse 5.8%, and
+`filter sumBy` 11.7%, `sortedBy` 9.3%, `groupBy` 5.6%; no row runs more
+than 0.5% more, and executables weigh 0.1% to 0.3% more. Retains and
+releases of texts with the glue around them took 25.9% of kvstore's
+time and now 23.0%, chat's 23.2% and 21.7%, notes' 17.1% and 12.6%,
+warehouse's 24.0% and 21.2%; what is left in the runtime's entries, 3%
+to 7%, is the direct sites', to be taken one kind at a time with code
+smaller than this.
+
+A character interpolated into a text is written where the code is when
+it is ASCII and the text has room, in its block or in a short text's
+word, as the runtime would, at no cost in size that `tondo size` shows.
