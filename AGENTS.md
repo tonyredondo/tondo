@@ -171,6 +171,9 @@ its own, with `gh workflow run CI --ref <branch>`.
   The toolchain does what it can by itself rather than ask for
   annotations.
 - Keep it small: no code a feature does not need.
+- Nothing that reaches an executable takes its order from a hash map's
+  iteration: a build is the same bytes twice, as
+  `cargo test -p tondo --test cli a_build_is_the_same_bytes_twice` holds.
 - The public API of the standard library is recorded in
   `crates/tondo/tests/snapshots/std-api.txt`, which a test holds it to: a
   change to it on purpose records it again with

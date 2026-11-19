@@ -1949,7 +1949,9 @@ depuración (sección 7.6) cuyo código cambia mientras el programa corre.
 Cada llamada a una función del programa pasa por un slot de una tabla, y la
 imagen guarda tablas de lo que un cambio puede necesitar de ella: las
 funciones del runtime, que enlaza todas, las de C que llama y la identidad de
-cada tipo. Un build vivo atiende siempre a las herramientas, como con
+cada tipo. Cada build vivo lleva una identidad de cuándo y dónde se hizo,
+con la que `tondo reload` lo reconoce, así que dos builds vivos del mismo
+programa no son los mismos bytes. Un build vivo atiende siempre a las herramientas, como con
 `TONDO_DIAGNOSTICS=1`, salvo con `TONDO_DIAGNOSTICS=0`. Los demás builds no
 tienen nada de eso, ni su coste.
 
