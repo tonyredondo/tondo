@@ -143,8 +143,11 @@ at 6:5 ``, when it is the program's:
   Pass the parts, or what it is made from.
 
 For a loop, the kind `grown` gives the arrays that grow as they are pushed to
-and `reserved` those given their room before the loop. `check` with
-`performance` warns, while writing, of a copy that a loop makes on every turn.
+and `reserved` those given their room before the loop, and the collections
+that an `x = []` empties in place, keeping their room. Emptying one to fill
+it again, by `clear()` or by assigning it an empty one, costs it neither its
+room nor its region. `check` with `performance` warns, while writing, of a
+copy that a loop makes on every turn.
 `against` with a commit, in `optimizations` and in `test` with `bench`, gives
 only what a change made different, and `max_regression` fails a run whose
 benchmarks allocate more than the baseline's: that is the form for CI.
