@@ -325,6 +325,57 @@ $ tondo profile --tasks -- ./todo
 tondo: a program that has just started has only `main`: give `--duration <seconds>` to say when its tasks are to be seen, as `tondo profile --tasks --duration 1 -- <program>`
 ```
 
+A task that has not run yet is in the picture too, where it was spawned.
+Three long sums started as tasks, by a program held to one core:
+
+```tondo
+import std.console
+
+/// A sum that takes a while.
+fn busy(rounds: Int): Int {
+    var total = 0
+    for i in 0..rounds {
+        total += i % 7
+    }
+    total
+}
+
+fn main() {
+    let first = spawn busy(40000000000)
+    let second = spawn busy(40000000000)
+    let third = spawn busy(40000000000)
+    console.println("{first.wait() + second.wait() + third.wait()}")
+}
+```
+
+```text
+$ TONDO_DIAGNOSTICS=1 taskset -c 0 ./backlog &
+$ tondo profile backlog --tasks --output tasks.pb.gz
+tondo: 4 tasks: tasks.pb.gz; `tondo profile show tasks.pb.gz` shows where; the program did not stop within its wait: tasks that were running are shown where the system had them
+
+$ tondo profile show tasks.pb.gz
+tasks of tasks.pb.gz, 4 in all over 0.26s
+     flat  flat%       cum   cum%  function
+        2  50.0%         3  75.0%  main  backlog.to
+        1  25.0%         1  25.0%  busy  backlog.to
+        1  25.0%         1  25.0%  tondo_runtime::tasks::join::finish
+        0   0.0%         4 100.0%  tondo_runtime::tasks::trampoline
+        0   0.0%         3  75.0%  tondo_main
+        0   0.0%         1  25.0%  spawn busy  backlog.to
+        0   0.0%         1  25.0%  tondo_rt_join_wait
+by label:
+        2  50.0%  state=ready
+        1  25.0%  state=runs
+        1  25.0%  state=waits
+```
+
+One sum runs, in `busy`, and `main` waits for it. The two that are `ready`
+have not had the core yet, so they are counted in `main`, at the lines that
+spawned them, which `--lines` names: `backlog.to:14` and `backlog.to:15`.
+Tasks that pile up `ready` are work with no core to do it. This program,
+busy in a loop of arithmetic, is also one that did not stand still for its
+picture, and the command said so.
+
 ## Everything at once: dump
 
 ```text
