@@ -1259,7 +1259,7 @@ line beside it:
 
 ```text
 $ tondo asm stats.to mean
-mean (1144 bytes, 8 of them constants)
+mean (1152 bytes, 13 of them constants)
       0  push rbp
       1  mov rbp, rsp
       4  sub rsp, 0x80
@@ -1305,7 +1305,7 @@ stays":
 ```text
 $ tondo asm letters.to letters
 letters.to:6  for c in text.chars() {
-        ; a turn of the loop runs 21 to 43 instructions on its common path, by the way it branches: at most 2 checks and at most 2 calls
+        ; a turn of the loop runs 18 to 39 instructions on its common path, by the way it branches: at most 2 checks and at most 2 calls
 ```
 
 That is the number to bring down, and the one to compare before and after
@@ -1360,7 +1360,7 @@ retain of `Reading` (71 bytes)
 A `Reading` holds one text, so to count a reading is to count its text. A
 [text of a few bytes](#a-text-of-a-few-bytes) is its own word and has no
 count, which is the first jump. Nothing is counted either for a text that
-nothing frees, as one made in a function's frame. For any other the count
+nothing frees, as one written in the program is. For any other the count
 is one addition, `lock add`, where the code is, and the call of the
 runtime is left for the few kinds only it knows.
 
@@ -1375,20 +1375,20 @@ function. For the program of this chapter's first section:
 
 ```text
 $ tondo size stats.to
-2.93 MiB in all
-    4.9 KiB   0.2%  the program's code
-    4.0 KiB   0.1%  the standard library's code
-      913 B   0.0%  code the compiler adds
-   1.78 MiB  60.7%  the runtime's code
-      764 B   0.0%  the program's data
-  489.1 KiB  16.3%  the runtime's data
-  167.1 KiB   5.6%  tables for traces, dumps and debuggers
-  470.1 KiB  15.7%  the names of symbols
-   41.2 KiB   1.4%  the rest: headers, dynamic linking, alignment
+2.98 MiB in all
+    5.1 KiB   0.2%  the program's code
+    9.6 KiB   0.3%  the standard library's code
+    1.3 KiB   0.0%  code the compiler adds
+   1.80 MiB  60.4%  the runtime's code
+      485 B   0.0%  the program's data
+  494.6 KiB  16.2%  the runtime's data
+  173.5 KiB   5.7%  tables for traces, dumps and debuggers
+  478.9 KiB  15.7%  the names of symbols
+   44.3 KiB   1.5%  the rest: headers, dynamic linking, alignment
 the functions that weigh the most:
-   37.1 KiB  tondo_runtime::debugger::commands::command  (tondo_runtime::debugger)
-   34.6 KiB  tondo_runtime::debugger::stopping::render  (tondo_runtime::debugger)
-   32.6 KiB  tondo_runtime::diagnostics::serving::answer  (tondo_runtime::diagnostics)
+   37.6 KiB  tondo_runtime::debugger::commands::command  (tondo_runtime::debugger)
+   34.1 KiB  tondo_runtime::diagnostics::serving::answer  (tondo_runtime::diagnostics)
+   33.7 KiB  tondo_runtime::debugger::stopping::render  (tondo_runtime::debugger)
 ```
 
 A small program is its runtime: the scheduler of tasks, the debugger and
