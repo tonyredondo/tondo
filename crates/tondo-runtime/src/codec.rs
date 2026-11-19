@@ -180,6 +180,10 @@ fn url_decode(input: &[u8]) -> Result<Vec<u8>, usize> {
 /// UTF-8, or `-1`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_url_check(input: *const Str) -> i64 {
+    // Without a `%`, it is its own bytes, which a text has as UTF-8.
+    if !text(&input).contains(&b'%') {
+        return -1;
+    }
     match url_decode(text(&input)) {
         Ok(decoded) if std::str::from_utf8(&decoded).is_ok() => -1,
         Ok(_) => -2,
@@ -189,6 +193,10 @@ pub unsafe extern "C" fn tondo_rt_url_check(input: *const Str) -> i64 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_url_decode(input: *const Str, region: *mut Region) -> *mut Str {
+    // Without a `%`, its bytes again, with no vector between.
+    if !text(&input).contains(&b'%') {
+        return str_in(region, text(&input));
+    }
     str_in(region, &url_decode(text(&input)).unwrap_or_default())
 }
 

@@ -405,15 +405,45 @@ pub extern "C" fn tondo_rt_text_float(
 /// 3 NFKD.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_normalize(s: *const Str, form: i64, region: *mut Region) -> *mut Str {
-    use unicode_normalization::UnicodeNormalization;
+    use unicode_normalization::{IsNormalized, UnicodeNormalization};
+    use unicode_normalization::{is_nfc_quick, is_nfd_quick, is_nfkc_quick, is_nfkd_quick};
     let text = text(&s);
-    let normal: String = match form {
-        1 => text.nfd().collect(),
-        2 => text.nfkc().collect(),
-        3 => text.nfkd().collect(),
-        _ => text.nfc().collect(),
+    // One already in the form, as ASCII always is, is its bytes again.
+    let quick = match form {
+        1 => is_nfd_quick(text.chars()),
+        2 => is_nfkc_quick(text.chars()),
+        3 => is_nfkd_quick(text.chars()),
+        _ => is_nfc_quick(text.chars()),
     };
-    str_in(region, normal.as_bytes())
+    if quick == IsNormalized::Yes {
+        return str_in(region, text.as_bytes());
+    }
+    // Else its characters in the form, built as the text they make, in its
+    // region when it has one, without a text of Rust's between.
+    // A decomposition takes more bytes than the text, which half again
+    // its room holds as a few accents take.
+    let room = match form {
+        1 | 3 => text.len() + text.len() / 2,
+        _ => text.len(),
+    };
+    let mut builder = std::mem::MaybeUninit::<crate::Builder>::uninit();
+    unsafe {
+        match region.is_null() {
+            true => {
+                builder.write(crate::Builder::new(room));
+            }
+            false => super::builder::tondo_rt_sb_start_region(builder.as_mut_ptr(), room, region),
+        }
+    }
+    let mut builder = unsafe { builder.assume_init() };
+    let mut put = |c: char| builder.extend(c.encode_utf8(&mut [0; 4]).as_bytes());
+    match form {
+        1 => text.nfd().for_each(&mut put),
+        2 => text.nfkc().for_each(&mut put),
+        3 => text.nfkd().for_each(&mut put),
+        _ => text.nfc().for_each(&mut put),
+    }
+    builder.finish()
 }
 
 /// Whether the text is in a normalization form, as `tondo_rt_text_normalize`
@@ -740,10 +770,24 @@ pub extern "C" fn tondo_rt_text_collate(object: *mut super::native::NativeObject
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_char_case(c: u32, upper: u8) -> u32 {
     let c = scalar(c);
-    let mut changed: Vec<char> = if upper != 0 { c.to_uppercase().collect() } else { c.to_lowercase().collect() };
-    match changed.len() {
-        1 => changed.pop().unwrap() as u32,
-        _ => c as u32,
+    if c.is_ascii() {
+        return match upper != 0 {
+            true => c.to_ascii_uppercase(),
+            false => c.to_ascii_lowercase(),
+        } as u32;
+    }
+    // One character in the other case, or the same where Unicode gives
+    // more than one, as `ß` gives `SS`: read off the case's own iterator,
+    // without a vector for it.
+    fn one(mut changed: impl Iterator<Item = char>, c: char) -> u32 {
+        match (changed.next(), changed.next()) {
+            (Some(one), None) => one as u32,
+            _ => c as u32,
+        }
+    }
+    match upper != 0 {
+        true => one(c.to_uppercase(), c),
+        false => one(c.to_lowercase(), c),
     }
 }
 

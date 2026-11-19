@@ -2675,6 +2675,50 @@ test counted {
     }
 }
 
+/// A normalization allocates the text it gives and none of its own: one
+/// already in the form, as ASCII is, its bytes again, and one that changes
+/// its characters as it builds them; so does the decoding of a URL's text
+/// with nothing percent-encoded; and a character's change of case, a
+/// character, allocates nothing, ASCII or not.
+#[test]
+fn normalizing_decoding_and_a_characters_case_allocate_only_what_they_give() {
+    let tests = "\
+import std.console
+import std.encoding
+import std.testing
+import std.text
+
+test counted {
+    let lines = (0..100).map((n) { \"GET /users/{n} 200 {n}ms\" }).collect()
+    let accented = lines.map((line) { \"café {line}\" })
+    let letters = \"QuéÉß\".chars().collect().repeat(40)
+    // The first of each, which may take room a thread keeps.
+    _ = (text.normalize(lines[0], text.Normalization.Nfd), text.normalize(accented[0], text.Normalization.Nfd))
+    console.println(\"lengths {testing.allocations(() { lines.map((line) { line.byteLength() }).sum() })}\")
+    console.println(\"normalized {testing.allocations(() { lines.map((line) { text.normalize(line, text.Normalization.Nfd).byteLength() }).sum() })}\")
+    console.println(\"decomposed {testing.allocations(() { accented.map((line) { text.normalize(line, text.Normalization.Nfd).byteLength() }).sum() })}\")
+    console.println(\"cased {testing.allocations(() { cased(letters) })}\")
+    console.println(\"unescaped {testing.allocations(() { lines.map((line) { (encoding.urlDecode(line) ?? \"\").byteLength() }).sum() })}\")
+}
+
+fn cased(letters: Array[Char]): Int {
+    var changed = 0
+    for letter in letters {
+        if letter.toLower() != letter or letter.toUpper() != letter {
+            changed += 1
+        }
+    }
+    changed
+}
+";
+    let counts = counts_of("normalizing_counted", tests);
+    let of = |name: &str| counts.iter().find(|(n, _)| n == name).map(|&(_, count)| count).unwrap();
+    // The array `map` makes, and one text for each line.
+    let mapped = of("lengths");
+    let each = (of("normalized"), of("decomposed"), of("cased"), of("unescaped"));
+    assert_eq!(each, (mapped + 100, mapped + 100, 0, mapped + 100), "{counts:?}");
+}
+
 /// Slices, of arrays and of texts, allocate as often in a region as on the
 /// heap: read within a turn, returned to a caller, kept past their turn,
 /// and of texts the region did not make (tests/cases/run/regions/slices.to).
