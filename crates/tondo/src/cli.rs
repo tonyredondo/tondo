@@ -413,7 +413,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "asm",
         usage: &[
-            "tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--against <rev> | --compiler <tondo|rev>]",
+            "tondo asm [<project>|<file.to>] [--tests] <function>|--all [--reached] [--clif] [--rules] [--against <rev> | --compiler <tondo|rev>]",
             "          [--cpu <level>] [--no-logpoints] [--no-lifetimes] [--json]",
             "tondo asm --runtime <function>|--all [--compiler <tondo|rev>] [--json]",
         ],

@@ -276,24 +276,22 @@ impl Server {
                     return Ok(Reply::new(text, json!({ "functions": functions })));
                 }
                 if let Some(reference) = args.text("against") {
-                    let (commit, changes, same) =
+                    let (commit, comparison) =
                         driver::assembly_against(&args.path(), &reference, function, args.flag("tests"))?;
                     let from = format!("{reference} ({})", &commit[..commit.len().min(12)]);
-                    let text = driver::assembly_changes_text(&from, &changes, same);
-                    let against = json!({ "ref": reference, "commit": commit });
-                    return Ok(Reply::new(
-                        text,
-                        json!({ "against": against, "changes": listed(&changes), "same": same }),
-                    ));
+                    let mut data = comparison.json();
+                    data["against"] = json!({ "ref": reference, "commit": commit });
+                    return Ok(Reply::new(driver::comparison_text(&from, &comparison), data));
                 }
                 if let Some(reference) = args.text("compiler") {
                     let (compiler, executable) = driver::compiler(&reference, &args.path())?;
-                    let (changes, same) =
+                    let comparison =
                         driver::assembly_compiler(&args.path(), &executable, function, args.flag("tests"))?;
-                    let text = driver::assembly_changes_text(&format!("the tondo of {reference}"), &changes, same);
+                    let mut data = comparison.json();
+                    data["compiler"] = json!(compiler);
                     return Ok(Reply::new(
-                        text,
-                        json!({ "compiler": compiler, "changes": listed(&changes), "same": same }),
+                        driver::comparison_text(&format!("the tondo of {reference}"), &comparison),
+                        data,
                     ));
                 }
                 let analysis = driver::analyzed(&args.path(), args.flag("tests"))?;
@@ -302,7 +300,9 @@ impl Server {
                     let data = json!({ "compiles": false, "diagnostics": diagnostics });
                     return Ok(Reply::new(report(&analysis, &diagnostics), data));
                 }
-                let assemblies = driver::assembly_with(&analysis, function, args.flag("clif"), args.flag("rules"))?;
+                let reached = args.flag("reached") && function.is_none();
+                let assemblies =
+                    driver::assembly_with(&analysis, function, args.flag("clif"), args.flag("rules"), reached)?;
                 let text = assemblies.iter().map(driver::Assembly::text).collect::<Vec<_>>().join("\n");
                 let functions: Vec<Value> = assemblies.iter().map(driver::Assembly::json).collect();
                 Ok(Reply::new(text, json!({ "functions": functions })))
@@ -2571,8 +2571,10 @@ against, what changed since a git revision.",
         name: "asm",
         description: "The machine code a release build makes of a function, under the lines of the program it is \
 at, with what the passes did there and what each call calls; with clif, Cranelift's IR before and after it \
-optimizes the function; with against, only what changed since a git revision. To see what a loop costs, \
-instruction by instruction.",
+optimizes the function; with against, only what changed since a git revision. With all and against or \
+compiler, also what changed in the standard library's and the dependencies' instances the program reaches and in \
+the glue made for its types, named by its type, counted by module with their instructions before and after; \
+reached lists them with all. To see what a loop costs, instruction by instruction.",
         kind: Kind::Reads,
         params: &[
             ("path", "string", "A project or a .to file; the server's directory by default."),
@@ -2581,6 +2583,12 @@ instruction by instruction.",
                 "all",
                 "boolean",
                 "Every function of the program's own code instead of one; with `runtime`, every one of the runtime's own.",
+            ),
+            (
+                "reached",
+                "boolean",
+                "With all, also the standard library's and the dependencies' instances the program reaches, and the \
+glue made for its types.",
             ),
             ("tests", "boolean", "The code of the tests and benchmarks, as `test` with `bench` builds it."),
             (

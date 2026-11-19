@@ -2561,7 +2561,8 @@ Las medidas se comparan con una línea base:
   para no depender del ruido de la máquina. Bajo cada benchmark cuyas
   instrucciones se movieron medio por ciento o más, o cuyo tiempo cambió
   donde el procesador no las cuenta, nombra las funciones que
-  su test alcanza cuyo código el otro `tondo` hace distinto, del programa y
+  su test alcanza cuyo código el otro `tondo` hace distinto: del programa,
+  instancias de `std` y de las dependencias, la glue por su tipo y las
   entradas del runtime, con sus instrucciones antes y ahora, las que más
   cambiaron primero, como las da `tondo asm --compiler`; o dice que ninguna
   cambió, y entonces lo que se movió es dónde está su código o lo que lee. El

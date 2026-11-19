@@ -586,7 +586,7 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
                    needs| {
         let func = std::mem::replace(&mut context.func, ir::Function::new());
         let traced = traced.map(str::to_string);
-        jobs.push(Job { id, func, traced, sites, latent, inlined, body, needs, file: None });
+        jobs.push(Job { id, func, traced, shown: None, sites, latent, inlined, body, needs, file: None });
     };
     // Each function, then the versions of those that have one.
     let built = {
@@ -740,14 +740,22 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
             cg.live.as_mut().expect("a live build").objects.push(object);
         }
     }
+    let asking = ASKED.lock().unwrap_or_else(|e| e.into_inner()).is_some();
+    let mut shown: HashMap<FuncId, String> = HashMap::new();
     while let Some((kind, ty, id)) = cg.pending_glue.pop() {
         context.func.signature = cg.glue_signature(kind);
         context.func.name = UserFuncName::user(2, id.as_u32());
         define_glue(&mut cg, kind, ty, &mut context.func, &mut builder_context);
         job(id, &mut context, None, (Vec::new(), Latent::default()), Vec::new(), 0, 0);
+        if asking {
+            shown.insert(id, glue::shown(&cg, kind, ty));
+        }
         cg.module.clear_context(&mut context);
     }
     drop(building);
+    for job in jobs.iter_mut().filter(|job| job.traced.is_none()) {
+        job.shown = shown.remove(&job.id);
+    }
     let compiling = crate::times::part("Cranelift");
     if crate::times::keeping() {
         for job in jobs.iter_mut().filter(|job| job.traced.is_some()) {
@@ -1039,6 +1047,9 @@ struct Job {
     id: FuncId,
     func: ir::Function,
     traced: Option<String>,
+    /// The name of glue while `tondo asm` asks for code, by what it does
+    /// and the type it is of, which names the calls of it too.
+    shown: Option<String>,
     /// Where each statement's code is in the source, and the type of the
     /// local it assigns, so that a sample of the memory it allocates names
     /// its type: the source location of an instruction indexes this, from 1.
@@ -1186,11 +1197,13 @@ fn labelled(ranges: &cranelift_codegen::ValueLabelsRanges) -> Vec<(u32, u32, u32
 /// their names hold, and whether with their IR (toolchain 7.19).
 static ASKED: std::sync::Mutex<Option<Asked>> = std::sync::Mutex::new(None);
 
-/// What `tondo asm` asks codegen to keep: the functions, by name, whether
-/// with their IR, and whether with the ISLE rules applied to them.
+/// What `tondo asm` asks codegen to keep: the functions, by name, the
+/// glue whose name holds `glue`, all of it for an empty one, whether with
+/// their IR, and whether with the ISLE rules applied to them.
 #[derive(Clone)]
 pub struct Asked {
     pub names: std::collections::HashSet<String>,
+    pub glue: Option<String>,
     pub ir: bool,
     pub rules: bool,
 }
@@ -1202,6 +1215,8 @@ static KEPT: std::sync::Mutex<Vec<Kept>> = std::sync::Mutex::new(Vec::new());
 /// and after Cranelift optimizes it.
 pub struct Kept {
     pub name: String,
+    /// Glue, named by what it does and the type it is of.
+    pub glue: bool,
     pub bytes: Vec<u8>,
     /// Where the instructions end, and the constants they read start.
     pub code_end: usize,
@@ -1983,8 +1998,13 @@ impl Codegen<'_> {
     fn compile_all(&mut self, mut jobs: Vec<Job>) -> Result<(), String> {
         let isa = self.module.isa();
         let asked = ASKED.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let wanted = |job: &Job| match (&asked, &job.traced) {
-            (Some(asked), Some(traced)) if asked.names.contains(traced) => Some(asked.ir),
+        let wanted = |job: &Job| match (&asked, &job.traced, &job.shown) {
+            (Some(asked), Some(traced), _) if asked.names.contains(traced) => Some(asked.ir),
+            (Some(asked), None, Some(shown))
+                if asked.glue.as_ref().is_some_and(|glue| shown.contains(glue.as_str())) =>
+            {
+                Some(asked.ir)
+            }
             _ => None,
         };
         // Each function goes to the thread that compiles it, which says
@@ -2024,7 +2044,10 @@ impl Codegen<'_> {
         });
         // What a call in kept code calls, by the program's names.
         let names: HashMap<u32, String> = match asked.is_some() {
-            true => jobs.iter().filter_map(|job| Some((job.id.as_u32(), job.traced.clone()?))).collect(),
+            true => jobs
+                .iter()
+                .filter_map(|job| Some((job.id.as_u32(), job.traced.clone().or_else(|| job.shown.clone())?)))
+                .collect(),
             false => HashMap::new(),
         };
         let labels = self.live.is_some().then(|| self.labels());
@@ -2055,10 +2078,11 @@ impl Codegen<'_> {
                 };
                 let site = |site: u32| job.sites.get((site as usize).checked_sub(1)?).map(|site| site.0);
                 // A function's version is shown with its level.
-                let name = job.traced.clone().unwrap_or_default();
+                let name = job.traced.clone().or_else(|| job.shown.clone()).unwrap_or_default();
                 let name = if job.needs & VERSION != 0 { format!("{name} (x86-64-v3)") } else { name };
                 KEPT.lock().unwrap_or_else(|e| e.into_inner()).push(Kept {
                     name,
+                    glue: job.traced.is_none(),
                     bytes: code.bytes.clone(),
                     code_end: code.code_end as usize,
                     targets: code.relocs.iter().filter_map(|reloc| Some((reloc.offset, target(reloc)?))).collect(),

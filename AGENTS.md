@@ -218,7 +218,11 @@ Ask the toolchain before guessing why code is slow or allocates:
   and after it optimizes, where a `Tondo:` rule shows whether it applied,
   and `--against <commit>` diffs the code with a revision's.
   `--all --compiler <old tondo>` gives the functions whose code a change
-  to the compiler changes, or that it changes none. In a `tondo` built
+  to the compiler changes, the program's with their diffs, then the
+  standard library's instances and the glue it reaches, by module, or
+  that it changes none; `--all --reached` lists those too, and a piece of
+  glue is named by what it does and its type, as release of
+  `Map[String, Value]`. In a `tondo` built
   with `--features rules`, `--rules` lists the ISLE rules applied to it,
   Tondo's marked; check a change to `vendor/` with `cargo test -p tondo
   --features rules --test cli the_rules` too.

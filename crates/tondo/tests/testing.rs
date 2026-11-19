@@ -836,6 +836,99 @@ fn names_the_code_that_changed_under_a_row_that_moved() {
     assert!(stdout.contains("code changed, in instructions:"), "{stdout}");
 }
 
+/// A change of the compiler that touches only code the program reaches,
+/// an instance of the standard library and a piece of glue, is told apart
+/// from the program's own: `tondo asm --all --compiler` gives it by module
+/// and as glue, named by its type, and ends with how many of each changed;
+/// the line under a row that moved names them; and a `tondo` from before
+/// `--reached` is said once not to list them. The other tondo is this one,
+/// whose listing of the two ends otherwise and whose run does more turns.
+#[test]
+fn names_the_library_and_glue_code_that_changed() {
+    let tests = "import std.env\nimport std.testing\n\ntest ordering {\n    let rounds = match env.get(\"ROUNDS\") {\n        \
+        some(text) => Int.parse(text) ?? 50\n        none => 50\n    }\n    \
+        testing.bench(\"ordered\", () { ordered(rounds) })\n}\n";
+    let dir = project("reached-code", tests);
+    let main = "type Pair = { name: String, tags: Array[String] }\n\npub fn ordered(rounds: Int): Int {\n    \
+        var total = 0\n    for round in 0..rounds {\n        let one = Pair { name: \"b{round}\", tags: [\"x{round}\"] }\n        \
+        let other = Pair { name: \"b{round}\", tags: [\"x{round % 2}\"] }\n        \
+        let numbers = [round, 3, 1, 2].sortedWith((a, b) { a - b })\n        \
+        total += numbers[0] + if one == other { 1 } else { 0 }\n    }\n    total\n}\n\nfn main() {}\n";
+    std::fs::write(dir.join("src/main.to"), main).unwrap();
+    let script = r#"#!/bin/sh
+case "$1" in
+  asm) "TONDO" "$@" | awk '{
+    n = split($0, parts, /\{"constants":/)
+    out = parts[1]
+    for (i = 2; i <= n; i++) {
+      p = parts[i]
+      if (index(p, "\"function\":\"prelude.mergeSort[Int]\"") || index(p, "\"function\":\"equality of `String`\"")) {
+        sub(/"instruction":"ret"/, "\"instruction\":\"nop\"", p)
+      }
+      out = out "{\"constants\":" p
+    }
+    print out
+  }' ;;
+  test) ROUNDS=60 exec "TONDO" "$@" ;;
+  *) exec "TONDO" "$@" ;;
+esac
+"#;
+    let write = |name: &str, script: &str| {
+        let path = dir.join(name);
+        std::fs::write(&path, script.replace("TONDO", env!("CARGO_BIN_EXE_tondo"))).unwrap();
+        std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        path.to_str().unwrap().to_string()
+    };
+    let other = write("other-tondo", script);
+    // A listing has the program's own; with `--reached`, what it reaches,
+    // and a piece of glue by its name alone.
+    let (said, _, _) = tondo(&dir, &["asm", ".", "--tests", "--all"]);
+    assert!(said.contains("\nordered (") && !said.contains("prelude.mergeSort[Int] ("), "{said}");
+    let (said, _, _) = tondo(&dir, &["asm", ".", "--tests", "--all", "--reached"]);
+    assert!(said.contains("prelude.mergeSort[Int] (") && said.contains("equality of `String` ("), "{said}");
+    let (said, stderr, status) = tondo(&dir, &["asm", ".", "--tests", "equality of `String`"]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(said.starts_with("equality of `String` (") && !said.contains("\nordered ("), "{said}");
+    let (_, stderr, status) = tondo(&dir, &["asm", ".", "ordered", "--reached"]);
+    assert_eq!(status, 2, "{stderr}");
+    assert!(stderr.contains("--reached goes with --all"), "{stderr}");
+    let (said, stderr, status) = tondo(&dir, &["asm", ".", "--tests", "--all", "--compiler", &other]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(said.contains("the standard library and the dependencies, against the tondo at "), "{said}");
+    assert!(said.contains("  std.prelude: ") && said.contains("    prelude.mergeSort[Int]"), "{said}");
+    assert!(said.contains("glue, against the tondo at ") && said.contains("    equality of `String`: "), "{said}");
+    let last = said.lines().last().unwrap_or_default();
+    assert!(last.starts_with("program: no function changed, "), "{said}");
+    assert!(last.contains(" changed in 1 module, ") && last.contains("; glue: 1 piece changed, "), "{said}");
+    let (stdout, stderr, status) = tondo(&dir, &["asm", ".", "--tests", "--all", "--compiler", &other, "--json"]);
+    assert_eq!(status, 0, "{stderr}");
+    let found: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let reached = found["reached"].as_array().cloned().unwrap_or_default();
+    assert!(reached.iter().any(|r| r["origin"] == "library" && r["module"] == "std.prelude"), "{found}");
+    assert!(reached.iter().any(|r| r["origin"] == "glue" && r["function"] == "equality of `String`"), "{found}");
+    // A tondo from before `--reached` compares the program's alone.
+    let older = "#!/bin/sh\ncase \"$*\" in\n  *--reached*) echo \"tondo: asm does not take --reached\" >&2; exit 2 ;;\nesac\nexec \"TONDO\" \"$@\"\n";
+    let older = write("older-tondo", older);
+    let (said, stderr, status) = tondo(&dir, &["asm", ".", "--tests", "--all", "--compiler", &older]);
+    assert_eq!(status, 0, "{stderr}");
+    assert_eq!(said.matches("not compared").count(), 1, "{said}");
+    assert!(said.contains(" lists only the program's own functions"), "{said}");
+    // The row's run does a fifth more turns there, and the code it reaches
+    // that changed is the instance and the glue, not the program's.
+    let args = ["test", "--bench", "--bench-time", "0.05", "--compiler", &other, "--test-format", "json"];
+    let (stdout, stderr, status) = tondo(&dir, &args);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let baseline = &report["tests"][0]["attempts"][0]["benchmarks"][0]["baseline"];
+    if baseline["code_changed"].is_null() && baseline["instructions_per_op"].is_null() {
+        return;
+    }
+    let changed = &baseline["code_changed"];
+    let names: Vec<&str> = changed.as_array().unwrap().iter().filter_map(|c| c["function"].as_str()).collect();
+    assert!(names.contains(&"prelude.mergeSort[Int]") && names.contains(&"equality of `String`"), "{changed}");
+    assert!(!names.contains(&"ordered"), "{changed}");
+}
+
 /// Each benchmark says the regions a run sets up, which a build that counts
 /// them measures, and those it used: a region on a branch the run does not
 /// take is set up and never used.

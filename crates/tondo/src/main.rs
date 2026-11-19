@@ -2481,6 +2481,7 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
         (take_flag(&mut args, "--json"), take_flag(&mut args, "--clif"), take_flag(&mut args, "--all"));
     let (rules, tests) = (take_flag(&mut args, "--rules"), take_flag(&mut args, "--tests"));
     let runtime = take_flag(&mut args, "--runtime");
+    let reached = take_flag(&mut args, "--reached");
     if take_flag(&mut args, "--no-logpoints") {
         driver::set_no_logpoints();
     }
@@ -2504,6 +2505,9 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
     if against.is_some() && compiler.is_some() {
         return Err(format!("--against compares with a revision, --compiler with another tondo: choose one\n{USAGE}"));
     }
+    if reached && (!all || runtime) {
+        return Err(format!("--reached goes with --all, of the program's code\n{USAGE}"));
+    }
     if runtime {
         return runtime_asm(&args, compiler, json, all, ir || rules || tests || against.is_some());
     }
@@ -2518,35 +2522,27 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
             ));
         }
     };
-    let changed = |changes: &[driver::Changed]| -> Vec<serde_json::Value> {
-        changes.iter().map(|(name, lines)| serde_json::json!({ "function": name, "diff": lines })).collect()
-    };
     if let Some(reference) = against {
-        let (commit, changes, same) = driver::assembly_against(&path, &reference, function.as_deref(), tests)?;
+        let (commit, comparison) = driver::assembly_against(&path, &reference, function.as_deref(), tests)?;
         if json {
-            let against = serde_json::json!({ "ref": reference, "commit": commit });
-            print_json(
-                "asm",
-                true,
-                serde_json::json!({ "against": against, "changes": changed(&changes), "same": same }),
-            );
+            let mut data = comparison.json();
+            data["against"] = serde_json::json!({ "ref": reference, "commit": commit });
+            print_json("asm", true, data);
         } else {
             let from = format!("{reference} ({})", &commit[..commit.len().min(12)]);
-            print!("{}", driver::assembly_changes_text(&from, &changes, same));
+            print!("{}", driver::comparison_text(&from, &comparison));
         }
         return Ok(ExitCode::SUCCESS);
     }
     if let Some(reference) = compiler {
         let (compiler, executable) = driver::compiler(&reference, &path)?;
-        let (changes, same) = driver::assembly_compiler(&path, &executable, function.as_deref(), tests)?;
+        let comparison = driver::assembly_compiler(&path, &executable, function.as_deref(), tests)?;
         if json {
-            print_json(
-                "asm",
-                true,
-                serde_json::json!({ "compiler": compiler, "changes": changed(&changes), "same": same }),
-            );
+            let mut data = comparison.json();
+            data["compiler"] = serde_json::json!(compiler);
+            print_json("asm", true, data);
         } else {
-            print!("{}", driver::assembly_changes_text(&format!("the tondo at {compiler}"), &changes, same));
+            print!("{}", driver::comparison_text(&format!("the tondo at {compiler}"), &comparison));
         }
         return Ok(ExitCode::SUCCESS);
     }
@@ -2560,7 +2556,7 @@ fn asm_command(args: &[OsString]) -> Result<ExitCode, String> {
         }
         return Ok(ExitCode::FAILURE);
     }
-    let assemblies = driver::assembly_with(&analysis, function.as_deref(), ir, rules)?;
+    let assemblies = driver::assembly_with(&analysis, function.as_deref(), ir, rules, reached)?;
     if json {
         let functions: Vec<serde_json::Value> = assemblies.iter().map(driver::Assembly::json).collect();
         print_json("asm", true, serde_json::json!({ "functions": functions }));

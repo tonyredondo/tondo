@@ -196,7 +196,7 @@ usage:
                                                        what a release build makes of the code: the calls it
                                                        inlines and those it keeps, the texts and closures made
                                                        without the heap, the checks it drops and those it keeps
-  tondo asm [<project>|<file.to>] [--tests] <function>|--all [--clif] [--rules] [--against <rev> | --compiler <tondo|rev>]
+  tondo asm [<project>|<file.to>] [--tests] <function>|--all [--reached] [--clif] [--rules] [--against <rev> | --compiler <tondo|rev>]
             [--cpu <level>] [--no-logpoints] [--no-lifetimes] [--json]
   tondo asm --runtime <function>|--all [--compiler <tondo|rev>] [--json]
                                                        the machine code a release build makes of a function, by

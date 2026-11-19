@@ -1826,7 +1826,9 @@ fn the_machine_code_of_a_function() {
     Command::new("chmod").arg("+x").arg(&other).status().unwrap();
     let (found, status) = json(&dir, &["asm", "main.to", "--all", "--compiler", other.to_str().unwrap(), "--json"]);
     assert_eq!(status, 0, "{found}");
-    let changes = found["changes"].as_array().unwrap();
+    // The first `ret` of its listing, which has what the program reaches too.
+    let changes: Vec<&Value> =
+        found["changes"].as_array().unwrap().iter().chain(found["reached"].as_array().unwrap()).collect();
     assert!(!changes.is_empty() && changes.iter().all(|c| c["diff"].to_string().contains("\"+ret\"")), "{found}");
     let (_, stderr, status) = tondo(&dir, &["asm", "main.to", "fib", "--against", "HEAD", "--compiler", this]);
     assert_eq!(status, 2, "{stderr}");

@@ -796,6 +796,11 @@ impl Types {
         ModuleId(index as u32)
     }
 
+    /// The path of the module numbered `id`, as `std.json`.
+    pub fn module_path(&self, id: ModuleId) -> &str {
+        &self.modules[id.0 as usize]
+    }
+
     /// The number of the module at `path`, when it declares types.
     pub fn declaring(&self, path: &str) -> Option<ModuleId> {
         self.modules.iter().position(|m| m == path).map(|index| ModuleId(index as u32))

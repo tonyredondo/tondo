@@ -2647,7 +2647,11 @@ src/main.to:6  total += values[i]
   build`, y el segundo, la función: las que se llaman así, o si ninguna, las
   que contienen el nombre en el suyo, como `said` las instancias de
   `said[Int]`; o `--all`, todas las del código del programa, no las de sus
-  dependencias ni de `std`. Una función sin código propio, porque se inlinea en cada
+  dependencias ni de `std`; con `--reached`, también lo demás que el
+  programa alcanza y tiene código: las instancias de `std` y de sus
+  dependencias, y la glue que el compilador genera para sus tipos, que se
+  nombra por lo que hace y el tipo del que es, como `release of
+  Map[String, Value]`, y se pide por ese nombre. Una función sin código propio, porque se inlinea en cada
   llamada, o que no existe, es un error del toolchain (estado 3).
 - El código de las instrucciones es el de esta máquina, x86-64 o arm64; las
   constantes que Cranelift deja tras ellas no se desensamblan, y la cabecera
@@ -2672,7 +2676,11 @@ src/main.to:6  total += values[i]
   ` ` iguales, `-` solo de la revisión y `+` solo de ahora, con la distancia
   de los saltos fuera, que mueve el código de antes, y una llamada por lo que
   llama; o que el código es el mismo; y cuántas funciones cambiaron y
-  cuántas no.
+  cuántas no. Con `--all` compara también lo que `--reached` añade: tras
+  las funciones del programa, las instancias de `std` y de las
+  dependencias que cambiaron, contadas por módulo y nombradas cada una con
+  sus instrucciones antes → después, y la glue igual; el nombre abre su
+  diff, como `tondo asm app prelude.mergeSort[UInt] --against main`.
 - `--rules` añade las reglas de ISLE que Cranelift aplicó a la función, cada
   una con su término, dónde está, cuántas veces, y marcadas las de Tondo
   (`Tondo:` en `vendor/`). Solo un `tondo` construido con su feature `rules`,
@@ -2681,7 +2689,10 @@ src/main.to:6  total += values[i]
   (estado 3).
 - `--compiler <tondo>` compara igual con el código que otro `tondo`, uno que
   tenga `asm`, hace del mismo programa: con `--all`, demuestra que un cambio
-  del compilador no cambia el código, o dice qué funciones cambia.
+  del compilador no cambia el código, o dice qué funciones cambia. Con
+  `--all` compara también lo de `--reached`, como `--against`; de un
+  `tondo` anterior, que no lo lista, dice una vez cuántas funciones no
+  listó.
 - `--runtime <función>` da el código máquina de una función del runtime, tal
   como este `tondo` la enlaza en los programas: por su nombre, desmanglado, o
   por una parte del de unas pocas, ocho como mucho; lo que llama o lee se

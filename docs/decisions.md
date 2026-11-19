@@ -8269,3 +8269,28 @@ done, and a model of that change proving no update lost. The call, twice
 the atomic's share, goes with retains and releases written inline, which
 needs none of that, and is measured first; the plain count waits for what
 remains after it.
+
+## A comparison of machine code sees what the program reaches
+
+`tondo asm --all --compiler` and the line under a row of `--bench
+--compiler` compared only the program's own functions, so A's first
+measure showed profiler 1.3% worse in instructions with one function of
+its own two instructions shorter: the cost was in `mergeSort[UInt]` of
+the standard library, which no comparison listed. They now compare the
+instances of the standard library and the dependencies the program
+reaches, and the glue made for its types, apart from the program's: its
+functions with their diffs, then the others by module with their
+instructions before and after, and last how many of each changed and
+how many did not, so that a group with no change says so. `--all` alone
+still lists the program's own, a few dozen functions where with the rest
+it would be hundreds; `--reached` adds them, and the comparisons ask for
+it themselves. A `tondo` from before it rejects the flag, and is asked
+again without it and said once not to list them.
+
+Glue is named by what it does and the type it is of, as release of
+`Map[String, Value]`, where its symbol has a number in the order the
+build made it, which tells a reader nothing and moves when any other
+glue comes before it. A call of glue is compared by what the glue does,
+not by its name, so that the code of a function that calls glue is the
+same against a `tondo` that numbered it. Copies of a function the passes
+made share its name and pair in their order.

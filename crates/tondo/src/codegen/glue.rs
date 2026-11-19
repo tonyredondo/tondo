@@ -46,6 +46,31 @@ pub(super) fn glue_key(types: &Types, kind: Glue, ty: Ty) -> (Glue, Ty) {
 
 /// Defines a glue function: retain, release or compare values of `ty` given
 /// their addresses.
+/// What `tondo asm` names glue by: what it does and the type it is of, as
+/// "release of `Map[String, Value]`", which, unlike its symbol's number,
+/// is the same in every build of the program.
+pub(super) fn shown(cg: &Codegen, kind: Glue, ty: Ty) -> String {
+    let what = match kind {
+        Glue::Retain => "retain",
+        Glue::Release => "release",
+        Glue::RetainCold => "cold retain",
+        Glue::ReleaseCold => "cold release",
+        Glue::Equal => "equality",
+        Glue::Display | Glue::DisplayFrom(_) => "display",
+        Glue::Hash => "hash",
+        Glue::Test => "test run",
+        Glue::Visit => "cycle visit",
+        Glue::Show => "debugger view",
+        Glue::ShowRaw => "raw debugger view",
+        Glue::Secret => return "debugger view of a secret".to_string(),
+    };
+    let from = match kind {
+        Glue::DisplayFrom(module) => format!(" from `{}`", cg.types.module_path(module)),
+        _ => String::new(),
+    };
+    format!("{what} of `{}`{from}", cg.types.display(ty))
+}
+
 pub(super) fn define_glue(
     cg: &mut Codegen,
     kind: Glue,

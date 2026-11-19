@@ -2263,6 +2263,7 @@ fn runtime_assembly_in(path: &Path, function: Option<&str>) -> Result<Vec<Assemb
                 lines: Vec::new(),
                 ir: None,
                 rules: Vec::new(),
+                origin: Origin::Own,
             });
         }
     }
@@ -2305,14 +2306,29 @@ pub struct Assembly {
     /// The ISLE rules Cranelift applied to it, with `--rules`: the term,
     /// where the rule is, how many times, and whether it is Tondo's.
     pub rules: Vec<(String, String, u64, bool)>,
+    pub origin: Origin,
+}
+
+/// Whose code a function of `tondo asm` is (toolchain 7.19).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Origin {
+    /// The program's own, or the runtime's.
+    Own,
+    /// An instance of the standard library or of a dependency, of the
+    /// module named.
+    Library(String),
+    /// Glue the compiler made for a type, named by it.
+    Glue,
 }
 
 /// The machine code a release build of a checked program makes of the
 /// functions named `function`, or, when none is, of those whose names hold
-/// it; or with no `function`, of every function of the program's own
-/// code; without linking it, and with their IR when `ir` asks.
-pub fn assembly(analysis: &Analysis, function: Option<&str>, ir: bool) -> Result<Vec<Assembly>, String> {
-    assembly_with(analysis, function, ir, false)
+/// it, glue too; or with no `function`, of every function of the program's
+/// own code, and with `reached` of the instances of the standard library
+/// and of the dependencies it reaches and of its glue; without linking it,
+/// and with their IR when `ir` asks.
+pub fn assembly(analysis: &Analysis, function: Option<&str>, ir: bool, reached: bool) -> Result<Vec<Assembly>, String> {
+    assembly_with(analysis, function, ir, false, reached)
 }
 
 /// As `assembly`, with the ISLE rules Cranelift applied to each function
@@ -2322,6 +2338,7 @@ pub fn assembly_with(
     function: Option<&str>,
     ir: bool,
     rules: bool,
+    reached: bool,
 ) -> Result<Vec<Assembly>, String> {
     if rules && !cfg!(feature = "rules") {
         return Err("this tondo does not log the rules Cranelift applies: build one that does with `cargo build --release -p tondo --features rules`".into());
@@ -2334,17 +2351,34 @@ pub fn assembly_with(
     };
     cpu(analysis, None)?;
     let bodies = lower::lower(program, false, false, None);
-    let mut names: std::collections::HashSet<String> = match function {
-        Some(name) if bodies.iter().any(|body| body.name == name) => std::iter::once(name.to_string()).collect(),
-        Some(name) => bodies.iter().filter(|body| body.name.contains(name)).map(|body| body.name.clone()).collect(),
-        None => bodies.iter().filter(|body| own(body)).map(|body| body.name.clone()).collect(),
+    let library = |body: &crate::mir::Body| body.span != crate::source::Span::default() && !own(body);
+    let exact = function.is_some_and(|name| bodies.iter().any(|body| body.name == name));
+    let (mut names, glue): (std::collections::HashSet<String>, Option<String>) = match function {
+        Some(name) if exact => (std::iter::once(name.to_string()).collect(), None),
+        Some(name) => (
+            bodies.iter().filter(|body| body.name.contains(name)).map(|body| body.name.clone()).collect(),
+            Some(name.to_string()),
+        ),
+        None => (
+            bodies.iter().filter(|body| own(body) || reached && library(body)).map(|body| body.name.clone()).collect(),
+            reached.then(String::new),
+        ),
     };
     names.retain(|name| !name.is_empty());
-    crate::codegen::keep_code(Some(crate::codegen::Asked { names, ir, rules }));
+    let origins: std::collections::HashMap<&str, Origin> = bodies
+        .iter()
+        .filter(|body| library(body))
+        .map(|body| (body.name.as_str(), Origin::Library(sources.file_of(body.span.start).module.clone())))
+        .collect();
+    crate::codegen::keep_code(Some(crate::codegen::Asked { names, glue, ir, rules }));
     let built = compile(analysis, false, None, None);
     crate::codegen::keep_code(None);
     built?;
     let mut kept = crate::codegen::kept_code();
+    // A glue named whole is that one alone, as a function is.
+    if let Some(name) = function.filter(|name| kept.iter().any(|kept| kept.name == *name)) {
+        kept.retain(|kept| kept.name == name);
+    }
     if kept.is_empty() {
         let named = function.map_or("of the program's own".to_string(), |name| format!("named `{name}`"));
         return Err(format!(
@@ -2425,7 +2459,11 @@ pub fn assembly_with(
         }
         let constants = kept.bytes.len() - code.len();
         let (function, size, ir, rules) = (kept.name, kept.bytes.len(), kept.ir, kept.rules);
-        assemblies.push(Assembly { function, size, constants, instructions, lines, ir, rules });
+        let origin = match kept.glue {
+            true => Origin::Glue,
+            false => origins.get(function.trim_end_matches(" (x86-64-v3)")).cloned().unwrap_or(Origin::Own),
+        };
+        assemblies.push(Assembly { function, size, constants, instructions, lines, ir, rules, origin });
     }
     Ok(assemblies)
 }
@@ -2633,22 +2671,103 @@ pub fn assembly_against(
     reference: &str,
     function: Option<&str>,
     tests: bool,
-) -> Result<(String, Vec<Changed>, usize), String> {
+) -> Result<(String, Comparison), String> {
     let now = compiled_assembly(path, function, "the code", tests)?;
     let (commit, dir) = revision(path, reference)?;
     let then = compiled_assembly(&dir, function, &format!("the code of {reference}"), tests)?;
-    let (changes, same) = assembly_changes(&then, &now);
-    Ok((commit, changes, same))
+    Ok((commit, compared(&then, &now, function.is_none(), None)))
 }
 
-/// The machine code of the functions named, or of all the program's own,
-/// of the code at `path`, which must compile.
+/// The machine code of the functions named, or of all the program's own
+/// and all it reaches, of the code at `path`, which must compile.
 fn compiled_assembly(path: &Path, function: Option<&str>, what: &str, tests: bool) -> Result<Vec<Assembly>, String> {
     let analysis = analyzed(path, tests)?;
     if analysis.program.is_none() {
         return Err(format!("{what} does not compile, so there is nothing to compare"));
     }
-    assembly(&analysis, function, false)
+    assembly(&analysis, function, false, function.is_none())
+}
+
+/// What changed in machine code from one build to another (toolchain
+/// 7.19): the program's own functions, or all a name names, each with its
+/// diff; and with `--all`, apart, the instances of the standard library and
+/// the dependencies and the glue the program reaches.
+pub struct Comparison {
+    pub changes: Vec<Changed>,
+    pub same: usize,
+    /// The instances and the glue whose code changed, with whose they are.
+    pub reached: Vec<(Changed, Origin)>,
+    /// How many instances, and how many pieces of glue, are the same.
+    pub reached_same: (usize, usize),
+    /// How many functions the other build did not list: one of a `tondo`
+    /// from before `--reached`, which compares only the program's.
+    pub unlisted: Option<usize>,
+    /// Whether it compared every function, rather than those named.
+    pub all: bool,
+}
+
+impl Comparison {
+    /// As `tondo asm --json` gives it: `changes` and `same` as ever, and
+    /// what the program reaches apart, in `reached`, `reached_same` and
+    /// `unlisted`.
+    pub fn json(&self) -> serde_json::Value {
+        let reached: Vec<serde_json::Value> = self
+            .reached
+            .iter()
+            .map(|((name, lines), origin)| {
+                let (origin, module) = match origin {
+                    Origin::Library(module) => ("library", Some(module)),
+                    _ => ("glue", None),
+                };
+                serde_json::json!({ "function": name, "origin": origin, "module": module, "diff": lines })
+            })
+            .collect();
+        let changes: Vec<serde_json::Value> =
+            self.changes.iter().map(|(name, lines)| serde_json::json!({ "function": name, "diff": lines })).collect();
+        serde_json::json!({
+            "changes": changes, "same": self.same, "reached": reached,
+            "reached_same": { "library": self.reached_same.0, "glue": self.reached_same.1 },
+            "unlisted": self.unlisted,
+        })
+    }
+}
+
+/// `then` and `now` compared as `Comparison` tells, with `unlisted` the
+/// functions here an older `tondo` did not list.
+fn compared(then: &[Assembly], now: &[Assembly], all: bool, unlisted: Option<usize>) -> Comparison {
+    if !all {
+        let (changes, same) = assembly_changes(then, now);
+        return Comparison { changes, same, reached: Vec::new(), reached_same: (0, 0), unlisted, all };
+    }
+    let own = |a: &&Assembly| a.origin == Origin::Own;
+    let (then_own, then_reached): (Vec<&Assembly>, Vec<&Assembly>) = then.iter().partition(own);
+    let (now_own, now_reached): (Vec<&Assembly>, Vec<&Assembly>) = now.iter().partition(own);
+    let (changes, same) = changes_of(&then_own, &now_own);
+    let (reached, reached_same) = match unlisted {
+        Some(_) => (Vec::new(), (0, 0)),
+        None => {
+            let (glue_then, library_then): (Vec<&Assembly>, Vec<&Assembly>) =
+                then_reached.iter().partition(|a| a.origin == Origin::Glue);
+            let (glue_now, library_now): (Vec<&Assembly>, Vec<&Assembly>) =
+                now_reached.iter().partition(|a| a.origin == Origin::Glue);
+            let (library, library_same) = changes_of(&library_then, &library_now);
+            let (glue, glue_same) = changes_of(&glue_then, &glue_now);
+            let origin_of = |name: &str| {
+                let name = base_name(name);
+                library_now.iter().chain(&library_then).find(|a| a.function == name).map(|a| a.origin.clone())
+            };
+            let mut reached: Vec<(Changed, Origin)> = library
+                .into_iter()
+                .map(|change| {
+                    let origin = origin_of(&change.0).unwrap_or(Origin::Library(String::new()));
+                    (change, origin)
+                })
+                .collect();
+            reached.extend(glue.into_iter().map(|change| (change, Origin::Glue)));
+            (reached, (library_same, glue_same))
+        }
+    };
+    Comparison { changes, same, reached, reached_same, unlisted, all }
 }
 
 /// What changed in the machine code of the code at `path` from what the
@@ -2659,19 +2778,49 @@ pub fn assembly_compiler(
     compiler: &Path,
     function: Option<&str>,
     tests: bool,
-) -> Result<(Vec<Changed>, usize), String> {
+) -> Result<Comparison, String> {
     let now = compiled_assembly(path, function, "the code", tests)?;
-    let mut command = std::process::Command::new(compiler);
-    command.arg("asm").arg(path);
-    if tests {
-        command.arg("--tests");
-    }
-    match function {
-        Some(name) => command.arg(name),
-        None => command.arg("--all"),
+    let (then, unlisted) = other_assembly(path, compiler, function, tests, &now)?;
+    Ok(compared(&then, &now, function.is_none(), unlisted))
+}
+
+/// The machine code the `tondo` at `compiler` makes of the functions
+/// named, or of all the program's own and all it reaches; and from one
+/// before `--reached`, which lists only the program's, how many of `now`
+/// it did not list.
+fn other_assembly(
+    path: &Path,
+    compiler: &Path,
+    function: Option<&str>,
+    tests: bool,
+    now: &[Assembly],
+) -> Result<(Vec<Assembly>, Option<usize>), String> {
+    let ask = |reached: bool| {
+        let mut command = std::process::Command::new(compiler);
+        command.arg("asm").arg(path);
+        if tests {
+            command.arg("--tests");
+        }
+        match function {
+            Some(name) => command.arg(name),
+            None => command.arg("--all"),
+        };
+        if reached {
+            command.arg("--reached");
+        }
+        told_assembly(command, compiler)
     };
-    let then = told_assembly(command, compiler)?;
-    Ok(assembly_changes(&then, &now))
+    if function.is_some() {
+        return Ok((ask(false)?, None));
+    }
+    match ask(true) {
+        Ok(then) => Ok((then, None)),
+        Err(why) if why.contains("--reached") => {
+            let unlisted = now.iter().filter(|a| a.origin != Origin::Own).count();
+            Ok((ask(false)?, Some(unlisted)))
+        }
+        Err(why) => Err(why),
+    }
 }
 
 /// A function whose machine code another `tondo` makes otherwise: its
@@ -2691,22 +2840,29 @@ pub struct ChangedCode {
 /// beside a row whose instructions moved.
 pub fn changed_by_test(path: &Path, compiler: &Path) -> Result<Vec<(String, Vec<ChangedCode>)>, String> {
     let now = compiled_assembly(path, None, "the code", true)?;
-    let mut command = std::process::Command::new(compiler);
-    command.arg("asm").arg(path).arg("--tests").arg("--all");
-    let then = told_assembly(command, compiler)?;
-    let (program, _) = assembly_changes(&then, &now);
+    let (then, unlisted) = other_assembly(path, compiler, None, true, &now)?;
+    // What an older tondo did not list is not compared.
+    let compared: Vec<&Assembly> = now.iter().filter(|a| unlisted.is_none() || a.origin == Origin::Own).collect();
+    let (program, _) = changes_of(&then.iter().collect::<Vec<_>>(), &compared);
     let (runtime, _) = runtime_assembly_compiler(compiler, None)?;
-    let changed = |(name, lines): &Changed, runtime: bool| ChangedCode {
+    let changed_code = |(name, lines): &Changed, runtime: bool| ChangedCode {
         function: name.clone(),
         before: lines.iter().filter(|line| !line.starts_with('+')).count(),
         after: lines.iter().filter(|line| !line.starts_with('-')).count(),
         runtime,
     };
-    let changed: std::collections::HashMap<&str, ChangedCode> = program
-        .iter()
-        .map(|change| (change.0.as_str(), changed(change, false)))
-        .chain(runtime.iter().map(|change| (change.0.as_str(), changed(change, true))))
-        .collect();
+    // Of the copies of a function, which share its name, the one that
+    // changed most, as calls name them all alike.
+    let mut changed: std::collections::HashMap<&str, ChangedCode> = std::collections::HashMap::new();
+    let all = program.iter().map(|change| (change, false)).chain(runtime.iter().map(|change| (change, true)));
+    for (change, runtime) in all {
+        let name = base_name(&change.0);
+        let code = ChangedCode { function: name.to_string(), ..changed_code(change, runtime) };
+        let moved = |code: &ChangedCode| code.after.abs_diff(code.before);
+        if changed.get(name).is_none_or(|kept| moved(&code) > moved(kept)) {
+            changed.insert(name, code);
+        }
+    }
     let mut calls: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
     for assembly in &now {
         let called = calls.entry(assembly.function.as_str()).or_default();
@@ -2827,6 +2983,11 @@ fn told_assembly(mut command: std::process::Command, compiler: &Path) -> Result<
             lines: Vec::new(),
             ir: None,
             rules: Vec::new(),
+            origin: match (function["origin"].as_str(), function["module"].as_str()) {
+                (Some("library"), module) => Origin::Library(module.unwrap_or_default().to_string()),
+                (Some("glue"), _) => Origin::Glue,
+                _ => Origin::Own,
+            },
         })
         .collect())
 }
@@ -2834,38 +2995,80 @@ fn told_assembly(mut command: std::process::Command, compiler: &Path) -> Result<
 /// The functions whose code differs from `then` to `now`, with their diffs,
 /// and how many are the same.
 fn assembly_changes(then: &[Assembly], now: &[Assembly]) -> (Vec<Changed>, usize) {
-    let listing = |assembly: Option<&Assembly>| -> Vec<String> {
+    changes_of(&then.iter().collect::<Vec<_>>(), &now.iter().collect::<Vec<_>>())
+}
+
+/// As `assembly_changes`, of some of the functions. Copies of a function
+/// the passes made, which share its name, pair in their order, and are
+/// told apart as `name (2 of 3)`.
+fn changes_of(then: &[&Assembly], now: &[&Assembly]) -> (Vec<Changed>, usize) {
+    let listing = |assembly: Option<&&Assembly>| -> Vec<String> {
         assembly.map_or(Vec::new(), |assembly| assembly.instructions.iter().map(normalized).collect())
     };
+    let copies = |side: &[&Assembly], name: &str| side.iter().filter(|a| a.function == name).count();
     let mut names: Vec<&String> = now.iter().chain(then).map(|a| &a.function).collect();
     names.sort();
     names.dedup();
-    let all = names.len();
-    let changes: Vec<Changed> = names
-        .into_iter()
-        .map(|name| {
-            let before = listing(then.iter().find(|a| &a.function == name));
-            let after = listing(now.iter().find(|a| &a.function == name));
-            (name.clone(), line_diff(&before, &after))
-        })
-        .filter(|(_, lines)| lines.iter().any(|line| !line.starts_with(' ')))
-        .collect();
+    let mut all = 0;
+    let mut changes: Vec<Changed> = Vec::new();
+    for name in names {
+        let many = copies(then, name).max(copies(now, name));
+        all += many;
+        for copy in 0..many {
+            let before = listing(then.iter().filter(|a| &a.function == name).nth(copy));
+            let after = listing(now.iter().filter(|a| &a.function == name).nth(copy));
+            let lines = line_diff(&before, &after);
+            if lines.iter().any(|line| !line.starts_with(' ')) {
+                let shown = if many > 1 { format!("{name} ({} of {many})", copy + 1) } else { name.clone() };
+                changes.push((shown, lines));
+            }
+        }
+    }
     let same = all - changes.len();
     (changes, same)
 }
 
 /// An instruction as a diff compares it: a jump without its distance, a
-/// call by what it calls.
+/// call by what it calls, and glue by what it does, as a `tondo` from
+/// before glue had names numbered it in the order it was made.
 fn normalized(instruction: &Instruction) -> String {
     let mnemonic = instruction.text.split_whitespace().next().unwrap_or("");
     let jumps = mnemonic.starts_with('j')
         || mnemonic.starts_with("b.")
         || matches!(mnemonic, "b" | "bl" | "cbz" | "cbnz" | "tbz" | "tbnz" | "call");
     match (&instruction.target, jumps) {
+        (Some(target), _) if glue_kind(target).is_some() => {
+            format!("{mnemonic} glue {}", glue_kind(target).unwrap_or_default())
+        }
         (Some(target), _) => format!("{mnemonic} {target}"),
         (None, true) => mnemonic.to_string(),
         (None, false) => instruction.text.clone(),
     }
+}
+
+/// What a piece of glue does, by its name, `release of `T`` as
+/// `codegen::glue::shown` gives it or the symbol `tondo_glue_release_32`.
+fn glue_kind(name: &str) -> Option<&'static str> {
+    const KINDS: &[(&str, &str)] = &[
+        ("retain of `", "retain"),
+        ("release of `", "release"),
+        ("cold retain of `", "retaincold"),
+        ("cold release of `", "releasecold"),
+        ("equality of `", "equal"),
+        ("display of `", "display"),
+        ("hash of `", "hash"),
+        ("test run of `", "test"),
+        ("cycle visit of `", "visit"),
+        ("debugger view of `", "show"),
+        ("raw debugger view of `", "showraw"),
+        ("debugger view of a secret", "secret"),
+    ];
+    if let Some(rest) = name.strip_prefix("tondo_glue_") {
+        let kind = rest.rsplit_once('_').map_or(rest, |(kind, _)| kind);
+        let kind = if kind == "displayfrom" { "display" } else { kind };
+        return KINDS.iter().map(|&(_, kind)| kind).find(|&known| known == kind);
+    }
+    KINDS.iter().find(|(start, _)| name.starts_with(start)).map(|&(_, kind)| kind)
 }
 
 /// The lines of a diff of two listings: what they start and end with
@@ -2919,6 +3122,118 @@ pub fn assembly_changes_text(from: &str, changes: &[Changed], same: usize) -> St
     if changes.is_empty() {
         return format!("a release build makes the same code as {from}, in {same} functions\n");
     }
+    let mut out = diffs_text(from, changes);
+    let changed = match changes.len() {
+        1 => "1 function changed".to_string(),
+        n => format!("{n} functions changed"),
+    };
+    out.push_str(&format!("{changed}, {same} the same\n"));
+    out
+}
+
+/// What `tondo asm --against` and `--compiler` write of a comparison: with
+/// functions named, as `assembly_changes_text`; with `--all`, the diffs of
+/// the program's functions, then the instances of the standard library and
+/// the dependencies that changed, by module, then the glue, each with its
+/// instructions before and after, and last how many of each changed and
+/// how many did not.
+pub fn comparison_text(from: &str, comparison: &Comparison) -> String {
+    let Comparison { changes, same, reached, reached_same: (library_same, glue_same), unlisted, all } = comparison;
+    if !all {
+        return assembly_changes_text(from, changes, *same);
+    }
+    let count = |n: usize, one: &str, many: &str| match n {
+        1 => format!("1 {one}"),
+        n => format!("{n} {many}"),
+    };
+    let library: Vec<&(Changed, Origin)> = reached.iter().filter(|(_, origin)| *origin != Origin::Glue).collect();
+    let glue: Vec<&(Changed, Origin)> = reached.iter().filter(|(_, origin)| *origin == Origin::Glue).collect();
+    if changes.is_empty() && reached.is_empty() && unlisted.is_none() {
+        return format!(
+            "a release build makes the same code as {from}: in {} of the program, {} of the standard library and \
+             the dependencies and {}\n",
+            count(*same, "function", "functions"),
+            count(*library_same, "instance", "instances"),
+            count(*glue_same, "piece of glue", "pieces of glue"),
+        );
+    }
+    let mut out = diffs_text(from, changes);
+    let sizes = |(name, lines): &Changed| {
+        let before = lines.iter().filter(|line| !line.starts_with('+')).count();
+        let after = lines.iter().filter(|line| !line.starts_with('-')).count();
+        format!("    {name}: {before} → {after} instructions\n")
+    };
+    if !library.is_empty() {
+        out.push_str(&format!("the standard library and the dependencies, against {from}:\n"));
+        let modules =
+            library.iter().map(|(_, origin)| origin_module(origin)).collect::<std::collections::BTreeSet<_>>();
+        for module in modules {
+            let of: Vec<&&(Changed, Origin)> =
+                library.iter().filter(|(_, origin)| *origin == Origin::Library(module.to_string())).collect();
+            out.push_str(&format!("  {module}: {} changed\n", count(of.len(), "instance", "instances")));
+            for (change, _) in of {
+                out.push_str(&sizes(change));
+            }
+        }
+    }
+    if !glue.is_empty() {
+        out.push_str(&format!("glue, against {from}:\n"));
+        for (change, _) in &glue {
+            out.push_str(&sizes(change));
+        }
+    }
+    let program = match changes.len() {
+        0 => format!("program: no function changed, {same} the same"),
+        n => format!("program: {} changed, {same} the same", count(n, "function", "functions")),
+    };
+    let rest = match unlisted {
+        Some(unlisted) => format!(
+            "; {} of the standard library, the dependencies and the glue not compared: {from} lists only the \
+             program's own functions",
+            count(*unlisted, "other function", "other functions")
+        ),
+        None => {
+            let modules =
+                library.iter().map(|(_, origin)| origin_module(origin)).collect::<std::collections::BTreeSet<_>>();
+            let modules = modules.len();
+            let library = match library.len() {
+                0 => format!("no instance changed, {library_same} the same"),
+                n => format!(
+                    "{} changed in {}, {library_same} the same",
+                    count(n, "instance", "instances"),
+                    count(modules, "module", "modules")
+                ),
+            };
+            let glue = match glue.len() {
+                0 => format!("no piece changed, {glue_same} the same"),
+                n => format!("{} changed, {glue_same} the same", count(n, "piece", "pieces")),
+            };
+            format!("; the standard library and the dependencies: {library}; glue: {glue}")
+        }
+    };
+    out.push_str(&format!("{program}{rest}\n"));
+    out
+}
+
+/// A function's name without the copy `changes_of` tells it as, `(2 of 3)`.
+fn base_name(name: &str) -> &str {
+    match name.rsplit_once(" (") {
+        Some((base, copy)) if copy.ends_with(')') && copy.contains(" of ") => base,
+        _ => name,
+    }
+}
+
+/// The module an instance is of, by its origin.
+fn origin_module(origin: &Origin) -> &str {
+    match origin {
+        Origin::Library(module) => module,
+        _ => "",
+    }
+}
+
+/// Each function that changed since `from`, its diff with a few lines
+/// around each change.
+fn diffs_text(from: &str, changes: &[Changed]) -> String {
     let mut out = String::new();
     for (name, lines) in changes {
         out.push_str(&format!("{name}, against {from}:\n"));
@@ -2935,11 +3250,6 @@ pub fn assembly_changes_text(from: &str, changes: &[Changed], same: usize) -> St
             }
         }
     }
-    let changed = match changes.len() {
-        1 => "1 function changed".to_string(),
-        n => format!("{n} functions changed"),
-    };
-    out.push_str(&format!("{changed}, {same} the same\n"));
     out
 }
 
@@ -3000,8 +3310,14 @@ impl Assembly {
                 serde_json::json!({ "file": file, "line": line, "source": code, "optimizations": remarks })
             })
             .collect();
+        let (origin, module) = match &self.origin {
+            Origin::Own => ("program", None),
+            Origin::Library(module) => ("library", Some(module)),
+            Origin::Glue => ("glue", None),
+        };
         serde_json::json!({
-            "function": self.function, "size": self.size, "constants": self.constants,
+            "function": self.function, "origin": origin, "module": module,
+            "size": self.size, "constants": self.constants,
             "instructions": instructions, "lines": lines,
             "ir_before": self.ir.as_ref().map(|ir| &ir.0), "ir_after": self.ir.as_ref().map(|ir| &ir.1),
             "rules": self.rules.iter().map(|(term, place, count, tondo)| {
