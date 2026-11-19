@@ -8252,3 +8252,20 @@ their releases, 14.6% and 15.1% of its time in its profile, are 0.4% and
 instructions with one allocation less, and profiler and textkit allocate
 one less a run; no row of bench/tondo and no example runs more than 0.1%
 more.
+
+## Counts stay atomic while the calls around them cost more
+
+Every count is changed by an atomic instruction, as values may reach other
+threads. In CPU profiles of the examples, the retains and releases of texts
+took 19.5% of kvstore's time, 12.3% of chat's, 10.9% of notes' and 8.5% of
+warehouse's; within them the atomic instruction was about a quarter, the
+load of the header 10% to 13%, and the call itself about half. A count no
+other thread can see could be changed without the atomic, but a task moves
+between threads, so a value is the thread's alone only while nothing hands
+it on: it would need a mark set before it is sent on a channel, captured by
+a `spawn`, put in a `Ref`, held by a context or given to C, a change of the
+mark from the plain count to the atomic one that no other thread reads half
+done, and a model of that change proving no update lost. The call, twice
+the atomic's share, goes with retains and releases written inline, which
+needs none of that, and is measured first; the plain count waits for what
+remains after it.
