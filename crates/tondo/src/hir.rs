@@ -885,6 +885,10 @@ pub enum Mutation {
     /// Room for as many more elements of an array, before a loop that
     /// pushes them (`reserve.rs`): a hint, which no source writes.
     Reserve,
+    /// `x = []` on an array that a push may fill again (`reserve.rs`): the
+    /// array emptied where it is, keeping its room up to a bound, when
+    /// nothing else holds it, and otherwise `[]`. No source writes it.
+    Empty,
 }
 
 impl Mutation {

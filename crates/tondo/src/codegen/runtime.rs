@@ -550,7 +550,7 @@ impl Rt {
             Rt::ArrayArith => ("tondo_rt_array_arith", &[I64, I32, I64, I32, I32, I32, I64], &[I64]),
             Rt::ArrayInsert => ("tondo_rt_array_insert", &[I64, I64, I64, I64, I64, I64, I64], &[]),
             Rt::ArrayRemoveAt => ("tondo_rt_array_remove_at", &[I64, I64, I64, I64, I64, I64], &[I8]),
-            Rt::ArrayClear => ("tondo_rt_array_clear", &[I64, I64, I64], &[]),
+            Rt::ArrayClear => ("tondo_rt_array_clear", &[I64, I64, I64, I64, I64], &[]),
             Rt::DequePush => ("tondo_rt_deque_push", &[I64, I64, I64, I8, I64, I64, I64], &[]),
             Rt::DequePopFront => ("tondo_rt_deque_pop_front", &[I64, I64, I64, I64, I64, I64], &[I8]),
             Rt::SbArray => ("tondo_rt_sb_array", &[I64, I64, I64, I64], &[]),

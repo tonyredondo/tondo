@@ -218,7 +218,25 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let at = self.scalar_of(values[0]);
                 self.e.call_rt(Rt::ArrayRemoveAt, &[slot, at, out, size, retain_glue, release_glue])
             }
-            (Mutation::Clear, ..) => self.e.call_rt(Rt::ArrayClear, &[slot, size, release_glue]),
+            (Mutation::Clear | Mutation::Empty, ..) => {
+                // What a shared array or deque takes instead: the empty
+                // one `[]` and `Deque[T]()` are, but in a live build, whose
+                // patches' data goes with them, where the runtime makes one.
+                let empty = if self.e.cg.live() {
+                    self.e.fb.ins().iconst(POINTER, 0)
+                } else {
+                    let bytes = self.e.cg.layout(element).size as usize;
+                    let id = self.e.cg.static_array(bytes, Vec::new());
+                    let global = self.e.global(id);
+                    self.e.fb.ins().symbol_value(POINTER, global)
+                };
+                let kept = match mutation {
+                    Mutation::Empty => crate::reserve::KEPT_ROOM,
+                    _ => i64::MAX,
+                };
+                let kept = self.e.fb.ins().iconst(POINTER, kept);
+                self.e.call_rt(Rt::ArrayClear, &[slot, size, release_glue, empty, kept])
+            }
             (Mutation::Reserve, ..) => {
                 let extra = self.scalar_of(values[0]);
                 match self.e.region {

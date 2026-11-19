@@ -8117,3 +8117,25 @@ header, as a short text is marked by its sign: an owned text keeps its
 bytes where they are, with no word more and no read of where they start,
 and only a view pays. It needs its own door, measured on these rows and
 the examples before anything else.
+
+## `x = []` keeps an array's room for the loop that fills it again
+
+`x = []` gave the array up for the one empty array, and the pushes after
+it grew another from nothing. A release build now empties the array where
+it is when a push, `pushFront` or `insert` to it can follow before it is
+written whole, and the runtime keeps its room when nothing else holds it:
+a hundred words of eight letters gathered in one array and emptied after
+each allocate twice, not two hundred times. A copy, a closure, a slice, a
+map or the array it was pushed to keep its count above one, and then it
+takes the empty array, as before. The room is kept up to 64 KiB: a program
+may write `x = []` to let go of a buffer that once held something large,
+and one past the bound still does, while `clear()`, asked for by name,
+keeps any room. `clear()` of a shared array took a new empty one; it takes
+the program's, as `[]` is.
+
+It was meant for textkit, whose growing `part` in `slug` makes nearly all
+its allocations, and it does not move them, nor those of any other
+example: `slug` is called once a word and its `part = []` runs only
+between the parts of one. That share is the regions pass's, which leaves
+an array that a loop empties on the heap; whether it may take it, and in
+which functions, is its own decision.

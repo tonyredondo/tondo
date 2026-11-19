@@ -1,0 +1,190 @@
+// `x = []`, or `x = Array[T]()`, on an array that a push may fill again, as
+// the next turn of a loop does, empties it in place and keeps its room when
+// nothing else holds it, rather than growing it again from nothing
+// (crates/tondo/tests/testing.rs counts it, and that room past 64 KiB is
+// given back). What else holds it keeps what it held: a copy, a closure that
+// took it, a slice, the array it was pushed to, a map it was stored in. An
+// error or a panic between the `= []` and the next push leaves a valid array
+// behind, and so does an array that moved away just before it, as `map`
+// takes one it reads last. Where nothing pushes to it after, or the array is lent to a loop,
+// `x = []` is as ever; and `clear()` of a shared array or deque leaves the
+// other holder its elements.
+
+import std.console
+
+fn words(text: String): Array[String] {
+    var all: Array[String] = []
+    var word: Array[Char] = []
+    for letter in text.chars() {
+        if letter == ' ' {
+            all.push(word.join(""))
+            word = []
+        } else {
+            word.push(letter)
+        }
+    }
+    all.push(word.join(""))
+    all
+}
+
+fn groups(items: Array[String]): Array[Array[String]] {
+    var all: Array[Array[String]] = []
+    var group: Array[String] = []
+    for item in items {
+        if item == "|" {
+            all.push(group)
+            group = []
+        } else {
+            group.push(item)
+        }
+    }
+    all.push(group)
+    all
+}
+
+fn copies(): String {
+    var kept: Array[Array[Int]] = []
+    var turn: Array[Int] = []
+    for i in 0..3 {
+        turn.push(i)
+        turn.push(i * 10)
+        let copy = turn
+        let shown = () { "{copy}" }
+        let head = turn[0:1]
+        kept.push(copy)
+        turn = []
+        turn.push(-1)
+        kept.push(head)
+        console.println("{shown()} {turn}")
+    }
+    "{kept}"
+}
+
+fn stored(): Map[String, Array[Int]] {
+    var byName: Map[String, Array[Int]] = [:]
+    var values: Array[Int] = []
+    for name in ["a", "b"] {
+        values.push(name.length())
+        values.push(2)
+        byName[name] = values
+        values = []
+    }
+    byName
+}
+
+fn parsed(text: String): Array[Int] ! String {
+    var numbers: Array[Int] = []
+    var digits: Array[Char] = []
+    for letter in "{text},".chars() {
+        if letter == ',' {
+            let number = match Int.parse(digits.join("")) {
+                ok(value) => value
+                err(_) => fail "not a number: {digits.join("")}"
+            }
+            numbers.push(number)
+            digits = Array[Char]()
+            if number < 0 {
+                panic("negative: {number}")
+            }
+        } else {
+            digits.push(letter)
+        }
+    }
+    numbers
+}
+
+fn listed(lines: Array[String]): String {
+    var out: Array[String] = []
+    var items: Array[String] = []
+    for line in lines.concat([""]) {
+        if not line.startsWith("- ") and not items.isEmpty() {
+            out.push("<ul>{items.map((item) { "<li>{item}</li>" }).join("")}</ul>")
+            items = []
+        }
+        if line.startsWith("- ") {
+            items.push(line.removePrefix("- "))
+        } else if not line.isEmpty() {
+            out.push("<p>{line}</p>")
+        }
+    }
+    out.join("")
+}
+
+fn last(text: String): String {
+    var buffer: Array[Char] = []
+    for letter in text.chars() {
+        buffer.push(letter)
+    }
+    let all = buffer.join("")
+    buffer = []
+    "{all} {buffer.length()}"
+}
+
+fn lent(): Array[Int] {
+    var values = [1, 2, 3]
+    for mut value in values {
+        value = value * 2
+    }
+    var sums: Array[Int] = []
+    for turn in 0..2 {
+        values = []
+        values.push(turn)
+        sums.push(values[0])
+    }
+    sums
+}
+
+fn cleared(): String {
+    var first = [1, 2, 3]
+    let second = first
+    first.clear()
+    first.push(4)
+    var queue = Deque[Int]()
+    queue.push(1)
+    let other = queue
+    queue.clear()
+    queue.pushFront(0)
+    "{first} {second} {queue} {other}"
+}
+
+fn main() {
+    console.println("{words("one two three")}")
+    console.println("{groups(["a", "b", "|", "c", "|", "|", "d"])}")
+    console.println(copies())
+    let byName = stored()
+    console.println("{byName["a"]} {byName["b"]}")
+    console.println("{parsed("1,22,333")}")
+    match parsed("1,x,3") {
+        ok(numbers) => console.println("{numbers}")
+        err(why) => console.println(why)
+    }
+    match recover { parsed("4,-5,6") } {
+        ok(numbers) => console.println("{numbers}")
+        err(p) => console.println("panicked: {p.message}")
+    }
+    console.println(listed(["- a", "- b", "x", "- c"]))
+    console.println(last("abc"))
+    console.println("{lent()} {cleared()}")
+}
+
+// expect-stdout: [one, two, three]
+// expect-stdout: [[a, b], [c], [], [d]]
+// expect-stdout: [0, 0] [-1]
+// expect-stdout: [-1, 1, 10] [-1]
+// expect-stdout: [-1, 2, 20] [-1]
+// expect-stdout: [[0, 0], [0], [-1, 1, 10], [-1], [-1, 2, 20], [-1]]
+// expect-stdout: some([1, 2]) some([1, 2])
+// expect-stdout: ok([1, 22, 333])
+// expect-stdout: not a number: x
+// expect-stdout: panicked: negative: -5
+// expect-stdout: <ul><li>a</li><li>b</li></ul><p>x</p><ul><li>c</li></ul>
+// expect-stdout: abc 0
+// expect-stdout: [0, 1] [4] [1, 2, 3] [0] [1]
+// expect-optimization: 21:13 reserved empties the array in place
+// expect-optimization: 36:13 reserved empties the array in place
+// expect-optimization: 55:9 reserved empties the array in place
+// expect-optimization: 70:9 reserved empties the array in place
+// expect-optimization: 85:13 reserved empties the array in place
+// expect-optimization: 102:13 reserved empties the array in place
+// expect-no-optimization: 119:5 reserved
+// expect-no-optimization: 130:9 reserved

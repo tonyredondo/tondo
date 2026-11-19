@@ -9,6 +9,15 @@
 //! pushes in some turns only, as `filter` does, is left to grow, so that no
 //! array takes much more room than its elements. The room is a hint, which
 //! the runtime takes when the system has it (`tondo_rt_array_reserve`).
+//!
+//! And room kept for what a loop pushes again: `x = []` on an array that a
+//! push may fill again, as the next turn of a loop does, empties it where
+//! it is, keeping its room, when nothing else holds it, rather than giving
+//! it up for `[]` and growing again from nothing. What else holds it, a
+//! copy, a capture, a slice or the array it was pushed to, keeps its count
+//! above one, and the runtime takes `[]` then, as before; and so does an
+//! array whose room is past `KEPT_ROOM`, as a buffer that once held
+//! something large, which `x = []` gives back.
 
 use crate::ast::BinOp;
 use crate::hir::Mutation;
@@ -16,8 +25,12 @@ use crate::mir::*;
 use crate::source::Span;
 use crate::types::{Ty, TyKind, Types};
 
+/// The most room, in bytes, that `x = []` keeps.
+pub const KEPT_ROOM: i64 = 64 * 1024;
+
 pub fn reserve(bodies: &mut [Body], types: &Types) {
     crate::parallel::each_mut(bodies, |body| {
+        empties(body, types);
         let noting = crate::mir_text::noting(&body.name);
         let (found, grown) = loops(body, types);
         for (span, why) in grown {
@@ -57,6 +70,123 @@ pub fn reserve(bodies: &mut [Body], types: &Types) {
             body.blocks[before].stmts.extend(stmts);
         }
     });
+}
+
+/// `x = []` or `x = Array[T]()`, as the lowering makes it, `empty = []`,
+/// `old = x`, `x = empty` and `release old`, becomes the mutation that empties `x` in place, where
+/// `x` is the function's own array, which no binding borrows from, and a
+/// push, `pushFront` or `insert` to it may follow before it is written
+/// whole.
+fn empties(body: &mut Body, types: &Types) {
+    let locals = body.locals.len();
+    let (mut reads, mut writes, mut foreign) = (vec![0; locals], vec![0; locals], vec![false; locals]);
+    for block in &body.blocks {
+        let (mut used, mut defined) = (Vec::new(), Vec::new());
+        for statement in &block.stmts {
+            statement_locals(statement, &mut used, &mut defined);
+            match statement {
+                Statement::Lend(alias, place) => {
+                    foreign[alias.0 as usize] = true;
+                    foreign[place.local.0 as usize] = true;
+                }
+                Statement::LendAt(alias, _) => foreign[alias.0 as usize] = true,
+                _ => {}
+            }
+        }
+        terminator_uses(&block.terminator, &mut used);
+        used.iter().for_each(|local| reads[local.0 as usize] += 1);
+        defined.iter().for_each(|local| writes[local.0 as usize] += 1);
+    }
+    for local in body.params.iter().chain(&body.ret) {
+        foreign[local.0 as usize] = true;
+    }
+    let whole = |place: &Place| place.path.is_empty().then_some(place.local);
+    let copied = |rvalue: &Rvalue| match rvalue {
+        Rvalue::Use(Operand::Copy(place)) => whole(place),
+        _ => None,
+    };
+    let mut found = Vec::new();
+    for (block, data) in body.blocks.iter().enumerate() {
+        for (at, window) in data.stmts.windows(4).enumerate() {
+            let [
+                Statement::Assign(empty, made, _),
+                Statement::Assign(old, kept, _),
+                Statement::Assign(array, given, span),
+                Statement::Release(released),
+            ] = window
+            else {
+                continue;
+            };
+            let (Some(empty), Some(old), Some(array)) = (whole(empty), whole(old), whole(array)) else { continue };
+            let once = |local: Local| reads[local.0 as usize] == 1 && writes[local.0 as usize] == 1;
+            let fresh = match &**made {
+                Rvalue::Array(list, _) => list.is_empty(),
+                Rvalue::ArrayOp(crate::hir::ArrayOp::New, list, _) => list.is_empty(),
+                _ => false,
+            };
+            if fresh
+                && copied(kept) == Some(array)
+                && copied(given) == Some(empty)
+                && whole(released) == Some(old)
+                && once(empty)
+                && once(old)
+                && !foreign[array.0 as usize]
+                && matches!(types.kind(types.repr(body.locals[array.0 as usize])), TyKind::Array(_))
+                && refilled(&body.blocks, block, at + 4, array)
+            {
+                found.push((block, at, array, *span));
+            }
+        }
+    }
+    // From the last, so that the places of those before stay as they are.
+    for (block, at, array, span) in found.into_iter().rev() {
+        crate::mir_text::remark(body, span, "reserved", || {
+            "empties the array in place, keeping its room for what is pushed after it, when nothing else holds it \
+             and its room is small"
+                .into()
+        });
+        if crate::mir_text::noting(&body.name) {
+            body.notes.push(format!("reserve: l{} = [] empties it in place, in b{block}", array.0));
+        }
+        body.locals.push(Ty::UNIT);
+        body.names.push(None);
+        let done = Place::local(Local(body.locals.len() as u32 - 1));
+        let emptied = Rvalue::Mutate(Mutation::Empty, Place::local(array), Vec::new(), Vec::new(), span);
+        body.blocks[block].stmts.splice(at..at + 4, [Statement::Assign(done, Box::new(emptied), span)]);
+    }
+}
+
+/// Whether a push, `pushFront` or `insert` to `array` may follow statement
+/// `from` of `block`, before `array` is written whole.
+fn refilled(blocks: &[BlockData], block: usize, from: usize, array: Local) -> bool {
+    let grows = |rvalue: &Rvalue| {
+        matches!(rvalue, Rvalue::Mutate(Mutation::Push | Mutation::PushFront | Mutation::InsertAt, target, ..)
+            if target.local == array && target.path.is_empty())
+    };
+    let mut seen = vec![false; blocks.len()];
+    let mut pending = vec![(block, from)];
+    while let Some((block, from)) = pending.pop() {
+        let mut on = true;
+        for statement in &blocks[block].stmts[from..] {
+            match statement {
+                Statement::Assign(_, rvalue, _) if grows(rvalue) => return true,
+                Statement::Assign(place, ..) if place.local == array && place.path.is_empty() => on = false,
+                Statement::Clear(local) if *local == array => on = false,
+                _ => {}
+            }
+            if !on {
+                break;
+            }
+        }
+        if on {
+            for next in successors(&blocks[block].terminator) {
+                if !std::mem::replace(&mut seen[next], true) {
+                    pending.push((next, 0));
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Where a block goes when its task unwinds a panic or is cancelled, as the

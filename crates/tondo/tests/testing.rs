@@ -2719,6 +2719,105 @@ fn cased(letters: Array[Char]): Int {
     assert_eq!(each, (mapped + 100, mapped + 100, 0, mapped + 100), "{counts:?}");
 }
 
+/// `x = []` on an array a loop fills again keeps its room: a hundred words
+/// of eight letters, each emptied and filled again, allocate the room of
+/// one; where the array was pushed to another, it starts from nothing each
+/// time, as a new one does, and so does `clear()`, which takes `[]` rather
+/// than a new empty array; and room past 64 KiB is given back
+/// (tests/cases/run/arrays_emptied.to).
+#[test]
+fn an_array_emptied_and_filled_again_keeps_its_room() {
+    let tests = "\
+import std.console
+import std.testing
+
+test counted {
+    let words = (1000..1100).map((n) { \"word{n}\" }).collect()
+    console.println(\"fresh {testing.allocations(() { fresh(words) })}\")
+    console.println(\"kept {testing.allocations(() { kept(words) })}\")
+    console.println(\"given {testing.allocations(() { given(words, false) })}\")
+    console.println(\"pushed {testing.allocations(() { pushed(words) })}\")
+    console.println(\"cleared {testing.allocations(() { given(words, true) })}\")
+    console.println(\"small {testing.allocations(() { rounds(4000) })}\")
+    console.println(\"large {testing.allocations(() { rounds(10000) })}\")
+}
+
+fn fresh(words: Array[String]): Int {
+    var count = 0
+    for each in words {
+        var word: Array[Char] = []
+        for letter in each.chars() {
+            word.push(letter)
+        }
+        count += word.length()
+    }
+    count
+}
+
+fn kept(words: Array[String]): Int {
+    var count = 0
+    var word: Array[Char] = []
+    for each in words {
+        for letter in each.chars() {
+            word.push(letter)
+        }
+        count += word.length()
+        word = []
+    }
+    count
+}
+
+fn pushed(words: Array[String]): Int {
+    var all: Array[Array[Char]] = []
+    for each in words {
+        var word: Array[Char] = []
+        for letter in each.chars() {
+            word.push(letter)
+        }
+        all.push(word)
+    }
+    all.length()
+}
+
+fn given(words: Array[String], clearing: Bool): Int {
+    var all: Array[Array[Char]] = []
+    var word: Array[Char] = []
+    for each in words {
+        for letter in each.chars() {
+            word.push(letter)
+        }
+        all.push(word)
+        if clearing {
+            word.clear()
+        } else {
+            word = []
+        }
+    }
+    all.length()
+}
+
+fn rounds(length: Int): Int {
+    var count = 0
+    var numbers: Array[Int] = []
+    for _ in 0..3 {
+        for n in 0..length {
+            numbers.push(n)
+        }
+        count += numbers.length()
+        numbers = []
+    }
+    count
+}
+";
+    let counts = counts_of("emptied_counted", tests);
+    let of = |name: &str| counts.iter().find(|(n, _)| n == name).map(|&(_, count)| count).unwrap();
+    // Before, `kept` was `fresh`, `cleared` one more for each word, and
+    // `small` one for each round.
+    assert_eq!(of("kept") * 100, of("fresh"), "{counts:?}");
+    assert_eq!((of("given"), of("cleared")), (of("pushed"), of("pushed")), "{counts:?}");
+    assert_eq!((of("small"), of("large")), (1, 3), "{counts:?}");
+}
+
 /// Slices, of arrays and of texts, allocate as often in a region as on the
 /// heap: read within a turn, returned to a caller, kept past their turn,
 /// and of texts the region did not make (tests/cases/run/regions/slices.to).

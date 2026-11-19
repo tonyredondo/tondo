@@ -2488,7 +2488,9 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   `unchecked` o `checked`, `arithmetic`; `unrolled` o `looped`, un bucle
   contado que corre cuatro vueltas a la vez, o por qué una; `reserved` o
   `grown`, un `push` cuyo array toma antes del bucle sitio para cada vuelta,
-  o por qué crece al empujarlo; `lent` o `counted`, un elemento que un
+  o un `x = []` que vacía el array donde está y le deja su sitio para lo que
+  después se le añade, si nada más lo tiene y ese sitio no pasa de 64 KiB; o
+  por qué crece al empujarlo; `lent` o `counted`, un elemento que un
   bucle lee y no cuenta, pues su array lo tiene, o por qué cuenta; y
   `hoisted` o `reloaded`, la longitud de un texto o un array que un bucle
   lee una vez, antes del bucle, porque el bucle no puede cambiarlo, o por

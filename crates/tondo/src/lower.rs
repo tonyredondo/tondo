@@ -126,7 +126,7 @@ pub(crate) fn may_panic(statement: &Statement) -> bool {
                         use hir::Mutation::*;
                         checked(place)
                             || operands.iter().any(read)
-                            || !matches!(mutation, Push | PushFront | Pop | PopFront | RemoveAt | Clear)
+                            || !matches!(mutation, Push | PushFront | Pop | PopFront | RemoveAt | Clear | Empty)
                     }
                     Rvalue::Exact(..)
                     | Rvalue::Increment(_)
@@ -141,6 +141,8 @@ pub(crate) fn may_panic(statement: &Statement) -> bool {
                     | Rvalue::Restart(_)
                     | Rvalue::Transfer(_)
                     | Rvalue::OsrPoint => false,
+                    // The empty array, which `Array[T]()` is.
+                    Rvalue::ArrayOp(hir::ArrayOp::New, ..) => false,
                     Rvalue::Call(hir::Callee::Std(hir::StdFn::Number(op)), _) => op.may_panic(),
                     Rvalue::Call(hir::Callee::Std(hir::StdFn::Simd(op)), _) => op.may_panic(),
                     // What codegen writes in place, which never panics.
