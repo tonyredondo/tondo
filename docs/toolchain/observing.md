@@ -251,33 +251,44 @@ there, with every value ([Debugging](debugging.md)).
 
 ```text
 $ tondo profile todo --cpu --duration 2 --output cpu.pb.gz
-tondo: 94 samples of 1 ms of processor time: cpu.pb.gz; `tondo profile show cpu.pb.gz` shows where
+tondo: 35 samples, 32ms of processor time: cpu.pb.gz; `tondo profile show cpu.pb.gz` shows where
 
 $ tondo profile show cpu.pb.gz --top 300
-cpu of cpu.pb.gz, 94ms in all over 2.03s
+cpu of cpu.pb.gz, 32ms in all over 2.03s
      flat  flat%       cum   cum%  function
-     20ms  21.3%      20ms  21.3%  libc.so.6+0xa08f2
-      7ms   7.4%       7ms   7.4%  shutdown
-      6ms   6.4%       6ms   6.4%  syscall
-      4ms   4.3%       4ms   4.3%  _mi_theap_malloc_zero
-      2ms   2.1%       4ms   4.3%  tondo_rt_array_release
-      2ms   2.1%       2ms   2.1%  sqlite3VdbeExec
-      2ms   2.1%       2ms   2.1%  tondo_rt_str_release
-      1ms   1.1%       3ms   3.2%  sql.readValue  <std>/sql/sqlite.to
-      1ms   1.1%       2ms   2.1%  closure in sql.Row.next  <std>/sql/databases.to
+      5ms  15.7%       5ms  15.7%  libc.so.6+0xa08f2
+      3ms   9.9%       3ms   9.9%  shutdown
+      2ms   6.8%       2ms   6.8%  sqlite3_column_int64
       ...
-      0ns   0.0%      51ms  54.3%  http.converse  <std>/http/server.to
-      0ns   0.0%      30ms  31.9%  closure in http.App.pipeline  <std>/http/app.to
-      0ns   0.0%      29ms  30.9%  api.traced  src/api/api.to
-      0ns   0.0%      15ms  16.0%  closure in api.routes  src/api/api.to
-      0ns   0.0%       8ms   8.5%  store.find  src/store/store.to
+      1ms   3.1%       1ms   3.1%  Bool.decode[sql.Row]  <std>/serialization.to
+      1ms   3.1%       1ms   3.1%  sqlite3VdbeExec
+      1ms   3.1%       1ms   3.1%  syscall
+      1ms   3.1%       1ms   3.1%  tondo_rt_str_release
+    946us   3.0%     946us   3.0%  tondo_runtime::regions::take
+      ...
+      0ns   0.0%      19ms  60.2%  http.converse  <std>/http/server.to
+      0ns   0.0%      12ms  38.5%  api.traced  src/api/api.to
+      0ns   0.0%      12ms  38.5%  closure in http.App.pipeline  <std>/http/app.to
+      0ns   0.0%      10ms  32.4%  closure in api.routes  src/api/api.to
+      0ns   0.0%       9ms  28.3%  store.list  src/store/store.to
 ```
 
-Two seconds of a server answering a few hundred requests: 94 ms of
-processor in all, most of it in the system and in SQLite. The program's own
-code took no sample by itself, so it is far down the list, which `--top`
-lengthens: `api.traced` and the handlers have what they called under them
-in the `cum` column.
+Two seconds of a server answering some three hundred requests: 32 ms of
+processor in all, the largest shares in the system's library and in SQLite.
+The program's own code took no sample by itself, so it is far down the
+list, which `--top` lengthens: `api.traced` and the handlers have what they
+called under them in the `cum` column.
+
+The first line gives the samples taken and the processor time they count,
+which are two things. Each sample counts what its thread took since that
+thread's sample before, by the thread's own clock, so the total holds on a
+machine whose timer wakes the sampler late, as macOS does and a virtual
+machine more: fewer samples there, each counting more. `--json` gives both:
+
+```text
+$ tondo profile todo --cpu --duration 1 --output cpu2.pb.gz --json
+{"duration_ms":1016,"ended":null,"format":"tondo-profile-0.1/1","kind":"cpu","lost":0,"ok":true,"processor_ms":13,"profile":"cpu2.pb.gz","samples":15}
+```
 
 | | |
 | --- | --- |
