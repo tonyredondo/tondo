@@ -74,8 +74,8 @@ pub(super) fn end_trace(session: &mut Option<Session>, why: &str) {
         let mut frames = Frames { described: std::mem::take(&mut tracer.described), json: String::new() };
         let memory = if why == "exit" { memory(&mut frames) } else { "null".into() };
         // What the sampling did, which says why a profile took no sample.
-        let (rounds, heard, idle) = crate::recorder::sampled_counts();
-        let sampled = format!("{{\"rounds\":{rounds},\"heard\":{heard},\"idle\":{idle}}}");
+        let (rounds, heard, idle, taken) = crate::recorder::sampled_counts();
+        let sampled = format!("{{\"rounds\":{rounds},\"heard\":{heard},\"idle\":{idle},\"taken_ns\":{taken}}}");
         let ended =
             format!("{{\"end\":\"{why}\",\"memory\":{memory},\"sampled\":{sampled},\"frames\":{{{}}}}}", frames.json);
         let _ = send(&mut tracer.stream, &ended);

@@ -139,6 +139,11 @@ pub fn profile(
         Kind::Memory => Some("memory"),
         Kind::Tasks => Some("dump"),
     };
+    // How to see where a program that waits waits: its tasks.
+    let waits = match &traced {
+        Traced::Running(name) => format!("`tondo profile {name} --tasks`"),
+        Traced::Started(..) => "`tondo profile --tasks --duration <seconds> -- <program>`".to_string(),
+    };
     let recorded = observe::record(traced, duration, ask, kind == Kind::Memory, kind == Kind::Instructions)?;
     let mut frames = recorded.recording.frames.clone();
     if let Some(Value::Object(more)) = recorded.asked.as_ref().and_then(|a| a.get("frames")) {
@@ -164,7 +169,7 @@ pub fn profile(
     // one that took none took none.
     let processor = (kind == Kind::Cpu).then(|| weights(&recording.samples).iter().sum::<i64>());
     let empty = (count == 0 && matches!(kind, Kind::Cpu | Kind::Instructions))
-        .then(|| why_no_samples(recorded.sampled.as_ref()));
+        .then(|| why_no_samples(recorded.sampled.as_ref(), recorded.exited, &waits));
     if as_json {
         let mut fields = json!({
             "profile": path,
@@ -187,6 +192,7 @@ pub fn profile(
         return Ok(());
     }
     let what = match kind {
+        Kind::Cpu if count == 0 => "0 samples".to_string(),
         Kind::Cpu => format!("{count} samples, {} of processor time", amount(processor.unwrap_or(0), "nanoseconds")),
         Kind::Instructions => format!("{count} samples of a million instructions"),
         Kind::Memory => format!("{count} samples of memory"),
@@ -206,23 +212,47 @@ pub fn profile(
     Ok(())
 }
 
+/// Processor time that a sampling every `PERIOD` may give no sample of: the
+/// system looks at the process's time only at its ticks, of a thousandth to
+/// a hundredth of a second, and only on a thread that runs then. The start
+/// of a program that then waits takes a few milliseconds.
+const UNSAMPLED: u64 = 10 * PERIOD as u64;
+
 /// Why a profile of the processor took no sample, from what the program's
-/// sampling said at its end.
-fn why_no_samples(sampled: Option<&Value>) -> String {
+/// sampling said at its end and whether the program `exited`: first, a
+/// program that took too little processor time while it was profiled to be
+/// sampled, which waited, as a server with no load or a program that reads
+/// its input, and whose tasks show where, or ended; only one that took more
+/// and gave no sample says tondo's sampling failed it. `waits` is how to
+/// profile its tasks.
+fn why_no_samples(sampled: Option<&Value>, exited: bool, waits: &str) -> String {
     let count = |name: &str| sampled.and_then(|s| s[name].as_u64());
+    let taken = count("taken_ns");
+    if let Some(taken) = taken.filter(|&taken| taken < UNSAMPLED) {
+        let taken = amount(taken as i64, "nanoseconds");
+        return if exited {
+            format!("the program took {taken} of processor time before it ended, too little to be sampled")
+        } else {
+            format!(
+                "the program took {taken} of processor time while it was profiled, too little to be sampled: it \
+                 waited; {waits} shows where"
+            )
+        };
+    }
     match (count("rounds"), count("heard"), count("idle")) {
-        (_, Some(0), _) if cfg!(target_os = "macos") && count("rounds") == Some(0) => {
+        (Some(0), _, _) if cfg!(target_os = "macos") => {
             "the runtime's sampling thread made no round while the program ran: this is tondo's, not the \
              program's; profile it again, and report it if it repeats"
                 .into()
         }
-        (_, Some(0), _) => "no thread of the program heard the sampling signal while it ran: this is tondo's, not \
-                            the program's; profile it again, and report it if it repeats"
-            .into(),
-        (_, Some(heard), Some(idle)) if heard == idle => "each time the sampling looked, no task of the program was \
-                                                         running: it waited, or ended before its first millisecond of \
-                                                         processor time"
-            .into(),
+        (_, Some(0), _) => format!(
+            "no thread of the program heard the sampling signal while it took {} of processor time: this is \
+             tondo's, not the program's; profile it again, and report it if it repeats",
+            amount(taken.unwrap_or(0) as i64, "nanoseconds")
+        ),
+        (_, Some(heard), Some(idle)) if heard == idle => {
+            format!("each time the sampling looked, no task of the program was running: it waited; {waits} shows where")
+        }
         _ => "the program ended before its first millisecond of processor time".into(),
     }
 }
@@ -1166,6 +1196,27 @@ code{{font-family:var(--vscode-editor-font-family,ui-monospace,monospace);backgr
 
 #[cfg(test)]
 mod tests {
+    /// A program that took too little processor time to be sampled waited,
+    /// or ended; only one that took more and was never signalled is
+    /// tondo's.
+    #[test]
+    fn says_why_a_cpu_profile_has_no_sample() {
+        let sampled = |taken: u64| serde_json::json!({"rounds": 1, "heard": 0, "idle": 0, "taken_ns": taken});
+        let why = |taken, exited| why_no_samples(Some(&sampled(taken)), exited, "`tasks`");
+        assert_eq!(
+            why(2_700_000, false),
+            "the program took 3ms of processor time while it was profiled, too little to be sampled: it waited; \
+             `tasks` shows where"
+        );
+        assert_eq!(
+            why(400_000, true),
+            "the program took 400us of processor time before it ended, too little to be sampled"
+        );
+        assert!(
+            why(50_000_000, false).starts_with("no thread of the program heard the sampling signal while it took 50ms")
+        );
+    }
+
     /// A sample with its thread's clock weighs what its thread took since
     /// that thread's sample before; one without, as a profile taken before
     /// the clock was kept, weighs a millisecond, so that its numbers do not

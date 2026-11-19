@@ -374,11 +374,22 @@ pub(crate) fn stop() {
 static ROUNDS: AtomicU64 = AtomicU64::new(0);
 static HEARD: AtomicU64 = AtomicU64::new(0);
 static IDLE: AtomicU64 = AtomicU64::new(0);
+/// The processor time the process had taken when the sampling started.
+static STARTED_TIME: AtomicU64 = AtomicU64::new(0);
+
+/// The processor time the whole process has taken, in nanoseconds.
+fn process_time() -> u64 {
+    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut time) };
+    time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
+}
 
 /// The rounds of the sampling thread (macOS), the signals heard and those
-/// that found no task, since the sampling started.
-pub(crate) fn sampled_counts() -> (u64, u64, u64) {
-    (ROUNDS.load(Ordering::Relaxed), HEARD.load(Ordering::Relaxed), IDLE.load(Ordering::Relaxed))
+/// that found no task, since the sampling started, and the processor time
+/// the process took since then: none says a program that waited.
+pub(crate) fn sampled_counts() -> (u64, u64, u64, u64) {
+    let taken = process_time().saturating_sub(STARTED_TIME.load(Ordering::Relaxed));
+    (ROUNDS.load(Ordering::Relaxed), HEARD.load(Ordering::Relaxed), IDLE.load(Ordering::Relaxed), taken)
 }
 
 /// Microseconds of processor time between two samples of the threads,
@@ -414,6 +425,7 @@ pub(crate) fn sample_threads() {
     for count in [&ROUNDS, &HEARD, &IDLE] {
         count.store(0, Ordering::Relaxed);
     }
+    STARTED_TIME.store(process_time(), Ordering::Relaxed);
     // macOS sends the signal of the process's processor time to whichever
     // thread it likes, mostly the main one, however idle; a thread of the
     // runtime signals each worker every millisecond instead.

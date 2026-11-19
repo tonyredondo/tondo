@@ -416,6 +416,56 @@ fn main() {
     );
 }
 
+/// A program that waits while its processor is profiled gives no sample,
+/// and the profile says that it waited and how to see where, never that
+/// tondo's sampling failed it. One the command starts may give a sample or
+/// two of its start.
+#[test]
+fn a_cpu_profile_of_a_program_that_waits_says_it_waited() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("profile-waits");
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console\nimport std.time\n\nfn main() {\n    console.println(\"waiting\")\n    \
+                   let _ = console.flush()\n    time.sleep(time.seconds(30))\n}\n";
+    std::fs::write(dir.join("sleeping.to"), program).unwrap();
+    let executable = dir.join("sleeping");
+    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "sleeping.to", "--output"])
+        .arg(&executable)
+        .current_dir(&dir)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let waited = |profile: &Value| {
+        let why = profile["no_samples"].as_str().unwrap_or_default();
+        assert!(
+            profile["samples"] == 0 && why.contains("it waited") && why.contains("--tasks") && !why.contains("tondo's"),
+            "{profile}"
+        );
+    };
+    let mut child =
+        Started::new(Command::new(&executable).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap());
+    let mut line = String::new();
+    BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
+    assert_eq!(line, "waiting\n");
+    let file = dir.join("attached.pprof");
+    let pid = child.id().to_string();
+    waited(&tondo(&["profile", &pid, "--cpu", "--duration", "1", "--output", file.to_str().unwrap(), "--json"]));
+    drop(child);
+    let started = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["profile", "--cpu", "--duration", "1", "--output", "started.pprof", "--json", "--", "./sleeping"])
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&started.stdout);
+    assert!(started.status.success(), "{out}{}", String::from_utf8_lossy(&started.stderr));
+    let line = out.lines().find(|line| line.starts_with('{')).expect("the profile's JSON");
+    let profile: Value = serde_json::from_str(line).unwrap();
+    if profile["samples"] == 0 {
+        waited(&profile);
+    }
+}
+
 #[test]
 fn profiles_time_memory_and_tasks() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("profile");

@@ -492,6 +492,8 @@ pub(crate) struct Recorded {
     /// of its sampling thread, the signals its threads heard and those that
     /// found no task running.
     pub(crate) sampled: Option<Value>,
+    /// Whether the program ended while it was recorded.
+    pub(crate) exited: bool,
 }
 
 /// Records what a program does until it ends, `duration` passes or
@@ -543,6 +545,7 @@ pub(crate) fn record(
     let mut stopping = false;
     let mut asked = None;
     let mut sampled = None;
+    let mut exited = false;
     let mut line = String::new();
     loop {
         let stop = INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst)
@@ -561,6 +564,7 @@ pub(crate) fn record(
                 line.clear();
                 if chunk.get("end").is_some() {
                     sampled = chunk.get("sampled").cloned();
+                    exited = chunk["end"] == "exit";
                     // A program that exits says what memory it had.
                     if !chunk["memory"].is_null() && asked.is_none() {
                         if let Some(Value::Object(frames)) = chunk.get("frames") {
@@ -594,7 +598,7 @@ pub(crate) fn record(
         }
     }
     let pid = program.pid;
-    Ok(Recorded { info, pid, recording, end, asked, started: started_at, sampled })
+    Ok(Recorded { info, pid, recording, end, asked, started: started_at, sampled, exited })
 }
 
 /// `tondo trace`: records until the program ends, `duration` passes or
