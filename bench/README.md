@@ -45,6 +45,15 @@ that waits once, for a task or a goroutine it starts. Each side compiles
 the same `callers.c` with the system's C compiler, Go's through cgo; without
 one, Tondo's test skips them and Go builds without them.
 
+`bench/baselines/table.json` holds what `bench/tondo` measured with the
+release tondo of this table's commit, on its machine, with the
+instructions of each row: a change is judged against it as well as
+against the commit before it, `--baseline bench/baselines/table.json`, so
+that costs too small for one change to show are seen when they add up.
+It is saved again only with a new table, in that table's commit, never
+with another change, which would make it follow the drift it is there to
+catch; measured on another machine, it compares nothing.
+
 This table was measured on an AMD Ryzen 9 5950X, Linux, with Go 1.27, on
 2026-11-19 at 25ff8924, each side for its default level of processor:
 Tondo's `baseline`, x86-64-v2, and Go's `GOAMD64=v1`, as the tables of
