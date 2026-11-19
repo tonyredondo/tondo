@@ -2602,6 +2602,34 @@ fn pieces(texts: Array[String]): Int {
     assert_eq!(counts, expected);
 }
 
+/// A short text with a number in it allocates nothing, though the room its
+/// interpolation asks for counts a digit more than the number may have:
+/// two digits from 64 to 99 after four bytes, which asked a byte for a
+/// sign they do not have, and a single digit after five.
+#[test]
+fn short_texts_of_numbers_allocate_nothing() {
+    let tests = "\
+import std.console
+import std.testing
+
+test counted {
+    let texts = (0..100).map((n) { \" key {n} and more\" }).collect()
+    console.println(\"numbered {testing.allocations(() { lengths(texts, (t) { \"SKU-{t.byteLength() * 5}\" }) })}\")
+    console.println(\"digit {testing.allocations(() { lengths(texts, (t) { \"ITEM-{t.byteLength() - 7}\" }) })}\")
+}
+
+fn lengths(texts: Array[String], made: fn(String): String): Int {
+    var total = 0
+    for text in texts {
+        total += made(text).byteLength()
+    }
+    total
+}
+";
+    let counts = counts_of("short_numbers_counted", tests);
+    assert_eq!(counts, [("numbered".to_string(), 0), ("digit".to_string(), 0)]);
+}
+
 /// The runtime's operations on texts allocate what they give and none of
 /// their own on the way: `words` and `lines` as `split` does, one block of
 /// pieces and their array, and a slice, an ASCII text's change of case,

@@ -203,7 +203,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                             room = Some(room.map_or(length, |room| self.e.fb.ins().iadd(room, length)));
                         }
                         (TyKind::Int(int), _) if int.bits() == 128 => known += 40,
-                        // At most one digit more than it has, and its sign.
+                        // At most one digit more than it has, and its sign
+                        // when it is negative: never under what it writes,
+                        // so that a short one starts in the builder's word.
                         (TyKind::Int(_), Val::Scalar(value)) => {
                             let value = self.wide(value, true);
                             let sign = self.e.fb.ins().sshr_imm_u(value, 63);
@@ -214,8 +216,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                             let bits = self.e.fb.ins().isub(sixty_four, zeros);
                             let digits = self.e.fb.ins().imul_imm_u(bits, 1233);
                             let digits = self.e.fb.ins().ushr_imm_u(digits, 12);
+                            let negative = self.e.fb.ins().ushr_imm_u(value, 63);
+                            let digits = self.e.fb.ins().iadd(digits, negative);
                             room = Some(room.map_or(digits, |room| self.e.fb.ins().iadd(room, digits)));
-                            known += 2;
+                            known += 1;
                         }
                         (TyKind::Int(_) | TyKind::Float(_), _) => known += 24,
                         _ => known += 16,
