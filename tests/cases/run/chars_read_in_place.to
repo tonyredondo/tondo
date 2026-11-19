@@ -1,0 +1,23 @@
+// A loop over a text's characters reads the text where it is, a short one
+// from a header of the frame, and makes nothing there: no place of it goes
+// in a region or on the heap.
+
+import std.console
+
+fn vowels(text: String): Int {
+    var count = 0
+    for letter in text.chars() {
+        if letter == 'a' or letter == 'e' or letter == 'o' {
+            count += 1
+        }
+    }
+    count
+}
+
+fn main() {
+    console.println("{vowels("one")} {vowels("a text long enough to be held in a block of its own")}")
+}
+
+// expect-stdout: 2 12
+// expect-no-optimization: 9:19 region
+// expect-no-optimization: 18:23 region

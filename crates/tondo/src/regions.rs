@@ -1944,7 +1944,6 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
         |place: &Place| matches!(types.kind(types.repr(body.place_ty(types, place))), crate::types::TyKind::Array(_));
     let deque =
         |place: &Place| matches!(types.kind(types.repr(body.place_ty(types, place))), crate::types::TyKind::Deque(_));
-    const TEXTS: Option<&str> = Some("regions do not take texts yet");
     const RUNTIME: Option<&str> = Some("regions do not take what the runtime makes yet");
     let kind = |local: Local| types.kind(types.repr(body.locals[local.0 as usize])).clone();
     for (at, statement) in positioned(body) {
@@ -2097,14 +2096,13 @@ fn sites(body: &Body, types: &Types) -> Vec<Site> {
                 RUNTIME
             }
             // A text an operation makes, as `replace` or `toUpper` does: in
-            // a region when the runtime makes it there.
+            // a region when the runtime makes it there. The text a loop reads
+            // in place (`InPlace`) is the same text, which makes nothing.
             Rvalue::StrOp(op, ..)
-                if matches!(types.kind(types.repr(body.place_ty(types, place))), crate::types::TyKind::String) =>
+                if makes_text(*op)
+                    && matches!(types.kind(types.repr(body.place_ty(types, place))), crate::types::TyKind::String) =>
             {
-                match makes_text(*op) {
-                    true => None,
-                    false => TEXTS,
-                }
+                None
             }
             _ => continue,
         };
