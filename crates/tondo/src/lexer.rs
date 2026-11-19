@@ -571,8 +571,10 @@ impl Lexer<'_> {
         let candidates = c.is_ascii().then(|| &by_first_byte()[c as usize]).map_or(&[][..], Vec::as_slice);
         let found = candidates.iter().map(|&i| &PUNCTUATION[i]).find(|(text, _)| rest.starts_with(text));
         let Some((text, tok)) = found else {
-            let after = rest[c.len_utf8()..].chars().next();
-            let directive = rest[1..].starts_with("include") || rest[1..].starts_with("import");
+            // After the character, which may take more than one byte.
+            let next = &rest[c.len_utf8()..];
+            let after = next.chars().next();
+            let directive = next.starts_with("include") || next.starts_with("import");
             self.pos += c.len_utf8();
             let message = match (c, after) {
                 (';', _) => "`;` is not a Tondo token: a new line ends a statement".to_string(),

@@ -1,0 +1,8 @@
+// A character no token starts with is told as it is, also one of more
+// than one byte, as a line of a box drawn in a comment and pasted out of
+// it.
+fn main() {
+ ─   let total = 1
+}
+
+// expect-error: E0002 unexpected character `─`
