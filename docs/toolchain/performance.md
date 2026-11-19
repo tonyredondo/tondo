@@ -1314,12 +1314,59 @@ a change.
 | | |
 | --- | --- |
 | `tondo asm <function>` | one function of the project |
-| `tondo asm --all` | every function |
+| `tondo asm --all` | every function of the program |
+| `--all --reached` | those, and [the rest of the code the program reaches](#the-code-a-program-reaches) |
 | `--clif` | Cranelift's intermediate code as well, before and after it optimizes |
 | `--cpu <level>` | the code of a [level of processor](#the-processor-a-build-is-for) |
 | `--tests` | a function of the tests or benchmarks |
 | `--against <rev>` | the difference with a revision's code |
 | `tondo profile show <profile> --asm` | the same listing, with the share of the samples on each instruction |
+
+### The code a program reaches
+
+`--all` lists the program's own functions, three in `stats.to`. Its
+executable runs more code than that. The compiler made copies of the
+library's functions for the types this program calls them with, two of
+`formats.formatFloat` among them, and it wrote the glue of the program's
+own types: the code that counts one more holder of a `Reading`, the code
+that lets go of one, the code that shows one to a debugger. `--all
+--reached` lists all of it, 21 pieces here, and each has a name it is
+asked for by:
+
+```text
+$ tondo asm stats.to 'retain of `Reading`'
+retain of `Reading` (71 bytes)
+      0  push rbp
+      1  mov rbp, rsp
+      4  mov rdi, qword [rdi]
+      7  test rdi, rdi
+      a  jle $+0x24
+     10  mov r8, qword [rdi]
+     13  test r8, r8
+     16  jge $+0xf
+     1c  cmp r8, -0x1
+     20  jnz $+0x13
+     26  jmp $+0x9
+     2b  mov eax, 0x1
+     30  lock add qword [rdi], rax
+     34  mov rsp, rbp
+     37  pop rbp
+     38  ret
+     39  mov rax, qword [rip]  ; tondo_rt_str_retain
+     40  call rax
+     42  jmp $-0x13
+```
+
+A `Reading` holds one text, so to count a reading is to count its text. A
+[text of a few bytes](#a-text-of-a-few-bytes) is its own word and has no
+count, which is the first jump. Nothing is counted either for a text that
+nothing frees, as one made in a function's frame. For any other the count
+is one addition, `lock add`, where the code is, and the call of the
+runtime is left for the few kinds only it knows.
+
+The program gives this code to the runtime with its array of readings, as
+`main` does where it makes room for them: an array that two hold is copied
+before one of them writes to it, and the copy counts each element with it.
 
 ## What an executable weighs: size
 
@@ -1415,6 +1462,43 @@ A row that moved with no such code changed says so: what moved is where
 its code lies, or what it reads. `tondo asm --runtime --all --compiler
 <tondo|rev>` lists every function of the runtime that the two make
 differently.
+
+`tondo asm --all`, with `--against` or `--compiler`, compares all [the code
+the program reaches](#the-code-a-program-reaches), in three groups: the
+program's functions, each with the diff of its instructions, then the
+copies of the library's and of the dependencies', by module, and then the
+glue, each with its instructions before and after. This is `stats.to` as
+the Tondo of 531f45b9 built it, against the one that put the counts of
+texts in the glue:
+
+```text
+$ tondo asm stats.to --all --compiler <the tondo of 531f45b9>
+the standard library and the dependencies, against the tondo at <its path>:
+  std.formats: 2 instances changed
+    formats.formatText (1 of 2): 380 → 411 instructions
+    formats.formatText (2 of 2): 383 → 413 instructions
+glue, against the tondo at <its path>:
+    debugger view of `Char`: 27 → 57 instructions
+    release of `Reading`: 8 → 30 instructions
+    release of `String ! text.TextError`: 19 → 41 instructions
+    retain of `Reading`: 8 → 19 instructions
+program: no function changed, 3 the same; the standard library and the dependencies: 2 instances changed in 1 module, 5 the same; glue: 4 pieces changed, 7 the same
+```
+
+None of the program's three functions changed, and a comparison of them
+alone would have said that the two make the same code. What changed is in
+what they reach: the glue that counts a `Reading` and lets go of it, and
+`formats.formatText`, which now writes its fill character into a text where
+its code is.
+A line's name opens its diff, as ``tondo asm stats.to 'retain of
+`Reading`' --compiler <tondo>``, which here gives as new the lines of the
+listing above from `test rdi, rdi` to `lock add`, before a call of the
+runtime that was all there was.
+
+These are the instructions of the code, not those a run executes. The glue
+is longer and a run is shorter: with this change eight of the repository's
+examples run 2.5% to 7.8% fewer instructions, which is the benchmarks' to
+say, with `tondo test --bench --compiler`.
 
 ## The processor a build is for
 

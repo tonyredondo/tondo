@@ -315,6 +315,14 @@ Tondo links its own executables, so a build needs no C compiler and no
 linker on the machine. The [`textkit`](../../examples/textkit) example
 builds a library that a C program links.
 
+The same files, built again by the same `tondo` with the same options, are
+the same bytes: two executables that differ were not made alike. Two things
+count as what is built. A debug build holds the directory of its sources,
+where the debugger finds them, and on macOS the signature of an executable
+holds its file's name. A [live build](observing.md#changing-it-while-it-runs)
+is never the same twice, since each carries the identity of when and where
+it was made, by which `tondo reload` finds it.
+
 ## Dependencies
 
 A dependency is another package: a directory beside this one, a git
