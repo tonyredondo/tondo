@@ -94,7 +94,8 @@ pub fn memory(): Profile {
     Profile { native: native.profileMemory() }
 }
 
-/// Where each task of the program is now.
+/// Where each task of the program is now: one ready that has not run yet
+/// is where it was spawned.
 pub fn tasks(): Profile {
     Profile { native: native.profileTasks() }
 }

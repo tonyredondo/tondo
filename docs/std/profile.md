@@ -63,7 +63,8 @@ allocated it, from the samples since `startMemory`.
 pub fn tasks(): Profile
 ```
 
-Where each task of the program is now.
+Where each task of the program is now: one ready that has not run yet
+is where it was spawned.
 
 #### startBlocking
 

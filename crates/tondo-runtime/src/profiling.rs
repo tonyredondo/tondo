@@ -617,6 +617,17 @@ fn allocator(name: &str) -> bool {
     .any(|prefix| name.starts_with(prefix))
 }
 
+/// Where a profile of the tasks shows one: where it is, or where it was
+/// spawned for one ready that has not run yet, which has no stack, so that
+/// a backlog of tasks ready to run shows. One that runs and did not stop
+/// has none either, and is not there.
+fn shown_at(shot: &super::tasks::Shot) -> Vec<usize> {
+    match shot.state == "ready" && shot.stack.is_empty() {
+        true => shot.spawned.clone(),
+        false => shot.stack.clone(),
+    }
+}
+
 /// `profile.tasks()`: where each task is now.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_profile_tasks() -> *mut super::native::NativeObject {
@@ -639,7 +650,7 @@ pub extern "C" fn tondo_rt_profile_tasks() -> *mut super::native::NativeObject {
     }
     let weighed: Vec<Weighed> = shots
         .into_iter()
-        .map(|shot| (shot.stack, vec![1], vec![("state".to_string(), shot.state.to_string())]))
+        .map(|shot| (shown_at(&shot), vec![1], vec![("state".to_string(), shot.state.to_string())]))
         .collect();
     super::native::new(made("tasks", &[("tasks", "count")], ("tasks", "count", 1), None, &weighed, &[false], 0))
 }
@@ -761,6 +772,29 @@ pub extern "C" fn tondo_rt_profile_folded(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A task ready that has not run yet is shown where it was spawned; one
+    /// with a stack where it is, and one that runs with none nowhere.
+    #[test]
+    fn a_task_not_run_yet_is_where_it_was_spawned() {
+        let shot = |state: &'static str, stack: Vec<usize>| super::super::tasks::Shot {
+            id: 1,
+            main: false,
+            state,
+            stack,
+            spawned: vec![0x20],
+            locks: Vec::new(),
+            cancelled: false,
+            request: None,
+            wait: None,
+            woken: None,
+            wakes: Vec::new(),
+        };
+        assert_eq!(shown_at(&shot("ready", Vec::new())), [0x20]);
+        assert_eq!(shown_at(&shot("ready", vec![0x10])), [0x10]);
+        assert_eq!(shown_at(&shot("waits", vec![0x10])), [0x10]);
+        assert!(shown_at(&shot("runs", Vec::new())).is_empty());
+    }
 
     #[test]
     fn demangles_rust_symbols() {

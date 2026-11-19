@@ -311,13 +311,12 @@ pub(crate) fn build(
             let tasks = dump["tasks"].as_array().cloned().unwrap_or_default();
             for task in &tasks {
                 let state = task["state"].as_str().unwrap_or_default().to_string();
-                // A task that has not run yet has no stack: it is where it
-                // was spawned, which its own chain says, so that a backlog
-                // of tasks ready to run shows.
-                let stack = match task["stack"].as_array() {
-                    Some(stack) if !stack.is_empty() => &task["stack"],
-                    _ => &task["spawned"],
-                };
+                // A task ready that has not run yet has no stack: it is
+                // where it was spawned, which its own chain says, so that a
+                // backlog of tasks ready to run shows. One that runs and did
+                // not stop has none either, and is not there.
+                let unrun = state == "ready" && task["stack"].as_array().is_none_or(Vec::is_empty);
+                let stack = if unrun { &task["spawned"] } else { &task["stack"] };
                 add(&mut builder, stack, &[1], &[("state", &state)]);
             }
             Ok((builder, tasks.len()))
@@ -1148,9 +1147,10 @@ mod tests {
         let dump = json!({ "tasks": [
             { "state": "waits", "stack": ["10"], "spawned": [] },
             { "state": "ready", "stack": [], "spawned": ["20"] },
+            { "state": "runs", "stack": [], "spawned": ["20"] },
         ] });
         let (builder, count) = build(Kind::Tasks, "app", &frames, &serde_json::Map::new(), &[], Some(&dump)).unwrap();
-        assert_eq!(count, 2);
+        assert_eq!(count, 3);
         let path = std::env::temp_dir().join(format!("tondo-tasks-test-{}.pprof", std::process::id()));
         std::fs::write(&path, builder.finish(0, 0)).unwrap();
         let read = read(&path).unwrap();
