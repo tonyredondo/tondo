@@ -134,8 +134,9 @@ bar is measured again with `--layouts 4` beside `--compiler HEAD`, each side
 in four orders of the code: a growth that stays past every order is the
 change's own, and lands only with its reason, as one of instructions does.
 Under a row that
-moved it names the code that changed, the runtime's too, and beside a row
-the regions its runs set up and how many of them were used.
+moved the benchmarks' report names the code that changed, the runtime's
+too, and beside a row the regions its runs set up and how many of them were
+used.
 
 `.github/scripts/local.sh` runs what CI and the Nightly add, in containers
 on this machine: the servers, no C compiler, musl, emulation, and the tests that
@@ -272,8 +273,11 @@ Ask the toolchain before guessing why code is slow or allocates:
   cycles,instructions,…"`: loads that waited on a store,
   `ls_bad_status2.stli_other` on AMD and `ld_blocks.store_forward` on
   Intel, beside cache and branch misses. `perf record -e` of the same event
-  names the functions that pay it. Each vendor names these events its own
-  way, so the bench does not show them.
+  names the functions that pay it. Their count bounds what there is to
+  gain and does not measure it: a load that waits off the chain of what
+  the code computes costs nothing, so a fix is judged by the cycles of a
+  program of its own. Each vendor names these events its own way, so the
+  bench does not show them.
 - `tondo test --bench` gives, on Linux, the instructions and cycles of a
   run beside its time; `--regression-by instructions` with
   `--max-regression` judges a change by them, which where code lies does

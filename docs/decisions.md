@@ -8373,9 +8373,17 @@ program takes 523 million cycles and 2566 million instructions with 40
 million interlocks: the figure differs from the experiment's, and the
 cycles do not. On an Apple M2 it takes 0.123 s where it took 0.158.
 
-Every entry that reads a short text's bytes pays the same, from 1.5% to
-4.7% of the examples' cycles at most: the builder's joins and appends,
-the case functions, finding, slicing and counting characters, and code
-of ours that hands a text's place on. The entries that pay most take the
-same path one at a time, each measured.
+The other entries that read a short text's bytes were counted too:
+interlocks were 1.5% to 4.7% of the examples' cycles, in the builder's
+joins and appends, the case functions, finding, slicing and counting
+characters, and code of ours that hands a text's place on. Their count
+bounds what there is to gain and does not measure it. Appending a short
+text from its word, never through memory, took a million joins of eight
+short texts from 8.5 million interlocks to 0.9 and from 124 million
+cycles to 142, and joins of long texts from 207 to 268, as the larger
+append cost more than the waits it removed; and finding a byte in a short
+text costs what it does in a block, 73.4 cycles against 72.5. A load
+that waits costs only on the chain of what is being computed, as each
+digit of a parse feeds the next multiplication. So only the parser took
+the path, and the rest wait for a program of their own to show cycles.
 
