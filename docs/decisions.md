@@ -8341,3 +8341,38 @@ fails on either. The baseline is that of the last table against Go,
 it does not follow the drift it is there to catch; one measured on
 another processor, system or architecture compares nothing, as the same
 code runs other instructions there, and the run says so once.
+
+## A short text's digits are read from its word
+
+A short text lives in its word, and the runtime's entries read its bytes
+through `str_bytes`, as a slice over the place the call had just written
+the word to. On a Zen 3 a load of a byte inside an eight-byte write,
+past its first, waits for the write to leave: in `Int.parse` of a short
+text, an interlock for each digit but the first. Counted with
+`ls_bad_status2.stli_other`, a program that parses 20 million texts of up
+to seven digits took 711 million cycles with them short and 594 with them
+in blocks, for 3254 and 3198 million instructions; 159 million interlocks
+against 42.
+
+Four forms were measured on that program. As it was: 713 million
+cycles, 3254 million instructions, 159 million interlocks. The word copied
+to an array of the function's own: 716 to 721, 3294 and 155, as it is
+again one write read back a byte at a time. The digits shifted out of the
+word in a register, one a turn: 658, 3589 and 37, the interlocks gone and
+the instructions grown. And the digits put at the top of a word with `0`s
+below them, checked as digits all at once with two masks and joined by
+three multiplications: 523, 2526 and 10 to 12, under the cost of block
+texts. The last is the parser's short path now, a sign handled with one
+compare and a shift; anything else is left to the general path, and a
+test of the runtime holds the two to the same answers for every text of
+up to seven digits and every byte at each place. In the commit the
+program takes 523 million cycles and 2566 million instructions with 40
+million interlocks: the figure differs from the experiment's, and the
+cycles do not. On an Apple M2 it takes 0.123 s where it took 0.158.
+
+Every entry that reads a short text's bytes pays the same, from 1.5% to
+4.7% of the examples' cycles at most: the builder's joins and appends,
+the case functions, finding, slicing and counting characters, and code
+of ours that hands a text's place on. The entries that pay most take the
+same path one at a time, each measured.
+

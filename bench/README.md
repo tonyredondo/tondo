@@ -227,8 +227,15 @@ The rows still behind Go, and why:
   thread's block.
 - `tasks/spawn`, 6%: each task's record with its join, below; and
   `texts/toUpper other`, 6% to 10% in two runs, and `net/tls echo`, 5%.
-  `texts/parse ints`, at 0.99× at bce6dca4, is at 1.16×, with 1.7% more
-  instructions and 17% more cycles: most of it where its code lies.
+  `texts/parse ints` went from 0.99× at bce6dca4 to 1.16× in one commit,
+  89958411: the numbers it parses, of up to seven digits, became short
+  texts, in their word, and the runtime's parser read their digits from
+  the memory the word had just been written to, which a Zen 3 gives a
+  load of a byte inside the write only after the write leaves: an
+  interlock a digit, a fifth more cycles with 1.7% more instructions.
+  The parser now reads a short text's digits from its word in a register,
+  all at once: 0.85× in a run of the same session, with 133.1 thousand
+  instructions against Go's 144.4.
   `net/echo` is at 0.99× and 1.00× in two runs, within what a row moves
   from one run to the next; `runtime/mutex` and `queries/uniqueBy`, at
   1.05× and 1.00× at bce6dca4, are at 0.97× and 0.94–0.97× now.

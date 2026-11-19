@@ -110,6 +110,19 @@ pub unsafe extern "C" fn tondo_rt_int_parse(
     signed: u8,
     out: *mut [u64; 2],
 ) -> u8 {
+    // A short text's decimal digits, from its word: never through the
+    // memory its word was just written to, which a processor reads back a
+    // byte at a time only after the write leaves (store-to-load interlocks).
+    if radix == 10
+        && bits == 64
+        && signed != 0
+        && super::strings::short(s)
+        && let Some(value) = short_decimal(s as u64)
+    {
+        let wide = i128::from(value) as u128;
+        unsafe { *out = [wide as u64, (wide >> 64) as u64] };
+        return 1;
+    }
     let text = unsafe { super::str_bytes(&s) };
     // An `Int` in decimal of up to 18 digits, as most texts parsed are,
     // fits in 64 bits as it is read and needs no bounds of 128.
@@ -172,6 +185,34 @@ fn decimal(digits: &[u8]) -> Option<u64> {
         value = value * 10 + u64::from(digit);
     }
     Some(value)
+}
+
+/// The value of a short text's word written in decimal, with an optional
+/// sign: its digits put at the top of eight, `0`s below them, all checked as
+/// digits at once, then joined two, four and eight at a time by three
+/// multiplications; anything else, as a `_`, a letter or a lone sign, is
+/// left to the general path.
+fn short_decimal(word: u64) -> Option<i64> {
+    let len = ((word >> 56) & 0x7f) as u32;
+    let bytes = word & 0x00ff_ffff_ffff_ffff;
+    let (negative, skip) = match bytes & 0xff {
+        0x2d => (true, 1),
+        0x2b => (false, 1),
+        _ => (false, 0),
+    };
+    let digits = len.checked_sub(skip).filter(|&digits| digits > 0)?;
+    let chunk = ((bytes >> (8 * skip)) << (8 * (8 - digits))) | (0x3030_3030_3030_3030u64 >> (8 * digits));
+    let high = 0xf0f0_f0f0_f0f0_f0f0;
+    let digits_only = chunk & high == 0x3030_3030_3030_3030
+        && chunk.wrapping_add(0x0606_0606_0606_0606) & high == 0x3030_3030_3030_3030;
+    if !digits_only {
+        return None;
+    }
+    let mut value = chunk - 0x3030_3030_3030_3030;
+    value = (value.wrapping_mul(10) + (value >> 8)) & 0x00ff_00ff_00ff_00ff;
+    value = (value.wrapping_mul(100) + (value >> 16)) & 0x0000_ffff_0000_ffff;
+    value = (value.wrapping_mul(10000) + (value >> 32)) & 0xffff_ffff;
+    Some(if negative { -(value as i64) } else { value as i64 })
 }
 
 /// The digits' value in `radix`, a `_` only between two of them, in 64 bits
@@ -315,6 +356,67 @@ pub unsafe extern "C" fn tondo_rt_float_parse(s: *const Str, single: u8, out: *m
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What `tondo_rt_int_parse` gave a text before short texts took a path
+    /// of their own: its bytes through the general one, kept as the
+    /// reference.
+    fn parsed_before(bytes: &[u8]) -> Option<i64> {
+        let (negative, digits) = match bytes.first() {
+            Some(b'-') => (true, &bytes[1..]),
+            Some(b'+') => (false, &bytes[1..]),
+            _ => (false, bytes),
+        };
+        if (1..=18).contains(&digits.len())
+            && let Some(value) = decimal(digits)
+        {
+            return Some(if negative { -(value as i64) } else { value as i64 });
+        }
+        parse(unsafe { std::str::from_utf8_unchecked(bytes) }, 10, 64, true).map(|value| value as i64)
+    }
+
+    /// What it gives the short text of `bytes` now.
+    fn parsed_now(bytes: &[u8]) -> Option<i64> {
+        let text = crate::strings::short_text(bytes);
+        let mut out = [0u64; 2];
+        let parsed = unsafe { tondo_rt_int_parse(text, 10, 64, 1, &mut out) };
+        (parsed == 1).then_some(out[0] as i64)
+    }
+
+    /// Every text of one to seven digits, leading zeros too, and of a sign
+    /// and up to six, parses to its value; and every byte at each place of
+    /// each length, with digits around it, gives what the general path did.
+    #[test]
+    fn short_decimals_parse_as_before() {
+        let mut text = [0u8; 7];
+        for len in 1..=7usize {
+            for n in 0..10u64.pow(len as u32) {
+                let mut rest = n;
+                for at in (0..len).rev() {
+                    text[at] = b'0' + (rest % 10) as u8;
+                    rest /= 10;
+                }
+                assert_eq!(parsed_now(&text[..len]), Some(n as i64), "{:?}", &text[..len]);
+                if len < 7 {
+                    let mut signed = [0u8; 7];
+                    signed[1..=len].copy_from_slice(&text[..len]);
+                    for (sign, value) in [(b'-', -(n as i64)), (b'+', n as i64)] {
+                        signed[0] = sign;
+                        assert_eq!(parsed_now(&signed[..=len]), Some(value), "{:?}", &signed[..=len]);
+                    }
+                }
+            }
+        }
+        for len in 1..=7usize {
+            for at in 0..len {
+                for byte in 0..=255u8 {
+                    let mut text: Vec<u8> = (0..len).map(|i| b'1' + (i % 9) as u8).collect();
+                    text[at] = byte;
+                    assert_eq!(parsed_now(&text), parsed_before(&text), "{text:?}");
+                }
+            }
+        }
+        assert_eq!(parsed_now(b""), parsed_before(b""));
+    }
 
     fn power(base: i128, exponent: i64, bits: u32, signed: bool, saturate: bool) -> (i128, u8) {
         let base = base as u128;

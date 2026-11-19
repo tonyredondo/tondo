@@ -1,8 +1,9 @@
 import std.console
 
-// Integers read from texts: up to 18 decimal digits in a loop that cannot
-// overflow, and the rest the general way, with the same answers: signs,
-// `_` between digits, the bounds of each width, and what is no number.
+// Integers read from texts: a short text's digits from its word at once, up
+// to 18 decimal digits in a loop that cannot overflow, and the rest the
+// general way, with the same answers: signs, `_` between digits, the bounds
+// of each width, and what is no number, at each place of a short text too.
 
 fn shown(text: String): String {
     match Int.parse(text) {
@@ -16,6 +17,7 @@ fn main() {
         "0", "-0", "+7", "42", "-42", "1_000", "_1", "1_", "1__0", "", "-", "+", "12a", " 1",
         "999999999999999999", "1000000000000000000", "9223372036854775807", "9223372036854775808",
         "-9223372036854775808", "-9223372036854775809", "00000000000000000000001",
+        "1234567", "0000000", "-123456", "+123456", "-0", "a12", "1a2", "12a3", "123456/", ":", "99_9999",
     ]
     for text in texts {
         console.println("{text}: {shown(text)}")
@@ -23,6 +25,15 @@ fn main() {
     console.println("{Int8.parse("127") ?? 0} {Int8.parse("128") ?? 0} {Int8.parse("-128") ?? 0}")
     console.println("{UInt.parse("18446744073709551615") ?? 0} {UInt.parse("-1") ?? 7} {UInt.parse("-0") ?? 7}")
     console.println("{Int.parse("ff", radix: 16) ?? 0} {Int.parse("-1_0", radix: 2) ?? 0}")
+    // Texts made as the program runs, short and not, back to their numbers.
+    var same = 0
+    for n in -1100..1100 {
+        let value = n * 7919
+        if (Int.parse("{value}") ?? 0) == value {
+            same += 1
+        }
+    }
+    console.println("{same} of 2200")
 }
 
 // expect-stdout: 0: 0
@@ -46,6 +57,18 @@ fn main() {
 // expect-stdout: -9223372036854775808: -9223372036854775808
 // expect-stdout: -9223372036854775809: error
 // expect-stdout: 00000000000000000000001: 1
+// expect-stdout: 1234567: 1234567
+// expect-stdout: 0000000: 0
+// expect-stdout: -123456: -123456
+// expect-stdout: +123456: 123456
+// expect-stdout: -0: 0
+// expect-stdout: a12: error
+// expect-stdout: 1a2: error
+// expect-stdout: 12a3: error
+// expect-stdout: 123456/: error
+// expect-stdout: :: error
+// expect-stdout: 99_9999: 999999
 // expect-stdout: 127 0 -128
 // expect-stdout: 18446744073709551615 7 0
 // expect-stdout: 255 -2
+// expect-stdout: 2200 of 2200
