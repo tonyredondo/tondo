@@ -1353,10 +1353,12 @@ fn only_pushed(body: &Body, types: &Types, inside: &[bool], local: Local) -> boo
                                         crate::hir::Mutation::Push
                                         | crate::hir::Mutation::PushFront
                                         | crate::hir::Mutation::Reserve => true,
-                                        // Emptied to be filled again, where
-                                        // its function's region does not
-                                        // last long.
+                                        // Emptied, to be filled again or
+                                        // by `clear()`, where its
+                                        // function's region does not last
+                                        // long.
                                         crate::hir::Mutation::Empty => body.lasting.is_none(),
+                                        crate::hir::Mutation::Clear => body.lasting.is_none(),
                                         _ => false,
                                     }
                             }
@@ -1639,6 +1641,9 @@ fn unchanged(body: &Body, types: &Types, local: Local) -> Option<(String, Span, 
             Rvalue::Mutate(crate::hir::Mutation::Empty, target, ..) if target.local == local => {
                 return body.lasting.as_ref().map(|why| (why.clone(), *span, block));
             }
+            Rvalue::Mutate(crate::hir::Mutation::Clear, target, ..) if target.local == local && !map => {
+                return body.lasting.as_ref().map(|why| (why.clone(), *span, block));
+            }
             Rvalue::Mutate(mutation, target, ..) if target.local == local => matches!(
                 mutation,
                 crate::hir::Mutation::Push
@@ -1660,10 +1665,13 @@ fn unchanged(body: &Body, types: &Types, local: Local) -> Option<(String, Span, 
                 "a region changes a map only by its insertions, its removals and the values of its entries yet"
             }
             (_, true) => {
-                "a region changes a deque only by `push`, `pushFront`, `pop`, `popFront` and the writes of its \
+                "a region changes a deque only by `push`, `pushFront`, `pop`, `popFront`, `x = Deque[T]()`, \
+                 `x.clear()` and the writes of its elements yet"
+            }
+            _ => {
+                "a region changes an array only by `push`, `pop`, `x = []`, `x.clear()` and the writes of its \
                  elements yet"
             }
-            _ => "a region changes an array only by `push`, `pop` and the writes of its elements yet",
         };
         (!taken).then(|| (why.to_string(), *span, block))
     })
@@ -1709,6 +1717,17 @@ fn made(
                     // it in place or gives it the constant empty array, as
                     // `[]` does, and copies nothing onto the heap.
                     Rvalue::Mutate(crate::hir::Mutation::Empty, ..) if body.lasting.is_none() => None,
+                    // So does `clear()` of an array or a deque, which keeps
+                    // its room.
+                    Rvalue::Mutate(crate::hir::Mutation::Clear, target, ..)
+                        if body.lasting.is_none()
+                            && matches!(
+                                types.kind(types.repr(body.locals[target.local.0 as usize])),
+                                TyKind::Array(_) | TyKind::Deque(_)
+                            ) =>
+                    {
+                        None
+                    }
                     Rvalue::Mutate(_, target, ..) | Rvalue::AssignSlice(target, ..) => {
                         Some((target.local, taken(target.local)))
                     }

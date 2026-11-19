@@ -10,14 +10,15 @@
 //! array takes much more room than its elements. The room is a hint, which
 //! the runtime takes when the system has it (`tondo_rt_array_reserve`).
 //!
-//! And room kept for what a loop pushes again: `x = []` on an array that a
-//! push may fill again, as the next turn of a loop does, empties it where
-//! it is, keeping its room, when nothing else holds it, rather than giving
-//! it up for `[]` and growing again from nothing. What else holds it, a
-//! copy, a capture, a slice or the array it was pushed to, keeps its count
-//! above one, and the runtime takes `[]` then, as before; and so does an
-//! array whose room is past `KEPT_ROOM`, as a buffer that once held
-//! something large, which `x = []` gives back.
+//! And room kept for what a loop pushes again: `x = []` on an array, or
+//! `x = Deque[T]()` on a deque, that a push may fill again, as the next
+//! turn of a loop does, empties it where it is, keeping its room, when
+//! nothing else holds it, rather than giving it up for the empty one and
+//! growing again from nothing. What else holds it, a copy, a capture, a
+//! slice or the array it was pushed to, keeps its count above one, and the
+//! runtime takes the empty one then, as before; and so does one whose room
+//! is past `KEPT_ROOM`, as a buffer that once held something large, which
+//! `x = []` gives back.
 
 use crate::ast::BinOp;
 use crate::hir::Mutation;
@@ -72,11 +73,11 @@ pub fn reserve(bodies: &mut [Body], types: &Types) {
     });
 }
 
-/// `x = []` or `x = Array[T]()`, as the lowering makes it, `empty = []`,
-/// `old = x`, `x = empty` and `release old`, becomes the mutation that empties `x` in place, where
-/// `x` is the function's own array, which no binding borrows from, and a
-/// push, `pushFront` or `insert` to it may follow before it is written
-/// whole.
+/// `x = []`, `x = Array[T]()` or `x = Deque[T]()`, as the lowering makes
+/// it, `empty = []`, `old = x`, `x = empty` and `release old`, becomes the
+/// mutation that empties `x` in place, where `x` is the function's own
+/// array or deque, which no binding borrows from, and a push, `pushFront`
+/// or `insert` to it may follow before it is written whole.
 fn empties(body: &mut Body, types: &Types) {
     let locals = body.locals.len();
     let (mut reads, mut writes, mut foreign) = (vec![0; locals], vec![0; locals], vec![false; locals]);
@@ -131,7 +132,7 @@ fn empties(body: &mut Body, types: &Types) {
                 && once(empty)
                 && once(old)
                 && !foreign[array.0 as usize]
-                && matches!(types.kind(types.repr(body.locals[array.0 as usize])), TyKind::Array(_))
+                && matches!(types.kind(types.repr(body.locals[array.0 as usize])), TyKind::Array(_) | TyKind::Deque(_))
                 && refilled(&body.blocks, block, at + 4, array)
             {
                 found.push((block, at, array, *span));
@@ -140,10 +141,13 @@ fn empties(body: &mut Body, types: &Types) {
     }
     // From the last, so that the places of those before stay as they are.
     for (block, at, array, span) in found.into_iter().rev() {
+        let deque = matches!(types.kind(types.repr(body.locals[array.0 as usize])), TyKind::Deque(_));
         crate::mir_text::remark(body, span, "reserved", || {
-            "empties the array in place, keeping its room for what is pushed after it, when nothing else holds it \
-             and its room is small"
-                .into()
+            format!(
+                "empties the {} in place, keeping its room for what is pushed after it, when nothing else holds it \
+                 and its room is small",
+                if deque { "deque" } else { "array" }
+            )
         });
         if crate::mir_text::noting(&body.name) {
             body.notes.push(format!("reserve: l{} = [] empties it in place, in b{block}", array.0));

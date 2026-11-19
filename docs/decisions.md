@@ -8170,3 +8170,16 @@ became 3 and its 173536 bytes 736, its regions' 6414 allocations 9614 and
 allocations and 5168 bytes fewer, its regions 100 and 5600 more. No other
 example moves, and no row of bench/tondo by more than 0.5% in
 instructions.
+
+## Emptying a collection never costs it its region
+
+After F2 an array emptied by `x = []` went in its function's region, and
+one emptied by `x.clear()`, the way that says what it means, stayed on
+the heap: the manual would have told its readers to write the one that
+looks like making a new array. `clear()` of an array or a deque is now a
+change a region takes, as the emptying is, in a turn's region or its
+function's own, keeping its room, and not in `main`, a function C calls
+or a task's body; and F's pattern sees `q = Deque[T]()` as it sees
+`x = []`, with the same 64 KiB bound on the heap, so that neither
+collection differs by how it is emptied. No example clears one in a
+loop, and none moves: it is for the programs that write `clear()`.

@@ -1,9 +1,10 @@
 // Deques in a region: grown at either end, emptied from the front and the
 // back and written by index, as a queue that slides through its storage,
 // one that keeps a window of a steady size in the room it has, however
-// many turns it slides, and one of texts the region made; one its function returns stays on the
-// heap, and so does one emptied by `clear()`, which a region does not take
-// yet and the remark names.
+// many turns it slides, and one of texts the region made; one its function
+// returns stays on the heap. One emptied by `clear()` keeps its room in its
+// function's region, and stays on the heap in `main`, whose region lasts as
+// long as the program, which the remark names.
 
 import std.console
 
@@ -73,7 +74,9 @@ fn made(n: Int): Deque[Int] {
     numbers
 }
 
-/// Emptied by `clear()`, which a region does not take yet.
+/// Emptied by `clear()`, which keeps its room: in its function's region,
+/// and on the heap where it is inlined into `main`, whose region lasts as
+/// long as the program.
 fn cleared(n: Int): Int {
     var numbers = Deque[Int]()
     for i in 0..n {
@@ -88,16 +91,17 @@ fn main() {
 }
 
 // expect-stdout: 200 118 26 4 0 4222
-// expect-optimization: 15:9 region grows a deque that goes in a region of `slid`
-// expect-optimization: 17:22 region changes a deque that goes in a region of `slid`
-// expect-optimization: 32:9 region grows a deque that goes in a region of `steady`
-// expect-optimization: 33:18 region changes a deque that goes in a region of `steady`
-// expect-optimization: 43:13 region grows a deque that goes in a region of `ends`
-// expect-optimization: 45:13 region grows a deque that goes in a region of `ends`
-// expect-optimization: 48:5 region changes a deque that goes in a region of `ends`
-// expect-optimization: 49:16 region changes a deque that goes in a region of `ends`
-// expect-optimization: 57:9 region grows a deque that goes in a region of `words`
-// expect-optimization: 57:20 region goes in a region of `words`
-// expect-optimization: 61:20 region changes a deque that goes in a region of `words`
-// expect-optimization: 71:9 region grows a deque that stays on the heap: `made` returns it
-// expect-optimization: 80:9 region grows a deque that stays on the heap: a region changes a deque only by `push`, `pushFront`, `pop`, `popFront` and the writes of its elements yet
+// expect-optimization: 16:9 region grows a deque that goes in a region of `slid`
+// expect-optimization: 18:22 region changes a deque that goes in a region of `slid`
+// expect-optimization: 33:9 region grows a deque that goes in a region of `steady`
+// expect-optimization: 34:18 region changes a deque that goes in a region of `steady`
+// expect-optimization: 44:13 region grows a deque that goes in a region of `ends`
+// expect-optimization: 46:13 region grows a deque that goes in a region of `ends`
+// expect-optimization: 49:5 region changes a deque that goes in a region of `ends`
+// expect-optimization: 50:16 region changes a deque that goes in a region of `ends`
+// expect-optimization: 58:9 region grows a deque that goes in a region of `words`
+// expect-optimization: 58:20 region goes in a region of `words`
+// expect-optimization: 62:20 region changes a deque that goes in a region of `words`
+// expect-optimization: 72:9 region grows a deque that stays on the heap: `made` returns it
+// expect-optimization: 83:9 region grows a deque that goes in a region of `cleared`
+// expect-optimization: 83:9 region it is emptied in `main`, whose region lasts as long as the program

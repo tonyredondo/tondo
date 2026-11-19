@@ -2732,7 +2732,8 @@ fn cased(letters: Array[Char]): Int {
 /// one; where the array was pushed to another, it starts from nothing each
 /// time, as a new one does, and so does `clear()`, which takes `[]` rather
 /// than a new empty array; and room past 64 KiB is given back, but in a
-/// region (tests/cases/run/arrays_emptied.to, regions/emptied.to).
+/// region, a deque's as an array's (tests/cases/run/arrays_emptied.to,
+/// regions/emptied.to, regions/cleared.to).
 #[test]
 fn an_array_emptied_and_filled_again_keeps_its_room() {
     let tests = "\
@@ -2748,6 +2749,37 @@ test counted {
     console.println(\"cleared {testing.allocations(() { given(words, true) })}\")
     console.println(\"small {testing.allocations(() { rounds(4000) })}\")
     console.println(\"large {testing.allocations(() { rounds(10000) })}\")
+    console.println(\"clearing {testing.allocations(() { clearedRounds(10000) })}\")
+    console.println(\"queueSmallOnce {testing.allocations(() { queued(4000, 1) })}\")
+    console.println(\"queueSmall {testing.allocations(() { queued(4000, 3) })}\")
+    console.println(\"queueLargeOnce {testing.allocations(() { queued(10000, 1) })}\")
+    console.println(\"queueLarge {testing.allocations(() { queued(10000, 3) })}\")
+}
+
+fn clearedRounds(length: Int): Int {
+    var total = 0
+    var numbers: Array[Int] = []
+    for _ in 0..3 {
+        for n in 0..length {
+            numbers.push(n)
+        }
+        total += numbers.length()
+        numbers.clear()
+    }
+    total
+}
+
+fn queued(length: Int, turns: Int): Int {
+    var total = 0
+    var queue = Deque[Int]()
+    for _ in 0..turns {
+        for n in 0..length {
+            queue.push(n)
+        }
+        total += queue.length()
+        queue = Deque[Int]()
+    }
+    total
 }
 
 fn fresh(words: Array[String]): Int {
@@ -2821,12 +2853,17 @@ fn rounds(length: Int): Int {
     // `small` one for each round. Room past the bound is given back on the
     // heap, one allocation a round, and kept in a region, which would keep
     // a room given back to its end.
+    // `clear()` keeps any room, in a region and on the heap; a deque
+    // emptied by `Deque[T]()` grows as it is pushed to, in its first round
+    // only while its room is under the bound.
     let (regions, heap) = counts_both("emptied_counted", tests);
-    for (counts, large) in [(regions, 1), (heap, 3)] {
+    for (counts, rounds) in [(regions, 1), (heap, 3)] {
         let of = |name: &str| counts.iter().find(|(n, _)| n == name).map(|&(_, count)| count).unwrap();
         assert_eq!(of("kept") * 100, of("fresh"), "{counts:?}");
         assert_eq!((of("given"), of("cleared")), (of("pushed"), of("pushed")), "{counts:?}");
-        assert_eq!((of("small"), of("large")), (1, large), "{counts:?}");
+        assert_eq!((of("small"), of("large"), of("clearing")), (1, rounds, 1), "{counts:?}");
+        assert_eq!(of("queueSmall"), of("queueSmallOnce"), "{counts:?}");
+        assert_eq!(of("queueLarge"), of("queueLargeOnce") * rounds, "{counts:?}");
     }
 }
 

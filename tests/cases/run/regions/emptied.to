@@ -162,6 +162,20 @@ extern fn widest(count: ffi.CInt): ffi.CInt {
     Int32(longest) ?? 0
 }
 
+fn queued(lines: Array[String]): String {
+    var out: Array[Int] = []
+    var queue = Deque[Int]()
+    for line in lines {
+        queue.push(line.length() * 10)
+        if queue.length() == 2 {
+            let first = queue.popFront() ?? 0
+            out.push(first + (queue.popFront() ?? 0))
+            queue = Deque[Int]()
+        }
+    }
+    "{out}"
+}
+
 fn main() {
     let lines = counted("a bb ccc\nd ee\nfff")
     let slugged = slug("one two three")
@@ -182,22 +196,26 @@ fn main() {
     }
     let task = spawn worker("xy zwv q")
     console.println("{total + line.length()} {task.wait()} {widest(1234)} {noise()} {lines} {grouped}")
+    console.println(queued(["a", "b", "c", "d", "e"]))
 }
 
 // expect-stdout: 1800 [2:ccc, 1:ee, 0:fff] one-two-three [[<a>, <b>], [<c>], [], [<d>]] 60000 <ul><li>a!</li><li>b!</li></ul><p>x</p><ul><li>c!</li></ul> [a]+<b>+[a]<b> [c]+<d>+[c]<d>
 // expect-stdout: 7 3 4 1800 [2:ccc, 1:ee, 0:fff] [[<a>, <b>], [<c>], [], [<d>]]
+// expect-stdout: [20, 20]
 // expect-optimization: 33:17 reserved empties the array in place
+// expect-optimization: 86:13 reserved empties the array in place
+// expect-optimization: 108:9 reserved empties the array in place
+// expect-optimization: 173:13 reserved empties the deque in place
 // expect-optimization: 35:17 region goes in the region of a turn of the loop at line 27
 // expect-optimization: 51:13 region goes in a region of `slug`
 // expect-optimization: 70:13 region goes in a region that the caller of `groups` gives
-// expect-optimization: 86:13 reserved empties the array in place
 // expect-optimization: 89:13 region goes in a region of `listed`
 // expect-optimization: 89:24 region goes in a region of `listed`
 // expect-optimization: 101:9 region goes in a region of `taken`
 // expect-optimization: 101:20 region goes in a region of `taken`
-// expect-optimization: 108:9 reserved empties the array in place
 // expect-optimization: 122:13 region goes in a region of `large`
 // expect-optimization: 144:13 region goes in a region of `worker`
 // expect-optimization: 144:13 region it is emptied in `spawn worker`, the body of a task, whose region lasts as long as the task
 // expect-optimization: 159:13 region it is emptied in `widest`, which code outside the program calls
-// expect-optimization: 180:13 region it is emptied in `main`, whose region lasts as long as the program
+// expect-optimization: 169:9 region goes in a region of `queued`
+// expect-optimization: 194:13 region it is emptied in `main`, whose region lasts as long as the program

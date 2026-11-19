@@ -111,4 +111,4 @@ fn main() {
 // expect-optimization: 65:5 region in `Array.reverse[Int]`, `self[:] = reversed` changes an array that goes in a region of `ordered`
 // expect-optimization: 75:9 region grows an array that stays on the heap: it holds a value that its region did not make: `names.sort()` at 77:5
 // expect-optimization: 84:5 region changes an array that goes in a region of `sliced`
-// expect-optimization: 92:9 region stays on the heap: a region changes an array only by `push`, `pop` and the writes of its elements yet
+// expect-optimization: 92:9 region stays on the heap: a region changes an array only by `push`, `pop`, `x = []`, `x.clear()` and the writes of its elements yet
