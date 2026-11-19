@@ -8,3 +8,4 @@ fn main(): !NumericConversionError {
 }
 
 // expect-stdout: true 907060870
+// expect-no-static: it links the system's `z`, whose static library a system may not have
