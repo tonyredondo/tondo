@@ -117,8 +117,8 @@ fn tally(text: String): Int {
     (seen["a"] ?? 0) * 10 + seen.length()
 }
 
-/// Emptied, which a region does not take yet: on the heap, and the remark
-/// names it.
+/// Emptied by `clear()`: in its function's region, and on the heap where
+/// `main` inlines it, whose region lasts as long as the program.
 fn churn(): Int {
     var map: Map[Int, Int] = [:]
     for i in 0..10 {
@@ -152,5 +152,6 @@ fn removed(): Int {
 // expect-optimization: 105:9 region goes in a region of `numbers`
 // expect-optimization: 115:9 region changes a map that goes in a region of `tally`
 // expect-optimization: 115:14 region grows a map that goes in a region of `tally`
-// expect-optimization: 125:9 region stays on the heap: a region changes a map only by its insertions, its removals and the values of its entries yet
+// expect-optimization: 125:9 region goes in a region of `churn`
+// expect-optimization: 125:9 region it is emptied in `main`, whose region lasts as long as the program
 // expect-optimization: 137:5 region changes a map that goes in a region of `removed`

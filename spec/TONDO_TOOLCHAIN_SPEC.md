@@ -2505,7 +2505,8 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   allá de la llamada, aunque lo guarde de una vuelta a otra un array o un
   deque al que el bucle solo añade con `push` o `pushFront`, o un array o un
   deque que el bucle vacía, con `x = []`, `x = Deque[T]()` o `x.clear()`, y
-  vuelve a llenar, que en una región guarda su sitio sea cual sea, o sea el
+  vuelve a llenar, que en una región guarda su sitio sea cual sea, y no lo
+  que un mapa guarda de una vuelta a otra, que se queda en el heap, o sea el
   texto que el bucle amplía en su
   sitio, `x = "{x}..."`, si mientras crece no lo guarda nada más que su
   variable y esos arrays, o en la de una vuelta de un bucle si no
@@ -2525,7 +2526,8 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   como la variable que la vuelta siguiente reescribe, contiene un valor que
   su región no hizo, contiene un objeto del runtime, que un valor de una
   región nunca soltaría, se cambia de un modo que una región no toma aún, como
-  un mapa que se vacía con `clear`, un array que cambia más que con `push`,
+  un mapa que cambia más que con sus inserciones, sus borrados, `x.clear()` y
+  los valores de sus entradas, un array que cambia más que con `push`,
   `pop`, `x = []`, `x.clear()` y la escritura de sus elementos o un deque que
   cambia más que con `push`, `pushFront`, `pop`, `popFront`,
   `x = Deque[T]()`, `x.clear()` y la escritura de sus elementos, y nombra el

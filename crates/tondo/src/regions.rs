@@ -1641,7 +1641,7 @@ fn unchanged(body: &Body, types: &Types, local: Local) -> Option<(String, Span, 
             Rvalue::Mutate(crate::hir::Mutation::Empty, target, ..) if target.local == local => {
                 return body.lasting.as_ref().map(|why| (why.clone(), *span, block));
             }
-            Rvalue::Mutate(crate::hir::Mutation::Clear, target, ..) if target.local == local && !map => {
+            Rvalue::Mutate(crate::hir::Mutation::Clear, target, ..) if target.local == local => {
                 return body.lasting.as_ref().map(|why| (why.clone(), *span, block));
             }
             Rvalue::Mutate(mutation, target, ..) if target.local == local => matches!(
@@ -1662,7 +1662,8 @@ fn unchanged(body: &Body, types: &Types, local: Local) -> Option<(String, Span, 
         };
         let why = match (map, deque) {
             (true, _) => {
-                "a region changes a map only by its insertions, its removals and the values of its entries yet"
+                "a region changes a map only by its insertions, its removals, `x.clear()` and the values of its \
+                 entries yet"
             }
             (_, true) => {
                 "a region changes a deque only by `push`, `pushFront`, `pop`, `popFront`, `x = Deque[T]()`, \
@@ -1717,13 +1718,13 @@ fn made(
                     // it in place or gives it the constant empty array, as
                     // `[]` does, and copies nothing onto the heap.
                     Rvalue::Mutate(crate::hir::Mutation::Empty, ..) if body.lasting.is_none() => None,
-                    // So does `clear()` of an array or a deque, which keeps
-                    // its room.
+                    // So does `clear()`, which empties a collection in place,
+                    // keeping its room, or gives it the constant empty one.
                     Rvalue::Mutate(crate::hir::Mutation::Clear, target, ..)
                         if body.lasting.is_none()
                             && matches!(
                                 types.kind(types.repr(body.locals[target.local.0 as usize])),
-                                TyKind::Array(_) | TyKind::Deque(_)
+                                TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_)
                             ) =>
                     {
                         None

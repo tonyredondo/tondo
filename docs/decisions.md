@@ -8183,3 +8183,15 @@ or a task's body; and F's pattern sees `q = Deque[T]()` as it sees
 `x = []`, with the same 64 KiB bound on the heap, so that neither
 collection differs by how it is emptied. No example clears one in a
 loop, and none moves: it is for the programs that write `clear()`.
+
+A map's or a set's `clear()` is taken the same way. The runtime told a
+map alone in its region from a shared one by a count of exactly one,
+which a count with the region's mark never is, and now tells it by the
+region's mask, as an array's. A cleared map also kept its entries' room
+but let its table go back to nothing, which filling it again grew by
+doubling, freeing and allocating at each step on the heap: ten refills
+of a hundred entries took 75 allocations where one took 21. It keeps its
+table's size now, every slot empty, so that a cleared map keeps its room
+as a cleared array and deque always have. What a map keeps from turn to
+turn stays on the heap: only arrays and deques keep the function's
+region's values across turns, and 7.12 says so.

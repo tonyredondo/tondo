@@ -2754,6 +2754,41 @@ test counted {
     console.println(\"queueSmall {testing.allocations(() { queued(4000, 3) })}\")
     console.println(\"queueLargeOnce {testing.allocations(() { queued(10000, 1) })}\")
     console.println(\"queueLarge {testing.allocations(() { queued(10000, 3) })}\")
+    console.println(\"mapOnce {testing.allocations(() { mapped(1, false) })}\")
+    console.println(\"map {testing.allocations(() { mapped(10, false) })}\")
+    console.println(\"mapLiteral {testing.allocations(() { mapped(10, true) })}\")
+    console.println(\"setOnce {testing.allocations(() { setted(1) })}\")
+    console.println(\"set {testing.allocations(() { setted(10) })}\")
+}
+
+fn mapped(turns: Int, literal: Bool): Int {
+    var total = 0
+    var seen: Map[Int, Int] = [:]
+    for turn in 0..turns {
+        for n in 0..100 {
+            seen[n] = n + turn
+        }
+        total += seen.length()
+        if literal {
+            seen = [:]
+        } else {
+            seen.clear()
+        }
+    }
+    total
+}
+
+fn setted(turns: Int): Int {
+    var total = 0
+    var seen = Set[Int]()
+    for _ in 0..turns {
+        for n in 0..100 {
+            seen.insert(n)
+        }
+        total += seen.length()
+        seen.clear()
+    }
+    total
 }
 
 fn clearedRounds(length: Int): Int {
@@ -2855,7 +2890,8 @@ fn rounds(length: Int): Int {
     // a room given back to its end.
     // `clear()` keeps any room, in a region and on the heap; a deque
     // emptied by `Deque[T]()` grows as it is pushed to, in its first round
-    // only while its room is under the bound.
+    // only while its room is under the bound. Before, a cleared map grew its
+    // table again from the smallest each time it was filled.
     let (regions, heap) = counts_both("emptied_counted", tests);
     for (counts, rounds) in [(regions, 1), (heap, 3)] {
         let of = |name: &str| counts.iter().find(|(n, _)| n == name).map(|&(_, count)| count).unwrap();
@@ -2864,6 +2900,10 @@ fn rounds(length: Int): Int {
         assert_eq!((of("small"), of("large"), of("clearing")), (1, rounds, 1), "{counts:?}");
         assert_eq!(of("queueSmall"), of("queueSmallOnce"), "{counts:?}");
         assert_eq!(of("queueLarge"), of("queueLargeOnce") * rounds, "{counts:?}");
+        // A map or a set cleared keeps its entries' room and its table's
+        // size, and one emptied by `[:]` is a new one each time.
+        assert_eq!((of("map"), of("set")), (of("mapOnce"), of("setOnce")), "{counts:?}");
+        assert_eq!(of("mapLiteral"), of("mapOnce") * 10, "{counts:?}");
     }
 }
 

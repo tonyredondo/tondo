@@ -552,7 +552,9 @@ pub unsafe extern "C" fn tondo_rt_map_remove(
 pub unsafe extern "C" fn tondo_rt_map_clear(slot: *mut *mut MapObject, glue: *const MapGlue) {
     unsafe {
         let m = *slot;
-        if (*m).rc.load(Ordering::Acquire) != 1 {
+        // A map alone in its region, which carries the region's mark in its
+        // count, is emptied in place as one alone on the heap is.
+        if !regions::only(&(*m).rc) {
             *slot = (&raw const EMPTY).cast_mut();
             tondo_rt_map_release(m, glue);
             return;
@@ -560,7 +562,9 @@ pub unsafe extern "C" fn tondo_rt_map_clear(slot: *mut *mut MapObject, glue: *co
         release_entries(&mut *m, &*glue);
         (*m).entries.len = 0;
         (*m).hashes.len = 0;
-        (*m).table.len = 0;
+        // The table keeps its size, every slot empty, so that filling the
+        // map again does not grow it again from the smallest.
+        (*m).table.as_mut_slice().fill(0);
     }
 }
 
