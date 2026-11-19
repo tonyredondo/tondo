@@ -165,14 +165,12 @@ native tondo_rt_text_currency_symbol      cases/run/regions/natives_text.to
 native tondo_rt_text_find_in              cases/run/regions/natives_text.to
 native tondo_rt_text_find_last            cases/run/regions/natives_text.to
 native tondo_rt_text_is_float             - no function of the library calls it
-native tondo_rt_text_is_int               - no function of the library calls it
 native tondo_rt_text_is_normalized        cases/run/regions/natives_text.to
 native tondo_rt_text_lines                cases/run/regions/natives_text.to
 native tondo_rt_text_lower                cases/run/regions/natives_text.to
 native tondo_rt_text_normalize            cases/run/regions/natives_text.to
 native tondo_rt_text_number_symbols       cases/run/regions/natives_text.to
 native tondo_rt_text_parse_float          cases/run/regions/natives_text.to
-native tondo_rt_text_parse_int            - no function of the library calls it
 native tondo_rt_text_plural_rules         cases/run/regions/natives_text.to
 native tondo_rt_text_repeat               cases/run/regions/natives_text.to
 native tondo_rt_text_scalar_at            cases/run/regions/natives_text.to

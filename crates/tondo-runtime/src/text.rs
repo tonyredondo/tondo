@@ -317,33 +317,6 @@ fn cased(text: *mut Str, change: fn(&mut [u8])) -> *mut Str {
     text
 }
 
-/// The integer a text writes in `radix` (2 to 36), with an optional sign
-/// and `_` between digits; `ok` tells whether it is one that fits.
-fn parse_int(s: &str, radix: i64) -> Option<i64> {
-    let radix = u32::try_from(radix).ok().filter(|r| (2..=36).contains(r))?;
-    let (negative, digits) = match s.as_bytes().first()? {
-        b'-' => (true, &s[1..]),
-        b'+' => (false, &s[1..]),
-        _ => (false, s),
-    };
-    if digits.is_empty() || digits.starts_with('_') || digits.ends_with('_') || digits.contains("__") {
-        return None;
-    }
-    let digits: String = digits.chars().filter(|&c| c != '_').collect();
-    let magnitude = u64::from_str_radix(&digits, radix).ok()?;
-    if negative { 0i64.checked_sub_unsigned(magnitude) } else { i64::try_from(magnitude).ok() }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_text_is_int(s: *const Str, radix: i64) -> u8 {
-    parse_int(text(&s), radix).is_some() as u8
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_text_parse_int(s: *const Str, radix: i64) -> i64 {
-    parse_int(text(&s), radix).unwrap_or(0)
-}
-
 /// A decimal float, `inf`, `-inf` or `NaN`, as Tondo writes them.
 pub(crate) fn parse_float(s: &str) -> Option<f64> {
     match s {

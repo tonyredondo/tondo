@@ -1816,8 +1816,6 @@ pub const NATIVES: &[Native] = {
         text("count", &[String, String], Int, "tondo_rt_text_count"),
         text("lower", &[String], String, "tondo_rt_text_lower"),
         text("upper", &[String], String, "tondo_rt_text_upper"),
-        text("isInt", &[String, Int], Bool, "tondo_rt_text_is_int"),
-        text("parseInt", &[String, Int], Int, "tondo_rt_text_parse_int"),
         text("isFloat", &[String], Bool, "tondo_rt_text_is_float"),
         text("parseFloat", &[String], Float, "tondo_rt_text_parse_float"),
         text("int", &[Int, Int], String, "tondo_rt_text_int"),
