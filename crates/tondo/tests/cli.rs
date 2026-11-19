@@ -852,6 +852,26 @@ fn fma_is_one_instruction_where_the_level_has_it() {
     }
 }
 
+/// A function of wide vectors has a version for x86-64-v3 beside its
+/// baseline one, and `tondo asm` with its name lists both, as `--all` does.
+#[test]
+fn asm_of_a_name_lists_its_versions() {
+    if !cfg!(target_arch = "x86_64") {
+        return;
+    }
+    let dir = scratch("asm-versions");
+    let program = "import std.console\nimport std.simd\n\nfn wide(bytes: Array[Byte]): Int {\n    \
+        let feed = simd.Vector256[Byte].all(10)\n    var lines = 0\n    var at = 0\n    \
+        for at + 32 <= bytes.length() {\n        lines += simd.Vector256[Byte].load(ref bytes, at: at).equal(feed).count()\n        \
+        at += 32\n    }\n    lines\n}\n\nfn main() {\n    console.println(\"{wide(\"a\\nb\\n\".repeat(20).bytes())}\")\n}\n";
+    std::fs::write(dir.join("main.to"), program).unwrap();
+    let (out, err, code) = tondo(&dir, &["asm", "main.to", "wide"]);
+    assert_eq!(code, 0, "{err}");
+    let headers: Vec<&str> = out.lines().filter(|l| l.starts_with("wide (")).collect();
+    assert_eq!(headers.len(), 2, "{out}");
+    assert!(headers[1].starts_with("wide (x86-64-v3) ("), "{out}");
+}
+
 /// A write made from an earlier read has a repair: one `update`, unless what
 /// was read goes on being used.
 #[test]

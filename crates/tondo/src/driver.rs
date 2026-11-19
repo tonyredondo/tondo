@@ -2375,9 +2375,10 @@ pub fn assembly_with(
     crate::codegen::keep_code(None);
     built?;
     let mut kept = crate::codegen::kept_code();
-    // A glue named whole is that one alone, as a function is.
+    // A glue named whole is that one alone, as a function is, with each
+    // version a build makes of it for a wider level.
     if let Some(name) = function.filter(|name| kept.iter().any(|kept| kept.name == *name)) {
-        kept.retain(|kept| kept.name == name);
+        kept.retain(|kept| kept.name.trim_end_matches(" (x86-64-v3)") == name);
     }
     if kept.is_empty() {
         let named = function.map_or("of the program's own".to_string(), |name| format!("named `{name}`"));
