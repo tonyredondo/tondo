@@ -2215,7 +2215,7 @@ campos de su resultado:
 | `setup` | `tondo-setup-0.1/1` | `tondo`, `version`, `agents` (`name`, `skill` y `mcp`), `editors` (`name` y `extension`), `on_path` y `messages`, lo que dice sin `--json` |
 | `ps` | `tondo-ps-0.1/1` | `programs` |
 | `trace` | `tondo-trace-0.1/1` | `timeline`, `profile`, `events`, `samples`, `lost` y `ended` |
-| `profile` | `tondo-profile-0.1/1` | `profile`, la ruta; `kind`; `samples`; `duration_ms`; `lost` y `ended`; con `--tasks`, `stopped`: si el programa se detuvo para que se vieran sus tareas |
+| `profile` | `tondo-profile-0.1/1` | `profile`, la ruta; `kind`; `samples`; `duration_ms`; `lost` y `ended`; con `--cpu`, `processor_ms`, el tiempo de procesador que cuentan sus muestras, y `no_samples`, por qué no tomó ninguna, cuando no tomó ninguna; con `--tasks`, `stopped`: si el programa se detuvo para que se vieran sus tareas |
 | `profile show` | `tondo-profile-show-0.1/1` | `profile`, `type`, `unit`, `types`, `total`, `duration_ms`, `functions` (`function`, `file`, `flat`, `cum`), `lines` (`file`, `line`, `function`, `flat`, `cum`, `source`), `labels` (`label`, `value`, `total`) y `html`; con `--asm`, `asm`: `function`, `unit`, `value`, `total` e `instructions` (`offset`, `instruction`, `value`, `file` y `line`) |
 | `dump` | `tondo-dump-0.1/1` | `file` y `summary` |
 | `dump read` | `tondo-dump-read-0.1/1` | la vista por su nombre: `summary`, `why`, `stacks`, `requests`, `events`, `found`, `tasks`, `task`, `locals`, `value`, `heap`, `objects` u `object` |
@@ -2305,6 +2305,11 @@ instrucciones, qué memoria asigna y retiene, o dónde están sus tareas, nombra
 - `--cpu`, por defecto: las muestras de cada milisegundo de procesador de
   7.5, hasta que el programa termina, pasa `--duration` o llega Ctrl-C. El
   programa que arranca no cuenta su memoria, que cambiaría lo que mide.
+  Cada muestra cuenta el tiempo de procesador que su hilo tomó desde su
+  muestra anterior, por el reloj del hilo, de modo que el perfil cuenta el
+  tiempo que el programa tomó aunque el sistema despierte al muestreo más
+  tarde de lo pedido; su línea dice cuántas muestras tomó y cuánto tiempo
+  cuentan, y la de un perfil sin ninguna, por qué.
 - `--instructions`, en Linux: una muestra de cada millón de instrucciones que
   ejecuta cada hilo, contadas por el sistema (`perf_event_open`), con los
   mismos límites que `--cpu`. Lo que mide no lo cambia la carga de la
