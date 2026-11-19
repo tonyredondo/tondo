@@ -780,9 +780,11 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     if !bench && let Some(flag) = comparing.iter().find(|f| given(f)) {
         return Err(usage(format!("{flag} is about benchmarks: it goes with --bench")));
     }
-    if given("--layouts") && (against.is_some() || compiler.is_some()) {
+    // `--compiler`'s other tondo measures its own layouts, as it is given
+    // the same arguments; a revision's tests are built here, in one.
+    if given("--layouts") && against.is_some() {
         return Err(usage(
-            "--layouts measures this code's tests in several layouts, --against another revision's: compare layouts with --baseline".into(),
+            "--layouts measures this code's tests in several layouts, --against another revision's in one: compare layouts with --compiler or with --baseline".into(),
         ));
     }
     if against.is_some() && compiler.is_some() {

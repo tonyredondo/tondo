@@ -1000,6 +1000,56 @@ fn holds_rows_to_a_second_baseline() {
     assert!(!stdout.contains("since elsewhere"), "{stdout}");
 }
 
+/// The rule's command runs as one: `--compiler` with `--layouts`, whose
+/// other tondo measures its own orders of the code, and `--baseline` beside
+/// them, judged by instructions; the row's line has the orders' range, the
+/// verdict against the other tondo and the change since the baseline.
+#[test]
+fn layouts_beside_another_compiler_and_a_baseline() {
+    let tests = "import std.testing\n\nfn work(rounds: Int): Int {\n    var total = 0\n    \
+        for i in 0..rounds {\n        total += \"a b {i}\".split(\" \").length()\n    }\n    total\n}\n\n\
+        test counting {\n    testing.bench(\"work\", () { work(50) })\n}\n";
+    let dir = project("layouts-compiler", tests);
+    let base = dir.join("table.json");
+    let (stdout, stderr, status) =
+        tondo(&dir, &["test", "--bench", "--bench-time", "0.05", "--save-baseline", base.to_str().unwrap()]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    let asked = dir.join("asked.txt");
+    let other = dir.join("other-tondo");
+    let script =
+        format!("#!/bin/sh\necho \"$@\" >> '{}'\nexec '{}' \"$@\"\n", asked.display(), env!("CARGO_BIN_EXE_tondo"));
+    std::fs::write(&other, script).unwrap();
+    std::fs::set_permissions(&other, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let args = [
+        "test",
+        "--bench",
+        "--bench-time",
+        "0.05",
+        "--compiler",
+        other.to_str().unwrap(),
+        "--baseline",
+        base.to_str().unwrap(),
+        "--layouts",
+        "2",
+        "--regression-by",
+        "instructions",
+        "--max-regression",
+        "2",
+    ];
+    let (stdout, stderr, status) = tondo(&dir, &args);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    let asked = std::fs::read_to_string(&asked).unwrap();
+    assert!(asked.lines().any(|line| line.starts_with("test ") && line.contains("--layouts 2")), "{asked}");
+    let line = stdout.lines().find(|l| l.trim_start().starts_with("work ")).unwrap_or_default();
+    assert!(line.contains("  2 layouts "), "{stdout}");
+    assert!(["same", "faster", "slower"].iter().any(|verdict| line.contains(verdict)), "{stdout}");
+    if !line.contains("ins/op") {
+        // Where the processor counts no instructions, as on macOS.
+        return;
+    }
+    assert!(line.contains("ins since table"), "{stdout}");
+}
+
 /// Each benchmark says the regions a run sets up, which a build that counts
 /// them measures, and those it used: a region on a branch the run does not
 /// take is set up and never used.
@@ -2152,7 +2202,7 @@ fn judges_benchmarks_by_their_instructions() {
     assert!(laid.contains("  2 layouts "), "{laid}");
     let (_, stderr, status) = tondo(&dir, &[&bench[..], &["--layouts", "2", "--against", "HEAD"]].concat());
     assert_eq!(status, 2);
-    assert!(stderr.contains("compare layouts with --baseline"), "{stderr}");
+    assert!(stderr.contains("compare layouts with --compiler or with --baseline"), "{stderr}");
     let (_, stderr, status) = tondo(&dir, &[&bench[..], &["--layouts", "1"]].concat());
     assert_eq!(status, 2);
     assert!(stderr.contains("--layouts takes how many layouts"), "{stderr}");

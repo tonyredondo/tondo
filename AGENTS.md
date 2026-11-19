@@ -130,12 +130,10 @@ last table against Go, which `--baseline` names there: small costs add up,
 and a row that is over 2% past it in all lands only with its reason too,
 whoever added what. The baseline is saved again only with a new table.
 A row whose cycles grow by over 5% while its instructions stay within the
-bar is measured again in four orders of the code on each side: the base's
-`tondo`, which `tondo compiler HEAD` gives, runs the benchmarks with
-`--layouts 4 --save-baseline <name>`, and the change's with `--layouts 4
---baseline <name>`, as `--layouts` compares with a saved baseline. A growth
-that stays past every order is the change's own, and lands only with its
-reason, as one of instructions does. Under a row that
+bar is measured again with `--layouts 4` beside `--compiler HEAD`, each side
+in four orders of the code: a growth that stays past every order is the
+change's own, and lands only with its reason, as one of instructions does.
+Under a row that
 moved it names the code that changed, the runtime's too, and beside a row
 the regions its runs set up and how many of them were used.
 

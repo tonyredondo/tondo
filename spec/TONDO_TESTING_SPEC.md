@@ -2628,8 +2628,9 @@ Comparado con una línea base que también se midió en varios órdenes, un
 benchmark es `slower` solo si su mediana en cada orden pasa de la de todos
 los de la línea base en más del 2%, `faster` si queda por debajo de todas en
 más del 2%, y `same` en otro caso: un cambio que el orden explica no es del
-cambio. No admite `--against`, que mide los tests de otra revisión; para
-comparar dos compiladores, uno guarda la línea base y el otro la compara.
+cambio. Con `--compiler`, el otro `tondo` mide también en `n` órdenes y cada
+benchmark se juzga así entre los dos, en una sola ejecución. No admite
+`--against`, que mide los tests de otra revisión con este `tondo`.
 
 ~~~text
   collatz 10000   879.1 µs/op  ±0.5%  0 allocs/op  0 B/op  7.43M ins/op  3 layouts 879.1 µs–1.126 ms
