@@ -680,15 +680,36 @@ pub(crate) fn forget_positions_within(from: usize, to: usize) {
 /// The number of scalars of some bytes: every scalar has exactly one byte
 /// that is not a continuation byte.
 pub(crate) fn scalars(bytes: &[u8]) -> usize {
+    // ASCII, as most texts are, whose scalars are its bytes, tested eight
+    // bytes at a time.
+    if bytes.is_ascii() {
+        return bytes.len();
+    }
     bytes.iter().filter(|&&b| (b as i8) >= -0x40).count()
+}
+
+/// The high bits of the seven bytes a short text holds in its word: none
+/// set is ASCII, whose scalars are its bytes.
+const SHORT_HIGH: usize = 0x0080_8080_8080_8080;
+
+/// Whether a text is short and ASCII, by one test of its word.
+#[inline(always)]
+fn short_ascii(s: *const Str) -> bool {
+    short(s) && s as usize & SHORT_HIGH == 0
 }
 
 /// The byte where the scalar at `index` starts, or `None` past the end.
 pub(crate) unsafe fn scalar_offset(s: *const Str, index: usize) -> Option<usize> {
-    let text = unsafe { str_text(&s) };
-    let bytes = text.as_bytes();
+    if short_ascii(s) {
+        return (index < short_len(s)).then_some(index);
+    }
+    let bytes = unsafe { str_bytes(&s) };
     if bytes.len() < POSITIONED_FROM {
-        return text.char_indices().nth(index).map(|(offset, _)| offset);
+        if bytes.is_ascii() {
+            return (index < bytes.len()).then_some(index);
+        }
+        // Where each scalar starts, a byte that does not go on one.
+        return bytes.iter().enumerate().filter(|&(_, &b)| (b as i8) >= -0x40).nth(index).map(|(at, _)| at);
     }
     let slot = position_slot(s);
     let mut held = POSITIONS[slot].lock().unwrap_or_else(|e| e.into_inner());
@@ -733,6 +754,9 @@ pub(crate) unsafe fn scalar_offset(s: *const Str, index: usize) -> Option<usize>
 
 /// The number of scalars, from the string's slot when it has one.
 pub(crate) unsafe fn scalar_count(s: *const Str) -> usize {
+    if short_ascii(s) {
+        return short_len(s);
+    }
     let bytes = unsafe { str_bytes(&s) };
     if bytes.len() >= POSITIONED_FROM && POSITIONED[position_slot(s)].load(Ordering::Relaxed) == s as usize {
         let held = POSITIONS[position_slot(s)].lock().unwrap_or_else(|e| e.into_inner());
@@ -1021,4 +1045,28 @@ pub unsafe extern "C" fn tondo_rt_str_from_chars(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_decode(s: *const Str, offset: i64) -> u32 {
     unsafe { str_text(&s).get_unchecked(offset as usize..) }.chars().next().map_or(0, |c| c as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A text's count of scalars and where each starts, short or not, ASCII
+    /// or not, below and past where positions are kept, are Rust's.
+    #[test]
+    fn counts_and_finds_scalars_as_rust_does() {
+        let long = "word ".repeat(20);
+        let accented = format!("{}é{}", "a".repeat(40), "ñ".repeat(30));
+        for text in ["", "abc", "abcdefg", "é", "aé", "日本", "a😀b", "abcdefgh", "naïve café", &long, &accented]
+        {
+            let s = str_new(text.as_bytes());
+            let count = text.chars().count();
+            assert_eq!(unsafe { scalar_count(s) }, count, "{text:?}");
+            for index in 0..=count + 1 {
+                let expected = text.char_indices().nth(index).map(|(at, _)| at);
+                assert_eq!(unsafe { scalar_offset(s, index) }, expected, "{text:?} at {index}");
+            }
+            unsafe { tondo_rt_str_release(s) };
+        }
+    }
 }
