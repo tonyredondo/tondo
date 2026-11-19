@@ -1037,14 +1037,17 @@ fn layouts_beside_another_compiler_and_a_baseline() {
         "2",
     ];
     let (stdout, stderr, status) = tondo(&dir, &args);
-    assert_eq!(status, 0, "{stdout}{stderr}");
+    // Where the system counts no instructions, as on macOS or in a container
+    // that refuses `perf_event_open`, they cannot judge, and the run says so.
+    let counts = counts_itself();
+    assert_eq!(status, if counts { 0 } else { 1 }, "{stdout}{stderr}");
     let asked = std::fs::read_to_string(&asked).unwrap();
     assert!(asked.lines().any(|line| line.starts_with("test ") && line.contains("--layouts 2")), "{asked}");
     let line = stdout.lines().find(|l| l.trim_start().starts_with("work ")).unwrap_or_default();
     assert!(line.contains("  2 layouts "), "{stdout}");
     assert!(["same", "faster", "slower"].iter().any(|verdict| line.contains(verdict)), "{stdout}");
-    if !line.contains("ins/op") {
-        // Where the processor counts no instructions, as on macOS.
+    if !counts {
+        assert!(stdout.contains("its instructions were not counted on both sides"), "{stdout}");
         return;
     }
     assert!(line.contains("ins since table"), "{stdout}");
