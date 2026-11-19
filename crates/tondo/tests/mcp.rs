@@ -468,6 +468,26 @@ fn compares_two_recordings() {
     agent.stop();
 }
 
+/// A program that writes before it is profiled for its tasks: the tool
+/// reads the profile's line of JSON after what the program wrote, and says
+/// whether the program stood still for its tasks to be seen.
+#[test]
+fn profiles_the_tasks_of_a_program_that_writes() {
+    let program = "import std.console
+import std.time
+
+fn main() {
+    console.println(\"started\")
+    time.sleep(time.seconds(2))
+}
+";
+    let dir = project("mcp_profile_writes", &[("tondo.toml", "[package]\nname = \"app\"\n"), ("src/main.to", program)]);
+    let mut agent = Agent::start(&dir);
+    let (profiled, _) = agent.call("profile", json!({ "kind": "tasks", "duration": 0.5 }));
+    assert!(profiled["profiles"][0]["stopped"].is_boolean(), "{profiled}");
+    agent.stop();
+}
+
 #[test]
 fn profiles_for_agents() {
     let files = [

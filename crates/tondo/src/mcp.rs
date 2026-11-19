@@ -1783,8 +1783,16 @@ fn profile(args: &Args) -> Result<Reply, String> {
         if ran.code != Some(0) {
             return Err(why_failed(&argv, &ran, limit));
         }
-        // A program that did not stand still for its tasks to be seen.
-        let told: Value = serde_json::from_str(&ran.stdout).unwrap_or(Value::Null);
+        // A program that did not stand still for its tasks to be seen: the
+        // profile's line of JSON, after what the program wrote.
+        let told: Value = ran
+            .stdout
+            .lines()
+            .rev()
+            .find_map(|line| {
+                serde_json::from_str::<Value>(line).ok().filter(|told| told["format"] == "tondo-profile-0.1/1")
+            })
+            .unwrap_or(Value::Null);
         stopped = told["stopped"].as_bool();
         let base = if Path::new(&path).is_dir() {
             PathBuf::from(&path)
