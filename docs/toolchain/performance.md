@@ -712,9 +712,10 @@ the others. The reasons a value stays on the heap are that it is stored in
 what the function was given, in a lock's state or in a `Ref`; that a
 closure captures it, that it is sent, taken by a task or given to C; that
 it outlives a turn of its loop; that it holds a value its region did not
-make; that it is changed in a way a region does not take yet, as a map
-that is emptied, where the remark names the change; and that regions do not
-take that kind of value yet, as a process, a pipe or a logger.
+make; that it is changed in a way a region does not take yet, as an array
+that has an element taken out of its middle, where the remark names the
+change; and that regions do not take that kind of value yet, as a process,
+a pipe or a logger.
 
 A text goes in a region as an array does, whatever its length, when the
 frame does not take it first: one that an interpolation makes, as the
@@ -886,12 +887,87 @@ What is written into a map or an array of a region has to be the region's
 own or a value that counts nothing, as a number: a map that is given a text
 from elsewhere stays on the heap, with `it holds a value that its region
 did not make`. And a change other than these keeps the value on the heap
-for now, and the remark names it: a map that is emptied says ``a region
-changes a map only by its insertions, its removals and the values of its
-entries yet: `seen.clear()` at 9:13``, and an array that is inserted into
-in the middle or has an element taken out of it, ``a region changes an
-array only by `push`, `pop` and the writes of its elements yet``. A deque
-that is emptied says the same of deques.
+for now, and the remark names it: an array that is inserted into in the
+middle says ``a region grows an array only at its end yet``, and one that
+has an element taken out of it, ``a region changes an array only by `push`,
+`pop`, `x = []`, `x.clear()` and the writes of its elements yet:
+`all.removeAt(0)` at 23:5``.
+
+#### A collection that is emptied and filled again
+
+Emptying a collection does not take it out of its region. An array that a
+loop empties and fills again, as the letters of one word after another,
+stays where its function's region has it and keeps its room:
+
+```tondo
+import std.console
+
+/// The words of a text, each of its letters in lower case, joined by `-`.
+fn slug(text: String): String {
+    var parts: Array[String] = []
+    var part: Array[Char] = []
+    for letter in text.chars() {
+        if letter.isAlphanumeric() {
+            part.push(letter.toLower())
+        } else if not part.isEmpty() {
+            parts.push(part.join(""))
+            part = []
+        }
+    }
+    if not part.isEmpty() {
+        parts.push(part.join(""))
+    }
+    parts.join("-")
+}
+
+fn main() {
+    console.println(slug("Tomorrow, and tomorrow, and tomorrow"))
+}
+```
+
+```text output
+tomorrow-and-tomorrow-and-tomorrow
+```
+
+```text
+$ tondo optimizations slug.to --kind region
+slug.to:9:13: `part.push(letter.toLower())` grows an array that goes in a region of `slug` (in slug)
+slug.to:11:13: `parts.push(part.join(""))` grows an array that goes in a region of `slug` (in slug)
+slug.to:11:24: `part.join("")` in `Array.join[Char]`, `textNative.joined(self, separator)` goes in a region of `slug` (in slug)
+slug.to:16:9: `parts.push(part.join(""))` grows an array that goes in a region of `slug` (in slug)
+slug.to:16:20: `part.join("")` in `Array.join[Char]`, `textNative.joined(self, separator)` goes in a region of `slug` (in slug)
+slug.to:18:5: `parts.join("-")` in `Array.join[String]`, `textNative.joined(self, separator)` goes in a region that the caller of `slug` gives (in slug)
+$ tondo optimizations slug.to --kind reserved
+slug.to:12:13: `part = []` empties the array in place, keeping its room for what is pushed after it, when nothing else holds it and its room is small (in slug)
+```
+
+A benchmark of `slug` over a line of sixteen words takes nothing from the
+heap:
+
+```text
+$ tondo test --bench
+test slug::unit::slug::aLine ... ok
+  slug of a line     827.7 ns/op  ±0.2%  0 allocs/op +20 in regions  0 B/op +1504 in regions  1 regions set up/op, 1 used  17.5k ins/op
+```
+
+`part.clear()` in place of `part = []` gives the same lines and the same
+row: the two ways of emptying are one. So it is for a deque, emptied with
+`clear()` or `x = Deque[T]()`, and for a map and a set, with `clear()`,
+`x = [:]` or `x = Set[T]()`.
+
+Two things set its bounds. In `main`, in a function that is exported and
+in the body of a task, whose region may last as long as the program, such
+a collection stays on the heap, and the remark says so where it is pushed
+to: ``it is emptied in `main`, whose region lasts as long as the program:
+`part = []` at 11:13``. There `x = []` keeps the room when it is at most
+64 KiB and gives a larger one back, and `clear()` keeps it whatever its
+size. And what a map or a set holds from one turn of a loop to the next
+stays on the heap, where an array's or a deque's goes in the function's
+region: a set of the words of each line that is emptied after each line
+keeps its words and itself on the heap, with ``it holds a value that its
+region did not make``, while a set of numbers emptied the same way goes in
+its function's region, and a set made anew in each turn goes whole in the
+turn's region with its words.
 
 #### A part that is returned
 
