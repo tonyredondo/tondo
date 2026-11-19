@@ -83,7 +83,11 @@ A value held by one variable alone is changed in place, with no copy at
 all, so a loop that pushes to an array it owns is as cheap as it looks. The
 compiler also skips the count where it can prove nothing else sees the
 value, and `tondo check --performance` warns of a loop that copies on every
-turn.
+turn. The same holds across a call. A function that takes a value, changes
+its own copy and returns it, as in `ledger = moved(ledger, amount)`, is
+given the value in a release build when its caller has no more use for it,
+and changes it in place
+([Performance](../toolchain/performance.md#a-value-that-is-given)).
 
 Records and enums are copied by their fields. A small record is a few
 machine words; a large one holds its strings and collections by sharing
