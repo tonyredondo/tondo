@@ -591,8 +591,8 @@ though. A benchmark of the two over a thousand numbers shows both costs:
 ```text
 $ tondo test --bench
 test squares::unit::squares::aThousand ... ok
-  arrays     1.121 µs/op  ±0.4%  0 allocs/op +9 in regions  0 B/op +12448 in regions  1 regions set up/op, 1 used  23.9k ins/op
-  chain      1.396 µs/op  ±0.2%  0 allocs/op +2 in regions  0 B/op +96 in regions  1 regions set up/op, 1 used  38.2k ins/op
+  arrays     1.056 µs/op  ±0.3%  0 allocs/op +9 in regions  0 B/op +12448 in regions  1 regions set up/op, 1 used  23.9k ins/op
+  chain      1.598 µs/op  ±0.2%  0 allocs/op +2 in regions  0 B/op +96 in regions  1 regions set up/op, 1 used  38.2k ins/op
 ```
 
 The chain makes its two closures and nothing else, however long the array
@@ -920,12 +920,12 @@ fn commonest(text: String): String {
 }
 
 fn main() {
-    console.println(commonest("to be or not to be"))
+    console.println(commonest("tomorrow and tomorrow and tomorrow"))
 }
 ```
 
 ```text output
-to
+tomorrow
 ```
 
 ```text
@@ -939,9 +939,12 @@ commonest.to:17:5: `best` is copied out at its return, and goes in a region that
 The copy is one allocation that the heap did not make, where the piece was
 a part of its block: it is the one case in which `testing.allocations`
 counts one more with regions than without, while `testing.heapAllocations`
-counts fewer, the pieces and the map having left the heap. It is done for a
-text; an array or a record that is read out of a collection and returned
-still takes the collection to the heap.
+counts fewer, the pieces and the map having left the heap. A word of up to
+seven bytes is not copied at all, since such a text is in its own word
+([A text of a few bytes](#a-text-of-a-few-bytes)): the commonest word of
+`"to be or not to be"` counts the same both ways. It is done for a text; an
+array or a record that is read out of a collection and returned still takes
+the collection to the heap.
 
 An object of the runtime goes in a region as well when only variables hold
 it: a reader, a buffer, a file that is opened, a pattern that is compiled.
@@ -1651,6 +1654,64 @@ be accounted for.
 Memory is counted, so most of it is freed the moment its last holder goes,
 and there is no collector to tune. What a server holds follows what its
 data structures hold.
+
+### A text of a few bytes
+
+A text of up to seven bytes has no memory of its own: it is in the word
+that would point to it. Making one allocates nothing and holding one counts
+nothing, in every build and however it is made: a piece of `split`, the
+digits of a number, an interpolation, what `trim` leaves.
+
+```tondo
+import std.console
+
+/// A label for each number under `count`.
+fn labels(count: Int, prefix: String): Array[String] {
+    var all: Array[String] = []
+    for i in 0..count {
+        all.push("{prefix}{i}")
+    }
+    all
+}
+
+fn main() {
+    console.println(labels(3, "n").join(" "))
+    console.println(labels(3, "number ").join(", "))
+}
+```
+
+```text output
+n0 n1 n2
+number 0, number 1, number 2
+```
+
+A benchmark of a thousand labels each way, `labels(1000, "n")` and
+`labels(1000, "number ")`:
+
+```text
+$ tondo test --bench
+test labels::unit::labels::aThousand ... ok
+  short     10.05 µs/op  ±0.2%  0 allocs/op +1 in regions  0 B/op +8032 in regions  214.1k ins/op
+  long      10.71 µs/op  ±0.2%  0 allocs/op +1001 in regions  0 B/op +56032 in regions  222.6k ins/op
+```
+
+The short labels cost their array and nothing else, eight bytes a label,
+where each long one is an allocation besides. `tondo optimizations` speaks
+of a place and not of what a run makes there, so it says one thing of both:
+
+```text
+$ tondo optimizations labels.to --kind region
+labels.to:7:9: `all.push("{prefix}{i}")` grows an array that goes in a region of `main` (in main)
+labels.to:7:9: `all.push("{prefix}{i}")` grows an array that stays on the heap: `labels` returns it, and no call of it is left in the program's code: each was inlined (in labels)
+labels.to:7:18: `"{prefix}{i}"` goes in a region of `main` (in main)
+labels.to:7:18: `"{prefix}{i}"` stays on the heap: `labels` returns it, and no call of it is left in the program's code: each was inlined (in labels)
+labels.to:13:21: `labels(3, "n").join(" ")` in `Array.join[String]`, `textNative.joined(self, separator)` goes in a region of `main` (in main)
+labels.to:14:21: `labels(3, "number ").join(", ")` in `Array.join[String]`, `textNative.joined(self, separator)` goes in a region of `main` (in main)
+```
+
+A place that makes texts says where they go, a region or the heap, and a
+text that comes out short there allocates nothing either way. What a run
+allocated is in the benchmark's row and in `testing.allocations`.
 
 ## What not to be fooled by
 
