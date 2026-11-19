@@ -287,8 +287,11 @@ pub fn which(name: String): String?
 ```
 
 The file a shell runs for `name`: `name` itself when it holds a `/`,
-or else the first file of that name in the directories of `PATH` that
-may be run; `none` without one.
+or else the first file of that name in the directories of `PATH`,
+those whose names are texts, that may be run; `none` without one. A
+directory whose name is not a text is passed over: a shell, and a
+command the program runs by its name, which the system finds, would
+run a file in it first, which a program could not name.
 
 #### signal
 

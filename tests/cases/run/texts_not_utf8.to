@@ -1,0 +1,82 @@
+// Bytes that are not UTF-8, or units that are not UTF-16, never become a
+// text: a reader's line and a socket's line fail, and C's strings, arrays
+// of characters and wide strings give U+FFFD for them. The other doors are
+// in fs.to (`String.fromBytes`, a file read as text) and command_running.to
+// (a command's output as text); `process.which` in crates/tondo/tests/cli.rs.
+
+import std.console
+import std.ffi
+import std.fs
+import std.net
+import std.path
+
+fn readLine(dir: String): String ! fs.FsError {
+    let file = path.join(dir, "bad.txt")
+    fs.writeBytes(file, [Byte(97u8), Byte(255u8), Byte(10u8)])?
+    let reader = fs.open(file, fs.OpenMode.Read)?.reader()
+    match reader.readLine() {
+        ok(line) => "reader gave {line}"
+        err(_) => "reader refused"
+    }
+}
+
+fn sendBad(listener: net.Listener) {
+    match listener.accept() {
+        ok(connection) => {
+            _ = connection.writeBytes([Byte(97u8), Byte(255u8), Byte(10u8)])
+            _ = connection.close()
+        }
+        err(_) => {}
+    }
+}
+
+fn socketLine(): String ! net.NetError {
+    let listener = net.listen("127.0.0.1", 0)?
+    let sender = spawn sendBad(listener)
+    let stream = net.connect("127.0.0.1", listener.address().port)?
+    let said = match stream.readLine() {
+        ok(line) => "socket gave {line}"
+        err(_) => "socket refused"
+    }
+    sender.wait()
+    said
+}
+
+fn fromC(): String {
+    let buffer = ffi.allocate[ffi.CChar](4)
+    unsafe {
+        buffer.offset(0).write(97)
+        buffer.offset(1).write(255)
+        buffer.offset(2).write(98)
+        buffer.offset(3).write(0)
+        let text = ffi.fromCString(buffer)
+        ffi.free(buffer)
+        text
+    }
+}
+
+fn fromWide(): String {
+    let buffer = ffi.allocate[UInt16](4)
+    unsafe {
+        buffer.offset(0).write(0x61)
+        buffer.offset(1).write(0xD800)
+        buffer.offset(2).write(0x62)
+        buffer.offset(3).write(0)
+        let text = ffi.fromWide(buffer)
+        ffi.free(buffer)
+        text
+    }
+}
+
+fn main(): !(fs.FsError | net.NetError) {
+    let dir = fs.createTemporaryDirectory()?
+    console.println(readLine(dir)?)
+    console.println(socketLine()?)
+    let chars: Array[ffi.CChar] = [97, 255, 98, 0]
+    console.println("{fromC()} {fromC().length()} {ffi.fromCChars(chars)} {fromWide()} {fromWide().length()}")
+    fs.remove(dir, recursive: true)?
+}
+
+// expect-stdout: reader refused
+// expect-stdout: socket refused
+// expect-stdout: a�b 3 a�b a�b 3

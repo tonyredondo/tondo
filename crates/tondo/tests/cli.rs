@@ -445,6 +445,39 @@ fn a_program_built_again_while_it_runs() {
     assert_eq!(left.len(), 2, "{left:?}");
 }
 
+/// `process.which` gives a path a program can hold, a text: a directory of
+/// `PATH` whose name is not UTF-8, first and with the program in it, is
+/// passed over for the next. Linux, as macOS names files in UTF-8 alone.
+#[cfg(target_os = "linux")]
+#[test]
+fn which_passes_over_a_directory_that_is_not_a_text() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    use std::os::unix::fs::PermissionsExt;
+    let dir = scratch("cli-which");
+    let foreign = dir.join(std::ffi::OsStr::from_bytes(b"bin-\xff"));
+    let named = dir.join("bin");
+    for directory in [&foreign, &named] {
+        std::fs::create_dir_all(directory).unwrap();
+        let program = directory.join("found-here");
+        std::fs::write(&program, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    std::fs::write(
+        dir.join("main.to"),
+        "import std.console\nimport std.process\n\nconsole.println(\"{process.which(\"found-here\")}\")\n",
+    )
+    .unwrap();
+    let (_, stderr, status) = tondo(&dir, &["build", "main.to", "--output", "main"]);
+    assert_eq!(status, 0, "{stderr}");
+    let mut path = foreign.clone().into_os_string().into_vec();
+    path.push(b':');
+    path.extend(named.as_os_str().as_bytes());
+    let run = Command::new(dir.join("main")).env("PATH", OsString::from_vec(path)).output().unwrap();
+    let said = String::from_utf8(run.stdout).expect("a text");
+    assert_eq!(said, format!("some({})\n", named.join("found-here").display()), "{:?}", run.status);
+}
+
 /// Every code a diagnostic of the compiler gives has its explanation.
 #[test]
 fn every_code_is_explained() {

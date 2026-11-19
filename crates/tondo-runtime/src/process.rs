@@ -987,7 +987,8 @@ pub unsafe extern "C" fn tondo_rt_process_signal(process: *mut ProcessObject, ta
 }
 
 /// `process.which(name)`: the file a shell runs for `name`, with the
-/// program's `PATH`; empty for none.
+/// program's `PATH`, in a directory whose path is a text, as the path it
+/// gives must be; empty for none.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_process_which(name: *const Str, region: *mut crate::regions::Region) -> *mut Str {
     let name = os(name);
@@ -1002,7 +1003,7 @@ pub unsafe extern "C" fn tondo_rt_process_which(name: *const Str, region: *mut c
         let path = environment.iter().find(|(key, _)| key == "PATH").map(|(_, value)| value.clone());
         path.unwrap_or_default().as_bytes().split(|&b| b == b':').find_map(|directory| {
             let directory = if directory.is_empty() { OsStr::new(".") } else { OsStr::from_bytes(directory) };
-            Some(std::path::Path::new(directory).join(&name)).filter(|path| runnable(path))
+            Some(std::path::Path::new(directory).join(&name)).filter(|path| path.to_str().is_some() && runnable(path))
         })
     };
     crate::strings::str_in(region, found.map_or(Vec::new(), |path| path.into_os_string().into_vec()).as_slice())
