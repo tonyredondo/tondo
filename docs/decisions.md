@@ -8081,3 +8081,39 @@ around it. Four rows stay over 2% by the test at a read outside a loop:
 contains 1000 +3.1%, builder 100 +2.6%, parse ints 1000 +2.6% and sort
 adults +2.2%; 17 are 2% or more under, and every example allocates fewer
 and holds fewer bytes.
+
+## Parts of texts lent were built, measured and set aside
+
+Tony approved lending a part of a text that only its frame reads, a
+header in the frame that reads its source's bytes where they are, rather
+than a copy. It was built on a branch, kept as `views-on-main`
+(817050f0..e35b0a91): every text's header gained a word saying where its
+bytes start; a pass lent the parts of `trim`, `slice`, `removePrefix` and
+`removeSuffix` that nothing took out of the frame and whose source nothing
+let go of, gave away or grew while they were used, also through the
+functions that only read them; and `TONDO_CHECK_LIFETIMES` and the MIR's
+check checked every loan, with cases guarding the two wrong loans the work
+found.
+
+Against 4cfdb1d8, both built as releases by `tondo compiler`, every
+example held more bytes, 1% to 10%, none allocated less on the heap, and
+their instructions grew 0.7% to 2.2%, but for profiler's 1.4% fewer;
+notes made 200 fewer values in regions and profiler 190. Six rows of
+`bench/tondo` ran over 2% more instructions: `texts/chars ascii` 22% and
+`chars other` 13.6%, likely by their loop reading where the bytes start,
+which `tondo asm` was not asked; `texts/trim` 5.3%, `programs/sort adults`
+3.9%, `queries/filter sumBy` 3.3% and `sortedBy` 2.4%. `net/echo` held
+25% more bytes. `texts/trim read`, a trimmed text only measured, ran
+14.8% fewer instructions and allocated nothing, and still took 2.74 times
+Go's time. Against Go, 16 of 75 rows were slower, and the rows holding
+more bytes on the heap than Go's were the same 16 as on main. Short
+texts, and a trim that gives a text with nothing to trim back as it is,
+had taken what loans were for: the parts the examples cut allocated
+almost nothing before loans either. So neither the header's word nor the
+pass landed.
+
+If loans come back, the design to weigh first is a view marked in its
+header, as a short text is marked by its sign: an owned text keeps its
+bytes where they are, with no word more and no read of where they start,
+and only a view pays. It needs its own door, measured on these rows and
+the examples before anything else.
