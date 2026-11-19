@@ -1861,11 +1861,11 @@ starts. `tondo asm countByWideVectors` shows both, the second with AVX2's
 comparison of thirty-two bytes:
 
 ```text
-countByWideVectors (x86-64-v3) (1088 bytes, 8 of them constants)
+countByWideVectors (x86-64-v3) (1216 bytes, 9 of them constants)
     ...
-    26b  vmovdqu ymm1, ymmword [rdi + rcx * 1 + 0x20]
-    271  vpcmpeqb ymm1, ymm1, ymm0
-    275  vpmovmskb edx, ymm1
+    2da  vmovdqu ymm1, ymmword [rdi + rcx * 1 + 0x20]
+    2e0  vpcmpeqb ymm1, ymm1, ymm0
+    2e4  vpmovmskb r8d, ymm1
 ```
 
 Where the processor lacks the instructions of a width, as an arm64 one
