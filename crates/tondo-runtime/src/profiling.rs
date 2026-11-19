@@ -144,9 +144,10 @@ pub(crate) fn write(node: u32, bench: Option<&str>) {
         let kind = if settings.instructions { "instructions" } else { "cpu" };
         let _ = write!(out, "\"kind\":\"{kind}\",\"samples\":[");
         let mut labels = Labels::default();
-        for (index, (at, thread, stack, set)) in samples.iter().enumerate() {
+        for (index, (at, thread, stack, set, cpu)) in samples.iter().enumerate() {
             let comma = if index == 0 { "" } else { "," };
-            let _ = write!(out, "{comma}[{at},{thread},{},{}]", frames.list(stack.frames()), labels.number(*set));
+            let frames = frames.list(stack.frames());
+            let _ = write!(out, "{comma}[{at},{thread},{frames},{},{cpu}]", labels.number(*set));
         }
         let _ = write!(out, "],\"labels\":{{{}}}", labels.json);
     }
@@ -482,12 +483,16 @@ pub extern "C" fn tondo_rt_profile_cpu_period() -> *mut super::native::NativeObj
 /// A profile of the processor time from its samples, each standing for
 /// `period` nanoseconds.
 fn cpu_profile(samples: &[Sample], started: std::time::Instant, period: i64) -> *mut super::native::NativeObject {
-    let weighed: Vec<Weighed> = kept_samples(samples)
+    let kept = kept_samples(samples);
+    let clocks: Vec<(u32, u64)> = kept.iter().map(|&(thread, _, _, cpu)| (thread, cpu)).collect();
+    let weights = super::recorder::weights(&clocks, period);
+    let weighed: Vec<Weighed> = kept
         .into_iter()
-        .map(|(thread, set, frames)| {
+        .zip(weights)
+        .map(|((thread, set, frames, _), weight)| {
             let mut labels = vec![("thread".to_string(), thread.to_string())];
             labels.extend(super::labels::get(set).unwrap_or_default());
-            (frames, vec![1, period], labels)
+            (frames, vec![1, weight], labels)
         })
         .collect();
     let took = started.elapsed().as_nanos() as i64;
@@ -495,10 +500,11 @@ fn cpu_profile(samples: &[Sample], started: std::time::Instant, period: i64) -> 
     super::native::new(made("cpu", &kinds, ("cpu", "nanoseconds", period), None, &weighed, &[false, false], took))
 }
 
-/// The thread, labels and frames of each sample, which a recorded run
-/// keeps and its replay gives back: a frame of the executable as where it
-/// is in it, which a replay loaded elsewhere has at another address.
-fn kept_samples(samples: &[Sample]) -> Vec<(u32, u32, Vec<usize>)> {
+/// The thread, labels, frames and thread's processor time of each sample,
+/// which a recorded run keeps and its replay gives back: a frame of the
+/// executable as where it is in it, which a replay loaded elsewhere has at
+/// another address.
+fn kept_samples(samples: &[Sample]) -> Vec<(u32, u32, Vec<usize>, u64)> {
     const OWN: u64 = 1 << 63;
     let base = |address: usize| {
         let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
@@ -508,9 +514,10 @@ fn kept_samples(samples: &[Sample]) -> Vec<(u32, u32, Vec<usize>)> {
     let own = base(kept_samples as *const () as usize).unwrap_or(0);
     let bytes = super::replay::kept(|| {
         let mut bytes = Vec::new();
-        for (_, thread, stack, set) in samples {
+        for (_, thread, stack, set, cpu) in samples {
             bytes.extend(thread.to_le_bytes());
             bytes.extend(set.to_le_bytes());
+            bytes.extend(cpu.to_le_bytes());
             bytes.extend((stack.frames().len() as u32).to_le_bytes());
             for &frame in stack.frames() {
                 let at = match base(frame) {
@@ -529,12 +536,12 @@ fn kept_samples(samples: &[Sample]) -> Vec<(u32, u32, Vec<usize>)> {
         words = &words[size..];
         Some(word.iter().rev().fold(0, |value, &byte| value << 8 | u64::from(byte)))
     };
-    while let (Some(thread), Some(set), Some(count)) = (next(4), next(4), next(4)) {
+    while let (Some(thread), Some(set), Some(cpu), Some(count)) = (next(4), next(4), next(8), next(4)) {
         let frames = (0..count).map_while(|_| next(8)).map(|frame| match frame & OWN {
             0 => frame as usize,
             _ => own + (frame & !OWN) as usize,
         });
-        out.push((thread as u32, set as u32, frames.collect()));
+        out.push((thread as u32, set as u32, frames.collect(), cpu));
     }
     out
 }

@@ -433,7 +433,7 @@ fn fib(n: Int): Int {
 }
 
 fn main() {
-    console.println(\"{fib(35)}\")
+    console.println(\"{fib(38)}\")
 }
 ";
 

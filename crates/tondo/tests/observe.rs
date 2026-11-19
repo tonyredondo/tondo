@@ -361,6 +361,61 @@ fn main() {
 }
 "#;
 
+/// A profile of the processor counts the time its program took: each sample
+/// weighs what its thread took since its sample before, by the thread's
+/// own clock, so a sampler whose rounds come late, as macOS's came every
+/// 8 ms for every 1, still adds up to the time that passed. The program's
+/// own count, C's `clock()`, is the measure.
+#[test]
+fn a_cpu_profile_counts_the_processor_time_taken() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("profile-time");
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = "import std.console
+import std.ffi
+
+extern fn clock(): ffi.CLong
+
+fn fib(n: Int): Int {
+    if n < 2 {
+        return n
+    }
+    fib(n - 1) + fib(n - 2)
+}
+
+fn main() {
+    console.println(\"{fib(38)}\")
+    let used = unsafe { clock() }
+    console.println(\"took {used}\")
+}
+";
+    std::fs::write(dir.join("clocked.to"), program).unwrap();
+    let tondo = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+        assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    tondo(&["build", "clocked.to", "--output", "clocked"]);
+    // The program writes its number and its processor time, in the
+    // microseconds of `clock()`, and the profile its line of JSON.
+    let out = tondo(&["profile", "--cpu", "--json", "--output", "clocked.pprof", "--", "./clocked"]);
+    let took: i64 =
+        out.lines().find_map(|line| line.strip_prefix("took ")?.parse::<i64>().ok()).expect("its time") / 1000;
+    let line = out.lines().find(|line| line.starts_with('{')).expect("the profile's JSON");
+    let said: Value = serde_json::from_str(line).unwrap();
+    let counted = said["processor_ms"].as_i64().expect("the processor time of a cpu profile");
+    // Within a tenth over, for the clocks' rounding. Under by up to a
+    // quarter: the program's clock counts its start before the sampling,
+    // the runtime's other threads, and the time of each thread before its
+    // first sample, which weighs one millisecond, and after its last; on
+    // CI's virtual Macs, whose sampler wakes every 8 to 13 ms, those ends
+    // are a round each. A tighter low side would start to catch a lost
+    // first round, not a wrong weight: that weight gave an eighth.
+    assert!(
+        counted * 4 >= took * 3 && counted * 10 <= took * 11,
+        "the profile counts {counted} ms of processor time, and the program took {took} ms: {said}"
+    );
+}
+
 #[test]
 fn profiles_time_memory_and_tasks() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("profile");

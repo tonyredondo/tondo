@@ -1734,6 +1734,7 @@ fn profile(args: &Args) -> Result<Reply, String> {
     let mut argv: Vec<String> = Vec::new();
     // Whether a program profiled for its tasks stood still for it.
     let mut stopped = None;
+    let mut empty = None;
     let (profiles, base): (Vec<PathBuf>, PathBuf) = if args.text("test").is_some() || args.flag("bench") {
         if kind == "tasks" {
             return Err("tests are profiled for cpu, instructions or memory".into());
@@ -1783,8 +1784,9 @@ fn profile(args: &Args) -> Result<Reply, String> {
         if ran.code != Some(0) {
             return Err(why_failed(&argv, &ran, limit));
         }
-        // A program that did not stand still for its tasks to be seen: the
-        // profile's line of JSON, after what the program wrote.
+        // A program that did not stand still for its tasks to be seen, or
+        // that took no sample, and why: the profile's line of JSON, after
+        // what the program wrote.
         let told: Value = ran
             .stdout
             .lines()
@@ -1794,6 +1796,7 @@ fn profile(args: &Args) -> Result<Reply, String> {
             })
             .unwrap_or(Value::Null);
         stopped = told["stopped"].as_bool();
+        empty = told["no_samples"].as_str().map(str::to_string);
         let base = if Path::new(&path).is_dir() {
             PathBuf::from(&path)
         } else {
@@ -1810,6 +1813,9 @@ fn profile(args: &Args) -> Result<Reply, String> {
     let mut text = String::new();
     if stopped == Some(false) {
         text.push_str(&format!("{}\n", crate::profile::NOT_STOPPED));
+    }
+    if let Some(empty) = &empty {
+        text.push_str(&format!("no sample: {empty}\n"));
     }
     for file in &profiles {
         let read = crate::profile::read(file)?;

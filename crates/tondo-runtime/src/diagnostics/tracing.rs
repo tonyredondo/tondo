@@ -73,7 +73,11 @@ pub(super) fn end_trace(session: &mut Option<Session>, why: &str) {
     if let Some(mut tracer) = session.take() {
         let mut frames = Frames { described: std::mem::take(&mut tracer.described), json: String::new() };
         let memory = if why == "exit" { memory(&mut frames) } else { "null".into() };
-        let ended = format!("{{\"end\":\"{why}\",\"memory\":{memory},\"frames\":{{{}}}}}", frames.json);
+        // What the sampling did, which says why a profile took no sample.
+        let (rounds, heard, idle) = crate::recorder::sampled_counts();
+        let sampled = format!("{{\"rounds\":{rounds},\"heard\":{heard},\"idle\":{idle}}}");
+        let ended =
+            format!("{{\"end\":\"{why}\",\"memory\":{memory},\"sampled\":{sampled},\"frames\":{{{}}}}}", frames.json);
         let _ = send(&mut tracer.stream, &ended);
     }
 }
@@ -144,10 +148,10 @@ pub(super) fn recorded(session: &mut Session) -> String {
     }
     out.push_str("],\"samples\":[");
     let mut labels = Labels::default();
-    for (index, (at, thread, sampled, set)) in samples.iter().enumerate() {
+    for (index, (at, thread, sampled, set, cpu)) in samples.iter().enumerate() {
         let comma = if index == 0 { "" } else { "," };
         let frames = stack(sampled.frames());
-        let _ = write!(out, "{comma}[{at},{thread},{frames},{}]", labels.number(*set));
+        let _ = write!(out, "{comma}[{at},{thread},{frames},{},{cpu}]", labels.number(*set));
     }
     session.described = std::mem::take(&mut frames.described);
     let _ = write!(

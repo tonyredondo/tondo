@@ -488,6 +488,10 @@ pub(crate) struct Recorded {
     pub(crate) end: Option<String>,
     pub(crate) asked: Option<Value>,
     pub(crate) started: std::time::Instant,
+    /// What the program's sampling did, as it said at its end: the rounds
+    /// of its sampling thread, the signals its threads heard and those that
+    /// found no task running.
+    pub(crate) sampled: Option<Value>,
 }
 
 /// Records what a program does until it ends, `duration` passes or
@@ -538,6 +542,7 @@ pub(crate) fn record(
     let started_at = std::time::Instant::now();
     let mut stopping = false;
     let mut asked = None;
+    let mut sampled = None;
     let mut line = String::new();
     loop {
         let stop = INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst)
@@ -555,6 +560,7 @@ pub(crate) fn record(
                 let Ok(chunk) = serde_json::from_str::<Value>(&line) else { break };
                 line.clear();
                 if chunk.get("end").is_some() {
+                    sampled = chunk.get("sampled").cloned();
                     // A program that exits says what memory it had.
                     if !chunk["memory"].is_null() && asked.is_none() {
                         if let Some(Value::Object(frames)) = chunk.get("frames") {
@@ -588,7 +594,7 @@ pub(crate) fn record(
         }
     }
     let pid = program.pid;
-    Ok(Recorded { info, pid, recording, end, asked, started: started_at })
+    Ok(Recorded { info, pid, recording, end, asked, started: started_at, sampled })
 }
 
 /// `tondo trace`: records until the program ends, `duration` passes or

@@ -160,6 +160,11 @@ pub fn profile(
     // did not within its wait shows a task that ran where the system had
     // it then, as in a call of the system's library.
     let stopped = (kind == Kind::Tasks).then(|| recorded.asked.as_ref().and_then(|a| a["stopped"].as_bool())).flatten();
+    // The processor time the samples of a CPU profile stand for, and why
+    // one that took none took none.
+    let processor = (kind == Kind::Cpu).then(|| weights(&recording.samples).iter().sum::<i64>());
+    let empty = (count == 0 && matches!(kind, Kind::Cpu | Kind::Instructions))
+        .then(|| why_no_samples(recorded.sampled.as_ref()));
     if as_json {
         let mut fields = json!({
             "profile": path,
@@ -169,6 +174,12 @@ pub fn profile(
             "lost": recorded.recording.lost,
             "ended": recorded.end,
         });
+        if let Some(processor) = processor {
+            fields["processor_ms"] = json!(processor / 1_000_000);
+        }
+        if let Some(empty) = &empty {
+            fields["no_samples"] = json!(empty);
+        }
         if let Some(stopped) = stopped {
             fields["stopped"] = json!(stopped);
         }
@@ -176,12 +187,15 @@ pub fn profile(
         return Ok(());
     }
     let what = match kind {
-        Kind::Cpu => format!("{count} samples of 1 ms of processor time"),
+        Kind::Cpu => format!("{count} samples, {} of processor time", amount(processor.unwrap_or(0), "nanoseconds")),
         Kind::Instructions => format!("{count} samples of a million instructions"),
         Kind::Memory => format!("{count} samples of memory"),
         Kind::Tasks => format!("{count} tasks"),
     };
     let mut said = format!("{what}: {}; `tondo profile show {}` shows where", path.display(), path.display());
+    if let Some(empty) = &empty {
+        said.push_str(&format!("; no sample: {empty}"));
+    }
     if let Some(end) = &recorded.end {
         said.push_str(&format!("; {end}"));
     }
@@ -192,10 +206,51 @@ pub fn profile(
     Ok(())
 }
 
+/// Why a profile of the processor took no sample, from what the program's
+/// sampling said at its end.
+fn why_no_samples(sampled: Option<&Value>) -> String {
+    let count = |name: &str| sampled.and_then(|s| s[name].as_u64());
+    match (count("rounds"), count("heard"), count("idle")) {
+        (_, Some(0), _) if cfg!(target_os = "macos") && count("rounds") == Some(0) => {
+            "the runtime's sampling thread made no round while the program ran: this is tondo's, not the \
+             program's; profile it again, and report it if it repeats"
+                .into()
+        }
+        (_, Some(0), _) => "no thread of the program heard the sampling signal while it ran: this is tondo's, not \
+                            the program's; profile it again, and report it if it repeats"
+            .into(),
+        (_, Some(heard), Some(idle)) if heard == idle => "each time the sampling looked, no task of the program was \
+                                                         running: it waited, or ended before its first millisecond of \
+                                                         processor time"
+            .into(),
+        _ => "the program ended before its first millisecond of processor time".into(),
+    }
+}
+
 /// What a profile of the tasks says of a program that did not stand still
 /// for it.
 pub const NOT_STOPPED: &str =
     "the program did not stop within its wait: tasks that were running are shown where the system had them";
+
+/// The processor time each sample of a CPU profile stands for, in
+/// nanoseconds: what its thread took since that thread's sample before, as
+/// the runtime read its clock (a sample's fifth value); a thread's first,
+/// one whose clock did not move or a sample without it, `PERIOD`. A late
+/// round of the sampler, or a sample lost, still counts the time that
+/// passed.
+pub(crate) fn weights(samples: &[Value]) -> Vec<i64> {
+    let mut before: HashMap<u64, u64> = HashMap::new();
+    samples
+        .iter()
+        .map(|sample| {
+            let (Some(thread), Some(cpu)) = (sample[1].as_u64(), sample[4].as_u64()) else { return PERIOD };
+            match before.insert(thread, cpu) {
+                Some(last) if cpu > last => (cpu - last) as i64,
+                _ => PERIOD,
+            }
+        })
+        .collect()
+}
 
 /// The profile of `kind` of what a program said: the samples of its
 /// threads, or the answer it gave to what it was asked, `memory` or
@@ -251,7 +306,11 @@ pub(crate) fn build(
                 _ => (("instructions", "count"), INSTRUCTIONS),
             };
             let mut builder = Builder::new(program, &[("samples", "count"), unit], unit, period);
-            for sample in samples {
+            let weights = match kind {
+                Kind::Cpu => weights(samples),
+                _ => vec![period; samples.len()],
+            };
+            for (sample, weight) in samples.iter().zip(weights) {
                 let thread = sample[1].to_string();
                 // The thread, and the labels of the task that ran.
                 let set = labels.get(&sample[3].to_string()).and_then(Value::as_array).cloned().unwrap_or_default();
@@ -261,7 +320,7 @@ pub(crate) fn build(
                     .collect();
                 let mut tags: Vec<(&str, &str)> = vec![("thread", &thread)];
                 tags.extend(named.iter().map(|(name, value)| (name.as_str(), value.as_str())));
-                add(&mut builder, &sample[2], &[1, period], &tags);
+                add(&mut builder, &sample[2], &[1, weight], &tags);
             }
             Ok((builder, samples.len()))
         }
@@ -1107,6 +1166,18 @@ code{{font-family:var(--vscode-editor-font-family,ui-monospace,monospace);backgr
 
 #[cfg(test)]
 mod tests {
+    /// A sample with its thread's clock weighs what its thread took since
+    /// that thread's sample before; one without, as a profile taken before
+    /// the clock was kept, weighs a millisecond, so that its numbers do not
+    /// change; and a thread's first sample weighs a millisecond too.
+    #[test]
+    fn weighs_samples_by_their_threads_clock_or_a_millisecond() {
+        let with = [json!([0, 1, [], 0, 5_000_000]), json!([1, 2, [], 0, 9_000_000]), json!([2, 1, [], 0, 13_000_000])];
+        assert_eq!(weights(&with), [PERIOD, PERIOD, 8_000_000]);
+        let without = [json!([0, 1, [], 0]), json!([1, 1, [], 0]), json!([2, 2, [], 0])];
+        assert_eq!(weights(&without), [PERIOD, PERIOD, PERIOD]);
+    }
+
     use super::*;
 
     #[test]

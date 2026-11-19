@@ -169,6 +169,8 @@ struct Slot {
     stack: UnsafeCell<Stack>,
     /// The labels of the task that ran (`labels`).
     labels: UnsafeCell<u32>,
+    /// The processor time its thread had taken (`thread_time`).
+    cpu: UnsafeCell<u64>,
 }
 
 unsafe impl Sync for Slot {}
@@ -211,7 +213,13 @@ extern "C" fn sample(_: i32, info: *mut libc::siginfo_t, context: *mut libc::c_v
     crate::tasks::answer_where(pc, fp);
     // On macOS a worker is signalled whether it runs or waits: only one
     // that runs a task makes a sample.
-    if !SAMPLING.load(Ordering::Relaxed) || (cfg!(target_os = "macos") && crate::tasks::current().is_null()) {
+    if !SAMPLING.load(Ordering::Relaxed) {
+        unsafe { *errno = saved };
+        return;
+    }
+    HEARD.fetch_add(1, Ordering::Relaxed);
+    if cfg!(target_os = "macos") && crate::tasks::current().is_null() {
+        IDLE.fetch_add(1, Ordering::Relaxed);
         unsafe { *errno = saved };
         return;
     }
@@ -239,13 +247,39 @@ extern "C" fn sample(_: i32, info: *mut libc::siginfo_t, context: *mut libc::c_v
         *slot.at.get() = now();
         *slot.stack.get() = stack;
         *slot.labels.get() = crate::tasks::labels();
+        *slot.cpu.get() = thread_time();
     }
     slot.written.store(sequence + 1, Ordering::Release);
     unsafe { *errno = saved };
 }
 
-/// A sample: when, on which thread, where, and the labels of its task.
-pub(crate) type Sample = (u64, u32, Stack, u32);
+/// A sample: when, on which thread, where, the labels of its task, and the
+/// processor time its thread had taken.
+pub(crate) type Sample = (u64, u32, Stack, u32, u64);
+
+/// The processor time the thread that runs has taken, in nanoseconds, as a
+/// signal handler may ask for it: one call to the kernel, no lock.
+fn thread_time() -> u64 {
+    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time) };
+    time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
+}
+
+/// The processor time each sample stands for, in nanoseconds: what its
+/// thread took since that thread's sample before, or `period` for a
+/// thread's first, or one whose clock did not move. A round of the
+/// sampler that came late, or a sample that was lost, then still counts
+/// the time that passed.
+pub(crate) fn weights(samples: &[(u32, u64)], period: i64) -> Vec<i64> {
+    let mut before: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
+    samples
+        .iter()
+        .map(|&(thread, cpu)| match before.insert(thread, cpu) {
+            Some(last) if cpu > last => (cpu - last) as i64,
+            _ => period,
+        })
+        .collect()
+}
 
 /// The samples taken since the last time, and how many were lost because
 /// the ring went round before the tool took them.
@@ -271,7 +305,8 @@ pub(crate) fn take_samples() -> (Vec<Sample>, u64) {
             *read += 1;
             continue;
         }
-        let copied = unsafe { (*slot.at.get(), *slot.thread.get(), *slot.stack.get(), *slot.labels.get()) };
+        let copied =
+            unsafe { (*slot.at.get(), *slot.thread.get(), *slot.stack.get(), *slot.labels.get(), *slot.cpu.get()) };
         std::sync::atomic::fence(Ordering::Acquire);
         if slot.written.load(Ordering::Relaxed) == before {
             out.push(copied);
@@ -333,6 +368,19 @@ pub(crate) fn stop() {
     super::tasks::tools::listen(super::tasks::tools::RECORDER, false);
 }
 
+/// While the threads are sampled: the rounds of macOS's sampling thread,
+/// the signals the threads heard, and those that found no task running,
+/// which say why a profile took no sample.
+static ROUNDS: AtomicU64 = AtomicU64::new(0);
+static HEARD: AtomicU64 = AtomicU64::new(0);
+static IDLE: AtomicU64 = AtomicU64::new(0);
+
+/// The rounds of the sampling thread (macOS), the signals heard and those
+/// that found no task, since the sampling started.
+pub(crate) fn sampled_counts() -> (u64, u64, u64) {
+    (ROUNDS.load(Ordering::Relaxed), HEARD.load(Ordering::Relaxed), IDLE.load(Ordering::Relaxed))
+}
+
 /// Microseconds of processor time between two samples of the threads,
 /// which `profile.startCpu(every:)` sets before they start.
 pub(crate) static CPU_EVERY: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1000);
@@ -363,6 +411,9 @@ pub(crate) fn sample_threads() {
     if SAMPLING.swap(true, Ordering::SeqCst) {
         return;
     }
+    for count in [&ROUNDS, &HEARD, &IDLE] {
+        count.store(0, Ordering::Relaxed);
+    }
     // macOS sends the signal of the process's processor time to whichever
     // thread it likes, mostly the main one, however idle; a thread of the
     // runtime signals each worker every millisecond instead.
@@ -372,6 +423,7 @@ pub(crate) fn sample_threads() {
     } else if cfg!(target_os = "macos") {
         let _ = crate::tasks::try_spawn_thread(Some(64 * 1024), || {
             while SAMPLING.load(Ordering::Relaxed) {
+                ROUNDS.fetch_add(1, Ordering::Relaxed);
                 crate::tasks::signal_workers(libc::SIGPROF);
                 std::thread::sleep(std::time::Duration::from_micros(CPU_EVERY.load(Ordering::Relaxed) as u64));
             }
