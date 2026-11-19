@@ -547,12 +547,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.set_srcloc(own);
         self.e.fb.ins().call(callee, &[]);
         self.e.fb.set_srcloc(statement);
-        let checks = self.defined_here.iter().map(|(&label, &generation)| (own.bits(), label, generation));
+        // In the order of their labels, which a hash's would not keep from
+        // one build to the next, as the table of bindings must.
+        let mut checks: Vec<Stale> =
+            self.defined_here.iter().map(|(&label, &generation)| (own.bits(), label, generation)).collect();
+        checks.sort_unstable();
         self.latent.stale.extend(checks);
         self.latent_here = true;
         // This site follows the block's last one.
         if let Some((previous, assigned)) = self.latent_previous.take() {
-            self.latent.follows.push((previous, own.bits(), assigned.into_iter().collect()));
+            let mut assigned: Vec<u32> = assigned.into_iter().collect();
+            assigned.sort_unstable();
+            self.latent.follows.push((previous, own.bits(), assigned));
         }
         self.latent_previous = Some((own.bits(), std::collections::HashSet::new()));
     }

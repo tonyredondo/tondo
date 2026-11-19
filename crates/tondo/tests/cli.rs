@@ -1835,6 +1835,37 @@ fn the_machine_code_of_a_function() {
     assert!(stderr.contains("choose one"), "{stderr}");
 }
 
+/// The same program built twice is the same bytes, in a release build and
+/// a debug one: what a dump reads of the bindings each line gives values,
+/// four of a tuple at once here, is in their order, not a hash's, which
+/// changed from one build to the next. A live build has an identity of its
+/// own, when and where it was made, which `tondo reload` finds it by.
+#[test]
+fn a_build_is_the_same_bytes_twice() {
+    let dir = scratch("same-bytes");
+    let source = "import std.console\nimport std.env\n\nfn served(n: Int): (String, String, Int, Int) {\n    \
+        if n > 100 {\n        console.println(\"many {n} {n * 2} {n * 3}\")\n        \
+        console.println(\"many {n + 1} {n + 2} {n + 3}\")\n        console.println(\"many {n - 1} {n - 2} {n - 3}\")\n    \
+        }\n    (\"c{n}\", \"k{n}\", n * 2, n + 7)\n}\n\nfn listen(n: Int): String {\n    \
+        let (certificate, key, clients, minimum) = served(n)\n    let (other, more, count, least) = served(n + 1)\n    \
+        \"{certificate}{key}{clients}{minimum}{other}{more}{count}{least}\"\n}\n\n\
+        fn main() {\n    console.println(listen(env.args().length()))\n}\n";
+    std::fs::write(dir.join("main.to"), source).unwrap();
+    for mode in [None, Some("--debug")] {
+        let built: Vec<Vec<u8>> = (0..3)
+            .map(|round| {
+                let output = format!("built-{round}");
+                let mut args = vec!["build", "main.to", "--output", output.as_str()];
+                args.extend(mode);
+                let (_, stderr, status) = tondo(&dir, &args);
+                assert_eq!(status, 0, "{stderr}");
+                std::fs::read(dir.join(&output)).unwrap()
+            })
+            .collect();
+        assert!(built.iter().all(|bytes| *bytes == built[0]), "builds {mode:?} differ");
+    }
+}
+
 /// `tondo asm --rules` lists the ISLE rules Cranelift applied, Tondo's own
 /// marked, in a tondo built with its feature `rules`; another says how to
 /// build one.
