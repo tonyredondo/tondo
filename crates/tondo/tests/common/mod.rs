@@ -83,3 +83,40 @@ impl Drop for Started {
         }
     }
 }
+
+/// Makes `command`, and what it starts, run as on a system that refuses
+/// `perf_event_open`, as the filter of system calls of a container does on
+/// a runner: the side of a test where nothing counts the processor's
+/// instructions, run on a machine that counts them too. Linux only, where a
+/// program can count itself; elsewhere nothing counts, and the command is
+/// left as it is.
+///
+/// It is a switch for a test, not a sandbox: the filter compares the call's
+/// number for the architecture the test is built for, refuses that one call
+/// and lets every other through. Where the filter cannot be set, as under an
+/// emulator that refuses or ignores `PR_SET_SECCOMP`, the command runs as it
+/// is, and the test's assertions decide: on a machine that counts, those of
+/// the side that does not then fail, loudly; where nothing counts, they hold
+/// anyway. So a filter that did not take is not an error here.
+pub fn uncounted(command: &mut std::process::Command) -> &mut std::process::Command {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        command.pre_exec(|| {
+            // Load the call's number; if it is `perf_event_open`'s, refuse
+            // it as a system that does not allow it does; else let it be.
+            let filter = [
+                libc::sock_filter { code: 0x20, jt: 0, jf: 0, k: 0 },
+                libc::sock_filter { code: 0x15, jt: 0, jf: 1, k: libc::SYS_perf_event_open as u32 },
+                libc::sock_filter { code: 0x06, jt: 0, jf: 0, k: 0x0005_0000 | libc::EPERM as u32 },
+                libc::sock_filter { code: 0x06, jt: 0, jf: 0, k: 0x7fff_0000 },
+            ];
+            let program = libc::sock_fprog { len: filter.len() as u16, filter: filter.as_ptr().cast_mut() };
+            if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0 {
+                libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER, &program as *const libc::sock_fprog);
+            }
+            Ok(())
+        });
+    }
+    command
+}

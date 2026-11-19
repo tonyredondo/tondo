@@ -18,8 +18,17 @@ fn sample() -> PathBuf {
 /// makes the end of a region a call to the system, would measure itself,
 /// and leave a memory profile too few turns to sample.
 fn tondo(dir: &Path, args: &[&str]) -> (String, String, i32) {
+    tondo_on(dir, args, false)
+}
+
+/// As `tondo`, and, when `uncounted`, as on a system that refuses the
+/// processor's counters (`common::uncounted`).
+fn tondo_on(dir: &Path, args: &[&str], uncounted: bool) -> (String, String, i32) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
     command.args(args).current_dir(dir);
+    if uncounted {
+        common::uncounted(&mut command);
+    }
     if !args.contains(&"--bench") {
         command.env("TONDO_CHECK_LIFETIMES", "1");
     }
@@ -1006,10 +1015,19 @@ fn holds_rows_to_a_second_baseline() {
 /// verdict against the other tondo and the change since the baseline.
 #[test]
 fn layouts_beside_another_compiler_and_a_baseline() {
+    for uncounted in [false, true] {
+        layouts_beside_another_compiler(uncounted);
+    }
+}
+
+/// The test above, on the machine as it is or, `uncounted`, as on one that
+/// refuses the processor's counters.
+fn layouts_beside_another_compiler(uncounted: bool) {
+    let tondo = |dir: &Path, args: &[&str]| tondo_on(dir, args, uncounted);
     let tests = "import std.testing\n\nfn work(rounds: Int): Int {\n    var total = 0\n    \
         for i in 0..rounds {\n        total += \"a b {i}\".split(\" \").length()\n    }\n    total\n}\n\n\
         test counting {\n    testing.bench(\"work\", () { work(50) })\n}\n";
-    let dir = project("layouts-compiler", tests);
+    let dir = project(&format!("layouts-compiler-{uncounted}"), tests);
     let base = dir.join("table.json");
     let (stdout, stderr, status) =
         tondo(&dir, &["test", "--bench", "--bench-time", "0.05", "--save-baseline", base.to_str().unwrap()]);
@@ -1039,7 +1057,7 @@ fn layouts_beside_another_compiler_and_a_baseline() {
     let (stdout, stderr, status) = tondo(&dir, &args);
     // Where the system counts no instructions, as on macOS or in a container
     // that refuses `perf_event_open`, they cannot judge, and the run says so.
-    let counts = counts_itself();
+    let counts = !uncounted && counts_itself();
     assert_eq!(status, if counts { 0 } else { 1 }, "{stdout}{stderr}");
     let asked = std::fs::read_to_string(&asked).unwrap();
     assert!(asked.lines().any(|line| line.starts_with("test ") && line.contains("--layouts 2")), "{asked}");
@@ -2184,8 +2202,17 @@ fn counts_itself() -> bool {
 /// with why.
 #[test]
 fn judges_benchmarks_by_their_instructions() {
+    for uncounted in [false, true] {
+        judges_by_instructions(uncounted);
+    }
+}
+
+/// The test above, on the machine as it is or, `uncounted`, as on one that
+/// refuses the processor's counters.
+fn judges_by_instructions(uncounted: bool) {
+    let tondo = |dir: &Path, args: &[&str]| tondo_on(dir, args, uncounted);
     let tests = "import std.testing\n\ntest fibonacci {\n    testing.bench(\"fib 15\", () { fib(15) })\n}\n";
-    let dir = project("benchmark-instructions", tests);
+    let dir = project(&format!("benchmark-instructions-{uncounted}"), tests);
     let source = |extra: &str| {
         format!(
             "pub fn fib(n: Int): Int {{\n    if n < 2 {{\n        return n\n    }}\n    fib(n - 1) + fib(n - 2){extra}\n}}\n\nfn main() {{}}\n"
@@ -2209,7 +2236,7 @@ fn judges_benchmarks_by_their_instructions() {
     let (_, stderr, status) = tondo(&dir, &[&bench[..], &["--layouts", "1"]].concat());
     assert_eq!(status, 2);
     assert!(stderr.contains("--layouts takes how many layouts"), "{stderr}");
-    let counts = counts_itself();
+    let counts = !uncounted && counts_itself();
     let saved: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("target/bench/main.json")).unwrap()).unwrap();
     // The load the baseline was measured under, which a comparison with one
