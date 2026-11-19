@@ -2507,9 +2507,10 @@ el build de los tests, que es optimizado salvo con `--debug`, como el de
 `--bench`: un test con `assert(testing.allocations(() { receipt(lines) }) <= 7)`
 mantiene una función en las asignaciones que hace ahora, vayan donde el
 optimizador las ponga, y falla cuando el compilador o el código hacen más. La
-única excepción es el texto que una función copia al volver para que una
-colección suya se quede en su región (7.18 de toolchain): la copia es una
-asignación que el heap no hacía, y cuenta una más con regiones que sin ellas.
+única excepción es el texto de más de siete bytes que una función copia al
+volver para que una colección suya se quede en su región (7.18 de
+toolchain): la copia es una asignación que el heap no hacía, y cuenta una
+más con regiones que sin ellas.
 
 El reporte (15.11) da por cada benchmark las ejecuciones de cada muestra, los
 nanosegundos por ejecución de cada muestra, su mediana, media, mínimo, máximo y
