@@ -167,11 +167,38 @@ pub unsafe extern "C" fn tondo_rt_text_lines(s: *const Str, region: *mut Region)
     strings(s, s.lines(), region)
 }
 
-/// The pieces between runs of Unicode whitespace.
+/// The pieces between runs of Unicode whitespace: of an ASCII text, read a
+/// byte at a time, as its whitespace is ASCII's.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_words(s: *const Str, region: *mut Region) -> *mut ArrayHeader {
     let s = text(&s);
-    strings(s, s.split_whitespace(), region)
+    match s.is_ascii() {
+        true => strings(s, ascii_words(s), region),
+        false => strings(s, s.split_whitespace(), region),
+    }
+}
+
+/// The pieces of an ASCII text between runs of its whitespace.
+fn ascii_words(s: &str) -> impl Iterator<Item = &str> {
+    let bytes = s.as_bytes();
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        while at < bytes.len() && ascii_space(bytes[at]) {
+            at += 1;
+        }
+        let start = at;
+        while at < bytes.len() && !ascii_space(bytes[at]) {
+            at += 1;
+        }
+        (start < at).then(|| &s[start..at])
+    })
+}
+
+/// Unicode's whitespace among ASCII's characters: `\t` to `\r`, and the
+/// space.
+fn ascii_space(byte: u8) -> bool {
+    const SPACES: u64 = 0b1_1111 << 9 | 1 << 32;
+    byte <= b' ' && SPACES >> byte & 1 != 0
 }
 
 #[unsafe(no_mangle)]
@@ -220,12 +247,9 @@ pub unsafe extern "C" fn tondo_rt_text_untrimmed(s: *const Str, ends: i64) -> u8
 /// that is not ASCII, Unicode's.
 fn without_whitespace(s: &str, ends: i64) -> &str {
     let bytes = s.as_bytes();
-    // `\t` to `\r`, and the space, as bits of a word.
-    const SPACES: u64 = 0b1_1111 << 9 | 1 << 32;
-    let space = |byte: u8| byte <= b' ' && SPACES >> byte & 1 != 0;
     let (mut start, mut end) = (0, bytes.len());
     if ends != 2 {
-        while start < end && space(bytes[start]) {
+        while start < end && ascii_space(bytes[start]) {
             start += 1;
         }
         if start < end && bytes[start] >= 0x80 {
@@ -233,7 +257,7 @@ fn without_whitespace(s: &str, ends: i64) -> &str {
         }
     }
     if ends != 1 {
-        while end > start && space(bytes[end - 1]) {
+        while end > start && ascii_space(bytes[end - 1]) {
             end -= 1;
         }
         if end > start && bytes[end - 1] >= 0x80 {
@@ -795,4 +819,21 @@ pub extern "C" fn tondo_rt_char_case(c: u32, upper: u8) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_char_valid(code: i64) -> u8 {
     u32::try_from(code).ok().and_then(char::from_u32).is_some() as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ASCII's whitespace is Unicode's among its characters, and an ASCII
+    /// text's words are those `split_whitespace` gives.
+    #[test]
+    fn ascii_words_are_unicodes() {
+        for byte in 0..128u8 {
+            assert_eq!(ascii_space(byte), (byte as char).is_whitespace(), "{byte}");
+        }
+        for text in ["", " ", "one", " one  two\tthree\n", "\x0b\x0cform\rfeed \x1cfile", "a b", "  lead", "trail  "] {
+            assert_eq!(ascii_words(text).collect::<Vec<_>>(), text.split_whitespace().collect::<Vec<_>>(), "{text:?}");
+        }
+    }
 }
