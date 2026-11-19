@@ -8330,9 +8330,12 @@ word, as the runtime would, at no cost in size that `tondo size` shows.
 ## A row is held to the last table's baseline too
 
 Each change was judged against the commit before it, with a bar of 2% in
-instructions, and texts/parse ints went from 0.99× Go's time to 1.16×
-with 1.7% more instructions, in steps that each passed. A bar for each
-change says nothing of their sum. So `--baseline <path>` may stand beside
+instructions. texts/parse ints went from 0.99× Go's time to 1.16× in one
+change, 89958411, which passed the bar at 1.7% more instructions while
+it cost a fifth more cycles, and nothing held the rows to where a table
+had left them. A bar for each change says nothing of a sum of small
+ones, nor one of instructions of cycles: AGENTS.md has a rule for cycles
+since, and this one is for the sum. So `--baseline <path>` may stand beside
 `--compiler` or `--against`, where it was refused: one run is judged
 against both, each row's line says how much its instructions moved since
 the baseline, and `--max-regression` with `--regression-by instructions`

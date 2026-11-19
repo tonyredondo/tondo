@@ -128,7 +128,14 @@ whole programs, and a row that does over 2% more work lands only with its
 reason written in the commit. Each row is also held to the baseline of the
 last table against Go, which `--baseline` names there: small costs add up,
 and a row that is over 2% past it in all lands only with its reason too,
-whoever added what. The baseline is saved again only with a new table. Under a row that
+whoever added what. The baseline is saved again only with a new table.
+A row whose cycles grow by over 5% while its instructions stay within the
+bar is measured again in four orders of the code on each side: the base's
+`tondo`, which `tondo compiler HEAD` gives, runs the benchmarks with
+`--layouts 4 --save-baseline <name>`, and the change's with `--layouts 4
+--baseline <name>`, as `--layouts` compares with a saved baseline. A growth
+that stays past every order is the change's own, and lands only with its
+reason, as one of instructions does. Under a row that
 moved it names the code that changed, the runtime's too, and beside a row
 the regions its runs set up and how many of them were used.
 
@@ -262,6 +269,13 @@ Ask the toolchain before guessing why code is slow or allocates:
   tried with it on the programs that run what it touches.
 - `tondo test --exec <command>` runs the tests' executable under a
   command: `perf stat`, `valgrind`, `gdb --args`.
+- When a row's cycles move with the same instructions and the same code,
+  ask the processor why under `tondo test --exec "perf stat -e
+  cycles,instructions,…"`: loads that waited on a store,
+  `ls_bad_status2.stli_other` on AMD and `ld_blocks.store_forward` on
+  Intel, beside cache and branch misses. `perf record -e` of the same event
+  names the functions that pay it. Each vendor names these events its own
+  way, so the bench does not show them.
 - `tondo test --bench` gives, on Linux, the instructions and cycles of a
   run beside its time; `--regression-by instructions` with
   `--max-regression` judges a change by them, which where code lies does
