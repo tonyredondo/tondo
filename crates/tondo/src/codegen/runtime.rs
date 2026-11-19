@@ -565,7 +565,7 @@ impl Rt {
             Rt::MapEntry => ("tondo_rt_map_entry", &[I64, I64], &[I64]),
             Rt::MapUnique => ("tondo_rt_map_unique", &[I64, I64, I64], &[]),
             Rt::MapEq => ("tondo_rt_map_eq", &[I64, I64, I64, I64], &[I8]),
-            Rt::MapClear => ("tondo_rt_map_clear", &[I64, I64], &[]),
+            Rt::MapClear => ("tondo_rt_map_clear", &[I64, I64, I64], &[]),
             Rt::FnNew => ("tondo_rt_fn_new", &[I64, I64, I64, I64], &[I64]),
             Rt::FnNewIn => ("tondo_rt_fn_new_in", &[I64, I64, I64, I64, I64], &[I64]),
             Rt::FnIn => ("tondo_rt_fn_in", &[I64, I64, I64, I64, I64], &[I64]),

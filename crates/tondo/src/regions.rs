@@ -1660,10 +1660,14 @@ fn unchanged(body: &Body, types: &Types, local: Local) -> Option<(String, Span, 
             },
             _ => return None,
         };
+        let set = matches!(types.kind(types.repr(body.locals[local.0 as usize])), TyKind::Set(_));
         let why = match (map, deque) {
+            (true, _) if set => {
+                "a region changes a set only by its insertions, its removals, `x = Set[T]()` and `x.clear()` yet"
+            }
             (true, _) => {
-                "a region changes a map only by its insertions, its removals, `x.clear()` and the values of its \
-                 entries yet"
+                "a region changes a map only by its insertions, its removals, `x = [:]`, `x.clear()` and the values \
+                 of its entries yet"
             }
             (_, true) => {
                 "a region changes a deque only by `push`, `pushFront`, `pop`, `popFront`, `x = Deque[T]()`, \

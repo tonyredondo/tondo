@@ -2488,9 +2488,10 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   `unchecked` o `checked`, `arithmetic`; `unrolled` o `looped`, un bucle
   contado que corre cuatro vueltas a la vez, o por qué una; `reserved` o
   `grown`, un `push` cuyo array toma antes del bucle sitio para cada vuelta,
-  o un `x = []` de un array, o `x = Deque[T]()` de un deque, que lo vacía
-  donde está y le deja su sitio para lo que después se le añade, si nada más
-  lo tiene y ese sitio no pasa de 64 KiB; o por qué crece al empujarlo; `lent` o `counted`, un elemento que un
+  o un `x = []` de un array, `x = Deque[T]()` de un deque, `x = [:]` de un
+  mapa o `x = Set[T]()` de un conjunto, que lo vacía donde está y le deja su
+  sitio para lo que después se le añade, si nada más lo tiene y ese sitio no
+  pasa de 64 KiB; o por qué crece al empujarlo; `lent` o `counted`, un elemento que un
   bucle lee y no cuenta, pues su array lo tiene, o por qué cuenta; y
   `hoisted` o `reloaded`, la longitud de un texto o un array que un bucle
   lee una vez, antes del bucle, porque el bucle no puede cambiarlo, o por
@@ -2501,18 +2502,20 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   toolchain (estado 3).
 - `region`: dónde va lo que asigna cada sitio, en una región, memoria que
   un marco toma moviendo un puntero y devuelve entera al terminar, o en el
-  heap. Va en la región de la función que lo hace si nada lo guarda más
-  allá de la llamada, aunque lo guarde de una vuelta a otra un array o un
-  deque al que el bucle solo añade con `push` o `pushFront`, o un array o un
-  deque que el bucle vacía, con `x = []`, `x = Deque[T]()` o `x.clear()`, y
-  vuelve a llenar, que en una región guarda su sitio sea cual sea, y no lo
-  que un mapa guarda de una vuelta a otra, que se queda en el heap, o sea el
-  texto que el bucle amplía en su
-  sitio, `x = "{x}..."`, si mientras crece no lo guarda nada más que su
-  variable y esos arrays, o en la de una vuelta de un bucle si no
-  sobrevive a la vuelta, o solo la sobrevive por una salida del bucle que no
-  vuelve a él, como la de un `?` o un `return`, pues la región de una vuelta
-  se vacía al volver a la cabeza del bucle y se deja al volver la función,
+  heap. Un array, un deque, un mapa o un conjunto que el bucle vacía, con
+  `x = []`, `x = Deque[T]()`, `x = [:]`, `x = Set[T]()` o `x.clear()`, y
+  vuelve a llenar sigue donde iría sin vaciarse, y en una región guarda su
+  sitio sea cual sea. Va en la región de la función que lo hace si nada lo
+  guarda más allá de la llamada, aunque lo guarde de una vuelta a otra un
+  array o un deque al que el bucle solo añade con `push` o `pushFront`, o
+  que vacía así y vuelve a llenar, pero no lo que un mapa o un conjunto
+  guarda de una vuelta a otra, que se queda en el heap, o aunque sea el
+  texto que el bucle amplía en su sitio, `x = "{x}..."`, si mientras crece
+  no lo guarda nada más que su variable y esos arrays, o en la de una vuelta
+  de un bucle si no sobrevive a la vuelta, o solo la sobrevive por una
+  salida del bucle que no vuelve a él, como la de un `?` o un `return`, pues
+  la región de una vuelta se vacía al volver a la cabeza del bucle y se deja
+  al volver la función,
   y nombra el bucle por su línea; en una que le da quien la llama
   si la función solo lo devuelve, nuevo, y quienes lo toman tampoco lo
   guardan, y si unas llamadas lo sueltan y otras lo guardan, en una copia
@@ -2526,13 +2529,15 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   como la variable que la vuelta siguiente reescribe, contiene un valor que
   su región no hizo, contiene un objeto del runtime, que un valor de una
   región nunca soltaría, se cambia de un modo que una región no toma aún, como
-  un mapa que cambia más que con sus inserciones, sus borrados, `x.clear()` y
-  los valores de sus entradas, un array que cambia más que con `push`,
+  un mapa que cambia más que con sus inserciones, sus borrados, `x = [:]`,
+  `x.clear()` y los valores de sus entradas, un array que cambia más que con
+  `push`,
   `pop`, `x = []`, `x.clear()` y la escritura de sus elementos o un deque que
   cambia más que con `push`, `pushFront`, `pop`, `popFront`,
   `x = Deque[T]()`, `x.clear()` y la escritura de sus elementos, y nombra el
-  cambio, se vacía con `x = []`, `x = Deque[T]()` o `x.clear()` en `main`, en
-  una función que se exporta o en el cuerpo de una tarea, donde el pase no lo
+  cambio, se vacía con `x = []`, `x = Deque[T]()`, `x = [:]`,
+  `x = Set[T]()` o `x.clear()` en `main`, en una función que se exporta o en
+  el cuerpo de una tarea, donde el pase no lo
   pone en una región, que duraría lo que el programa o la tarea, y nombra la
   función, se pasa
   a una función del runtime cuyo código aún no se ha leído, y la nombra,

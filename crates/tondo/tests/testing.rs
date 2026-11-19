@@ -2757,8 +2757,24 @@ test counted {
     console.println(\"mapOnce {testing.allocations(() { mapped(1, false) })}\")
     console.println(\"map {testing.allocations(() { mapped(10, false) })}\")
     console.println(\"mapLiteral {testing.allocations(() { mapped(10, true) })}\")
-    console.println(\"setOnce {testing.allocations(() { setted(1) })}\")
-    console.println(\"set {testing.allocations(() { setted(10) })}\")
+    console.println(\"setOnce {testing.allocations(() { setted(1, false) })}\")
+    console.println(\"set {testing.allocations(() { setted(10, false) })}\")
+    console.println(\"setLiteral {testing.allocations(() { setted(10, true) })}\")
+    console.println(\"bigMapOnce {testing.allocations(() { bigMap(1) })}\")
+    console.println(\"bigMap {testing.allocations(() { bigMap(3) })}\")
+}
+
+fn bigMap(turns: Int): Int {
+    var total = 0
+    var seen: Map[Int, Int] = [:]
+    for _ in 0..turns {
+        for n in 0..5000 {
+            seen[n] = n
+        }
+        total += seen.length()
+        seen = [:]
+    }
+    total
 }
 
 fn mapped(turns: Int, literal: Bool): Int {
@@ -2778,7 +2794,7 @@ fn mapped(turns: Int, literal: Bool): Int {
     total
 }
 
-fn setted(turns: Int): Int {
+fn setted(turns: Int, literal: Bool): Int {
     var total = 0
     var seen = Set[Int]()
     for _ in 0..turns {
@@ -2786,7 +2802,11 @@ fn setted(turns: Int): Int {
             seen.insert(n)
         }
         total += seen.length()
-        seen.clear()
+        if literal {
+            seen = Set[Int]()
+        } else {
+            seen.clear()
+        }
     }
     total
 }
@@ -2900,10 +2920,12 @@ fn rounds(length: Int): Int {
         assert_eq!((of("small"), of("large"), of("clearing")), (1, rounds, 1), "{counts:?}");
         assert_eq!(of("queueSmall"), of("queueSmallOnce"), "{counts:?}");
         assert_eq!(of("queueLarge"), of("queueLargeOnce") * rounds, "{counts:?}");
-        // A map or a set cleared keeps its entries' room and its table's
-        // size, and one emptied by `[:]` is a new one each time.
-        assert_eq!((of("map"), of("set")), (of("mapOnce"), of("setOnce")), "{counts:?}");
-        assert_eq!(of("mapLiteral"), of("mapOnce") * 10, "{counts:?}");
+        // A map or a set cleared, or emptied by `[:]` or `Set[T]()`, keeps
+        // its entries' room and its table's size: past 64 KiB, but in a
+        // region, `[:]` gives it back.
+        assert_eq!((of("map"), of("mapLiteral")), (of("mapOnce"), of("mapOnce")), "{counts:?}");
+        assert_eq!((of("set"), of("setLiteral")), (of("setOnce"), of("setOnce")), "{counts:?}");
+        assert_eq!(of("bigMap"), of("bigMapOnce") * rounds, "{counts:?}");
     }
 }
 

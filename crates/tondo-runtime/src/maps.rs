@@ -547,14 +547,19 @@ pub unsafe extern "C" fn tondo_rt_map_remove(
     }
 }
 
-/// Removes every entry of the map or set in `slot`.
+/// Removes every entry of the map or set in `slot`, keeping its room when
+/// nothing else holds it and the room is at most `kept` bytes, or the map
+/// is a region's; else `slot` takes the empty map.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_map_clear(slot: *mut *mut MapObject, glue: *const MapGlue) {
+pub unsafe extern "C" fn tondo_rt_map_clear(slot: *mut *mut MapObject, glue: *const MapGlue, kept: usize) {
     unsafe {
         let m = *slot;
         // A map alone in its region, which carries the region's mark in its
-        // count, is emptied in place as one alone on the heap is.
-        if !regions::only(&(*m).rc) {
+        // count, is emptied in place as one alone on the heap is, and keeps
+        // its room past `kept` bytes there, as a region would keep a room
+        // given back to its end.
+        let room = (*m).entries.cap + ((*m).hashes.cap + (*m).table.cap) * 8;
+        if !regions::only(&(*m).rc) || room > kept && !(*m).in_region() {
             *slot = (&raw const EMPTY).cast_mut();
             tondo_rt_map_release(m, glue);
             return;

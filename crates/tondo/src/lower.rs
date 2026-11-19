@@ -141,8 +141,9 @@ pub(crate) fn may_panic(statement: &Statement) -> bool {
                     | Rvalue::Restart(_)
                     | Rvalue::Transfer(_)
                     | Rvalue::OsrPoint => false,
-                    // The empty array, which `Array[T]()` is.
-                    Rvalue::ArrayOp(hir::ArrayOp::New, ..) => false,
+                    // The empty array, which `Array[T]()` is, and the empty
+                    // map or set, `[:]` and `Set[T]()`.
+                    Rvalue::ArrayOp(hir::ArrayOp::New, ..) | Rvalue::MapOp(hir::MapOp::New, ..) => false,
                     Rvalue::Call(hir::Callee::Std(hir::StdFn::Number(op)), _) => op.may_panic(),
                     Rvalue::Call(hir::Callee::Std(hir::StdFn::Simd(op)), _) => op.may_panic(),
                     // What codegen writes in place, which never panics.

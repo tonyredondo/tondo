@@ -8195,3 +8195,10 @@ table's size now, every slot empty, so that a cleared map keeps its room
 as a cleared array and deque always have. What a map keeps from turn to
 turn stays on the heap: only arrays and deques keep the function's
 region's values across turns, and 7.12 says so.
+
+The other way of emptying a map, `m = [:]`, or a set, `s = Set[T]()`,
+made a new one each time: ten refills of a hundred entries took 210
+allocations. F's pattern takes them now as it takes `x = []`, with the
+same 64 KiB bound counted over the entries', hashes' and table's room,
+and ten refills take 21, as `clear()` does: for all four collections the
+two ways of emptying agree.

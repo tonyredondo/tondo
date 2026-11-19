@@ -2,11 +2,12 @@
 // the next turn of a loop does, empties it in place and keeps its room when
 // nothing else holds it, rather than growing it again from nothing
 // (crates/tondo/tests/testing.rs counts it, and that room past 64 KiB is
-// given back). What else holds it keeps what it held: a copy, a closure that
-// took it, a slice, the array it was pushed to, a map it was stored in. An
-// error or a panic between the `= []` and the next push leaves a valid array
-// behind, and so does an array that moved away just before it, as `map`
-// takes one it reads last. Where nothing pushes to it after, or the array is lent to a loop,
+// given back), and so does `x = [:]` on a map. What else holds it keeps
+// what it held: a copy, a closure that took it, a slice, the array or map it
+// was pushed to, a map it was stored in. An error or a panic between the
+// `= []` and the next push leaves a valid array behind, and so does an
+// array that moved away just before it, as `map` takes one it reads last.
+// Where nothing pushes to it after, or the array is lent to a loop,
 // `x = []` is as ever; and `clear()` of a shared array or deque leaves the
 // other holder its elements.
 
@@ -147,6 +148,19 @@ fn cleared(): String {
     "{first} {second} {queue} {other}"
 }
 
+fn counted(items: Array[String]): String {
+    var kept: Array[Map[String, Int]] = []
+    var counts: Map[String, Int] = [:]
+    for word in items {
+        counts[word, default: 0] += 1
+        if counts.length() == 2 {
+            kept.push(counts)
+            counts = [:]
+        }
+    }
+    "{kept} {counts}"
+}
+
 fn main() {
     console.println("{words("one two three")}")
     console.println("{groups(["a", "b", "|", "c", "|", "|", "d"])}")
@@ -165,6 +179,7 @@ fn main() {
     console.println(listed(["- a", "- b", "x", "- c"]))
     console.println(last("abc"))
     console.println("{lent()} {cleared()}")
+    console.println(counted(["a", "b", "a", "c", "d"]))
 }
 
 // expect-stdout: [one, two, three]
@@ -180,11 +195,13 @@ fn main() {
 // expect-stdout: <ul><li>a</li><li>b</li></ul><p>x</p><ul><li>c</li></ul>
 // expect-stdout: abc 0
 // expect-stdout: [0, 1] [4] [1, 2, 3] [0] [1]
-// expect-optimization: 21:13 reserved empties the array in place
-// expect-optimization: 36:13 reserved empties the array in place
-// expect-optimization: 55:9 reserved empties the array in place
-// expect-optimization: 70:9 reserved empties the array in place
-// expect-optimization: 85:13 reserved empties the array in place
-// expect-optimization: 102:13 reserved empties the array in place
-// expect-no-optimization: 119:5 reserved
-// expect-no-optimization: 130:9 reserved
+// expect-stdout: [[a: 1, b: 1], [a: 1, c: 1]] [d: 1]
+// expect-optimization: 22:13 reserved empties the array in place
+// expect-optimization: 37:13 reserved empties the array in place
+// expect-optimization: 56:9 reserved empties the array in place
+// expect-optimization: 71:9 reserved empties the array in place
+// expect-optimization: 86:13 reserved empties the array in place
+// expect-optimization: 103:13 reserved empties the array in place
+// expect-no-optimization: 120:5 reserved
+// expect-no-optimization: 131:9 reserved
+// expect-optimization: 158:13 reserved empties the map in place

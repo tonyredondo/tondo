@@ -10,8 +10,9 @@
 //! array takes much more room than its elements. The room is a hint, which
 //! the runtime takes when the system has it (`tondo_rt_array_reserve`).
 //!
-//! And room kept for what a loop pushes again: `x = []` on an array, or
-//! `x = Deque[T]()` on a deque, that a push may fill again, as the next
+//! And room kept for what a loop puts in again: `x = []` on an array,
+//! `x = Deque[T]()` on a deque, or `x = [:]` and `x = Set[T]()` on a map
+//! and a set, that a push or an insertion may fill again, as the next
 //! turn of a loop does, empties it where it is, keeping its room, when
 //! nothing else holds it, rather than giving it up for the empty one and
 //! growing again from nothing. What else holds it, a copy, a capture, a
@@ -73,11 +74,12 @@ pub fn reserve(bodies: &mut [Body], types: &Types) {
     });
 }
 
-/// `x = []`, `x = Array[T]()` or `x = Deque[T]()`, as the lowering makes
-/// it, `empty = []`, `old = x`, `x = empty` and `release old`, becomes the
-/// mutation that empties `x` in place, where `x` is the function's own
-/// array or deque, which no binding borrows from, and a push, `pushFront`
-/// or `insert` to it may follow before it is written whole.
+/// `x = []`, `x = Array[T]()`, `x = Deque[T]()`, `x = [:]` or
+/// `x = Set[T]()`, as the lowering makes it, `empty = []`, `old = x`,
+/// `x = empty` and `release old`, becomes the mutation that empties `x` in
+/// place, where `x` is the function's own collection, which no binding
+/// borrows from, and a push, `pushFront`, `insert` or insertion into it may
+/// follow before it is written whole.
 fn empties(body: &mut Body, types: &Types) {
     let locals = body.locals.len();
     let (mut reads, mut writes, mut foreign) = (vec![0; locals], vec![0; locals], vec![false; locals]);
@@ -123,6 +125,7 @@ fn empties(body: &mut Body, types: &Types) {
             let fresh = match &**made {
                 Rvalue::Array(list, _) => list.is_empty(),
                 Rvalue::ArrayOp(crate::hir::ArrayOp::New, list, _) => list.is_empty(),
+                Rvalue::MapOp(crate::hir::MapOp::New, list, _) => list.is_empty(),
                 _ => false,
             };
             if fresh
@@ -132,7 +135,10 @@ fn empties(body: &mut Body, types: &Types) {
                 && once(empty)
                 && once(old)
                 && !foreign[array.0 as usize]
-                && matches!(types.kind(types.repr(body.locals[array.0 as usize])), TyKind::Array(_) | TyKind::Deque(_))
+                && matches!(
+                    types.kind(types.repr(body.locals[array.0 as usize])),
+                    TyKind::Array(_) | TyKind::Deque(_) | TyKind::Map(..) | TyKind::Set(_)
+                )
                 && refilled(&body.blocks, block, at + 4, array)
             {
                 found.push((block, at, array, *span));
@@ -141,12 +147,16 @@ fn empties(body: &mut Body, types: &Types) {
     }
     // From the last, so that the places of those before stay as they are.
     for (block, at, array, span) in found.into_iter().rev() {
-        let deque = matches!(types.kind(types.repr(body.locals[array.0 as usize])), TyKind::Deque(_));
+        let (what, added) = match types.kind(types.repr(body.locals[array.0 as usize])) {
+            TyKind::Deque(_) => ("deque", "pushed"),
+            TyKind::Map(..) => ("map", "inserted"),
+            TyKind::Set(_) => ("set", "inserted"),
+            _ => ("array", "pushed"),
+        };
         crate::mir_text::remark(body, span, "reserved", || {
             format!(
-                "empties the {} in place, keeping its room for what is pushed after it, when nothing else holds it \
-                 and its room is small",
-                if deque { "deque" } else { "array" }
+                "empties the {what} in place, keeping its room for what is {added} after it, when nothing else \
+                 holds it and its room is small"
             )
         });
         if crate::mir_text::noting(&body.name) {
@@ -160,11 +170,12 @@ fn empties(body: &mut Body, types: &Types) {
     }
 }
 
-/// Whether a push, `pushFront` or `insert` to `array` may follow statement
-/// `from` of `block`, before `array` is written whole.
+/// Whether a push, `pushFront` or `insert` to `array`, or an insertion
+/// into a map or a set, may follow statement `from` of `block`, before
+/// `array` is written whole.
 fn refilled(blocks: &[BlockData], block: usize, from: usize, array: Local) -> bool {
     let grows = |rvalue: &Rvalue| {
-        matches!(rvalue, Rvalue::Mutate(Mutation::Push | Mutation::PushFront | Mutation::InsertAt, target, ..)
+        matches!(rvalue, Rvalue::Mutate(Mutation::Push | Mutation::PushFront | Mutation::InsertAt | Mutation::Insert, target, ..)
             if target.local == array && target.path.is_empty())
     };
     let mut seen = vec![false; blocks.len()];

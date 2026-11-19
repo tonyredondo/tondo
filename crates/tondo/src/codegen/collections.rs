@@ -343,9 +343,14 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let (key, value) = self.e.cg.map_parts(map_ty);
         let is_set = matches!(self.e.cg.types().kind(self.e.cg.types().repr(map_ty)), TyKind::Set(_));
         let glue = self.e.map_glue_address(map_ty);
-        if mutation == Mutation::Clear {
+        if matches!(mutation, Mutation::Clear | Mutation::Empty) {
+            let kept = match mutation {
+                Mutation::Empty => crate::reserve::KEPT_ROOM,
+                _ => i64::MAX,
+            };
+            let kept = self.e.fb.ins().iconst(POINTER, kept);
             let (slot, spilled) = self.array_slot(target);
-            self.e.call_rt(Rt::MapClear, &[slot, glue]);
+            self.e.call_rt(Rt::MapClear, &[slot, glue, kept]);
             if let Some(var) = spilled {
                 self.unspill(var, slot);
             }

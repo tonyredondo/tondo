@@ -1,13 +1,14 @@
-// An array that a loop empties with `x = []` and fills again (MIR `Mutate`,
-// the emptying): in the region of a turn of the loop around it, in its
-// function's region, given to an array the function returns before it is
-// emptied, moved away just before it, as `map` takes an array it reads
-// last, with texts taken out of it by index and read after it is emptied
-// and filled again in its room, and past 64 KiB, whose room a region
-// keeps; and in `main` and in
-// the body of a task and a function C calls, whose regions last as long as
-// the program, the task and maybe the program, where it stays on the heap. What each made holds what it held once
-// the regions that made the rest are gone and their memory reused.
+// A collection that a loop empties with `x = []` (MIR `Mutate`, the
+// emptying), `x = Deque[T]()`, `x = [:]` or `x = Set[T]()`, and fills again:
+// in the region of a turn of the loop around it, in its function's region,
+// given to an array the function returns before it is emptied, moved away
+// just before it, as `map` takes an array it reads last, with texts taken
+// out of it by index and read after it is emptied and filled again in its
+// room, and past 64 KiB, whose room a region keeps; and in `main`, in the
+// body of a task and in a function C calls, whose regions may last as long
+// as the program or the task, where it stays on the heap. What each made
+// holds what it held once the regions that made the rest are gone and their
+// memory reused.
 
 import std.console
 import std.ffi
@@ -176,6 +177,23 @@ fn queued(lines: Array[String]): String {
     "{out}"
 }
 
+fn tallied(lines: Array[String]): String {
+    var out: Array[Int] = []
+    var counts: Map[Int, Int] = [:]
+    var seen = Set[Int]()
+    for line in lines {
+        for letter in line.chars() {
+            let code = letter.code()
+            counts[code, default: 0] += 1
+            seen.insert(code)
+        }
+        out.push(counts.length() * 100 + seen.length() * 10 + (counts[97] ?? 0))
+        counts = [:]
+        seen = Set[Int]()
+    }
+    "{out}"
+}
+
 fn main() {
     let lines = counted("a bb ccc\nd ee\nfff")
     let slugged = slug("one two three")
@@ -197,25 +215,31 @@ fn main() {
     let task = spawn worker("xy zwv q")
     console.println("{total + line.length()} {task.wait()} {widest(1234)} {noise()} {lines} {grouped}")
     console.println(queued(["a", "b", "c", "d", "e"]))
+    console.println(tallied(["banana", "abc", "", "aaa"]))
 }
 
 // expect-stdout: 1800 [2:ccc, 1:ee, 0:fff] one-two-three [[<a>, <b>], [<c>], [], [<d>]] 60000 <ul><li>a!</li><li>b!</li></ul><p>x</p><ul><li>c!</li></ul> [a]+<b>+[a]<b> [c]+<d>+[c]<d>
 // expect-stdout: 7 3 4 1800 [2:ccc, 1:ee, 0:fff] [[<a>, <b>], [<c>], [], [<d>]]
 // expect-stdout: [20, 20]
-// expect-optimization: 33:17 reserved empties the array in place
-// expect-optimization: 86:13 reserved empties the array in place
-// expect-optimization: 108:9 reserved empties the array in place
-// expect-optimization: 173:13 reserved empties the deque in place
-// expect-optimization: 35:17 region goes in the region of a turn of the loop at line 27
-// expect-optimization: 51:13 region goes in a region of `slug`
-// expect-optimization: 70:13 region goes in a region that the caller of `groups` gives
-// expect-optimization: 89:13 region goes in a region of `listed`
-// expect-optimization: 89:24 region goes in a region of `listed`
-// expect-optimization: 101:9 region goes in a region of `taken`
-// expect-optimization: 101:20 region goes in a region of `taken`
-// expect-optimization: 122:13 region goes in a region of `large`
-// expect-optimization: 144:13 region goes in a region of `worker`
-// expect-optimization: 144:13 region it is emptied in `spawn worker`, the body of a task, whose region lasts as long as the task
-// expect-optimization: 159:13 region it is emptied in `widest`, which code outside the program calls
-// expect-optimization: 169:9 region goes in a region of `queued`
-// expect-optimization: 194:13 region it is emptied in `main`, whose region lasts as long as the program
+// expect-stdout: [333, 331, 0, 113]
+// expect-optimization: 34:17 reserved empties the array in place
+// expect-optimization: 87:13 reserved empties the array in place
+// expect-optimization: 109:9 reserved empties the array in place
+// expect-optimization: 174:13 reserved empties the deque in place
+// expect-optimization: 36:17 region goes in the region of a turn of the loop at line 28
+// expect-optimization: 52:13 region goes in a region of `slug`
+// expect-optimization: 71:13 region goes in a region that the caller of `groups` gives
+// expect-optimization: 90:13 region goes in a region of `listed`
+// expect-optimization: 90:24 region goes in a region of `listed`
+// expect-optimization: 102:9 region goes in a region of `taken`
+// expect-optimization: 102:20 region goes in a region of `taken`
+// expect-optimization: 123:13 region goes in a region of `large`
+// expect-optimization: 145:13 region goes in a region of `worker`
+// expect-optimization: 145:13 region it is emptied in `spawn worker`, the body of a task, whose region lasts as long as the task
+// expect-optimization: 160:13 region it is emptied in `widest`, which code outside the program calls
+// expect-optimization: 170:9 region goes in a region of `queued`
+// expect-optimization: 187:13 region changes a map that goes in a region of `tallied`
+// expect-optimization: 188:13 region grows a map that goes in a region of `tallied`
+// expect-optimization: 191:9 reserved empties the map in place
+// expect-optimization: 192:9 reserved empties the set in place
+// expect-optimization: 212:13 region it is emptied in `main`, whose region lasts as long as the program
