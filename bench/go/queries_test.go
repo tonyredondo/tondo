@@ -232,6 +232,11 @@ func BenchmarkTexts(b *testing.B) {
 			sinkString = strings.TrimSpace(padded)
 		}
 	})
+	b.Run("trim read", func(b *testing.B) {
+		for b.Loop() {
+			sinkInt = len(strings.TrimSpace(padded))
+		}
+	})
 	b.Run("toUpper ascii", func(b *testing.B) {
 		for b.Loop() {
 			sinkString = strings.ToUpper(ascii)

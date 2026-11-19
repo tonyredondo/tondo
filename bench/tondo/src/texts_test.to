@@ -29,6 +29,7 @@ test texts {
     testing.bench("replace other", () { other.replace("más", "menos") })
     let padded = "   {Ascii}\t\n"
     testing.bench("trim", () { padded.trim() })
+    testing.bench("trim read", () { padded.trim().byteLength() })
     testing.bench("toUpper ascii", () { ascii.toUpper() })
     testing.bench("toUpper other", () { other.toUpper() })
     let words = Ascii.split(" ").repeat(10)

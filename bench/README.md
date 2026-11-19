@@ -180,9 +180,12 @@ The rows still behind Go, and why:
   gives a text with nothing to trim back as it is (a2d299d7), 355
   instructions where it ran 492, against Go's 115. A trimmed text is still
   a new one holding its bytes, where Go's is a view of the old: a region
-  takes it, which costs the heap nothing, but the call and the copy remain,
-  and views of texts, lent where they do not outlive their text, are one of
-  the two ways of texts before Tony.
+  takes it, which costs the heap nothing, but the call and the copy remain.
+  `texts/trim read` measures the commoner case, a trimmed text only read,
+  `padded.trim().byteLength()` against `len(strings.TrimSpace(padded))`:
+  Tondo copies that part too, where Go reads the old bytes. A view of the
+  text would close both; lending a part only read was built, measured and
+  set aside, as `docs/decisions.md` says.
 - `texts/chars ascii` and `other`: the loop reads an ASCII character in
   place and the text's length once, before it, but checks its count for
   overflow each turn and jumps twice for each ASCII character, out of the
