@@ -290,6 +290,19 @@ $ tondo profile todo --cpu --duration 1 --output cpu2.pb.gz --json
 {"duration_ms":1016,"ended":null,"format":"tondo-profile-0.1/1","kind":"cpu","lost":0,"ok":true,"processor_ms":13,"profile":"cpu2.pb.gz","samples":15}
 ```
 
+A program that waits takes no processor, so its profile has no sample. The
+command says what the program took and where to look instead, which is its
+tasks:
+
+```text
+$ tondo profile todo --cpu --duration 1 --output quiet.pb.gz
+tondo: 0 samples: quiet.pb.gz; `tondo profile show quiet.pb.gz` shows where; no sample: the program took 321us of processor time while it was profiled, too little to be sampled: it waited; `tondo profile todo --tasks` shows where
+```
+
+In the JSON that reason is `no_samples`. A profile that took processor time
+and still has no sample says that it is the profiler's fault and not the
+program's, and to profile again.
+
 | | |
 | --- | --- |
 | `--cpu` | where processor time goes |
