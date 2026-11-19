@@ -1,0 +1,67 @@
+// An array made in the region of a turn of a loop and given to a function
+// that takes it, which writes its elements in place where no region is:
+// each write finds it the only reference, as it is, whichever home its
+// count tells, and changes it where it lives, rather than call the runtime
+// to learn so. Its elements swapped, sorted by the standard library, which
+// takes it too, and grown past its room, which moves it to the heap.
+
+import std.console
+
+fn reversed(items: Array[Int]): Array[Int] {
+    var all = items
+    let last = all.length() - 1
+    for at in 0..all.length() / 2 {
+        let kept = all[at]
+        all[at] = all[last - at]
+        all[last - at] = kept
+    }
+    if all.length() > 100000 {
+        console.println("many {all.length()} {all.length() * 2} {all.length() * 3}")
+        console.println("many {all.length() + 1} {all.length() + 2} {all.length() + 3}")
+        console.println("many {all.length() - 1} {all.length() - 2} {all.length() - 3}")
+    }
+    all
+}
+
+fn grownAndSet(items: Array[Int], extra: Int): Array[Int] {
+    var all = items
+    for n in 0..extra {
+        all.push(n)
+    }
+    all[0] = -1
+    if all.length() > 100000 {
+        console.println("many {all.length()} {all.length() * 2} {all.length() * 3}")
+        console.println("many {all.length() + 1} {all.length() + 2} {all.length() + 3}")
+        console.println("many {all.length() - 1} {all.length() - 2} {all.length() - 3}")
+    }
+    all
+}
+
+fn main() {
+    var keys: Map[Int, String] = [:]
+    for n in 0..20 {
+        keys[(n * 7) % 20] = "k{n}"
+    }
+    for round in 0..3 {
+        let made = [round, round + 1, round + 2, round + 3]
+        console.println("{reversed(made)}")
+        let sorted = keys.keys().collect().sorted()
+        console.println("{sorted[0]} {sorted[19]} {sorted.length()}")
+        let more = [round, round * 10]
+        console.println("{grownAndSet(more, 3)}")
+    }
+}
+
+// expect-stdout: [3, 2, 1, 0]
+// expect-stdout: 0 19 20
+// expect-stdout: [-1, 0, 0, 1, 2]
+// expect-stdout: [4, 3, 2, 1]
+// expect-stdout: 0 19 20
+// expect-stdout: [-1, 10, 0, 1, 2]
+// expect-stdout: [5, 4, 3, 2]
+// expect-stdout: 0 19 20
+// expect-stdout: [-1, 20, 0, 1, 2]
+// expect-optimization: 46:20 region goes in the region of a turn of the loop at line 45
+// expect-optimization: 47:27 given `reversed` takes it
+// expect-optimization: 50:20 region goes in the region of a turn of the loop at line 45
+// expect-optimization: 51:27 given `grownAndSet` takes it

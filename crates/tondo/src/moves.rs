@@ -33,10 +33,14 @@ fn moves_in(body: &mut Body) {
     if !body.blocks.iter().flat_map(|block| &block.stmts).any(|s| matches!(s, Statement::Retain(_))) {
         return;
     }
-    // What is not the function's own to give up.
+    // What is not the function's own to give up: a parameter it borrows,
+    // not one it takes (`takes`), and its result.
     let mut foreign = vec![false; body.locals.len()];
-    for local in body.params.iter().chain(&body.ret) {
-        foreign[local.0 as usize] = true;
+    for (at, local) in body.params.iter().enumerate() {
+        foreign[local.0 as usize] = !body.takes.get(at).copied().unwrap_or(false);
+    }
+    if let Some(ret) = body.ret {
+        foreign[ret.0 as usize] = true;
     }
     for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
         match statement {

@@ -168,6 +168,10 @@ pub struct Body {
     /// Parameters passed as the address of the caller's place (a `mut self`
     /// or `var self` loan); reads and writes go through it.
     pub loans: Vec<bool>,
+    /// Parameters the function takes rather than borrows (`takes`): every
+    /// call gives each a reference, which the function releases where it
+    /// returns, unless it moved it. Empty when it takes none.
+    pub takes: Vec<bool>,
     /// The local that holds the result, unless it is `Unit` or `Never`.
     pub ret: Option<Local>,
     pub result: Ty,

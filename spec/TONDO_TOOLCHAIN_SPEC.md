@@ -2454,8 +2454,10 @@ del programa, sin generarlo: en cada sitio, qué llamadas copia en su lugar y
 cuáles deja como llamadas, y por qué; qué textos y closures hace en el frame,
 sin el heap, y qué retiene en el heap a los demás; qué más hace en el heap:
 los arrays cuyos valores no son todos constantes (uno de constantes va en los
-datos del programa), los mapas y los sets, los slices, que copian su parte, y
-la caja de un valor cuyo tipo se contiene a sí mismo; qué comprobaciones de
+datos del programa), los mapas y los sets, los slices, que copian su parte,
+la caja de un valor cuyo tipo se contiene a sí mismo, y el cambio de un valor
+que también tiene un parámetro, que se copia, y por qué la función no lo
+toma; qué comprobaciones de
 límites y de desbordamiento quita y cuáles deja en un bucle, donde cuestan
 más; y qué productos y divisiones hace sin multiplicar ni dividir. Sirve para
 ver, antes de medir, por qué un código asigna o comprueba más de lo que se
@@ -2492,7 +2494,11 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   mapa o `x = Set[T]()` de un conjunto, que lo vacía donde está y le deja su
   sitio para lo que después se le añade, si nada más lo tiene y ese sitio no
   pasa de 64 KiB; o por qué crece al empujarlo; `lent` o `counted`, un elemento que un
-  bucle lee y no cuenta, pues su array lo tiene, o por qué cuenta; y
+  bucle lee y no cuenta, pues su array lo tiene, o por qué cuenta; `given` o
+  `retained`, un argumento de una función que lo toma, la que lo copia en un
+  local que luego cambia o lo devuelve cambiado: se le da sin contarlo
+  cuando quien llama ya no lo lee, o se cuenta antes, y dice por qué: dónde
+  se lee después, o quién más lo tiene; y
   `hoisted` o `reloaded`, la longitud de un texto o un array que un bucle
   lee una vez, antes del bucle, porque el bucle no puede cambiarlo, o por
   qué la lee en cada vuelta. Un sitio que una región toma en todas sus

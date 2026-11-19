@@ -28,7 +28,7 @@ pub fn verify(stage: &str, bodies: &[Body], types: &Types, sources: &crate::sour
         return;
     }
     for body in bodies {
-        if let Some(problem) = unassigned(body, types).or_else(|| moved_read(body)) {
+        if let Some(problem) = unassigned(body, types).or_else(|| moved_read(body)).or_else(|| taken_once(body)) {
             let text = crate::mir_text::text(body, types, sources);
             panic!("the MIR of `{}` after {stage} {problem}\n{text}", body.name);
         }
@@ -298,6 +298,100 @@ fn read_besides_target(statement: &Statement, place: &Place) -> bool {
         read |= overlap(seen_place, place);
     });
     read
+}
+
+/// What a taken parameter holds at a point: the reference its caller gave,
+/// or none, released or moved away.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Taken {
+    Owned,
+    Released,
+    Moved,
+}
+
+/// Where a function lets go of a parameter it takes (`takes`) other than
+/// once on every way out: it releases it twice, reads it once released,
+/// returns still holding it, or comes to one block holding it on one way
+/// and not on another.
+pub fn taken_once(body: &Body) -> Option<String> {
+    for (at, &param) in body.params.iter().enumerate() {
+        if !body.takes.get(at).copied().unwrap_or(false) {
+            continue;
+        }
+        let names = |statement: &Statement| {
+            let (mut used, mut defined) = (Vec::new(), Vec::new());
+            statement_locals(statement, &mut used, &mut defined);
+            used.contains(&param) || defined.contains(&param)
+        };
+        // A copy of it, or of a part, that the parameter's every other
+        // naming after, in its block or in any other, is a copy of a part
+        // too: as the moves pass leaves a move it found released at once
+        // (`drop_released_moves`), and `split` takes that copy field by
+        // field. The copies hold its reference.
+        let part_copy = |statement: &Statement| {
+            matches!(statement, Statement::Assign(target, value, _)
+                if target.local != param
+                    && matches!(&**value, Rvalue::Use(Operand::Copy(source)) if source.local == param))
+        };
+        let handed = |block: usize, index: usize| {
+            body.blocks.iter().enumerate().all(|(other, data)| {
+                let statements = if other == block { &data.stmts[index + 1..] } else { &data.stmts[..] };
+                let mut used = Vec::new();
+                terminator_uses(&data.terminator, &mut used);
+                !used.contains(&param) && statements.iter().all(|statement| !names(statement) || part_copy(statement))
+            })
+        };
+        let mut entry: Vec<Option<Taken>> = vec![None; body.blocks.len()];
+        entry[0] = Some(Taken::Owned);
+        let mut pending = vec![0usize];
+        while let Some(block) = pending.pop() {
+            let mut state = entry[block].expect("a block reached");
+            for (index, statement) in body.blocks[block].stmts.iter().enumerate() {
+                if part_copy(statement) && state == Taken::Owned && handed(block, index) {
+                    state = Taken::Moved;
+                    continue;
+                }
+                let (mut used, mut defined) = (Vec::new(), Vec::new());
+                statement_locals(statement, &mut used, &mut defined);
+                state = match (statement, state) {
+                    (Statement::Release(place), Taken::Owned) if place.local == param && place.path.is_empty() => {
+                        Taken::Released
+                    }
+                    (Statement::Release(place), Taken::Released) if place.local == param => {
+                        return Some(format!("releases its parameter `l{}` twice, in b{block}", param.0));
+                    }
+                    (Statement::Release(place), Taken::Moved) if place.local == param => Taken::Moved,
+                    (Statement::Moved(place), _) if place.local == param && place.path.is_empty() => Taken::Moved,
+                    (Statement::Clear(local), _) if *local == param => Taken::Moved,
+                    (_, Taken::Released) if used.contains(&param) => {
+                        return Some(format!("reads its parameter `l{}` after releasing it, in b{block}", param.0));
+                    }
+                    (_, state) => state,
+                };
+            }
+            let data = &body.blocks[block];
+            if matches!(data.terminator, Terminator::Return(_)) && state == Taken::Owned {
+                return Some(format!("returns from b{block} still holding its parameter `l{}`", param.0));
+            }
+            for next in successors(&data.terminator) {
+                match entry[next] {
+                    None => {
+                        entry[next] = Some(state);
+                        pending.push(next);
+                    }
+                    Some(before) if before != state => {
+                        return Some(format!(
+                            "comes to b{next} holding its parameter `l{}` on one way ({before:?}) and not on another \
+                             ({state:?})",
+                            param.0
+                        ));
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]

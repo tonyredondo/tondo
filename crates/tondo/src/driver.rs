@@ -1629,10 +1629,14 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, program: &crate::hir::Program, s
     after("elide", bodies, types, sources);
     crate::thread::thread(bodies, types);
     after("thread", bodies, types, sources);
+    crate::takes::takes(bodies, types, program);
+    after("takes", bodies, types, sources);
     crate::lends::lends(bodies, types);
     after("lends", bodies, types, sources);
     crate::moves::moves(bodies, types, sources);
+    crate::takes::settle(bodies);
     after("moves", bodies, types, sources);
+    crate::takes::tell(bodies, sources);
     crate::split::split(bodies, types, sources);
     after("split", bodies, types, sources);
     crate::borrowed::borrowed(bodies, types);
@@ -1745,6 +1749,8 @@ pub const OPTIMIZATION_KINDS: &[&str] = &[
     "grown",
     "lent",
     "counted",
+    "given",
+    "retained",
     "hoisted",
     "reloaded",
     "region",
@@ -1844,6 +1850,7 @@ pub fn optimizations(
             "unrolled" => "looped",
             "reserved" => "grown",
             "lent" => "counted",
+            "given" => "retained",
             "hoisted" => "reloaded",
             _ => "",
         };

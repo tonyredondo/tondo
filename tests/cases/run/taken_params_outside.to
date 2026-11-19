@@ -1,0 +1,30 @@
+// A function that copies a parameter and changes the copy, but that the
+// runtime calls as well as the program, as the `display` of a type whose
+// values are shown inside a collection, keeps borrowing it: the runtime
+// gives it no argument of its own, so the change copies, and the view says
+// why. A function of C cannot take such a parameter (E1703).
+
+import std.console
+
+type Tally = { counts: Array[Int] }
+
+impl Display for Tally {
+    fn display(self): String {
+        var shown = self
+        shown.counts.push(shown.counts.length())
+        if shown.counts.length() > 100000 {
+            console.println("many {shown.counts.length()} {shown.counts.length() * 2}")
+            console.println("many {shown.counts.length() + 1} {shown.counts.length() + 2}")
+            console.println("many {shown.counts.length() - 1} {shown.counts.length() - 2}")
+        }
+        "tally {shown.counts}"
+    }
+}
+
+fn main() {
+    let tally = Tally { counts: [4, 5] }
+    console.println("{tally.display()} {[tally]} {tally.counts}")
+}
+
+// expect-stdout: tally [4, 5, 2] [tally [4, 5, 2]] [4, 5]
+// expect-optimization: 14:9 heap as `Tally.display` is called from outside the program's code

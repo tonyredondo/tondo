@@ -320,13 +320,21 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         // the last reference of one.
         let array = self.e.fb.ins().load(POINTER, flags(), slot, 0);
         let count = self.e.fb.ins().atomic_load(types::I64, flags(), array);
-        let last = match self.e.region {
-            Some(_) => (REGION | 1) as i64,
-            None => 1,
+        let (last, other) = match self.e.region {
+            Some(_) => ((REGION | 1) as i64, 1),
+            None => (1, (REGION | 1) as i64),
         };
         let unique = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, last);
-        let (copy, done) = (self.e.fb.create_block(), self.e.fb.create_block());
-        self.e.fb.ins().brif(unique, done, &[], copy, &[]);
+        let (elsewhere, copy, done) = (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
+        self.e.fb.ins().brif(unique, done, &[], elsewhere, &[]);
+        // The only reference too, of the other home: an array of a region
+        // that a function took from its caller (`takes`), at a place of no
+        // region, or one of the heap at a region's place. The runtime would
+        // change nothing, at the cost of a call on every write.
+        self.e.fb.set_cold_block(elsewhere);
+        self.e.fb.switch_to_block(elsewhere);
+        let only = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, other);
+        self.e.fb.ins().brif(only, done, &[], copy, &[]);
         self.e.fb.set_cold_block(copy);
         self.e.fb.switch_to_block(copy);
         let size = self.e.element_size(element);

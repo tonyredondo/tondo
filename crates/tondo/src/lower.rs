@@ -510,6 +510,7 @@ fn lower_function(
         needs: function.needs,
         widest: false,
         lasting: None,
+        takes: Vec::new(),
         region: Vec::new(),
         loops: Vec::new(),
         copy_of: None,

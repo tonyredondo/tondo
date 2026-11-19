@@ -1,0 +1,174 @@
+// A function that copies a parameter into a local it then changes takes
+// it: each call gives it its argument without a count when it reads the
+// argument no more after the call, and retains it first when it does, and
+// the change is made in place rather than on a copy of what the caller
+// holds. Through two calls, in a recursive call, in each instance of a
+// generic function and through a trait's method, which reach it as direct
+// calls; with a `?` or a panic after the copy, where the parameter is let
+// go of on the way out. A function called as a value too, a closure, and
+// one that reads the parameter after copying it keep the caller's value
+// borrowed, and the change copies it, which the view says with why.
+
+import std.console
+
+type Store = { values: Map[String, Int], count: Int }
+
+fn added(store: Store, keys: Array[String]): Store {
+    var next = store
+    for key in keys {
+        next.values[key] = key.length()
+        next.count += 1
+    }
+    if next.count > 1000 {
+        console.println("many")
+    }
+    if next.count > 100000 {
+        console.println("{next.count} {next.values.length()} {next.values.keys().collect()}")
+        console.println("{next.values} many")
+    }
+    next
+}
+
+fn twice(store: Store, key: String): Store {
+    let once = added(store, [key])
+    if once.count > 100000 {
+        console.println("{once.count} {once.values.length()} {once.values.keys().collect()}")
+        console.println("{once.values} many")
+    }
+    added(once, ["{key}{key}"])
+}
+
+fn deep(store: Store, rounds: Int): Store {
+    var next = store
+    next.values["round {rounds}"] = rounds
+    next.count += 1
+    if rounds == 0 {
+        next
+    } else {
+        deep(next, rounds - 1)
+    }
+}
+
+fn grown[T](items: Array[T], item: T): Array[T] {
+    var all = items
+    all.push(item)
+    if all.length() > 1000 {
+        console.println("many {all.length()} {all.length() * 2} {all.length() * 3}")
+        console.println("many {all.length() + 1} {all.length() + 2} {all.length() + 3}")
+        console.println("many {all.length() - 1} {all.length() - 2} {all.length() - 3}")
+    }
+    all
+}
+
+trait Bumped {
+    fn bumped(self, by: Int): Self
+}
+
+impl Bumped for Store {
+    fn bumped(self, by: Int): Store {
+        var next = self
+        next.values["by {by}"] = by
+        next.count += by
+        if next.count > 100000 {
+            console.println("{next.count} {next.values.length()} {next.values.keys().collect()}")
+            console.println("{next.values} many")
+            console.println("{next.count * 2} {next.count * 3} {next.count * 4} {next.count * 5}")
+            console.println("{next.count + 2} {next.count + 3} {next.count + 4} {next.count + 5}")
+        }
+        next
+    }
+}
+
+fn bumpedTwice[T: Bumped](value: T): T {
+    value.bumped(1).bumped(2)
+}
+
+fn checked(store: Store, key: String): Store ! String {
+    var next = store
+    if key.isEmpty() {
+        fail "an empty key"
+    }
+    if key == "boom" {
+        panic("boom with {next.count}")
+    }
+    next.values[key] = 1
+    if next.count > 100000 {
+        console.println("{next.count} {next.values.length()} {next.values.keys().collect()}")
+        console.println("{next.values} many")
+    }
+    next
+}
+
+fn byValue(store: Store, key: String): Store {
+    var next = store
+    next.values[key] = 0
+    if next.count > 100000 {
+        console.println("{next.count} {next.values.length()} {next.values.keys().collect()}")
+        console.println("{next.values} many")
+    }
+    next
+}
+
+fn kept(store: Store, key: String): (Store, Int) {
+    var next = store
+    next.values[key] = 7
+    if next.count > 100000 {
+        console.println("{next.count} {next.values.length()} {next.values.keys().collect()}")
+        console.println("{next.values} many")
+    }
+    (next, store.values.length())
+}
+
+fn main() {
+    var store = Store { values: [:], count: 0 }
+    for round in 0..3 {
+        store = added(store, ["k{round}"])
+    }
+    let before = store
+    let after = added(before, ["more"])
+    console.println("{before.count} {after.count} {store.values.length()}")
+    console.println("{twice(store, "t").count} {deep(store, 2).count}")
+    console.println("{grown([1, 2], 3)} {grown(["a"], "b")}")
+    console.println("{bumpedTwice(store).count}")
+    match checked(store, "") {
+        ok(next) => console.println("{next.count}")
+        err(why) => console.println(why)
+    }
+    match recover { checked(store, "boom") } {
+        ok(_) => console.println("no panic")
+        err(p) => console.println("panicked: {p.message}")
+    }
+    let f = byValue
+    let chosen = [byValue, f]
+    var through = store
+    for round in 0..2 {
+        let pick = chosen[round]
+        through = pick(through, "v{round}")
+    }
+    console.println("{through.values.length()} {byValue(store, "w").values.length()} {store.values.length()}")
+    let grow = (items: Array[Int]) {
+        var all = items
+        all.push(9)
+        all
+    }
+    console.println("{grow([8])} {kept(store, "x").1} {store.count}")
+}
+
+// expect-stdout: 3 4 3
+// expect-stdout: 5 6
+// expect-stdout: [1, 2, 3] [a, b]
+// expect-stdout: 6
+// expect-stdout: an empty key
+// expect-stdout: panicked: boom with 3
+// expect-stdout: 5 4 3
+// expect-stdout: [8, 9] 3 3
+// expect-optimization: 125:17 given gives `store` without a count: `added` takes it
+// expect-optimization: 48:9 given `deep` takes it
+// expect-optimization: 83:5 given `Store.bumped` takes it
+// expect-optimization: 131:23 given `grown[Int]` takes it
+// expect-optimization: 131:42 given `grown[String]` takes it
+// expect-optimization: 128:17 retained the argument is read after the call, at 129:21
+// expect-optimization: 33:16 retained the argument is a parameter its caller keeps
+// expect-optimization: 133:11 retained `checked` takes it
+// expect-optimization: 104:5 heap as `byValue` is called as a value
+// expect-optimization: 114:5 heap as `kept` reads `store` after copying it

@@ -8202,3 +8202,53 @@ allocations. F's pattern takes them now as it takes `x = []`, with the
 same 64 KiB bound counted over the entries', hashes' and table's room,
 and ten refills take 21, as `clear()` does: for all four collections the
 two ways of emptying agree.
+
+## A function that changes a copy of its parameter takes it
+
+Calls borrow their arguments, so a function that copies a parameter into
+a local and changes it, as kvstore's `without` does with `var next =
+store` before removing a key, changed a value its caller still held: in
+`apply`, where `without` is inlined, the first change copied the whole
+map, though the caller most often never read its own again. In a release build such a function now takes the
+parameter, and each direct call gives it its argument: without a count
+when nothing reads the argument after the call, which the moves pass
+turns into a move, or retained first when something does, or when it is
+a parameter its own caller keeps, the state a lock keeps or a loan. The
+function lets go of it on every way out, and the change is made in place
+when it had the last reference. `tondo optimizations` tells each such
+call as `given` or `retained`, and where the argument is read after or
+who else holds it, and tells a change that copies a parameter its caller
+keeps as `heap`, with why the function does not take it.
+
+A function keeps borrowing when some code reaches it other than by a
+direct call of the program: called as a value, a closure included, or
+from outside the program's code, as `main`, a `display` the runtime
+calls, a debugger's view or a context's maker; one with a version for
+wider vectors, whose two versions one caller cannot tell apart; one that
+reads the parameter after copying it, where the copy is needed anyway;
+and one given a value made in place for the parameter. C cannot call a
+function with such a parameter (E1703). A debug build, and so a live one,
+runs none of the passes and borrows everywhere, which is why a reload
+never meets two conventions: the convention holds only between
+functions compiled together, in release builds, and nothing from outside
+calls a function that takes.
+
+The MIR's check holds every taken parameter released or moved exactly
+once on every path out, and no part of a local read after it was moved
+away until the local is written whole. Taking exposed a check that cost
+nothing before: a write by index compared an array's count with the one
+value its place expects, so an array of a turn's region that a function
+took and wrote where no region is called the runtime on every write,
+which then changed nothing. A program that only sorts the keys of a map
+in a loop ran 47% more instructions through it; the cold path now
+compares the other value before calling, and the same program runs 4%
+fewer than before taking.
+
+Against 0728aeae, both built as releases, kvstore runs 31.6% fewer
+instructions in 38% less time, with 1711 heap allocations a run where it
+made 3757 and 342526 bytes where it took 1002742: the map's copies and
+their releases, 14.6% and 15.1% of its time in its profile, are 0.4% and
+0.5%. `sort adults` and `sortedBy 10000` run 3.7% and 3.0% fewer
+instructions with one allocation less, and profiler and textkit allocate
+one less a run; no row of bench/tondo and no example runs more than 0.1%
+more.

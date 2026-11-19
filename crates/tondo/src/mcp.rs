@@ -2528,7 +2528,7 @@ checks more than it should, before measuring it.",
                 "kind",
                 "string",
                 "Only one kind: inlined, call, frame, heap, unchecked, checked, arithmetic, unrolled, looped, reserved, \
-grown, lent, counted, hoisted, reloaded, or region.",
+grown, lent, counted, given, retained, hoisted, reloaded, or region.",
             ),
             ("tests", "boolean", "The code of the tests and benchmarks, as `test` with `bench` builds it."),
             (
