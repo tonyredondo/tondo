@@ -180,13 +180,15 @@ fn given_up(body: &Body, block: usize, at: usize, source: &Place) -> bool {
     true
 }
 
-/// The local the first of `statements` copies `source` into whole, when
-/// `source` is a whole local that the next statement naming it writes
-/// whole without reading it: its old value is that local's from then on.
+/// Where `source` is held once the first of `statements` copies its local
+/// whole into another and the next statement naming its local writes it
+/// whole without reading it, as `old = x; x = new; release old` does: its
+/// old value, and the part `source` names, are the other local's from then
+/// on.
 fn handed_on(statements: &[Statement], source: &Place) -> Option<Place> {
     let Statement::Assign(target, value, _) = &statements[0] else { return None };
     let Rvalue::Use(Operand::Copy(from)) = &**value else { return None };
-    if !source.path.is_empty() || !target.path.is_empty() || *from != *source || target.local == source.local {
+    if !from.path.is_empty() || !target.path.is_empty() || from.local != source.local || target.local == source.local {
         return None;
     }
     let names = |statement: &Statement| {
@@ -196,7 +198,7 @@ fn handed_on(statements: &[Statement], source: &Place) -> Option<Place> {
     };
     let next = statements[1..].iter().find(|statement| names(statement) != (false, false))?;
     match names(next) {
-        (false, true) => Some(Place::local(target.local)),
+        (false, true) => Some(Place { local: target.local, path: source.path.clone() }),
         _ => None,
     }
 }

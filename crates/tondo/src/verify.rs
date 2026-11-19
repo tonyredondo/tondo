@@ -28,7 +28,7 @@ pub fn verify(stage: &str, bodies: &[Body], types: &Types, sources: &crate::sour
         return;
     }
     for body in bodies {
-        if let Some(problem) = unassigned(body, types) {
+        if let Some(problem) = unassigned(body, types).or_else(|| moved_read(body)) {
             let text = crate::mir_text::text(body, types, sources);
             panic!("the MIR of `{}` after {stage} {problem}\n{text}", body.name);
         }
@@ -141,6 +141,163 @@ pub fn unassigned(body: &Body, types: &Types) -> Option<String> {
         }
     }
     None
+}
+
+/// Where a body reads a part of a local that a move zeroed: on every way on
+/// from a `moved`, the local is written whole, released, or copied whole
+/// into another that then is, as `old = x; x = new; release old` does,
+/// before anything reads the part.
+pub fn moved_read(body: &Body) -> Option<String> {
+    for (block, data) in body.blocks.iter().enumerate() {
+        for (at, statement) in data.stmts.iter().enumerate() {
+            let Statement::Moved(moved) = statement else { continue };
+            if let Some(problem) = read_after_move(body, block, at + 1, moved) {
+                return Some(format!("{problem} after `moved` in b{block} zeroed it"));
+            }
+        }
+    }
+    None
+}
+
+/// Whether `a` and `b` may name the same memory: one is a part of the
+/// other, or they are the same.
+fn overlap(a: &Place, b: &Place) -> bool {
+    a.local == b.local
+        && a.path.iter().zip(&b.path).all(|pair| match pair {
+            (Proj::Field(i), Proj::Field(j)) => i == j,
+            (Proj::Variant(v, i), Proj::Variant(w, j)) => v != w || i == j,
+            _ => true,
+        })
+}
+
+fn read_after_move(body: &Body, block: usize, from: usize, moved: &Place) -> Option<String> {
+    let mut seen: std::collections::HashSet<(usize, Local)> = std::collections::HashSet::new();
+    let mut ways = vec![(block, from, moved.clone())];
+    while let Some((block, from, mut place)) = ways.pop() {
+        let data = &body.blocks[block];
+        let mut done = false;
+        for (index, statement) in data.stmts.iter().enumerate().skip(from) {
+            // The local copied whole, and written whole next without being
+            // read: its old value, with the part zeroed, is the copy's.
+            if let Statement::Assign(target, value, _) = statement
+                && let Rvalue::Use(Operand::Copy(source)) = &**value
+                && source.local == place.local
+                && source.path.is_empty()
+                && target.path.is_empty()
+                && target.local != place.local
+            {
+                let names = |s: &Statement| {
+                    let (mut used, mut defined) = (Vec::new(), Vec::new());
+                    statement_locals(s, &mut used, &mut defined);
+                    (used.contains(&place.local), defined.contains(&place.local))
+                };
+                if data.stmts[index + 1..]
+                    .iter()
+                    .find(|s| names(s) != (false, false))
+                    .is_some_and(|s| names(s) == (false, true))
+                {
+                    place = Place { local: target.local, path: place.path.clone() };
+                    continue;
+                }
+            }
+            // The moved part, or a part of it, copied into a whole local,
+            // as `split` takes a record's old value field by field: the copy
+            // holds the zero from then on, and is followed too.
+            if let Statement::Assign(target, value, _) = statement
+                && let Rvalue::Use(Operand::Copy(source)) = &**value
+                && source.local == place.local
+                && source.path.len() >= place.path.len()
+                && source.path[..place.path.len()] == place.path[..]
+                && target.path.is_empty()
+            {
+                if seen.insert((block, target.local)) {
+                    ways.push((block, index + 1, Place::local(target.local)));
+                }
+                continue;
+            }
+            match statement {
+                // Released whole, or by a part that holds the moved one.
+                Statement::Release(released)
+                    if released.local == place.local
+                        && released.path.len() <= place.path.len()
+                        && place.path[..released.path.len()] == released.path[..] =>
+                {
+                    done = true;
+                    break;
+                }
+                Statement::Moved(again) if overlap(again, &place) => continue,
+                Statement::Clear(local) if *local == place.local => {
+                    done = true;
+                    break;
+                }
+                Statement::Assign(target, _, _) if target.local == place.local && target.path.is_empty() => {
+                    done = true;
+                    break;
+                }
+                // Emptied whole, which gives it a value of its own again.
+                Statement::Assign(_, value, _)
+                    if matches!(&**value, Rvalue::Mutate(crate::hir::Mutation::Empty, target, ..)
+                        if target.local == place.local && target.path.is_empty()) =>
+                {
+                    done = true;
+                    break;
+                }
+                _ => {}
+            }
+            // A tag is not the payload moved out of it.
+            if let Statement::Assign(target, value, _) = statement
+                && let Rvalue::Discriminant(of) = &**value
+                && of.local == place.local
+                && of.path.len() < place.path.len()
+                && place.path[..of.path.len()] == of.path[..]
+                && !overlap(target, &place)
+            {
+                continue;
+            }
+            let mut read = false;
+            crate::inline::visit_statement(&mut statement.clone(), &mut |seen_place: &mut Place| {
+                read |= overlap(seen_place, &place);
+            });
+            // A write of the part, or of one that holds it, gives it a value
+            // again.
+            if let Statement::Assign(target, _, _) = statement
+                && overlap(target, &place)
+                && !read_besides_target(statement, &place)
+            {
+                done = true;
+                break;
+            }
+            if read {
+                return Some(format!("b{block} reads `l{}`", place.local.0));
+            }
+        }
+        if done {
+            continue;
+        }
+        let mut read = false;
+        crate::inline::visit_terminator(&mut data.terminator.clone(), &mut |seen_place: &mut Place| {
+            read |= overlap(seen_place, &place);
+        });
+        if read {
+            return Some(format!("b{block}'s end reads `l{}`", place.local.0));
+        }
+        for next in successors(&data.terminator) {
+            if seen.insert((next, place.local)) {
+                ways.push((next, 0, place.clone()));
+            }
+        }
+    }
+    None
+}
+
+/// Whether an assignment reads `place` other than by writing it.
+fn read_besides_target(statement: &Statement, place: &Place) -> bool {
+    let Statement::Assign(_, value, _) = statement else { return false };
+    let mut read = false;
+    crate::inline::visit_rvalue(&mut (**value).clone(), &mut |seen_place: &mut Place| {
+        read |= overlap(seen_place, place);
+    });
+    read
 }
 
 #[cfg(test)]
