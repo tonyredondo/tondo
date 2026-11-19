@@ -279,6 +279,15 @@ impl Write for Builder {
     }
 }
 
+/// What Rust's formatting writes, as a float's shortest form, straight
+/// into the builder, rather than through `io::Write`'s adapter.
+impl std::fmt::Write for Builder {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        self.extend(text.as_bytes());
+        Ok(())
+    }
+}
+
 /// Starts the builder at `b` with the elements of an array, as their
 /// `Display` writes them, with `separator` between them.
 #[unsafe(no_mangle)]
@@ -716,25 +725,27 @@ pub unsafe extern "C" fn tondo_rt_sb_bool(b: *mut Builder, value: u8) {
 /// always distinguishable from an integer: `1.0`, `0.1`, `1e-7`, `NaN`, `inf`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_f64(b: *mut Builder, value: f64) {
-    unsafe { write!(*b, "{value:?}").unwrap() }
+    let _ = std::fmt::Write::write_fmt(unsafe { &mut *b }, format_args!("{value:?}"));
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_f32(b: *mut Builder, value: f32) {
-    unsafe { write!(*b, "{value:?}").unwrap() }
+    let _ = std::fmt::Write::write_fmt(unsafe { &mut *b }, format_args!("{value:?}"));
 }
 
+/// A character's UTF-8 bytes, the replacement character's for a code that
+/// is not a scalar.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_char(b: *mut Builder, value: u32) {
     let c = char::from_u32(value).unwrap_or(char::REPLACEMENT_CHARACTER);
-    unsafe { write!(*b, "{c}").unwrap() }
+    unsafe { (*b).extend(c.encode_utf8(&mut [0; 4]).as_bytes()) }
 }
 
 /// A text in quotes, escaped as JSON escapes it, as a debugger shows it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_quoted(b: *mut Builder, s: *const Str) {
-    let text = String::from_utf8_lossy(unsafe { str_bytes(&s) });
-    unsafe { write!(*b, "{text:?}").unwrap() }
+    let text = unsafe { super::strings::str_text(&s) };
+    let _ = std::fmt::Write::write_fmt(unsafe { &mut *b }, format_args!("{text:?}"));
 }
 
 /// Consumes the builder and returns an owned string.
