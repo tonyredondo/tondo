@@ -121,10 +121,14 @@ case in every mode is a loop over them.
 
 A change to the optimizer, the regions or the runtime is measured before it
 lands, not after: `tondo test bench/tondo <projects> --bench --compiler HEAD
---regression-by instructions --max-regression 2`, with every project of
-`examples/` that has a benchmark, judges it by the benchmarks of single
-operations and by those of whole programs, and a row that does over 2% more
-work lands only with its reason written in the commit. Under a row that
+--baseline bench/baselines/table.json --regression-by instructions
+--max-regression 2`, with every project of `examples/` that has a
+benchmark, judges it by the benchmarks of single operations and by those of
+whole programs, and a row that does over 2% more work lands only with its
+reason written in the commit. Each row is also held to the baseline of the
+last table against Go, which `--baseline` names there: small costs add up,
+and a row that is over 2% past it in all lands only with its reason too,
+whoever added what. The baseline is saved again only with a new table. Under a row that
 moved it names the code that changed, the runtime's too, and beside a row
 the regions its runs set up and how many of them were used.
 

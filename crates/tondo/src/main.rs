@@ -414,6 +414,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         bench: None,
         save_baseline: None,
         baseline: None,
+        since: None,
         max_regression: None,
         by_instructions: false,
         layouts: Vec::new(),
@@ -784,8 +785,11 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
             "--layouts measures this code's tests in several layouts, --against another revision's: compare layouts with --baseline".into(),
         ));
     }
-    if [baseline.is_some(), against.is_some(), compiler.is_some()].iter().filter(|&&given| given).count() > 1 {
-        return Err(usage("--baseline, --against and --compiler are things to compare with: choose one".into()));
+    if against.is_some() && compiler.is_some() {
+        return Err(usage(
+            "--against compares with a revision, --compiler with another tondo: choose one, with --baseline <path> beside it if you hold the rows to a saved baseline too"
+                .into(),
+        ));
     }
     if given("--regression-by") && !given("--max-regression") {
         return Err(usage("--regression-by says what --max-regression judges: add --max-regression <percent>".into()));
@@ -802,7 +806,22 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         return Err(usage(format!("--list measures nothing, so it does not go with {flag}")));
     }
     options.save_baseline = save.map(|name| baseline_path(&path, &name)).transpose()?;
-    options.baseline = baseline.map(|name| baseline_path(&path, &name).map(runner::Baseline::Saved)).transpose()?;
+    // Beside `--against` or `--compiler`, a saved baseline is a second one
+    // each row is held to, as the last table against Go (testing 10.4).
+    let saved = baseline.map(|name| baseline_path(&path, &name)).transpose()?;
+    match against.is_some() || compiler.is_some() {
+        true => options.since = saved,
+        false => options.baseline = saved.map(runner::Baseline::Saved),
+    }
+    // An input the run cannot read (testing 9.6), before another tondo or
+    // revision measures anything.
+    if let Some(since) = options.since.as_ref().filter(|since| !since.is_file()) {
+        eprintln!(
+            "tondo: cannot read the baseline {}: `tondo test --bench --save-baseline` writes one",
+            since.display()
+        );
+        return Ok(ExitCode::FAILURE);
+    }
     if bench {
         // Benchmarks run one at a time, in the optimized build that counts
         // nothing.

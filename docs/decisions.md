@@ -8326,3 +8326,18 @@ smaller than this.
 A character interpolated into a text is written where the code is when
 it is ASCII and the text has room, in its block or in a short text's
 word, as the runtime would, at no cost in size that `tondo size` shows.
+
+## A row is held to the last table's baseline too
+
+Each change was judged against the commit before it, with a bar of 2% in
+instructions, and texts/parse ints went from 0.99× Go's time to 1.16×
+with 1.7% more instructions, in steps that each passed. A bar for each
+change says nothing of their sum. So `--baseline <path>` may stand beside
+`--compiler` or `--against`, where it was refused: one run is judged
+against both, each row's line says how much its instructions moved since
+the baseline, and `--max-regression` with `--regression-by instructions`
+fails on either. The baseline is that of the last table against Go,
+`bench/baselines/table.json`, saved again only with a new table, so that
+it does not follow the drift it is there to catch; one measured on
+another processor, system or architecture compares nothing, as the same
+code runs other instructions there, and the run says so once.

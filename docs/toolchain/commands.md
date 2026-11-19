@@ -88,7 +88,7 @@ usage:
             [--show-output] [--allow-empty] [--deny-skips] [--test-format human|json|events] [--json]
             [--report json=<path> | junit=<path> | coverage=<path> | lcov=<path> | markdown=<path>
                       | html=<path>]... [--coverage]
-            [--bench [--bench-time <seconds>] [--save-baseline <name>] [--baseline <name> | --against <rev> | --compiler <tondo|rev>]
+            [--bench [--bench-time <seconds>] [--save-baseline <name>] [--baseline <name|path>] [--against <rev> | --compiler <tondo|rev>]
                      [--max-regression <percent> [--regression-by time|instructions]] [--layouts <n>]]
             [--profile cpu|instructions|memory]
             [--fuzz [--fuzz-time <seconds>] [--fuzz-timeout <seconds>] [--fuzz-memory <MiB>] [--fuzz-corpus <dir>]]
@@ -99,7 +99,9 @@ usage:
                                                        again as its files change; --bench measures its benchmarks,
                                                        --fuzz searches for inputs that fail its fuzz tests, and
                                                        --models checks the models of `std.model` alone; --exec runs
-                                                       the tests' executable under a command, as `perf record -g`
+                                                       the tests' executable under a command, as `perf record -g`;
+                                                       --baseline alone is what --bench compares with, and beside
+                                                       --against or --compiler a second one each row is judged by
   tondo doc-test [--edition 0.1] <markdown>            check the examples of a document (as JSON)
   tondo lsp                                            serve an editor: diagnostics, hover, definitions,
                                                        references, rename, completion, highlighting

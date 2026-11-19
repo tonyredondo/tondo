@@ -103,6 +103,9 @@ pub struct Options {
     pub save_baseline: Option<PathBuf>,
     /// What the benchmarks are compared with.
     pub baseline: Option<Baseline>,
+    /// `--baseline` beside `--against` or `--compiler`: a saved baseline
+    /// each benchmark is held to as well, as the last table against Go.
+    pub since: Option<PathBuf>,
     /// `--max-regression`, as a fraction: a benchmark slower or allocating
     /// more than that fails the run.
     pub max_regression: Option<f64>,
@@ -632,6 +635,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
             read
         }
         Some(Baseline::Revision(revision)) => bench::Baselines {
+            since: None,
             busy: None,
             code: Vec::new(),
             counted: Default::default(),
@@ -644,6 +648,10 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         },
         None => bench::Baselines::default(),
     };
+    if let Some(path) = &options.since {
+        let read = bench::read_baseline(path).map_err(Failure::Input)?;
+        printer.baselines.since = bench::since(path, read).map_err(|elsewhere| eprintln!("tondo: {elsewhere}")).ok();
+    }
     let artifacts = store::Artifacts {
         root: options.artifacts.clone().unwrap_or_else(|| dir.join("target/test-artifacts")),
         error: std::sync::Mutex::new(None),
@@ -777,6 +785,11 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
             let under = if busy { " (measured under load)" } else { "" };
             Some(format!("{test} {}: {why}{under}", b.name))
         })
+        .chain(measured.iter().filter_map(|(test, b)| {
+            let (since, change) = bench::since_change(test, b, &baselines)?;
+            let over = options.by_instructions && options.max_regression.is_some_and(|max| change > max);
+            over.then(|| format!("{test} {}: {:.1}% more instructions since {since}", b.name, change * 100.0))
+        }))
         .collect();
     failed |= !regressions.is_empty();
     if let (Some(path), Some(time)) = (&options.save_baseline, options.bench) {

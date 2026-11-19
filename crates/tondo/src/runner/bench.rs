@@ -66,6 +66,7 @@ pub(super) fn json(
     benchmark: &Benchmark,
     compared: Option<&Compared>,
     changed: Option<&[crate::driver::ChangedCode]>,
+    since: Value,
 ) -> Value {
     let stats = stats(&benchmark.samples);
     let mut fields = vec![
@@ -136,6 +137,7 @@ pub(super) fn json(
         ])
     });
     fields.push(("baseline", baseline));
+    fields.push(("since", since));
     obj(fields)
 }
 
@@ -156,6 +158,64 @@ pub(super) struct Baselines {
     /// The regions a run of each benchmark set up and used, by test and
     /// benchmark, as the build that counts them measured.
     pub counted: HashMap<(String, String), (f64, f64)>,
+    /// A second baseline beside `--against` or `--compiler` (10.4).
+    pub since: Option<Since>,
+}
+
+/// A saved baseline each benchmark is held to beside another comparison,
+/// as the last table against Go: its name, the file's without `.json`,
+/// and what it measured, on this machine.
+pub(super) struct Since {
+    pub name: String,
+    pub measures: HashMap<(String, String), Benchmark>,
+}
+
+/// `read` as the second baseline, or why it compares nothing: measured
+/// on another processor, system or architecture, where the same code runs
+/// other instructions.
+pub(super) fn since(path: &Path, read: Baselines) -> Result<Since, String> {
+    let source = read.source.unwrap_or(Value::Null);
+    let field = |key: &str| match source.get(key) {
+        Some(Value::Str(text)) => text.clone(),
+        _ => String::new(),
+    };
+    let (there, here) = (
+        format!("{} {} {}", field("cpu"), field("os"), field("arch")),
+        format!("{} {} {}", cpu(), std::env::consts::OS, std::env::consts::ARCH),
+    );
+    if there != here {
+        return Err(format!("{} was measured on {there}, here is {here}: nothing is compared with it", path.display()));
+    }
+    let name = path.file_stem().map_or(String::new(), |stem| stem.to_string_lossy().to_string());
+    Ok(Since { name, measures: read.measures })
+}
+
+/// What the report says of a benchmark against the second baseline: its
+/// name, the change of the instructions, and whether it went past
+/// `--max-regression` by them.
+pub(super) fn since_json(
+    test: &str,
+    benchmark: &Benchmark,
+    baselines: &Baselines,
+    max: Option<f64>,
+    by_instructions: bool,
+) -> Value {
+    since_change(test, benchmark, baselines).map_or(Value::Null, |(name, change)| {
+        let over = by_instructions && max.is_some_and(|max| change > max);
+        obj(vec![
+            ("baseline", str(name.to_string())),
+            ("instructions_change_percent", decimal(change * 100.0)),
+            ("regressed", Value::Bool(over)),
+        ])
+    })
+}
+
+/// How much more a benchmark's instructions are than the second
+/// baseline's, as a fraction, with the baseline's name.
+pub(super) fn since_change<'a>(test: &str, benchmark: &Benchmark, baselines: &'a Baselines) -> Option<(&'a str, f64)> {
+    let since = baselines.since.as_ref()?;
+    let base = since.measures.get(&(test.to_string(), benchmark.name.clone()))?;
+    Some((since.name.as_str(), benchmark.instructions? / base.instructions? - 1.0))
 }
 
 /// The machine's load as the benchmarks started and as they ended.
@@ -432,7 +492,7 @@ pub(super) fn read_baseline(path: &Path) -> Result<Baselines, String> {
         ("cpu", str(machine("cpu"))),
         ("load", busy.map_or(Value::Null, |(load, _)| decimal(load))),
     ]);
-    Ok(Baselines { measures, source: Some(source), busy, code: Vec::new(), counted: HashMap::new() })
+    Ok(Baselines { measures, source: Some(source), busy, code: Vec::new(), counted: HashMap::new(), since: None })
 }
 
 /// Where benchmarks ran, as people read it.
@@ -576,8 +636,14 @@ pub(super) fn lines(
             }
             _ => String::new(),
         };
+        // Since the second baseline, as the last table against Go.
+        let since = since_change(test, benchmark, baselines).map_or(String::new(), |(name, change)| {
+            let over = by_instructions && max.is_some_and(|max| change > max);
+            let percent = if (change * 100.0).abs() < 0.05 { 0.0 } else { change * 100.0 };
+            format!(", {percent:+.1}% ins since {name}{}", if over { ", REGRESSED" } else { "" })
+        });
         text.push_str(&format!(
-            "  {:<width$}  {:>11}/op  ±{spread:.1}%  {} allocs/op{}  {} B/op{}{regions}{instructions}{layouts}{compared}\n",
+            "  {:<width$}  {:>11}/op  ±{spread:.1}%  {} allocs/op{}  {} B/op{}{regions}{instructions}{layouts}{compared}{since}\n",
             benchmark.name,
             time(stats.median),
             amount(benchmark.allocations),

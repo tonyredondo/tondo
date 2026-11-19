@@ -788,9 +788,11 @@ fn compares_benchmarks_with_another_compiler() {
     let benchmark = &report["tests"][0]["attempts"][0]["benchmarks"][0];
     assert!(benchmark["baseline"].is_object(), "{benchmark}");
     assert!(stderr.contains("measuring the benchmarks with the tondo of"), "{stderr}");
-    // It is one more thing to compare with.
+    // Beside it a saved baseline is a second comparison, which must exist
+    // before anything is measured.
     let (_, stderr, status) = tondo(&dir, &["test", "--bench", "--compiler", other, "--baseline", "main"]);
-    assert_eq!(status, 2, "{stderr}");
+    assert!(status == 1 && stderr.contains("cannot read the baseline"), "{stderr}");
+    assert!(!stderr.contains("measuring the benchmarks"), "{stderr}");
     let (_, stderr, status) = tondo(&dir, &["test", "--compiler", other]);
     assert!(status == 2 && stderr.contains("it goes with --bench"), "{stderr}");
 }
@@ -927,6 +929,75 @@ esac
     let names: Vec<&str> = changed.as_array().unwrap().iter().filter_map(|c| c["function"].as_str()).collect();
     assert!(names.contains(&"prelude.mergeSort[Int]") && names.contains(&"equality of `String`"), "{changed}");
     assert!(!names.contains(&"ordered"), "{changed}");
+}
+
+/// Beside `--compiler`, `--baseline <path>` holds each row to a saved
+/// baseline too, as the last table against Go: a row the same as the other
+/// tondo's but past the baseline by more than `--max-regression` in
+/// instructions fails the run, its line saying how much since it; one
+/// measured on another processor compares nothing, and says so.
+#[test]
+fn holds_rows_to_a_second_baseline() {
+    let tests = "import std.env\nimport std.testing\n\nfn work(rounds: Int): Int {\n    var total = 0\n    \
+        for i in 0..rounds {\n        total += \"a b {i}\".split(\" \").length()\n    }\n    total\n}\n\n\
+        test counting {\n    let rounds = match env.get(\"ROUNDS\") {\n        some(text) => Int.parse(text) ?? 50\n        \
+        none => 50\n    }\n    testing.bench(\"work\", () { work(rounds) })\n}\n";
+    let dir = project("second-baseline", tests);
+    let base = dir.join("table.json");
+    let run = |rounds: &str, args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(args)
+            .env("ROUNDS", rounds)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        (
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+            out.status.code(),
+        )
+    };
+    let (stdout, stderr, status) =
+        run("40", &["test", "--bench", "--bench-time", "0.05", "--save-baseline", base.to_str().unwrap()]);
+    assert_eq!(status, Some(0), "{stdout}{stderr}");
+    let saved = std::fs::read_to_string(&base).unwrap();
+    if saved.contains("\"instructions_per_op\":null") {
+        // Where the processor counts no instructions, as on macOS.
+        return;
+    }
+    let other = dir.join("other-tondo");
+    std::fs::write(&other, format!("#!/bin/sh\nexec '{}' \"$@\"\n", env!("CARGO_BIN_EXE_tondo"))).unwrap();
+    std::fs::set_permissions(&other, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let judged = [
+        "test",
+        "--bench",
+        "--bench-time",
+        "0.05",
+        "--compiler",
+        other.to_str().unwrap(),
+        "--baseline",
+        base.to_str().unwrap(),
+        "--regression-by",
+        "instructions",
+        "--max-regression",
+        "2",
+    ];
+    let (stdout, stderr, status) = run("50", &judged);
+    assert_eq!(status, Some(1), "{stdout}{stderr}");
+    let line = stdout.lines().find(|l| l.trim_start().starts_with("work ")).unwrap_or_default();
+    assert!(line.contains("ins since table, REGRESSED"), "{stdout}");
+    assert!(stdout.contains("more instructions since table"), "{stdout}");
+    // Measured elsewhere: said once, and nothing compared.
+    let elsewhere = dir.join("elsewhere.json");
+    let cpu = saved.split("\"cpu\":\"").nth(1).and_then(|rest| rest.split('"').next()).unwrap_or_default();
+    std::fs::write(&elsewhere, saved.replacen(&format!("\"cpu\":\"{cpu}\""), "\"cpu\":\"another processor\"", 1))
+        .unwrap();
+    let mut args = judged.to_vec();
+    args[7] = elsewhere.to_str().unwrap();
+    let (stdout, stderr, status) = run("50", &args);
+    assert_eq!(status, Some(0), "{stdout}{stderr}");
+    assert_eq!(stderr.matches("nothing is compared with it").count(), 1, "{stderr}");
+    assert!(!stdout.contains("since elsewhere"), "{stdout}");
 }
 
 /// Each benchmark says the regions a run sets up, which a build that counts
@@ -2195,7 +2266,7 @@ test fibonacci {
     for (args, said) in [
         (vec!["test", "--baseline", "main"], "--baseline is about benchmarks: it goes with --bench"),
         (vec!["test", "--bench", "--max-regression", "5"], "--max-regression compares with a baseline"),
-        (vec!["test", "--bench", "--baseline", "main", "--against", "HEAD"], "choose one"),
+        (vec!["test", "--bench", "--against", "HEAD", "--compiler", "tondo"], "choose one"),
         (vec!["test", "--bench", "--against", "nowhere"], "git knows no revision nowhere"),
     ] {
         let (_, stderr, status) = tondo(&dir, &args);

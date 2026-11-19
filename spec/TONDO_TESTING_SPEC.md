@@ -2567,6 +2567,16 @@ Las medidas se comparan con una línea base:
   cambiaron primero, como las da `tondo asm --compiler`; o dice que ninguna
   cambió, y entonces lo que se movió es dónde está su código o lo que lee. El
   reporte las da en `code_changed`.
+- Con `--compiler` o `--against`, `--baseline <ruta>` compara además con una
+  línea base guardada, como la de la última tabla frente a Go
+  (`bench/baselines/table.json`). Cada benchmark dice en su línea cuánto
+  cambiaron sus instrucciones desde ella, como `+2.4% ins since table`, con
+  el nombre del archivo sin `.json`. Con `--regression-by instructions`,
+  `--max-regression` falla también por un benchmark que la supera desde la
+  línea base, aunque ningún cambio la supere por sí solo. Una línea base
+  medida en otro procesador, sistema o arquitectura no se compara: el
+  reporte lo dice una vez, con dónde se midió cada lado. En el reporte,
+  cada benchmark la lleva en `since`.
 
 Con una línea base, cada benchmark dice cuánto cambió la mediana, el intervalo
 en que está ese cambio con un 95% de confianza (de mil remuestreos con

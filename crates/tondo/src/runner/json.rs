@@ -491,7 +491,8 @@ impl Context<'_> {
                 (b.regions_set_up, b.regions_used) = (set_up, used);
             }
             let compared = base.map(|base| super::bench::compare(&b, base, max, by));
-            super::bench::json(&b, compared.as_ref(), changed)
+            let since = super::bench::since_json(id, &b, self.baselines, max, by);
+            super::bench::json(&b, compared.as_ref(), changed, since)
         });
         fields.push(("benchmarks", Value::Array(benchmarks.collect())));
         fields.push(("fuzz", Value::Array(attempt.fuzz.iter().map(fuzzed).collect())));
@@ -674,7 +675,9 @@ pub(super) fn note_event(tree: &Tree, note: &Note, options: &Options) -> Value {
             ("stderr", stream(&attempt.stderr)),
             (
                 "benchmarks",
-                Value::Array(attempt.benchmarks.iter().map(|b| super::bench::json(b, None, None)).collect()),
+                Value::Array(
+                    attempt.benchmarks.iter().map(|b| super::bench::json(b, None, None, Value::Null)).collect(),
+                ),
             ),
             ("fuzz", Value::Array(attempt.fuzz.iter().map(fuzzed).collect())),
         ]);
