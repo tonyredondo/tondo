@@ -2602,10 +2602,11 @@ fn pieces(texts: Array[String]): Int {
     assert_eq!(counts, expected);
 }
 
-/// A short text with a number in it allocates nothing, though the room its
-/// interpolation asks for counts a digit more than the number may have:
-/// two digits from 64 to 99 after four bytes, which asked a byte for a
-/// sign they do not have, and a single digit after five.
+/// A short text with a number, a character or a flag in it allocates
+/// nothing, though the room its interpolation asks for counts a digit more
+/// than a number may have: two digits from 64 to 99 after four bytes,
+/// which asked a byte for a sign they do not have, a single digit after
+/// five, and a character beside a flag, which asked 16 bytes each.
 #[test]
 fn short_texts_of_numbers_allocate_nothing() {
     let tests = "\
@@ -2616,6 +2617,7 @@ test counted {
     let texts = (0..100).map((n) { \" key {n} and more\" }).collect()
     console.println(\"numbered {testing.allocations(() { lengths(texts, (t) { \"SKU-{t.byteLength() * 5}\" }) })}\")
     console.println(\"digit {testing.allocations(() { lengths(texts, (t) { \"ITEM-{t.byteLength() - 7}\" }) })}\")
+    console.println(\"flagged {testing.allocations(() { lengths(texts, (t) { \"{t.isEmpty()}{if t.isEmpty() { 'a' } else { 'é' }}\" }) })}\")
 }
 
 fn lengths(texts: Array[String], made: fn(String): String): Int {
@@ -2627,7 +2629,8 @@ fn lengths(texts: Array[String], made: fn(String): String): Int {
 }
 ";
     let counts = counts_of("short_numbers_counted", tests);
-    assert_eq!(counts, [("numbered".to_string(), 0), ("digit".to_string(), 0)]);
+    let expected = [("numbered", 0), ("digit", 0), ("flagged", 0)];
+    assert_eq!(counts, expected.map(|(name, count)| (name.to_string(), count)));
 }
 
 /// The runtime's operations on texts allocate what they give and none of

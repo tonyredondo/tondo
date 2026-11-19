@@ -222,6 +222,24 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                             known += 1;
                         }
                         (TyKind::Int(_) | TyKind::Float(_), _) => known += 24,
+                        // A character's UTF-8 bytes, one more at each of
+                        // 0x80, 0x800 and 0x10000, and `true` or `false`.
+                        (TyKind::Char, Val::Scalar(value)) => {
+                            let value = self.wide(value, false);
+                            let mut bytes = self.e.fb.ins().iconst(types::I64, 1);
+                            for from in [0x80, 0x800, 0x10000] {
+                                let past = self.e.fb.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, value, from);
+                                let past = self.e.fb.ins().uextend(types::I64, past);
+                                bytes = self.e.fb.ins().iadd(bytes, past);
+                            }
+                            room = Some(room.map_or(bytes, |room| self.e.fb.ins().iadd(room, bytes)));
+                        }
+                        (TyKind::Bool, Val::Scalar(value)) => {
+                            let value = self.wide(value, false);
+                            let five = self.e.fb.ins().iconst(types::I64, 5);
+                            let bytes = self.e.fb.ins().isub(five, value);
+                            room = Some(room.map_or(bytes, |room| self.e.fb.ins().iadd(room, bytes)));
+                        }
                         _ => known += 16,
                     }
                     values.push(value);
