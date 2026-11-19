@@ -98,8 +98,10 @@ fn run(connection: &rusqlite::Connection, sql: &str, parameters: &[u8]) -> rusql
             3 | 4 => {
                 let length = u32::from_le_bytes(parameters[at..at + 4].try_into().unwrap_or_default()) as usize;
                 let value = &parameters[at + 4..at + 4 + length];
+                // A text's bytes: `sqlite.to` sends the tag of a text for
+                // texts alone, which always hold valid UTF-8.
                 if tag == 3 {
-                    statement.raw_bind_parameter(index, std::str::from_utf8(value).unwrap_or_default())?;
+                    statement.raw_bind_parameter(index, unsafe { std::str::from_utf8_unchecked(value) })?;
                 } else {
                     statement.raw_bind_parameter(index, value)?;
                 }

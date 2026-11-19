@@ -9,7 +9,7 @@
 //! thread to read right after it.
 
 use super::regex_dialect::{Kind, check};
-use super::{ArrayHeader, LIVE_OBJECTS, Str, str_bytes, str_new};
+use super::{ArrayHeader, LIVE_OBJECTS, Str, str_new};
 use std::cell::Cell;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicUsize;
@@ -54,8 +54,10 @@ pub struct RegexObject {
     max_replacement: usize,
 }
 
+/// The text of a string, which always holds valid UTF-8: checked where it
+/// was made, not again at each match.
 fn utf8(s: &*const Str) -> &str {
-    std::str::from_utf8(unsafe { str_bytes(s) }).unwrap_or_default()
+    unsafe { super::strings::str_text(s) }
 }
 
 fn builder(pattern: &str, flags: i64, size: usize, depth: u32) -> regex::RegexBuilder {
@@ -94,8 +96,7 @@ pub(crate) fn pattern(pattern: &str) -> Result<regex::Regex, String> {
 /// `Regex.escape(text)`: a pattern that matches the text as it is.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_regex_escape(text: *const Str, region: *mut crate::regions::Region) -> *mut Str {
-    let text = String::from_utf8_lossy(unsafe { str_bytes(&text) }).into_owned();
-    crate::strings::str_in(region, regex::escape(&text).as_bytes())
+    crate::strings::str_in(region, regex::escape(utf8(&text)).as_bytes())
 }
 
 /// `Regex.compile`: the pattern with its options as bits (case-insensitive,
