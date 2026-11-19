@@ -390,7 +390,7 @@ when they ended, in `bench.load`.
 | | |
 | --- | --- |
 | `--save-baseline <name>` | keeps this run's numbers |
-| `--baseline <name>` | compares with them |
+| `--baseline <name>` | compares with them; beside `--against`, holds each benchmark to them as well |
 | `--against <rev>` | builds and measures a git revision, and compares with it |
 | `--max-regression <percent>` | fails the run when a benchmark got worse by more |
 | `--regression-by instructions` | judges by instructions instead of time |
@@ -403,6 +403,32 @@ when they ended, in `bench.load`.
 `tondo test --bench --against main --max-regression 5 --regression-by
 instructions` is a CI job that fails a pull request for making a benchmark
 do more work, and is not fooled by a noisy runner.
+
+That job judges each change against the code before it, so changes that
+each pass can add up to one that would not have. `--baseline` beside
+`--against` holds every benchmark to a saved baseline as well, as one kept
+when a version went out. This function counts the words of a page, and a
+change before this one made it leave out the lines that are comments, for
+1.8% more instructions, which passed. The change at hand adds one more kind
+of comment:
+
+```text
+$ tondo test --bench --against HEAD --baseline release --max-regression 2 --regression-by instructions
+tondo: building the tests of HEAD (084c8a1a8451) to compare with
+test pages::unit::pages::aPage ... ok
+  words of a page     73.12 µs/op  ±0.2%  0 allocs/op +225 in regions  0 B/op +139392 in regions  1 regions set up/op, 1 used  1.30M ins/op  +2.0% same, +0.7% ins, +2.5% ins since release, REGRESSED
+
+benchmarks that regressed beyond 2%:
+  pages::unit::pages::aPage words of a page: 2.5% more instructions since release
+```
+
+The change costs 0.7%, and with it the benchmark does 2.5% more than when
+the baseline was saved, which is what fails the run. The baseline is saved
+again when a cost is accepted, with the next version for one, and not with
+each change, or it would follow the drift it is there to catch. A baseline
+measured on another processor, system or architecture is not compared
+with, since the same code runs other instructions there, and the run says
+so once.
 
 ## Fuzzing
 

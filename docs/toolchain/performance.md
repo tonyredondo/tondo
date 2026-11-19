@@ -40,6 +40,10 @@ so a change of 2% in it is a change in the program.
 tondo test --bench --against main --max-regression 2 --regression-by instructions
 ```
 
+With `--baseline <name>` beside it, the same run holds each benchmark to a
+saved baseline too, so that costs which each pass do not add up unseen
+([Testing](testing.md#benchmarks)).
+
 A run made while the machine had more to do than it has processors says so
 in its last line, `note: the machine was busy (load 32.9 on 32 processors):
 times are not to be compared, instructions are`.
