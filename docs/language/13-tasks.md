@@ -627,10 +627,7 @@ fn main() {
     let open = sync.Atomic(0)
     let most = sync.Atomic(0)
     let fetching = tasks.limit(4)  // the server's, shared by its requests
-    let first = spawn handle(fetching, open, most)
-    let second = spawn handle(fetching, open, most)
-    first.wait()
-    second.wait()
+    [spawn handle(fetching, open, most), spawn handle(fetching, open, most)].wait()
     console.println("{most.load()} at once at most, of 2 requests that want 3 each")
 }
 ```
@@ -1251,10 +1248,10 @@ fn count(words: Array[String], seen: sync.Set[String], lengths: sync.Map[Int, In
 fn main() {
     let seen = sync.Set[String]()
     let lengths = sync.Map[Int, Int]()
-    let first = spawn count(["to", "be", "or"], seen, lengths)
-    let second = spawn count(["not", "to", "be"], seen, lengths)
-    first.wait()
-    second.wait()
+    [
+        spawn count(["to", "be", "or"], seen, lengths),
+        spawn count(["not", "to", "be"], seen, lengths),
+    ].wait()
     console.println("{seen.length()} words, lengths {lengths.snapshot().keys().collect().sorted()}")
 }
 ```

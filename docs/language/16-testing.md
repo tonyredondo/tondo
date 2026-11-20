@@ -323,10 +323,7 @@ fn deposit(balance: sync.Mutex[Int], amount: Int) {
 
 test depositsAddUp {
     let balance = sync.Mutex(0)
-    let first = spawn deposit(balance, 10)
-    let second = spawn deposit(balance, 5)
-    first.wait()
-    second.wait()
+    [spawn deposit(balance, 10), spawn deposit(balance, 5)].wait()
     assert(balance.get() == 15)
 }
 ```
