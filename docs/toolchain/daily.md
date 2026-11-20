@@ -364,6 +364,66 @@ commit of a tag and the hash of an archive, so that a build from the same
 lock is a build of the same code. There is no registry and no version
 solver: a dependency is named by where it is.
 
+### In a script
+
+A script is one file, with no `tondo.toml` to write its dependencies in. It
+names them itself, in comments at its top, one a line. The same commands
+write them, given the script where they take a project:
+
+```text
+$ tondo add greet --git file:///tmp/tondo-script/greet --tag v1.0.0 --project hello.to
+fetching greet: git file:///tmp/tondo-script/greet, tag v1.0.0
+added `greet` to the script's header: `import greet` uses it
+
+$ cat hello.to
+#!/usr/bin/env tondo
+
+// tondo: dependency greet = { git = "file:///tmp/tondo-script/greet", tag = "v1.0.0" }
+
+import greet
+import std.console
+import std.env
+
+for name in env.args() {
+    console.println(greet.hello(name))
+}
+
+$ tondo hello.to ada bo
+hello, ada
+hello, bo
+```
+
+- A line is `// tondo: dependency <name> = <source>`, with the source as
+  `tondo.toml` writes it: a `git` with a `tag`, a `branch` or a `rev`, a
+  `url` with its `sha256`, or a `path`, which is counted from the script's
+  directory.
+- The lines go before the script's code, after its `#!` line if it has one.
+  One further down is not read, and the compiler says so (`E0009`); so is
+  one in a file of a project, where the error gives the `tondo add` that
+  writes it in `tondo.toml`. `tondo fmt` leaves them where and as they are.
+- What they resolved to is kept beside the script, in a file of its name
+  and `.lock`: `hello.to.lock`. It is found by where the script is, not by
+  where it is run from, so a script on the `PATH` uses its own. Keep the
+  two together, in a repository or wherever the script is installed.
+- A package is fetched the first time, with a line that says so, as above;
+  with the lock and the cache in place a run fetches nothing and says
+  nothing.
+- `tondo remove greet --project hello.to` takes a line out, and
+  `tondo update hello.to` fetches again and writes the lock again.
+
+A script installed where its user cannot write, without its lock, still
+runs. It resolves its dependencies each time and says why:
+
+```text
+warning: cannot write hello.to.lock (Permission denied): the dependencies were resolved for this run only; install the script with its lock beside it to fix them
+```
+
+A script has dependencies and nothing else of a project: none for tests
+alone, no C libraries, no settings of the build. One that needs those is a
+project, which `tondo new <name>` makes, with the script as its
+`src/main.to` and its dependencies in its `tondo.toml`; the commands say so
+when asked for one of them on a script.
+
 ## What a project is made of
 
 ```text

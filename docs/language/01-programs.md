@@ -158,6 +158,11 @@ error[E1001]: unknown name `limit`; `limit` is a binding of the script, which it
 - A file with statements cannot be imported, and a file cannot have both
   statements and a `main`.
 - A project's `src/main.to` may be a script too.
+- A script alone imports `std`, and the packages it names in its own first
+  lines, one a line, as
+  `// tondo: dependency http = { git = "https://github.com/acme/http", tag = "v1.2.0" }`.
+  [Every day](../toolchain/daily.md#in-a-script) has the commands, and what
+  is kept beside the script.
 
 Only the root file runs anything. Importing a module never executes code:
 there are no initializers that run before `main`, and so the order in which

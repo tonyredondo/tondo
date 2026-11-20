@@ -246,6 +246,9 @@ tondo update                        fetch again, and write tondo.lock again
   `git`, `curl` and `tar`.
 - There is no central registry. A dependency is somewhere it can be fetched
   from, and the lock says what was fetched.
+- A script, which has no `tondo.toml`, names its dependencies in comments at
+  its top and keeps its lock beside it
+  ([Every day](../toolchain/daily.md#in-a-script)).
 
 ## Libraries
 

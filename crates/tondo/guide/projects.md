@@ -77,6 +77,42 @@ and `tondo remove units` takes it out.
 --list` shows every module of the project, its dependencies and the
 standard library.
 
+## A script's dependencies
+
+A file run alone has no `tondo.toml`: it names its dependencies in its own
+first lines, one a line, with the source as `[dependencies]` writes it.
+
+```text
+#!/usr/bin/env tondo
+// tondo: dependency http = { git = "https://github.com/acme/http", tag = "v1.2.0" }
+// tondo: dependency units = { path = "../libs/units" }
+
+import http.client
+import units
+```
+
+- The lines go before the code, after the `#!` line. A `path` is counted
+  from the script's directory.
+- `tondo add units --path ../libs/units --project deploy.to` writes the
+  line, and `remove` and `update` take the script the same way.
+- `deploy.to.lock` beside the script pins what was fetched, found by where
+  the script is: keep the two together. Without it, where it cannot be
+  written, the script still runs and resolves again each time, with a
+  warning.
+- A script has no dev-dependencies, C libraries or build settings: one that
+  needs them is a project, `tondo new <name>` with the script as its
+  `src/main.to`.
+
+A line below the code is not read, and neither is one in a file of a
+project, whose dependencies are in `tondo.toml`:
+
+```tondo error E0009
+import std.console
+
+console.println("starting")
+// tondo: dependency units = { path = "../libs/units" }
+```
+
 ## Executables
 
 `tondo build app --output app` writes a native executable, which `tondo`
