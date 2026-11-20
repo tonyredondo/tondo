@@ -360,12 +360,12 @@ fn watch_nexts() -> Watched {
     if waiting { Watched::Looking } else { Watched::Idle }
 }
 
-/// A task was woken next to a worker: with a worker idle, the monitor
-/// watches until it runs (`watch_nexts`).
+/// A task was woken next to a worker, whose task may compute for long: the
+/// monitor watches until it runs, asleep as it may be with every worker
+/// busy and nothing waiting before. With a worker idle it tells that one
+/// (`watch_nexts`); with none, it watches the worker held (`watch_held`).
 pub(super) fn watch_next() {
-    if IDLE.load(Ordering::SeqCst) > 0 {
-        watch_busy();
-    }
+    watch_busy();
 }
 
 /// How long a worker has stayed on one task, by a look at it: its count of

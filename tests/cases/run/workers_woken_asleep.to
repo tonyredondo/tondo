@@ -1,0 +1,41 @@
+// A task woken by a computation that never asks, with one worker given and
+// the monitor asleep: every worker was busy and nothing waited while the
+// computation began, so the monitor had nothing to watch. The task woken
+// next to the held worker wakes it, and the watcher puts another worker
+// beside the held one, where the task runs (16.14). Before, nothing woke the
+// monitor and the task waited for as long as the computation ran, which here
+// is until the task stops it.
+
+import std.console
+import std.sync
+
+/// Computes for a while, so that the monitor finds nothing to watch and
+/// sleeps; then says it began, and computes until `stop` is set.
+fn compute(began: Sender[Unit], stop: sync.Atomic[Bool]): Int {
+    var turns = 0
+    for n in 0..20_000_000 {
+        turns += n % 3
+    }
+    began.send(())
+    for not stop.load() {
+        turns += 1
+    }
+    turns
+}
+
+fn main() {
+    let (began, beginning) = channel[Unit]()
+    let stop = sync.Atomic(false)
+    let job = spawn compute(began, stop)
+    _ = beginning.receive()
+    console.println("main ran beside the computation")
+    stop.store(true)
+    _ = job.wait()
+    console.println("the computation stopped")
+}
+
+// expect-env: TONDO_WORKERS=1
+// expect-no-schedule: the explorer runs one worker and adds none, so a computation that does not ask holds it, by design
+// expect-no-replay: a recorded run, too, runs its tasks on one worker that adds none
+// expect-stdout: main ran beside the computation
+// expect-stdout: the computation stopped

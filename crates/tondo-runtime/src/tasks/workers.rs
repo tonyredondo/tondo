@@ -257,8 +257,8 @@ pub(super) fn schedule(task: *mut Task) {
         let now = nanos();
         next.since.store(now, Ordering::Relaxed);
         let replaced = next.task.swap(task, Ordering::SeqCst);
-        // With a worker idle, the monitor watches until it runs: its waker
-        // may compute for long, and the wakes below are rationed.
+        // The monitor watches until it runs: its waker may compute for
+        // long, and the wakes below are rationed.
         super::foreign::watch_next();
         if !replaced.is_null() {
             enqueue(replaced);

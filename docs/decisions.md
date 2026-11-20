@@ -8951,9 +8951,16 @@ for a task woken by a timer or from outside, not for one the
 computation itself woke. A case of the watcher that waited for a
 message rather than a sleep found it (CI run 44789782015, then a gate).
 
-Now a task landing in a next, with a worker idle, has the monitor watch
-until it runs: it tells an idle worker of one there longer than
-NEXT_WAIT. testing/models/tests/next.to weighs it against two others.
+Now a task landing in a next wakes the monitor, which watches until it
+runs: with a worker idle, it tells that one of a task there longer than
+NEXT_WAIT; with none, it watches the worker held, as the watcher does.
+That it wake the monitor with no worker idle too was found after: with
+one worker, a computation that wakes a task after the monitor has gone to
+sleep, every worker busy and nothing waiting, left it asleep, and no
+worker gave way or was put beside (workers_woken_asleep.to; the red of
+tasks_give_way.to in CI run 44803131862). The model of the watcher has
+its monitor look at every step and does not see that: the monitor's
+sleep is the code's. testing/models/tests/next.to weighs it against two others.
 The monitor alone keeps the bound, two of its looks, a millisecond or
 two. A worker about to sleep that counted a task in another's next as
 one that waits, and looked again for it in NEXT_WAIT, would only make
