@@ -125,12 +125,19 @@ fn read_message(input: &mut impl BufRead) -> Option<Value> {
     serde_json::from_slice(&body).ok()
 }
 
+/// How long the adapter waits for the program to answer a command.
+const ANSWER_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// The program being debugged: the connection, the answers to commands,
 /// and the program it started.
 struct Debuggee {
     pid: u32,
     writer: UnixStream,
     answers: mpsc::Receiver<Value>,
+    /// Answers owed to commands the program did not answer in time, which
+    /// arrive first and answer nothing now; and how long it is waited for.
+    late: usize,
+    wait: std::time::Duration,
     child: Option<std::process::Child>,
     /// Where relative paths of the program's sources are.
     root: PathBuf,
@@ -207,6 +214,7 @@ impl Debuggee {
         std::thread::spawn(move || pumped.pump(id, said.into_iter().map(Ok), answer));
         self.writer = session.writer;
         self.answers = answers;
+        self.late = 0;
         // It keeps checkpoints as it runs, to go back from.
         let _ = self.ask(crate::debug::CHECKPOINTING);
         self.pid = running.pid();
@@ -287,10 +295,25 @@ impl Debuggee {
     }
 
     /// The program's answer as it is, with its `error`: a reload reads
-    /// why the program refused it.
+    /// why the program refused it. A program that says nothing for
+    /// `ANSWER_WAIT` leaves the editor an error rather than a session that
+    /// answers nothing more; its answer, when it comes, is let go.
     fn answer(&mut self, command: &str) -> Result<Value, String> {
         writeln!(self.writer, "{command}").map_err(|_| "the program ended".to_string())?;
-        self.answers.recv().map_err(|_| "the program ended".to_string())
+        loop {
+            match self.answers.recv_timeout(self.wait) {
+                Ok(_) if self.late > 0 => self.late -= 1,
+                Ok(answer) => return Ok(answer),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    self.late += 1;
+                    return Err(format!(
+                        "the program has not answered for {} seconds; the session goes on, and ends when the program does",
+                        self.wait.as_secs()
+                    ));
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Err("the program ended".to_string()),
+            }
+        }
     }
 }
 
@@ -1077,6 +1100,8 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
         pid,
         writer,
         answers,
+        late: 0,
+        wait: ANSWER_WAIT,
         child,
         root,
         handles,
@@ -1089,7 +1114,10 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
         roots: Roots::default(),
         sources: Vec::new(),
     };
-    let attached = debuggee.answers.recv().map_err(|_| "the program ended".to_string())?;
+    let attached = debuggee.answers.recv_timeout(ANSWER_WAIT).map_err(|error| match error {
+        mpsc::RecvTimeoutError::Timeout => "the program does not answer the debugger".to_string(),
+        mpsc::RecvTimeoutError::Disconnected => "the program ended".to_string(),
+    })?;
     if let Some(error) = attached["error"].as_str() {
         return Err(format!("{error}: a program is debugged in a build with --debug"));
     }
@@ -2189,6 +2217,47 @@ mod tests {
             let sent = String::from_utf8(kept.0.lock().unwrap().clone()).unwrap();
             assert_eq!(sent.contains(r#""event":"terminated""#), ends, "{current}: {sent}");
         }
+    }
+
+    /// A program that does not answer in time leaves the editor an error,
+    /// not a session that answers nothing more; its late answer, when it
+    /// comes, is not taken for the next command's.
+    #[test]
+    fn an_answer_that_does_not_come_leaves_the_editor_an_error() {
+        let editor = super::Editor { out: Arc::new(Mutex::new((Box::new(Kept::default()), 0))) };
+        let pumped = super::Pumped {
+            events: editor,
+            entry: false,
+            drained: Arc::new((Mutex::new(0), std::sync::Condvar::new())),
+            streams: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            checkpointed: Arc::new(Mutex::new(Vec::new())),
+            current: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        };
+        let (writer, _program) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (answer, answers) = std::sync::mpsc::channel();
+        let mut debuggee = super::Debuggee {
+            pid: 0,
+            writer,
+            answers,
+            late: 0,
+            wait: std::time::Duration::from_millis(20),
+            child: None,
+            root: std::path::PathBuf::new(),
+            handles: Vec::new(),
+            forgotten: 0,
+            targets: Vec::new(),
+            pumped,
+            replaying: None,
+            kept: false,
+            after: None,
+            roots: super::Roots::default(),
+            sources: Vec::new(),
+        };
+        let slow = debuggee.answer("tasks").unwrap_err();
+        assert!(slow.contains("has not answered"), "{slow}");
+        answer.send(serde_json::json!({ "tasks": "late" })).unwrap();
+        answer.send(serde_json::json!({ "tasks": "now" })).unwrap();
+        assert_eq!(debuggee.answer("tasks").unwrap()["tasks"], "now");
     }
 
     #[test]

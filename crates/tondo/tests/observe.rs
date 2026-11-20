@@ -1111,6 +1111,42 @@ fn dap_read(reader: &mut impl BufRead) -> Value {
 /// ended: one session in sixty to a hundred on one core, so that three
 /// hundred catch it 19 runs in 20. The adapter now ends such a session and
 /// says why, which this holds to never happening.
+/// The adapter `adapter` and the processes it started: each one's state
+/// and processor time, its threads' stacks (`sample` on macOS, the kernel's
+/// view on Linux), and a dump of the program, as `tondo dump` takes it.
+fn stuck_processes(tondo: &str, adapter: u32) -> (Vec<String>, String) {
+    let children = Command::new("pgrep").arg("-P").arg(adapter.to_string()).output();
+    let children = children.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    let pids: Vec<String> =
+        std::iter::once(adapter.to_string()).chain(children.split_whitespace().map(String::from)).collect();
+    let mut told = format!("10 s in:\n{}", run_states(&pids));
+    for pid in &pids {
+        let stacks = match cfg!(target_os = "macos") {
+            true => Command::new("sample").args([pid.as_str(), "1"]).output(),
+            false => Command::new("sh")
+                .arg("-c")
+                .arg(format!("for t in /proc/{pid}/task/*; do echo \"$t $(cut -d' ' -f3 $t/stat) $(cat $t/wchan 2>/dev/null)\"; done"))
+                .output(),
+        };
+        let stacks = stacks.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+        let lines: Vec<&str> = stacks.lines().take(120).collect();
+        told.push_str(&format!("\nthreads of {pid}:\n{}", lines.join("\n")));
+    }
+    if let Some(program) = pids.get(1) {
+        let dump = Command::new(tondo).args(["dump", program.as_str(), "--json"]).output();
+        let dump = dump.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+        told.push_str(&format!("\ndump of {program}:\n{}", dump.chars().take(4000).collect::<String>()));
+    }
+    (pids, told)
+}
+
+/// Each process's state and the processor time it has used: one that did
+/// not run is told from one that waits by its state, R or S.
+fn run_states(pids: &[String]) -> String {
+    let shown = Command::new("ps").args(["-o", "pid=,state=,time=", "-p", &pids.join(",")]).output();
+    shown.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+}
+
 #[test]
 fn every_debugged_program_s_end_reaches_the_editor() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dapends");
@@ -1158,9 +1194,16 @@ fn every_debugged_program_s_end_reaches_the_editor() {
         send("launch", json!({ "program": program })).unwrap();
         send("configurationDone", json!({})).unwrap();
         // As VS Code does while a program runs: its tasks, often.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let begun = std::time::Instant::now();
+        let deadline = begun + std::time::Duration::from_secs(20);
         let mut said = Vec::new();
+        let mut looked: Option<(Vec<String>, String)> = None;
         let ended = loop {
+            // Half way without an end: where the adapter and the program
+            // stand, and whether they run, for the failure to say.
+            if looked.is_none() && begun.elapsed() > std::time::Duration::from_secs(10) {
+                looked = Some(stuck_processes(tondo, child.id()));
+            }
             if let Ok(message) = ends.recv_timeout(std::time::Duration::from_millis(1)) {
                 let ended = message["event"] == "terminated";
                 said.push(message);
@@ -1181,7 +1224,11 @@ fn every_debugged_program_s_end_reaches_the_editor() {
             .filter(|m| m["command"] != "threads")
             .map(|m| format!("{} {} {}", m["type"], m["command"], m["event"]))
             .collect();
-        assert!(ended, "round {round}: the session did not end: {shown:?}");
+        let stood = match &looked {
+            Some((pids, first)) => format!("\n{first}\nat the deadline:\n{}", run_states(pids)),
+            None => String::new(),
+        };
+        assert!(ended, "round {round}: the session did not end: {shown:?}{stood}");
         let unread = said.iter().find(|m| m["body"]["output"].as_str().is_some_and(|o| o.contains("could not read")));
         assert!(unread.is_none(), "round {round}: {unread:?}");
     }
