@@ -1809,13 +1809,19 @@ impl Parser<'_> {
     }
 
     fn for_statement(&mut self) -> PResult<StmtKind> {
+        let (header, body) = self.for_parts()?;
+        Ok(StmtKind::For { header, body })
+    }
+
+    /// `for header { body }`, a statement or a value (13.3).
+    fn for_parts(&mut self) -> PResult<(ForHeader, Block)> {
         self.bump();
         if self.at(&Tok::LParen) && matches!(self.nth(1), Tok::Ident(_)) && matches!(self.nth(2), Tok::Eq) {
             return self
                 .error("Tondo has no C-style `for`: count with a range, `for i in 0..count { ... }`".to_string());
         }
         if self.at(&Tok::LBrace) {
-            return Ok(StmtKind::For { header: ForHeader::Infinite, body: self.block()? });
+            return Ok((ForHeader::Infinite, self.block()?));
         }
         let in_header = self.header_has_in();
         let no_brace = std::mem::replace(&mut self.no_brace, true);
@@ -1831,7 +1837,7 @@ impl Parser<'_> {
         if let ForHeader::In { source, .. } | ForHeader::Condition(source) = &header {
             self.record_in_header(source)?;
         }
-        Ok(StmtKind::For { header, body: self.block()? })
+        Ok((header, self.block()?))
     }
 
     /// A record literal cannot follow a header expression directly, since
@@ -1982,7 +1988,7 @@ impl Parser<'_> {
                 let kind = StmtKind::Discard(self.expression()?);
                 statement(kind, self)
             }
-            Tok::Kw(kw @ (Kw::Let | Kw::Var | Kw::Defer | Kw::For)) => {
+            Tok::Kw(kw @ (Kw::Let | Kw::Var | Kw::Defer)) => {
                 return self.error(format!("`{}` in a match arm needs a block: `=> {{ ... }}`", kw.as_str()));
             }
             _ => {
@@ -2753,6 +2759,10 @@ impl Parser<'_> {
                 ExprKind::Block(block)
             }
             Tok::Kw(Kw::If) => return self.if_expression(),
+            Tok::Kw(Kw::For) => {
+                let (header, body) = self.for_parts()?;
+                ExprKind::For(Box::new(header), body)
+            }
             Tok::LBracket => return self.bracket_literal(),
             Tok::Kw(Kw::SelfValue) => {
                 self.bump();

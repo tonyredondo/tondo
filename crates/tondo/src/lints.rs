@@ -157,6 +157,10 @@ fn copies(file: &SourceFile, block: &Block, diags: &mut Diagnostics) {
                 turn(file, body, diags);
                 copies(file, body, diags);
             }
+            StmtKind::Let { value: Some(ast::Expr { kind: ExprKind::For(_, body), .. }), .. } => {
+                turn(file, body, diags);
+                copies(file, body, diags);
+            }
             StmtKind::Expr(value) => {
                 if let ExprKind::If { then, .. } = &value.kind {
                     copies(file, then, diags);

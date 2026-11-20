@@ -45,6 +45,13 @@ impl<'a> Checker<'a> {
             per_element: false,
             per_call: false,
             turn_arrays: Vec::new(),
+            collecting: Vec::new(),
+            turn_body: None,
+            wants: Wants::Nothing,
+            array_body: false,
+            closure_body: false,
+            end_for: None,
+            end_dropped: false,
         }
     }
 
@@ -362,32 +369,39 @@ impl<'a> Checker<'a> {
     /// What a statement or the end of a block with no value leaves (5.2, 11.9):
     /// a call abandons its result, but a value with no call does nothing, and
     /// W1018 a call whose `String` nothing uses, made for nothing or meant to
-    /// be written.
-    pub(super) fn dropped_value(&mut self, written: &ast::Expr, value: &hir::Expr) {
+    /// be written. At the end of a `for`'s body, each also says how the loop
+    /// gives its values (13.3). Whether it was an error.
+    pub(super) fn dropped_value(&mut self, written: &ast::Expr, value: &hir::Expr, turn: TurnHint) -> bool {
         let plain = !matches!(value.ty, Ty::UNIT | Ty::NEVER) && !self.types.has_error(value.ty);
         if plain && Self::only_a_value(written) && self.types.is_copy(value.ty) {
-            let message = "this value does nothing: use it, return it from a function that declares its type, \
-                or discard it with `_ = ...`";
+            let message = format!(
+                "this value does nothing: use it, return it from a function that declares its type, \
+                or discard it with `_ = ...`{}",
+                Self::turn_hint(turn)
+            );
             self.diags.error("E1306", value.span, message);
             let start = Span::new(value.span.start, value.span.start);
             self.diags.fix("discard it with `_ = ...`", false, vec![(start, "_ = ".into())]);
-            return;
+            return true;
         }
         let call = match &written.kind {
             ast::ExprKind::Try(inner) => &inner.kind,
             kind => kind,
         };
         if !matches!(call, ast::ExprKind::Call { .. }) {
-            return;
+            return false;
         }
         if value.ty != Ty::STRING {
             if plain && !self.must_use(value.ty) {
-                self.dropped_result(call, value);
+                self.dropped_result(call, value, turn);
             }
-            return;
+            return false;
         }
-        let message = "nothing uses the `String` of this call, and making it has a cost: write it with \
-            `console.println(...)`, or discard it with `_ = ...`";
+        let message = format!(
+            "nothing uses the `String` of this call, and making it has a cost: write it with \
+            `console.println(...)`, or discard it with `_ = ...`{}",
+            Self::turn_hint(turn)
+        );
         self.diags.warning("W1018", value.span, message);
         let (start, end) = (Span::new(value.span.start, value.span.start), Span::new(value.span.end, value.span.end));
         let console = self.imported_as(value.span, "std.console");
@@ -397,14 +411,15 @@ impl<'a> Checker<'a> {
         }
         self.diags.fix("write it with `console.println`", false, edits);
         self.diags.fix("discard it with `_ = ...`", false, vec![(start, "_ = ".into())]);
+        false
     }
 
     /// W1018 of a result that is not a text, when the call has no other effect:
     /// a method of the language that only reads, or a function of the program
     /// that only computes, which is known once all are declared.
-    pub(super) fn dropped_result(&mut self, call: &ast::ExprKind, value: &hir::Expr) {
+    pub(super) fn dropped_result(&mut self, call: &ast::ExprKind, value: &hir::Expr, turn: TurnHint) {
         if let hir::ExprKind::Call(Callee::Fn(id), ..) = &value.kind {
-            self.dropped_calls.push((*id, value.span));
+            self.dropped_calls.push((*id, value.span, turn));
         } else if let ast::ExprKind::Call { callee, .. } = call
             && let Some(method) = match &callee.kind {
                 ast::ExprKind::Field(_, method) => Some(method),
@@ -415,7 +430,19 @@ impl<'a> Checker<'a> {
             && let Some(receiver) = Self::receiver(value)
             && self.only_reads(receiver.ty, &method.name)
         {
-            self.result_unused(value.span);
+            self.result_unused(value.span, turn);
+        }
+    }
+
+    /// What a dropped value at the end of a `for`'s body adds: how the loop
+    /// gives its values, for one who expected them.
+    fn turn_hint(turn: TurnHint) -> &'static str {
+        match turn {
+            TurnHint::Bind => {
+                "; a `for` gives its values when it is bound or returned, as `let values = for ... { ... }`"
+            }
+            TurnHint::Return => "; a `for` gives its values when it is returned, as `return for ... { ... }`",
+            TurnHint::None => "",
         }
     }
 
@@ -437,9 +464,11 @@ impl<'a> Checker<'a> {
         }
     }
 
-    pub(super) fn result_unused(&mut self, span: Span) {
-        let message =
-            "nothing uses what this call gives, and it does nothing else: use it, or discard it with `_ = ...`";
+    pub(super) fn result_unused(&mut self, span: Span, turn: TurnHint) {
+        let message = format!(
+            "nothing uses what this call gives, and it does nothing else: use it, or discard it with `_ = ...`{}",
+            Self::turn_hint(turn)
+        );
         self.diags.warning("W1018", span, message);
         self.diags.fix("discard it with `_ = ...`", false, vec![(Span::new(span.start, span.start), "_ = ".into())]);
     }
@@ -717,7 +746,10 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> hir::Expr {
         let kind = ClosureKind { deferred, is_unsafe, test: false, infer_error: false };
-        let body = |this: &mut Self, cx: &mut FnCx, success| this.block(cx, closure_body, success);
+        let body = |this: &mut Self, cx: &mut FnCx, success| {
+            cx.closure_body = !deferred;
+            this.block(cx, closure_body, success)
+        };
         self.closure_with(cx, (closure_params, closure_result), expected, kind, span, body)
     }
 
@@ -787,6 +819,11 @@ impl<'a> Checker<'a> {
         let declared = closure_result
             .map(|t| self.resolve_type(t))
             .or(expected.as_ref().map(|e| e.result).filter(|&r| r != Ty::ERROR));
+        // Expected to give an array of what is not known yet, it infers its
+        // result, which must be an array (13.3).
+        let array_body = closure_result.is_none()
+            && declared.is_some_and(|d| matches!(self.types.kind(d), TyKind::Array(element) if *element == Ty::ERROR));
+        let declared = declared.filter(|_| !array_body);
         // Expected to give `T ! E` with `E` not known yet, it infers its
         // errors, none when it cannot fail.
         let infer_failure =
@@ -819,6 +856,7 @@ impl<'a> Checker<'a> {
         // The body is checked in its own context, nested in the current one.
         let mut inner = self.new_cx(declared.unwrap_or(Ty::ERROR));
         inner.infer_result = declared.is_none();
+        inner.array_body = array_body;
         inner.infer_error = test || infer_error || infer_failure;
         if infer_failure {
             inner.error = None;

@@ -1,0 +1,219 @@
+// A `for` where a value is wanted gives the array of what its body ends
+// with on each turn (13.3): bound, assigned, passed, returned, and as the
+// value of a function, a branch or an arm whose type is an array.
+// `continue` gives nothing on its turn and `break` ends with what was
+// given; elsewhere a `for` is the statement it was.
+
+import std.console
+
+type User = {
+    name: String
+    hidden: Bool
+}
+
+fn doubled(values: Array[Int]): Array[Int] {
+    for value in values {
+        value * 2
+    }
+}
+
+fn squares(count: Int): Array[Int] {
+    return for i in 1..=count { i * i }
+}
+
+fn total(values: Array[Int]): Int {
+    var sum = 0
+    for value in values {
+        sum += value
+    }
+    sum
+}
+
+fn square(n: Int): Int {
+    n * n
+}
+
+fn main() {
+    let lines = ["alpha", "be", "gam"]
+    let lengths = for line in lines { line.length() }
+    console.println("{lengths}")
+
+    let users = [
+        User { name: "ana", hidden: false },
+        User { name: "bo", hidden: true },
+        User { name: "cy", hidden: false },
+    ]
+    let names = for user in users {
+        if user.hidden {
+            continue
+        }
+        user.name.toUpper()
+    }
+    console.println("{names}")
+
+    // `break` ends with the values given before it.
+    let small = for value in [1, 2, 30, 4] {
+        if value > 10 {
+            break
+        }
+        value
+    }
+    console.println("{small}")
+
+    // `for condition` and `for` alone.
+    var i = 0
+    let counted = for i < 3 {
+        i += 1
+        i * 10
+    }
+    var n = 0
+    let until = for {
+        n += 1
+        if n > 4 {
+            break
+        }
+        n
+    }
+    console.println("{counted} {until}")
+
+    console.println("{doubled([1, 2, 3])} {squares(3)} {total(for x in 0..4 { x })}")
+
+    var kept = [0]
+    kept = for x in [7, 8] { x + 1 }
+    console.println("{kept}")
+
+    // A branch and an arm whose type is an array.
+    let wanted = true
+    let picked: Array[Int] = if wanted {
+        for x in [1, 2] {
+            x
+        }
+    } else {
+        []
+    }
+    let mode = 1
+    let armed: Array[String] = match mode {
+        0 => []
+        _ => for x in [3, 4] { "#{x}" }
+    }
+    console.println("{picked} {armed}")
+
+    // A `for` that ends a turn's body gives that turn's value.
+    let grid = for row in [[1, 2], [3]] {
+        for x in row {
+            x * 10
+        }
+    }
+    console.println("{grid}")
+
+    let pairs = for (key, value) in ["a": 1, "b": 2] { "{key}={value}" }
+    let borrowed = for ref line in lines { line.length() + 1 }
+    console.println("{pairs} {borrowed}")
+
+    // Each task stays alive in the array the loop gives.
+    let jobs = for k in [2, 3, 4] { spawn square(k) }
+    let results = for job in jobs { job.wait() }
+    console.println("{results}")
+
+    // Where no value is wanted, it is the statement it was.
+    match mode {
+        0 => console.println("none")
+        _ => for x in [5, 6] { console.println("{x}") }
+    }
+
+    // A loop for its effects, whose body ends with what a change of a set
+    // gives, says nothing.
+    let distinct = (values: Array[Int]) {
+        var seen: Set[Int] = Set[]
+        for value in values {
+            seen.insert(value)
+        }
+        seen.length()
+    }
+    console.println("{distinct([9, 9, 8])}")
+
+    console.println("{firstBig([1, 20, 3])} {upTo(3)}")
+
+    // A branch and an arm whose value is wanted, with no type written.
+    let unnamed = if wanted {
+        for x in [1, 2] {
+            x * 3
+        }
+    } else {
+        [0]
+    }
+    let chosen = match mode + 1 {
+        1 => [0]
+        _ => {
+            for x in [4, 5] {
+                x
+            }
+        }
+    }
+    console.println("{unnamed} {chosen}")
+
+    // A closure for `fn(T): Array[U]`, one whose result is written, and
+    // one where an array is expected.
+    let flat = [[1, 2], [3]].flatMap(
+        (row) {
+            for x in row {
+                x * 10
+            }
+        },
+    )
+    let written = (row: Array[Int]): Array[Int] {
+        for x in row {
+            x + 1
+        }
+    }
+    let given: fn(Array[Int]): Array[Int] = (row) {
+        for x in row {
+            x - 1
+        }
+    }
+    console.println("{flat} {written([1])} {given([1])}")
+}
+
+// A `for` alone that ends a block, with no `break` that ends it, never
+// ends: it is the statement it was, of type `Never` (13.4).
+fn firstBig(values: Array[Int]): Array[Int] {
+    var at = 0
+    for {
+        if values[at] > 10 {
+            return [values[at]]
+        }
+        at += 1
+    }
+}
+
+// With a `break`, it gives its values.
+fn upTo(limit: Int): Array[Int] {
+    var n = 0
+    for {
+        n += 1
+        if n > limit {
+            break
+        }
+        n
+    }
+}
+
+// expect-stdout: [5, 2, 3]
+// expect-stdout: [ANA, CY]
+// expect-stdout: [1, 2]
+// expect-stdout: [10, 20, 30] [1, 2, 3, 4]
+// expect-stdout: [2, 4, 6] [1, 4, 9] 6
+// expect-stdout: [8, 9]
+// expect-stdout: [1, 2] [#3, #4]
+// expect-stdout: [[10, 20], [30]]
+// expect-stdout: [a=1, b=2] [6, 3, 4]
+// expect-stdout: [4, 9, 16]
+// expect-stdout: 5
+// expect-stdout: 6
+// expect-stdout: 2
+// expect-stdout: [20] [1, 2, 3]
+// expect-stdout: [3, 6] [4, 5]
+// expect-stdout: [10, 20, 30] [2] [0]
+// expect-optimization: 16:9 reserved takes room for every turn before the loop
+// expect-optimization: 38:39 reserved takes room for every turn before the loop
+// expect-optimization: 103:9 reserved takes room for every turn before the loop

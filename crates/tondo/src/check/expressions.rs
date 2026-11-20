@@ -700,6 +700,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Closure(closure) => self.closure(cx, closure, expected, span),
             ast::ExprKind::Recover(block) => self.recover(cx, block, expected, span),
             ast::ExprKind::Within(limits, block) => self.within(cx, limits, block, span),
+            ast::ExprKind::For(header, body) => self.for_value(cx, header, body, expected, span, false),
             // The text of `template.html` or `template.text`, which the call
             // compiles (standard library 14.31).
             ast::ExprKind::Template(_) => Self::mk(hir::ExprKind::Str(String::new()), Ty::STRING, span),

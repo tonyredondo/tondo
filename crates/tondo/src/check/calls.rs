@@ -1383,7 +1383,7 @@ impl<'a> Checker<'a> {
             self.diags.error("E1201", pattern.span, message);
         }
         cx.loops.push(false);
-        let body = self.block(cx, body, Some(Ty::UNIT));
+        let body = self.turn_body(cx, body);
         cx.loops.pop();
         cx.scopes.close();
         let pattern_span = pattern.span;
@@ -3293,7 +3293,8 @@ impl<'a> Checker<'a> {
                         .or_else(|| self.call_expectation(&inference, ty))
                         .or_else(|| {
                             let annotated = matches!(&arg.value.kind, ast::ExprKind::Closure(c) if c.params.iter().all(|p| p.ty.is_some()));
-                            if waits { None } else { self.fn_expectation(&inference, ty, annotated) }
+                            let closure = matches!(&arg.value.kind, ast::ExprKind::Closure(c) if c.result.is_none());
+                            if waits { None } else { self.fn_expectation(&inference, ty, annotated, closure) }
                         }),
                 };
                 if pass == 0 && expected.is_none() && self.needs_context(&arg.value) {
@@ -3367,8 +3368,13 @@ impl<'a> Checker<'a> {
             .filter(|g| !inference.map.contains_key(g))
             .map(|&g| format!("`{}`", self.types.display(g)))
             .collect();
-        // An argument that is an error already says why.
-        let failed = values.iter().flatten().any(|value| self.types.has_error(value.ty));
+        // An argument that is an error already says why, as a closure whose
+        // body is.
+        let mut failed = false;
+        for value in values.iter().flatten() {
+            failed |= self.types.has_error(value.ty)
+                || self.callable(value.ty).is_some_and(|callable| self.types.has_error(callable.result));
+        }
         if !unknown.is_empty() && failed {
             return Self::error_expr(span);
         }

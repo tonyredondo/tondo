@@ -140,6 +140,7 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "invalid-within",
         "A `within` with two deadlines or two limits, or with what is neither a deadline nor a limit of tasks.",
     ),
+    ("E1623", "for-without-value", "A `for` where a value is wanted whose body does not end with a value."),
     ("E1701", "unsafe-operation-outside-region", "A raw operation outside an `unsafe` region."),
     ("E1702", "invalid-unsafe-contract", "A signature or capture does not show the `unsafe` contract it needs."),
     ("E1703", "invalid-c-type", "A type that does not cross to C in a C declaration, or an opaque type built or read."),

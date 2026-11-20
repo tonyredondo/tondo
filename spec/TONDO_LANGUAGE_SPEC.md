@@ -5034,6 +5034,10 @@ mismatch, salvo que se espere `Unit`: entonces su valor se abandona como el de
 una sentencia, y un `Result` u `Option` exige igualmente `?`, `match` o `_ =`
 (11.9). Una expresión anterior termina como sentencia mediante `NL`.
 
+Un bloque que debe dar un valor y termina en un `for` da el array de ese `for`
+(13.3), salvo un `for` solo que ningún `break` termina: nunca acaba, y su tipo
+sigue siendo `Never` (13.4).
+
 ### 13.2 `if`
 
 La condición debe ser exactamente `Bool`:
@@ -5213,6 +5217,41 @@ for index < values.length() {
 }
 ~~~
 
+Un `for` donde se espera un valor da un array con el valor de cada vuelta: a la
+derecha de `let` o de `=`, como argumento, tras `return`, o al final de un bloque
+que debe dar un valor: el cuerpo de una función con tipo de resultado, una rama de
+un `if` o un brazo de un `match` o un `select` cuyo valor se usa, la vuelta de un
+`for` que da valores, un cierre cuyo resultado está escrito o se espera:
+
+~~~tondo
+let lengths = for line in lines { line.length() }        // Array[Int]
+let names = for user in users {
+    if user.hidden {
+        continue
+    }
+    user.name
+}
+~~~
+
+- El valor de cada vuelta es el del final de su cuerpo. Un cuerpo que no
+  termina en un valor produce `E1623`, que dice terminarlo con el valor de la
+  vuelta, o escribir el `for` como sentencia.
+- `continue` no da valor en su vuelta; `break` termina con los valores dados
+  hasta entonces.
+- Una vuelta debe dar un valor, así que el `for` en que termina su cuerpo es uno:
+  `let grid = for row in rows { for x in row { x * 10 } }` es un
+  `Array[Array[Int]]`. Un bloque que no necesita darlo, como el cuerpo de una
+  función sin tipo de resultado o el de un cierre cuyo resultado nada dice, puede
+  ser para sus efectos, y el `for` en que termina sigue siendo una sentencia.
+- Vale igual para `for x in xs`, `for condición` y `for` solo.
+- Es el bucle que añade cada valor a un array, escrito por el compilador, con el
+  array crecido de antemano cuando se sabe cuántas vueltas habrá.
+- En cualquier otro sitio un `for` es la sentencia que era. `map` sigue siendo
+  la forma corta de una sola expresión.
+- Un cuerpo cuyo valor es una tarea, `for url in urls { spawn fetch(url) }`, da
+  un `Array[Join[T]]`: cada tarea sigue viva al acabar su vuelta, en el array, y
+  no avisa `W1013` ni el `E1303` de una tarea que puede fallar.
+
 ### 13.4 `break` y `continue`
 
 `break` termina el bucle más cercano. `continue` inicia su siguiente iteración.
@@ -5237,7 +5276,7 @@ Tondo 0.1 no tiene:
 - `break` con valor.
 - `else` de bucle.
 
-Los bucles condicionales y de iteración tienen tipo `Unit`. Un `for {}` tiene tipo `Never` cuando ningún `break` alcanzable termina ese mismo bucle; si existe tal salida, su tipo es `Unit`. El análisis no depende de demostrar que una condición ordinaria sea siempre verdadera.
+Como sentencia, los bucles condicionales y de iteración tienen tipo `Unit`. Un `for {}` tiene tipo `Never` cuando ningún `break` alcanzable termina ese mismo bucle; si existe tal salida, su tipo es `Unit`. El análisis no depende de demostrar que una condición ordinaria sea siempre verdadera. Usado como valor, un `for` tiene el tipo de su array (13.3).
 
 `break` y `continue` no atraviesan una frontera de función o cierre. Un cierre declarado dentro de un bucle no puede controlar el bucle exterior.
 
@@ -9490,6 +9529,7 @@ oculten un diagnóstico independiente.
 | `E1620` | `wait-or-cancel-without-errors` | `waitOrCancel()` sobre tareas que no pueden fallar. |
 | `E1621` | `wait-used-as-result` | Lo que da `wait()` sobre tareas que pueden fallar se usa como un solo resultado. |
 | `E1622` | `invalid-within` | Un `within` con dos plazos o dos límites, o con algo que no es un plazo ni un límite. |
+| `E1623` | `for-without-value` | Un `for` donde se espera un valor cuyo cuerpo no termina en un valor. |
 
 #### Unsafe, programas y constantes
 
@@ -9929,6 +9969,7 @@ Son errores obligatorios, entre otros:
 - `spawn` sin una llamada (`E1611`) o con argumentos prestados (`E1609`).
 - `waitOrCancel()` sobre tareas que no pueden fallar (`E1620`), y lo que da `wait()` usado como un solo resultado (`E1621`).
 - Un `within` con dos plazos, dos límites o algo que no es ninguno de los dos (`E1622`).
+- Un `for` usado como valor cuyo cuerpo no termina en el valor de la vuelta (`E1623`).
 - Uso de un binding después de mover un valor afín (`E1401`).
 - Intento de almacenar, capturar, devolver o prolongar un préstamo fuera de su
   región estructurada (`E1402`).
@@ -10626,13 +10667,17 @@ una forma sea una ruta de lugar no concede por sí solo permiso de escritura.
 ### 23.16 `for`
 
 ~~~ebnf
-for_stmt        = "for", ( block
+for_stmt        = for_expression ;
+
+for_expression  = "for", ( block
                   | irrefutable_pattern, "in", expression, block
                   | expression, block ) ;
 ~~~
 
 Resolución:
 
+- Al principio de una sentencia, `for` es `for_stmt`; dentro de una expresión,
+  `for_expression` (13.3).
 - `for { ... }`: infinito.
 - Si aparece `in` al nivel del header: iteración.
 - En otro caso: la expresión debe ser `Bool`.
@@ -10848,6 +10893,7 @@ primary_expression
                 | unsafe_expression
                 | recover_expression
                 | within_expression
+                | for_expression
                 | command_literal
                 | block ;
 

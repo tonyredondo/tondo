@@ -599,6 +599,9 @@ pub enum ExprKind {
     /// `within limit { ... }` (11.17): a deadline, a limit of tasks, or
     /// both, `within time.seconds(5), tasks.limit(8) { ... }`.
     Within(Vec<Expr>, Block),
+    /// A `for` where a value is wanted (13.3): an array of what its body
+    /// ends with on each turn.
+    For(Box<ForHeader>, Block),
     /// The code of a template compiled with the program (standard library
     /// 14.31), which `template.html` and `template.text` take as their
     /// source: the statements that write it, with its data as `self`.

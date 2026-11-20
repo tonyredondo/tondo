@@ -1203,7 +1203,13 @@ impl<'a> Checker<'a> {
     /// What a closure for a `fn(A): B` parameter is checked against when
     /// its parameters are known and its result is not yet: `B` comes from
     /// the closure's body.
-    pub(super) fn fn_expectation(&mut self, inference: &Inference, ty: Ty, annotated: bool) -> Option<Ty> {
+    pub(super) fn fn_expectation(
+        &mut self,
+        inference: &Inference,
+        ty: Ty,
+        annotated: bool,
+        closure: bool,
+    ) -> Option<Ty> {
         let TyKind::Fn(params, result, variadic, modes, is_unsafe) = self.types.kind(ty).clone() else {
             return None;
         };
@@ -1212,7 +1218,13 @@ impl<'a> Checker<'a> {
             .into_iter()
             .map(|p| self.inferred(inference, p).or(annotated.then_some(Ty::ERROR)))
             .collect::<Option<Vec<Ty>>>()?;
-        let result = self.expected_result(inference, result);
+        // A closure for `fn(T): Array[U]`, `U` not known yet, still gives an
+        // array: a `for` that ends its body is one (13.3).
+        let array = closure && matches!(self.types.kind(result), TyKind::Array(_));
+        let result = match array && self.inferred(inference, result).is_none() {
+            true => self.types.intern(TyKind::Array(Ty::ERROR)),
+            false => self.expected_result(inference, result),
+        };
         Some(self.types.intern(TyKind::Fn(params, result, variadic, modes, is_unsafe)))
     }
 

@@ -877,6 +877,22 @@ impl Linker<'_> {
         self.visible.truncate(visible);
     }
 
+    /// A `for`, statement or value: its pattern's bindings are seen in its
+    /// body alone.
+    fn for_loop(&mut self, header: &mut ForHeader, body: &mut Block) {
+        self.scoped(|linker| {
+            match header {
+                ForHeader::Infinite => {}
+                ForHeader::Condition(condition) => linker.expr(condition),
+                ForHeader::In { pattern, source } => {
+                    linker.pattern(pattern);
+                    linker.expr(source);
+                }
+            }
+            linker.block(body);
+        })
+    }
+
     fn generics(&mut self, generics: &mut [GenericParam]) {
         for generic in generics {
             generic.bounds.iter_mut().for_each(|b| self.ty(b));
@@ -940,17 +956,7 @@ impl Linker<'_> {
                 }
             }
             StmtKind::Break | StmtKind::Continue => {}
-            StmtKind::For { header, body } => self.scoped(|linker| {
-                match header {
-                    ForHeader::Infinite => {}
-                    ForHeader::Condition(condition) => linker.expr(condition),
-                    ForHeader::In { pattern, source } => {
-                        linker.pattern(pattern);
-                        linker.expr(source);
-                    }
-                }
-                linker.block(body);
-            }),
+            StmtKind::For { header, body } => self.for_loop(header, body),
             StmtKind::Defer(Defer::Call(call)) => self.expr(call),
             StmtKind::Defer(Defer::Block(block)) => self.block(block),
             StmtKind::With { path, fields } => {
@@ -1100,6 +1106,7 @@ impl Linker<'_> {
                 limits.iter_mut().for_each(|limit| self.expr(limit));
                 self.block(block);
             }
+            ExprKind::For(header, body) => self.for_loop(header, body),
             ExprKind::Template(block) => self.block(block),
             ExprKind::TemplateWrite { value, .. } => self.expr(value),
             ExprKind::TemplateInclude { data, named, body } => {

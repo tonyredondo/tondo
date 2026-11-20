@@ -1,0 +1,53 @@
+// A `for` used as a value whose body does not end with the value of its
+// turn is E1623 (13.3). A `for` that ends a closure's body is a statement,
+// and what drops its body's value says how the loop gives its values.
+
+import std.console
+
+fn twice(n: Int): Int {
+    n * 2
+}
+
+fn count(values: Array[Int]): Int {
+    for value in values {
+        value
+    }
+}
+
+fn main() {
+    let values = [1, 2, 3]
+    let printed = for value in values { console.println("{value}") }
+    var sum = 0
+    let added = for value in values {
+        sum += value
+    }
+    let looped = () {
+        for value in values {
+            value * 2
+        }
+    }
+    let called = () {
+        for value in values {
+            twice(value)
+        }
+    }
+    let texts = () {
+        for value in values {
+            "{value}".toUpper()
+        }
+    }
+    let odd = for value in values {
+        if value % 2 == 1 {
+            value
+        }
+    }
+    _ = (printed, added, looped, called, texts, odd, count(values))
+}
+
+// expect-error: E1102 expected `Int`, found `Array[Int]`
+// expect-error: E1623 this `for` is used as a value, the array of what its body ends with on each turn, but its body ends without a value: end it with the turn's value, `continue` on a turn that gives none, or, for a loop run for its effects, write the `for` as a statement of its own
+// expect-error: E1623 this `for` is used as a value
+// expect-error: E1306 this value does nothing: use it, return it from a function that declares its type, or discard it with `_ = ...`; a `for` gives its values when it is returned, as `return for ... { ... }`
+// expect-warning: W1018 nothing uses what this call gives, and it does nothing else: use it, or discard it with `_ = ...`; a `for` gives its values when it is returned, as `return for ... { ... }`
+// expect-warning: W1018 nothing uses the `String` of this call, and making it has a cost: write it with `console.println(...)`, or discard it with `_ = ...`; a `for` gives its values when it is returned
+// expect-error: E1623 this turn gives a value only when its condition holds, and a turn gives none with `continue`: write `if value % 2 != 1 { continue }` before the value, `value`

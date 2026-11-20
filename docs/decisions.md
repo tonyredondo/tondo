@@ -8731,3 +8731,40 @@ which says to nest them. The formatter would have written two nested of
 the two kinds as one, but it has no types and the limits are often
 bindings, so the checker warns instead, W1027, with the repair that
 writes one, the deadline first.
+
+## A `for` as a value
+
+Tony asked for a parallel `for`, "un for paralelo… otro nivel de
+abstracción", one that gives what its turns compute; its first piece is
+the plain `for` that gives them. A `for` where a value is wanted, bound,
+assigned, passed or returned, or ending a block whose type is an array,
+gives the array of what its body ends with on each turn: `continue`
+gives nothing on its turn and `break` ends with what was given. It is
+the loop that pushes each value to an array, written by the compiler, so
+the passes that give such an array its room before the loop give it to
+this one. Elsewhere a `for` is the statement it was, and `map` stays the
+short form of one expression.
+
+The rule decides by where the loop is, not by its body, which would turn
+a loop for its effects into an `Array[Bool]` the day its body ended with
+an `insert`: a `for` ends a block that must give a value as one, a
+function's body with a result type, a branch of an `if` or an arm of a
+`match` or a `select` whose value is used, a closure whose result is
+written or expected, as for `flatMap`'s `fn(T): Array[U]`, and a turn of
+a `for` that gives values, so `for row in rows { for x in row { x * 10 }
+}` is an `Array[Array[Int]]`. A block that need not give one, the body of
+a function without a result type or of a closure whose result nothing
+states, may be for its effects, and a `for` it ends with stays a
+statement. There, what says that its body's value is dropped, E1306 or
+W1018, adds how the loop gives its values: `return for ...` at the end of
+a closure, `let values = for ...` elsewhere. A body whose value has an
+effect, as an `insert`, is a loop for its effects and is left silent. A
+`for` alone that no `break` ends never ends and stays `Never`, as
+functions that end with one and return from inside it compile today. A body that ends without a
+value where one is wanted is E1623; one that ends with `if condition {
+value }`, as a comprehension with a filter is ported, gets the code with
+`continue` written. A task as a turn's value, `for url in
+urls { spawn fetch(url) }`, stays alive in the array, so neither W1013
+nor E1303 speaks of it. An arm `=> for ...` follows the same rule: it
+gives an array in a `match` that gives one, and is the statement in a
+`match` statement, where it was a parse error.

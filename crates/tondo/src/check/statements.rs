@@ -2,6 +2,19 @@
 
 use super::*;
 
+/// What the end of a block gives (13.1, 13.3).
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Ending {
+    /// The expression it ends with, if any.
+    Plain,
+    /// Also a `for` it ends with, used as a value: the block's type is an
+    /// array.
+    LastFor,
+    /// The value of a turn of a `for` used as a value: the expression or
+    /// `for` its body ends with, and E1623 without one.
+    Turn,
+}
+
 impl<'a> Checker<'a> {
     /// A local that no name refers to, such as the value of `for _ in ...`.
     pub(super) fn hidden_local(&mut self, cx: &mut FnCx, ty: Ty) -> LocalId {
@@ -119,28 +132,128 @@ impl<'a> Checker<'a> {
     // ---- statements ------------------------------------------------------
 
     pub(super) fn block(&mut self, cx: &mut FnCx, b: &ast::Block, expected: Option<Ty>) -> hir::Block {
+        let wants = std::mem::take(&mut cx.wants);
+        let closure = std::mem::take(&mut cx.closure_body);
+        // A block that must give a value: a `for` that ends it is one (13.3).
+        let gives = match expected {
+            Some(ty) => ty != Ty::UNIT && ty != Ty::NEVER && !self.types.has_error(ty),
+            None if closure => cx.array_body,
+            None => wants == Wants::Value,
+        };
+        let ending = if gives { Ending::LastFor } else { Ending::Plain };
+        self.block_with(cx, b, expected, ending, closure && expected.is_none() && !gives)
+    }
+
+    /// What a block, `if`, `match`, `select` or `for` checked as `value`
+    /// is told its place wants: nothing to any other expression, which
+    /// would pass it on to what it holds.
+    pub(super) fn passed(value: &ast::Expr, wants: Wants) -> Wants {
+        match value.kind {
+            ast::ExprKind::Block(_)
+            | ast::ExprKind::If { .. }
+            | ast::ExprKind::Match { .. }
+            | ast::ExprKind::Select(_)
+            | ast::ExprKind::For(..) => wants,
+            _ => Wants::Nothing,
+        }
+    }
+
+    /// A block, whose last statement, when it is a `for` and `ending` asks,
+    /// gives its value as a `for` used as a value (13.3); `ends_closure`
+    /// when it is the body of a closure whose result nothing states.
+    fn block_with(
+        &mut self,
+        cx: &mut FnCx,
+        b: &ast::Block,
+        expected: Option<Ty>,
+        ending: Ending,
+        ends_closure: bool,
+    ) -> hir::Block {
         let body = std::mem::take(&mut cx.body);
         cx.scopes.open();
         let withs = cx.withs.len();
         let outer = std::mem::replace(&mut cx.diverged, false);
-        let stmts = self.statements(cx, &b.stmts);
-        let tail = b.tail.as_ref().map(|t| {
-            if cx.diverged {
-                self.diags.warning("W1006", t.span, "unreachable expression");
+        let last_for = match (&b.tail, b.stmts.split_last()) {
+            (None, Some((ast::Stmt { kind: ast::StmtKind::For { header, body: looped }, span, .. }, before)))
+                if ending != Ending::Plain =>
+            {
+                Some((header, looped, *span, before))
             }
-            let entries = cx.entry_values.len();
-            let value = self.expr(cx, t, expected);
-            self.unchanged_entries(cx, entries);
-            if expected == Some(Ty::UNIT) {
-                self.dropped_value(t, &value);
+            _ => None,
+        };
+        // A `for` that ends a closure's body whose result nothing states is a
+        // statement, whose body's value at its end is dropped.
+        if ends_closure
+            && b.tail.is_none()
+            && let Some(ast::Stmt { kind: ast::StmtKind::For { body: looped, .. }, .. }) = b.stmts.last()
+        {
+            cx.end_for = Some(looped.span);
+        }
+        let stmts = self.statements(cx, last_for.map_or(&b.stmts[..], |(.., before)| before));
+        let turn = ending == Ending::Turn;
+        // What the place of its last expression asks of it when its type is
+        // not known: a value if this block must give one.
+        let tail_wants = match (expected, ending) {
+            (None, Ending::Plain) => Wants::Maybe,
+            (None, _) => Wants::Value,
+            _ => Wants::Nothing,
+        };
+        let tail = match last_for {
+            Some((header, looped, span, _)) => {
+                if cx.diverged {
+                    self.diags.warning("W1006", span, "unreachable expression");
+                }
+                Some(self.for_value(cx, header, looped, expected, span, true))
             }
+            None => b.tail.as_ref().map(|t| {
+                if cx.diverged {
+                    self.diags.warning("W1006", t.span, "unreachable expression");
+                }
+                // A turn that gives a value only when a condition holds.
+                if turn && let ast::ExprKind::If { condition, then, otherwise: None } = &t.kind {
+                    self.turn_given_sometimes(cx, condition, then, t.span);
+                    return Self::error_expr(t.span);
+                }
+                let entries = cx.entry_values.len();
+                cx.wants = Self::passed(t, tail_wants);
+                let value = self.expr(cx, t, expected);
+                self.unchanged_entries(cx, entries);
+                if expected == Some(Ty::UNIT) {
+                    let hint = match cx.turn_body {
+                        Some((span, true)) if span == b.span => TurnHint::Return,
+                        Some((span, false)) if span == b.span => TurnHint::Bind,
+                        _ => TurnHint::None,
+                    };
+                    if self.dropped_value(t, &value, hint) && hint == TurnHint::Return {
+                        cx.end_dropped = true;
+                    }
+                }
+                if turn && value.ty == Ty::UNIT {
+                    self.turn_without_value(t.span);
+                    return Self::error_expr(t.span);
+                }
+                value
+            }),
+        };
+        let tail = tail.map(|value| {
             Box::new(match expected {
                 Some(expected) if body => self.returned(cx, value, expected),
                 Some(expected) => self.coerce(value, expected),
                 None => value,
             })
         });
+        // A closure whose body ends with a `for` whose value nothing uses
+        // gives nothing more to speak of.
+        let dropped = ends_closure && std::mem::take(&mut cx.end_dropped);
+        if ends_closure {
+            cx.end_for = None;
+        }
         let ty = match &tail {
+            None if turn => {
+                self.turn_without_value(Span::new(b.span.end - 1, b.span.end));
+                Ty::ERROR
+            }
+            None if dropped => Ty::ERROR,
             _ if cx.diverged => Ty::NEVER,
             Some(tail) => tail.ty,
             None => match expected.filter(|&t| t != Ty::UNIT && t != Ty::ERROR) {
@@ -175,6 +288,163 @@ impl<'a> Checker<'a> {
         cx.scopes.close();
         cx.withs.truncate(withs);
         hir::Block { stmts, tail, ty }
+    }
+
+    /// E1623: the body of a `for` used as a value ends without the value of
+    /// its turn.
+    fn turn_without_value(&mut self, span: Span) {
+        let message = "this `for` is used as a value, the array of what its body ends with on each turn, but its body \
+            ends without a value: end it with the turn's value, `continue` on a turn that gives none, or, for a loop \
+            run for its effects, write the `for` as a statement of its own";
+        self.diags.error("E1623", span, message);
+    }
+
+    /// E1623 for a turn that ends with `if condition { value }`: a turn
+    /// gives nothing with `continue`, which the message writes.
+    fn turn_given_sometimes(&mut self, cx: &mut FnCx, condition: &ast::Expr, then: &ast::Block, span: Span) {
+        let checked = self.expr(cx, condition, Some(Ty::BOOL));
+        let _ = self.coerce(checked, Ty::BOOL);
+        let _ = self.block(cx, then, None);
+        let text = |this: &Self, span: Span| this.sources.slice(span).to_string();
+        let skip = match &condition.kind {
+            ast::ExprKind::Binary(op, left, right) => {
+                let flipped = match op {
+                    BinOp::Eq => Some("!="),
+                    BinOp::Ne => Some("=="),
+                    BinOp::Lt => Some(">="),
+                    BinOp::Le => Some(">"),
+                    BinOp::Gt => Some("<="),
+                    BinOp::Ge => Some("<"),
+                    _ => None,
+                };
+                flipped.map(|op| format!("{} {op} {}", text(self, left.span), text(self, right.span)))
+            }
+            ast::ExprKind::Unary(ast::UnaryOp::Not, inner) => {
+                let inner = text(self, inner.span);
+                let bare = inner.strip_prefix('(').and_then(|rest| rest.strip_suffix(')'));
+                Some(bare.filter(|bare| !bare.contains(['(', ')'])).unwrap_or(&inner).to_string())
+            }
+            _ => None,
+        }
+        .unwrap_or_else(|| format!("not ({})", text(self, condition.span)));
+        let value = match (&then.tail, then.stmts.is_empty()) {
+            (Some(tail), true) => format!(", `{}`", text(self, tail.span)),
+            _ => String::new(),
+        };
+        let message = format!(
+            "this turn gives a value only when its condition holds, and a turn gives none with `continue`: write \
+             `if {skip} {{ continue }}` before the value{value}"
+        );
+        self.diags.error("E1623", span, message);
+    }
+
+    /// A `for` where a value is wanted (13.3): the array of what its body
+    /// ends with on each turn, which `continue` skips and `break` ends.
+    /// Where `Unit` is wanted, as an arm of a `match` statement, it is the
+    /// statement it is elsewhere; and so is a `for` alone that ends a block,
+    /// `ending`, when no `break` ends it, which is `Never` (13.4).
+    pub(super) fn for_value(
+        &mut self,
+        cx: &mut FnCx,
+        header: &ast::ForHeader,
+        body: &ast::Block,
+        expected: Option<Ty>,
+        span: Span,
+        ending: bool,
+    ) -> hir::Expr {
+        let wants = std::mem::take(&mut cx.wants);
+        let outer = std::mem::replace(&mut cx.diverged, false);
+        if expected == Some(Ty::UNIT) || (expected.is_none() && wants == Wants::Maybe) {
+            let looped = self.for_loop(cx, header, body, span);
+            let ty = if std::mem::replace(&mut cx.diverged, outer) { Ty::NEVER } else { Ty::UNIT };
+            let block = hir::Block { stmts: looped.into_iter().collect(), tail: None, ty };
+            return Self::mk(hir::ExprKind::Block(block), ty, span);
+        }
+        let element = expected.and_then(|ty| match *self.types.kind(ty) {
+            TyKind::Array(element) => Some(element),
+            _ => None,
+        });
+        let lenient = ending && matches!(header, ast::ForHeader::Infinite);
+        cx.collecting.push(Collect { body: body.span, element, array: None, lenient, statement: false });
+        let looped = self.for_loop(cx, header, body, span);
+        let collected = cx.collecting.pop();
+        let diverged = std::mem::replace(&mut cx.diverged, outer);
+        if collected.as_ref().is_some_and(|collect| collect.statement) {
+            let block = hir::Block { stmts: looped.into_iter().collect(), tail: None, ty: Ty::NEVER };
+            return Self::mk(hir::ExprKind::Block(block), Ty::NEVER, span);
+        }
+        let collected = collected.and_then(|collect| collect.array);
+        let (Some(looped), Some((local, array))) = (looped, collected) else { return Self::error_expr(span) };
+        let empty = Self::mk(hir::ExprKind::Array(Vec::new()), array, span);
+        let gives = Self::mk(hir::ExprKind::Local(local), array, span);
+        let ty = if diverged { Ty::NEVER } else { array };
+        let block = hir::Block { stmts: vec![hir::Stmt::Let(local, empty), looped], tail: Some(Box::new(gives)), ty };
+        Self::mk(hir::ExprKind::Block(block), ty, span)
+    }
+
+    /// The body of a `for`. A statement's drops the value it ends with, if
+    /// any; a `for` used as a value pushes it to the array the loop gives.
+    pub(super) fn turn_body(&mut self, cx: &mut FnCx, body: &ast::Block) -> hir::Block {
+        let collecting = cx.collecting.last().filter(|c| c.body == body.span && c.array.is_none());
+        let Some((element, lenient)) = collecting.map(|c| (c.element, c.lenient)) else {
+            let outer = cx.turn_body.replace((body.span, cx.end_for == Some(body.span)));
+            let block = self.block(cx, body, Some(Ty::UNIT));
+            cx.turn_body = outer;
+            return block;
+        };
+        let mut block = match lenient {
+            // Whether it is a value is known once its body is, by a `break`:
+            // until then, its body is a statement's.
+            true => self.block_with(cx, body, None, Ending::Plain, false),
+            false => self.block_with(cx, body, element, Ending::Turn, false),
+        };
+        if lenient && !cx.loops.last().copied().unwrap_or(true) {
+            if let Some(tail) = block.tail.take() {
+                block.stmts.push(hir::Stmt::Expr(*tail));
+            }
+            if let Some(collect) = cx.collecting.last_mut() {
+                collect.statement = true;
+            }
+            return block;
+        }
+        if lenient && block.tail.as_ref().is_none_or(|tail| tail.ty == Ty::UNIT) {
+            let span = block.tail.as_ref().map_or(Span::new(body.span.end - 1, body.span.end), |tail| tail.span);
+            self.turn_without_value(span);
+            return block;
+        }
+        if lenient
+            && let Some(element) = element
+            && let Some(tail) = block.tail.take()
+        {
+            block.tail = Some(Box::new(self.coerce(*tail, element)));
+        }
+        let Some(tail) = block.tail.take() else { return block };
+        let element = match element {
+            _ if self.types.has_error(tail.ty) => return block,
+            Some(element) => element,
+            None if tail.ty == Ty::NEVER => {
+                self.turn_without_value(tail.span);
+                return block;
+            }
+            None => tail.ty,
+        };
+        let array = self.types.intern(TyKind::Array(element));
+        let local = self.hidden_local(cx, array);
+        cx.mutable[local.0 as usize] = true;
+        let span = tail.span;
+        let place = hir::Place { local, path: Vec::new() };
+        let push = match tail.ty {
+            Ty::NEVER => *tail,
+            _ => Self::mk(hir::ExprKind::Mutate(hir::Mutation::Push, place, vec![*tail]), Ty::UNIT, span),
+        };
+        block.stmts.push(hir::Stmt::Expr(push));
+        if block.ty != Ty::NEVER {
+            block.ty = Ty::UNIT;
+        }
+        if let Some(collect) = cx.collecting.last_mut() {
+            collect.array = Some((local, array));
+        }
+        block
     }
 
     pub(super) fn statements(&mut self, cx: &mut FnCx, stmts: &[ast::Stmt]) -> Vec<hir::Stmt> {
@@ -314,7 +584,7 @@ impl<'a> Checker<'a> {
                 .then_some(Ty::UNIT);
                 let written = value;
                 let value = self.expr(cx, written, expected);
-                self.dropped_value(written, &value);
+                self.dropped_value(written, &value, TurnHint::None);
                 // Only a result must be used: it may be a failure the
                 // program has to see (11.9).
                 if self.must_use(value.ty) {
@@ -1285,7 +1555,7 @@ impl<'a> Checker<'a> {
         match header {
             ast::ForHeader::Infinite => {
                 cx.loops.push(false);
-                let body = self.block(cx, body, Some(Ty::UNIT));
+                let body = self.turn_body(cx, body);
                 let saw_break = cx.loops.pop().unwrap();
                 cx.diverged |= !saw_break;
                 Some(hir::Stmt::Loop { condition: None, body, span })
@@ -1294,7 +1564,7 @@ impl<'a> Checker<'a> {
                 let condition = self.expr(cx, condition, Some(Ty::BOOL));
                 let condition = self.coerce(condition, Ty::BOOL);
                 cx.loops.push(false);
-                let body = self.block(cx, body, Some(Ty::UNIT));
+                let body = self.turn_body(cx, body);
                 cx.loops.pop();
                 Some(hir::Stmt::Loop { condition: Some(condition), body, span })
             }
@@ -1351,7 +1621,7 @@ impl<'a> Checker<'a> {
                         self.diags.error("E1201", pattern.span, message);
                     }
                     cx.loops.push(false);
-                    let body = self.block(cx, body, Some(Ty::UNIT));
+                    let body = self.turn_body(cx, body);
                     cx.loops.pop();
                     cx.scopes.close();
                     return Some(hir::Stmt::ForEach { pattern, source, body });
@@ -1378,7 +1648,7 @@ impl<'a> Checker<'a> {
                     }
                 };
                 cx.loops.push(false);
-                let body = self.block(cx, body, Some(Ty::UNIT));
+                let body = self.turn_body(cx, body);
                 cx.loops.pop();
                 cx.scopes.close();
                 Some(hir::Stmt::ForRange { local, start, end, inclusive: *op == BinOp::RangeInclusive, body })
@@ -1468,7 +1738,7 @@ impl<'a> Checker<'a> {
         self.borrowed_bindings(cx, &pattern, map, false);
         cx.lent.push((place.clone(), exclusive));
         cx.loops.push(false);
-        let mut body = self.block(cx, body, Some(Ty::UNIT));
+        let mut body = self.turn_body(cx, body);
         cx.loops.pop();
         cx.lent.pop();
         cx.scopes.close();

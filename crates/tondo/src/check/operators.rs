@@ -582,11 +582,13 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
+        let branches = self.branches_want(cx, expected);
         let condition = self.expr(cx, condition, Some(Ty::BOOL));
         let condition = Box::new(self.coerce(condition, Ty::BOOL));
         let Some(otherwise) = otherwise else {
             // Its value is used, but there is none when the condition is false.
             let used = expected != Some(Ty::UNIT);
+            cx.wants = branches;
             let then = self.block(cx, then, if used { None } else { Some(Ty::UNIT) });
             if used && ![Ty::UNIT, Ty::NEVER, Ty::ERROR].contains(&then.ty) {
                 let message = "an `if` without `else` has no value when its condition is false: add `else { ... }` with a value of the same type";
@@ -597,14 +599,18 @@ impl<'a> Checker<'a> {
         // `if c { [] } else { items }`: the other branch gives the type an
         // empty literal needs, as the first does the other way round.
         if expected.is_none() && then.tail.as_deref().is_some_and(empty_literal) {
+            cx.wants = Self::passed(otherwise, branches);
             let other = self.expr(cx, otherwise, None);
             let then_expected = (![Ty::NEVER, Ty::ERROR].contains(&other.ty)).then_some(other.ty);
+            cx.wants = branches;
             let then = self.block(cx, then, then_expected);
             let ty = if then.ty == Ty::NEVER { other.ty } else { then.ty };
             return Self::mk(hir::ExprKind::If(condition, then, Some(Box::new(other))), ty, span);
         }
+        cx.wants = branches;
         let then = self.block(cx, then, expected);
         let other_expected = expected.or((then.ty != Ty::NEVER).then_some(then.ty));
+        cx.wants = Self::passed(otherwise, branches);
         let other = self.expr(cx, otherwise, other_expected);
         let ty = if then.ty == Ty::NEVER {
             other.ty

@@ -196,6 +196,7 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
+        let arms_want = self.branches_want(cx, expected);
         let scrutinee = self.expr(cx, scrutinee, None);
         // A `wait()` matched as one result, with `ok` and `err` (11.12).
         let as_result = arms.iter().any(|arm| {
@@ -228,14 +229,14 @@ impl<'a> Checker<'a> {
                     later.push(out.len());
                     Self::error_expr(body.span)
                 }
-                _ => self.arm_body(cx, &arm.body, &mut result),
+                _ => self.arm_body(cx, &arm.body, &mut result, arms_want),
             };
             cx.diverged = outer;
             cx.scopes.close();
             out.push(hir::Arm { pattern, guard, body });
         }
         for index in later {
-            out[index].body = self.arm_body(cx, &arms[index].body, &mut result);
+            out[index].body = self.arm_body(cx, &arms[index].body, &mut result, arms_want);
         }
         // Each alternative of an arm is a row of its own.
         let checked: Vec<(&hir::Pattern, bool)> = out
@@ -289,11 +290,28 @@ impl<'a> Checker<'a> {
         Self::mk(hir::ExprKind::Match(Box::new(scrutinee), out), ty, span)
     }
 
+    /// What the branches of an `if`, or the arms of a `match` or `select`,
+    /// checked where `expected` is, are told their place wants (13.3).
+    pub(super) fn branches_want(&mut self, cx: &mut FnCx, expected: Option<Ty>) -> Wants {
+        match std::mem::take(&mut cx.wants) {
+            _ if expected == Some(Ty::UNIT) => Wants::Nothing,
+            Wants::Maybe => Wants::Maybe,
+            _ => Wants::Value,
+        }
+    }
+
     /// The body of a `match` or `select` arm, of the type the first arm
     /// with a value set in `result`.
-    pub(super) fn arm_body(&mut self, cx: &mut FnCx, body: &ast::ArmBody, result: &mut Option<Ty>) -> hir::Expr {
+    pub(super) fn arm_body(
+        &mut self,
+        cx: &mut FnCx,
+        body: &ast::ArmBody,
+        result: &mut Option<Ty>,
+        wants: Wants,
+    ) -> hir::Expr {
         let body = match body {
             ast::ArmBody::Expr(body) => {
+                cx.wants = Self::passed(body, wants);
                 let value = self.expr(cx, body, *result);
                 match *result {
                     Some(expected) => self.coerce(value, expected),
@@ -326,6 +344,7 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> hir::Expr {
+        let arms_want = self.branches_want(cx, expected);
         let mut result = expected;
         let mut out: Vec<hir::SelectArm> = Vec::new();
         let mut otherwise: Option<hir::Expr> = None;
@@ -340,7 +359,7 @@ impl<'a> Checker<'a> {
                     } else if index + 1 != arms.len() {
                         self.diags.error("E1613", arm.span, "the `else` arm of `select` comes last");
                     }
-                    otherwise = Some(self.arm_body(cx, &arm.body, &mut result));
+                    otherwise = Some(self.arm_body(cx, &arm.body, &mut result, arms_want));
                 }
                 Some(operation) => {
                     let operation = self.expr(cx, operation, None);
@@ -387,7 +406,7 @@ impl<'a> Checker<'a> {
                         }
                         pattern
                     });
-                    let body = self.arm_body(cx, &arm.body, &mut result);
+                    let body = self.arm_body(cx, &arm.body, &mut result, arms_want);
                     out.push(hir::SelectArm { operation, pattern, body });
                 }
             }

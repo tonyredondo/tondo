@@ -1009,8 +1009,9 @@ struct Checker<'a> {
     implementing: Option<(TraitId, Vec<Ty>)>,
     traits: Vec<TraitDef>,
     trait_names: HashMap<String, TraitId>,
-    /// Calls whose result nothing uses, of functions not all known yet.
-    dropped_calls: Vec<(FnId, Span)>,
+    /// Calls whose result nothing uses, of functions not all known yet,
+    /// and whether each ends the body of a `for`.
+    dropped_calls: Vec<(FnId, Span, TurnHint)>,
     impls: Vec<ImplDef>,
     /// The `impl`s of each trait by the head of the type they are for, a
     /// type parameter's as `None`, so that asking whether a type has a
@@ -1299,6 +1300,63 @@ struct FnCx {
     per_call: bool,
     /// What each enclosing loop's turns search and push to (W1023).
     turn_arrays: Vec<TurnArrays>,
+    /// The `for` loops used as values whose body is being checked (13.3).
+    collecting: Vec<Collect>,
+    /// The body of the `for` statement being checked, whose value at its
+    /// end, if any, is dropped, and whether that `for` ends a closure's
+    /// body.
+    turn_body: Option<(Span, bool)>,
+    /// What the place of the block, `if`, `match`, `select` or `for`
+    /// checked next asks of its value, set just before by what holds it.
+    wants: Wants,
+    /// The body of a closure for a `fn(...): Array[U]` whose `U` is not
+    /// known yet: it must give an array (13.3).
+    array_body: bool,
+    /// Set while the next block checked is a closure's body.
+    closure_body: bool,
+    /// The body of the `for` that ends the closure being checked: its value
+    /// is dropped where none does anything (E1306).
+    end_for: Option<Span>,
+    end_dropped: bool,
+}
+
+/// What a dropped value at the end of a `for`'s body adds, of how the loop
+/// gives its values (13.3): none elsewhere, `let values = for ...` for a
+/// statement, `return for ...` for one that ends a closure.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum TurnHint {
+    None,
+    Bind,
+    Return,
+}
+
+/// What the place of a block, an `if`, a `match`, a `select` or a `for`
+/// asks of its value when its type is not known yet (13.3): a `for` that
+/// ends a block that must give a value is one, and one that ends a block
+/// whose value may be dropped stays a statement.
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
+enum Wants {
+    /// Nothing said: what is expected of it decides.
+    #[default]
+    Nothing,
+    /// A value, of a type to infer: a branch of an `if` or an arm of a
+    /// `match` that is bound, passed or returned.
+    Value,
+    /// Its value may be dropped: the end of a closure's body whose result
+    /// nothing states, and the branches that end it.
+    Maybe,
+}
+
+/// A `for` used as a value (13.3): its body, the type of its elements
+/// when known, and the array its turns push to, once its body is checked.
+/// A `for` alone that ends a block, `lenient`, is the statement it was,
+/// of type `Never`, when no `break` ends it (13.4): `statement` then.
+struct Collect {
+    body: Span,
+    element: Option<Ty>,
+    array: Option<(LocalId, Ty)>,
+    lenient: bool,
+    statement: bool,
 }
 
 /// The arrays a loop's turns search with `contains` or `in`, and those it

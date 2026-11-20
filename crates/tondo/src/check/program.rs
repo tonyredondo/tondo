@@ -180,9 +180,9 @@ impl<'a> Checker<'a> {
             }
         }
         self.check_reached(&bodies, &mut reach);
-        for (id, span) in std::mem::take(&mut self.dropped_calls) {
+        for (id, span, turn) in std::mem::take(&mut self.dropped_calls) {
             if self.only_computes(&bodies, id, &mut HashSet::new()) {
-                self.result_unused(span);
+                self.result_unused(span, turn);
             }
         }
 

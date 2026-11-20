@@ -985,18 +985,23 @@ impl Formatter<'_> {
             StmtKind::Break => text("break"),
             StmtKind::Continue => text("continue"),
             StmtKind::For { header, body } => {
-                let head = match header {
-                    ForHeader::Infinite => text("for "),
-                    ForHeader::Condition(condition) => concat(vec![text("for "), self.expr(condition), text(" ")]),
-                    ForHeader::In { pattern, source } => {
-                        concat(vec![text("for "), self.pattern(pattern), text(" in "), self.expr(source), text(" ")])
-                    }
-                };
+                let head = self.for_head(header);
                 concat(vec![head, self.block(body)])
             }
             StmtKind::Defer(Defer::Call(call)) => concat(vec![text("defer "), self.expr(call)]),
             StmtKind::Defer(Defer::Block(block)) => concat(vec![text("defer "), self.block(block)]),
             StmtKind::Expr(value) => self.expr(value),
+        }
+    }
+
+    /// `for header `, before the body of a `for`.
+    fn for_head(&mut self, header: &ForHeader) -> Doc {
+        match header {
+            ForHeader::Infinite => text("for "),
+            ForHeader::Condition(condition) => concat(vec![text("for "), self.expr(condition), text(" ")]),
+            ForHeader::In { pattern, source } => {
+                concat(vec![text("for "), self.pattern(pattern), text(" in "), self.expr(source), text(" ")])
+            }
         }
     }
 
@@ -1034,6 +1039,7 @@ impl Formatter<'_> {
                     | ExprKind::Call { .. }
                     | ExprKind::Block(_)
                     | ExprKind::If { .. }
+                    | ExprKind::For(..)
                     | ExprKind::Match { .. }
                     | ExprKind::Select(_)
                     | ExprKind::Closure(_)
@@ -1291,6 +1297,10 @@ impl Formatter<'_> {
                 }
                 parts.extend([text(" "), self.value_block(block)]);
                 concat(parts)
+            }
+            ExprKind::For(header, body) => {
+                let head = self.for_head(header);
+                concat(vec![head, self.value_block(body)])
             }
             ExprKind::SyncLiteral(path, literal) => concat(vec![text(path_text(path)), self.expr(literal)]),
             // Code the compiler writes for a template, never in a file.
