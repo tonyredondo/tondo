@@ -1185,10 +1185,15 @@ program was started with `TONDO_WORKERS=<n>` in its environment, which asks
 for another number of workers, from 1 to 1024: one makes a program run its
 tasks one at a time, and more than the processors brings out a race.
 
-A task that calls into C, or computes for a long time without waiting, keeps
-its worker busy. The runtime notices and starts another worker for the rest,
-so one slow call does not hold the others up, and nothing has to be marked
-as blocking.
+A task that calls into C keeps its worker for as long as the call takes. The
+runtime watches those calls: when one goes on beyond a short interval and
+tasks are waiting, it starts another worker in its place, so a slow call
+does not hold the others up, and nothing has to be marked as blocking.
+
+A task that computes for long without waiting keeps its worker too, and
+nothing takes it away. The other workers go on with the rest, so with
+several it holds nobody up; a program with one worker, as in a container
+with one processor, runs nothing else until that task waits.
 
 ## Choosing
 

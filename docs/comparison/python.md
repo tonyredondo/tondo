@@ -669,8 +669,10 @@ all three in under 800 ms: true
 - A task belongs to the block that started it, which waits for it, as a
   `TaskGroup` does. That is how every `spawn` works, not a context manager
   to remember.
-- A blocking call does not freeze the others: the scheduler has every core,
-  and when a task computes for long it starts another worker for the rest.
+- A blocking call does not freeze the others. A task that waits gives its
+  worker to another, a long call into C has another worker started in its
+  place, and one that computes for long holds one worker of as many as the
+  cores, not the only thread there is.
 
 ## Deadlines
 

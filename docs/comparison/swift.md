@@ -586,8 +586,9 @@ all three in under 800 ms: true
   `async`. A library is written once.
 - `spawn f()` is `async let`: a child task that its block waits for. It
   gives a `Join[T]`, which can be kept, passed on or put in an array.
-- Tasks run on every core. One that computes for long does not hold up the
-  others, and nothing has to be moved off a main actor.
+- Tasks run on every core. One that computes for long holds one worker
+  while the others go on with the rest, and nothing has to be moved off a
+  main actor.
 - `spawn detached f()` is `Task.detached`.
 
 ## Deadlines
