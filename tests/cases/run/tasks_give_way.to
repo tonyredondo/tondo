@@ -13,14 +13,11 @@ fn spin(began: Sender[Unit]): Int {
         console.println("the computation stopped, cancelled: {tasks.cancelled()}")
     }
     began.send(())
-    var total = 0
-    for n in 0..4_000_000_000 {
-        if n % 1024 == 0 {
-            tasks.checkpoint()
-        }
-        total += n % 7
+    // Only the cancel ends it, at a checkpoint: run to no end, it does no
+    // more than its turns until then.
+    for {
+        tasks.checkpoint()
     }
-    total
 }
 
 fn main() {

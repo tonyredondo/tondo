@@ -12,23 +12,22 @@ import std.console
 import std.tasks
 import std.time
 
-/// Adds until it is stopped, asking every 1024 turns.
+/// Computes nothing but asks, at every turn, until it is stopped: only a
+/// cancel, a deadline or a panic it is told of ends it, so that in an order
+/// where nothing stops it at once it has done no more than its turns until
+/// then, however long it was meant to run.
 fn spin(): Int {
-    var total = 0
-    for n in 0..2_000_000_000 {
-        if n % 1024 == 0 {
-            tasks.checkpoint()
-        }
-        total += n % 7
+    for {
+        tasks.checkpoint()
     }
-    total
 }
 
-fn cancelled(): Int {
+fn cancelled(began: Sender[Unit]): Int {
     defer {
         tasks.checkpoint()
         console.println("its cleanup goes on past a checkpoint, cancelled: {tasks.cancelled()}")
     }
+    began.send(())
     spin()
 }
 
@@ -39,8 +38,9 @@ fn fails() {
 fn main() {
     console.println("cancelled at first: {tasks.cancelled()}")
 
-    let job = spawn cancelled()
-    time.sleep(time.milliseconds(20))
+    let (began, beginning) = channel[Unit]()
+    let job = spawn cancelled(began)
+    _ = beginning.receive()
     job.cancel()
     console.println("cancelled by another task")
 
