@@ -8988,3 +8988,32 @@ beside a computation and on nothing else: a worker in a call of C is
 replaced as it always was, whatever the count. Work with no core to run
 on waits: one worker and three computations run two, and the third when
 one ends.
+
+## A seeded order gives way as the runtime does
+
+A task that asks with `tasks.checkpoint()` in a loop until another task
+stops it hung its test under `--schedules` in a share of the seeds,
+where the program never hangs: the runtime makes a checkpoint give way
+once another task has waited an interval. The seeded orders run the
+task of highest priority, and their two changes of priority had fallen
+before the loop began, so the loop was chosen at every step for ever.
+The explorer tried an order the runtime cannot produce and reported it
+as a hang, the one thing an explorer must not do. tasks_give_way.to,
+with a computation that ends only when cut, hung in 5 of 40 seeds; on
+main's version, which ended after four thousand million turns, those
+seeds took a minute or more, or printed that the task was not
+cancelled.
+
+A rule by which a task that asks always lets the others run once was
+refused: in the runtime a computation passes thousands of checkpoints
+before it gives way, so going on past one while another could run is a
+real order, and that rule would never try it. A writer that sets a value
+to 1, asks, to 2, asks, to 3, beside a reader, would show the reader
+the first value only. The rule is instead the one `--schedules all`
+already had, a scheduler's: no order takes the same task more than a
+thousand times in a row while another can go, and then the next by
+priority runs that step. Every order where a task runs ahead by fewer
+than a thousand steps stays, and those dropped are the ones the runtime
+drops too. The two cases now pass in every seed tried, in tens of
+milliseconds in a debug build that records, and the test of the three
+values sees each of them under seeds and under `all`.

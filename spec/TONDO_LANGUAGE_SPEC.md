@@ -4294,7 +4294,10 @@ da `err(TimedOut)`, y `cancelled()` da `true` dentro del bloque y `false` despu�
 Una tarea cuyo `recover` tiene un pánico que transmitir (15.9) lo transmite en su
 `checkpoint()`, como en una espera, y `cancelled()` da `false`: cancelada es una
 cancelación o un plazo vencido, nada más. Con `--schedules`, cada `checkpoint()`
-es un punto donde puede caer una cancelación.
+es un punto donde puede caer una cancelación y donde la tarea puede ceder el
+paso; un orden no la deja seguir más de mil pasos seguidos mientras otra tarea
+puede ir (8.10 de la especificación de testing), como el runtime no la deja
+retener su worker más de un intervalo.
 
 `tasks.checkpoint()` es también una espera de nada: cuando todos los workers están
 ocupados, alguna tarea espera uno y un worker lleva más de un intervalo corto en

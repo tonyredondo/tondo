@@ -1744,6 +1744,12 @@ las tareas corren en otro orden:
 - cada tarea cede el paso tras cada llamada que puede esperar (11.10 del
   lenguaje), tras lanzar otra tarea, al soltar un lock y antes de escribir un
   `Atomic`, donde el orden entre tareas puede cambiar aunque nadie espere;
+- como un planificador, ningún orden toma la misma tarea más de mil veces
+  seguidas mientras otra puede ir: en la siguiente corre la que la sigue en
+  prioridad, y la cuenta empieza otra vez. Así una tarea que pregunta con
+  `tasks.checkpoint()` en un bucle hasta que otra la para no cuelga el test en
+  ninguna seed, como no lo cuelga el runtime (11.15 del lenguaje), y todo orden
+  en que una tarea va por delante menos de mil pasos sigue siendo posible;
 - y en las ventanas que el sistema deja entre dos pasos que otra tarea puede
   ver: entre dar a un socket su dirección y escuchar en él, cuando su archivo
   ya está y una conexión se rechaza, y entre enviar una señal al propio

@@ -260,6 +260,34 @@ pub(super) fn prioritized(seed: &AtomicU64, runnable: &VecDeque<*mut Task>) -> u
         let tasks: Vec<u64> = runnable.iter().map(|&task| unsafe { (*task).name }).collect();
         return scripted(runnable.len(), &tasks).unwrap_or(0);
     }
+    fair(runnable, by_priority(seed, runnable))
+}
+
+/// As a scheduler does, and as an order given its choices does (`FAIR`):
+/// the task chosen, taken `FAIR` times in a row while another can go, gives
+/// this step to the next by priority, and the count starts again. A task
+/// that asks with `tasks.checkpoint()` until another stops it does not hang
+/// its test in any seed, as the runtime does not let it (testing 8.10).
+fn fair(runnable: &VecDeque<*mut Task>, chosen: usize) -> usize {
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    static STREAK: AtomicUsize = AtomicUsize::new(0);
+    if runnable.len() < 2 {
+        return chosen;
+    }
+    let name = unsafe { (*runnable[chosen]).name };
+    let streak = if LAST.swap(name, Ordering::Relaxed) == name { STREAK.load(Ordering::Relaxed) + 1 } else { 1 };
+    if streak <= FAIR {
+        STREAK.store(streak, Ordering::Relaxed);
+        return chosen;
+    }
+    STREAK.store(0, Ordering::Relaxed);
+    let priority = |at: usize| unsafe { (*runnable[at]).priority };
+    (0..runnable.len()).filter(|&at| at != chosen).max_by_key(|&at| priority(at)).unwrap_or(chosen)
+}
+
+/// The task a seed's priorities choose among `runnable` (PCT), or, in one
+/// seed of four, one at random.
+fn by_priority(seed: &AtomicU64, runnable: &VecDeque<*mut Task>) -> usize {
     static STEPS: AtomicU64 = AtomicU64::new(0);
     static CHANGES: std::sync::OnceLock<[u64; 2]> = std::sync::OnceLock::new();
     let changes = CHANGES.get_or_init(|| {

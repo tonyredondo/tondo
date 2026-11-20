@@ -3691,6 +3691,84 @@ test orders {
     }
 }
 
+/// A task that asks with `tasks.checkpoint()` may go on past it while
+/// another could run, as the runtime lets it until an interval passes, and
+/// no order takes it more than a thousand steps in a row while another can
+/// go (testing 8.10). The reader of three values written one checkpoint
+/// apart sees each of them, which a test that asserts it never sees one
+/// finds by failing: under `all`, 1, 2 and 3, every value the runtime lets
+/// it see beside the 0 before them; under seeds, the same across the seeds
+/// tried. A rule by which a task that asks always gives way would show it 0
+/// and 1 only. And a loop that asks until another task stops it ends in
+/// every order, where seeded orders once kept it ahead for ever.
+#[test]
+fn a_task_that_asks_runs_ahead_and_gives_way() {
+    let tests = "import std.sync
+import std.tasks
+
+fn writer(x: sync.Atomic[Int]) {
+    x.store(1)
+    tasks.checkpoint()
+    x.store(2)
+    tasks.checkpoint()
+    x.store(3)
+}
+
+/// The value the reader sees beside the writer.
+fn seen(): Int {
+    let x = sync.Atomic(0)
+    let job = spawn writer(x)
+    let value = x.load()
+    job.wait()
+    value
+}
+
+fn spin(stop: sync.Atomic[Bool]) {
+    for not stop.load() {
+        tasks.checkpoint()
+    }
+}
+
+test neverOne {
+    assert(seen() != 1)
+}
+
+test neverTwo {
+    assert(seen() != 2)
+}
+
+test neverThree {
+    assert(seen() != 3)
+}
+
+test stops {
+    let stop = sync.Atomic(false)
+    let job = spawn spin(stop)
+    tasks.checkpoint()
+    stop.store(true)
+    job.wait()
+}
+";
+    let dir = project("asks-and-gives-way", tests);
+    for value in ["One", "Two", "Three"] {
+        let filter = format!("never{value}");
+        for orders in [&["--schedules", "all"][..], &["--schedules", "200", "--seed", "1"]] {
+            let args: Vec<&str> =
+                ["test", "--filter", filter.as_str()].iter().copied().chain(orders.iter().copied()).collect();
+            let (stdout, stderr, status) = tondo(&dir, &args);
+            assert_eq!(status, 1, "{args:?} never showed the reader the value: {stdout}{stderr}");
+        }
+    }
+    // Every iteration of the loop reads the flag another task writes, so
+    // the orders that differ are as many as the turns it can take: two
+    // hundred of them say that each ends.
+    for orders in [&["--schedules", "all:200"][..], &["--schedules", "200", "--seed", "1"]] {
+        let args: Vec<&str> = ["test", "--filter", "stops"].iter().copied().chain(orders.iter().copied()).collect();
+        let (stdout, stderr, status) = tondo(&dir, &args);
+        assert_eq!(status, 0, "{args:?}: {stdout}{stderr}");
+    }
+}
+
 /// `--schedules` widens the windows the system leaves between two steps
 /// another task sees: a client that calls a Unix socket once its file is
 /// there, which happens a moment before the server listens, is refused in
