@@ -38,20 +38,16 @@ fn waitFor(who: ref Guest, lines: Int) {
 
 /// What a guest was told, a few words for each line.
 fn heard(who: ref Guest): Array[String] ! json.JsonError {
-    var words: Array[String] = []
     for text in who.seen.get() {
         let event = json.decode[Event](text)?
-        words.push(
-            match event.kind {
-                Welcome => "welcome to {event.room} with {event.people}"
-                Joined => "{event.from} joined: {event.people}"
-                Said => "{event.from}: {event.text}"
-                Left => "{event.from} left: {event.people}"
-                Missed => "missed {event.text}"
-            },
-        )
+        match event.kind {
+            Welcome => "welcome to {event.room} with {event.people}"
+            Joined => "{event.from} joined: {event.people}"
+            Said => "{event.from}: {event.text}"
+            Left => "{event.from} left: {event.people}"
+            Missed => "missed {event.text}"
+        }
     }
-    words
 }
 
 test aRoomHearsWhoComesSpeaksAndGoes {

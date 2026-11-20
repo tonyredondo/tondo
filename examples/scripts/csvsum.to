@@ -40,10 +40,7 @@ for record in csv.records(io.reader(fs.readText(file)?)) {
     }
 }
 
-var rows: Array[Row] = []
-for (key, (count, sum)) in totals {
-    rows.push(Row { group: key, rows: count, total: "{sum:.2}" })
-}
+let rows = for (key, (count, sum)) in totals { Row { group: key, rows: count, total: "{sum:.2}" } }
 console.println("{amount} by {by}")
 console.println(cli.table(rows.sortedBy((row) { row.group })))
 if skipped > 0 {

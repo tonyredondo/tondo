@@ -80,11 +80,9 @@ pub fn load(files: fs.FileSystem, name: String): Note ! NoteError {
 
 /// Every note, by name.
 pub fn all(files: fs.FileSystem): Array[Note] ! NoteError {
-    var notes: Array[Note] = []
     for file in files.glob("*.md").mapErr(NoteError.Files)?.sorted() {
-        notes.push(load(files, file.removeSuffix(".md"))?)
+        load(files, file.removeSuffix(".md"))?
     }
-    notes
 }
 
 /// Deletes a note.
@@ -114,8 +112,7 @@ fn terms(words: String): Array[String] {
 /// note's name counts three times and one in its tags twice.
 pub fn search(files: fs.FileSystem, query: String, limit: Int = 5): Array[Match] ! NoteError {
     let wanted = terms(query)
-    var found: Array[Match] = []
-    for note in all(files)? {
+    let found = for note in all(files)? {
         let body = note.text.toLower()
         var score = 0
         for word in wanted {
@@ -123,12 +120,13 @@ pub fn search(files: fs.FileSystem, query: String, limit: Int = 5): Array[Match]
             score += 3 * note.name.count(word)
             score += 2 * note.tags.filter((tag) { tag.toLower() == word }).length()
         }
-        if score > 0 {
-            let line = note.text
-                .lines()
-                .find((each) { wanted.any((word) { each.toLower().contains(word) }) })
-            found.push(Match { name: note.name, score, line: line ?? "" })
+        if score == 0 {
+            continue
         }
+        let line = note.text
+            .lines()
+            .find((each) { wanted.any((word) { each.toLower().contains(word) }) })
+        Match { name: note.name, score, line: line ?? "" }
     }
     found.sortedBy((each) { -each.score }).take(limit)
 }

@@ -27,10 +27,7 @@ fn count(file: String, text: String): Count {
     }
 }
 
-var counts: Array[Count] = []
-for file in env.args() {
-    counts.push(count(file, fs.readText(file)?))
-}
+var counts = for file in env.args() { count(file, fs.readText(file)?) }
 if counts.isEmpty() {
     counts.push(count("(input)", console.stdin().readText()?))
 }

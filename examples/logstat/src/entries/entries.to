@@ -73,15 +73,17 @@ pub type Read = {
 
 /// Reads a file, leaving out the lines that are not entries.
 pub fn read(path: String): Read ! fs.FsError {
-    var entries: Array[Entry] = []
     var skipped = 0
-    for line in fs.readText(path)?.lines() {
+    let entries = for line in fs.readText(path)?.lines() {
         if line.trim().isEmpty() {
             continue
         }
         match parse(line) {
-            ok(entry) => entries.push(entry)
-            err(_) => skipped += 1
+            ok(entry) => entry
+            err(_) => {
+                skipped += 1
+                continue
+            }
         }
     }
     Read { entries, skipped }

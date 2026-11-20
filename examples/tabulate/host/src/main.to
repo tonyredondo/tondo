@@ -33,10 +33,7 @@ impl api.Renderer for Plain {
 }
 
 fn line(cells: Array[String], widths: Array[Int]): String {
-    var padded: Array[String] = []
-    for (index, cell) in cells.enumerate() {
-        padded.push(cell.padEnd(widths.get(index) ?? 0))
-    }
+    let padded = for (index, cell) in cells.enumerate() { cell.padEnd(widths.get(index) ?? 0) }
     padded.join("  ").trimEnd()
 }
 
@@ -53,7 +50,6 @@ pub fn tableOf(title: String, text: String): api.Table ! csv.CsvError {
 /// The plugins of a directory: a shared library is loaded, and anything
 /// else is started as a program.
 fn plugins(directory: String): Array[api.RendererPlugin] {
-    var found: Array[api.RendererPlugin] = []
     for name in fs.list(directory) ?? [] {
         let file = path.join(directory, name)
         let opened = if name.endsWith(".so") or name.endsWith(".dylib") {
@@ -62,11 +58,13 @@ fn plugins(directory: String): Array[api.RendererPlugin] {
             api.RendererPlugin.start(process.command(file))
         }
         match opened {
-            ok(loaded) => found.push(loaded)
-            err(error) => console.eprintln("{name}: {error}")
+            ok(loaded) => loaded
+            err(error) => {
+                console.eprintln("{name}: {error}")
+                continue
+            }
         }
     }
-    found
 }
 
 /// What one renderer makes of a table, whether it is part of this program

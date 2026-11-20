@@ -52,11 +52,10 @@ pub type Built = {
 
 /// The pages of `content/`, newest first.
 pub fn load(site: fs.FileSystem): Array[content.Page] ! BuildError {
-    var pages: Array[content.Page] = []
-    for path in site.glob("content/*.md").mapErr(BuildError.Files)? {
+    let pages = for path in site.glob("content/*.md").mapErr(BuildError.Files)? {
         let text = site.readText(path).mapErr(BuildError.Files)?
         let name = path.removePrefix("content/")
-        pages.push(content.parse(name, text).mapErr(BuildError.Content)?)
+        content.parse(name, text).mapErr(BuildError.Content)?
     }
     pages.sortedBy((page) { page.meta.date }).reversed()
 }
@@ -92,9 +91,8 @@ pub fn build(site: fs.FileSystem, out: fs.FileSystem, name: String): Built ! Bui
     let rendering = pages.map((page) { spawn renderPost(theme, name, page) })
     let rendered = rendering.waitOrCancel().mapErr(BuildError.Template)?
 
-    var files: Array[String] = []
-    for (page, html) in pages.zip(rendered) {
-        files.push(write(out, "posts/{page.slug}.html", html)?)
+    var files = for (page, html) in pages.zip(rendered) {
+        write(out, "posts/{page.slug}.html", html)?
     }
 
     let links = pages.map((page) { link(page) })

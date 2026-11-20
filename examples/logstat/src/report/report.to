@@ -14,18 +14,15 @@ pub type RouteRow = {
 /// they took, the busiest first.
 pub fn byRoute(found: Array[entries.Entry]): Array[RouteRow] {
     let groups = found.groupBy((entry) { entries.route(entry.path) })
-    var rows: Array[RouteRow] = []
-    for (route, group) in groups {
+    let rows = for (route, group) in groups {
         let times = group.map((entry) { entry.took.milliseconds() })
-        rows.push(
-            RouteRow {
-                route
-                requests: group.length()
-                errors: group.count((entry) { entry.status >= 500 })
-                slowest: milliseconds(times.max() ?? 0)
-                mean: milliseconds(times.sum() / group.length())
-            },
-        )
+        RouteRow {
+            route
+            requests: group.length()
+            errors: group.count((entry) { entry.status >= 500 })
+            slowest: milliseconds(times.max() ?? 0)
+            mean: milliseconds(times.sum() / group.length())
+        }
     }
     rows.sortedBy((row) { -row.requests })
 }

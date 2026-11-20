@@ -11,13 +11,12 @@ impl api.Renderer for Objects {
     }
 
     fn render(self, table: api.Table): String ! plugin.Error {
-        var rows: Array[Map[String, String]] = []
-        for cells in table.rows {
+        let rows = for cells in table.rows {
             var row: Map[String, String] = [:]
             for (index, column) in table.columns.enumerate() {
                 row[column] = cells.get(index) ?? ""
             }
-            rows.push(row)
+            row
         }
         json.encode(rows, pretty: true)
     }
