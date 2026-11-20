@@ -141,7 +141,10 @@ error[E1102]: expected `Int`, found `Int ! text.TextError`: add `?` to pass the 
 The same holds one level in. An array, a tuple or an option that holds
 results cannot be left unused either, as the `Array[T ! E]` that waiting
 for tasks gives ([Tasks](13-tasks.md#errors-and-panics-in-tasks)): any of
-its values may be a failure. It is read, or discarded with `_ = ...`.
+its values may be a failure. It is read, or discarded with `_ = ...`. Nor
+can a task that can fail be started and left alone, since its failure is a
+result that nobody would read
+([Tasks](13-tasks.md#a-task-belongs-to-its-block)).
 
 ## Passing a failure on with ?
 

@@ -162,6 +162,71 @@ fn main() {
 A program ends when `main` does, and detached tasks are cancelled then.
 `job.detach()` does the same to a task that was started with a `Join`.
 
+A task that can fail is a result that somebody has to read. Started and
+left alone, it would be waited for at the end of its block and its failure
+would go nowhere, so the compiler refuses it where it is made:
+
+```text
+error[E1303]: the task of `save` may fail, and nothing will read its failure: keep its `Join` and wait for it, as `let job = spawn save(Order { id: 2 })` and later `job.wait()?`, or handle the failure in the task
+```
+
+Either the code that starts the task waits for it where the work has to be
+done, and gets its failure there, or the task takes care of its own:
+
+```tondo
+import std.console
+
+type Order = {
+    id: Int
+}
+
+fn save(order: Order): !String {
+    if order.id == 2 {
+        fail "order {order.id} could not be saved"
+    }
+}
+
+/// Saves beside other work, and passes a failure on.
+fn place(order: Order): !String {
+    let saving = spawn save(order)
+    console.println("order {order.id}: packing")
+    saving.wait()?
+}
+
+/// Saves, and says so itself when it cannot.
+fn saveOrSay(order: Order) {
+    match save(order) {
+        ok(_) => {}
+        err(why) => console.println("not saved: {why}")
+    }
+}
+
+fn main() {
+    for id in [1, 2] {
+        match place(Order { id }) {
+            ok(_) => console.println("order {id}: placed")
+            err(why) => console.println("order {id}: {why}")
+        }
+    }
+    spawn saveOrSay(Order { id: 2 })
+}
+```
+
+```text output
+order 1: packing
+order 1: placed
+order 2: packing
+order 2: order 2 could not be saved
+not saved: order 2 could not be saved
+```
+
+`_ = saving.wait()` drops a failure on purpose, at the place where the
+work is done. `_ = spawn save(order)` does not: it lets go of the `Join` at
+once, so the task is waited for right there, as a call would be, and the
+compiler warns (`W1026`). A `spawn detached` of a call that can fail has
+nobody to wait for it, and is written `_ = spawn detached save(order)` to
+say that its failure is dropped, as a server does with each connection.
+
 One consequence: a `spawn` in a loop whose `Join` is dropped waits for each
 task before starting the next, which is rarely what was meant. The compiler
 warns (`W1013`) and says what to write instead: an array of tasks, a

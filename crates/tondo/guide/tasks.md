@@ -56,6 +56,28 @@ fn main() {
   `recover { ... }`, without `detached`: its panic stops that block, which
   cancels its other tasks (see `tondo guide errors`).
 
+A task that can fail is not dropped where it is made: nothing would read
+its failure. Keep its `Join` and wait for it, `job.wait()?`, or handle the
+failure in the task; `spawn detached` of such a call needs `_ =` before it,
+to say the failure is dropped on purpose. `_ = spawn f()` is no way out: it
+drops the `Join` at once, so it waits for the task right there (`W1026`).
+
+```tondo error E1303
+type Order = {
+    id: Int
+}
+
+fn save(order: Order): !String {
+    if order.id == 2 {
+        fail "order {order.id} could not be saved"
+    }
+}
+
+fn main() {
+    spawn save(Order { id: 2 })
+}
+```
+
 `wait()` on tasks that can fail gives every outcome, each with its own
 error, and cancels none: an array of results, not one result. For the
 values or the first error, which cancels the rest, write `waitOrCancel()`.

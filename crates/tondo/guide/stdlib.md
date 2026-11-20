@@ -498,7 +498,8 @@ fn handle(connection: net.Stream): !net.NetError {
 
 fn serve(listener: net.Listener) {
     for connection in listener {
-        spawn detached handle(connection)
+        // A failure ends that connection only: dropped on purpose.
+        _ = spawn detached handle(connection)
     }
 }
 
