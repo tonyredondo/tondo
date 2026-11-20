@@ -75,13 +75,19 @@ pub(super) fn program_ended(queue: &Queue) -> bool {
 /// `work` in a recorded run, on a thread other than the worker's until
 /// `until` says: the worker may be in C, and only the baton's runs anyway.
 pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
+    work_from(main, until, false)
+}
+
+/// `work_until`, by a worker that `beside` says the monitor put beside a
+/// held one.
+fn work_from(main: bool, until: Option<&dyn Fn() -> bool>, beside: bool) -> i32 {
     crate::trace::guard_thread(true, kept());
     if exploring().is_none()
         && own_next().is_none()
         && let Some(next) = NEXTS.get(NEXT_COUNT.fetch_add(1, Ordering::AcqRel))
     {
         next.domain.store(super::domains::here(), Ordering::Relaxed);
-        next.beside.store(STARTS_BESIDE.get(), Ordering::Relaxed);
+        next.beside.store(beside, Ordering::Relaxed);
         worker(|w| w.own_next.set(Some(next)));
     }
     // Its slot, which stays its own while the thread works.
@@ -602,16 +608,10 @@ pub(super) fn start_workers() {
     }
 }
 
-thread_local! {
-    /// The thread is a worker the monitor puts beside a held one.
-    static STARTS_BESIDE: Cell<bool> = const { Cell::new(false) };
-}
-
 /// Another worker; `beside` one the monitor puts beside a held one.
 pub(super) fn start_worker(beside: bool) {
     spawn_thread(Some(256 * 1024), move || {
-        STARTS_BESIDE.set(beside);
-        work(false);
+        work_from(false, None, beside);
     });
 }
 
