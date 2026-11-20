@@ -806,8 +806,11 @@ sent stays on the heap: one call that keeps does not take the region from
 the others. The reasons a value stays on the heap are that it is stored in
 what the function was given, in a lock's state or in a `Ref`; that a
 closure captures it, that it is sent, taken by a task or given to C; that
-it outlives a turn of its loop; that it holds a value its region did not
-make; that it is changed in a way a region does not take yet, as an array
+the function returns it with a value it also keeps, or a task gives it as
+its result; that it outlives a turn of its loop, or is made in every turn
+of one where the region would be the caller's
+([What each turn of a loop makes](#what-each-turn-of-a-loop-makes)); that
+it holds a value its region did not make; that it is changed in a way a region does not take yet, as an array
 that has an element taken out of its middle, where the remark names the
 change; and that regions do not take that kind of value yet, as a process,
 a pipe or a logger.
@@ -1063,6 +1066,79 @@ keeps its words and itself on the heap, with ``it holds a value that its
 region did not make``, while a set of numbers emptied the same way goes in
 its function's region, and a set made anew in each turn goes whole in the
 turn's region with its words.
+
+#### What each turn of a loop makes
+
+A region gives its memory back all at once, so what goes in one stays
+until it ends. For what a loop makes and lets go of turn by turn that is
+the wrong place: on the heap each turn's values go when the turn is over,
+and in a region that lasts longer than the loop they would pile up for as
+long as it runs. The compiler does not put them there. These two functions
+run the same loop over the lines of a text. The first wants the words of
+the last line, and the second those of every line:
+
+```tondo
+import std.console
+
+/// The words of the last line that is not a comment.
+fn lastWords(lines: Array[String]): Array[String] {
+    var last: Array[String] = []
+    for line in lines {
+        if line.isEmpty() or line.startsWith("#") or line.startsWith("//") {
+            continue
+        }
+        last = line.split(" ")
+    }
+    last
+}
+
+/// The words of every line that is not a comment.
+fn allWords(lines: Array[String]): Array[String] {
+    var all: Array[String] = []
+    for line in lines {
+        if line.isEmpty() or line.startsWith("#") or line.startsWith("//") {
+            continue
+        }
+        for word in line.split(" ") {
+            all.push(word)
+        }
+    }
+    all
+}
+
+fn main() {
+    let lines = ["# Hamlet", "to be", "or not to be", "that is the question"]
+    console.println("{lastWords(lines).length()} {allWords(lines).length()}")
+}
+```
+
+```text output
+4 10
+```
+
+```text
+$ tondo optimizations words.to --kind region
+words.to:10:16: `line.split(" ")` in `String.split`, `textNative.split(self, separator, most)` stays on the heap: it is made in every turn of the loop at line 6, and the region the caller of `lastWords` gives would keep each turn's (in lastWords)
+words.to:22:21: `line.split(" ")` in `String.split`, `textNative.split(self, separator, most)` goes in a region that the caller of `allWords` gives (in allWords)
+words.to:23:13: `all.push(word)` grows an array that goes in a region that the caller of `allWords` gives (in allWords)
+```
+
+Both return what they made to a caller that lets go of it, so both could
+have their caller's region, as `build` had above. `allWords` has it: each
+word it makes is pushed to the array it returns, and all of them are needed
+for as long as the result is. `lastWords` writes over `last` in each turn,
+and of a million lines it needs the words of one. In its caller's region it
+would hold those of the million until the caller was done, so they are made
+on the heap, where each turn's go when the next replaces them, and the
+remark says it with the line of the loop.
+
+What a loop leaves in a region is what it keeps: an array it only pushes
+to, what such an array holds, and a text it extends in place, which leave
+behind them less than their own size as they grow. A value made only on
+the way out of the loop, as the error a `fail` carries, is made once a
+call and goes in the region too. A function's own region follows the same
+rule, with ``it outlives a turn of the loop``, and the region of a turn,
+which is emptied before the next one, takes what the turn alone uses.
 
 #### A part that is returned
 
