@@ -20,6 +20,16 @@ fn sleeper(n: Int): String {
     "slept {n}"
 }
 
+// A sleeper of a group says its cleanup on a channel: the group tells
+// every task to stop before it waits for any, so they stop in any order.
+fn stopped(n: Int, said: Sender[String]): String {
+    defer {
+        said.send("cleanup: sleeper {n}")
+    }
+    time.sleep(time.seconds(60))
+    "slept {n}"
+}
+
 fn parent(): String {
     defer note("cleanup: parent")
     let child = spawn sleeper(7)
@@ -99,12 +109,21 @@ fn main() {
         err(error) => console.println("failed: {error}")
     }
 
+    // Each task holds a copy of the sender, so the channel is closed once
+    // all of them have ended: their cleanups ran before `cancel` returned.
+    let (said, heard) = channel[String](3)
     var many = Group[String]()
-    for n in 10..13 {
-        many.add(spawn sleeper(n))
+    for n in 10..12 {
+        many.add(spawn stopped(n, said.copy()))
     }
+    many.add(spawn stopped(12, said))
     many.cancel()
-    console.println("cancelled the group")
+    console.println("cancelled the group, all ended: {heard.isClosed()}")
+    var cleanups: Array[String] = []
+    for line in heard {
+        cleanups.push(line)
+    }
+    console.println("{cleanups.sorted()}")
 
     let (texts, inbox) = channel[String]()
     let (ack, acks) = channel[Int]()
@@ -136,10 +155,8 @@ fn main() {
 // expect-stdout: cleanup: parent
 // expect-stdout: cancelled the tree
 // expect-stdout: failed: bad 2
-// expect-stdout: cleanup: sleeper 10
-// expect-stdout: cleanup: sleeper 11
-// expect-stdout: cleanup: sleeper 12
-// expect-stdout: cancelled the group
+// expect-stdout: cancelled the group, all ended: true
+// expect-stdout: [cleanup: sleeper 10, cleanup: sleeper 11, cleanup: sleeper 12]
 // expect-stdout: got one
 // expect-stdout: unwind level 0
 // expect-stdout: unwind level 1
