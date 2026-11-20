@@ -482,7 +482,8 @@ for when the block ends, so none is left running by accident. A task that
 should outlive its block says `spawn detached`. Tasks that can fail are
 waited for with `wait()`, which gives each outcome, or with
 `waitOrCancel()`, where the first error cancels the others; a cancelled
-task stops at its next wait and runs its `defer`s.
+task stops at its next wait and runs its `defer`s, and one that computes
+without waiting says where it may be stopped with `tasks.checkpoint()`.
 
 Tasks talk through channels, and `select` waits for whichever comes first:
 

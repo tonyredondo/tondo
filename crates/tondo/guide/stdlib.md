@@ -61,6 +61,7 @@ std.math       floating-point math, Pi and E, and integers' gcd and lcm
 std.sync       Mutex, Atomic, shared collections, rate limits, retries (`tondo guide tasks`)
 std.validate   rules on the fields of a type, which reading checks: lengths, bounds, patterns
 std.executor   pools that bound work, actors with a mailbox (`tondo guide tasks`)
+std.tasks      a limit on a block's tasks, a checkpoint where a computation may be stopped (`tondo guide tasks`)
 std.reflect    values by name at run time (`tondo guide meta`)
 std.ffi        C types and memory (`tondo guide ffi`)
 std.testing    what a test tells the runner (`tondo guide testing`)

@@ -9,9 +9,12 @@ cancelling, sharing state, and pools and actors.
 - [Any function can wait](#any-function-can-wait)
 - [spawn and Join](#spawn-and-join)
 - [A task belongs to its block](#a-task-belongs-to-its-block)
+- [An array of tasks](#an-array-of-tasks)
 - [Groups](#groups)
+- [At most so many at once](#at-most-so-many-at-once)
 - [Errors and panics in tasks](#errors-and-panics-in-tasks)
 - [Cancelling](#cancelling)
+- [A task that only computes](#a-task-that-only-computes)
 - [Channels](#channels)
 - [select](#select)
 - [Signals](#signals)
@@ -658,7 +661,8 @@ cancelled, cleaned up: true
 ```
 
 - Cancelling is cooperative. A task that only computes is not interrupted:
-  it is cancelled when it next waits.
+  it is cancelled when it next waits, or where it asks to be
+  ([below](#a-task-that-only-computes)).
 - Cancelling a task cancels the tasks it started and still owns.
 - In the `defer`s of a cancelled task, what needs no waiting still works,
   as taking a free lock or sending to a channel with room, so shared state
@@ -668,6 +672,145 @@ cancelled, cleaned up: true
 - Ctrl-C and `SIGTERM` cancel `main`, so a program's own cleanup is the
   same code whether it ends by itself or is told to. A program that wants
   to decide what they do takes them as [signals](#signals).
+
+## A task that only computes
+
+A cancel lands where a task waits, and so does the deadline of a `within`. A
+computation that never waits gives them no place to land: it runs to its
+end, however long ago it was told to stop. Such code says where it may be
+stopped. `tasks.checkpoint()` stops the task there if it was cancelled or
+its deadline passed, as a wait would, and its `defer`s run; otherwise it
+does nothing.
+
+```tondo
+import std.console
+import std.tasks
+import std.time
+
+/// Adds for a long time, and never waits.
+fn total(): Int {
+    defer {
+        console.println("stopped early: {tasks.cancelled()}")
+    }
+    var sum = 0
+    for n in 0..2_000_000_000 {
+        tasks.checkpoint()  // where a cancel or a deadline stops it
+        sum += n % 7
+    }
+    sum
+}
+
+fn main() {
+    let sum = within time.milliseconds(20) { total() }
+    console.println("{sum}")
+}
+```
+
+```text output
+stopped early: true
+err(timed out after 20ms)
+```
+
+Without the checkpoint, the block would give `ok` with the sum, seconds
+after its deadline.
+
+`tasks.cancelled()` asks the same question without stopping. In a `defer`
+it tells a task that was stopped from one that ended, as above. In a loop
+it lets the code end by itself with what it has, and then the block gives
+its value, not the error:
+
+```tondo
+import std.console
+import std.tasks
+import std.time
+
+fn isPrime(n: Int): Bool {
+    var divisor = 2
+    for divisor * divisor <= n {
+        if n % divisor == 0 {
+            return false
+        }
+        divisor += 1
+    }
+    n > 1
+}
+
+/// The primes it has time for: it ends by itself when it is told to stop.
+fn primes(): Array[Int] {
+    var found: Array[Int] = []
+    var n = 2
+    for not tasks.cancelled() {
+        if isPrime(n) {
+            found.push(n)
+        }
+        n += 1
+    }
+    found
+}
+
+fn main() {
+    let found = within time.milliseconds(20) { primes() }
+    match found {
+        ok(list) => console.println("it found primes: {not list.isEmpty()}")
+        err(late) => console.println("{late}")
+    }
+    console.println("after the block: {tasks.cancelled()}")
+}
+```
+
+```text output
+it found primes: true
+after the block: false
+```
+
+- A checkpoint is where three things land: a cancel, from `cancel()`, from
+  a `waitOrCancel()` that met an error or from the cancel of the task that
+  started this one; the deadline of a `within` the task is inside, which
+  unwinds to that `within`; and the panic of a task of its `recover` block,
+  which it passes on.
+- `cancelled()` is `true` for the first two, and only while they hold: once
+  the `within` whose deadline passed has ended, the task goes on and it is
+  `false` again. A panic is no cancel.
+- In the `defer`s of a cancelled task a checkpoint does nothing, so a
+  cleanup runs to its end.
+- A cancel made by another task needs a worker for that task to run on. With
+  one worker, as with `TONDO_WORKERS=1` or in a container with one
+  processor, a computation that does not wait lets no other task run, so
+  nothing can cancel it before it ends, checkpoint or not. There,
+  `TONDO_WORKERS=2` gives the program two workers that the system runs in
+  turns on the one processor, and the cancel lands.
+- A deadline is seen with any number of workers, since the checkpoint reads
+  the clock itself: up to a tick of the system's clock late, which is one to
+  ten milliseconds by the system, and never early.
+- Under `tondo test --schedules`, every checkpoint is a place where the
+  order of the tasks may change ([Testing](16-testing.md)).
+
+A checkpoint is cheap enough for every turn of a loop whose turn does some
+work: two loads and a branch in a program that has no deadline, a call of a
+few nanoseconds in one that has them, and twice that inside a deadline,
+where it reads the clock. In a loop of a few instructions a turn it costs
+more than its own work, because the compiler no longer runs four turns at a
+time, so there it goes every thousand turns or so:
+
+```tondo
+import std.console
+import std.tasks
+
+fn main() {
+    var sum = 0
+    for n in 0..5_000_000 {
+        if n % 1024 == 0 {
+            tasks.checkpoint()
+        }
+        sum += n % 7
+    }
+    console.println("{sum}")
+}
+```
+
+```text output
+14999995
+```
 
 ## Channels
 

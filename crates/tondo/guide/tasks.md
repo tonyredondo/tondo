@@ -58,6 +58,15 @@ fn main() {
   still do what needs no wait, as taking a free lock or sending to a channel
   with room, so shared state stays right. A wait a `defer` needs ends at
   once, and ends that `defer`.
+- A loop that computes without waiting is not interrupted, by a cancel or by
+  the deadline of a `within`: call `tasks.checkpoint()` in it
+  (`import std.tasks`), which stops the task there as a wait would and
+  otherwise does nothing. In a loop of a few instructions a turn, call it
+  every thousand turns: `if n % 1024 == 0 { tasks.checkpoint() }`.
+  `tasks.cancelled()` asks without stopping, for a `defer` or to end with
+  what there is. With one worker (`TONDO_WORKERS=1`, a container with one
+  processor) no other task runs while one computes, so only a deadline can
+  stop it; `TONDO_WORKERS=2` there lets another task run and cancel it.
 - A panic in a task ends the program, unless the task was started in a
   `recover { ... }`, without `detached`: its panic stops that block, which
   cancels its other tasks (see `tondo guide errors`).

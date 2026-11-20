@@ -1,8 +1,10 @@
 # std.tasks
 
-What goes with the language's tasks. Today that is one thing: `limit`, the
-bound on how many of the tasks a `within` block starts are alive at once,
-which reads beside a deadline as its sibling does:
+What goes with the language's tasks: `checkpoint` and `cancelled`, for a
+computation that does not wait and has to be stopped
+([Tasks](../language/13-tasks.md#a-task-that-only-computes)), and `limit`,
+the bound on how many of the tasks a `within` block starts are alive at
+once, which reads beside a deadline as its sibling does:
 
 ```tondo
 import std.tasks

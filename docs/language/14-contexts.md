@@ -317,7 +317,9 @@ deadline as `within time.seconds(5), tasks.limit(64) { ... }`
 
 `within duration { ... }` gives a block a time limit. When the time passes,
 the block's next wait ends, its `defer`s run, the tasks it started are
-cancelled, and the block gives an error:
+cancelled, and the block gives an error. Code that computes without waiting
+is not interrupted: it calls `tasks.checkpoint()` where it may be stopped
+([Tasks](13-tasks.md#a-task-that-only-computes)).
 
 ```tondo
 import std.console
