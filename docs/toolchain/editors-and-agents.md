@@ -109,7 +109,11 @@ vim.lsp.enable('tondo')
 ```
 
 `tondo dap` is the debugger for any editor that speaks the Debug Adapter
-Protocol.
+Protocol. It does not leave the editor without an answer: a request the
+program has not answered in 10 seconds fails with `the program has not
+answered for 10 seconds; the session goes on, and ends when the program
+does`, and attaching to one that stays silent says `the program does not
+answer the debugger`.
 
 ## Coding agents
 
