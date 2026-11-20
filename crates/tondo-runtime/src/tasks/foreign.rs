@@ -179,16 +179,17 @@ pub(crate) fn step_back() {
     }
 }
 
-/// Looks of the monitor a worker may stay on one task while tasks wait for
-/// one and none is idle before the first task to ask gives its worker away
-/// (language 11.15).
-const GIVE_WAY_LOOKS: u32 = 10;
+/// How long a worker may stay on one task while tasks wait for one and none
+/// is idle before the first task to ask gives its worker away (language
+/// 11.15). By the clock, not by the monitor's looks, whose millisecond of
+/// sleep lasts longer on some systems (macOS's coalesced timers).
+const GIVE_WAY_AFTER: Duration = Duration::from_millis(10);
 /// And before another worker starts beside it (language 16.14): a tenth of
 /// a second, as a worker started and retired costs the processor some 100 µs
 /// and buys a saturated machine nothing, so tasks that compute for less
 /// never get one, while the task that waits is still served soon enough for
 /// a person or a health check (docs/decisions.md).
-const ADD_LOOKS: u32 = 100;
+const ADD_AFTER: Duration = Duration::from_millis(100);
 
 /// Watches the workers. One still in the same call of C after a period
 /// blocks its tasks, so when tasks wait to run and no worker is idle,
@@ -199,7 +200,7 @@ const ADD_LOOKS: u32 = 100;
 /// none of that can happen.
 pub(super) fn monitor() {
     let mut last: HashMap<usize, usize> = HashMap::new();
-    let mut held: Vec<(u64, u32)> = Vec::new();
+    let mut held: Vec<(u64, Instant)> = Vec::new();
     loop {
         std::thread::sleep(MONITOR_PERIOD);
         if stopping() {
@@ -286,10 +287,10 @@ enum Watched {
 }
 
 /// One look at the workers that run Tondo code: while none is idle and tasks
-/// wait, one whose count of started tasks has not moved for `GIVE_WAY_LOOKS`
-/// looks has the first task to ask give its worker away, and one still on
-/// it `ADD_LOOKS` looks on gets another worker beside it, once.
-fn watch_held(held: &mut Vec<(u64, u32)>) -> Watched {
+/// wait, one whose count of started tasks has not moved for `GIVE_WAY_AFTER`
+/// has the first task to ask give its worker away, and one still on it after
+/// `ADD_AFTER` gets another worker beside it, once.
+fn watch_held(held: &mut Vec<(u64, Instant)>) -> Watched {
     if exploring().is_some() {
         held.clear();
         return Watched::Idle;
@@ -305,24 +306,29 @@ fn watch_held(held: &mut Vec<(u64, u32)>) -> Watched {
     }
     drop(shared);
     let count = NEXT_COUNT.load(Ordering::Acquire).min(NEXTS.len());
-    held.resize(count, (u64::MAX, 0));
-    for (next, (seen, looks)) in NEXTS[..count].iter().zip(held.iter_mut()) {
+    // The clock the runtime's timers keep.
+    let now = clock_now();
+    held.resize(count, (u64::MAX, now));
+    for (next, (seen, since)) in NEXTS[..count].iter().zip(held.iter_mut()) {
         // A worker in a call of C is the watch above's.
         let in_c = next.in_c.load(Ordering::Acquire);
         if !in_c.is_null() && unsafe { (*in_c).depth.load(Ordering::SeqCst) } > 0 {
-            (*seen, *looks) = (u64::MAX, 0);
+            (*seen, *since) = (u64::MAX, now);
             continue;
         }
         let turns = next.turns.load(Ordering::Relaxed);
         if *seen != turns {
-            (*seen, *looks) = (turns, 0);
+            (*seen, *since) = (turns, now);
             continue;
         }
-        *looks = looks.saturating_add(1);
-        if *looks >= GIVE_WAY_LOOKS && CHECKPOINT_ASKS.load(Ordering::Relaxed) & GIVE_WAY == 0 {
+        let still = now.saturating_duration_since(*since);
+        if still >= GIVE_WAY_AFTER && CHECKPOINT_ASKS.load(Ordering::Relaxed) & GIVE_WAY == 0 {
             CHECKPOINT_ASKS.fetch_or(GIVE_WAY, Ordering::SeqCst);
         }
-        if *looks == ADD_LOOKS && next.held.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+        if still >= ADD_AFTER
+            && !next.held.load(Ordering::Relaxed)
+            && next.held.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+        {
             crate::diagnostics::WORKERS_ADDED.add(1);
             add_worker(queue());
         }

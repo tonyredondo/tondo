@@ -8849,7 +8849,11 @@ processor. With one worker, a task that waits behind a computation that
 never asks runs 22, 53 and 106 ms late at 20, 50 and 100 ms. A worker
 added to a saturated machine buys nothing, so tasks shorter than the
 interval should never get one: 100 ms, while the task that waits is
-still served soon enough for a person and a health check.
+still served soon enough for a person and a health check. Both intervals are measured by the clock the
+runtime's timers keep, not counted in the monitor's looks: a look sleeps a
+millisecond, which macOS stretches, and on an M2 the 110 looks of a loop
+on a flag took 182 ms where Linux took 130, and longer on CI's runners,
+past what the cases allow. By the clock they hold within one look.
 
 The model in testing/models/tests/watcher.to, written before the code,
 found a mark the monitor set on a worker that had gone idle, which no
