@@ -1474,9 +1474,11 @@ fn main() {
 it ended after some turns: true
 ```
 
-- At most one worker is put beside each, so a program whose workers are all
-  held runs twice as many for a while. `env.workers()` keeps saying how many
-  it was given, by the processors or by `TONDO_WORKERS`.
+- At most one worker is put beside each worker a program has, and none
+  beside one that was put so: a program whose workers are all held runs
+  twice as many, never more, and what is still ready waits for one of them.
+  `env.workers()` keeps saying how many it was given, by the processors or
+  by `TONDO_WORKERS`.
 - A tenth of a second is long for a request that waits behind a computation,
   and a thread is more than a checkpoint costs: a loop that runs for long
   asks. The counters say when code did not, as `workers.added`, beside

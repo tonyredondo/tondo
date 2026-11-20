@@ -400,25 +400,31 @@ tondo: 4 tasks: tasks.pb.gz; `tondo profile show tasks.pb.gz` shows where; the p
 $ tondo profile show tasks.pb.gz
 tasks of tasks.pb.gz, 4 in all over 0.26s
      flat  flat%       cum   cum%  function
-        2  50.0%         3  75.0%  main  backlog.to
-        1  25.0%         1  25.0%  busy  backlog.to
-        1  25.0%         1  25.0%  tondo_runtime::tasks::join::finish
+        2  50.0%         2  50.0%  busy  backlog.to
+        1  25.0%         2  50.0%  main  backlog.to
+        1  25.0%         1  25.0%  <tondo_runtime::tasks::waits::Wait>::parked
         0   0.0%         4 100.0%  tondo_runtime::tasks::trampoline
-        0   0.0%         3  75.0%  tondo_main
-        0   0.0%         1  25.0%  spawn busy  backlog.to
+        0   0.0%         2  50.0%  spawn busy  backlog.to
+        0   0.0%         2  50.0%  tondo_main
         0   0.0%         1  25.0%  tondo_rt_join_wait
+        0   0.0%         1  25.0%  tondo_runtime::tasks::join::finish
 by label:
-        2  50.0%  state=ready
-        1  25.0%  state=runs
+        2  50.0%  state=runs
+        1  25.0%  state=ready
         1  25.0%  state=waits
 ```
 
-One sum runs, in `busy`, and `main` waits for it. The two that are `ready`
-have not had the core yet, so they are counted in `main`, at the lines that
-spawned them, which `--lines` names: `backlog.to:14` and `backlog.to:15`.
-Tasks that pile up `ready` are work with no core to do it. This program,
-busy in a loop of arithmetic, is also one that did not stand still for its
-picture, and the command said so.
+Two sums run, in `busy`, and `main` waits for the first. The program has
+one worker, and a sum that never waits would keep it to itself: the runtime
+put a second worker beside it, so two run in turns on the one core, and it
+puts no more than one beside each worker a program has
+([Tasks and threads](../language/13-tasks.md#tasks-and-threads)). The third
+sum is `ready` and has not had a worker yet, so it is counted in `main`, at
+the line that spawned it, which `--lines` names: `backlog.to:15`. Tasks
+that pile up `ready` are work with no core to do it, and the counters say
+it of this program too: `tasks ready 1`, and `workers total 2` of a `limit`
+of 1, with `added 1`. Busy in a loop of arithmetic, it is also one that did
+not stand still for its picture, and the command said so.
 
 ## Everything at once: dump
 
