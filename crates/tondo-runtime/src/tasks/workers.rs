@@ -120,14 +120,6 @@ pub(super) fn waiting_somewhere() -> bool {
     nexts().any(|next| next.count.load(Ordering::SeqCst) > 0)
 }
 
-/// Whether a task waits next to another worker than this one, which may
-/// run another for long: a worker about to sleep looks again for it in a
-/// moment (testing/models/tests/next.to).
-pub(super) fn waiting_next_elsewhere() -> bool {
-    let mine = own_next().map(|next| next as *const Next);
-    nexts().any(|next| Some(next as *const Next) != mine && !next.task.load(Ordering::SeqCst).is_null())
-}
-
 /// The first of the tasks this worker's tasks started.
 pub(super) fn own_started() -> Option<*mut Task> {
     let own = own_next()?;

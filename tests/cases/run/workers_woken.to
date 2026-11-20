@@ -1,10 +1,10 @@
 // A task woken by a computation that never asks, with one worker given: the
 // watcher puts another worker beside the one the computation holds (16.14),
 // and the woken task runs there (testing/models/tests/next.to). `main` waits
-// for the computation's message, which wakes it next to the held worker; the
-// worker put beside looks for it there before it sleeps, and the monitor tells
-// it to. Before, the worker put beside slept without seeing it, and `main`
-// never ran. Once the computation ends, that worker retires.
+// for the computation's message, which wakes it next to the held worker, and
+// the monitor tells the worker put beside to take it there. Before, that
+// worker slept without seeing it, and `main` never ran. Once the computation
+// ends, that worker retires.
 
 import std.console
 import std.diagnostics

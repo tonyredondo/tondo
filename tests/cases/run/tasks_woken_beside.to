@@ -1,9 +1,9 @@
 // A task woken by one that then computes, with a worker idle beside them,
 // runs on that worker while the other computes (testing/models/tests/next.to):
 // `main`, woken by the computation's message, stops it. It waits next to the
-// worker the computation holds, where the idle worker looks for it before it
-// sleeps, and where the monitor tells one to; before, it waited there until
-// the computation ended, which here it never does on its own.
+// worker the computation holds, where the monitor tells the idle worker to
+// take it; before, it waited there until the computation ended, which here
+// it never does on its own.
 
 import std.console
 import std.sync

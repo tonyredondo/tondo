@@ -176,8 +176,10 @@ test seeingItBeforeSleepingIsNotEnough {
     }
 }
 
-// The monitor alone keeps the bound; seeing the task before sleeping takes
-// it within NEXT_WAIT instead of a millisecond.
+// The monitor alone keeps the bound, and it is what the code does: seeing
+// the task before sleeping would take it within NEXT_WAIT instead of a
+// millisecond, but the idle worker then naps and looks at every handoff of
+// two tasks that hand work to each other (docs/decisions.md).
 test theMonitorAloneKeepsTheBound {
     assert(model.expect(check(Fixes { sees: false, net: true })).states == 20)
 }

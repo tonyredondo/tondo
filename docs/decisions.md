@@ -8951,17 +8951,20 @@ for a task woken by a timer or from outside, not for one the
 computation itself woke. A case of the watcher that waited for a
 message rather than a sleep found it (CI run 44789782015, then a gate).
 
-Two changes, as testing/models/tests/next.to has them. A worker about to
-sleep counts a task in another's next as one that waits, and looks
-again for it in NEXT_WAIT. And a task landing in a next, with a worker
-idle, has the monitor watch until it runs: it tells an idle worker of
-one there longer than NEXT_WAIT. The model says which does what: the
-monitor alone keeps the bound, two of its looks; the look before
-sleeping only makes the common case take NEXT_WAIT instead of a
-millisecond. A third, telling a worker at every handoff unless one
-looks, as Go's `wakep`, was left out: a worker that is told looks once
-and sleeps again, so in a ping-pong it would be a wake of the kernel at
-every handoff, which the two others do not need.
+Now a task landing in a next, with a worker idle, has the monitor watch
+until it runs: it tells an idle worker of one there longer than
+NEXT_WAIT. testing/models/tests/next.to weighs it against two others.
+The monitor alone keeps the bound, two of its looks, a millisecond or
+two. A worker about to sleep that counted a task in another's next as
+one that waits, and looked again for it in NEXT_WAIT, would only make
+the common case take NEXT_WAIT instead of a millisecond; it was built
+and measured, and it cost 5 to 12% more instructions in the rows where
+tasks hand work to each other, the echoes and a C thread's waits, as
+the idle worker napped and looked while every handoff passed through a
+next, for no time gained: left out. So was telling a worker at every
+handoff unless one looks, as Go's `wakep`: a worker that is told looks
+once and sleeps again, so in a ping-pong it would be a wake of the
+kernel at every handoff.
 
 The same monitor broke its own bound. "At most one beside each worker"
 was read of every worker, those it had put beside included, so a worker

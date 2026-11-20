@@ -271,8 +271,7 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                     if let Some(domain) = seeker.take() {
                         SEEKING[domain].store(false, Ordering::SeqCst);
                     }
-                    if (waiting_somewhere() || waiting_next_elsewhere()) && !SEEKING[here].swap(true, Ordering::SeqCst)
-                    {
+                    if waiting_somewhere() && !SEEKING[here].swap(true, Ordering::SeqCst) {
                         (seeker, waited) = (Some(here), true);
                     }
                 }
