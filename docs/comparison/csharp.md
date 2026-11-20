@@ -973,7 +973,7 @@ Hello, Ada! (3)
 | `new Point(1, 2)` | `Point { x: 1, y: 2 }` |
 | a property with `get` and `set` | a field, or a method |
 | `async Task<T>`, `await` | nothing: every function can wait |
-| `Task.WhenAll(a, b)` | `[spawn a(), spawn b()].wait()` |
+| `Task.WhenAll(a, b)` | `[spawn a(), spawn b()].wait()`; `(spawn a(), spawn b()).wait()` when their types differ |
 | `CancellationToken token` | `within` |
 | `lock (gate) { }` | `mutex.update((value) { ... })` |
 | `List<T>`, `Dictionary<K, V>`, `HashSet<T>` | `Array[T]`, `Map[K, V]`, `Set[T]` |

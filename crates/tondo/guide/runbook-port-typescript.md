@@ -26,6 +26,7 @@ follows; this is what each thing becomes.
 | `throw new Error(...)`, `try { } catch (e) { }` | `fail error` in a `T ! E`; `match`, `?`, `??` |
 | `async function f(): Promise<T>`, `await f()` | `fn f(): T`, `f()`: any function can wait |
 | `Promise.all(xs.map(f))` | `xs.map((x) { spawn f(x) }).wait()`; `waitOrCancel()` when they can fail |
+| `const [a, b] = await Promise.all([f(), g()])` | `let (a, b) = (spawn f(), spawn g()).wait()`, a tuple, as `f` and `g` give different types |
 | a callback, an event emitter | a closure; a `channel[T]()` for a stream of events |
 | `xs.map`, `filter`, `reduce`, `some`, `every`, `find`, `includes` | `map`, `filter`, `reduce`, `any`, `all`, `find`, `contains` |
 | `xs.length`, `xs.push(x)`, `xs.forEach(f)` | `xs.length()`, `xs.push(x)` on a `var`, `for x in xs` |

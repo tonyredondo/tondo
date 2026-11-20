@@ -36,6 +36,7 @@ follows; this is what each thing of Rust becomes.
 | `x as f64`, `"3".parse::<i64>()` | `Float(x)`, `Int.parse("3")` |
 | `format!("{}: {:02}", a, b)`, `println!` | `"{a}: {b:02}"`, `console.println(...)` |
 | `thread::spawn`, `thread::scope`, `tokio::spawn`, `.await` | `spawn f()`, `wait()` on an array of tasks; there is no `async` |
+| `tokio::try_join!(a, b)` | `(spawn a(), spawn b()).waitOrCancel()?`: the values, or the first error, which cancels the other and is the union of their errors |
 | `mpsc::channel()`, `select!` | `channel[T]()`, `select` |
 | `Mutex<T>`, `RwLock<T>`, `AtomicUsize` | `sync.Mutex(value)`, `sync.RwLock(value)`, `sync.Atomic(0)` |
 | `impl Drop` | `defer` where the value is made |

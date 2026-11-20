@@ -937,7 +937,7 @@ Hello, Ada! (3)
 | `&&`, `\|\|`, `!` | `and`, `or`, `not` |
 | `Int(x)` | `Int(x)`, which fails if it does not fit |
 | `async`, `await`, `Task { }` | nothing: every function can wait; `spawn` |
-| `async let`, `withTaskGroup` | `spawn`, `wait()` on an array of tasks |
+| `async let`, `withTaskGroup` | `spawn`, `wait()` on an array of tasks, or on a tuple of them when their types differ |
 | `actor` | `sync.Mutex[T]`, or `executor.actor` |
 | `weak`, `unowned` | `WeakRef[T]`, seldom: cycles are collected |
 | `private`, `internal`, `public` | nothing, or `pub` |

@@ -10,6 +10,7 @@ cancelling, sharing state, and pools and actors.
 - [spawn and Join](#spawn-and-join)
 - [A task belongs to its block](#a-task-belongs-to-its-block)
 - [An array of tasks](#an-array-of-tasks)
+- [A tuple of tasks](#a-tuple-of-tasks)
 - [Groups](#groups)
 - [At most so many at once](#at-most-so-many-at-once)
 - [Errors and panics in tasks](#errors-and-panics-in-tasks)
@@ -361,6 +362,88 @@ order.
 `cancel()` on the array tells every task to stop, and then waits until all
 of them have. Each of the three uses the array up, as `wait()` does a
 `Join`: the compiler refuses a use of it afterwards (`E1401`).
+
+## A tuple of tasks
+
+An array holds tasks of one type. Tasks of different types, as the one that
+fetches a page and the one that loads a user, go in a tuple, which is waited
+for and cancelled in the same three ways and gives each result with its own
+type:
+
+```tondo
+import std.console
+import std.time
+
+type HttpError = {
+    status: Int
+}
+
+type DbError = {
+    code: Int
+}
+
+type User = {
+    name: String
+}
+
+fn fetch(url: String): String ! HttpError {
+    time.sleep(time.milliseconds(10))
+    if url.endsWith("/missing") {
+        fail HttpError { status: 404 }
+    }
+    "the page of {url}"
+}
+
+fn load(id: Int): User ! DbError {
+    time.sleep(time.milliseconds(5))
+    if id < 0 {
+        fail DbError { code: 23 }
+    }
+    User { name: "ada" }
+}
+
+/// A page and the user it is for, asked for at once.
+fn profile(url: String, id: Int): String ! (HttpError | DbError) {
+    let (page, user) = (spawn fetch(url), spawn load(id)).waitOrCancel()?
+    "{page}, for {user.name}"
+}
+
+fn main() {
+    console.println("{profile("/home", 1)}")
+    console.println("{profile("/missing", 1)}")
+    console.println("{profile("/home", -1)}")
+
+    // `wait()` gives each result as its task gave it, and cancels nothing.
+    let (page, user) = (spawn fetch("/missing"), spawn load(1)).wait()
+    console.println("{page} {user}")
+}
+```
+
+```text output
+ok(the page of /home, for ada)
+err(HttpError { status: 404 })
+err(DbError { code: 23 })
+err(HttpError { status: 404 }) ok(User { name: ada })
+```
+
+- `wait()` gives the tuple of the results, each as its task gave it, and
+  cancels none.
+- `waitOrCancel()` gives the tuple of the values, or the first error to
+  happen, which cancels the other tasks. The tasks need not fail with the
+  same error: the result fails with the union of theirs, here
+  `HttpError | DbError`, which `?` passes on as any other
+  ([Errors](07-errors.md)). A task that cannot fail sits beside those that
+  can and gives its value. Where none can, there is nothing to stop at, and
+  the compiler says to write `wait()` (`E1620`).
+- `cancel()` tells every task to stop and waits until all have.
+- Each of the three uses the tuple up, as it does an array.
+
+Every item of such a tuple is a task. One that holds something else has none
+of the three, and the compiler says what to write instead:
+
+```text
+error[E1001]: `wait()` is a method of a tuple whose items are all tasks; item 2 is `String`: wait the tasks on their own, as `(first.wait(), name)`
+```
 
 ## Groups
 

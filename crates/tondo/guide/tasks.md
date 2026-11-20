@@ -45,6 +45,11 @@ fn main() {
   gives `Array[T] ! E`: all the values, or the first error to happen, which
   cancels the others. `ids.map((id) { spawn load(id) }).waitOrCancel()?`
   passes that error on.
+- Tasks of different types go in a tuple, waited for the same three ways:
+  `let (page, user) = (spawn fetch(url), spawn load(id)).waitOrCancel()?`
+  gives the values or the first error, which fails with the union of the
+  tasks' errors, `! (HttpError | DbError)`; a task that cannot fail may sit
+  beside those that can. `wait()` gives each result with its own type.
 - `within tasks.limit(64) { ... }` (`import std.tasks`) bounds how many of
   the tasks a block starts are alive at once: a `spawn` in it waits for a
   place before its task exists. The tasks those tasks start are not counted,

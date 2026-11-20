@@ -931,7 +931,7 @@ Hello, Ada! (3)
 | `for (const x of xs)`, `while (c)` | `for x in xs`, `for c` |
 | `switch` | `match` |
 | `async`, `await`, `Promise<T>` | nothing: every function can wait |
-| `Promise.all([...])` | `[spawn a(), spawn b()].wait()` |
+| `Promise.all([...])` | `[spawn a(), spawn b()].wait()`; `(spawn a(), spawn b()).wait()` when their types differ |
 | `export`, `import { a } from "./b"` | `pub`, `import app.b` |
 | `number` | `Int` or `Float` |
 | `;` | nothing |

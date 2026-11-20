@@ -25,7 +25,7 @@ what each thing of C# becomes.
 | `catch (Exception)` around a request | `recover { ... }`, which stops a panic |
 | `int.TryParse(s, out var n)` | `Int.parse(s)`, an `Int ! text.TextError` |
 | `async Task<T> F()`, `await F()` | `fn f(): T`, `f()`: any function can wait |
-| `Task.Run(...)`, `Task.WhenAll(...)` | `spawn f()`, `wait()` on an array of tasks |
+| `Task.Run(...)`, `Task.WhenAll(...)` | `spawn f()`, `wait()` on an array of tasks, or on a tuple of them when their types differ |
 | a `CancellationToken` passed down | `job.cancel()`, which reaches what the task started |
 | `lock (gate) { }`, `Interlocked` | `sync.Mutex(value)`, `sync.Atomic(0)` |
 | `Channel<T>` | `channel[T]()` |
