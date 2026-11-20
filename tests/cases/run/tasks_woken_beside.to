@@ -1,0 +1,36 @@
+// A task woken by one that then computes, with a worker idle beside them,
+// runs on that worker while the other computes (testing/models/tests/next.to):
+// `main`, woken by the computation's message, stops it. It waits next to the
+// worker the computation holds, where the idle worker looks for it before it
+// sleeps, and where the monitor tells one to; before, it waited there until
+// the computation ended, which here it never does on its own.
+
+import std.console
+import std.sync
+
+/// Computes until `stop` is set, without waiting, once it has said it began.
+fn compute(began: Sender[Unit], stop: sync.Atomic[Bool]): Int {
+    began.send(())
+    var turns = 0
+    for not stop.load() {
+        turns += 1
+    }
+    turns
+}
+
+fn main() {
+    let (began, beginning) = channel[Unit]()
+    let stop = sync.Atomic(false)
+    let job = spawn compute(began, stop)
+    _ = beginning.receive()
+    console.println("main ran while the computation went on")
+    stop.store(true)
+    _ = job.wait()
+    console.println("the computation stopped")
+}
+
+// expect-env: TONDO_WORKERS=2
+// expect-no-schedule: the explorer runs one worker and adds none, so a computation that does not ask holds it, by design
+// expect-no-replay: a recorded run, too, runs its tasks on one worker that adds none
+// expect-stdout: main ran while the computation went on
+// expect-stdout: the computation stopped

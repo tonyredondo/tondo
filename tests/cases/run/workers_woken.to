@@ -1,0 +1,47 @@
+// A task woken by a computation that never asks, with one worker given: the
+// watcher puts another worker beside the one the computation holds (16.14),
+// and the woken task runs there (testing/models/tests/next.to). `main` waits
+// for the computation's message, which wakes it next to the held worker; the
+// worker put beside looks for it there before it sleeps, and the monitor tells
+// it to. Before, the worker put beside slept without seeing it, and `main`
+// never ran. Once the computation ends, that worker retires.
+
+import std.console
+import std.diagnostics
+import std.sync
+import std.time
+
+/// Computes until `stop` is set, without waiting, once it has said it began.
+fn compute(began: Sender[Unit], stop: sync.Atomic[Bool]): Int {
+    began.send(())
+    var turns = 0
+    for not stop.load() {
+        turns += 1
+    }
+    turns
+}
+
+fn counted(name: String): Int {
+    diagnostics.metrics().find((each) { each.name == name }).map((each) { each.value }) ?? -1
+}
+
+fn main() {
+    let (began, beginning) = channel[Unit]()
+    let stop = sync.Atomic(false)
+    let job = spawn compute(began, stop)
+    _ = beginning.receive()
+    console.println("main ran beside the computation: workers added {counted("workers.added")}")
+    stop.store(true)
+    _ = job.wait()
+    // The worker added retires once it looks for a task again.
+    for counted("workers.total") > 1 {
+        time.sleep(time.milliseconds(1))
+    }
+    console.println("workers once it ended: {counted("workers.total")}")
+}
+
+// expect-env: TONDO_WORKERS=1
+// expect-no-schedule: the explorer runs one worker and adds none, so a computation that does not ask holds it, by design
+// expect-no-replay: a recorded run, too, runs its tasks on one worker that adds none
+// expect-stdout: main ran beside the computation: workers added 1
+// expect-stdout: workers once it ended: 1

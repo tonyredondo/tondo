@@ -1,0 +1,49 @@
+// With one worker and three computations that never ask, the watcher puts
+// one worker beside the one that is held (16.14), and none beside the worker
+// it put there: two of them run, and the third waits for one to end, as work
+// with no core to run on does. The workers never pass twice their number.
+// The computations turn until one of them, having seen the first worker put
+// beside, has given the watcher a few hundred milliseconds more, in which it
+// put a second before; then they all stop. A slow machine only takes longer.
+
+import std.console
+import std.diagnostics
+import std.sync
+import std.time
+
+fn counted(name: String): Int {
+    diagnostics.metrics().find((each) { each.name == name }).map((each) { each.value }) ?? -1
+}
+
+/// Turns until `stop` is set, without waiting; every million turns it looks
+/// at how many workers were put beside, and 300 ms after the first it stops
+/// them all.
+fn turn(stop: sync.Atomic[Bool]): Int {
+    var turns = 0
+    var seen: time.Instant? = none
+    for not stop.load() {
+        turns += 1
+        if turns % 1_000_000 == 0 {
+            match seen {
+                none => if counted("workers.added") >= 1 {
+                    seen = time.now()
+                }
+                some(at) => if at.elapsed() >= time.milliseconds(300) {
+                    stop.store(true)
+                }
+            }
+        }
+    }
+    turns
+}
+
+fn main() {
+    let stop = sync.Atomic(false)
+    _ = [spawn turn(stop), spawn turn(stop), spawn turn(stop)].wait()
+    console.println("workers put beside: {counted("workers.added")}")
+}
+
+// expect-env: TONDO_WORKERS=1
+// expect-no-schedule: the explorer runs one worker and adds none, so the first computation holds it, by design
+// expect-no-replay: a recorded run, too, runs its tasks on one worker that adds none
+// expect-stdout: workers put beside: 1

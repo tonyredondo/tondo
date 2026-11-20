@@ -81,6 +81,7 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
         && let Some(next) = NEXTS.get(NEXT_COUNT.fetch_add(1, Ordering::AcqRel))
     {
         next.domain.store(super::domains::here(), Ordering::Relaxed);
+        next.beside.store(STARTS_BESIDE.get(), Ordering::Relaxed);
         worker(|w| w.own_next.set(Some(next)));
     }
     // Its slot, which stays its own while the thread works.
@@ -270,7 +271,8 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                     if let Some(domain) = seeker.take() {
                         SEEKING[domain].store(false, Ordering::SeqCst);
                     }
-                    if waiting_somewhere() && !SEEKING[here].swap(true, Ordering::SeqCst) {
+                    if (waiting_somewhere() || waiting_next_elsewhere()) && !SEEKING[here].swap(true, Ordering::SeqCst)
+                    {
                         (seeker, waited) = (Some(here), true);
                     }
                 }
@@ -597,12 +599,19 @@ pub(super) fn start_workers() {
     let count = crate::config::workers();
     queue().workers = count;
     for _ in 1..count {
-        start_worker();
+        start_worker(false);
     }
 }
 
-pub(super) fn start_worker() {
-    spawn_thread(Some(256 * 1024), || {
+thread_local! {
+    /// The thread is a worker the monitor puts beside a held one.
+    static STARTS_BESIDE: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Another worker; `beside` one the monitor puts beside a held one.
+pub(super) fn start_worker(beside: bool) {
+    spawn_thread(Some(256 * 1024), move || {
+        STARTS_BESIDE.set(beside);
         work(false);
     });
 }

@@ -166,7 +166,7 @@ pub extern "C" fn tondo_rt_foreign_leave() {
 pub(crate) fn step_aside() {
     if exploring().is_none() {
         queue().workers += 1;
-        start_worker();
+        start_worker(false);
     }
 }
 
@@ -233,7 +233,7 @@ pub(super) fn monitor() {
                 }
                 state.replaced.store(true, Ordering::SeqCst);
                 crate::diagnostics::WORKERS_REPLACED.add(1);
-                add_worker(queue);
+                add_worker(queue, false);
             }
         }
         let watched = watch_held(&mut held);
@@ -263,8 +263,8 @@ fn tasks_wait(queue: &Queue) -> bool {
     due || !queue.runnable.is_empty() || !waiting_next().is_empty() || !waiting_local().is_empty()
 }
 
-/// Another worker, in the place of one in C or beside one a task holds.
-fn add_worker(mut queue: MutexGuard<'static, Queue>) {
+/// Another worker, in the place of one in C or `beside` one a task holds.
+fn add_worker(mut queue: MutexGuard<'static, Queue>, beside: bool) {
     queue.workers += 1;
     // It looks for tasks for a domain where none looks.
     let domain = (0..super::domains::count()).find(|&domain| !SEEKING[domain].load(Ordering::SeqCst));
@@ -273,7 +273,7 @@ fn add_worker(mut queue: MutexGuard<'static, Queue>) {
         queue.starting = Some(domain);
     }
     drop(queue);
-    start_worker();
+    start_worker(beside);
 }
 
 /// What the watch of held workers found: workers to look at again in a
@@ -298,7 +298,8 @@ fn watch_held(held: &mut Vec<(u64, Instant)>) -> Watched {
     let shared = queue();
     if shared.idle > 0 {
         held.clear();
-        return Watched::Idle;
+        drop(shared);
+        return watch_nexts();
     }
     if !tasks_wait(&shared) {
         held.clear();
@@ -322,15 +323,49 @@ fn watch_held(held: &mut Vec<(u64, Instant)>) -> Watched {
         if still >= GIVE_WAY_AFTER && CHECKPOINT_ASKS.load(Ordering::Relaxed) & GIVE_WAY == 0 {
             CHECKPOINT_ASKS.fetch_or(GIVE_WAY, Ordering::SeqCst);
         }
-        if still >= ADD_AFTER
-            && !next.held.load(Ordering::Relaxed)
-            && next.held.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok()
-        {
-            crate::diagnostics::WORKERS_ADDED.add(1);
-            add_worker(queue());
+        // One beside each worker the program has, never beside one put
+        // beside another, so never more than twice its number (16.14).
+        if still >= ADD_AFTER && !next.held.load(Ordering::Relaxed) && !next.beside.load(Ordering::Relaxed) {
+            let queue = queue();
+            if queue.workers < 2 * crate::config::workers()
+                && next.held.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+            {
+                crate::diagnostics::WORKERS_ADDED.add(1);
+                add_worker(queue, true);
+            }
         }
     }
     Watched::Looking
+}
+
+/// While a worker is idle, the tasks woken next to workers that run others,
+/// which may compute for long: one there for longer than NEXT_WAIT has an
+/// idle worker told to look for it, as no other wake may come while its
+/// waker computes (testing/models/tests/next.to). The monitor watches while
+/// one waits there.
+fn watch_nexts() -> Watched {
+    let now = nanos();
+    let mut waiting = false;
+    let mut told = false;
+    for next in nexts() {
+        if next.task.load(Ordering::SeqCst).is_null() {
+            continue;
+        }
+        waiting = true;
+        if !told && now.saturating_sub(next.since.load(Ordering::Relaxed)) >= NEXT_WAIT.as_nanos() as u64 {
+            told = true;
+            wake_idle();
+        }
+    }
+    if waiting { Watched::Looking } else { Watched::Idle }
+}
+
+/// A task was woken next to a worker: with a worker idle, the monitor
+/// watches until it runs (`watch_nexts`).
+pub(super) fn watch_next() {
+    if IDLE.load(Ordering::SeqCst) > 0 {
+        watch_busy();
+    }
 }
 
 /// How long a worker has stayed on one task, by a look at it: its count of

@@ -30,6 +30,9 @@ pub(super) struct Next {
     /// worker lets one go when its task leaves it, or when it finds itself
     /// idle with the mark on (testing/models/tests/watcher.to).
     pub(super) held: AtomicBool,
+    /// Its worker is one the monitor put beside a held one, which is given
+    /// none beside it in turn (language 16.14).
+    pub(super) beside: AtomicBool,
     /// Its worker's calls of C, which the monitor watches on their own.
     pub(super) in_c: AtomicPtr<InC>,
 }
@@ -49,6 +52,7 @@ impl Next {
             domain: AtomicUsize::new(0),
             turns: AtomicU64::new(0),
             held: AtomicBool::new(false),
+            beside: AtomicBool::new(false),
             in_c: AtomicPtr::new(std::ptr::null_mut()),
         }
     }
@@ -114,6 +118,14 @@ pub(super) fn steal() -> Result<(*mut Task, bool), bool> {
 /// Whether tasks wait in a worker's own queue.
 pub(super) fn waiting_somewhere() -> bool {
     nexts().any(|next| next.count.load(Ordering::SeqCst) > 0)
+}
+
+/// Whether a task waits next to another worker than this one, which may
+/// run another for long: a worker about to sleep looks again for it in a
+/// moment (testing/models/tests/next.to).
+pub(super) fn waiting_next_elsewhere() -> bool {
+    let mine = own_next().map(|next| next as *const Next);
+    nexts().any(|next| Some(next as *const Next) != mine && !next.task.load(Ordering::SeqCst).is_null())
 }
 
 /// The first of the tasks this worker's tasks started.
@@ -252,7 +264,10 @@ pub(super) fn schedule(task: *mut Task) {
     {
         let now = nanos();
         next.since.store(now, Ordering::Relaxed);
-        let replaced = next.task.swap(task, Ordering::AcqRel);
+        let replaced = next.task.swap(task, Ordering::SeqCst);
+        // With a worker idle, the monitor watches until it runs: its waker
+        // may compute for long, and the wakes below are rationed.
+        super::foreign::watch_next();
         if !replaced.is_null() {
             enqueue(replaced);
             return;

@@ -7203,7 +7203,8 @@ cuando todos los workers están ocupados, alguna tarea espera uno y un worker ll
 más de un intervalo corto en la misma tarea, la que pregunta con
 `tasks.checkpoint()` cede el suyo (11.15), y si ese worker sigue en la misma tarea
 un intervalo más, el runtime pone otro a su lado, que se retira cuando esa tarea
-deja el suyo; como mucho uno por worker. El número de workers, el de por defecto
+deja el suyo: como mucho uno por cada worker que el programa tiene, y ninguno al
+lado de uno puesto así, así que nunca son más del doble. El número de workers, el de por defecto
 o el que fija `TONDO_WORKERS`, es cuántos tiene el programa; el que se pone junto
 a uno retenido lo rebasa mientras esa tarea retiene el suyo. Si los cálculos que no esperan ni preguntan ocupan todos los workers,
 los puestos a su lado incluidos, Tondo no promete progreso. Las operaciones de la

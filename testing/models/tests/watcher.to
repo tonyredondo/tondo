@@ -7,10 +7,14 @@
 // moved for one more look is marked replaced, a step later as the code reads
 // then writes, and a surplus worker starts. A worker whose task leaves it
 // swaps its mark off and, if it was on, one worker retires; so does one
-// that finds itself idle with the mark on. Two workers: one runs a task that
-// never asks until it ends, the other a short one that asks; a third task
-// waits. It runs in the end, the workers never pass twice their number, and
-// they come back to it once every task has ended.
+// that finds itself idle with the mark on. A worker put beside a held one
+// is given none beside it in turn, and the workers never pass twice their
+// number: without those two limits a worker put beside, held in turn, got
+// another, which the code did until the case of workers_bound.to. Two
+// workers: one runs a task that never asks until it ends, the other a short
+// one that asks; a third task waits. It runs in the end, the workers never
+// pass twice their number, and they come back to it once every task has
+// ended.
 import std.model
 
 type Worker = {
@@ -44,6 +48,10 @@ const Short = 1
 
 const Waiting = 2
 
+/// Another task that never asks, in the queue beside the one that waits,
+/// which a worker put beside the first takes and is held by in turn.
+const Fourth = 3
+
 const Base = 2
 
 fn worker(state: Watched, w: Int, after: Worker): Watched {
@@ -61,26 +69,42 @@ fn leaves(state: Watched, w: Int, ended: Bool, back: Bool, fixed: Bool): Watched
     worker(state with { queue, ended: done, surplus: owed }, w, after)
 }
 
-fn steps(state: Watched, fixed: Bool, asks: Bool, added: Bool): Array[model.Step[Watched]] {
+fn steps(
+    state: Watched,
+    fixed: Bool,
+    asks: Bool,
+    added: Bool,
+    limits: Bool,
+): Array[model.Step[Watched]] {
     var next: Array[model.Step[Watched]] = []
     let present = state.workers.filter((each) { each.task != -2 })
     let idle = present.any((each) { each.task == -1 })
     let watching = not idle and not state.queue.isEmpty()
-    let room = present.length() < 2 * Base
-    let looked = state.workers.map(
-        (each) {
-            match each.task {
-                -2 => each
-                _ if not watching => each with { seen: -1, looks: 0 }
-                _ => {
-                    let looks = if each.seen == each.started { (each.looks + 1).min(3) } else { 1 }
-                    let pending =
-                        each.pending or (added and looks >= 3 and not each.replaced and room)
-                    each with { seen: each.started, looks, pending }
+    let room = not limits or present.length() < 2 * Base
+    let looked = state.workers
+        .enumerate()
+        .map(
+            (pair) {
+                let (w, each) = pair
+                // The workers the program has, the first `Base`, get one beside.
+                let given = not limits or w < Base
+                match each.task {
+                    -2 => each
+                    _ if not watching => each with { seen: -1, looks: 0 }
+                    _ => {
+                        let looks = if each.seen == each.started {
+                            (each.looks + 1).min(3)
+                        } else {
+                            1
+                        }
+                        let pending =
+                            each.pending or
+                                (added and looks >= 3 and not each.replaced and room and given)
+                        each with { seen: each.started, looks, pending }
+                    }
                 }
-            }
-        },
-    )
+            },
+        )
     let stuck = looked.any((each) { each.task >= 0 and each.looks >= 2 })
     next.push(model.step("look", state with { workers: looked, bit: state.bit or stuck }))
     for (w, each) in state.workers.enumerate() {
@@ -128,9 +152,9 @@ fn steps(state: Watched, fixed: Bool, asks: Bool, added: Bool): Array[model.Step
                     next.push(model.step("retire {w}", retired))
                 }
             }
-            // The long task never asks, and ends only once the one that
-            // waits has run: it holds its worker until then.
-            task if task == Long => {
+            // The long tasks never ask, and end only once the one that
+            // waits has run: they hold their worker until then.
+            task if task == Long or task == Fourth => {
                 if state.ended[Waiting] {
                     next.push(model.step("finish {w}", leaves(state, w, true, false, fixed)))
                 }
@@ -152,7 +176,13 @@ fn steps(state: Watched, fixed: Bool, asks: Bool, added: Bool): Array[model.Step
     next
 }
 
-fn check(fixed: Bool, asks: Bool, added: Bool): model.Checked ! model.Violation {
+fn check(
+    fixed: Bool,
+    asks: Bool,
+    added: Bool,
+    limits: Bool,
+    fourth: Bool,
+): model.Checked ! model.Violation {
     let running = (task: Int) {
         Worker { task, started: 1, seen: -1, looks: 0, replaced: false, pending: false }
     }
@@ -165,11 +195,11 @@ fn check(fixed: Bool, asks: Bool, added: Bool): model.Checked ! model.Violation 
         pending: false
     }
     let start = Watched {
-        workers: [running(Long), running(Short), absent, absent]
-        queue: model.Queue([Waiting])
+        workers: [running(Long), running(Short), absent, absent, absent]
+        queue: model.Queue(if fourth { [Fourth, Waiting] } else { [Waiting] })
         bit: false
         surplus: 0
-        ended: [false, false, false]
+        ended: [false, false, false, false]
     }
     let present = (state: Watched) { state.workers.filter((each) { each.task != -2 }).length() }
     let bounded = model.always(
@@ -196,21 +226,21 @@ fn check(fixed: Bool, asks: Bool, added: Bool): model.Checked ! model.Violation 
     ]
     model.check(
         start,
-        (state) { steps(state, fixed, asks, added) },
+        (state) { steps(state, fixed, asks, added, limits) },
         holds: [bounded, runs, back],
         fair: fair,
     )
 }
 
 test theMonitorsRemediesEndAndGiveBackTheirWorkers {
-    assert(model.expect(check(true, true, true)).states == 4795)
+    assert(model.expect(check(true, true, true, true, false)).states == 4795)
 }
 
 // A mark the monitor sets on a worker that has gone idle, swapped off only
 // when a task leaves it, is never swapped off once no task comes: the
 // surplus worker stays for ever.
 test aMarkOnAnIdleWorkerKeepsItsSurplus {
-    match check(false, true, true) {
+    match check(false, true, true, true, false) {
         ok(_) => panic("the surplus worker retired with nothing owing its retirement")
         err(stopped) => assert(stopped.property == "the workers come back to their number")
     }
@@ -219,16 +249,32 @@ test aMarkOnAnIdleWorkerKeepsItsSurplus {
 // With no task that asks and no worker put beside, the long task holds its
 // worker and the short one its own, and the task that waits never runs.
 test withNeitherRemedyTheTaskThatWaitsStarves {
-    match check(true, false, false) {
+    match check(true, false, false, true, false) {
         ok(_) => panic("the task that waits ran with every worker held")
         err(stopped) => assert(stopped.property == "the task that waits runs")
     }
 }
 
 test theBitAloneLetsTheTaskThatWaitsRun {
-    _ = model.expect(check(true, true, false))
+    _ = model.expect(check(true, true, false, true, false))
 }
 
 test theWorkerPutBesideAloneLetsTheTaskThatWaitsRun {
-    _ = model.expect(check(true, false, true))
+    _ = model.expect(check(true, false, true, true, false))
+}
+
+// With a fourth task that never asks, the worker put beside the first is
+// held by it while the last waits, and gets none beside it: the workers stay
+// within twice their number, and every task runs.
+test aWorkerPutBesideAndHeldGetsNone {
+    assert(model.expect(check(true, true, true, true, true)).states == 45057)
+}
+
+// Without its two limits, the code before workers_bound.to: that worker
+// gets one beside it in turn, past twice the workers.
+test withoutItsLimitsAWorkerPutBesideGetsAnother {
+    match check(true, true, true, false, true) {
+        ok(_) => panic("the workers stayed within twice their number with no limit")
+        err(stopped) => assert(stopped.property == "at most twice the workers")
+    }
 }

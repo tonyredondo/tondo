@@ -8932,3 +8932,49 @@ every command has, so there is one rule rather than a flag for each. A
 script has no dev-dependencies, native libraries, providers, generators
 or `[build]`: one that needs them is a project, and the error says how
 to make it one.
+
+## A task woken next to a worker that computes
+
+A task that a running task wakes runs next on that task's worker, as
+Go's `runnext`: two tasks that hand work to each other run on one
+worker and wake nobody. An idle worker takes it once it has waited
+there longer than NEXT_WAIT, but only a worker told to look does, and
+telling one is rationed, one in 100 µs, not at every handoff. A worker
+that found nothing looked once more at the workers' queues before it
+slept, not at their next; and the monitor parked while any worker was
+idle. So a task woken by one that then computes without waiting waited
+for as long as its waker computed, with a worker idle beside it: a
+cancel, a deadline or a consumer late by the whole computation. With
+one worker too: the worker the watcher put beside a held one slept
+without seeing the task woken next to it, so the watcher kept its word
+for a task woken by a timer or from outside, not for one the
+computation itself woke. A case of the watcher that waited for a
+message rather than a sleep found it (CI run 44789782015, then a gate).
+
+Two changes, as testing/models/tests/next.to has them. A worker about to
+sleep counts a task in another's next as one that waits, and looks
+again for it in NEXT_WAIT. And a task landing in a next, with a worker
+idle, has the monitor watch until it runs: it tells an idle worker of
+one there longer than NEXT_WAIT. The model says which does what: the
+monitor alone keeps the bound, two of its looks; the look before
+sleeping only makes the common case take NEXT_WAIT instead of a
+millisecond. A third, telling a worker at every handoff unless one
+looks, as Go's `wakep`, was left out: a worker that is told looks once
+and sleeps again, so in a ping-pong it would be a wake of the kernel at
+every handoff, which the two others do not need.
+
+The same monitor broke its own bound. "At most one beside each worker"
+was read of every worker, those it had put beside included, so a worker
+put beside and held in turn got one beside it too: three computations
+on one processor made three workers, and a hundred would have made a
+hundred threads. The model of the watcher had the bound, its room for
+twice the workers, which the code did not: only a fourth task that never
+asks, in testing/models/tests/watcher.to now, holds a worker put beside,
+and without the two limits the model finds the fifth worker. Now a
+worker put beside is given none, and the monitor adds none once the
+program has twice the workers it was given, those that stand in for a
+call of C counted with them. The limit is on what the monitor puts
+beside a computation and on nothing else: a worker in a call of C is
+replaced as it always was, whatever the count. Work with no core to run
+on waits: one worker and three computations run two, and the third when
+one ends.
