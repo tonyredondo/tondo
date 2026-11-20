@@ -190,6 +190,13 @@ warehouse::unit::shelves::ordersForTheLastUnitsCannotAllGetThem: 10074 orders, n
 test warehouse::unit::shelves::ordersForTheLastUnitsCannotAllGetThem ... ok
 ```
 
+An order is fair in the way a scheduler is: it does not take the same task
+more than a thousand times in a row while another could go. A task that
+turns in a loop until another stops it, asking with `tasks.checkpoint()` at
+each turn, then ends in every order, as it does in a run, and every order
+in which one task is fewer than a thousand steps ahead of another is still
+tried.
+
 A test that reaches outside the program, to files, the network, a database
 or C, runs in one order in a plain run, since running it again would
 change what is outside. That is the `note` at the end of the first run on

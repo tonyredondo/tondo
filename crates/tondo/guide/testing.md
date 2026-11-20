@@ -77,6 +77,9 @@ suite slow {
   find one that depends on which task runs first; a failure prints the
   command that runs that order again, `--schedules 1 --seed hex`, and the
   one that debugs the test in it, `tondo debug --test <id> --schedule hex`.
+- No order takes the same task more than a thousand times in a row while
+  another could go, so a loop that calls `tasks.checkpoint()` until another
+  task stops it ends in every order.
 - `tondo test --schedules all` tries every order that differs instead of some,
   fewest changes first, and says how many and whether that was all of them, up
   to 20 000 runs for each test, or `all:<n>`. Two orders differ only if two tasks

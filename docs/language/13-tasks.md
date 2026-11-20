@@ -856,7 +856,10 @@ after the block: false
 - A deadline is seen at a checkpoint up to a tick of the system's clock
   late, which is one to ten milliseconds by the system, and never early.
 - Under `tondo test --schedules`, every checkpoint is a place where the
-  order of the tasks may change ([Testing](16-testing.md)).
+  order of the tasks may change, and an order does not let a task go on
+  for more than a thousand steps in a row while another could run. So a
+  loop that asks until another task stops it ends in every order tried, as
+  it does in a run ([Testing](16-testing.md)).
 
 A checkpoint is a wait of nothing in one more way: it lets the other tasks
 run. A program has as many workers as processors, and a task that computes
