@@ -1104,6 +1104,89 @@ fn dap_read(reader: &mut impl BufRead) -> Value {
     serde_json::from_slice(&body).unwrap()
 }
 
+/// A program that ends as the editor asks for its tasks, again and again,
+/// on one core where it can: each session hears the end, from the program.
+/// Its end and its answers once went out on one socket as lines another
+/// could cut, which the adapter could not read, and the session never
+/// ended: one session in sixty to a hundred on one core, so that three
+/// hundred catch it 19 runs in 20. The adapter now ends such a session and
+/// says why, which this holds to never happening.
+#[test]
+fn every_debugged_program_s_end_reaches_the_editor() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dapends");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"dapends\"\n").unwrap();
+    std::fs::write(dir.join("src/main.to"), "import std.console\n\nfn main() {\n    console.println(\"hello\")\n}\n")
+        .unwrap();
+    let program = dir.join("src/main.to");
+    let tondo = env!("CARGO_BIN_EXE_tondo");
+    // This thread, the adapter and the program on one core, as a small
+    // runner is, where the two lines meet most often.
+    #[cfg(target_os = "linux")]
+    unsafe {
+        let mut one: libc::cpu_set_t = std::mem::zeroed();
+        libc::CPU_SET(0, &mut one);
+        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &one);
+    }
+    for round in 1..=300 {
+        let mut child = Command::new(tondo)
+            .arg("dap")
+            .current_dir(&dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut input = child.stdin.take().unwrap();
+        let mut output = BufReader::new(child.stdout.take().unwrap());
+        let (heard, ends) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            loop {
+                let message = dap_read(&mut output);
+                let ended = message["event"] == "terminated";
+                if heard.send(message).is_err() || ended {
+                    return;
+                }
+            }
+        });
+        let mut seq = 0;
+        let mut send = |command: &str, arguments: Value| {
+            seq += 1;
+            let text = json!({ "seq": seq, "type": "request", "command": command, "arguments": arguments }).to_string();
+            std::io::Write::write_all(&mut input, format!("Content-Length: {}\r\n\r\n{text}", text.len()).as_bytes())
+        };
+        send("initialize", json!({ "adapterID": "tondo" })).unwrap();
+        send("launch", json!({ "program": program })).unwrap();
+        send("configurationDone", json!({})).unwrap();
+        // As VS Code does while a program runs: its tasks, often.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let mut said = Vec::new();
+        let ended = loop {
+            if let Ok(message) = ends.recv_timeout(std::time::Duration::from_millis(1)) {
+                let ended = message["event"] == "terminated";
+                said.push(message);
+                if ended {
+                    break true;
+                }
+                continue;
+            }
+            if std::time::Instant::now() > deadline || send("threads", json!({})).is_err() {
+                break false;
+            }
+        };
+        let _ = send("disconnect", json!({ "terminateDebuggee": true }));
+        let _ = child.kill();
+        let _ = child.wait();
+        let shown: Vec<String> = said
+            .iter()
+            .filter(|m| m["command"] != "threads")
+            .map(|m| format!("{} {} {}", m["type"], m["command"], m["event"]))
+            .collect();
+        assert!(ended, "round {round}: the session did not end: {shown:?}");
+        let unread = said.iter().find(|m| m["body"]["output"].as_str().is_some_and(|o| o.contains("could not read")));
+        assert!(unread.is_none(), "round {round}: {unread:?}");
+    }
+}
+
 /// The debugger runs one test of a project, stopping in it, and says how
 /// it ended.
 #[test]

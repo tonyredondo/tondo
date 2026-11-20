@@ -63,6 +63,19 @@ async function until<T>(found: () => T | undefined, what: string, seconds = 60):
   }
 }
 
+/** What a promise gives, or a failure that names what never came. */
+async function within<T>(promise: Promise<T>, what: string, seconds = 60): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_, fail) => {
+    timer = setTimeout(() => fail(new Error(`${what} did not come within ${seconds} s`)), seconds * 1000);
+  });
+  try {
+    return await Promise.race([promise, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** The exit code of the task a command starts. */
 async function ended(command: string, answers: string[] = []): Promise<number | undefined> {
   const code = new Promise<number | undefined>((done) => {
@@ -72,7 +85,7 @@ async function ended(command: string, answers: string[] = []): Promise<number | 
     });
   });
   await execute(command, answers);
-  return code;
+  return within(code, `the end of the task of ${command}`);
 }
 
 const openMain = async () => {
@@ -211,7 +224,7 @@ const tests: [string, () => Promise<void>][] = [
       const program = path.join(folder(), 'src/main.to');
       const config = { type: 'tondo', name: 'run', request: 'launch', program };
       assert.equal(await vscode.debug.startDebugging(vscode.workspace.workspaceFolders![0], config), true);
-      await session;
+      await within(session, 'the end of the debug session');
     },
   ],
   [
@@ -237,7 +250,9 @@ export async function run(): Promise<void> {
   const failed: string[] = [];
   for (const [name, test] of tests) {
     try {
-      await test();
+      // A step that waits for what never comes fails, named, rather than
+      // keep the run waiting.
+      await within(test(), `the end of the step "${name}"`, 300);
       console.log(`ok ${name}`);
     } catch (error) {
       console.log(`FAILED ${name}: ${String(error)}`);

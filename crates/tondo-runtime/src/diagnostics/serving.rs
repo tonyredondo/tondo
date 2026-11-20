@@ -280,10 +280,13 @@ pub(super) fn answer(client: &mut UnixStream, pending: &mut Vec<u8>) -> bool {
             }
             other => format!("{{\"error\":{}}}", quoted(&format!("unknown request `{other}`"))),
         };
-        // A logpoint answers by itself.
+        // A logpoint answers by itself. The debugger's answers go between
+        // the events the program tells it, never inside one.
+        let sending = crate::debugger::is_client(client.as_raw_fd()).then(crate::debugger::sending);
         if !reply.is_empty() && send(client, &reply).is_err() {
             return false;
         }
+        drop(sending);
         crate::debugger::answered();
     }
     pending.len() < 4096

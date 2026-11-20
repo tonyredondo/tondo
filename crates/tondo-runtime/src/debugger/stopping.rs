@@ -360,8 +360,22 @@ pub(super) fn state() -> std::sync::MutexGuard<'static, State> {
 pub(super) fn tell(event: &str) {
     let _outside = crate::replay::Outside::enter();
     if let Some(client) = CLIENT.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-        let _ = writeln!(client, "{event}");
+        // One write of the whole line, which no answer of the serving
+        // thread comes between.
+        let line = format!("{event}\n");
+        let _sending = sending();
+        let _ = client.write_all(line.as_bytes());
     }
+}
+
+/// Held while a line goes to the debugger: the events this module tells it
+/// and the answers the diagnostics' thread sends on another handle of the
+/// same socket. A line cut by another's would be one the debugger cannot
+/// read, and the program's end, told so, would never reach it.
+static SENDING: Mutex<()> = Mutex::new(());
+
+pub(crate) fn sending() -> std::sync::MutexGuard<'static, ()> {
+    SENDING.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// The probe where a line starts: stops the task when the debugger asked

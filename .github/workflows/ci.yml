@@ -390,9 +390,12 @@ jobs:
           save: true
       - run: taskset -c 0 cargo test -p tondo --test observe --test mcp --test live --test runbooks
 
-  # The VS Code extension: its tests, then the .vsix as an artifact.
+  # The VS Code extension: its tests, then the .vsix as an artifact. It
+  # takes five minutes at most; a wait that never ends stops at ten times
+  # that.
   vscode:
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     defaults:
       run:
         working-directory: editors/vscode

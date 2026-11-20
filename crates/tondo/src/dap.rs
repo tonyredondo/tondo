@@ -34,7 +34,7 @@ const SEARCHES: &[&str] = &["diff", "effects", "origins", "seek", "timeline", "w
 /// The editor's side: messages framed with `Content-Length`, numbered.
 #[derive(Clone)]
 struct Editor {
-    out: Arc<Mutex<(std::io::Stdout, u64)>>,
+    out: Arc<Mutex<(Box<dyn Write + Send>, u64)>>,
 }
 
 impl Editor {
@@ -202,7 +202,9 @@ impl Debuggee {
         let (answer, answers) = mpsc::channel();
         let pumped = self.pumped.clone();
         let said = session.said;
-        std::thread::spawn(move || pumped.pump(said.into_iter(), answer));
+        // The old process's end, which comes next, ends nothing.
+        let id = self.pumped.current.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        std::thread::spawn(move || pumped.pump(id, said.into_iter().map(Ok), answer));
         self.writer = session.writer;
         self.answers = answers;
         // It keeps checkpoints as it runs, to go back from.
@@ -327,7 +329,7 @@ pub(crate) fn test_frame(header: &str, stream: &mut impl BufRead, tested: Option
 pub fn serve(builds: Builds) -> Result<(), String> {
     // An editor that ends the adapter by a signal ends what it debugs too.
     crate::debug::end_owned_on_signals();
-    let editor = Editor { out: Arc::new(Mutex::new((std::io::stdout(), 0))) };
+    let editor = Editor { out: Arc::new(Mutex::new((Box::new(std::io::stdout()), 0))) };
     // What the editor sends is read while a request runs, as a long search
     // of a replay: its `cancel` ends it.
     let (requests, incoming) = mpsc::channel();
@@ -485,6 +487,8 @@ pub fn serve(builds: Builds) -> Result<(), String> {
         }
         if ending {
             if let Some(mut program) = debuggee.take() {
+                // The editor ends the session itself.
+                program.pumped.current.store(0, std::sync::atomic::Ordering::SeqCst);
                 let _ = program.writer.shutdown(std::net::Shutdown::Both);
                 if let Some(child) = program.child.as_mut() {
                     let _ = child.kill();
@@ -723,12 +727,37 @@ struct Pumped {
     streams: Arc<std::sync::atomic::AtomicUsize>,
     /// The checkpoints a replay kept as it ran, by probe and process.
     checkpointed: Arc<Mutex<Vec<(u64, u32)>>>,
+    /// Which pump's end ends the session: the one of the process the
+    /// debugger talks to, which a replay that takes over replaces; none
+    /// once the editor ended it.
+    current: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Pumped {
-    fn pump(self, values: impl Iterator<Item = Value>, answer: mpsc::Sender<Value>) {
-        let Pumped { events, entry, drained: read_out, streams, checkpointed } = self;
+    /// What the program says, `Err` for a line that cannot be read, until
+    /// its connection ends. A program that ends without saying so, as one
+    /// killed, ends the session all the same, as does a line it cannot
+    /// read, which the editor is shown.
+    fn pump(self, id: u64, values: impl Iterator<Item = Result<Value, String>>, answer: mpsc::Sender<Value>) {
+        let Pumped { events, entry, drained: read_out, streams, checkpointed, current } = self;
+        let drain = || {
+            let (count, ended) = &*read_out;
+            let count = count.lock().unwrap_or_else(|e| e.into_inner());
+            let wait = std::time::Duration::from_secs(2);
+            let opened = streams.load(std::sync::atomic::Ordering::SeqCst);
+            drop(ended.wait_timeout_while(count, wait, |count| *count < opened));
+        };
+        let mut told = false;
         for value in values {
+            let value = match value {
+                Ok(value) => value,
+                Err(line) => {
+                    let line: String = line.chars().take(200).collect();
+                    let output = format!("the debugger could not read what the program said, and stops: {line}\n");
+                    events.event("output", json!({ "category": "console", "output": output }));
+                    break;
+                }
+            };
             if let Some(stop) = value.get("stopped") {
                 if stop["why"] == "start" && !entry {
                     continue;
@@ -809,15 +838,19 @@ impl Pumped {
                 let breakpoint = json!({ "id": id, "verified": false, "message": format!("the watch ended: {why}") });
                 events.event("breakpoint", json!({ "reason": "changed", "breakpoint": breakpoint }));
             } else if value.get("exited").is_some() {
-                let (count, ended) = &*read_out;
-                let count = count.lock().unwrap_or_else(|e| e.into_inner());
-                let wait = std::time::Duration::from_secs(2);
-                let opened = streams.load(std::sync::atomic::Ordering::SeqCst);
-                drop(ended.wait_timeout_while(count, wait, |count| *count < opened));
+                drain();
                 events.event("terminated", json!({}));
+                told = true;
             } else if answer.send(value).is_err() {
                 break;
             }
+        }
+        // The connection ended, or could not be read, and the program did
+        // not say it ended: the session ends, unless another process took
+        // over or the editor ended it.
+        if !told && current.load(std::sync::atomic::Ordering::SeqCst) == id {
+            drain();
+            events.event("terminated", json!({}));
         }
     }
 }
@@ -1011,10 +1044,12 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
     // to the command waiting for them.
     let checkpointed = Arc::new(Mutex::new(Vec::new()));
     let streams = Arc::new(std::sync::atomic::AtomicUsize::new(streams));
-    let pumped = Pumped { events, entry, drained: read_out, streams, checkpointed };
-    let values = reader.lines().map_while(|line| serde_json::from_str::<Value>(&line.ok()?).ok());
+    let current = Arc::new(std::sync::atomic::AtomicU64::new(1));
+    let pumped = Pumped { events, entry, drained: read_out, streams, checkpointed, current };
+    let values =
+        reader.lines().map_while(Result::ok).map(|line| serde_json::from_str::<Value>(&line).map_err(|_| line));
     let pumping = pumped.clone();
-    std::thread::spawn(move || pumping.pump(values, answer));
+    std::thread::spawn(move || pumping.pump(1, values, answer));
     let mut child = child;
     if let Some(child) = child.as_mut() {
         let streams = (
@@ -2091,6 +2126,70 @@ fn is_order(order: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::hexadecimal;
+    use std::sync::{Arc, Mutex};
+
+    /// What the editor is sent, kept.
+    #[derive(Clone, Default)]
+    struct Kept(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Kept {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A line of the program that cannot be read, as two said at once
+    /// were before, ends the session and says so, rather than leave the
+    /// editor waiting for an end it would never hear.
+    #[test]
+    fn a_line_it_cannot_read_ends_the_session_and_says_why() {
+        let kept = Kept::default();
+        let editor = super::Editor { out: Arc::new(Mutex::new((Box::new(kept.clone()), 0))) };
+        let pumped = super::Pumped {
+            events: editor,
+            entry: false,
+            drained: Arc::new((Mutex::new(0), std::sync::Condvar::new())),
+            streams: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            checkpointed: Arc::new(Mutex::new(Vec::new())),
+            current: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        };
+        let glued = r#"{"exited":true}{"tasks":[]}"#.to_string();
+        let said =
+            vec![Ok(serde_json::json!({ "logged": "first" })), Err(glued), Ok(serde_json::json!({ "exited": true }))];
+        let (answer, _answers) = std::sync::mpsc::channel();
+        pumped.pump(1, said.into_iter(), answer);
+        let sent = String::from_utf8(kept.0.lock().unwrap().clone()).unwrap();
+        let said = r#"the debugger could not read what the program said, and stops: {\"exited\":true}{\"tasks\":[]}"#;
+        assert!(sent.contains(said), "{sent}");
+        assert_eq!(sent.matches(r#""event":"terminated""#).count(), 1, "{sent}");
+    }
+
+    /// A program whose connection ends without saying it ended, as one
+    /// killed, ends the session; one another process took over from, or
+    /// that the editor ended, does not end it again.
+    #[test]
+    fn the_end_of_the_connection_ends_the_session_once() {
+        for (current, ends) in [(1, true), (2, false), (0, false)] {
+            let kept = Kept::default();
+            let editor = super::Editor { out: Arc::new(Mutex::new((Box::new(kept.clone()), 0))) };
+            let pumped = super::Pumped {
+                events: editor,
+                entry: false,
+                drained: Arc::new((Mutex::new(0), std::sync::Condvar::new())),
+                streams: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                checkpointed: Arc::new(Mutex::new(Vec::new())),
+                current: Arc::new(std::sync::atomic::AtomicU64::new(current)),
+            };
+            let (answer, _answers) = std::sync::mpsc::channel();
+            pumped.pump(1, std::iter::empty(), answer);
+            let sent = String::from_utf8(kept.0.lock().unwrap().clone()).unwrap();
+            assert_eq!(sent.contains(r#""event":"terminated""#), ends, "{current}: {sent}");
+        }
+    }
 
     #[test]
     fn whole_numbers_show_in_hexadecimal_and_the_rest_as_it_is() {
