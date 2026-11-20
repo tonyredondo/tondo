@@ -1,0 +1,38 @@
+// One worker runs the program's code, but a task held in a long call of C
+// does not hold it: the worker is replaced, and the other task runs during
+// the call.
+
+import std.console
+import std.ffi
+import std.sync
+
+extern fn usleep(micros: ffi.CUInt): ffi.CInt
+
+/// Says it is about to call, then holds its worker in C.
+fn calls(ready: Sender[Bool], other: sync.Atomic[Int]): Int {
+    ready.send(true)
+    unsafe {
+        _ = usleep(300000u32)
+    }
+    other.load()
+}
+
+/// Runs only once the call has begun.
+fn quick(ready: Receiver[Bool], other: sync.Atomic[Int]) {
+    _ = ready.receive()
+    other.store(1)
+}
+
+fn main() {
+    let other = sync.Atomic(0)
+    let (ready, begun) = channel[Bool](1)
+    let calling = spawn calls(ready, other)
+    let running = spawn quick(begun, other)
+    running.wait()
+    console.println("the other ran during the call: {calling.wait() == 1}")
+}
+
+// expect-env: TONDO_WORKERS=1
+// expect-no-schedule: a seeded order runs the tasks on one worker that a call of C holds, as `--schedules` does
+// expect-no-replay: a recorded run, too, runs its tasks in one order on one worker that a call of C holds
+// expect-stdout: the other ran during the call: true

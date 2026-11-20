@@ -177,7 +177,7 @@ pub fn ps(json: bool) -> Result<(), String> {
         println!("no Tondo program started with TONDO_DIAGNOSTICS=1 is running");
         return Ok(());
     }
-    println!("{:<9} {:>9}  PROGRAM", "PID", "UPTIME");
+    println!("{:<9} {:>9}  {:>9}  PROGRAM", "PID", "UPTIME", "WORKERS");
     for info in &programs {
         let mut line = info["program"].as_str().unwrap_or_default().to_string();
         for argument in info["arguments"].as_array().into_iter().flatten() {
@@ -185,7 +185,13 @@ pub fn ps(json: bool) -> Result<(), String> {
             line.push_str(argument.as_str().unwrap_or_default());
         }
         let uptime = duration(info["uptime_ms"].as_f64().unwrap_or(0.0) / 1000.0);
-        println!("{:<9} {uptime:>9}  {line}", info["pid"]);
+        // How many workers run its code at once, of the processors it may
+        // use: fewer with `TONDO_WORKERS`.
+        let workers = match (info["workers"].as_u64(), info["processors"].as_u64()) {
+            (Some(workers), Some(processors)) => format!("{workers} of {processors}"),
+            _ => "-".to_string(),
+        };
+        println!("{:<9} {uptime:>9}  {workers:>9}  {line}", info["pid"]);
     }
     Ok(())
 }

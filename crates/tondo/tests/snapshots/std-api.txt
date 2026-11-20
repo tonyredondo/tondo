@@ -857,6 +857,7 @@ pub fn syncNative()
 pub fn system(): System
 pub fn user(): User
 pub fn vars(): Map[String, String]
+pub fn workers(): Int
 pub type Build = {
     /// The package's name, or the file's without `.to`.
     name: String

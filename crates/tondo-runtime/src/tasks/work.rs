@@ -560,7 +560,7 @@ pub(super) fn start_workers() {
     if exploring().is_some() {
         return;
     }
-    let count = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let count = crate::config::workers();
     queue().workers = count;
     for _ in 1..count {
         start_worker();

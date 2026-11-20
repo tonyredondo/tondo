@@ -396,6 +396,7 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         repeat: 1,
         schedules: None,
         orders: None,
+        workers: None,
         record: None,
         codeowners: Codeowners::Auto,
         show_output: false,
@@ -559,6 +560,15 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
                     .filter(|&n| n > 0)
                     .map(|n| n as usize)
                     .ok_or_else(|| usage("--jobs takes a positive number".into()))?
+            }
+            "--workers" => {
+                options.workers = Some(
+                    count(&value()?, "--workers")
+                        .ok()
+                        .filter(|n| (1..=1024).contains(n))
+                        .map(|n| n as u32)
+                        .ok_or_else(|| usage("--workers takes a number of workers from 1 to 1024".into()))?,
+                )
             }
             "--timeout" => {
                 let seconds: f64 = value()?
@@ -736,6 +746,9 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
         && let Some(flag) = campaign.iter().find(|f| given(f))
     {
         return Err(usage(format!("--schedules runs everything once per order; it does not go with {flag}")));
+    }
+    if schedules.is_some() && given("--workers") {
+        return Err(usage("--schedules runs the tasks on one worker; it does not go with --workers".into()));
     }
     if given("--repeat") && (given("--retry") || given("--allow-flaky")) {
         return Err(usage("--repeat runs everything again; it does not go with --retry or --allow-flaky".into()));

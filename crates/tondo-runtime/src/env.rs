@@ -190,6 +190,13 @@ pub extern "C" fn tondo_rt_env_processors() -> i64 {
     std::thread::available_parallelism().map_or(1, |count| count.get() as i64)
 }
 
+/// `env.workers()`: how many workers run the program's tasks at once,
+/// `TONDO_WORKERS` or the processors.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_env_workers() -> i64 {
+    crate::config::workers() as i64
+}
+
 /// The cores of the machine, each once however many threads it runs; what
 /// the program may run on when the system does not say.
 #[unsafe(no_mangle)]

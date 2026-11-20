@@ -52,7 +52,12 @@ pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
         // of them 89, the same as half, which leaves the rest to the
         // program's workers; one client is as quick with any.
         false => {
-            let workers = std::thread::available_parallelism().map_or(2, |n| (n.get() / 2).max(2));
+            // With `TONDO_WORKERS`, half of those, one at least: a program
+            // asked to run on one core keeps to it.
+            let workers = match crate::config::workers_asked() {
+                true => (crate::config::workers() / 2).max(1),
+                false => std::thread::available_parallelism().map_or(2, |n| (n.get() / 2).max(2)),
+            };
             let mut builder = tokio::runtime::Builder::new_multi_thread();
             builder.worker_threads(workers).thread_name("tondo-http");
             builder

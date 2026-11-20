@@ -219,6 +219,7 @@ fn worker(
             (false, false) => None,
         })
         .envs(run.bench.is_none().then_some(("TONDO_RACE", "1")))
+        .envs(run.options.workers.map(|workers| ("TONDO_WORKERS", workers.to_string())))
         // What a test that does not end was doing, unless it measures.
         .envs((run.bench.is_none() && stores.profiles.is_none()).then_some(("TONDO_DIAGNOSTICS", "1")))
         .env("TONDO_TEST_NONCE", &nonce)

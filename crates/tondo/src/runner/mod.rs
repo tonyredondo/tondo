@@ -65,6 +65,9 @@ pub struct Options {
     /// `--schedules all`: every order of the tasks of each test, up to as
     /// many, and `--schedules at:0.2.1`, one given by its choices (8.10).
     pub orders: Option<Orders>,
+    /// `--workers n`: the tests' tasks run on n workers, `TONDO_WORKERS`
+    /// (testing 8.5).
+    pub workers: Option<u32>,
     /// `--record dir`: each test runs alone, recorded (toolchain 7.6), and
     /// the recordings of those that fail stay in the directory.
     pub record: Option<PathBuf>,

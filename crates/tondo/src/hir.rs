@@ -1850,6 +1850,7 @@ pub const NATIVES: &[Native] = {
         text("pluralRules", &[String], Strings, "tondo_rt_text_plural_rules"),
         // `std.internal.env`: what `std.env` writes in Tondo asks of the host.
         env("processors", &[], Int, "tondo_rt_env_processors"),
+        env("workers", &[], Int, "tondo_rt_env_workers"),
         env("cores", &[], Int, "tondo_rt_env_cores"),
         env("user", &[], Strings, "tondo_rt_env_user"),
         env("system", &[], Strings, "tondo_rt_env_system"),

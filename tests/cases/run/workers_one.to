@@ -1,0 +1,33 @@
+// With one worker, two tasks that compute never run at once: each counts
+// itself in while it runs, and counts the times it found the other in.
+
+import std.console
+import std.sync
+
+fn compute(running: sync.Atomic[Int], overlaps: sync.Atomic[Int]): Int {
+    var total = 0
+    for round in 0..200 {
+        if running.add(1) > 1 {
+            _ = overlaps.add(1)
+        }
+        for i in 0..2000 {
+            total += (i * round) % 7
+        }
+        _ = running.add(-1)
+    }
+    total
+}
+
+fn main() {
+    let running = sync.Atomic(0)
+    let overlaps = sync.Atomic(0)
+    let first = spawn compute(running, overlaps)
+    let second = spawn compute(running, overlaps)
+    console.println("{first.wait() == second.wait()}")
+    console.println("overlaps: {overlaps.load()}")
+}
+
+// expect-env: TONDO_WORKERS=1
+// expect-no-schedule: a seeded order interleaves the tasks at each operation of an atomic, on the one worker it explores with
+// expect-stdout: true
+// expect-stdout: overlaps: 0

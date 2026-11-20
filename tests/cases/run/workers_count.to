@@ -1,0 +1,14 @@
+// `TONDO_WORKERS` says how many workers run the program's tasks at once,
+// which `env.workers()` gives; `env.processors()` stays the machine's.
+
+import std.console
+import std.env
+
+fn main() {
+    console.println("{env.workers()} workers")
+    console.println("processors kept: {env.processors() >= 1}")
+}
+
+// expect-env: TONDO_WORKERS=3
+// expect-stdout: 3 workers
+// expect-stdout: processors kept: true

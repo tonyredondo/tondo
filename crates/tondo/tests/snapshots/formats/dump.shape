@@ -24,8 +24,10 @@
 .info.base: number
 .info.pid: number
 .info.probes: bool
+.info.processors: number
 .info.program: string
 .info.uptime_ms: number
+.info.workers: number
 .lock_order[]
 .message: string
 .reason: string

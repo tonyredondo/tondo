@@ -16,7 +16,7 @@ console.println("{env.args().length()} arguments; home is {home}")
 
 `tondo api std.env` shows the same in a terminal.
 
-- [Functions](#functions): [`args`](#args), [`get`](#get), [`vars`](#vars), [`set`](#set), [`setAll`](#setall), [`remove`](#remove), [`currentDirectory`](#currentdirectory), [`setCurrentDirectory`](#setcurrentdirectory), [`syncNative`](#syncnative), [`hostname`](#hostname), [`processId`](#processid), [`executable`](#executable), [`invokedAs`](#invokedas), [`homeDirectory`](#homedirectory), [`configDirectory`](#configdirectory), [`cacheDirectory`](#cachedirectory), [`processors`](#processors), [`user`](#user), [`system`](#system), [`build`](#build)
+- [Functions](#functions): [`args`](#args), [`get`](#get), [`vars`](#vars), [`set`](#set), [`setAll`](#setall), [`remove`](#remove), [`currentDirectory`](#currentdirectory), [`setCurrentDirectory`](#setcurrentdirectory), [`syncNative`](#syncnative), [`hostname`](#hostname), [`processId`](#processid), [`executable`](#executable), [`invokedAs`](#invokedas), [`homeDirectory`](#homedirectory), [`configDirectory`](#configdirectory), [`cacheDirectory`](#cachedirectory), [`processors`](#processors), [`workers`](#workers), [`user`](#user), [`system`](#system), [`build`](#build)
 - [EnvError](#enverror)
 - [Build](#build-1)
 - [Dependency](#dependency)
@@ -165,7 +165,27 @@ pub fn processors(physical: Bool = false): Int
 
 How many processors the program may run on at once, as its affinity
 and its cgroup's quota allow: at least 1. With `physical`, the cores of
-the machine, each once however many threads it runs.
+the machine, each once however many threads it runs. To size what runs
+at once, use `workers()`.
+
+#### workers
+
+```tondo
+pub fn workers(): Int
+```
+
+How many workers run the program's tasks at once: one per processor it
+may use, or as many as `TONDO_WORKERS` says. Size by it what is shared
+out among tasks, a pool or the chunks of a job; `processors` is the
+machine's.
+
+```tondo
+import std.console
+import std.env
+
+let chunks = env.workers()
+console.println("{chunks} workers on {env.processors()} processors")
+```
 
 #### user
 

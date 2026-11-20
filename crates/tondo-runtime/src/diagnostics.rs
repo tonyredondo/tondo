@@ -618,6 +618,9 @@ fn sample() -> Vec<Sample> {
     add("tasks.spawned", false, "", TASKS_SPAWNED.get());
     add("profile.samples", false, "", super::recorder::taken() as i64);
     add("workers.total", true, "", scheduler.workers as i64);
+    // How many may run the program's code at once: `TONDO_WORKERS`, or
+    // the processors.
+    add("workers.limit", true, "", crate::config::workers() as i64);
     add("workers.idle", true, "", scheduler.idle as i64);
     add("workers.in_c", true, "", scheduler.in_c as i64);
     add("workers.replaced", false, "", WORKERS_REPLACED.get());

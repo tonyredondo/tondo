@@ -286,9 +286,10 @@ fn scratch(size: usize) -> Vec<u64> {
     vec![0; size.div_ceil(8).max(1)]
 }
 
-/// The number of stripes of locks: several per core.
+/// The number of stripes of locks: several per worker, which are what
+/// contend.
 fn stripe_count() -> usize {
-    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let cores = crate::config::workers();
     (cores * 4).next_power_of_two().clamp(8, 256)
 }
 

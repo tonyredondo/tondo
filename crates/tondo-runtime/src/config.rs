@@ -45,6 +45,9 @@ pub(crate) struct Config {
     /// `TONDO_CACHE_DOMAINS`: `0` takes every core as one domain: the
     /// workers do not keep to the cores that share a cache.
     pub(crate) cache_domains: Option<String>,
+    /// `TONDO_WORKERS`: how many workers run the program's code at once, 1
+    /// to 1024, instead of one per processor.
+    pub(crate) workers: Option<String>,
     /// `TONDO_ZONES`: `builtin` uses the time zones built into the program,
     /// not the system's.
     pub(crate) zones: Option<String>,
@@ -146,6 +149,7 @@ pub(crate) fn config() -> &'static Config {
             wakes: os("TONDO_WAKES"),
             versions: os("TONDO_VERSIONS"),
             cache_domains: text("TONDO_CACHE_DOMAINS"),
+            workers: text("TONDO_WORKERS"),
             debug: os("TONDO_DEBUG"),
             trace: os("TONDO_TRACE"),
             race: os("TONDO_RACE"),
@@ -182,4 +186,32 @@ pub(crate) fn config() -> &'static Config {
 /// Whether a variable read as it started was `1`.
 pub(crate) fn on(value: &Option<OsString>) -> bool {
     value.as_ref().is_some_and(|value| value == "1")
+}
+
+/// How many workers run the program's code at once: `TONDO_WORKERS`, or one
+/// per processor it may use. A worker held in a long call of C is replaced
+/// and does not count. A value that is no such number is said once, with
+/// what is used instead.
+pub(crate) fn workers() -> usize {
+    static WORKERS: OnceLock<usize> = OnceLock::new();
+    *WORKERS.get_or_init(|| {
+        let processors = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let Some(asked) = config().workers.as_deref() else { return processors };
+        match asked.trim().parse::<usize>() {
+            Ok(count @ 1..=1024) => count,
+            _ => {
+                let said = format!(
+                    "tondo runtime: TONDO_WORKERS={asked} is not a number of workers from 1 to 1024; the program runs with {processors}, its processors\n"
+                );
+                let _ = std::io::Write::write_all(&mut std::io::stderr(), said.as_bytes());
+                processors
+            }
+        }
+    })
+}
+
+/// Whether `TONDO_WORKERS` set how many workers run, rather than the
+/// processors.
+pub(crate) fn workers_asked() -> bool {
+    config().workers.as_deref().is_some_and(|asked| matches!(asked.trim().parse::<usize>(), Ok(1..=1024)))
 }

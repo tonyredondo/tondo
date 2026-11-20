@@ -83,6 +83,7 @@ usage:
   tondo test [<project>...] [--filter <text> | --glob <pattern> | --exact <id>... | --affected <rev>]
             [--bisect <commit> [--bisect-with <command>]] [--shard <i/n>] [--watch]
             [--order canonical|random] [--schedules <n>|all|all:<n>|at:<choices>] [--seed <hex>] [--record <dir>] [--list] [--jobs <n>]
+            [--workers <n>]
             [--timeout <seconds>]
             [--retry <n>] [--allow-flaky] [--lock-order] [--repeat <n>] [--codeowners auto|none|<path>]
             [--show-output] [--allow-empty] [--deny-skips] [--test-format human|json|events] [--json]

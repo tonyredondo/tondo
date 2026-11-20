@@ -1553,6 +1553,12 @@ El resultado final, los logs y la salida capturada continúan presentándose por
 nodo en orden canónico, no en orden de finalización. Eventos de dos envelopes
 distintos nunca se intercalan dentro del buffer del otro.
 
+`--workers N`, con `1 <= N <= 1024`, corre el ejecutable de los tests con
+`TONDO_WORKERS=N` (toolchain 7.17): sus tareas corren en N workers en vez de uno
+por procesador, y con 1 nunca dos a la vez, que es como se reproduce en una
+máquina de muchos núcleos una carrera que solo sale con pocos. No tiene que ver
+con `--jobs`, que dice cuántos tests corren a la vez.
+
 El runner no garantiza un orden de efectos externos entre tests paralelos. Una
 suite que comparta un servicio bajo `--jobs N` es responsable de que ese servicio
 admita concurrencia o de solicitar `--jobs 1`. Los snapshots estáticos impiden
@@ -1792,7 +1798,7 @@ cualquier otro. `time.now()` y `time.unixTime()` dicen ese tiempo. La red, los
 archivos y los procesos siguen siendo los reales.
 
 `--schedules` es incompatible con `--repeat`, `--retry`, `--allow-flaky`,
-`--list` y `--update-snapshots`, y con más de una iteración sigue la política
+`--list`, `--update-snapshots` y `--workers`, y con más de una iteración sigue la política
 de campaña de 8.8: cualquier intento que no pase da exit `1`. Sin seed, el
 runner elige una y la muestra.
 

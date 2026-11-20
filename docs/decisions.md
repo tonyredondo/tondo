@@ -8666,3 +8666,36 @@ the interceptors of a call in a task whose status reaches the caller
 through the slot it closes with it, so that task is let go with `_ =`;
 the function stays one that can fail, since a unary call runs it in
 place and its failure is the call's.
+
+## How many workers run a program
+
+Tony asked whether a program could bound how many cores it uses, as Go's
+GOMAXPROCS does. The runtime started one worker for each processor the
+program may run on, so that only `taskset` or a container's quota could
+ask for fewer, and macOS has no `taskset`; that night, two races were
+reproduced by pinning to one core half a dozen times. Of a variable read
+once at start, with no API to change it while the program runs, he said
+"Estoy de acuerdo".
+
+`TONDO_WORKERS`, from 1 to 1024, says how many workers run the program's
+code at once. More than the processors is allowed, as in Go, which brings
+races out. It bounds the workers, not the threads: a worker held in a
+long call of C is replaced as before, so a program blocked in C still
+goes on. A value that is no such number is said once on stderr, with the
+number used instead, and the program runs. The HTTP server's own threads,
+half the processors and two at least, are half the workers and one at
+least when the variable is set, so that a program asked to keep to one
+core does; the stripes of the shared collections' locks follow the
+workers, which are what contend. The cache domains and the processors
+are the machine's and do not change.
+
+`env.processors()` stays the processors the program may use. Of a
+program that sizes something by it, he wrote "No se si deberíamos tener
+un api interna con este valor": a pool or a number of chunks sized by the
+processors is sized for thirty-two under `TONDO_WORKERS=2`. So
+`env.workers()` gives the workers, as Go's `GOMAXPROCS(0)` beside
+`NumCPU`, and the documentation of each says which to size by. `tondo ps`
+shows them as "2 of 32", and the counters as `workers.limit`. To a test
+that reproduces a race on one core, `tondo test --workers <n>`, which he
+called "Guay", passes the variable; it does not go with `--schedules`,
+whose runs already put the tasks on one worker.

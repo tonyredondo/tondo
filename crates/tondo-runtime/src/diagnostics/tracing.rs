@@ -226,13 +226,15 @@ pub(super) fn info() -> String {
     let program = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
     let arguments: Vec<String> = crate::env::arguments().iter().skip(1).map(|a| quoted(&a.to_string_lossy())).collect();
     format!(
-        "{{\"pid\":{},\"program\":{},\"base\":{},\"arguments\":[{}],\"uptime_ms\":{},\"probes\":{}}}",
+        "{{\"pid\":{},\"program\":{},\"base\":{},\"arguments\":[{}],\"uptime_ms\":{},\"probes\":{},\"workers\":{},\"processors\":{}}}",
         std::process::id(),
         quoted(&program),
         program_base(),
         arguments.join(","),
         uptime_ms(),
-        crate::debugger::has_probes()
+        crate::debugger::has_probes(),
+        crate::config::workers(),
+        std::thread::available_parallelism().map_or(1, |n| n.get()),
     )
 }
 

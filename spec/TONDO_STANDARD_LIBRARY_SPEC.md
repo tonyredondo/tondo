@@ -2279,6 +2279,7 @@ pub fn processId(): Int
 pub fn executable(): String
 pub fn invokedAs(): String
 pub fn processors(physical: Bool = false): Int
+pub fn workers(): Int
 pub fn user(): User
 pub fn system(): System
 pub fn homeDirectory(): String?
@@ -2308,7 +2309,12 @@ pub type System = { name: String, release: String, machine: String }
   `go`, que un programa con varios nombres usa para saber cuál hace.
 - `processors` es cuántos procesadores puede usar el programa a la vez, con
   su afinidad y la cuota de su cgroup: al menos 1. Con `physical: true`, los
-  núcleos de la máquina, cada uno una vez aunque ejecute varios hilos.
+  núcleos de la máquina, cada uno una vez aunque ejecute varios hilos. Para
+  dimensionar lo que corre a la vez, `workers`.
+- `workers` es cuántos workers corren a la vez el código del programa: uno por
+  procesador que puede usar, o los que diga `TONDO_WORKERS` (toolchain 7.17).
+  Es el número por el que dimensionar lo que se reparte entre tareas, un pool
+  o los trozos de un trabajo.
 - `user` es el usuario con que corre el programa: su id, el de su grupo, su
   nombre y su home, como los dicen las cuentas del sistema, con un nombre o
   un home vacíos si no los tienen. `system` es el sistema en que corre, como

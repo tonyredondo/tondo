@@ -80,9 +80,26 @@ fn userDirectory(variable: String, linux: String, macos: String): String? {
 
 /// How many processors the program may run on at once, as its affinity
 /// and its cgroup's quota allow: at least 1. With `physical`, the cores of
-/// the machine, each once however many threads it runs.
+/// the machine, each once however many threads it runs. To size what runs
+/// at once, use `workers()`.
 pub fn processors(physical: Bool = false): Int {
     if physical { envNative.cores() } else { envNative.processors() }
+}
+
+/// How many workers run the program's tasks at once: one per processor it
+/// may use, or as many as `TONDO_WORKERS` says. Size by it what is shared
+/// out among tasks, a pool or the chunks of a job; `processors` is the
+/// machine's.
+///
+/// ```tondo
+/// import std.console
+/// import std.env
+///
+/// let chunks = env.workers()
+/// console.println("{chunks} workers on {env.processors()} processors")
+/// ```
+pub fn workers(): Int {
+    envNative.workers()
 }
 
 /// The user the program runs as: its id, its group's, its name and its
