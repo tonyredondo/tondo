@@ -322,7 +322,9 @@ fn watch_held(held: &mut Vec<(u64, Instant)>) -> Watched {
         held.clear();
         return Watched::Until(shared.timers.peek().map(|timer| timer.at));
     }
+    let workers = shared.workers;
     drop(shared);
+    let given = crate::config::workers();
     let count = NEXT_COUNT.load(Ordering::Acquire).min(NEXTS.len());
     // The clock the runtime's timers keep.
     let now = clock_now();
@@ -340,11 +342,11 @@ fn watch_held(held: &mut Vec<(u64, Instant)>) -> Watched {
         if still >= GIVE_WAY_AFTER && CHECKPOINT_ASKS.load(Ordering::Relaxed) & GIVE_WAY == 0 {
             CHECKPOINT_ASKS.fetch_or(GIVE_WAY, Ordering::SeqCst);
         }
-        // One beside each worker the program has, never beside one put
-        // beside another, so never more than twice its number (16.14).
-        if still >= ADD_AFTER && !next.held.load(Ordering::Relaxed) && !next.beside.load(Ordering::Relaxed) {
+        let (marked, beside) = (next.held.load(Ordering::Relaxed), next.beside.load(Ordering::Relaxed));
+        if puts_beside(still, marked, beside, workers, given) {
             let queue = queue();
-            if queue.workers < 2 * crate::config::workers()
+            // Again under the lock: another may have started meanwhile.
+            if puts_beside(still, false, beside, queue.workers, given)
                 && next.held.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok()
             {
                 crate::diagnostics::WORKERS_ADDED.add(1);
@@ -383,6 +385,16 @@ fn watch_nexts() -> Watched {
 /// (`watch_nexts`); with none, it watches the worker held (`watch_held`).
 pub(super) fn watch_next() {
     watch_busy();
+}
+
+/// Whether the watcher puts a worker beside one that has stayed `still` on
+/// one task (16.14): only past the second interval, never beside one that
+/// has one already (`marked`) or was itself put beside another (`beside`),
+/// and never once the program has twice the workers `given`. A promise about
+/// one choice, held by this function's test, where the checker holds those
+/// about what the scheduler does over time.
+fn puts_beside(still: Duration, marked: bool, beside: bool, workers: usize, given: usize) -> bool {
+    still >= ADD_AFTER && !marked && !beside && workers < 2 * given
 }
 
 /// How long a worker has stayed on one task, by a look at it: its count of
@@ -547,7 +559,7 @@ unsafe fn run_here(inner: unsafe extern "C" fn(*mut u8), frame: *mut u8, kept: &
 
 #[cfg(test)]
 mod tests {
-    use super::{ADD_AFTER, GIVE_WAY_AFTER, stayed};
+    use super::{ADD_AFTER, GIVE_WAY_AFTER, puts_beside, stayed};
     use std::time::{Duration, Instant};
 
     /// A worker whose tasks change, as tasks of 2 ms each change it, never
@@ -571,5 +583,21 @@ mod tests {
         assert_eq!(stayed(&mut seen, 7, at(100)), ADD_AFTER);
         assert_eq!(stayed(&mut seen, 8, at(150)), Duration::ZERO);
         assert_eq!(stayed(&mut seen, 8, at(400)), Duration::from_millis(250));
+    }
+
+    /// A worker is put beside one only once that one has stayed on its task
+    /// past the second interval, never beside one that has one already or
+    /// was itself put beside another, and never at twice the workers given.
+    #[test]
+    fn a_worker_is_put_beside_only_one_held_past_the_intervals() {
+        let long = ADD_AFTER;
+        assert!(puts_beside(long, false, false, 1, 1));
+        assert!(!puts_beside(ADD_AFTER - Duration::from_nanos(1), false, false, 1, 1));
+        assert!(!puts_beside(GIVE_WAY_AFTER, false, false, 1, 1));
+        assert!(!puts_beside(long, true, false, 1, 1));
+        assert!(!puts_beside(long, false, true, 1, 1));
+        assert!(!puts_beside(long, false, false, 2, 1));
+        assert!(puts_beside(long, false, false, 7, 4));
+        assert!(!puts_beside(long, false, false, 8, 4));
     }
 }
