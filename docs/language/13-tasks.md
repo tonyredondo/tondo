@@ -164,7 +164,69 @@ A program ends when `main` does, and detached tasks are cancelled then.
 
 One consequence: a `spawn` in a loop whose `Join` is dropped waits for each
 task before starting the next, which is rarely what was meant. The compiler
-warns (`W1013`) and says to use a `Group` or `detached`.
+warns (`W1013`) and says to use a `Group` or `detached`. To start a task
+for each value and wait for them all, the tasks go in an array.
+
+## An array of tasks
+
+`map` gives an array of what its closure gives, and a closure that spawns
+gives a task. So one line starts a task for each element, and `wait()` on
+the array waits for them all and gives their results, in the array's order
+whichever finished first:
+
+```tondo
+import std.console
+import std.time
+
+fn fetch(id: Int): String {
+    time.sleep(time.milliseconds(10 * (4 - id)))  // the last one finishes first
+    "page {id}"
+}
+
+fn main() {
+    let pages = [1, 2, 3].map((id) { spawn fetch(id) }).wait()
+    console.println("{pages}")
+}
+```
+
+```text output
+[page 1, page 2, page 3]
+```
+
+`wait()` cancels nothing. When the tasks can fail, each result keeps its
+own error, and a task that failed does not stop the others:
+
+```tondo
+import std.console
+import std.time
+
+fn load(id: Int): String ! String {
+    time.sleep(time.milliseconds(5 * id))
+    if id == 2 {
+        fail "item {id} is missing"
+    }
+    "item {id}"
+}
+
+fn main() {
+    let loaded = [1, 2, 3].map((id) { spawn load(id) }).wait()
+    console.println("{loaded}")
+}
+```
+
+```text output
+[ok(item 1), err(item 2 is missing), ok(item 3)]
+```
+
+It is the same as waiting for each task in turn, `first.wait()` and then
+the next, so a task that panicked does what its own `wait()` would. An
+array written out is waited for the same way, as `[spawn one(), spawn
+two()].wait()`.
+
+`cancel()` on the array tells every task to stop, and then waits until all
+of them have. Either one uses the array up, as `wait()` does a `Join`:
+the compiler refuses a use of it afterwards (`E1401`). To stop the others
+at the first error, the tasks go in a `Group` instead.
 
 ## Groups
 

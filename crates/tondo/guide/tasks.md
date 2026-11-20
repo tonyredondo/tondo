@@ -17,6 +17,10 @@ fn main() {
     let job = spawn fetch(1)
     console.println("{job.wait()}")
 
+    // An array of tasks: one for each element, every result in its order.
+    let pages = [1, 2, 3].map((id) { spawn fetch(id) }).wait()
+    console.println("{pages}")
+
     // A group: many tasks, results in order of adding.
     var group = Group[Int]()
     for id in 0..5 {
@@ -33,6 +37,11 @@ fn main() {
   left behind by accident. In a loop that means one task at a time, which
   warns (`W1013`): `spawn detached` launches a task nobody waits for, as a
   server does for each connection, and a `Group` waits for many at once.
+- An array of tasks is waited for whole: `ids.map((id) { spawn fetch(id) })`
+  starts one for each element, and `wait()` on it gives every result in the
+  array's order and cancels nothing, each keeping its own error; `cancel()`
+  tells them all to stop and waits. Either uses the array up (`E1401`
+  after).
 - With `Group[T ! E]`, `wait()` gives `Array[T] ! E`: the first error cancels
   the others.
 - `job.cancel()` stops a task at its next wait and runs its `defer`s, which
