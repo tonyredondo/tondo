@@ -128,6 +128,14 @@ value, and what ended each wait. A task whose wait was claimed but that is
 still parked lost its wake on the way; one whose last wait nothing claimed was
 never woken. Without it the program pays nothing.
 
+A program that stops answering while none of its tasks waits is one whose
+workers are held by code that computes. `tondo counters` shows it: `tasks
+ready` above zero with `workers idle` at zero, and `workers added` growing
+where a loop never waits and never asks, since the runtime puts a worker
+beside one held for a tenth of a second. Give that loop a
+`tasks.checkpoint()`: it then gives its worker to the tasks that wait, and
+a cancel or a deadline stops it there (`tondo guide tasks`).
+
 For a test that hangs, `test` takes `flags` with `--timeout <seconds>`;
 `lock_order` finds locks taken in opposite orders, which only sometimes hang.
 What a program that runs is doing, when it is slow rather than stopped:

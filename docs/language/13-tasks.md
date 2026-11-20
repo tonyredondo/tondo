@@ -771,19 +771,54 @@ after the block: false
 - `cancelled()` is `true` for the first two, and only while they hold: once
   the `within` whose deadline passed has ended, the task goes on and it is
   `false` again. A panic is no cancel.
-- In the `defer`s of a cancelled task a checkpoint does nothing, so a
-  cleanup runs to its end.
-- A cancel made by another task needs a worker for that task to run on. With
-  one worker, as with `TONDO_WORKERS=1` or in a container with one
-  processor, a computation that does not wait lets no other task run, so
-  nothing can cancel it before it ends, checkpoint or not. There,
-  `TONDO_WORKERS=2` gives the program two workers that the system runs in
-  turns on the one processor, and the cancel lands.
-- A deadline is seen with any number of workers, since the checkpoint reads
-  the clock itself: up to a tick of the system's clock late, which is one to
-  ten milliseconds by the system, and never early.
+- In the `defer`s of a cancelled task a checkpoint does not stop it, so a
+  cleanup runs to its end. It still gives its worker to tasks that wait, as
+  below.
+- A deadline is seen at a checkpoint up to a tick of the system's clock
+  late, which is one to ten milliseconds by the system, and never early.
 - Under `tondo test --schedules`, every checkpoint is a place where the
   order of the tasks may change ([Testing](16-testing.md)).
+
+A checkpoint is a wait of nothing in one more way: it lets the other tasks
+run. A program has as many workers as processors, and a task that computes
+keeps its own. When every worker is busy, a task waits for one, and a worker
+has been on the same task for about 10 ms, the task that asks gives its
+worker away and goes on when its turn comes again. So a computation that
+asks holds nobody up, in a program with one worker either, and a cancel made
+by another task reaches it:
+
+```tondo
+import std.console
+import std.sync
+import std.tasks
+import std.time
+
+/// Counts until it is told to stop, and never waits.
+fn count(turns: sync.Atomic[Int]) {
+    for {
+        tasks.checkpoint()  // where the cancel stops it
+        _ = turns.add(1)
+    }
+}
+
+fn main() {
+    let turns = sync.Atomic(0)
+    let job = spawn count(turns)
+    time.sleep(time.milliseconds(20))
+    job.cancel()
+    console.println("cancelled after some turns: {turns.load() > 0}")
+}
+```
+
+```text output
+cancelled after some turns: true
+```
+
+With one worker, `main` wakes because `count` gives its worker away, calls
+`cancel()`, and the next checkpoint stops the loop. A computation that
+never asks is not left to hold the others either, but it takes the runtime
+ten times as long to step in, and it cannot be cancelled before it ends
+([Tasks and threads](#tasks-and-threads)).
 
 A checkpoint is cheap enough for every turn of a loop whose turn does some
 work: two loads and a branch in a program that has no deadline, a call of a
@@ -1326,17 +1361,65 @@ whatever a program shares out among tasks, as a pool or the pieces of a
 job; `env.processors()` is the machine's. They are the same unless the
 program was started with `TONDO_WORKERS=<n>` in its environment, which asks
 for another number of workers, from 1 to 1024: one makes a program run its
-tasks one at a time, and more than the processors brings out a race.
+tasks one at a time, but for the worker put beside one that is held
+(below), and more than the processors brings out a race.
 
 A task that calls into C keeps its worker for as long as the call takes. The
 runtime watches those calls: when one goes on beyond a short interval and
 tasks are waiting, it starts another worker in its place, so a slow call
 does not hold the others up, and nothing has to be marked as blocking.
 
-A task that computes for long without waiting keeps its worker too, and
-nothing takes it away. The other workers go on with the rest, so with
-several it holds nobody up; a program with one worker, as in a container
-with one processor, runs nothing else until that task waits.
+A task that computes for long without waiting keeps its worker too, and the
+other workers go on with the rest. When all of them are busy and tasks
+wait, one of two things lets those tasks run. A computation that asks, with
+`tasks.checkpoint()`, gives its worker away after about 10 ms
+([A task that only computes](#a-task-that-only-computes)). One that never
+asks is given what a call of C is: after about a tenth of a second on the
+same task, the runtime puts another worker beside it, which goes away when
+that task lets go of its own. So this program ends, with one worker too,
+where the loop would otherwise turn for ever, since `main` could never run
+to set what it waits for:
+
+```tondo
+import std.console
+import std.sync
+import std.time
+
+/// Turns until another task says so: it never waits, and never asks.
+fn spin(done: sync.Atomic[Bool]): Int {
+    var turns = 0
+    for not done.load() {
+        turns += 1
+    }
+    turns
+}
+
+fn main() {
+    let done = sync.Atomic(false)
+    let spinning = spawn spin(done)
+    time.sleep(time.milliseconds(20))
+    done.store(true)  // runs on the worker put beside the one `spin` holds
+    console.println("it ended after some turns: {spinning.wait() > 0}")
+}
+```
+
+```text output
+it ended after some turns: true
+```
+
+- At most one worker is put beside each, so a program whose workers are all
+  held runs twice as many for a while. `env.workers()` keeps saying how many
+  it was given, by the processors or by `TONDO_WORKERS`.
+- A tenth of a second is long for a request that waits behind a computation,
+  and a thread is more than a checkpoint costs: a loop that runs for long
+  asks. The counters say when code did not, as `workers.added`, beside
+  `tasks.yields` for the times one that asked gave way
+  ([Observing](../toolchain/observing.md#what-it-holds-counters)).
+- If every worker, those put beside included, is held by code that neither
+  waits nor asks, nothing else runs until one of them does.
+- Under `tondo test --schedules` and in a replay one worker runs the tasks
+  in the order being tried, and none is put beside it: there, code that
+  never waits and never asks holds the others until it ends.
 
 ## Choosing
 

@@ -64,9 +64,14 @@ fn main() {
   otherwise does nothing. In a loop of a few instructions a turn, call it
   every thousand turns: `if n % 1024 == 0 { tasks.checkpoint() }`.
   `tasks.cancelled()` asks without stopping, for a `defer` or to end with
-  what there is. With one worker (`TONDO_WORKERS=1`, a container with one
-  processor) no other task runs while one computes, so only a deadline can
-  stop it; `TONDO_WORKERS=2` there lets another task run and cancel it.
+  what there is.
+- A checkpoint also lets the others run: when every worker is busy and tasks
+  wait, the task that asks gives its worker away after about 10 ms on it and
+  goes on at its next turn, so a loop that asks holds nobody up, with one
+  worker either, and another task's cancel reaches it. Code that never asks
+  gets a worker put beside it after about a tenth of a second, and cannot be
+  cancelled before it ends: `workers added` in `tondo counters` counts those,
+  and a loop that shows there wants a checkpoint.
 - A panic in a task ends the program, unless the task was started in a
   `recover { ... }`, without `detached`: its panic stops that block, which
   cancels its other tasks (see `tondo guide errors`).

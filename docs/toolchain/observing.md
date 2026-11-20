@@ -47,24 +47,24 @@ WORKERS is how many workers run the program's tasks at once, of the
 processors it may use. They are the same unless the program was started
 with `TONDO_WORKERS=<n>` in its environment, from 1 to 1024: with
 `TONDO_WORKERS=2` the line says `2 of 32`, and the program runs its tasks on
-two cores at most, which is how a machine with few is stood in for on one
-with many. A program reads the two numbers with `env.workers()` and
+two workers, which is how a machine with few is stood in for on one with
+many. A program reads the two numbers with `env.workers()` and
 `env.processors()`.
 
 ## What it holds: counters
 
 ```text
 $ tondo counters todo --count 1
-todo (pid 3640370), up 2.4 s
+todo (pid 2387694), up 2.3 s
 
 memory
-  held                           121.5 KiB
-  allocated                          0 B/s   total 1.5 MiB
-  allocations                        0.0/s   total 3183
-  objects                               60
-  regions                        864.0 KiB
+  held                           113.9 KiB
+  allocated                          0 B/s   total 1.4 MiB
+  allocations                        0.0/s   total 2720
+  objects                               45
+  regions                        768.0 KiB
   regions_kept                         0 B
-  region_allocations                 0.0/s   total 364
+  region_allocations                 0.0/s   total 174
 
 collector
   collections                        0.0/s   total 0
@@ -76,15 +76,18 @@ tasks
   live                                   2
   ready                                  0
   spawned                            0.0/s   total 7
+  yields                             0.0/s   total 0
 
 profile
   samples                            0.0/s   total 0
 
 workers
   total                                 32
+  limit                                 32
   idle                                  31
   in_c                                   0
   replaced                           0.0/s   total 0
+  added                              0.0/s   total 0
   c_calls                            0.0/s   total 0
 
 timers
@@ -124,8 +127,8 @@ processes
   started                            0.0/s   total 0
 
 os
-  cpu                                 0.0%   total 18.9 ms
-  resident                        42.5 MiB
+  cpu                                 0.0%   total 12.5 ms
+  resident                        44.7 MiB
   threads                               54
 ```
 
@@ -138,6 +141,13 @@ gives another pace.
 
 - `tasks ready` that stays above zero is a program with more work than
   cores. `workers in_c` that stays high is tasks blocked in C calls.
+- `workers limit` is how many workers the program was given, and `total`
+  how many it has now: one more for each that is held, by a long call of C
+  (`replaced`) or by a computation that neither waits nor asks (`added`),
+  until it is let go. `tasks yields` counts the times a task that asks with
+  `tasks.checkpoint()` gave its worker to one that waited. An `added` that
+  keeps growing is code to give a checkpoint
+  ([Tasks](../language/13-tasks.md#a-task-that-only-computes)).
 - `memory held` that grows while `objects` does not is large values;
   both growing is a leak, and [dumps](#everything-at-once-dump) find it.
 - `memory regions` is what regions hold now, the values a release build
