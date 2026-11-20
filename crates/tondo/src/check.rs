@@ -100,6 +100,7 @@ fn check_with<'a>(
         traits: Vec::new(),
         trait_names: HashMap::new(),
         dropped_calls: Vec::new(),
+        tuple_waits: HashSet::new(),
         impls: Vec::new(),
         impl_heads: HashMap::new(),
         heads_indexed: 0,
@@ -1012,6 +1013,9 @@ struct Checker<'a> {
     /// Calls whose result nothing uses, of functions not all known yet,
     /// and whether each ends the body of a `for`.
     dropped_calls: Vec<(FnId, Span, TurnHint)>,
+    /// The `wait()`s of tuples of tasks that can fail, by where they are
+    /// written: E1621 when one is used as one result.
+    tuple_waits: HashSet<Span>,
     impls: Vec<ImplDef>,
     /// The `impl`s of each trait by the head of the type they are for, a
     /// type parameter's as `None`, so that asking whether a type has a

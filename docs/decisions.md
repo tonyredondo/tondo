@@ -8861,3 +8861,33 @@ task would swap off, and a surplus worker that then stayed for ever: a
 worker that finds itself idle with its mark on lets one go too. A test
 holds the model without that to fail, so that the code's version of it
 is not simplified away.
+
+## A tuple of tasks
+
+`var (a, b, c) = await (x, y, z)` was the line of .NET that started the
+waits of tasks together, and a tuple is what one writes when the tasks
+are of different kinds: a page and a user, a file and a query. Asked
+whether a tuple of tasks should be waited whole or each task on its
+own, Tony answered "No, creo que si hacemos la tupla." So a tuple whose
+items are all a `Join` has `wait()`, `waitOrCancel()` and `cancel()`,
+as an array of tasks has.
+
+Tasks of different kinds nearly always fail with different errors. A
+`waitOrCancel()` that asked for one error in every task would refuse
+its own example, `(spawn fetch(url), spawn load(id)).waitOrCancel()?`,
+in most programs that would write it, and send them back to `wait()`
+and four lines by hand. The language already has the type it wants:
+a result that fails with a union, as `?` passes on. So the error is
+that of the tasks that can fail, or the union of theirs, and a task
+that cannot fail sits beside them, giving its value and being cancelled
+when another fails. `E1620` is only for a tuple none of whose tasks can
+fail, as for an array.
+
+`waitOrCancel()` is a group the joins are moved into, as for an array:
+the first error to happen settles it whatever its task, and each
+result is taken out with its own type, its error widened to the union
+there. A group of one type knew whether its tasks could fail; each of
+its entries knows it now, since a task that cannot fail has no error
+to settle on. A tuple with an item that is no task, as a `String`, or an
+array or another tuple of tasks, has none of the three: the message
+names the item and says to wait it on its own.

@@ -45,21 +45,26 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.call_rt(Rt::JoinWait, &[values[0], out]);
                 Some(self.e.value_at(out, item))
             }
-            TaskOp::GroupNew => {
-                let result = self.e.cg.types().handle_result(ty);
-                let fallible = matches!(self.e.cg.types().kind(result), TyKind::Result(..));
-                let fallible = self.e.fb.ins().iconst(types::I8, fallible as i64);
-                Some(Val::Scalar(self.e.call_rt(Rt::GroupNew, &[fallible]).unwrap()))
-            }
+            TaskOp::GroupNew => Some(Val::Scalar(self.e.call_rt(Rt::GroupNew, &[]).unwrap())),
             TaskOp::GroupAdd => {
                 if retain[1] {
                     self.e.call_rt(Rt::HandleRetain, &[values[1]]);
                 }
-                self.e.call_rt(Rt::GroupAdd, &[values[0], values[1]]);
+                // Whether the task's result is `R ! E`, whose tag the group
+                // reads: a tuple's tasks share one, each with its own result.
+                let result = self.e.cg.types().handle_result(self.operand_ty(&operands[1]));
+                let fallible = matches!(self.e.cg.types().kind(result), TyKind::Result(..));
+                let fallible = self.e.fb.ins().iconst(types::I8, fallible as i64);
+                self.e.call_rt(Rt::GroupAdd, &[values[0], values[1], fallible]);
                 None
             }
             TaskOp::GroupNext | TaskOp::GroupTake => {
-                let item = item.expect("a group");
+                // What it gives, `T?`, says what it takes: a tuple's tasks
+                // share a group, each with its own result (11.11).
+                let item = match *self.e.cg.types().kind(ty) {
+                    TyKind::Option(taken) => taken,
+                    _ => item.expect("a group"),
+                };
                 let out = self.scratch(item);
                 let found = if op == TaskOp::GroupNext {
                     self.e.call_rt(Rt::GroupNext, &[values[0], out]).unwrap()

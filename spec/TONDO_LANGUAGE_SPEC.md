@@ -4086,6 +4086,29 @@ let pages = urls.map((url) { spawn fetch(url) }).waitOrCancel()?   // Array[Page
 Sobre tareas que no pueden fallar, `waitOrCancel()` produce `E1620`, que dice
 escribir `wait()`.
 
+Una tupla de tareas, `(Join[A], Join[B], ...)`, se espera o se cancela entera
+del mismo modo, y la operación la consume:
+
+- `tasks.wait()` espera a todas y devuelve la tupla de sus resultados, cada uno
+  con su tipo: `(Join[Page ! HttpError], Join[User]).wait()` da
+  `(Page ! HttpError, User)`. No cancela ninguna.
+- `tasks.waitOrCancel()`, cuando alguna puede fallar, devuelve
+  `(A, B, ...) ! E`, donde `E` es el error de las que pueden fallar o la unión
+  de sus errores: sus valores, o el primer error que ocurre, que cancela las
+  demás y espera su cleanup antes de devolverse.
+- `tasks.cancel()` avisa a todas de que paren y después espera a que terminen.
+
+~~~tondo
+let (page, user) = (spawn fetch(url), spawn load(id)).waitOrCancel()?
+~~~
+
+Sobre una tupla de tareas que no pueden fallar, `waitOrCancel()` produce
+`E1620`, que dice escribir `wait()`. Usar la tupla después produce `E1401`; lo
+que da `wait()` sobre tareas que pueden fallar no se usa como un solo resultado
+(`E1621`) ni se abandona (`E1303`), como con un array. Una tupla en la que algún
+elemento no es un `Join` no tiene estas operaciones: se esperan sus tareas por
+separado.
+
 `spawn detached call(arguments)` lanza la tarea suelta: no da `Join`, su valor
 es `Unit` y nadie la espera. Si la llamada puede fallar, su fallo no tiene
 adónde ir: produce `E1303`, salvo que la tarea lo maneje o que se descarte a

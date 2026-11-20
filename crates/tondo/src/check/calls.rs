@@ -646,6 +646,12 @@ impl<'a> Checker<'a> {
             let callee = Callee::Std(StdFn::Number(entry.op));
             return self.dot_call(cx, callee, signature, HashMap::new(), value, method, args, expected, span);
         }
+        // `wait()`, `waitOrCancel()` and `cancel()` of a tuple of tasks (11.11).
+        if let Some(items) = self.tuple_of_tasks(ty)
+            && matches!(method.name.as_str(), "wait" | "waitOrCancel" | "cancel")
+        {
+            return self.tuple_tasks(cx, value, items, method, args, span);
+        }
         // `wait()` and `cancel()` of an array of tasks (11.11): each task's,
         // in the array's order, by the prelude's `waitTasks` and
         // `cancelTasks`, as `Join` is no type a method can be declared on.
@@ -1767,9 +1773,237 @@ impl<'a> Checker<'a> {
         Self::error_expr(span)
     }
 
+    /// The items of a tuple that holds a task (11.11), whose `wait()`,
+    /// `waitOrCancel()` and `cancel()` it has.
+    pub(super) fn tuple_of_tasks(&self, ty: Ty) -> Option<Vec<Ty>> {
+        let TyKind::Tuple(items) = self.types.kind(self.types.repr(ty)).clone() else { return None };
+        items.iter().any(|&item| self.is_join(item)).then_some(items)
+    }
+
+    fn is_join(&self, ty: Ty) -> bool {
+        matches!(self.types.kind(self.types.repr(ty)), TyKind::Handle(Handle::Join, _))
+    }
+
+    /// The error of what a task gives, when it can fail.
+    fn task_error(&self, result: Ty) -> Option<(Ty, Ty)> {
+        match *self.types.kind(self.types.repr(result)) {
+            TyKind::Result(value, error) if error != Ty::NEVER => Some((value, error)),
+            _ => None,
+        }
+    }
+
+    /// `wait()`, `waitOrCancel()` or `cancel()` of a tuple of tasks (11.11),
+    /// written with what a single task and a group do, the tuple taken
+    /// apart first: `wait()` each task's result, each with its type;
+    /// `cancel()` every task, by a group; `waitOrCancel()` the values, or
+    /// the first error to happen, as the union of the errors of those that
+    /// can fail, which cancels the rest.
+    pub(super) fn tuple_tasks(
+        &mut self,
+        cx: &mut FnCx,
+        value: hir::Expr,
+        items: Vec<Ty>,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+        span: Span,
+    ) -> hir::Expr {
+        if !args.is_empty() {
+            return self.arity_error(span, 0, args.len());
+        }
+        let name = method.name.clone();
+        if let Some((index, &item)) = items.iter().enumerate().find(|&(_, &item)| !self.is_join(item)) {
+            let tasks = self.tasks_array(item) || self.tuple_of_tasks(item).is_some();
+            let (what, advice) = match tasks {
+                true => {
+                    let what = if self.tasks_array(item) { "an array of tasks" } else { "a tuple of tasks" };
+                    (what.to_string(), format!("wait it on its own, as `(first.{name}(), rest.{name}())`"))
+                }
+                false => (self.display(item), format!("wait the tasks on their own, as `(first.{name}(), name)`")),
+            };
+            let message = format!(
+                "`{name}()` is a method of a tuple whose items are all tasks; item {} is {what}: {advice}",
+                index + 1
+            );
+            self.diags.error("E1001", method.span, message);
+            return Self::error_expr(span);
+        }
+        let results: Vec<Ty> = items.iter().map(|&item| self.types.handle_result(item)).collect();
+        let errors: Vec<Ty> = results.iter().filter_map(|&r| self.task_error(r).map(|(_, e)| e)).collect();
+        if name == "waitOrCancel" && errors.is_empty() {
+            return self.wait_or_cancel_unfailing(value.ty, method, span);
+        }
+        // The tuple taken apart, a task in each binding.
+        let joins: Vec<LocalId> = items.iter().map(|&item| self.hidden_local(cx, item)).collect();
+        let parts =
+            joins.iter().zip(&items).map(|(&local, &ty)| hir::Pattern { kind: hir::PatKind::Binding(local), ty, span });
+        let pattern = hir::Pattern { kind: hir::PatKind::Fields(parts.collect()), ty: value.ty, span };
+        let mut stmts = vec![hir::Stmt::Destructure(pattern, value)];
+        let read = |local: LocalId, ty: Ty| Self::mk(hir::ExprKind::Local(local), ty, span);
+        let lent =
+            |local: LocalId, ty: Ty| Self::mk(hir::ExprKind::Loan(hir::Place { local, path: Vec::new() }), ty, span);
+        let (tail, ty) = match name.as_str() {
+            "wait" => {
+                let waits = joins
+                    .iter()
+                    .zip(&items)
+                    .zip(&results)
+                    .map(|((&join, &item), &result)| {
+                        Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Wait, vec![read(join, item)]), result, span)
+                    })
+                    .collect();
+                let ty = self.types.intern(TyKind::Tuple(results.clone()));
+                if !errors.is_empty() {
+                    self.tuple_waits.insert(span);
+                }
+                (Self::mk(hir::ExprKind::Aggregate(waits), ty, span), ty)
+            }
+            "cancel" => {
+                let group_ty = self.types.handle(Handle::Group, results[0]);
+                let group = self.hidden_local(cx, group_ty);
+                cx.mutable[group.0 as usize] = true;
+                let made = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::GroupNew, Vec::new()), group_ty, span);
+                stmts.push(hir::Stmt::Let(group, made));
+                for (&join, &item) in joins.iter().zip(&items) {
+                    let add =
+                        hir::ExprKind::TaskOp(hir::TaskOp::GroupAdd, vec![lent(group, group_ty), read(join, item)]);
+                    stmts.push(hir::Stmt::Expr(Self::mk(add, Ty::UNIT, span)));
+                }
+                let cancel = hir::ExprKind::TaskOp(hir::TaskOp::GroupCancel, vec![read(group, group_ty)]);
+                (Self::mk(cancel, Ty::UNIT, span), Ty::UNIT)
+            }
+            _ => self.tuple_wait_or_cancel(cx, &mut stmts, &joins, &items, &results, &errors, span),
+        };
+        Self::mk(hir::ExprKind::Block(hir::Block { stmts, tail: Some(Box::new(tail)), ty }), ty, span)
+    }
+
+    /// `waitOrCancel()` of a tuple of tasks taken apart into `joins`: a group
+    /// of them settles at the first error, which cancels the rest; then
+    /// that error, widened to the union of their errors, or every value,
+    /// each taken out of the group with its own type.
+    #[allow(clippy::too_many_arguments)]
+    fn tuple_wait_or_cancel(
+        &mut self,
+        cx: &mut FnCx,
+        stmts: &mut Vec<hir::Stmt>,
+        joins: &[LocalId],
+        items: &[Ty],
+        results: &[Ty],
+        errors: &[Ty],
+        span: Span,
+    ) -> (hir::Expr, Ty) {
+        let union = self.types.union(errors);
+        let values: Vec<Ty> = results.iter().map(|&r| self.task_error(r).map_or(r, |(value, _)| value)).collect();
+        let values_ty = self.types.intern(TyKind::Tuple(values.clone()));
+        let ty = self.types.intern(TyKind::Result(values_ty, union));
+        let read = |local: LocalId, ty: Ty| Self::mk(hir::ExprKind::Local(local), ty, span);
+        let lent =
+            |local: LocalId, ty: Ty| Self::mk(hir::ExprKind::Loan(hir::Place { local, path: Vec::new() }), ty, span);
+        let group_ty = {
+            let failing = self.types.intern(TyKind::Result(Ty::UNIT, union));
+            self.types.handle(Handle::Group, failing)
+        };
+        let group = self.hidden_local(cx, group_ty);
+        cx.mutable[group.0 as usize] = true;
+        let made = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::GroupNew, Vec::new()), group_ty, span);
+        stmts.push(hir::Stmt::Let(group, made));
+        for (&join, &item) in joins.iter().zip(items) {
+            let add = hir::ExprKind::TaskOp(hir::TaskOp::GroupAdd, vec![lent(group, group_ty), read(join, item)]);
+            stmts.push(hir::Stmt::Expr(Self::mk(add, Ty::UNIT, span)));
+        }
+        let failed = self.hidden_local(cx, Ty::INT);
+        let stops = Self::mk(hir::ExprKind::Bool(true), Ty::BOOL, span);
+        let settle = hir::ExprKind::TaskOp(hir::TaskOp::GroupSettle, vec![lent(group, group_ty), stops]);
+        stmts.push(hir::Stmt::Let(failed, Self::mk(settle, Ty::INT, span)));
+        // What no path reaches: a task the group settled gives its result.
+        let never = || {
+            let message = Self::mk(hir::ExprKind::Str("a task of the tuple gave no result".into()), Ty::STRING, span);
+            Self::mk(hir::ExprKind::Panic(Box::new(message), 8), Ty::NEVER, span)
+        };
+        // A task's result at its place in the group, or with -1 the first
+        // not yet taken, in the order they were added.
+        let take = |this: &mut Self, index: i128, result: Ty| {
+            let option = this.types.intern(TyKind::Option(result));
+            let at = Self::mk(hir::ExprKind::Int(index), Ty::INT, span);
+            Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::GroupTake, vec![lent(group, group_ty), at]), option, span)
+        };
+        let pattern = |kind: hir::PatKind, ty: Ty| hir::Pattern { kind, ty, span };
+        // The first error, by the task it came from.
+        let mut arms = Vec::new();
+        for (index, &result) in results.iter().enumerate() {
+            let Some((_, error)) = self.task_error(result) else { continue };
+            let option = self.types.intern(TyKind::Option(result));
+            let caught = self.hidden_local(cx, error);
+            let err = pattern(hir::PatKind::Variant(ERR, vec![pattern(hir::PatKind::Binding(caught), error)]), result);
+            let some = pattern(hir::PatKind::Variant(SOME, vec![err]), option);
+            let widened = self.widen_to_union(cx, read(caught, error), union, span);
+            let failure = Self::mk(hir::ExprKind::Variant(ERR, vec![(0, widened)]), ty, span);
+            let other = pattern(hir::PatKind::Wildcard, option);
+            let arms_of = vec![
+                hir::Arm { pattern: some, guard: None, body: failure },
+                hir::Arm { pattern: other, guard: None, body: never() },
+            ];
+            let taken = Self::mk(hir::ExprKind::Match(Box::new(take(self, index as i128, result)), arms_of), ty, span);
+            let at = pattern(hir::PatKind::Literal(hir::Literal::Int(index as i128)), Ty::INT);
+            arms.push(hir::Arm { pattern: at, guard: None, body: taken });
+        }
+        arms.push(hir::Arm { pattern: pattern(hir::PatKind::Wildcard, Ty::INT), guard: None, body: never() });
+        let which = Self::mk(hir::ExprKind::Match(Box::new(read(failed, Ty::INT)), arms), ty, span);
+        // Every value, each task's taken out with its type.
+        let mut taken = Vec::new();
+        for (&result, &value) in results.iter().zip(&values) {
+            let option = self.types.intern(TyKind::Option(result));
+            let got = self.hidden_local(cx, value);
+            let inner = match self.task_error(result) {
+                Some(_) => pattern(hir::PatKind::Variant(OK, vec![pattern(hir::PatKind::Binding(got), value)]), result),
+                None => pattern(hir::PatKind::Binding(got), value),
+            };
+            let some = pattern(hir::PatKind::Variant(SOME, vec![inner]), option);
+            let arms_of = vec![
+                hir::Arm { pattern: some, guard: None, body: read(got, value) },
+                hir::Arm { pattern: pattern(hir::PatKind::Wildcard, option), guard: None, body: never() },
+            ];
+            taken.push(Self::mk(hir::ExprKind::Match(Box::new(take(self, -1, result)), arms_of), value, span));
+        }
+        let all = Self::mk(hir::ExprKind::Aggregate(taken), values_ty, span);
+        let succeeded = Self::mk(hir::ExprKind::Variant(OK, vec![(0, all)]), ty, span);
+        let none = Self::mk(hir::ExprKind::Int(0), Ty::INT, span);
+        let lost =
+            Self::mk(hir::ExprKind::Binary(BinOp::Lt, Box::new(read(failed, Ty::INT)), Box::new(none)), Ty::BOOL, span);
+        let block = |expr: hir::Expr| hir::Block { stmts: Vec::new(), ty: expr.ty, tail: Some(Box::new(expr)) };
+        let chosen = hir::ExprKind::If(Box::new(lost), block(succeeded), Some(Box::new(which)));
+        (Self::mk(chosen, ty, span), ty)
+    }
+
+    /// An error as a value of `union`, which holds it, or each of its
+    /// members when it is a union itself.
+    fn widen_to_union(&mut self, cx: &mut FnCx, error: hir::Expr, union: Ty, span: Span) -> hir::Expr {
+        if error.ty == union {
+            return error;
+        }
+        let Some(inner) = self.types.members(error.ty).map(<[Ty]>::to_vec) else {
+            return self.coerce(error, union);
+        };
+        let from = error.ty;
+        let arms = inner
+            .iter()
+            .enumerate()
+            .map(|(index, &member)| {
+                let bound = self.hidden_local(cx, member);
+                let part = hir::Pattern { kind: hir::PatKind::Binding(bound), ty: member, span };
+                let pattern = hir::Pattern { kind: hir::PatKind::Variant(index as u32, vec![part]), ty: from, span };
+                let body = self.coerce(Self::mk(hir::ExprKind::Local(bound), member, span), union);
+                hir::Arm { pattern, guard: None, body }
+            })
+            .collect();
+        Self::mk(hir::ExprKind::Match(Box::new(error), arms), union, span)
+    }
+
     /// Whether `value` is a `wait()` of tasks that can fail, a group's or
     /// an array's, which gives every result, `Array[R ! E]` (11.11, 11.12).
     pub(super) fn waited_results(&self, value: &hir::Expr) -> bool {
+        if self.tuple_waits.contains(&value.span) && matches!(self.types.kind(value.ty), TyKind::Tuple(_)) {
+            return true;
+        }
         let waits = match &value.kind {
             hir::ExprKind::TaskOp(hir::TaskOp::GroupWait, _) => true,
             hir::ExprKind::Call(Callee::Fn(id), ..) => {

@@ -1,0 +1,92 @@
+// A tuple of tasks is waited for or cancelled whole (11.11): `wait()` gives
+// each task's result with its own type and cancels none; `waitOrCancel()`,
+// when some task can fail, gives the values or the first error to happen,
+// as the union of the errors of those that can fail, and cancels the rest;
+// a task that cannot fail sits beside them, and an error that is a union is
+// widened member by member; `cancel()` stops every task.
+
+import std.console
+import std.time
+
+type HttpError = {
+    status: Int
+}
+
+type ParseError = {
+    line: Int
+}
+
+fn fetch(url: String, fails: Bool): String ! HttpError {
+    time.sleep(time.milliseconds(5))
+    if fails {
+        fail HttpError { status: 500 }
+    }
+    "page of {url}"
+}
+
+fn load(id: Int): Int {
+    time.sleep(time.milliseconds(5))
+    id * 2
+}
+
+fn parse(text: String, fails: Bool): Int ! ParseError {
+    time.sleep(time.milliseconds(5))
+    if fails {
+        fail ParseError { line: 7 }
+    }
+    text.length()
+}
+
+/// Long enough that a test which waited for it would be seen to.
+fn slow(): Int ! HttpError {
+    time.sleep(time.seconds(30))
+    1
+}
+
+fn both(fails: Bool): (String, Int) ! HttpError {
+    (spawn fetch("a", fails), spawn load(21)).waitOrCancel()
+}
+
+fn three(fetchFails: Bool, parseFails: Bool): Int ! (HttpError | ParseError) {
+    let (page, count, user) =
+        (spawn fetch("b", fetchFails), spawn parse("xyz", parseFails), spawn load(1)).waitOrCancel()?
+    page.length() + count + user
+}
+
+fn named(fails: Bool): Int ! String {
+    time.sleep(time.milliseconds(5))
+    if fails {
+        fail "no name"
+    }
+    3
+}
+
+/// An error that is a union itself is widened member by member.
+fn widened(parseFails: Bool, nameFails: Bool): (Int, Int) ! (HttpError | ParseError | String) {
+    (spawn three(false, parseFails), spawn named(nameFails)).waitOrCancel()
+}
+
+fn main() {
+    let (page, user) = (spawn fetch("a", true), spawn load(21)).wait()
+    console.println("{page} {user}")
+
+    console.println("{both(false)} {both(true)}")
+    console.println("{three(false, false)} {three(true, false)} {three(false, true)}")
+
+    console.println("{widened(false, false)} {widened(true, false)} {widened(false, true)}")
+
+    // The first error cancels a task that would have run for 30 s.
+    let started = time.now()
+    let early = (spawn slow(), spawn fetch("c", true)).waitOrCancel()
+    console.println("{early}, the slow one cancelled: {started.elapsed() < time.seconds(10)}")
+
+    (spawn load(1), spawn load(2)).cancel()
+    console.println("both cancelled")
+}
+
+// expect-stdout: err(HttpError { status: 500 }) 42
+// expect-stdout: ok((page of a, 42)) err(HttpError { status: 500 })
+// expect-stdout: ok(14) err(HttpError { status: 500 }) err(ParseError { line: 7 })
+// expect-stdout: ok((14, 3)) err(ParseError { line: 7 }) err(no name)
+// expect-stdout: err(HttpError { status: 500 }), the slow one cancelled: true
+// expect-stdout: both cancelled

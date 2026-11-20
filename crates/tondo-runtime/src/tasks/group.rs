@@ -11,7 +11,6 @@ use super::*;
 pub struct GroupObject {
     pub(super) rc: AtomicUsize,
     pub(super) lock: AtomicBool,
-    pub(super) fallible: bool,
     pub(super) entries: Vec<Entry>,
     /// The tasks that finished and `next` has not returned, first to last,
     /// linked through their entries.
@@ -24,12 +23,15 @@ pub struct GroupObject {
     pub(super) waiter: Option<(*const Wait, usize)>,
 }
 
-/// A task of a group: its join, whether its result was taken, and the one
-/// that finished after it.
+/// A task of a group: its join, whether its result was taken, the one
+/// that finished after it, and whether its result is `R ! E`, which starts
+/// with its tag, `1` for `err`: a tuple's tasks share a group, each with
+/// its own result (language 11.11).
 pub(super) struct Entry {
     pub(super) join: *mut JoinObject,
     taken: bool,
     next: usize,
+    fallible: bool,
 }
 
 const NO_ENTRY: usize = usize::MAX;
@@ -54,15 +56,13 @@ impl GroupObject {
     }
 }
 
-/// `Group[T]()`; `fallible` when `T` is `R ! E`, whose results start
-/// with their tag, `1` for `err`.
+/// `Group[T]()`.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_group_new(fallible: u8) -> *mut GroupObject {
+pub extern "C" fn tondo_rt_group_new() -> *mut GroupObject {
     LIVE_OBJECTS.made();
     let fresh = |entries| GroupObject {
         rc: AtomicUsize::new(1),
         lock: AtomicBool::new(false),
-        fallible: fallible != 0,
         entries,
         finished: (NO_ENTRY, NO_ENTRY),
         left: 0,
@@ -118,12 +118,12 @@ const KEPT_ENTRIES: usize = 1024;
 /// `group.add(job)`: the group takes over the join's reference, which the
 /// caller retained for it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_group_add(group: *mut GroupObject, join: *mut JoinObject) {
+pub unsafe extern "C" fn tondo_rt_group_add(group: *mut GroupObject, join: *mut JoinObject, fallible: u8) {
     unsafe {
         let g = &mut *group;
         lock(&g.lock);
         let index = g.entries.len();
-        g.entries.push(Entry { join, taken: false, next: NO_ENTRY });
+        g.entries.push(Entry { join, taken: false, next: NO_ENTRY, fallible: fallible != 0 });
         g.left += 1;
         g.running += 1;
         unlock(&g.lock);
@@ -156,7 +156,7 @@ pub(super) unsafe fn group_completed(group: *mut GroupObject, index: usize) -> O
         }
         g.running -= 1;
         let join = g.entries[index].join;
-        if g.fallible && g.failed.is_none() && *(*join).result != 0 {
+        if g.entries[index].fallible && g.failed.is_none() && *(*join).result != 0 {
             g.failed = Some(index);
         }
         let woken = g.waiter.take().filter(|&(wait, i)| (*wait).claim(i)).map(|(wait, _)| (*wait).task);

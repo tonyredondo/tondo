@@ -1,0 +1,39 @@
+// What a tuple of tasks refuses (11.11): `waitOrCancel()` where no task can
+// fail (E1620, with its fix to `wait()`); what `wait()` gives of tasks that
+// can fail used as one result (E1621) or dropped (E1303); the tuple used
+// after it was waited for (E1401); and a tuple with an item that is no
+// task, which has none of the three (E1001).
+
+fn fetch(fails: Bool): Int ! String {
+    if fails {
+        fail "down"
+    }
+    1
+}
+
+fn load(): Int {
+    2
+}
+
+fn first(): Int ! String {
+    let (a, b) = (spawn fetch(false), spawn load()).wait()?
+    a + b
+}
+
+fn main() {
+    let unfailing = (spawn load(), spawn load()).waitOrCancel()
+    (spawn fetch(true), spawn load()).wait()
+    let tasks = (spawn load(), spawn load())
+    _ = tasks.wait()
+    _ = tasks.wait()
+    _ = (spawn load(), "name").wait()
+    _ = (spawn load(), [spawn load()]).cancel()
+    _ = (unfailing, first())
+}
+
+// expect-error: E1621 `wait()` gives every task's result
+// expect-error: E1620 the tasks of
+// expect-error: E1303
+// expect-error: E1401
+// expect-error: E1001 `wait()` is a method of a tuple whose items are all tasks; item 2 is `String`: wait the tasks on their own, as `(first.wait(), name)`
+// expect-error: E1001 `cancel()` is a method of a tuple whose items are all tasks; item 2 is an array of tasks: wait it on its own, as `(first.cancel(), rest.cancel())`
