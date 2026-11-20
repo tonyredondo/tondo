@@ -562,7 +562,8 @@ const NOTES: &str = "\
 help --all` every usage. `tondo <file.to> [<argument>...]` runs a script (for
 #! lines). A project is a directory with src/main.to, or with main.to or
 tondo.toml, given as <project> or with --project <dir>; the current
-directory by default. With --json, a command writes its result as one JSON
+directory by default. A script is taken wherever a project is, with the
+dependencies its `// tondo: dependency` lines declare. With --json, a command writes its result as one JSON
 object.";
 
 /// What `tondo help` shows: the groups of commands, each with its own.

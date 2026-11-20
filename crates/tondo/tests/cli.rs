@@ -2049,3 +2049,53 @@ fn the_library_lines_of_regions_are_what_reaches_the_program() {
     let all = lines(&["optimizations", "--kind", "region"]);
     assert!(all.iter().any(|line| line.contains(width)), "{all:?}");
 }
+
+/// A script takes `tondo add` and `tondo remove` where a project does
+/// (toolchain 7.14): its header gets the line, in the formatter's shape,
+/// and loses it. What a script has not, it refuses, saying how to make it
+/// a project; and in a file of a project the line is E0009, with the
+/// `tondo add` that writes it into tondo.toml.
+#[test]
+fn a_script_takes_its_dependencies_by_command() {
+    let dir = scratch("cli-script-dependencies");
+    std::fs::create_dir_all(dir.join("units")).unwrap();
+    std::fs::write(dir.join("units/main.to"), "pub fn double(x: Int): Int {\n    x * 2\n}\n").unwrap();
+    let script =
+        "#!/usr/bin/env tondo\n\nimport std.console\nimport units\n\nconsole.println(\"{units.double(21)}\")\n";
+    std::fs::write(dir.join("double.to"), script).unwrap();
+    let add = ["add", "units", "--path", "units", "--project", "double.to"];
+    let (out, err, status) = tondo(&dir, &add);
+    assert_eq!((out.as_str(), status), ("added `units` to the script's header: `import units` uses it\n", 0), "{err}");
+    let written = std::fs::read_to_string(dir.join("double.to")).unwrap();
+    let line = "// tondo: dependency units = { path = \"units\" }";
+    assert_eq!(written, script.replacen("\n\n", &format!("\n\n{line}\n\n"), 1));
+    assert_eq!(tondo(&dir, &["fmt", "--check", "double.to"]).2, 0);
+    assert_eq!(tondo(&dir, &["run", "double.to"]).0, "42\n");
+    let (_, err, _) = tondo(&dir, &add);
+    assert!(
+        err.contains(
+            "the script depends on `units` already, on line 3: `tondo remove units --project double.to` first"
+        ),
+        "{err}"
+    );
+    let (_, err, _) = tondo(&dir, &["add", "fixtures", "--path", "units", "--dev", "--project", "double.to"]);
+    assert!(
+        err.contains(
+            "a script has no dev-dependencies: one whose tests need them is a project, which `tondo new <name>` makes"
+        ),
+        "{err}"
+    );
+    let (_, err, _) = tondo(&dir, &["bind", "--project", "double.to", "native.h"]);
+    assert!(err.contains("`tondo bind` writes a module of a project, and a script is one file"), "{err}");
+    assert_eq!(tondo(&dir, &["remove", "units", "--project", "double.to"]).2, 0);
+    assert_eq!(std::fs::read_to_string(dir.join("double.to")).unwrap(), script);
+    // In a project the line declares nothing.
+    std::fs::create_dir_all(dir.join("app")).unwrap();
+    std::fs::write(dir.join("app/tondo.toml"), "[package]\nname = \"app\"\n").unwrap();
+    let line = "// tondo: dependency http = { git = \"https://github.com/acme/http\", tag = \"v1.2.0\" }";
+    std::fs::write(dir.join("app/main.to"), format!("{line}\nfn main() {{}}\n")).unwrap();
+    let (_, err, status) = tondo(&dir, &["check", "app"]);
+    assert_eq!(status, 1, "{err}");
+    let expected = "error[E0009]: a project declares its dependencies in tondo.toml: `tondo add http --git https://github.com/acme/http --tag v1.2.0` writes this one there";
+    assert!(err.starts_with(expected), "{err}");
+}

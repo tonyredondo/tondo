@@ -2,7 +2,7 @@
 //! and archives into the cache, and `tondo.lock`, which pins the exact
 //! commit or content of each fetched dependency.
 
-use crate::project::{Arch, System, is_identifier};
+use crate::project::{Arch, ProjectFile, System, is_identifier};
 use crate::toml::{self, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -15,6 +15,9 @@ pub struct Package {
     /// Its `[package] version`, or `0.0.0`.
     pub version: String,
     pub dir: PathBuf,
+    /// The file of a script that declares dependencies (toolchain 2), the
+    /// package's one source, in `dir`.
+    pub script: Option<PathBuf>,
     /// The repository and commit it was fetched from, if it was.
     pub origin: Option<(String, String)>,
     /// `[source] url`: the page of a line at the project's own host.
@@ -49,6 +52,17 @@ pub struct Package {
     /// Whether its release builds put in regions what the program makes and
     /// lets go (`[build] lifetimes`).
     pub regions: bool,
+}
+
+impl Package {
+    /// Its sources, as `project::sources` gives them: a script's one file, as
+    /// the module of its name, or those of its directory.
+    pub fn sources(&self, target: Option<crate::project::Target>) -> Result<(Vec<ProjectFile>, usize), String> {
+        match &self.script {
+            Some(file) => Ok((vec![ProjectFile { path: file.clone(), module: vec![self.name.clone()] }], 0)),
+            None => crate::project::sources(&self.dir, &self.name, target),
+        }
+    }
 }
 
 /// A generator (27.5 of the language): a program that writes modules of
@@ -116,24 +130,125 @@ struct Manifest {
     regions: bool,
 }
 
+impl Manifest {
+    fn empty() -> Manifest {
+        Manifest {
+            source_url: None,
+            name: None,
+            version: None,
+            dependencies: Vec::new(),
+            dev_dependencies: Vec::new(),
+            libraries: Vec::new(),
+            providers: Vec::new(),
+            generators: Vec::new(),
+            systems: Vec::new(),
+            architectures: Vec::new(),
+            cpu: None,
+            logpoints: true,
+            regions: true,
+        }
+    }
+}
+
+/// The number of lines of a script's header (toolchain 2): those before
+/// its first line of code, a shebang, comments and blank lines.
+pub fn header_lines(text: &str) -> usize {
+    let header = |(index, line): &(usize, &str)| {
+        let line = line.trim();
+        line.is_empty() || line.starts_with("//") || (*index == 0 && line.starts_with("#!"))
+    };
+    text.lines().enumerate().take_while(header).count()
+}
+
+/// The word after `// tondo:` in a line of comment, and what follows it.
+pub fn directive(line: &str) -> Option<(&str, &str)> {
+    let rest = line.trim().strip_prefix("//")?.trim_start().strip_prefix("tondo:")?.trim_start();
+    let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+    Some((&rest[..end], rest[end..].trim()))
+}
+
+/// Whether the file at `path` is a script that declares something with
+/// `// tondo:` in its header, but `allow`: then it is a package of its own,
+/// with its dependencies (toolchain 2).
+pub fn is_script_package(path: &Path) -> bool {
+    if path.is_dir() {
+        return false;
+    }
+    let Ok(text) = std::fs::read_to_string(path) else { return false };
+    text.lines().take(header_lines(&text)).filter_map(directive).any(|(word, _)| word != "allow")
+}
+
+/// Where the lockfile of a script is: beside it, its name and `.lock`.
+pub fn script_lock(script: &Path) -> PathBuf {
+    let mut name = script.file_name().unwrap_or_default().to_os_string();
+    name.push(".lock");
+    script.with_file_name(name)
+}
+
+/// An alias and its source, from what follows `// tondo: dependency`.
+fn declared(rest: &str) -> Result<(String, Source), String> {
+    let usage = "write `// tondo: dependency name = { git = \"https://...\", tag = \"v1.0.0\" }`";
+    let tables = toml::parse(rest).map_err(|e| format!("{}; {usage}", e.trim_start_matches("line 1: ")))?;
+    match tables.first().map(|t| t.entries.as_slice()) {
+        Some([(alias, value, _)]) if tables.len() == 1 => Ok((alias.clone(), dependency(alias, value)?)),
+        _ => Err(usage.to_string()),
+    }
+}
+
+/// The `tondo add` that writes the dependency of a `// tondo: dependency`
+/// line into a project's tondo.toml.
+pub fn add_command(rest: &str) -> Option<String> {
+    let (alias, source) = declared(rest).ok()?;
+    let flags = match source {
+        Source::Path(path) => format!("--path {}", path.display()),
+        Source::Git { url, reference } => match reference {
+            Reference::Tag(tag) => format!("--git {url} --tag {tag}"),
+            Reference::Branch(branch) => format!("--git {url} --branch {branch}"),
+            Reference::Rev(rev) => format!("--git {url} --rev {rev}"),
+            Reference::Default => format!("--git {url}"),
+        },
+        Source::Archive { url, sha256: None } => format!("--url {url}"),
+        Source::Archive { url, sha256: Some(hash) } => format!("--url {url} --sha256 {hash}"),
+    };
+    Some(format!("tondo add {alias} {flags}"))
+}
+
+/// What the header of a script declares: its dependencies (toolchain 2).
+fn script_manifest(path: &Path) -> Result<Manifest, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let at = |line: usize, message: String| format!("{}:{line}: {message}", path.display());
+    let mut manifest = Manifest::empty();
+    let mut lines: Vec<(String, usize)> = Vec::new();
+    for (index, line) in text.lines().take(header_lines(&text)).enumerate() {
+        let Some((word, rest)) = directive(line) else { continue };
+        match word {
+            "allow" => {}
+            "dependency" => {
+                let (alias, source) = declared(rest).map_err(|e| at(index + 1, e))?;
+                if let Some((_, first)) = lines.iter().find(|(a, _)| *a == alias) {
+                    return Err(at(index + 1, format!("dependency `{alias}` is declared on line {first} too")));
+                }
+                lines.push((alias.clone(), index + 1));
+                manifest.dependencies.push((alias, source));
+            }
+            other => {
+                return Err(at(
+                    index + 1,
+                    format!(
+                        "a script declares only its dependencies, `// tondo: dependency name = {{ ... }}`, not `{other}`: one that needs more is {}",
+                        crate::manage::SCRIPT_AS_PROJECT
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(manifest)
+}
+
 /// Reads `tondo.toml` in `dir`; a missing file declares nothing.
 fn manifest(dir: &Path) -> Result<Manifest, String> {
     let path = dir.join("tondo.toml");
-    let mut manifest = Manifest {
-        source_url: None,
-        name: None,
-        version: None,
-        dependencies: Vec::new(),
-        dev_dependencies: Vec::new(),
-        libraries: Vec::new(),
-        providers: Vec::new(),
-        generators: Vec::new(),
-        systems: Vec::new(),
-        architectures: Vec::new(),
-        cpu: None,
-        logpoints: true,
-        regions: true,
-    };
+    let mut manifest = Manifest::empty();
     if !path.is_file() {
         return Ok(manifest);
     }
@@ -416,13 +531,22 @@ fn dependency(alias: &str, value: &Value) -> Result<Source, String> {
     Ok(Source::Archive { url, sha256: sha256.map(|h| h.to_lowercase()) })
 }
 
-/// Resolves the package graph of the project in `dir`, the root first.
-/// What `tondo.lock` pins is used as is; other dependencies are fetched
-/// and pinned, and the lockfile is rewritten when that changes it.
-/// `update` names dependencies to resolve again, all of them when empty.
+/// Resolves the package graph of the project in `dir`, or of the script
+/// that `dir` is, the root first. What `tondo.lock`, or the script's lock,
+/// pins is used as is; other dependencies are fetched and pinned, and the
+/// lockfile is rewritten when that changes it. `update` names
+/// dependencies to resolve again, all of them when empty.
 pub fn resolve(dir: &Path, update: Option<&[String]>) -> Result<Vec<Package>, String> {
-    let lock_path = dir.join("tondo.lock");
-    let pins = read_lock(&lock_path)?;
+    let script = !dir.is_dir();
+    let lock_path = if script { script_lock(dir) } else { dir.join("tondo.lock") };
+    let mut pins = read_lock(&lock_path)?;
+    // What this process resolved for a lock it could not write.
+    if script && update.is_none() {
+        let unwritten = UNWRITTEN.lock().unwrap_or_else(|e| e.into_inner());
+        for (source, pin) in unwritten.get(&lock_path).into_iter().flatten() {
+            pins.entry(source.clone()).or_insert_with(|| pin.clone());
+        }
+    }
     let mut resolver = Resolver {
         pins,
         update,
@@ -446,7 +570,23 @@ pub fn resolve(dir: &Path, update: Option<&[String]>) -> Result<Vec<Package>, St
     let text = write_lock(&resolver.used);
     let current = std::fs::read_to_string(&lock_path).ok();
     if current.as_deref() != Some(text.as_str()) && (current.is_some() || !resolver.used.is_empty()) {
-        std::fs::write(&lock_path, text).map_err(|e| format!("cannot write {}: {e}", lock_path.display()))?;
+        match std::fs::write(&lock_path, text) {
+            Ok(()) => {}
+            // A script runs where it was installed, which its user may not
+            // be able to write: it goes on, and says so once.
+            Err(e) if script => {
+                let mut unwritten = UNWRITTEN.lock().unwrap_or_else(|e| e.into_inner());
+                if unwritten.insert(lock_path.clone(), resolver.used.clone()).is_none() {
+                    let reason = e.to_string();
+                    let reason = reason.split(" (os error").next().unwrap_or_default();
+                    eprintln!(
+                        "warning: cannot write {} ({reason}): the dependencies were resolved for this run only; install the script with its lock beside it to fix them",
+                        lock_path.display()
+                    );
+                }
+            }
+            Err(e) => return Err(format!("cannot write {}: {e}", lock_path.display())),
+        }
     }
     // Packages that share a name stay distinct.
     let mut seen: HashMap<String, usize> = HashMap::new();
@@ -459,6 +599,11 @@ pub fn resolve(dir: &Path, update: Option<&[String]>) -> Result<Vec<Package>, St
     }
     Ok(resolver.packages)
 }
+
+/// The pins resolved by this process for each script's lock that could
+/// not be written, so that it resolves them once.
+static UNWRITTEN: std::sync::Mutex<BTreeMap<PathBuf, BTreeMap<String, String>>> =
+    std::sync::Mutex::new(BTreeMap::new());
 
 struct Resolver<'a> {
     pins: BTreeMap<String, String>,
@@ -475,16 +620,25 @@ struct Resolver<'a> {
 impl Resolver<'_> {
     fn visit(&mut self, dir: &Path, alias: Option<&str>) -> Result<usize, String> {
         let dir = std::fs::canonicalize(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
-        if let Some(index) = self.packages.iter().position(|p| p.dir == dir) {
+        // The root may be a script, a package of its one file.
+        let (dir, script) = match dir.is_file() {
+            true => (dir.parent().map(Path::to_path_buf).unwrap_or_default(), Some(dir)),
+            false => (dir, None),
+        };
+        if let Some(index) = self.packages.iter().position(|p| p.dir == dir && p.script == script) {
             if self.visiting.contains(&dir) {
                 return Err(format!("packages depend on each other in a cycle through {}", dir.display()));
             }
             return Ok(index);
         }
-        let manifest = manifest(&dir)?;
-        let name = match manifest.name {
-            Some(name) => name,
-            None => {
+        let manifest = match &script {
+            Some(file) => script_manifest(file)?,
+            None => manifest(&dir)?,
+        };
+        let name = match (manifest.name, &script) {
+            (Some(name), _) => name,
+            (None, Some(file)) => file.file_stem().unwrap_or_default().to_string_lossy().into_owned(),
+            (None, None) => {
                 let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
                 if !is_identifier(&name) {
                     let what = alias.map_or("the project".to_string(), |a| format!("dependency `{a}`"));
@@ -503,6 +657,7 @@ impl Resolver<'_> {
             origin: self.origins.get(&dir).cloned(),
             source_url: manifest.source_url,
             dir: dir.clone(),
+            script,
             dependencies: Vec::new(),
             dev_dependencies: Vec::new(),
             tests_only: false,
@@ -557,7 +712,7 @@ impl Resolver<'_> {
                 return Ok(dir);
             }
             Source::Git { url, reference } => {
-                let (commit, dir) = git_checkout(url, reference, pinned.as_deref())
+                let (commit, dir) = git_checkout(alias, url, reference, pinned.as_deref())
                     .map_err(|e| format!("dependency `{alias}` ({url}): {e}"))?;
                 self.used.insert(key, commit.clone());
                 self.origins.insert(std::fs::canonicalize(&dir).unwrap_or(dir.clone()), (url.clone(), commit));
@@ -565,7 +720,8 @@ impl Resolver<'_> {
             }
             Source::Archive { url, sha256 } => {
                 let expected = pinned.as_deref().or(sha256.as_deref());
-                let (hash, dir) = archive(url, expected).map_err(|e| format!("dependency `{alias}` ({url}): {e}"))?;
+                let (hash, dir) =
+                    archive(alias, url, expected).map_err(|e| format!("dependency `{alias}` ({url}): {e}"))?;
                 if let Some(declared) = sha256
                     && *declared != hash
                 {
@@ -628,7 +784,17 @@ fn cache(kind: &str) -> Result<PathBuf, String> {
 
 /// The commit of a repository and a directory with its files at that
 /// commit; with `pinned`, that commit.
-fn git_checkout(url: &str, reference: &Reference, pinned: Option<&str>) -> Result<(String, PathBuf), String> {
+/// Says on stderr that a package is being downloaded (toolchain 6).
+fn fetching(alias: &str, what: &str) {
+    eprintln!("fetching {alias}: {what}");
+}
+
+fn git_checkout(
+    alias: &str,
+    url: &str,
+    reference: &Reference,
+    pinned: Option<&str>,
+) -> Result<(String, PathBuf), String> {
     let deps = cache("deps")?;
     if let Some(commit) = pinned {
         let dir = deps.join(format!("git-{commit}"));
@@ -637,7 +803,15 @@ fn git_checkout(url: &str, reference: &Reference, pinned: Option<&str>) -> Resul
         }
     }
     let repository = cache("git")?.join(crate::driver::fingerprint(&[url.as_bytes()]));
-    if !repository.is_dir() {
+    let what = match reference {
+        Reference::Tag(tag) => format!("git {url}, tag {tag}"),
+        Reference::Branch(branch) => format!("git {url}, branch {branch}"),
+        Reference::Rev(rev) => format!("git {url}, rev {rev}"),
+        Reference::Default => format!("git {url}"),
+    };
+    let cloned = !repository.is_dir();
+    if cloned {
+        fetching(alias, &what);
         let partial = repository.with_extension(format!("partial{}", std::process::id()));
         run(Command::new("git").args(["clone", "--quiet", "--bare", url]).arg(&partial))?;
         std::fs::rename(&partial, &repository).map_err(|e| e.to_string())?;
@@ -645,6 +819,9 @@ fn git_checkout(url: &str, reference: &Reference, pinned: Option<&str>) -> Resul
     let git = |args: &[&str]| run(Command::new("git").arg("-C").arg(&repository).args(args));
     let known = |commit: &str| git(&["cat-file", "-e", &format!("{commit}^{{commit}}")]).is_ok();
     if pinned.is_none_or(|commit| !known(commit)) {
+        if !cloned {
+            fetching(alias, &what);
+        }
         git(&["fetch", "--quiet", "--force", "origin", "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"])?;
     }
     let commit = match (pinned, reference) {
@@ -685,7 +862,7 @@ fn git_checkout(url: &str, reference: &Reference, pinned: Option<&str>) -> Resul
 
 /// The SHA-256 of an archive and the directory of its contents; with
 /// `expected`, a cached copy is used and a download must match it.
-fn archive(url: &str, expected: Option<&str>) -> Result<(String, PathBuf), String> {
+fn archive(alias: &str, url: &str, expected: Option<&str>) -> Result<(String, PathBuf), String> {
     let deps = cache("deps")?;
     if let Some(hash) = expected {
         let dir = deps.join(format!("sha256-{hash}"));
@@ -693,6 +870,7 @@ fn archive(url: &str, expected: Option<&str>) -> Result<(String, PathBuf), Strin
             return Ok((hash.to_string(), dir));
         }
     }
+    fetching(alias, url);
     let partial = deps.join(format!(".partial-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&partial);
     std::fs::create_dir_all(&partial).map_err(|e| e.to_string())?;

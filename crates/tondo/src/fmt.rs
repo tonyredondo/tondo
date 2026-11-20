@@ -315,6 +315,21 @@ impl Formatter<'_> {
                 docs.push(Doc::Hardline);
             }
         }
+        // A script's dependency lines, with the comments of their run, are
+        // its header, where they are and as they are, and a blank line
+        // follows them (21.4).
+        let first = module
+            .imports
+            .iter()
+            .map(|i| i.span.start)
+            .chain(module.items.iter().map(|i| item_span(i).start))
+            .chain(module.statements.iter().map(|s| s.span.start))
+            .min()
+            .unwrap_or(self.file.base + self.file.text.len() as u32);
+        if let Some(end) = self.dependency_header(first) {
+            docs.push(self.leading(end));
+            docs.push(Doc::Hardline);
+        }
         if !module.imports.is_empty() {
             docs.push(self.imports(&module.imports));
             docs.push(Doc::Hardline);
@@ -354,6 +369,22 @@ impl Formatter<'_> {
         }
         docs.push(Doc::Hardline);
         concat(docs)
+    }
+
+    /// The end of the run of comments before `first` that holds a script's
+    /// last `// tondo: dependency` line (toolchain 2), if one does.
+    fn dependency_header(&self, first: u32) -> Option<u32> {
+        let header: Vec<Span> = self.comments.iter().copied().take_while(|c| c.end <= first).collect();
+        let dependency = |c: &Span| matches!(crate::deps::directive(self.source(*c)), Some(("dependency", _)));
+        let last = header.iter().rposition(dependency)?;
+        let mut end = header[last].end;
+        for comment in &header[last + 1..] {
+            if self.blank_between(end, comment.start) {
+                break;
+            }
+            end = comment.end;
+        }
+        Some(end)
     }
 
     /// The start of the first comment before `pos`, or `pos`.
@@ -1741,6 +1772,22 @@ mod tests {
         for (input, output) in pairs {
             assert_eq!(format(input), output, "formatting {input:?}");
         }
+    }
+
+    /// A script's dependency lines stay at its top, as and where they are
+    /// written, with a blank line after them, when its imports are sorted
+    /// (21.4).
+    #[test]
+    fn dependency_header() {
+        let lines = "// tondo: dependency zeta = { path = \"../zeta\" }\n//   tondo: dependency http={ git = \"https://github.com/acme/http\",tag=\"v1\" }";
+        let source = format!(
+            "#!/usr/bin/env tondo\n{lines}\nimport std.console\nimport http.client\n\nconsole.println(\"x\")\n"
+        );
+        let formatted = format!(
+            "#!/usr/bin/env tondo\n\n{lines}\n\nimport http.client\nimport std.console\n\nconsole.println(\"x\")\n"
+        );
+        assert_eq!(format(&source), formatted);
+        assert_eq!(format(&formatted), formatted);
     }
 
     /// A list stays flat when it ends at column 99 or 100, and breaks at 101.

@@ -73,6 +73,34 @@ pub(crate) fn allow(sources: &SourceMap, diags: &mut Diagnostics) {
     }
 }
 
+/// A `// tondo: dependency` line where nothing reads it (E0009): below the
+/// code of the script `script`, whose dependencies are read from its top,
+/// or in a file of a project, whose dependencies are in its tondo.toml
+/// (toolchain 2). A dependency's files are its author's.
+pub(crate) fn misplaced_dependencies(sources: &SourceMap, diags: &mut Diagnostics, script: Option<usize>) {
+    for (index, file) in sources.files().enumerate() {
+        if file.dependency || file.logical.starts_with('<') || !file.text.contains("tondo: dependency") {
+            continue;
+        }
+        let header = (script == Some(index)).then(|| crate::deps::header_lines(&file.text));
+        let (_, comments) = crate::lexer::lex_with_comments(file, None, &mut Diagnostics::default());
+        for comment in comments {
+            let Some(("dependency", rest)) = crate::deps::directive(file.slice(comment)) else { continue };
+            let message = match header {
+                Some(lines) if file.line_col(comment.start).0 <= lines => continue,
+                Some(_) => "a script's dependencies are read from its top, before its code: move this line up, under the shebang".to_string(),
+                None => match crate::deps::add_command(rest) {
+                    Some(command) => {
+                        format!("a project declares its dependencies in tondo.toml: `{command}` writes this one there")
+                    }
+                    None => "a project declares its dependencies in tondo.toml: `tondo add <alias> --git <url> --tag <tag>` writes one there".to_string(),
+                },
+            };
+            diags.error("E0009", comment, message);
+        }
+    }
+}
+
 /// Each warning of the program can be accepted, by a comment above it that
 /// someone has to finish: without a reason it is an error.
 fn offer_to_allow(sources: &SourceMap, diags: &mut Diagnostics) {

@@ -840,7 +840,7 @@ impl Server {
             "initialized" => {
                 let mut registrations = Vec::new();
                 if self.watches {
-                    let watchers: Vec<Value> = ["**/*.to", "**/tondo.toml", "**/tondo.lock"]
+                    let watchers: Vec<Value> = ["**/*.to", "**/tondo.toml", "**/tondo.lock", "**/*.to.lock"]
                         .iter()
                         .map(|glob| json!({ "globPattern": glob }))
                         .collect();

@@ -521,7 +521,7 @@ pub fn checked_targets(path: &Path) -> Result<Vec<(project::Target, Vec<project:
     targets.sort_by_key(|t| (t.system != here.system, t.arch != here.arch));
     let (mut by_system, mut by_arch) = (false, false);
     for package in &packages {
-        let (files, _) = project::sources(&package.dir, &package.name, None)?;
+        let (files, _) = package.sources(None)?;
         for file in &files {
             let (systems, archs) = project::suffixes(&file.path);
             by_system |= systems.is_some();
@@ -747,9 +747,11 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         dependencies: Vec::new(),
     };
     let mut project = crate::roots::Project { dir: built.dir.clone(), ..Default::default() };
-    let module = if path.is_dir() {
+    // A script that declares dependencies is a package of its one file.
+    let script = !path.is_dir();
+    let module = if !script || deps::is_script_package(path) {
         let packages = deps::resolve(path, None)?;
-        project.dir = path.to_path_buf();
+        project.dir = packages[0].dir.clone();
         let target = target();
         for package in &packages {
             if !package.systems.is_empty() && !package.systems.contains(&target.system) {
@@ -787,7 +789,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
         built = ast::Built {
             name: packages[0].name.clone(),
             version: packages[0].version.clone(),
-            dir: path.to_path_buf(),
+            dir: packages[0].dir.clone(),
             dependencies: packages[1..]
                 .iter()
                 .filter(|p| !p.tests_only)
@@ -799,7 +801,9 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
                 libraries.push(library.clone());
             }
         }
-        source_id = format!("pkg:{}", packages[0].name);
+        if !script {
+            source_id = format!("pkg:{}", packages[0].name);
+        }
         let mut modules: Vec<modules::ModuleSource> = Vec::new();
         let mut root = 0;
         for (package_index, package) in packages.iter().enumerate() {
@@ -807,7 +811,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             if package.tests_only && !tests {
                 continue;
             }
-            let (files, root_file) = project::sources(&package.dir, &package.name, Some(target))?;
+            let (files, root_file) = package.sources(Some(target))?;
             // `.proto` files are modules of their own, whose source the
             // compiler writes from them, all together.
             let root_path = files.get(root_file).map(|f| f.path.clone());
@@ -1017,6 +1021,7 @@ fn analyze_with(path: &Path, tests: bool, meta: bool, editor: bool, root: Root) 
             module
         }
     };
+    crate::lints::misplaced_dependencies(&sources, &mut diags, script.then_some(0));
     let mut module = module;
     module.elsewhere = elsewhere;
     module.built = Some(built);
@@ -1165,7 +1170,7 @@ fn drop_dependency_warnings(diags: &mut Diagnostics, sources: &SourceMap, depend
 /// What the files of a package that are not for `system` declare at their
 /// top, for an error about a name only they have (language 6.8).
 fn declared_elsewhere(package: &deps::Package, target: project::Target) -> Vec<ast::Elsewhere> {
-    let Ok((files, _)) = project::sources(&package.dir, &package.name, None) else { return Vec::new() };
+    let Ok((files, _)) = package.sources(None) else { return Vec::new() };
     let mut found = Vec::new();
     for file in files {
         let Some(targets) = project::targets_of(&file.path).filter(|targets| !targets.contains(&target)) else {
@@ -1243,7 +1248,7 @@ pub fn proto_tondo(path: &Path) -> Option<String> {
     let path = path.canonicalize().ok()?;
     let dir = path.ancestors().find(|dir| dir.join("tondo.toml").is_file())?;
     let package = deps::resolve(dir, None).ok()?.into_iter().next()?;
-    let (files, _) = project::sources(&package.dir, &package.name, Some(target())).ok()?;
+    let (files, _) = package.sources(Some(target())).ok()?;
     let protos: Vec<_> = files.iter().filter(|file| file.path.extension().is_some_and(|e| e == "proto")).collect();
     let module = protos.iter().find(|file| file.path.canonicalize().ok().as_deref() == Some(&path))?.module.clone();
     let source_root = if package.dir.join("src").is_dir() { package.dir.join("src") } else { package.dir.clone() };
@@ -1326,15 +1331,15 @@ fn embedded(inputs: &mut Vec<PathBuf>) {
 
 /// The files of a build but those its sources embed.
 fn sources(path: &Path) -> Result<Vec<PathBuf>, String> {
-    if !path.is_dir() {
+    if !path.is_dir() && !deps::is_script_package(path) {
         return Ok(vec![path.to_path_buf()]);
     }
     let mut inputs = Vec::new();
     for package in deps::resolve(path, None)? {
-        let (files, _) = project::sources(&package.dir, &package.name, None)?;
+        let (files, _) = package.sources(None)?;
         inputs.extend(files.into_iter().map(|f| f.path));
         let manifest = package.dir.join("tondo.toml");
-        if manifest.is_file() {
+        if package.script.is_none() && manifest.is_file() {
             inputs.push(manifest);
         }
         inputs.extend(package.providers.into_iter().map(|(_, file)| file));

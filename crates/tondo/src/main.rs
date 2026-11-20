@@ -1860,18 +1860,20 @@ fn update_command(args: &[OsString]) -> Result<ExitCode, String> {
     if let Some(flag) = args.iter().find(|a| a.to_string_lossy().starts_with('-')) {
         return Err(format!("update does not take {}\n{USAGE}", flag.display()));
     }
+    // A project's directory, or a script.
     let (path, rest) = match args.first() {
-        Some(first) if Path::new(first).is_dir() => (PathBuf::from(first), &args[1..]),
+        Some(first) if Path::new(first).is_dir() || Path::new(first).is_file() => (PathBuf::from(first), &args[1..]),
         _ => source_argument(&args),
     };
     let names: Vec<String> = rest.iter().map(|a| a.to_string_lossy().into_owned()).collect();
     let packages = tondo::deps::resolve(&path, Some(&names))?;
+    let lock = if path.is_dir() { path.join("tondo.lock") } else { tondo::deps::script_lock(&path) };
     if json {
         let packages: Vec<serde_json::Value> = packages[1..]
             .iter()
             .map(|p| serde_json::json!({ "name": p.name, "dir": p.dir, "tests_only": p.tests_only }))
             .collect();
-        print_json("update", true, serde_json::json!({ "lock": path.join("tondo.lock"), "packages": packages }));
+        print_json("update", true, serde_json::json!({ "lock": lock, "packages": packages }));
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -1916,6 +1918,12 @@ fn bind_command(args: &[OsString]) -> Result<ExitCode, String> {
             flag if flag.starts_with('-') => return Err(format!("unknown option {flag}\n{USAGE}")),
             _ => headers.push(PathBuf::from(arg)),
         }
+    }
+    if project.is_file() {
+        return Err(format!(
+            "`tondo bind` writes a module of a project, and a script is one file, with no native libraries: one that calls C is {}",
+            tondo::manage::SCRIPT_AS_PROJECT
+        ));
     }
     let command = std::iter::once("tondo bind".to_string())
         .chain(std::env::args().skip(2).map(|a| if a.contains(' ') { format!("{a:?}") } else { a }))
@@ -2066,7 +2074,8 @@ fn add_command(args: &[OsString]) -> Result<ExitCode, String> {
     if json {
         print_json("add", true, serde_json::json!({ "alias": alias, "table": table }));
     } else {
-        println!("added `{alias}` to [{table}]: `import {alias}` uses it");
+        let place = if project.is_dir() { format!("[{table}]") } else { "the script's header".to_string() };
+        println!("added `{alias}` to {place}: `import {alias}` uses it");
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -2768,7 +2777,7 @@ fn api_command(args: &[OsString]) -> Result<ExitCode, String> {
         let packages = tondo::deps::resolve(&project, None)?;
         let mut modules: Vec<(String, Vec<PathBuf>, bool)> = Vec::new();
         for (index, package) in packages.iter().enumerate() {
-            let (files, _) = tondo::project::sources(&package.dir, &package.name, Some(tondo::driver::target()))?;
+            let (files, _) = package.sources(Some(tondo::driver::target()))?;
             let visible = |file: &tondo::project::ProjectFile| {
                 index == 0 || !file.module[1..].iter().any(|part| part == "internal")
             };

@@ -20,6 +20,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "invalid-command",
         "A command literal, `$( )`, holds what a shell does and no shell runs it: a variable, a pattern of files, `&&`, `;`, or a redirection or stage out of place.",
     ),
+    (
+        "E0009",
+        "misplaced-dependency",
+        "A `// tondo: dependency` comment where nothing reads it: below a script's code, as a script's dependencies are read from its top, or in a file of a project, whose dependencies are in tondo.toml. Move it to the top of the script, or run the `tondo add` the error gives.",
+    ),
     ("E1001", "unknown-name", "No visible declaration has the name."),
     ("E1002", "duplicate-name", "Two declarations take the same name in the same namespace and scope."),
     ("E1003", "shadowing", "A declaration would hide a binding that is still visible."),

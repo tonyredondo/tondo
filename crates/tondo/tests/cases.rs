@@ -640,58 +640,68 @@ fn json_diagnostics() {
     assert_eq!(json["diagnostics"], serde_json::json!([expected]));
 }
 
+/// Runs git in `dir`, with an identity and no signing of its own.
+fn git_in(dir: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(status.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&status.stderr));
+}
+
+/// Writes `text` into `root`'s `path`, making its directories.
+fn write_under(root: &Path, path: &str, text: &str) {
+    let path = root.join(path);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, text).unwrap();
+}
+
+/// What the tests of dependencies fetch, under `root`: a repository
+/// `greet`, whose tag `v1` says "hello" and whose head says "HELLO", and an
+/// archive of a package `math`; their URLs. A package `units` in `units`
+/// depends on the archive.
+fn packages_to_fetch(root: &Path) -> (String, String) {
+    write_under(root, "greet/src/greet.to", "pub fn hello(name: String): String {\n    \"hello {name}\"\n}\n");
+    write_under(root, "greet/tondo.toml", "[package]\nname = \"greet\"\n");
+    let greet = root.join("greet");
+    git_in(&greet, &["init", "-q"]);
+    git_in(&greet, &["add", "-A"]);
+    git_in(&greet, &["commit", "-qm", "v1"]);
+    git_in(&greet, &["tag", "-a", "v1", "-m", "v1"]);
+    write_under(root, "greet/src/greet.to", "pub fn hello(name: String): String {\n    \"HELLO {name}\"\n}\n");
+    git_in(&greet, &["commit", "-qam", "v2"]);
+    write_under(root, "math-1.0/tondo.toml", "[package]\nname = \"math\"\n");
+    write_under(root, "math-1.0/src/math.to", "pub fn twice(value: Int): Int {\n    value * 2\n}\n");
+    let tar = Command::new("tar").args(["-czf", "math-1.0.tar.gz", "math-1.0"]).current_dir(root).status().unwrap();
+    assert!(tar.success());
+    let url = format!("file://{}/math-1.0.tar.gz", root.display());
+    write_under(
+        root,
+        "units/src/units.to",
+        "import math\n\npub fn meters(km: Int): Int {\n    math.twice(km) * 500\n}\n",
+    );
+    write_under(
+        root,
+        "units/tondo.toml",
+        &format!("[package]\nname = \"units\"\n\n[dependencies]\nmath = {{ url = \"{url}\" }}\n"),
+    );
+    (format!("file://{}/greet", root.display()), url)
+}
+
 /// Dependencies from a git repository (by tag) and an archive, reached
 /// through a path dependency; `tondo.lock` pins them until `tondo update`.
 #[test]
 fn dependencies() {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dependencies");
     let _ = std::fs::remove_dir_all(&root);
-    let write = |path: &str, text: &str| {
-        let path = root.join(path);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, text).unwrap();
-    };
-    let git = |args: &[&str]| {
-        let status = Command::new("git")
-            .args([
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@t",
-                "-c",
-                "commit.gpgSign=false",
-                "-c",
-                "tag.gpgSign=false",
-            ])
-            .args(args)
-            .current_dir(root.join("greet"))
-            .output()
-            .unwrap();
-        assert!(status.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&status.stderr));
-    };
-    write("greet/src/greet.to", "pub fn hello(name: String): String {\n    \"hello {name}\"\n}\n");
-    write("greet/tondo.toml", "[package]\nname = \"greet\"\n");
-    git(&["init", "-q"]);
-    git(&["add", "-A"]);
-    git(&["commit", "-qm", "v1"]);
-    git(&["tag", "-a", "v1", "-m", "v1"]);
-    write("greet/src/greet.to", "pub fn hello(name: String): String {\n    \"HELLO {name}\"\n}\n");
-    git(&["commit", "-qam", "v2"]);
-    write("math-1.0/tondo.toml", "[package]\nname = \"math\"\n");
-    write("math-1.0/src/math.to", "pub fn twice(value: Int): Int {\n    value * 2\n}\n");
-    let tar = Command::new("tar").args(["-czf", "math-1.0.tar.gz", "math-1.0"]).current_dir(&root).status().unwrap();
-    assert!(tar.success());
-    let url = format!("file://{}/math-1.0.tar.gz", root.display());
-    write("app/libs/units/src/units.to", "import math\n\npub fn meters(km: Int): Int {\n    math.twice(km) * 500\n}\n");
-    write(
-        "app/libs/units/tondo.toml",
-        &format!("[package]\nname = \"units\"\n\n[dependencies]\nmath = {{ url = \"{url}\" }}\n"),
-    );
-    let repository = format!("file://{}/greet", root.display());
+    let (repository, _) = packages_to_fetch(&root);
+    let write = |path: &str, text: &str| write_under(&root, path, text);
     write(
         "app/tondo.toml",
         &format!(
-            "[dependencies]\ngreet = {{ git = \"{repository}\", tag = \"v1\" }}\nunits = {{ path = \"libs/units\" }}\n"
+            "[dependencies]\ngreet = {{ git = \"{repository}\", tag = \"v1\" }}\nunits = {{ path = \"../units\" }}\n"
         ),
     );
     write(
@@ -713,8 +723,68 @@ fn dependencies() {
     let lock = std::fs::read_to_string(root.join("app/tondo.lock")).unwrap();
     assert!(lock.contains("commit = ") && lock.contains("sha256 = "), "{lock}");
     // Moving the tag changes nothing until the lock is updated.
-    git(&["tag", "-f", "-a", "v1", "-m", "moved"]);
+    git_in(&root.join("greet"), &["tag", "-f", "-a", "v1", "-m", "moved"]);
     assert_eq!(tondo(&["run"]), "hello ada 3000\n");
     tondo(&["update"]);
     assert_eq!(tondo(&["run"]), "HELLO ada 3000\n");
+}
+
+/// A script declares its dependencies in its header (toolchain 2): each
+/// package fetched says so once on stderr, and the lock beside the script
+/// pins them, found by the script's path from another directory. A script
+/// that cannot write its lock runs, and says so once.
+#[test]
+fn script_dependencies() {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("script-dependencies");
+    let _ = std::fs::remove_dir_all(&root);
+    let (repository, url) = packages_to_fetch(&root);
+    write_under(
+        &root,
+        "scripts/deploy.to",
+        &format!(
+            "#!/usr/bin/env tondo\n\n// tondo: dependency greet = {{ git = \"{repository}\", tag = \"v1\" }}\n// tondo: dependency units = {{ path = \"../units\" }}\n\nimport greet\nimport std.console\nimport units\n\nconsole.println(\"{{greet.hello(\"ada\")}} {{units.meters(3)}}\")\n"
+        ),
+    );
+    // From the root, as a shebang runs it from wherever its user is.
+    let tondo = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(args)
+            .current_dir(&root)
+            .env("XDG_CACHE_HOME", root.join("cache"))
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert!(output.status.success(), "tondo {args:?}: {stderr}");
+        (String::from_utf8(output.stdout).unwrap(), stderr)
+    };
+    let fetched = format!("fetching greet: git {repository}, tag v1\nfetching math: {url}\n");
+    assert_eq!(tondo(&["run", "scripts/deploy.to"]), ("hello ada 3000\n".into(), fetched.clone()));
+    let lock = root.join("scripts/deploy.to.lock");
+    let pins = std::fs::read_to_string(&lock).unwrap();
+    assert!(pins.contains("commit = ") && pins.contains("sha256 = "), "{pins}");
+    // With the lock and the cache, nothing is fetched and nothing said.
+    assert_eq!(tondo(&["scripts/deploy.to"]), ("hello ada 3000\n".into(), String::new()));
+    // Moving the tag changes nothing until the lock is updated.
+    git_in(&root.join("greet"), &["tag", "-f", "-a", "v1", "-m", "moved"]);
+    assert_eq!(tondo(&["run", "scripts/deploy.to"]).0, "hello ada 3000\n");
+    tondo(&["update", "scripts/deploy.to"]);
+    assert_eq!(tondo(&["run", "scripts/deploy.to"]).0, "HELLO ada 3000\n");
+    // Installed where its user cannot write, without its lock.
+    std::fs::remove_file(&lock).unwrap();
+    let scripts = root.join("scripts");
+    let mode = |mode| {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&scripts, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    mode(0o555);
+    // The superuser writes anyway: then there is nothing to see.
+    if std::fs::write(scripts.join("probe"), "").is_err() {
+        let (out, err) = tondo(&["run", "scripts/deploy.to"]);
+        mode(0o755);
+        assert_eq!(out, "HELLO ada 3000\n");
+        let warning = "warning: cannot write scripts/deploy.to.lock (Permission denied): the dependencies were resolved for this run only; install the script with its lock beside it to fix them\n";
+        assert_eq!(err, format!("{fetched}{warning}"));
+        assert!(!lock.exists());
+    }
+    mode(0o755);
 }

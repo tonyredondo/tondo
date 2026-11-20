@@ -64,8 +64,43 @@ Reglas de descubrimiento, deterministas:
 6. El nombre del paquete es `[package].name` o, sin él, el nombre del
    directorio, que entonces debe ser un identificador.
 
-Un archivo `.to` suelto también es un programa: se compila sin manifiesto ni
-dependencias y solo puede importar `std`.
+Un archivo `.to` suelto también es un programa, un script (20.3 del
+lenguaje): se compila sin manifiesto, y no importa más que `std` y las
+dependencias que él mismo declara, una por línea, en su cabecera:
+
+~~~tondo
+#!/usr/bin/env tondo
+// tondo: dependency http = { git = "https://github.com/acme/http", tag = "v1.2.0" }
+// tondo: dependency units = { path = "../libs/units" }
+
+import http.client
+~~~
+
+- Cada línea es `// tondo: dependency <alias> = <fuente>`, con la fuente como
+  en `[dependencies]` (sección 4) y un `path` relativo al directorio del
+  script.
+- Van en la cabecera, antes de la primera línea de código, entre el shebang,
+  otros comentarios y líneas en blanco. Una más abajo, o en un archivo de un
+  proyecto, cuyas dependencias van en `tondo.toml`, es `E0009`.
+- El script es un paquete del nombre de su archivo, de versión `0.0.0`, y sus
+  dependencias se resuelven, descargan y fijan como las de un proyecto. Su
+  lockfile está a su lado, con su nombre y `.lock`: `deploy.to` fija las suyas
+  en `deploy.to.lock`, con el formato de la sección 5. Se busca por la ruta
+  del script, no por el directorio actual: un script con shebang que se
+  ejecuta desde otro directorio usa el suyo.
+- Si el lockfile de un script no se puede escribir, como el de uno instalado
+  en un directorio de solo lectura, el toolchain lo dice en una línea de
+  stderr y sigue con lo que ha resuelto: lo que el lockfile no fija se
+  resuelve de nuevo la vez siguiente. El de un proyecto que no se puede
+  escribir sigue siendo un error.
+- Un script no tiene `[dev-dependencies]`, `[native]`, `[derive]`,
+  generadores ni `[build]`. En su cabecera, `// tondo:` seguido de otra
+  palabra que `dependency` o `allow` es un error del toolchain que dice que
+  un script que la necesita es un proyecto, y cómo hacerlo: `tondo new
+  <nombre>`, el script como su `src/main.to` y sus dependencias en su
+  `tondo.toml`.
+- `check`, `run`, `build`, el language server y `tondo mcp` resuelven un
+  script del mismo modo.
 
 ## 3. `tondo.toml`
 
@@ -218,7 +253,8 @@ source = "https://example.com/zlib-1.0.tar.gz"
 sha256 = "5b833887a4dc1fa6504a356e56aa12cfd4cce098f03e153f8c09c3961d1e9380"
 ~~~
 
-- Solo existe en la raíz del proyecto y registra todas las dependencias
+- Existe en la raíz del proyecto, o al lado del script (sección 2), y
+  registra todas las dependencias
   descargadas del grafo, también las transitivas. Las dependencias por `path`
   no se registran.
 - `source` identifica la declaración: la URL de git con su referencia, o la URL
@@ -258,6 +294,10 @@ Además, una vez al día, mientras lo que guardan juntos `run/`, `test/` y
 10 GB, o lo que dé `TONDO_CACHE_LIMIT`, en bytes o con unidad, como `40G` o
 `500M`. Las dependencias descargadas y el runtime no cuentan: lo demás, un
 build lo vuelve a hacer.
+
+Por cada paquete que descarga, el toolchain escribe una línea en stderr,
+`fetching http: git https://github.com/acme/http, tag v1.2.0`; con el
+lockfile y la caché completos no escribe nada.
 
 Para descargar, el toolchain usa `git`, `curl`, `tar` y `unzip` del sistema.
 Si falta una herramienta, el error lo dice. Con `tondo.lock` y la caché
@@ -2286,6 +2326,12 @@ código que no existe es un error del toolchain (estado 3).
   resuelve y la descarga como un build; si no puede, `tondo.toml` queda como
   estaba. Un alias que el proyecto ya tiene es un error. `tondo remove
   <alias>` la quita y vuelve a escribir `tondo.lock`.
+- `tondo add`, `tondo remove` y `tondo update` reciben un script donde
+  reciben un proyecto, como todo comando que recibe `--project`: `tondo add
+  http --git <url> --tag v1.2.0 --project deploy.to` escribe su línea tras
+  las demás de su cabecera, o tras el shebang, y la descarga. Con `--dev` es
+  un error: un script no tiene dev-dependencies. `tondo fmt` deja las líneas
+  de dependencia de un script donde y como están (21.4 del lenguaje).
 - `tondo fix` aplica las reparaciones `safe` de los diagnósticos (22.4 del
   lenguaje) a los archivos del programa, las que no se tocan entre sí, y
   comprueba de nuevo; da `1` si sigue sin compilar. Entre ellas están los

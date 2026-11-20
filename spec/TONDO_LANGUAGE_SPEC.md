@@ -8572,6 +8572,10 @@ En un script raíz:
 
 El shebang `#!...` solo es válido como primera línea de un script raíz. El lexer lo trata como metadato de ejecución y no como código Tondo.
 
+Un script declara las dependencias que importa en comentarios de su
+cabecera, `// tondo: dependency http = { git = "…", tag = "v1.2.0" }`
+(sección 2 del toolchain).
+
 ### 20.4 Módulos sin efectos
 
 Fuera del archivo raíz en modo script no hay sentencias top-level. Importar nunca ejecuta código, tampoco cuando el módulo fue utilizado originalmente por otro target como raíz de aplicación.
@@ -9085,6 +9089,11 @@ La asociación se calcula sobre runs de comentarios sin línea vacía interna:
 4. Un run seguido por al menos una línea vacía queda asociado a la unidad anterior
    como comentario de sección. Si no existe unidad anterior, es header de archivo.
 
+Las líneas `// tondo: dependency` de la cabecera de un script, con los
+comentarios de su run, son el header del archivo: el formatter las deja donde
+y como están, en su orden, y escribe una línea vacía tras ellas; nunca se
+mueven con un import.
+
 Un comentario leading se emite en su propia línea con la indentación de la unidad.
 Un `//` trailing se precede por exactamente dos espacios y fuerza `hardline`. Un
 `/* ... */` de una línea puede permanecer inline con exactamente un espacio a
@@ -9477,6 +9486,7 @@ oculten un diagnóstico independiente.
 | `E0006` | `invalid-source-form` | Mezcla o selección inválida de forma módulo, script o snippet. |
 | `E0007` | `invalid-allow` | Un comentario `// tondo: allow` sin códigos de aviso o sin razón. |
 | `E0008` | `invalid-command` | Un literal de comando `$( )` con lo que haría una shell, que no corre: una variable, un patrón de archivos, `&&`, `;`, o una redirección o una etapa fuera de su sitio. |
+| `E0009` | `misplaced-dependency` | Un comentario `// tondo: dependency` fuera de la cabecera de un script: tras su código, o en un archivo de un proyecto. |
 
 #### Nombres y módulos
 

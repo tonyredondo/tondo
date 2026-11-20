@@ -8891,3 +8891,44 @@ its entries knows it now, since a task that cannot fail has no error
 to settle on. A tuple with an item that is no task, as a `String`, or an
 array or another tuple of tasks, has none of the three: the message
 names the item and says to wait it on its own.
+
+## A script's packages
+
+A script could import only `std`, so one that needed a package had to
+become a project. Tony asked for a script's packages one line each ("Una
+línea por paquete definitivamente"), in script mode as in a project ("Si
+esto vamos a tener que soportarlo también para el modo script"). A line
+of the header, `// tondo: dependency http = { git = "…", tag = "v1.2.0" }`,
+takes the value a project's tondo.toml takes, so there is one way to
+write a source.
+
+The lock is beside the script, its whole name and `.lock`,
+`deploy.to.lock`, as uv writes `script.py.lock`: with the stem alone a
+script named `tondo.to` beside a project would write over its lock. It
+is found by the script's path, so a script run by its shebang from
+another directory uses its own.
+
+The lines are read from the header only, before the code. One below the
+code, or in a file of a project, is E0009 rather than being ignored: a
+dependency that is silently not one is the worse outcome. In a project
+the error gives the `tondo add` that writes it into tondo.toml. The
+formatter keeps the header where it is: a run of comments right above
+the first import was that import's, and sorting the imports would have
+carried a dependency line below `import http.client`, where it is E0009.
+
+A script runs where it was installed, often a place its user cannot
+write, and failing there for a lock it could not write breaks the reason
+for a script: it says so in one line and goes on, resolving again the
+next time. A project is built where it is developed, where a lock that
+cannot be written is something wrong with the tree, and a pipeline that
+builds from a read-only checkout with a stale lock is better stopped: a
+project keeps the error. Every package fetched, for a project as for a
+script, says so in one line on stderr, since a first run downloads in
+front of someone who only typed a name; with the lock and the cache it
+says nothing.
+
+`tondo add`, `remove` and `update` take a script through the `--project`
+every command has, so there is one rule rather than a flag for each. A
+script has no dev-dependencies, native libraries, providers, generators
+or `[build]`: one that needs them is a project, and the error says how
+to make it one.

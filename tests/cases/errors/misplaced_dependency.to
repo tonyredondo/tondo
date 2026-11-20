@@ -1,0 +1,10 @@
+// A dependency line below a script's code declares nothing, since a
+// script's dependencies are read from its top (toolchain 2): E0009 says to
+// move it up.
+
+import std.console
+
+console.println("x")
+// tondo: dependency http = { git = "https://github.com/acme/http", tag = "v1.2.0" }
+
+// expect-error: E0009 a script's dependencies are read from its top, before its code: move this line up, under the shebang

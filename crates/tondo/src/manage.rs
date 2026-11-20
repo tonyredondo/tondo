@@ -78,6 +78,9 @@ pub fn add(project: &Path, alias: &str, source: &Source, dev: bool) -> Result<()
     if !crate::project::is_identifier(alias) {
         return Err(format!("`{alias}` cannot name a dependency: an alias is an identifier, as `http`"));
     }
+    if !project.is_dir() {
+        return add_to_script(project, alias, source, dev);
+    }
     let path = project.join("tondo.toml");
     let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let tables = crate::toml::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -119,6 +122,9 @@ pub fn add(project: &Path, alias: &str, source: &Source, dev: bool) -> Result<()
 /// Takes a dependency out of the project's manifest, and out of
 /// `tondo.lock`.
 pub fn remove(project: &Path, alias: &str) -> Result<(), String> {
+    if !project.is_dir() {
+        return remove_from_script(project, alias);
+    }
     let path = project.join("tondo.toml");
     let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let tables = crate::toml::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -135,6 +141,80 @@ pub fn remove(project: &Path, alias: &str) -> Result<(), String> {
     lines.remove(line - 1);
     std::fs::write(&path, lines.join("\n") + "\n").map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     crate::deps::resolve(project, None).map(|_| ())
+}
+
+/// What a script that needs more than its dependencies is (toolchain 2).
+pub const SCRIPT_AS_PROJECT: &str = "a project, which `tondo new <name>` makes, with this script as its src/main.to and its dependencies in its tondo.toml";
+
+/// The lines of a script's header that declare a dependency, by index, with
+/// their alias.
+fn script_dependencies(lines: &[String]) -> Vec<(usize, String)> {
+    let header = crate::deps::header_lines(&lines.join("\n"));
+    let alias = |rest: &str| rest.split(['=', ' ']).next().unwrap_or_default().to_string();
+    lines[..header.min(lines.len())]
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| match crate::deps::directive(line) {
+            Some(("dependency", rest)) => Some((index, alias(rest))),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Adds a dependency to a script's header (toolchain 2), under the others,
+/// or at its top, under the shebang, with a blank line after it as the
+/// formatter writes it; the script stays as it was when it cannot be fetched.
+fn add_to_script(script: &Path, alias: &str, source: &Source, dev: bool) -> Result<(), String> {
+    if dev {
+        return Err(format!("a script has no dev-dependencies: one whose tests need them is {SCRIPT_AS_PROJECT}"));
+    }
+    let text = std::fs::read_to_string(script).map_err(|e| format!("cannot read {}: {e}", script.display()))?;
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let declared = script_dependencies(&lines);
+    if let Some((index, _)) = declared.iter().find(|(_, a)| a == alias) {
+        return Err(format!(
+            "the script depends on `{alias}` already, on line {}: `tondo remove {alias} --project {}` first",
+            index + 1,
+            script.display()
+        ));
+    }
+    let line = format!("// tondo: dependency {alias} = {}", source.entry());
+    match declared.last() {
+        Some((index, _)) => lines.insert(index + 1, line),
+        None => {
+            let at = usize::from(lines.first().is_some_and(|l| l.starts_with("#!")));
+            while lines.get(at).is_some_and(|l| l.trim().is_empty()) {
+                lines.remove(at);
+            }
+            let rest = at < lines.len();
+            lines
+                .splice(at..at, [(at > 0).then(String::new), Some(line), rest.then(String::new)].into_iter().flatten());
+        }
+    }
+    std::fs::write(script, lines.join("\n") + "\n").map_err(|e| format!("cannot write {}: {e}", script.display()))?;
+    if let Err(message) = crate::deps::resolve(script, None) {
+        std::fs::write(script, text).map_err(|e| format!("cannot write {}: {e}", script.display()))?;
+        return Err(format!("{message}; {} is as it was", script.display()));
+    }
+    Ok(())
+}
+
+/// Takes a dependency out of a script's header, and out of its lock.
+fn remove_from_script(script: &Path, alias: &str) -> Result<(), String> {
+    let text = std::fs::read_to_string(script).map_err(|e| format!("cannot read {}: {e}", script.display()))?;
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let Some((index, _)) = script_dependencies(&lines).into_iter().find(|(_, a)| a == alias) else {
+        return Err(format!(
+            "the script does not depend on `{alias}`: its `// tondo: dependency` lines say what it does"
+        ));
+    };
+    lines.remove(index);
+    // The blank line after the last one goes with it.
+    if lines.get(index).is_some_and(|l| l.trim().is_empty()) && (index == 0 || lines[index - 1].trim().is_empty()) {
+        lines.remove(index);
+    }
+    std::fs::write(script, lines.join("\n") + "\n").map_err(|e| format!("cannot write {}: {e}", script.display()))?;
+    crate::deps::resolve(script, None).map(|_| ())
 }
 
 /// Empties the cache of builds, and with `all` the dependencies fetched
