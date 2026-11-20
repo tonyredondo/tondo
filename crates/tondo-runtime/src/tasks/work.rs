@@ -90,6 +90,20 @@ fn work_from(main: bool, until: Option<&dyn Fn() -> bool>, beside: bool) -> i32 
         next.beside.store(beside, Ordering::Relaxed);
         worker(|w| w.own_next.set(Some(next)));
     }
+    // A thread works on its slot until it returns, which the checker reads.
+    if let Some(next) = own_next() {
+        next.alive.store(true, Ordering::Release);
+    }
+    let status = work_loop(main, until);
+    if let Some(next) = own_next() {
+        next.alive.store(false, Ordering::Release);
+    }
+    status
+}
+
+/// The loop of `work_from`, until the program ends, `until` says, or the
+/// worker retires.
+fn work_loop(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
     // Its slot, which stays its own while the thread works.
     let own = own_next();
     // A worker just woken looks once more, a moment later, for a task
@@ -606,6 +620,7 @@ pub(super) fn start_workers() {
     for _ in 1..count {
         start_worker(false);
     }
+    super::checker::start();
 }
 
 /// Another worker; `beside` one the monitor puts beside a held one.

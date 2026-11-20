@@ -2,7 +2,8 @@
 # Mutation testing of the runtime's core (docs/refactor.md, 0.8): cargo-mutants
 # writes the mutants of the scheduler's core, of the locks of `std.sync` and of
 # strings and arrays, and each, applied in turn to a copy of the repository,
-# must make a test fail: the cases, the runtime's own tests, the orders of
+# must make a test fail: the cases, in debug builds whose runtime checks its
+# scheduler as it runs (TONDO_CHECK_SCHEDULER), the runtime's own tests, the orders of
 # tests/orders or another test of the toolchain, as those of the tools the
 # scheduler serves. One that passes is a missing test, or a change that changes
 # nothing, which testing/mutants/explained.txt says why: a line each, the
@@ -19,7 +20,7 @@ work=$(mktemp -d)
 git -C "$root" archive HEAD | tar -x -C "$work"
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$root/target/mutants}
 export TONDO_RUNTIME_FAST=1
-tasks='in (work_until|steal|enqueue|wake_idle|new_task|first_priority|recycle|Wait::parked|Wait::block|notify_with|schedule|ending|timers_ended|Few<T>::partition_dedup_len)$'
+tasks='in (work_from|work_loop|steal|enqueue|wake_idle|new_task|first_priority|recycle|Wait::parked|Wait::block|notify_with|schedule|ending|timers_ended|Few<T>::partition_dedup_len|monitor|watch_held|watch_nexts|watch_next|stayed|add_worker)$'
 locks='in (try_take|grant|ungrant)$'
 strings='in (Builder::(extend|grow|finish)|append|tondo_rt_str_[a-z_]+|tondo_rt_array_[a-z_]+|tondo_rt_sb_[a-z_]+)$'
 cd "$root"
@@ -47,7 +48,7 @@ tondo = os.path.join(os.environ["CARGO_TARGET_DIR"], "debug", "tondo")
 
 def tests(timeout):
     commands = [
-        ["cargo", "test", "-q", "-p", "tondo", "--test", "cases", "cases"],
+        ["env", "TONDO_CASES_DEBUG=1", "cargo", "test", "-q", "-p", "tondo", "--test", "cases", "cases"],
         ["cargo", "test", "-q", "-p", "tondo-runtime", "--lib"],
         [tondo, "test", "tests/orders", "--schedules", "all"],
         ["cargo", "test", "-q", "-p", "tondo", "--", "--exact", "--skip", "cases", "--skip", "projects"],

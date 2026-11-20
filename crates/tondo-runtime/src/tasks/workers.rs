@@ -33,6 +33,9 @@ pub(super) struct Next {
     /// Its worker is one the monitor put beside a held one, which is given
     /// none beside it in turn (language 16.14).
     pub(super) beside: AtomicBool,
+    /// A thread works on it now: a worker, or a thread of C that runs tasks
+    /// while its call waits; not one that retired.
+    pub(super) alive: AtomicBool,
     /// Its worker's calls of C, which the monitor watches on their own.
     pub(super) in_c: AtomicPtr<InC>,
 }
@@ -53,6 +56,7 @@ impl Next {
             turns: AtomicU64::new(0),
             held: AtomicBool::new(false),
             beside: AtomicBool::new(false),
+            alive: AtomicBool::new(false),
             in_c: AtomicPtr::new(std::ptr::null_mut()),
         }
     }

@@ -7214,6 +7214,28 @@ los puestos a su lado incluidos, Tondo no promete progreso. Las operaciones de l
 librería estándar que esperan a un recurso externo detienen la tarea, no el
 thread. La cancelación se observa en las esperas y en `tasks.checkpoint()` (11.15).
 
+Con `TONDO_CHECK_SCHEDULER=1` (7.17 del toolchain), el runtime comprueba mientras
+corre lo que promete esta sección, en miradas propias de un milisegundo, de modo
+que un proceso que el sistema detiene no rompe ninguna regla:
+
+- una tarea lista, o un temporizador vencido, no sigue así cien miradas mientras
+  un worker duerme sin que nada le haya dicho que mire;
+- un worker que lleva quinientas miradas en la misma tarea mientras otras esperan
+  y ninguno está libre tiene otro a su lado, salvo que él mismo esté al lado de
+  otro o el programa tenga ya el doble de sus workers;
+- los workers, sin contar los que están en lugar de uno en una llamada de C o de
+  uno que retiene una herramienta, como el depurador, nunca son más del doble de
+  los que el programa tiene;
+- el monitor no duerme mientras una tarea despertada por la que corre en un
+  worker sigue lista junto a él cien miradas.
+
+Una regla rota termina el programa con el pánico `P0020`, que dice cuál, de qué
+tarea y de qué worker, con el estado del planificador debajo. `P0020` es del
+runtime, no del programa: ningún `recover` lo detiene, y termina el programa con
+su volcado, como `P0013`. Con `--schedules`, en una ejecución grabada y en su
+reproducción, una sola tarea corre a la vez y no se añaden workers, por diseño, y
+la comprobación no se hace.
+
 ### 16.15 Modelo de memoria concurrente
 
 Un programa escrito íntegramente en Tondo seguro no contiene data races. El
@@ -9708,6 +9730,7 @@ oculten un diagnóstico independiente.
 | `P0017` | `invalid-panic-code` | El `code` calculado de `panic` no es un código propio (15.7). | `code` |
 | `P0018` | `negative-exponent` | `pow` de un entero, o una de sus variantes, recibe un exponente negativo (18.9). | `exponent` |
 | `P0019` | `lock-order` | Locks tomados en órdenes que pueden bloquearse, con `tondo test --lock-order` |
+| `P0020` | `scheduler-rule` | Con `TONDO_CHECK_SCHEDULER`, el planificador rompe una de las reglas de 16.14. | `rule` |
 | `P2001` | `test-skip-during-cleanup` | `testing.skip` intenta omitir un nodo durante cleanup, unwind o teardown. | — |
 | `P2002` | `test-tag-conflict` | `testing.tags` intenta cambiar el valor ya asociado a una key en el mismo envelope. | — |
 | `P2003` | `test-virtual-time-deadlock` | Un dominio temporal virtual queda quiescente sin timer ni evento interno capaz de progresar. | — |

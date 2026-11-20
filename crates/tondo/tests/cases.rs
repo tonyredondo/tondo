@@ -40,7 +40,9 @@
 //! `TONDO_CHECK_LIFETIMES=1`, so that a value a release build puts in a region
 //! it outlives faults where it is read. With
 //! `TONDO_CASES_STATIC` set, cases build static executables (`--static`);
-//! with `TONDO_CASES_DEBUG`, debug builds (`--debug`); with
+//! with `TONDO_CASES_DEBUG`, debug builds (`--debug`), whose runtime checks
+//! as it runs what its scheduler promises (`TONDO_CHECK_SCHEDULER`, off by
+//! itself under an order or a recording); with
 //! `TONDO_CASES_LIVE`, live builds (`--live`). With `TONDO_CASES_REPLAY`,
 //! debug builds whose runs are recorded, each checked as ever and then
 //! replayed, which must write the same and end the same. With
@@ -262,6 +264,10 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
         // It serves the tools, so that one that hangs can say why.
         if std::env::var_os("TONDO_CASES_REPLAY").is_none() {
             command.env("TONDO_DIAGNOSTICS", "1");
+        }
+        // Unless the runner is given it, as `0` to measure what it catches.
+        if std::env::var_os("TONDO_CASES_DEBUG").is_some() && std::env::var_os("TONDO_CHECK_SCHEDULER").is_none() {
+            command.env("TONDO_CHECK_SCHEDULER", "1");
         }
         command
     };

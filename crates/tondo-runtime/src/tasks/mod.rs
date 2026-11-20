@@ -60,6 +60,8 @@ pub(crate) use stop::*;
 mod foreign;
 pub(crate) use foreign::*;
 
+mod checker;
+
 mod inspect;
 pub(crate) use inspect::*;
 

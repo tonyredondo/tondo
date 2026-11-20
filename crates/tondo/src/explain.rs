@@ -422,6 +422,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
     ("P0017", "invalid-panic-code", "The computed `code` of `panic` is not a code of the program's own."),
     ("P0018", "negative-exponent", "`pow` of an integer, or one of its variants, gets a negative exponent."),
     ("P0019", "lock-order", "Locks taken in orders that can deadlock, under `tondo test --lock-order`."),
+    (
+        "P0020",
+        "scheduler-rule",
+        "Under `TONDO_CHECK_SCHEDULER`, the runtime's scheduler broke a rule it promises: a task ready while a worker sleeps untold, a worker held with none beside it, workers past twice their number, or the monitor asleep beside a woken task. The runtime's fault, not the program's: no `recover` takes it.",
+    ),
     ("P2001", "test-skip-during-cleanup", "`testing.skip` while a cleanup, an unwind or a teardown runs."),
     ("P2002", "test-tag-conflict", "`testing.tags` changes the value a key already has in the same test."),
     (

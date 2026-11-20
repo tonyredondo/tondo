@@ -165,14 +165,31 @@ pub extern "C" fn tondo_rt_foreign_leave() {
 /// exploring orders, starts no other.
 pub(crate) fn step_aside() {
     if exploring().is_none() {
+        ASIDE.fetch_add(1, Ordering::SeqCst);
         queue().workers += 1;
         start_worker(false);
     }
 }
 
+/// The tasks a tool holds on their worker, for each of which another
+/// worker stands in (`step_aside`).
+static ASIDE: AtomicUsize = AtomicUsize::new(0);
+
+/// How many workers stand in for one in a call of C or one whose task a
+/// tool holds: none of them counts against twice the workers (16.14).
+pub(super) fn standing_in() -> usize {
+    let callers = CALLERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let in_c = callers
+        .iter()
+        .filter(|state| state.replaced.load(Ordering::SeqCst) && state.depth.load(Ordering::SeqCst) > 0)
+        .count();
+    in_c + ASIDE.load(Ordering::SeqCst)
+}
+
 /// The task goes on: one worker retires.
 pub(crate) fn step_back() {
     if exploring().is_none() {
+        ASIDE.fetch_sub(1, Ordering::SeqCst);
         let mut queue = queue();
         queue.surplus += 1;
         wake_one(queue);
