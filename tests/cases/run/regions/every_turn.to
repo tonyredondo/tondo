@@ -1,13 +1,13 @@
-// A function that stays a call and makes values in every turn of a loop,
-// for the region its caller gives when it returns one of them, held to a
-// fixed bound of memory after the loop: a region keeps nothing that a turn
-// makes and the next no longer needs. One whose words leave only by a
-// `fail`, and one whose last words replace the others', each over 200,000
-// turns, hold their memory flat, where without the rule they held 45 MB;
-// one that keeps every turn's words on purpose grows with the turns, in a
-// region or on the heap. Nor does a function that calls another in every
-// turn pass it the region its caller gives. The bytes are the runtime's own
-// count, of its regions and of its heap.
+// A function that stays a call and makes values in every turn of a loop, for
+// the region its caller gives when it returns one of them, held to a fixed
+// bound of memory after the loop: a region keeps nothing that a turn makes and
+// the next no longer needs. One whose words leave only by a `fail`, and one
+// whose last words replace the others', each over 20,000 turns, hold their
+// memory flat, where without the rule they held about 4.5 MB; one that keeps
+// every turn's words on purpose grows with the turns, in a region or on the
+// heap. Nor does a function that calls another in every turn pass it the region
+// its caller gives. The bytes are the runtime's own count, of its regions and
+// of its heap.
 
 import std.console
 import std.diagnostics
@@ -145,19 +145,19 @@ fn said(name: String, grew: Int): String {
 
 fn main() {
     let before = held()
-    let total = match exitOnly(200000) {
+    let total = match exitOnly(20000) {
         ok(total) => total
         err(_) => -1
     }
     console.println(said("exit only", held() - before))
     let middle = held()
-    let last = lastOnly(200000)
+    let last = lastOnly(20000)
     console.println(said("last only", held() - middle))
     let called = held()
-    let lastWords = lastCalled(200000)
+    let lastWords = lastCalled(20000)
     console.println(said("last called", held() - called))
     let end = held()
-    let all = keptAll(100000)
+    let all = keptAll(10000)
     let grew = held() - end > 1048576
     console.println("kept on purpose grows: {grew}")
     console.println("{total} {last} {lastWords} {all.length()}")
@@ -167,7 +167,7 @@ fn main() {
 // expect-stdout: last only: flat
 // expect-stdout: last called: flat
 // expect-stdout: kept on purpose grows: true
-// expect-stdout: 800001 [first, second, third, 199999] [first, second, third, 199999] 100001
+// expect-stdout: 80001 [first, second, third, 19999] [first, second, third, 19999] 10001
 // expect-optimization: 56:21 region stays on the heap: it is made in every turn of the loop at line 55, and the region the caller of `lastOnly` gives would keep each turn's
 // expect-optimization: 78:9 region grows an array that goes in a region that the caller of `keptAll` gives
 // expect-optimization: 78:18 region goes in a region that the caller of `keptAll` gives

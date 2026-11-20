@@ -8422,10 +8422,12 @@ that would pass the caller's region on from every turn of a loop calls
 the function's own version instead: "`g` calls it in every turn of a
 loop, where the region its caller gives would keep each turn's".
 `regions/every_turn.to` holds the bound from inside the program, with
-the runtime's own count of its regions' and its heap's bytes: 200,000
-turns of each shape stay under a mebibyte, where main, and the widened
-change without the rule, held 45 MB, and the table's million turns 224
-MB.
+the runtime's own count of its regions' and its heap's bytes: 20,000
+turns of each shape stay under a mebibyte, where main held 4.5 MB in the
+two whose last words replace the others', and the table's million turns
+224 MB; 10,000 turns kept on purpose grow by 2.3 MB. The case first ran
+200,000 turns, 45 MB on main, and under the lifetimes check took longer
+than a loaded CI runner's 60 seconds.
 
 An append under an `if`, `x = if c { "{x}-" } else { "{x}" }`, is not
 one the pass sees, so such a text built in a loop goes to the heap.
