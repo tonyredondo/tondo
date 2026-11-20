@@ -239,7 +239,10 @@ from the bottom:
   negative.
 - **Loops.** Both loops run four turns at a time, and the array is given
   room for all thousand elements before the loop that fills it starts, so
-  `push` never grows it.
+  `push` never grows it. A `for` that gives its values,
+  `let readings = for n in 0..1000 { Reading { ... } }`, is this same loop
+  written by the compiler, and the view says the same two things of it, at
+  the value its turn ends with.
 - **The heap.** In `label`, the label is a string that is returned, so it
   is made on the heap. A string, a closure or a record that does not
   outlive its function stays in the function's frame, and the line says

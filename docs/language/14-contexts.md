@@ -172,9 +172,8 @@ fn handle(id: String): Array[String] {
 }
 
 fn main() {
-    let first = spawn handle("r-1")
-    let second = spawn handle("r-2")
-    console.println("{first.wait()} {second.wait()}")
+    let (first, second) = (spawn handle("r-1"), spawn handle("r-2")).wait()
+    console.println("{first} {second}")
 }
 ```
 

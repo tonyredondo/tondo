@@ -758,11 +758,10 @@ fn work(hits: sync.Mutex[Map[String, Int]], page: String) {
 fn main() {
     let empty: Map[String, Int] = [:]
     let hits = sync.Mutex(empty)
-    var group = Group[Unit]()
-    for n in 0..50 {
-        group.add(spawn work(hits, if n % 2 == 0 { "/home" } else { "/about" }))
+    let working = for n in 0..50 {
+        spawn work(hits, if n % 2 == 0 { "/home" } else { "/about" })
     }
-    group.wait()
+    working.wait()
     let counts = hits.get()
     console.println("{counts.get("/home") ?? 0} {counts.get("/about") ?? 0}")
 }

@@ -36,7 +36,8 @@ fn main() {
 - A `Join` nobody waits for is waited at the end of its block, so no task is
   left behind by accident. In a loop that means one task at a time, which
   warns (`W1013`): `spawn detached` launches a task nobody waits for, as a
-  server does for each connection, and a `Group` waits for many at once.
+  server does for each connection, and a loop that gives its tasks,
+  `let jobs = for x in xs { spawn f(x) }`, has them all to wait for at once.
 - An array of tasks is waited for whole: `ids.map((id) { spawn fetch(id) })`
   starts one for each element, and `wait()` on it gives every result in the
   array's order and cancels nothing, each keeping its own error; `cancel()`
@@ -198,11 +199,8 @@ pub type Stats = { hits: Int }
 fn main() {
     let stats = sync.Mutex(Stats { hits: 0 })
     let counter = sync.Atomic(0)
-    var group = Group[Unit]()
-    for _ in 0..4 {
-        group.add(spawn record(stats, counter))
-    }
-    group.wait()
+    let recording = for _ in 0..4 { spawn record(stats, counter) }
+    recording.wait()
     console.println("{stats.get().hits} {counter.load()}")
 }
 
@@ -232,11 +230,8 @@ import std.executor
 
 fn main(): !(executor.ExecutorError | executor.SubmitError | executor.SendError) {
     let pool = executor.pool(2, 8)?
-    var group = Group[Int]()
-    for n in 1..=5 {
-        group.add(pool.submit(() { n * n })?)
-    }
-    console.println("{group.wait()}")
+    let squares = for n in 1..=5 { pool.submit(() { n * n })? }
+    console.println("{squares.wait()}")
     pool.shutdown()
 
     let counter = executor.actor(0, 16, (total: var Int, amount: Int) {

@@ -1141,11 +1141,8 @@ fn record(stats: sync.Mutex[Stats], took: Int, failed: Bool) {
 
 fn main() {
     let stats = sync.Mutex(Stats { requests: 0, errors: 0, slowest: 0 })
-    var group = Group[Unit]()
-    for n in 1..=100 {
-        group.add(spawn record(stats, n, n % 10 == 0))
-    }
-    group.wait()
+    let recording = for n in 1..=100 { spawn record(stats, n, n % 10 == 0) }
+    recording.wait()
     let final = stats.get()
     console.println("{final.requests} requests, {final.errors} errors, slowest {final.slowest}")
 }
@@ -1182,11 +1179,8 @@ import std.sync
 
 fn main() {
     let hits = sync.Atomic(0)
-    var group = Group[Int]()
-    for _ in 0..1000 {
-        group.add(spawn hits.add(1))
-    }
-    group.wait()
+    let adding = for _ in 0..1000 { spawn hits.add(1) }
+    adding.wait()
     console.println("{hits.load()} {hits.swap(0)} {hits.load()}")
 }
 ```
@@ -1334,11 +1328,8 @@ import std.executor
 
 fn main(): !(executor.ExecutorError | executor.SubmitError) {
     let pool = executor.pool(2, 8)?             // 2 at a time, 8 waiting
-    var group = Group[Int]()
-    for n in 1..=5 {
-        group.add(pool.submit(() { n * n })?)
-    }
-    console.println("{group.wait()}")
+    let squares = for n in 1..=5 { pool.submit(() { n * n })? }
+    console.println("{squares.wait()}")
     pool.shutdown()
 }
 ```

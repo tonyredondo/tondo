@@ -540,11 +540,8 @@ fn record(stats: sync.Mutex[Stats], counter: sync.Atomic[Int]) {
 fn main() {
     let stats = sync.Mutex(Stats { hits: 0 })
     let counter = sync.Atomic(0)
-    var group = Group[Unit]()
-    for _ in 0..4 {
-        group.add(spawn record(stats, counter))
-    }
-    group.wait()
+    let recording = for _ in 0..4 { spawn record(stats, counter) }
+    recording.wait()
     console.println("{stats.get().hits} {counter.load()}")
 }
 ```
