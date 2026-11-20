@@ -8387,3 +8387,63 @@ that waits costs only on the chain of what is being computed, as each
 digit of a parse feeds the next multiplication. So only the parser took
 the path, and the rest wait for a program of their own to show cycles.
 
+## A region keeps nothing a turn makes that the next no longer needs
+
+The region a caller gives a copy of a function lives until the caller's
+region ends. Placement put in it every value of the copy that the
+function returns, whether the function made it once or in every turn of
+a loop. A function that split a line in each turn and returned the last
+turn's words kept every turn's: 240 MB at a million turns, where on the
+heap it held 11 MB. A copy that called another function in every turn
+and returned its result passed the region on, with the same effect. The
+function's own region never did this: a turn's region empties each turn,
+and what outlives a turn stays on the heap unless the loop only pushes
+it into arrays or grows one text in place (toolchain 7.18). Peak
+resident memory of one program, with the release tondo of c93a7679 and
+with the change that widened what counts as fresh but without this rule:
+
+| shape | main, regions | main, heap | widened, regions | widened, heap |
+| --- | --- | --- | --- | --- |
+| a word leaves only by `fail`, 250k / 1M turns | 11.6 / 11.6 MB | 11.1 / 11.6 MB | 65.9 / 240.0 MB | 11.6 / 10.9 MB |
+| the last turn's words replace the others' | 65.8 / 240.0 MB | 11.6 / 11.1 MB | 65.8 / 240.2 MB | 11.1 / 11.4 MB |
+| every turn's words kept on purpose | 67.7 / 248.3 MB | 72.2 / 266.8 MB | 68.0 / 248.3 MB | 72.1 / 266.4 MB |
+
+Now a value that a copy would make for its caller's region in every turn
+of a loop of the function stays on the heap, and the view says "it is
+made in every turn of the loop at line N, and the region the caller of
+`f` gives would keep each turn's". The exceptions are what the
+function's own region would take for the whole loop: one array the loop
+only grows with `push`, what only such arrays keep past the turns, and
+one text grown by the append the pass sees, `x = "{x}..."`. Each of
+those leaves at most its own size behind it as it grows. A value made
+only on a way out of the loop that never comes back to its head, as the
+error a `fail` carries, is made once a call and keeps the region. A call
+that would pass the caller's region on from every turn of a loop calls
+the function's own version instead: "`g` calls it in every turn of a
+loop, where the region its caller gives would keep each turn's".
+`regions/every_turn.to` holds the bound from inside the program, with
+the runtime's own count of its regions' and its heap's bytes: 200,000
+turns of each shape stay under a mebibyte, where main, and the widened
+change without the rule, held 45 MB, and the table's million turns 224
+MB.
+
+An append under an `if`, `x = if c { "{x}-" } else { "{x}" }`, is not
+one the pass sees, so such a text built in a loop goes to the heap.
+std's `cli.kebab` and `grpc.percentEncoded` were written so, and they
+were quadratic in work on the heap before regions; they now append in
+each branch. An append on every branch of an `if` is listed for Phase K.
+
+A probe in placement counted, over the 11 examples and bench/tondo with
+the std code they reach, the places of this kind: on main, 4 made only
+to leave by an exit and 4 made new in each turn, replacing the last.
+With the change that widened freshness there would have been 7 and 9.
+All are in the library, and no example's own code has one. By the view,
+the rule moves 2 places of bench's derived `Purchase.decode` to the
+heap, and stops 3 calls from passing the region on: `links.targets`,
+textkit's `frequencies` and a protobuf reader. textkit's `frequencies`
+keeps its map's keys from `slug` on the heap with them, as a map keeping
+values from turn to turn does in a function's own region. The view also
+names a loop by the first of its names that is the program's code: where
+it is written, then the calls that brought the code of its head, as the
+`for` that a `next()` is inlined into. Eight places that named a line of
+std now name the program's.

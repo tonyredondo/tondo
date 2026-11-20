@@ -238,10 +238,10 @@ fn program(): String {
 fn kebab(name: String): String {
     var written = ""
     for c in name.chars() {
-        written = if c.isUpper() and not written.isEmpty() {
-            "{written}-{c.toLower()}"
+        if c.isUpper() and not written.isEmpty() {
+            written = "{written}-{c.toLower()}"
         } else {
-            "{written}{c.toLower()}"
+            written = "{written}{c.toLower()}"
         }
     }
     written

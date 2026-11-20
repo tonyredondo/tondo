@@ -208,10 +208,10 @@ fn percentEncoded(text: String): String {
     var out = ""
     for byte in text.bytes() {
         let value = Int(byte)
-        out = if value >= 0x20 and value <= 0x7e and value != 0x25 {
-            "{out}{Char.from(value) ?? '?'}"
+        if value >= 0x20 and value <= 0x7e and value != 0x25 {
+            out = "{out}{Char.from(value) ?? '?'}"
         } else {
-            "{out}%{value.toString(16).padStart(2, "0").toUpper()}"
+            out = "{out}%{value.toString(16).padStart(2, "0").toUpper()}"
         }
     }
     out

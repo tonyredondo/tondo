@@ -2510,7 +2510,9 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   toolchain (estado 3).
 - `region`: dónde va lo que asigna cada sitio, en una región, memoria que
   un marco toma moviendo un puntero y devuelve entera al terminar, o en el
-  heap. Un array, un deque, un mapa o un conjunto que el bucle vacía, con
+  heap. Una región no guarda lo que cada vuelta de un bucle hace y la
+  siguiente ya no necesita, salvo lo que deja atrás un valor que crece en
+  su sitio, que no pasa de su tamaño. Un array, un deque, un mapa o un conjunto que el bucle vacía, con
   `x = []`, `x = Deque[T]()`, `x = [:]`, `x = Set[T]()` o `x.clear()`, y
   vuelve a llenar sigue donde iría sin vaciarse, y en una región guarda su
   sitio sea cual sea. Va en la región de la función que lo hace si nada lo
@@ -2527,14 +2529,25 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   y nombra el bucle por su línea; en una que le da quien la llama
   si la función solo lo devuelve, nuevo, y quienes lo toman tampoco lo
   guardan, y si unas llamadas lo sueltan y otras lo guardan, en una copia
-  de la función para las primeras, y nombra unas y otras; o se queda en el
+  de la función para las primeras, y nombra unas y otras, salvo lo que la
+  función hace en cada vuelta de uno de sus bucles, que esa región guardaría
+  hasta que acaba la de quien la llama: va en ella solo lo que la región de
+  la función tomaría para todo el bucle, un array que el bucle solo amplía
+  con `push`, lo que solo esos arrays guardan de una vuelta a otra y un
+  texto que crece en su sitio, `x = "{x}..."`, que dejan atrás a lo sumo
+  su propio tamaño, y lo que se hace solo en una salida del bucle que no
+  vuelve a él, una vez por llamada, y la función no pasa esa región a una
+  llamada que hace en cada vuelta de un bucle; o se queda en el
   heap, y dice por qué: se guarda en lo que la función recibió, en el
   estado de un lock o en un `Ref`, lo captura un closure, se envía, va a
   una tarea o a C, lo guarda una función a la que se pasa, y no una que
   solo lo devuelve, como `sorted` un array de menos de dos elementos,
   cuyo resultado se sigue en su lugar, sobrevive a una
   vuelta del bucle en que se hace en algo que el bucle hace más que ampliar,
-  como la variable que la vuelta siguiente reescribe, contiene un valor que
+  como la variable que la vuelta siguiente reescribe, se hace en cada
+  vuelta de un bucle para la región que le da quien la llama, y nombra el
+  bucle, lo devuelve una función a la que se llama en cada vuelta de un
+  bucle, y nombra a quien la llama así, contiene un valor que
   su región no hizo, contiene un objeto del runtime, que un valor de una
   región nunca soltaría, se cambia de un modo que una región no toma aún, como
   un mapa que cambia más que con sus inserciones, sus borrados, `x = [:]`,

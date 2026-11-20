@@ -793,6 +793,12 @@ S5 (1) `sortedBy 10000` (1.18 ms to 1.90 ms over four orders, against 1.38 to 1.
 and logstat again (266 µs to 307 µs, against 269 to 278). The cycles-over-layouts tool is to say
 which loop's head moved and what aligning it costs.
 
+The pass is also to take an append on every branch of an `if`, `x = if c { "{x}-" } else {
+"{x}" }`, for the append it is. Until then such a text, built in a loop of a function whose result
+its caller's region takes, is a new one in each turn, which stays on the heap so that the region
+does not keep every turn's (docs/decisions.md, "A region keeps nothing a turn makes that the next no
+longer needs"); std's `cli.kebab` and `grpc.percentEncoded` append in each branch instead.
+
 ## Status
 
 | Phase | State |

@@ -1525,7 +1525,8 @@ fn opens_a_library_call_and_sums_its_places() {
         .lines()
         .find(|line| line.contains("stays a call of `json.whole[Config]`"))
         .unwrap_or_else(|| panic!("{said}"));
-    assert!(call.contains("places in it make values"), "{call}");
+    // "1 place in it makes values …", or "places … make".
+    assert!(call.contains(" in it make"), "{call}");
     let (data, _) = json(&dir, &["optimizations", "main.to", "--kind", "call", "--json"]);
     let found = data["optimizations"].as_array().unwrap();
     let call = found.iter().find(|o| o["text"].as_str().unwrap_or_default().contains("json.whole")).unwrap();

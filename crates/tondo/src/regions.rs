@@ -239,7 +239,9 @@ pub fn regions(
             // A loop by its line, and its file when it is another than the
             // one the line is told in.
             let told = told_at(body, site, sources);
-            let line = |at: &Span| {
+            // A loop by the first of its names that is the program's code.
+            let line = |named: &[Span]| {
+                let at = named.iter().find(|&&at| !library(sources, at)).or(named.first()).copied().unwrap_or_default();
                 let ((file, line, _), (here, ..)) = (sources.position(at.start), sources.position(told.start));
                 match file == here {
                     true => format!("line {line}"),
@@ -250,6 +252,16 @@ pub fn regions(
                 Outcome::Stands => continue,
                 Outcome::Turn(at) => {
                     verdict.text = format!("{what}goes in the region of a turn of the loop at {}", line(at))
+                }
+                Outcome::EveryTurn(at) => {
+                    verdict.region = false;
+                    verdict.by_call = false;
+                    verdict.text = format!(
+                        "{what}stays on the heap: it is made in every turn of the loop at {}, and the region the \
+                         caller of `{}` gives would keep each turn's",
+                        line(at),
+                        body.name
+                    );
                 }
                 Outcome::Outlives(at) => {
                     verdict.region = false;
@@ -506,6 +518,40 @@ fn copied_out(
     !copying.is_empty()
 }
 
+/// The loop in every turn of which a copy makes the value of `site` for the
+/// region its caller gives, which would keep each turn's until the caller's
+/// ends (`every_turn_of`).
+fn made_every_turn(flow: &Flow, body: &Body, types: &Types, lifetimes: &Lifetimes, site: &Site) -> Option<usize> {
+    let parts = flow.called[site.local.0 as usize];
+    every_turn_of(flow, body, types, lifetimes, site.local, site.at, parts, Some(site))
+}
+
+/// The loop in every turn of which the statement at `at` makes the value
+/// of `local` again, so that a region that outlives the loop would keep
+/// each turn's: none where it is made once a call, as on the way out of a
+/// `?`, and none where the function's own region would take it for the
+/// whole loop (`Lifetimes::region`), one array the loop only grows with
+/// `push`, what only such arrays keep past the turns, or one text grown in
+/// place, `x = "{x}..."`, each of which leaves at most its own size behind
+/// it as it grows.
+#[allow(clippy::too_many_arguments)]
+fn every_turn_of(
+    flow: &Flow,
+    body: &Body,
+    types: &Types,
+    lifetimes: &Lifetimes,
+    local: Local,
+    at: (u32, u32),
+    parts: bool,
+    grows: Option<&Site>,
+) -> Option<usize> {
+    let k = lifetimes.every_turn(at.0 as usize)?;
+    match lifetimes.region(flow, body, types, local, at, parts, grows) {
+        Some(0) => None,
+        _ => Some(k),
+    }
+}
+
 /// What a build puts in regions today, of what a region takes now: in each
 /// function, what the verdicts give its own region, in the region of the
 /// function or of the innermost loop whose turn it does not outlive; in a
@@ -649,12 +695,24 @@ fn place(
             .collect();
         // Where what the verdicts give a region goes in the end.
         let loops = &lifetimes[index];
-        let written = |k: usize| loops.written(body, k);
+        let written = |k: usize| loops.named(body, k);
+        // What a copy would make in every turn of a loop for the region its
+        // caller gives stays on the heap, as that region would keep each
+        // turn's until the caller's ends.
+        let every_turn: Vec<Option<usize>> = sites
+            .iter()
+            .zip(verdicts)
+            .map(|(site, verdict)| match copied[index] && site.placed() && verdict.region && !verdict.own {
+                true => made_every_turn(&flows[index], body, types, loops, site),
+                false => None,
+            })
+            .collect();
         let mut outcome: Vec<Outcome> = sites
             .iter()
             .zip(verdicts)
             .zip(&regions)
-            .map(|((site, verdict), region)| match (verdict.region, verdict.own, site.refused, region) {
+            .zip(&every_turn)
+            .map(|(((site, verdict), region), every_turn)| match (verdict.region, verdict.own, site.refused, region) {
                 (false, ..) => Outcome::Stands,
                 (true, _, Some(why), _) => Outcome::Heap(why.to_string(), None),
                 (true, true, None, Some(0)) => Outcome::Stands,
@@ -662,9 +720,10 @@ fn place(
                 (true, true, None, None) => {
                     Outcome::Outlives(loops.loop_of(site.at.0 as usize).map(written).unwrap_or_default())
                 }
-                (true, false, None, _) => match copied[index] {
-                    true => Outcome::Stands,
-                    false => Outcome::Heap(format!("no call of `{}` lets it go", body.name), None),
+                (true, false, None, _) => match (copied[index], every_turn) {
+                    (true, Some(k)) => Outcome::EveryTurn(written(*k)),
+                    (true, None) => Outcome::Stands,
+                    (false, _) => Outcome::Heap(format!("no call of `{}` lets it go", body.name), None),
                 },
             })
             .collect();
@@ -692,7 +751,10 @@ fn place(
             .iter()
             .zip(verdicts)
             .zip(&regions)
-            .map(|((site, verdict), region)| site.placed() && verdict.region && (!verdict.own || region.is_some()))
+            .zip(&every_turn)
+            .map(|(((site, verdict), region), every_turn)| {
+                site.placed() && verdict.region && (!verdict.own || region.is_some()) && every_turn.is_none()
+            })
             .collect();
         for (at, (why, by)) in holding(&flows[index], body, types, loans, sites, &mut placed, &gives) {
             if !verdicts[at].own {
@@ -774,10 +836,13 @@ fn place(
 enum Outcome {
     /// Where its verdict says, in a region or on the heap.
     Stands,
-    /// In the region of a turn of the loop written there.
-    Turn(Span),
-    /// On the heap, as it outlives a turn of the loop written there.
-    Outlives(Span),
+    /// In the region of a turn of the loop named so (`Lifetimes::named`).
+    Turn(Vec<Span>),
+    /// On the heap, as it outlives a turn of the loop named so.
+    Outlives(Vec<Span>),
+    /// On the heap, as a copy makes it in every turn of the loop named so
+    /// for the region its caller gives, which would keep each turn's.
+    EveryTurn(Vec<Span>),
     /// On the heap, as no region takes it: why, and the code that keeps it.
     Heap(String, Option<crate::mir::By>),
 }
@@ -857,9 +922,37 @@ impl Lifetimes {
         Lifetimes { loops, live_head, live_out, back, looped }
     }
 
+    /// Where loop `k` is written (`written`), and then each call that
+    /// brought the code of its head, from the innermost out: the view names
+    /// it by the first that is the program's, as the `for` a `next()` of an
+    /// iterator is inlined into.
+    fn named(&self, body: &Body, k: usize) -> Vec<Span> {
+        let mut named = vec![self.written(body, k)];
+        let mut scope = body.scopes.get(self.loops[k].0).copied().flatten();
+        while let Some(at) = scope {
+            named.push(body.inlined[at as usize].call);
+            scope = body.inlined[at as usize].parent;
+        }
+        named
+    }
+
     /// The innermost loop `block` is in.
     fn loop_of(&self, block: usize) -> Option<usize> {
         self.loops.iter().position(|(_, inside)| inside[block])
+    }
+
+    /// The innermost loop whose head `block` comes back to, so that what it
+    /// makes is made again in each turn; none when it is in no loop, or
+    /// only on a way out that never comes back, as a `?`'s.
+    fn every_turn(&self, block: usize) -> Option<usize> {
+        if !self.looped.get(block).copied().unwrap_or(false) {
+            return None;
+        }
+        // In a loop whose lifetimes were not read: each turn, to be safe.
+        if self.back.len() != self.loops.len() {
+            return self.loop_of(block);
+        }
+        (0..self.loops.len()).find(|&k| self.loops[k].1[block] && self.back[k][block])
     }
 
     /// Where loop `k` is written: the first statement of its head, as its
@@ -3073,7 +3166,9 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize], flows: &[Flow], si
         }
     }
     // What each call that runs does with the result it takes, when the
-    // callee returns what it makes.
+    // callee returns what it makes. The loops of a caller, read once, where
+    // a call may pass on the region its caller gives.
+    let mut loops: Vec<Option<Lifetimes>> = (0..bodies.len()).map(|_| None).collect();
     for (index, body) in bodies.iter().enumerate().filter(|&(index, _)| live[index]) {
         for &(block, statement, local, callee, span) in &flows[index].results {
             if !summaries[callee].fresh {
@@ -3087,7 +3182,25 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize], flows: &[Flow], si
             }
             let taken = match fate(&flows[index], body, types, local, &summaries, bodies) {
                 Fate::Here => Taken::Drops,
-                Fate::Returned if summaries[index].fresh => Taken::Passes,
+                // A call in every turn of a loop that passed on the region
+                // its caller gives would leave each turn's result there.
+                Fate::Returned if summaries[index].fresh => {
+                    let lifetimes = loops[index].get_or_insert_with(|| {
+                        Lifetimes::of(body, flows[index].results.iter().map(|&(block, ..)| block as u32))
+                    });
+                    let at = (block as u32, statement as u32);
+                    match every_turn_of(&flows[index], body, types, lifetimes, local, at, true, None) {
+                        Some(k) => Taken::Keeps(
+                            format!(
+                                "`{}` calls it in every turn of a loop, where the region its caller gives would keep \
+                                 each turn's",
+                                body.name
+                            ),
+                            lifetimes.written(body, k),
+                        ),
+                        None => Taken::Passes,
+                    }
+                }
                 Fate::Returned if returned_by_error(&flows[index], body, types, local, &summaries, bodies) => {
                     let callee = &bodies[callee].name;
                     let why = format!(

@@ -1,0 +1,146 @@
+// Where what a function makes in a loop for the region its caller gives
+// goes: a region keeps nothing that each turn makes and the next no longer
+// needs. What the function's own region would take for the whole loop
+// goes in the caller's too: one array the loop only grows with `push`,
+// what only such arrays keep past the turns, and one text grown in place,
+// `x = "{x}..."`, each of which leaves at most its own size behind it. So
+// does what is made only on the way out of the loop, once a call. Each
+// turn's words that the next turn no longer needs stay on the heap, and so
+// does a text grown under an `if`, `x = if c { "{x}-" } else { "{x}" }`,
+// whose append the pass does not see.
+
+import std.console
+
+pub enum Bad {
+    Word(String)
+}
+
+/// Every turn's words, kept in the array the loop grows.
+fn kept(n: Int): Array[Array[String]] {
+    var spare = 0
+    for k in 0..n % 97 {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    var all: Array[Array[String]] = [["{spare}"]]
+    for i in 0..n {
+        all.push("first second third {i}".split(" "))
+    }
+    all
+}
+
+/// One text grown in place.
+fn appended(n: Int): String {
+    var spare = 0
+    for k in 0..n % 97 {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    var text = "{spare}"
+    for i in 0..n {
+        if i % 2 == 0 {
+            text = "{text}-{i}"
+        } else {
+            text = "{text}{i}"
+        }
+    }
+    text
+}
+
+/// The same text, grown under an `if`.
+fn appendedUnderIf(n: Int): String {
+    var spare = 0
+    for k in 0..n % 97 {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    var text = "{spare}"
+    for i in 0..n {
+        text = if i % 2 == 0 { "{text}-{i}" } else { "{text}{i}" }
+    }
+    text
+}
+
+/// A word made only on the way out, once a call; the words of each turn
+/// stay on the heap.
+fn firstLong(n: Int): Int ! Bad {
+    var spare = 0
+    for k in 0..n % 97 {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    var total = spare % 2
+    for i in 0..n {
+        let words = "first second third {i}".split(" ")
+        if words[3].length() > 2 {
+            fail Word("{words[3]} is too long")
+        }
+        total += words.length()
+    }
+    total
+}
+
+/// The last turn's words, which replace the others'.
+fn lastWords(n: Int): Array[String] {
+    var spare = 0
+    for k in 0..n % 97 {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    var last: Array[String] = ["{spare}"]
+    for i in 0..n {
+        let words = "first second third {i}".split(" ")
+        if words.length() > 1 {
+            last = words
+        }
+    }
+    last
+}
+
+fn main() {
+    var total = 0
+    for round in 0..3 {
+        total += kept(round + 2).length()
+        total += appended(round + 5).length()
+        total += appendedUnderIf(round + 5).length()
+        total += lastWords(round + 2).length()
+        total += match firstLong(round + 200) {
+            ok(words) => words
+            err(Word(word)) => word.length()
+        }
+    }
+    console.println("{total} {appended(4)} {appendedUnderIf(4)}")
+}
+
+// expect-stdout: 137 8-01-23 8-01-23
+// expect-optimization: 32:9 region grows an array that goes in a region that the caller of `kept` gives
+// expect-optimization: 32:18 region in `String.split`, `textNative.split(self, separator, most)` goes in a region that the caller of `kept` gives
+// expect-optimization: 52:13 region goes in a region that the caller of `appended` gives
+// expect-optimization: 74:32 region stays on the heap: it is made in every turn of the loop at line 73, and the region the caller of `appendedUnderIf` gives would keep each turn's
+// expect-optimization: 96:23 region goes in a region that the caller of `firstLong` gives
+// expect-optimization: 117:21 region in `String.split`, `textNative.split(self, separator, most)` stays on the heap: it is made in every turn of the loop at line 116
