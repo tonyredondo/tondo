@@ -15,6 +15,22 @@
 // one that asks; a third task waits. It runs in the end, the workers never
 // pass twice their number, and they come back to it once every task has
 // ended.
+//
+// What it assumes of the code, read against it on 2026-11-21:
+// - The monitor looks at every step while no worker is idle and a task
+//   waits, a due timer counting as one (`tasks_wait`). The code's monitor
+//   sleeps when nothing waits, and only a wake makes it look again: who wakes
+//   it is next.to's, which has the monitor asleep; here it never sleeps.
+// - A look is a step, and the code's intervals of ten and a hundred
+//   milliseconds are one and two more looks of a count that did not move
+//   (`stayed`, by the clock in the code).
+// - The bit is one for the program: the first task to ask swaps it off and
+//   gives its worker away (`tondo_rt_tasks_checkpoint`).
+// - A worker put beside another is marked so as it starts (`beside`), and is
+//   given none; the monitor adds none past twice the workers given, counting
+//   every worker there is (`queue.workers`).
+// - Tasks wait in one queue; the next of a worker, its own queue and the
+//   domains of cores are wake.to's and next.to's.
 import std.model
 
 type Worker = {

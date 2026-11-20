@@ -1,8 +1,24 @@
 // How workers find tasks and go to sleep (crates/tondo-runtime/src/tasks/:
-// work_until in work.rs; enqueue, wake_idle and wake_one in workers.rs;
+// work_loop in work.rs; enqueue, wake_idle and wake_one in workers.rs;
 // step_back in foreign.rs), as Wake.tla says it, with three workers, the first
 // of them `main`'s. A step here is what the code does with the queue's lock
 // held, or one atomic operation.
+//
+// What it assumes of the code, read against it on 2026-11-21:
+// - A task woken by a running task runs next on its worker, and the one it
+//   replaces there goes to that worker's own queue (`schedule`); telling a
+//   worker that sleeps is rationed, so a wake may or may not tell one.
+// - Only a worker told to look, or that waited for a task too young to take,
+//   takes from another's next (`take_next`, gated in work_loop); one that
+//   looks does not sleep while a next holds a task (`waited`).
+// - A worker that retires leaves what it had to the queue and wakes one
+//   that sleeps (`wake_one` on retiring).
+// - The monitor is here only what it does for a worker in a call of C: it
+//   starts another when tasks wait and none is idle, and tells one that
+//   sleeps. Its watch of a worker held by one task is watcher.to's, and its
+//   watch of a task woken next to a busy worker, with the monitor's own
+//   sleep, is next.to's: here no task computes for long outside C.
+// - No time: a task that runs ends, or enters C, in some step.
 import std.model
 
 enum Task {

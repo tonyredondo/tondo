@@ -15,6 +15,24 @@
 // beside counts as one look. The woken task must run within two of them;
 // that it runs in the end was true before, once its waker stopped
 // computing, which here it never does.
+//
+// What it assumes of the code, read against it on 2026-11-21:
+// - The waker computes and never waits: its worker runs nothing else.
+// - One other worker at most, which when the task lands may be looking, told
+//   or not, counted idle before its last look, asleep, or asleep for a
+//   moment; or none, one worker being given.
+// - `schedule` tells a worker that sleeps unless one looks (`SEEKING`) or one
+//   was told within 100 µs, left here to chance, and wakes the monitor for
+//   every task it puts in a next (`watch_next`, the parameter `always`).
+// - Only a worker told to look, or that napped, takes from another's next,
+//   and only a task older than NEXT_WAIT; one younger makes it nap first.
+// - The monitor looks once a millisecond while it watches; with a worker
+//   idle it tells one of a task in a next older than NEXT_WAIT
+//   (`watch_nexts`); with none, it puts one beside the held worker after the
+//   watcher's interval, which counts here as one look. Asleep, it looks at
+//   nothing until something wakes it.
+// - A thread that can act acts within a millisecond: a process the system
+//   stops is no part of the bound.
 import std.model
 
 enum Phase {
