@@ -1,9 +1,10 @@
 // A task that computes and never asks holds its worker; when it has held it
 // for two intervals while another task waits and no worker is idle, the
 // runtime puts another worker beside it (16.14), with one worker given as
-// with any number. `main` waits for the computation to begin and then for
-// the worker: the computation holds the one there was until `main` stops it,
-// so `main` runs on the worker put beside it, and only there. Once the
+// with any number. `main` waits for the computation to begin, looking every
+// millisecond, and then for a worker: the computation holds the one there
+// was until `main` stops it, so `main` runs on the worker put beside it, and
+// only there. Its sleep ends by a timer, whose task any worker takes. Once the
 // computation ends, that worker retires and the program has its one again.
 // Nothing here is measured by the clock, so a slow machine changes only how
 // long it takes; that a worker whose tasks change is given nothing is held
@@ -15,8 +16,8 @@ import std.sync
 import std.time
 
 /// Computes until `stop` is set, without waiting, once it has said it began.
-fn compute(began: Sender[Unit], stop: sync.Atomic[Bool]): Int {
-    began.send(())
+fn compute(began: sync.Atomic[Bool], stop: sync.Atomic[Bool]): Int {
+    began.store(true)
     var turns = 0
     for not stop.load() {
         turns += 1
@@ -29,10 +30,12 @@ fn counted(name: String): Int {
 }
 
 fn main() {
-    let (began, beginning) = channel[Unit]()
+    let began = sync.Atomic(false)
     let stop = sync.Atomic(false)
     let job = spawn compute(began, stop)
-    _ = beginning.receive()
+    for not began.load() {
+        time.sleep(time.milliseconds(1))
+    }
     console.println("main ran beside the computation: workers added {counted("workers.added")}")
     stop.store(true)
     _ = job.wait()
