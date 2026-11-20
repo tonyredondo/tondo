@@ -212,13 +212,13 @@ stats.to:12:13: `count += 1` cannot overflow: no check, in one copy of the code;
 stats.to:19:5: `"{sensor}: {value:.1}"` is not made in the frame: it is copied (in main)
 stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in label)
 stats.to:19:5: `"{sensor}: {value:.1}"` goes in a region of `main` (in main)
-stats.to:19:5: `"{sensor}: {value:.1}"` stays on the heap: `label` returns it with what it was given (in label)
+stats.to:19:5: `"{sensor}: {value:.1}"` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
 stats.to:19:17: `value` in `formats.formatFloat`, `formatNumber(` stays a call of `formats.formatNumber`: its body costs 31, more than the 30 inlining takes; 3 places in it make values on the heap, 2 in regions of its own and 4 in the region its caller gives (in label)
 stats.to:19:17: `value` stays a call of `formats.formatFloat`: its body costs 80, more than the 30 inlining takes; 6 places in it make values in regions of its own and 6 in the region its caller gives (in main)
 stats.to:19:17: `value` is inlined: the body of `formats.formatFloat` is copied here (in label)
-stats.to:19:17: `value` in `String.removePrefix`, `self.slice(prefix.length(), self.length())` stays on the heap: `label` returns it with what it was given (in label)
-stats.to:19:17: `value` in `formats.formatFloat`, `textNative.float(value, precision, exponent, sing…` stays on the heap: `label` returns it with what it was given (in label)
-stats.to:19:17: `value` in `formats.formatFloat`, `written.replace("e", "E")` stays on the heap: `label` returns it with what it was given (in label)
+stats.to:19:17: `value` in `String.removePrefix`, `self.slice(prefix.length(), self.length())` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
+stats.to:19:17: `value` in `formats.formatFloat`, `textNative.float(value, precision, exponent, sing…` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
+stats.to:19:17: `value` in `formats.formatFloat`, `written.replace("e", "E")` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
 stats.to:24:14: `0..1000` runs four turns at a time (in main)
 stats.to:25:9: `readings.push(Reading { sensor: if n % 2 == 0 { "a" } else …` grows an array that goes in a region of `main` (in main)
 stats.to:25:9: `readings.push(Reading { sensor: if n % 2 == 0 { "a" } else …` takes room for every turn before the loop (in main)
@@ -250,10 +250,13 @@ from the bottom:
   ([What a region takes](#what-a-region-takes)). So does the label where
   `main` inlined `label`: the frame does not take it, and the line says
   why, and the region does. Each place has a line for each copy of its
-  code, named at its end. The last three lines at 19:17 are of the
-  library's code that writes the number, copied into `label`: the text it
-  makes may be the one that `label` returns, so it is told with the
-  program's own.
+  code, named at its end. In the `label` that stays a function the text
+  stays on the heap, and its line says what decided it: `label` returns
+  it, so only who calls `label` could give it a region, and nothing calls
+  that copy, as its one call was inlined. The last three lines at 19:17
+  are of the library's code that writes the number, copied into `label`:
+  the text it makes may be the one that `label` returns, so it is told
+  with the program's own.
 - **Checks.** The compiler proved that `count += 1` cannot overflow in one
   copy of the loop, which has no check; the copy it could not prove it for
   keeps it. A check that stays says so too.
@@ -1385,10 +1388,10 @@ $ tondo size stats.to
     1.3 KiB   0.0%  code the compiler adds
    1.80 MiB  60.4%  the runtime's code
       485 B   0.0%  the program's data
-  494.6 KiB  16.2%  the runtime's data
+  494.5 KiB  16.2%  the runtime's data
   173.5 KiB   5.7%  tables for traces, dumps and debuggers
   478.9 KiB  15.7%  the names of symbols
-   44.3 KiB   1.5%  the rest: headers, dynamic linking, alignment
+   44.4 KiB   1.5%  the rest: headers, dynamic linking, alignment
 the functions that weigh the most:
    37.6 KiB  tondo_runtime::debugger::commands::command  (tondo_runtime::debugger)
    34.1 KiB  tondo_runtime::diagnostics::serving::answer  (tondo_runtime::diagnostics)
@@ -1465,7 +1468,9 @@ test tree::unit::tree::aTree ... ok
 A row that moved with no such code changed says so: what moved is where
 its code lies, or what it reads. `tondo asm --runtime --all --compiler
 <tondo|rev>` lists every function of the runtime that the two make
-differently.
+differently. With `--layouts <n>`, each Tondo measures the benchmarks in
+`n` orders of the code's functions, and a row is slower or faster only if
+it is past every order of the other.
 
 `tondo asm --all`, with `--against` or `--compiler`, compares all [the code
 the program reaches](#the-code-a-program-reaches), in three groups: the
