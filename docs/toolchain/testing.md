@@ -253,6 +253,22 @@ arrival. The seed that shows the failure shows it again. Here the fix is
 to start the server before asking, since `start` returns when it listens;
 with that, the twenty orders pass.
 
+`--schedules` tries the orders of tasks on one worker. Some failures are
+about the cores instead: two tasks that really run at once, or a program
+that runs on a runner of CI with two cores and is written on a machine
+with thirty-two. `--workers <n>` runs the tests' tasks on that many
+workers, from 1 to 1024, in place of one for each processor:
+
+```text
+tondo test --workers 1                 no two tasks run at once
+tondo test --workers 2 --repeat 200    as a small runner has it, many times
+```
+
+It is `TONDO_WORKERS=<n>` in the tests' environment, which any program
+reads ([A running program](observing.md#what-is-running-ps)), and it has
+nothing to do with `--jobs`, which says how many tests run at once. It
+does not go with `--schedules`, whose runs are on one worker already.
+
 ## Models
 
 A test that checks a state machine with `std.model` explores every state

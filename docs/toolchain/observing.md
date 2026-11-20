@@ -37,11 +37,19 @@ the same machine.
 
 ```text
 $ tondo ps
-PID          UPTIME  PROGRAM
-3576673     1.0 s  /tmp/todo 8791 sqlite::memory:
+PID          UPTIME    WORKERS  PROGRAM
+3576673     1.0 s   32 of 32  /tmp/todo 8791 sqlite::memory:
 ```
 
 Every command after this takes that process ID, or the program's name.
+
+WORKERS is how many workers run the program's tasks at once, of the
+processors it may use. They are the same unless the program was started
+with `TONDO_WORKERS=<n>` in its environment, from 1 to 1024: with
+`TONDO_WORKERS=2` the line says `2 of 32`, and the program runs its tasks on
+two cores at most, which is how a machine with few is stood in for on one
+with many. A program reads the two numbers with `env.workers()` and
+`env.processors()`.
 
 ## What it holds: counters
 
@@ -570,8 +578,8 @@ container holds only a static `tondo` (`FROM scratch`, `COPY tondo /tondo`,
 
 ```text
 $ docker run --rm -i --pid=container:ticker-1 --tmpfs /tmp tondo-tools ps
-PID          UPTIME  PROGRAM
-1     5.8 s  /ticker
+PID          UPTIME    WORKERS  PROGRAM
+1     5.8 s   32 of 32  /ticker
 $ docker run --rm -i --pid=container:ticker-1 --tmpfs /tmp tondo-tools counters 1 --count 1
 ticker (pid 1), up 7.1 s
 

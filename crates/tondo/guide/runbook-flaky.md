@@ -76,6 +76,9 @@ last line says so: `schedules` tries the others, when the test leaves the
 outside as it found it.
 
 `lock_order` finds locks taken in opposite orders, which hang only sometimes,
-and `flags` with `--repeat <n>` runs a test many times. A run recorded with
+and `flags` with `--repeat <n>` runs a test many times. A failure that only a
+machine with few cores shows, as a runner of CI, is looked for with `flags`
+and `--workers <n>`, which runs the tests' tasks on that many workers: `1`
+for no two at once, `2` for a small runner. A run recorded with
 `record` is the same each time it is replayed, with `debug_start` and
 `replay`: `runbook-once`, and `runbook-ci` for a test that fails only there.

@@ -996,10 +996,17 @@ shows who waits for whom in a running program.
 
 ## Tasks and threads
 
-Tasks are not threads. The runtime keeps one worker thread for each core
-and moves tasks among them; a task that waits costs a little memory and no
-thread, so a server has a task for each connection and may have a hundred
-thousand.
+Tasks are not threads. The runtime keeps one worker thread for each
+processor the program may use and moves tasks among them; a task that waits
+costs a little memory and no thread, so a server has a task for each
+connection and may have a hundred thousand.
+
+`env.workers()` is how many workers there are, and the number to size by
+whatever a program shares out among tasks, as a pool or the pieces of a
+job; `env.processors()` is the machine's. They are the same unless the
+program was started with `TONDO_WORKERS=<n>` in its environment, which asks
+for another number of workers, from 1 to 1024: one makes a program run its
+tasks one at a time, and more than the processors brings out a race.
 
 A task that calls into C, or computes for a long time without waiting, keeps
 its worker busy. The runtime notices and starts another worker for the rest,
