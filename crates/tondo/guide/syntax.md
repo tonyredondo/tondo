@@ -69,11 +69,40 @@ fn main() {
         }
         console.println(item)
     }
+    let odd = for i in 0..6 {       // where a value is wanted, the array of
+        if i % 2 == 0 {             // what each turn ends with: [1, 9, 25]
+            continue                // this turn gives nothing
+        }
+        i * i
+    }
+    console.println("{odd}")
 }
 ```
 
 `for` is the only loop. `if` is an expression; its condition is a `Bool`:
 there is no truthiness (`if list.isEmpty()`, not `if list`).
+
+A `for` gives its values on the right of `let` or `=`, in an argument, after
+`return`, and at the end of a block that has to give a value: the body of a
+function with a result type, a branch or an arm whose value is used, a turn
+of another such loop. `continue` leaves a turn's element out and `break`
+ends with what was given. Anywhere else it is a statement, as at the end of
+a closure whose result nothing states, the one `map` takes: there write
+`return for ... { ... }`. `map` stays the short form of one expression; the
+loop is for a turn of several lines, or one that can fail, since a `?` in it
+leaves the function: `for result in results { result? }` gives the values
+or fails with the first error. A turn of such a loop ends with its value:
+
+```tondo error E1623
+import std.console
+
+fn main() {
+    let printed = for name in ["ada", "bo"] {
+        console.println(name)
+    }
+    _ = printed
+}
+```
 
 ## match
 

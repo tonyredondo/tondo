@@ -246,6 +246,10 @@ large and positive
 small and negative
 ```
 
+A `for` has a value too where one is wanted, the array of what each of its
+turns ends with, as `let lengths = for word in words { word.length() }`
+([Control flow](04-control-flow.md#a-for-that-gives-its-values)).
+
 A statement whose value nobody uses must do something. A bare value such as
 `3 + 4` on a line of its own is an error (`E1306`), and so is a result that
 is dropped, since it holds a failure when there is one (`E1303`). An option

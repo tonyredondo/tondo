@@ -191,20 +191,23 @@ fn main() {
         break
     }
 
+    // Where a value is wanted, a `for` gives the array of its turns' values.
+    let squares = for i in 1..=3 { i * i }
+
     let kind = match n % 2 {
         0 => "even"
         _ => "odd"
     }
 
     defer console.println("leaving")
-    console.println("{size} {kind} {countdown} {n in 1..10} {not (n > 3 and n < 5)}")
+    console.println("{size} {kind} {countdown} {squares} {n in 1..10} {not (n > 3 and n < 5)}")
 }
 ```
 
 ```text output
 0
 2
-big odd 0 true true
+big odd 0 [1, 4, 9] true true
 leaving
 ```
 

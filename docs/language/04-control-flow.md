@@ -1,14 +1,16 @@
 # Control flow and operators
 
 Tondo has one conditional, one loop and one way to tell cases apart. This
-chapter covers `if`, `for` in all its forms, leaving a block early, `defer`,
-assignment, and the operators with their precedence. `match` has a chapter
+chapter covers `if`, `for` in all its forms, leaving a block early, a `for`
+that gives its values, `defer`, assignment, and the operators with their
+precedence. `match` has a chapter
 of its own with [enums](06-enums.md).
 
 - [if](#if)
 - [for: the one loop](#for-the-one-loop)
 - [Looping over a collection in place](#looping-over-a-collection-in-place)
 - [break, continue and return](#break-continue-and-return)
+- [A for that gives its values](#a-for-that-gives-its-values)
 - [defer](#defer)
 - [Assignment](#assignment)
 - [Operators](#operators)
@@ -224,6 +226,174 @@ some(-4) none
   around it.
 - `fail error` leaves a function that can fail, with the error
   ([Errors](07-errors.md)).
+
+## A for that gives its values
+
+Where a value is wanted, a `for` gives one: the array of what its body ends
+with on each turn.
+
+```tondo
+import std.console
+
+type User = {
+    name: String
+    hidden: Bool
+}
+
+fn visible(users: Array[User]): Array[String] {
+    for user in users {
+        if user.hidden {
+            continue  // this turn gives nothing
+        }
+        user.name
+    }
+}
+
+fn main() {
+    let lengths = for word in ["alpha", "be", "gam"] { word.length() }
+    console.println("{lengths}")
+
+    let users = [
+        User { name: "ada", hidden: false },
+        User { name: "bo", hidden: true },
+        User { name: "cy", hidden: false },
+    ]
+    console.println("{visible(users)}")
+
+    // `break` ends the loop with what its turns gave so far.
+    let small = for value in [1, 2, 30, 4] {
+        if value > 10 {
+            break
+        }
+        value * value
+    }
+    console.println("{small}")
+
+    // The other two forms give their values the same way.
+    var n = 27
+    let path = for n != 1 {
+        n = if n % 2 == 0 { n / 2 } else { 3 * n + 1 }
+        n
+    }
+    console.println("{path.length()} steps, up to {path.max() ?? 0}")
+
+    // A turn whose body ends with a loop gives that loop's array.
+    let table = for row in 1..=3 {
+        for column in 1..=3 {
+            row * column
+        }
+    }
+    console.println("{table}")
+}
+```
+
+```text output
+[5, 2, 3]
+[ada, cy]
+[1, 4]
+111 steps, up to 9232
+[[1, 2, 3], [2, 4, 6], [3, 6, 9]]
+```
+
+- A value is wanted on the right of `let` or `=`, in an argument, after
+  `return`, and at the end of a block that has to give a value: the body of
+  a function with a result type, as `visible`, a branch of an `if` or an arm
+  of a `match` whose value is used, a turn of another such loop, and a
+  closure whose result is written or expected. Anywhere else a `for` is the
+  statement it always was.
+- A turn gives what its body ends with. `continue` gives nothing on its
+  turn, which is how an element is left out, and `break` ends the loop with
+  what the turns before it gave.
+- It is the loop that pushes each value to an array, written by the
+  compiler, which gives the array its room before the loop when the number
+  of turns is known.
+- To call a method on one, put it in parentheses:
+  `(for word in words { word.length() }).sum()`.
+
+For one expression, `words.map((word) { word.length() })` says the same and
+stays the short form
+([Collections](08-collections.md#the-methods-of-an-array)). The loop is for
+a turn that takes more than that: several lines, some elements left out, an
+early end, or a step that can fail. A `?` in a closure can only leave the
+closure. In a turn it leaves the function, so the loop gives every value or
+the function fails with the first error:
+
+```tondo
+import std.console
+import std.text
+
+fn parseAll(items: Array[String]): Array[Int] ! text.TextError {
+    for item in items {
+        Int.parse(item.trim())?
+    }
+}
+
+fn main() {
+    console.println("{parseAll(["1", " 2", "30 "])}")
+    console.println("{parseAll(["1", "two"])}")
+}
+```
+
+```text output
+ok([1, 2, 30])
+err(invalid data)
+```
+
+A turn ends with its value. To leave an element out, the turn says
+`continue` before it; an `if` around the value would give one on some turns
+only, and the compiler writes the line that was meant:
+
+```tondo error E1623
+import std.console
+
+fn main() {
+    let odd = for n in [1, 2, 3] {
+        if n % 2 == 1 {
+            n
+        }
+    }
+    console.println("{odd}")
+}
+```
+
+```text
+error[E1623]: this turn gives a value only when its condition holds, and a turn gives none with `continue`: write `if n % 2 != 1 { continue }` before the value, `n`
+```
+
+A loop that ends a block that need not give a value stays a statement, so
+that a loop run for its effects never turns into an array nobody asked for.
+That is the body of a function without a result type, and of a closure
+whose result nothing states: the one `map` takes may give a value of any
+type, or none. There `return` says that the loop is the closure's value:
+
+```tondo
+import std.console
+
+fn main() {
+    let rows = [[1, 2], [3]]
+    let scaled = rows.map(
+        (row) {
+            return for x in row { x * 10 }
+        },
+    )
+    console.println("{scaled}")
+}
+```
+
+```text output
+[[10, 20], [30]]
+```
+
+Without the `return`, that closure holds a statement whose value is
+dropped, and the compiler says so with what to write:
+
+```text
+error[E1306]: this value does nothing: use it, return it from a function that declares its type, or discard it with `_ = ...`; a `for` gives its values when it is returned, as `return for ... { ... }`
+```
+
+A closure that has to give an array needs no `return`, since a value is
+wanted there: the one `flatMap` takes, or one passed where a
+`fn(Int): Array[Int]` is expected.
 
 ## defer
 

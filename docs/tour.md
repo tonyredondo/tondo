@@ -89,7 +89,9 @@ Hi, Ada!
 - A newline ends a statement, and there are no semicolons.
 - The last expression of a block is its value, so `if` gives one and
   `return` is only for leaving early.
-- `for` is the only loop. A condition is a `Bool`: there is no truthiness.
+- `for` is the only loop. Where a value is wanted it gives the array of what
+  its turns end with: `let squares = for n in 1..=3 { n * n }`. A condition
+  is a `Bool`: there is no truthiness.
 - Signatures state their types; inside a function they are inferred.
 - A binding never hides another one that is visible: a new value takes a new
   name.

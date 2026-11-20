@@ -236,6 +236,11 @@ true true
 [[1, 2], [3, 4], [5]] [[1, 2], [2, 3], [3, 4]] ([3, 4], [1, 2])
 ```
 
+When a step takes more than one expression, leaves some elements out, ends
+early or can fail, a
+[`for` that gives its values](04-control-flow.md#a-for-that-gives-its-values)
+makes the array instead: `let names = for item in items { ... }`.
+
 The ones that end in `By` take the key or the value of each element, where
 their plain twin takes the element itself. Two arrays that share a key are
 joined as two tables are, and an array becomes a map by a key of its

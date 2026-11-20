@@ -592,7 +592,9 @@ to 3, be 3, or 1
 - `[len(w) for w in words if len(w) > 2]` is
   `words.filter((w) { w.length() > 2 }).map((w) { w.length() })`. A closure
   is `(w) { ... }`, with as many lines as it needs: there is no `lambda`
-  limited to one expression.
+  limited to one expression. A `for` gives an array too where a value is
+  wanted, `let lengths = for w in words { w.length() }`, and `continue`
+  leaves an element out.
 - `Array[T]`, `Map[K, V]`, `Set[T]` and `Deque[T]` are `list`, `dict`,
   `set` and `deque`. Each holds one type of element.
 - `len(x)` is `x.length()`, and a string's length is its characters.

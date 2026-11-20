@@ -289,6 +289,32 @@ the next, so a task that panicked does what its own `wait()` would. An
 array written out is waited for the same way, as `[spawn one(), spawn
 two()].wait()`.
 
+A [`for` that gives its values](04-control-flow.md#a-for-that-gives-its-values)
+gives such an array too, for a turn that does more than start one task. Each
+task stays alive in the array when its turn ends:
+
+```tondo
+import std.console
+
+fn square(n: Int): Int {
+    n * n
+}
+
+fn main() {
+    let jobs = for n in [1, 2, 3, 4] {
+        if n % 2 == 0 {
+            continue  // no task for this one
+        }
+        spawn square(n)
+    }
+    console.println("{jobs.wait()}")
+}
+```
+
+```text output
+[1, 9]
+```
+
 `waitOrCancel()` is for when one failure makes the rest pointless. It gives
 all the values, or the first error to happen, and that error cancels the
 tasks still running:
@@ -323,6 +349,11 @@ err(item 2 is missing)
 With `?` after it the error goes on to the caller as any other does. On
 tasks that cannot fail there is nothing to stop at, and the compiler says
 to write `wait()` (`E1620`).
+
+To let every task finish and then have the values or a failure, read what
+`wait()` gave with a `for`: `for result in loaded { result? }` is the array
+of the values, or leaves the function with the first error in the array's
+order.
 
 `cancel()` on the array tells every task to stop, and then waits until all
 of them have. Each of the three uses the array up, as `wait()` does a

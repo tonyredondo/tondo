@@ -22,7 +22,7 @@ port follows; this is what each thing of Python becomes.
 | `raise ValueError(...)` | `fail error`, in a function that returns `T ! E` |
 | `try:` and `except ValueError as e:` | `match f() { ok(v) => ..., err(e) => ... }`; `?` to pass it on |
 | `finally:`, `with open(path) as f:` | `defer` |
-| `[f(x) for x in xs if g(x)]` | `xs.filter(g).map(f)` |
+| `[f(x) for x in xs if g(x)]` | `xs.filter(g).map(f)`; with more to do in a turn, `let ys = for x in xs { ... }`, whose turn ends with its value and leaves an element out with `continue` |
 | `{k(x): x for x in xs}`, `set(xs)` | `xs.keyedBy(k)`, `xs.toSet()` |
 | `[1, 2]`, `{"a": 1}`, `{1, 2}`, `(1, "a")` | `[1, 2]`, `["a": 1]`, `Set[1, 2]`, `(1, "a")` |
 | `len(x)`, `xs[-1]`, `xs[1:3]`, `x in xs` | `x.length()`, `xs[-1]`, `xs[1:3]`, `xs.contains(x)` |

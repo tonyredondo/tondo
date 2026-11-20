@@ -23,6 +23,7 @@ follows; this is what each thing of Go becomes.
 | a pointer that may be `nil` | `T?`, with `none`, `match`, `?.` and `?? fallback` |
 | `v, ok := m[k]` | `m.get(k)`, a `V?`; `m[k] ?? 0` |
 | `[]T`, `append(s, x)`, `len(s)`, `s[1:3]` | `Array[T]`, `s.push(x)`, `s.length()`, `s[1:3]` |
+| a loop that appends what each turn computes, `out = append(out, f(x))` | `let out = for x in xs { ... }`, whose turn ends with its value; `xs.map((x) { f(x) })` for one expression |
 | `map[K]V{}`, `delete(m, k)`, `m[k]++` | `Map[K, V]`, `[:]`, `m.remove(k)`, `m[k, default: 0] += 1` |
 | `for i, x := range xs`, `for k, v := range m` | `for (i, x) in xs.enumerate()`, `for (k, v) in m` |
 | `for cond { }`, `for { }` | the same |
