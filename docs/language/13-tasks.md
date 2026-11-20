@@ -164,8 +164,9 @@ A program ends when `main` does, and detached tasks are cancelled then.
 
 One consequence: a `spawn` in a loop whose `Join` is dropped waits for each
 task before starting the next, which is rarely what was meant. The compiler
-warns (`W1013`) and says to use a `Group` or `detached`. To start a task
-for each value and wait for them all, the tasks go in an array.
+warns (`W1013`) and says what to write instead: an array of tasks, a
+`Group`, or `detached`. To start a task for each value and wait for them
+all, the tasks go in an array.
 
 ## An array of tasks
 
