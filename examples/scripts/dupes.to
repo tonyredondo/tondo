@@ -23,10 +23,7 @@ let files = fs.walk(root, skipUnreadable: true)?.filter((entry) { entry.kind == 
 
 // A task for each file: they read and hash at once, on every core, and the
 // results come back in the order of the files.
-var hashing = Group[(String, String)?]()
-for entry in files {
-    hashing.add(spawn fingerprint(entry.path))
-}
+let hashing = files.map((entry) { spawn fingerprint(entry.path) })
 
 var same: Map[String, Array[String]] = [:]
 for found in hashing.wait() {

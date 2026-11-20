@@ -90,12 +90,8 @@ pub fn read(path: String): Read ! fs.FsError {
 /// Reads several files at once, a task for each, and gives all they hold in
 /// the order the files were named.
 pub fn readAll(paths: Array[String]): Read ! fs.FsError {
-    var reading = Group[Read ! fs.FsError]()
-    for path in paths {
-        reading.add(spawn read(path))
-    }
     var all = Read { entries: [], skipped: 0 }
-    for part in reading.waitOrCancel()? {
+    for part in paths.map((path) { spawn read(path) }).waitOrCancel()? {
         all.entries.extend(part.entries)
         all.skipped += part.skipped
     }

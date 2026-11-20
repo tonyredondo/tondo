@@ -89,10 +89,7 @@ pub fn build(site: fs.FileSystem, out: fs.FileSystem, name: String): Built ! Bui
 
     // Each page is rendered in a task of its own; the first that fails
     // cancels the rest.
-    var rendering = Group[String ! template.TemplateError]()
-    for page in pages {
-        rendering.add(spawn renderPost(theme, name, page))
-    }
+    let rendering = pages.map((page) { spawn renderPost(theme, name, page) })
     let rendered = rendering.waitOrCancel().mapErr(BuildError.Template)?
 
     var files: Array[String] = []
