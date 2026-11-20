@@ -422,6 +422,152 @@ mid.example answered
 A group has the three ways of an array to end: `wait()` for every result,
 `waitOrCancel()` for the values or the first error, and `cancel()`.
 
+## At most so many at once
+
+A task for each element is right until the elements are many and each task
+holds something that is not free: a connection, a file, a place in
+somebody's rate limit. `within tasks.limit(n)` bounds how many of the tasks
+a block starts are alive at once:
+
+```tondo
+import std.console
+import std.sync
+import std.tasks
+import std.time
+
+/// Stands for a request: it counts how many are open while it waits.
+fn fetch(id: Int, open: sync.Atomic[Int], most: sync.Atomic[Int]): Int {
+    let now = open.add(1)
+    if now > most.load() {
+        most.store(now)
+    }
+    time.sleep(time.milliseconds(5))
+    _ = open.add(-1)
+    id
+}
+
+fn main() {
+    let open = sync.Atomic(0)
+    let most = sync.Atomic(0)
+    let ids = (1..=20).collect()
+    let done = within tasks.limit(3) { ids.map((id) { spawn fetch(id, open, most) }).wait() }
+    console.println("{done.length()} done, {most.load()} at once at most")
+}
+```
+
+```text output
+20 done, 3 at once at most
+```
+
+Inside the block a `spawn` waits for a place before its task exists, and
+the task gives the place back when it ends. So it is the code that starts
+the tasks that waits, and there are never more of them than places,
+however many elements there are.
+
+- It counts the tasks the block started that have not ended, those that
+  wait as much as those that run. What is bounded is what the tasks hold;
+  how many cores they run on is another number, the workers
+  ([Tasks and threads](#tasks-and-threads)).
+- It binds the tasks that the block's own task starts, here and in what it
+  calls. The tasks those start are not counted, so a task that has a place
+  and waits for its children is never left waiting for places they would
+  need. A bound further down is a `within` of its own.
+- `spawn detached` takes no place.
+- The wait for a place ends as any wait does, with a cancel or a deadline.
+
+A limit is a value. Kept and shared, every `within` of it takes from the
+same places, which is how a server bounds what all its requests do
+together while each request bounds its own. With several limits around it,
+a `spawn` takes a place of each:
+
+```tondo
+import std.console
+import std.sync
+import std.tasks
+import std.time
+
+/// Stands for a request out: it counts how many are open while it waits.
+fn fetch(open: sync.Atomic[Int], most: sync.Atomic[Int]) {
+    let now = open.add(1)
+    if now > most.load() {
+        most.store(now)
+    }
+    time.sleep(time.milliseconds(5))
+    _ = open.add(-1)
+}
+
+/// What one request of the server does: ten fetches, three at once at most,
+/// and never more than the server allows in all.
+fn handle(fetching: tasks.Limit, open: sync.Atomic[Int], most: sync.Atomic[Int]) {
+    within fetching {
+        within tasks.limit(3) {
+            _ = (1..=10).collect().map((_) { spawn fetch(open, most) }).wait()
+        }
+    }
+}
+
+fn main() {
+    let open = sync.Atomic(0)
+    let most = sync.Atomic(0)
+    let fetching = tasks.limit(4)  // the server's, shared by its requests
+    let first = spawn handle(fetching, open, most)
+    let second = spawn handle(fetching, open, most)
+    first.wait()
+    second.wait()
+    console.println("{most.load()} at once at most, of 2 requests that want 3 each")
+}
+```
+
+```text output
+4 at once at most, of 2 requests that want 3 each
+```
+
+One `within` takes a deadline and a limit together, separated by a comma.
+It is the two nested, in either order, and since it has a deadline its
+value may be `time.TimedOut`:
+
+```tondo
+import std.console
+import std.tasks
+import std.time
+
+fn fetch(id: Int): Int {
+    time.sleep(time.milliseconds(20 * id))
+    id
+}
+
+fn fetchAll(ids: Array[Int]): Array[Int] {
+    ids.map((id) { spawn fetch(id) }).wait()
+}
+
+fn main() {
+    let ids = [1, 2, 3, 4]
+    let quick = within time.seconds(5), tasks.limit(2) { fetchAll(ids) }
+    let slow = within time.milliseconds(30), tasks.limit(2) { fetchAll(ids) }
+    console.println("{quick}")
+    console.println("{slow}")
+}
+```
+
+```text output
+ok([1, 2, 3, 4])
+err(timed out after 30ms)
+```
+
+The compiler warns of a `within` that holds nothing but another of the
+other kind (`W1027`), and its fix writes the two as one.
+
+Two things to keep in mind, both about a place that cannot come back:
+
+- A task that waits for a place while it holds a lock that the tasks it
+  started need waits for ever: they cannot end without the lock, and it
+  cannot go on without a place. Start the tasks outside the lock.
+- Tasks that send what they make to a channel need someone receiving while
+  they are being started. If the code that starts them reads the channel
+  only after its last `spawn`, the first tasks fill the channel and never
+  end. Receive in another task, or give the values back and `wait()` for
+  them.
+
 ## Errors and panics in tasks
 
 A task's result is whatever its function returns, errors included. On an
@@ -1021,7 +1167,8 @@ as blocking.
 | do many things at once | an array of tasks and `wait()` |
 | add tasks as the work goes, or take results as they finish | a `Group` |
 | stop at the first failure | `waitOrCancel()` |
-| bound how much runs at once | `executor.pool`, or a `Semaphore` |
+| bound how many tasks are alive at once | `within tasks.limit(n)` |
+| bound something else that is shared | `executor.pool`, or a `Semaphore` |
 | hand values from one task to another | a channel |
 | wait for whichever comes first | `select` |
 | give work a time limit | `within` |

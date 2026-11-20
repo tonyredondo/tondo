@@ -309,6 +309,12 @@ each field, and a dump keeps them for every task.
 
 ## within: a deadline for a block
 
+`within` puts a limit on a block, and the tasks the block starts live under
+it. This chapter is about the limit of time; the other, how many tasks are
+alive at once, is `within tasks.limit(64) { ... }`, alone or beside a
+deadline as `within time.seconds(5), tasks.limit(64) { ... }`
+([Tasks](13-tasks.md#at-most-so-many-at-once)).
+
 `within duration { ... }` gives a block a time limit. When the time passes,
 the block's next wait ends, its `defer`s run, the tasks it started are
 cancelled, and the block gives an error:

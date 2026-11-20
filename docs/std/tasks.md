@@ -1,5 +1,29 @@
 # std.tasks
 
+What goes with the language's tasks. Today that is one thing: `limit`, the
+bound on how many of the tasks a `within` block starts are alive at once,
+which reads beside a deadline as its sibling does:
+
+```tondo
+import std.tasks
+import std.time
+
+fn fetch(id: Int): Int {
+    time.sleep(time.milliseconds(5))
+    id
+}
+
+fn main() {
+    let ids = [1, 2, 3, 4, 5, 6]
+    let fetched =
+        within time.seconds(5), tasks.limit(2) { ids.map((id) { spawn fetch(id) }).wait() }
+    _ = fetched
+}
+```
+
+[Tasks](../language/13-tasks.md#at-most-so-many-at-once) says what a limit
+counts, whom it binds, and how one limit is shared.
+
 <!-- From here on, docs/std/generate.to writes this page from `tondo api`: edit above this line. -->
 
 ## Reference

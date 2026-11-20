@@ -45,6 +45,12 @@ fn main() {
   gives `Array[T] ! E`: all the values, or the first error to happen, which
   cancels the others. `ids.map((id) { spawn load(id) }).waitOrCancel()?`
   passes that error on.
+- `within tasks.limit(64) { ... }` (`import std.tasks`) bounds how many of
+  the tasks a block starts are alive at once: a `spawn` in it waits for a
+  place before its task exists. The tasks those tasks start are not counted,
+  `spawn detached` takes no place, and a limit kept in a value is shared by
+  every `within` of it. With a deadline:
+  `within time.seconds(5), tasks.limit(64) { ... }`.
 - A `Group` is for tasks added as the work goes and results taken as they
   finish: `group.next()`, or `for value in group { ... }`, which leaves the
   tasks still running in the group after a `break`.
