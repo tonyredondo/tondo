@@ -327,8 +327,10 @@ fn the_api_of_a_declaration_and_a_search() {
     assert!(!apart["matches"].as_array().unwrap().is_empty(), "{apart}");
     // The words of the job in another language: little words aside, and
     // when few hold every word, those that hold some follow.
+    // An array of tasks waited for whole first, then a group.
     let (waits, _) = json(&dir, &["api", "--search", "wait for all tasks", "--json"]);
-    assert_eq!(waits["matches"][0]["name"], "Group.wait", "{waits}");
+    assert_eq!(waits["matches"][0]["name"], "Array.wait", "{waits}");
+    assert!(waits["matches"].as_array().unwrap()[..4].iter().any(|m| m["name"] == "Group.wait"), "{waits}");
     let (words, _) = json(&dir, &["api", "--search", "split into words", "--json"]);
     let partial = words["partial"].as_u64().unwrap() as usize;
     let matches = words["matches"].as_array().unwrap();

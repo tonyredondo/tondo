@@ -2895,9 +2895,9 @@ llamada del programa que llegó a él; la traza conserva el frame de la librerí
 ~~~tondo pseudocode
 fn first(self): T?
 fn last(self): T?
-fn map[U](self, transform: fn(T): U): Array[U]
+fn map[U: ~Copy](self, transform: fn(T): U): Array[U]
 fn filter(self, keep: fn(T): Bool): Array[T]
-fn flatMap[U](self, transform: fn(T): Array[U]): Array[U]
+fn flatMap[U: ~Copy](self, transform: fn(T): Array[U]): Array[U]
 fn reduce[A](self, initial: A, combine: fn(A, T): A): A
 fn contains(self, value: T): Bool                   // T: Equatable, `value in array`
 fn any(self, predicate: fn(T): Bool): Bool
@@ -2949,6 +2949,9 @@ fn extend(var self, other: Array[T])
 fn iter(self): ArrayIterator[T]                     // Iterator[T], perezoso
 ~~~
 
+- `map` y `flatMap` aceptan resultados que no son `Copy` (`U: ~Copy`), como el
+  `Join` de un `spawn`: `urls.map((url) { spawn fetch(url) })` da un
+  `Array[Join[…]]`, que se espera con `wait()` (lenguaje 11.11).
 - `minBy` y `maxBy` dan el primer elemento de la clave menor o mayor, `none`
   con un array vacío, y llaman a `key` una vez por elemento. `uniqueBy`
   conserva el primer elemento de cada clave, en orden, como `unique` con los

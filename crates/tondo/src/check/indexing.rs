@@ -307,6 +307,23 @@ impl Checker<'_> {
                 });
             }
         }
+        // `wait()` and `cancel()` of an array of tasks, as `tondo api`
+        // documents them under `Array[Join[T]]`.
+        if self.tasks_array(ty) {
+            for name in ["wait", "cancel"] {
+                if !members.iter().any(|m| m.name == name) {
+                    let builtin = Some("Array[Join[T]]".to_string());
+                    members.push(Member {
+                        name: name.into(),
+                        method: true,
+                        ty: None,
+                        def: None,
+                        builtin,
+                        private: false,
+                    });
+                }
+            }
+        }
         let mut implemented: Vec<usize> = by_owner.impls.get(&key).into_iter().flatten().copied().collect();
         if ty != key {
             implemented.extend(by_owner.impls.get(&ty).into_iter().flatten());

@@ -1041,7 +1041,7 @@ impl<'a> Checker<'a> {
         // In a loop the block is the iteration, so the tasks would run one
         // at a time: almost never what a loop that spawns wants.
         if !cx.loops.is_empty() {
-            let message = "each iteration waits for this task at its end, so the tasks run one at a time; `spawn detached` lets them run at once, or add them to a `Group` and wait for all of them";
+            let message = "each iteration waits for this task at its end, so the tasks run one at a time; map the values to tasks and `wait()` for the array, as `values.map((value) { spawn work(value) }).wait()`, or add them to a `Group`, or `spawn detached` lets them run at once without waiting";
             self.diags.warning("W1013", call.span, message);
             let start = Span::new(call.span.start, call.span.start);
             self.diags.fix("launch it with `spawn detached`", false, vec![(start, "detached ".into())]);

@@ -266,12 +266,23 @@ pub unsafe extern "C" fn tondo_rt_group_settle(group: *mut GroupObject) -> i64 {
     }
 }
 
-/// `group.cancel()`: cancels the tasks still running and waits for them.
+/// `group.cancel()`: cancels the tasks still running and waits for them,
+/// every task told before any is waited for (11.15), so that none goes on
+/// working while another stops.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_group_cancel(group: *mut GroupObject) {
     unsafe {
+        let entries = &(*group).entries;
+        for entry in entries.iter() {
+            let j = &mut *entry.join;
+            lock(&j.lock);
+            if !j.done {
+                cancel_task(j.task);
+            }
+            unlock(&j.lock);
+        }
         for index in 0..(*group).entries.len() {
-            cancel_join((&(*group).entries)[index].join);
+            finish((&(*group).entries)[index].join, true);
         }
     }
 }

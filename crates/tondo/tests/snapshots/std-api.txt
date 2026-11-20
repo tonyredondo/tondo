@@ -72,7 +72,7 @@ pub fn Array[T].findIndex(self, predicate: fn(T): Bool): Int?
 pub fn Array[T].findLast(self, predicate: fn(T): Bool): T?
 pub fn Array[T].findLastIndex(self, predicate: fn(T): Bool): Int?
 pub fn Array[T].first(self): T?
-pub fn Array[T].flatMap[U](self, transform: fn(T): Array[U]): Array[U]
+pub fn Array[T].flatMap[U: ~Copy](self, transform: fn(T): Array[U]): Array[U]
 pub fn Array[T].groupBy[K: Key](self, key: fn(T): K): Map[K, Array[T]]
 pub fn Array[T].iter(self): ArrayIterator[T]
 pub fn Array[T].joinBy[U, K: Key](
@@ -83,7 +83,7 @@ pub fn Array[T].joinBy[U, K: Key](
 ): Array[(T, U)]
 pub fn Array[T].keyedBy[K: Key](self, key: fn(T): K): Map[K, T]
 pub fn Array[T].last(self): T?
-pub fn Array[T].map[U](self, transform: fn(T): U): Array[U]
+pub fn Array[T].map[U: ~Copy](self, transform: fn(T): U): Array[U]
 pub fn Array[T].maxBy[K: Ordered](self, key: fn(T): K): T?
 pub fn Array[T].minBy[K: Ordered](self, key: fn(T): K): T?
 pub fn Array[T].partition(self, predicate: fn(T): Bool): (Array[T], Array[T])

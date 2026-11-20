@@ -1,0 +1,56 @@
+// `wait()` of an array of tasks is waiting for each in the array's order:
+// a task's panic reaches the waiter at that task's turn, and a waiter
+// cancelled while it waits cancels the tasks it has not waited for yet,
+// as it would its own pending tasks (11.15).
+
+import std.console
+
+fn crash(n: Int): Int {
+    if n == 2 {
+        panic("task {n}")
+    }
+    n
+}
+
+fn sleeper(id: Int, ready: Sender[Bool], idle: Receiver[Int], said: Sender[String]): Int {
+    defer {
+        said.send("task {id} cancelled")
+    }
+    ready.send(true)
+    _ = idle.receive()
+    id
+}
+
+fn waiter(
+    ready: Sender[Bool],
+    idles: (Receiver[Int], Receiver[Int]),
+    said: Sender[String],
+): Array[Int] {
+    let (first, second) = idles
+    [spawn sleeper(1, ready.copy(), first, said.copy()), spawn sleeper(2, ready, second, said)].wait()
+}
+
+fn main() {
+    match recover { [1, 2, 3].map((n) { spawn crash(n) }).wait() } {
+        ok(values) => console.println("{values}")
+        err(stopped) => console.println("recovered {stopped.message}")
+    }
+    let (ready, started) = channel[Bool](2)
+    let (holdFirst, idleFirst) = channel[Int](1)
+    let (holdSecond, idleSecond) = channel[Int](1)
+    let (said, heard) = channel[String](4)
+    let job = spawn waiter(ready, (idleFirst, idleSecond), said)
+    _ = started.receive()
+    _ = started.receive()
+    job.cancel()
+    var lines: Array[String] = []
+    for line in heard {
+        lines.push(line)
+    }
+    console.println("{lines.sorted()}")
+    holdFirst.close()
+    holdSecond.close()
+}
+
+// expect-stdout: recovered task 2
+// expect-stdout: [task 1 cancelled, task 2 cancelled]

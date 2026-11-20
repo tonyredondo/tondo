@@ -643,6 +643,25 @@ impl<'a> Checker<'a> {
             let callee = Callee::Std(StdFn::Number(entry.op));
             return self.dot_call(cx, callee, signature, HashMap::new(), value, method, args, expected, span);
         }
+        // `wait()` and `cancel()` of an array of tasks (11.11): each task's,
+        // in the array's order, by the prelude's `waitTasks` and
+        // `cancelTasks`, as `Join` is no type a method can be declared on.
+        // `all()` with no test is taken for a wait, and told so.
+        if self.tasks_array(ty) && method.name == "all" && args.is_empty() {
+            return self.no_method(ty, method, span);
+        }
+        if self.tasks_array(ty)
+            && let Some(name) = match method.name.as_str() {
+                "wait" => Some("prelude.waitTasks"),
+                "cancel" => Some("prelude.cancelTasks"),
+                _ => None,
+            }
+            && let Some(&ModuleName::Fn(id)) = self.names.get(name)
+        {
+            // The array is its first parameter, given as the receiver.
+            let signature = Signature { receiver: Some(ast::Mode::Value), ..self.signatures[id.0 as usize].clone() };
+            return self.dot_call(cx, Callee::Fn(id), signature, HashMap::new(), value, method, args, expected, span);
+        }
         let key = self.owner_key(ty);
         if let Some(&id) = self.methods.get(&(key, method.name.clone())) {
             self.index_refer(method, crate::index::Key::Fn(id.0));
@@ -1691,6 +1710,12 @@ impl<'a> Checker<'a> {
         found
     }
 
+    /// Whether `ty` is an array of tasks, `Array[Join[T]]`.
+    pub(super) fn tasks_array(&self, ty: Ty) -> bool {
+        matches!(*self.types.kind(self.types.repr(ty)), TyKind::Array(element)
+            if matches!(self.types.kind(self.types.repr(element)), TyKind::Handle(Handle::Join, _)))
+    }
+
     /// Whether the language gives a type of its own a method `name`. Of the
     /// types it has no list of, all it knows.
     pub(super) fn language_method(&self, ty: Ty, name: &str) -> bool {
@@ -1710,6 +1735,12 @@ impl<'a> Checker<'a> {
     /// The canonical spelling of a method that other languages name
     /// differently (10.2.3).
     pub(super) fn method_hint(&self, ty: Ty, name: &str) -> Option<&'static str> {
+        if self.tasks_array(ty) {
+            return Some(
+                "an array of tasks is waited for whole with `wait()`, which gives every result in the array's \
+                 order, or stopped with `cancel()`",
+            );
+        }
         let hint = match (self.types.kind(ty), name) {
             (TyKind::Option(_), "unwrap" | "get" | "value" | "orElseThrow") => {
                 "use `expect(message)`, which panics with the message on `none`; or `value ?? fallback`, `?` or `match`"
@@ -3328,6 +3359,16 @@ impl<'a> Checker<'a> {
                         && let Some((item, field)) = self.field_with(actual, self.fractional) =>
                     {
                         format!(": of a field of each, `averageBy(({item}) {{ {item}.{field} }})`")
+                    }
+                    // A lazy chain's values are copied as it goes: tasks are
+                    // made by the array's own `map`.
+                    None if signature.name.starts_with("Iterator.")
+                        && missing.starts_with("`Copy`")
+                        && matches!(self.types.kind(self.types.repr(actual)), TyKind::Handle(Handle::Join, _)) =>
+                    {
+                        ": a lazy chain takes only `Copy` values; map the array itself, `values.map((value) { spawn \
+                         work(value) })`, whose result may be a task, then `wait()` for them all"
+                            .into()
                     }
                     None if signature.name == "Iterator.average" && missing == "`Fractional`" => {
                         ": an average is of floats; for integers, make them floats first, as in `map((n) { Float(n) }).average()`".into()

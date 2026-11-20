@@ -777,8 +777,28 @@ pub fn Array[T].last(self): T? {
     self.get(self.length() - 1)
 }
 
+/// `jobs.wait()` of an array of tasks (language 11.11): waits for every
+/// task, in the array's order, and gives their results; it cancels none.
+fn waitTasks[T: ~Copy](jobs: Array[Join[T]]): Array[T] {
+    var results: Array[T] = []
+    for job in jobs {
+        results.push(job.wait())
+    }
+    results
+}
+
+/// `jobs.cancel()` of an array of tasks (language 11.11): tells every task
+/// to stop, then waits for each, as a group's `cancel()` does.
+fn cancelTasks[T: ~Copy](jobs: Array[Join[T]]) {
+    var group = Group[T]()
+    for job in jobs {
+        group.add(job)
+    }
+    group.cancel()
+}
+
 /// The function's result for each element, in order.
-pub fn Array[T].map[U](self, transform: fn(T): U): Array[U] {
+pub fn Array[T].map[U: ~Copy](self, transform: fn(T): U): Array[U] {
     var out: Array[U] = []
     for item in self {
         out.push(transform(item))
@@ -800,7 +820,7 @@ pub fn Array[T].filter(self, keep: fn(T): Bool): Array[T] {
 /// The elements of the arrays the function gives for each element, in
 /// order. It flattens an array of arrays, which has no `flatten` of its own:
 /// `[[1, 2], [3]].flatMap((inner) { inner })` is `[1, 2, 3]`.
-pub fn Array[T].flatMap[U](self, transform: fn(T): Array[U]): Array[U] {
+pub fn Array[T].flatMap[U: ~Copy](self, transform: fn(T): Array[U]): Array[U] {
     var out: Array[U] = []
     for item in self {
         for part in transform(item) {

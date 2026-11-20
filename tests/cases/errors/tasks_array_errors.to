@@ -1,0 +1,21 @@
+fn square(n: Int): Int {
+    n * n
+}
+
+fn main() {
+    let jobs = [1, 2].map((n) { spawn square(n) })
+    let first = jobs.wait()
+    let again = jobs.wait()
+    let numbers = [1, 2]
+    let waited = numbers.wait()
+    let joined = [3].map((n) { spawn square(n) }).waitAll()
+    let each = [4].map((n) { spawn square(n) }).all()
+    let lazy = [5, 6].iter().map((n) { spawn square(n) }).collect()
+    let total = first.length() + again.length() + waited.length()
+}
+
+// expect-error: E1401 `jobs` was moved before this use, since its type `Array[Join[Int]]` is not `Copy`; use it before passing it on
+// expect-error: E1001 `Array[Int]` has no method `wait`
+// expect-error: E1001 `Array[Join[Int]]` has no method `waitAll`: an array of tasks is waited for whole with `wait()`, which gives every result in the array's order, or stopped with `cancel()`
+// expect-error: E1001 `Array[Join[Int]]` has no method `all`: an array of tasks is waited for whole with `wait()`
+// expect-error: E1105 `Join[Int]` does not implement `Copy` (type parameters are `Copy` unless declared `~Copy`), which `Iterator.map` requires of `U`: a lazy chain takes only `Copy` values; map the array itself

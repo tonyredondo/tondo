@@ -1,0 +1,45 @@
+import std.console
+
+// An array of tasks is waited for or cancelled whole: `wait()` gives every
+// result in the array's order and cancels none, a failure kept in its
+// place; `cancel()` cancels each task and waits for it. `map` takes a
+// function whose result is not `Copy`, as the `Join` of a `spawn`, so a
+// task for each element is started and waited for in one line.
+
+pub enum Odd {
+    Number(Int)
+}
+
+fn square(n: Int): Int {
+    n * n
+}
+
+fn half(n: Int): Int ! Odd {
+    if n % 2 == 1 {
+        fail Number(n)
+    }
+    n / 2
+}
+
+fn slow(n: Int): Int {
+    var total = 0
+    for i in 0..n {
+        total += i % 7
+    }
+    total
+}
+
+fn main() {
+    console.println("{[2, 3, 4].map((n) { spawn square(n) }).wait()}")
+    console.println("{[2, 3, 4].map((n) { spawn half(n) }).wait()}")
+    let empty: Array[Int] = []
+    console.println("{empty.map((n) { spawn square(n) }).wait()}")
+    [1000000, 2000000].map((n) { spawn slow(n) }).cancel()
+    let nested = [[1, 2], [3]].flatMap((row) { row.map((n) { spawn square(n) }) })
+    console.println("{nested.wait()}")
+}
+
+// expect-stdout: [4, 9, 16]
+// expect-stdout: [ok(1), err(Number(3)), ok(2)]
+// expect-stdout: []
+// expect-stdout: [1, 4, 9]

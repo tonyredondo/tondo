@@ -1,0 +1,51 @@
+// `cancel()` of an array of tasks tells every task to stop before it waits
+// for any, as a group's does: the second task stops while the first is
+// still cleaning up in its `defer`, rather than after it.
+
+import std.console
+import std.time
+
+fn slowToStop(ready: Sender[Bool], idle: Receiver[Int], said: Sender[String]) {
+    defer {
+        said.send("first stopping")
+        _ = within time.seconds(5) { time.sleep(time.milliseconds(300)) }
+        said.send("first stopped")
+    }
+    ready.send(true)
+    _ = idle.receive()
+}
+
+fn quickToStop(ready: Sender[Bool], idle: Receiver[Int], said: Sender[String]) {
+    defer {
+        said.send("second stopped")
+    }
+    ready.send(true)
+    _ = idle.receive()
+}
+
+fn main() {
+    let (ready, started) = channel[Bool](2)
+    let (holdFirst, idleFirst) = channel[Int](1)
+    let (holdSecond, idleSecond) = channel[Int](1)
+    let (said, heard) = channel[String](8)
+    let jobs = [
+        spawn slowToStop(ready.copy(), idleFirst, said.copy()),
+        spawn quickToStop(ready, idleSecond, said),
+    ]
+    _ = started.receive()
+    _ = started.receive()
+    jobs.cancel()
+    var order: Array[String] = []
+    for line in heard {
+        order.push(line)
+    }
+    let second = order.findIndex((line) { line == "second stopped" }) ?? -1
+    let first = order.findIndex((line) { line == "first stopped" }) ?? -1
+    console.println("{order.sorted()}")
+    console.println("the second stopped before the first: {second < first}")
+    holdFirst.close()
+    holdSecond.close()
+}
+
+// expect-stdout: [first stopped, first stopping, second stopped]
+// expect-stdout: the second stopped before the first: true

@@ -84,6 +84,15 @@ pub fn Array.removeAt(var self, index: Int): T?
 /// Removes every element.
 pub fn Array.clear(var self)
 
+/// Of an array of tasks: waits for every task, in the array's order, and
+/// gives their results, cancelling none, as waiting for each in that order
+/// would (language 11.11). It takes the array.
+pub fn Array[Join[T]].wait(self): Array[T]
+
+/// Of an array of tasks: tells every task to stop, then waits for each to
+/// end. It takes the array.
+pub fn Array[Join[T]].cancel(self)
+
 /// The number of elements.
 pub fn Deque.length(self): Int
 

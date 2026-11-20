@@ -4041,6 +4041,25 @@ sentencia, o como valor de un bloque, rama o brazo de tipo `Unit`, no necesita
 notify(id) }` espera cada tarea al final de su iteración, y el compilador lo
 avisa (`W1013`): casi nunca es lo que quiere un bucle que lanza tareas.
 
+Un array de tareas, `Array[Join[T]]`, se espera o se cancela entero, y la
+operación lo consume:
+
+- `jobs.wait()` espera a todas sus tareas y devuelve sus resultados en el orden
+  del array, `Array[T]`: equivale a esperarlas una a una en ese orden. No
+  cancela ninguna: cuando `T` es `R ! E`, cada resultado conserva su error.
+- `jobs.cancel()` avisa a todas sus tareas de que paren y después espera a que
+  terminen.
+
+Usar el array después produce `E1401`, como un `Join` ya esperado. `map` acepta
+resultados que no son `Copy`, así que una tarea por elemento se lanza y se
+espera en una línea:
+
+~~~tondo
+let pages = urls.map((url) { spawn fetch(url) }).wait()   // Array[Page ! HttpError]
+~~~
+
+Para que el primer error cancele las demás, se reúnen en un `Group` (11.12).
+
 `spawn detached call(arguments)` lanza la tarea suelta: no da `Join`, su valor
 es `Unit` y nadie la espera. Es la forma de un servidor que atiende cada
 conexión a la vez, o de trabajo que no debe retener a quien lo inicia, como
@@ -4093,7 +4112,8 @@ fn scores(ids: Array[Int]): Array[Int] ! FetchError {
 - `group.next()` espera la siguiente tarea que termine, la retira y devuelve su
   resultado, o `none` si el grupo está vacío. El orden de terminación puede
   variar entre ejecuciones.
-- `group.cancel()` cancela todas las tareas y espera a que terminen.
+- `group.cancel()` avisa a todas las tareas de que paren y después espera a que
+  terminen.
 - `group.length()` y `group.isEmpty()` cuentan las tareas pendientes.
 
 `wait` y `cancel` consumen el grupo; un grupo que nadie consume se espera al

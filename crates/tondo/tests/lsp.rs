@@ -521,6 +521,9 @@ fn completion_and_highlighting() {
     assert!(strings.contains(&"fromBytes".to_string()) && !strings.contains(&"length".to_string()), "{strings:?}");
     let strings = complete(&mut editor, "\"text\".");
     assert!(strings.contains(&"length".to_string()) && strings.contains(&"split".to_string()), "{strings:?}");
+    // An array of tasks offers its `wait()` and `cancel()`.
+    let tasks = complete(&mut editor, "[1, 2].map((n) { spawn greet(ada, n) }).");
+    assert!(tasks.contains(&"wait".to_string()) && tasks.contains(&"cancel".to_string()), "{tasks:?}");
     let names = complete(&mut editor, "gr");
     assert!(names.contains(&"greet".to_string()) && names.contains(&"ada".to_string()), "{names:?}");
     // In an import, the modules: `std` and the project's first, then the

@@ -8544,3 +8544,34 @@ not one the test of freshness can lift: a function that returns its
 parameter as given is not fresh. The rows keep their reason in
 bench/README. It is reopened by Phase K's weighing of a call by what
 inlining buys, here that a region could take the copy.
+
+## An array of tasks is waited for or cancelled whole
+
+Tony asked for fan-out code that reads as what it does: a task for each
+element, then every result. `urls.map((url) { spawn fetch(url) })` was
+refused, as `map` asked of its result what every type parameter asks,
+`Copy`, which a `Join` is not; and an array of tasks had no way to be
+waited for but a loop. Of the line he was shown he said "Ala esa
+sintaxis mola", and of whether one task's failure should stop the
+others, "Dudo que si se cancela 1 las demás tengan que cancelarse".
+
+`map` and `flatMap` now take a result that is not `Copy` (`U: ~Copy`),
+and an `Array[Join[T]]` has `wait()` and `cancel()`, which take the
+array. `wait()` gives every result in the array's order and cancels
+none: a task that fails gives its error in its place, and the whole is
+what waiting for each in that order would do, a task's panic reaching
+the waiter at its turn and a waiter that is cancelled cancelling the
+tasks it has not waited for yet. `cancel()` tells every task to stop
+before it waits for any, so that none goes on working while another
+stops. `Join` is no type a method can be declared on, so the checker
+sends those two names, on that receiver alone, to two private functions
+of the prelude written in Tondo; `tondo api Array` and the editor's
+completion list them, a wrong name on such an array says what to write,
+and so does a lazy chain that makes tasks, whose values must be `Copy`.
+
+`group.cancel()` waited for each task before it told the next to stop, a
+loop of what one `Join`'s `cancel()` does; it now tells all first, as
+its sentence in the specification now says, and the array's `cancel()`
+is a group's. To stop at the first error and cancel the rest, as a
+group's `wait()` does today, is the other way of waiting Tony chose,
+`waitOrCancel()`, which comes with the group's change.

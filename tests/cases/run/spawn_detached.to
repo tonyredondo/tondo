@@ -32,7 +32,7 @@ fn main() {
     }
 }
 
-// expect-warning: W1013 each iteration waits for this task at its end
+// expect-warning: W1013 each iteration waits for this task at its end, so the tasks run one at a time; map the values to tasks and `wait()` for the array
 // expect-stdout: detached tasks ran at once: 3
 // expect-stdout: a function named detached: 1
 // expect-stdout: a function named detached: 2
