@@ -40,10 +40,14 @@ fn main() {
 - An array of tasks is waited for whole: `ids.map((id) { spawn fetch(id) })`
   starts one for each element, and `wait()` on it gives every result in the
   array's order and cancels nothing, each keeping its own error; `cancel()`
-  tells them all to stop and waits. Either uses the array up (`E1401`
-  after).
-- With `Group[T ! E]`, `wait()` gives `Array[T] ! E`: the first error cancels
-  the others.
+  tells them all to stop and waits. Each uses the array up (`E1401` after).
+- `waitOrCancel()`, on an array of tasks or a `Group` whose tasks can fail,
+  gives `Array[T] ! E`: all the values, or the first error to happen, which
+  cancels the others. `ids.map((id) { spawn load(id) }).waitOrCancel()?`
+  passes that error on.
+- A `Group` is for tasks added as the work goes and results taken as they
+  finish: `group.next()`, or `for value in group { ... }`, which leaves the
+  tasks still running in the group after a `break`.
 - `job.cancel()` stops a task at its next wait and runs its `defer`s, which
   still do what needs no wait, as taking a free lock or sending to a channel
   with room, so shared state stays right. A wait a `defer` needs ends at
@@ -51,6 +55,42 @@ fn main() {
 - A panic in a task ends the program, unless the task was started in a
   `recover { ... }`, without `detached`: its panic stops that block, which
   cancels its other tasks (see `tondo guide errors`).
+
+`wait()` on tasks that can fail gives every outcome, each with its own
+error, and cancels none: an array of results, not one result. For the
+values or the first error, which cancels the rest, write `waitOrCancel()`.
+
+```tondo error E1621
+fn load(id: Int): Int ! String {
+    if id == 2 {
+        fail "item {id} is missing"
+    }
+    id
+}
+
+fn loadAll(ids: Array[Int]): Array[Int] ! String {
+    let loaded = ids.map((id) { spawn load(id) }).wait()?
+    loaded
+}
+
+fn main() {
+    _ = loadAll([1, 2, 3])
+}
+```
+
+`waitOrCancel()` stops at the first error, so it is for tasks that can
+fail. On tasks that cannot, write `wait()`.
+
+```tondo error E1620
+fn double(n: Int): Int {
+    n * 2
+}
+
+fn main() {
+    let doubled = [1, 2, 3].map((n) { spawn double(n) }).waitOrCancel()
+    _ = doubled
+}
+```
 
 ## Channels and select
 

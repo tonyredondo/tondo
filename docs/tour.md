@@ -480,9 +480,10 @@ fn main() {
 
 A task belongs to the block that spawned it: one nobody waited for is waited
 for when the block ends, so none is left running by accident. A task that
-should outlive its block says `spawn detached`. With a `Group[T ! E]`, the
-first error cancels the others, and a cancelled task stops at its next wait
-and runs its `defer`s.
+should outlive its block says `spawn detached`. Tasks that can fail are
+waited for with `wait()`, which gives each outcome, or with
+`waitOrCancel()`, where the first error cancels the others; a cancelled
+task stops at its next wait and runs its `defer`s.
 
 Tasks talk through channels, and `select` waits for whichever comes first:
 

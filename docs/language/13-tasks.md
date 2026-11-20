@@ -224,15 +224,52 @@ the next, so a task that panicked does what its own `wait()` would. An
 array written out is waited for the same way, as `[spawn one(), spawn
 two()].wait()`.
 
+`waitOrCancel()` is for when one failure makes the rest pointless. It gives
+all the values, or the first error to happen, and that error cancels the
+tasks still running:
+
+```tondo
+import std.console
+import std.time
+
+fn load(id: Int): String ! String {
+    time.sleep(time.milliseconds(5 * id))
+    if id == 2 {
+        fail "item {id} is missing"
+    }
+    "item {id}"
+}
+
+fn loadAll(ids: Array[Int]): Array[String] ! String {
+    ids.map((id) { spawn load(id) }).waitOrCancel()
+}
+
+fn main() {
+    console.println("{loadAll([1, 3])}")
+    console.println("{loadAll([1, 2, 3])}")
+}
+```
+
+```text output
+ok([item 1, item 3])
+err(item 2 is missing)
+```
+
+With `?` after it the error goes on to the caller as any other does. On
+tasks that cannot fail there is nothing to stop at, and the compiler says
+to write `wait()` (`E1620`).
+
 `cancel()` on the array tells every task to stop, and then waits until all
-of them have. Either one uses the array up, as `wait()` does a `Join`:
-the compiler refuses a use of it afterwards (`E1401`). To stop the others
-at the first error, the tasks go in a `Group` instead.
+of them have. Each of the three uses the array up, as `wait()` does a
+`Join`: the compiler refuses a use of it afterwards (`E1401`).
 
 ## Groups
 
-A `Group` holds many tasks and waits for them together. Its results come in
-the order the tasks were added, whichever finished first:
+An array is the short way when the tasks are all there at the start. A
+`Group` is for the rest: tasks that are added as the work finds them, and
+results that are taken as they finish. It waits for its tasks together, as
+an array does, and its results come in the order the tasks were added,
+whichever finished first:
 
 ```tondo
 import std.console
@@ -282,41 +319,63 @@ fn main() {
 some(fast.example) answered first, 1 still running
 ```
 
-## Errors and panics in tasks
-
-A task's result is whatever its function returns, errors included. With a
-`Group[T ! E]`, `wait()` gives `Array[T] ! E`: all the values, or the first
-error, and that error cancels the tasks still running.
+A `for` over the group takes each result as its task finishes, until none
+is left. It does not use the group up: after a `break` the tasks still
+running are in it, to be waited for or cancelled, and more can be added:
 
 ```tondo
 import std.console
 import std.time
 
-fn load(id: Int): String ! String {
-    time.sleep(time.milliseconds(5 * id))
-    if id == 2 {
-        fail "item {id} is missing"
-    }
-    "item {id}"
-}
-
-fn loadAll(ids: Array[Int]): Array[String] ! String {
-    var group = Group[String ! String]()
-    for id in ids {
-        group.add(spawn load(id))
-    }
-    group.wait()
+fn check(host: String, delay: Int): String {
+    time.sleep(time.milliseconds(delay))
+    host
 }
 
 fn main() {
-    console.println("{loadAll([1, 3])}")
-    console.println("{loadAll([1, 2, 3])}")
+    var group = Group[String]()
+    group.add(spawn check("slow.example", 300))
+    group.add(spawn check("fast.example", 1))
+    group.add(spawn check("mid.example", 50))
+    for host in group {
+        console.println("{host} answered")
+        if host == "mid.example" {
+            break
+        }
+    }
+    console.println("{group.length()} still running")
+    group.cancel()
 }
 ```
 
 ```text output
-ok([item 1, item 3])
-err(item 2 is missing)
+fast.example answered
+mid.example answered
+1 still running
+```
+
+A group has the three ways of an array to end: `wait()` for every result,
+`waitOrCancel()` for the values or the first error, and `cancel()`.
+
+## Errors and panics in tasks
+
+A task's result is whatever its function returns, errors included. On an
+array of tasks and on a `Group` alike, `wait()` gives every outcome with
+its own error, and `waitOrCancel()` gives all the values or the first
+error ([An array of tasks](#an-array-of-tasks)).
+
+What `wait()` gives on tasks that can fail is an array of results, not one
+result. Using it as one is a compile error that says what was meant:
+
+```text
+error[E1621]: `wait()` gives every task's result, as `Array[Int ! String]`, and cancels none; for the values or the first error, which cancels the other tasks, write `waitOrCancel()`
+```
+
+And an array of results that nobody reads is refused as a result that
+nobody reads is, since any of its values may be a failure:
+
+```text
+error[E1303]: a value of type `Array[Int ! String]` is not used, and it holds results that may be failures; read them, discard them with `_ = ...`, or pass the first failure on with `waitOrCancel()?`
 ```
 
 A panic in a task is a bug and ends the program, with a report that shows
@@ -887,8 +946,9 @@ as blocking.
 | To | Use |
 | --- | --- |
 | do two things at once and use both results | `spawn` and `wait()` |
-| do many things at once | a `Group` |
-| stop at the first failure | a `Group[T ! E]` |
+| do many things at once | an array of tasks and `wait()` |
+| add tasks as the work goes, or take results as they finish | a `Group` |
+| stop at the first failure | `waitOrCancel()` |
 | bound how much runs at once | `executor.pool`, or a `Semaphore` |
 | hand values from one task to another | a channel |
 | wait for whichever comes first | `select` |

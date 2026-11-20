@@ -171,11 +171,8 @@ fn size(url: String): Int ! http.HttpError {
 }
 
 fn main() {
-    var pages = Group[Int ! http.HttpError]()
-    for url in ["https://example.com", "https://example.org"] {
-        pages.add(spawn size(url))
-    }
-    match within time.seconds(5) { pages.wait() } {
+    let urls = ["https://example.com", "https://example.org"]
+    match within time.seconds(5) { urls.map((url) { spawn size(url) }).waitOrCancel() } {
         ok(sizes) => console.println("{sizes}")
         err(error) => console.println("gave up: {error}")
     }

@@ -383,11 +383,7 @@ fn size(url: String): Int ! http.HttpError {
 }
 
 fn sizes(urls: Array[String]): Array[Int] {
-    var pages = Group[Int ! http.HttpError]()
-    for url in urls {
-        pages.add(spawn size(url))
-    }
-    pages.wait() ?? []
+    urls.map((url) { spawn size(url) }).waitOrCancel() ?? []
 }
 
 fn main() {
