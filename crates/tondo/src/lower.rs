@@ -160,6 +160,8 @@ pub(crate) fn may_panic(statement: &Statement) -> bool {
                             | hir::StdFn::WithinEnter
                             | hir::StdFn::WithinLeave
                             | hir::StdFn::WithinCatch
+                            | hir::StdFn::LimitEnter
+                            | hir::StdFn::LimitLeave
                             | hir::StdFn::ContextGet(_)
                             | hir::StdFn::ContextSet(..)
                             | hir::StdFn::ContextRestore
@@ -286,6 +288,8 @@ enum Exit {
     Recover,
     /// The end of a `within` block (11.17).
     Within,
+    /// The end of a `within tasks.limit(n)` block (11.17).
+    Limit,
     /// The end of a `with`: the contexts its local saved come back (11.16).
     Restore(Local),
 }
@@ -693,6 +697,7 @@ impl Builder<'_> {
                     Exit::Defer(call) => Rc::as_ptr(call) as u64 | 1 << 63,
                     Exit::Recover => u64::MAX - 1,
                     Exit::Within => u64::MAX - 2,
+                    Exit::Limit => u64::MAX - 3,
                     Exit::Restore(local) => u64::from(local.0) | 1 << 61,
                 });
             }
@@ -755,6 +760,28 @@ impl Builder<'_> {
     /// `failure` when its deadline passed first. What unwinds to one of them
     /// and is not its own, a deadline to a `recover` or a panic to a
     /// `within`, goes on unwinding, after the cleanups of what it abandoned.
+    /// `within tasks.limit(n) { ... }` (11.17): the tasks the block's own
+    /// task starts take a place of the limit while the block runs, which
+    /// ends however it is left; its value is the block's.
+    fn limited(&mut self, e: &hir::Expr, limit: &hir::Expr, block: &hir::Block) -> Operand {
+        let limit = self.expr(limit);
+        let unit = self.new_local(Ty::UNIT);
+        let enter = Rvalue::Call(hir::Callee::Std(hir::StdFn::LimitEnter), vec![limit]);
+        self.push(Statement::Assign(Place::local(unit), Box::new(enter), e.span));
+        let result = self.new_local(e.ty);
+        self.scopes.push(vec![Exit::Limit]);
+        self.in_frame(|b| {
+            let value = b.block(block);
+            if block.ty != Ty::NEVER {
+                b.store(Place::local(result), value, e.span);
+            }
+        });
+        self.scopes.pop();
+        self.std_call(hir::StdFn::LimitLeave, e.span);
+        self.own(result);
+        Operand::local(result)
+    }
+
     fn catcher(&mut self, e: &hir::Expr, block: &hir::Block, catch_kind: Catch) -> Operand {
         let result = self.new_local(e.ty);
         let exit = match catch_kind {
@@ -1209,6 +1236,7 @@ impl Builder<'_> {
             Exit::Release(local) => self.push(Statement::Release(Place::local(local))),
             Exit::Recover => self.std_call(hir::StdFn::RecoverLeave, Span::default()),
             Exit::Within => self.std_call(hir::StdFn::WithinLeave, Span::default()),
+            Exit::Limit => self.std_call(hir::StdFn::LimitLeave, Span::default()),
             Exit::Restore(saved) => {
                 let unit = self.new_local(Ty::UNIT);
                 let call = Rvalue::Call(hir::Callee::Std(hir::StdFn::ContextRestore), vec![Operand::local(saved)]);
@@ -2673,7 +2701,8 @@ impl Builder<'_> {
                 self.temp(Ty::STRING, Rvalue::Concat(pieces), e.span)
             }
             hir::ExprKind::Recover(block, caught) => self.catcher(e, block, Catch::Recover(caught)),
-            hir::ExprKind::Within(limit, block, failure) => self.catcher(e, block, Catch::Within(limit, failure)),
+            hir::ExprKind::Within(limit, block, Some(failure)) => self.catcher(e, block, Catch::Within(limit, failure)),
+            hir::ExprKind::Within(limit, block, None) => self.limited(e, limit, block),
             hir::ExprKind::Panic(message, code) => {
                 let message = self.expr(message);
                 self.panic_with(*code, message, e.span);

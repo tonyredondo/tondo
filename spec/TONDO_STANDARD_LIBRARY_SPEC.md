@@ -841,6 +841,17 @@ pub fn Receiver.isClosed(self): Bool
 su capacidad opcional; son formas intrínsecas del preludio, no sobrecargas que
 un módulo pueda declarar.
 
+`std.tasks` reúne lo que acompaña a las tareas del lenguaje (11.11–11.17):
+
+~~~tondo pseudocode
+pub fn limit(places: Int): Limit
+pub type Limit
+~~~
+
+`limit` da un límite de `places` plazas para `within` (lenguaje 11.17); un
+`Limit` es un valor que puede guardarse y compartirse, y todos los `within` que
+lo usan comparten sus plazas.
+
 ### 9.4 Cancelación
 
 La cancelación es cooperativa (11.15): una tarea cancelada se detiene en su

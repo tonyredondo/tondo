@@ -3447,6 +3447,8 @@ fn runtime_keeps(std: &crate::hir::StdFn) -> bool {
         | StdFn::WithinEnter
         | StdFn::WithinLeave
         | StdFn::WithinCatch
+        | StdFn::LimitEnter
+        | StdFn::LimitLeave
         | StdFn::ContextGet(_)
         | StdFn::ContextField(..)
         | StdFn::RecoverEnter

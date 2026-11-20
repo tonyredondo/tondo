@@ -54,6 +54,13 @@ pub(crate) fn get<'a, T: Any>(object: *mut NativeObject) -> Option<&'a T> {
     unsafe { Some(&(*(object as *mut Inner<T>)).value) }
 }
 
+/// One more reference to an object of the heap, which the runtime keeps.
+pub(crate) unsafe fn retain(object: *mut NativeObject) {
+    if !object.is_null() {
+        unsafe { (*object).rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed) };
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_native_release(object: *mut NativeObject) {
     if object.is_null() {

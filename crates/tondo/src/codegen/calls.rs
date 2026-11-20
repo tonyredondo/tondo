@@ -211,6 +211,8 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Callee::Std(StdFn::SpawnDetached) => self.e.call_rt(Rt::SpawnDetached, &[]),
             Callee::Std(StdFn::WithinLeave) => self.e.call_rt(Rt::WithinLeave, &[]),
             Callee::Std(StdFn::WithinCatch) => self.e.call_rt(Rt::WithinCatch, &[]),
+            Callee::Std(StdFn::LimitEnter) => self.e.call_rt(Rt::LimitEnter, &values),
+            Callee::Std(StdFn::LimitLeave) => self.e.call_rt(Rt::LimitLeave, &[]),
             Callee::Std(StdFn::UnwindHold) => self.e.call_rt(Rt::UnwindHold, &[]),
             Callee::Std(StdFn::PanicHeld) => self.e.call_rt(Rt::PanicHeld, &[]),
             // A function that returns from here goes to its caller's way,

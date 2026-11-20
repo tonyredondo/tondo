@@ -336,6 +336,7 @@ pub(crate) const LOCK: u8 = 1;
 pub(crate) const RECEIVING: u8 = 2;
 pub(crate) const SENDING: u8 = 3;
 pub(crate) const JOIN: u8 = 4;
+pub(crate) const PLACE: u8 = 5;
 
 /// Blocks the running task as `block` does, on `object` of the kind
 /// `kind`, which the debugger shows while it waits.

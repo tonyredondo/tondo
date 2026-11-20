@@ -528,8 +528,9 @@ pub enum ExprKind {
     Recover(Block, Box<Expr>),
     /// `within limit { ... }` (11.17): the limit, a binding's value; the
     /// block, whose value the result holds; and the result's error when the
-    /// deadline passes first.
-    Within(Box<Expr>, Block, Box<Expr>),
+    /// deadline passes first. With no error, the limit is a limit of tasks,
+    /// the runtime's object, and the result the block's own value.
+    Within(Box<Expr>, Block, Option<Box<Expr>>),
     /// The members of the suite (or of the root of the test tree) whose
     /// setup is done: each node with the closure, erased to a `fn()`, that
     /// runs it (testing 7.3).
@@ -1033,6 +1034,10 @@ pub enum StdFn {
     WithinEnter,
     WithinLeave,
     WithinCatch,
+    /// A `within tasks.limit(n)` block starts with its limit and ends
+    /// (11.17).
+    LimitEnter,
+    LimitLeave,
     /// The `Ref` of a context's value where the code runs; a new value of
     /// it, which gives what to restore; and that restored (11.16).
     ContextGet(u32),
@@ -1724,6 +1729,9 @@ pub const NATIVES: &[Native] = {
     const fn env(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
         Native { module: "env", name, receiver: None, params, result, symbol }
     }
+    const fn tasks(name: &'static str, params: &'static [NativeTy], result: NativeTy, symbol: &'static str) -> Native {
+        Native { module: "tasks", name, receiver: None, params, result, symbol }
+    }
     const fn process(
         name: &'static str,
         params: &'static [NativeTy],
@@ -1851,6 +1859,8 @@ pub const NATIVES: &[Native] = {
         // `std.internal.env`: what `std.env` writes in Tondo asks of the host.
         env("processors", &[], Int, "tondo_rt_env_processors"),
         env("workers", &[], Int, "tondo_rt_env_workers"),
+        // `std.internal.tasks`: the runtime's limits, for `std.tasks`.
+        tasks("limit", &[Int], Object, "tondo_rt_tasks_limit"),
         env("cores", &[], Int, "tondo_rt_env_cores"),
         env("user", &[], Strings, "tondo_rt_env_user"),
         env("system", &[], Strings, "tondo_rt_env_system"),
@@ -2484,7 +2494,9 @@ pub fn written(e: &Expr, out: &mut Vec<LocalId>) {
         ExprKind::Within(limit, block, failure) => {
             written(limit, out);
             written_block(block, out);
-            written(failure, out);
+            if let Some(failure) = failure {
+                written(failure, out);
+            }
         }
         ExprKind::Interpolate(segments) => segments.iter().for_each(|segment| {
             if let Segment::Value(value) = segment {

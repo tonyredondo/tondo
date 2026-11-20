@@ -338,7 +338,9 @@ fn expr(e: &hir::Expr, f: &mut impl FnMut(&hir::Expr)) {
         E::Within(limit, block, failure) => {
             expr(limit, f);
             each_expr(block, f);
-            expr(failure, f);
+            if let Some(failure) = failure {
+                expr(failure, f);
+            }
         }
         E::Interpolate(segments) => segments.iter().for_each(|segment| {
             if let hir::Segment::Value(value) = segment {

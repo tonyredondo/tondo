@@ -596,8 +596,9 @@ pub enum ExprKind {
     Unsafe(Block),
     /// `recover { ... }` (15.9).
     Recover(Block),
-    /// `within limit { ... }` (11.17).
-    Within(Box<Expr>, Block),
+    /// `within limit { ... }` (11.17): a deadline, a limit of tasks, or
+    /// both, `within time.seconds(5), tasks.limit(8) { ... }`.
+    Within(Vec<Expr>, Block),
     /// The code of a template compiled with the program (standard library
     /// 14.31), which `template.html` and `template.text` take as their
     /// source: the statements that write it, with its data as `self`.

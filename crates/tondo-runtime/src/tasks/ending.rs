@@ -52,6 +52,7 @@ pub(crate) fn end_all(status: i32) -> ! {
                 std::ptr::write_bytes((*join).result, 0, (*join).size);
             }
             (*join).taken = true;
+            give_places(&mut *me);
             if complete(join) {
                 DETACHED.lock().unwrap_or_else(|e| e.into_inner()).retain(|&j| j != join as usize);
                 tondo_rt_join_release(join);

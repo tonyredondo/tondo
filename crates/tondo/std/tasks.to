@@ -1,0 +1,49 @@
+//! What goes with the language's tasks (language 11.11 to 11.17): a limit
+//! of how many tasks a block keeps alive at once.
+//!
+//! ```tondo
+//! import std.console
+//! import std.tasks
+//!
+//! fn square(n: Int): Int {
+//!     n * n
+//! }
+//!
+//! let squares = within tasks.limit(4) {
+//!     [1, 2, 3, 4, 5, 6].map((n) { spawn square(n) }).wait()
+//! }
+//! console.println("{squares}")
+//! ```
+
+import std.internal.tasks as tasksNative
+
+/// A limit of how many tasks the `within` blocks of it keep alive at once
+/// (language 11.17). It is a value: every `within` of the same limit shares
+/// its places, so one kept by a server bounds all its requests together.
+///
+/// ```tondo
+/// import std.console
+/// import std.tasks
+///
+/// fn twice(n: Int): Int {
+///     n * 2
+/// }
+///
+/// let fetching = tasks.limit(2)
+/// let first = within fetching { [1, 2, 3].map((n) { spawn twice(n) }).wait() }
+/// let second = within fetching { [4, 5].map((n) { spawn twice(n) }).wait() }
+/// console.println("{first} {second}")
+/// ```
+pub type Limit = {
+    priv native: tasksNative.Native
+}
+
+/// A limit of `places` tasks alive at once, for `within`: each task that
+/// the block's own task starts, not detached, takes a place before it
+/// starts, and gives it back as it ends. Panics when `places` is below 1.
+pub fn limit(places: Int): Limit {
+    if places < 1 {
+        panic("tasks.limit takes 1 place or more, not {places}: write tasks.limit(1) or more")
+    }
+    Limit { native: tasksNative.limit(places) }
+}

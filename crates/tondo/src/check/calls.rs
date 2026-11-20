@@ -2461,7 +2461,8 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalEnv
                     | StdModule::InternalProcess
                     | StdModule::InternalSql
-                    | StdModule::InternalImage),
+                    | StdModule::InternalImage
+                    | StdModule::InternalTasks),
                 )),
             ) => {
                 // `has(feature)`: what `cpu.has` answers when the build's
@@ -2552,6 +2553,7 @@ impl<'a> Checker<'a> {
                     StdModule::InternalProcess => "process",
                     StdModule::InternalSql => "sql",
                     StdModule::InternalImage => "image",
+                    StdModule::InternalTasks => "tasks",
                     StdModule::InternalLibrary => "library",
                     _ => "reflect",
                 };

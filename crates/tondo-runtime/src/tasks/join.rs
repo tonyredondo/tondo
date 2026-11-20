@@ -234,6 +234,12 @@ pub unsafe extern "C" fn tondo_rt_spawn(
     show: Option<Show>,
 ) -> *mut JoinObject {
     start_workers();
+    // A place of every limit around it, which may wait (11.17), in a
+    // program that made one.
+    let places = match limits::USED.load(Ordering::Relaxed) {
+        true => take_places(),
+        false => std::ptr::null_mut(),
+    };
     let align = align.max(8);
     LIVE_OBJECTS.made();
     let spawned = Spawned {
@@ -291,6 +297,7 @@ pub unsafe extern "C" fn tondo_rt_spawn(
     let task = new_task(current(), None, body, code, kind, join, unsafe { (&raw mut (*block).task).cast() }, None);
     unsafe {
         (*join).task = task;
+        (*task).limits = places;
         let spawned = crate::trace::spawned(origin());
         tools::spawned(task, code, spawned);
         if let Some(parent) = current().as_ref().filter(|parent| parent.flight != 0) {

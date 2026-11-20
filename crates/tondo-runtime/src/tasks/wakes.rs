@@ -115,6 +115,7 @@ pub(crate) fn waiting_on(kind: u8) -> &'static str {
         RECEIVING => "a value of a channel",
         SENDING => "room in a channel",
         JOIN => "a task",
+        PLACE => "a place of a tasks.limit",
         _ => "time or input",
     }
 }

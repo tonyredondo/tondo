@@ -1,0 +1,16 @@
+// A `within` whose block is only another of the other kind is written as
+// one, the deadline first; two of one kind nested stay as they are.
+
+import std.console
+import std.tasks
+import std.time
+
+fn main() {
+    let fetching = tasks.limit(4)
+    let one = within fetching { within time.seconds(1) { 5 } }
+    let two = within time.seconds(1) { within time.seconds(2) { 6 } }
+    console.println("{one} {two}")
+}
+
+// expect-warning: W1027 this `within` holds only another of the other kind: write them as one, `within time.seconds(1), fetching { ... }`
+// expect-stdout: ok(5) ok(6)

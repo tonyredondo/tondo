@@ -81,6 +81,9 @@ pub(crate) use join::*;
 mod group;
 pub(crate) use group::*;
 
+mod limits;
+pub(crate) use limits::*;
+
 mod channels;
 pub(crate) use channels::*;
 
@@ -120,6 +123,12 @@ const PINNED: u8 = 4;
 static PINNED_LOCK: Mutex<()> = Mutex::new(());
 static PINNED_WAKE: Condvar = Condvar::new();
 
+/// A task, which `tondo_rt_spawn` makes in one block with its join and
+/// its result: 640 bytes, 8 under the allocator's next size class. A field
+/// more costs a page's worth of blocks to a program with many live tasks
+/// (`spawn 1000` moved 5% in instructions when the block grew 8 bytes):
+/// a new field goes into the padding the flags at the end leave, or behind
+/// a pointer, as `limits` does.
 #[repr(C)]
 pub(crate) struct Task {
     /// `TASK_MARK` while the task is alive: what finds it in a core, which
@@ -209,11 +218,13 @@ pub(crate) struct Task {
     /// innermost last: the one that holds, the nearest, and the index of the
     /// block that set it.
     pub(crate) withins: Vec<(Instant, usize)>,
+    /// The limits of tasks it runs within and the places it holds (11.17),
+    /// a box of them or null: one word, which a program that made no
+    /// limit never looks at, and which needs nothing to drop.
+    pub(crate) limits: *mut Limits,
     /// The `within` entered in a `defer` of the cancelled task, whose waits
     /// go on until its deadline (11.15): its level among `withins`.
     pub(crate) grace: Option<usize>,
-    /// Its deadline passed in a wait: it unwinds to the block of it.
-    pub(crate) expired: bool,
     /// The deadline of the block that spawned it, which it reads and does
     /// not keep (`contexts::deadline_nanos`).
     pub(crate) inherited: AtomicU64,
@@ -223,6 +234,9 @@ pub(crate) struct Task {
     /// The `recover` it belongs to: started without `detached` inside one,
     /// or by a task that belongs to one.
     pub(crate) owner: Option<Arc<super::panics::Owner>>,
+    /// Its deadline passed in a wait: it unwinds to the block of it. Beside
+    /// the other flags, where it takes no word of its own.
+    pub(crate) expired: bool,
     /// Detached since: it belongs to no `recover` but its own.
     pub(crate) free: AtomicBool,
     /// The next task it spawns starts detached (11.11).
@@ -711,6 +725,8 @@ extern "C" fn trampoline() -> ! {
             if (*join).failed >= 0 {
                 join::note_failure(join, &*task);
             }
+            // Its places, before whoever waits for it hears that it ended.
+            give_places(&mut *task);
             if complete(join) {
                 let mut detached = DETACHED.lock().unwrap_or_else(|e| e.into_inner());
                 detached.retain(|&j| j != join as usize);
@@ -820,6 +836,7 @@ fn new_task(
         region_allocations: std::sync::atomic::AtomicU64::new(0),
         context,
         withins: Vec::new(),
+        limits: std::ptr::null_mut(),
         grace: None,
         expired: false,
         inherited: AtomicU64::new(inherited),

@@ -1,7 +1,8 @@
-// `within` takes a `time.Duration`, from `std.time`.
+// `within` takes a deadline, a `time.Duration` from `std.time`, or a limit
+// of tasks, a `tasks.Limit` from `std.tasks`, and says how to write either.
 
 fn main() {
     let _ = within 5 { 1 }
 }
 
-// expect-error: E1001 `within` takes a `time.Duration`
+// expect-error: E1622 `within` takes a deadline, a `time.Duration`, or a limit of tasks, a `tasks.Limit`, not `Int`

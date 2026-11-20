@@ -1,0 +1,11 @@
+// A limit of tasks has one place at least.
+
+import std.tasks
+
+fn main() {
+    let places = 0
+    _ = tasks.limit(places)
+}
+
+// expect-panic: P0008
+// expect-stderr: panic[P0008]: explicit-panic: tasks.limit takes 1 place or more, not 0: write tasks.limit(1) or more

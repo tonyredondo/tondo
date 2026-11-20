@@ -216,6 +216,7 @@ impl<'a> Checker<'a> {
             ["std", "internal", "process"] => StdModule::InternalProcess,
             ["std", "internal", "sql"] => StdModule::InternalSql,
             ["std", "internal", "image"] => StdModule::InternalImage,
+            ["std", "internal", "tasks"] => StdModule::InternalTasks,
             ["std", "internal", "context"] => StdModule::InternalContext,
             ["std", "internal", "channel"] => StdModule::InternalChannel,
             ["std", rest @ ..] if let Some((targets, suffix, key)) = crate::stdlib::elsewhere(&path) => {
@@ -340,6 +341,7 @@ impl<'a> Checker<'a> {
                 | StdModule::InternalFs
                 | StdModule::InternalSql
                 | StdModule::InternalImage
+                | StdModule::InternalTasks
                 | StdModule::InternalLibrary
         ) {
             self.types.handle(Handle::Native, Ty::UNIT);
@@ -493,6 +495,7 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalFs
                     | StdModule::InternalSql
                     | StdModule::InternalImage
+                    | StdModule::InternalTasks
                     | StdModule::InternalLibrary
                     | StdModule::InternalText
                     | StdModule::InternalContext,

@@ -768,7 +768,9 @@ impl Mono<'_> {
             ExprKind::Within(limit, block, failure) => {
                 self.expr(limit, map);
                 self.block(block, map);
-                self.expr(failure, map);
+                if let Some(failure) = failure {
+                    self.expr(failure, map);
+                }
             }
             ExprKind::Interpolate(segments) => {
                 for segment in segments {

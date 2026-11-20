@@ -738,26 +738,135 @@ impl<'a> Checker<'a> {
         Self::mk(hir::ExprKind::Recover(block, Box::new(caught)), ty, span)
     }
 
-    /// `within limit { ... }` (11.17): the block's value, as a result whose
-    /// error also takes `time.TimedOut`, which it is when the deadline
-    /// passes first. The limit is evaluated first, into a binding that the
-    /// error reads.
-    pub(super) fn within(&mut self, cx: &mut FnCx, limit: &ast::Expr, block: &ast::Block, span: Span) -> hir::Expr {
-        let (Some(duration), Some(timed_out)) = (self.duration, self.timed_out()) else {
-            let message =
-                "`within` takes a `time.Duration`: `import std.time`, and write `within time.seconds(2) { ... }`";
-            self.diags.error("E1001", limit.span, message);
-            self.block(cx, block, None);
-            return Self::error_expr(span);
+    /// `within` (11.17): a deadline, a `time.Duration`, whose block's value
+    /// comes as a result whose error also takes `time.TimedOut`, which it is
+    /// when the deadline passes first; a limit of tasks, a `tasks.Limit`,
+    /// whose block's value comes as it is; or one of each, read as the two
+    /// nested. A `within` whose block is only another of the other kind is
+    /// written as one (W1027).
+    pub(super) fn within(&mut self, cx: &mut FnCx, limits: &[ast::Expr], block: &ast::Block, span: Span) -> hir::Expr {
+        let nested = match (limits, block) {
+            ([_], ast::Block { stmts, tail: Some(tail), .. }) if stmts.is_empty() => match &tail.kind {
+                ast::ExprKind::Within(inner, inner_block) if inner.len() == 1 => Some((&inner[0], inner_block)),
+                _ => None,
+            },
+            _ => None,
         };
-        let limit = self.expr(cx, limit, Some(duration));
-        let limit = self.coerce(limit, duration);
-        let held = self.hidden_local(cx, duration);
+        let mut written: Vec<&ast::Expr> = limits.iter().collect();
+        let mut body = block;
+        if let Some((inner, inner_block)) = nested {
+            written.push(inner);
+            body = inner_block;
+        }
+        let mut values = Vec::new();
+        for limit in &written {
+            let value = self.expr(cx, limit, None);
+            let bound = self.bound_of(value.ty);
+            values.push((value, bound, limit.span));
+        }
+        if let Some(refused) = self.refused_within(&values, limits.len()) {
+            self.diags.error("E1622", refused.0, refused.1);
+            self.block(cx, body, None);
+            return Self::error_expr(span);
+        }
+        // An expression that is already an error says nothing more.
+        if values.iter().any(|(value, ..)| value.ty == Ty::ERROR) {
+            self.block(cx, body, None);
+            return Self::error_expr(span);
+        }
+        // One of each kind, the second the whole block of the first.
+        if let (Some((_, inner_block)), [(_, Some(outer), _), (_, Some(inner), _)]) = (nested, values.as_slice())
+            && outer != inner
+        {
+            let source = self.sources.file_of(span.start);
+            let text = |at: Span| source.slice(at).to_string();
+            let (deadline, limit) = match outer {
+                Bound::Deadline => (text(values[0].2), text(values[1].2)),
+                Bound::Limit => (text(values[1].2), text(values[0].2)),
+            };
+            let message = format!(
+                "this `within` holds only another of the other kind: write them as one, `within {deadline}, {limit} {{ ... }}`"
+            );
+            self.diags.warning("W1027", span, message);
+            let head = Span::new(span.start, inner_block.span.start);
+            let tail = Span::new(inner_block.span.end, span.end);
+            let edits = vec![(head, format!("within {deadline}, {limit} ")), (tail, String::new())];
+            self.diags.fix("write them as one `within`", true, edits);
+        }
         // In a `defer` of a cancelled task, its waits go on until its
         // deadline (11.17): a lock there is no end of the `defer`.
-        let deferred = std::mem::replace(&mut cx.deferred, false);
-        let block = self.block(cx, block, None);
+        let timed = values.iter().any(|(_, bound, _)| *bound == Some(Bound::Deadline));
+        let deferred = match timed {
+            true => std::mem::replace(&mut cx.deferred, false),
+            false => cx.deferred,
+        };
+        let mut body = Some(self.block(cx, body, None));
         cx.deferred = deferred;
+        // The innermost first: each is the whole block of the next.
+        let mut made: Option<hir::Expr> = None;
+        for (value, bound, _) in values.into_iter().rev() {
+            let inner = match made.take() {
+                Some(expr) => hir::Block { stmts: Vec::new(), ty: expr.ty, tail: Some(Box::new(expr)) },
+                None => body.take().expect("the block, once"),
+            };
+            made = Some(match bound {
+                Some(Bound::Deadline) => self.deadline_block(cx, value, inner, span),
+                _ => self.limit_block(value, inner, span),
+            });
+        }
+        made.unwrap_or_else(|| Self::error_expr(span))
+    }
+
+    /// What a `within`'s expression is: a deadline or a limit of tasks.
+    fn bound_of(&self, ty: Ty) -> Option<Bound> {
+        if Some(ty) == self.duration {
+            return Some(Bound::Deadline);
+        }
+        match self.type_names.get("tasks.Limit") {
+            Some(&TypeName::Nominal(limit)) if limit == ty => Some(Bound::Limit),
+            _ => None,
+        }
+    }
+
+    /// Why a `within` cannot take what it was given (E1622): something that
+    /// is neither a deadline nor a limit, more than two, or two of one kind
+    /// in its list, with where.
+    fn refused_within(&self, values: &[(hir::Expr, Option<Bound>, Span)], listed: usize) -> Option<(Span, String)> {
+        if let Some((value, _, at)) = values.iter().find(|(value, bound, _)| bound.is_none() && value.ty != Ty::ERROR) {
+            let message = format!(
+                "`within` takes a deadline, a `time.Duration`, or a limit of tasks, a `tasks.Limit`, not {}: write `within time.seconds(2) {{ ... }}` with `import std.time`, or `within tasks.limit(8) {{ ... }}` with `import std.tasks`",
+                self.display(value.ty)
+            );
+            return Some((*at, message));
+        }
+        let listed = &values[..listed];
+        if listed.len() > 2 {
+            return Some((listed[2].2, "a `within` takes one deadline and one limit at most".to_string()));
+        }
+        if let [(_, first, _), (_, second, at)] = listed
+            && first == second
+        {
+            let kind = match first {
+                Some(Bound::Deadline) => "two deadlines",
+                _ => "two limits",
+            };
+            let message = format!(
+                "this `within` takes {kind}: if both are meant, nest them, `within a {{ within b {{ ... }} }}`; one of each is written with a comma"
+            );
+            return Some((*at, message));
+        }
+        None
+    }
+
+    /// The block of a deadline: its value as a result whose error also
+    /// takes `time.TimedOut`. The deadline is evaluated first, into a
+    /// binding that the error reads.
+    fn deadline_block(&mut self, cx: &mut FnCx, limit: hir::Expr, block: hir::Block, span: Span) -> hir::Expr {
+        let (Some(duration), Some(timed_out)) = (self.duration, self.timed_out()) else {
+            return Self::error_expr(span);
+        };
+        let limit = self.coerce(limit, duration);
+        let held = self.hidden_local(cx, duration);
         let (ty, error) = match *self.types.kind(block.ty) {
             TyKind::Result(ok, error) => {
                 let error = self.types.union(&[error, timed_out]);
@@ -768,9 +877,19 @@ impl<'a> Checker<'a> {
         let read = Self::mk(hir::ExprKind::Local(held), duration, span);
         let failure = Self::mk(hir::ExprKind::Record(vec![(0, read.clone())]), timed_out, span);
         let failure = self.coerce(failure, error);
-        let within = Self::mk(hir::ExprKind::Within(Box::new(read), block, Box::new(failure)), ty, span);
+        let within = Self::mk(hir::ExprKind::Within(Box::new(read), block, Some(Box::new(failure))), ty, span);
         let stmts = vec![hir::Stmt::Let(held, limit)];
         Self::mk(hir::ExprKind::Block(hir::Block { stmts, tail: Some(Box::new(within)), ty }), ty, span)
+    }
+
+    /// The block of a limit of tasks: the tasks its own task starts take a
+    /// place of the limit, the runtime's object the `tasks.Limit` holds;
+    /// its value is the block's.
+    fn limit_block(&mut self, limit: hir::Expr, block: hir::Block, span: Span) -> hir::Expr {
+        let native = self.types.handle(Handle::Native, Ty::UNIT);
+        let object = Self::mk(hir::ExprKind::Field(Box::new(limit), 0), native, span);
+        let ty = block.ty;
+        Self::mk(hir::ExprKind::Within(Box::new(object), block, None), ty, span)
     }
 
     /// `time.TimedOut`, which `std.time` writes in Tondo (11.17).
@@ -1091,4 +1210,11 @@ impl<'a> Checker<'a> {
             }
         }
     }
+}
+
+/// What a `within` bounds its block by (11.17).
+#[derive(Copy, Clone, PartialEq)]
+pub(super) enum Bound {
+    Deadline,
+    Limit,
 }

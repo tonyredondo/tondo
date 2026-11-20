@@ -4233,6 +4233,11 @@ pub type RateLimiter = {
 }
 pub type Set[K: Key]
 pub type Stack[T]
+== std.tasks
+pub fn limit(places: Int): Limit
+pub type Limit = {
+    // private fields
+}
 == std.template
 impl Display for Html
 impl Display for TemplateError

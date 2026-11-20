@@ -1,0 +1,174 @@
+// The places a `spawn` takes of the limits around it (crates/tondo-runtime/
+// src/tasks/limits.rs: take_places, give_back, give_places), with two limits
+// of one place each and two tasks that nest them in opposite orders. A step is
+// what the code does with one limit's lock held. Taking all or none, giving
+// back what was taken before waiting for a full one, every task ends and no
+// limit holds more than its places; holding them while waiting stops both.
+import std.model
+
+enum Pc {
+    Idle
+    Taking
+    Giving
+    Checking
+    Waits
+    Holds
+    Ending
+}
+
+type Spawner = {
+    pc: Pc
+    order: Array[Int]
+    next: Int
+    held: Array[Int]
+    rounds: Int
+}
+
+type Limits = {
+    taken: Array[Int]
+    places: Array[Int]
+    waiting: Array[model.Queue[Int]]
+    spawners: Array[Spawner]
+}
+
+fn changed(limits: Limits, s: Int, spawner: Spawner): Limits {
+    limits with { spawners: limits.spawners.replaced(s, spawner) }
+}
+
+/// `give_back`: one place of `l` back, and the first that waits for it
+/// tries all again.
+fn giveBack(limits: Limits, l: Int): Limits {
+    let taken = limits.taken.replaced(l, limits.taken[l] - 1)
+    let given = limits with { taken }
+    match limits.waiting[l].first() {
+        none => given
+        some(w) => {
+            let waiting = limits.waiting.replaced(l, limits.waiting[l].rest())
+            let woken = limits.spawners[w] with { pc: Pc.Taking, next: 0 }
+            changed(given with { waiting }, w, woken)
+        }
+    }
+}
+
+fn steps(limits: Limits, rollback: Bool): Array[model.Step[Limits]] {
+    var next: Array[model.Step[Limits]] = []
+    for (s, spawner) in limits.spawners.enumerate() {
+        let at = (state: Limits, after: Spawner) { changed(state, s, after) }
+        match spawner.pc {
+            Pc.Idle if spawner.rounds > 0 => next.push(
+                model.step(
+                    "start",
+                    at(
+                        limits,
+                        spawner with {
+                            pc: Pc.Taking
+                            next: 0
+                            held: []
+                            rounds: spawner.rounds - 1
+                        },
+                    ),
+                ),
+            )
+            Pc.Taking => {
+                let l = spawner.order[spawner.next]
+                if limits.taken[l] < limits.places[l] {
+                    let taken = limits.taken.replaced(l, limits.taken[l] + 1)
+                    let held = spawner.held.concat([l])
+                    let done = spawner.next + 1 == spawner.order.length()
+                    let pc = if done { Pc.Holds } else { Pc.Taking }
+                    next.push(
+                        model.step(
+                            "take",
+                            at(
+                                limits with { taken },
+                                spawner with { pc, next: spawner.next + 1, held },
+                            ),
+                        ),
+                    )
+                } else if rollback {
+                    next.push(model.step("full", at(limits, spawner with { pc: Pc.Giving })))
+                } else {
+                    // Holding what it took, it waits for this one.
+                    let waiting = limits.waiting.replaced(l, limits.waiting[l].push(s))
+                    next.push(
+                        model.step(
+                            "wait",
+                            at(limits with { waiting }, spawner with { pc: Pc.Waits }),
+                        ),
+                    )
+                }
+            }
+            // What was taken goes back, a limit at a time.
+            Pc.Giving if spawner.held.isEmpty() => next.push(
+                model.step("given", at(limits, spawner with { pc: Pc.Checking })),
+            )
+            Pc.Giving => {
+                let l = spawner.held[0]
+                let after = spawner with { held: spawner.held.drop(1) }
+                next.push(model.step("give", changed(giveBack(limits, l), s, after)))
+            }
+            // With the full one's lock: free by now, or into its queue.
+            Pc.Checking => {
+                let l = spawner.order[spawner.next]
+                if limits.taken[l] < limits.places[l] {
+                    next.push(
+                        model.step("again", at(limits, spawner with { pc: Pc.Taking, next: 0 })),
+                    )
+                } else {
+                    let waiting = limits.waiting.replaced(l, limits.waiting[l].push(s))
+                    next.push(
+                        model.step(
+                            "wait",
+                            at(limits with { waiting }, spawner with { pc: Pc.Waits }),
+                        ),
+                    )
+                }
+            }
+            // The task it started runs and ends.
+            Pc.Holds => next.push(model.step("ends", at(limits, spawner with { pc: Pc.Ending })))
+            Pc.Ending if spawner.held.isEmpty() => next.push(
+                model.step("idle", at(limits, spawner with { pc: Pc.Idle })),
+            )
+            Pc.Ending => {
+                let l = spawner.held[0]
+                let after = spawner with { held: spawner.held.drop(1) }
+                next.push(model.step("end", changed(giveBack(limits, l), s, after)))
+            }
+            _ => {}
+        }
+    }
+    next
+}
+
+fn check(rollback: Bool): model.Checked ! model.Violation {
+    let spawner = (order: Array[Int]) {
+        Spawner { pc: Pc.Idle, order, next: 0, held: [], rounds: 2 }
+    }
+    let start = Limits {
+        taken: [0, 0]
+        places: [1, 1]
+        waiting: [model.Queue([]), model.Queue([])]
+        spawners: [spawner([0, 1]), spawner([1, 0])]
+    }
+    let bounded = model.always(
+        (limits: Limits) { (0..2).all((l) { limits.taken[l] <= limits.places[l] }) },
+        name: "Bounded",
+    )
+    let over = (limits: Limits) {
+        limits.spawners.all((each) { each.pc == Pc.Idle and each.rounds == 0 })
+    }
+    model.check(start, (limits) { steps(limits, rollback) }, holds: [bounded], ends: some(over))
+}
+
+test limitsEndAndHoldTheirPlaces {
+    assert(model.expect(check(true)).states == 473)
+}
+
+// Holding the places taken while waiting for a full one: each of the two
+// holds the other's limit, and neither ends, a state nothing can follow.
+test limitsHeldWhileWaitingStop {
+    match check(false) {
+        ok(_) => panic("two tasks that hold a limit each and wait for the other's went unseen")
+        err(stopped) => assert(stopped.property == none)
+    }
+}

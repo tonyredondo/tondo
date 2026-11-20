@@ -4468,7 +4468,7 @@ valores iniciales que se leen en ciclo. Un `with` sobre algo que no es un contex
 produce `E1617`; sus campos se comprueban como los de la actualización de un
 record (9.3).
 
-### 11.17 Plazos: `within`
+### 11.17 Plazos y límites: `within`
 
 `within plazo bloque` ejecuta el bloque con un plazo de `plazo`, un
 `time.Duration`, contado desde ese momento:
@@ -4521,9 +4521,48 @@ fn profile(id: Int): Profile ! (HttpError | time.TimedOut) {
   }
   ~~~
 
+`within tasks.limit(n) bloque` acota cuántas de las tareas que lanza el bloque
+viven a la vez. `tasks.limit(n)`, de `std.tasks`, da un `tasks.Limit` de `n`
+plazas; con `n` menor que 1 es un pánico que dice escribir 1 o más:
+
+~~~tondo
+let pages = within tasks.limit(64) {
+    urls.map((url) { spawn fetch(url) }).wait()
+}
+~~~
+
+- Cuenta las tareas que el bloque lanzó y no han terminado. Un `spawn` sin
+  `detached` del bloque, o de lo que el bloque llama en su propia tarea, espera
+  una plaza antes de que la tarea exista, y la tarea la devuelve al terminar.
+  Esa espera es como cualquier otra (11.10): una cancelación o un plazo la
+  terminan.
+- Con varios `within` de límite alrededor, un `spawn` ocupa una plaza de cada
+  uno: todos acotan a la vez las tareas que su bloque lanza. Las toma todas o
+  ninguna, así que dos tareas que anidan los mismos límites en otro orden no
+  se esperan la una a la otra.
+- No se hereda: las tareas que lanzan las tareas del bloque no ocupan plazas de
+  él, así que una tarea que ocupa una plaza y espera a sus hijas no puede
+  detener el programa. Un límite más abajo es un `within` propio. En esto se
+  separa del plazo, que sí se hereda.
+- `spawn detached` no ocupa plaza.
+- Su tipo es el del bloque: un límite no falla.
+- Un `tasks.Limit` es un valor, y todos los `within` del mismo límite comparten
+  sus plazas: `let fetching = tasks.limit(64)`, guardado en un record o un
+  contexto, acota a la vez las peticiones de un servidor que lo usan, cada una
+  en su `within fetching { ... }`.
+
+Un `within` lleva un plazo, un límite o los dos, separados por una coma:
+`within time.seconds(5), tasks.limit(64) { ... }` es como los dos anidados, en
+cualquier orden, y su tipo lleva `! time.TimedOut` porque lleva un plazo. Dos
+plazos o dos límites en uno producen `E1622`, que dice anidarlos. El
+compilador avisa (`W1027`) de un `within` cuyo cuerpo es solo otro `within` del
+otro tipo, con la reparación que los escribe en uno, el plazo primero; dos del
+mismo tipo anidados no avisan.
+
 `within` solo es una palabra del lenguaje al principio de una expresión,
-seguido de una expresión y un bloque (5.5). La expresión del plazo se lee como
-la condición de `if`, sin un record literal antes de `{`.
+seguido de una o dos expresiones separadas por una coma y un bloque (5.5). Cada
+expresión se lee como la condición de `if`, sin un record literal antes de
+`{`.
 
 ---
 
@@ -9450,6 +9489,7 @@ oculten un diagnóstico independiente.
 | `E1619` | `invalid-annotation` | Una anotación que no existe o no es visible, repetida en un elemento, con un argumento que no es constante o que `meta` no puede leer, o una del lenguaje fuera de su sitio (27.13). |
 | `E1620` | `wait-or-cancel-without-errors` | `waitOrCancel()` sobre tareas que no pueden fallar. |
 | `E1621` | `wait-used-as-result` | Lo que da `wait()` sobre tareas que pueden fallar se usa como un solo resultado. |
+| `E1622` | `invalid-within` | Un `within` con dos plazos o dos límites, o con algo que no es un plazo ni un límite. |
 
 #### Unsafe, programas y constantes
 
@@ -9540,6 +9580,7 @@ oculten un diagnóstico independiente.
 | `W1024` | `array-front-every-turn` | Con `performance`: `removeAt(0)` de un array en cada vuelta de un bucle, que mueve los demás elementos; un `Deque` toma el primero de una vez. |
 | `W1025` | `pattern-compiled-every-call` | Con `performance`: `regex.Regex.compile` de un patrón escrito donde corre cada vez; el campo de un contexto lo compila una vez. |
 | `W1026` | `spawn-waited-at-once` | `_ = spawn ...`: el `Join` se descarta en el acto y la tarea se espera ahí mismo. |
+| `W1027` | `nested-within` | Un `within` cuyo cuerpo es solo otro `within` del otro tipo, que se escribe en uno. |
 
 #### Pánicos del lenguaje
 
@@ -9868,6 +9909,7 @@ con condiciones cerradas:
 - Campo opcional que `reflect.convert` rellena con `none` (`W1012`).
 - `spawn` cuyo `Join` nadie consume dentro de un bucle (`W1013`).
 - `_ = spawn ...`, que espera a la tarea en el acto (`W1026`).
+- Un `within` cuyo cuerpo es solo otro `within` del otro tipo (`W1027`).
 - Sentencia que es un valor negativo que nada usa (`W1014`).
 - Llamada cuyo resultado nada usa y sin otro efecto (`W1018`).
 - `some(value)` donde el valor solo se elevaría igual (`W1021`).
@@ -9886,6 +9928,7 @@ Son errores obligatorios, entre otros:
 - Literal de map con una clave constante repetida (`E1116`).
 - `spawn` sin una llamada (`E1611`) o con argumentos prestados (`E1609`).
 - `waitOrCancel()` sobre tareas que no pueden fallar (`E1620`), y lo que da `wait()` usado como un solo resultado (`E1621`).
+- Un `within` con dos plazos, dos límites o algo que no es ninguno de los dos (`E1622`).
 - Uso de un binding después de mover un valor afín (`E1401`).
 - Intento de almacenar, capturar, devolver o prolongar un préstamo fuera de su
   región estructurada (`E1402`).

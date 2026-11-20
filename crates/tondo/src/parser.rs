@@ -169,8 +169,8 @@ const SYNC_COLLECTIONS: [&str; 5] = ["Array", "Map", "Set", "Stack", "Queue"];
 
 /// Whether the word at `at` is one of the language there, as `recover {`,
 /// `context Name =` (11.16), `annotation Name =` (27.13) and
-/// `within limit {` (11.17) are, with the
-/// limit and `{` on one line; elsewhere they are names, as in `within(...)`.
+/// `within limit {` or `within deadline, limit {` (11.17) are, with the
+/// limits and `{` on one line; elsewhere they are names, as in `within(...)`.
 pub(crate) fn keyword_at(tokens: &[Token], at: usize) -> bool {
     let nth = |offset: usize| &tokens[(at + offset).min(tokens.len() - 1)].tok;
     match nth(0) {
@@ -184,8 +184,12 @@ pub(crate) fn keyword_at(tokens: &[Token], at: usize) -> bool {
                 match nth(offset) {
                     Tok::LParen | Tok::LBracket => depth += 1,
                     Tok::RParen | Tok::RBracket if depth > 0 => depth -= 1,
+                    // Closing what it was not in: a name among arguments.
+                    Tok::RParen | Tok::RBracket => return false,
                     Tok::LBrace if depth == 0 => return offset > 1,
                     Tok::Eof => return false,
+                    // `within deadline, limit {`: a comma between two.
+                    Tok::Comma if depth == 0 && offset > 1 => {}
                     Tok::Newline | Tok::RBrace | Tok::Eq | Tok::Comma | Tok::FatArrow if depth == 0 => return false,
                     _ => {}
                 }
@@ -2716,11 +2720,21 @@ impl Parser<'_> {
             // `within`, only before an expression and a block (11.17).
             Tok::Ident(name) if name == "within" && keyword_at(&self.tokens, self.pos) => {
                 self.bump();
+                // A deadline, a limit of tasks, or both, separated by a comma.
                 let no_brace = std::mem::replace(&mut self.no_brace, true);
-                let limit = self.expression();
+                let mut limits = Vec::new();
+                let read = loop {
+                    match self.expression() {
+                        Ok(limit) => limits.push(limit),
+                        Err(error) => break Err(error),
+                    }
+                    if !self.eat(&Tok::Comma) {
+                        break Ok(());
+                    }
+                };
                 self.no_brace = no_brace;
-                let limit = Box::new(limit?);
-                ExprKind::Within(limit, self.block()?)
+                read?;
+                ExprKind::Within(limits, self.block()?)
             }
             Tok::Ident(name) => {
                 self.bump();

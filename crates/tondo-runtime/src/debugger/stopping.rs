@@ -2531,7 +2531,7 @@ pub(super) fn stop_here(why: String) -> bool {
 /// What a task waits for, in words, and the tasks that keep it waiting:
 /// those that hold the lock it wants, or the one it waits to finish.
 pub(crate) fn waits_for(task: u64) -> Option<(String, Vec<u64>)> {
-    use crate::tasks::{JOIN, LOCK, RECEIVING, SENDING};
+    use crate::tasks::{JOIN, LOCK, PLACE, RECEIVING, SENDING};
     let (kind, object) = crate::tasks::blocked_of(task)?;
     let filled = |object: usize| {
         let (count, capacity) = crate::tasks::channel_fill(object);
@@ -2549,6 +2549,7 @@ pub(crate) fn waits_for(task: u64) -> Option<(String, Vec<u64>)> {
         }
         RECEIVING => (format!("a value of a channel that holds {}", filled(object)), Vec::new()),
         SENDING => (format!("room in a channel that holds {}", filled(object)), Vec::new()),
+        PLACE => (crate::tasks::described(object), Vec::new()),
         JOIN => match crate::tasks::joined(object) {
             Some(joined) => (format!("task {joined} to end"), vec![joined]),
             None => ("a task to end".to_string(), Vec::new()),

@@ -8699,3 +8699,35 @@ shows them as "2 of 32", and the counters as `workers.limit`. To a test
 that reproduces a race on one core, `tondo test --workers <n>`, which he
 called "Guay", passes the variable; it does not go with `--schedules`,
 whose runs already put the tasks on one worker.
+
+## A limit of tasks a block keeps alive
+
+Tony asked how to bound how many tasks run at once. Measured over
+100,000 tasks of 2 ms each: a semaphore taken inside each task takes 4.0
+to 4.7 s and 470 MB, since every task is made and parks at the gate; a
+place taken before the task is made, and given back as it ends, takes
+3.7 s and 106 MB; so the spawner waits. Of the shape he was shown, a
+`within` whose tasks a limit counts, he said "Si, me gusta", and of the
+spelling he wanted it beside the deadline's: "los dos son límites pero no
+se parecen y pierde elegancia". So `within tasks.limit(64) { ... }`, from
+a module `std.tasks`, as `within time.seconds(5)` is from `std.time`, and
+one `within` takes both: "Si eso me gusta", and of the cost, "Añadimos".
+
+A limit counts the tasks the block started and that have not ended, and
+binds only those the block's own task starts: the tasks they start take
+no place of it, so a task that holds a place and waits for its children
+cannot stop the program, which a bounded pool would. A detached task
+takes none. A limit is a value that every `within` of it shares, so a
+server's limit bounds its requests together, and a request's own limit
+inside it bounds its tasks too: a `spawn` takes a place of every limit
+around it, all or none, waiting for the one that is full while it holds
+none of the others, so that two tasks that nest the same limits in other
+orders cannot wait for each other. Its block's type is the block's own,
+as a limit cannot fail; a wait for a place ends with a cancel or a
+deadline, as any wait does, and the debugger names it.
+
+Two deadlines, two limits, or anything else in one `within` are E1622,
+which says to nest them. The formatter would have written two nested of
+the two kinds as one, but it has no types and the limits are often
+bindings, so the checker warns instead, W1027, with the repair that
+writes one, the deadline first.

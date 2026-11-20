@@ -1,0 +1,15 @@
+import std.tasks
+import std.time
+
+fn main() {
+    let a = within time.seconds(1), time.seconds(2) { 1 }
+    let b = within tasks.limit(1), tasks.limit(2) { 2 }
+    let c = within 5 { 3 }
+    let d = within time.seconds(1), tasks.limit(1), time.seconds(3) { 4 }
+    _ = (a, b, c, d)
+}
+
+// expect-error: E1622 this `within` takes two deadlines: if both are meant, nest them, `within a { within b { ... } }`; one of each is written with a comma
+// expect-error: E1622 this `within` takes two limits
+// expect-error: E1622 `within` takes a deadline, a `time.Duration`, or a limit of tasks, a `tasks.Limit`, not `Int`: write `within time.seconds(2) { ... }` with `import std.time`, or `within tasks.limit(8) { ... }` with `import std.tasks`
+// expect-error: E1622 a `within` takes one deadline and one limit at most

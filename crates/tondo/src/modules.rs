@@ -1096,8 +1096,8 @@ impl Linker<'_> {
                 }
             }
             ExprKind::Unsafe(block) | ExprKind::Recover(block) => self.block(block),
-            ExprKind::Within(limit, block) => {
-                self.expr(limit);
+            ExprKind::Within(limits, block) => {
+                limits.iter_mut().for_each(|limit| self.expr(limit));
                 self.block(block);
             }
             ExprKind::Template(block) => self.block(block),

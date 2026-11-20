@@ -1,0 +1,149 @@
+// `within tasks.limit(n)` (11.17): the tasks a block's own task starts
+// take a place of every limit around them, all or none, and give it back
+// as they end; the tasks they start take none; `spawn detached` takes none;
+// one limit is shared by every `within` of it; a cancel or a deadline ends
+// a wait for a place; and two tasks that nest two limits of one place in
+// opposite orders both end.
+
+import std.console
+import std.sync
+import std.tasks
+import std.time
+
+/// Counts itself in while it runs, and how often it found more than `most`.
+fn counted(running: sync.Atomic[Int], over: sync.Atomic[Int], most: Int): Int {
+    if running.add(1) > most {
+        _ = over.add(1)
+    }
+    time.sleep(time.milliseconds(2))
+    _ = running.add(-1)
+    1
+}
+
+/// A request: at most 3 of its own tasks at once, under the server's limit.
+fn request(shared: tasks.Limit, total: sync.Atomic[Int], over: sync.Atomic[Int]): Int {
+    let mine = sync.Atomic(0)
+    let mineOver = sync.Atomic(0)
+    let done =
+        within shared {
+            within tasks.limit(3) {
+                (0..10).collect().map((_) { spawn both(mine, mineOver, total, over) }).wait()
+            }
+        }
+    done.length() + mineOver.load() * 1000
+}
+
+fn both(
+    mine: sync.Atomic[Int],
+    mineOver: sync.Atomic[Int],
+    total: sync.Atomic[Int],
+    over: sync.Atomic[Int],
+): Int {
+    if mine.add(1) > 3 {
+        _ = mineOver.add(1)
+    }
+    let result = counted(total, over, 4)
+    _ = mine.add(-1)
+    result
+}
+
+/// Starts two of its own and waits for them: a limit of 1 around it does
+/// not reach them.
+fn parent(): Int {
+    let children = [spawn plain(1), spawn plain(2)]
+    children.wait().sum()
+}
+
+fn plain(n: Int): Int {
+    n
+}
+
+fn holds(gate: Receiver[Int]): Int {
+    gate.receive() ?? 0
+}
+
+fn signals(said: Sender[Int]) {
+    said.send(1)
+}
+
+/// Two limits of one place, nested in the order given, around one task.
+fn nests(first: tasks.Limit, second: tasks.Limit): Int {
+    within first { within second { (spawn plain(1)).wait() } }
+}
+
+/// Waits for a place that never frees until cancelled.
+fn starts(limit: tasks.Limit, gate: Receiver[Int]): Int {
+    within limit {
+        let held = spawn holds(gate)
+        let second = spawn plain(2)
+        held.wait() + second.wait()
+    }
+}
+
+fn main() {
+    let running = sync.Atomic(0)
+    let over = sync.Atomic(0)
+    let values =
+        within tasks.limit(3) {
+            (0..20).collect().map((_) { spawn counted(running, over, 3) }).wait()
+        }
+    console.println("{values.length()} done, over 3: {over.load()}")
+
+    // A server's limit of 4 shared by two requests of 3 each.
+    let shared = tasks.limit(4)
+    let total = sync.Atomic(0)
+    let totalOver = sync.Atomic(0)
+    let requests = [
+        spawn request(shared, total, totalOver),
+        spawn request(shared, total, totalOver),
+    ]
+    console.println("requests: {requests.wait()}, over 4 between them: {totalOver.load()}")
+
+    let inherited: Int = within tasks.limit(1) { (spawn parent()).wait() }
+    console.println("not inherited: {inherited}")
+
+    let (gate, waiting) = channel[Int](1)
+    let (said, heard) = channel[Int](1)
+    within tasks.limit(1) {
+        let held = spawn holds(waiting)
+        spawn detached signals(said)
+        console.println("detached took no place: {heard.receive() ?? 0}")
+        gate.send(5)
+        _ = held.wait()
+    }
+
+    let (never, stuck) = channel[Int](1)
+    let late =
+        within time.milliseconds(50), tasks.limit(1) {
+            let held = spawn holds(stuck)
+            let second = spawn plain(2)
+            held.wait() + second.wait()
+        }
+    console.println("a deadline ends the wait: {late.isErr()}")
+    never.close()
+
+    let (stay, closed) = channel[Int](1)
+    let job = spawn starts(tasks.limit(1), closed)
+    time.sleep(time.milliseconds(20))
+    job.cancel()
+    console.println("a cancel ends the wait")
+    stay.close()
+
+    let first = tasks.limit(1)
+    let second = tasks.limit(1)
+    var ended = 0
+    for _ in 0..50 {
+        let one = spawn nests(first, second)
+        let other = spawn nests(second, first)
+        ended += one.wait() + other.wait()
+    }
+    console.println("opposite orders ended: {ended}")
+}
+
+// expect-stdout: 20 done, over 3: 0
+// expect-stdout: requests: [10, 10], over 4 between them: 0
+// expect-stdout: not inherited: 3
+// expect-stdout: detached took no place: 1
+// expect-stdout: a deadline ends the wait: true
+// expect-stdout: a cancel ends the wait
+// expect-stdout: opposite orders ended: 100

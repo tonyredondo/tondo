@@ -358,6 +358,9 @@ enum StdModule {
     InternalSql,
     /// `std.internal.image`: decoding, encoding and pixels, for `std.image`.
     InternalImage,
+    /// `std.internal.tasks`: the runtime's limits of tasks, for
+    /// `std.tasks`.
+    InternalTasks,
 }
 
 /// The types `std.process` declares when imported.

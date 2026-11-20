@@ -114,6 +114,7 @@ const SOURCES: &[(&str, &[(&str, &str)])] = &[
     ("paths", &[file!("paths")]),
     ("texts", &[file!("texts")]),
     ("environment", &[file!("environment")]),
+    ("tasks", &[file!("tasks")]),
     ("processes", &[file!("processes")]),
     ("pacing", &[file!("pacing")]),
     ("rules", &[file!("rules")]),
