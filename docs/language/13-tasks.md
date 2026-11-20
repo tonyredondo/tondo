@@ -817,15 +817,14 @@ fn isPrime(n: Int): Bool {
 
 /// The primes it has time for: it ends by itself when it is told to stop.
 fn primes(): Array[Int] {
-    var found: Array[Int] = []
-    var n = 2
+    var n = 1
     for not tasks.cancelled() {
-        if isPrime(n) {
-            found.push(n)
-        }
         n += 1
+        if not isPrime(n) {
+            continue
+        }
+        n
     }
-    found
 }
 
 fn main() {
@@ -993,10 +992,7 @@ fn main() {
     spawn produce(jobs, 100)                    // the original moves here
     spawn consume(inbox, results.copy())
     spawn consume(inbox, results)
-    var collected: Array[Int] = []
-    for result in outbox {
-        collected.push(result)
-    }
+    let collected = for result in outbox { result }
     console.println("{collected.sorted()}")
 }
 ```

@@ -330,10 +330,7 @@ fn main() {
             values.offset(index).write(value)
         }
         qsort(values.cast[ffi.Void](), 6u64, 8u64, descending)
-        var sorted: Array[Int] = []
-        for index in 0..input.length() {
-            sorted.push(values.offset(index).read())
-        }
+        let sorted = for index in 0..input.length() { values.offset(index).read() }
         ffi.free(values)
         console.println("{sorted}")
     }

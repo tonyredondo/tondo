@@ -30,17 +30,15 @@ import std.console
 fn main() {
     let primes = [2, 3, 5, 7]                   // Array[Int]
     let names: Array[String] = []               // an empty one says its type
-    var squares = Array[Int]()                  // or is built by calling the type
-    for n in 1..=4 {
-        squares.push(n * n)
-    }
-    console.println("{primes} {names} {squares}")
+    let scores = Array[Int]()                   // or is built by calling the type
+    let squares = for n in 1..=4 { n * n }      // a `for` gives one, of what its turns end with
+    console.println("{primes} {names} {scores} {squares}")
     console.println("{primes.length()} {primes.isEmpty()} {primes.first()} {primes.last()} {3 in primes}")
 }
 ```
 
 ```text output
-[2, 3, 5, 7] [] [1, 4, 9, 16]
+[2, 3, 5, 7] [] [] [1, 4, 9, 16]
 4 false some(2) some(7) true
 ```
 

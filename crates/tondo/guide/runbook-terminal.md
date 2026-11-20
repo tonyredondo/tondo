@@ -63,9 +63,8 @@ fn press(menu: Menu, key: cli.Key): Menu {
 
 /// The menu as a screen of that size.
 fn draw(menu: Menu, size: cli.Size): String {
-    var lines: Array[String] = []
-    for index in 0..menu.options.length() {
-        lines.push("{if index == menu.chosen { ">" } else { " " }} {menu.options[index]}")
+    let lines = for index in 0..menu.options.length() {
+        "{if index == menu.chosen { ">" } else { " " }} {menu.options[index]}"
     }
     cli.Pane(lines.join("\n"), title: "Drinks", border: cli.Border.Rounded).draw(size)
 }

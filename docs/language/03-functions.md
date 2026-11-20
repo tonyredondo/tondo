@@ -560,11 +560,9 @@ fn applyTwice[F: Call[fn(Int): Int]](value: Int, operation: F): Int {
 /// One that changes what it captured each time it is called.
 fn collect[F: CallMut[fn(): Int]](times: Int, next: F): Array[Int] {
     var step = next
-    var results: Array[Int] = []
     for _ in 0..times {
-        results.push(step())
+        step()
     }
-    results
 }
 
 fn main() {

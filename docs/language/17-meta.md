@@ -313,9 +313,8 @@ pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
         out.error("`Describe` derives only for records, and `{target.name()}` is not one")
         return out.finishDerive()?
     }
-    var parts: Array[String] = []
-    for field in target.fields() {
-        parts.push(meta.code(r"$name = {self.$name}", ["name": field.name]))
+    let parts = for field in target.fields() {
+        meta.code(r"$name = {self.$name}", ["name": field.name])
     }
     out.add(meta.code(r"""
         impl $trait for $type {
@@ -365,11 +364,10 @@ import std.meta
 
 pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Error {
     let input = request.input("colors.txt")?
-    var lines: Array[String] = []
-    for line in (input.text() ?? "").lines() {
+    let lines = for line in (input.text() ?? "").lines() {
         let (name, hex) = line.splitOnce(" ") ?? ("", "")
         let constant = "{name[:1].toUpper()}{name[1:]}"
-        lines.push(meta.code(r"pub const $name: String = $hex", ["name": constant, "hex": "\"{hex}\""]))
+        meta.code(r"pub const $name: String = $hex", ["name": constant, "hex": "\"{hex}\""])
     }
     var out = request.sourceBuilder()
     out.write("palette", lines.join("\n"))?

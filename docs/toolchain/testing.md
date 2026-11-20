@@ -375,11 +375,9 @@ import std.testing
 
 /// The squares below a number.
 fn squares(limit: Int): Array[Int] {
-    var all: Array[Int] = []
     for n in 0..limit {
-        all.push(n * n)
+        n * n
     }
-    all
 }
 
 test theSquaresTakeOneAllocation {

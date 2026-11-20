@@ -198,12 +198,14 @@ fn money(cents: Int): String {
 }
 
 fn main() {
-    var lines: Array[Line] = []
-    for {
+    let lines = for {
         let text = console.readLine() ?? break
         match parse(text) {
-            ok(line) => lines.push(line)
-            err(why) => console.println("skipped `{text}`: {why}")
+            ok(line) => line
+            err(why) => {
+                console.println("skipped `{text}`: {why}")
+                continue
+            }
         }
     }
     let totals = lines.map((line) { spawn line.total() }).wait()

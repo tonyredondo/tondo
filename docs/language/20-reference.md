@@ -413,10 +413,7 @@ fn main() {
 
     let (sender, receiver) = channel[Int](4)
     spawn produce(sender)
-    var received: Array[Int] = []
-    for value in receiver {
-        received.push(value)
-    }
+    let received = for value in receiver { value }
 
     let counter = sync.Atomic(0)
     let state = sync.Mutex([0])
