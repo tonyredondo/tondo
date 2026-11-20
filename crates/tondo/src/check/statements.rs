@@ -297,15 +297,15 @@ impl<'a> Checker<'a> {
                 // Only a result must be used: it may be a failure the
                 // program has to see (11.9).
                 if self.must_use(value.ty) {
-                    let message = format!(
-                        "a value of type {} is not used; pass a failure on with `?`, handle it with `match`, or discard it with `_ = ...`",
-                        self.display(value.ty)
-                    );
-                    self.diags.error("E1303", value.span, message);
+                    self.dropped_results(&value);
                     let start = Span::new(value.span.start, value.span.start);
                     let end = Span::new(value.span.end, value.span.end);
                     if matches!(self.types.kind(value.ty), TyKind::Result(..)) && cx.error.is_some() {
                         self.diags.fix("pass the failure on with `?`", false, vec![(end, "?".into())]);
+                    }
+                    if let Some(name) = self.wait_name(&value).filter(|_| cx.error.is_some()) {
+                        let edits = vec![(name, "waitOrCancel".into()), (end, "?".into())];
+                        self.diags.fix("pass the first failure on with `waitOrCancel()?`", false, edits);
                     }
                     self.diags.fix("discard it with `_ = ...`", false, vec![(start, "_ = ".into())]);
                 }
@@ -1299,6 +1299,9 @@ impl<'a> Checker<'a> {
                         TyKind::Handle(Handle::Receiver, element) => {
                             return Some(self.for_receiver(cx, pattern, source, element, body));
                         }
+                        TyKind::Handle(Handle::Group, element) => {
+                            return self.for_group(cx, pattern, source, element, body);
+                        }
                         TyKind::Array(element) | TyKind::Deque(element) | TyKind::Set(element) => element,
                         TyKind::String => Ty::CHAR,
                         // A map yields its entries as `(key, value)` (10.13).
@@ -1691,8 +1694,38 @@ impl<'a> Checker<'a> {
     pub(super) fn must_use(&self, ty: Ty) -> bool {
         match self.types.kind(self.types.repr(ty)) {
             TyKind::Result(_, error) => *error != Ty::NEVER,
+            _ => self.holds_results(ty),
+        }
+    }
+
+    /// Whether an array, a tuple or an option holds results that may be
+    /// failures, which a statement cannot drop either (11.9).
+    pub(super) fn holds_results(&self, ty: Ty) -> bool {
+        match self.types.kind(self.types.repr(ty)) {
+            TyKind::Array(element) | TyKind::Option(element) => self.must_use(*element),
+            TyKind::Tuple(items) => items.iter().any(|&item| self.must_use(item)),
             _ => false,
         }
+    }
+
+    /// E1303: a value that is or holds results, dropped. A `wait()` of
+    /// tasks that can fail is told how to pass the first failure on.
+    pub(super) fn dropped_results(&mut self, value: &hir::Expr) {
+        let ty = self.display(value.ty);
+        let message = if !self.holds_results(value.ty) {
+            format!(
+                "a value of type {ty} is not used; pass a failure on with `?`, handle it with `match`, or discard it with `_ = ...`"
+            )
+        } else if self.waited_results(value) {
+            format!(
+                "a value of type {ty} is not used, and it holds results that may be failures; read them, discard them with `_ = ...`, or pass the first failure on with `waitOrCancel()?`"
+            )
+        } else {
+            format!(
+                "a value of type {ty} is not used, and it holds results that may be failures; read them, or discard them with `_ = ...`"
+            )
+        };
+        self.diags.error("E1303", value.span, message);
     }
 
     pub(super) fn error_expr(span: Span) -> hir::Expr {

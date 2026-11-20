@@ -651,10 +651,11 @@ pub enum TaskOp {
     GroupNext,
     /// `group.length()`
     GroupLength,
-    /// `group.wait()`: `Array[T]`, or `Array[R] ! E` when `T` is `R ! E`.
+    /// `group.wait()`, `Array[T]`, or `group.waitOrCancel()`,
+    /// `Array[R] ! E` when `T` is `R ! E`: which one, its type says.
     GroupWait,
-    /// Used by `GroupWait`: waits for every task, or for the first that
-    /// fails, and gives its index or -1.
+    /// Used by `GroupWait`: waits for every task, or, when its second
+    /// operand is true, for the first that fails, and gives its index or -1.
     GroupSettle,
     /// Used by `GroupWait`: the result at an index, or the first one not
     /// taken when it is -1, as `T?`.

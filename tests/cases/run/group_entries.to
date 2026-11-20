@@ -56,7 +56,7 @@ fn main() {
     for n in 1..=5 {
         failing.add(spawn checked(n))
     }
-    match failing.wait() {
+    match failing.waitOrCancel() {
         ok(values) => console.println("ok {values}")
         err(error) => console.println("failed: {error}")
     }

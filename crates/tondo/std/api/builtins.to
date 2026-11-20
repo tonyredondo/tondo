@@ -89,6 +89,11 @@ pub fn Array.clear(var self)
 /// would (language 11.11). It takes the array.
 pub fn Array[Join[T]].wait(self): Array[T]
 
+/// Of an array of tasks that can fail: their values, in the array's order,
+/// or the first error to happen, which cancels the other tasks and is
+/// given once they end (language 11.11). It takes the array.
+pub fn Array[Join[T ! E]].waitOrCancel(self): Array[T] ! E
+
 /// Of an array of tasks: tells every task to stop, then waits for each to
 /// end. It takes the array.
 pub fn Array[Join[T]].cancel(self)
@@ -285,11 +290,19 @@ pub fn Group[T](): Group[T]
 /// Adds a task to the group.
 pub fn Group.add(var self, job: Join[T])
 
-/// Waits for every task of the group and gives their results, in order;
-/// with `T = R ! E`, the first error cancels the rest.
+/// Waits for every task of the group and gives their results, in the
+/// order they were added; it cancels none, and with `T = R ! E` each
+/// result keeps its error.
 pub fn Group.wait(self): Array[T]
 
+/// Of a group of tasks that can fail, `T = R ! E`: their values, in the
+/// order they were added, or the first error to happen, which cancels the
+/// other tasks and is given once they end.
+pub fn Group[R ! E].waitOrCancel(self): Array[R] ! E
+
 /// The next task to finish, or `none` when the group is empty.
+/// `for value in group` takes them so, and leaves the group the tasks a
+/// `break` did not take.
 pub fn Group.next(var self): T?
 
 /// Cancels every task of the group and waits until they end.

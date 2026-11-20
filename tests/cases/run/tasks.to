@@ -34,7 +34,7 @@ fn total(ids: Array[Int]): Int ! FetchError {
         group.add(spawn score(id))
     }
     var sum = 0
-    for value in group.wait()? {
+    for value in group.waitOrCancel()? {
         sum += value
     }
     sum

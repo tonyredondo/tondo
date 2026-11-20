@@ -9,7 +9,7 @@ What `spawn` gives, a group of tasks, and the two ends of a channel.
 `tondo api Join`, `tondo api Group`, `tondo api Sender`, `tondo api Receiver` show the same in a terminal.
 
 - [Join](#join): [`Join.wait`](#joinwait), [`Join.cancel`](#joincancel), [`Join.detach`](#joindetach)
-- [Group](#group): [`Group`](#group-1), [`Group.add`](#groupadd), [`Group.wait`](#groupwait), [`Group.next`](#groupnext), [`Group.cancel`](#groupcancel), [`Group.length`](#grouplength)
+- [Group](#group): [`Group`](#group-1), [`Group.add`](#groupadd), [`Group.wait`](#groupwait), [`Group.waitOrCancel`](#groupwaitorcancel), [`Group.next`](#groupnext), [`Group.cancel`](#groupcancel), [`Group.length`](#grouplength)
 - [Sender](#sender): [`Sender.send`](#sendersend), [`Sender.close`](#senderclose), [`Sender.isClosed`](#senderisclosed), [`Sender.isAbandoned`](#senderisabandoned), [`Sender.copy`](#sendercopy)
 - [Receiver](#receiver): [`Receiver.receive`](#receiverreceive), [`Receiver.isClosed`](#receiverisclosed)
 
@@ -64,8 +64,19 @@ Adds a task to the group.
 pub fn Group.wait(self): Array[T]
 ```
 
-Waits for every task of the group and gives their results, in order;
-with `T = R ! E`, the first error cancels the rest.
+Waits for every task of the group and gives their results, in the
+order they were added; it cancels none, and with `T = R ! E` each
+result keeps its error.
+
+#### Group.waitOrCancel
+
+```tondo
+pub fn Group[R ! E].waitOrCancel(self): Array[R] ! E
+```
+
+Of a group of tasks that can fail, `T = R ! E`: their values, in the
+order they were added, or the first error to happen, which cancels the
+other tasks and is given once they end.
 
 #### Group.next
 
@@ -74,6 +85,8 @@ pub fn Group.next(var self): T?
 ```
 
 The next task to finish, or `none` when the group is empty.
+`for value in group` takes them so, and leaves the group the tasks a
+`break` did not take.
 
 #### Group.cancel
 

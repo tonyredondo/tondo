@@ -820,8 +820,9 @@ pub fn Join.cancel(self)
 
 pub fn Group[T](): Group[T]
 pub fn Group.add(var self, job: Join[T])
-pub fn Group.wait(self): Array[T]        // Array[R] ! E cuando T es R ! E
-pub fn Group.next(var self): T?
+pub fn Group.wait(self): Array[T]                      // todos, sin cancelar ninguna
+pub fn Group[R ! E].waitOrCancel(self): Array[R] ! E   // el primer error cancela las demás
+pub fn Group.next(var self): T?                        // y `for value in group`
 pub fn Group.cancel(self)
 pub fn Group.length(self): Int
 pub fn Group.isEmpty(self): Bool
@@ -2951,7 +2952,8 @@ fn iter(self): ArrayIterator[T]                     // Iterator[T], perezoso
 
 - `map` y `flatMap` aceptan resultados que no son `Copy` (`U: ~Copy`), como el
   `Join` de un `spawn`: `urls.map((url) { spawn fetch(url) })` da un
-  `Array[Join[…]]`, que se espera con `wait()` (lenguaje 11.11).
+  `Array[Join[…]]`, que se espera con `wait()`, o con `waitOrCancel()` para los
+  valores o el primer error, que cancela las demás (lenguaje 11.11).
 - `minBy` y `maxBy` dan el primer elemento de la clave menor o mayor, `none`
   con un array vacío, y llaman a `key` una vez por elemento. `uniqueBy`
   conserva el primer elemento de cada clave, en orden, como `unique` con los

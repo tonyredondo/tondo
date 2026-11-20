@@ -93,7 +93,7 @@ fn calls(plugged: api.GreeterPlugin) {
     for index in 0..16 {
         group.add(spawn plugged.greet("caller {index}"))
     }
-    match group.wait() {
+    match group.waitOrCancel() {
         ok(answers) => console.println("{answers.length()} answers, the last {answers[15]}")
         err(error) => console.println("{error}")
     }

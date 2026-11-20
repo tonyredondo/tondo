@@ -3966,6 +3966,11 @@ explícitamente, lo que comunica intención:
 _ = computeValue()
 ~~~
 
+Tampoco un array, una tupla o una opción que guarda resultados, como el
+`Array[T ! E]` que da `wait()` sobre tareas que pueden fallar: cualquiera de sus
+valores puede ser un fallo. Se leen o se descartan con `_ = ...`; con tareas,
+`waitOrCancel()?` propaga el primer fallo.
+
 Un `Option`, `T?`, sí se abandona como cualquier otro valor: una ausencia no es
 un fallo, y lo que da `seen.remove(key)` o `queue.pop()` a menudo no hace falta.
 `_ = ...` sigue siendo válido para él.
@@ -4047,6 +4052,9 @@ operación lo consume:
 - `jobs.wait()` espera a todas sus tareas y devuelve sus resultados en el orden
   del array, `Array[T]`: equivale a esperarlas una a una en ese orden. No
   cancela ninguna: cuando `T` es `R ! E`, cada resultado conserva su error.
+- `jobs.waitOrCancel()`, cuando `T` es `R ! E`, devuelve `Array[R] ! E`: los
+  valores en el orden del array, o el primer error que ocurre, que cancela las
+  demás tareas y espera su cleanup antes de devolverse.
 - `jobs.cancel()` avisa a todas sus tareas de que paren y después espera a que
   terminen.
 
@@ -4058,7 +4066,14 @@ espera en una línea:
 let pages = urls.map((url) { spawn fetch(url) }).wait()   // Array[Page ! HttpError]
 ~~~
 
-Para que el primer error cancele las demás, se reúnen en un `Group` (11.12).
+`waitOrCancel()?` propaga ese primer error:
+
+~~~tondo
+let pages = urls.map((url) { spawn fetch(url) }).waitOrCancel()?   // Array[Page]
+~~~
+
+Sobre tareas que no pueden fallar, `waitOrCancel()` produce `E1620`, que dice
+escribir `wait()`.
 
 `spawn detached call(arguments)` lanza la tarea suelta: no da `Join`, su valor
 es `Unit` y nadie la espera. Es la forma de un servidor que atiende cada
@@ -4101,23 +4116,36 @@ fn scores(ids: Array[Int]): Array[Int] ! FetchError {
     for id in ids {
         group.add(spawn fetchScore(id))
     }
-    group.wait()
+    group.waitOrCancel()
 }
 ~~~
 
 - `group.add(job)` incorpora un `Join[T]`.
-- `group.wait()` espera a todas y devuelve sus resultados en orden de inserción.
-  Cuando `T` es `R ! E`, devuelve `Array[R] ! E`: el primer error cancela las
-  tareas restantes, espera su cleanup y es el que se devuelve.
+- `group.wait()` espera a todas y devuelve sus resultados en orden de inserción,
+  `Array[T]`. No cancela ninguna: cuando `T` es `R ! E`, cada resultado
+  conserva su error.
+- `group.waitOrCancel()`, cuando `T` es `R ! E`, devuelve `Array[R] ! E`: el
+  primer error que ocurre cancela las tareas restantes, espera su cleanup y es
+  el que se devuelve. Sobre un grupo de tareas que no pueden fallar produce
+  `E1620`.
 - `group.next()` espera la siguiente tarea que termine, la retira y devuelve su
   resultado, o `none` si el grupo está vacío. El orden de terminación puede
   variar entre ejecuciones.
+- `for value in group { ... }` recorre los resultados en el orden en que
+  terminan las tareas, como `next()` hasta `none`. No consume el grupo: tras un
+  `break` conserva las tareas que quedan, que pueden esperarse o cancelarse, y
+  se le pueden añadir otras.
 - `group.cancel()` avisa a todas las tareas de que paren y después espera a que
   terminen.
 - `group.length()` y `group.isEmpty()` cuentan las tareas pendientes.
 
-`wait` y `cancel` consumen el grupo; un grupo que nadie consume se espera al
-terminar su bloque, igual que un `Join`.
+`wait`, `waitOrCancel` y `cancel` consumen el grupo; un grupo que nadie consume
+se espera al terminar su bloque, igual que un `Join`.
+
+Usar lo que da `wait()` sobre tareas que pueden fallar como un solo resultado
+produce `E1621`, que dice escribir `waitOrCancel()`. Eso es usarlo con `?` o
+`??`, con `match` sobre `ok`/`err`, con un método de `Result` que un array no
+tiene, o donde se espera `Array[R] ! E`.
 
 ### 11.13 Canales
 
@@ -9364,7 +9392,7 @@ oculten un diagnóstico independiente.
 |---|---|---|
 | `E1301` | `incompatible-error-propagation` | `?` no puede representar el canal propagado en la firma envolvente. |
 | `E1302` | `invalid-fail-context` | `fail` aparece sin error compatible. |
-| `E1303` | `discarded-result` | Un `Result` se abandona como sentencia sin uso ni `_ =`. |
+| `E1303` | `discarded-result` | Un `Result`, o un array, una tupla o una opción que guarda resultados, se abandona como sentencia sin uso ni `_ =`. |
 | `E1304` | `invalid-result-construction` | `ok`, `err`, `some` o `none` carece de contexto único o payload válido. |
 | `E1305` | `invalid-panic-code` | El `code` literal de `panic` no es un código propio (15.7). |
 | `E1306` | `value-without-effect` | Una sentencia, o el final de un bloque sin valor, es un valor sin ninguna llamada, que no hace nada. |
@@ -9407,6 +9435,8 @@ oculten un diagnóstico independiente.
 | `E1617` | `invalid-context-change` | `with Nombre { ... }` nombra algo que no es un contexto. |
 | `E1618` | `invalid-annotation-declaration` | Una anotación declara un campo `priv`, de un tipo sin constantes o con un valor por defecto que no es constante (27.13). |
 | `E1619` | `invalid-annotation` | Una anotación que no existe o no es visible, repetida en un elemento, con un argumento que no es constante o que `meta` no puede leer, o una del lenguaje fuera de su sitio (27.13). |
+| `E1620` | `wait-or-cancel-without-errors` | `waitOrCancel()` sobre tareas que no pueden fallar. |
+| `E1621` | `wait-used-as-result` | Lo que da `wait()` sobre tareas que pueden fallar se usa como un solo resultado. |
 
 #### Unsafe, programas y constantes
 
@@ -9832,7 +9862,7 @@ Son errores obligatorios, entre otros:
 
 - Rama `match` cubierta por anteriores (`E1203`).
 - `match` no exhaustivo (`E1204`).
-- `Result` descartado como sentencia (`E1303`).
+- `Result` descartado como sentencia, solo o dentro de un array, una tupla o una opción (`E1303`).
 - Valor sin ninguna llamada como sentencia (`E1306`).
 - Declaración que produciría shadowing (`E1003`).
 - Cabeceras de `impl` que se solapan (`E1111`) o un ciclo de obligaciones que no
@@ -9840,6 +9870,7 @@ Son errores obligatorios, entre otros:
 - Más de una implementación `Iterator[T]` para el mismo target (`E1113`).
 - Literal de map con una clave constante repetida (`E1116`).
 - `spawn` sin una llamada (`E1611`) o con argumentos prestados (`E1609`).
+- `waitOrCancel()` sobre tareas que no pueden fallar (`E1620`), y lo que da `wait()` usado como un solo resultado (`E1621`).
 - Uso de un binding después de mover un valor afín (`E1401`).
 - Intento de almacenar, capturar, devolver o prolongar un préstamo fuera de su
   región estructurada (`E1402`).

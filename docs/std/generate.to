@@ -412,7 +412,7 @@ fn main(): !String {
     for page in pages {
         asked.add(spawn listingsOf(tondo, page))
     }
-    let listings = asked.wait()?
+    let listings = asked.waitOrCancel()?
     if not check and not fs.exists("docs/std/prelude") {
         fs.createDirectory("docs/std/prelude").mapErr((e) { "cannot make docs/std/prelude: {e}" })?
     }

@@ -13,17 +13,15 @@ impl<'a> Checker<'a> {
         // result the program has to see (11.9).
         if expected == Ty::UNIT && value.ty != Ty::NEVER && !self.types.has_error(value.ty) {
             if self.must_use(value.ty) {
-                let message = match value.kind {
-                    hir::ExprKind::Recover(..) => format!(
+                if let hir::ExprKind::Recover(..) = value.kind {
+                    let message = format!(
                         "what `recover` gives, of type {}, is not used; read it with `match`, `?? fallback` or `.isErr()`, or discard it with `_ = ...`",
                         self.display(value.ty)
-                    ),
-                    _ => format!(
-                        "a value of type {} is not used; pass a failure on with `?`, handle it with `match`, or discard it with `_ = ...`",
-                        self.display(value.ty)
-                    ),
-                };
-                self.diags.error("E1303", value.span, message);
+                    );
+                    self.diags.error("E1303", value.span, message);
+                } else {
+                    self.dropped_results(&value);
+                }
                 let start = Span::new(value.span.start, value.span.start);
                 self.diags.fix("discard it with `_ = ...`", false, vec![(start, "_ = ".into())]);
                 return value;
@@ -125,6 +123,16 @@ impl<'a> Checker<'a> {
             && !self.types.has_error(value.ty)
             && !self.types.has_error(expected)
         {
+            // What an older `wait()` gave, or its values (11.12).
+            let waited = match *self.types.kind(expected) {
+                TyKind::Result(..) => true,
+                TyKind::Array(values) => matches!(*self.types.kind(value.ty), TyKind::Array(results)
+                    if matches!(*self.types.kind(results), TyKind::Result(ok, _) if ok == values)),
+                _ => false,
+            };
+            if waited && self.wait_as_result(&value) {
+                return value;
+            }
             let wrapped = match *self.types.kind(value.ty) {
                 TyKind::Result(ok, _) | TyKind::Option(ok) => ok == expected,
                 _ => false,
@@ -390,6 +398,8 @@ impl<'a> Checker<'a> {
                 self.expr(cx, fallback, None);
                 return Self::error_expr(span);
             }
+            // The fallback is of what `waitOrCancel()` would give.
+            _ if self.wait_as_result(&value) => return Self::error_expr(span),
             _ => {
                 let message = format!(
                     "`??` gives the value of an option or a result, and this is {}: write it without `?? ...`",

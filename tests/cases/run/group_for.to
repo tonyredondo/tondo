@@ -1,0 +1,65 @@
+// `for value in group` takes the results as the tasks finish, and does not
+// take the group: after a `break` it holds the tasks left, which `cancel()`
+// stops, and after a loop that ran out it takes more tasks.
+
+import std.console
+
+fn released(n: Int, go: Receiver[Bool]): Int {
+    _ = go.receive()
+    n
+}
+
+fn main() {
+    let (goFirst, first) = channel[Bool](1)
+    let (goSecond, second) = channel[Bool](1)
+    let (goThird, third) = channel[Bool](1)
+    var group = Group[Int]()
+    group.add(spawn released(1, first))
+    group.add(spawn released(2, second))
+    group.add(spawn released(3, third))
+    // Each turn lets the next task go, in an order of its own.
+    goThird.send(true)
+    var order: Array[Int] = []
+    for n in group {
+        order.push(n)
+        if n == 3 {
+            goFirst.send(true)
+        } else if n == 1 {
+            goSecond.send(true)
+        }
+    }
+    console.println("finished in order {order}, {group.length()} left")
+
+    // Tasks added after the loop ran out.
+    let (goFourth, fourth) = channel[Bool](1)
+    group.add(spawn released(4, fourth))
+    goFourth.send(true)
+    for n in group {
+        console.println("then {n}")
+    }
+
+    // A loop that breaks leaves the rest to the program.
+    let (goFifth, fifth) = channel[Bool](1)
+    let (goSixth, sixth) = channel[Bool](1)
+    let (goSeventh, seventh) = channel[Bool](1)
+    var waiting = Group[Int]()
+    waiting.add(spawn released(5, fifth))
+    waiting.add(spawn released(6, sixth))
+    waiting.add(spawn released(7, seventh))
+    goSixth.send(true)
+    for n in waiting {
+        console.println("took {n}")
+        break
+    }
+    console.println("{waiting.length()} left")
+    waiting.cancel()
+    console.println("cancelled the rest")
+    goFifth.close()
+    goSeventh.close()
+}
+
+// expect-stdout: finished in order [3, 1, 2], 0 left
+// expect-stdout: then 4
+// expect-stdout: took 6
+// expect-stdout: 2 left
+// expect-stdout: cancelled the rest

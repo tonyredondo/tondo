@@ -310,7 +310,7 @@ impl Checker<'_> {
         // `wait()` and `cancel()` of an array of tasks, as `tondo api`
         // documents them under `Array[Join[T]]`.
         if self.tasks_array(ty) {
-            for name in ["wait", "cancel"] {
+            for name in ["wait", "waitOrCancel", "cancel"] {
                 if !members.iter().any(|m| m.name == name) {
                     let builtin = Some("Array[Join[T]]".to_string());
                     members.push(Member {

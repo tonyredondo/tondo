@@ -284,7 +284,7 @@ test groupStopsAtAnError {
     var group = Group[Int ! String]()
     group.add(spawn failing(1))
     group.add(spawn failing(2))
-    match group.wait() {
+    match group.waitOrCancel() {
         ok(_) => assert(false)
         err(problem) => assert(problem == "one")
     }

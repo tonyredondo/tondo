@@ -1,0 +1,86 @@
+// A group's `wait()` gives every result and cancels none; `waitOrCancel()`
+// gives the values or the first error to happen, which cancels the other
+// tasks and is given once their cleanup ends, of a group and of an array
+// of tasks alike.
+
+import std.console
+import std.time
+
+type Failed = { n: Int }
+
+fn failNow(n: Int): Int ! Failed {
+    fail Failed { n: n }
+}
+
+fn later(n: Int): Int ! Failed {
+    time.sleep(time.milliseconds(20))
+    n * 10
+}
+
+fn stuck(idle: Receiver[Int], said: Sender[String]): Int ! Failed {
+    defer {
+        said.send("stuck cleaned up")
+    }
+    idle.receive() ?? 0
+}
+
+fn shown(results: Array[Int ! Failed]): String {
+    var parts: Array[String] = []
+    for result in results {
+        parts.push(match result {
+            ok(value) => "ok {value}"
+            err(error) => "failed {error.n}"
+        })
+    }
+    parts.join(", ")
+}
+
+fn main() {
+    // The first task fails at once; the second is not cancelled for it.
+    var all = Group[Int ! Failed]()
+    all.add(spawn failNow(1))
+    all.add(spawn later(2))
+    console.println(shown(all.wait()))
+
+    // The task added last fails first: its error is the one given, and the
+    // task that would never end is cancelled, its cleanup done before.
+    let (hold, idle) = channel[Int](1)
+    let (said, heard) = channel[String](4)
+    var first = Group[Int ! Failed]()
+    first.add(spawn stuck(idle, said))
+    first.add(spawn failNow(3))
+    match first.waitOrCancel() {
+        ok(values) => console.println("values {values}")
+        err(error) => console.println("first error {error.n}, {heard.receive() ?? "nothing"}")
+    }
+    hold.close()
+
+    var fine = Group[Int ! Failed]()
+    for n in [4, 6] {
+        fine.add(spawn later(n))
+    }
+    console.println("{fine.waitOrCancel()}")
+
+    // An array of tasks, the same.
+    console.println(shown([spawn failNow(5), spawn later(8)].wait()))
+    let (arrayHold, arrayIdle) = channel[Int](1)
+    let (arraySaid, arrayHeard) = channel[String](4)
+    let jobs = [spawn stuck(arrayIdle, arraySaid), spawn failNow(7)]
+    match jobs.waitOrCancel() {
+        ok(values) => console.println("values {values}")
+        err(error) => console.println("first error {error.n}, {arrayHeard.receive() ?? "nothing"}")
+    }
+    arrayHold.close()
+    let values = [1, 2, 3].map((n) { spawn later(n) }).waitOrCancel()
+    console.println("{values}")
+    let every = [9, 10].map((n) { spawn later(n) }).wait()
+    console.println(shown(every))
+}
+
+// expect-stdout: failed 1, ok 20
+// expect-stdout: first error 3, stuck cleaned up
+// expect-stdout: ok([40, 60])
+// expect-stdout: failed 5, ok 80
+// expect-stdout: first error 7, stuck cleaned up
+// expect-stdout: ok([10, 20, 30])
+// expect-stdout: ok 90, ok 100

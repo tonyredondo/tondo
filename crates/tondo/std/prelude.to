@@ -787,6 +787,17 @@ fn waitTasks[T: ~Copy](jobs: Array[Join[T]]): Array[T] {
     results
 }
 
+/// `jobs.waitOrCancel()` of an array of tasks that can fail (language
+/// 11.11): their values, in the array's order, or the first error to
+/// happen, which cancels the rest, as a group's `waitOrCancel()` does.
+fn waitOrCancelTasks[T: ~Copy, E](jobs: Array[Join[T ! E]]): Array[T] ! E {
+    var group = Group[T ! E]()
+    for job in jobs {
+        group.add(job)
+    }
+    group.waitOrCancel()
+}
+
 /// `jobs.cancel()` of an array of tasks (language 11.11): tells every task
 /// to stop, then waits for each, as a group's `cancel()` does.
 fn cancelTasks[T: ~Copy](jobs: Array[Join[T]]) {

@@ -95,7 +95,7 @@ pub fn readAll(paths: Array[String]): Read ! fs.FsError {
         reading.add(spawn read(path))
     }
     var all = Read { entries: [], skipped: 0 }
-    for part in reading.wait()? {
+    for part in reading.waitOrCancel()? {
         all.entries.extend(part.entries)
         all.skipped += part.skipped
     }

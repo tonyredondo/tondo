@@ -21,6 +21,9 @@ impl<'a> Checker<'a> {
 
     /// `?` on a value already checked, written at the end of `span`.
     pub(super) fn try_value(&mut self, cx: &mut FnCx, value: hir::Expr, span: Span) -> hir::Expr {
+        if self.wait_as_result(&value) {
+            return Self::error_expr(span);
+        }
         self.note_propagation(cx, value.ty, Span::new(span.end - 1, span.end), "?");
         self.note_exit(cx, Span::new(span.end - 1, span.end));
         match self.types.kind(value.ty).clone() {

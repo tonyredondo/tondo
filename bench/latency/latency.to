@@ -64,7 +64,7 @@ fn sent(client: http.Client, rate: Int, count: Int, json: Bool): Array[Int] ! ht
         }
         group.add(spawn timed(client, due, json))
     }
-    group.wait()
+    group.waitOrCancel()
 }
 
 fn written(name: String, rate: Int, latencies: (Int, Int)) {

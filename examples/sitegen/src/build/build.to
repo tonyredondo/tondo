@@ -93,7 +93,7 @@ pub fn build(site: fs.FileSystem, out: fs.FileSystem, name: String): Built ! Bui
     for page in pages {
         rendering.add(spawn renderPost(theme, name, page))
     }
-    let rendered = rendering.wait().mapErr(BuildError.Template)?
+    let rendered = rendering.waitOrCancel().mapErr(BuildError.Template)?
 
     var files: Array[String] = []
     for (page, html) in pages.zip(rendered) {

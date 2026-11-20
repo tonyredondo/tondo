@@ -1721,7 +1721,7 @@ impl<'a> Checker<'a> {
             (Handle::Group, "add") => T::GroupAdd,
             (Handle::Group, "next") => T::GroupNext,
             (Handle::Group, "length" | "isEmpty") => T::GroupLength,
-            (Handle::Group, "wait") => T::GroupWait,
+            (Handle::Group, "wait" | "waitOrCancel") => T::GroupWait,
             (Handle::Join, "cancel") => T::Cancel,
             (Handle::Join, "detach") => T::Detach,
             (Handle::Group, "cancel") => T::GroupCancel,
@@ -1734,6 +1734,9 @@ impl<'a> Checker<'a> {
             (Handle::Weak, "get") => T::WeakGet,
             _ => return self.no_method(ty, method, span),
         };
+        if method.name == "waitOrCancel" && !self.tasks_fail(ty) {
+            return self.wait_or_cancel_unfailing(ty, method, span);
+        }
         let timeout = matches!(args, [arg] if arg.name.as_ref().is_some_and(|n| n.name == "timeout"));
         let op = match op {
             T::Wait if timeout => T::WaitTimeout,
@@ -1783,8 +1786,10 @@ impl<'a> Checker<'a> {
                 let reference = self.types.handle(Handle::Ref, result);
                 self.types.intern(TyKind::Option(reference))
             }
+            // `wait()` gives every result; `waitOrCancel()` the values or
+            // the first error.
             T::GroupWait => match *self.types.kind(result) {
-                TyKind::Result(value, error) => {
+                TyKind::Result(value, error) if method.name == "waitOrCancel" => {
                     let values = self.types.intern(TyKind::Array(value));
                     self.types.intern(TyKind::Result(values, error))
                 }

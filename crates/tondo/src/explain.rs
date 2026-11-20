@@ -73,7 +73,11 @@ pub const CODES: &[(&str, &str, &str)] = &[
     ("E1206", "invalid-for-source", "A `for` loop's header, pattern or source does not allow what it asks."),
     ("E1301", "incompatible-error-propagation", "`?` cannot pass on its error through the function's result."),
     ("E1302", "invalid-fail-context", "`fail` where no compatible error can leave."),
-    ("E1303", "discarded-result", "A `Result` is dropped as a statement, unused and without `_ =`."),
+    (
+        "E1303",
+        "discarded-result",
+        "A `Result`, or an array, a tuple or an option that holds results, is dropped as a statement, unused and without `_ =`.",
+    ),
     (
         "E1304",
         "invalid-result-construction",
@@ -124,6 +128,12 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "E1619",
         "invalid-annotation",
         "An annotation that is not declared or visible, written twice on a thing, with an argument that is not a constant or that `meta` cannot read, or one of the language's out of its place.",
+    ),
+    ("E1620", "wait-or-cancel-without-errors", "`waitOrCancel()` is called on tasks that cannot fail."),
+    (
+        "E1621",
+        "wait-used-as-result",
+        "What `wait()` gives of tasks that can fail is used as one result. A `wait()` whose value is discarded, `_ = group.wait()`, is not caught: it now waits for every task without cancelling any.",
     ),
     ("E1701", "unsafe-operation-outside-region", "A raw operation outside an `unsafe` region."),
     ("E1702", "invalid-unsafe-contract", "A signature or capture does not show the `unsafe` contract it needs."),

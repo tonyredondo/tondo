@@ -197,6 +197,14 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> hir::Expr {
         let scrutinee = self.expr(cx, scrutinee, None);
+        // A `wait()` matched as one result, with `ok` and `err` (11.12).
+        let as_result = arms.iter().any(|arm| {
+            matches!(&arm.pattern.kind, ast::PatternKind::Constructor { path, .. }
+                if matches!(path.as_slice(), [name] if name.name == "ok" || name.name == "err"))
+        });
+        if as_result && self.wait_as_result(&scrutinee) {
+            return Self::error_expr(span);
+        }
         let mut result = expected;
         let mut out = Vec::new();
         // An arm whose value is an empty literal, `[]`, before any other with

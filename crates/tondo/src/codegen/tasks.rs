@@ -69,7 +69,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.removal_result(place, ty, item, out, found)
             }
             TaskOp::GroupLength => Some(Val::Scalar(self.e.call_rt(Rt::GroupLength, &[values[0]]).unwrap())),
-            TaskOp::GroupSettle => Some(Val::Scalar(self.e.call_rt(Rt::GroupSettle, &[values[0]]).unwrap())),
+            TaskOp::GroupSettle => Some(Val::Scalar(self.e.call_rt(Rt::GroupSettle, &[values[0], values[1]]).unwrap())),
             TaskOp::Channel => {
                 let sender_ty = self.e.cg.types().components(ty).expect("a pair of ends")[0];
                 let value = self.e.cg.types().handle_result(sender_ty);

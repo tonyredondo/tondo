@@ -1,6 +1,6 @@
 //! Groups of tasks: a `Group` gives the results of the tasks added to it in
-//! the order they finish, and with results, the first error cancels the
-//! others (docs/refactor.md, phase 2).
+//! the order they finish, or all of them, and with results, the first error
+//! may cancel the others (docs/refactor.md, phase 2).
 
 use super::*;
 
@@ -235,12 +235,12 @@ pub unsafe extern "C" fn tondo_rt_group_next(group: *mut GroupObject, out: *mut 
     }
 }
 
-/// The first part of `group.wait()`: waits until every task finished or,
-/// for results, one finished with an error, which cancels the others;
-/// returns the index of that task, -1, or -2 if the waiting task is
-/// cancelled.
+/// The first part of `group.wait()` and `group.waitOrCancel()`: waits
+/// until every task finished or, with `on_error`, one finished with an
+/// error, which cancels the others; returns the index of that task, -1, or
+/// -2 if the waiting task is cancelled.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_group_settle(group: *mut GroupObject) -> i64 {
+pub unsafe extern "C" fn tondo_rt_group_settle(group: *mut GroupObject, on_error: u8) -> i64 {
     unsafe {
         let g = &mut *group;
         lock(&g.lock);
@@ -249,7 +249,7 @@ pub unsafe extern "C" fn tondo_rt_group_settle(group: *mut GroupObject) -> i64 {
                 unlock(&g.lock);
                 return -2;
             }
-            if let Some(index) = g.failed.filter(|&i| !g.entries[i].taken) {
+            if let Some(index) = g.failed.filter(|&i| on_error != 0 && !g.entries[i].taken) {
                 unlock(&g.lock);
                 tondo_rt_group_cancel(group);
                 return index as i64;

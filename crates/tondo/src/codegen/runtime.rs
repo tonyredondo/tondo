@@ -586,7 +586,7 @@ impl Rt {
             Rt::GroupAdd => ("tondo_rt_group_add", &[I64, I64], &[]),
             Rt::GroupLength => ("tondo_rt_group_length", &[I64], &[I64]),
             Rt::GroupNext => ("tondo_rt_group_next", &[I64, I64], &[I8]),
-            Rt::GroupSettle => ("tondo_rt_group_settle", &[I64], &[I64]),
+            Rt::GroupSettle => ("tondo_rt_group_settle", &[I64, I8], &[I64]),
             Rt::GroupTake => ("tondo_rt_group_take", &[I64, I64, I64], &[I8]),
             Rt::GroupRelease => ("tondo_rt_group_release", &[I64], &[]),
             Rt::ChannelNew => ("tondo_rt_channel_new", &[I64, I8, I64, I64, I64, I64, I64, I8], &[I64]),

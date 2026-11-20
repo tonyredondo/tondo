@@ -2719,7 +2719,9 @@ impl Builder<'_> {
             _ => (e.ty, false),
         };
         let group = self.expr(group);
-        let settle = Rvalue::TaskOp(hir::TaskOp::GroupSettle, vec![group.clone()], vec![false], span);
+        // `waitOrCancel()` stops at the first error and cancels the rest.
+        let stops = Operand::Const(Const::Bool(fallible));
+        let settle = Rvalue::TaskOp(hir::TaskOp::GroupSettle, vec![group.clone(), stops], vec![false, false], span);
         let index = self.temp(Ty::INT, settle, span);
         self.cancellation_point(span, true);
         let values = self.new_local(array);

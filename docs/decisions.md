@@ -8577,3 +8577,48 @@ its sentence in the specification now says, and the array's `cancel()`
 is a group's. To stop at the first error and cancel the rest, as a
 group's `wait()` does today, is the other way of waiting Tony chose,
 `waitOrCancel()`, which comes with the group's change.
+## Two ways of waiting for many tasks
+
+A group's `wait()` gave `Array[R] ! E` when its tasks could fail: the
+first error cancelled the others. Tony doubted that this should be the
+way to wait: "Dudo que si se cancela 1 las demás tengan que
+cancelarse". So `wait()`, of a group as of an array of tasks, now gives
+every result, `Array[T]`, each with its error, and cancels none; the old
+way is a second one, `waitOrCancel()`, which gives `Array[R] ! E`: the
+values, or the first error to happen, which cancels the rest and is
+given once their cleanup ends. Of one type with two ways of waiting,
+rather than a flag in the group's constructor or a second type, he said
+"Me parece genial", and of the name, "Está genial así". An array's
+`waitOrCancel()` moves its tasks into a group, so that the error given
+is the first in time, not in the array's order.
+
+`next()` stays the group's alone, as only the group keeps the tasks in
+the order they finish: "Ahh vale aquí es donde dices que debería ir el
+next solo". `for value in group` takes them so, a `next()` each turn,
+and does not take the group: a loop that breaks leaves it the tasks
+left, which can be waited for or cancelled, and one that ran out leaves
+a group more tasks can be added to.
+
+The type changed, so code written for the old `wait()` stops compiling
+where it used the value as one result, with `?`, `??`, `match` on `ok`
+and `err`, a method of `Result` an array lacks, or where `Array[R] ! E`
+is expected: E1621 says to write `waitOrCancel()`, and `tondo fix`
+writes it. `map` is the method of both an array and a result that it
+cannot catch; inside its closure, the message names the element's type,
+`Int ! E`, which shows what changed. A `wait()` whose value is discarded,
+`_ = group.wait()`, is not caught either: it now waits for every task.
+The repository's code was read for such a place, and every one discards
+the `wait()` of tasks that cannot fail, which is as before. The three
+examples, three cases and two benchmarks whose first error had to stop
+the rest now say `waitOrCancel()`. `waitOrCancel()` on tasks that cannot fail has no
+error to stop at, and is E1620, which says to write `wait()`.
+
+A `wait()` of tasks that can fail gives results a statement cannot drop,
+and E1303 said nothing of them, as it looked only at a `Result` itself.
+It now looks into an array, a tuple and an option too, which may hold
+failures as a result does; a count over the repository found no
+statement it would now refuse. A map or another container does not
+count, and the library has no way to turn an array of results into its
+values or its first failure, so the message says to read them or to
+discard them, and, of a `wait()` of tasks, to pass the first failure on
+with `waitOrCancel()?`.

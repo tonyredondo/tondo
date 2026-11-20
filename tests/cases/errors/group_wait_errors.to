@@ -1,0 +1,89 @@
+type Failed = { n: Int }
+
+fn work(n: Int): Int ! Failed {
+    n
+}
+
+fn plain(n: Int): Int {
+    n
+}
+
+fn tail(): Array[Int] ! Failed {
+    var group = Group[Int ! Failed]()
+    group.add(spawn work(1))
+    group.wait()
+}
+
+fn returned(): Array[Int] ! Failed {
+    var group = Group[Int ! Failed]()
+    group.add(spawn work(1))
+    return group.wait()
+}
+
+fn passed(): Array[Int] ! Failed {
+    let values = [1].map((n) { spawn work(n) }).wait()?
+    values
+}
+
+fn found(): (Int ! Failed)? {
+    none
+}
+
+fn take(values: Array[Int] ! Failed) {
+    _ = values
+}
+
+fn dropped(): Unit ! Failed {
+    var group = Group[Int ! Failed]()
+    group.add(spawn work(1))
+    group.wait()
+    (work(1), 2)
+    found()
+    var kept = Group[Int ! Failed]()
+    kept.add(spawn work(2))
+    _ = kept.wait()
+}
+
+fn main() {
+    var fallback = Group[Int ! Failed]()
+    fallback.add(spawn work(1))
+    let values = fallback.wait() ?? []
+    var asked = Group[Int ! Failed]()
+    asked.add(spawn work(1))
+    let failed = asked.wait().isErr()
+    var matched = Group[Int ! Failed]()
+    matched.add(spawn work(1))
+    match matched.wait() {
+        ok(all) => take(all)
+        err(error) => take(error.n)
+    }
+    var argument = Group[Int ! Failed]()
+    argument.add(spawn work(1))
+    take(argument.wait())
+    var declared = Group[Int ! Failed]()
+    declared.add(spawn work(1))
+    let kept: Array[Int] ! Failed = declared.wait()
+    var plainGroup = Group[Int]()
+    plainGroup.add(spawn plain(1))
+    let numbers = plainGroup.waitOrCancel()
+    let more = [1].map((n) { spawn plain(n) }).waitOrCancel()
+    let fixed = Group[Int]()
+    for n in fixed {
+        _ = n
+    }
+}
+
+// expect-error: E1621 `wait()` gives every task's result, as `Array[Int ! Failed]`, and cancels none; for the values or the first error, which cancels the other tasks, write `waitOrCancel()`
+// expect-error: E1621 `wait()` gives every task's result
+// expect-error: E1621 `wait()` gives every task's result
+// expect-error: E1303 a value of type `Array[Int ! Failed]` is not used, and it holds results that may be failures; read them, discard them with `_ = ...`, or pass the first failure on with `waitOrCancel()?`
+// expect-error: E1303 a value of type `(Int ! Failed, Int)` is not used, and it holds results that may be failures; read them, or discard them with `_ = ...`
+// expect-error: E1303 a value of type `(Int ! Failed)?` is not used, and it holds results
+// expect-error: E1621 `wait()` gives every task's result
+// expect-error: E1621 `wait()` gives every task's result
+// expect-error: E1621 `wait()` gives every task's result
+// expect-error: E1621 `wait()` gives every task's result
+// expect-error: E1621 `wait()` gives every task's result
+// expect-error: E1620 the tasks of `Group[Int]` cannot fail, so there is no error to cancel the others on: write `wait()`
+// expect-error: E1620 the tasks of `Array[Join[Int]]` cannot fail
+// expect-error: E1411 a `for` over a group changes `fixed`, which is not declared with `var`: declare it as `var fixed`

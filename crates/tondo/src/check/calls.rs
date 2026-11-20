@@ -628,6 +628,9 @@ impl<'a> Checker<'a> {
         if self.vectored(ty).is_some() {
             return self.simd_method(cx, value, method, args, expected, span);
         }
+        if self.result_only_method(&method.name) && self.wait_as_result(&value) {
+            return Self::error_expr(span);
+        }
         if self.is_http_route(ty, method, args) {
             return self.http_route(cx, value, method, args, expected, span);
         }
@@ -650,9 +653,13 @@ impl<'a> Checker<'a> {
         if self.tasks_array(ty) && method.name == "all" && args.is_empty() {
             return self.no_method(ty, method, span);
         }
+        if self.tasks_array(ty) && method.name == "waitOrCancel" && !self.tasks_fail(ty) {
+            return self.wait_or_cancel_unfailing(ty, method, span);
+        }
         if self.tasks_array(ty)
             && let Some(name) = match method.name.as_str() {
                 "wait" => Some("prelude.waitTasks"),
+                "waitOrCancel" => Some("prelude.waitOrCancelTasks"),
                 "cancel" => Some("prelude.cancelTasks"),
                 _ => None,
             }
@@ -1314,7 +1321,7 @@ impl<'a> Checker<'a> {
         let loan = Self::mk(hir::ExprKind::Loan(hir::Place { local: cursor, path: Vec::new() }), ty, span);
         let next =
             Self::mk(hir::ExprKind::Call(Callee::Trait(ITERATOR, 0), vec![ty, element], vec![loan]), option, span);
-        self.until_none(cx, pattern, element, body, (cursor, source), next)
+        self.until_none(cx, pattern, element, body, Some((cursor, source)), next, span)
     }
 
     /// `for value in receiver` (11.13): receives until the channel is
@@ -1332,21 +1339,41 @@ impl<'a> Checker<'a> {
         let option = self.types.intern(TyKind::Option(element));
         let read = Self::mk(hir::ExprKind::Local(receiver), ty, span);
         let next = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Receive, vec![read]), option, span);
-        self.until_none(cx, pattern, element, body, (receiver, source), next)
+        self.until_none(cx, pattern, element, body, Some((receiver, source)), next, span)
+    }
+
+    /// `for value in group` (11.12): takes the next task to finish until
+    /// none is left, with a loan of the group each turn, which so stays
+    /// the program's.
+    pub(super) fn for_group(
+        &mut self,
+        cx: &mut FnCx,
+        pattern: &ast::Pattern,
+        source: hir::Expr,
+        element: Ty,
+        body: &ast::Block,
+    ) -> Option<hir::Stmt> {
+        let (ty, span) = (source.ty, source.span);
+        let place = self.loan_place(cx, source, "a `for` over a group", true)?;
+        let option = self.types.intern(TyKind::Option(element));
+        let group = Self::mk(hir::ExprKind::Loan(place), ty, span);
+        let next = Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::GroupNext, vec![group]), option, span);
+        Some(self.until_none(cx, pattern, element, body, None, next, span))
     }
 
     /// A loop that binds `pattern` to each value `next` gives until `none`,
-    /// after storing `source` in a hidden local.
+    /// after storing `source`, if given, in a hidden local.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn until_none(
         &mut self,
         cx: &mut FnCx,
         pattern: &ast::Pattern,
         element: Ty,
         body: &ast::Block,
-        (cursor, source): (LocalId, hir::Expr),
+        stored: Option<(LocalId, hir::Expr)>,
         next: hir::Expr,
+        span: Span,
     ) -> hir::Stmt {
-        let span = source.span;
         let option = next.ty;
         cx.scopes.open();
         let context = PatternContext { in_match: false, mutable: false, loans: Loans::None };
@@ -1369,7 +1396,9 @@ impl<'a> Checker<'a> {
         ];
         let step = Self::mk(hir::ExprKind::Match(Box::new(next), arms), Ty::UNIT, span);
         let body = hir::Block { stmts: vec![hir::Stmt::Expr(step)], tail: None, ty: Ty::UNIT };
-        let stmts = vec![hir::Stmt::Let(cursor, source), hir::Stmt::Loop { condition: None, body, span }];
+        let mut stmts: Vec<hir::Stmt> =
+            stored.map(|(cursor, source)| hir::Stmt::Let(cursor, source)).into_iter().collect();
+        stmts.push(hir::Stmt::Loop { condition: None, body, span });
         hir::Stmt::Expr(Self::mk(hir::ExprKind::Block(hir::Block { stmts, tail: None, ty: Ty::UNIT }), Ty::UNIT, span))
     }
 
@@ -1716,6 +1745,80 @@ impl<'a> Checker<'a> {
             if matches!(self.types.kind(self.types.repr(element)), TyKind::Handle(Handle::Join, _)))
     }
 
+    /// Whether the tasks of an array of tasks or of a group can fail: their
+    /// result is `R ! E`.
+    pub(super) fn tasks_fail(&self, ty: Ty) -> bool {
+        let tasks = match *self.types.kind(self.types.repr(ty)) {
+            TyKind::Array(element) => self.types.repr(element),
+            _ => ty,
+        };
+        let result = self.types.repr(self.types.handle_result(tasks));
+        matches!(*self.types.kind(result), TyKind::Result(_, error) if error != Ty::NEVER)
+    }
+
+    /// E1620: `waitOrCancel()` of tasks that cannot fail.
+    pub(super) fn wait_or_cancel_unfailing(&mut self, ty: Ty, method: &ast::Ident, span: Span) -> hir::Expr {
+        let message = format!(
+            "the tasks of {} cannot fail, so there is no error to cancel the others on: write `wait()`",
+            self.display(ty)
+        );
+        self.diags.error("E1620", method.span, message);
+        self.diags.fix("write `wait()`", true, vec![(method.span, "wait".into())]);
+        Self::error_expr(span)
+    }
+
+    /// Whether `value` is a `wait()` of tasks that can fail, a group's or
+    /// an array's, which gives every result, `Array[R ! E]` (11.11, 11.12).
+    pub(super) fn waited_results(&self, value: &hir::Expr) -> bool {
+        let waits = match &value.kind {
+            hir::ExprKind::TaskOp(hir::TaskOp::GroupWait, _) => true,
+            hir::ExprKind::Call(Callee::Fn(id), ..) => {
+                matches!(self.names.get("prelude.waitTasks"), Some(&ModuleName::Fn(wait)) if wait == *id)
+            }
+            _ => false,
+        };
+        waits
+            && matches!(*self.types.kind(value.ty), TyKind::Array(element)
+                if matches!(*self.types.kind(element), TyKind::Result(_, error) if error != Ty::NEVER))
+    }
+
+    /// Where `wait` is written in a `wait()` of tasks that can fail.
+    pub(super) fn wait_name(&self, value: &hir::Expr) -> Option<Span> {
+        if !self.waited_results(value) {
+            return None;
+        }
+        let text = self.sources.file_of(value.span.start).slice(value.span);
+        let start = value.span.start + text.rfind("wait")? as u32;
+        Some(Span::new(start, start + 4))
+    }
+
+    /// E1621: a `wait()` of tasks that can fail used as one result, as
+    /// `waitOrCancel()` gives it (11.12).
+    pub(super) fn wait_as_result(&mut self, value: &hir::Expr) -> bool {
+        if !self.waited_results(value) {
+            return false;
+        }
+        let message = format!(
+            "`wait()` gives every task's result, as {}, and cancels none; for the values or the first error, which cancels the other tasks, write `waitOrCancel()`",
+            self.display(value.ty)
+        );
+        self.diags.error("E1621", value.span, message);
+        if let Some(name) = self.wait_name(value) {
+            self.diags.fix("write `waitOrCancel()`", true, vec![(name, "waitOrCancel".into())]);
+        }
+        true
+    }
+
+    /// Whether `name` is a method of a result that an array does not have.
+    pub(super) fn result_only_method(&mut self, name: &str) -> bool {
+        let (Some(result), Some(array)) = (self.intrinsic_owner("Result"), self.intrinsic_owner("Array")) else {
+            return false;
+        };
+        self.methods.contains_key(&(result, name.to_string()))
+            && !self.methods.contains_key(&(array, name.to_string()))
+            && !crate::api::builtin_methods("Array").contains(&name)
+    }
+
     /// Whether the language gives a type of its own a method `name`. Of the
     /// types it has no list of, all it knows.
     pub(super) fn language_method(&self, ty: Ty, name: &str) -> bool {
@@ -1738,7 +1841,8 @@ impl<'a> Checker<'a> {
         if self.tasks_array(ty) {
             return Some(
                 "an array of tasks is waited for whole with `wait()`, which gives every result in the array's \
-                 order, or stopped with `cancel()`",
+                 order, with `waitOrCancel()`, which gives the values or the first error and cancels the rest, \
+                 or stopped with `cancel()`",
             );
         }
         let hint = match (self.types.kind(ty), name) {

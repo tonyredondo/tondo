@@ -8,7 +8,7 @@
 
 `tondo api Array` shows the same in a terminal.
 
-- [Array](#array): [`Array.first`](#arrayfirst), [`Array.last`](#arraylast), [`Array.map`](#arraymap), [`Array.filter`](#arrayfilter), [`Array.flatMap`](#arrayflatmap), [`Array.reduce`](#arrayreduce), [`Array.contains`](#arraycontains), [`Array.any`](#arrayany), [`Array.all`](#arrayall), [`Array.find`](#arrayfind), [`Array.findIndex`](#arrayfindindex), [`Array.count`](#arraycount), [`Array.sum`](#arraysum), [`Array.min`](#arraymin), [`Array.max`](#arraymax), [`Array.sorted`](#arraysorted), [`Array.sortedBy`](#arraysortedby), [`Array.sortedWith`](#arraysortedwith), [`Array.reversed`](#arrayreversed), [`Array.replaced`](#arrayreplaced), [`Array.unique`](#arrayunique), [`Array.take`](#arraytake), [`Array.drop`](#arraydrop), [`Array.zip`](#arrayzip), [`Array.enumerate`](#arrayenumerate), [`Array.chunks`](#arraychunks), [`Array.windows`](#arraywindows), [`Array.groupBy`](#arraygroupby), [`Array.partition`](#arraypartition), [`Array.minBy`](#arrayminby), [`Array.maxBy`](#arraymaxby), [`Array.uniqueBy`](#arrayuniqueby), [`Array.takeWhile`](#arraytakewhile), [`Array.dropWhile`](#arraydropwhile), [`Array.toMap`](#arraytomap), [`Array.keyedBy`](#arraykeyedby), [`Array.countBy`](#arraycountby), [`Array.sumBy`](#arraysumby), [`Array.average`](#arrayaverage), [`Array.averageBy`](#arrayaverageby), [`Array.scan`](#arrayscan), [`Array.findLast`](#arrayfindlast), [`Array.findLastIndex`](#arrayfindlastindex), [`Array.indexOf`](#arrayindexof), [`Array.joinBy`](#arrayjoinby), [`Array.toSet`](#arraytoset), [`Array.join`](#arrayjoin), [`Array.sort`](#arraysort), [`Array.sortBy`](#arraysortby), [`Array.reverse`](#arrayreverse), [`Array.swap`](#arrayswap), [`Array.retain`](#arrayretain), [`Array.extend`](#arrayextend), [`Array.iter`](#arrayiter), [`Array.length`](#arraylength), [`Array.isEmpty`](#arrayisempty), [`Array.get`](#arrayget), [`Array.slice`](#arrayslice), [`Array.concat`](#arrayconcat), [`Array.repeat`](#arrayrepeat), [`Array.push`](#arraypush), [`Array.pop`](#arraypop), [`Array.insert`](#arrayinsert), [`Array.removeAt`](#arrayremoveat), [`Array.clear`](#arrayclear), [`Array.wait`](#arraywait), [`Array.cancel`](#arraycancel)
+- [Array](#array): [`Array.first`](#arrayfirst), [`Array.last`](#arraylast), [`Array.map`](#arraymap), [`Array.filter`](#arrayfilter), [`Array.flatMap`](#arrayflatmap), [`Array.reduce`](#arrayreduce), [`Array.contains`](#arraycontains), [`Array.any`](#arrayany), [`Array.all`](#arrayall), [`Array.find`](#arrayfind), [`Array.findIndex`](#arrayfindindex), [`Array.count`](#arraycount), [`Array.sum`](#arraysum), [`Array.min`](#arraymin), [`Array.max`](#arraymax), [`Array.sorted`](#arraysorted), [`Array.sortedBy`](#arraysortedby), [`Array.sortedWith`](#arraysortedwith), [`Array.reversed`](#arrayreversed), [`Array.replaced`](#arrayreplaced), [`Array.unique`](#arrayunique), [`Array.take`](#arraytake), [`Array.drop`](#arraydrop), [`Array.zip`](#arrayzip), [`Array.enumerate`](#arrayenumerate), [`Array.chunks`](#arraychunks), [`Array.windows`](#arraywindows), [`Array.groupBy`](#arraygroupby), [`Array.partition`](#arraypartition), [`Array.minBy`](#arrayminby), [`Array.maxBy`](#arraymaxby), [`Array.uniqueBy`](#arrayuniqueby), [`Array.takeWhile`](#arraytakewhile), [`Array.dropWhile`](#arraydropwhile), [`Array.toMap`](#arraytomap), [`Array.keyedBy`](#arraykeyedby), [`Array.countBy`](#arraycountby), [`Array.sumBy`](#arraysumby), [`Array.average`](#arrayaverage), [`Array.averageBy`](#arrayaverageby), [`Array.scan`](#arrayscan), [`Array.findLast`](#arrayfindlast), [`Array.findLastIndex`](#arrayfindlastindex), [`Array.indexOf`](#arrayindexof), [`Array.joinBy`](#arrayjoinby), [`Array.toSet`](#arraytoset), [`Array.join`](#arrayjoin), [`Array.sort`](#arraysort), [`Array.sortBy`](#arraysortby), [`Array.reverse`](#arrayreverse), [`Array.swap`](#arrayswap), [`Array.retain`](#arrayretain), [`Array.extend`](#arrayextend), [`Array.iter`](#arrayiter), [`Array.length`](#arraylength), [`Array.isEmpty`](#arrayisempty), [`Array.get`](#arrayget), [`Array.slice`](#arrayslice), [`Array.concat`](#arrayconcat), [`Array.repeat`](#arrayrepeat), [`Array.push`](#arraypush), [`Array.pop`](#arraypop), [`Array.insert`](#arrayinsert), [`Array.removeAt`](#arrayremoveat), [`Array.clear`](#arrayclear), [`Array.wait`](#arraywait), [`Array.waitOrCancel`](#arraywaitorcancel), [`Array.cancel`](#arraycancel)
 
 ### Array
 
@@ -589,6 +589,16 @@ pub fn Array[Join[T]].wait(self): Array[T]
 Of an array of tasks: waits for every task, in the array's order, and
 gives their results, cancelling none, as waiting for each in that order
 would (language 11.11). It takes the array.
+
+#### Array.waitOrCancel
+
+```tondo
+pub fn Array[Join[T ! E]].waitOrCancel(self): Array[T] ! E
+```
+
+Of an array of tasks that can fail: their values, in the array's order,
+or the first error to happen, which cancels the other tasks and is
+given once they end (language 11.11). It takes the array.
 
 #### Array.cancel
 
