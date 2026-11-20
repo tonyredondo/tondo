@@ -316,12 +316,9 @@ fn watch_held(held: &mut Vec<(u64, Instant)>) -> Watched {
             (*seen, *since) = (u64::MAX, now);
             continue;
         }
-        let turns = next.turns.load(Ordering::Relaxed);
-        if *seen != turns {
-            (*seen, *since) = (turns, now);
-            continue;
-        }
-        let still = now.saturating_duration_since(*since);
+        let mut look = (*seen, *since);
+        let still = stayed(&mut look, next.turns.load(Ordering::Relaxed), now);
+        (*seen, *since) = look;
         if still >= GIVE_WAY_AFTER && CHECKPOINT_ASKS.load(Ordering::Relaxed) & GIVE_WAY == 0 {
             CHECKPOINT_ASKS.fetch_or(GIVE_WAY, Ordering::SeqCst);
         }
@@ -334,6 +331,17 @@ fn watch_held(held: &mut Vec<(u64, Instant)>) -> Watched {
         }
     }
     Watched::Looking
+}
+
+/// How long a worker has stayed on one task, by a look at it: its count of
+/// started tasks, `turns`, at `now`, against what the last look saw, `seen`,
+/// which a count that moved starts again.
+fn stayed(seen: &mut (u64, Instant), turns: u64, now: Instant) -> Duration {
+    if seen.0 != turns {
+        *seen = (turns, now);
+        return Duration::ZERO;
+    }
+    now.saturating_duration_since(seen.1)
 }
 
 /// Every worker is busy, or a task was queued with none idle: the monitor
@@ -483,4 +491,33 @@ unsafe fn run_here(inner: unsafe extern "C" fn(*mut u8), frame: *mut u8, kept: &
         crate::clock::stopped(in_domain);
     }
     kept.calling.store(false, Ordering::Release);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ADD_AFTER, GIVE_WAY_AFTER, stayed};
+    use std::time::{Duration, Instant};
+
+    /// A worker whose tasks change, as tasks of 2 ms each change it, never
+    /// stays on one long enough to give way or to get a worker beside it,
+    /// however long it is watched; one whose count stops moving stays from
+    /// the look that last saw it move, a late look counting the time it
+    /// missed. What the watch decides is a matter of counts and of the clock
+    /// it is given, not of how the threads were run.
+    #[test]
+    fn a_worker_stays_only_while_its_count_does_not_move() {
+        let start = Instant::now();
+        let at = |millis| start + Duration::from_millis(millis);
+        let mut seen = (u64::MAX, start);
+        for millis in 0..1000 {
+            let still = stayed(&mut seen, millis / 2, at(millis));
+            assert!(still < GIVE_WAY_AFTER, "at {millis} ms it stayed {still:?}");
+        }
+        let mut seen = (u64::MAX, start);
+        assert_eq!(stayed(&mut seen, 7, at(0)), Duration::ZERO);
+        assert_eq!(stayed(&mut seen, 7, at(10)), GIVE_WAY_AFTER);
+        assert_eq!(stayed(&mut seen, 7, at(100)), ADD_AFTER);
+        assert_eq!(stayed(&mut seen, 8, at(150)), Duration::ZERO);
+        assert_eq!(stayed(&mut seen, 8, at(400)), Duration::from_millis(250));
+    }
 }

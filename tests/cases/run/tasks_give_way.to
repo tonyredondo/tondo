@@ -1,17 +1,18 @@
 // With one worker, a task that computes and asks with `tasks.checkpoint()`
 // gives its worker away once it has held it for an interval while another
-// task waits (11.15): `main`, whose sleep ends meanwhile, gets the worker,
-// and its cancel reaches the computation at its next checkpoint. Under a
-// seeded order the explorer gives way at every checkpoint itself.
+// task waits (11.15): `main`, which waits for the computation to begin,
+// gets the worker, and its cancel reaches the computation at its next
+// checkpoint. Under a seeded order the explorer gives way at every
+// checkpoint itself.
 
 import std.console
 import std.tasks
-import std.time
 
-fn spin(): Int {
+fn spin(began: Sender[Unit]): Int {
     defer {
         console.println("the computation stopped, cancelled: {tasks.cancelled()}")
     }
+    began.send(())
     var total = 0
     for n in 0..4_000_000_000 {
         if n % 1024 == 0 {
@@ -23,8 +24,9 @@ fn spin(): Int {
 }
 
 fn main() {
-    let job = spawn spin()
-    time.sleep(time.milliseconds(20))
+    let (began, beginning) = channel[Unit]()
+    let job = spawn spin(began)
+    _ = beginning.receive()
     job.cancel()
     console.println("main ran beside it and cancelled it")
 }

@@ -1,20 +1,24 @@
 // A task that computes and never asks holds its worker; when it has held it
 // for two intervals while another task waits and no worker is idle, the
 // runtime puts another worker beside it (16.14), with one worker given as
-// with any number: `main`, whose sleep ends meanwhile, runs on it. Once the
+// with any number. `main` waits for the computation to begin and then for
+// the worker: the computation holds the one there was until `main` stops it,
+// so `main` runs on the worker put beside it, and only there. Once the
 // computation ends, that worker retires and the program has its one again.
-// Tasks that compute for less than an interval each, keeping the worker
-// busy, change task all the time: nothing gives way and no worker is added.
+// Nothing here is measured by the clock, so a slow machine changes only how
+// long it takes; that a worker whose tasks change is given nothing is held
+// by the monitor's own tests (tasks/foreign.rs).
 
 import std.console
 import std.diagnostics
+import std.sync
 import std.time
 
-/// Computes for about `millis` milliseconds without waiting.
-fn busy(millis: Int): Int {
-    let started = time.now()
+/// Computes until `stop` is set, without waiting, once it has said it began.
+fn compute(began: Sender[Unit], stop: sync.Atomic[Bool]): Int {
+    began.send(())
     var turns = 0
-    for started.elapsed() < time.milliseconds(millis) {
+    for not stop.load() {
         turns += 1
     }
     turns
@@ -25,21 +29,16 @@ fn counted(name: String): Int {
 }
 
 fn main() {
-    let short = (0..12).collect().map((_) { spawn busy(2) })
-    _ = short.wait()
-    console.println(
-        "short tasks: yields {counted("tasks.yields")}, workers added {counted("workers.added")}",
-    )
-
-    let job = spawn busy(200)
-    time.sleep(time.milliseconds(20))
+    let (began, beginning) = channel[Unit]()
+    let stop = sync.Atomic(false)
+    let job = spawn compute(began, stop)
+    _ = beginning.receive()
     console.println("main ran beside the computation: workers added {counted("workers.added")}")
+    stop.store(true)
     _ = job.wait()
     // The worker added retires once it looks for a task again.
-    var waited = 0
-    for counted("workers.total") > 1 and waited < 2000 {
+    for counted("workers.total") > 1 {
         time.sleep(time.milliseconds(1))
-        waited += 1
     }
     console.println("workers once it ended: {counted("workers.total")}")
 }
@@ -47,6 +46,5 @@ fn main() {
 // expect-env: TONDO_WORKERS=1
 // expect-no-schedule: the explorer runs one worker and adds none, so a computation that does not ask holds it, by design
 // expect-no-replay: a recorded run, too, runs its tasks on one worker that adds none
-// expect-stdout: short tasks: yields 0, workers added 0
 // expect-stdout: main ran beside the computation: workers added 1
 // expect-stdout: workers once it ended: 1
