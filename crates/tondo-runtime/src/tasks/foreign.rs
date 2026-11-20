@@ -64,6 +64,9 @@ pub(super) fn in_c() -> &'static InC {
     new.native.store(unsafe { current().as_ref() }.is_some_and(|task| task.native), Ordering::SeqCst);
     CALLERS.lock().unwrap_or_else(|e| e.into_inner()).push(new);
     worker(|w| w.in_c.set(new));
+    if let Some(next) = own_next() {
+        next.in_c.store(new as *const InC as *mut InC, Ordering::Release);
+    }
     kept().in_c.set(new);
     new
 }
@@ -176,12 +179,27 @@ pub(crate) fn step_back() {
     }
 }
 
-/// Watches the workers in C: one still in the same call after a period
+/// Looks of the monitor a worker may stay on one task while tasks wait for
+/// one and none is idle before the first task to ask gives its worker away
+/// (language 11.15).
+const GIVE_WAY_LOOKS: u32 = 10;
+/// And before another worker starts beside it (language 16.14): a tenth of
+/// a second, as a worker started and retired costs the processor some 100 µs
+/// and buys a saturated machine nothing, so tasks that compute for less
+/// never get one, while the task that waits is still served soon enough for
+/// a person or a health check (docs/decisions.md).
+const ADD_LOOKS: u32 = 100;
+
+/// Watches the workers. One still in the same call of C after a period
 /// blocks its tasks, so when tasks wait to run and no worker is idle,
-/// another worker starts in its place (as Go's runtime does). Sleeps while
-/// no worker is in C.
+/// another worker starts in its place (as Go's runtime does). One that stays
+/// on the same task while tasks wait and none is idle has the first task to
+/// ask give its worker away, and then another worker beside it
+/// (testing/models/tests/watcher.to). Sleeps while no worker is in C and
+/// none of that can happen.
 pub(super) fn monitor() {
     let mut last: HashMap<usize, usize> = HashMap::new();
+    let mut held: Vec<(u64, u32)> = Vec::new();
     loop {
         std::thread::sleep(MONITOR_PERIOD);
         if stopping() {
@@ -198,9 +216,8 @@ pub(super) fn monitor() {
             }
             busy = true;
             if last.insert(key, calls) == Some(calls) {
-                let mut queue = queue();
-                let due = queue.timers.peek().is_some_and(|timer| timer.at <= clock_now());
-                if !due && queue.runnable.is_empty() && waiting_next().is_empty() && waiting_local().is_empty() {
+                let queue = queue();
+                if !tasks_wait(&queue) {
                     continue;
                 }
                 // What waits for this worker has another: one that sleeps,
@@ -214,30 +231,114 @@ pub(super) fn monitor() {
                     continue;
                 }
                 state.replaced.store(true, Ordering::SeqCst);
-                queue.workers += 1;
-                // It looks for tasks for a domain where none looks.
-                let domain = (0..super::domains::count()).find(|&domain| !SEEKING[domain].load(Ordering::SeqCst));
-                if let Some(domain) = domain {
-                    SEEKING[domain].store(true, Ordering::SeqCst);
-                    queue.starting = Some(domain);
-                }
                 crate::diagnostics::WORKERS_REPLACED.add(1);
-                drop(queue);
-                start_worker();
+                add_worker(queue);
             }
         }
-        if !busy {
+        let watched = watch_held(&mut held);
+        if !busy && watched != Watched::Looking {
             MONITOR_ASLEEP.store(true, Ordering::SeqCst);
             let callers = CALLERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
-            if callers
+            let quiet = callers
                 .iter()
-                .all(|state| state.depth.load(Ordering::SeqCst) == 0 || state.native.load(Ordering::SeqCst))
-                && !stopping()
-            {
-                MONITOR.park();
+                .all(|state| state.depth.load(Ordering::SeqCst) == 0 || state.native.load(Ordering::SeqCst));
+            if quiet && !stopping() {
+                // Workers all busy with nothing waiting: the next timer may
+                // make something wait.
+                match watch_held(&mut held) {
+                    Watched::Looking => {}
+                    Watched::Until(at) => MONITOR.park_until(at),
+                    Watched::Idle => MONITOR.park(),
+                }
             }
             MONITOR_ASLEEP.store(false, Ordering::SeqCst);
         }
+    }
+}
+
+/// Whether tasks wait for a worker: in the queues, or as timers due.
+fn tasks_wait(queue: &Queue) -> bool {
+    let due = queue.timers.peek().is_some_and(|timer| timer.at <= clock_now());
+    due || !queue.runnable.is_empty() || !waiting_next().is_empty() || !waiting_local().is_empty()
+}
+
+/// Another worker, in the place of one in C or beside one a task holds.
+fn add_worker(mut queue: MutexGuard<'static, Queue>) {
+    queue.workers += 1;
+    // It looks for tasks for a domain where none looks.
+    let domain = (0..super::domains::count()).find(|&domain| !SEEKING[domain].load(Ordering::SeqCst));
+    if let Some(domain) = domain {
+        SEEKING[domain].store(true, Ordering::SeqCst);
+        queue.starting = Some(domain);
+    }
+    drop(queue);
+    start_worker();
+}
+
+/// What the watch of held workers found: workers to look at again in a
+/// moment, every worker busy with nothing waiting until a timer is due, or
+/// a worker idle, which needs no watch.
+#[derive(PartialEq)]
+enum Watched {
+    Looking,
+    Until(Option<Instant>),
+    Idle,
+}
+
+/// One look at the workers that run Tondo code: while none is idle and tasks
+/// wait, one whose count of started tasks has not moved for `GIVE_WAY_LOOKS`
+/// looks has the first task to ask give its worker away, and one still on
+/// it `ADD_LOOKS` looks on gets another worker beside it, once.
+fn watch_held(held: &mut Vec<(u64, u32)>) -> Watched {
+    if exploring().is_some() {
+        held.clear();
+        return Watched::Idle;
+    }
+    let shared = queue();
+    if shared.idle > 0 {
+        held.clear();
+        return Watched::Idle;
+    }
+    if !tasks_wait(&shared) {
+        held.clear();
+        return Watched::Until(shared.timers.peek().map(|timer| timer.at));
+    }
+    drop(shared);
+    let count = NEXT_COUNT.load(Ordering::Acquire).min(NEXTS.len());
+    held.resize(count, (u64::MAX, 0));
+    for (next, (seen, looks)) in NEXTS[..count].iter().zip(held.iter_mut()) {
+        // A worker in a call of C is the watch above's.
+        let in_c = next.in_c.load(Ordering::Acquire);
+        if !in_c.is_null() && unsafe { (*in_c).depth.load(Ordering::SeqCst) } > 0 {
+            (*seen, *looks) = (u64::MAX, 0);
+            continue;
+        }
+        let turns = next.turns.load(Ordering::Relaxed);
+        if *seen != turns {
+            (*seen, *looks) = (turns, 0);
+            continue;
+        }
+        *looks = looks.saturating_add(1);
+        if *looks >= GIVE_WAY_LOOKS && CHECKPOINT_ASKS.load(Ordering::Relaxed) & GIVE_WAY == 0 {
+            CHECKPOINT_ASKS.fetch_or(GIVE_WAY, Ordering::SeqCst);
+        }
+        if *looks == ADD_LOOKS && next.held.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+            crate::diagnostics::WORKERS_ADDED.add(1);
+            add_worker(queue());
+        }
+    }
+    Watched::Looking
+}
+
+/// Every worker is busy, or a task was queued with none idle: the monitor
+/// looks at what holds them, unless it does already.
+pub(super) fn watch_busy() {
+    if exploring().is_some() {
+        return;
+    }
+    MONITOR.start_once(|| spawn_thread(Some(64 * 1024), monitor));
+    if MONITOR_ASLEEP.load(Ordering::SeqCst) && MONITOR_ASLEEP.swap(false, Ordering::SeqCst) {
+        MONITOR.unpark();
     }
 }
 

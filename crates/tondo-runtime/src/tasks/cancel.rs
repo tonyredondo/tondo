@@ -104,17 +104,22 @@ pub extern "C" fn tondo_rt_cancelled() -> u8 {
     }
 }
 
-/// Whether the program ever entered a `within` with a deadline, which a
-/// checkpoint must then compare with the clock: compiled code reads it
-/// beside the count of reasons to ask, and until it is set, a checkpoint
-/// asks the runtime only when something else does. Set once, never cleared.
-#[unsafe(export_name = "tondo_rt_deadlined")]
-pub static DEADLINED: AtomicU32 = AtomicU32::new(0);
+/// What a checkpoint must see to, which compiled code reads beside the
+/// count of reasons to ask: until a bit is set, a checkpoint asks the
+/// runtime only when something else does.
+#[unsafe(export_name = "tondo_rt_checkpoint_asks")]
+pub static CHECKPOINT_ASKS: AtomicU32 = AtomicU32::new(0);
+/// The program entered a `within` with a deadline, which a checkpoint must
+/// compare with the clock. Set once, never cleared.
+const DEADLINES: u32 = 1;
+/// A worker is held by one task while tasks wait for one: the first task
+/// to ask gives its worker away. Set by the monitor, swapped off by it.
+pub(super) const GIVE_WAY: u32 = 2;
 
-/// A `within` with a deadline starts: a load each time, a store the first.
+/// A `within` with a deadline starts: a load each time, a write the first.
 pub(crate) fn deadline_entered() {
-    if DEADLINED.load(Ordering::Relaxed) == 0 {
-        DEADLINED.store(1, Ordering::Relaxed);
+    if CHECKPOINT_ASKS.load(Ordering::Relaxed) & DEADLINES == 0 {
+        CHECKPOINT_ASKS.fetch_or(DEADLINES, Ordering::Relaxed);
     }
 }
 
@@ -158,10 +163,33 @@ fn past_deadline(task: &mut Task) -> bool {
 /// panic that follows, as a wait would have seen it.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_tasks_checkpoint() {
-    let Some(task) = (unsafe { current().as_mut() }) else { return };
+    let task = current();
+    if task.is_null() {
+        return;
+    }
+    // A worker held while tasks wait: this task gives its own away, once
+    // for each time the monitor asks, unless frames of C on its stack keep
+    // it on its thread, or one worker runs the tasks in the order given.
+    if CHECKPOINT_ASKS.load(Ordering::Relaxed) & GIVE_WAY != 0
+        && exploring().is_none()
+        && !stays(task)
+        && CHECKPOINT_ASKS.fetch_and(!GIVE_WAY, Ordering::SeqCst) & GIVE_WAY != 0
+    {
+        give_way_to_waiting(task);
+    }
+    let task = unsafe { &mut *task };
     if !task.expired && past_deadline(task) {
         expire(task);
     }
+}
+
+/// Switches the running task out to its worker, as a wait does, to run
+/// again behind the tasks that wait for a worker (`run`).
+#[inline(never)]
+fn give_way_to_waiting(task: *mut Task) {
+    crate::diagnostics::TASKS_YIELDS.add(1);
+    worker(|w| w.yielded.set(true));
+    unsafe { switch(&mut (*task).sp, *home()) };
 }
 
 /// `tasks.cancelled()`: whether the running task was cancelled, or a

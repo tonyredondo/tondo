@@ -1,0 +1,234 @@
+// The monitor's two remedies for a worker that stays on one task (language
+// 11.15 and 16.14; crates/tondo-runtime/src/tasks: the monitor of
+// foreign.rs, run in work.rs). Each worker counts the tasks it starts.
+// While no worker is idle and a task waits, the monitor looks again and
+// again: a worker whose count has not moved for a look gets the bit, which
+// the first task to ask swaps off, giving its worker away; one that has not
+// moved for one more look is marked replaced, a step later as the code reads
+// then writes, and a surplus worker starts. A worker whose task leaves it
+// swaps its mark off and, if it was on, one worker retires; so does one
+// that finds itself idle with the mark on. Two workers: one runs a task that
+// never asks until it ends, the other a short one that asks; a third task
+// waits. It runs in the end, the workers never pass twice their number, and
+// they come back to it once every task has ended.
+import std.model
+
+type Worker = {
+    /// The task it runs, -1 when idle, -2 when it has not started or retired.
+    task: Int
+    /// How many tasks it has started, up to 4 and round again.
+    started: Int
+    /// Its count at the monitor's last look, or -1.
+    seen: Int
+    /// How many looks in a row have found the same count.
+    looks: Int
+    /// Marked replaced: a surplus worker runs beside it.
+    replaced: Bool
+    /// Marked by the monitor's look, to be replaced at its next step.
+    pending: Bool
+}
+
+type Watched = {
+    workers: Array[Worker]
+    queue: model.Queue[Int]
+    bit: Bool
+    /// Retirements owed, as `queue.surplus`.
+    surplus: Int
+    /// Which tasks have ended: the long one, the short one, the waiting one.
+    ended: Array[Bool]
+}
+
+const Long = 0
+
+const Short = 1
+
+const Waiting = 2
+
+const Base = 2
+
+fn worker(state: Watched, w: Int, after: Worker): Watched {
+    state with { workers: state.workers.replaced(w, after) }
+}
+
+/// The worker `w` leaves its task: its mark swapped off, a retirement owed
+/// if it was on.
+fn leaves(state: Watched, w: Int, ended: Bool, back: Bool, fixed: Bool): Watched {
+    let each = state.workers[w]
+    let queue = if back { state.queue.push(each.task) } else { state.queue }
+    let done = if ended { state.ended.replaced(each.task, true) } else { state.ended }
+    let owed = if fixed and each.replaced { state.surplus + 1 } else { state.surplus }
+    let after = each with { task: -1, replaced: each.replaced and not fixed }
+    worker(state with { queue, ended: done, surplus: owed }, w, after)
+}
+
+fn steps(state: Watched, fixed: Bool, asks: Bool, added: Bool): Array[model.Step[Watched]] {
+    var next: Array[model.Step[Watched]] = []
+    let present = state.workers.filter((each) { each.task != -2 })
+    let idle = present.any((each) { each.task == -1 })
+    let watching = not idle and not state.queue.isEmpty()
+    let room = present.length() < 2 * Base
+    let looked = state.workers.map(
+        (each) {
+            match each.task {
+                -2 => each
+                _ if not watching => each with { seen: -1, looks: 0 }
+                _ => {
+                    let looks = if each.seen == each.started { (each.looks + 1).min(3) } else { 1 }
+                    let pending =
+                        each.pending or (added and looks >= 3 and not each.replaced and room)
+                    each with { seen: each.started, looks, pending }
+                }
+            }
+        },
+    )
+    let stuck = looked.any((each) { each.task >= 0 and each.looks >= 2 })
+    next.push(model.step("look", state with { workers: looked, bit: state.bit or stuck }))
+    for (w, each) in state.workers.enumerate() {
+        // The monitor marks a worker it found stuck, whatever it runs now,
+        // and starts a surplus worker.
+        if each.pending {
+            let marked = worker(state, w, each with { replaced: true, pending: false })
+            let spare = marked.workers.findIndex((one) { one.task == -2 })
+            let started = match spare {
+                some(at) if room => worker(marked, at, marked.workers[at] with { task: -1 })
+                _ => marked
+            }
+            next.push(model.step("replace {w}", started))
+        }
+        match each.task {
+            -2 => {}
+            -1 => {
+                match state.queue.first() {
+                    some(task) => {
+                        let started = (each.started + 1) % 4
+                        let taken = each with { task, started }
+                        next.push(
+                            model.step(
+                                "take {w}",
+                                worker(state with { queue: state.queue.rest() }, w, taken),
+                            ),
+                        )
+                    }
+                    none => {}
+                }
+                // One that finds itself idle with its mark on.
+                if fixed and each.replaced {
+                    let owed = state with { surplus: state.surplus + 1 }
+                    next.push(
+                        model.step("unmark {w}", worker(owed, w, each with { replaced: false })),
+                    )
+                }
+                // A worker retires for a retirement owed, but the first two.
+                if state.surplus > 0 and w >= Base {
+                    let retired = worker(
+                        state with { surplus: state.surplus - 1 },
+                        w,
+                        each with { task: -2 },
+                    )
+                    next.push(model.step("retire {w}", retired))
+                }
+            }
+            // The long task never asks, and ends only once the one that
+            // waits has run: it holds its worker until then.
+            task if task == Long => {
+                if state.ended[Waiting] {
+                    next.push(model.step("finish {w}", leaves(state, w, true, false, fixed)))
+                }
+            }
+            task if task == Short => {
+                if asks and state.bit {
+                    let freed = leaves(state with { bit: false }, w, false, true, fixed)
+                    next.push(model.step("checkpoint {w}", freed))
+                }
+                // It ends only after the one that waits, which so runs only
+                // by a worker given away or put beside.
+                if state.ended[Waiting] {
+                    next.push(model.step("end {w}", leaves(state, w, true, false, fixed)))
+                }
+            }
+            _ => next.push(model.step("end {w}", leaves(state, w, true, false, fixed)))
+        }
+    }
+    next
+}
+
+fn check(fixed: Bool, asks: Bool, added: Bool): model.Checked ! model.Violation {
+    let running = (task: Int) {
+        Worker { task, started: 1, seen: -1, looks: 0, replaced: false, pending: false }
+    }
+    let absent = Worker {
+        task: -2
+        started: 0
+        seen: -1
+        looks: 0
+        replaced: false
+        pending: false
+    }
+    let start = Watched {
+        workers: [running(Long), running(Short), absent, absent]
+        queue: model.Queue([Waiting])
+        bit: false
+        surplus: 0
+        ended: [false, false, false]
+    }
+    let present = (state: Watched) { state.workers.filter((each) { each.task != -2 }).length() }
+    let bounded = model.always(
+        (state: Watched) { present(state) <= 2 * Base },
+        name: "at most twice the workers",
+    )
+    let runs = model.eventually(
+        (state: Watched) { state.ended[Waiting] },
+        name: "the task that waits runs",
+    )
+    let back = model.eventuallyAlways(
+        (state: Watched) { present(state) == Base },
+        name: "the workers come back to their number",
+    )
+    let fair = [
+        model.weak("look"),
+        model.weak("replace", each: true),
+        model.weak("take", each: true),
+        model.weak("checkpoint", each: true),
+        model.weak("end", each: true),
+        model.weak("finish", each: true),
+        model.weak("unmark", each: true),
+        model.weak("retire", each: true),
+    ]
+    model.check(
+        start,
+        (state) { steps(state, fixed, asks, added) },
+        holds: [bounded, runs, back],
+        fair: fair,
+    )
+}
+
+test theMonitorsRemediesEndAndGiveBackTheirWorkers {
+    assert(model.expect(check(true, true, true)).states == 4795)
+}
+
+// A mark the monitor sets on a worker that has gone idle, swapped off only
+// when a task leaves it, is never swapped off once no task comes: the
+// surplus worker stays for ever.
+test aMarkOnAnIdleWorkerKeepsItsSurplus {
+    match check(false, true, true) {
+        ok(_) => panic("the surplus worker retired with nothing owing its retirement")
+        err(stopped) => assert(stopped.property == "the workers come back to their number")
+    }
+}
+
+// With no task that asks and no worker put beside, the long task holds its
+// worker and the short one its own, and the task that waits never runs.
+test withNeitherRemedyTheTaskThatWaitsStarves {
+    match check(true, false, false) {
+        ok(_) => panic("the task that waits ran with every worker held")
+        err(stopped) => assert(stopped.property == "the task that waits runs")
+    }
+}
+
+test theBitAloneLetsTheTaskThatWaitsRun {
+    _ = model.expect(check(true, true, false))
+}
+
+test theWorkerPutBesideAloneLetsTheTaskThatWaitsRun {
+    _ = model.expect(check(true, false, true))
+}

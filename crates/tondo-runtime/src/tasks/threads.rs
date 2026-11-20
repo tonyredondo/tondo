@@ -301,6 +301,18 @@ impl ThreadSlot {
         *woken = false;
     }
 
+    /// On the thread: sleeps until woken since it last slept, or until
+    /// `at` if given.
+    pub(crate) fn park_until(&self, at: Option<Instant>) {
+        let Some(at) = at else { return self.park() };
+        let mut woken = self.woken.lock().unwrap_or_else(|e| e.into_inner());
+        while !*woken {
+            let Some(left) = at.checked_duration_since(Instant::now()) else { break };
+            woken = self.wake.wait_timeout(woken, left).unwrap_or_else(|e| e.into_inner()).0;
+        }
+        *woken = false;
+    }
+
     pub(crate) fn unpark(&self) {
         *self.woken.lock().unwrap_or_else(|e| e.into_inner()) = true;
         self.wake.notify_one();

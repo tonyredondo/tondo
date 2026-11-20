@@ -1,0 +1,52 @@
+// A task that computes and never asks holds its worker; when it has held it
+// for two intervals while another task waits and no worker is idle, the
+// runtime puts another worker beside it (16.14), with one worker given as
+// with any number: `main`, whose sleep ends meanwhile, runs on it. Once the
+// computation ends, that worker retires and the program has its one again.
+// Tasks that compute for less than an interval each, keeping the worker
+// busy, change task all the time: nothing gives way and no worker is added.
+
+import std.console
+import std.diagnostics
+import std.time
+
+/// Computes for about `millis` milliseconds without waiting.
+fn busy(millis: Int): Int {
+    let started = time.now()
+    var turns = 0
+    for started.elapsed() < time.milliseconds(millis) {
+        turns += 1
+    }
+    turns
+}
+
+fn counted(name: String): Int {
+    diagnostics.metrics().find((each) { each.name == name }).map((each) { each.value }) ?? -1
+}
+
+fn main() {
+    let short = (0..12).collect().map((_) { spawn busy(2) })
+    _ = short.wait()
+    console.println(
+        "short tasks: yields {counted("tasks.yields")}, workers added {counted("workers.added")}",
+    )
+
+    let job = spawn busy(200)
+    time.sleep(time.milliseconds(20))
+    console.println("main ran beside the computation: workers added {counted("workers.added")}")
+    _ = job.wait()
+    // The worker added retires once it looks for a task again.
+    var waited = 0
+    for counted("workers.total") > 1 and waited < 2000 {
+        time.sleep(time.milliseconds(1))
+        waited += 1
+    }
+    console.println("workers once it ended: {counted("workers.total")}")
+}
+
+// expect-env: TONDO_WORKERS=1
+// expect-no-schedule: the explorer runs one worker and adds none, so a computation that does not ask holds it, by design
+// expect-no-replay: a recorded run, too, runs its tasks on one worker that adds none
+// expect-stdout: short tasks: yields 0, workers added 0
+// expect-stdout: main ran beside the computation: workers added 1
+// expect-stdout: workers once it ended: 1

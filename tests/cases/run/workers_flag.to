@@ -1,0 +1,35 @@
+// A task that spins on a flag another task must set, with one worker: the
+// spinning task neither waits nor asks, and the one that sets the flag is
+// asleep for 20 ms. Once its sleep ends it waits for the worker the spinner
+// holds; after two intervals another worker starts beside it (16.14), the
+// flag is set, and the spin ends. Under a seeded order, which checks races,
+// the explorer gives way at each operation of the atomic itself.
+
+import std.console
+import std.sync
+import std.time
+
+fn spin(flag: sync.Atomic[Bool]): Int {
+    var turns = 0
+    for not flag.load() {
+        turns += 1
+    }
+    turns
+}
+
+fn setLater(flag: sync.Atomic[Bool]) {
+    time.sleep(time.milliseconds(20))
+    flag.store(true)
+}
+
+fn main() {
+    let flag = sync.Atomic(false)
+    let spinning = spawn spin(flag)
+    let setting = spawn setLater(flag)
+    setting.wait()
+    console.println("the spin ended: {spinning.wait() >= 0}")
+}
+
+// expect-env: TONDO_WORKERS=1
+// expect-no-replay: a recorded run runs its tasks on one worker that adds none, and its atomics give way only where races are checked
+// expect-stdout: the spin ended: true

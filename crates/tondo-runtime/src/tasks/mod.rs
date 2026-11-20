@@ -425,6 +425,9 @@ struct Worker {
     runner: Cell<Option<&'static Runner>>,
     /// Its calls of C, once it made one.
     in_c: Cell<*const InC>,
+    /// The task it ran gave it away at a checkpoint (11.15), to run again
+    /// behind the tasks that wait.
+    yielded: Cell<bool>,
     /// The futures of the host it polls at a turn, whose room it keeps;
     /// made when first needed, as `stacks` is, so that a worker needs no
     /// destructor, which a signal handler that reads it first would have to
@@ -508,6 +511,7 @@ thread_local! {
             stacks: Cell::new(std::ptr::null_mut()),
             runner: Cell::new(None),
             in_c: Cell::new(std::ptr::null()),
+            yielded: Cell::new(false),
             turns: Cell::new(std::ptr::null_mut()),
             events: Cell::new(std::ptr::null_mut()),
             waits: Cell::new(std::ptr::null_mut()),

@@ -133,17 +133,18 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.ins().brif(condition, then, &[], otherwise, &[]);
     }
 
-    /// `tasks.checkpoint()` (11.15): in a program that entered a deadline,
-    /// or when the runtime is asked something, the runtime sees whether a
-    /// deadline of the task passed; the checks that follow, as after a
-    /// wait, stop the task. Two loads and a branch when nothing is asked.
+    /// `tasks.checkpoint()` (11.15): when the runtime is asked something, or
+    /// its word for checkpoints says that the program entered a deadline or
+    /// that a worker is held while tasks wait, the runtime sees to it; the
+    /// checks that follow, as after a wait, stop the task. Two loads and a
+    /// branch when nothing asks.
     pub(super) fn checkpoint(&mut self) {
         let reasons = self.attention();
-        let id = self.e.cg.deadlined();
-        let deadlined = self.e.global(id);
-        let address = self.e.fb.ins().symbol_value(POINTER, deadlined);
-        let deadlined = self.e.fb.ins().load(types::I32, flags(), address, 0);
-        let asked = self.e.fb.ins().bor(reasons, deadlined);
+        let id = self.e.cg.checkpoint_asks();
+        let asks = self.e.global(id);
+        let address = self.e.fb.ins().symbol_value(POINTER, asks);
+        let asks = self.e.fb.ins().load(types::I32, flags(), address, 0);
+        let asked = self.e.fb.ins().bor(reasons, asks);
         let (ask, done) = (self.e.fb.create_block(), self.e.fb.create_block());
         self.e.fb.ins().brif(asked, ask, &[], done, &[]);
         self.e.fb.set_cold_block(ask);

@@ -23,6 +23,15 @@ pub(super) struct Next {
     pub(super) waiting: AtomicU64,
     /// The domain of cores its worker last looked for tasks in (`domains`).
     pub(super) domain: AtomicUsize,
+    /// How many tasks its worker has started, which the monitor reads: a
+    /// count that does not move while tasks wait is a worker held by one.
+    pub(super) turns: AtomicU64,
+    /// Marked by the monitor, which started a worker beside this one: the
+    /// worker lets one go when its task leaves it, or when it finds itself
+    /// idle with the mark on (testing/models/tests/watcher.to).
+    pub(super) held: AtomicBool,
+    /// Its worker's calls of C, which the monitor watches on their own.
+    pub(super) in_c: AtomicPtr<InC>,
 }
 
 pub(super) struct Local(pub(super) VecDeque<*mut Task>);
@@ -38,6 +47,9 @@ impl Next {
             count: AtomicUsize::new(0),
             waiting: AtomicU64::new(0),
             domain: AtomicUsize::new(0),
+            turns: AtomicU64::new(0),
+            held: AtomicBool::new(false),
+            in_c: AtomicPtr::new(std::ptr::null_mut()),
         }
     }
 
@@ -347,12 +359,14 @@ pub(crate) fn wake_worker() {
 /// Wakes a worker to look at the queue: one that sleeps, or the one that
 /// waits for the network's events if none sleeps.
 pub(super) fn wake_one(queue: MutexGuard<'static, Queue>) {
-    let (sleeping, polling) = (domain_asleep(&queue, super::domains::here()), queue.polling);
+    let (sleeping, polling, busy) = (domain_asleep(&queue, super::domains::here()), queue.polling, queue.idle == 0);
     drop(queue);
     if let Some(domain) = sleeping {
         READY[domain].notify_one();
     } else if polling && let Some(poller) = crate::poll::poller() {
         poller.wake();
+    } else if busy {
+        watch_busy();
     }
 }
 

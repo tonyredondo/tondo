@@ -2417,7 +2417,7 @@ significan lo de siempre.
 | `TONDO_LOCK_ORDER` | Quien lo ejecuta | Si mira en qué orden toman las tareas los locks: `fail` falla donde se cierra un ciclo, `off` no mira, otro valor lo dice en stderr. |
 | `TONDO_WAKES` | Quien lo ejecuta | `1` guarda las últimas esperas y despertares de cada tarea para un volcado y `tondo blocked`. |
 | `TONDO_VERSIONS` | Quien lo ejecuta | `0` corre el código del nivel del build y no las versiones de sus funciones para uno mayor (7.8), como en un procesador sin ese nivel. |
-| `TONDO_WORKERS` | Quien lo ejecuta, y `tondo test --workers` | Cuántos workers corren a la vez el código del programa, de 1 a 1024, en vez de uno por procesador; uno que espera una llamada larga de C se reemplaza, como siempre. |
+| `TONDO_WORKERS` | Quien lo ejecuta, y `tondo test --workers` | Cuántos workers corren a la vez el código del programa, de 1 a 1024, en vez de uno por procesador; como siempre, uno que espera una llamada larga de C se reemplaza, y junto a uno que lleva más de dos intervalos cortos en la misma tarea mientras otras esperan se pone otro hasta que la suelta (lenguaje 16.14). |
 | `TONDO_CACHE_DOMAINS` | Quien lo ejecuta | `0` toma todos los núcleos como un dominio: los workers no se quedan entre los núcleos que comparten una caché. |
 | `TONDO_ZONES` | Quien lo ejecuta | `builtin` usa las zonas horarias que lleva el programa y no las del sistema. |
 | `TONDO_CHECK_LIFETIMES` | Quien lo ejecuta, y los tests del toolchain | `1` da a las regiones memoria que no se vuelve a usar y la hace ilegible cuando la región acaba: un valor que la sobrevive falla al leerse, con dónde. |

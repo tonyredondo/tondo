@@ -1,0 +1,34 @@
+// With one worker, a task that computes and asks with `tasks.checkpoint()`
+// gives its worker away once it has held it for an interval while another
+// task waits (11.15): `main`, whose sleep ends meanwhile, gets the worker,
+// and its cancel reaches the computation at its next checkpoint. Under a
+// seeded order the explorer gives way at every checkpoint itself.
+
+import std.console
+import std.tasks
+import std.time
+
+fn spin(): Int {
+    defer {
+        console.println("the computation stopped, cancelled: {tasks.cancelled()}")
+    }
+    var total = 0
+    for n in 0..4_000_000_000 {
+        if n % 1024 == 0 {
+            tasks.checkpoint()
+        }
+        total += n % 7
+    }
+    total
+}
+
+fn main() {
+    let job = spawn spin()
+    time.sleep(time.milliseconds(20))
+    job.cancel()
+    console.println("main ran beside it and cancelled it")
+}
+
+// expect-env: TONDO_WORKERS=1
+// expect-stdout: the computation stopped, cancelled: true
+// expect-stdout: main ran beside it and cancelled it

@@ -8801,3 +8801,59 @@ its kernel was built, and on macOS was seen at 0.1 ms on average and
 by another task cannot happen while a task computes, as nothing gives the
 worker away but a wait; the piece that follows gives it away at a
 checkpoint.
+
+## A worker that one task holds
+
+A task that computes without waiting holds its worker: with one worker,
+as a container of one processor has, nothing else of the program ran
+until it ended, not a cancel, not a request, not the task that would
+set the flag it spins on. Tony asked for a minimum of two workers; on
+one processor that costs a second thread always and its wakes (spawn
++24%, select +67% by time, measured), and two computations still hold
+both. So the runtime does what it already did for a long call of C:
+its monitor, which looks every millisecond while tasks wait and no
+worker is idle, watches every worker. Each worker counts the tasks it starts. One whose
+count has not moved for about 10 ms while tasks wait and none is idle
+has the first task to ask with `tasks.checkpoint()` give its worker
+away, to run again behind those that waited; one still on that task a
+tenth of a second later gets another worker beside it, which retires
+when that task leaves its worker. At most one beside each worker. A due
+timer counts as a task that waits, as with every worker computing no
+worker fires it. A task with frames of C on its stack does not give its
+worker away, as it cannot go on on another thread. Under the explorer,
+in a seeded order, a recording and its replay, one worker runs the
+tasks and the monitor adds none: there a computation that neither waits
+nor asks holds it, by design, as a test of such a program under
+`--schedules` waits for its timeout today.
+
+That the number of workers given by `TONDO_WORKERS` would be passed was
+weighed and kept: "Pero si es así como evitamos un deadlock o que un
+código nunca se ejecute por qué el otro no le deja?", then "Vale
+entonces si lo aumentamos temporalmente". The number is how many the
+program has; the worker beside a held one passes it while it lasts, as
+a replacement for a call of C always did.
+
+The second interval was measured, as Tony asked ("20 aún me parece poco
+pero supongo que lo medirás"), on 4 processors, the default 4 workers:
+
+| tasks that compute | workers added at 20 ms | at 50 ms | at 100 ms |
+|---|---|---|---|
+| 5 ms each, 1600 | 0 | 0 | 0 |
+| 30 ms each, 266 | 266 | 0 | 0 |
+| 80 ms each, 100 | 97 | 97 | 0 |
+
+The work done a millisecond moved by 0.4 to 0.8% where workers were
+added; a fixed amount of work took 1961 to 1977 ms whatever the
+interval; starting and retiring a worker costs 70 to 110 µs of the
+processor. With one worker, a task that waits behind a computation that
+never asks runs 22, 53 and 106 ms late at 20, 50 and 100 ms. A worker
+added to a saturated machine buys nothing, so tasks shorter than the
+interval should never get one: 100 ms, while the task that waits is
+still served soon enough for a person and a health check.
+
+The model in testing/models/tests/watcher.to, written before the code,
+found a mark the monitor set on a worker that had gone idle, which no
+task would swap off, and a surplus worker that then stayed for ever: a
+worker that finds itself idle with its mark on lets one go too. A test
+holds the model without that to fail, so that the code's version of it
+is not simplified away.

@@ -1,7 +1,11 @@
-// With one worker, two tasks that compute never run at once: each counts
-// itself in while it runs, and counts the times it found the other in.
+// With one worker, two tasks that compute run one at a time: each counts
+// itself in while it runs, and counts the times it found the other in. Only
+// a worker put beside one that a task holds for two intervals while the
+// other waits (16.14) lets them overlap, as a slow build may, and the count
+// of workers added says whether one was.
 
 import std.console
+import std.diagnostics
 import std.sync
 
 fn compute(running: sync.Atomic[Int], overlaps: sync.Atomic[Int]): Int {
@@ -24,10 +28,16 @@ fn main() {
     let first = spawn compute(running, overlaps)
     let second = spawn compute(running, overlaps)
     console.println("{first.wait() == second.wait()}")
-    console.println("overlaps: {overlaps.load()}")
+    let added =
+        diagnostics
+            .metrics()
+            .find((metric) { metric.name == "workers.added" })
+            .map((metric) { metric.value }) ??
+            0
+    console.println("one at a time, but beside a worker added: {overlaps.load() == 0 or added > 0}")
 }
 
 // expect-env: TONDO_WORKERS=1
 // expect-no-schedule: a seeded order interleaves the tasks at each operation of an atomic, on the one worker it explores with
 // expect-stdout: true
-// expect-stdout: overlaps: 0
+// expect-stdout: one at a time, but beside a worker added: true

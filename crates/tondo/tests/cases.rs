@@ -14,6 +14,10 @@
 //! - `// expect-platform: <os or arch>...` — the case runs only there, as
 //!   `linux` or `aarch64`;
 //! - `// expect-env: <NAME>=<value>` — the executable runs with it set;
+//! - `// expect-processors: <n>` — the executable runs on the first n
+//!   processors alone, as in a container of that many, which its runtime
+//!   counts as its own; on Linux only, so the case says `expect-platform:
+//!   linux` too;
 //! - `// expect-no-replay: <why>` — with `TONDO_CASES_REPLAY`, it is not
 //!   recorded, for the reason given.
 //! - `// expect-no-schedule: <why>` — with `TONDO_CASES_SCHEDULE`, its tasks
@@ -70,6 +74,7 @@ struct Expect {
     warnings: Vec<String>,
     platforms: Vec<String>,
     env: Vec<(String, String)>,
+    processors: Option<usize>,
     no_replay: bool,
     no_schedule: bool,
     no_static: bool,
@@ -101,10 +106,34 @@ fn expectations(source: &str) -> Expect {
                 let (name, value) = value.split_once('=').expect("`NAME=value`");
                 expect.env.push((name.trim().into(), value.trim().into()));
             }
+            "processors" => expect.processors = Some(value.trim().parse().expect("a number of processors")),
             other => panic!("unknown expectation `{other}`"),
         }
     }
     expect
+}
+
+/// Runs `command` on the first `count` processors alone: the child's
+/// affinity, set between its fork and its exec.
+#[cfg(target_os = "linux")]
+fn on_processors(command: &mut Command, count: usize) {
+    use std::os::unix::process::CommandExt;
+    let set = unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        (0..count).for_each(|cpu| libc::CPU_SET(cpu, &mut set));
+        set
+    };
+    unsafe {
+        command.pre_exec(move || match libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set) {
+            0 => Ok(()),
+            _ => Err(std::io::Error::last_os_error()),
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn on_processors(_: &mut Command, _: usize) {
+    panic!("`expect-processors` runs on Linux only: the case says `expect-platform: linux` too");
 }
 
 fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -217,6 +246,9 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
         // A case that panics on purpose leaves no dump in the user's cache.
         command.env("TONDO_DUMP", "off");
         command.envs(expect.env.iter().map(|(name, value)| (name, value)));
+        if let Some(count) = expect.processors {
+            on_processors(&mut command, count);
+        }
         command.env("TONDO_RT_CHECK_LEAKS", "1").current_dir(scratch);
         if std::env::var_os("TONDO_CASES_STATIC").is_none() {
             command.env("TONDO_CHECK_LIFETIMES", "1");

@@ -1,0 +1,137 @@
+// A checkpoint that gives its worker away (language 11.15; crates/tondo-
+// runtime/src/tasks: the monitor of foreign.rs, run in work.rs). Each
+// worker counts the tasks it starts; the monitor looks again and again
+// while no worker is idle and a task waits for one, and when a worker's
+// count has not moved since its last look, it sets the bit, as a store.
+// A checkpoint swaps the bit off and, if it was on, puts its task at the
+// back of the queue and leaves its worker, which takes the first task that
+// waits. Two workers run a task that computes each; a third task waits,
+// and ends once it runs, as `main` does after a cancel. It runs in the end
+// when the tasks that compute ask, and never when they do not.
+import std.model
+
+type Worker = {
+    /// The task it runs, or -1.
+    task: Int
+    /// How many tasks it has started, up to 4 and round again.
+    started: Int
+    /// Its count at the monitor's last look, or -1.
+    seen: Int
+}
+
+type Yields = {
+    workers: Array[Worker]
+    queue: model.Queue[Int]
+    bit: Bool
+    /// Whether the task that waits ran and ended.
+    done: Bool
+}
+
+/// The task that waits, after the two that compute.
+const Waiting = 2
+
+fn worker(yields: Yields, w: Int, after: Worker): Yields {
+    yields with { workers: yields.workers.replaced(w, after) }
+}
+
+fn steps(yields: Yields, asks: Bool, back: Bool): Array[model.Step[Yields]] {
+    var next: Array[model.Step[Yields]] = []
+    let idle = yields.workers.any((each) { each.task == -1 })
+    // The monitor: asleep but while every worker is busy and a task waits.
+    let watching = not idle and not yields.queue.isEmpty()
+    let looked = yields.workers.map(
+        (each) { each with { seen: if watching { each.started } else { -1 } } },
+    )
+    let stuck = watching and yields.workers.any((each) { each.seen == each.started })
+    next.push(model.step("look", yields with { workers: looked, bit: yields.bit or stuck }))
+    for (w, each) in yields.workers.enumerate() {
+        if each.task == -1 {
+            // A worker without a task takes the first that waits.
+            match yields.queue.first() {
+                some(task) => {
+                    let started = (each.started + 1) % 4
+                    let taken = each with { task, started }
+                    next.push(
+                        model.step(
+                            "take {w}",
+                            worker(yields with { queue: yields.queue.rest() }, w, taken),
+                        ),
+                    )
+                }
+                none => {}
+            }
+        } else if each.task == Waiting {
+            next.push(
+                model.step("end {w}", worker(yields with { done: true }, w, each with { task: -1 })),
+            )
+        } else if asks {
+            // A checkpoint: the bit swapped off, and the worker given away
+            // if it was on.
+            let after = match yields.bit {
+                true => {
+                    let queue = match back {
+                        true => yields.queue.push(each.task)
+                        false => model.Queue([each.task].concat(yields.queue.items()))
+                    }
+                    worker(yields with { queue, bit: false }, w, each with { task: -1 })
+                }
+                false => yields
+            }
+            next.push(model.step("checkpoint {w}", after))
+        }
+    }
+    next
+}
+
+fn check(asks: Bool, back: Bool): model.Checked ! model.Violation {
+    let computing = (task: Int) { Worker { task, started: 1, seen: -1 } }
+    let start = Yields {
+        workers: [computing(0), computing(1)]
+        queue: model.Queue([Waiting])
+        bit: false
+        done: false
+    }
+    let once = model.always(
+        (yields: Yields) {
+            (0..3).all(
+                (task) {
+                    let running = yields.workers.filter((each) { each.task == task }).length()
+                    let queued = if yields.queue.contains(task) { 1 } else { 0 }
+                    running + queued <= 1
+                },
+            )
+        },
+        name: "a task is in one place at most",
+    )
+    let runs = model.eventually((yields: Yields) { yields.done }, name: "the task that waits runs")
+    let fair = [
+        model.weak("look"),
+        model.weak("take", each: true),
+        model.weak("end", each: true),
+        model.weak("checkpoint", each: true),
+    ]
+    model.check(start, (yields) { steps(yields, asks, back) }, holds: [once, runs], fair: fair)
+}
+
+test aTaskThatWaitsRunsWhenTheOthersAsk {
+    assert(model.expect(check(true, true)).states == 211)
+}
+
+// Without a checkpoint, the two that compute keep their workers for ever,
+// and the task that waits never runs: what the monitor's second remedy, or
+// a cancel the program cannot make, would be for.
+test aTaskThatWaitsStarvesWhenNoneAsks {
+    match check(false, true) {
+        ok(_) => panic("the task that waits ran with nothing giving its worker away")
+        err(stopped) => assert(stopped.property == "the task that waits runs")
+    }
+}
+
+// A task that gave way put back first, as a worker's own next is, runs
+// again before the one that waited, and that one never runs.
+test aTaskPutBackFirstStarvesTheOneThatWaits {
+    match check(true, false) {
+        ok(_) => panic("the task that waits ran behind tasks put back before it")
+        err(stopped) => assert(stopped.property == "the task that waits runs")
+    }
+}

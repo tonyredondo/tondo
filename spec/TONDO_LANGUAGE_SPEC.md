@@ -4263,17 +4263,22 @@ así una limpieza que necesita esperar, como el último envío de un tracer al
 recibir `SIGTERM`, dice cuánto tiempo tiene. Cuando `cancel()` regresa, la
 tarea ya terminó.
 
-En un `defer` de la tarea cancelada, `tasks.checkpoint()` no hace nada y
-`tasks.cancelled()` da `true`. Un plazo vencido de un `within` (11.17) cuenta para
+En un `defer` de la tarea cancelada, `tasks.checkpoint()` no la detiene, pero
+sigue cediendo su worker como en cualquier otro sitio, y `tasks.cancelled()` da
+`true`. Un plazo vencido de un `within` (11.17) cuenta para
 ambos como la cancelación de su bloque: `checkpoint()` sale hasta el `within`, que
 da `err(TimedOut)`, y `cancelled()` da `true` dentro del bloque y `false` después.
 Una tarea cuyo `recover` tiene un pánico que transmitir (15.9) lo transmite en su
 `checkpoint()`, como en una espera, y `cancelled()` da `false`: cancelada es una
 cancelación o un plazo vencido, nada más. Con `--schedules`, cada `checkpoint()`
-es un punto donde puede caer una cancelación. La cancelación que hace otra tarea
-necesita un worker en el que esa tarea corra: con un solo worker
-(`TONDO_WORKERS=1`, o un contenedor con un procesador), un cálculo que no espera
-no deja correr a ninguna otra tarea, pregunte o no.
+es un punto donde puede caer una cancelación.
+
+`tasks.checkpoint()` es también una espera de nada: cuando todos los workers están
+ocupados, alguna tarea espera uno y un worker lleva más de un intervalo corto en
+la misma tarea, la tarea que pregunta cede el suyo y sigue cuando vuelva a
+tocarle. Así un cálculo que pregunta deja correr a las demás tareas, también con
+un solo worker, y la cancelación que hace otra tarea llega a él. Un cálculo que no
+pregunta no cede su worker; el runtime pone otro a su lado (16.14).
 
 ### 11.16 Contextos
 
@@ -7155,7 +7160,7 @@ no puede perder un wakeup: si una operación esperada completa, la task propieta
 debe quedar runnable exactamente una vez salvo que su scope ya haya terminado.
 
 Mientras el entorno proporcione tiempo de CPU y ningún cálculo monopolice todos
-los workers sin llegar a esperar, una tarea que
+los workers sin llegar a esperar ni a preguntar con `tasks.checkpoint()`, una tarea que
 permanezca runnable debe volver a ejecutar eventualmente. Bajo las mismas
 condiciones, completar una operación esperada o un `Join` hace que su continuador
 avance eventualmente. Esta es una garantía de ausencia de starvation permanente,
@@ -7170,8 +7175,15 @@ El lenguaje no fija:
 - Progreso cuando el sistema operativo deja de planificar el proceso o una
   dependencia externa no completa.
 
-Un bucle de CPU que no espera puede monopolizar su worker. Si todos los workers
-están monopolizados de ese modo, Tondo no promete progreso. Las operaciones de la
+Un cálculo que no espera ni pregunta no retiene a las demás tareas:
+cuando todos los workers están ocupados, alguna tarea espera uno y un worker lleva
+más de un intervalo corto en la misma tarea, la que pregunta con
+`tasks.checkpoint()` cede el suyo (11.15), y si ese worker sigue en la misma tarea
+un intervalo más, el runtime pone otro a su lado, que se retira cuando esa tarea
+deja el suyo; como mucho uno por worker. El número de workers, el de por defecto
+o el que fija `TONDO_WORKERS`, es cuántos tiene el programa; el que se pone junto
+a uno retenido lo rebasa mientras esa tarea retiene el suyo. Si los cálculos que no esperan ni preguntan ocupan todos los workers,
+los puestos a su lado incluidos, Tondo no promete progreso. Las operaciones de la
 librería estándar que esperan a un recurso externo detienen la tarea, no el
 thread. La cancelación se observa en las esperas y en `tasks.checkpoint()` (11.15).
 

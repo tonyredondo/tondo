@@ -83,6 +83,8 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
         next.domain.store(super::domains::here(), Ordering::Relaxed);
         worker(|w| w.own_next.set(Some(next)));
     }
+    // Its slot, which stays its own while the thread works.
+    let own = own_next();
     // A worker just woken looks once more, a moment later, for a task
     // waiting next to a worker that runs another, before it sleeps again.
     // One that starts to take another's place was woken for that.
@@ -231,6 +233,15 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                 // With sockets to poll, an idle worker waits for their
                 // events, unless another one does, and runs what they wake
                 // on its own thread.
+                // A worker the monitor started another beside, idle now, lets
+                // one go: no task may come to it to do so.
+                if let Some(next) = own
+                    && next.held.load(Ordering::Relaxed)
+                    && next.held.swap(false, Ordering::SeqCst)
+                {
+                    queue.surplus += 1;
+                    continue;
+                }
                 let polling = claim(&mut queue);
                 if polling.is_none() {
                     queue.idle += 1;
@@ -348,6 +359,9 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                 queue.idle -= 1;
                 queue.idle_in[sleeps_in] -= 1;
                 IDLE.fetch_sub(1, Ordering::SeqCst);
+                if queue.idle == 0 {
+                    watch_busy();
+                }
                 // Woken for a task: the first to look after a wake looks for
                 // what it was for, and one that waited a moment for a task
                 // looks again as `waited` says. A wake that found nothing
@@ -376,7 +390,12 @@ pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
 /// Runs a task on this thread until it waits, yields or ends; a task that
 /// ends is freed.
 pub(super) fn run(task: *mut Task) {
-    worker(|w| w.current.set(task));
+    worker(|w| {
+        w.current.set(task);
+        if let Some(next) = w.own_next.get() {
+            next.turns.store(next.turns.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
+        }
+    });
     let traced = tools::running(task);
     unsafe {
         if (*task).stack.is_none() {
@@ -388,8 +407,23 @@ pub(super) fn run(task: *mut Task) {
     enter_tondo();
     unsafe { switch(home(), (*task).sp) };
     leave_tondo();
-    worker(|w| w.current.set(std::ptr::null_mut()));
+    // A worker the monitor started another beside lets one go as its task
+    // leaves it.
+    let (yielded, held) = worker(|w| {
+        w.current.set(std::ptr::null_mut());
+        let held = w.own_next.get().is_some_and(|next| next.held.load(Ordering::Relaxed));
+        (w.yielded.replace(false), held)
+    });
     tools::stopped(task, traced);
+    if held && own_next().is_some_and(|next| next.held.swap(false, Ordering::SeqCst)) {
+        queue().surplus += 1;
+    }
+    // Given away at a checkpoint: behind the tasks that wait for a worker.
+    if yielded {
+        unsafe { (*task).state.swap(RUNNING, Ordering::AcqRel) };
+        queue().runnable.push_back(task);
+        return;
+    }
     unsafe {
         let in_domain = (*task).in_domain;
         if (*task).finished {

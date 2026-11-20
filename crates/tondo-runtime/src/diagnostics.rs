@@ -287,7 +287,11 @@ impl Drop for Open {
 }
 
 pub(crate) static TASKS_SPAWNED: Count = Count::new();
+/// Times a checkpoint gave its worker away to a task that waited for one.
+pub(crate) static TASKS_YIELDS: Count = Count::new();
 pub(crate) static WORKERS_REPLACED: Count = Count::new();
+/// Workers started beside one held by a task while tasks waited.
+pub(crate) static WORKERS_ADDED: Count = Count::new();
 pub(crate) static COLLECTIONS: Count = Count::new();
 pub(crate) static COLLECTED: Count = Count::new();
 /// Microseconds the workers stood still for the collector, in all and at
@@ -616,14 +620,16 @@ fn sample() -> Vec<Sample> {
     add("tasks.live", true, "", scheduler.live as i64);
     add("tasks.ready", true, "", scheduler.ready as i64);
     add("tasks.spawned", false, "", TASKS_SPAWNED.get());
+    add("tasks.yields", false, "", TASKS_YIELDS.get());
     add("profile.samples", false, "", super::recorder::taken() as i64);
     add("workers.total", true, "", scheduler.workers as i64);
-    // How many may run the program's code at once: `TONDO_WORKERS`, or
-    // the processors.
+    // How many the program has: `TONDO_WORKERS`, or the processors; one
+    // put beside a worker a task holds passes it while that lasts.
     add("workers.limit", true, "", crate::config::workers() as i64);
     add("workers.idle", true, "", scheduler.idle as i64);
     add("workers.in_c", true, "", scheduler.in_c as i64);
     add("workers.replaced", false, "", WORKERS_REPLACED.get());
+    add("workers.added", false, "", WORKERS_ADDED.get());
     add("workers.c_calls", false, "", scheduler.c_calls as i64);
     add("timers.pending", true, "", scheduler.timers as i64);
     add("net.connections", false, "", NET_CONNECTIONS.get());

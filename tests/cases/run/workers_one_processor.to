@@ -1,0 +1,37 @@
+// On one processor, as a container of one, the runtime counts one worker of
+// its own. A task that computes and never asks holds it; when it has held
+// it for two intervals while `main`, whose sleep ended, waits, another
+// worker starts beside it (16.14), and the system shares the one processor
+// between the two threads: `main` runs while the computation goes on.
+
+import std.console
+import std.env
+import std.sync
+import std.time
+
+/// Computes for about `millis` milliseconds without waiting, then says so.
+fn busy(millis: Int, done: sync.Atomic[Bool]): Int {
+    let started = time.now()
+    var turns = 0
+    for started.elapsed() < time.milliseconds(millis) {
+        turns += 1
+    }
+    done.store(true)
+    turns
+}
+
+fn main() {
+    console.println("{env.workers()} worker")
+    let done = sync.Atomic(false)
+    let job = spawn busy(300, done)
+    time.sleep(time.milliseconds(20))
+    console.println("main ran while it computed: {not done.load()}")
+    _ = job.wait()
+}
+
+// expect-platform: linux
+// expect-processors: 1
+// expect-no-schedule: the explorer runs one worker and adds none, so a computation that does not ask holds it, by design
+// expect-no-replay: a recorded run, too, runs its tasks on one worker that adds none
+// expect-stdout: 1 worker
+// expect-stdout: main ran while it computed: true
