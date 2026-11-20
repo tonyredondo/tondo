@@ -634,11 +634,8 @@ fn fetch(name: String, delay: Int): String {
 
 fn main() {
     let started = time.now()
-    var group = Group[String]()
-    group.add(spawn fetch("users", 300))
-    group.add(spawn fetch("orders", 500))
-    group.add(spawn fetch("prices", 100))
-    for result in group.wait() {            // in the order they were added
+    let tasks = [spawn fetch("users", 300), spawn fetch("orders", 500), spawn fetch("prices", 100)]
+    for result in tasks.wait() {            // in the order of the array
         console.println(result)
     }
     // One after another they would take 900 ms.
@@ -657,7 +654,8 @@ all three in under 800 ms: true
   task is its result's error; there is no `ExecutionException` wrapped
   around it, and no `InterruptedException` to declare on every method that
   sleeps.
-- A `Group` waits for many and gives their results in order.
+- An array of tasks is waited for whole, and gives their results in its
+  order.
 - A task that should outlive its block is `spawn detached f()`.
 - Channels and `select` are in the language, for tasks that talk to each
   other.

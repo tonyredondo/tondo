@@ -405,10 +405,8 @@ fn produce(out: Sender[Int]) {
 
 fn main() {
     let job = spawn work(1)
-    var group = Group[Int]()
-    group.add(spawn work(2))
-    group.add(spawn work(3))
-    console.println("{job.wait()} {group.wait()}")
+    let jobs = [spawn work(2), spawn work(3)]
+    console.println("{job.wait()} {jobs.wait()}")
 
     let (sender, receiver) = channel[Int](4)
     spawn produce(sender)

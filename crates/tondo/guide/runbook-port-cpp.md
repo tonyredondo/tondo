@@ -33,7 +33,7 @@ C++ becomes.
 | `std::sort`, `std::accumulate`, `std::max_element`, `std::transform`, `std::find_if` | `sorted()`, `sum()`, `maxBy`, `map`, `find` |
 | `std::format("{}: {:02}", a, b)`, `std::cout << x` | `"{a}: {b:02}"`, `console.println(...)` |
 | `static_cast<double>(x)`, `std::stoi(s)`, `std::from_chars` | `Float(x)`, `Int.parse(s)` |
-| `std::thread`, `std::async`, `std::future` | `spawn f()`, a `Group` |
+| `std::thread`, `std::async`, `std::future` | `spawn f()`, `wait()` on an array of tasks |
 | a `std::mutex` beside what it guards, `std::atomic<int>` | `sync.Mutex(value)`, `sync.Atomic(0)` |
 | `#include`, a header and its source, `namespace shop` | `import`, one file, the directory `shop` |
 | `#ifdef __linux__` | a file `name_linux.to` |
@@ -244,11 +244,7 @@ fn main() {
             err(why) => console.println("skipped `{text}`: {why}")
         }
     }
-    var pricing = Group[Int]()
-    for line in lines {
-        pricing.add(spawn line.total())
-    }
-    let totals = pricing.wait()
+    let totals = lines.map((line) { spawn line.total() }).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
@@ -281,7 +277,8 @@ What went, part by part of the original:
 - **The exception.** `parse` says in its signature that it can fail, and
   `match` takes both cases.
 - **The futures and the reference each lambda captured.** `spawn` starts a
-  task with the line it needs, and the `Group` gives their results in order.
+  task with the line it needs, and `wait()` on the array of them gives their
+  results in order.
   No task can outlive what it borrowed, because it borrows nothing.
 - **The iterator compared with `end()`.** `maxBy` gives a `Line?`.
 

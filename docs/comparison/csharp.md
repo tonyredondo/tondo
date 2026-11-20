@@ -581,11 +581,8 @@ fn fetch(name: String, delay: Int): String {
 
 fn main() {
     let started = time.now()
-    var group = Group[String]()
-    group.add(spawn fetch("users", 300))
-    group.add(spawn fetch("orders", 500))
-    group.add(spawn fetch("prices", 100))
-    for result in group.wait() {            // in the order they were added
+    let tasks = [spawn fetch("users", 300), spawn fetch("orders", 500), spawn fetch("prices", 100)]
+    for result in tasks.wait() {            // in the order of the array
         console.println(result)
     }
     // One after another they would take 900 ms.
@@ -609,7 +606,7 @@ all three in under 800 ms: true
   something a Tondo program can write by accident: `spawn detached f()` is
   how to ask for it.
 - `spawn f()` gives a `Join[T]`, and `wait()` its result or the task's
-  error. A `Group` waits for many.
+  error. An array of tasks is waited for whole, as `WhenAll` does.
 - Tasks are cheap, as C#'s are: a server has one for each connection.
   Channels, `select` and the tools of `std.sync` are there for when they
   have to talk.
@@ -976,7 +973,7 @@ Hello, Ada! (3)
 | `new Point(1, 2)` | `Point { x: 1, y: 2 }` |
 | a property with `get` and `set` | a field, or a method |
 | `async Task<T>`, `await` | nothing: every function can wait |
-| `Task.WhenAll(a, b)` | `spawn`, and a `Group` |
+| `Task.WhenAll(a, b)` | `[spawn a(), spawn b()].wait()` |
 | `CancellationToken token` | `within` |
 | `lock (gate) { }` | `mutex.update((value) { ... })` |
 | `List<T>`, `Dictionary<K, V>`, `HashSet<T>` | `Array[T]`, `Map[K, V]`, `Set[T]` |

@@ -175,11 +175,7 @@ fn size(url: String): Int {
 }
 
 fn sizes(urls: Array[String]): Array[Int] {
-    var group = Group[Int]()
-    for url in urls {
-        group.add(spawn size(url))
-    }
-    group.wait()
+    urls.map((url) { spawn size(url) }).wait()
 }
 
 fn main() {

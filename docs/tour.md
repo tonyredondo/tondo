@@ -470,11 +470,8 @@ fn main() {
     let job = spawn fetch(1)
     console.println("{job.wait()}")
 
-    var group = Group[Int]()
-    for id in 0..5 {
-        group.add(spawn fetch(id))
-    }
-    console.println("{group.wait()}")           // results in the order they were added
+    let pages = [0, 1, 2, 3, 4].map((id) { spawn fetch(id) })
+    console.println("{pages.wait()}")           // results in the order of the array
 }
 ```
 

@@ -556,11 +556,8 @@ fn fetch(name: String, delay: Int): String {
 
 fn main() {
     let started = time.now()
-    var group = Group[String]()
-    group.add(spawn fetch("users", 300))
-    group.add(spawn fetch("orders", 500))
-    group.add(spawn fetch("prices", 100))
-    for result in group.wait() {            // in the order they were added
+    let tasks = [spawn fetch("users", 300), spawn fetch("orders", 500), spawn fetch("prices", 100)]
+    for result in tasks.wait() {            // in the order of the array
         console.println(result)
     }
     // One after another they would take 900 ms.
@@ -580,9 +577,9 @@ all three in under 800 ms: true
   core, and a call that blocks does not starve the others.
 - `spawn f()` is `async { f() }`: it gives a `Join[T]`, and `wait()` is
   `await()`. The block that spawned it is its scope.
-- A `Group` is `awaitAll`, and gives its results in the order the tasks
-  were added. In a group of tasks that can fail, the first error cancels
-  the ones still running.
+- `wait()` on an array of tasks is `awaitAll`, and gives its results in the
+  array's order. With tasks that can fail, `waitOrCancel()` is the one
+  where the first error cancels the ones still running.
 - `spawn detached f()` is `GlobalScope.launch`, and as rare.
 - Channels and `select` are in the language. A `Flow` is an iterator, or a
   channel when it crosses tasks.

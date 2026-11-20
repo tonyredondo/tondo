@@ -38,8 +38,8 @@ port follows; this is what each thing of Python becomes.
 | `int("3")`, `str(n)`, `float(n)` | `Int.parse("3")`, `"{n}"`, `Float(n)` |
 | `isinstance(x, T)`, a method any object may have | a `match` on an `enum`; a `trait` for what the types share |
 | a generator with `yield` | an iterator: `xs.iter()` and its adapters, or a type with `next` |
-| `async def`, `await`, `asyncio.gather` | a plain function, a plain call, a `Group` |
-| `threading`, `ThreadPoolExecutor` | `spawn`, a `Group`: tasks run on every core |
+| `async def`, `await`, `asyncio.gather` | a plain function, a plain call, `wait()` on an array of tasks |
+| `threading`, `ThreadPoolExecutor` | `spawn`, an array of tasks: they run on every core |
 | `queue.Queue`, `threading.Lock` | `channel[T]()`, `sync.Mutex(value)` |
 | `import os`, `from json import loads` | `import std.fs`, `import std.json`: a name keeps its module, `json.decode` |
 | `if __name__ == "__main__":` | `fn main()`, or statements at the top of a script |
@@ -206,11 +206,7 @@ fn main() {
             err(why) => console.println("skipped `{text}`: {why}")
         }
     }
-    var pricing = Group[Int]()
-    for line in lines {
-        pricing.add(spawn line.total())
-    }
-    let totals = pricing.wait()
+    let totals = lines.map((line) { spawn line.total() }).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
@@ -239,8 +235,8 @@ What went, part by part of the original:
 - **The exception and its two `try`.** `parse` says in its signature that it
   can fail, and `match` takes both cases; `??` says what to do when
   `Int.parse` fails.
-- **The pool.** `spawn` starts each pricing as a task, on every core, and the
-  `Group` gives their results in order.
+- **The pool.** `spawn` starts each pricing as a task, on every core, and
+  `wait()` on the array of them gives their results in order.
 - **`default=None` and `is not None`.** `maxBy` gives a `Line?`, and `match`
   takes the case with none.
 

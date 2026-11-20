@@ -37,7 +37,7 @@ this is what each thing of Kotlin becomes.
 | `for (x in xs)`, `for ((i, x) in xs.withIndex())`, `for (i in 0 until n)` | `for x in xs`, `for (i, x) in xs.enumerate()`, `for i in 0..n` |
 | `"$name: ${price}"`, `"%.2f".format(price)` | `"{name}: {price:.2}"` |
 | `if (c) a else b` | `if c { a } else { b }` |
-| `suspend fun`, `launch`, `async` and `await`, `coroutineScope` | a plain function; `spawn`, a `Group`, the block that waits for its tasks |
+| `suspend fun`, `launch`, `async` and `await`, `coroutineScope` | a plain function; `spawn`, `wait()` on an array of tasks, the block that waits for its tasks |
 | `Flow<T>`, `Channel<T>` | an iterator, `channel[T]()` |
 | `Mutex().withLock { }`, `AtomicInteger`, `synchronized` | `sync.Mutex(value)`, `sync.Atomic(0)` |
 | `use { }`, `finally` | `defer` |
@@ -237,11 +237,7 @@ fn main() {
             err(why) => console.println("skipped `{text}`: {why}")
         }
     }
-    var pricing = Group[Int]()
-    for line in lines {
-        pricing.add(spawn line.total())
-    }
-    let totals = pricing.wait()
+    let totals = lines.map((line) { spawn line.total() }).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
@@ -271,7 +267,7 @@ What went, part by part of the original:
   that it can fail, which no Kotlin signature does, and `match` takes both
   cases.
 - **The futures and `join()`.** `spawn` starts each pricing as a task, and
-  the `Group` waits for them and gives their results in order.
+  `wait()` on the array of them gives their results in order.
 - **`?.let`.** `maxBy` gives a `Line?`, and `match` takes the case with none.
 - **`mutableListOf` against `listOf`.** An array changes when its binding is
   a `var`.

@@ -35,7 +35,7 @@ follows; this is what each thing of Rust becomes.
 | `i64`, `u8`, `usize`, `f64`, `&str` | `Int`, `Byte`, `Int`, `Float`, `String` |
 | `x as f64`, `"3".parse::<i64>()` | `Float(x)`, `Int.parse("3")` |
 | `format!("{}: {:02}", a, b)`, `println!` | `"{a}: {b:02}"`, `console.println(...)` |
-| `thread::spawn`, `thread::scope`, `tokio::spawn`, `.await` | `spawn f()`, a `Group`; there is no `async` |
+| `thread::spawn`, `thread::scope`, `tokio::spawn`, `.await` | `spawn f()`, `wait()` on an array of tasks; there is no `async` |
 | `mpsc::channel()`, `select!` | `channel[T]()`, `select` |
 | `Mutex<T>`, `RwLock<T>`, `AtomicUsize` | `sync.Mutex(value)`, `sync.RwLock(value)`, `sync.Atomic(0)` |
 | `impl Drop` | `defer` where the value is made |
@@ -221,11 +221,7 @@ fn main() {
             err(why) => console.println("skipped `{text}`: {why}")
         }
     }
-    var pricing = Group[Int]()
-    for line in lines {
-        pricing.add(spawn line.total())
-    }
-    let totals = pricing.wait()
+    let totals = lines.map((line) { spawn line.total() }).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
@@ -254,8 +250,8 @@ What went, part by part of the original:
 - **Every `&`, `.to_string()`, `.iter()` and `*total`.** A function takes the
   value and gives one back; who owns it is not the author's to say.
 - **`thread::scope`, the handles and their `join().unwrap()`.** `spawn`
-  starts a task, which is far cheaper than a thread, and the `Group` waits
-  for them and gives their results in order.
+  starts a task, which is far cheaper than a thread, and `wait()` on the
+  array of them gives their results in order.
 - **The closure with `map_err`.** `??` takes what to do when `Int.parse`
   fails, which may be to fail with the function's own error.
 - **`collect::<Vec<_>>()`.** An array's `map` gives an array.

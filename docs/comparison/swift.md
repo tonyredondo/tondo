@@ -566,11 +566,8 @@ fn fetch(name: String, delay: Int): String {
 
 fn main() {
     let started = time.now()
-    var group = Group[String]()
-    group.add(spawn fetch("users", 300))
-    group.add(spawn fetch("orders", 500))
-    group.add(spawn fetch("prices", 100))
-    for result in group.wait() {            // in the order they were added
+    let tasks = [spawn fetch("users", 300), spawn fetch("orders", 500), spawn fetch("prices", 100)]
+    for result in tasks.wait() {            // in the order of the array
         console.println(result)
     }
     // One after another they would take 900 ms.
@@ -588,7 +585,7 @@ all three in under 800 ms: true
 - No `async`, no `await`, and no `Task { }` to cross from code that is not
   `async`. A library is written once.
 - `spawn f()` is `async let`: a child task that its block waits for. It
-  gives a `Join[T]`, which can be kept, passed on or put in a `Group`.
+  gives a `Join[T]`, which can be kept, passed on or put in an array.
 - Tasks run on every core. One that computes for long does not hold up the
   others, and nothing has to be moved off a main actor.
 - `spawn detached f()` is `Task.detached`.
@@ -939,7 +936,7 @@ Hello, Ada! (3)
 | `&&`, `\|\|`, `!` | `and`, `or`, `not` |
 | `Int(x)` | `Int(x)`, which fails if it does not fit |
 | `async`, `await`, `Task { }` | nothing: every function can wait; `spawn` |
-| `async let`, `withTaskGroup` | `spawn`, a `Group` |
+| `async let`, `withTaskGroup` | `spawn`, `wait()` on an array of tasks |
 | `actor` | `sync.Mutex[T]`, or `executor.actor` |
 | `weak`, `unowned` | `WeakRef[T]`, seldom: cycles are collected |
 | `private`, `internal`, `public` | nothing, or `pub` |

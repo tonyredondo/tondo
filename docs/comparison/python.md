@@ -645,11 +645,8 @@ fn fetch(name: String, delay: Int): String {
 
 fn main() {
     let started = time.now()
-    var group = Group[String]()
-    group.add(spawn fetch("users", 300))
-    group.add(spawn fetch("orders", 500))
-    group.add(spawn fetch("prices", 100))
-    for result in group.wait() {            // in the order they were added
+    let tasks = [spawn fetch("users", 300), spawn fetch("orders", 500), spawn fetch("prices", 100)]
+    for result in tasks.wait() {            // in the order of the array
         console.println(result)
     }
     // One after another they would take 900 ms.

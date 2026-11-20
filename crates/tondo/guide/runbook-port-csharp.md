@@ -25,7 +25,7 @@ what each thing of C# becomes.
 | `catch (Exception)` around a request | `recover { ... }`, which stops a panic |
 | `int.TryParse(s, out var n)` | `Int.parse(s)`, an `Int ! text.TextError` |
 | `async Task<T> F()`, `await F()` | `fn f(): T`, `f()`: any function can wait |
-| `Task.Run(...)`, `Task.WhenAll(...)` | `spawn f()`, a `Group` |
+| `Task.Run(...)`, `Task.WhenAll(...)` | `spawn f()`, `wait()` on an array of tasks |
 | a `CancellationToken` passed down | `job.cancel()`, which reaches what the task started |
 | `lock (gate) { }`, `Interlocked` | `sync.Mutex(value)`, `sync.Atomic(0)` |
 | `Channel<T>` | `channel[T]()` |
@@ -190,11 +190,7 @@ fn main() {
             err(why) => console.println("skipped `{text}`: {why}")
         }
     }
-    var pricing = Group[Int]()
-    for line in lines {
-        pricing.add(spawn line.total())
-    }
-    let totals = pricing.wait()
+    let totals = lines.map((line) { spawn line.total() }).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
@@ -224,8 +220,8 @@ What went, part by part of the original:
   reason, and `match` takes both cases where the `try` stood. Nothing can
   throw past a caller that did not expect it.
 - **`async`, `await`, `Task`.** `main` is a plain function. `spawn` starts
-  each pricing as a task, and the `Group` waits for them and gives their
-  results in the order they were added, as `WhenAll` did.
+  each pricing as a task, and `wait()` on the array of them gives their
+  results in its order, as `WhenAll` did.
 - **The `null` check.** `maxBy` gives a `Line?`, which has to be matched
   before its name is read.
 - **The static class.** `money` and `parse` are functions of the module.

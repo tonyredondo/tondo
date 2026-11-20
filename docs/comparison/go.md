@@ -655,7 +655,7 @@ func main() {
 ```
 
 In Tondo a task belongs to the block that started it, which does not end
-before the task does. A `Group` collects their results:
+before the task does. An array of tasks is waited for whole:
 
 ```tondo
 import std.console
@@ -669,11 +669,8 @@ fn fetch(name: String, delay: Int): String {
 
 fn main() {
     let started = time.now()
-    var group = Group[String]()
-    group.add(spawn fetch("users", 300))
-    group.add(spawn fetch("orders", 500))
-    group.add(spawn fetch("prices", 100))
-    for result in group.wait() {            // in the order they were added
+    let tasks = [spawn fetch("users", 300), spawn fetch("orders", 500), spawn fetch("prices", 100)]
+    for result in tasks.wait() {            // in the order of the array
         console.println(result)
     }
     // One after another they would take 900 ms.
@@ -1124,7 +1121,7 @@ Hello, Ada! (3)
 | `for cond { }`, `for { }` | the same |
 | `switch` | `match`, which covers every case |
 | `go f()` | `spawn f()`, waited for by its block |
-| `wg.Add`, `wg.Done`, `wg.Wait` | a `Group`, or the end of the block |
+| `wg.Add`, `wg.Done`, `wg.Wait` | `wait()` on an array of tasks, or the end of the block |
 | `ctx context.Context` as first parameter | `within` and `context` |
 | `defer mu.Unlock()` | `mutex.update((value) { ... })` |
 | `fmt.Sprintf("%s is %d", name, age)` | `"{name} is {age}"` |

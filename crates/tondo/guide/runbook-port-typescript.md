@@ -25,7 +25,7 @@ follows; this is what each thing becomes.
 | `===`, `!==` | `==`, `!=`: there is one equality, and it compares values |
 | `throw new Error(...)`, `try { } catch (e) { }` | `fail error` in a `T ! E`; `match`, `?`, `??` |
 | `async function f(): Promise<T>`, `await f()` | `fn f(): T`, `f()`: any function can wait |
-| `Promise.all(xs.map(f))` | a `Group`, with `spawn f(x)` for each |
+| `Promise.all(xs.map(f))` | `xs.map((x) { spawn f(x) }).wait()`; `waitOrCancel()` when they can fail |
 | a callback, an event emitter | a closure; a `channel[T]()` for a stream of events |
 | `xs.map`, `filter`, `reduce`, `some`, `every`, `find`, `includes` | `map`, `filter`, `reduce`, `any`, `all`, `find`, `contains` |
 | `xs.length`, `xs.push(x)`, `xs.forEach(f)` | `xs.length()`, `xs.push(x)` on a `var`, `for x in xs` |
@@ -223,11 +223,7 @@ fn main() {
             err(why) => console.println("skipped `{text}`: {why}")
         }
     }
-    var pricing = Group[Int]()
-    for line in lines {
-        pricing.add(spawn line.total())
-    }
-    let totals = pricing.wait()
+    let totals = lines.map((line) { spawn line.total() }).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
@@ -256,8 +252,8 @@ What went, part by part of the original:
 - **The exception and its `catch (why)`,** whose type nobody knew. `parse`
   gives a `Line` or fails with a `String`, and `match` takes both cases.
 - **`async`, `await` and `Promise.all`.** `spawn` starts each pricing as a
-  task, on every core and not on one thread, and the `Group` gives their
-  results in order.
+  task, on every core and not on one thread, and `wait()` on the array of
+  them gives their results in order.
 - **`undefined` and the loop that kept the best.** `maxBy` gives a `Line?`,
   which is matched before its name is read.
 - **The regular expression before `Number`.** `Int.parse` fails for what is

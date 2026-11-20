@@ -31,7 +31,7 @@ follows; this is what each thing of Go becomes.
 | `interface` | `trait`, and `impl Trait for Type` says who implements it |
 | `interface{}`, `any` | an `enum` of the cases, or a type parameter |
 | an embedded struct | a field, and the methods that pass the call on |
-| `go f()` with a `sync.WaitGroup` | `spawn f()`; a `Group` waits for many and gives their results |
+| `go f()` with a `sync.WaitGroup` | `spawn f()`; `xs.map((x) { spawn f(x) }).wait()` waits for many and gives their results |
 | `go f()` that outlives its function | `spawn detached f()` |
 | `make(chan T, n)`, `<-ch`, `select` | `channel[T](n)`, `receive()`, `select` |
 | a `sync.Mutex` beside what it guards | `sync.Mutex(value)`: the lock holds the value |
@@ -242,11 +242,7 @@ fn main() {
             err(why) => console.println("skipped `{text}`: {why}")
         }
     }
-    var pricing = Group[Int]()
-    for line in lines {
-        pricing.add(spawn line.total())
-    }
-    let totals = pricing.wait()
+    let totals = lines.map((line) { spawn line.total() }).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
@@ -274,8 +270,9 @@ What went, line by line of the original:
 
 - **The error's two values.** `parse` gives a `Line` or fails; a caller cannot
   read the line of a parse that failed, and `match` makes it take both cases.
-- **The `WaitGroup`, the slice to write into and the index.** A `Group` waits
-  for its tasks and gives their results in the order they were added.
+- **The `WaitGroup`, the slice to write into and the index.** `map` starts a
+  task for each line, and `wait()` on the array waits for them all and gives
+  their results in its order.
 - **The pointer that may be `nil`.** `maxBy` gives a `Line?`, which has to be
   matched before its name is read.
 - **The loop for the sum and the largest**, which `sum()` and `maxBy` say.

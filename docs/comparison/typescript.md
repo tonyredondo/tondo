@@ -555,11 +555,8 @@ fn fetch(name: String, delay: Int): String {
 
 fn main() {
     let started = time.now()
-    var group = Group[String]()
-    group.add(spawn fetch("users", 300))
-    group.add(spawn fetch("orders", 500))
-    group.add(spawn fetch("prices", 100))
-    for result in group.wait() {            // in the order they were added
+    let tasks = [spawn fetch("users", 300), spawn fetch("orders", 500), spawn fetch("prices", 100)]
+    for result in tasks.wait() {            // in the order of the array
         console.println(result)
     }
     // One after another they would take 900 ms.
@@ -580,8 +577,10 @@ all three in under 800 ms: true
 - A forgotten `await` cannot happen. `spawn f()` gives a `Join[T]`, which
   its block waits for when it ends, and an error in the task comes out of
   `wait()` instead of becoming an unhandled rejection.
-- A `Group` is `Promise.all`, with its results in the order the tasks were
-  added.
+- `wait()` on an array of tasks is `Promise.all`, with its results in the
+  array's order. With tasks that can fail it gives each outcome, as
+  `Promise.allSettled` does, and `waitOrCancel()` gives the values or the
+  first error, which also stops the others.
 
 ## Deadlines and cancelling
 
@@ -932,7 +931,7 @@ Hello, Ada! (3)
 | `for (const x of xs)`, `while (c)` | `for x in xs`, `for c` |
 | `switch` | `match` |
 | `async`, `await`, `Promise<T>` | nothing: every function can wait |
-| `Promise.all([...])` | `spawn`, and a `Group` |
+| `Promise.all([...])` | `[spawn a(), spawn b()].wait()` |
 | `export`, `import { a } from "./b"` | `pub`, `import app.b` |
 | `number` | `Int` or `Float` |
 | `;` | nothing |

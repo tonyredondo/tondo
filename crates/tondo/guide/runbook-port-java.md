@@ -35,7 +35,7 @@ every port follows; this is what each thing of Java becomes.
 | `x -> x * 2`, `Line::total` | `(x) { x * 2 }`, `Line.total` |
 | a `switch` expression, `instanceof` with a pattern | `match`, which must cover every case |
 | `<T extends Comparable<T>>` | `[T: Ordered]` |
-| `Thread`, an `ExecutorService`, `CompletableFuture` | `spawn f()`, a `Group` |
+| `Thread`, an `ExecutorService`, `CompletableFuture` | `spawn f()`, `wait()` on an array of tasks |
 | `synchronized`, `AtomicInteger`, `BlockingQueue` | `sync.Mutex(value)`, `sync.Atomic(0)`, `channel[T]()` |
 | `String.format("%s: %02d", a, b)`, `"a" + b` | `"{a}: {b:02}"`: `+` does not join strings |
 | `package shop.orders;`, `import shop.orders.Line;` | the directory `src/orders`, `import shop.orders` |
@@ -224,11 +224,7 @@ fn main() {
             err(why) => console.println("skipped `{text}`: {why}")
         }
     }
-    var pricing = Group[Int]()
-    for line in lines {
-        pricing.add(spawn line.total())
-    }
-    let totals = pricing.wait()
+    let totals = lines.map((line) { spawn line.total() }).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
@@ -257,7 +253,7 @@ What went, part by part of the original:
 - **Both `try` and the exception that crossed them.** `parse` gives a `Line`
   or fails with the reason, in its signature, and `match` takes both cases.
 - **The futures, their pool and `join`.** `spawn` starts each pricing as a
-  task, and the `Group` waits for them and gives their results in order.
+  task, and `wait()` on the array of them gives their results in order.
 - **`Optional`, `isPresent()` and `get()`.** `maxBy` gives a `Line?`, which
   cannot be read without saying what happens when there is none.
 - **The class around it all.** Functions belong to a module.

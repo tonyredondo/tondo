@@ -168,10 +168,7 @@ fn part(name: String): String {
 
 fn handle(id: String): Array[String] {
     with Request { id }
-    var group = Group[String]()
-    group.add(spawn part("header"))
-    group.add(spawn part("body"))
-    group.wait()
+    [spawn part("header"), spawn part("body")].wait()
 }
 
 fn main() {

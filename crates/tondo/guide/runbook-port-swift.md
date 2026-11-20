@@ -34,7 +34,7 @@ port follows; this is what each thing of Swift becomes.
 | `{ $0 * 2 }`, `{ x in x * 2 }` | `(x) { x * 2 }` |
 | `for x in xs`, `for (i, x) in xs.enumerated()`, `for i in 0..<n` | `for x in xs`, `for (i, x) in xs.enumerate()`, `for i in 0..n` |
 | `"\(name): \(price)"`, `String(format: "%.2f", price)` | `"{name}: {price:.2}"` |
-| `async`, `await`, `Task { }`, `withTaskGroup` | a plain function and a plain call; `spawn`, a `Group` |
+| `async`, `await`, `Task { }`, `withTaskGroup` | a plain function and a plain call; `spawn`, `wait()` on an array of tasks |
 | an `actor` | `sync.Mutex(value)`, or a task that owns the value behind a channel |
 | `defer` | `defer` |
 | `guard cond else { return }` | `if not cond { return }` |
@@ -244,11 +244,7 @@ fn main() {
             err(why) => console.println("skipped `{text}`: {why}")
         }
     }
-    var pricing = Group[Int]()
-    for line in lines {
-        pricing.add(spawn line.total())
-    }
-    let totals = pricing.wait()
+    let totals = lines.map((line) { spawn line.total() }).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
@@ -278,8 +274,8 @@ What went, part by part of the original:
   result that it can fail and with what, which Swift's `throws` does not, and
   `match` takes both cases.
 - **The task group, the pairs of index and total, and the array filled by
-  index.** A `Group` gives the results of its tasks in the order they were
-  added.
+  index.** `wait()` on an array of tasks gives their results in the
+  array's order.
 - **`await`.** Nothing marks a call that waits: any function can.
 - **The `Substring` made a `String`.** A part of a text is a `String`.
 - **The copy named `bought`,** which the task group needed to capture
