@@ -3435,6 +3435,7 @@ fn runtime_keeps(std: &crate::hir::StdFn) -> bool {
         | StdFn::Number(_)
         | StdFn::Simd(_)
         | StdFn::TimeSleep
+        | StdFn::Checkpoint
         | StdFn::TimeNow
         | StdFn::TimeUnix
         | StdFn::TimeUtcNow

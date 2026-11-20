@@ -169,6 +169,10 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Callee::Std(StdFn::ConsoleEprintln) => self.e.call_rt(Rt::ConsoleEprintln, &values),
             Callee::Std(StdFn::Io(IoFn::BufferClear)) => self.e.call_rt(Rt::Io(IoFn::BufferClear), &values),
             Callee::Std(StdFn::TimeSleep) => self.e.call_rt(Rt::Sleep, &values),
+            Callee::Std(StdFn::Checkpoint) => {
+                self.checkpoint();
+                None
+            }
             Callee::Std(StdFn::TestLog) => self.e.call_rt(Rt::TestLog, &values),
             Callee::Std(StdFn::TestTags) => self.e.call_rt(Rt::TestTags, &values),
             Callee::Std(StdFn::TestWhere) => {

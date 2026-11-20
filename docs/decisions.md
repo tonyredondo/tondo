@@ -8768,3 +8768,36 @@ urls { spawn fetch(url) }`, stays alive in the array, so neither W1013
 nor E1303 speaks of it. An arm `=> for ...` follows the same rule: it
 gives an array in a `match` that gives one, and is the statement in a
 `match` statement, where it was a parse error.
+
+## A checkpoint, and whether a task was cancelled
+
+Tony asked how a cancelled task learns of it, thinking of .NET's
+`CancellationToken`, and whether the compiler could put the checks in by
+itself. A task that only computes was not stopped at all: 200 million
+turns ran on after `cancel()`, unless its loop slept for nothing, which
+stopped it in 20 ms by the check compiled code makes after a call that
+may wait. Asking every 1024 turns costs about 1% of a loop's
+instructions, so an automatic check was affordable; but a task stops
+only where it waits, so a stretch of code with no wait runs whole, and
+checks put in every loop would take that away. He chose the explicit
+form.
+
+`tasks.checkpoint()` stops its task where it is written, as a wait would,
+when it was cancelled, a deadline of its `within` passed, or its
+`recover` has a panic to pass on; otherwise it does nothing.
+`tasks.cancelled()` says whether the task was cancelled or a deadline of
+its block passed, for a `defer` that tells a cancel from an ordinary end:
+a panic is no cancel. A deadline is seen today only at a wait, and nothing
+reads the clock for a task that computes, so a checkpoint must: a count
+of the tasks inside a deadline would almost never be zero in a server,
+which runs each request inside one, and would bounce between workers, so
+the runtime keeps a flag set at the first `within` with a deadline and
+never cleared. A checkpoint reads it beside the count of reasons to ask
+and calls the runtime only when one is set; the clock is read only inside
+a deadline, coarsely, as it lags by at most a tick of the system's clock
+and so never sees a deadline early: a tick is 1 to 10 ms on Linux, by how
+its kernel was built, and on macOS was seen at 0.1 ms on average and
+3 ms at most; 8 ns a checkpoint there instead of 21. With one worker, a cancel made
+by another task cannot happen while a task computes, as nothing gives the
+worker away but a wait; the piece that follows gives it away at a
+checkpoint.

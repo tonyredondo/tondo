@@ -133,6 +133,26 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.ins().brif(condition, then, &[], otherwise, &[]);
     }
 
+    /// `tasks.checkpoint()` (11.15): in a program that entered a deadline,
+    /// or when the runtime is asked something, the runtime sees whether a
+    /// deadline of the task passed; the checks that follow, as after a
+    /// wait, stop the task. Two loads and a branch when nothing is asked.
+    pub(super) fn checkpoint(&mut self) {
+        let reasons = self.attention();
+        let id = self.e.cg.deadlined();
+        let deadlined = self.e.global(id);
+        let address = self.e.fb.ins().symbol_value(POINTER, deadlined);
+        let deadlined = self.e.fb.ins().load(types::I32, flags(), address, 0);
+        let asked = self.e.fb.ins().bor(reasons, deadlined);
+        let (ask, done) = (self.e.fb.create_block(), self.e.fb.create_block());
+        self.e.fb.ins().brif(asked, ask, &[], done, &[]);
+        self.e.fb.set_cold_block(ask);
+        self.e.fb.switch_to_block(ask);
+        self.e.call_rt(Rt::Checkpoint, &[]);
+        self.e.fb.ins().jump(done, &[]);
+        self.e.fb.switch_to_block(done);
+    }
+
     /// The reasons the runtime has to be asked, as the flag of attention
     /// holds them now.
     pub(super) fn attention(&mut self) -> ir::Value {

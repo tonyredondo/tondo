@@ -30,7 +30,7 @@ counts, whom it binds, and how one limit is shared.
 
 `tondo api std.tasks` shows the same in a terminal.
 
-- [Functions](#functions): [`limit`](#limit)
+- [Functions](#functions): [`limit`](#limit), [`checkpoint`](#checkpoint), [`cancelled`](#cancelled)
 - [Limit](#limit-1)
 
 ### Functions
@@ -44,6 +44,53 @@ pub fn limit(places: Int): Limit
 A limit of `places` tasks alive at once, for `within`: each task that
 the block's own task starts, not detached, takes a place before it
 starts, and gives it back as it ends. Panics when `places` is below 1.
+
+#### checkpoint
+
+```tondo
+pub fn checkpoint()
+```
+
+A point where this task stops if it was cancelled, or a deadline of the
+`within` it runs in passed, as it would at a wait, running its `defer`s;
+otherwise it does nothing. For the loop of a computation that does not
+wait, which a cancel otherwise lets run to its end (language 11.15).
+
+```tondo
+import std.console
+import std.tasks
+import std.time
+
+let sum = within time.milliseconds(50) {
+    var total = 0
+    for n in 0..1_000_000_000 {
+        if n % 1024 == 0 {
+            tasks.checkpoint()
+        }
+        total += n % 7
+    }
+    total
+}
+console.println(if sum.isErr() { "stopped at its deadline" } else { "done" })
+```
+
+#### cancelled
+
+```tondo
+pub fn cancelled(): Bool
+```
+
+Whether this task was cancelled, or a deadline of the `within` it runs
+in passed: for a `defer` that tells a cancel from an ordinary end, and
+for code that would rather end by itself with what it has. A panic that
+a `recover` passes on is no cancel.
+
+```tondo
+import std.console
+import std.tasks
+
+console.println("{tasks.cancelled()}")
+```
 
 ### Limit
 

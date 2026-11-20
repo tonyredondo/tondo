@@ -4248,7 +4248,10 @@ de `group.wait()` cancelan tareas. La cancelación es cooperativa: la tarea se
 detiene en su siguiente espera, o al instante si ya está esperando. La operación
 que esperaba no devuelve nada; la tarea termina ejecutando sus `defer` y
 liberando sus valores, y sus propios `Join` y grupos pendientes se cancelan
-también. Un cálculo que no espera no se interrumpe. Un `defer` de la tarea
+también. Un cálculo que no espera no se interrumpe, salvo que lo pregunte:
+`tasks.checkpoint()` es un punto donde la tarea se detiene si está cancelada,
+como en una espera, y si no, no hace nada; `tasks.cancelled()` dice si lo está.
+Un `defer` de la tarea
 cancelada, y las funciones que llama, hacen lo que no necesita esperar:
 toman un lock libre, envían a un canal con sitio y reciben un valor que ya
 está, así que el estado compartido queda como debe. Una espera que sí
@@ -4259,6 +4262,18 @@ tarea cancelada, o una función que llama, siguen hasta su plazo (11.17):
 así una limpieza que necesita esperar, como el último envío de un tracer al
 recibir `SIGTERM`, dice cuánto tiempo tiene. Cuando `cancel()` regresa, la
 tarea ya terminó.
+
+En un `defer` de la tarea cancelada, `tasks.checkpoint()` no hace nada y
+`tasks.cancelled()` da `true`. Un plazo vencido de un `within` (11.17) cuenta para
+ambos como la cancelación de su bloque: `checkpoint()` sale hasta el `within`, que
+da `err(TimedOut)`, y `cancelled()` da `true` dentro del bloque y `false` después.
+Una tarea cuyo `recover` tiene un pánico que transmitir (15.9) lo transmite en su
+`checkpoint()`, como en una espera, y `cancelled()` da `false`: cancelada es una
+cancelación o un plazo vencido, nada más. Con `--schedules`, cada `checkpoint()`
+es un punto donde puede caer una cancelación. La cancelación que hace otra tarea
+necesita un worker en el que esa tarea corra: con un solo worker
+(`TONDO_WORKERS=1`, o un contenedor con un procesador), un cálculo que no espera
+no deja correr a ninguna otra tarea, pregunte o no.
 
 ### 11.16 Contextos
 
@@ -7158,7 +7173,7 @@ El lenguaje no fija:
 Un bucle de CPU que no espera puede monopolizar su worker. Si todos los workers
 están monopolizados de ese modo, Tondo no promete progreso. Las operaciones de la
 librería estándar que esperan a un recurso externo detienen la tarea, no el
-thread. La cancelación se observa solo en las esperas (11.15).
+thread. La cancelación se observa en las esperas y en `tasks.checkpoint()` (11.15).
 
 ### 16.15 Modelo de memoria concurrente
 

@@ -1,0 +1,84 @@
+// `tasks.checkpoint()` (11.15) stops a task that only computes where it
+// asks: when another task cancels it, when a deadline of its `within`
+// passes, and when a task of its `recover` panics, which it passes on.
+// `tasks.cancelled()` says whether the task was cancelled or a deadline of
+// its block passed: true in the cleanup of a cancelled task, false in that
+// of a panic. In a `defer` of a cancelled task, a checkpoint does nothing.
+// A cancel or a panic of another task needs a worker for that task to run
+// on, which one worker beside a computation does not give: the case asks
+// for two, which a machine of one processor runs too.
+
+import std.console
+import std.tasks
+import std.time
+
+/// Adds until it is stopped, asking every 1024 turns.
+fn spin(): Int {
+    var total = 0
+    for n in 0..2_000_000_000 {
+        if n % 1024 == 0 {
+            tasks.checkpoint()
+        }
+        total += n % 7
+    }
+    total
+}
+
+fn cancelled(): Int {
+    defer {
+        tasks.checkpoint()
+        console.println("its cleanup goes on past a checkpoint, cancelled: {tasks.cancelled()}")
+    }
+    spin()
+}
+
+fn fails() {
+    panic("the other task's")
+}
+
+fn main() {
+    console.println("cancelled at first: {tasks.cancelled()}")
+
+    let job = spawn cancelled()
+    time.sleep(time.milliseconds(20))
+    job.cancel()
+    console.println("cancelled by another task")
+
+    let timed = within time.milliseconds(30) { spin() }
+    console.println("{timed}")
+
+    let seen = within time.milliseconds(10) {
+        var turns = 0
+        for {
+            turns += 1
+            if turns % 1024 == 0 and tasks.cancelled() {
+                break
+            }
+        }
+        turns > 0
+    }
+    console.println("seen inside: {seen}, after: {tasks.cancelled()}")
+
+    let caught = recover {
+        let failing = spawn fails()
+        defer {
+            console.println("in the cleanup of a panic, cancelled: {tasks.cancelled()}")
+        }
+        let total = spin()
+        failing.wait()
+        total
+    }
+    match caught {
+        ok(_) => console.println("not stopped")
+        err(stopped) => console.println("recovered {stopped.message}")
+    }
+}
+
+// expect-stdout: cancelled at first: false
+// expect-stdout: its cleanup goes on past a checkpoint, cancelled: true
+// expect-stdout: cancelled by another task
+// expect-stdout: err(timed out after 30ms)
+// expect-stdout: seen inside: ok(true), after: false
+// expect-stdout: in the cleanup of a panic, cancelled: false
+// expect-stdout: recovered the other task's
+// expect-env: TONDO_WORKERS=2

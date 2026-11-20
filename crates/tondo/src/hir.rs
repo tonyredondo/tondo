@@ -1010,6 +1010,9 @@ pub enum StdFn {
     Simd(crate::simd::SimdOp),
     /// `time.sleep(delay)`: waits without blocking the thread (14.3.3).
     TimeSleep,
+    /// `tasks.checkpoint()`: a point where the task stops if it was
+    /// cancelled or a deadline of its passed, as at a wait (11.15).
+    Checkpoint,
     /// `time.now()`, `unixTime()`, `utcNow()` and `utc(sinceEpoch)` (14.3).
     TimeNow,
     TimeUnix,
@@ -1262,6 +1265,7 @@ impl StdFn {
         matches!(
             self,
             StdFn::TimeSleep
+                | StdFn::Checkpoint
                 | StdFn::ContextField(..)
                 | StdFn::ClockSettle
                 | StdFn::ClockAdvance
@@ -1861,6 +1865,7 @@ pub const NATIVES: &[Native] = {
         env("workers", &[], Int, "tondo_rt_env_workers"),
         // `std.internal.tasks`: the runtime's limits, for `std.tasks`.
         tasks("limit", &[Int], Object, "tondo_rt_tasks_limit"),
+        tasks("cancelled", &[], Bool, "tondo_rt_tasks_cancelled"),
         env("cores", &[], Int, "tondo_rt_env_cores"),
         env("user", &[], Strings, "tondo_rt_env_user"),
         env("system", &[], Strings, "tondo_rt_env_system"),

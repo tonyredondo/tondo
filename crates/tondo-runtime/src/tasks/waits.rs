@@ -127,7 +127,7 @@ impl Wait {
         tools::note(|| "b\n".to_string());
         // The deadline of a `within` ends the wait when it passes, as a
         // cancellation would, and the task unwinds to it (11.17).
-        if let Some(&(at, _)) = task.withins.last() {
+        if let Some(&(at, ..)) = task.withins.last() {
             let now = clock_now();
             match at.checked_duration_since(now).filter(|left| !left.is_zero()) {
                 Some(left) => {

@@ -2465,6 +2465,17 @@ impl<'a> Checker<'a> {
                     | StdModule::InternalTasks),
                 )),
             ) => {
+                // `checkpoint()`, which compiled code checks in place (11.15).
+                if module == StdModule::InternalTasks && *member == "checkpoint" {
+                    if !args.is_empty() {
+                        return self.arity_error(span, 0, args.len());
+                    }
+                    return Self::mk(
+                        hir::ExprKind::Call(hir::Callee::Std(StdFn::Checkpoint), Vec::new(), Vec::new()),
+                        Ty::UNIT,
+                        span,
+                    );
+                }
                 // `has(feature)`: what `cpu.has` answers when the build's
                 // level does not say (toolchain 7.8).
                 if module == StdModule::InternalCpu && *member == "has" {

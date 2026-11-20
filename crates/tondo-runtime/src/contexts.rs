@@ -508,7 +508,7 @@ fn base() -> Instant {
 /// of the block that spawned it (11.17).
 fn deadline() -> Option<Instant> {
     let task = unsafe { crate::tasks::current().as_ref() }?;
-    if let Some(&(at, _)) = task.withins.last() {
+    if let Some(&(at, ..)) = task.withins.last() {
         return Some(at);
     }
     match task.inherited.load(Ordering::Acquire) {
@@ -527,11 +527,12 @@ pub(crate) fn deadline_nanos() -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_within_enter(limit: i64) {
     let Some(task) = (unsafe { crate::tasks::current().as_mut() }) else { return };
+    crate::tasks::deadline_entered();
     let at = crate::tasks::clock_now() + Duration::from_nanos(limit.max(0) as u64);
     let level = task.withins.len();
     let held = match task.withins.last() {
-        Some(&(outer, owner)) if outer <= at => (outer, owner),
-        _ => (at, level),
+        Some(&(outer, owner, system)) if outer <= at => (outer, owner, system),
+        _ => (at, level, 0),
     };
     task.withins.push(held);
     crate::tasks::within_starts(task, level);
@@ -544,7 +545,7 @@ pub extern "C" fn tondo_rt_within_leave() {
     let Some(task) = (unsafe { crate::tasks::current().as_mut() }) else { return };
     let level = task.withins.len().saturating_sub(1);
     crate::tasks::within_ends(task, level);
-    if task.withins.pop().is_some_and(|(_, owner)| owner == level) && task.expired {
+    if task.withins.pop().is_some_and(|(_, owner, _)| owner == level) && task.expired {
         task.expired = false;
         crate::tasks::attend(false);
     }

@@ -846,7 +846,12 @@ un módulo pueda declarar.
 ~~~tondo pseudocode
 pub fn limit(places: Int): Limit
 pub type Limit
+pub fn checkpoint()
+pub fn cancelled(): Bool
 ~~~
+
+`checkpoint()` y `cancelled()` son el punto donde se detiene un cálculo que no
+espera y la pregunta de si debe hacerlo (lenguaje 11.15).
 
 `limit` da un límite de `places` plazas para `within` (lenguaje 11.17); un
 `Limit` es un valor que puede guardarse y compartirse, y todos los `within` que

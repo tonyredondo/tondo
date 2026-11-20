@@ -538,7 +538,7 @@ pub extern "C" fn tondo_rt_unwinding() -> u8 {
         task.expired = false;
         crate::tasks::attend(false);
         if task.unwinding.is_none()
-            && let Some(&(_, owner)) = task.withins.last()
+            && let Some(&(_, owner, _)) = task.withins.last()
         {
             let (code, message, location) = (String::new(), String::new(), String::new());
             let context = Vec::new();

@@ -104,6 +104,75 @@ pub extern "C" fn tondo_rt_cancelled() -> u8 {
     }
 }
 
+/// Whether the program ever entered a `within` with a deadline, which a
+/// checkpoint must then compare with the clock: compiled code reads it
+/// beside the count of reasons to ask, and until it is set, a checkpoint
+/// asks the runtime only when something else does. Set once, never cleared.
+#[unsafe(export_name = "tondo_rt_deadlined")]
+pub static DEADLINED: AtomicU32 = AtomicU32::new(0);
+
+/// A `within` with a deadline starts: a load each time, a store the first.
+pub(crate) fn deadline_entered() {
+    if DEADLINED.load(Ordering::Relaxed) == 0 {
+        DEADLINED.store(1, Ordering::Relaxed);
+    }
+}
+
+/// Nanoseconds of the system's monotonic clock, exactly or as of its last
+/// tick: the coarse reading costs a fourth of the exact one and is never
+/// ahead of it.
+fn monotonic(coarse: bool) -> u64 {
+    #[cfg(target_os = "macos")]
+    let clock = if coarse { libc::CLOCK_UPTIME_RAW_APPROX } else { libc::CLOCK_UPTIME_RAW };
+    #[cfg(not(target_os = "macos"))]
+    let clock = if coarse { libc::CLOCK_MONOTONIC_COARSE } else { libc::CLOCK_MONOTONIC };
+    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe { libc::clock_gettime(clock, &mut time) };
+    time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
+}
+
+/// Whether a deadline of the block the task runs has passed. The first
+/// time a `within` is asked, its deadline is read in the system's clock,
+/// whose coarse reading answers after that: a deadline is seen at most a
+/// tick of that clock late, never early, a tick being 1 to 10 ms on Linux
+/// by how its kernel was built, and a few at most on macOS. A run given its
+/// choices moves its clock itself, which only the exact reading follows.
+fn past_deadline(task: &mut Task) -> bool {
+    if task.expired {
+        return true;
+    }
+    let Some(entry) = task.withins.last_mut() else { return false };
+    if ahead() != 0 {
+        return clock_now() >= entry.0;
+    }
+    if entry.2 == 0 {
+        let now = Instant::now();
+        entry.2 = monotonic(false) + entry.0.saturating_duration_since(now).as_nanos() as u64;
+    }
+    monotonic(true) >= entry.2
+}
+
+/// `tasks.checkpoint()`, in a program that entered a deadline or when the
+/// runtime is asked something (11.15): a deadline of the running task that
+/// passed while it computed unwinds it to its `within`, at the check for a
+/// panic that follows, as a wait would have seen it.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_tasks_checkpoint() {
+    let Some(task) = (unsafe { current().as_mut() }) else { return };
+    if !task.expired && past_deadline(task) {
+        expire(task);
+    }
+}
+
+/// `tasks.cancelled()`: whether the running task was cancelled, or a
+/// deadline of the block it runs passed; not a panic its `recover` passes
+/// on, which is no cancel (11.15).
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_tasks_cancelled() -> u8 {
+    let Some(task) = (unsafe { current().as_mut() }) else { return 0 };
+    u8::from(task.cancelled.load(Ordering::Acquire) || past_deadline(task))
+}
+
 /// Cancels the task numbered `id` if it is still alive, as a client that
 /// went away cancels the task that answers it. Its number is never reused,
 /// and while the set of tasks is locked none of them is freed.

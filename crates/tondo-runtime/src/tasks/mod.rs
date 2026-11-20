@@ -217,7 +217,7 @@ pub(crate) struct Task {
     /// The deadlines of the `within` blocks it runs (language 11.17),
     /// innermost last: the one that holds, the nearest, and the index of the
     /// block that set it.
-    pub(crate) withins: Vec<(Instant, usize)>,
+    pub(crate) withins: Vec<(Instant, usize, u64)>,
     /// The limits of tasks it runs within and the places it holds (11.17),
     /// a box of them or null: one word, which a program that made no
     /// limit never looks at, and which needs nothing to drop.

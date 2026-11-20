@@ -4234,6 +4234,8 @@ pub type RateLimiter = {
 pub type Set[K: Key]
 pub type Stack[T]
 == std.tasks
+pub fn cancelled(): Bool
+pub fn checkpoint()
 pub fn limit(places: Int): Limit
 pub type Limit = {
     // private fields
