@@ -3819,6 +3819,7 @@ const OBJECTS_ON_THE_HEAP: &[&str] = &[
     "tondo_rt_profile_waits",
     "tondo_rt_region_new",
     "tondo_rt_sqlite_open",
+    "tondo_rt_tasks_limit",
     "tondo_rt_tee",
     "tondo_rt_terminal_keys",
     "tondo_rt_terminal_take",

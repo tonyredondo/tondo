@@ -1,19 +1,20 @@
-//! What goes with the language's tasks (language 11.11 to 11.17): a limit
-//! of how many tasks a block keeps alive at once.
-//!
-//! ```tondo
-//! import std.console
-//! import std.tasks
-//!
-//! fn square(n: Int): Int {
-//!     n * n
-//! }
-//!
-//! let squares = within tasks.limit(4) {
-//!     [1, 2, 3, 4, 5, 6].map((n) { spawn square(n) }).wait()
-//! }
-//! console.println("{squares}")
-//! ```
+// std.tasks (standard library 9.3): what goes with the language's tasks
+// (language 11.11 to 11.17): a limit of how many tasks a block keeps alive
+// at once.
+//
+// ```tondo
+// import std.console
+// import std.tasks
+//
+// fn square(n: Int): Int {
+//     n * n
+// }
+//
+// let squares = within tasks.limit(2) {
+//     [1, 2, 3].map((n) { spawn square(n) }).wait()
+// }
+// console.println("{squares}")
+// ```
 
 import std.internal.tasks as tasksNative
 
