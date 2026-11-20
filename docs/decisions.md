@@ -8447,3 +8447,100 @@ names a loop by the first of its names that is the program's code: where
 it is written, then the calls that brought the code of its head, as the
 `for` that a `next()` is inlined into. Eight places that named a line of
 std now name the program's.
+
+## The view says why a result is not fresh
+
+A function whose result goes in the region its caller gives returns only
+what it made, "fresh". The view said of every other one "`f` returns it
+with what it was given", whatever kept it from being fresh, and the
+words were taken at face value: logstat's `line.words()` in
+`entries.parse`, 97.5% of its heap allocations, was read as a function
+that returns what it made or what it was given, and a change was decided
+for that shape. A probe in the test of freshness showed otherwise. Of
+the 175 places over `examples/` and `bench/tondo --tests` that said
+those words, one returns a parameter as given; 80 return a value the
+function also keeps; 78 were refused for a value the function keeps that
+never reaches its result; 23 return a part of what a call made, as an
+element of the array `words` gives, which the fate of the call's value
+follows and the test did not; two misfires counted a call's arguments,
+and every piece of an interpolation, as written into the result. The
+change for the other shape was withdrawn, as no place would take it, and
+the test was made to read as the flow does:
+
+- What a call made is followed through its parts, as its fate is.
+- Only the values that reach the result are asked whether something
+  keeps them.
+- A call's argument is written into the result only when the callee may
+  return it, or keeps it and returns more than what it made; an
+  interpolation writes only the text it takes over or shows alone.
+
+The view now says the cause it found, on the function's side and on its
+caller's: "`f` returns it with what it was given"; "`f` returns it with
+a value it also keeps: <why the value is kept>: `<code>` at
+<line>:<col>"; for a task's result, "a task gives it as its result:
+`spawn …` at <line>:<col>", where it said that what calls the closure
+through a function value may keep it; and where the summaries do not
+settle, which should never show, "the analysis of `f`'s calls did not
+settle, which keeps it on the heap to be safe". Over the rule for loops
+(the entry before), which already says of one of the 175 places that it
+is made in every turn of a loop, the 174 others now say: their function
+returns it with a value it also keeps (80), or a caller does (12); they
+are fresh now and end at the keeper they reach (66), a call through a
+function value (15), a function every call of which was inlined (19), a
+caller that keeps it (18), a caller that calls it in every turn of a
+loop (12), a task's result (2); they are made in every turn of a loop
+(2); they hold a value their region did not make (5); they go in the
+region their caller gives (8); and the one that returns a parameter says
+so. None leaves a region. logstat's place now says "`entries.parse`
+returns it, and a task gives it as its result: `spawn read(path)` at
+95:21": its words become the fields of entries that a task returns and
+`main` keeps for the whole run, which no region takes.
+
+The test is optimistic, as it was: a function that returns what a call
+gave through a local of its own still counts as fresh, and its own
+values go in the region its caller gives. What holds its result takes it
+for the region's only when all of it is, which the placement checks over
+every copy; a case where a result is in part a region's and in part the
+heap's (`fresh_whole.to`) leaks an object when that check is left out.
+
+Three consequences. A function that returns a text which is a part of a
+collection it made still copies it out at its return, however the test
+came to call it fresh, as Tony chose. A record made of such parts, as
+logstat's `Entry`, now takes the collection to the region its caller
+gives where it took it to the heap. And more functions now make, in
+every turn of a loop, what may become their result: one whose error
+holds a piece of a `split` made in a loop, and one that passes on, from
+a loop, the error of a call (`regions/errors.to`, `found` and
+`shouted`). The rule of the entry before keeps each turn's on the heap,
+and the view says so. The words for an error passed on by a function
+that is not fresh stay, held by `shoutedOr` there.
+
+A known limit: 66 of the 80 are the `reflectSet` bodies the compiler
+writes for `Reflect`, generated code, where `self = T(__value.to()?)`
+stores the success of a call's result and `?` returns its error. The
+analysis holds a call's result as one value, so the error is said to be
+returned with a value the function also keeps: the sentence describes
+the generated code as the analysis sees it. The variants of a call's
+result told apart are listed for Phase K; each of these bodies is called
+through a function value, so none would take a region either way.
+
+## Trim stays a native until a call is weighed by what inlining buys
+
+Tony asked whether `trim` written in Tondo could beat the native,
+measured first. Two forms were built over 6daf9987 and measured against
+main (f561bd1c) with the table's baseline. The plain one scans both ends
+a byte at a time with `textNative.byteAt` over ASCII's whitespace, gives
+the text itself when nothing is to cut, and otherwise copies the range:
+`texts/trim` +12.9% instructions, +23.5% cycles, +17.1% time;
+`texts/trim read` +11.5%, +20.7%, +20.1%; and one heap allocation of 67
+B where main made none and put 80 B in the loop's region. The second
+form scanned in a helper that returns the range and kept the copy in
+`trimmed`, and did worse. The view named the cause in both: the scan
+costs 95 against the inliner's budget of 30, so the call stays, and a
+function over the budget that returns what it was given or what it made
+kept its copy on the heap, where the native's copy, in `trimmed`,
+inlined into the caller, went in the turn's region. The second cause is
+not one the test of freshness can lift: a function that returns its
+parameter as given is not fresh. The rows keep their reason in
+bench/README. It is reopened by Phase K's weighing of a call by what
+inlining buys, here that a region could take the copy.

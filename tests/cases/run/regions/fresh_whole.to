@@ -1,0 +1,77 @@
+// A result that is in part a region's and in part the heap's. `listed`
+// returns a text it makes, which goes in the region its caller gives, or a
+// slice of the array it was given, which holds that array's texts and so
+// stays on the heap. `second` returns an element of what `listed` gives:
+// what it makes, followed through its parts. Neither result is all its
+// region's, and the array of `main` that holds them stays on the heap: a
+// region would let go of it whole and never of the texts it holds.
+
+import std.console
+
+fn listed(names: Array[String], n: Int): Array[String] {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    if spare == -999 {
+        return ["none {n} and more"]
+    }
+    names[1:]
+}
+
+fn second(names: Array[String], n: Int): String {
+    let rest = listed(names, n)
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    if spare == -999 {
+        return "none"
+    }
+    rest[0]
+}
+
+fn main() {
+    // Names on the heap: a `Ref` keeps them.
+    var names: Array[String] = []
+    for i in 0..3 {
+        names.push("a name of turn {i}, long enough")
+    }
+    let shared = Ref(names)
+    var held: Array[String] = []
+    for i in 0..3 {
+        held.push(second(shared.value, i))
+    }
+    console.println("{held} {shared.value.length()}")
+}
+
+// expect-optimization: 30:16 region goes in a region that the caller of `listed` gives
+// expect-optimization: 32:5 region stays on the heap: it holds a value that its region did not make
+// expect-optimization: 69:9 region stays on the heap: it holds a value that its region did not make
+// expect-stdout: [a name of turn 1, long enough, a name of turn 1, long enough, a name of turn 1, long enough] 3

@@ -748,7 +748,7 @@ heap, four groups are the analysis's, not their kind's:
 
 | Places | The remark's reason | One of them |
 | --- | --- | --- |
-| 88 | "`f` returns it with what it was given": a function that returns either what it made or what it was given, as most accessors and parsers do | examples/todo-api/src/api/api.to:42, `request.intParam("id")`, whose error text the closure of the route returns with what it was given |
+| 88 | "`f` returns it with what it was given", which the view said of every result the analysis did not take for fresh, whatever the cause; read again on 2026-11-20, below | examples/todo-api/src/api/api.to:42, `request.intParam("id")`, whose error text the closure of the route returns |
 | about 60 | a chain of callers that ends in one that keeps it: "`f` returns it, and `g` keeps it: …" | examples/kvstore/src/protocol/protocol.to:55, `first.toUpper()`, which a caller stores in a lock's state |
 | 162 | "`f` returns it, and what calls it through a function value may keep it": nearly all on the way to a failure, as the errors of derived code | examples/todo-api/src/api/api.to:56, `"there is no task {id}"` |
 | 30 | "it holds a value that its region did not make" | examples/notes/src/library/library.to:84, `files.glob("*.md")…?.sorted()`, a sorted copy of the texts the runtime gave; and texts sorted in place, where the copy and the array each wait for the other to be known as the region's |
@@ -765,6 +765,29 @@ The first is the one to look at first. The rest left the function for good: stor
 given (65), sent to a task (16), read in a way that may keep it (19). By kind there was little:
 closures a value holds, as an iterator's adapters (12), the objects of the runtime (6), slices (2),
 and deques.
+
+The first row was read wrong. On 2026-11-20 a probe in the test of freshness found that of 175
+places saying those words over the same programs, one returned a parameter as given: the rest were
+a value the function also keeps (80), a kept value that never reached the result (78), a part of
+what a call made (23), and two misfires of the test. The test was made to read as the flow does
+and the view says each cause (docs/decisions.md, "The view says why a result is not fresh"); 8
+verdicts entered a region over the rule for loops, and none left one. 66 of the 80 are the
+`reflectSet` bodies the compiler writes for `Reflect`, where the success of a call's result is
+stored and its error returned: they wait for the variants of a call's result told apart, an item
+of this phase.
+
+What logstat allocates most is the words of a line: at f561bd1c, `line.words()` in `entries.parse`
+made 97.5% of logstat's heap allocations and 64.9% of its bytes.
+`parse` returns an `Entry` of the line's words; the entries go into what the task that read their
+file returns, and from there into `main`'s list, which keeps them for the whole run, so no region
+takes them: the view says "a task gives it as its result". The array dies in `parse`, but a
+region's array cannot hold texts of the heap. The step planned for a part stored into a value that
+leaves, a copy of it in the function's copy for the calls that let it go, does not take them
+either: each word would still be an allocation. That step would have to make the words pieces of
+the line that hold the line, views of texts: one allocation for the array and none for the words,
+at the price that a program keeping one word of a long line keeps the whole line, which the loans
+set aside (docs/decisions.md, "Parts of texts lent were built, measured and set aside"). It is
+weighed with Tony when that step's turn comes.
 
 ---
 

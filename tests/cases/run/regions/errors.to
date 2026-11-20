@@ -1,9 +1,12 @@
 // A text read with `?` in a function that returns an error: the error the
 // `?` returns takes none of the text, which goes in a region of the
-// function or of a turn; an error made of the text, or of a part of it,
-// takes it out of the function, and the text, or the part, stays on the
-// heap. Each is run with the memory of every region that ends made
-// unreadable, where a text that left by the error would fault.
+// function or of a turn; an error made of the text takes it out of the
+// function, and the text stays on the heap; one made of a piece of a
+// `split` the function made takes the pieces to the region its caller
+// gives, where the caller reads the error, unless it makes them in every
+// turn of a loop, where that region would keep each turn's. Each is run with the memory of
+// every region that ends made unreadable, where a text that left by the
+// error would fault.
 
 import std.console
 import std.fs
@@ -82,7 +85,9 @@ fn shout(file: String): Int ! fs.FsError {
 
 /// The longest word, returned with an error that holds a text the function
 /// makes: the error a `?` passes on may be in the region the word is in,
-/// and so the word stays on the heap.
+/// so both go where the caller of what passes the error on lets them go,
+/// or stay on the heap when that function calls it in every turn of a
+/// loop.
 fn loudest(file: String): String ! Problem {
     let text = fs.readText(file) ?? ""
     var best = ""
@@ -103,6 +108,37 @@ fn shouted(files: Array[String]): Int ! Problem {
     for file in files {
         let loud = loudest(file)?
         total += loud.length()
+    }
+    total
+}
+
+/// The shortest word, returned with an error that holds a text the
+/// function makes.
+fn quietest(file: String): String ! Problem {
+    let text = fs.readText(file) ?? ""
+    var best = text
+    for word in text.split(" ") {
+        if word.length() < best.length() {
+            best = word
+        }
+    }
+    if best.length() < 2 {
+        fail Problem { word: "{best}?" }
+    }
+    best.toLower()
+}
+
+/// Gives back what it was given when there are no files, and passes on the
+/// error of `quietest`: not fresh, so the error and the word it passes on
+/// stay on the heap.
+fn shoutedOr(files: Array[String], fallback: Int ! Problem): Int ! Problem {
+    if files.isEmpty() {
+        return fallback
+    }
+    var total = 0
+    for file in files {
+        let quiet = quietest(file)?
+        total += quiet.length()
     }
     total
 }
@@ -141,20 +177,26 @@ fn main(): !fs.FsError {
         ok(total) => "{total}"
         err(problem) => problem.word
     }
+    let h = match shoutedOr([second, first], err(Problem { word: "none" })) {
+        ok(total) => "{total}"
+        err(problem) => problem.word
+    }
     let quiet = noise()
     fs.remove(dir, recursive: true)?
-    console.println("{a} {b} {c}, {d}, {e} {f} {g} {quiet}")
+    console.println("{a} {b} {c}, {d}, {e} {f} {g} {h} {quiet}")
 }
 
-// expect-stdout: 19 27 first line of words, first, line 5 words! 3560
-// expect-optimization: 18:16 region goes in a region of `counted`
-// expect-optimization: 26:20 region goes in the region of a turn of the loop at line 25
-// expect-optimization: 34:16 region stays on the heap: `whole` returns it
-// expect-optimization: 43:16 region goes in a region of `part`
-// expect-optimization: 45:30 region stays on the heap: `part` returns it
-// expect-optimization: 54:20 region goes in the region of a turn of the loop at line 53
-// expect-optimization: 55:21 region stays on the heap: `found` returns it
-// expect-optimization: 68:16 region goes in a region of `longest`
-// expect-optimization: 75:5 region goes in a region that the caller of `longest` gives
-// expect-optimization: 95:30 region stays on the heap: `loudest` returns it, and `shouted` passes on the error of `loudest`, which `loudest` may make in the region of what it returns
-// expect-optimization: 97:5 region stays on the heap: `loudest` returns it, and `shouted` passes on the error of `loudest`, which `loudest` may make in the region of what it returns
+// expect-stdout: 19 27 first line of words, first, line 5 words! 5 3560
+// expect-optimization: 21:16 region goes in a region of `counted`
+// expect-optimization: 29:20 region goes in the region of a turn of the loop at line 28
+// expect-optimization: 37:16 region stays on the heap: `whole` returns it
+// expect-optimization: 46:16 region goes in a region of `part`
+// expect-optimization: 48:30 region goes in a region that the caller of `part` gives
+// expect-optimization: 57:20 region goes in the region of a turn of the loop at line 56
+// expect-optimization: 58:21 region stays on the heap: it is made in every turn of the loop at line 56, and the region the caller of `found` gives would keep each turn's
+// expect-optimization: 71:16 region goes in a region of `longest`
+// expect-optimization: 78:5 region goes in a region that the caller of `longest` gives
+// expect-optimization: 100:30 region stays on the heap: `loudest` returns it, and `shouted` calls it in every turn of a loop, where the region its caller gives would keep each turn's
+// expect-optimization: 102:5 region stays on the heap: `loudest` returns it, and `shouted` calls it in every turn of a loop, where the region its caller gives would keep each turn's
+// expect-optimization: 126:30 region stays on the heap: `quietest` returns it, and `shoutedOr` passes on the error of `quietest`, which `quietest` may make in the region of what it returns
+// expect-optimization: 128:5 region stays on the heap: `quietest` returns it, and `shoutedOr` passes on the error of `quietest`, which `quietest` may make in the region of what it returns

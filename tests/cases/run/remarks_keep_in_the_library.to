@@ -16,6 +16,6 @@ fn main() {
     console.println("{lines}")
 }
 
-// expect-optimization: 8:17 region stays on the heap: `label` returns it with what it was given
+// expect-optimization: 8:17 region stays on the heap: `label` returns it, and no call of it is left
 // expect-no-optimization: 8:17 region which keeps it: `value`
 // expect-stdout: [s0: 0.0, s1: 1.5, s2: 3.0]

@@ -33,7 +33,7 @@ Rvalue::Unary                 - gives a number or a Bool
 Rvalue::Binary                - gives a number or a Bool
 Rvalue::Increment             - gives a number
 Rvalue::Exact                 - gives a number
-Rvalue::Call                  cases/run/regions/calls.to cases/run/regions/contexts.to cases/run/regions/natives_codec.to cases/run/regions/texts.to cases/run/regions/parts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to cases/run/regions/runtime_texts_system.to cases/run/regions/runtime_texts_library.to cases/run/regions/errors.to cases/run/regions/runtime_arrays.to cases/run/regions/runtime_arrays_natives.to cases/run/regions/copied_out.to cases/run/regions/every_turn.to cases/run/regions/every_turn_kept.to
+Rvalue::Call                  cases/run/regions/calls.to cases/run/regions/contexts.to cases/run/regions/natives_codec.to cases/run/regions/texts.to cases/run/regions/parts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to cases/run/regions/runtime_texts_system.to cases/run/regions/runtime_texts_library.to cases/run/regions/errors.to cases/run/regions/runtime_arrays.to cases/run/regions/runtime_arrays_natives.to cases/run/regions/copied_out.to cases/run/regions/every_turn.to cases/run/regions/every_turn_kept.to cases/run/regions/fresh_parts.to cases/run/regions/fresh_kept.to cases/run/regions/fresh_given.to cases/run/regions/fresh_whole.to
 Rvalue::FnValue               - gives a function's address
 Rvalue::ExternFn              - gives a C function's address
 Rvalue::Callback              - gives a C function's address
@@ -42,7 +42,7 @@ Rvalue::Reflect               cases/run/regions/erased.to cases/run/regions/nati
 Rvalue::Fixed                 - copies the elements of an array of C's types, which hold no value
 Rvalue::CallIndirect          cases/run/regions/closures.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/kept_still.to
 Rvalue::Erase                 cases/run/regions/closures.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to cases/run/regions/runtime_arrays.to cases/run/regions/closures_held.to
-Rvalue::Spawn                 cases/run/regions/tasks.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_arrays.to
+Rvalue::Spawn                 cases/run/regions/tasks.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_arrays.to cases/run/regions/fresh_parts.to cases/run/regions/fresh_given.to
 Rvalue::TestMembers           - gives the runner a suite's functions, which hold no value
 Rvalue::TaskOp                cases/run/regions/tasks.to cases/run/regions/texts.to cases/run/regions/runtime_texts.to cases/run/regions/runtime_texts_io.to cases/run/regions/runtime_texts_formats.to cases/run/regions/runtime_texts_system.to cases/run/regions/runtime_texts_library.to cases/run/regions/runtime_arrays.to cases/run/regions/runtime_arrays_natives.to
 Rvalue::Select                cases/run/regions/tasks.to
@@ -52,7 +52,7 @@ Rvalue::Restart               - live builds only, which have no regions
 Rvalue::Transfer              - live builds only, which have no regions
 Rvalue::CallOsr               - live builds only, which have no regions
 Rvalue::OsrPoint              - live builds only, which have no regions
-Rvalue::Concat                cases/run/regions/texts.to cases/run/regions/exits.to cases/run/regions/runtime_texts.to cases/run/regions/texts_grown.to cases/run/regions/texts_room.to cases/run/regions/every_turn_kept.to
+Rvalue::Concat                cases/run/regions/texts.to cases/run/regions/exits.to cases/run/regions/runtime_texts.to cases/run/regions/texts_grown.to cases/run/regions/texts_room.to cases/run/regions/every_turn_kept.to cases/run/regions/fresh_given.to
 Rvalue::Aggregate             cases/run/regions/stores.to
 Rvalue::Variant               cases/run/regions/stores.to cases/run/regions/errors.to cases/run/regions/runtime_arrays.to
 Rvalue::Discriminant          - gives a variant's index

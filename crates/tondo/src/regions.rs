@@ -43,15 +43,58 @@ struct Summary {
     /// a call of it gives may be what it was given, as a sort gives back
     /// an array of fewer than two elements.
     returns: Vec<bool>,
-    /// Whether what it returns is only what it, or the fresh results of
-    /// its calls, made: a value no one else holds.
-    fresh: bool,
+    /// Why what it returns is not only what it, or the fresh results of
+    /// its calls, made, a value no one else holds; none when it is.
+    stale: Option<Stale>,
+    /// Whether what it returns, fresh, is only parts of what its calls
+    /// made, as an element of an array `split` gave: a text it returns so
+    /// is copied out instead (`copied_out`), and the collection stays in
+    /// its own region.
+    parted: bool,
     /// Its calls the program's code makes by its name, and what each does
     /// with the result.
     calls: Vec<Call>,
     /// Why calls of it that are not seen may keep its result: those
-    /// through a function value, or from outside the program's code.
-    unseen: Option<&'static str>,
+    /// through a function value, as the task a `spawn` starts, or from
+    /// outside the program's code; and the `spawn`, when it is one.
+    unseen: Option<(&'static str, Span)>,
+}
+
+impl Summary {
+    /// Whether what it returns is only what it, or the fresh results of its
+    /// calls, made.
+    fn fresh(&self) -> bool {
+        self.stale.is_none()
+    }
+}
+
+/// Why what a function returns is not fresh.
+#[derive(Clone, Debug, PartialEq)]
+enum Stale {
+    /// It returns what it was given, or holds it.
+    Given,
+    /// It keeps a value it returns: why, and where.
+    Kept(String, Span),
+    /// None of what it made reaches what it returns.
+    Unmade,
+    /// The summaries did not settle.
+    Unsettled,
+}
+
+impl Stale {
+    /// What the view says of a function `name` whose result is so, and the
+    /// code that keeps it.
+    fn words(&self, name: &str) -> (String, Span) {
+        match self {
+            Stale::Given => (format!("`{name}` returns it with what it was given"), Span::default()),
+            Stale::Kept(why, at) => (format!("`{name}` returns it with a value it also keeps: {why}"), *at),
+            Stale::Unmade => (format!("`{name}` returns it with what it did not make"), Span::default()),
+            Stale::Unsettled => (
+                format!("the analysis of `{name}`'s calls did not settle, which keeps it on the heap to be safe"),
+                Span::default(),
+            ),
+        }
+    }
 }
 
 /// A call of a function by its name.
@@ -149,8 +192,9 @@ pub fn regions(
             let own = fate == Fate::Here;
             let (region, text, by) = match fate {
                 Fate::Here => (true, format!("{what}goes in a region of `{name}`"), None),
-                Fate::Returned if !summaries[index].fresh => {
-                    (false, format!("{what}stays on the heap: `{name}` returns it with what it was given"), None)
+                Fate::Returned if let Some(stale) = &summaries[index].stale => {
+                    let (words, at) = stale.words(name);
+                    (false, format!("{what}stays on the heap: {words}"), Some(at).filter(|at| *at != Span::default()))
                 }
                 Fate::Returned => {
                     let (mut drops, mut keeps) = (Vec::new(), Vec::new());
@@ -204,7 +248,7 @@ pub fn regions(
         }
         // What a region holds must be the region's too, as nothing lets go
         // of it when the region goes.
-        let fresh = |_: (u32, u32), callee: usize| summaries[callee].fresh;
+        let fresh = |_: (u32, u32), callee: usize| summaries[callee].fresh();
         let mut region: Vec<bool> = verdicts.iter().map(|verdict| verdict.region).collect();
         for (at, (why, by)) in holding(&flows[index], body, types, &loans, sites, &mut region, &fresh) {
             let verdict = &mut verdicts[at];
@@ -478,7 +522,7 @@ fn copied_out(
     let copying: Vec<usize> = (0..bodies.len())
         .filter(|&index| {
             let body = &bodies[index];
-            !summaries[index].fresh
+            (!summaries[index].fresh() || summaries[index].parted)
                 && called[index]
                 && body.ret.is_some()
                 && text(body.result)
@@ -595,7 +639,7 @@ fn place(
         while changed {
             changed = false;
             for index in 0..count {
-                if copied[index] || !summaries[index].fresh || barred[index] {
+                if copied[index] || !summaries[index].fresh() || barred[index] {
                     continue;
                 }
                 let lets_go = summaries[index].calls.iter().any(|call| {
@@ -607,7 +651,7 @@ fn place(
                 }
             }
             for &(base, clone) in clones {
-                if copied[base] != copied[clone] && summaries[base].fresh && summaries[clone].fresh {
+                if copied[base] != copied[clone] && summaries[base].fresh() && summaries[clone].fresh() {
                     copied[base] = true;
                     copied[clone] = true;
                     changed = true;
@@ -1405,6 +1449,23 @@ fn appends(body: &Body, site: &Site) -> bool {
         if place.local == site.local && place.path.is_empty() && taken_first(rvalue, site.local))
 }
 
+/// What an interpolation passes on of its pieces: those it takes over, and
+/// the text it shows when it shows one alone, which it gives as it is
+/// (`concat` in codegen). It copies the rest.
+fn passed_on<'a>(pieces: &'a [Piece], types: &Types) -> impl Iterator<Item = &'a Place> {
+    let alone = match pieces {
+        [Piece::Value(Operand::Copy(shown), ty)] if types.repr(*ty) == Ty::STRING => Some(shown),
+        _ => None,
+    };
+    pieces
+        .iter()
+        .filter_map(|piece| match piece {
+            Piece::Taken(taken) => Some(taken),
+            _ => None,
+        })
+        .chain(alone)
+}
+
 /// Whether an rvalue appends to the text of `local`, taken whole.
 fn taken_first(rvalue: &Rvalue, local: Local) -> bool {
     matches!(rvalue, Rvalue::Concat(pieces)
@@ -1944,8 +2005,8 @@ fn resolve(
     if std::mem::replace(&mut seen[index], true) {
         return;
     }
-    if let Some(why) = summaries[index].unseen {
-        keeps.push((why.to_string(), Span::default()));
+    if let Some((why, at)) = summaries[index].unseen {
+        keeps.push((why.to_string(), at));
     }
     for call in &summaries[index].calls {
         match &call.taken {
@@ -2258,6 +2319,9 @@ pub(crate) struct Flow {
     /// as a value, whose calls are not seen.
     callees: Vec<usize>,
     valued: Vec<usize>,
+    /// The functions of the closures `spawn` runs, whose result the task
+    /// gives to what waits for it, and the `spawn`.
+    tasks: Vec<(usize, Span)>,
     /// The locals that take the result of a call of the program's, with
     /// the block, the statement, the callee and the call.
     results: Vec<(usize, usize, Local, usize, Span)>,
@@ -2375,27 +2439,12 @@ impl Flow {
                         Rvalue::Aggregate(operands) | Rvalue::Variant(_, operands) | Rvalue::Array(operands, _) => {
                             (How::Made, copies(operands))
                         }
-                        // What an interpolation takes over, and the text it
-                        // shows when it shows one alone, which it gives as it
-                        // is (`concat` in codegen): it copies the rest.
+                        // What an interpolation passes on (`passed_on`).
                         Rvalue::Concat(pieces) => {
-                            let alone = match pieces.as_slice() {
-                                [Piece::Value(Operand::Copy(shown), ty)] if types.repr(*ty) == Ty::STRING => {
-                                    Some((shown.local, !shown.path.is_empty(), variant_read(shown)))
-                                }
-                                _ => None,
-                            };
-                            let taken = pieces
-                                .iter()
-                                .filter_map(|piece| match piece {
-                                    Piece::Taken(taken) => {
-                                        Some((taken.local, !taken.path.is_empty(), variant_read(taken)))
-                                    }
-                                    _ => None,
-                                })
-                                .chain(alone)
+                            let passed = passed_on(pieces, types)
+                                .map(|place| (place.local, !place.path.is_empty(), variant_read(place)))
                                 .collect();
-                            (How::Whole, taken)
+                            (How::Whole, passed)
                         }
                         Rvalue::Mutate(_, target, operands, ..) => {
                             transfers.push(Transfer {
@@ -2569,7 +2618,7 @@ impl Flow {
             }
         }
         let counted = body.locals.iter().map(|&ty| types.needs_drop(ty)).collect();
-        let spawned = body
+        let spawned: Vec<Local> = body
             .blocks
             .iter()
             .flat_map(|block| &block.stmts)
@@ -2579,6 +2628,29 @@ impl Flow {
                     _ => None,
                 },
                 _ => None,
+            })
+            .collect();
+        let tasks: Vec<(usize, Span)> = body
+            .blocks
+            .iter()
+            .flat_map(|block| &block.stmts)
+            .filter_map(|statement| match statement {
+                Statement::Assign(place, rvalue, _) if place.path.is_empty() && spawned.contains(&place.local) => {
+                    match &**rvalue {
+                        Rvalue::Erase(_, id, _) => Some((id.0 as usize, place.local)),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .filter_map(|(id, closure)| {
+                body.blocks.iter().flat_map(|block| &block.stmts).find_map(|statement| match statement {
+                    Statement::Assign(_, rvalue, span) => match &**rvalue {
+                        Rvalue::Spawn(Operand::Copy(spawned), _) if spawned.local == closure => Some((id, *span)),
+                        _ => None,
+                    },
+                    _ => None,
+                })
             })
             .collect();
         let mut called = vec![false; body.locals.len()];
@@ -2672,6 +2744,7 @@ impl Flow {
             at,
             callees,
             valued,
+            tasks,
             results,
         }
     }
@@ -3063,6 +3136,13 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize], flows: &[Flow], si
             *valued = true;
         }
     }
+    // A closure `spawn` runs is called through a value too, by its task.
+    let mut task = vec![None; count];
+    for &(id, at) in flows.iter().flat_map(|flow| &flow.tasks) {
+        if let Some(task) = task.get_mut(id) {
+            *task = Some(at);
+        }
+    }
     let mut live = vec![false; count];
     let mut pending: Vec<usize> = roots.iter().copied().chain((0..count).filter(|&index| valued[index])).collect();
     while let Some(index) = pending.pop() {
@@ -3075,13 +3155,17 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize], flows: &[Flow], si
         .enumerate()
         .map(|(index, body)| {
             let unseen = match () {
-                _ if valued[index] => Some("what calls it through a function value may keep it"),
-                _ if roots.contains(&index) => Some("it is called from outside the program's code"),
-                _ if !live[index] => Some("no call of it is left in the program's code: each was inlined"),
+                _ if let Some(at) = task[index] => Some(("a task gives it as its result", at)),
+                _ if valued[index] => Some(("what calls it through a function value may keep it", Span::default())),
+                _ if roots.contains(&index) => Some(("it is called from outside the program's code", Span::default())),
+                _ if !live[index] => {
+                    Some(("no call of it is left in the program's code: each was inlined", Span::default()))
+                }
                 _ => None,
             };
             let params = vec![false; body.params.len()];
-            Summary { keeps: params.clone(), returns: params, fresh: body.ret.is_some(), calls: Vec::new(), unseen }
+            let stale = body.ret.is_none().then_some(Stale::Unmade);
+            Summary { keeps: params.clone(), returns: params, stale, parted: false, calls: Vec::new(), unseen }
         })
         .collect();
     // The callers of each function, which a change of its summary may
@@ -3107,7 +3191,8 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize], flows: &[Flow], si
             for summary in &mut summaries {
                 summary.keeps.iter_mut().for_each(|keeps| *keeps = true);
                 summary.returns.iter_mut().for_each(|returns| *returns = false);
-                summary.fresh = false;
+                summary.stale = Some(Stale::Unsettled);
+                summary.parted = false;
             }
             break;
         }
@@ -3127,36 +3212,71 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize], flows: &[Flow], si
             let returns: Vec<bool> = fates.iter().map(|fate| *fate == Fate::Returned).collect();
             // The result: fresh when what reaches it is made here, or a
             // fresh result of a call.
-            let fresh = body.ret.is_some_and(|ret| {
+            let (stale, parted) = body.ret.map_or((Some(Stale::Unmade), false), |ret| {
                 let mut made = all_sites[index].clone();
                 made.extend(fresh_calls(&flows[index], &summaries));
                 made.sort_unstable_by_key(|local| local.0);
                 made.dedup();
                 let flow = &flows[index];
+                // What a call made is followed through its parts, as its
+                // fate is: an element of the array a call made is of the
+                // region the array is in.
                 let (held, variants): (Vec<Vec<bool>>, Vec<Vec<u64>>) = made
                     .iter()
                     .map(|&local| {
+                        let parts = flow.called[local.0 as usize];
                         let (mut held, mut variants) =
-                            flow.holders_in(types, body, local, false, flow.start_variants(local));
+                            flow.holders_in(types, body, local, parts, flow.start_variants(local));
                         through(flow, body, types, &mut held, &mut variants, &summaries);
                         (held, variants)
                     })
                     .unzip();
-                held.iter().any(|held| held[ret.0 as usize])
-                    && only_made(body, types, ret, &held)
-                    && made.iter().zip(held.iter().zip(&variants)).all(|(&local, (held, variants))| {
-                        let fate = match flow.called[local.0 as usize] {
-                            true => fate(flow, body, types, local, &summaries, bodies),
-                            false => fate_of(flow, body, types, None, held, variants, &summaries, bodies),
-                        };
-                        !matches!(fate, Fate::Kept(..))
-                    })
+                // Only what reaches the result is asked whether something
+                // keeps it: what the function keeps apart does not change
+                // what it returns.
+                if !held.iter().any(|held| held[ret.0 as usize]) {
+                    return (Some(Stale::Unmade), false);
+                }
+                if !only_made(body, types, ret, &held, &summaries) {
+                    return (Some(Stale::Given), false);
+                }
+                let kept =
+                    made.iter().zip(held.iter().zip(&variants)).filter(|(_, (held, _))| held[ret.0 as usize]).find_map(
+                        |(&local, (held, variants))| {
+                            let fate = match flow.called[local.0 as usize] {
+                                true => fate(flow, body, types, local, &summaries, bodies),
+                                false => fate_of(flow, body, types, None, held, variants, &summaries, bodies),
+                            };
+                            match fate {
+                                Fate::Kept(why, at) => Some(Stale::Kept(why, at)),
+                                _ => None,
+                            }
+                        },
+                    );
+                if kept.is_some() {
+                    return (kept, false);
+                }
+                // Whether something it made reaches the result whole, and
+                // not only through the parts of what a call made.
+                let plain = made.iter().any(|&local| {
+                    let (mut held, mut variants) =
+                        flow.holders_in(types, body, local, false, flow.start_variants(local));
+                    through(flow, body, types, &mut held, &mut variants, &summaries);
+                    held[ret.0 as usize]
+                });
+                (None, !plain)
             });
-            if keeps != summaries[index].keeps || returns != summaries[index].returns || fresh != summaries[index].fresh
-            {
+            // Only a change of what it does wakes its callers: the words of
+            // why it is not fresh follow theirs.
+            let fresh = stale.is_none();
+            let changed = keeps != summaries[index].keeps
+                || returns != summaries[index].returns
+                || fresh != summaries[index].fresh();
+            summaries[index].stale = stale;
+            summaries[index].parted = parted;
+            if changed {
                 summaries[index].keeps = keeps;
                 summaries[index].returns = returns;
-                summaries[index].fresh = fresh;
                 for &caller in &callers[index] {
                     if !std::mem::replace(&mut queued[caller], true) {
                         pending.push(caller);
@@ -3171,7 +3291,7 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize], flows: &[Flow], si
     let mut loops: Vec<Option<Lifetimes>> = (0..bodies.len()).map(|_| None).collect();
     for (index, body) in bodies.iter().enumerate().filter(|&(index, _)| live[index]) {
         for &(block, statement, local, callee, span) in &flows[index].results {
-            if !summaries[callee].fresh {
+            if !summaries[callee].fresh() {
                 continue;
             }
             let mut written = span;
@@ -3184,7 +3304,7 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize], flows: &[Flow], si
                 Fate::Here => Taken::Drops,
                 // A call in every turn of a loop that passed on the region
                 // its caller gives would leave each turn's result there.
-                Fate::Returned if summaries[index].fresh => {
+                Fate::Returned if summaries[index].fresh() => {
                     let lifetimes = loops[index].get_or_insert_with(|| {
                         Lifetimes::of(body, flows[index].results.iter().map(|&(block, ..)| block as u32))
                     });
@@ -3210,7 +3330,9 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize], flows: &[Flow], si
                     Taken::Keeps(why, Span::default())
                 }
                 Fate::Returned => {
-                    Taken::Keeps(format!("`{}` returns it with what it was given", body.name), Span::default())
+                    let stale = summaries[index].stale.as_ref().unwrap_or(&Stale::Given);
+                    let (words, at) = stale.words(&body.name);
+                    Taken::Keeps(words, at)
                 }
                 Fate::Kept(why, at) => Taken::Keeps(format!("`{}` keeps it: {why}", body.name), at),
             };
@@ -3225,14 +3347,18 @@ fn summaries(bodies: &[Body], types: &Types, roots: &[usize], flows: &[Flow], si
 fn fresh_calls(flow: &Flow, summaries: &[Summary]) -> Vec<Local> {
     flow.results
         .iter()
-        .filter(|&&(_, _, _, callee, _)| summaries[callee].fresh)
+        .filter(|&&(_, _, _, callee, _)| summaries[callee].fresh())
         .map(|&(_, _, local, ..)| local)
         .collect()
 }
 
 /// Whether every value written whole into `ret`, or into a local that
-/// reaches it, comes from what the function made, or holds no count.
-fn only_made(body: &Body, types: &Types, ret: Local, held: &[Vec<bool>]) -> bool {
+/// reaches it, comes from what the function made, or holds no count. What
+/// a call of the program gives holds of its arguments only those its
+/// callee may return, or keeps when what it returns is not only what it
+/// made (a parameter it keeps is not said to be returned too); and an
+/// interpolation only what it passes on.
+fn only_made(body: &Body, types: &Types, ret: Local, held: &[Vec<bool>], summaries: &[Summary]) -> bool {
     let mut allowed = vec![false; body.locals.len()];
     for held in held {
         for (allowed, &held) in allowed.iter_mut().zip(held) {
@@ -3245,7 +3371,20 @@ fn only_made(body: &Body, types: &Types, ret: Local, held: &[Vec<bool>]) -> bool
             continue;
         }
         let mut used = Vec::new();
-        rvalue_uses(rvalue, &mut used);
+        match &**rvalue {
+            Rvalue::Call(Callee::Fn(id), args) => {
+                let summary = &summaries[id.0 as usize];
+                for (at, arg) in args.iter().enumerate() {
+                    let held =
+                        summary.returns.get(at).is_none_or(|&returns| returns || summary.keeps[at] && !summary.fresh());
+                    if let (true, Operand::Copy(place)) = (held, arg) {
+                        used.push(place.local);
+                    }
+                }
+            }
+            Rvalue::Concat(pieces) => used.extend(passed_on(pieces, types).map(|place| place.local)),
+            _ => rvalue_uses(rvalue, &mut used),
+        }
         let counted = |local: Local| types.needs_drop(body.locals[local.0 as usize]);
         if used.iter().any(|&local| !allowed[local.0 as usize] && body.params.contains(&local) && counted(local)) {
             return false;

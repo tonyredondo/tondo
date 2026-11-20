@@ -1,0 +1,468 @@
+// What a function returns of what it was given, and what only looks so.
+// A function that writes into its result a parameter, the call of one
+// that may give it back, or an interpolation that shows it alone stays on
+// the heap, "with what it was given". A call gives none of an argument its
+// callee neither returns nor keeps, nor one it keeps when it returns only
+// what it made; and an interpolation copies the texts it shows: what such
+// a function returns goes in the region its caller gives. A function takes
+// a call's result through a local of its own, and its texts still go in
+// the region its caller gives: what holds its result takes it for the
+// region's only when all of it is (fresh_whole.to). The closure of a task
+// writes a result that may fail whole into its own.
+
+import std.console
+
+type Shelf = {
+    names: Array[String]
+    last: String
+}
+
+pub enum Oops {
+    Odd(Int)
+}
+
+// Gives back what it was given.
+fn same(text: String, n: Int): String {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    if spare == -999 {
+        return "none {n} and more"
+    }
+    text
+}
+
+// A text of its own, or what `same` gives back.
+fn ownOrSame(text: String, n: Int): String {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    if n % 2 == 1 {
+        return "own {n} and some more"
+    }
+    same(text, n)
+}
+
+// Keeps what it was given, and may give it back.
+fn Shelf.keepOrGive(mut self, text: String, n: Int): String {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    self.names.push(text)
+    if spare == -999 {
+        return "none {n} and more"
+    }
+    text
+}
+
+// Stores what it was given in a field, and returns a text of its own.
+fn Shelf.store(mut self, text: String, n: Int): String {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    self.last = text
+    "stored {spare}"
+}
+
+// Pushes what it was given, and returns a text of its own.
+fn Shelf.keep(mut self, text: String, n: Int): String {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    self.names.push(text)
+    "kept {spare}"
+}
+
+// Passes what it was given on to one that keeps it.
+fn Shelf.handOn(mut self, text: String, n: Int): String {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    let kept = self.keep(text, n)
+    "handed on {kept} {spare}"
+}
+
+// Neither returns nor keeps what it was given.
+fn measured(text: String, n: Int): String {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    "measured {spare} {text.length()}"
+}
+
+// Each returns what a call of one of them gives, written whole into its
+// result.
+fn echoSame(text: String, n: Int): String {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    ownOrSame(text, n + spare % 2)
+}
+
+fn Shelf.echoStore(mut self, text: String, n: Int): String {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    self.store(text, n + spare % 2)
+}
+
+fn Shelf.echoKeep(mut self, text: String, n: Int): String {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    self.keep(text, n + spare % 2)
+}
+
+fn Shelf.echoHandOn(mut self, text: String, n: Int): String {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    self.handOn(text, n + spare % 2)
+}
+
+fn echoMeasured(text: String, n: Int): String {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    measured(text, n + spare % 2)
+}
+
+// An interpolation that copies the text it was given.
+fn quoted(text: String, n: Int): String {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    if spare == -999 {
+        return "none {n} and more"
+    }
+    "<li>{text}</li>"
+}
+
+// One that shows it alone, and gives it as it is.
+fn shown(text: String, n: Int): String {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    if spare == -999 {
+        return "none {n} and more"
+    }
+    "{text}"
+}
+
+// One that takes over a copy of it, and grows it.
+fn grown(text: String, n: Int): String {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    if spare == -999 {
+        return "none {n} and more"
+    }
+    var longer = text
+    longer = "{longer} and more"
+    longer
+}
+
+// For tasks, whose closure writes a result that may fail whole into its
+// own: one that may give back what it was given, and one that neither
+// returns nor keeps it.
+fn ownOrGiven(text: String, n: Int): String ! Oops {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    if spare == -999 {
+        fail Odd(n)
+    }
+    if n % 2 == 1 {
+        return "own {n} and some more"
+    }
+    text
+}
+
+fn counted(text: String, n: Int): String ! Oops {
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    for k in 0..spare {
+        if k % 17 == 5 {
+            spare -= 1
+        } else if k % 19 == 7 {
+            spare += 3
+        }
+    }
+    if spare == -999 {
+        fail Odd(n)
+    }
+    "counted {spare} {text.length()}"
+}
+
+fn main() {
+    var shelf = Shelf { names: [], last: "" }
+    var total = 0
+    for i in 0..4 {
+        let text = "a text of turn {i}"
+        total += echoSame(text, i).length()
+        total += ownOrSame(text, i).length()
+        total += shelf.keepOrGive(text, i).length()
+        total += shelf.echoStore(text, i).length()
+        total += shelf.echoKeep(text, i).length()
+        total += shelf.echoHandOn(text, i).length()
+        total += echoMeasured(text, i).length()
+        total += quoted(text, i).length()
+        total += shown(text, i).length()
+        total += grown(text, i).length()
+    }
+    for i in 0..2 {
+        total += (ownOrGiven("a text of turn {i}", i) ?? "").length()
+        total += (counted("a text of turn {i}", i) ?? "").length()
+    }
+    let given = spawn ownOrGiven("a text for a task", 2)
+    let counting = spawn counted("a text for a task", 2)
+    console.println(
+        "{total} {shelf.names.length()} {shelf.last} {given.wait() ?? ""} {counting.wait() ?? ""}",
+    )
+}
+
+// expect-optimization: 44:16 region stays on the heap: `same` returns it with what it was given
+// expect-optimization: 69:16 region goes in a region that the caller of `ownOrSame` gives
+// expect-optimization: 95:16 region stays on the heap: `Shelf.keepOrGive` returns it with what it was given
+// expect-optimization: 120:5 region goes in a region that the caller of `Shelf.store` gives
+// expect-optimization: 143:5 region goes in a region that the caller of `Shelf.keep` gives
+// expect-optimization: 166:5 region goes in a region that the caller of `Shelf.handOn` gives
+// expect-optimization: 188:5 region goes in a region that the caller of `measured` gives
+// expect-optimization: 320:5 region goes in a region that the caller of `quoted` gives
+// expect-optimization: 345:5 region stays on the heap: `shown` returns it with what it was given
+// expect-optimization: 371:5 region goes in a region that the caller of `grown` gives
+// expect-optimization: 400:16 region `spawn ownOrGiven` returns it with what it was given
+// expect-optimization: 426:5 region a task gives it as its result: `spawn counted("a text for a task", 2)` at 450:20
+// expect-stdout: 709 12 a text of turn 3 a text for a task counted 4 17

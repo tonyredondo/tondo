@@ -1,0 +1,85 @@
+// A function whose result holds parts of what a call made, as the words
+// of the array `words` gives: the array and its texts go in the region its
+// caller gives, as a call makes the parts of what it makes where it makes
+// it. A text it returns so is copied out at its return instead, and the
+// array stays in its own region. A result a task returns stays on the
+// heap, and the view names the task's `spawn`.
+
+import std.console
+
+type Pair = {
+    first: String
+    second: String
+}
+
+fn firstTwo(line: String): Pair {
+    let words = line.words()
+    var spare = 0
+    for word in words {
+        if word.length() % 7 == 3 {
+            spare += word.length() * 3 - 1
+        } else if word.length() % 5 == 2 {
+            spare -= word.length() / 2
+        } else {
+            spare += 1
+        }
+    }
+    if spare == -12345 {
+        return Pair { first: "none", second: "none" }
+    }
+    Pair { first: words[0], second: words[1] }
+}
+
+fn firstWord(line: String): String {
+    let words = line.words()
+    var spare = 0
+    for word in words {
+        if word.length() % 7 == 3 {
+            spare += word.length() * 3 - 1
+        } else if word.length() % 5 == 2 {
+            spare -= word.length() / 2
+        } else {
+            spare += 1
+        }
+    }
+    if spare == -12345 {
+        return "none"
+    }
+    words[0]
+}
+
+fn lastTwo(line: String): Pair {
+    let words = line.words()
+    var spare = 0
+    for word in words {
+        if word.length() % 7 == 3 {
+            spare += word.length() * 3 - 1
+        } else if word.length() % 5 == 2 {
+            spare -= word.length() / 2
+        } else {
+            spare += 1
+        }
+    }
+    if spare == -12345 {
+        return Pair { first: "none", second: "none" }
+    }
+    Pair { first: words[words.length() - 2], second: words[words.length() - 1] }
+}
+
+fn main() {
+    var total = 0
+    for i in 0..3 {
+        let pair = firstTwo("a longer first word {i} and more")
+        total += pair.first.length() + pair.second.length()
+        total += firstWord("longerfirstword{i} and more").length()
+    }
+    let task = spawn lastTwo("several words and a longer last word")
+    let last = task.wait()
+    console.println("{total} {last.first} {last.second}")
+}
+
+// expect-optimization: 16:17 region goes in a region that the caller of `firstTwo` gives
+// expect-optimization: 34:17 region goes in a region of `firstWord`
+// expect-optimization: 48:5 region is copied out at its return, and goes in a region that the caller of `firstWord` gives
+// expect-optimization: 52:17 region stays on the heap: `lastTwo` returns it, and a task gives it as its result: `spawn lastTwo(
+// expect-stdout: 69 last word

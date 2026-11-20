@@ -1,0 +1,129 @@
+// Functions that keep a value they make: what they return goes in the
+// region their caller gives when the kept value is not part of it, and
+// stays on the heap with the keeper named when it is, on the function's
+// side and on its caller's.
+
+import std.console
+
+type Log = {
+    arrays: Array[Array[Int]]
+}
+
+type Pair = {
+    a: Array[Int]
+    b: Array[Int]
+}
+
+// Keeps `b` and returns `a` alone: the result is what it made.
+fn Log.apart(mut self, n: Int): Array[Int] {
+    var a = [n]
+    var b = [n, n]
+    for k in 0..n {
+        if k % 7 == 3 { a.push(k * 3 - 1) } else if k % 5 == 2 { b.push(k / 2) } else { a.push(k) }
+    }
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    if spare == -999 {
+        a.push(spare)
+    }
+    self.arrays.push(b)
+    a
+}
+
+// Keeps `b` and returns it beside `a`.
+fn Log.paired(mut self, n: Int): Pair {
+    var a = [n]
+    var b = [n, n]
+    for k in 0..n {
+        if k % 7 == 3 { a.push(k * 3 - 1) } else if k % 5 == 2 { b.push(k / 2) } else { a.push(k) }
+    }
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    if spare == -999 {
+        a.push(spare)
+    }
+    self.arrays.push(b)
+    Pair { a, b }
+}
+
+// Returns only what it makes.
+fn made(n: Int): Array[Int] {
+    var a = [n]
+    for k in 0..n {
+        if k % 7 == 3 { a.push(k * 3 - 1) } else if k % 5 == 2 { a.push(k / 2) } else { a.push(k) }
+    }
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    if spare == -999 {
+        a.push(spare)
+    }
+    a
+}
+
+// Returns what `made` made beside a value it keeps.
+fn Log.wrapped(mut self, n: Int): Pair {
+    var b = [n, n]
+    for k in 0..n {
+        if k % 3 == 1 {
+            b.push(k)
+        } else if k % 4 == 2 {
+            b.push(k * 2)
+        }
+    }
+    var spare = 0
+    for k in 0..n {
+        if k % 11 == 4 {
+            spare += k * 5
+        } else if k % 13 == 6 {
+            spare -= k
+        } else {
+            spare += 2
+        }
+    }
+    if spare == -999 {
+        b.push(spare)
+    }
+    self.arrays.push(b)
+    Pair { a: made(n), b }
+}
+
+fn main() {
+    var log = Log { arrays: [] }
+    var total = 0
+    for i in 0..4 {
+        total += log.apart(i).length()
+        total += log.paired(i).a.length()
+        total += log.wrapped(i).a.length()
+    }
+    console.println("{total} {log.arrays.length()}")
+}
+
+// expect-optimization: 19:13 region goes in a region that the caller of `Log.apart` gives
+// expect-optimization: 20:13 region stays on the heap: it is stored in what the function was given
+// expect-optimization: 43:13 region stays on the heap: `Log.paired` returns it with a value it also keeps: it is stored in what the function was given
+// expect-optimization: 67:13 region stays on the heap: `made` returns it, and `Log.wrapped` returns it with a value it also keeps: it is stored in what the function was given
+// expect-stdout: 28 12

@@ -2542,7 +2542,10 @@ src/main.to:28:21: `"{round * 1000}"` is made on the heap: it is copied to `labe
   estado de un lock o en un `Ref`, lo captura un closure, se envía, va a
   una tarea o a C, lo guarda una función a la que se pasa, y no una que
   solo lo devuelve, como `sorted` un array de menos de dos elementos,
-  cuyo resultado se sigue en su lugar, sobrevive a una
+  cuyo resultado se sigue en su lugar, la función lo devuelve con lo que
+  recibió, o con un valor que también guarda, y nombra el código que lo
+  guarda, una tarea lo da como su resultado, y nombra su `spawn`,
+  sobrevive a una
   vuelta del bucle en que se hace en algo que el bucle hace más que ampliar,
   como la variable que la vuelta siguiente reescribe, se hace en cada
   vuelta de un bucle para la región que le da quien la llama, y nombra el
