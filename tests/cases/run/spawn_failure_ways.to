@@ -1,0 +1,68 @@
+// A task that can fail is not dropped where it is made (11.9): its `Join`
+// is kept and waited for, its failure passed on or dropped on purpose; or
+// the task handles its failure; or a detached one is let go with `_ =`.
+// An array of tasks dropped with `_ =` waits for them all together, and a
+// task that cannot fail, or a `Join` let go with `detach()`, is as before.
+
+import std.console
+
+type Failed = { n: Int }
+
+fn save(n: Int): Int ! Failed {
+    if n % 2 == 1 {
+        fail Failed { n: n }
+    }
+    n * 10
+}
+
+/// The task handles its own failure.
+fn saved(n: Int, out: Sender[String]) {
+    match save(n) {
+        ok(value) => out.send("saved {value}")
+        err(error) => out.send("could not save {error.n}")
+    }
+}
+
+fn count(n: Int): Int {
+    n + 1
+}
+
+fn kept(): Int ! Failed {
+    let saving = spawn save(2)
+    let failing = spawn save(3)
+    _ = failing.wait()
+    saving.wait()?
+}
+
+fn passed(): Int ! Failed {
+    let failing = spawn save(5)
+    failing.wait()?
+}
+
+fn main() {
+    console.println("{kept()}")
+    match passed() {
+        ok(value) => console.println("{value}")
+        err(error) => console.println("passed on {error.n}")
+    }
+    let (out, said) = channel[String](4)
+    spawn saved(6, out.copy())
+    spawn saved(7, out)
+    var lines: Array[String] = []
+    for line in said {
+        lines.push(line)
+    }
+    console.println("{lines.sorted()}")
+    _ = spawn detached save(9)
+    _ = [spawn save(10), spawn save(11)]
+    spawn count(12)
+    spawn detached count(13)
+    let joined = spawn save(15)
+    joined.detach()
+    console.println("done")
+}
+
+// expect-stdout: ok(20)
+// expect-stdout: passed on 5
+// expect-stdout: [could not save 7, saved 60]
+// expect-stdout: done

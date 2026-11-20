@@ -1,0 +1,23 @@
+// A `Join` nobody uses is waited for when its block ends, and `_ =` waits
+// for the task at once: the warnings say so, and that a failure would be
+// lost.
+
+type Failed = { n: Int }
+
+fn save(n: Int): Int ! Failed {
+    n
+}
+
+fn count(n: Int): Int {
+    n
+}
+
+fn main() {
+    let saving = spawn save(1)
+    let counting = spawn count(2)
+    _ = spawn count(3)
+}
+
+// expect-warning: W1002 `saving` is never used, so its task is waited for when the block ends, and nothing reads its failure: wait for it where it should end, as `saving.wait()?`, or drop the failure on purpose with `_ = saving.wait()`
+// expect-warning: W1002 `counting` is never used, so its task is waited for when the block ends: wait for it where it should end, as `counting.wait()`, or write `_counting` to wait at the block's end
+// expect-warning: W1026 the task is waited for here, at once, as `_ =` drops its `Join`: keep its `Join` to run it beside the rest, as `let job = spawn ...`, and wait for it where it should have ended

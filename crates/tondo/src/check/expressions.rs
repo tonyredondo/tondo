@@ -731,13 +731,7 @@ impl<'a> Checker<'a> {
                 Self::mk(hir::ExprKind::Block(hir::Block { stmts, tail: None, ty: Ty::UNIT }), Ty::UNIT, span)
             }
             ast::ExprKind::Spawn(call, false) => self.spawn(cx, call, span),
-            ast::ExprKind::Spawn(call, true) => {
-                let join = self.spawn(cx, call, span);
-                if join.ty == Ty::ERROR {
-                    return join;
-                }
-                Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Detach, vec![join]), Ty::UNIT, span)
-            }
+            ast::ExprKind::Spawn(call, true) => self.spawn_detached(cx, call, span, false),
             ast::ExprKind::Error => Self::error_expr(span),
         }
     }

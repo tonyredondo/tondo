@@ -76,7 +76,7 @@ pub const CODES: &[(&str, &str, &str)] = &[
     (
         "E1303",
         "discarded-result",
-        "A `Result`, or an array, a tuple or an option that holds results, is dropped as a statement, unused and without `_ =`.",
+        "A `Result`, or an array, a tuple, an option or a `Join` that holds results, is dropped as a statement, unused and without `_ =`; or a `spawn detached` of a call that can fail is written without `_ =`.",
     ),
     (
         "E1304",
@@ -377,6 +377,12 @@ pub const CODES: &[(&str, &str, &str)] = &[
         "With `--performance`: `regex.Regex.compile` of a written pattern in a loop, a closure or a function \
          other than `main`, which compiles it every time that code runs. A context's field compiles it once, \
          when first read: `context Patterns = { words: regex.Regex = regex.Regex.compile(r\"\\w+\")? }`.",
+    ),
+    (
+        "W1026",
+        "spawn-waited-at-once",
+        "`_ = spawn ...`: the `Join` is dropped at once, so the task is waited for right there, as a call would \
+         be. To run it beside the rest, keep its `Join`, `let job = spawn ...`, and wait for it where it should end.",
     ),
     ("P0001", "bounds", "An index or bound outside the range allowed."),
     ("P0002", "zero-slice-step", "A slice with a step of zero."),

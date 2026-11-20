@@ -10,7 +10,8 @@ import std.net
 
 fn serve(listener: net.Listener) {
     for connection in listener {
-        spawn detached echo(connection)
+        // A connection's failure ends only that connection.
+        _ = spawn detached echo(connection)
     }
 }
 

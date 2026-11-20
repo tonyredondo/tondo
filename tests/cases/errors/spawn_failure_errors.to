@@ -1,0 +1,27 @@
+type Failed = { n: Int }
+
+fn save(n: Int): Int ! Failed {
+    n
+}
+
+fn main() {
+    spawn save(1)
+    spawn detached save(2)
+    [spawn save(3), spawn save(4)]
+    let maybe: Join[Int ! Failed]? = none
+    maybe
+    if true {
+        spawn save(5)
+    }
+    for n in 0..2 {
+        spawn save(n)
+    }
+}
+
+// expect-error: E1303 the task of `save` may fail, and nothing will read its failure: keep its `Join` and wait for it, as `let job = spawn save(1)` and later `job.wait()?`, or handle the failure in the task
+// expect-error: E1303 the task of `save` may fail, and nothing will read its failure: handle it in the task, or discard it on purpose with `_ = spawn detached ...`
+// expect-error: E1303 a value of type `Array[Join[Int ! Failed]]` is not used, and it holds results that may be failures; read them, or discard them with `_ = ...`
+// expect-error: E1303 a value of type `Join[Int ! Failed]?` is not used, and it holds results
+// expect-error: E1303 as `let job = spawn save(5)` and later
+// expect-error: E1303 as `let job = spawn save(n)` and later
+// expect-warning: W1013

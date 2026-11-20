@@ -19,7 +19,8 @@ fn echo(connection: net.Stream): !net.NetError {
 
 fn serve(listener: net.Listener) {
     for connection in listener {
-        spawn detached echo(connection)
+        // A connection's failure ends only that connection.
+        _ = spawn detached echo(connection)
     }
 }
 
@@ -62,12 +63,13 @@ fn main(): !(io.IoError | net.NetError) {
 
     // std.io streams and direct calls on one connection.
     let greeter = net.listen("127.0.0.1", 0)?
-    spawn greet(greeter)
+    let greeting = spawn greet(greeter)
     let client = net.connect("127.0.0.1", greeter.address().port)?
     console.println("{client.readLine()?} / {client.reader().readLine()?}")
     client.writer().writeLine("thanks")?
     console.println("rest: {client.readAll()?.length()}")
     client.close()?
+    greeting.wait()?
 
     // Timeouts, cancellation and a writer the other side does not read.
     let quiet = net.listen("127.0.0.1", 0)?

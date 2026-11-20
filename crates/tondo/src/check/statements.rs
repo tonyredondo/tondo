@@ -94,6 +94,18 @@ impl<'a> Checker<'a> {
                 );
                 self.diags.warning("W1003", *span, message);
                 self.diags.fix(format!("rename it `_{name}`"), false, vec![(*span, format!("_{name}"))]);
+            } else if let TyKind::Handle(Handle::Join, result) = *self.types.kind(cx.locals[local.0 as usize].ty) {
+                // `_` would wait for the task at once, and `_name` hide its
+                // failure.
+                let message = match self.must_use(result) {
+                    true => format!(
+                        "`{name}` is never used, so its task is waited for when the block ends, and nothing reads its failure: wait for it where it should end, as `{name}.wait()?`, or drop the failure on purpose with `_ = {name}.wait()`"
+                    ),
+                    false => format!(
+                        "`{name}` is never used, so its task is waited for when the block ends: wait for it where it should end, as `{name}.wait()`, or write `_{name}` to wait at the block's end"
+                    ),
+                };
+                self.diags.warning("W1002", *span, message);
             } else {
                 let message = format!(
                     "`{name}` is never used: write `_` instead, or `_{name}` to hold its value until the block ends"
@@ -270,7 +282,16 @@ impl<'a> Checker<'a> {
                 }
             }
             ast::StmtKind::Assign { target, op, value } => self.assign(cx, target, *op, value, stmt.span),
+            // `_ = spawn detached f()` drops a failure on purpose.
+            ast::StmtKind::Discard(ast::Expr { kind: ast::ExprKind::Spawn(call, true), span }) => {
+                Some(hir::Stmt::Expr(self.spawn_detached(cx, call, *span, true)))
+            }
             ast::StmtKind::Discard(value) => {
+                // `_ = spawn f()` waits for the task here (11.9).
+                if let ast::ExprKind::Spawn(_, false) = value.kind {
+                    let message = "the task is waited for here, at once, as `_ =` drops its `Join`: keep its `Join` to run it beside the rest, as `let job = spawn ...`, and wait for it where it should have ended";
+                    self.diags.warning("W1026", value.span, message);
+                }
                 let value = self.expr(cx, value, None);
                 cx.diverged |= value.ty == Ty::NEVER;
                 Some(hir::Stmt::Expr(value))
@@ -1703,6 +1724,8 @@ impl<'a> Checker<'a> {
     pub(super) fn holds_results(&self, ty: Ty) -> bool {
         match self.types.kind(self.types.repr(ty)) {
             TyKind::Array(element) | TyKind::Option(element) => self.must_use(*element),
+            // A task's `Join`, whose failure nothing else would read.
+            TyKind::Handle(Handle::Join, result) => self.must_use(*result),
             TyKind::Tuple(items) => items.iter().any(|&item| self.must_use(item)),
             _ => false,
         }

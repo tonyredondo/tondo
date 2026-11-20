@@ -1038,17 +1038,72 @@ impl<'a> Checker<'a> {
     /// `spawn call(...)` as a statement: the task belongs to the block,
     /// which waits for it at its end.
     pub(super) fn spawn_statement(&mut self, cx: &mut FnCx, call: &ast::Expr) -> hir::Stmt {
+        let join = self.expr(cx, call, None);
+        let fails = self.must_use(join.ty);
         // In a loop the block is the iteration, so the tasks would run one
         // at a time: almost never what a loop that spawns wants.
         if !cx.loops.is_empty() {
             let message = "each iteration waits for this task at its end, so the tasks run one at a time; map the values to tasks and `wait()` for the array, as `values.map((value) { spawn work(value) }).wait()`, or add them to a `Group`, or `spawn detached` lets them run at once without waiting";
             self.diags.warning("W1013", call.span, message);
             let start = Span::new(call.span.start, call.span.start);
-            self.diags.fix("launch it with `spawn detached`", false, vec![(start, "detached ".into())]);
+            // A task that can fail is let go with its failure on purpose.
+            let detached = Span::new(call.span.start + "spawn".len() as u32, call.span.start + "spawn".len() as u32);
+            match fails {
+                false => self.diags.fix("launch it with `spawn detached`", false, vec![(start, "detached ".into())]),
+                true => {
+                    let edits = vec![(start, "_ = ".into()), (detached, " detached".into())];
+                    self.diags.fix("launch it with `_ = spawn detached`", false, edits)
+                }
+            }
         }
-        let join = self.expr(cx, call, None);
+        if fails {
+            self.failure_lost(call, false);
+        }
         let local = self.hidden_local(cx, join.ty);
         hir::Stmt::Let(local, join)
+    }
+
+    /// `spawn detached call(...)`: the task runs on, and nothing waits for
+    /// it. Its failure would go nowhere, so one that can fail is said to be
+    /// dropped on purpose, `_ = spawn detached ...` (11.11).
+    pub(super) fn spawn_detached(&mut self, cx: &mut FnCx, call: &ast::Expr, span: Span, discarded: bool) -> hir::Expr {
+        let join = self.spawn(cx, call, span);
+        if join.ty == Ty::ERROR {
+            return join;
+        }
+        if !discarded && self.must_use(join.ty) {
+            let written = ast::Expr { kind: call.kind.clone(), span };
+            self.failure_lost(&written, true);
+        }
+        Self::mk(hir::ExprKind::TaskOp(hir::TaskOp::Detach, vec![join]), Ty::UNIT, span)
+    }
+
+    /// E1303: a task that can fail, whose `Join` is dropped where it is
+    /// made, so that nothing would read its failure (11.9).
+    fn failure_lost(&mut self, spawned: &ast::Expr, detached: bool) {
+        let call = match &spawned.kind {
+            ast::ExprKind::Spawn(call, _) => &**call,
+            _ => spawned,
+        };
+        let name = match &call.kind {
+            ast::ExprKind::Call { callee, .. } => match &callee.kind {
+                ast::ExprKind::Path(path) => path.last().map(|n| n.name.clone()),
+                ast::ExprKind::Field(_, field) => Some(field.name.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let task = name.map_or("the task".to_string(), |name| format!("the task of `{name}`"));
+        let text = self.sources.file_of(call.span.start).slice(call.span).to_string();
+        let message = match detached {
+            false => format!(
+                "{task} may fail, and nothing will read its failure: keep its `Join` and wait for it, as `let job = spawn {text}` and later `job.wait()?`, or handle the failure in the task"
+            ),
+            true => format!(
+                "{task} may fail, and nothing will read its failure: handle it in the task, or discard it on purpose with `_ = spawn detached ...`"
+            ),
+        };
+        self.diags.error("E1303", spawned.span, message);
     }
 
     /// `spawn call(arguments)` (11.11): the callee and arguments are

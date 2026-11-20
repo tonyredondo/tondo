@@ -49,7 +49,8 @@ fn main() {
         total += Int.saturating((spawn ratio(round)).wait())
         let made = (spawn big(round)).wait()
         total += made.a + made.c + made.d.length()
-        // Never waited for: its result goes with the join.
+        // Waited for at once, as `_ =` drops the join, which frees its
+        // result.
         _ = spawn text(round)
     }
     console.println("total {total}")
@@ -103,3 +104,4 @@ fn main() {
 // expect-stdout: caught 25
 // expect-stdout: reported 45
 // expect-stdout: grouped 870
+// expect-warning: W1026

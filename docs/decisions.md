@@ -8622,3 +8622,47 @@ count, and the library has no way to turn an array of results into its
 values or its first failure, so the message says to read them or to
 discard them, and, of a `wait()` of tasks, to pass the first failure on
 with `waitOrCancel()?`.
+
+## A task that can fail is not dropped where it is made
+
+Tony asked why an array of results nobody uses is an error, and whether
+tasks were not waited for by themselves. They are, and that does not
+change; but looking showed that a task that can fail and that nobody
+waits for lost its failure without a word: `spawn save(order)` as a
+statement compiled, the block's end waited for the task, and its `err`
+went nowhere, and so did one `spawn detached` started. He asked to look
+at it: "Vale investiga, y decidamos si eso es muy malo o si podemos
+resolverlo de forma elegante". Of the rule below, with its code, he
+said "Vale me gusta".
+
+E1303 reads a `Join` as it reads an array, a tuple or an option: by
+what it holds. A `spawn` whose call can fail, written as a statement or
+as the value of a block, branch or arm of type `Unit`, is refused, and
+so is an array of such tasks nobody takes; and `spawn detached` of such
+a call, whose failure has nowhere to go, unless it is written `_ =
+spawn detached ...`. The ways out are the message's: keep the `Join` and
+wait where the work must be done, `job.wait()?`, or `_ = job.wait()` to
+drop the failure on purpose; or handle the failure in the task. Tasks
+that cannot fail are as before.
+
+`_ = spawn f()` was first among the ways out, and is not one: `_ =`
+drops the `Join` at once, and a dropped `Join` waits for its task, so
+two such lines took 400 ms where two `spawn` statements took 200, the
+tasks one after the other. It now warns, W1026, wherever it is written,
+as W1013 does in a loop. W1002 on a `Join` nobody uses no longer offers
+`_`, which would wait at once, and for a task that can fail offers
+`job.wait()?` or `_ = job.wait()`, not `_job`, which would hide the
+failure again; W1013's repair writes `_ = spawn detached` for such a
+task. `job.detach()` of a task that can fail stays allowed, as `_ =
+spawn detached` is: an act that says so, where the rule is about a task
+dropped where it is made.
+
+A count over std's every body, the examples, the cases, the manual's,
+the guide's and the runbooks' programs found five places. Two echo
+servers of the cases and the guide's server now let each connection's
+failure end that connection, `_ = spawn detached`. A case's greeter is
+waited for, so that its failure fails the case. And gRPC's client starts
+the interceptors of a call in a task whose status reaches the caller
+through the slot it closes with it, so that task is let go with `_ =`;
+the function stays one that can fail, since a unary call runs it in
+place and its failure is the call's.

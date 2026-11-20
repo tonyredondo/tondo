@@ -3967,9 +3967,19 @@ _ = computeValue()
 ~~~
 
 Tampoco un array, una tupla o una opción que guarda resultados, como el
-`Array[T ! E]` que da `wait()` sobre tareas que pueden fallar: cualquiera de sus
-valores puede ser un fallo. Se leen o se descartan con `_ = ...`; con tareas,
-`waitOrCancel()?` propaga el primer fallo.
+`Array[T ! E]` que da `wait()` sobre tareas que pueden fallar, o tareas que
+pueden fallar, como un `Array[Join[T ! E]]`: cualquiera de sus valores puede ser
+un fallo. Se leen o se descartan con `_ = ...`; con tareas, `waitOrCancel()?`
+propaga el primer fallo.
+
+Una tarea que puede fallar tampoco se abandona donde se crea: `spawn
+save(order)` como sentencia, o como valor de un bloque, rama o brazo de tipo
+`Unit`, produce `E1303`, porque nada leería su fallo. Se guarda su `Join` y se
+espera donde el trabajo debe estar hecho, `let job = spawn save(order)` y
+después `job.wait()?`, o `_ = job.wait()` para descartar el fallo a propósito;
+o se maneja el fallo dentro de la tarea. `_ = spawn save(order)` no es una
+salida: descarta el `Join` en el acto, así que espera ahí mismo a la tarea, y
+avisa (`W1026`).
 
 Un `Option`, `T?`, sí se abandona como cualquier otro valor: una ausencia no es
 un fallo, y lo que da `seen.remove(key)` o `queue.pop()` a menudo no hace falta.
@@ -4042,7 +4052,8 @@ lo posee nadie lo ha consumido, el bloque espera a la tarea y descarta su
 resultado, también cuando sale por `return`, `fail` o `?`. Así ninguna tarea queda
 suelta ni hay que escribir nada para esperarla. Un `spawn` escrito como
 sentencia, o como valor de un bloque, rama o brazo de tipo `Unit`, no necesita
-`_ =`: su `Join` pertenece a ese bloque. Por eso `for id in ids { spawn
+`_ =`: su `Join` pertenece a ese bloque. Si la llamada puede fallar, produce
+`E1303` (11.9): nada leería su fallo. Por eso `for id in ids { spawn
 notify(id) }` espera cada tarea al final de su iteración, y el compilador lo
 avisa (`W1013`): casi nunca es lo que quiere un bucle que lanza tareas.
 
@@ -4076,7 +4087,9 @@ Sobre tareas que no pueden fallar, `waitOrCancel()` produce `E1620`, que dice
 escribir `wait()`.
 
 `spawn detached call(arguments)` lanza la tarea suelta: no da `Join`, su valor
-es `Unit` y nadie la espera. Es la forma de un servidor que atiende cada
+es `Unit` y nadie la espera. Si la llamada puede fallar, su fallo no tiene
+adónde ir: produce `E1303`, salvo que la tarea lo maneje o que se descarte a
+propósito, `_ = spawn detached call(arguments)`. Es la forma de un servidor que atiende cada
 conexión a la vez, o de trabajo que no debe retener a quien lo inicia, como
 enviar una métrica:
 
@@ -9392,7 +9405,7 @@ oculten un diagnóstico independiente.
 |---|---|---|
 | `E1301` | `incompatible-error-propagation` | `?` no puede representar el canal propagado en la firma envolvente. |
 | `E1302` | `invalid-fail-context` | `fail` aparece sin error compatible. |
-| `E1303` | `discarded-result` | Un `Result`, o un array, una tupla o una opción que guarda resultados, se abandona como sentencia sin uso ni `_ =`. |
+| `E1303` | `discarded-result` | Un `Result`, o un array, una tupla, una opción o un `Join` que guarda resultados, se abandona como sentencia sin uso ni `_ =`; o un `spawn detached` de una llamada que puede fallar se escribe sin `_ =`. |
 | `E1304` | `invalid-result-construction` | `ok`, `err`, `some` o `none` carece de contexto único o payload válido. |
 | `E1305` | `invalid-panic-code` | El `code` literal de `panic` no es un código propio (15.7). |
 | `E1306` | `value-without-effect` | Una sentencia, o el final de un bloque sin valor, es un valor sin ninguna llamada, que no hace nada. |
@@ -9526,6 +9539,7 @@ oculten un diagnóstico independiente.
 | `W1023` | `array-searched-while-grown` | Con `performance`: `contains` o `in` de un array al que el mismo bucle añade elementos, que en cada vuelta mira más; un `Set` a su lado encuentra uno de una vez. |
 | `W1024` | `array-front-every-turn` | Con `performance`: `removeAt(0)` de un array en cada vuelta de un bucle, que mueve los demás elementos; un `Deque` toma el primero de una vez. |
 | `W1025` | `pattern-compiled-every-call` | Con `performance`: `regex.Regex.compile` de un patrón escrito donde corre cada vez; el campo de un contexto lo compila una vez. |
+| `W1026` | `spawn-waited-at-once` | `_ = spawn ...`: el `Join` se descarta en el acto y la tarea se espera ahí mismo. |
 
 #### Pánicos del lenguaje
 
@@ -9853,6 +9867,7 @@ con condiciones cerradas:
 - Literal `Set[...]` con una entrada constante repetida (`W1011`).
 - Campo opcional que `reflect.convert` rellena con `none` (`W1012`).
 - `spawn` cuyo `Join` nadie consume dentro de un bucle (`W1013`).
+- `_ = spawn ...`, que espera a la tarea en el acto (`W1026`).
 - Sentencia que es un valor negativo que nada usa (`W1014`).
 - Llamada cuyo resultado nada usa y sin otro efecto (`W1018`).
 - `some(value)` donde el valor solo se elevaría igual (`W1021`).
@@ -9862,7 +9877,7 @@ Son errores obligatorios, entre otros:
 
 - Rama `match` cubierta por anteriores (`E1203`).
 - `match` no exhaustivo (`E1204`).
-- `Result` descartado como sentencia, solo o dentro de un array, una tupla o una opción (`E1303`).
+- `Result` descartado como sentencia, solo o dentro de un array, una tupla, una opción o un `Join`, o el fallo de un `spawn detached` sin `_ =` (`E1303`).
 - Valor sin ninguna llamada como sentencia (`E1306`).
 - Declaración que produciría shadowing (`E1003`).
 - Cabeceras de `impl` que se solapan (`E1111`) o un ciclo de obligaciones que no

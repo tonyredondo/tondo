@@ -221,7 +221,9 @@ fn Channel.started(self, rpc: Call, opening: Opening): Outgoing {
         self.open(rpc, opening, none)
     } else {
         let slot = grpcNative.slot()
-        spawn detached self.intercepted(slot, rpc, opening)
+        // Its status reaches the caller through the slot, which it closes
+        // with it.
+        _ = spawn detached self.intercepted(slot, rpc, opening)
         grpcNative.take(slot)
     }
     Outgoing { native, call: rpc, watchers: self.watchers }
