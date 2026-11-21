@@ -9315,3 +9315,32 @@ that is gone is a guess, and the failure shows the whole diagnostic.
 Listings with times, sizes or dumps, and those of a project built up by
 commands, stay plain `text`, held by nothing, and the pages say what they
 leave out rather than mark a listing that shows less than the tool prints.
+
+## The scheduler's state where people look
+
+A hang that lost a wake showed only in the checker's panic, which few runs
+have on: a dump, `tondo blocked`, `why` and the debugger said that tasks
+were ready, never where, nor what the workers did. They now show the look
+the checker takes. A ready task says where it waits, beside a worker, in a
+worker's queue or in the shared queue, with the time its slot already
+keeps: since it was put beside the worker, or since no other worker took
+from that worker's queue, which is written when the queue fills and when
+another takes from it, not when its own worker does, as that is the hot
+path of a worker that starts tasks. The shared queue keeps no time, and
+giving it one is a write at each enqueue, left until a measure shows it
+costs nothing. The dump gains `scheduler`, the workers, each with the task
+it runs, and the monitor; under a debugger's stop the times go, as the clock
+ran while the program stood.
+
+`why` calls a task a wake the scheduler lost only by looks, as the checker
+does, never by the clock: a program resumed from a pause shows a task ready
+for a minute beside a worker that runs it the next millisecond. A dump on
+demand, taken by a thread of its own, looks again up to a hundred times, a
+millisecond apart, at the tasks ready while a worker sleeps, and `lost`
+names one that stayed so through all of them; a dump at a panic names none,
+but at `P0020`, whose checker hands it its own count. The condition is the
+checker's, without "none told to look": a flag of the scheduler left set
+once hid a lost wake, and a worker truly told takes the task within a look.
+`blocked` prints a line only for a task still for a second or more, and
+counts the rest by place, since a server under load has ready tasks at every
+instant; the JSON has them all.

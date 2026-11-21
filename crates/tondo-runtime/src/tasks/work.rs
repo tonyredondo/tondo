@@ -92,11 +92,13 @@ fn work_from(main: bool, until: Option<&dyn Fn() -> bool>, beside: bool, seeks: 
     }
     // A thread works on its slot until it returns, which the checker reads.
     if let Some(next) = own_next() {
+        next.runner.store(running_here() as *const Runner as *mut Runner, Ordering::Release);
         next.alive.store(true, Ordering::Release);
     }
     let status = work_loop(main, until, seeks);
     if let Some(next) = own_next() {
         next.alive.store(false, Ordering::Release);
+        next.runner.store(std::ptr::null_mut(), Ordering::Release);
     }
     status
 }

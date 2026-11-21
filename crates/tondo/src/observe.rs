@@ -2506,6 +2506,7 @@ fn tasks(dump: &Value) -> Vec<Value> {
             "stack": words(&task["stack"]), "spawned": words(&task["spawned"]), "locks": task["locks"],
             "contexts": task.get("contexts").cloned().unwrap_or_else(|| json!([])),
             "frames": frames, "wait": task["wait"], "woken": task["woken"], "wakes": wakes, "request": task["request"],
+            "ready": task["ready"],
         }));
     }
     out
@@ -2524,6 +2525,9 @@ fn task_text(task: &Value, whole: bool) -> String {
     if let Some(wait) = task["wait"]["for"].as_str() {
         let waited = duration(task["wait"]["ms"].as_f64().unwrap_or(0.0) / 1000.0);
         out.push_str(&format!("  waited {waited} for {wait}\n"));
+    }
+    if task["ready"].is_object() {
+        out.push_str(&format!("  {}\n", ready_text(&task["id"], &task["ready"])));
     }
     out.push_str(&wakes_text(task));
     // A short view shows the program's frames; the whole one, every frame.
@@ -3021,6 +3025,7 @@ fn why(dump: &Value) -> Value {
     let heap = heap(dump);
     found["reason"] = dump["reason"].clone();
     found["message"] = dump["message"].clone();
+    found["lost"] = lost(&tasks).into();
     found["unread"] = unread(dump).into();
     found["signature"] = json!(signature(dump));
     found["lock_order"] = dump["lock_order"].clone();
@@ -3069,6 +3074,10 @@ pub(crate) fn blocked(answer: &Value) -> Value {
     let tasks: Vec<Value> = answer["tasks"].as_array().into_iter().flatten().map(task).collect();
     let mut graph = wait_graph(&tasks);
     graph["waits"] = tasks.iter().filter(|t| t["wait"].is_object()).cloned().collect();
+    // Where the ready tasks are while it stands, and the workers.
+    let listed = answer["tasks"].as_array().into_iter().flatten().filter(|t| t["ready"].is_object());
+    graph["ready"] = listed.map(|t| json!({ "id": t["task"], "ready": t["ready"] })).collect();
+    graph["scheduler"] = answer["scheduler"].clone();
     graph
 }
 
@@ -3103,11 +3112,98 @@ fn wakes_text(task: &Value) -> String {
     out
 }
 
+/// Looks in a row a task must stay ready where it is while a worker sleeps
+/// for `why` to call it a wake the scheduler lost, as the runtime takes them
+/// for a dump on demand (`tasks/views.rs`).
+const LOST_LOOKS: u64 = 100;
+
+/// Where a ready task waits, in words: beside a worker, in a worker's queue
+/// or in the queue every worker takes from.
+pub(crate) fn ready_place(ready: &Value) -> String {
+    match ready["in"].as_str().unwrap_or_default() {
+        "next" => format!("beside worker {}", ready["worker"]),
+        "own" => format!("in worker {}'s queue", ready["worker"]),
+        _ => "in the queue every worker takes from".into(),
+    }
+}
+
+/// A ready task's line, with the time its slot keeps.
+fn ready_text(id: &Value, ready: &Value) -> String {
+    let seconds = |ms: &Value| ms.as_f64().map(|ms| duration(ms / 1000.0));
+    let place = ready_place(ready);
+    match (seconds(&ready["waited_ms"]), seconds(&ready["untaken_ms"])) {
+        (Some(time), _) => format!("task {id} is ready {place}, for {time}"),
+        (_, Some(time)) => format!("task {id} is ready {place}, which no other worker has taken from for {time}"),
+        _ => format!("task {id} is ready {place}"),
+    }
+}
+
+/// What `blocked` says of the scheduler: the ready tasks still for a second
+/// or more, a line each, the others counted by place, then the workers and
+/// the monitor.
+fn scheduler_text(ready: &[Value], scheduler: &Value) -> String {
+    let still = |task: &&Value| {
+        let ready = &task["ready"];
+        [&ready["waited_ms"], &ready["untaken_ms"]].iter().any(|ms| ms.as_u64().is_some_and(|ms| ms >= 1000))
+    };
+    let mut out: Vec<String> = ready.iter().filter(still).map(|t| ready_text(&t["id"], &t["ready"])).collect();
+    let rest: Vec<&Value> = ready.iter().filter(|t| !still(t)).collect();
+    if !rest.is_empty() {
+        let places = [
+            ("next", "beside a worker", "beside workers"),
+            ("own", "in a worker's queue", "in workers' queues"),
+            ("shared", "in the shared queue", "in the shared queue"),
+        ];
+        let counted: Vec<String> = places
+            .iter()
+            .map(|&(place, one, many)| (rest.iter().filter(|t| t["ready"]["in"] == place).count(), one, many))
+            .filter(|&(count, ..)| count > 0)
+            .map(|(count, one, many)| format!("{count} {}", if count == 1 { one } else { many }))
+            .collect();
+        let more = if out.is_empty() { "" } else { " more" };
+        out.push(format!("{}{more} ready: {}", rest.len(), counted.join(", ")));
+    }
+    if scheduler.is_object() {
+        let workers = scheduler["workers"].as_array().map_or(0, Vec::len);
+        let told = if scheduler["told"] == true { "one told to look" } else { "none told to look" };
+        out.push(format!(
+            "workers: {workers} started, {} asleep, {told}; monitor {}",
+            scheduler["asleep"].as_u64().unwrap_or(0),
+            scheduler["monitor"].as_str().unwrap_or("watching")
+        ));
+    }
+    out.join("\n")
+}
+
+/// The tasks that stayed ready where they were through `LOST_LOOKS` looks
+/// while a worker slept: wakes the scheduler lost.
+fn lost(tasks: &[Value]) -> Vec<Value> {
+    let unmoved = |t: &&Value| t["ready"]["unmoved_looks"].as_u64().is_some_and(|looks| looks >= LOST_LOOKS);
+    tasks.iter().filter(unmoved).map(|t| json!({ "task": t["id"], "at": t["at"], "ready": t["ready"] })).collect()
+}
+
+fn lost_text(lost: &Value) -> String {
+    let ready = &lost["ready"];
+    let seconds = |ms: &Value| ms.as_f64().map(|ms| duration(ms / 1000.0));
+    let time = match (seconds(&ready["waited_ms"]), seconds(&ready["untaken_ms"])) {
+        (Some(time), _) => format!(", ready there for {time}"),
+        (_, Some(time)) => format!(", in a queue no other worker has taken from for {time}"),
+        _ => String::new(),
+    };
+    format!(
+        "task {} stayed ready {} through {} looks while a worker slept{time}: a wake the scheduler lost, not the program's",
+        lost["task"],
+        ready_place(ready),
+        ready["unmoved_looks"]
+    )
+}
+
 /// `blocked` as text: each wait, then what they add up to.
 pub(crate) fn blocked_text(graph: &Value) -> String {
     let list = graph["waits"].as_array().map_or(&[][..], Vec::as_slice);
+    let scheduled = scheduler_text(graph["ready"].as_array().map_or(&[][..], Vec::as_slice), &graph["scheduler"]);
     if list.is_empty() {
-        return "no task waits for another".to_string();
+        return format!("no task waits for another\n{scheduled}").trim_end().to_string();
     }
     let lines = list.iter().map(|t| {
         let at = t["at"].as_str().unwrap_or("nowhere known");
@@ -3120,7 +3216,7 @@ pub(crate) fn blocked_text(graph: &Value) -> String {
         };
         format!("{line}\n{}", wakes_text(t)).trim_end().to_string()
     });
-    format!("{}\n{}", lines.collect::<Vec<_>>().join("\n"), why_text(graph)).trim_end().to_string()
+    format!("{}\n{}{scheduled}", lines.collect::<Vec<_>>().join("\n"), why_text(graph)).trim_end().to_string()
 }
 
 /// What `tondo logpoint` is asked for.
@@ -3312,6 +3408,13 @@ pub fn blocked_in(name: &str, as_json: bool) -> Result<(), String> {
     // The tasks that wait for another, and those a wake did not reach.
     let lost = |t: &Value| t["woken"] == true && t["state"] == "waits";
     graph["waits"] = tasks.iter().filter(|t| t["wait"].is_object() || lost(t)).cloned().collect();
+    // Where the ready tasks are, and the workers and the monitor.
+    graph["ready"] = tasks
+        .iter()
+        .filter(|t| t["ready"].is_object())
+        .map(|t| json!({ "id": t["id"], "ready": t["ready"] }))
+        .collect();
+    graph["scheduler"] = dump["scheduler"].clone();
     match as_json {
         true => crate::cli::print_json("blocked", true, graph),
         false => println!("{}", blocked_text(&graph)),
@@ -3329,6 +3432,10 @@ fn why_text(found: &Value) -> String {
         }
     }
     let list = |key: &str| found[key].as_array().map_or(&[][..], Vec::as_slice);
+    // The scheduler's, which no change to the program mends.
+    for lost in list("lost") {
+        out.push_str(&format!("{}\n", lost_text(lost)));
+    }
     // What another task waits for may be what one of these would have given.
     for unread in list("unread") {
         out.push_str(&format!("{}\n", unread_text(unread)));

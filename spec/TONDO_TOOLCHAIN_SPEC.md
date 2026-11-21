@@ -1148,6 +1148,36 @@ hasta 256: las tareas que empezó y que acabaron, los pánicos, también los que
 colector, cada uno con cuánto antes del volcado fue. Solo los apunta un programa
 con `TONDO_DUMP`, `TONDO_DUMP_VALUES=off` los quita, y `why` da los diez últimos.
 
+Cada tarea lista dice dónde espera (`ready`): `in` es `next` junto al worker
+`worker`, que la despertó desde la tarea que corre; `own` en la cola de las
+tareas que empezaron las tareas de ese worker; o `shared` en la cola de la que
+toman todos. Junto a un worker lleva cuánto hace que la pusieron ahí
+(`waited_ms`); en la cola de un worker, cuánto hace que ningún otro worker toma
+de ella (`untaken_ms`), un tiempo que se apunta cuando la cola se llena estando
+vacía y cuando otro worker toma de ella, no cuando su propio worker toma la
+primera, y que por eso no dice que la cola esté quieta; en la cola compartida,
+ninguno. El volcado que pide un depurador no los lleva, porque corrieron con el
+programa parado. `scheduler` da lo que mira `TONDO_CHECK_SCHEDULER` (7.17): cada
+worker vivo con la tarea que corre, las que empezó (`turns`), si tiene otro
+puesto a su lado (`held`), si lo pusieron al lado de uno retenido (`beside`), si
+está en una llamada de C (`in_c`) y si otro ocupa su lugar en ella
+(`replaced`); cuántos duermen (`asleep`), si alguno fue avisado para mirar
+(`told`), las retiradas que se deben (`retiring`), los que suplen a otro
+(`standing_in`), si el monitor vigila o duerme (`monitor`), los dominios
+buscados (`sought`) y si hay un timer vencido (`timer_due`).
+
+Un volcado pedido, con `tondo dump`, `kill -QUIT` o `TONDO_DUMP_WHEN`, mira el
+planificador hasta cien veces, a un milisegundo, antes de parar el programa, y
+apunta en cada tarea lista cuántas miradas seguidas siguió lista en su sitio
+mientras un worker dormía (`unmoved_looks`); el de un `P0020`, las de su
+comprobador. `why` nombra en `lost` la que siguió así cien miradas: un
+despertar que perdió el planificador, no el programa. Juzga por sus miradas y
+no por el reloj, que en un programa reanudado tras una pausa daría por perdida
+una tarea que va a correr enseguida; otro volcado no nombra ninguna. `tondo
+blocked` da, tras las esperas, una línea por cada tarea lista que lleva un
+segundo o más en su sitio, las demás contadas por sitio, y una de los workers y
+el monitor.
+
 Cada ejecutable guarda de dónde vienen sus fuentes, salvo con `tondo build
 --no-source-links`: el repositorio y el commit del programa, el `remote.origin.url`
 de su repositorio y su `HEAD`, y los de cada dependencia, la URL y el commit de

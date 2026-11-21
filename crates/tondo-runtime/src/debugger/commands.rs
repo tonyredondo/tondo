@@ -767,6 +767,10 @@ pub(crate) fn command(line: &str) -> Option<String> {
         },
         "tasks" => {
             settle();
+            // Where the ready tasks wait, and the workers, looked at before
+            // the debugger's state is locked: without times, which ran on
+            // while the program stood.
+            let (ready, scheduler) = crate::tasks::views::viewed(&[], false, &[], false);
             let state = state();
             let held: Vec<String> = state
                 .held
@@ -802,10 +806,12 @@ pub(crate) fn command(line: &str) -> Option<String> {
                         format!(",\"for\":{},\"on\":[{}],\"ms\":{ms}", quoted(&text), on.join(","))
                     });
                     let serving = request_field(task);
-                    waiting.push(format!("{{\"task\":{task},\"at\":{at},\"why\":{why}{waits}{serving}}}"));
+                    let ready = ready.get(&task).map_or(String::new(), |at| format!(",\"ready\":{}", at.json()));
+                    waiting.push(format!("{{\"task\":{task},\"at\":{at},\"why\":{why}{waits}{serving}{ready}}}"));
                 }
             }
-            format!("{{\"tasks\":[{}]}}", held.into_iter().chain(waiting).collect::<Vec<_>>().join(","))
+            let listed: Vec<String> = held.into_iter().chain(waiting).collect();
+            format!("{{\"tasks\":[{}],\"scheduler\":{scheduler}}}", listed.join(","))
         }
         _ => return None,
     })

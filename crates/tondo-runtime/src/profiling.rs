@@ -788,6 +788,7 @@ mod tests {
             id: 1,
             main: false,
             state,
+            runner: 0,
             stack,
             spawned: vec![0x20],
             locks: Vec::new(),

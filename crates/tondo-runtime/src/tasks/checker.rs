@@ -321,6 +321,11 @@ pub(super) fn start() {
             }
             let look = looked();
             if let Some(broken) = judge(&mut watch, &look, given, &named) {
+                // What it counted of each ready task, which its dump shows.
+                if broken.rule == "ready-while-idle" {
+                    let looks = |since: u64| watch.look - since + 1;
+                    super::views::judged(watch.ready.iter().map(|(&task, &(since, _))| (task, looks(since))).collect());
+                }
                 report(&broken, &look);
             }
         }
@@ -339,7 +344,7 @@ fn named(task: usize) -> String {
 }
 
 /// One look at the scheduler, taking each lock on its own.
-fn looked() -> Look {
+pub(super) fn looked() -> Look {
     let mut look = Look::default();
     {
         let queue = queue();

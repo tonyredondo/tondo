@@ -622,8 +622,12 @@ impl Dumped {
                     .iter()
                     .map(|t| {
                         let serves = t["request"].as_str().map_or(String::new(), |it| format!(" {it}"));
+                        let place = match t["ready"].is_object() {
+                            true => format!(" {}", crate::observe::ready_place(&t["ready"])),
+                            false => String::new(),
+                        };
                         let name = format!(
-                            "task {} ({}) {}{serves}",
+                            "task {} ({}) {}{place}{serves}",
                             t["id"],
                             t["runs"].as_str().unwrap_or_default(),
                             t["state"].as_str().unwrap_or_default()
@@ -1784,9 +1788,13 @@ fn handle(
                 .flatten()
                 .map(|t| {
                     let serves = t["request"].as_str().map_or(String::new(), |it| format!(" {it}"));
+                    let place = match t["ready"].is_object() {
+                        true => format!(" {}", crate::observe::ready_place(&t["ready"])),
+                        false => String::new(),
+                    };
                     match t["why"].as_str() {
                         Some(why @ ("waits" | "ready")) => {
-                            json!({ "id": t["task"], "name": format!("task {} ({why}){serves}", t["task"]) })
+                            json!({ "id": t["task"], "name": format!("task {} ({why}{place}){serves}", t["task"]) })
                         }
                         _ => json!({ "id": t["task"], "name": format!("task {}{serves}", t["task"]) }),
                     }

@@ -217,6 +217,107 @@ fn a_tasks_profile_without_a_duration() {
 /// What regions hold shows beside the heap: the counters give the bytes
 /// regions hold now and the values they made, and a dump what they hold
 /// by site, sampled.
+const COMPUTING: &str = "import std.console
+import std.time
+
+fn spin(n: Int): Int {
+    var total = 0
+    for i in 0..n {
+        total += i % 7
+    }
+    total
+}
+
+fn main() {
+    var jobs = [spawn spin(4_000_000_000_000)]
+    for _ in 1..8 {
+        jobs.push(spawn spin(4_000_000_000_000))
+    }
+    console.println(\"started\")
+    let _ = console.flush()
+    time.sleep(time.seconds(120))
+    _ = jobs.length()
+}
+";
+
+/// A dump on demand shows where each ready task waits and what each worker
+/// runs, `blocked` says so, and nothing is a wake lost where no worker
+/// sleeps: eight tasks that compute on one worker, and one the monitor puts
+/// beside it, leave six ready. `why` names a task lost only once it stayed
+/// ready through a hundred looks.
+#[test]
+fn a_dump_shows_the_schedulers_state() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("scheduler-view");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("computing.to"), COMPUTING).unwrap();
+    let executable = dir.join("computing");
+    let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "computing.to", "--output"])
+        .arg(&executable)
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let mut child = Started::new(
+        Command::new(&executable)
+            .env("TONDO_DIAGNOSTICS", "1")
+            .env("TONDO_WORKERS", "1")
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut line = String::new();
+    BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
+    assert_eq!(line, "started\n");
+    let pid = child.id().to_string();
+    let file = dir.join("computing.dump.json");
+    tondo(&["dump", &pid, "--output", file.to_str().unwrap(), "--json"]);
+    let mut dump: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let tasks = dump["tasks"].as_array().unwrap().clone();
+    let workers = dump["scheduler"]["workers"].as_array().unwrap().clone();
+    assert!(!workers.is_empty() && dump["scheduler"]["monitor"].is_string(), "{}", dump["scheduler"]);
+    // Each worker's task runs, and each ready task is in the place of one of
+    // them, as none retires here, or in the shared queue.
+    for worker in workers.iter().filter(|worker| worker["task"].is_number()) {
+        let task = tasks.iter().find(|task| task["id"] == worker["task"]).unwrap();
+        assert_eq!(task["state"], "runs", "{worker} {task}");
+    }
+    let ready: Vec<&Value> = tasks.iter().filter(|task| task["ready"].is_object()).collect();
+    assert!(ready.len() >= 6, "{}", dump["scheduler"]);
+    for task in &ready {
+        let at = &task["ready"];
+        match at["in"].as_str().unwrap() {
+            "next" | "own" => assert!(workers.iter().any(|worker| worker["worker"] == at["worker"]), "{task}"),
+            place => assert_eq!(place, "shared", "{task}"),
+        }
+    }
+    let why = tondo(&["dump", "read", file.to_str().unwrap(), "why", "--json"]);
+    assert_eq!(why["why"]["lost"], json!([]), "{}", why["why"]);
+    let blocked = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["blocked", &pid]).output().unwrap();
+    let said = String::from_utf8_lossy(&blocked.stdout);
+    assert!(said.contains(" started, ") && said.contains("; monitor ") && said.contains("ready"), "{said}");
+    // Through a hundred looks a task is a wake lost; through 99, not yet.
+    let at = tasks.iter().position(|task| task["ready"].is_object()).unwrap();
+    let id = dump["tasks"][at]["id"].clone();
+    for (looks, lost) in [(99, false), (100, true)] {
+        dump["tasks"][at]["ready"]["unmoved_looks"] = json!(looks);
+        let marked = dir.join(format!("lost-{looks}.dump.json"));
+        std::fs::write(&marked, dump.to_string()).unwrap();
+        let why = tondo(&["dump", "read", marked.to_str().unwrap(), "why", "--json"]);
+        let named: Vec<&Value> = why["why"]["lost"].as_array().unwrap().iter().map(|l| &l["task"]).collect();
+        assert_eq!(named == [&id], lost, "{looks} looks: {}", why["why"]["lost"]);
+        let text =
+            Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", "read"]).arg(&marked).arg("why").output().unwrap();
+        let text = String::from_utf8_lossy(&text.stdout);
+        let sentence = format!("task {id} stayed ready ");
+        assert_eq!(
+            text.contains(&sentence) && text.contains("a wake the scheduler lost, not the program's"),
+            lost,
+            "{text}"
+        );
+    }
+}
+
 #[test]
 fn counters_and_dumps_show_what_regions_hold() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("in_regions");

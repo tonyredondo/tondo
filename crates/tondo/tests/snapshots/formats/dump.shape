@@ -32,6 +32,21 @@
 .message: string
 .reason: string
 .requests[]
+.scheduler.asleep: number
+.scheduler.monitor: string
+.scheduler.retiring: number
+.scheduler.sought[]
+.scheduler.standing_in: number
+.scheduler.timer_due: bool
+.scheduler.told: bool
+.scheduler.workers[]
+.scheduler.workers[].beside: bool
+.scheduler.workers[].held: bool
+.scheduler.workers[].in_c: bool
+.scheduler.workers[].replaced: bool
+.scheduler.workers[].task: number
+.scheduler.workers[].turns: number
+.scheduler.workers[].worker: number
 .served[]
 .sources: string
 .stopped: bool

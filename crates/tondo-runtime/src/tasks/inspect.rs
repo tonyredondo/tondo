@@ -10,6 +10,9 @@ pub(crate) struct Shot {
     pub main: bool,
     /// `waits`, `ready`, `runs` or `in C`.
     pub state: &'static str,
+    /// The address of the state for stopping the world of the thread it was
+    /// found running on, which a worker's slot names (`views`), or 0.
+    pub runner: usize,
     /// Where it is, innermost first: empty for one that runs and did not
     /// stop.
     pub stack: Vec<usize>,
@@ -70,12 +73,12 @@ pub(crate) fn signal_workers(signal: i32) {
 }
 
 /// Asks the threads that still run Tondo code where they are, a while.
-pub(super) fn ask_where(runners: &[&Runner]) -> Vec<(*mut Task, Vec<usize>)> {
+pub(super) fn ask_where(runners: &[&'static Runner]) -> Vec<(*mut Task, Vec<usize>, &'static Runner)> {
     crate::recorder::install();
     // Only threads still in the list, under its lock, which a thread that
     // ends takes to leave it.
     let present = IN_TONDO.lock().unwrap_or_else(|e| e.into_inner());
-    let asked: Vec<&&Runner> = runners
+    let asked: Vec<&&'static Runner> = runners
         .iter()
         .filter(|&&r| {
             r.running.load(Ordering::SeqCst)
@@ -100,7 +103,7 @@ pub(super) fn ask_where(runners: &[&Runner]) -> Vec<(*mut Task, Vec<usize>)> {
         }
         let count = runner.answered.load(Ordering::Relaxed);
         let stack = runner.answer[..count].iter().map(|a| a.load(Ordering::Relaxed)).collect();
-        out.push((runner.task.swap(std::ptr::null_mut(), Ordering::Relaxed), stack));
+        out.push((runner.task.swap(std::ptr::null_mut(), Ordering::Relaxed), stack, *runner));
     }
     out
 }
@@ -160,7 +163,12 @@ fn snapshot_once(here: Option<Vec<usize>>) -> Vec<Shot> {
                 runners.iter().find(|r| r.task.load(Ordering::SeqCst) == task && !r.running.load(Ordering::SeqCst));
             let in_c =
                 callers.iter().find(|c| c.depth.load(Ordering::SeqCst) > 0 && c.task.load(Ordering::SeqCst) == task);
-            let answered = answers.iter().find(|(t, _)| *t == task);
+            let answered = answers.iter().find(|(t, ..)| *t == task);
+            let runner = match task == me {
+                true => worker(|w| w.runner.get()),
+                false => paused.or(answered.map(|(_, _, runner)| runner)).copied(),
+            };
+            let runner = runner.map_or(0, |runner| runner as *const Runner as usize);
             let (state, stack): (&str, Vec<usize>) = if task == me {
                 ("runs", here.take().unwrap_or_default())
             } else if let Some(runner) = paused {
@@ -168,7 +176,7 @@ fn snapshot_once(here: Option<Vec<usize>>) -> Vec<Shot> {
                 // on its own stack: the task is where it switched out.
                 let stack: Vec<usize> = crate::trace::walk(runner.frame.load(Ordering::SeqCst), bounds).collect();
                 ("runs", if stack.is_empty() { parked_walk(task).collect() } else { stack })
-            } else if let Some((_, stack)) = answered {
+            } else if let Some((_, stack, _)) = answered {
                 ("runs", stack.clone())
             } else if let Some(caller) = in_c {
                 let depth = (caller.depth.load(Ordering::SeqCst) - 1).min(caller.frames.len() - 1);
@@ -190,6 +198,7 @@ fn snapshot_once(here: Option<Vec<usize>>) -> Vec<Shot> {
                 id: shown.id,
                 main: shown.main,
                 state,
+                runner,
                 stack,
                 spawned: shown.origin.map(|o| o.frames().to_vec()).unwrap_or_default(),
                 locks,

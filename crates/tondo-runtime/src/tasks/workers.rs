@@ -38,6 +38,9 @@ pub(super) struct Next {
     pub(super) alive: AtomicBool,
     /// Its worker's calls of C, which the monitor watches on their own.
     pub(super) in_c: AtomicPtr<InC>,
+    /// Its worker's state for stopping the world, which says what task it
+    /// runs while the world stands, as a dump's view of the scheduler shows.
+    pub(super) runner: AtomicPtr<Runner>,
 }
 
 pub(super) struct Local(pub(super) VecDeque<*mut Task>);
@@ -58,6 +61,7 @@ impl Next {
             beside: AtomicBool::new(false),
             alive: AtomicBool::new(false),
             in_c: AtomicPtr::new(std::ptr::null_mut()),
+            runner: AtomicPtr::new(std::ptr::null_mut()),
         }
     }
 

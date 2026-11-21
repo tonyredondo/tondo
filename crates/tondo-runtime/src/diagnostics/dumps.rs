@@ -84,10 +84,20 @@ pub(super) fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: 
         true => wait.max(OBJECTS_WAIT),
         false => wait,
     });
-    let (stopped, tasks, contexts, values, objects) = crate::cycles::without_collections(|| {
+    // On demand, from a thread of its own, the scheduler is looked at again
+    // and again before the world stops: a task that stays ready where it is
+    // while a worker sleeps is a wake lost (`views`).
+    let unmoved = match reason {
+        "request" | "signal" | "schedule" => crate::tasks::views::unmoved_looks(),
+        _ => Vec::new(),
+    };
+    let (stopped, tasks, contexts, values, objects, (ready, scheduler)) = crate::cycles::without_collections(|| {
         let stopped = wait.is_some_and(crate::tasks::stop_world);
         let current = here.is_some();
         let tasks = crate::tasks::snapshot(here);
+        // The times a slot keeps, but under a debugger, whose stop the clock
+        // ran through.
+        let viewed = crate::tasks::views::viewed(&tasks, reason != "debugger", &unmoved, reason == "scheduler-rule");
         // The bindings of the frames, while nothing moves.
         let shown = values_shown();
         let values = if shown { crate::debugger::values(current.then(here_now)) } else { Vec::new() };
@@ -107,7 +117,7 @@ pub(super) fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: 
         if stopped {
             crate::tasks::resume_world();
         }
-        (stopped, tasks, contexts, values, objects)
+        (stopped, tasks, contexts, values, objects, viewed)
     });
     let (samples, dropped) = crate::heap::alive(false);
     let (region_samples, region_dropped) = crate::heap::alive(true);
@@ -151,9 +161,10 @@ pub(super) fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: 
             })
             .collect();
         let wakes = if wakes.is_empty() { String::new() } else { format!(",\"wakes\":[{}]", wakes.join(",")) };
+        let ready = ready.get(&task.id).map_or(String::new(), |at| format!(",\"ready\":{}", at.json()));
         let _ = write!(
             out,
-            "{comma}{{\"id\":{},\"main\":{},\"state\":\"{}\",\"cancelled\":{},\"stack\":{},\"spawned\":{},\"locks\":[{}],\"contexts\":{}{wait}{woken}{wakes}}}",
+            "{comma}{{\"id\":{},\"main\":{},\"state\":\"{}\",\"cancelled\":{},\"stack\":{},\"spawned\":{},\"locks\":[{}],\"contexts\":{}{wait}{woken}{wakes}{ready}}}",
             task.id,
             task.main,
             task.state,
@@ -173,7 +184,7 @@ pub(super) fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: 
             format!("{{\"task\":{task},\"spawned\":{}{result}}}", frames.list(&spawned))
         })
         .collect();
-    let _ = write!(out, "],\"unread\":[{}", unread.join(","));
+    let _ = write!(out, "],\"scheduler\":{scheduler},\"unread\":[{}", unread.join(","));
     let _ = write!(out, "],\"heap\":{{\"rate\":{},\"dropped\":{dropped},\"samples\":[", crate::heap::rate());
     for (index, (size, stack)) in samples.iter().enumerate() {
         let comma = if index == 0 { "" } else { "," };
