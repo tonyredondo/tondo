@@ -151,6 +151,18 @@ for word in words {
 - A function does not see the script's bindings. It takes what it needs as
   parameters, and the compiler says so when one tries:
 
+```tondo error E1001
+import std.console
+
+let limit = 3
+
+fn allowed(n: Int): Bool {
+    n < limit
+}
+
+console.println("{allowed(2)} {limit}")
+```
+
 ```text
 error[E1001]: unknown name `limit`; `limit` is a binding of the script, which its functions do not see: pass it to the function as a parameter
 ```
@@ -323,6 +335,13 @@ the name it should have:
 | Functions, methods, fields, parameters, bindings | `camelCase` | `findUser`, `userId` |
 | Modules | lower case | `std.http`, `app.models` |
 | Acronyms | as words | `JsonValue`, `userId`, never `JSONValue` or `userID` |
+
+```tondo warning W1004
+fn main() {
+    let user_name = "ada"
+    _ = user_name
+}
+```
 
 ```text
 warning[W1004]: `user_name` should be `userName`: functions, fields, bindings and modules are `camelCase`, with acronyms written as words

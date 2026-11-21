@@ -136,7 +136,7 @@ The standard library declares the annotations its modules read, as
 `std.reflect` reaches a value's fields and methods by their names, when the
 names are only known as the program runs:
 
-```tondo
+```tondo file=reflects.to
 import std.console
 import std.reflect
 
@@ -179,6 +179,11 @@ true true
 Each operation gives a result: a path that does not exist or a type that
 does not fit is an error value, not a crash. When the path is written as a
 literal, the compiler checks it too, and a wrong one does not compile:
+
+```diff file=reach.to from=reflects.to error E2110
+-    let city: String = reflect.get(user, "address.city")?
++    let city: String = reflect.get(user, "missing")?
+```
 
 ```text
 error[E2110]: `reflect.get` cannot reach `missing`: `User` has no field `missing`; its fields are `name`, `age` and `address`

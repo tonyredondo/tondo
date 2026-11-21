@@ -133,6 +133,19 @@ error: nobody is 999
 The caller cannot forget the failure. A result that is not used is a compile
 error, and so is using a `T ! E` where a `T` goes:
 
+```tondo error E1303
+import std.fs
+
+fn twice(n: Int): Int {
+    n * 2
+}
+
+fn main() {
+    fs.readText("notes.txt")
+    let doubled = twice(Int.parse("21"))
+}
+```
+
 ```text
 error[E1303]: a value of type `String ! fs.FsError` is not used; pass a failure on with `?`, handle it with `match`, or discard it with `_ = ...`
 error[E1102]: expected `Int`, found `Int ! text.TextError`: add `?` to pass the failure on, give a fallback with `value ?? fallback`, or handle it with `match`

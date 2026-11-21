@@ -202,7 +202,7 @@ only to its own module: from another, `Account { owner: ada, balance: … }`.
 Everything in a module is private to it unless it says `pub`. In a `pub`
 record the fields are public too, except those marked `priv`:
 
-```tondo
+```tondo file=accounts.to
 pub type Account = {
     owner: String
     priv balance: Int
@@ -245,8 +245,16 @@ error[E1501]: field `balance` of `accounts.Account` is private to its module
 - A method cannot have the name of a field, so `value.name` is never
   ambiguous:
 
+```diff file=named.to from=accounts.to error E1505
++pub fn Account.balance(self): Int {
++    self.balance
++}
++
+ fn main() {}
+```
+
 ```text
-error[E1505]: `balance` is a field of `accounts.Account`; a method with a receiver needs another name
+error[E1505]: `balance` is a field of `Account`; a method with a receiver needs another name
 ```
 
 ## Generic records

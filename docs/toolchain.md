@@ -72,6 +72,14 @@ tondo guide tasks           one topic of the guide
 
 An error says what is wrong and what to write instead:
 
+```tondo error E1303 file=unused.to
+import std.fs
+
+fn main() {
+    fs.readText("x")
+}
+```
+
 ```text
 error[E1303]: a value of type `String ! fs.FsError` is not used; pass a failure on with `?`, handle it with `match`, or discard it with `_ = ...`
  --> unused.to:4:5

@@ -41,6 +41,12 @@ Ada: 55
 A binding always starts with a value: there is no declaration to fill in
 later, so nothing is ever uninitialized.
 
+```tondo error E1109
+fn main() {
+    let total: Int
+}
+```
+
 ```text
 error[E1109]: a binding must be initialized where it is declared
 ```
@@ -324,6 +330,14 @@ fn main() {
 
 Where a variable does not fit by its type, the error gives the conversion to
 write:
+
+```tondo error E1102
+fn main() {
+    let n = 10
+    let small: Int32 = n
+    let ratio: Float = n
+}
+```
 
 ```text
 error[E1102]: expected `Int32`, found `Int`, which may not fit: convert it with `Int32(n)?`, or handle the error with `match`

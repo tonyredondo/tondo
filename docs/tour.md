@@ -98,7 +98,7 @@ Hi, Ada!
 
 ## Records, enums and match
 
-```tondo
+```tondo file=pay.to
 import std.console
 
 pub type User = {
@@ -144,9 +144,14 @@ User { name: Ada, age: 37, admin: false } Card(4242)
 A `match` covers every case, and the compiler names the one that is missing.
 Without the last arm of `label`:
 
+```diff file=pay.to error E1204
+         Card(number) => "card {number}"
+-        Transfer { iban, reference } => "transfer {iban} {reference}"
+```
+
 ```text
 error[E1204]: `match` is not exhaustive: `Payment.Transfer { .. }` is not covered
-  --> pay.to:10:5
+  --> pay.to:21:5
 ```
 
 A pattern names a variant alone, since the value matched says which enum it

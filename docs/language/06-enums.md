@@ -129,7 +129,7 @@ says the same and is also accepted. This holds at any depth, as in
 
 Several patterns share an arm with `|`, when none of them binds a name:
 
-```tondo
+```tondo file=tokens.to
 import std.console
 
 enum Token {
@@ -160,6 +160,11 @@ Number(4) Plus [Word(tea), Minus]
 
 A pattern that binds a name takes an arm of its own, so that the name always
 has a value:
+
+```diff file=binds.to from=tokens.to error E1202
+-        Number(_) | Word(_) => "an operand"
++        Number(n) | Word(_) => "an operand {n}"
+```
 
 ```text
 error[E1202]: the patterns that `|` joins bind nothing, and this one binds `n`: write an arm of its own for it
@@ -227,6 +232,11 @@ and strings, and name the variants of an enum.
 
 An arm that can never run, because the arms above take everything it would,
 is an error too:
+
+```diff file=covered.to from=tokens.to error E1203
+         Number(_) | Word(_) => "an operand"
++        Star => "a star"
+```
 
 ```text
 error[E1203]: this arm is covered by earlier arms

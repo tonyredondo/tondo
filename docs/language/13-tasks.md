@@ -168,8 +168,20 @@ A task that can fail is a result that somebody has to read. Started and
 left alone, it would be waited for at the end of its block and its failure
 would go nowhere, so the compiler refuses it where it is made:
 
+```tondo error E1303
+fn save(id: Int): !String {
+    if id == 2 {
+        fail "order {id} could not be saved"
+    }
+}
+
+fn main() {
+    spawn save(2)
+}
+```
+
 ```text
-error[E1303]: the task of `save` may fail, and nothing will read its failure: keep its `Join` and wait for it, as `let job = spawn save(Order { id: 2 })` and later `job.wait()?`, or handle the failure in the task
+error[E1303]: the task of `save` may fail, and nothing will read its failure: keep its `Join` and wait for it, as `let job = spawn save(2)` and later `job.wait()?`, or handle the failure in the task
 ```
 
 Either the code that starts the task waits for it where the work has to be
@@ -439,6 +451,18 @@ err(HttpError { status: 404 }) ok(User { name: ada })
 Every item of such a tuple is a task. One that holds something else has none
 of the three, and the compiler says what to write instead:
 
+```tondo error E1001
+fn double(n: Int): Int {
+    n * 2
+}
+
+fn main() {
+    let first = spawn double(2)
+    let name = "ada"
+    let both = (first, name).wait()
+}
+```
+
 ```text
 error[E1001]: `wait()` is a method of a tuple whose items are all tasks; item 2 is `String`: wait the tasks on their own, as `(first.wait(), name)`
 ```
@@ -690,12 +714,38 @@ error ([An array of tasks](#an-array-of-tasks)).
 What `wait()` gives on tasks that can fail is an array of results, not one
 result. Using it as one is a compile error that says what was meant:
 
+```tondo error E1621
+fn half(n: Int): Int ! String {
+    if n % 2 == 1 {
+        fail "{n} is odd"
+    }
+    n / 2
+}
+
+fn main(): !String {
+    let halves = [2, 4].map(n => spawn half(n)).wait()?
+}
+```
+
 ```text
 error[E1621]: `wait()` gives every task's result, as `Array[Int ! String]`, and cancels none; for the values or the first error, which cancels the other tasks, write `waitOrCancel()`
 ```
 
 And an array of results that nobody reads is refused as a result that
 nobody reads is, since any of its values may be a failure:
+
+```tondo error E1303
+fn half(n: Int): Int ! String {
+    if n % 2 == 1 {
+        fail "{n} is odd"
+    }
+    n / 2
+}
+
+fn main() {
+    [2, 4].map(n => spawn half(n)).wait()
+}
+```
 
 ```text
 error[E1303]: a value of type `Array[Int ! String]` is not used, and it holds results that may be failures; read them, discard them with `_ = ...`, or pass the first failure on with `waitOrCancel()?`

@@ -368,7 +368,7 @@ written as a block whose result nothing states: the one `map` takes may give
 a value of any type, or none. The body of an arrow is a value, so the loop
 there gives its array:
 
-```tondo
+```tondo file=scaled.to
 import std.console
 
 fn main() {
@@ -382,9 +382,13 @@ fn main() {
 [[10, 20], [30]]
 ```
 
-Written as a block, `(row) { for x in row { x * 10 } }`, that closure holds a
-statement whose value is dropped, and the compiler says so with what to
-write:
+Written as a block, that closure holds a statement whose value is dropped,
+and the compiler says so with what to write:
+
+```diff file=block.to from=scaled.to error E1306
+-    let scaled = rows.map(row => for x in row { x * 10 })
++    let scaled = rows.map((row) { for x in row { x * 10 } })
+```
 
 ```text
 error[E1306]: this value does nothing: use it, return it from a function that declares its type, or discard it with `_ = ...`; a `for` gives its values as an arrow's body, as `row => for ... { ... }`
