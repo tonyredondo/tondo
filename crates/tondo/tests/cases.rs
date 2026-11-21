@@ -596,23 +596,7 @@ fn run_with_timeout(command: &mut Command, seconds: u64, stops: &[Stop]) -> Resu
         let watched = !stops.is_empty();
         move || {
             if watched {
-                // macOS reports a stop and a continue here too, though only
-                // an end was asked for: wait again until the report is one.
-                loop {
-                    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-                    let flags = libc::WEXITED | libc::WNOWAIT;
-                    if unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, flags) } == -1 {
-                        if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
-                            continue;
-                        }
-                        break;
-                    }
-                    if matches!(info.si_code, libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED) {
-                        break;
-                    }
-                    // While it stands, macOS gives the stop back at once.
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
+                ended_unreaped(pid);
                 *over.lock().unwrap() = true;
             }
             done.send(child.wait())
@@ -628,6 +612,37 @@ fn run_with_timeout(command: &mut Command, seconds: u64, stops: &[Stop]) -> Resu
         }
     };
     Ok(std::process::Output { status, stdout: stdout.join().unwrap(), stderr: stderr.join().unwrap() })
+}
+
+/// Returns once the process has ended, and before it is reaped.
+#[cfg(not(target_os = "macos"))]
+fn ended_unreaped(pid: u32) {
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let flags = libc::WEXITED | libc::WNOWAIT;
+    while unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, flags) } == -1
+        && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+    {}
+}
+
+/// Returns once the process has ended, and before it is reaped: through
+/// kqueue, as macOS's waitid returns for a stop too, though only an end is
+/// asked for. One that has already ended gives ESRCH, which ends the wait.
+#[cfg(target_os = "macos")]
+fn ended_unreaped(pid: u32) {
+    let queue = unsafe { libc::kqueue() };
+    if queue == -1 {
+        return;
+    }
+    let mut change: libc::kevent = unsafe { std::mem::zeroed() };
+    change.ident = pid as libc::uintptr_t;
+    change.filter = libc::EVFILT_PROC;
+    change.flags = libc::EV_ADD | libc::EV_ONESHOT;
+    change.fflags = libc::NOTE_EXIT;
+    let mut event: libc::kevent = unsafe { std::mem::zeroed() };
+    while unsafe { libc::kevent(queue, &change, 1, &mut event, 1, std::ptr::null()) } == -1
+        && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+    {}
+    unsafe { libc::close(queue) };
 }
 
 #[test]
