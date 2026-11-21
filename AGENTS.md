@@ -342,6 +342,26 @@ by counting with atomics and printing from a thread of its own what stops
 moving: a lock or a print on the path changes the timing that loses the
 wake.
 
+The scheduler itself is held to its word by three things:
+
+- `TONDO_CHECK_SCHEDULER=1` in the environment of a program makes the runtime
+  check as it runs what its scheduler promises (16.14 of the language's
+  specification), in looks of its own, and end with `P0020` and a dump at the
+  first rule that breaks, with what each worker and the monitor were doing.
+  The cases run with it in their debug step, in plain runs: a red there is
+  the scheduler's, whatever the case prints. Under a seeded order, a recording
+  or a replay it is off, by design.
+- A case that holds the scheduler holds no duration, by the rules of the
+  next section applied to the case's own program. It waits for a word or a
+  flag, never for a time, and its computation ends when it is told to, not
+  after so many turns: a runner that is slow or busy breaks any margin of
+  time, and a computation sized by this machine runs for a minute on another.
+  A bound, in a case or in a model, is counted in its own unit, looks, steps
+  or turns until told, never in another thread's time.
+- A model says at its top what it assumes of the code, and whoever changes
+  that code reads the list: a model whose monitor looks at every step cannot
+  see a monitor that sleeps.
+
 ### Waits in a test
 
 A test that fails now and then on a slow machine has most often taken time
