@@ -248,7 +248,7 @@ version, so a tool knows what it is reading:
 
 ```text
 $ tondo version --json
-{"backend":"cranelift","features":["json","graph","test-events","test-exact-many","test-watch","test-coverage","test-bench","test-fuzz","profile","optimizations","asm","lsp-tests","lsp-lenses","explain","new","add","fix"],"format":"tondo-version-0.1/1","ok":true,"target":"x86_64-linux","version":"0.1.0-dev"}
+{"backend":"cranelift","features":["json","graph","test-events","test-exact-many","test-watch","test-coverage","test-bench","test-fuzz","profile","optimizations","asm","size","timings","lsp-tests","lsp-lenses","explain","new","add","fix"],"format":"tondo-version-0.1/1","ok":true,"target":"x86_64-linux","version":"0.1.0-dev"}
 ```
 
 `features` says what this `tondo` can do, for a tool that must work with

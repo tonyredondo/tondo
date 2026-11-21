@@ -183,30 +183,29 @@ fn main() {
 
 ## Explain, and look things up
 
-Every code has a longer explanation, with an example:
+Every code has an explanation, and with it what the guide says of the
+mistake, with an example where the guide has one:
 
 ```text
-$ tondo explain E1303
-E1303 discarded-result (error)
+$ tondo explain E0002
+E0002 invalid-token (error)
 
-A `Result` is dropped as a statement, unused and without `_ =`.
+A character or sequence that is no token of the language.
 
 From `tondo guide pitfalls`:
 
-A fallible call's result must be used: `?`, `match`, or `_ = call()`.
-
-    enum E {
-        Bad
-    }
-
-    fn risky(): Int ! E {
-        fail E.Bad
-    }
+No semicolons; a newline ends a statement.
 
     fn main() {
-        risky()
+        let x = 1;
     }
+
+The diagnostic itself says what to write; `tondo check --json` gives its repairs as data, and `tondo fix` applies the safe ones.
 ```
+
+A code with more than one cause, as `E1303` for a result that is dropped
+and for a task whose failure nobody would read, shows each with its
+example.
 
 The standard library's documentation is in the binary. `tondo api` gives a
 module, a type or one function, and `--search` finds what does a job:
@@ -224,6 +223,19 @@ std.hash.sha256
 std.hash.hmacSha256
     pub fn hmacSha256(key: Array[Byte], data: Array[Byte]): Digest
     The HMAC of the data with the key (RFC 2104), on SHA-256.
+std.crypto.verifyPassword
+    pub fn verifyPassword(password: String, hash: String): Bool
+    Whether `password` is the one `hash` was made from.
+std.hash.Digest
+    pub type Digest =
+    The digest of some data.
+std.hash.Hasher
+    pub type Hasher =
+    A digest or an HMAC computed in parts, without the data together: each part to `update`, then `finish`.
+std.meta.Input
+    pub type Input =
+    A file a generator is given: its name in the manifest, its bytes and their SHA-256.
+`tondo api <name>` shows one, with its methods and an example, as `tondo api std.hash.sha256`
 ```
 
 `tondo api` works on a project's own modules too, and `tondo api --diff

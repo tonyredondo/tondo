@@ -375,7 +375,15 @@ fn main() {
 ```text
 $ tondo check queue.to --performance
 warning[W1024]: `rest.removeAt(0)` moves every other element of `rest` on every turn: a `Deque` takes its first at once, with `popFront()`; or find where to cut once and take a `slice`
+ --> queue.to:8:13
+  |
+8 |         _ = rest.removeAt(0)
+  |             ^^^^^^^^^^^^^^^^
 warning[W1025]: `regex.Regex.compile(r"^\w+$")` compiles its pattern every time this code runs: a context's field compiles it once, when first read: `context Patterns = { pattern: regex.Regex = regex.Regex.compile(r"^\w+$")? }`, and `Patterns.pattern` reads it
+  --> queue.to:15:11
+   |
+15 |     match regex.Regex.compile(r"^\w+$") {
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 ```
 
 Each says what to write. The loop that keeps what it has not seen yet is
@@ -408,6 +416,10 @@ fn main() {
 ```text
 $ tondo check names.to --performance
 warning[W1023]: `seen.contains(name)` looks at every element of `seen`, which this loop pushes to, so each turn looks at more: keep a `Set` beside it, `var seenSet = seen.toSet()` before the loop, ask `seenSet.contains(...)`, and `seenSet.insert(...)` with each push
+ --> names.to:7:16
+  |
+7 |         if not seen.contains(name) {
+  |                ^^^^^^^^^^^^^^^^^^^
 ```
 
 A loop that searches an array which stays as it is gets no warning: it
