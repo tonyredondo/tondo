@@ -339,7 +339,7 @@ fn watch_held(held: &mut Vec<(u64, Instant)>) -> Watched {
         let mut look = (*seen, *since);
         let still = stayed(&mut look, next.turns.load(Ordering::Relaxed), now);
         (*seen, *since) = look;
-        if still >= GIVE_WAY_AFTER && CHECKPOINT_ASKS.load(Ordering::Relaxed) & GIVE_WAY == 0 {
+        if asks_to_give_way(still, CHECKPOINT_ASKS.load(Ordering::Relaxed)) {
             CHECKPOINT_ASKS.fetch_or(GIVE_WAY, Ordering::SeqCst);
         }
         let (marked, beside) = (next.held.load(Ordering::Relaxed), next.beside.load(Ordering::Relaxed));
@@ -385,6 +385,14 @@ fn watch_nexts() -> Watched {
 /// (`watch_nexts`); with none, it watches the worker held (`watch_held`).
 pub(super) fn watch_next() {
     watch_busy();
+}
+
+/// Whether the watcher asks the first task to ask with `tasks.checkpoint()`
+/// to give its worker away, a worker having stayed `still` on one task, by
+/// the word `asks` checkpoints read (11.15): once past the first interval,
+/// and not while it asks already.
+fn asks_to_give_way(still: Duration, asks: u32) -> bool {
+    still >= GIVE_WAY_AFTER && asks & GIVE_WAY == 0
 }
 
 /// Whether the watcher puts a worker beside one that has stayed `still` on
@@ -559,7 +567,7 @@ unsafe fn run_here(inner: unsafe extern "C" fn(*mut u8), frame: *mut u8, kept: &
 
 #[cfg(test)]
 mod tests {
-    use super::{ADD_AFTER, GIVE_WAY_AFTER, puts_beside, stayed};
+    use super::{ADD_AFTER, GIVE_WAY, GIVE_WAY_AFTER, asks_to_give_way, puts_beside, stayed};
     use std::time::{Duration, Instant};
 
     /// A worker whose tasks change, as tasks of 2 ms each change it, never
@@ -599,5 +607,19 @@ mod tests {
         assert!(!puts_beside(long, false, false, 2, 1));
         assert!(puts_beside(long, false, false, 7, 4));
         assert!(!puts_beside(long, false, false, 8, 4));
+    }
+
+    /// The watcher asks a task to give its worker away once that worker has
+    /// stayed on one task past the first interval, and not while it asks
+    /// already; another bit of the word, as that of deadlines, changes
+    /// nothing of it.
+    #[test]
+    fn a_task_is_asked_to_give_way_only_past_the_first_interval() {
+        let deadlines = 1;
+        assert!(asks_to_give_way(GIVE_WAY_AFTER, 0));
+        assert!(asks_to_give_way(ADD_AFTER, deadlines));
+        assert!(!asks_to_give_way(GIVE_WAY_AFTER - Duration::from_nanos(1), 0));
+        assert!(!asks_to_give_way(ADD_AFTER, GIVE_WAY));
+        assert!(!asks_to_give_way(ADD_AFTER, GIVE_WAY | deadlines));
     }
 }

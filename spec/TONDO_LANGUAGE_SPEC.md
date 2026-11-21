@@ -7226,6 +7226,10 @@ que un proceso que el sistema detiene no rompe ninguna regla:
 - los workers, sin contar los que están en lugar de uno en una llamada de C o de
   uno que retiene una herramienta, como el depurador, nunca son más del doble de
   los que el programa tiene;
+- un worker que lleva quinientas miradas en una misma llamada de C mientras otras
+  tareas esperan y ninguno está libre tiene otro en su lugar;
+- los workers, contados como ya retirados los que deben retirarse, nunca son
+  menos de los que el programa tiene;
 - el monitor no duerme mientras una tarea despertada por la que corre en un
   worker sigue lista junto a él cien miradas.
 

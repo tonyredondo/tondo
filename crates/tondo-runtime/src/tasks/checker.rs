@@ -19,6 +19,13 @@ const HELD_LOOKS: u64 = 500;
 const ASLEEP_LOOKS: u64 = 100;
 /// Looks the workers may be past their bound, as one starts or retires.
 const OVER_LOOKS: u64 = 2;
+/// Looks a worker may stay in one call of C while others wait and none is
+/// free, with none in its place: the monitor replaces it after a look of a
+/// millisecond or two. A rule that fires when the monitor has not acted yet
+/// is broken also by a monitor the system runs late, so it waits as long as
+/// `HELD_LOOKS` does for the watcher; the stalls of one thread a test makes
+/// must stay under the margin these two leave.
+const IN_C_LOOKS: u64 = 500;
 
 /// Where a ready task waits.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -39,10 +46,15 @@ pub(super) struct Slot {
     pub(super) held: bool,
     pub(super) beside: bool,
     pub(super) in_c: bool,
+    /// The calls of C its worker has made, which a call that goes on does
+    /// not move.
+    pub(super) c_calls: u64,
+    /// Another worker stands in its place for the call it is in.
+    pub(super) replaced: bool,
 }
 
 /// What one look saw.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub(super) struct Look {
     /// The ready tasks, by identity, and where each waits.
     pub(super) ready: Vec<(usize, Place)>,
@@ -77,6 +89,11 @@ pub(super) struct Watch {
     held: HashMap<usize, (u64, u64)>,
     /// Since which look the workers have been past their bound.
     over: Option<u64>,
+    /// Since which look each slot has been in one call of C while others
+    /// waited and none was free, with none in its place, and its calls then.
+    in_c: HashMap<usize, (u64, u64)>,
+    /// Since which look the workers have been fewer than their number.
+    under: Option<u64>,
 }
 
 /// A rule broken: its headline, and the state under it.
@@ -95,7 +112,7 @@ fn shown(place: Place) -> String {
     }
 }
 
-/// The four rules over one look more (16.14), with `given` workers.
+/// The six rules over one look more (16.14), with `given` workers.
 pub(super) fn judge(watch: &mut Watch, look: &Look, given: usize, name: &dyn Fn(usize) -> String) -> Option<Broken> {
     watch.look += 1;
     let now = watch.look;
@@ -176,6 +193,43 @@ pub(super) fn judge(watch: &mut Watch, look: &Look, given: usize, name: &dyn Fn(
             headline: format!(
                 "the program has {counted} workers, besides those standing in for a call of C or a task a tool holds, where twice its number is {}: past the bound of 16.14",
                 2 * given
+            ),
+        });
+    }
+
+    // A worker held in one call of C, with none in its place.
+    for (slot, state) in look.slots.iter().enumerate() {
+        let watched = state.alive && state.in_c && !state.replaced && waits && look.idle == 0;
+        let entry = watch.in_c.get(&slot).copied().filter(|&(calls, _)| watched && calls == state.c_calls);
+        match entry {
+            Some((_, since)) if looks(since) >= IN_C_LOOKS => {
+                return Some(Broken {
+                    rule: "held-in-c",
+                    headline: format!(
+                        "worker {slot} has been in one call of C for {} looks while others wait and no worker is free, and nothing stands in its place: the monitor did not replace it (16.14)",
+                        looks(since)
+                    ),
+                });
+            }
+            Some(_) => {}
+            None if watched => {
+                watch.in_c.insert(slot, (state.c_calls, now));
+            }
+            None => {
+                watch.in_c.remove(&slot);
+            }
+        }
+    }
+
+    // Fewer workers than their number: those owed retirement count as
+    // retired already, as a worker counts as started from when it is.
+    let remaining = look.workers.saturating_sub(look.surplus);
+    watch.under = if remaining < given { watch.under.or(Some(now)) } else { None };
+    if watch.under.is_some_and(|since| looks(since) >= OVER_LOOKS) {
+        return Some(Broken {
+            rule: "workers-below-number",
+            headline: format!(
+                "the program has {remaining} workers once those owed retirement retire, where it was given {given}: fewer than its number (16.14)"
             ),
         });
     }
@@ -263,12 +317,17 @@ fn looked() -> Look {
         }
         look.ready.extend(next.tasks().0.iter().map(|&task| (task as usize, Place::Own(slot))));
         let in_c = next.in_c.load(Ordering::Acquire);
+        // A thread of C's calls hold no worker (`native`).
+        let calling = unsafe { in_c.as_ref() }
+            .filter(|state| state.depth.load(Ordering::SeqCst) > 0 && !state.native.load(Ordering::SeqCst));
         look.slots.push(Slot {
             alive: next.alive.load(Ordering::Acquire),
             turns: next.turns.load(Ordering::Relaxed),
             held: next.held.load(Ordering::Relaxed),
             beside: next.beside.load(Ordering::Relaxed),
-            in_c: !in_c.is_null() && unsafe { (*in_c).depth.load(Ordering::SeqCst) } > 0,
+            in_c: calling.is_some(),
+            c_calls: calling.map_or(0, |state| state.calls.load(Ordering::SeqCst) as u64),
+            replaced: calling.is_some_and(|state| state.replaced.load(Ordering::SeqCst)),
         });
     }
     look
@@ -297,7 +356,7 @@ fn report_text(broken: &Broken, look: &Look, name: &dyn Fn(usize) -> String) -> 
             line.push_str(", put beside a held one");
         }
         if state.in_c {
-            line.push_str(", in a call of C");
+            line.push_str(if state.replaced { ", in a call of C, another in its place" } else { ", in a call of C" });
         }
         report.push_str(&line);
     }
@@ -450,5 +509,43 @@ mod tests {
             "timers: none due",
         ];
         assert_eq!(report.lines().collect::<Vec<_>>(), expected);
+    }
+
+    /// A worker held in one call of C while others wait and none is free,
+    /// and nothing put in its place: the monitor's oldest remedy undone.
+    #[test]
+    fn a_worker_held_in_c_with_none_in_its_place_breaks_the_fifth_rule() {
+        let calling = Slot { in_c: true, c_calls: 4, ..busy(3) };
+        let look = Look { ready: vec![(7, Place::Shared)], workers: 1, slots: vec![calling], ..Look::default() };
+        let broken = run(&look, 600, 1).expect("no rule broke");
+        assert_eq!(broken.rule, "held-in-c");
+        assert!(broken.headline.starts_with("worker 0 has been in one call of C for 500 looks"), "{broken:?}");
+        // With another in its place, or a worker free, it holds.
+        let replaced = Look { slots: vec![Slot { replaced: true, ..calling }], ..look.clone() };
+        assert_eq!(run(&replaced, 600, 1), None);
+        let free = Look {
+            idle: 1,
+            told: true,
+            workers: 2,
+            slots: vec![calling, Slot { alive: true, ..Slot::default() }],
+            ..look
+        };
+        assert_eq!(run(&free, 600, 1), None);
+    }
+
+    /// The workers fewer than their number, those owed retirement counted
+    /// as gone; one being started counts already.
+    #[test]
+    fn workers_fewer_than_their_number_break_the_sixth_rule() {
+        let look = Look { workers: 4, surplus: 2, slots: vec![busy(1), busy(1), busy(1), busy(1)], ..Look::default() };
+        let broken = run(&look, 5, 3).expect("no rule broke");
+        assert_eq!(broken.rule, "workers-below-number");
+        assert!(
+            broken
+                .headline
+                .starts_with("the program has 2 workers once those owed retirement retire, where it was given 3")
+        );
+        let owed = Look { surplus: 1, ..look };
+        assert_eq!(run(&owed, 5, 3), None);
     }
 }
