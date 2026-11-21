@@ -5934,6 +5934,9 @@ fn debugger_follows_tasks_and_searches_history() {
 }
 
 const COUNTED: &str = r#"import std.console
+import std.diagnostics
+import std.env
+import std.time
 
 fn count(name: String, done: Sender[String]) {
     var total = 0
@@ -5949,11 +5952,18 @@ fn main() {
     spawn count("b", done)
     console.println(finished.receive() ?? "")
     console.println(finished.receive() ?? "")
+    // The worker that stood in for a frozen task retires once it is thawed.
+    let total = () { diagnostics.metrics().find((each) { each.name == "workers.total" }).map((each) { each.value }) ?? -1 }
+    for total() > env.workers() {
+        time.sleep(time.milliseconds(1))
+    }
+    console.println("workers back at their number: {total() == env.workers()}")
 }
 "#;
 
 /// Breakpoints at events: a task starts, a channel is used, a wait is long;
-/// a frozen task stays while the others go on.
+/// a frozen task stays while the others go on, and the worker that stood in
+/// for it retires once it is thawed (`step_back`).
 #[test]
 fn debugger_stops_at_events_and_freezes_tasks() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-events");
@@ -5981,10 +5991,10 @@ fn debugger_stops_at_events_and_freezes_tasks() {
     // The first of the two tasks to start, as the workers take them.
     let (at, task, why) = stops[1];
     assert!(matches!(task.as_u64(), Some(2 | 3)), "{stops:?}");
-    let spawned = format!("task {task} starts, spawned at counted.to:{} in main", 11 + task.as_u64().unwrap());
-    assert_eq!((at, why), ("counted.to:4 in count", spawned.as_str()));
+    let spawned = format!("task {task} starts, spawned at counted.to:{} in main", 14 + task.as_u64().unwrap());
+    assert_eq!((at, why), ("counted.to:7 in count", spawned.as_str()));
     // Task 2 frozen at its first line, task 3 sends.
-    assert_eq!(stops[2], ("counted.to:8 in count", &json!(3), "sends on a channel that holds 0 of 1"));
+    assert_eq!(stops[2], ("counted.to:11 in count", &json!(3), "sends on a channel that holds 0 of 1"));
     let tasks = lines.iter().find_map(|l| l["tasks"].as_array()).unwrap();
     // Stands frozen, if it started: task 3 may have come first, and it then
     // stops at its first line once it runs.
@@ -5996,6 +6006,7 @@ fn debugger_stops_at_events_and_freezes_tasks() {
     assert!(waited.starts_with("waited ") && on_channel, "{stops:?}");
     assert!(lines.iter().any(|l| l["error"].as_str().is_some_and(|e| e.starts_with("break on takes"))));
     assert!(text.contains("a 3\n") && text.contains("b 3\n"), "{text}");
+    assert!(text.contains("workers back at their number: true\n"), "{text}");
     // The editor's event filters.
     let mut adapter = Adapter::start();
     adapter.ask("initialize", json!({ "adapterID": "tondo" }));
