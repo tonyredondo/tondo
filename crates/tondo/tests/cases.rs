@@ -558,10 +558,12 @@ fn run_with_timeout(command: &mut Command, seconds: u64, stops: &[Stop]) -> Resu
                 (!*over).then(|| unsafe { libc::kill(pid as i32, signal) }).is_some()
             };
             for stop in stops {
+                // Time is what is under test: the moment the program stops.
                 std::thread::sleep((started + stop.at).saturating_duration_since(std::time::Instant::now()));
                 if !signal(libc::SIGSTOP) {
                     return;
                 }
+                // Time is what is under test: how long it stands.
                 std::thread::sleep(stop.lasting);
                 if !signal(libc::SIGCONT) {
                     return;
