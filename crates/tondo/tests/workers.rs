@@ -35,6 +35,12 @@ const KNOWN: &[(&str, &str, &str)] = &[
         "SPARE_BLOCKS",
         "blocks of tasks that ended, taken and given back by calls that never wait, on any thread",
     ),
+    (
+        "tasks/stalls.rs",
+        "PASSES",
+        "a thread's passes where it may stop: the monitor's loop and a worker's, outside any task",
+    ),
+    ("tasks/stalls.rs", "STOPPED", "the stops a thread made: the monitor's loop and a worker's, outside any task"),
     ("heap.rs", "UNTIL", "a sample of the heap per thread, whichever task allocates"),
     ("heap.rs", "SEED", "a sample of the heap per thread, whichever task allocates"),
     ("heap.rs", "REGION_UNTIL", "a sample of what regions make per thread, whichever task makes it"),
