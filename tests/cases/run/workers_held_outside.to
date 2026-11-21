@@ -1,0 +1,44 @@
+// With one worker, a computation that neither waits nor asks holds it until
+// a flag is set, and `main`, which sets the flag, waits for a child process.
+// The process's end makes `main` ready from outside the code a worker runs:
+// it waits in the queue every worker takes from, the only task there, with
+// the one worker held. The watcher counts it as a task that waits (16.14),
+// puts a worker beside the held one, and `main` runs there and stops the
+// computation, as a server's request does when its workers all compute.
+// Nothing here is measured by the clock.
+
+import std.console
+import std.process
+import std.sync
+
+/// Computes until `stop` is set, without waiting, once it has said it began.
+fn compute(began: sync.Atomic[Bool], stop: sync.Atomic[Bool]): Int {
+    began.store(true)
+    var turns = 0
+    for not stop.load() {
+        turns += 1
+    }
+    turns
+}
+
+fn main(): !String {
+    let began = sync.Atomic(false)
+    let stop = sync.Atomic(false)
+    let job = spawn compute(began, stop)
+    // Child processes until the computation holds the one worker: the end of
+    // each makes `main` ready from outside.
+    for not began.load() {
+        _ = process.command("true").output().mapErr((e) { "{e}" })?
+    }
+    let output = process.command("echo", "outside").output().mapErr((e) { "{e}" })?
+    console.println(
+        "main ran beside the computation: {output.text().mapErr((e) { "{e}" })?.trim()}",
+    )
+    stop.store(true)
+    _ = job.wait()
+}
+
+// expect-env: TONDO_WORKERS=1
+// expect-no-schedule: the explorer runs one worker and adds none, so a computation that does not ask holds it, by design
+// expect-no-replay: a recorded run, too, runs its tasks on one worker that adds none
+// expect-stdout: main ran beside the computation: outside
