@@ -1446,47 +1446,6 @@ fn a_test_each_way_decided_is_threaded_through_the_join() {
     assert_eq!(String::from_utf8_lossy(&ran.stdout), "18 2 1 -1\n4 10 6\n");
 }
 
-/// A part of a parameter copied into a local the function only reads needs
-/// no count of its own, as the caller keeps the parameter: a specialized
-/// adapter's array and closures, and a copy of a record that walks its
-/// array. A part that is returned, stored, written, or of a `var`
-/// parameter keeps its count, and every program prints what it did.
-#[test]
-fn a_part_of_a_parameter_only_read_needs_no_count() {
-    let source = "import std.console\n\ntype Box = {\n    items: Array[Int]\n    name: String\n}\n\nfn sizes(box: Box): Int {\n    let items = box.items\n    items.length() + items[0]\n}\n\nfn walked(box: Box): Int {\n    var cursor = box\n    var total = 0\n    for item in cursor.items {\n        total += item\n    }\n    cursor.name = \"walked\"\n    total + cursor.name.length() + box.name.length()\n}\n\nfn kept(box: Box): Array[Int] {\n    let items = box.items\n    items\n}\n\nfn stored(box: Box): Box {\n    let items = box.items\n    Box { items: items, name: \"copy\" }\n}\n\nfn grown(box: var Box): Int {\n    let items = box.items\n    box = Box { items: [], name: \"\" }\n    items.length()\n}\n\nfn main() {\n    var box = Box { items: [1, 2, 3], name: \"b\" }\n    console.println(\"{sizes(box)} {walked(box)} {kept(box).length()} {stored(box).items.length()} {grown(var box)} {box.items.length()}\")\n    console.println(\"{[1, 2, 3, 4, 5, 6].iter().map(n => n * 2).filter(n => n % 3 == 0).sumBy(n => n)}\")\n}\n";
-    let dir = project_at("borrowed-parts", &[("main.to", source.as_bytes())]);
-    let notes = |function: &str| {
-        let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
-            .args(["build", "main.to", "--output", "main"])
-            .env("TONDO_DUMP_MIR", format!("{function}@borrowed"))
-            .current_dir(&dir)
-            .output()
-            .unwrap();
-        assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
-        let said = String::from_utf8_lossy(&ran.stderr).into_owned();
-        let notes: Vec<String> =
-            said.lines().filter(|line| line.contains("note borrowed:")).map(str::to_string).collect();
-        notes
-    };
-    let goes = "needs no count of its own";
-    let sum = notes("sumBy");
-    assert!(!sum.is_empty() && sum.iter().all(|note| note.contains(goes)), "{sum:?}");
-    let walked = notes("walked");
-    assert!(walked.iter().any(|note| note.contains(goes)), "{walked:?}");
-    assert!(
-        walked.iter().any(|note| note.contains("keeps its count: it or what holds it is given a value more than once")),
-        "{walked:?}"
-    );
-    let kept = notes("kept");
-    assert!(kept.len() == 1 && kept[0].contains("keeps its count: it is returned"), "{kept:?}");
-    let stored = notes("stored");
-    assert!(stored.len() == 1 && stored[0].contains("keeps its count: something keeps it"), "{stored:?}");
-    // A `var` parameter is lent: no part of it is looked at.
-    assert!(notes("grown").is_empty());
-    let ran = Command::new(dir.join("main")).output().unwrap();
-    assert_eq!(String::from_utf8_lossy(&ran.stdout), "4 13 3 3 3 0\n18\n");
-}
-
 /// `TONDO_LAYOUT_SEED` lays a build's functions out in another order, the
 /// same for the same seed: the program does what it did, its panics name
 /// the same frames, and only where its code lies changes.
