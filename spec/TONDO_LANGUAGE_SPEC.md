@@ -9782,6 +9782,10 @@ reutilizar uno existente.
 
 ### 22.3 Salida estructurada
 
+En el texto, un diagnóstico nombra su archivo por el path relativo al
+directorio actual cuando el archivo está dentro de él, y tal como se dio en
+otro caso; el JSON da siempre el path lógico (8 del toolchain).
+
 Además de texto humano, el compilador ofrece JSON: `tondo check --json` da
 los diagnósticos en `diagnostics` de `tondo-check-0.1/1`, y
 `--diagnostic-format json` en stderr (7.12 del toolchain). Cada uno es:
