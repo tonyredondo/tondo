@@ -3920,7 +3920,19 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         fbc: &'a mut FunctionBuilderContext,
     ) -> Self {
         let mut fb = FunctionBuilder::new(func, fbc);
-        let blocks = body.blocks.iter().map(|_| fb.create_block()).collect();
+        let blocks: Vec<ir::Block> = body.blocks.iter().map(|_| fb.create_block()).collect();
+        // The way out of a cancel or a panic's unwinding runs once a call at
+        // most: its first block goes to the function's end, out of the loops
+        // it leaves, as the checks' own calls already do.
+        let leaves = |statement: &Statement| {
+            matches!(statement, Statement::Assign(_, rvalue, _)
+                if matches!(**rvalue, Rvalue::Call(Callee::Std(StdFn::CancelReturn | StdFn::UnwindHold), _)))
+        };
+        for (&block, data) in blocks.iter().zip(&body.blocks) {
+            if data.stmts.iter().any(leaves) {
+                fb.set_cold_block(block);
+            }
+        }
         let mut storage = Vec::with_capacity(body.locals.len());
         // Locals that hold the address of an element they borrow.
         let lent: HashSet<Local> = body
