@@ -319,7 +319,7 @@ fn watch_held(held: &mut Vec<(u64, Instant)>) -> Watched {
         return Watched::Idle;
     }
     let shared = queue();
-    if shared.idle > 0 {
+    if watches_nexts(shared.idle) {
         held.clear();
         drop(shared);
         return watch_nexts();
@@ -391,6 +391,13 @@ fn watch_nexts() -> Watched {
 /// (`watch_nexts`); with none, it watches the worker held (`watch_held`).
 pub(super) fn watch_next() {
     watch_busy();
+}
+
+/// Whether the watch is of the tasks woken next to workers, not of held
+/// workers: while a worker is idle, which takes what waits, so that none is
+/// put beside a held one then (16.14).
+fn watches_nexts(idle: usize) -> bool {
+    idle > 0
 }
 
 /// Whether the watcher asks the first task to ask with `tasks.checkpoint()`
@@ -573,7 +580,7 @@ unsafe fn run_here(inner: unsafe extern "C" fn(*mut u8), frame: *mut u8, kept: &
 
 #[cfg(test)]
 mod tests {
-    use super::{ADD_AFTER, GIVE_WAY, GIVE_WAY_AFTER, asks_to_give_way, puts_beside, stayed};
+    use super::{ADD_AFTER, GIVE_WAY, GIVE_WAY_AFTER, asks_to_give_way, puts_beside, stayed, watches_nexts};
     use std::time::{Duration, Instant};
 
     /// A worker whose tasks change, as tasks of 2 ms each change it, never
@@ -619,6 +626,13 @@ mod tests {
     /// stayed on one task past the first interval, and not while it asks
     /// already; another bit of the word, as that of deadlines, changes
     /// nothing of it.
+    #[test]
+    fn a_worker_idle_turns_the_watch_to_the_nexts() {
+        assert!(!watches_nexts(0));
+        assert!(watches_nexts(1));
+        assert!(watches_nexts(7));
+    }
+
     #[test]
     fn a_task_is_asked_to_give_way_only_past_the_first_interval() {
         let deadlines = 1;
