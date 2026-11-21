@@ -86,6 +86,15 @@ pub(super) struct Broken {
     pub(super) headline: String,
 }
 
+/// Where a ready task waits, in the report's words.
+fn shown(place: Place) -> String {
+    match place {
+        Place::Next(slot) => format!("beside worker {slot}, woken by the task it runs"),
+        Place::Own(slot) => format!("in the queue of worker {slot}"),
+        Place::Shared => "in the shared queue".to_string(),
+    }
+}
+
 /// The four rules over one look more (16.14), with `given` workers.
 pub(super) fn judge(watch: &mut Watch, look: &Look, given: usize, name: &dyn Fn(usize) -> String) -> Option<Broken> {
     watch.look += 1;
@@ -108,11 +117,7 @@ pub(super) fn judge(watch: &mut Watch, look: &Look, given: usize, name: &dyn Fn(
     let looks = |since: u64| now - since + 1;
     let oldest =
         watch.ready.iter().min_by_key(|(_, (since, _))| *since).map(|(&task, &(since, place))| (task, since, place));
-    let shown = |place: Place| match place {
-        Place::Next(slot) => format!("beside worker {slot}, woken by the task it runs"),
-        Place::Own(slot) => format!("in the queue of worker {slot}"),
-        Place::Shared => "in the shared queue".to_string(),
-    };
+    let shown = shown;
 
     // A ready task, or a due timer, while a worker sleeps untold.
     if let Some(untold) = watch.untold.filter(|&since| looks(since) >= READY_LOOKS) {
@@ -274,6 +279,14 @@ fn report(broken: &Broken, look: &Look) -> ! {
     use std::io::Write;
     flush_stdout();
     crate::terminal::give_back();
+    let _ = writeln!(std::io::stderr(), "{}", report_text(broken, look, &named));
+    crate::diagnostics::crash_dump("scheduler-rule", &broken.headline, Vec::new(), true);
+    std::process::exit(crate::PANIC_EXIT_CODE)
+}
+
+/// The report of a rule broken: its headline, then the state of the
+/// scheduler at the look that broke it.
+fn report_text(broken: &Broken, look: &Look, name: &dyn Fn(usize) -> String) -> String {
     let mut report = format!("panic[P0020]: scheduler-rule: {}", broken.headline);
     for (slot, state) in look.slots.iter().enumerate().filter(|(_, state)| state.alive) {
         let mut line = format!("\nworker {slot}: {} tasks started", state.turns);
@@ -289,7 +302,7 @@ fn report(broken: &Broken, look: &Look) -> ! {
         report.push_str(&line);
     }
     for &(task, place) in &look.ready {
-        report.push_str(&format!("\nready: {} {place:?}", named(task)));
+        report.push_str(&format!("\nready: {} {}", name(task), shown(place)));
     }
     report.push_str(&format!(
         "\nworkers: {} started, {} asleep{}, {} retirements owed, {} standing in",
@@ -304,14 +317,12 @@ fn report(broken: &Broken, look: &Look) -> ! {
         Some(_) => "\ntimers: one due",
         None => "\ntimers: none due",
     });
-    let _ = writeln!(std::io::stderr(), "{report}");
-    crate::diagnostics::crash_dump("scheduler-rule", &broken.headline, Vec::new(), true);
-    std::process::exit(crate::PANIC_EXIT_CODE)
+    report
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Broken, Look, Place, Slot, Watch, judge};
+    use super::{Broken, Look, Place, Slot, Watch, judge, report_text};
     use std::time::Instant;
 
     fn name(task: usize) -> String {
@@ -412,5 +423,32 @@ mod tests {
             };
             assert_eq!(judge(&mut watch, &look, 2, &name), None, "at look {at}");
         }
+    }
+
+    /// The report of P0020 says the rule's headline and, under it, each
+    /// worker, each ready task where it waits, the workers' counts, the
+    /// monitor and the timers, in the words `why` will use.
+    #[test]
+    fn the_report_of_p0020_says_whose_fault_and_the_state_under_it() {
+        let look = Look {
+            ready: vec![(7, Place::Next(0))],
+            idle: 1,
+            workers: 2,
+            monitor_asleep: true,
+            slots: vec![busy(3), Slot { alive: true, ..Slot::default() }],
+            ..Look::default()
+        };
+        let broken = run(&look, 200, 2).expect("no rule broke");
+        let report = report_text(&broken, &look, &name);
+        let expected = [
+            "panic[P0020]: scheduler-rule: task 7 has been ready for 100 looks beside worker 0, woken by the task it runs, while a worker has slept for 100 looks and nothing told it to look: a wake the scheduler lost, not the program's (16.14)",
+            "worker 0: 3 tasks started",
+            "worker 1: 0 tasks started",
+            "ready: task 7 beside worker 0, woken by the task it runs",
+            "workers: 2 started, 1 asleep, none told to look, 0 retirements owed, 0 standing in",
+            "monitor: asleep",
+            "timers: none due",
+        ];
+        assert_eq!(report.lines().collect::<Vec<_>>(), expected);
     }
 }
