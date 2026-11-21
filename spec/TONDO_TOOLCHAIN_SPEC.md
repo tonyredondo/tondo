@@ -2480,6 +2480,7 @@ significan lo de siempre.
 | `TONDO_RT_REPLAY` | `tondo debug --replay` | La grabación que reproduce. |
 | `TONDO_RT_SHOWN_FROM` | `tondo debug --replay` | La sonda desde la que una reproducción muestra lo que escribe el programa. |
 | `TONDO_RT_SCHEDULE` | `tondo test --schedules`, `tondo run --record` y su reproducción | La semilla, en hexadecimal, del orden en que corren las tareas. |
+| `TONDO_RT_STALLS` | Los casos del toolchain, con `TONDO_CASES_STALLS` en su paso de depuración | Una semilla: con `TONDO_CHECK_SCHEDULER`, el runtime detiene un hilo a la vez donde la semilla dice, el monitor antes de mirar o entre leer la cuenta de un worker y marcarlo, y un worker que tomó una tarea de la cola común o de otro worker antes de correrla, de 5 a 50 ms, tres veces cada hilo como mucho; sin `TONDO_CHECK_SCHEDULER`, nada. |
 | `TONDO_RT_ORDER` | `tondo test --schedules all` | Las elecciones de la ejecución. |
 | `TONDO_RT_ORDER_OUT` | `tondo test --schedules all` | Dónde dice la ejecución lo que hizo, para la siguiente. |
 | `TONDO_TEST_PLAN` | `tondo test` | El archivo de los tests que corre. |

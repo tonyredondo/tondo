@@ -411,6 +411,7 @@ fn work_loop(main: bool, until: Option<&dyn Fn() -> bool>, seeks: Option<usize>)
             wake_idle();
         }
         (woken, waited) = (false, false);
+        super::stalls::here(super::stalls::Point::Take);
         run(task);
     }
 }

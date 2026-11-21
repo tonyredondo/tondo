@@ -71,6 +71,9 @@ pub(crate) struct Config {
     /// `TONDO_CHECK_SCHEDULER`: `1` checks what the scheduler promises as it
     /// runs (`tasks::checker`).
     pub(crate) check_scheduler: Option<OsString>,
+    /// `TONDO_RT_STALLS`, a seed: with `check_scheduler`, one thread at a
+    /// time stops where it says (`tasks::stalls`).
+    pub(crate) stalls: Option<OsString>,
     /// `TONDO_RT_CHECK_LEAKS`, set by the tests of the toolchain: counts the
     /// objects alive as the program ends.
     pub(crate) check_leaks: Option<OsString>,
@@ -160,6 +163,7 @@ pub(crate) fn config() -> &'static Config {
             live_hold: os("TONDO_LIVE_HOLD"),
             check_lifetimes: os("TONDO_CHECK_LIFETIMES"),
             check_scheduler: os("TONDO_CHECK_SCHEDULER"),
+            stalls: os("TONDO_RT_STALLS"),
             check_leaks: os("TONDO_RT_CHECK_LEAKS"),
             record: os("TONDO_RT_RECORD"),
             record_children: os("TONDO_RT_RECORD_CHILDREN"),

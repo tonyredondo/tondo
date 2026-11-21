@@ -310,6 +310,7 @@ pub(super) fn start() {
     if !asked() || STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
+    super::stalls::start();
     spawn_thread(Some(256 * 1024), || {
         let mut watch = Watch::default();
         let given = crate::config::workers();

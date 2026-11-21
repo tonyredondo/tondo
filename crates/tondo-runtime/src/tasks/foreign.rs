@@ -226,6 +226,7 @@ pub(super) fn monitor() {
         if stopping() {
             return;
         }
+        super::stalls::here(super::stalls::Point::Look);
         MONITOR_LOOKS.store(MONITOR_LOOKS.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
         let callers: Vec<&'static InC> = CALLERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let mut busy = false;
@@ -350,6 +351,7 @@ fn watch_held(held: &mut Vec<(u64, Instant)>) -> Watched {
         }
         let (marked, beside) = (next.held.load(Ordering::Relaxed), next.beside.load(Ordering::Relaxed));
         if puts_beside(still, marked, beside, workers, given) {
+            super::stalls::here(super::stalls::Point::Mark);
             let queue = queue();
             // Again under the lock: another may have started meanwhile.
             if puts_beside(still, false, beside, queue.workers, given)

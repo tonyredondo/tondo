@@ -9233,3 +9233,42 @@ before keeps its author's layout and its closures as blocks, which still
 compile: rewriting it with `tondo fmt` would have changed much more than its
 closures. The formatter leaves what a string interpolates as it was
 written, so the closures there were changed by hand.
+
+## One thread stopped at a time
+
+The cases' runner stops a whole program, every thread at once, as a busy
+machine stops a process (`TONDO_CASES_STALLS`). A busy machine also runs
+one thread late while the others go on, which that cannot show: a worker
+that took a task and has not run it yet, a monitor that read a worker's
+count and has not acted on it. With `TONDO_RT_STALLS`, a seed, and the
+checker on, the runtime stops one thread at a time where the seed says:
+the monitor before it looks, the monitor between reading a held worker's
+count and marking it, and a worker that took a task from the queue every
+worker takes from, or from another worker, before it runs it. Each thread
+stops three times at most, for 5 to 50 ms, far under the five hundred
+looks the checker's rules leave for a thread run late, so that what the
+checker judges is the scheduler and not the stop. The runner gives each
+case's run a seed of its own from `TONDO_CASES_STALLS`, which only the
+debug step, where the checker runs, puts to use. Off, the three places cost
+a load and a branch: over the 77 rows of bench/tondo, 69 do the same
+instructions and the rest move within 0.2%.
+
+Its first runs found a bound counted in another thread's time. A snapshot
+of the tasks takes itself again while a task is between the queue and the
+worker about to run it, and gave up after 100 ms by the clock; a worker
+stopped there, with a stop of the whole process during the snapshot's
+retries, used the time up with no try made, and profile_tasks_sleeping.to
+saw a task shown nowhere once in five runs. The snapshot now makes a
+thousand tries, about as long when the process runs and none lost when it
+stands.
+
+It does not reach the retirement of a worker put beside when the one it
+stood by goes idle still marked, which the mutation run left without a
+case. The stop between the count and the mark was meant to: the held task
+would end during it, and the mark land on an idle worker. But in every
+case that puts a worker beside, the held computation ends only when `main`
+tells it to, and `main` runs only on the worker put beside it, so the held
+task cannot end before the mark; with that retirement miscounted, ten
+seeds of every worker case pass. A case that reached it would need a held
+task that ends by itself as the watcher marks it, which only a duration
+gives. It stays a gap, named here.

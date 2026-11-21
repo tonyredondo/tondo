@@ -62,7 +62,10 @@
 //! first second, for 50 to 150 ms each, at moments that the seed, the case
 //! and the round pick, as a busy machine stops a process: the clock runs on
 //! while it stands, so a case that counts on a margin of time where it
-//! should wait for a word fails, and says when it stood.
+//! should wait for a word fails, and says when it stood. With the checker
+//! on, as in the debug step, its runtime also stops one thread at a time
+//! where a seed of the same run says (`TONDO_RT_STALLS`), as a busy machine
+//! runs one thread late while the others go on.
 //!
 //! Each directory under `tests/projects` is a project built as a whole,
 //! with the expectations written in any of its files.
@@ -284,8 +287,12 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
     let repeat = std::env::var("TONDO_CASES_REPEAT").ok().and_then(|n| n.parse().ok()).filter(|_| tasks).unwrap_or(1);
     for round in 1..=repeat {
         let stops = stops(path, round);
+        let stalls = thread_stalls(path, round);
         let once = || -> Result<(), String> {
             let mut command = program();
+            if let Some(seed) = stalls {
+                command.env("TONDO_RT_STALLS", seed.to_string());
+            }
             // A seed of its own each time, which a failure says.
             let recording = std::env::var_os("TONDO_CASES_REPLAY").filter(|_| !expect.no_replay).map(|_| {
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
@@ -360,11 +367,23 @@ fn stops(path: &Path, round: u32) -> Vec<Stop> {
     stops_of(seed, &own(path).to_string_lossy(), round)
 }
 
-fn stops_of(seed: u64, case: &str, round: u32) -> Vec<Stop> {
-    // FNV-1a of the case under the seed and the round, then splitmix64.
-    let mut state = case.bytes().fold(seed ^ (u64::from(round) << 32) ^ 0xcbf2_9ce4_8422_2325, |hash, byte| {
+/// The seed of a case's run: FNV-1a of the case under the seed and the round.
+fn run_seed(seed: u64, case: &str, round: u32) -> u64 {
+    case.bytes().fold(seed ^ (u64::from(round) << 32) ^ 0xcbf2_9ce4_8422_2325, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
-    });
+    })
+}
+
+/// The seed of the stops of one thread at a time the runtime makes, with the
+/// checker on (`TONDO_RT_STALLS`), from the same seed of the case's run.
+fn thread_stalls(path: &Path, round: u32) -> Option<u64> {
+    let seed: u64 = std::env::var("TONDO_CASES_STALLS").ok()?.trim().parse().ok()?;
+    Some(run_seed(seed, &own(path).to_string_lossy(), round).rotate_left(17))
+}
+
+fn stops_of(seed: u64, case: &str, round: u32) -> Vec<Stop> {
+    // The run's seed, then splitmix64.
+    let mut state = run_seed(seed, case, round);
     let mut next = move || {
         state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
         let mut z = state;
