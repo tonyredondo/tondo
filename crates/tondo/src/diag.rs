@@ -247,8 +247,11 @@ impl Diagnostics {
         format!("[{}]\n", items.join(","))
     }
 
+    /// The diagnostics as people read them, each file named from the current
+    /// directory when it lies under it, however the command was given it.
     pub fn render(&self, sources: &SourceMap) -> String {
         let mut out = String::new();
+        let here = Here::now();
         for d in &self.list {
             let severity = match d.severity {
                 Severity::Error => "error",
@@ -259,25 +262,44 @@ impl Diagnostics {
                 None => writeln!(out, "{severity}: {}", d.message).unwrap(),
             }
             if let Some(span) = d.span {
-                render_snippet(&mut out, sources, span);
+                render_snippet(&mut out, sources, span, &here);
             }
             for (span, message) in &d.related {
                 let file = sources.file_of(span.start);
                 let (line, column) = file.line_col(span.start);
-                writeln!(out, "note: {message}\n --> {}:{line}:{column}", file.path.display()).unwrap();
+                writeln!(out, "note: {message}\n --> {}:{line}:{column}", here.shown(&file.path)).unwrap();
             }
         }
         out
     }
 }
 
-fn render_snippet(out: &mut String, sources: &SourceMap, span: Span) {
+/// The current directory, as the process has it and as its real path: a
+/// project's files may be named from either.
+struct Here(Vec<std::path::PathBuf>);
+
+impl Here {
+    fn now() -> Here {
+        let given = std::env::current_dir().ok();
+        let real = given.as_ref().and_then(|dir| dir.canonicalize().ok());
+        Here(given.into_iter().chain(real).collect())
+    }
+
+    /// A file relative to the current directory when it lies under it, and
+    /// as it was named otherwise.
+    fn shown(&self, path: &std::path::Path) -> String {
+        let inside = self.0.iter().find_map(|dir| path.strip_prefix(dir).ok());
+        inside.filter(|inside| !inside.as_os_str().is_empty()).unwrap_or(path).display().to_string()
+    }
+}
+
+fn render_snippet(out: &mut String, sources: &SourceMap, span: Span, here: &Here) {
     let file = sources.file_of(span.start);
     let (line, column) = file.line_col(span.start);
     let (end_line, end_column) = file.line_col(span.end.max(span.start));
     let text = file.line_text(line);
     let gutter = line.to_string().len();
-    writeln!(out, "{:gutter$}--> {}:{line}:{column}", "", file.path.display()).unwrap();
+    writeln!(out, "{:gutter$}--> {}:{line}:{column}", "", here.shown(&file.path)).unwrap();
     writeln!(out, "{:gutter$} |", "").unwrap();
     writeln!(out, "{line} | {text}").unwrap();
     let width = if end_line == line { end_column.saturating_sub(column).max(1) } else { 1 };

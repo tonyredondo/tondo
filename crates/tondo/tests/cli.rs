@@ -1235,6 +1235,37 @@ fn a_test_says_of_locks_in_opposite_orders() {
     assert!(said.contains("crossed ... FAILED") && said.contains("P0019"), "{said}");
 }
 
+/// The text of a diagnostic names its file from the current directory when
+/// it lies under it, however the command was given the project, and as it
+/// was given otherwise.
+#[test]
+fn diagnostics_name_files_from_the_current_directory() {
+    let dir = project_at(
+        "relative-words",
+        &[("tondo.toml", b"[package]\nname = \"words\"\n"), ("src/main.to", b"fn main() {\n    undefined()\n}\n")],
+    );
+    let whole = dir.canonicalize().unwrap();
+    let whole = whole.to_str().unwrap();
+    let elsewhere = scratch("relative-elsewhere");
+    let outside = format!("{whole}/src/main.to");
+    let runs: [(&Path, &[&str], &str); 9] = [
+        (&dir, &["check"], "src/main.to"),
+        (&dir, &["check", "."], "src/main.to"),
+        (&dir, &["check", whole], "src/main.to"),
+        (&dir, &["check", "src/main.to"], "src/main.to"),
+        (dir.parent().unwrap(), &["check", "relative-words"], "relative-words/src/main.to"),
+        (&dir, &["build"], "src/main.to"),
+        (&dir, &["run"], "src/main.to"),
+        (&dir, &["test"], "src/main.to"),
+        (&elsewhere, &["check", whole], &outside),
+    ];
+    for (at, args, file) in runs {
+        let (_, said, status) = tondo(at, args);
+        assert_ne!(status, 0, "{args:?}: {said}");
+        assert!(said.contains(&format!("--> {file}:2:5\n")), "{args:?} in {}: {said}", at.display());
+    }
+}
+
 /// What a program asks of itself beyond compiling.
 #[test]
 fn check_says_what_it_is_asked() {
