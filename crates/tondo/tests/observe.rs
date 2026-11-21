@@ -419,7 +419,9 @@ fn main() {
 /// A program that waits while its processor is profiled gives no sample,
 /// and the profile says that it waited and how to see where, never that
 /// tondo's sampling failed it. One the command starts may give a sample or
-/// two of its start.
+/// two of its start. Of its threads, only those that serve the tools, as
+/// the one that sends the profile, are not sampled; the monitor sleeps while
+/// the program waits, and the checker's looks take far less than a sample.
 #[test]
 fn a_cpu_profile_of_a_program_that_waits_says_it_waited() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("profile-waits");
