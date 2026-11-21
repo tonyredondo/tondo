@@ -9271,4 +9271,8 @@ tells it to, and `main` runs only on the worker put beside it, so the held
 task cannot end before the mark; with that retirement miscounted, ten
 seeds of every worker case pass. A case that reached it would need a held
 task that ends by itself as the watcher marks it, which only a duration
-gives. It stays a gap, named here.
+gives. What it owes is now written once, `lets_one_go`, for that idle
+worker and for the task that leaves its worker, which every case of a
+worker put beside reaches: three of them hang when the retirement is
+miscounted there. What no case reaches is that one call of the idle path,
+named here.

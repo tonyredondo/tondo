@@ -20,7 +20,7 @@ work=$(mktemp -d)
 git -C "$root" archive HEAD | tar -x -C "$work"
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$root/target/mutants}
 export TONDO_RUNTIME_FAST=1
-tasks='in (work_from|work_loop|steal|enqueue|wake_idle|new_task|first_priority|recycle|Wait::parked|Wait::block|notify_with|schedule|ending|timers_ended|Few<T>::partition_dedup_len|monitor|watch_held|watch_nexts|watch_next|watches_nexts|stayed|puts_beside|add_worker)$'
+tasks='in (work_from|work_loop|steal|enqueue|wake_idle|new_task|first_priority|recycle|Wait::parked|Wait::block|notify_with|schedule|ending|timers_ended|Few<T>::partition_dedup_len|monitor|watch_held|watch_nexts|watch_next|watches_nexts|stayed|puts_beside|add_worker|lets_one_go)$'
 locks='in (try_take|grant|ungrant)$'
 strings='in (Builder::(extend|grow|finish)|append|tondo_rt_str_[a-z_]+|tondo_rt_array_[a-z_]+|tondo_rt_sb_[a-z_]+)$'
 cd "$root"

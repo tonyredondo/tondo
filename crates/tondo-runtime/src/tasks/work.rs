@@ -264,10 +264,8 @@ fn work_loop(main: bool, until: Option<&dyn Fn() -> bool>, seeks: Option<usize>)
                 // A worker the monitor started another beside, idle now, lets
                 // one go: no task may come to it to do so.
                 if let Some(next) = own
-                    && next.held.load(Ordering::Relaxed)
-                    && next.held.swap(false, Ordering::SeqCst)
+                    && lets_one_go(next, &mut queue)
                 {
-                    queue.surplus += 1;
                     continue;
                 }
                 let polling = claim(&mut queue);
@@ -416,6 +414,19 @@ fn work_loop(main: bool, until: Option<&dyn Fn() -> bool>, seeks: Option<usize>)
     }
 }
 
+/// A worker the monitor put another beside, `next` its slot, owes one
+/// retirement once its task leaves it or it idles, whichever comes first:
+/// the mark, taken under the queue's lock as the monitor sets it, says it
+/// owes one still. Both ways go through here, so that the cases that reach
+/// one hold what the other does.
+fn lets_one_go(next: &Next, queue: &mut Queue) -> bool {
+    let owed = next.held.load(Ordering::Relaxed) && next.held.swap(false, Ordering::SeqCst);
+    if owed {
+        queue.surplus += 1;
+    }
+    owed
+}
+
 /// Runs a task on this thread until it waits, yields or ends; a task that
 /// ends is freed.
 pub(super) fn run(task: *mut Task) {
@@ -444,8 +455,8 @@ pub(super) fn run(task: *mut Task) {
         (w.yielded.replace(false), held)
     });
     tools::stopped(task, traced);
-    if held && own_next().is_some_and(|next| next.held.swap(false, Ordering::SeqCst)) {
-        queue().surplus += 1;
+    if held && let Some(next) = own_next() {
+        lets_one_go(next, &mut queue());
     }
     // Given away at a checkpoint: behind the tasks that wait for a worker.
     if yielded {
