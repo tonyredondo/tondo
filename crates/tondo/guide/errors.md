@@ -162,8 +162,9 @@ in a task spawned at:
 Read the stack from the top: the first line is where it failed, each next one
 the call that led there; `in a task spawned at:` continues in the task that
 started this one. `assert(a == b)` shows both sides (`left:` and `right:`). A
-deadlock lists where every task waits, and a stack overflow or a crash in C
-prints `fatal:` with the same trace.
+deadlock lists where every task waits, and a stack overflow or a crash in C,
+a trap among them, prints `fatal:` with the same trace and ends by its own
+signal.
 
 A panic can carry the program's own code, dotted words such as
 `cache.corrupt`, and data, plain values by name, which its report shows:

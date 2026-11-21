@@ -566,8 +566,9 @@ fn main() {
 ```
 
 A panic ends the program with status 101. A crash below the language, as a
-stack overflow or a fault inside C, prints `fatal:` with the same kind of
-trace. With `TONDO_PANIC_FORMAT=json` in its environment, a program writes
+stack overflow, or a fault, an abort or a trap inside C, prints `fatal:`
+with the same kind of trace and ends the program by its own signal
+([Debugging](../toolchain/debugging.md#what-a-panic-says)). With `TONDO_PANIC_FORMAT=json` in its environment, a program writes
 how it failed as one line of JSON, for tools.
 
 ## assert

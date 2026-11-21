@@ -855,8 +855,11 @@ change of it grows by that much each time.
   other tasks, so nothing needs to be marked as blocking.
 - C may call back into Tondo from threads of its own. Each such call is a
   task for its length, and may wait.
-- A crash inside C, as a fault or an abort, is reported like a panic, with
-  the Tondo stack that led to the call. It cannot be recovered from.
+- A crash inside C, as a fault, an abort or a trap, is reported like a
+  panic, with the Tondo stack that led to the call, also when it is C's own
+  allocator that ends the program, on a block freed twice, or a destructor
+  that faults as the program exits. It cannot be recovered from
+  ([Debugging](../toolchain/debugging.md#what-a-panic-says)).
 - C's memory is C's. What `malloc` gave is freed with `free`, what the
   library allocated with the library's own function, and none of it is seen
   by Tondo's counting.

@@ -233,6 +233,61 @@ A release build reports the same, with the same lines: the checks are not
 a feature of debug builds. With `TONDO_PANIC_FORMAT=json` in
 its environment a program writes the report as JSON, for a log pipeline.
 
+A crash below the language has its report too, and ends the program by its
+own signal: a stack overflow, a read of memory that is not there in
+`unsafe` code, and the ways C ends a program on purpose, an abort or a
+trap. A program that gives the same block back to C twice:
+
+```tondo
+import std.console
+import std.ffi
+
+fn main() {
+    console.println("allocated")
+    unsafe {
+        let block = ffi.allocate[Byte](4096)
+        ffi.free(block)
+        ffi.free(block)
+    }
+}
+```
+
+```text
+$ ./twice
+double free or corruption (top)
+allocated
+fatal: SIGABRT: the program aborted, inside a function of C
+stack:
+  ffi.free  <std>/ffi.to:354:5
+  main      twice.to:9:9
+tondo runtime: a dump of the program is in dumps/twice-3001460.dump.json
+tondo runtime: the fault is in tondo_f0_main < tondo_main < _RNvNtCshPekXfXA3fw_13tondo_runtime5tasks10trampoline
+```
+
+The first line is the C library's own. The second is the program's: it had
+printed `allocated` and the line was still waiting to be written, so the
+runtime writes it out before its report, and what a program said last is
+not lost with it. Then what happened, the calls of the program that led
+there, where the dump is, and the functions of the machine code the fault
+was in. The status is the signal's, 134 here, which is what a shell or a
+supervisor reads. On macOS the system's allocator ends such a program with a trap, and
+the report says `SIGTRAP` and that C and the allocator use a trap to end a
+program on purpose.
+
+The report waits for nothing. The thread that faulted may hold any lock, of
+the C library, of the allocator or of the runtime, as it does when C's
+`free` finds the block freed twice, or when a destructor faults as the
+program exits; so what could meet a lock that is held, as reading the
+values for the dump, is done by a copy of the process that ends at its
+deadline, and the program ends with what could be written. A fault inside
+the report itself ends the program at once, by the first fault's signal,
+and a report that has not finished in thirty seconds ends it the same way
+with the line `tondo runtime: the crash report did not finish in 30 s`. On
+macOS, a fault outside the program's own code leaves the dump without the
+values of the bindings, since reading them there could wait for a lock the
+fault holds: the report says so in a line, and the dump in
+`values_left_out`.
+
 ## A release build that gives another result
 
 A debug build and a release build are the same program: what one prints
