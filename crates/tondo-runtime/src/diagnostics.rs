@@ -683,8 +683,7 @@ struct Descriptors {
 
 fn descriptors() -> Descriptors {
     let mut open = Descriptors::default();
-    let Ok(entries) = std::fs::read_dir("/dev/fd") else { return open };
-    let numbers: Vec<i32> = entries.flatten().filter_map(|e| e.file_name().to_str()?.parse().ok()).collect();
+    let Some(numbers) = numbered(c"/dev/fd") else { return open };
     let ours = socket();
     let ours = ours.as_ref().map(|path| path.as_os_str().as_encoded_bytes());
     // The listing's own descriptor is closed by now, and `fstat` skips it.
@@ -722,6 +721,50 @@ fn descriptors() -> Descriptors {
         }
     }
     open
+}
+
+/// The numbers a directory of the kernel's holds, as `/dev/fd` the open
+/// descriptors. A dump at a fault reads them, and `read_dir` would go
+/// through `opendir`, which allocates with C's malloc, whose lock the
+/// fault may hold (`crate::trace::fault`): on Linux `getdents64` reads
+/// them, and on macOS such a fault leaves them out.
+pub(crate) fn numbered(path: &std::ffi::CStr) -> Option<Vec<i32>> {
+    #[cfg(target_os = "linux")]
+    {
+        let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) };
+        if fd < 0 {
+            return None;
+        }
+        let (mut numbers, mut buffer) = (Vec::new(), [0u8; 4096]);
+        loop {
+            let read = unsafe { libc::syscall(libc::SYS_getdents64, fd, buffer.as_mut_ptr(), buffer.len()) };
+            if read <= 0 {
+                break;
+            }
+            // Each entry: its inode, offset, length, type, then its name.
+            let mut at = 0;
+            while at < read as usize {
+                let length = u16::from_ne_bytes([buffer[at + 16], buffer[at + 17]]) as usize;
+                let name = &buffer[at + 19..at + length];
+                let name = &name[..name.iter().position(|&b| b == 0).unwrap_or(name.len())];
+                if let Some(number) = std::str::from_utf8(name).ok().and_then(|name| name.parse().ok()) {
+                    numbers.push(number);
+                }
+                at += length;
+            }
+        }
+        unsafe { libc::close(fd) };
+        Some(numbers)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        if values_left_out().is_some() {
+            return None;
+        }
+        let entries = std::fs::read_dir(std::ffi::OsStr::from_bytes(path.to_bytes())).ok()?;
+        Some(entries.flatten().filter_map(|e| e.file_name().to_str()?.parse().ok()).collect())
+    }
 }
 
 /// Whether a stream socket listens for connections.

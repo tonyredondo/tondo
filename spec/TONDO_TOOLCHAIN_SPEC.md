@@ -930,7 +930,16 @@ en `TONDO_DUMP=<dir>` si se da, que crea si falta, y si no en la caché de
 Tondo, `$XDG_CACHE_HOME/tondo/dumps` o `~/.cache/tondo/dumps`, un directorio
 que solo su usuario puede abrir, donde quedan los 20 últimos. Si no puede
 crearlo, como con un sistema de archivos de solo lectura, lo dice una vez,
-con qué dar en `TONDO_DUMP`, `stderr` primero, y termina igual. En un
+con qué dar en `TONDO_DUMP`, `stderr` primero, y termina igual. Al fallar,
+nada de ese camino espera un lock sin plazo, porque el hilo que falló puede
+tener cualquiera, de libc, del asignador o del runtime: lo que podría
+encontrarse uno tomado, como leer los valores, lo hace una copia del proceso
+que termina a su plazo. Un fallo dentro del propio informe termina el programa
+en el acto, por la señal del primero, y un informe que no acaba en 30 s lo
+termina igual, con la línea `tondo runtime: the crash report did not finish in
+30 s`. En macOS, un fallo fuera del código del programa deja el volcado sin los
+valores, porque la copia que los lee tomaría allí los locks que ese fallo puede
+tener; el volcado lo dice en `values_left_out` y el informe en una línea. En un
 contenedor, que se reconoce por `/.dockerenv`, `/run/.containerenv` o
 `KUBERNETES_SERVICE_HOST`, dice también cómo sale de él: con `docker cp`, con
 `TONDO_DUMP` en un volumen o en los logs; de un tmpfs, al que `docker cp` no

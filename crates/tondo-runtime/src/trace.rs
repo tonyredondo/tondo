@@ -882,12 +882,15 @@ pub(crate) fn free_signal_stack(stack: *mut libc::c_void) {
 const ENDED_REGION: &str =
     ", in the memory of a region that ended: the compiler put a value in a region it outlives, a bug of tondo's";
 
-const FAULTS: [i32; 5] = [libc::SIGSEGV, libc::SIGBUS, libc::SIGABRT, libc::SIGILL, libc::SIGFPE];
+/// What a fault is: memory touched that should not be, an abort, an illegal
+/// instruction, an arithmetic fault, and a trap, which C code and the
+/// system's allocator reach to end a program on purpose (`brk`, `int3`).
+const FAULTS: [i32; 6] = [libc::SIGSEGV, libc::SIGBUS, libc::SIGABRT, libc::SIGILL, libc::SIGFPE, libc::SIGTRAP];
 
 /// The handlers there were before, which in a library get the faults that
 /// are not its own: written while `INSTALLED` is not set, under `INSTALLING`,
 /// and read by the handler once it is.
-struct Previous(std::cell::UnsafeCell<[libc::sigaction; 5]>);
+struct Previous(std::cell::UnsafeCell<[libc::sigaction; 6]>);
 
 unsafe impl Sync for Previous {}
 
@@ -983,7 +986,7 @@ unsafe fn forward(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c
             // ends the process as it would have.
             libc::SIG_DFL => {
                 libc::sigaction(signal, &previous, std::ptr::null_mut());
-                if signal == libc::SIGABRT {
+                if signal == libc::SIGABRT || signal == libc::SIGTRAP {
                     libc::raise(signal);
                 }
             }
@@ -1117,9 +1120,70 @@ unsafe fn top_word(sp: usize, address: usize) -> usize {
     if readable { unsafe { *(sp as *const usize) } } else { 0 }
 }
 
+/// The thread that reports a fault now, by its `pthread_self`, or 0; and
+/// the signal of that fault.
+static REPORTING: AtomicUsize = AtomicUsize::new(0);
+static REPORTED: AtomicUsize = AtomicUsize::new(0);
+
+/// How long the report of a fault may take before the watchdog ends the
+/// process: the copy that reads the values has seconds of its own.
+const WATCH: u32 = 30;
+
+/// SIGALRM's handler before the watchdog took it, given back after.
+struct Alarm(std::cell::UnsafeCell<libc::sigaction>);
+
+unsafe impl Sync for Alarm {}
+
+static ALARM: Alarm = Alarm(std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }));
+
+/// Ends the process by the fault's own signal, at its default action, so
+/// that its status is the one tools read; only calls a signal handler may
+/// make.
+unsafe fn end_by(signal: i32) -> ! {
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = libc::SIG_DFL;
+        libc::sigaction(signal, &action, std::ptr::null_mut());
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        libc::sigaddset(&mut set, signal);
+        libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
+        libc::raise(signal);
+        libc::_exit(128 + signal)
+    }
+}
+
+/// The watchdog's: the report took too long, as when a lock no rule
+/// foresaw is held.
+extern "C" fn unfinished(_: i32) {
+    let line = b"tondo runtime: the crash report did not finish in 30 s\n";
+    unsafe {
+        libc::write(2, line.as_ptr().cast(), line.len());
+        end_by(REPORTED.load(Ordering::Relaxed) as i32);
+    }
+}
+
+/// Gives the report of a fault `more` time, from now, while there is one.
+pub(crate) fn watch_longer(more: std::time::Duration) {
+    if REPORTING.load(Ordering::Relaxed) != 0 {
+        unsafe { libc::alarm(WATCH + more.as_secs() as u32) };
+    }
+}
+
 /// Reports a fault with the trace of the code that made it, and ends the
 /// process as the signal does: the handler goes back to the default one,
 /// and the instruction faults again, or the signal comes again.
+///
+/// The thread may hold any lock when it faults: one of libc's, as the
+/// dynamic linker's while `exit` runs destructors or the arena's while
+/// `free` checks a block; one of the allocator's; or the runtime's. Nothing
+/// on the way out waits for one without a deadline: no `fork`, which takes
+/// libc's (`crate::debugger::copy` makes the copies), nothing that
+/// allocates with C's malloc, and what may meet a held lock, reading the
+/// values and the directory of the dumps, runs in a copy that ends at its
+/// deadline (`crate::diagnostics::crash_dump`). For a lock nobody foresaw,
+/// a watchdog ends the process by the fault's signal after `WATCH`
+/// seconds. A fault inside this report ends it at once, by the first's.
 extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void) {
     // What it says and writes is the fault's, which a replay says too.
     let _outside = crate::replay::Outside::enter();
@@ -1129,6 +1193,46 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
         if crate::library() && crate::tasks::current().is_null() && find(pc).is_none() {
             forward(signal, info, context);
             return;
+        }
+        // One report at a time: a fault in this thread's own report ends
+        // the process at once, and another thread's waits for the first,
+        // which ends the process too.
+        let me = libc::pthread_self() as usize;
+        loop {
+            match REPORTING.compare_exchange(0, me, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => break,
+                Err(other) if other == me => {
+                    let line = b"tondo runtime: the report of a fault faulted in its turn\n";
+                    libc::write(2, line.as_ptr().cast(), line.len());
+                    let first = REPORTED.load(Ordering::Relaxed) as i32;
+                    end_by(if first == 0 { signal } else { first });
+                }
+                Err(_) => {
+                    let pause = libc::timespec { tv_sec: 0, tv_nsec: 10_000_000 };
+                    libc::nanosleep(&pause, std::ptr::null_mut());
+                }
+            }
+        }
+        REPORTED.store(signal as usize, Ordering::Relaxed);
+        let mut watchdog: libc::sigaction = std::mem::zeroed();
+        watchdog.sa_sigaction = unfinished as *const () as usize;
+        watchdog.sa_flags = libc::SA_ONSTACK;
+        libc::sigemptyset(&mut watchdog.sa_mask);
+        libc::sigaction(libc::SIGALRM, &watchdog, ALARM.0.get());
+        // This thread may be the only one to take it, and macOS's `abort`
+        // blocks every signal but its own.
+        let mut alarm: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut alarm);
+        libc::sigaddset(&mut alarm, libc::SIGALRM);
+        libc::pthread_sigmask(libc::SIG_UNBLOCK, &alarm, std::ptr::null_mut());
+        libc::alarm(WATCH);
+        #[cfg(test)]
+        tests::in_report();
+        // On macOS the copy that reads the values is made by `fork`, which
+        // takes the locks of C's allocator that a fault outside the
+        // program's own code may hold.
+        if cfg!(target_os = "macos") && function_at(pc).is_none() {
+            crate::diagnostics::leave_values_out();
         }
         // Under `tondo test --fuzz`, the input that faulted.
         crate::fuzz::faulted();
@@ -1161,6 +1265,7 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
                 libc::SIGILL => ("SIGILL", "illegal instruction at"),
                 libc::SIGFPE => ("SIGFPE", "arithmetic fault at"),
                 libc::SIGBUS => ("SIGBUS", "invalid memory access at"),
+                libc::SIGTRAP => ("SIGTRAP", "the program reached a trap at"),
                 _ => ("SIGSEGV", "invalid memory access at"),
             };
             if !json {
@@ -1168,11 +1273,17 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
             }
             let _ = match signal {
                 libc::SIGABRT => write!(out, "{what}"),
-                libc::SIGILL | libc::SIGFPE => write!(out, "{what} {pc:#x}"),
+                libc::SIGILL | libc::SIGFPE | libc::SIGTRAP => write!(out, "{what} {pc:#x}"),
                 _ => write!(out, "{what} {address:#x}"),
             };
             if in_c {
                 let _ = write!(out, ", inside a function of C");
+            }
+            if signal == libc::SIGTRAP {
+                let _ = write!(
+                    out,
+                    ", which C code and the system's allocator use to end a program on purpose, as on a block freed twice or at `__builtin_trap`"
+                );
             }
             if ended_region {
                 let _ = write!(out, "{ENDED_REGION}");
@@ -1185,6 +1296,7 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
                 libc::SIGILL => "SIGILL",
                 libc::SIGFPE => "SIGFPE",
                 libc::SIGBUS => "SIGBUS",
+                libc::SIGTRAP => "SIGTRAP",
                 _ => "SIGSEGV",
             };
             let _ = write!(out, "\",\"name\":\"{name}\",\"recovered\":false,\"source\":null,\"stack\":");
@@ -1211,6 +1323,7 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
         let message = match signal {
             libc::SIGABRT => "SIGABRT: the program aborted".to_string(),
             libc::SIGILL => format!("SIGILL: illegal instruction at {pc:#x}"),
+            libc::SIGTRAP => format!("SIGTRAP: the program reached a trap at {pc:#x}, an end on purpose"),
             libc::SIGFPE => format!("SIGFPE: arithmetic fault at {pc:#x}"),
             libc::SIGBUS => format!("SIGBUS: invalid memory access at {address:#x}"),
             _ => format!("SIGSEGV: invalid memory access at {address:#x}"),
@@ -1220,10 +1333,22 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
         crate::diagnostics::fault_registers(&fault_registers(context), !in_c);
         crate::diagnostics::faulted_at(if in_c { link } else { pc }, fp, bounds);
         crate::diagnostics::crash_dump("fault", &message, frames.clone(), false);
+        if let Some(why) = crate::diagnostics::values_left_out() {
+            let _ = std::io::Write::write_all(
+                &mut std::io::stderr(),
+                format!("tondo runtime: the dump has no values of the bindings: {why}\n").as_bytes(),
+            );
+        }
         // A fault of the runtime has no line of the program to show. Last,
         // as this reads the executable, and memory may be what broke.
         if function_at(pc).is_none() {
-            let names: Vec<&str> = frames.iter().take(8).filter_map(|&address| crate::symbols::name(address)).collect();
+            // The program's functions by their names, the others' as Rust
+            // or C writes them.
+            let named = |address: usize| match describe(address) {
+                Some(code) => Some(code.function.to_string()),
+                None => crate::symbols::name(address).map(crate::profiling::demangled),
+            };
+            let names: Vec<String> = frames.iter().take(8).filter_map(|&address| named(address)).collect();
             let _ = std::io::Write::write_all(
                 &mut std::io::stderr(),
                 format!("tondo runtime: the fault is in {}\n", names.join(" < ")).as_bytes(),
@@ -1232,12 +1357,16 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
         crate::debugger::crashed();
         // A recorded run ends here, its recording as it was.
         crate::replay::ending();
+        libc::alarm(0);
+        libc::sigaction(libc::SIGALRM, ALARM.0.get(), std::ptr::null_mut());
+        REPORTING.store(0, Ordering::Release);
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = libc::SIG_DFL;
         libc::sigaction(signal, &action, std::ptr::null_mut());
         // An abort is not an instruction that faults again when the handler
-        // returns: it is raised once more, and ends the process then.
-        if signal == libc::SIGABRT {
+        // returns, nor is a trap past which `int3` leaves the program: each
+        // is raised once more, and ends the process then.
+        if signal == libc::SIGABRT || signal == libc::SIGTRAP {
             libc::raise(signal);
         }
     }
@@ -1245,6 +1374,95 @@ extern "C" fn fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc:
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU8, Ordering};
+
+    /// What a test makes the report of a fault do once it begins: fault
+    /// in its turn (1), or never finish (2).
+    static IN_REPORT: AtomicU8 = AtomicU8::new(0);
+
+    pub(super) fn in_report() {
+        match IN_REPORT.load(Ordering::Relaxed) {
+            1 => unsafe { std::ptr::null_mut::<u8>().write_volatile(1) },
+            2 => unsafe {
+                libc::alarm(1);
+                loop {
+                    libc::pause();
+                }
+            },
+            _ => {}
+        }
+    }
+
+    /// In a child, an abort reported with the report doing `what`: the
+    /// signal that ended the child and what it wrote to its error output.
+    /// An abort, as a fault of the signal being handled, which the handler
+    /// blocks, is one the system ends the process for at once.
+    fn reported(what: u8) -> (i32, String) {
+        unsafe {
+            let mut ends = [0; 2];
+            assert_eq!(libc::pipe(ends.as_mut_ptr()), 0);
+            match libc::fork() {
+                0 => {
+                    libc::setrlimit(libc::RLIMIT_CORE, &libc::rlimit { rlim_cur: 0, rlim_max: 0 });
+                    libc::dup2(ends[1], 2);
+                    libc::close(ends[0]);
+                    IN_REPORT.store(what, Ordering::Relaxed);
+                    let mut action: libc::sigaction = std::mem::zeroed();
+                    action.sa_sigaction = super::fault as *const () as usize;
+                    action.sa_flags = libc::SA_SIGINFO;
+                    libc::sigemptyset(&mut action.sa_mask);
+                    libc::sigaction(libc::SIGSEGV, &action, std::ptr::null_mut());
+                    libc::sigaction(libc::SIGABRT, &action, std::ptr::null_mut());
+                    libc::abort()
+                }
+                pid => {
+                    libc::close(ends[1]);
+                    let (mut said, mut part) = (Vec::new(), [0u8; 512]);
+                    // A child that never ends is ended, and the test fails.
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                    let mut ready = libc::pollfd { fd: ends[0], events: libc::POLLIN, revents: 0 };
+                    loop {
+                        let left = deadline.saturating_duration_since(std::time::Instant::now()).as_millis() as i32;
+                        if libc::poll(&mut ready, 1, left) <= 0 {
+                            libc::kill(pid, libc::SIGKILL);
+                            break;
+                        }
+                        let read = libc::read(ends[0], part.as_mut_ptr().cast(), part.len());
+                        if read <= 0 {
+                            break;
+                        }
+                        said.extend_from_slice(&part[..read as usize]);
+                    }
+                    libc::close(ends[0]);
+                    let mut status = 0;
+                    libc::waitpid(pid, &mut status, 0);
+                    let signal = if libc::WIFSIGNALED(status) { libc::WTERMSIG(status) } else { -1 };
+                    (signal, String::from_utf8_lossy(&said).into_owned())
+                }
+            }
+        }
+    }
+
+    /// A fault inside the report of another, as an allocation the report
+    /// makes in a heap the first fault broke, ends the process at once by
+    /// the first fault's signal, where the second report waited for a lock
+    /// the first held.
+    #[test]
+    fn a_fault_inside_the_report_ends_it_by_the_first() {
+        let (signal, said) = reported(1);
+        assert_eq!(signal, libc::SIGABRT, "{said}");
+        assert!(said.contains("tondo runtime: the report of a fault faulted in its turn"), "{said}");
+    }
+
+    /// A report that never finishes, as one that waits for a lock no rule
+    /// foresaw, is ended by the watchdog, by the fault's own signal.
+    #[test]
+    fn a_report_that_never_finishes_ends_by_its_fault() {
+        let (signal, said) = reported(2);
+        assert_eq!(signal, libc::SIGABRT, "{said}");
+        assert!(said.contains("tondo runtime: the crash report did not finish in 30 s"), "{said}");
+    }
+
     /// A frame pointer near the top of memory, as one a library's frame
     /// leaves, ends the walk without a read, which would fault.
     #[test]

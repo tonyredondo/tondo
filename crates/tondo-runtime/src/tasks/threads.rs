@@ -235,7 +235,7 @@ pub(crate) fn join_threads() {
 /// How many threads the process has, where the system tells.
 #[cfg(target_os = "linux")]
 pub(crate) fn os_threads() -> Option<usize> {
-    std::fs::read_dir("/proc/self/task").ok().map(|entries| entries.count())
+    crate::diagnostics::numbered(c"/proc/self/task").map(|threads| threads.len())
 }
 
 #[cfg(target_os = "macos")]

@@ -863,6 +863,8 @@ pub unsafe extern "C" fn syscall_wrapper(
     let outs = |result: i64| -> Vec<(*mut u8, usize)> {
         match number {
             libc::SYS_getrandom => vec![filled(a as *mut c_void, result)],
+            // The entries of a directory, as the counters read them.
+            libc::SYS_getdents64 => vec![filled(b as *mut c_void, result)],
             // `struct statx`, 256 bytes.
             libc::SYS_statx => vec![(e as *mut u8, 256)],
             _ => Vec::new(),

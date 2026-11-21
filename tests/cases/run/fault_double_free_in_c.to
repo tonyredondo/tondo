@@ -1,0 +1,21 @@
+// C's allocator that finds a block freed twice ends the program inside
+// `free`, with its own lock held: glibc aborts, musl faults, macOS traps.
+// The report comes all the same, and the program ends, where the copy that
+// reads the values once waited for that lock forever.
+import std.console
+import std.ffi
+
+fn main() {
+    let block = ffi.allocate[Byte](4096)
+    console.println("allocated")
+    unsafe {
+        ffi.free(block.cast[ffi.Void]())
+        ffi.free(block.cast[ffi.Void]())
+    }
+    console.println("not reached")
+}
+
+// expect-crash
+// expect-stdout: allocated
+// expect-stderr: stack:
+// expect-stderr:   main      fault_double_free_in_c.to:13:9

@@ -90,28 +90,52 @@ fn read(file: &[u8]) -> Option<Vec<Function>> {
         return None;
     }
     let slide = unsafe { _dyld_get_image_vmaddr_slide(0) } as usize;
-    let mut command = 32;
-    for _ in 0..u32_at(file, 16)? {
-        let (kind, size) = (u32_at(file, command)?, u32_at(file, command + 4)? as usize);
+    let commands = || {
+        let mut command = 32;
+        (0..u32_at(file, 16).unwrap_or(0)).map_while(move |_| {
+            let (kind, size) = (u32_at(file, command)?, u32_at(file, command + 4)? as usize);
+            let at = command;
+            command += size;
+            Some((kind, at))
+        })
+    };
+    // The code's section, by its number among all the sections, and where
+    // it ends: symbols of other sections, as data, are no functions, and
+    // the last function ends there, not at the end of memory, where an
+    // address of a system library would take its name.
+    let (mut number, mut code) = (0u8, None);
+    for (kind, at) in commands() {
+        if kind != 0x19 {
+            continue;
+        }
+        for section in (0..u32_at(file, at + 64)? as usize).map(|i| at + 72 + i * 80) {
+            number = number.wrapping_add(1);
+            if file.get(section..section + 7)? == b"__text\0" && file.get(section + 16..section + 23)? == b"__TEXT\0" {
+                let start = u64_at(file, section + 32)?.wrapping_add(slide);
+                code = Some((number, start + u64_at(file, section + 40)?));
+            }
+        }
+    }
+    let (section, end) = code?;
+    for (kind, at) in commands() {
         if kind == 2 {
-            let (symbols, count) = (u32_at(file, command + 8)? as usize, u32_at(file, command + 12)? as usize);
-            let names = u32_at(file, command + 16)? as usize;
+            let (symbols, count) = (u32_at(file, at + 8)? as usize, u32_at(file, at + 12)? as usize);
+            let names = u32_at(file, at + 16)? as usize;
             let mut starts = Vec::new();
             for symbol in (0..count).map(|i| symbols + i * 16) {
                 let kind = *file.get(symbol + 4)?;
-                // Defined in a section, and no debugging entry.
-                if kind & 0xe0 == 0 && kind & 0x0e == 0x0e {
+                // Defined in the code's section, and no debugging entry.
+                if kind & 0xe0 == 0 && kind & 0x0e == 0x0e && *file.get(symbol + 5)? == section {
                     let name = text(file, names + u32_at(file, symbol)? as usize)?;
                     let name = name.strip_prefix('_').unwrap_or(&name).to_string();
                     starts.push((u64_at(file, symbol + 8)?.wrapping_add(slide), name));
                 }
             }
             starts.sort();
-            // Each runs to where the next begins.
-            let ends: Vec<usize> = starts.iter().skip(1).map(|(start, _)| *start).chain([usize::MAX]).collect();
+            // Each runs to where the next begins, the last to the section's end.
+            let ends: Vec<usize> = starts.iter().skip(1).map(|(start, _)| *start).chain([end]).collect();
             return Some(starts.into_iter().zip(ends).map(|((start, name), end)| (start, end, name)).collect());
         }
-        command += size;
     }
     None
 }

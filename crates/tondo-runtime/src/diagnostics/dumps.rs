@@ -70,6 +70,24 @@ pub(crate) fn values_shown() -> bool {
     config().dump_values.as_ref().is_none_or(|value| value == "on")
 }
 
+/// Set by a fault outside the program's own code on macOS, where the copy
+/// that reads the values of the bindings is made by `fork`, which takes
+/// the locks of C's allocator that such a fault may hold: the dump goes
+/// without them, and says why (`crate::debugger::copy`).
+static LEFT_OUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn leave_values_out() {
+    LEFT_OUT.store(true, Ordering::Relaxed);
+}
+
+/// Why this dump has no values of the bindings, when it has none.
+pub(crate) fn values_left_out() -> Option<&'static str> {
+    LEFT_OUT.load(Ordering::Relaxed).then_some(
+        "the fault is outside the program's own code, and on macOS reading the values could wait forever for a lock \
+         the fault holds",
+    )
+}
+
 /// How long a dump of a debug build waits for the program to stop.
 const OBJECTS_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
@@ -232,6 +250,9 @@ pub(super) fn dump(reason: &str, message: &str, here: Option<Vec<usize>>, wait: 
     let orders: Vec<String> = crate::lockorder::found().iter().map(|text| quoted(text)).collect();
     let _ = write!(out, ",\"lock_order\":[{}]", orders.join(","));
     let _ = write!(out, ",\"values\":[{}]", values.join(","));
+    if let Some(why) = values_left_out() {
+        let _ = write!(out, ",\"values_left_out\":{}", quoted(why));
+    }
     let _ = write!(out, ",\"frames\":{{{}}}}}", frames.json);
     out
 }
@@ -410,6 +431,12 @@ pub(super) fn prune_dumps(dir: &std::path::Path) {
 
 /// A program that panics, faults or deadlocks leaves a dump before it ends,
 /// named after it and its process: where `TONDO_DUMP` says, or in the cache.
+///
+/// At a fault this thread may hold any lock, and nothing here waits for
+/// one without a deadline (`crate::trace::fault` has the rule): what may
+/// meet one, reading the values and the directory of the dumps, whose
+/// `opendir` allocates with C's malloc, runs in a copy of the process,
+/// which ends at its deadline.
 pub(crate) fn crash_dump(reason: &str, message: &str, here: Vec<usize>, stop: bool) {
     if crate::debugger::rendering() {
         return;
@@ -440,9 +467,47 @@ pub(crate) fn crash_dump(reason: &str, message: &str, here: Vec<usize>, stop: bo
         }
     }
     if cache {
-        prune_dumps(&dir);
+        in_a_copy(|| prune_dumps(&dir), crate::debugger::DUMPING);
     }
     dumped(&path);
+}
+
+/// Runs `work` in a copy of the process (`crate::debugger::copy`), and
+/// waits for it until `within` has passed, then ends it: its end closes a
+/// pipe, which says so.
+fn in_a_copy(work: impl FnOnce(), within: std::time::Duration) {
+    let mut ends = [0; 2];
+    if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 {
+        return;
+    }
+    match crate::debugger::copy() {
+        -1 => unsafe {
+            libc::close(ends[0]);
+            libc::close(ends[1]);
+        },
+        0 => {
+            unsafe { libc::close(ends[0]) };
+            work();
+            unsafe { libc::_exit(0) }
+        }
+        pid => unsafe {
+            libc::close(ends[1]);
+            let deadline = Instant::now() + within;
+            let mut ready = libc::pollfd { fd: ends[0], events: libc::POLLIN, revents: 0 };
+            let ended = loop {
+                let left = deadline.saturating_duration_since(Instant::now()).as_millis() as i32;
+                match libc::poll(&mut ready, 1, left) {
+                    -1 if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted => continue,
+                    answer => break answer > 0,
+                }
+            };
+            if !ended {
+                libc::kill(pid, libc::SIGKILL);
+            }
+            libc::waitpid(pid, &mut 0, 0);
+            libc::close(ends[0]);
+        },
+    }
 }
 
 /// A dump at a logpoint, of the program as it stands where this thread is:
@@ -475,6 +540,8 @@ pub(super) const COMMAND_TIME: std::time::Duration = std::time::Duration::from_s
 pub(super) fn dumped(path: &std::path::Path) {
     let Some(command) = &config().dump_command else { return };
     let _outside = crate::replay::Outside::enter();
+    // At a fault, the command's own time is the report's too.
+    crate::trace::watch_longer(COMMAND_TIME);
     let started = std::process::Command::new("/bin/sh")
         .arg("-c")
         .arg(command)

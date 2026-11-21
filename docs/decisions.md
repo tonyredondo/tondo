@@ -9344,3 +9344,32 @@ once hid a lost wake, and a worker truly told takes the task within a look.
 `blocked` prints a line only for a task still for a second or more, and
 counts the rest by place, since a server under load has ready tasks at every
 instant; the JSON has them all.
+
+## A crash report waits for no lock
+
+CI's musl job slept for thirty minutes on `tondo test --models`, whose
+program faulted at its exit and then never ended. mimalloc's destructor
+faulted inside `exit`, which holds the
+dynamic linker's lock while destructors run, and the report's copy of the
+program, made with `fork`, waited for that lock. glibc hung the same way on
+a block of C freed twice, which `free` finds with its arena's lock held.
+After a fault the thread may hold any lock, of libc's, of the allocator's
+or of the runtime's, so nothing on the way out waits for one without a
+deadline. The copies are made with `_Fork`, which takes no lock of libc's
+and runs no handler of `fork`'s, and which gives the copy its own thread
+id: with a bare `clone`, an abort in the copy would signal the parent's
+thread through musl's `raise`. What may meet a held lock runs in a copy
+that ends at its deadline: reading the values, as before, and pruning the
+dumps' directory, whose `opendir` allocates with C's malloc. The counters
+list `/dev/fd` and `/proc/self/task` with `getdents64` for the same reason.
+For a lock nobody foresaw, a watchdog ends the report after 30 seconds by
+the fault's own signal, with a line that says so, and the status that tools
+read stays the fault's. A fault inside the report ends it at once, by the
+first fault's signal: the second report had waited for a `OnceLock` the
+first held. macOS has only `fork`, which takes the locks of C's allocator
+that a fault outside the program's own code may hold; there the dump goes
+without the values of the bindings and says why, in the dump and in the
+report. A trap, which C code and the system's allocator reach to end a
+program on purpose, as libmalloc does on a block freed twice, is a fault
+the runtime reports, in its own words and with its own status: it ended
+programs on macOS with no report, and without the output they had written.

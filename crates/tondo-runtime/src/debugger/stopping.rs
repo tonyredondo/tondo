@@ -738,7 +738,7 @@ pub(super) const DUMPED_DEPTH: usize = 4;
 pub(super) const DUMPED_PARTS: usize = 100;
 /// How long a dump takes to show the bindings, and how many that break it
 /// it goes past.
-pub(super) const DUMPING: std::time::Duration = std::time::Duration::from_secs(3);
+pub(crate) const DUMPING: std::time::Duration = std::time::Duration::from_secs(3);
 pub(super) const BROKEN: usize = 16;
 
 /// This process is the copy of the program that shows a dump's bindings.
@@ -866,11 +866,36 @@ pub(crate) fn latent_sites() -> Vec<LatentSite> {
     sites
 }
 
+/// A copy of the process, for work that may meet a lock the asking thread
+/// holds, as at a fault (`crate::trace::fault` says why). On Linux it is
+/// made by `_Fork`, which takes none of libc's locks and runs no handler of
+/// `fork`'s: `fork` takes them, and waits forever for one the thread holds,
+/// as the dynamic linker's while `exit` runs destructors, or the arena's
+/// while `free` checks a block. `_Fork` gives the copy its own thread id,
+/// which a bare `clone` would not: musl's `raise` signals by it, and an
+/// abort in the copy would reach this thread. macOS has `fork` alone.
+pub(crate) fn copy() -> libc::pid_t {
+    #[cfg(target_os = "linux")]
+    {
+        unsafe extern "C" {
+            fn _Fork() -> libc::pid_t;
+        }
+        unsafe { _Fork() }
+    }
+    #[cfg(not(target_os = "linux"))]
+    unsafe {
+        libc::fork()
+    }
+}
+
 pub(super) fn rendered(here: Option<(Option<usize>, usize, (usize, usize))>, alone: bool) -> Vec<String> {
     use std::io::Read;
     use std::os::fd::FromRawFd;
     let table = table();
     if table.is_none() && DUMP_TABLE.load(Ordering::Relaxed).is_null() {
+        return Vec::new();
+    }
+    if crate::diagnostics::values_left_out().is_some() {
         return Vec::new();
     }
     let _outside = crate::replay::Outside::enter();
@@ -881,7 +906,7 @@ pub(super) fn rendered(here: Option<(Option<usize>, usize, (usize, usize))>, alo
         if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 {
             break;
         }
-        match unsafe { libc::fork() } {
+        match copy() {
             -1 => break,
             0 => {
                 unsafe { libc::close(ends[0]) };
@@ -949,7 +974,7 @@ pub(super) fn render(
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = broke as *const () as usize;
         action.sa_flags = libc::SA_ONSTACK;
-        for signal in [libc::SIGSEGV, libc::SIGBUS, libc::SIGABRT, libc::SIGILL, libc::SIGFPE] {
+        for signal in [libc::SIGSEGV, libc::SIGBUS, libc::SIGABRT, libc::SIGILL, libc::SIGFPE, libc::SIGTRAP] {
             libc::sigaction(signal, &action, std::ptr::null_mut());
         }
         libc::setrlimit(libc::RLIMIT_CORE, &libc::rlimit { rlim_cur: 0, rlim_max: 0 });

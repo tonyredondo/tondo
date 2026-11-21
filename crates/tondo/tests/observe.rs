@@ -1019,6 +1019,75 @@ fn a_crash_leaves_a_dump_by_itself() {
     }
 }
 
+/// A program built with a library of C, `code` its source, run to its end:
+/// its exit's signal, its output and its error output.
+fn with_c(name: &str, code: &str, program: &str) -> Option<(Option<i32>, String, String)> {
+    use std::os::unix::process::ExitStatusExt;
+    if Command::new("cc").arg("--version").output().is_err() {
+        return None;
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("part.c"), code).unwrap();
+    let compiled = Command::new("cc").args(["-c", "-O1", "part.c", "-o", "part.o"]).current_dir(&dir).output().unwrap();
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let archived = Command::new("ar").args(["rcs", "libpart.a", "part.o"]).current_dir(&dir).output().unwrap();
+    assert!(archived.status.success(), "{}", String::from_utf8_lossy(&archived.stderr));
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\n\n[native]\nlibraries = [\"libpart.a\"]\n")
+        .unwrap();
+    std::fs::write(dir.join("src/main.to"), program).unwrap();
+    let mut build = Command::new(env!("CARGO_BIN_EXE_tondo"));
+    let built = build.args(["build", ".", "--output", "app"]).current_dir(&dir).output().unwrap();
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    let child = Command::new(dir.join("app"))
+        .env("TONDO_DUMP", dir.join("dumps"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let output = common::ended(child, name);
+    let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
+    Some((output.status.signal(), text(&output.stdout), text(&output.stderr)))
+}
+
+/// A fault at the program's exit, in a destructor of C, which musl runs
+/// with the dynamic linker's lock held, ends with its report and its
+/// dump: the copy that reads the values takes no lock of libc's, where
+/// `fork` waited for that one forever.
+#[test]
+fn a_fault_at_exit_ends_with_its_report() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let code = "static volatile int armed;\n\nvoid arm(void) {\n    armed = 1;\n}\n\n\
+        __attribute__((destructor)) static void at_exit(void) {\n    if (armed) {\n        \
+        volatile int *nowhere = 0;\n        *nowhere = 1;\n    }\n}\n";
+    let program = "import std.console\n\nextern fn arm()\n\nfn main() {\n    unsafe { arm() }\n    console.println(\"armed\")\n}\n";
+    let Some((signal, stdout, stderr)) = with_c("fault-at-exit", code, program) else { return };
+    assert_eq!(signal, Some(libc::SIGSEGV), "{stderr}");
+    assert_eq!(stdout, "armed\n");
+    assert!(stderr.contains("fatal: SIGSEGV: invalid memory access at 0x0"), "{stderr}");
+    assert!(stderr.contains("a dump of the program is in") && !stderr.contains("did not finish"), "{stderr}");
+}
+
+/// A trap that C reaches to end the program on purpose, as `__builtin_trap`
+/// or `int3`, is reported as a trap, with the output written before it and
+/// the trap's own signal: the system's allocator ends so on a block freed
+/// twice.
+#[test]
+fn a_trap_in_c_is_reported() {
+    let code = "void stop(void) {\n#if defined(__x86_64__)\n    __asm__ volatile(\"int3\");\n#else\n    \
+        __builtin_trap();\n#endif\n}\n";
+    let program = "import std.console\n\nextern fn stop()\n\nfn main() {\n    console.println(\"before\")\n    unsafe { stop() }\n}\n";
+    let Some((signal, stdout, stderr)) = with_c("trap-in-c", code, program) else { return };
+    assert_eq!(signal, Some(libc::SIGTRAP), "{stderr}");
+    assert_eq!(stdout, "before\n");
+    assert!(stderr.contains("fatal: SIGTRAP: the program reached a trap at"), "{stderr}");
+    assert!(stderr.contains(", inside a function of C, which C code and the system's allocator use"), "{stderr}");
+    assert!(stderr.contains("  main  src/main.to:7:14"), "{stderr}");
+}
+
 /// A dump names a task that ended with an error nobody read, what another
 /// task often waits for in its place, with where it was spawned.
 #[test]

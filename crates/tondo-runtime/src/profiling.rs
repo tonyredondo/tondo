@@ -236,7 +236,7 @@ fn named(address: usize) -> Vec<(String, String, i64)> {
 
 /// A symbol of Rust's manglings as Rust writes the path, without its hash
 /// or the parameters of its generics; others as they are.
-fn demangled(symbol: &str) -> String {
+pub(crate) fn demangled(symbol: &str) -> String {
     if let Some(rest) = symbol.strip_prefix("_R").or_else(|| symbol.strip_prefix("__R")) {
         return modern(rest.as_bytes());
     }
