@@ -223,6 +223,14 @@ extern "C" fn sample(_: i32, info: *mut libc::siginfo_t, context: *mut libc::c_v
         unsafe { *errno = saved };
         return;
     }
+    // On Linux the signal comes to whichever thread runs: one that serves
+    // the tools, as the one that sends this profile to its tool, is not the
+    // program, and its time is the profile's own.
+    if cfg!(target_os = "linux") && crate::diagnostics::serves_tools() {
+        IDLE.fetch_add(1, Ordering::Relaxed);
+        unsafe { *errno = saved };
+        return;
+    }
     let bounds = crate::tasks::stack_bounds().unwrap_or((0, 0));
     // In C, which may keep no frame pointers, the trace goes on from where
     // the program called it. The place it stopped at is kept one past it,

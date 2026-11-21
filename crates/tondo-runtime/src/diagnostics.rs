@@ -359,6 +359,12 @@ thread_local! {
     static BLOCK: Cell<*const Block> = const { Cell::new(std::ptr::null()) };
 }
 
+/// Whether this thread serves the tools, or the profile that samples the
+/// program, rather than running the program (`retire_here`).
+pub(crate) fn serves_tools() -> bool {
+    BLOCK.with(|cell| cell.get() == UNCOUNTED)
+}
+
 fn block() -> Option<&'static Block> {
     let block = BLOCK.with(|cell| {
         if cell.get().is_null() {
