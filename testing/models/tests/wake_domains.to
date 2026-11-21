@@ -8,6 +8,12 @@
 // which the model leaves out as it does for tasks too young to take. A step
 // here is what the code does with the queue's lock held, or one atomic
 // operation.
+//
+// What it assumes of the code, read against it on 2026-11-21:
+// - A worker started in another's place is given the domain it seeks as it
+//   starts, and seeks it at once; a domain marked as sought (`SEEKING`) has a
+//   worker that seeks it. handover.to holds how the code gives it, and the
+//   checker's seventh rule (16.14) holds the code to it as it runs.
 import std.model
 
 enum Task {

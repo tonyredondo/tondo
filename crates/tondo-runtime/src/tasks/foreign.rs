@@ -34,6 +34,9 @@ static SPARE_CALLERS: Mutex<Vec<&'static InC>> = Mutex::new(Vec::new());
 pub(super) static ENDED_C_CALLS: AtomicUsize = AtomicUsize::new(0);
 pub(super) static MONITOR: ThreadSlot = ThreadSlot::new();
 pub(super) static MONITOR_ASLEEP: AtomicBool = AtomicBool::new(false);
+/// The monitor's looks, counted as it makes them: what the checker sees of
+/// whether it looks (16.14), rather than what its flag says.
+pub(super) static MONITOR_LOOKS: AtomicU64 = AtomicU64::new(0);
 /// How often the monitor looks: a call still in C after one look and the
 /// next is long, and blocks its worker.
 pub(super) const MONITOR_PERIOD: Duration = Duration::from_millis(1);
@@ -167,7 +170,7 @@ pub(crate) fn step_aside() {
     if exploring().is_none() {
         ASIDE.fetch_add(1, Ordering::SeqCst);
         queue().workers += 1;
-        start_worker(false);
+        start_worker(false, None);
     }
 }
 
@@ -223,6 +226,7 @@ pub(super) fn monitor() {
         if stopping() {
             return;
         }
+        MONITOR_LOOKS.store(MONITOR_LOOKS.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
         let callers: Vec<&'static InC> = CALLERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let mut busy = false;
         for state in callers {
@@ -283,14 +287,16 @@ fn tasks_wait(queue: &Queue) -> bool {
 /// Another worker, in the place of one in C or `beside` one a task holds.
 fn add_worker(mut queue: MutexGuard<'static, Queue>, beside: bool) {
     queue.workers += 1;
-    // It looks for tasks for a domain where none looks.
+    // It looks for tasks for a domain where none looks, which it is given
+    // as it starts: through a slot of the queue, two added in one look took
+    // one domain, and the other's `SEEKING` stayed set with nobody seeking,
+    // so that nothing woke a worker for a task made ready from outside.
     let domain = (0..super::domains::count()).find(|&domain| !SEEKING[domain].load(Ordering::SeqCst));
     if let Some(domain) = domain {
         SEEKING[domain].store(true, Ordering::SeqCst);
-        queue.starting = Some(domain);
     }
     drop(queue);
-    start_worker(beside);
+    start_worker(beside, domain);
 }
 
 /// What the watch of held workers found: workers to look at again in a

@@ -7218,8 +7218,8 @@ Con `TONDO_CHECK_SCHEDULER=1` (7.17 del toolchain), el runtime comprueba mientra
 corre lo que promete esta sección, en miradas propias de un milisegundo, de modo
 que un proceso que el sistema detiene no rompe ninguna regla:
 
-- una tarea lista, o un temporizador vencido, no sigue así cien miradas mientras
-  un worker duerme sin que nada le haya dicho que mire;
+- una tarea lista, o un temporizador vencido, no sigue así quinientas miradas
+  mientras un worker duerme;
 - un worker que lleva quinientas miradas en la misma tarea mientras otras esperan
   y ninguno está libre tiene otro a su lado, salvo que él mismo esté al lado de
   otro o el programa tenga ya el doble de sus workers;
@@ -7230,8 +7230,10 @@ que un proceso que el sistema detiene no rompe ninguna regla:
   tareas esperan y ninguno está libre tiene otro en su lugar;
 - los workers, contados como ya retirados los que deben retirarse, nunca son
   menos de los que el programa tiene;
-- el monitor no duerme mientras una tarea despertada por la que corre en un
-  worker sigue lista junto a él cien miradas.
+- el monitor no deja de mirar quinientas miradas mientras una tarea despertada
+  por la que corre en un worker sigue lista junto a él;
+- un dominio marcado como buscado no sigue así quinientas miradas mientras todos
+  los workers duermen.
 
 Una regla rota termina el programa con el pánico `P0020`, que dice cuál, de qué
 tarea y de qué worker, con el estado del planificador debajo. `P0020` es del

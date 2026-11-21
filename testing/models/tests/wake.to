@@ -19,6 +19,10 @@
 //   watch of a task woken next to a busy worker, with the monitor's own
 //   sleep, is next.to's: here no task computes for long outside C.
 // - No time: a task that runs ends, or enters C, in some step.
+// - A domain marked as sought (`SEEKING`) has a worker that seeks it; the
+//   model takes the mark to be true. handover.to holds how a worker added is
+//   given its domain, and the checker's seventh rule (16.14) holds the code
+//   to it as it runs.
 import std.model
 
 enum Task {

@@ -1,0 +1,125 @@
+// How a worker the monitor adds is given the domain it looks for tasks for
+// (crates/tondo-runtime/src/tasks: `add_worker` in foreign.rs, `work_loop`
+// in work.rs). Two domains, and two workers added in one look of the
+// monitor, as beside two computations. Adding one marks as sought a domain
+// none seeks (`SEEKING`) and gives it to the worker; the worker, once its
+// thread starts, seeks it, and stops seeking, clearing the mark, when it
+// finds a task or before it sleeps. The code once gave the domain through
+// one slot of the queue, which each starting thread took: two added before
+// the first started left the first domain marked with nobody behind it, and
+// a task made ready from outside woke no worker again (workers_seeking.to).
+//
+// What it assumes of the code, read against it on 2026-11-21:
+// - The monitor adds both in one look, before either thread starts; each
+//   add marks the first domain none seeks, or none when both are marked.
+// - A thread that starts seeks the domain it was given, or none.
+// - A worker that seeks stops, and clears its domain's mark, at some step;
+//   what it finds meanwhile is wake_domains.to's.
+
+import std.model
+
+type Pool = {
+    /// Each domain marked as sought.
+    seeking: Array[Bool]
+    /// The worker that seeks each domain, or -1.
+    owner: Array[Int]
+    /// Each worker added: the domain it is to seek, -1 for none, or -2 while
+    /// it is not added.
+    given: Array[Int]
+    /// Each worker's thread has started.
+    started: Array[Bool]
+    /// The slot of the queue the domain went through, -1 when empty.
+    slot: Int
+}
+
+fn steps(pool: Pool, direct: Bool): Array[model.Step[Pool]] {
+    var next: Array[model.Step[Pool]] = []
+    // The monitor adds the next worker, in the same look as the one before.
+    let added = pool.given.count((given) { given != -2 })
+    if added < pool.given.length() {
+        let free = (0..pool.seeking.length()).filter((d) { not pool.seeking[d] }).collect()
+        let domain = if free.isEmpty() { -1 } else { free[0] }
+        let marked = if domain >= 0 { pool.seeking.replaced(domain, true) } else { pool.seeking }
+        let after = if direct {
+            pool with { seeking: marked, given: pool.given.replaced(added, domain) }
+        } else {
+            let slot = if domain >= 0 { domain } else { pool.slot }
+            pool with { seeking: marked, given: pool.given.replaced(added, -1), slot }
+        }
+        next.push(model.step("add a worker", after))
+    }
+    for w in 0..pool.given.length() {
+        // Its thread starts, and seeks the domain it was given or took.
+        if pool.given[w] != -2 and not pool.started[w] {
+            let started = pool with { started: pool.started.replaced(w, true) }
+            let (domain, taken) = if direct {
+                (pool.given[w], started)
+            } else {
+                (pool.slot, started with { slot: -1 })
+            }
+            let after = if domain >= 0 {
+                taken with { owner: taken.owner.replaced(domain, w) }
+            } else {
+                taken
+            }
+            next.push(model.step("start", after))
+        }
+    }
+    // A worker that seeks stops, clearing its domain's mark.
+    for d in 0..pool.owner.length() {
+        if pool.owner[d] >= 0 {
+            let after = pool with {
+                seeking: pool.seeking.replaced(d, false)
+                owner: pool.owner.replaced(d, -1)
+            }
+            next.push(model.step("stop seeking", after))
+        }
+    }
+    next
+}
+
+fn check(direct: Bool): model.Checked ! model.Violation {
+    let start = Pool {
+        seeking: [false, false]
+        owner: [-1, -1]
+        given: [-2, -2]
+        started: [false, false]
+        slot: -1
+    }
+    // A marked domain has a worker behind it: one that seeks it, or one not
+    // started yet that will.
+    let behind = model.always(
+        (pool: Pool) {
+            (0..pool.seeking.length()).all(
+                (d) {
+                    let coming = (0..pool.given.length()).any(
+                        (w) {
+                            pool.given[w] != -2 and
+                                not pool.started[w] and
+                                (if direct { pool.given[w] == d } else { pool.slot == d })
+                        },
+                    )
+                    not pool.seeking[d] or pool.owner[d] >= 0 or coming
+                },
+            )
+        },
+        name: "every domain marked as sought has a worker behind it",
+    )
+    model.check(start, (pool) { steps(pool, direct) }, holds: [behind])
+}
+
+// What the code does: each worker is given its domain as it is added.
+test givenAsAddedEveryMarkHasAWorker {
+    assert(model.expect(check(true)).states == 16)
+}
+
+// The code before: the domain through one slot of the queue, which the
+// second worker added overwrote before the first thread took it.
+test throughOneSlotAMarkIsLeftWithNobody {
+    match check(false) {
+        ok(_) => panic("a domain marked with nobody behind it went unseen")
+        err(stopped) => assert(
+            stopped.property == "every domain marked as sought has a worker behind it",
+        )
+    }
+}

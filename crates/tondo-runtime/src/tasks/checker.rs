@@ -8,15 +8,25 @@
 use super::*;
 use std::collections::HashMap;
 
-/// Looks a task may stay ready, or a timer due, while a worker sleeps and
-/// nothing told it to look.
-const READY_LOOKS: u64 = 100;
+/// Looks a task may stay ready, or a timer due, while a worker sleeps. A
+/// worker told to look takes it within a look, whatever says it was told:
+/// the checker judges by what it sees, as a flag of the scheduler's left
+/// set once hid a wake lost. One the system runs late has not looked yet
+/// either, so the rule waits as long as `HELD_LOOKS` does.
+const READY_LOOKS: u64 = 500;
 /// Looks a worker may stay on one task while others wait and none is free,
 /// with none beside it: past the watcher's two intervals, ten and a hundred
 /// milliseconds, with room for a monitor the system runs late.
 const HELD_LOOKS: u64 = 500;
-/// Looks the monitor may sleep while a task woken beside a worker waits.
-const ASLEEP_LOOKS: u64 = 100;
+/// Looks the monitor may go without looking, by its own count of looks,
+/// while a task woken beside a worker waits: asleep, or run late by the
+/// system, which the bound must leave room for, as `HELD_LOOKS` does.
+const STILL_LOOKS: u64 = 500;
+/// Looks a domain may stay marked as sought while every worker sleeps: a
+/// seeker finds a task, or none and stops seeking before it sleeps, so a
+/// mark with every worker asleep is one with no worker behind it, but for a
+/// seeker the system runs late.
+const SOUGHT_LOOKS: u64 = 500;
 /// Looks the workers may be past their bound, as one starts or retires.
 const OVER_LOOKS: u64 = 2;
 /// Looks a worker may stay in one call of C while others wait and none is
@@ -69,6 +79,10 @@ pub(super) struct Look {
     pub(super) surplus: usize,
     pub(super) standing_in: usize,
     pub(super) monitor_asleep: bool,
+    /// The monitor's count of its looks.
+    pub(super) monitor_looks: u64,
+    /// The domains marked as sought (`SEEKING`).
+    pub(super) sought: Vec<usize>,
     pub(super) slots: Vec<Slot>,
 }
 
@@ -80,10 +94,14 @@ pub(super) struct Watch {
     ready: HashMap<usize, (u64, Place)>,
     /// Since which look the earliest timer, by when it falls, has been due.
     due: Option<(Instant, u64)>,
-    /// Since which look a worker has slept with nothing told to look.
-    untold: Option<u64>,
-    /// Since which look the monitor has slept.
-    asleep: Option<u64>,
+    /// Since which look a worker has slept.
+    sleeping: Option<u64>,
+    /// The monitor's count of its looks, and since which look it has not
+    /// moved.
+    still: Option<(u64, u64)>,
+    /// Since which look each domain has been marked as sought while every
+    /// worker slept.
+    sought: HashMap<usize, u64>,
     /// Since which look each slot has run one task while others waited and
     /// none was free, with none beside it, and its count then.
     held: HashMap<usize, (u64, u64)>,
@@ -112,7 +130,7 @@ fn shown(place: Place) -> String {
     }
 }
 
-/// The six rules over one look more (16.14), with `given` workers.
+/// The seven rules over one look more (16.14), with `given` workers.
 pub(super) fn judge(watch: &mut Watch, look: &Look, given: usize, name: &dyn Fn(usize) -> String) -> Option<Broken> {
     watch.look += 1;
     let now = watch.look;
@@ -128,16 +146,25 @@ pub(super) fn judge(watch: &mut Watch, look: &Look, given: usize, name: &dyn Fn(
         (Some(at), _) => Some((at, now)),
         (None, _) => None,
     };
-    let untold = look.idle > 0 && !look.told;
-    watch.untold = if untold { watch.untold.or(Some(now)) } else { None };
-    watch.asleep = if look.monitor_asleep { watch.asleep.or(Some(now)) } else { None };
+    watch.sleeping = if look.idle > 0 { watch.sleeping.or(Some(now)) } else { None };
+    watch.still = match watch.still {
+        Some((count, since)) if count == look.monitor_looks => Some((count, since)),
+        _ => Some((look.monitor_looks, now)),
+    };
+    let all_asleep = look.workers > 0 && look.idle >= look.workers;
+    watch.sought = look
+        .sought
+        .iter()
+        .filter(|_| all_asleep)
+        .map(|&domain| (domain, watch.sought.get(&domain).copied().unwrap_or(now)))
+        .collect();
     let looks = |since: u64| now - since + 1;
     let oldest =
         watch.ready.iter().min_by_key(|(_, (since, _))| *since).map(|(&task, &(since, place))| (task, since, place));
     let shown = shown;
 
-    // A ready task, or a due timer, while a worker sleeps untold.
-    if let Some(untold) = watch.untold.filter(|&since| looks(since) >= READY_LOOKS) {
+    // A ready task, or a due timer, while a worker sleeps.
+    if let Some(sleeping) = watch.sleeping.filter(|&since| looks(since) >= READY_LOOKS) {
         let waiting = match (oldest, watch.due) {
             (Some((task, since, place)), _) if looks(since) >= READY_LOOKS => {
                 Some(format!("{} has been ready for {} looks {}", name(task), looks(since), shown(place)))
@@ -151,8 +178,8 @@ pub(super) fn judge(watch: &mut Watch, look: &Look, given: usize, name: &dyn Fn(
             return Some(Broken {
                 rule: "ready-while-idle",
                 headline: format!(
-                    "{waiting}, while a worker has slept for {} looks and nothing told it to look: a wake the scheduler lost, not the program's (16.14)",
-                    looks(untold)
+                    "{waiting}, while a worker has slept for {} looks: a wake the scheduler lost, not the program's (16.14)",
+                    looks(sleeping)
                 ),
             });
         }
@@ -234,19 +261,34 @@ pub(super) fn judge(watch: &mut Watch, look: &Look, given: usize, name: &dyn Fn(
         });
     }
 
-    // The monitor asleep while a task woken beside a worker waits.
-    if let (Some(asleep), Some((task, since, place))) = (watch.asleep, oldest)
+    // The monitor not looking while a task woken beside a worker waits.
+    if let (Some((_, still)), Some((task, since, place))) = (watch.still, oldest)
         && matches!(place, Place::Next(_))
-        && looks(asleep) >= ASLEEP_LOOKS
-        && looks(since) >= ASLEEP_LOOKS
+        && looks(still) >= STILL_LOOKS
+        && looks(since) >= STILL_LOOKS
     {
         return Some(Broken {
-            rule: "monitor-asleep",
+            rule: "monitor-still",
             headline: format!(
-                "the monitor has slept for {} looks while {} has been ready {} for {} looks: nothing watches it (16.14)",
-                looks(asleep),
+                "the monitor has not looked for {} looks while {} has been ready {} for {} looks: nothing watches it (16.14)",
+                looks(still),
                 name(task),
                 shown(place),
+                looks(since)
+            ),
+        });
+    }
+
+    // A domain marked as sought while every worker sleeps: no worker behind
+    // the mark, and a task made ready from outside wakes nobody. Where a
+    // worker is awake the first rule sees what is left of it.
+    if let Some((&domain, &since)) = watch.sought.iter().min_by_key(|(_, since)| **since)
+        && looks(since) >= SOUGHT_LOOKS
+    {
+        return Some(Broken {
+            rule: "sought-while-asleep",
+            headline: format!(
+                "domain {domain} has been marked as sought for {} looks while every worker slept: no worker looks for its tasks, and nothing wakes one for a task made ready from outside (16.14)",
                 looks(since)
             ),
         });
@@ -303,12 +345,14 @@ fn looked() -> Look {
         look.ready.extend(queue.runnable.iter().map(|&task| (task as usize, Place::Shared)));
         look.due = queue.timers.peek().map(|timer| timer.at).filter(|&at| at <= clock_now());
         look.idle = queue.idle;
-        look.told = queue.waking.iter().any(|&waking| waking) || queue.starting.is_some();
+        look.told = queue.waking.iter().any(|&waking| waking);
         look.workers = queue.workers;
         look.surplus = queue.surplus;
     }
     look.told |= SEEKING.iter().any(|seeking| seeking.load(Ordering::SeqCst));
     look.monitor_asleep = MONITOR_ASLEEP.load(Ordering::SeqCst);
+    look.monitor_looks = super::foreign::MONITOR_LOOKS.load(Ordering::Relaxed);
+    look.sought = (0..super::domains::count()).filter(|&domain| SEEKING[domain].load(Ordering::SeqCst)).collect();
     look.standing_in = super::foreign::standing_in();
     for (slot, next) in nexts().enumerate() {
         let task = next.task.load(Ordering::SeqCst);
@@ -372,6 +416,10 @@ fn report_text(broken: &Broken, look: &Look, name: &dyn Fn(usize) -> String) -> 
         look.standing_in
     ));
     report.push_str(&format!("\nmonitor: {}", if look.monitor_asleep { "asleep" } else { "watching" }));
+    if !look.sought.is_empty() {
+        let domains: Vec<String> = look.sought.iter().map(usize::to_string).collect();
+        report.push_str(&format!("\ndomains sought: {}", domains.join(", ")));
+    }
     report.push_str(match look.due {
         Some(_) => "\ntimers: one due",
         None => "\ntimers: none due",
@@ -389,7 +437,18 @@ mod tests {
     }
 
     /// Runs `looks` looks of the same state; the first rule broken.
+    /// The same look over and over, with a monitor that looks, as in a
+    /// program whose monitor works.
     fn run(look: &Look, looks: u64, given: usize) -> Option<Broken> {
+        let mut watch = Watch::default();
+        (0..looks).find_map(|at| {
+            let looking = Look { monitor_looks: look.monitor_looks + at, ..look.clone() };
+            judge(&mut watch, &looking, given, &name)
+        })
+    }
+
+    /// The same look with a monitor whose count does not move.
+    fn run_still(look: &Look, looks: u64, given: usize) -> Option<Broken> {
         let mut watch = Watch::default();
         (0..looks).find_map(|_| judge(&mut watch, look, given, &name))
     }
@@ -399,32 +458,33 @@ mod tests {
     }
 
     /// Today's first path: a task woken beside a worker that computes, a
-    /// worker asleep and nothing told it: a wake lost (testing/models/tests/
-    /// next.to's counterexample).
+    /// worker asleep: a wake lost (testing/models/tests/next.to's
+    /// counterexample). Told to look or not: one told would have looked, and
+    /// a flag that says one looks, left set with nobody behind it, once hid
+    /// such a wake.
     #[test]
     fn a_task_ready_beside_a_busy_worker_with_one_asleep_breaks_the_first_rule() {
         let look = Look {
             ready: vec![(7, Place::Next(0))],
             idle: 1,
             workers: 2,
-            monitor_asleep: true,
             slots: vec![busy(3), Slot { alive: true, ..Slot::default() }],
             ..Look::default()
         };
-        let broken = run(&look, 200, 2).expect("no rule broke");
+        let broken = run(&look, 600, 2).expect("no rule broke");
         assert_eq!(broken.rule, "ready-while-idle");
-        assert!(broken.headline.starts_with("task 7 has been ready for 100 looks beside worker 0"), "{broken:?}");
-        // Told to look, the worker is on its way, and the monitor watches:
-        // no rule breaks.
-        let told = Look { told: true, monitor_asleep: false, ..look };
-        assert_eq!(run(&told, 200, 2), None);
+        assert!(broken.headline.starts_with("task 7 has been ready for 500 looks beside worker 0"), "{broken:?}");
+        let told = Look { told: true, ..look.clone() };
+        assert_eq!(run(&told, 600, 2).map(|b| b.rule), Some("ready-while-idle"));
+        // Within the bound, as a worker run late, no rule breaks.
+        assert_eq!(run(&look, 400, 2), None);
     }
 
-    /// A due timer with a worker asleep and untold breaks it too.
+    /// A due timer with a worker asleep breaks it too.
     #[test]
     fn a_due_timer_with_a_worker_asleep_breaks_the_first_rule() {
         let look = Look { due: Some(Instant::now()), idle: 1, workers: 2, ..Look::default() };
-        assert_eq!(run(&look, 200, 2).map(|b| b.rule), Some("ready-while-idle"));
+        assert_eq!(run(&look, 600, 2).map(|b| b.rule), Some("ready-while-idle"));
     }
 
     /// The second path: one worker, held by a computation while a task waits,
@@ -452,18 +512,35 @@ mod tests {
         assert_eq!(run(&standing, 5, 1), None);
     }
 
-    /// The third path: the monitor asleep while a task woken beside the one
-    /// worker waits (workers_woken_asleep.to).
+    /// The third path: the monitor not looking while a task woken beside
+    /// the one worker waits (workers_woken_asleep.to), by its own count of
+    /// looks, whatever its flag says.
     #[test]
-    fn the_monitor_asleep_beside_a_woken_task_breaks_the_fourth_rule() {
+    fn the_monitor_still_beside_a_woken_task_breaks_the_fourth_rule() {
         let look = Look {
             ready: vec![(7, Place::Next(0))],
             workers: 1,
-            monitor_asleep: true,
+            monitor_looks: 9,
             slots: vec![Slot { held: true, ..busy(3) }],
             ..Look::default()
         };
-        assert_eq!(run(&look, 200, 1).map(|b| b.rule), Some("monitor-asleep"));
+        assert_eq!(run_still(&look, 600, 1).map(|b| b.rule), Some("monitor-still"));
+        assert_eq!(run_still(&look, 400, 1), None);
+        // A monitor that looks breaks nothing.
+        assert_eq!(run(&look, 2000, 1), None);
+    }
+
+    /// The fourth path: a domain marked as sought with every worker asleep,
+    /// left so by two workers added in one look (workers_seeking.to).
+    #[test]
+    fn a_domain_sought_while_every_worker_sleeps_breaks_the_seventh_rule() {
+        let look = Look { idle: 2, workers: 2, sought: vec![1], monitor_looks: 3, ..Look::default() };
+        let broken = run(&look, 600, 2).expect("no rule broke");
+        assert_eq!(broken.rule, "sought-while-asleep");
+        assert!(broken.headline.starts_with("domain 1 has been marked as sought for 500 looks"), "{broken:?}");
+        // A worker awake, or within the bound, as a seeker run late: nothing.
+        assert_eq!(run(&Look { idle: 1, ..look.clone() }, 600, 2), None);
+        assert_eq!(run(&look, 400, 2), None);
     }
 
     /// A task that moves, as two tasks that hand work to each other, never
@@ -493,19 +570,18 @@ mod tests {
             ready: vec![(7, Place::Next(0))],
             idle: 1,
             workers: 2,
-            monitor_asleep: true,
             slots: vec![busy(3), Slot { alive: true, ..Slot::default() }],
             ..Look::default()
         };
-        let broken = run(&look, 200, 2).expect("no rule broke");
+        let broken = run(&look, 600, 2).expect("no rule broke");
         let report = report_text(&broken, &look, &name);
         let expected = [
-            "panic[P0020]: scheduler-rule: task 7 has been ready for 100 looks beside worker 0, woken by the task it runs, while a worker has slept for 100 looks and nothing told it to look: a wake the scheduler lost, not the program's (16.14)",
+            "panic[P0020]: scheduler-rule: task 7 has been ready for 500 looks beside worker 0, woken by the task it runs, while a worker has slept for 500 looks: a wake the scheduler lost, not the program's (16.14)",
             "worker 0: 3 tasks started",
             "worker 1: 0 tasks started",
             "ready: task 7 beside worker 0, woken by the task it runs",
             "workers: 2 started, 1 asleep, none told to look, 0 retirements owed, 0 standing in",
-            "monitor: asleep",
+            "monitor: watching",
             "timers: none due",
         ];
         assert_eq!(report.lines().collect::<Vec<_>>(), expected);
@@ -530,7 +606,7 @@ mod tests {
             slots: vec![calling, Slot { alive: true, ..Slot::default() }],
             ..look
         };
-        assert_eq!(run(&free, 600, 1), None);
+        assert_ne!(run(&free, 600, 1).map(|b| b.rule), Some("held-in-c"));
     }
 
     /// The workers fewer than their number, those owed retirement counted

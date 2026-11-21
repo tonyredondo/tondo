@@ -8,7 +8,9 @@
 //! a domain is one the system ran there last, and keeps there, as Linux
 //! wakes a thread near where it ran. One domain on a machine with a cache
 //! for every core, or that says nothing of its caches, or with
-//! `TONDO_CACHE_DOMAINS=0`.
+//! `TONDO_CACHE_DOMAINS=0`; with a number from 2 to 16 there, the cores in
+//! that many domains of consecutive numbers, as on a machine of so many
+//! caches, which a test of the domains gives itself on any machine.
 
 use std::sync::OnceLock;
 
@@ -24,9 +26,20 @@ struct Map {
 fn map() -> &'static Map {
     static MAP: OnceLock<Map> = OnceLock::new();
     MAP.get_or_init(|| {
-        let one = crate::config::config().cache_domains.as_deref().is_some_and(|value| value.trim() == "0");
-        (!one).then(read).flatten().unwrap_or(Map { of: Vec::new(), count: 1 })
+        let given = crate::config::config().cache_domains.as_deref().map(str::trim);
+        match given.map(str::parse::<usize>) {
+            Some(Ok(0)) => None,
+            Some(Ok(count)) if (2..=MOST).contains(&count) => Some(split(count)),
+            _ => read(),
+        }
+        .unwrap_or(Map { of: Vec::new(), count: 1 })
     })
+}
+
+/// The cores in `count` domains of consecutive numbers.
+fn split(count: usize) -> Map {
+    let cores = (unsafe { libc::sysconf(libc::_SC_NPROCESSORS_CONF) }).max(1) as usize;
+    Map { of: (0..cores).map(|core| (core * count / cores) as u8).collect(), count }
 }
 
 /// The cores of each last-level cache, as Linux lists them.

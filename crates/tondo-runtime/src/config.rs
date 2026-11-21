@@ -42,8 +42,9 @@ pub(crate) struct Config {
     /// for, not the versions of its functions for a higher one, as a
     /// processor without that level would.
     pub(crate) versions: Option<OsString>,
-    /// `TONDO_CACHE_DOMAINS`: `0` takes every core as one domain: the
-    /// workers do not keep to the cores that share a cache.
+    /// `TONDO_CACHE_DOMAINS`: `0` takes every core as one domain, so that
+    /// the workers do not keep to the cores that share a cache; a number
+    /// from 2 to 16 splits the cores in that many (`domains`).
     pub(crate) cache_domains: Option<String>,
     /// `TONDO_WORKERS`: how many workers run the program's code at once, 1
     /// to 1024, instead of one per processor.

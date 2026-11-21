@@ -425,7 +425,7 @@ pub const CODES: &[(&str, &str, &str)] = &[
     (
         "P0020",
         "scheduler-rule",
-        "Under `TONDO_CHECK_SCHEDULER`, the runtime's scheduler broke a rule it promises: a task ready while a worker sleeps untold, a worker held with none beside it, workers past twice their number, a worker held in a call of C with none in its place, workers fewer than their number, or the monitor asleep beside a woken task. The runtime's fault, not the program's: no `recover` takes it.",
+        "Under `TONDO_CHECK_SCHEDULER`, the runtime's scheduler broke a rule it promises: a task ready while a worker sleeps, a worker held with none beside it, workers past twice their number, a worker held in a call of C with none in its place, workers fewer than their number, the monitor not looking beside a woken task, or a domain marked as sought while every worker sleeps. The runtime's fault, not the program's: no `recover` takes it.",
     ),
     ("P2001", "test-skip-during-cleanup", "`testing.skip` while a cleanup, an unwind or a teardown runs."),
     ("P2002", "test-tag-conflict", "`testing.tags` changes the value a key already has in the same test."),

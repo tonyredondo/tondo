@@ -57,7 +57,6 @@ pub(crate) fn stop_runtime() {
         queue.idle_in = [0; domains::MOST];
         queue.waking = [false; domains::MOST];
         queue.polling = false;
-        queue.starting = None;
         queue.timers.clear();
         queue.stale = 0;
     }

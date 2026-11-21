@@ -362,9 +362,6 @@ struct Queue {
     /// looked at the queue yet: the first of the domain that looks takes
     /// over its `SEEKING`.
     waking: [bool; domains::MOST],
-    /// A worker started for one long in C, which looks for tasks for this
-    /// domain, as the first worker to start takes over.
-    starting: Option<usize>,
     /// Waits for the network's events, which the watcher counts.
     polls: u64,
     /// Tasks taken from the queue, to look at the network now and then.
@@ -388,7 +385,6 @@ static QUEUE: Mutex<Queue> = Mutex::new(Queue {
     idle_in: [0; domains::MOST],
     polling: false,
     waking: [false; domains::MOST],
-    starting: None,
     polls: 0,
     picks: 0,
     surplus: 0,

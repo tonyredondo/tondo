@@ -1,0 +1,64 @@
+// Two computations hold the two workers, so the monitor puts a worker beside
+// each in one look (16.14). Each worker added looks first for the tasks of
+// a domain no worker looks for, marked as sought for it. Handed over through
+// one slot, the second took the first's domain, and the first domain stayed
+// marked with no worker behind it: once the computations ended and every
+// worker slept, a task made ready from outside, as by the end of a child
+// process, woke nobody, since a worker of that domain seemed to look. With
+// two domains of cores it hung thirty times of thirty; now each worker added
+// is given its domain as it starts. `TONDO_CACHE_DOMAINS=2` gives the two
+// domains on any machine. Nothing here is measured by the clock.
+
+import std.console
+import std.diagnostics
+import std.process
+import std.sync
+import std.time
+
+/// Computes until `stop` is set, without waiting, once it has said it began.
+fn compute(began: sync.Atomic[Int], stop: sync.Atomic[Bool]): Int {
+    began.add(1)
+    var turns = 0
+    for not stop.load() {
+        turns += 1
+    }
+    turns
+}
+
+fn counted(name: String): Int {
+    diagnostics.metrics().find((each) { each.name == name }).map((each) { each.value }) ?? -1
+}
+
+fn ran(): Int ! String {
+    let output = process.command("true").output().mapErr((e) { "{e}" })?
+    output.text().mapErr((e) { "{e}" })?.length()
+}
+
+fn main(): !String {
+    let began = sync.Atomic(0)
+    let stop = sync.Atomic(false)
+    let first = spawn compute(began, stop)
+    let second = spawn compute(began, stop)
+    for began.load() < 2 or counted("workers.added") < 2 {
+        time.sleep(time.milliseconds(1))
+    }
+    console.println("workers added beside: {counted("workers.added")}")
+    stop.store(true)
+    _ = (first.wait(), second.wait())
+    // The workers added retire once they look for a task again.
+    for counted("workers.total") > 2 {
+        time.sleep(time.milliseconds(1))
+    }
+    var runs = Group[Int ! String]()
+    for _ in 0..40 {
+        runs.add(spawn ran())
+    }
+    console.println("children that ended: {runs.waitOrCancel()?.length()}")
+}
+
+// expect-env: TONDO_WORKERS=2
+// expect-env: TONDO_CACHE_DOMAINS=2
+// expect-no-schedule: the explorer runs one worker and adds none, so a computation that does not ask holds it, by design
+// expect-no-replay: a recorded run, too, runs its tasks on one worker that adds none
+// expect-stdout: workers added beside: 2
+// expect-stdout: children that ended: 40

@@ -41,6 +41,10 @@
 //   as one look. Asleep, it looks at nothing until something wakes it.
 // - A thread that can act acts within a millisecond: a process the system
 //   stops is no part of the bound.
+// - A domain marked as sought (`SEEKING`) has a worker that seeks it; the
+//   model takes the mark to be true. handover.to holds how a worker added is
+//   given its domain, and the checker's seventh rule (16.14) holds the code
+//   to it as it runs.
 import std.model
 
 enum Phase {

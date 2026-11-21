@@ -75,12 +75,12 @@ pub(super) fn program_ended(queue: &Queue) -> bool {
 /// `work` in a recorded run, on a thread other than the worker's until
 /// `until` says: the worker may be in C, and only the baton's runs anyway.
 pub(super) fn work_until(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
-    work_from(main, until, false)
+    work_from(main, until, false, None)
 }
 
 /// `work_until`, by a worker that `beside` says the monitor put beside a
-/// held one.
-fn work_from(main: bool, until: Option<&dyn Fn() -> bool>, beside: bool) -> i32 {
+/// held one, and that `seeks` the tasks of a domain from its start.
+fn work_from(main: bool, until: Option<&dyn Fn() -> bool>, beside: bool, seeks: Option<usize>) -> i32 {
     crate::trace::guard_thread(true, kept());
     if exploring().is_none()
         && own_next().is_none()
@@ -94,7 +94,7 @@ fn work_from(main: bool, until: Option<&dyn Fn() -> bool>, beside: bool) -> i32 
     if let Some(next) = own_next() {
         next.alive.store(true, Ordering::Release);
     }
-    let status = work_loop(main, until);
+    let status = work_loop(main, until, seeks);
     if let Some(next) = own_next() {
         next.alive.store(false, Ordering::Release);
     }
@@ -103,16 +103,15 @@ fn work_from(main: bool, until: Option<&dyn Fn() -> bool>, beside: bool) -> i32 
 
 /// The loop of `work_from`, until the program ends, `until` says, or the
 /// worker retires.
-fn work_loop(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
+fn work_loop(main: bool, until: Option<&dyn Fn() -> bool>, seeks: Option<usize>) -> i32 {
     // Its slot, which stays its own while the thread works.
     let own = own_next();
     // A worker just woken looks once more, a moment later, for a task
     // waiting next to a worker that runs another, before it sleeps again.
     // One that starts to take another's place was woken for that.
-    let starts = queue().starting.take();
-    let (mut woken, mut waited) = (starts.is_some(), false);
+    let (mut woken, mut waited) = (seeks.is_some(), false);
     // The domain this worker looks for tasks for, as `SEEKING` says.
-    let mut seeker: Option<usize> = starts;
+    let mut seeker: Option<usize> = seeks;
     loop {
         turn_host();
         // The task made runnable by the one that ran here, but now and then
@@ -145,6 +144,14 @@ fn work_loop(main: bool, until: Option<&dyn Fn() -> bool>) -> i32 {
                     return MAIN_STATUS.load(Ordering::SeqCst) as i32;
                 }
                 if until.is_some_and(|until| until()) {
+                    // A thread that leaves lets another look for what it
+                    // looked for: a `SEEKING` left set wakes nobody again.
+                    if let Some(domain) = seeker.take() {
+                        SEEKING[domain].store(false, Ordering::SeqCst);
+                        if waiting_somewhere() || !queue.runnable.is_empty() {
+                            wake_one(queue);
+                        }
+                    }
                     return 0;
                 }
                 if !main && queue.surplus > 0 {
@@ -618,15 +625,17 @@ pub(super) fn start_workers() {
     let count = crate::config::workers();
     queue().workers = count;
     for _ in 1..count {
-        start_worker(false);
+        start_worker(false, None);
     }
     super::checker::start();
 }
 
-/// Another worker; `beside` one the monitor puts beside a held one.
-pub(super) fn start_worker(beside: bool) {
+/// Another worker; `beside` one the monitor puts beside a held one, and
+/// one that `seeks` a domain's tasks from its start, whose `SEEKING` its
+/// starter set.
+pub(super) fn start_worker(beside: bool, seeks: Option<usize>) {
     spawn_thread(Some(256 * 1024), move || {
-        work_from(false, None, beside);
+        work_from(false, None, beside, seeks);
     });
 }
 

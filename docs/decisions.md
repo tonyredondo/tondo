@@ -9136,3 +9136,59 @@ without it the model finds it waiting with the monitor asleep. Over the
 77 rows of bench/tondo, by instructions against the compiler before it, 74
 are the same, `join 1` and `tls 64x100` do 0.1% more, and none comes near
 the 2% bar.
+
+## A domain sought by nobody
+
+The docs test hung on this machine, first in a gate's workspace step and
+then in the manual session's run: docs/std/generate.to, which starts a task
+for each page and runs `tondo api` from each as a child process. Seventy
+tasks were ready and every one of the 32 workers slept; with the checker on
+it hung all the same, with no `P0020`.
+
+A worker that `add_worker` starts in place of one in C, or beside one held,
+looks first for the tasks of a domain none seeks: `add_worker` marks it in
+`SEEKING`, and handed it over through one slot of the queue, which the new
+thread took as it started. The watcher adds a worker beside each held one in
+one look, so two added before the first thread ran left the second's domain
+in the slot and the first's marked with no worker behind it. From then on a
+task made ready from outside a worker, as by a child process that ended,
+returned at `enqueue`'s "a worker looks already" and woke nobody, and
+`wake_idle` in that domain did the same. It takes two cache domains, as the
+two of this machine's processor, and several workers added in one look,
+which the watcher's workers beside held ones made common: built by main's
+compiler, `tondo compiler 6bd94173`, the two programs below hung in each of
+twenty-five runs. A thread of C that runs tasks while its
+call waits had a second way to leave a mark: it could become its domain's
+seeker and leave when its call returned, without clearing it.
+
+Now `add_worker` gives the domain to the thread it starts, and every way out
+of `work_loop` clears what its worker sought, waking another if tasks wait.
+A program of two computations on two workers, so that the watcher adds two
+in one look, then forty child processes, hung thirty times of thirty and now
+runs every time; with every core one domain it never hung.
+workers_seeking.to is that program, and gives itself two domains on any
+machine with `TONDO_CACHE_DOMAINS=2`: that variable now takes a number from
+2 to 16, which splits the cores in that many domains of consecutive
+numbers. Before the fix it hung ten times of ten. generate.to, four at a
+time with the checker on, ran sixty times without a hang.
+
+The checker was blind to it because it believed the flags it is there to
+check: a domain marked as sought counted as a worker told to look, so its
+first rule never began to count. It now judges by what it sees. The first
+rule is a task ready, or a timer due, beside a worker that sleeps, told or
+not, for five hundred looks, since a worker told a moment ago whose thread
+the system runs late sleeps too. The fourth rule reads the monitor's own
+count of its looks, which it keeps with one store a millisecond on its
+thread, instead of its flag, and waits as long. A seventh rule is the mark
+itself: a domain marked as sought for five hundred looks while every worker
+sleeps. Where some worker is awake, the first rule sees what such a mark
+leaves, a task ready beside a worker that sleeps, so this rule need cover
+no more. With the domain dropped by hand in `add_worker`, workers_seeking.to
+ends with `P0020` where it hung.
+
+No model had it. testing/models/tests/handover.to now gives two domains
+and two workers added in one look: through one slot it finds a domain
+marked with nobody behind it, and with the domain given as each is added
+it finds none in sixteen states. next.to, wake.to and wake_domains.to say
+in their lists that they take a mark to have a worker behind it, which
+handover.to and the seventh rule hold.
