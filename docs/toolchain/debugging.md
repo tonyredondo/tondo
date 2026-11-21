@@ -260,19 +260,20 @@ fatal: SIGABRT: the program aborted, inside a function of C
 stack:
   ffi.free  <std>/ffi.to:354:5
   main      twice.to:9:9
-tondo runtime: a dump of the program is in dumps/twice-3001460.dump.json
-tondo runtime: the fault is in tondo_f0_main < tondo_main < _RNvNtCshPekXfXA3fw_13tondo_runtime5tasks10trampoline
+tondo runtime: a dump of the program is in dumps/twice-3160884.dump.json
+tondo runtime: the fault is in ffi.free < tondo_main < tondo_runtime::tasks::trampoline
 ```
 
 The first line is the C library's own. The second is the program's: it had
 printed `allocated` and the line was still waiting to be written, so the
-runtime writes it out before its report, and what a program said last is
-not lost with it. Then what happened, the calls of the program that led
-there, where the dump is, and the functions of the machine code the fault
-was in. The status is the signal's, 134 here, which is what a shell or a
-supervisor reads. On macOS the system's allocator ends such a program with a trap, and
-the report says `SIGTRAP` and that C and the allocator use a trap to end a
-program on purpose.
+runtime writes it out before its report, and what a program said last is not
+lost with it. Then what happened, the calls of the program that led there,
+where the dump is, and the functions the fault was in, the program's by
+their own names and the runtime's by theirs. The status is the signal's, 134
+here, which is what a shell or a supervisor reads. On macOS the system's
+allocator ends such a program with an abort or with a trap, by how it finds
+the block, and the report names which: of a trap it says `SIGTRAP`, and that
+C and the allocator use one to end a program on purpose.
 
 The report waits for nothing. The thread that faulted may hold any lock, of
 the C library, of the allocator or of the runtime, as it does when C's
