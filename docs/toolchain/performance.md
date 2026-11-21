@@ -621,8 +621,8 @@ though. A benchmark of the two over a thousand numbers shows both costs:
 ```text
 $ tondo test --bench
 test squares::unit::squares::aThousand ... ok
-  arrays     1.056 µs/op  ±0.3%  0 allocs/op +9 in regions  0 B/op +12448 in regions  1 regions set up/op, 1 used  23.9k ins/op
-  chain      1.598 µs/op  ±0.2%  0 allocs/op +2 in regions  0 B/op +96 in regions  1 regions set up/op, 1 used  38.2k ins/op
+  arrays     1.055 µs/op  ±0.4%  0 allocs/op +9 in regions  0 B/op +12448 in regions  1 regions set up/op, 1 used  23.9k ins/op
+  chain      1.291 µs/op  ±0.2%  0 allocs/op +2 in regions  0 B/op +96 in regions  1 regions set up/op, 1 used  36.7k ins/op
 ```
 
 The chain makes its two closures and nothing else, however long the array
