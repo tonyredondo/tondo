@@ -15,8 +15,9 @@
 //! what it prints, standard output and then standard error, is every line
 //! up to the next `$` line, but for one blank line before it. Its exit
 //! status is not compared. A plain `text` block right after a `tondo error
-//! <code>` or `tondo warning <code>` program quotes its diagnostic: each of
-//! its lines is one of what `tondo check` prints for it, in order.
+//! <code>` or `tondo warning <code>` program, or a `diff` with `error <code>`
+//! or `warning <code>`, quotes its diagnostic: each of its lines is one of
+//! what `tondo check` prints for it, in order.
 //!
 //! `TONDO_UPDATE_DOCS=1 cargo test -p tondo --test docs` writes the reference,
 //! the outputs and the listings again, after a change to the standard
@@ -448,11 +449,21 @@ fn read_page(name: &str, document: usize, text: &str, dir: &Path) -> (Vec<Job>, 
                 };
                 files.insert(file, text.clone());
                 steps.push(Step::File { name: file.to_string(), text: text.clone() });
-                // The variant is an example too.
+                // The variant is an example too, wrong as `error <code>` or
+                // `warning <code>` says, and then quoted by a plain block.
                 if file.ends_with(".to") {
+                    let words: Vec<&str> = fence.info.split_whitespace().collect();
+                    let wrong = words.windows(2).find(|pair| matches!(pair[0], "error" | "warning"));
+                    let info = match wrong {
+                        Some(pair) => format!("tondo {} {} file={file}", pair[0], pair[1]),
+                        None => format!("tondo file={file}"),
+                    };
+                    let quoted = found
+                        .get(index + 1)
+                        .filter(|next| next.info == "text" && wrong.is_some())
+                        .map(|next| (next.body.start, next.code.clone()));
                     let name = format!("{at} ({})", fence.info);
-                    let info = format!("tondo file={file}");
-                    jobs.push(Job { name, document, info, code: text, case, output: None, quoted: None });
+                    jobs.push(Job { name, document, info, code: text, case, output: None, quoted });
                 }
             }
             _ if fence.info == "text listing" => match commands(name, fence, &lines) {
@@ -591,6 +602,16 @@ $ tondo run 'hello.to'
 hello
 ```
 
+```diff file=broken.to from=hello.to error E1001
+-    console.println("hello")
++    undefined()
+```
+
+```text
+error[E1001]: unknown name `undefined`; Tondo writes `none`, the `T?` without a value
+ --> broken.to:4:5
+```
+
 ```tondo error E1001 file=wrong.to
 fn main() {
     undefined()
@@ -609,7 +630,12 @@ fn main() {
     assert!(wrong.is_empty(), "{wrong:?}");
     assert_eq!(
         jobs.iter().map(|job| job.info.as_str()).collect::<Vec<_>>(),
-        ["tondo file=hello.to", "tondo file=bye.to", "tondo error E1001 file=wrong.to"]
+        [
+            "tondo file=hello.to",
+            "tondo file=bye.to",
+            "tondo error E1001 file=broken.to",
+            "tondo error E1001 file=wrong.to"
+        ]
     );
     for job in &jobs {
         if let Outcome::Failed(why) = check(env!("CARGO_BIN_EXE_tondo"), job) {
@@ -629,11 +655,17 @@ fn main() {
             "{failed:?}"
         ),
     }
-    let Outcome::Failed(why) = check(env!("CARGO_BIN_EXE_tondo"), &jobs[2]) else { panic!("the quote held") };
+    let Outcome::Failed(why) = check(env!("CARGO_BIN_EXE_tondo"), &jobs[3]) else { panic!("the quote held") };
     assert!(why.contains("no line ` --> wrong.to:3:5`"), "{why}");
+    // A wrong variant that compiles is wrong.
+    let (jobs, _, _) = read(&page.replace("+    undefined()", "+    console.println(\"hi\")"));
+    let Outcome::Failed(why) = check(env!("CARGO_BIN_EXE_tondo"), &jobs[2]) else { panic!("the variant held") };
+    assert!(why.contains("(diff file=broken.to from=hello.to error E1001)"), "{why}");
 
     // A variant whose lines are not there, and a command that needs a shell.
-    let (_, _, wrong) = read(&page.replace("-    console.println(\"hello\")", "-    console.println(\"hi\")"));
+    let (_, _, wrong) = read(
+        &page.replace(" fn main() {\n-    console.println(\"hello\")", " fn main() {\n-    console.println(\"hi\")"),
+    );
     assert!(wrong.len() == 1 && wrong[0].contains("is in the file 0 times"), "{wrong:?}");
     let (_, _, wrong) = read(&page.replace("$ tondo check hello.to", "$ tondo check hello.to | head"));
     assert!(wrong.len() == 1 && wrong[0].contains("asks a shell for `|`"), "{wrong:?}");

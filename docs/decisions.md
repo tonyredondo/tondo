@@ -9299,7 +9299,9 @@ that compiles and whose output is held. A `diff file=<new> from=<old>` shows
 a variant as what it changes, so that the page does not repeat the program:
 lines with `-` go, with `+` come, and with one space are context, and what
 goes, with its context, must be in the file exactly once. Without `from=`,
-the file itself changes. The variant is an example too. `diff` and not
+the file itself changes. The variant is an example too, and with `error
+<code>` or `warning <code>` a wrong one, as a `tondo error` program is,
+whose diagnostic a plain block after it may quote. `diff` and not
 `edit`, as the runbooks write it, because GitHub colours it, and the pages
 are read there.
 
