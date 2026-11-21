@@ -9100,3 +9100,39 @@ before this one made fair. The checker would not have caught it, and is
 not meant to: such a case is right about the scheduler and wrong about
 time. A case that holds the scheduler waits for a word or a flag, never
 for a time, and its computation ends when it is told to.
+
+## A task started beside a worker that computes
+
+A task that a running task starts goes to its worker's own queue, and the
+first one there tells an idle worker to look. With none idle it told
+nobody. A monitor that had looked once while nothing waited, and gone to
+sleep, slept on: the task waited until the worker that started it stopped
+computing, which for a task that spins on a flag the started one must set,
+on one worker, is never. "A task woken next to a worker that computes"
+woke the monitor for a task put in a next and left the own queue out, and
+no model had it: next.to followed the next alone, the monitor of
+watcher.to never sleeps, and wake.to has no task that computes.
+
+The checker found it. In a run of the cases in debug with the runner's
+stops (`TONDO_CASES_STALLS=4`), workers_flag.to ended with `P0020`: worker
+0 on one task for five hundred looks, the task that sets the flag in its
+own queue, the monitor asleep. The stops had no part in it, as the first
+came at 326 ms, after the program should have ended. What it needed was a
+monitor that looked before `main` started its two tasks, which a busy
+machine makes likely and workers_own_asleep.to makes certain: its `main`
+computes alone for 30 ms first. Before the fix that case ended with `P0020`
+every time, and without the checker it hangs.
+
+Now the first task started in an own queue with no worker idle wakes the
+monitor (`watch_busy`), which watches until a worker is put beside the held
+one. One of the two sees the other through the queue's lock: the monitor's
+look takes it after the task is in, and sees it, or the waker reads that
+the monitor sleeps after the monitor said so. next.to now starts the task
+in the own queue too, with what the code does there: any worker that looks
+takes it once it is old enough, one about to sleep naps for it, an idle
+one is told with no rationing, and the monitor with a worker idle does not
+look at own queues. With the fix the started task runs within two looks;
+without it the model finds it waiting with the monitor asleep. Over the
+77 rows of bench/tondo, by instructions against the compiler before it, 74
+are the same, `join 1` and `tls 64x100` do 0.1% more, and none comes near
+the 2% bar.

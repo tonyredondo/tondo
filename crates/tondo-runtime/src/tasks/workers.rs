@@ -302,7 +302,13 @@ pub(super) fn enqueue(task: *mut Task) {
         own.count.fetch_add(1, Ordering::SeqCst);
         if first {
             own.waiting.store(nanos(), Ordering::Relaxed);
-            wake_idle();
+            // With no worker idle to take it, the monitor watches until one
+            // does, as for a task woken next: this worker may compute for
+            // long, and the monitor may sleep, having seen nothing waiting.
+            match IDLE.load(Ordering::SeqCst) {
+                0 => super::foreign::watch_busy(),
+                _ => wake_idle(),
+            }
         }
         return;
     }

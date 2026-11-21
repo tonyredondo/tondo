@@ -1,9 +1,12 @@
 // A task woken by one that computes (crates/tondo-runtime/src/tasks:
-// `schedule`, `wake_idle` and `take_next` in workers.rs; a worker's last
-// look before it sleeps in work.rs; the monitor of foreign.rs). The task
-// runs next on its waker's worker, which computes and never waits; another
-// worker takes it from there once it is older than NEXT_WAIT, but only a
-// worker told to look, or that napped for it, looks at another's next.
+// `schedule`, `enqueue`, `wake_idle`, `take_next` and `steal` in workers.rs;
+// a worker's last look before it sleeps in work.rs; the monitor of
+// foreign.rs), or started by it. A woken task runs next on its waker's
+// worker, which computes and never waits; another worker takes it from
+// there once it is older than NEXT_WAIT, but only a worker told to look, or
+// that napped for it, looks at another's next. A task started goes to its
+// worker's own queue instead, which any worker that looks takes from once
+// the task is old enough.
 // `schedule` tells one that sleeps unless a worker of the domain looks
 // already, or one was told within the last 100 µs, which this model leaves
 // to chance. With one worker there is no other until the watcher puts one
@@ -24,13 +27,18 @@
 // - `schedule` tells a worker that sleeps unless one looks (`SEEKING`) or one
 //   was told within 100 µs, left here to chance, and wakes the monitor for
 //   every task it puts in a next (`watch_next`, the parameter `always`).
+// - `enqueue` puts a started task in its worker's own queue; the first there
+//   tells a worker that sleeps unless one looks, with no rationing, and with
+//   no worker idle wakes the monitor instead (`watch_busy`, the parameter
+//   `own`). Any worker that looks takes it once it is old enough (`steal`);
+//   one about to sleep sees it (`waiting_somewhere`) and naps for it.
 // - Only a worker told to look, or that napped, takes from another's next,
 //   and only a task older than NEXT_WAIT; one younger makes it nap first.
 // - The monitor looks once a millisecond while it watches; with a worker
 //   idle it tells one of a task in a next older than NEXT_WAIT
-//   (`watch_nexts`); with none, it puts one beside the held worker after the
-//   watcher's interval, which counts here as one look. Asleep, it looks at
-//   nothing until something wakes it.
+//   (`watch_nexts`), and of none in an own queue; with none, it puts one
+//   beside the held worker after the watcher's interval, which counts here
+//   as one look. Asleep, it looks at nothing until something wakes it.
 // - A thread that can act acts within a millisecond: a process the system
 //   stops is no part of the bound.
 import std.model
@@ -62,7 +70,7 @@ type State = {
     peeks: Bool
     /// The domain's worker that looks, as `SEEKING`.
     seeking: Bool
-    /// The task is in its waker's next.
+    /// The task is in its waker's next, or its own queue.
     landed: Bool
     /// It landed less than NEXT_WAIT ago.
     young: Bool
@@ -86,6 +94,16 @@ type Fixes = {
     /// And with no worker idle too: the monitor watches the held worker,
     /// and puts one beside it.
     always: Bool
+    /// The first task started in a worker's own queue, with no worker idle,
+    /// has the monitor watch.
+    own: Bool
+}
+
+/// Where the task goes: woken next to its waker, or started in its own
+/// queue.
+enum Landing {
+    Next
+    Own
 }
 
 const Bound = 2
@@ -100,7 +118,8 @@ fn told(state: State): State {
     state with { phase: Phase.Looking, peeks: true, seeking: true }
 }
 
-fn steps(state: State, fixes: Fixes): Array[model.Step[State]] {
+fn steps(state: State, fixes: Fixes, landing: Landing): Array[model.Step[State]] {
+    let own = landing == Landing.Own
     var next: Array[model.Step[State]] = []
     if state.phase == Phase.Choosing {
         let looking = state with { phase: Phase.Looking }
@@ -112,7 +131,7 @@ fn steps(state: State, fixes: Fixes): Array[model.Step[State]] {
         return next
     }
     // The waker wakes the task, once, at any moment: in its next.
-    if not state.landed {
+    if not state.landed and not own {
         let wakes = fixes.net and (fixes.always or idle(state))
         let landed = state with { landed: true, young: true, watching: state.watching or wakes }
         // Told, unless a worker looks, or one was told 100 µs ago.
@@ -121,9 +140,32 @@ fn steps(state: State, fixes: Fixes): Array[model.Step[State]] {
         }
         next.push(model.step("notify", landed))
     }
+    // Or starts it, once, at any moment: in its own queue, which tells an
+    // idle worker unless one looks, and otherwise wakes the monitor.
+    if not state.landed and own {
+        let wakes = fixes.own and not idle(state)
+        let landed = state with { landed: true, young: true, watching: state.watching or wakes }
+        if idle(state) and not state.seeking {
+            next.push(model.step("start and tell", told(landed)))
+        } else {
+            next.push(model.step("start", landed))
+        }
+    }
     match state.phase {
         Phase.Looking => {
-            if state.landed and state.peeks {
+            // Any worker that looks takes from an own queue a task old
+            // enough; one too young it naps for if it was told or looks for
+            // its domain, as it does for a next.
+            if state.landed and own {
+                if not state.young {
+                    next.push(model.step("steal", state with { phase: Phase.Runs }))
+                } else if state.peeks or state.seeking {
+                    next.push(model.step("nap for it", state with { phase: Phase.Napping }))
+                } else {
+                    let stops = state with { phase: Phase.Counted, peeks: false, seeking: false }
+                    next.push(model.step("find it too young", stops))
+                }
+            } else if state.landed and state.peeks {
                 if state.young {
                     next.push(model.step("nap for it", state with { phase: Phase.Napping }))
                 } else {
@@ -135,7 +177,7 @@ fn steps(state: State, fixes: Fixes): Array[model.Step[State]] {
             }
         }
         Phase.Counted => {
-            if fixes.sees and state.landed {
+            if (fixes.sees or own) and state.landed {
                 let naps = state with { phase: Phase.Napping, seeking: true }
                 next.push(model.step("nap for it", naps))
             } else {
@@ -150,7 +192,7 @@ fn steps(state: State, fixes: Fixes): Array[model.Step[State]] {
     if state.watching and not state.looked and state.landed {
         let looked = state with { looked: true }
         let tells =
-            (state.phase == Phase.Asleep or state.phase == Phase.Absent) and
+            (state.phase == Phase.Absent or (state.phase == Phase.Asleep and not own)) and
                 not state.young and
                 not state.seeking
         next.push(model.step("monitor", if tells { told(looked) } else { looked }))
@@ -174,7 +216,7 @@ fn steps(state: State, fixes: Fixes): Array[model.Step[State]] {
     next
 }
 
-fn check(fixes: Fixes): model.Checked ! model.Violation {
+fn check(fixes: Fixes, landing: Landing = Landing.Next): model.Checked ! model.Violation {
     let start = State {
         phase: Phase.Choosing
         peeks: false
@@ -189,19 +231,21 @@ fn check(fixes: Fixes): model.Checked ! model.Violation {
         (state: State) { not state.landed or state.phase == Phase.Runs or state.age <= Bound },
         name: "the woken task runs within two looks of the monitor",
     )
-    model.check(start, (state) { steps(state, fixes) }, holds: [soon])
+    model.check(start, (state) { steps(state, fixes, landing) }, holds: [soon])
 }
 
 // What the code does: a task landing in a next wakes the monitor, idle
 // workers or not.
 test theWokenTaskRunsSoonWithWhatTheCodeDoes {
-    assert(model.expect(check(Fixes { sees: false, net: true, always: true })).states == 24)
+    assert(
+        model.expect(check(Fixes { sees: false, net: true, always: true, own: true })).states == 24,
+    )
 }
 
 // The code before the fix: a worker that had looked already, or sleeps when
 // the wake is rationed, leaves the task to its waker.
 test todayTheWokenTaskWaitsForItsWaker {
-    match check(Fixes { sees: false, net: false, always: false }) {
+    match check(Fixes { sees: false, net: false, always: false, own: true }) {
         ok(_) => panic("the woken task ran soon with neither fix")
         err(stopped) => assert(
             stopped.property == "the woken task runs within two looks of the monitor",
@@ -212,7 +256,7 @@ test todayTheWokenTaskWaitsForItsWaker {
 // Seeing the task before it sleeps is not enough: a worker asleep when it
 // lands, with the wake rationed, is told by nobody.
 test seeingItBeforeSleepingIsNotEnough {
-    match check(Fixes { sees: true, net: false, always: false }) {
+    match check(Fixes { sees: true, net: false, always: false, own: true }) {
         ok(_) => panic("a worker asleep when the task landed took it with no monitor")
         err(stopped) => assert(
             stopped.property == "the woken task runs within two looks of the monitor",
@@ -224,7 +268,7 @@ test seeingItBeforeSleepingIsNotEnough {
 // worker the monitor sleeps on, nothing is put beside the held worker, and
 // the task waits for its waker (workers_woken_asleep.to).
 test aMonitorWokenOnlyForAnIdleWorkerMissesOneWorker {
-    match check(Fixes { sees: false, net: true, always: false }) {
+    match check(Fixes { sees: false, net: true, always: false, own: true }) {
         ok(_) => panic("one worker's woken task ran with the monitor left asleep")
         err(stopped) => assert(
             stopped.property == "the woken task runs within two looks of the monitor",
@@ -237,5 +281,28 @@ test aMonitorWokenOnlyForAnIdleWorkerMissesOneWorker {
 // naps and looks at every handoff of two tasks that hand work to each other
 // (docs/decisions.md).
 test seeingItBeforeSleepingAddsNothingTheBoundNeeds {
-    assert(model.expect(check(Fixes { sees: true, net: true, always: true })).states == 26)
+    assert(
+        model.expect(check(Fixes { sees: true, net: true, always: true, own: true })).states == 26,
+    )
+}
+
+// A task started in the own queue of a worker that computes: an idle worker
+// is told, or sees it before it sleeps, and with none idle the monitor
+// watches and puts one beside the held worker.
+test theStartedTaskRunsSoonWithWhatTheCodeDoes {
+    let fixes = Fixes { sees: false, net: true, always: true, own: true }
+    assert(model.expect(check(fixes, landing: Landing.Own)).states == 27)
+}
+
+// The code before the monitor was woken for an own queue: with one worker,
+// a monitor that went to sleep before the task was started sleeps on, and
+// the task waits for its starter (workers_own_asleep.to).
+test aMonitorAsleepMissesATaskStartedBesideOneWorker {
+    let fixes = Fixes { sees: false, net: true, always: true, own: false }
+    match check(fixes, landing: Landing.Own) {
+        ok(_) => panic("a task started beside one worker ran with the monitor left asleep")
+        err(stopped) => assert(
+            stopped.property == "the woken task runs within two looks of the monitor",
+        )
+    }
 }

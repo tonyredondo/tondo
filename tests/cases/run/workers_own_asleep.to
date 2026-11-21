@@ -1,0 +1,42 @@
+// With one worker, the monitor looks while `main` computes alone, finds
+// nothing waiting and sleeps. Then `main` starts a task that spins on a flag
+// and one that sets it after a sleep, both in its worker's own queue, and
+// waits: the spinner holds the worker, and the setter waits behind it. The
+// first task in a worker's own queue with no worker idle wakes the monitor,
+// which watches until a worker beside the spinner runs the setter (16.14).
+// How long `main` computes only decides whether the monitor was asleep;
+// what the program prints does not depend on it.
+
+import std.console
+import std.sync
+import std.time
+
+fn spin(flag: sync.Atomic[Bool]): Int {
+    var turns = 0
+    for not flag.load() {
+        turns += 1
+    }
+    turns
+}
+
+fn setLater(flag: sync.Atomic[Bool]) {
+    time.sleep(time.milliseconds(5))
+    flag.store(true)
+}
+
+fn main() {
+    console.println("started")
+    let started = time.now()
+    for started.elapsed() < time.milliseconds(30) {}
+    let flag = sync.Atomic(false)
+    let spinning = spawn spin(flag)
+    let setting = spawn setLater(flag)
+    setting.wait()
+    console.println("the spin ended: {spinning.wait() >= 0}")
+}
+
+// expect-env: TONDO_WORKERS=1
+// expect-no-schedule: the explorer runs one worker and adds none, so a computation that does not ask holds it, by design
+// expect-no-replay: a recorded run, too, runs its tasks on one worker that adds none
+// expect-stdout: started
+// expect-stdout: the spin ended: true
