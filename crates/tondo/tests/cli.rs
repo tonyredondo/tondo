@@ -238,6 +238,11 @@ fn manages_projects() {
     assert_eq!(status, 0);
     assert!(explained.starts_with("E1003 shadowing (error)\n\nA declaration would hide a binding"), "{explained}");
     assert!(explained.contains("From `tondo guide pitfalls`"), "{explained}");
+    // The pitfalls' examples first: E1303's of a `Result` left unused before
+    // those of a task's.
+    let (dropped, _, _) = tondo(&dir, &["explain", "E1303"]);
+    let from: Vec<&str> = dropped.lines().filter(|line| line.starts_with("From `tondo guide")).collect();
+    assert!(from.len() > 1 && from[0] == "From `tondo guide pitfalls`:", "{dropped}");
     let (all, _) = json(&dir, &["explain", "--json"]);
     assert_eq!(all["codes"].as_array().unwrap().len(), tondo::explain::CODES.len());
     let (_, stderr, status) = tondo(&dir, &["explain", "E9999"]);

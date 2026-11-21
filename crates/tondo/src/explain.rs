@@ -461,7 +461,9 @@ pub const CODES: &[(&str, &str, &str)] = &[
 ];
 
 /// What a code is: its name, its kind, what it reports, and the examples
-/// of the guide that give it, each the text before it and its code.
+/// of the guide that give it, each the text before it and its code: those
+/// of `pitfalls` first, the mistakes most often made, then the others in
+/// the order of the guide's topics.
 pub fn explain(code: &str) -> Option<serde_json::Value> {
     let code = code.trim().to_uppercase();
     let &(_, name, summary) = CODES.iter().find(|(c, ..)| *c == code)?;
@@ -471,7 +473,8 @@ pub fn explain(code: &str) -> Option<serde_json::Value> {
         _ => "panic",
     };
     let mut examples = Vec::new();
-    for &(topic, text) in crate::guide::TOPICS {
+    let pitfalls = crate::guide::TOPICS.iter().filter(|(topic, _)| *topic == "pitfalls");
+    for &(topic, text) in pitfalls.chain(crate::guide::TOPICS.iter().filter(|(topic, _)| *topic != "pitfalls")) {
         let fence = format!("```tondo error {code}");
         let mut rest = text;
         while let Some(at) = rest.find(&fence) {
