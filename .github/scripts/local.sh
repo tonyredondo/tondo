@@ -126,7 +126,9 @@ heap() {
   local status=0
   cargo test --workspace --test cases cases || status=1
   cargo test -p tondo --test examples || status=1
-  cargo build -q -p tondo && (cd testing/models && "$CARGO_TARGET_DIR/debug/tondo" test --models) || status=1
+  # The models ten times: a count released twice that the compiler made
+  # broke their heap in about half the runs (db420526), and ten catch it.
+  cargo build -q -p tondo && (cd testing/models && "$CARGO_TARGET_DIR/debug/tondo" test --models --repeat 10) || status=1
   return $status
 }
 

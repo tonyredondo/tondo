@@ -211,10 +211,12 @@ jobs:
       - name: The examples' tests
         if: ${{ !cancelled() }}
         run: cargo test --locked -p tondo --test examples
+      # Ten times: a count released twice that the compiler made broke
+      # their heap in about half the runs (db420526), and ten catch it.
       - name: The models' tests
         if: ${{ !cancelled() }}
         working-directory: testing/models
-        run: ../../target/debug/tondo test --models
+        run: ../../target/debug/tondo test --models --repeat 10
 
   # What the compiler costs against a program's size (docs/speed.md, A2):
   # checking or building a generated project of 8 times the lines may cost
