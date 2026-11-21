@@ -9017,3 +9017,86 @@ than a thousand steps stays, and those dropped are the ones the runtime
 drops too. The two cases now pass in every seed tried, in tens of
 milliseconds in a debug build that records, and the test of the three
 values sees each of them under seeds and under `all`.
+
+## The scheduler checked as it runs
+
+The three faults of "A task woken next to a worker that computes" were
+each found by luck of a kind: the idle worker that slept beside a woken
+task, by a case that waited for a message rather than a sleep; the
+monitor asleep with a task in a next, by a question; the workers put
+beside one another past twice their number, by a listing run again. The cases saw a program's output,
+which came out right whenever the computation ended, and not what 16.14
+promises, which is of time and of order. Tony asked what the debugging
+tools could gain so that this would not hang on a question ("Que podemos
+agregar al tooling de depuración para que esto no dependa de una
+pregunta?").
+
+`TONDO_CHECK_SCHEDULER=1` starts a thread that looks at the scheduler
+every millisecond and holds those promises as six rules (language 16.14,
+toolchain 7.17). It counts in its own looks, not in time: a process the
+system stops, or a runner five times slower, stops the checker with it,
+so a busy machine breaks no rule, as a bound in milliseconds would. It
+tells a ready task by its pointer staying ready from look to look, so the
+paths of a wake write nothing for it; off, it costs a worker's thread a
+store as it starts and one as it ends, and the variable is read once. A
+rule broken ends the program with `P0020`, which says the rule, the task
+and the worker, with the scheduler's state under it, and the dump.
+`P0020` is the runtime's fault, not the program's, so no `recover` takes
+it, as `P0013`. Under `--schedules`, in a recorded run and in its replay,
+one task runs at a time and no worker is added, by design, and it checks
+nothing there.
+
+The rules are of two kinds, and the bounds follow the kind. Two fire on a
+state no delay explains: a task ready, or a timer due, while a worker
+sleeps that nothing told to look; and the monitor asleep while a task
+woken beside a worker waits. A thread the system runs late is not a
+thread asleep, so a hundred looks is plenty. Two fire when something has
+not acted yet: a worker on one task while others wait and none is free,
+with none beside it; and a worker in one call of C, with none in its
+place. A monitor the system runs late has not acted either, so these wait
+five hundred looks, half a second at least, and the stalls of one thread
+a test makes must stay under that margin. The last two are counts, with
+no time in them: the workers, not counting those that stand in for a call
+of C or for a task a tool holds, are never more than twice the program's
+number, and, counting as gone those that must retire, never fewer; they
+allow two looks, the instant one starts or retires.
+
+What the monitor chooses at each look, to ask a task to give way or to
+put a worker beside one, is not a rule. A rule over it would judge the
+monitor's look from another thread, and a checker run late would see a
+choice not made yet as one refused. The two choices are functions,
+`asks_to_give_way` and `puts_beside`, whose unit tests hold each clause,
+so that every mutant of them fails on any machine. The checker holds the
+promises over time, and the tests hold the choices.
+
+The cases run their debug step with it on unless the environment gives a
+value: 33.4 and 33.8 s off, 33.9 and 34.0 s on, about 1%.
+tests/scheduler.rs runs a program of handoffs, timers and a woken
+computation on 1, 2 and 4 workers and holds that it breaks no rule; the
+checker's own tests build a look by hand for each rule, and hold every
+line of the report.
+
+Mutation testing measured what it adds. Of the 154 mutants of work.rs,
+workers.rs and foreign.rs, 141 build. The cases of tasks, workers and
+channels in the debug step catch 56 with the checker off and 57 with its
+first four rules on: two only with it, a worker about to sleep that marks
+its domain as looked after while tasks wait there, and the watcher's
+interval before a worker beside turned around; and one only without, by
+chance of timing, which the test of `puts_beside` now holds on any
+machine. Through everything the nightly mutation run runs, the cases'
+replay step, the six rules and a case of a worker that called C before
+(workers_after_c.to), 17 survive. Eleven change when a task runs and not
+whether, or nothing anyone can see, and testing/mutants/explained.txt
+says why for each. Six are gaps no case reaches: the retirement of the
+worker put beside when the one it stood by goes idle still marked (two);
+the debugger's stand-in, where no test counts the workers (two); the
+watcher with tasks waiting only in the shared queue while every worker is
+held; and the watcher putting a worker beside one while another is idle.
+
+The last red of main before it, CI run 44826590974, was tasks_give_way.to
+past its minute in the replay step on macOS arm64: a case sized by this
+machine, four thousand million turns in a seeded order that the entry
+before this one made fair. The checker would not have caught it, and is
+not meant to: such a case is right about the scheduler and wrong about
+time. A case that holds the scheduler waits for a word or a flag, never
+for a time, and its computation ends when it is told to.
