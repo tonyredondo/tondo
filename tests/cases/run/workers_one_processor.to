@@ -2,18 +2,19 @@
 // its own. A task that computes and never asks holds it; when it has held
 // it for two intervals while `main`, whose sleep ended, waits, another
 // worker starts beside it (16.14), and the system shares the one processor
-// between the two threads: `main` runs while the computation goes on.
+// between the two threads: `main` runs while the computation goes on. The
+// computation ends only when `main` tells it to, so a slow or busy machine
+// can make the program take longer but never print otherwise.
 
 import std.console
 import std.env
 import std.sync
 import std.time
 
-/// Computes for about `millis` milliseconds without waiting, then says so.
-fn busy(millis: Int, done: sync.Atomic[Bool]): Int {
-    let started = time.now()
+/// Computes without waiting until `stop` is set, then says so.
+fn busy(stop: sync.Atomic[Bool], done: sync.Atomic[Bool]): Int {
     var turns = 0
-    for started.elapsed() < time.milliseconds(millis) {
+    for not stop.load() {
         turns += 1
     }
     done.store(true)
@@ -22,10 +23,11 @@ fn busy(millis: Int, done: sync.Atomic[Bool]): Int {
 
 fn main() {
     console.println("{env.workers()} worker")
-    let done = sync.Atomic(false)
-    let job = spawn busy(300, done)
+    let (stop, done) = (sync.Atomic(false), sync.Atomic(false))
+    let job = spawn busy(stop, done)
     time.sleep(time.milliseconds(20))
     console.println("main ran while it computed: {not done.load()}")
+    stop.store(true)
     _ = job.wait()
 }
 

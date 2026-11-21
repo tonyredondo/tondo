@@ -57,13 +57,19 @@
 //! With `TONDO_CASES_CPU=<level>`, builds are for that level of processor.
 //! With `TONDO_CASES_ONLY=<text>`, only the cases whose path holds it, as
 //! `framed_texts`, run: one case in each mode at once is a loop over the
-//! variables of the modes.
+//! variables of the modes. With `TONDO_CASES_STALLS`, a seed, the runner
+//! stops each case's program, every thread at once, three times in its
+//! first second, for 50 to 150 ms each, at moments that the seed, the case
+//! and the round pick, as a busy machine stops a process: the clock runs on
+//! while it stands, so a case that counts on a margin of time where it
+//! should wait for a word fails, and says when it stood.
 //!
 //! Each directory under `tests/projects` is a project built as a whole,
 //! with the expectations written in any of its files.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 #[derive(Default)]
 struct Expect {
@@ -189,7 +195,7 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
     // Long enough for a debug build of `tondo` under an emulator, where a
     // case that uses much of the standard library takes minutes: a build
     // that hangs names its case.
-    let build = run_with_timeout(&mut build, 1200).map_err(|e| format!("its build: {e}"))?;
+    let build = run_with_timeout(&mut build, 1200, &[]).map_err(|e| format!("its build: {e}"))?;
     let diagnostics = String::from_utf8_lossy(&build.stderr);
     let matches = |line: &str, severity: &str, expected: &str| {
         let (code, text) = expected.split_once(' ').unwrap_or((expected, ""));
@@ -277,6 +283,7 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
     let tasks = std::fs::read_to_string(path).is_ok_and(|text| text.contains("spawn"));
     let repeat = std::env::var("TONDO_CASES_REPEAT").ok().and_then(|n| n.parse().ok()).filter(|_| tasks).unwrap_or(1);
     for round in 1..=repeat {
+        let stops = stops(path, round);
         let once = || -> Result<(), String> {
             let mut command = program();
             // A seed of its own each time, which a failure says.
@@ -287,7 +294,7 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
             if let Some((calls, seed)) = &recording {
                 command.env("TONDO_RT_RECORD", calls).env("TONDO_RT_SCHEDULE", seed);
             }
-            let run = run_with_timeout(&mut command, 60)?;
+            let run = run_with_timeout(&mut command, 60, &stops)?;
             let stdout = String::from_utf8_lossy(&run.stdout);
             let stderr = String::from_utf8_lossy(&run.stderr);
             let expected_stdout: String = expect.stdout.iter().map(|l| format!("{l}\n")).collect();
@@ -315,8 +322,9 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
             }
             if let Some((calls, seed)) = &recording {
                 let mut replay = program();
-                let again = run_with_timeout(replay.env("TONDO_RT_REPLAY", calls).env("TONDO_RT_SCHEDULE", seed), 60)
-                    .map_err(|e| format!("its replay, of seed {seed}: {e}"))?;
+                let again =
+                    run_with_timeout(replay.env("TONDO_RT_REPLAY", calls).env("TONDO_RT_SCHEDULE", seed), 60, &stops)
+                        .map_err(|e| format!("its replay, of seed {seed}: {e}"))?;
                 if again.stdout != run.stdout || again.status != run.status {
                     let (out, err) = (String::from_utf8_lossy(&again.stdout), String::from_utf8_lossy(&again.stderr));
                     let status = (run.status, again.status);
@@ -327,9 +335,78 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
             }
             Ok(())
         };
-        once().map_err(|e| if repeat > 1 { format!("run {round} of {repeat}: {e}") } else { e })?;
+        let once = once().map_err(|e| if stops.is_empty() { e } else { format!("{e}\n{}", stood(&stops)) });
+        once.map_err(|e| if repeat > 1 { format!("run {round} of {repeat}: {e}") } else { e })?;
     }
     Ok(())
+}
+
+/// A stop of a program, every thread at once: from `at` after it starts,
+/// for `lasting`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Stop {
+    at: Duration,
+    lasting: Duration,
+}
+
+/// With `TONDO_CASES_STALLS`, the stops of a case's run: three in its first
+/// second, of 50 to 150 ms each, one after another, that the seed, the
+/// case's path and the round pick, so that a seed repeats them.
+fn stops(path: &Path, round: u32) -> Vec<Stop> {
+    let Some(seed) = std::env::var_os("TONDO_CASES_STALLS") else {
+        return Vec::new();
+    };
+    let seed: u64 = seed.to_str().and_then(|seed| seed.parse().ok()).expect("TONDO_CASES_STALLS is a seed, a number");
+    stops_of(seed, &own(path).to_string_lossy(), round)
+}
+
+fn stops_of(seed: u64, case: &str, round: u32) -> Vec<Stop> {
+    // FNV-1a of the case under the seed and the round, then splitmix64.
+    let mut state = case.bytes().fold(seed ^ (u64::from(round) << 32) ^ 0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    let mut next = move || {
+        state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    };
+    let mut ats: Vec<u64> = (0..3).map(|_| next() % 1000).collect();
+    ats.sort_unstable();
+    let mut free = 0;
+    ats.into_iter()
+        .map(|at| {
+            let (at, lasting) = (at.max(free), 50 + next() % 101);
+            free = at + lasting;
+            Stop { at: Duration::from_millis(at), lasting: Duration::from_millis(lasting) }
+        })
+        .collect()
+}
+
+/// What a failure says of the stops, to repeat them.
+fn stood(stops: &[Stop]) -> String {
+    let each: Vec<String> =
+        stops.iter().map(|stop| format!("at {} ms for {} ms", stop.at.as_millis(), stop.lasting.as_millis())).collect();
+    let seed = std::env::var("TONDO_CASES_STALLS").unwrap_or_default();
+    format!("it stood still {}, with TONDO_CASES_STALLS={seed}", each.join(", "))
+}
+
+#[test]
+fn stops_are_three_in_the_first_second_one_after_another() {
+    for seed in 0..200 {
+        let stops = stops_of(seed, "cases/run/tasks.to", 1);
+        assert_eq!(stops, stops_of(seed, "cases/run/tasks.to", 1));
+        assert_eq!(stops.len(), 3);
+        let mut free = Duration::ZERO;
+        for stop in &stops {
+            assert!(stop.at >= free && stop.at < Duration::from_millis(1300), "{stops:?}");
+            assert!((50..=150).contains(&stop.lasting.as_millis()), "{stops:?}");
+            free = stop.at + stop.lasting;
+        }
+    }
+    assert_ne!(stops_of(1, "cases/run/tasks.to", 1), stops_of(1, "cases/run/tasks.to", 2));
+    assert_ne!(stops_of(1, "cases/run/tasks.to", 1), stops_of(1, "cases/run/select.to", 1));
 }
 
 /// A case's own directory under a scratch directory, which its executable
@@ -440,12 +517,13 @@ fn a_case_that_hangs_says_why() {
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let mut program = Command::new(dir.join("hangs"));
     program.env("TONDO_DIAGNOSTICS", "1").env("TONDO_CI_DUMPS", &dir);
-    let failure = run_with_timeout(&mut program, 2).err().unwrap_or_default();
+    let failure = run_with_timeout(&mut program, 2, &[]).err().unwrap_or_default();
     assert!(failure.contains("timed out") && failure.contains("hangs.to:4 in main"), "{failure}");
 }
 
-/// Runs a program, failing the case when it has not finished in time.
-fn run_with_timeout(command: &mut Command, seconds: u64) -> Result<std::process::Output, String> {
+/// Runs a program, failing the case when it has not finished in time, and
+/// stops it as `stops` say.
+fn run_with_timeout(command: &mut Command, seconds: u64, stops: &[Stop]) -> Result<std::process::Output, String> {
     use std::io::Read;
     use std::process::Stdio;
     // A program that cannot start fails its case, which says which.
@@ -467,8 +545,46 @@ fn run_with_timeout(command: &mut Command, seconds: u64) -> Result<std::process:
     });
     // Its end, which a thread waits for; the time only bounds a hang.
     let pid = child.id();
+    let started = std::time::Instant::now();
+    // Whether it ended, which a stop reads before it signals: the waiter
+    // learns of the end before it reaps the process, so that no stop
+    // signals another process given its number since.
+    let over = std::sync::Arc::new(std::sync::Mutex::new(false));
+    if !stops.is_empty() {
+        let (over, stops) = (over.clone(), stops.to_vec());
+        std::thread::spawn(move || {
+            let signal = |signal| {
+                let over = over.lock().unwrap();
+                (!*over).then(|| unsafe { libc::kill(pid as i32, signal) }).is_some()
+            };
+            for stop in stops {
+                std::thread::sleep((started + stop.at).saturating_duration_since(std::time::Instant::now()));
+                if !signal(libc::SIGSTOP) {
+                    return;
+                }
+                std::thread::sleep(stop.lasting);
+                if !signal(libc::SIGCONT) {
+                    return;
+                }
+            }
+        });
+    }
     let (done, ended) = std::sync::mpsc::channel();
-    let waiter = std::thread::spawn(move || done.send(child.wait()));
+    let waiter = std::thread::spawn({
+        let over = over.clone();
+        let watched = !stops.is_empty();
+        move || {
+            if watched {
+                let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+                let flags = libc::WEXITED | libc::WNOWAIT;
+                while unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, flags) } == -1
+                    && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+                {}
+                *over.lock().unwrap() = true;
+            }
+            done.send(child.wait())
+        }
+    });
     let status = match ended.recv_timeout(std::time::Duration::from_secs(seconds)) {
         Ok(status) => status.unwrap(),
         Err(_) => {
