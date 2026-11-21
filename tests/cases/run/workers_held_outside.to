@@ -28,9 +28,9 @@ fn main(): !String {
     // Child processes until the computation holds the one worker: the end of
     // each makes `main` ready from outside.
     for not began.load() {
-        _ = process.command("true").output().mapErr((e) { "{e}" })?
+        _ = process.command("true").output().mapErr(e => "{e}")?
     }
-    let output = process.command("echo", "outside").output().mapErr((e) { "{e}" })?
+    let output = process.command("echo", "outside").output().mapErr(e => "{e}")?
     console.println(
         "main ran beside the computation: {output.text().mapErr((e) { "{e}" })?.trim()}",
     )
