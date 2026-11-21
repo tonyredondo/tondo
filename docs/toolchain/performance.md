@@ -169,7 +169,7 @@ container does by default, the command says so before it builds and names
 A profile says which line is slow. `tondo optimizations` says what a
 release build did with it. This is a small program that averages readings:
 
-```tondo
+```tondo file=stats.to
 import std.console
 
 type Reading = { sensor: String, value: Float }
@@ -204,7 +204,7 @@ fn main() {
 a: 499.0
 ```
 
-```text
+```text listing
 $ tondo optimizations stats.to
 stats.to:9:9: `reading` is lent, with no count of its own: its array holds it (in main, mean)
 stats.to:9:20: `readings` runs four turns at a time (in main, mean)
@@ -269,7 +269,7 @@ from the bottom:
 
 The same view says why not. This function keeps what it reads:
 
-```tondo
+```tondo file=kept.to
 import std.console
 
 type Reading = { sensor: String, value: Float }
@@ -298,7 +298,7 @@ fn main() {
 500
 ```
 
-```text
+```text listing
 $ tondo optimizations kept.to --function of
 kept.to:8:9: `reading` keeps a count of its own: what it is given to may keep it: `found.push(reading)` at 10:13 (in main, of)
 kept.to:8:20: `readings` runs one turn at a time: each turn counts a value or measures a text, which costs more than the test saved (in main, of)
@@ -327,7 +327,7 @@ was inlined in `main`, which lets go of it, it goes in a region of `main`.
 | `--against <rev>` | only what a change made different |
 | `--json` | the same as data |
 
-```text
+```text listing
 $ tondo optimizations stats.to --kind heap
 stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in label)
 ```
@@ -342,7 +342,7 @@ loop searches while it pushes to it (`W1023`), taking the first element
 of an array in a loop (`W1024`), and compiling a regular expression each
 time the code runs (`W1025`). This program has the last two:
 
-```tondo
+```tondo file=queue.to
 import std.console
 import std.regex
 
@@ -372,7 +372,7 @@ fn main() {
 [a, b] true
 ```
 
-```text
+```text listing
 $ tondo check queue.to --performance
 warning[W1024]: `rest.removeAt(0)` moves every other element of `rest` on every turn: a `Deque` takes its first at once, with `popFront()`; or find where to cut once and take a `slice`
  --> queue.to:8:13
@@ -390,7 +390,7 @@ Each says what to write. The loop that keeps what it has not seen yet is
 the one `W1023` is for: it looks through an array that grows with every
 turn.
 
-```tondo
+```tondo file=names.to
 import std.console
 
 /// The names, each once, in the order they came.
@@ -413,7 +413,7 @@ fn main() {
 [ada, bo]
 ```
 
-```text
+```text listing
 $ tondo check names.to --performance
 warning[W1023]: `seen.contains(name)` looks at every element of `seen`, which this loop pushes to, so each turn looks at more: keep a `Set` beside it, `var seenSet = seen.toSet()` before the loop, ask `seenSet.contains(...)`, and `seenSet.insert(...)` with each push
  --> names.to:7:16
@@ -434,7 +434,7 @@ A check that the compiler keeps says what it would need to know to drop
 it, and the code of the standard library that a loop runs is said at the
 program's line that brought it in. This function walks a text:
 
-```tondo
+```tondo file=letters.to
 import std.console
 
 /// How many letters a text has.
@@ -457,7 +457,7 @@ fn main() {
 10
 ```
 
-```text
+```text listing
 $ tondo optimizations letters.to --kind checked
 letters.to:6:14: `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` keeps its overflow check, in a loop: its operands' bounds allow a result past `Int.Max` (in letters, main)
 letters.to:8:13: `count += 1` keeps its overflow check, in a loop: nothing bounds `count` from above (in letters, main)
@@ -473,9 +473,16 @@ this chapter, is under the kind `unchecked`.
 
 A program that has a `recover` anywhere, as tests often do, pays one more
 thing in its loops: after what may panic, it looks whether it did. The
-same function, called as `recover { letters("hello, world") }`, shows it:
+same function, called inside a `recover`, shows it:
 
-```text
+```diff file=caught.to from=letters.to
+ fn main() {
+-    console.println("{letters("hello, world")}")
++    console.println("{recover { letters("hello, world") }}")
+ }
+```
+
+```text listing
 $ tondo optimizations caught.to --kind checked
 caught.to:6:14: `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` is followed by a check for a panic, in a loop: a program with a `recover` checks after what may panic (in letters, main)
 caught.to:6:14: `text.chars()` in `prelude.CharIterator.next`, `self.offset += if code < 0x800 { 2 } else if code…` keeps its overflow check, in a loop: its operands' bounds allow a result past `Int.Max` (in letters, main)
@@ -495,7 +502,7 @@ reads that length once, before the loop, when nothing in the loop can
 change it; `--kind hoisted` lists those, and `--kind reloaded` the ones it
 reads at every turn, with why.
 
-```tondo
+```tondo file=lengths.to
 import std.console
 
 /// How many of the values are even: the loop only reads `values`.
@@ -534,7 +541,7 @@ fn main() {
 2 [2, 5, 3]
 ```
 
-```text
+```text listing
 $ tondo optimizations lengths.to --kind hoisted
 lengths.to:7:13: `values.length()` reads the length once, before the loop (in evens, main)
 $ tondo optimizations lengths.to --kind reloaded --function spread
@@ -556,7 +563,7 @@ the closures they are given, and the method that ends the chain calls them
 for every element. This program adds the squares of the even numbers twice:
 with the array's own methods, and with a chain that starts at `iter()`.
 
-```tondo
+```tondo file=squares.to
 import std.console
 
 /// The sum of the squares of the even numbers, with an array at each step.
@@ -579,7 +586,7 @@ fn main() {
 167167000 167167000
 ```
 
-```text
+```text listing
 $ tondo optimizations squares.to --function byChain --kind call
 squares.to:10:5: `numbers.iter().filter(n => n % 2 == 0).map(n => n * n).sum()` in `Iterator.sum[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int]`, `self.sumBy(item => item)` stays a call of `Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int]`: its body costs 48, more than the 30 inlining takes (in byChain, main)
 squares.to:10:27: `n => n % 2 == 0` is called by its body where a record holds it, as an iterator's adapter does (in prelude.FilterIterator.next[prelude.ArrayIterator[Int], Int])
@@ -599,7 +606,7 @@ The two closures are values that the adapters hold, so the frame does not
 take them. They go in a [region](#what-a-region-takes) of `byChain`, and
 nothing of the chain is on the heap:
 
-```text
+```text listing
 $ tondo optimizations squares.to --function byChain --kind region
 squares.to:10:27: `n => n % 2 == 0` goes in a region of `byChain` (in byChain)
 squares.to:10:27: `n => n % 2 == 0` goes in a region of `main` (in main)
@@ -636,7 +643,7 @@ build sees that the function changes what it was given and makes the
 parameter its own: the call gives the value instead of sharing it when the
 caller has no more use for it, and the change is made in place.
 
-```tondo
+```tondo file=ledger.to
 import std.console
 
 type Ledger = {
@@ -676,7 +683,7 @@ fn main() {
 10 50 60, 7 moves, 1 refused
 ```
 
-```text
+```text listing
 $ tondo optimizations ledger.to --kind given
 ledger.to:27:18: `moved(ledger, "ana", "luis", 30)` gives `ledger` without a count: `moved` takes it, and nothing reads it after the call (in main)
 ledger.to:28:18: `moved(ledger, "luis", "eva", 10 * round)` gives `ledger` without a count: `moved` takes it, and nothing reads it after the call (in main)
@@ -696,9 +703,25 @@ test ledger::unit::ledger::aThousandMoves ... ok
 A caller that reads its value after the call keeps it, and the call counts
 it first; the remark is of the kind `retained` and says where it is read:
 
-```text
+```diff file=read_after.to from=ledger.to
+ fn main() {
+-    var ledger = Ledger { held: ["ana": 100, "luis": 20], moves: 0, refused: 0 }
+-    for round in 0..4 {
+-        ledger = moved(ledger, "ana", "luis", 30)
+-        ledger = moved(ledger, "luis", "eva", 10 * round)
+-    }
+-    console.println(
+-        "{ledger.held["ana"] ?? 0} {ledger.held["luis"] ?? 0} {ledger.held["eva"] ?? 0}, {ledger.moves} moves, {ledger.refused} refused",
+-    )
++    let opening = Ledger { held: ["ana": 100, "luis": 20], moves: 0, refused: 0 }
++    let closing = moved(opening, "ana", "luis", 30)
++    console.println("{opening.moves} moves before, {closing.moves} after")
+ }
+```
+
+```text listing
 $ tondo optimizations read_after.to --kind retained
-read_after.to:26:19: `moved(opening, "ana", "luis", 30)` retains `ledger` first: `moved` takes it, and the argument is read after the call, at 27:23 (in main)
+read_after.to:26:19: `moved(opening, "ana", "luis", 30)` retains `ledger` first: `moved` takes it, and the argument is read after the call, at 27:21 (in main)
 ```
 
 Then the first change inside copies the map, once, as it must: the caller
@@ -707,7 +730,19 @@ the compiler cannot see every call of it, as one that is called through a
 value. The copy is then told where it happens, with who else holds the
 map and why:
 
-```text
+```diff file=as_value.to from=ledger.to
+ fn main() {
++    let steps = [moved, moved]
+     var ledger = Ledger { held: ["ana": 100, "luis": 20], moves: 0, refused: 0 }
+-    for round in 0..4 {
+-        ledger = moved(ledger, "ana", "luis", 30)
+-        ledger = moved(ledger, "luis", "eva", 10 * round)
++    for step in steps {
++        ledger = step(ledger, "ana", "luis", 30)
+     }
+```
+
+```text listing
 $ tondo optimizations as_value.to --kind heap
 as_value.to:18:5: `next.held[from] = has - amount` copies the map, which `ledger` holds too: a parameter its caller keeps, as `moved` is called as a value (in moved)
 as_value.to:25:17: `[moved, moved]` is made on the heap: an array whose values are not all constants (in main)
@@ -725,7 +760,7 @@ is written for it, and a build with `--debug` or a live one has none.
 `tondo optimizations` says, of each place that allocates, the region its
 values go in, or what keeps them on the heap.
 
-```tondo
+```tondo file=tree.to
 import std.console
 
 type Node = {
@@ -781,7 +816,7 @@ function to its count does not change when its values move to a region
 ([Testing](testing.md)), but for a text that is
 [copied out at a return](#a-part-that-is-returned).
 
-```text
+```text listing
 $ tondo optimizations tree.to --kind region
 tree.to:13:13: `children.push(build(depth - 1, fan))` grows an array that goes in a region of `main` (in main)
 tree.to:13:13: `children.push(build(depth - 1, fan))` grows an array that goes in a region that the caller of `build` gives (in build)
@@ -806,10 +841,23 @@ is of `build` where it stays a call, as in the benchmark.
 A place stays on the heap when something keeps what it makes beyond the
 scope, and the remark names the code that does. The verdict is by call.
 With a function added to the program that sends a tree through a channel,
-`fn offer(sender: Sender[Node], depth: Int) { sender.send(build(depth, 2))
-}`, which `main` calls after its sum:
+which `main` calls after its sum:
 
-```text
+```diff file=offered.to from=tree.to
++/// Sends a tree of that depth.
++fn offer(sender: Sender[Node], depth: Int) {
++    sender.send(build(depth, 2))
++}
++
+ fn main() {
+     console.println("{sum(build(8, 4))}")
++    let (sender, receiver) = channel[Node]()
++    offer(sender, 3)
++    console.println("{sum(receiver.receive() ?? Node { value: 0, children: [] })}")
+ }
+```
+
+```text listing
 $ tondo optimizations offered.to --kind region --function build
 offered.to:13:13: `children.push(build(depth - 1, fan))` grows an array that goes in a region of `main` (in main)
 offered.to:13:13: `children.push(build(depth - 1, fan))` grows an array that goes in a region that the caller of `build` gives, in a copy of it for the calls that let it go: `main` at 33; `main` keeps it: it is sent: `sender.send(build(depth, 2))` at 29:5 (in build)
@@ -838,7 +886,7 @@ that an operation of the runtime or of the library gives, as `split`,
 as `sorted` or `repeat`. This function reads a file, and none of its texts
 is on the heap:
 
-```tondo
+```tondo file=holding.to
 import std.console
 import std.fs
 
@@ -862,7 +910,7 @@ fn main() {
 }
 ```
 
-```text
+```text listing
 $ tondo optimizations holding.to --kind region
 holding.to:6:16: `fs.readText(file)` goes in a region of `holding` (in holding)
 holding.to:8:17: `text.lines()` in `String.lines`, `textNative.lines(self)` goes in a region of `holding` (in holding)
@@ -880,7 +928,7 @@ The loop that extends it leaves it in the region of the function, as it
 leaves an array that it only pushes to, or in that of a turn of a loop
 around it:
 
-```tondo
+```tondo file=line.to
 import std.console
 
 /// How wide a line of the words is, each in brackets.
@@ -916,7 +964,7 @@ fn main() {
 9 6
 ```
 
-```text
+```text listing
 $ tondo optimizations line.to --kind region
 line.to:7:9: `line = "{line}[{word}]"` goes in a region of `main` (in main)
 line.to:7:9: `line = "{line}[{word}]"` goes in a region of `width` (in width)
@@ -945,7 +993,7 @@ place. And a closure that
 a value holds goes where that value goes, when it captures nothing that
 counts, as [those of a chain](#the-closures-of-a-chain) do:
 
-```tondo
+```tondo file=tally.to
 import std.console
 
 /// How many times a text says the word it says most.
@@ -983,7 +1031,7 @@ fn main() {
 2 120
 ```
 
-```text
+```text listing
 $ tondo optimizations tally.to --kind region
 tally.to:6:17: `text.split(" ")` in `String.split`, `textNative.split(self, separator, most)` goes in a region of `mostTimes` (in mostTimes)
 tally.to:7:9: `counts[word, default: 0] += 1` changes a map that goes in a region of `mostTimes` (in mostTimes)
@@ -1012,7 +1060,7 @@ Emptying a collection does not take it out of its region. An array that a
 loop empties and fills again, as the letters of one word after another,
 stays where its function's region has it and keeps its room:
 
-```tondo
+```tondo file=slug.to
 import std.console
 
 /// The words of a text, each of its letters in lower case, joined by `-`.
@@ -1042,7 +1090,7 @@ fn main() {
 tomorrow-and-tomorrow-and-tomorrow
 ```
 
-```text
+```text listing
 $ tondo optimizations slug.to --kind region
 slug.to:9:13: `part.push(letter.toLower())` grows an array that goes in a region of `slug` (in slug)
 slug.to:11:13: `parts.push(part.join(""))` grows an array that goes in a region of `slug` (in slug)
@@ -1092,7 +1140,7 @@ long as it runs. The compiler does not put them there. These two functions
 run the same loop over the lines of a text. The first wants the words of
 the last line, and the second those of every line:
 
-```tondo
+```tondo file=words.to
 import std.console
 
 /// The words of the last line that is not a comment.
@@ -1131,7 +1179,7 @@ fn main() {
 4 10
 ```
 
-```text
+```text listing
 $ tondo optimizations words.to --kind region
 words.to:10:16: `line.split(" ")` in `String.split`, `textNative.split(self, separator, most)` stays on the heap: it is made in every turn of the loop at line 6, and the region the caller of `lastWords` gives would keep each turn's (in lastWords)
 words.to:22:21: `line.split(" ")` in `String.split`, `textNative.split(self, separator, most)` goes in a region that the caller of `allWords` gives (in allWords)
@@ -1161,7 +1209,7 @@ A function that returns one of the pieces it made would take them all out
 of its region with it. It copies that text at its return instead, and the
 rest stays:
 
-```tondo
+```tondo file=commonest.to
 import std.console
 
 /// The word a text says most.
@@ -1190,7 +1238,7 @@ fn main() {
 tomorrow
 ```
 
-```text
+```text listing
 $ tondo optimizations commonest.to --kind region
 commonest.to:6:17: `text.split(" ")` in `String.split`, `textNative.split(self, separator, most)` goes in a region of `commonest` (in commonest)
 commonest.to:7:9: `counts[word, default: 0] += 1` changes a map that goes in a region of `commonest` (in commonest)
@@ -1214,7 +1262,7 @@ It is let go of where it would be on the heap, at the end of the block that
 holds it, so a file closes when it did; what the region takes is the
 object's memory.
 
-```tondo
+```tondo file=lines.to
 import std.console
 import std.io
 import std.regex
@@ -1258,7 +1306,7 @@ fn main() {
 12 3 2
 ```
 
-```text
+```text listing
 $ tondo optimizations lines.to --kind region
 lines.to:7:18: `io.reader(text)` goes in a region of `added` (in added)
 lines.to:10:20: `reader.readLine()` goes in the region of a turn of the loop at line 9 (in added)
@@ -1288,7 +1336,7 @@ its turn by a way out of the loop that never comes back to it: a `?`, a
 `return`, or the `break` of a loop that no loop around it runs again. This
 function reads rows of numbers, and any of them may be no number:
 
-```tondo
+```tondo file=rows.to
 import std.console
 import std.text
 
@@ -1319,7 +1367,7 @@ fn main() {
 13
 ```
 
-```text
+```text listing
 $ tondo optimizations rows.to --kind region
 rows.to:9:22: `row.split(",")` in `String.split`, `textNative.split(self, separator, most)` goes in the region of a turn of the loop at line 7 (in largest)
 rows.to:10:13: `numbers.push(Int.parse(field)?)` grows an array that goes in the region of a turn of the loop at line 7 (in largest)
@@ -2010,7 +2058,7 @@ that would point to it. Making one allocates nothing and holding one counts
 nothing, in every build and however it is made: a piece of `split`, the
 digits of a number, an interpolation, what `trim` leaves.
 
-```tondo
+```tondo file=labels.to
 import std.console
 
 /// A label for each number under `count`.
@@ -2047,7 +2095,7 @@ The short labels cost their array and nothing else, eight bytes a label,
 where each long one is an allocation besides. `tondo optimizations` speaks
 of a place and not of what a run makes there, so it says one thing of both:
 
-```text
+```text listing
 $ tondo optimizations labels.to --kind region
 labels.to:7:9: `all.push("{prefix}{i}")` grows an array that goes in a region of `main` (in main)
 labels.to:7:9: `all.push("{prefix}{i}")` grows an array that stays on the heap: `labels` returns it, and no call of it is left in the program's code: each was inlined (in labels)

@@ -186,7 +186,7 @@ fn main() {
 Every code has an explanation, and with it what the guide says of the
 mistake, with an example where the guide has one:
 
-```text
+```text listing
 $ tondo explain E0002
 E0002 invalid-token (error)
 
@@ -210,7 +210,7 @@ example.
 The standard library's documentation is in the binary. `tondo api` gives a
 module, a type or one function, and `--search` finds what does a job:
 
-```text
+```text listing
 $ tondo api std.fs.readText
 /// The content of the file as text; one that is not UTF-8 is
 /// `FsError.InvalidData`.
