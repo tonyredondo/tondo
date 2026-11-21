@@ -1,0 +1,71 @@
+// `find` in a function of its own, with a predicate too long to inline,
+// which it calls with the whole element: the option it gives back holds the
+// element, written as copies of its parts beside a `moved`. Those parts carry
+// the element's count, which the element must take though the loop only
+// reads it; without it, the caller let go of a text the array still held,
+// which the runtime caught as "string released after it was freed".
+import std.console
+
+type Fair = {
+    step: String
+    strong: Bool
+    each: Bool
+}
+
+fn owed(fair: Array[Fair], banned: Array[String]): String {
+    match fair.find(
+        (one: Fair) {
+            var allowed = one.strong
+            for word in banned {
+                if one.step.contains(word) or one.step.startsWith(word) or one.step.endsWith(word) {
+                    allowed = false
+                }
+                for other in banned {
+                    if "{word}{other}" == one.step or "{other}{word}" == one.step {
+                        allowed = false
+                    }
+                }
+            }
+            allowed
+        },
+    ) {
+        some(found) => found.step
+        none => {
+            var names: Array[String] = []
+            for one in fair {
+                for word in banned {
+                    names.push("{one.step} {word}")
+                }
+            }
+            names.join(", ")
+        }
+    }
+}
+
+fn made(): Array[Fair] {
+    var fair: Array[Fair] = []
+    for n in 0..3 {
+        fair.push(Fair { step: "the step of a model numbered {n}, with a name long enough to be kept on the heap", strong: n == 1, each: false })
+    }
+    fair
+}
+
+fn main() {
+    // Made by another task, so on the heap, where a count lets it go.
+    let fair = (spawn made()).wait()
+    let banned = ["zzz", "yyy"]
+    for _ in 0..3 {
+        console.println(owed(fair, banned))
+    }
+    // Room freed too soon is given to these.
+    var others: Array[String] = []
+    for n in 0..10000 {
+        others.push("another text of the same size {n % 10}, with a name long enough to be kept on the heap!!")
+    }
+    console.println("{fair[1].step} {others.length()}")
+}
+
+// expect-stdout: the step of a model numbered 1, with a name long enough to be kept on the heap
+// expect-stdout: the step of a model numbered 1, with a name long enough to be kept on the heap
+// expect-stdout: the step of a model numbered 1, with a name long enough to be kept on the heap
+// expect-stdout: the step of a model numbered 1, with a name long enough to be kept on the heap 10000

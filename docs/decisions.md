@@ -9373,3 +9373,24 @@ report. A trap, which C code and the system's allocator reach to end a
 program on purpose, as libmalloc does on a block freed twice, is a fault
 the runtime reports, in its own words and with its own status: it ended
 programs on macOS with no report, and without the output they had written.
+
+## A part read is a read only while nothing takes it
+
+`borrowed` drops the count of an element that a function only reads, and
+of a part of a plain parameter, which the caller keeps through the call. To
+see a part of the element read, as `item.name` in a loop, it took a copy of
+a part as a read, and a value moved out of a function by its parts broke
+that: `find`'s `return item`, an option that `split` writes as copies of
+the element's parts beside a `moved`, gave the caller texts with no count
+of their own, and the caller let go of a text the array still held. The
+models' tests of the `stop` module broke the heap that way, which a hang at
+exit on musl was the only sign of until mimalloc's checks were on, and the
+count was reverted. A mark is not enough to see it: `moves` drops a
+`moved` with the release after it, and leaves the parts of a copy that
+ends in the turn it is made in with the count and no sign of it. So a copy
+of a part is a read only if it takes a count of its own at once, or if
+nothing treats it, or a whole copy of it, as its own: no release, no store
+or value it goes into, no return, no call that takes it, no capture, no
+lending. A count that leaves through a part, marked or not, ends in one of
+those places, and there the source keeps its count. Where it keeps it, a
+part of a parameter tells `tondo optimizations` why.

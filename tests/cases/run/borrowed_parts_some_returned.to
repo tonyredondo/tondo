@@ -1,0 +1,198 @@
+// An element of an array that a function reads where nothing counts it, as
+// a loop's element whose array stays, must not give a count away, as one
+// that leaves the function would: the program then lets go of a text the
+// array still holds. The texts are made by another task, on the heap, so
+// that one let go too soon is reused by the texts made after it.
+// An element returned from a loop, as an option, goes whole into a value.
+import std.console
+
+type Fair = {
+    step: String
+    strong: Bool
+    each: Bool
+}
+
+enum Shape {
+    Named(String)
+    Plain
+}
+
+fn banned(step: String, words: Array[String]): Bool {
+    var found = false
+    for word in words {
+        if step.contains(word) or step.startsWith(word) or step.endsWith(word) {
+            found = true
+        }
+        for other in words {
+            if "{word}{other}" == step or "{other}{word}" == step {
+                found = true
+            }
+        }
+    }
+    found
+}
+
+fn picked(one: Fair, words: Array[String]): Bool {
+    var found = false
+    for word in words {
+        if one.step.contains(word) or one.step.startsWith(word) or one.step.endsWith(word) {
+            found = true
+        }
+        for other in words {
+            if "{word}{other}" == one.step or "{other}{word}" == one.step {
+                found = true
+            }
+        }
+    }
+    one.strong and not found
+}
+
+fn pickedPair(pair: (String, Bool), words: Array[String]): Bool {
+    var found = false
+    for word in words {
+        if pair.0.contains(word) or pair.0.startsWith(word) or pair.0.endsWith(word) {
+            found = true
+        }
+        for other in words {
+            if "{word}{other}" == pair.0 or "{other}{word}" == pair.0 {
+                found = true
+            }
+        }
+    }
+    pair.1 and not found
+}
+
+fn pickedShape(shape: Shape, words: Array[String]): Bool {
+    match shape {
+        Shape.Named(name) => {
+            var found = false
+            for word in words {
+                if name.contains(word) or name.startsWith(word) or name.endsWith(word) {
+                    found = true
+                }
+                for other in words {
+                    if "{word}{other}" == name or "{other}{word}" == name {
+                        found = true
+                    }
+                }
+            }
+            name.contains("1") and not found
+        }
+        Shape.Plain => false
+    }
+}
+
+fn pickedText(text: String?, words: Array[String]): Bool {
+    match text {
+        some(name) => {
+            var found = false
+            for word in words {
+                if name.contains(word) or name.startsWith(word) or name.endsWith(word) {
+                    found = true
+                }
+                for other in words {
+                    if "{word}{other}" == name or "{other}{word}" == name {
+                        found = true
+                    }
+                }
+            }
+            name.contains("1") and not found
+        }
+        none => false
+    }
+}
+
+fn long(n: Int): String {
+    "the step of a model numbered {n}, with a name long enough to be kept on the heap"
+}
+
+fn made(): Array[Fair] {
+    var fair: Array[Fair] = []
+    for n in 0..3 {
+        fair.push(Fair { step: long(n), strong: n == 1, each: false })
+    }
+    fair
+}
+
+fn madePairs(): Array[(String, Bool)] {
+    var pairs: Array[(String, Bool)] = []
+    for n in 0..3 {
+        pairs.push((long(n), n == 1))
+    }
+    pairs
+}
+
+fn madeShapes(): Array[Shape] {
+    var shapes: Array[Shape] = [Shape.Plain]
+    for n in 0..3 {
+        shapes.push(Shape.Named(long(n)))
+    }
+    shapes
+}
+
+fn madeTexts(): Array[String?] {
+    var texts: Array[String?] = [none]
+    for n in 0..3 {
+        texts.push(long(n))
+    }
+    texts
+}
+
+// Room freed too soon is given to these.
+fn churn(): Int {
+    var others: Array[String] = []
+    for n in 0..10000 {
+        others.push("another text of the same size {n % 10}, with a name long enough to be kept on the heap!!")
+    }
+    others.length()
+}
+
+fn pick(fair: Array[Fair], words: Array[String]): Fair? {
+    var seen = 0
+    for word in words {
+        for other in words {
+            seen += "{word}{other}".length()
+        }
+    }
+    if seen < 0 {
+        console.println("{seen}")
+    }
+    for one in fair {
+        if picked(one, words) {
+            return one
+        }
+    }
+    none
+}
+
+fn probe(fair: Array[Fair], words: Array[String]): String {
+    var seen = 0
+    for word in words {
+        for other in words {
+            seen += "{word}{other}".length()
+        }
+    }
+    if seen < 0 {
+        console.println("{seen}")
+    }
+    match pick(fair, words) {
+        some(one) => one.step
+        none => ""
+    }
+}
+
+fn main() {
+    // Made by another task, so on the heap, where a count lets it go.
+    let fair = (spawn made()).wait()
+    let words = ["zzz", "yyy"]
+    for _ in 0..3 {
+        console.println(probe(fair, words))
+    }
+    let more = churn()
+    console.println("{fair[1].step} {more}")
+}
+
+// expect-stdout: the step of a model numbered 1, with a name long enough to be kept on the heap
+// expect-stdout: the step of a model numbered 1, with a name long enough to be kept on the heap
+// expect-stdout: the step of a model numbered 1, with a name long enough to be kept on the heap
+// expect-stdout: the step of a model numbered 1, with a name long enough to be kept on the heap 10000
