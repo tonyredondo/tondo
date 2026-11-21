@@ -15,7 +15,7 @@ pub type Sum = {
 
 /// Adds numbers.
 pub fn Calculator.add(self, input: Sum): Int {
-    input.numbers.reduce(0, (total, n) { total + n })
+    input.numbers.reduce(0, (total, n) => total + n)
 }
 
 mcp.serve(Calculator {})?

@@ -115,7 +115,7 @@ fn save(path: String): !String {
 }
 
 fn parse(text: String): Int ! String {
-    Int.parse(text).mapErr((_) { "not a number" })
+    Int.parse(text).mapErr(_ => "not a number")
 }
 
 fn total(values: ...Int): Int {
@@ -155,7 +155,7 @@ fn main() {
     let double = (n: Int): Int { n * 2 }
     var next = counter()
     console.println("{add(1)} {add(1, b: 5)} {save("x").isOk()} {parse("7")} {total(1, 2, 3)} {first([9])}")
-    console.println("{show(1.5)} {user.greet()} {double(4)} {[1, 2].map((n) { n + 1 })} {next()} {next()}")
+    console.println("{show(1.5)} {user.greet()} {double(4)} {[1, 2].map(n => n + 1)} {next()} {next()}")
 }
 ```
 
@@ -297,7 +297,7 @@ fn main() {
     let caught = recover { [1, 2][5] }      // stop a panic
     let missing: String? = none
     let length = missing?.length() ?? 0     // go on while there is a value, or else this
-    console.println("{caught.isErr()} {length} {some(2).map((n) { n * 2 })}")
+    console.println("{caught.isErr()} {length} {some(2).map(n => n * 2)}")
     assert(1 + 1 == 2, "arithmetic holds")
 }
 ```
@@ -327,7 +327,7 @@ fn main() {
 
     console.println("{list} {list[0]} {list[-1]} {list[1:3]} {list.get(9)} {list * 2}")
     console.println("{ages["ada"]} {ages["cy"] ?? 0} {"bo" in ages} {seen} {(1..=3).collect()}")
-    console.println("{list.map((n) { n * n }).filter((n) { n > 4 }).sum()} {list.sortedBy((n) { -n })}")
+    console.println("{list.map(n => n * n).filter(n => n > 4).sum()} {list.sortedBy(n => -n)}")
 
     let name = "Ada"
     let price = 3.14159
@@ -418,7 +418,7 @@ fn main() {
     let counter = sync.Atomic(0)
     let state = sync.Mutex([0])
     counter.add(1)
-    state.update((values) { values.push(1) })
+    state.update(values => values.push(1))
 
     let hurried = within time.milliseconds(50) { work(4) }
     let first = select {
@@ -458,7 +458,7 @@ suite edges {
     }
 
     test isMeasured {
-        testing.bench("double", () { double(21) })?
+        testing.bench("double", () => double(21))?
     }
 
     test holdsForAnyInput {
@@ -482,7 +482,7 @@ suite edges {
 | `HashMap<K, V>`, `map[K]V`, `Dictionary<K, V>` | `Map[K, V]` |
 | `null`, `nil`, `None`, `Some(x)` | `none`, `some(x)` |
 | `x as Int`, `int(x)`, `(int) x` | `Int(x)`, which may give a result |
-| `\|x\| x * 2`, `x => x * 2`, `func(x int) int { ... }` | `(x) { x * 2 }` |
+| `\|x\| x * 2`, `x -> x * 2`, `func(x int) int { ... }`, `x => { ... }` | `x => x * 2`; with statements or types a block, with no arrow: `(x: Int): Int { ... }` |
 | `struct P { }` and `impl P { fn m() }` | `type P = { }` and `fn P.m(self)` |
 | `class`, `interface` | `type`, `trait` with `impl` |
 | `try`, `catch`, `throw` | `T ! E`, `?`, `match`, `fail error` |

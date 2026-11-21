@@ -74,9 +74,7 @@ fn main(): !http.HttpError {
     app.post("/users", (input: NewUser) { User { id: 1, name: input.name } })
 
     // A handler can also take the request and build the reply.
-    app.get("/hello/:name", (request) {
-        http.Reply.text("hello {request.param("name")}")
-    })
+    app.get("/hello/:name", request => http.Reply.text("hello {request.param("name")}"))
 
     // Middleware wraps every route.
     app.use((request, next) {

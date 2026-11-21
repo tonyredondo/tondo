@@ -191,7 +191,7 @@ import std.yaml
 
 fn main(): !yaml.YamlError {
     var doc = yaml.load("# The service.\nport: 8080   # where it listens\n")?
-    console.println("{doc.find("port").andThen((node) { node.comment })}")
+    console.println("{doc.find("port").andThen(node => node.comment)}")
     doc.set("port", 9090)?
     doc.set("limits.memory", "512Mi")?
     console.print(doc.text())
@@ -628,7 +628,7 @@ first layer that has a path. `app.files`, `set.addFiles` and
 and `archive.open(path)?.extract(into)` write and read zip and tar, which
 an archive whose paths would leave `into` cannot use.
 
-`fs.walk(root, enter: (entry) { not entry.path.endsWith("/node_modules") })`
+`fs.walk(root, enter: entry => not entry.path.endsWith("/node_modules"))`
 does not go into the directories `enter` refuses, and `skipUnreadable: true`,
 of `walk` and `glob`, leaves out those that cannot be read.
 `path.matches(pattern, path)` is the glob of `fs.glob`: `*`, `?`, `[a-z]`,
@@ -818,7 +818,7 @@ others set how often they sample; `profile.startMemory()` and
 `profile.tasks()`; `profile.startBlocking()` and `profile.blocking()`, where
 tasks wait for others; `profile.startContention()` and
 `profile.contention()`, where locks others waited for are let go.
-`profile.withLabels(["endpoint": path], () { handle(request) })` labels the
+`profile.withLabels(["endpoint": path], () => handle(request))` labels the
 samples of its work, and of the tasks it starts, so a profile divides the
 time by them; `let previous = profile.setLabels(...)` and
 `defer previous.restore()` do it when start and end are different calls.

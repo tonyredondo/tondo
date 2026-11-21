@@ -26,7 +26,7 @@ fn main() {}
 import std.testing
 
 fn bought(): Array[Line] {
-    (0..100).map((n) { Line { name: "thing {n % 10}", cents: n % 10 * 5 } }).collect()
+    (0..100).map(n => Line { name: "thing {n % 10}", cents: n % 10 * 5 }).collect()
 }
 
 test everyThingIsCounted {
@@ -34,7 +34,7 @@ test everyThingIsCounted {
     var seen: Map[String, Int] = [:]
     tally(var seen, lines)
     assert(seen["thing 3 at 15"] == 10)
-    testing.bench("tally", () { tally(var seen, lines) })?
+    testing.bench("tally", () => tally(var seen, lines))?
 }
 ```
 
@@ -116,7 +116,7 @@ tally makes a text for each line again, wherever those texts would go.
 +    let lines = bought()
 +    var seen: Map[(String, Int), Int] = [:]
 +    tally(var seen, lines)
-+    assert(testing.allocations(() { tally(var seen, lines) }) == 0)
++    assert(testing.allocations(() => tally(var seen, lines)) == 0)
 +}
 +
 +test everyThingIsCounted {

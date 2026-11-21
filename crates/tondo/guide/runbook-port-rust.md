@@ -29,7 +29,7 @@ follows; this is what each thing of Rust becomes.
 | `trait Shape`, `impl Shape for Circle` | the same |
 | `fn largest<T: Ord>(xs: &[T])`, `where` clauses | `fn largest[T: Ordered](xs: Array[T])` |
 | `Box<dyn Shape>`, `&dyn Shape` | an `enum` of the implementations, or a closure |
-| `\|x\| x * 2`, `move \|\| ...` | `(x) { x * 2 }` |
+| `\|x\| x * 2`, `move \|\| ...` | `x => x * 2`, and `(x) { ... }` with statements |
 | `xs.iter().map(f).filter(g).collect::<Vec<_>>()` | `xs.map(f).filter(g)`; from `xs.iter()` for a lazy chain |
 | `for (i, x) in xs.iter().enumerate()` | `for (i, x) in xs.enumerate()` |
 | `i64`, `u8`, `usize`, `f64`, `&str` | `Int`, `Byte`, `Int`, `Float`, `String` |
@@ -151,7 +151,7 @@ check {"path": "orders.to"}
 => a record is `type Line = { field: Type }`
 => a type's own methods are declared apart, as `fn Type.method(self): Result { ... }`
 => a result type follows `:`
-=> a closure is `(x) { x * 2 }`
+=> a closure is `x => x * 2`, or `(x: Int): Int { x * 2 }` with types or statements
 ```
 
 With the forms right, the names of Rust's library are the next round: each
@@ -224,12 +224,12 @@ fn main() {
             }
         }
     }
-    let totals = lines.map((line) { spawn line.total() }).wait()
+    let totals = lines.map(line => spawn line.total()).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
     console.println("total {money(totals.sum())}")
-    match lines.maxBy((line) { line.total() }) {
+    match lines.maxBy(line => line.total()) {
         some(dearest) => console.println("dearest: {dearest.name}")
         none => {}
     }

@@ -262,7 +262,7 @@ fn main() {
     let numbers = [1, 2, 3]                     // Array[Int]
     let empty: Array[String] = []               // nothing to infer from
     let mixed: Array[Int | String] = [1, "a"]   // a union is asked for
-    let doubled = numbers.map((n) { n * 2 })    // the closure's types come from map
+    let doubled = numbers.map(n => n * 2)    // the closure's types come from map
     console.println("{numbers} {empty} {mixed} {doubled}")
 }
 ```

@@ -340,8 +340,8 @@ fn person(name: String): Ref[Person] {
 }
 
 fn befriend(a: Ref[Person], b: Ref[Person]) {
-    a.value.friends.update((list) { list.push(b) })
-    b.value.friends.update((list) { list.push(a) })
+    a.value.friends.update(list => list.push(b))
+    b.value.friends.update(list => list.push(a))
 }
 
 fn main() {

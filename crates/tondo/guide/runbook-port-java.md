@@ -32,7 +32,7 @@ every port follows; this is what each thing of Java becomes.
 | `for (String x : xs)`, `for (int i = 0; i < n; i++)` | `for x in xs`, `for i in 0..n` |
 | `stream().filter(g).map(f).toList()` | `xs.filter(g).map(f)`; from `xs.iter()` for a lazy chain |
 | `max(Comparator.comparingInt(f))`, `sorted(...)`, `Collectors.groupingBy(f)` | `maxBy(f)`, `sortedBy(f)`, `groupBy(f)` |
-| `x -> x * 2`, `Line::total` | `(x) { x * 2 }`, `Line.total` |
+| `x -> x * 2`, `Line::total` | `x => x * 2`, and `(x) { ... }` with statements; `Line.total` |
 | a `switch` expression, `instanceof` with a pattern | `match`, which must cover every case |
 | `<T extends Comparable<T>>` | `[T: Ordered]` |
 | `Thread`, an `ExecutorService`, `CompletableFuture` | `spawn f()`, `wait()` on an array of tasks |
@@ -226,12 +226,12 @@ fn main() {
             }
         }
     }
-    let totals = lines.map((line) { spawn line.total() }).wait()
+    let totals = lines.map(line => spawn line.total()).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
     console.println("total {money(totals.sum())}")
-    match lines.maxBy((line) { line.total() }) {
+    match lines.maxBy(line => line.total()) {
         some(dearest) => console.println("dearest: {dearest.name}")
         none => {}
     }

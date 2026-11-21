@@ -162,7 +162,7 @@ import std.console
 type User = { name: String, email: String? }
 
 fn find(users: Array[User], name: String): User? {
-    users.find((user) { user.name == name })
+    users.find(user => user.name == name)
 }
 
 fn main() {
@@ -269,7 +269,7 @@ impl Display for ConfigError {
 
 fn port(settings: Map[String, String], key: String): Int ! ConfigError {
     let text = settings.get(key) ?? fail Missing(key)
-    let value = Int.parse(text).mapErr((_) { ConfigError.NotANumber(key, text) })?
+    let value = Int.parse(text).mapErr(_ => ConfigError.NotANumber(key, text))?
     if value < 1 or value > 65535 {
         fail OutOfRange(key, value)
     }
@@ -586,11 +586,11 @@ fn main() {
         counts[word, default: 0] += 1
     }
     // The three most frequent; those that tie stay in the order they came.
-    let top = counts.entries().collect().sortedBy((entry) { -entry.1 }).take(3)
-    console.println(top.map((entry) { "{entry.0} {entry.1}" }).join(", "))
+    let top = counts.entries().collect().sortedBy(entry => -entry.1).take(3)
+    console.println(top.map(entry => "{entry.0} {entry.1}").join(", "))
 
-    let lengths = text.split(" ").map((word) { word.length() })
-    console.println("{lengths.filter((n) { n > 2 }).length()} long words, {lengths.sum()} letters")
+    let lengths = text.split(" ").map(word => word.length())
+    console.println("{lengths.filter(n => n > 2).length()} long words, {lengths.sum()} letters")
 }
 ```
 
@@ -976,7 +976,7 @@ takes any condition. When one fails, it prints both sides:
 ```tondo test
 /// The words of a title, each with a capital.
 fn titleCase(text: String): String {
-    text.split(" ").filter((word) { not word.isEmpty() }).map((word) { "{word[0:1].toUpper()}{word[1:].toLower()}" }).join(" ")
+    text.split(" ").filter(word => not word.isEmpty()).map(word => "{word[0:1].toUpper()}{word[1:].toLower()}").join(" ")
 }
 
 test capitalizesEachWord {

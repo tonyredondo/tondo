@@ -31,7 +31,7 @@ port follows; this is what each thing of Python becomes.
 | `sorted(xs, key=f)`, `max(xs, key=f)`, `sum(xs)`, `zip(xs, ys)` | `xs.sortedBy(f)`, `xs.maxBy(f)`, `xs.sum()`, `xs.zip(ys)` |
 | `", ".join(xs)`, `s.split()`, `s.strip()`, `s.upper()` | `xs.join(", ")`, `s.words()`, `s.trim()`, `s.toUpper()` |
 | `f"{name}: {price:.2f}"` | `"{name}: {price:.2}"` |
-| `lambda x: x * 2` | `(x) { x * 2 }` |
+| `lambda x: x * 2` | `x => x * 2`, and `(x) { ... }` with statements |
 | `a if cond else b` | `if cond { a } else { b }` |
 | `if xs:`, `if not name:` | `if not xs.isEmpty()`: a condition is a `Bool` |
 | `and`, `or`, `not` | the same |
@@ -208,12 +208,12 @@ fn main() {
             }
         }
     }
-    let totals = lines.map((line) { spawn line.total() }).wait()
+    let totals = lines.map(line => spawn line.total()).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
     console.println("total {money(totals.sum())}")
-    match lines.maxBy((line) { line.total() }) {
+    match lines.maxBy(line => line.total()) {
         some(dearest) => console.println("dearest: {dearest.name}")
         none => {}
     }

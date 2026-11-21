@@ -133,7 +133,7 @@ import std.console
 type User = { name: String, email: String? }
 
 fn find(users: Array[User], name: String): User? {
-    users.find((user) { user.name == name })
+    users.find(user => user.name == name)
 }
 
 fn main() {
@@ -224,7 +224,7 @@ impl Display for ConfigError {
 
 fn port(settings: Map[String, String], key: String): Int ! ConfigError {
     let text = settings.get(key) ?? fail Missing(key)
-    let value = Int.parse(text).mapErr((_) { ConfigError.NotANumber(key, text) })?
+    let value = Int.parse(text).mapErr(_ => ConfigError.NotANumber(key, text))?
     if value < 1 or value > 65535 {
         fail OutOfRange(key, value)
     }
@@ -475,7 +475,7 @@ fun main() {
 }
 ```
 
-Tondo's read much the same, with a closure written `(x) { ... }` where
+Tondo's read much the same, with a closure written `x => ...` where
 Kotlin writes `{ it ... }`:
 
 ```tondo
@@ -483,13 +483,13 @@ import std.console
 
 fn main() {
     let text = "to be or not to be that is the question to be"
-    let counts = text.split(" ").countBy((word) { word })
+    let counts = text.split(" ").countBy(word => word)
     // The three most frequent; those that tie stay in the order they came.
-    let top = counts.entries().collect().sortedBy((entry) { -entry.1 }).take(3)
-    console.println(top.map((entry) { "{entry.0} {entry.1}" }).join(", "))
+    let top = counts.entries().collect().sortedBy(entry => -entry.1).take(3)
+    console.println(top.map(entry => "{entry.0} {entry.1}").join(", "))
 
-    let lengths = text.split(" ").map((word) { word.length() })
-    console.println("{lengths.filter((n) { n > 2 }).length()} long words, {lengths.sum()} letters")
+    let lengths = text.split(" ").map(word => word.length())
+    console.println("{lengths.filter(n => n > 2).length()} long words, {lengths.sum()} letters")
 }
 ```
 
@@ -818,7 +818,7 @@ In Tondo a test is a `test` block, in a file beside the code it tests:
 ```tondo test
 /// The words of a title, each with a capital.
 fn titleCase(text: String): String {
-    text.split(" ").filter((word) { not word.isEmpty() }).map((word) { "{word[0:1].toUpper()}{word[1:].toLower()}" }).join(" ")
+    text.split(" ").filter(word => not word.isEmpty()).map(word => "{word[0:1].toUpper()}{word[1:].toLower()}").join(" ")
 }
 
 test capitalizesEachWord {
@@ -946,7 +946,7 @@ Hello, Ada! (3)
 | `class`, `open`, `override`, `object` | `type`, `trait`, `impl`; functions of a module |
 | `Point(1, 2)` | `Point { x: 1, y: 2 }` |
 | `point.copy(x = 3)` | `point with { x: 3 }` |
-| `{ it * 2 }`, `{ a, b -> a + b }` | `(x) { x * 2 }`, `(a, b) { a + b }` |
+| `{ it * 2 }`, `{ a, b -> a + b }` | `x => x * 2`, `(a, b) => a + b` |
 | `"$name is ${user.age}"` | `"{name} is {user.age}"` |
 | `listOf(1, 2)`, `mapOf("a" to 1)` | `[1, 2]`, `["a": 1]` |
 | `List<T>`, `Map<K, V>` | `Array[T]`, `Map[K, V]` |

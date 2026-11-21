@@ -7,7 +7,7 @@ import std.acme
 import std.http
 
 var app = http.App()
-app.get("/", (_) { http.Reply.text("hello") })
+app.get("/", _ => http.Reply.text("hello"))
 app.listen(port: 443, tls: acme.tls(["example.com"], email: "me@example.com"))?
 ```
 

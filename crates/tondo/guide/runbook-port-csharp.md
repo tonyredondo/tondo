@@ -192,12 +192,12 @@ fn main() {
             }
         }
     }
-    let totals = lines.map((line) { spawn line.total() }).wait()
+    let totals = lines.map(line => spawn line.total()).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
     console.println("total {money(totals.sum())}")
-    match lines.maxBy((line) { line.total() }) {
+    match lines.maxBy(line => line.total()) {
         some(dearest) => console.println("dearest: {dearest.name}")
         none => {}
     }

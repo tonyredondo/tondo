@@ -28,7 +28,7 @@ C++ becomes.
 | `throw`, `try` and `catch`, an error code, `std::expected<T, E>` | `T ! E`, `fail`, `?`, `match` |
 | a base class with `virtual` functions | a `trait` and `impl`; an `enum` when the cases are known |
 | `template <typename T>`, a concept | `fn largest[T: Ordered](xs: Array[T])` |
-| `[&](int x) { return x * 2; }` | `(x) { x * 2 }`: it captures what it uses |
+| `[&](int x) { return x * 2; }` | `x => x * 2`, and `(x) { ... }` with statements: it captures what it uses |
 | `for (const auto& x : xs)`, `for (int i = 0; i < n; i++)` | `for x in xs`, `for i in 0..n` |
 | `std::sort`, `std::accumulate`, `std::max_element`, `std::transform`, `std::find_if` | `sorted()`, `sum()`, `maxBy`, `map`, `find` |
 | `std::format("{}: {:02}", a, b)`, `std::cout << x` | `"{a}: {b:02}"`, `console.println(...)` |
@@ -246,12 +246,12 @@ fn main() {
             }
         }
     }
-    let totals = lines.map((line) { spawn line.total() }).wait()
+    let totals = lines.map(line => spawn line.total()).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
     console.println("total {money(totals.sum())}")
-    match lines.maxBy((line) { line.total() }) {
+    match lines.maxBy(line => line.total()) {
         some(dearest) => console.println("dearest: {dearest.name}")
         none => {}
     }

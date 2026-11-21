@@ -125,7 +125,7 @@ test countsEachWord {
 
 test counting {
     let text = "to be or not to be ".repeat(100)
-    testing.bench("count 600 words", () { count(text) })?
+    testing.bench("count 600 words", () => count(text))?
 }
 ```
 

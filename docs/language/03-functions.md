@@ -358,36 +358,67 @@ library writes its own so: `time.Duration.Zero`, `uuid.Uuid.Nil` and
 
 ## Closures
 
-A closure is a function written where it is used: its parameters in
-parentheses, then its body. It has no `fn` and no arrow.
+A closure is a function written where it is used, with no `fn`. It has two
+forms. One whose body is a single expression is an arrow: its parameters,
+`=>`, and the expression it gives. One that needs more, a type written on a
+parameter, a result or several statements, is a block: its parameters in
+parentheses, then its body in braces.
 
 ```tondo
 import std.console
 
 fn main() {
-    let double = (value: Int): Int { value * 2 }
-    let greet = (name: String) { "hello {name}" }      // the result is inferred
-    let ready = () { console.println("ready") }          // no parameters: `()`
-    console.println("{double(21)} {greet("Ada")}")
+    // An arrow: where a function is expected, the parameters' types come from it.
+    let lengths = ["one", "three"].map(word => word.length())
+    let short = ["one", "three"].filter(word => word.length() < 4)
+    let total = lengths.reduce(0, (sum, length) => sum + length)
+    let ready = () => console.println("ready")  // no parameters: `()`
+    console.println("{lengths} {short} {total}")
     ready()
 
-    // Where a function is expected, the parameters' types come from it.
-    let lengths = ["one", "three"].map((word) { word.length() })
-    let short = ["one", "three"].filter((word) { word.length() < 4 })
-    console.println("{lengths} {short}")
+    // A block: a type or a result is written, or there is more than one expression.
+    let double = (value: Int): Int { value * 2 }
+    let greet = (name: String) { "hello {name}" }  // the result is inferred
+    let describe = (value: Int) {
+        let half = value / 2
+        "{value} is twice {half}"
+    }
+    console.println("{double(21)} {greet("Ada")}: {describe(42)}")
 }
 ```
 
 ```text output
-42 hello Ada
+[3, 5] [one] 8
 ready
-[3, 5] [one]
+42 hello Ada: 42 is twice 21
 ```
 
-The parentheses are always there, also around one parameter. A closure says
-its result only when it wants to: what it gives and what it fails with are
-worked out from its body, so one that holds a `fail LoadError.Missing` and
-gives a `String` is a `fn(...): String ! LoadError`.
+- One parameter stands alone before the arrow. None, or several, go in
+  parentheses: `() => clock.now()`, `(a, b) => a + b`.
+- An arrow has no types, no `ref`, `mut` or `var` on a parameter, no result
+  and no braces after it: `x => { ... }` and `(x: Int) => x * 2` are refused
+  (`E0004`), and the message says to write the block. In a block the
+  parentheses are always there, also around one parameter.
+- The two are the same closure, and each has one way to be written: `tondo
+  fmt` writes a block of one expression, with nothing written on its
+  parameters, as an arrow.
+- An arrow's body is the longest expression after it: in
+  `words.map(word => word.length()).sum()` it ends at the `)`, and in a list
+  of arguments at the comma.
+- That body is a place where a value is wanted. A `for` there gives the
+  array of its turns, `rows.map(row => for x in row { x * 10 })`, unless the
+  closure has to give nothing, where it is the loop it is anywhere else
+  ([Control flow](04-control-flow.md#a-for-that-gives-its-values)).
+- In the guard of a `match` arm and in the operation of a `select` arm, a
+  `=>` outside parentheses is the arm's own: an arrow there is inside
+  parentheses, as the argument of a call already is.
+- A closure with nothing around it to say what its parameters are needs
+  their types, and so the block: `let twice = (x: Int) { x * 2 }`.
+
+A closure says its result only when it wants to: what it gives and what it
+fails with are worked out from its body, so one that holds a
+`fail LoadError.Missing` and gives a `String` is a
+`fn(...): String ! LoadError`.
 
 ## What a closure captures
 
@@ -518,7 +549,7 @@ fn main() {
     let lengths = ["ada", "bo"].map(String.length)
     let ids = [7, 8].map(UserId)
     let found: Array[Int?] = [1, 2].map(some)
-    console.println("{names} {lengths} {ids.map((id) { id.value })} {found}")
+    console.println("{names} {lengths} {ids.map(id => id.value)} {found}")
     console.println("{["4", "x"].map(Int.parse)}")
     match userId("x") {
         ok(id) => console.println("{id.value}")
@@ -536,9 +567,9 @@ BadNumber(invalid data)
 `String.toUpper` is the function that takes a `String` and calls `toUpper`
 on it. A function value has no defaults, so a method that has them is
 given whole or with a closure: `String.trim` takes the text and what to
-trim, and `(name) { name.trim() }` the text alone. A method bound to one
+trim, and `name => name.trim()` the text alone. A method bound to one
 value, `value.method` with no call, is still not a value: a closure does
-that job, `(x) { value.method(x) }`.
+that job, `x => value.method(x)`.
 
 ## Taking a function: fn types and Call bounds
 
@@ -571,7 +602,7 @@ fn main() {
         count += 10
         count
     }
-    console.println("{apply(5, (x) { x + 1 })} {applyTwice(5, (x) { x * 3 })} {collect(3, next)}")
+    console.println("{apply(5, x => x + 1)} {applyTwice(5, x => x * 3)} {collect(3, next)}")
 }
 ```
 
@@ -591,7 +622,7 @@ fn main() {
 
 The compiler works out which of the three a closure is from its body. The
 methods of the standard library are written this way, which is why
-`numbers.map((n) { n * 2 })` costs what the loop would.
+`numbers.map(n => n * 2)` costs what the loop would.
 
 ## Recursion
 

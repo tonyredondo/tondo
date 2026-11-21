@@ -58,7 +58,7 @@ fn main() {
   `users.get(id) ?? fail ApiError.NotFound(id)`, `?? return`, `?? continue`.
   After an option, an optional fallback keeps it, so `flag ?? env ?? 8080`
   chains. It binds least of all: `(name ?? "").trim()`.
-- Convert with `result.mapErr((e) { ... })`, and turn an option into a result
+- Convert with `result.mapErr(e => ...)`, and turn an option into a result
   with `option.okOr(error)`.
 - `main` fails with what its `?` and `fail` propagate, with no error to
   declare, as a script's top level does. The program then prints `error: `

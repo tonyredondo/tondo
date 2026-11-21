@@ -87,8 +87,9 @@ A `for` gives its values on the right of `let` or `=`, in an argument, after
 function with a result type, a branch or an arm whose value is used, a turn
 of another such loop. `continue` leaves a turn's element out and `break`
 ends with what was given. Anywhere else it is a statement, as at the end of
-a closure whose result nothing states, the one `map` takes: there write
-`return for ... { ... }`. `map` stays the short form of one expression; the
+a closure's block whose result nothing states, the one `map` takes: there
+write the arrow, whose body is a value, `rows.map(row => for x in row { x * 10 })`,
+or `return for ... { ... }` after the block's statements. `map` stays the short form of one expression; the
 loop is for a turn of several lines, or one that can fail, since a `?` in it
 leaves the function: `for result in results { result? }` gives the values
 or fails with the first error. A turn of such a loop ends with its value:
@@ -158,17 +159,23 @@ fn twice(f: fn(Int): Int, x: Int): Int {
 fn main() {
     let double = (n: Int): Int { n * 2 }
     console.println("{twice(double, 3)}")
-    console.println("{twice((n) { n + 1 }, 3)}")      // types from the context
-    let squares = [1, 2, 3].map((n) { n * n })
+    console.println("{twice(n => n + 1, 3)}")      // types from the context
+    let squares = [1, 2, 3].map(n => n * n)
     console.println("{squares}")
 }
 ```
 
-A closure is `(params) { body }`, with parameter types when the context does
-not give them. Where no function type is expected, as in a `let`, it infers
-its result, and what it fails with from its `fail` and `?`: a closure that
-fails with `fail LoadError.Missing` and gives a `String` is a
-`fn(...): String ! LoadError`. Where a function is expected, a method, a
+A closure of one expression is an arrow, `n => n + 1`, `(a, b) => a + b`,
+`() => clock.now()`: one parameter stands alone, none or several go in
+parentheses, and the types come from where it is passed. One with
+statements, or with a type, a `mut`, `ref` or `var`, or a result written,
+is a block with no arrow, `(n: Int): Int { ... }`, whose parentheses are
+always there; `x => { ... }` and `(x: Int) => ...` are refused, and `tondo
+fmt` writes a block of one expression as an arrow. Where no function type
+is expected, as in a `let`, a closure needs its parameters' types, so the
+block, and it infers its result, and what it fails with from its `fail` and
+`?`: a closure that fails with `fail LoadError.Missing` and gives a `String`
+is a `fn(...): String ! LoadError`. Where a function is expected, a method, a
 variant with data, a newtype and `some` are given by name:
 `names.map(String.toUpper)`, `result.mapErr(AppError.Io)`.
 

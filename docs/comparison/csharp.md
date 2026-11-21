@@ -140,7 +140,7 @@ import std.console
 type User = { name: String, email: String? }
 
 fn find(users: Array[User], name: String): User? {
-    users.find((user) { user.name == name })
+    users.find(user => user.name == name)
 }
 
 fn main() {
@@ -238,7 +238,7 @@ impl Display for ConfigError {
 
 fn port(settings: Map[String, String], key: String): Int ! ConfigError {
     let text = settings.get(key) ?? fail Missing(key)
-    let value = Int.parse(text).mapErr((_) { ConfigError.NotANumber(key, text) })?
+    let value = Int.parse(text).mapErr(_ => ConfigError.NotANumber(key, text))?
     if value < 1 or value > 65535 {
         fail OutOfRange(key, value)
     }
@@ -512,13 +512,13 @@ import std.console
 
 fn main() {
     let text = "to be or not to be that is the question to be"
-    let counts = text.split(" ").countBy((word) { word })
+    let counts = text.split(" ").countBy(word => word)
     // The three most frequent; those that tie stay in the order they came.
-    let top = counts.entries().collect().sortedBy((entry) { -entry.1 }).take(3)
-    console.println(top.map((entry) { "{entry.0} {entry.1}" }).join(", "))
+    let top = counts.entries().collect().sortedBy(entry => -entry.1).take(3)
+    console.println(top.map(entry => "{entry.0} {entry.1}").join(", "))
 
-    let lengths = text.split(" ").map((word) { word.length() })
-    console.println("{lengths.filter((n) { n > 2 }).length()} long words, {lengths.sum()} letters")
+    let lengths = text.split(" ").map(word => word.length())
+    console.println("{lengths.filter(n => n > 2).length()} long words, {lengths.sum()} letters")
 }
 ```
 
@@ -531,8 +531,9 @@ to 3, be 3, or 1
   There is no `List` beside `Array`, no `IEnumerable` beside both, and no
   query that runs again each time it is enumerated: `map` on an array gives
   an array.
-- A closure is `(word) { word.length() }`. The last expression is its
-  value.
+- A closure of one expression is the arrow it is in C#,
+  `word => word.length()`. One with statements is a block with no arrow,
+  `(word) { ... }`, whose last expression is its value.
 - A string is text measured in characters, `"añil".length()` is 4, and it
   is UTF-8 underneath. Interpolation is `"{name} is {age}"` in any string,
   with formats as `{price:.2}`.
@@ -848,7 +849,7 @@ In Tondo a test is a `test` block, in a file beside the code it tests:
 ```tondo test
 /// The words of a title, each with a capital.
 fn titleCase(text: String): String {
-    text.split(" ").filter((word) { not word.isEmpty() }).map((word) { "{word[0:1].toUpper()}{word[1:].toLower()}" }).join(" ")
+    text.split(" ").filter(word => not word.isEmpty()).map(word => "{word[0:1].toUpper()}{word[1:].toLower()}").join(" ")
 }
 
 test capitalizesEachWord {
@@ -976,7 +977,7 @@ Hello, Ada! (3)
 | `CancellationToken token` | `within` |
 | `lock (gate) { }` | `mutex.update((value) { ... })` |
 | `List<T>`, `Dictionary<K, V>`, `HashSet<T>` | `Array[T]`, `Map[K, V]`, `Set[T]` |
-| `x => x * 2` | `(x) { x * 2 }` |
+| `x => x * 2` | `x => x * 2` |
 | `items.Where(...).Select(...)` | `items.filter(...).map(...)` |
 | `items.MaxBy(x => x.Price)`, `items.ToDictionary(x => x.Id)`, `items.CountBy(x => x.Tag)` | `items.maxBy(...)`, `items.keyedBy(...)`, `items.countBy(...)` |
 | `$"{name} is {age}"` | `"{name} is {age}"` |

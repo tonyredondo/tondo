@@ -56,7 +56,7 @@ test theGateOpensOnlyWhenPaid {
 `model.expect` gives what was checked, as `model.expect(...).states`, or fails
 the test with what broke. `tondo test` also says which
 events no state took, which is often a mistake. An event that holds a number or
-a string has no end of values: then `events: (gate) { [...] }` says which can
+a string has no end of values: then `events: gate => [...]` says which can
 happen in a state.
 
 ## What must hold
@@ -89,7 +89,7 @@ step left stays where it is. A loop that never gets where it must breaks
 `eventually`, shown as `and then round for ever:`; a step that cannot be put
 off for ever goes in `fair`: `model.weak("grant")` if it comes when it stays
 possible, `model.strong("grant")` if it comes when it keeps becoming possible.
-`ends: (state) { ... }` says where a run may stop: anywhere else, stopping is a
+`ends: state => ...` says where a run may stop: anywhere else, stopping is a
 deadlock.
 
 Fairness is of a step's name: `model.weak("resume")` holds when some task
@@ -122,7 +122,7 @@ test bothAdd {
         b.wait()
     }
     let both = model.eventually((n: Int) { n == 2 }, name: "both add")
-    model.expect(model.watch(() { count.load() }, [both], run))
+    model.expect(model.watch(() => count.load(), [both], run))
 }
 ```
 
@@ -182,7 +182,7 @@ keys came in. A list of tasks is an `Array`, and
 `lock with { tasks: lock.tasks.replaced(t, task) }` is the state with one of
 them changed. A
 queue is a `model.Queue([1, 2])`, and a collection whose order says nothing a
-`model.Bag(...)`. `symmetry: (state) { ... }` gives the one state that stands
+`model.Bag(...)`. `symmetry: state => ...` gives the one state that stands
 for all those it equals, as the same with its tasks numbered otherwise, so that
 only it is gone through. `model.every[T]()` gives every value of a type.
 

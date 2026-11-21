@@ -13,7 +13,7 @@ follows; this is what each thing becomes.
 | TypeScript | Tondo |
 | --- | --- |
 | `const x = 5`, `let x = 5` | `let x = 5`, `var x = 5` |
-| `function f(a: number): string`, `const f = (a) => ...` | `fn f(a: Int): String`; a closure is `(a) { ... }` |
+| `function f(a: number): string`, `const f = (a) => a * 2`, `(a) => { ... }` | `fn f(a: Int): String`; `a => a * 2`; with statements a block, with no arrow: `(a) { ... }` |
 | `number` | `Int` or `Float`: say which; `Int(x)?` and `Float(n)` convert |
 | `string`, `boolean`, `T[]`, `Map<K, V>`, `Set<T>` | `String`, `Bool`, `Array[T]`, `Map[K, V]`, `Set[T]` |
 | `interface Line { name: string }`, an object literal | `type Line = { name: String }`, `Line { name: "tea" }` |
@@ -25,7 +25,7 @@ follows; this is what each thing becomes.
 | `===`, `!==` | `==`, `!=`: there is one equality, and it compares values |
 | `throw new Error(...)`, `try { } catch (e) { }` | `fail error` in a `T ! E`; `match`, `?`, `??` |
 | `async function f(): Promise<T>`, `await f()` | `fn f(): T`, `f()`: any function can wait |
-| `Promise.all(xs.map(f))` | `xs.map((x) { spawn f(x) }).wait()`; `waitOrCancel()` when they can fail |
+| `Promise.all(xs.map(f))` | `xs.map(x => spawn f(x)).wait()`; `waitOrCancel()` when they can fail |
 | `const [a, b] = await Promise.all([f(), g()])` | `let (a, b) = (spawn f(), spawn g()).wait()`, a tuple, as `f` and `g` give different types |
 | a callback, an event emitter | a closure; a `channel[T]()` for a stream of events |
 | `xs.map`, `filter`, `reduce`, `some`, `every`, `find`, `includes` | `map`, `filter`, `reduce`, `any`, `all`, `find`, `contains` |
@@ -116,7 +116,8 @@ dearest: tea
 ## The first try, with TypeScript's forms
 
 Written as TypeScript writes, the port has `function`, `async`, `===`, a
-template and an arrow. `check` answers each with Tondo's.
+template and an arrow with braces. `check` answers each with Tondo's: the
+arrow of one expression, `each => each * 2`, is Tondo's own.
 
 ```tondo error E0004 file=orders.to
 import std.console
@@ -137,7 +138,7 @@ fn main() {
     if cents === 500 {
         console.println(`total ${cents}`)
     }
-    let doubled = [cents].map((each) => each * 2)
+    let doubled = [cents].map((each) => { return each * 2 })
     console.println("{doubled}")
 }
 ```
@@ -149,7 +150,7 @@ check {"path": "orders.to"}
 => there is no `await`: call the function
 => Tondo has no `===`
 => strings use double quotes, and `{name}` inside one interpolates
-=> a closure is `(x) { x * 2 }`
+=> an arrow's body is one expression: a closure with statements has a block, `(each) { ... }`
 ```
 
 With the forms right, the names are the next round: the types of
@@ -226,12 +227,12 @@ fn main() {
             }
         }
     }
-    let totals = lines.map((line) { spawn line.total() }).wait()
+    let totals = lines.map(line => spawn line.total()).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
     console.println("total {money(totals.sum())}")
-    match lines.maxBy((line) { line.total() }) {
+    match lines.maxBy(line => line.total()) {
         some(dearest) => console.println("dearest: {dearest.name}")
         none => {}
     }

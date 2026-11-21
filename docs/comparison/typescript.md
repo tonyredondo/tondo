@@ -131,7 +131,7 @@ import std.console
 type User = { name: String, email: String? }
 
 fn find(users: Array[User], name: String): User? {
-    users.find((user) { user.name == name })
+    users.find(user => user.name == name)
 }
 
 fn main() {
@@ -227,7 +227,7 @@ impl Display for ConfigError {
 
 fn port(settings: Map[String, String], key: String): Int ! ConfigError {
     let text = settings.get(key) ?? fail Missing(key)
-    let value = Int.parse(text).mapErr((_) { ConfigError.NotANumber(key, text) })?
+    let value = Int.parse(text).mapErr(_ => ConfigError.NotANumber(key, text))?
     if value < 1 or value > 65535 {
         fail OutOfRange(key, value)
     }
@@ -496,11 +496,11 @@ fn main() {
         counts[word, default: 0] += 1
     }
     // The three most frequent; those that tie stay in the order they came.
-    let top = counts.entries().collect().sortedBy((entry) { -entry.1 }).take(3)
-    console.println(top.map((entry) { "{entry.0} {entry.1}" }).join(", "))
+    let top = counts.entries().collect().sortedBy(entry => -entry.1).take(3)
+    console.println(top.map(entry => "{entry.0} {entry.1}").join(", "))
 
-    let lengths = text.split(" ").map((word) { word.length() })
-    console.println("{lengths.filter((n) { n > 2 }).length()} long words, {lengths.sum()} letters")
+    let lengths = text.split(" ").map(word => word.length())
+    console.println("{lengths.filter(n => n > 2).length()} long words, {lengths.sum()} letters")
 }
 ```
 
@@ -512,7 +512,9 @@ to 3, be 3, or 1
 - `Array[T]`, `Map[K, V]` and `Set[T]` are `T[]`, `Map<K, V>` and
   `Set<T>`. There is no object used as a dictionary beside the `Map`.
 - `map`, `filter`, `find`, `some` as `any`, `every` as `all`, `sortedBy`,
-  `sum` and `join` are methods. A closure is `(word) { word.length() }`.
+  `sum` and `join` are methods. A closure of one expression is the arrow
+  it is in TypeScript, `word => word.length()`; one with statements is a
+  block with no arrow, `(word) { ... }`.
 - Sorting gives a new array, `sorted()`, or changes a `var` in place,
   `sort()`, and numbers sort as numbers.
 - `Int` and `Float` are different types. `7 / 2` is `3`, `7.0 / 2.0` is
@@ -810,7 +812,7 @@ In Tondo a test is a `test` block, in a file beside the code it tests:
 ```tondo test
 /// The words of a title, each with a capital.
 fn titleCase(text: String): String {
-    text.split(" ").filter((word) { not word.isEmpty() }).map((word) { "{word[0:1].toUpper()}{word[1:].toLower()}" }).join(" ")
+    text.split(" ").filter(word => not word.isEmpty()).map(word => "{word[0:1].toUpper()}{word[1:].toLower()}").join(" ")
 }
 
 test capitalizesEachWord {
@@ -915,7 +917,7 @@ Hello, Ada! (3)
 | --- | --- |
 | `const x = 1`, `let y = 2` | `let x = 1`, `var y = 2` |
 | `function f(a: number): string` | `fn f(a: Int): String` |
-| `(x) => x * 2` | `(x) { x * 2 }` |
+| `(x) => x * 2` | `x => x * 2` |
 | `x?: string`, `string \| undefined` | `x: String?` |
 | `a?.b ?? c` | `a?.b ?? c` |
 | `x!`, `x as Foo`, `any` | nothing: say what the value is |

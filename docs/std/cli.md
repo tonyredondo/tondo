@@ -214,7 +214,7 @@ import std.console
 fn main() {
     let parts = ["docs", "tests", "examples"]
     let picked = cli.chooseMany("Install", parts, chosen: [0])
-    console.println(picked.map((index) { parts[index] }).join(", "))
+    console.println(picked.map(index => parts[index]).join(", "))
 }
 ```
 
@@ -485,7 +485,7 @@ import std.console
 
 fn main() {
     let orders = ["#1 tea", "#2 coffee", "#3 water"].join("\n")
-    let log = (1..=40).map((n) { "request {n} answered in {n * 3 % 17 + 2} ms" }).collect().join("\n")
+    let log = (1..=40).map(n => "request {n} answered in {n * 3 % 17 + 2} ms").collect().join("\n")
     let screen = cli.Pane.rows([
         cli.Pane(cli.markup("[bold]Orders today[/]"), size: 1),
         cli.Pane.columns([

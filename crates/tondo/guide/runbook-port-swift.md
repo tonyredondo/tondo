@@ -31,7 +31,7 @@ port follows; this is what each thing of Swift becomes.
 | `[1, 2]`, `["a": 1]` | the same |
 | `xs.count`, `xs.append(x)`, `xs.isEmpty`, `xs.first` | `xs.length()`, `xs.push(x)`, `xs.isEmpty()`, `xs.first()` |
 | `map`, `filter`, `reduce`, `contains`, `sorted(by:)`, `max(by:)` | `map`, `filter`, `reduce`, `contains`, `sortedBy`, `maxBy` |
-| `{ $0 * 2 }`, `{ x in x * 2 }` | `(x) { x * 2 }` |
+| `{ $0 * 2 }`, `{ x in x * 2 }` | `x => x * 2`, and `(x) { ... }` with statements |
 | `for x in xs`, `for (i, x) in xs.enumerated()`, `for i in 0..<n` | `for x in xs`, `for (i, x) in xs.enumerate()`, `for i in 0..n` |
 | `"\(name): \(price)"`, `String(format: "%.2f", price)` | `"{name}: {price:.2}"` |
 | `async`, `await`, `Task { }`, `withTaskGroup` | a plain function and a plain call; `spawn`, `wait()` on an array of tasks |
@@ -246,12 +246,12 @@ fn main() {
             }
         }
     }
-    let totals = lines.map((line) { spawn line.total() }).wait()
+    let totals = lines.map(line => spawn line.total()).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
     console.println("total {money(totals.sum())}")
-    match lines.maxBy((line) { line.total() }) {
+    match lines.maxBy(line => line.total()) {
         some(dearest) => console.println("dearest: {dearest.name}")
         none => {}
     }

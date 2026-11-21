@@ -9,7 +9,7 @@ import std.meta
 /// names.
 pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
     let target = request.target()
-    let names = target.fields().map((field) { field.name }).join(", ")
+    let names = target.fields().map(field => field.name).join(", ")
     var out = request.sourceBuilder()
     out.add(meta.code(r"""
         impl $trait for $type {

@@ -593,7 +593,7 @@ fn main() {
     var seeded = random.Random.seeded(42)
     let dice = [seeded.int(1..=6), seeded.int(1..=6), seeded.int(1..=6)]
     var again = random.Random.seeded(42)
-    console.println("{dice.length()} {dice[0] == again.int(1..=6)} {dice.all((n) { n >= 1 and n <= 6 })}")
+    console.println("{dice.length()} {dice[0] == again.int(1..=6)} {dice.all(n => n >= 1 and n <= 6)}")
     console.println("{seeded.shuffled([1, 2, 3, 4]).length()} {seeded.choice(["a", "b"]).isSome()} {seeded.float() < 1.0}")
 
     var fresh = random.Random()             // from the system's entropy

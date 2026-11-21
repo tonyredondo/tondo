@@ -267,7 +267,7 @@ fn main() {
     let prices = [10.0, 20.0, 30.0, 40.0]
     console.println("{prices[-1]} {prices[1:3]}")        // from the end, and a slice
     console.println("{prices * 1.21}")                    // arithmetic on every element
-    console.println("{prices.filter((p) { p > 15.0 }).map((p) { p / 2.0 }).sum()}")
+    console.println("{prices.filter(p => p > 15.0).map(p => p / 2.0).sum()}")
 
     var ages: Map[String, Int] = [:]
     ages["ada"] = 36
@@ -279,7 +279,7 @@ fn main() {
     }
     console.println("{before.length()} {ages.get("dee")} {ages["dee"] ?? 0} {"bo" in ages}")
 
-    let evens = (0..10).filter((n) { n % 2 == 0 }).map((n) { n * n }).collect()
+    let evens = (0..10).filter(n => n % 2 == 0).map(n => n * n).collect()
     console.println("{evens}")
 }
 ```
@@ -472,7 +472,7 @@ fn main() {
     let job = spawn fetch(1)
     console.println("{job.wait()}")
 
-    let pages = [0, 1, 2, 3, 4].map((id) { spawn fetch(id) })
+    let pages = [0, 1, 2, 3, 4].map(id => spawn fetch(id))
     console.println("{pages.wait()}")           // results in the order of the array
 }
 ```

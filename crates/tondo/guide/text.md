@@ -52,7 +52,7 @@ fn main() {
   `text.normalize(s, text.Normalization.Nfd)` and dropping the marks takes
   the accents away: `café` is `cafe`.
 - `text.collator("es")` orders texts as a language does, `ñ` after `n`:
-  `names.sortedWith((a, b) { order.compare(a, b) })`. With
+  `names.sortedWith((a, b) => order.compare(a, b))`. With
   `strength: text.Strength.Primary` accents and case do not count, and with
   `numeric: true` `file2` goes before `file10`.
 - Numbers for people go through `std.format`, which knows how each language

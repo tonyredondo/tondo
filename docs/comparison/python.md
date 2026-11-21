@@ -204,7 +204,7 @@ import std.console
 type User = { name: String, email: String? }
 
 fn find(users: Array[User], name: String): User? {
-    users.find((user) { user.name == name })
+    users.find(user => user.name == name)
 }
 
 fn main() {
@@ -298,7 +298,7 @@ impl Display for ConfigError {
 
 fn port(settings: Map[String, String], key: String): Int ! ConfigError {
     let text = settings.get(key) ?? fail Missing(key)
-    let value = Int.parse(text).mapErr((_) { ConfigError.NotANumber(key, text) })?
+    let value = Int.parse(text).mapErr(_ => ConfigError.NotANumber(key, text))?
     if value < 1 or value > 65535 {
         fail OutOfRange(key, value)
     }
@@ -574,13 +574,13 @@ import std.console
 
 fn main() {
     let text = "to be or not to be that is the question to be"
-    let counts = text.split(" ").countBy((word) { word })
+    let counts = text.split(" ").countBy(word => word)
     // The three most frequent; those that tie stay in the order they came.
-    let top = counts.entries().collect().sortedBy((entry) { -entry.1 }).take(3)
-    console.println(top.map((entry) { "{entry.0} {entry.1}" }).join(", "))
+    let top = counts.entries().collect().sortedBy(entry => -entry.1).take(3)
+    console.println(top.map(entry => "{entry.0} {entry.1}").join(", "))
 
-    let lengths = text.split(" ").map((word) { word.length() })
-    console.println("{lengths.filter((n) { n > 2 }).length()} long words, {lengths.sum()} letters")
+    let lengths = text.split(" ").map(word => word.length())
+    console.println("{lengths.filter(n => n > 2).length()} long words, {lengths.sum()} letters")
 }
 ```
 
@@ -590,8 +590,9 @@ to 3, be 3, or 1
 ```
 
 - `[len(w) for w in words if len(w) > 2]` is
-  `words.filter((w) { w.length() > 2 }).map((w) { w.length() })`. A closure
-  is `(w) { ... }`, with as many lines as it needs: there is no `lambda`
+  `words.filter(w => w.length() > 2).map(w => w.length())`. A closure
+  of one expression is `w => w.length()`, and one with statements is
+  `(w) { ... }`, with as many lines as it needs: there is no `lambda`
   limited to one expression. A `for` gives an array too where a value is
   wanted, `let lengths = for w in words { w.length() }`, and `continue`
   leaves an element out.
@@ -903,7 +904,7 @@ In Tondo a test is a `test` block, in a file beside the code it tests:
 ```tondo test
 /// The words of a title, each with a capital.
 fn titleCase(text: String): String {
-    text.split(" ").filter((word) { not word.isEmpty() }).map((word) { "{word[0:1].toUpper()}{word[1:].toLower()}" }).join(" ")
+    text.split(" ").filter(word => not word.isEmpty()).map(word => "{word[0:1].toUpper()}{word[1:].toLower()}").join(" ")
 }
 
 test capitalizesEachWord {
@@ -1042,7 +1043,7 @@ are saved, and a running program can be changed without stopping it.
 | `"a" + "b"`, `"-" * 10` | `"{a}{b}"`, `"-".repeat(10)` |
 | `len(x)`, `str(x)`, `int(s)` | `x.length()`, `"{x}"`, `Int.parse(s)` |
 | `[f(x) for x in xs if c(x)]` | `xs.filter(c).map(f)` |
-| `lambda x: x * 2` | `(x) { x * 2 }` |
+| `lambda x: x * 2` | `x => x * 2` |
 | `for i in range(n):`, `while c:` | `for i in 0..n { }`, `for c { }` |
 | `for i, x in enumerate(xs):` | `for (i, x) in xs.enumerate() { }` |
 | `elif`, `and`, `or`, `not` | `else if`, `and`, `or`, `not` |

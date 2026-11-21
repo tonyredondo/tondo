@@ -100,7 +100,7 @@ fn main() {
     var stack = Stack[Int]()
     stack.push(1)
     stack.push(2)
-    let labels = stack.map((n) { "#{n}" })
+    let labels = stack.map(n => "#{n}")
     console.println("{stack.pop()} {stack.items} {labels.items}")
 
     let leaf: Tree[Int] = Tree.Leaf
@@ -371,7 +371,7 @@ impl Entity for Product {
 }
 
 fn listing[E: Entity](entities: Array[E]): String {
-    entities.map((entity) { entity.label() }).join(", ")
+    entities.map(entity => entity.label()).join(", ")
 }
 
 fn main() {
@@ -455,7 +455,7 @@ fn main() {
 ```
 
 ```text
-error[E1105]: `User` does not implement `Additive`, which `Iterator.sum` requires of `T`: to add a field of each, `sumBy((user) { user.age })`
+error[E1105]: `User` does not implement `Additive`, which `Iterator.sum` requires of `T`: to add a field of each, `sumBy(user => user.age)`
 ```
 
 Three rules keep such a method one thing for everybody:
@@ -557,7 +557,7 @@ fn main() {
         Version { major: 0, minor: 9, patch: 9 },
     ]
     console.println("{versions.sorted()} {versions.max()}")
-    console.println("{versions[1] < versions[0]} {versions.sorted().map((v) { "{v}" }).join(" < ")}")
+    console.println("{versions[1] < versions[0]} {versions.sorted().map(v => "{v}").join(" < ")}")
 }
 ```
 
@@ -692,10 +692,10 @@ fn main() {
 
     let side = 3.0
     let renderers = [
-        Renderer { name: "dot", draw: () { "." } },
-        Renderer { name: "box", draw: () { "[{side}]" } },
+        Renderer { name: "dot", draw: () => "." },
+        Renderer { name: "box", draw: () => "[{side}]" },
     ]
-    console.println("{renderers.map((renderer) { "{renderer.name}: {renderer.draw()}" })}")
+    console.println("{renderers.map(renderer => "{renderer.name}: {renderer.draw()}")}")
 }
 ```
 

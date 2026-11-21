@@ -132,7 +132,7 @@ fn main(): !http.HttpError {
         }
         next(request)?.header("X-Served-By", "tondo")
     })
-    app.get("/", (_) { http.Reply.text("hello") })
+    app.get("/", _ => http.Reply.text("hello"))
     let server = app.start()?
     defer server.stop()
 

@@ -26,7 +26,7 @@ fn main(): !process.ProcessError {
     // A pipeline, with no shell in between.
     let words = ["tea", "cup", "tea", "pot", "tea"]
     let counted = $(printf '%s\n' {...words} | sort | uniq -c | sort -rn).lines()?
-    console.println("{counted.map((line) { line.trim() })}")
+    console.println("{counted.map(line => line.trim())}")
 
     // `text` gives what it printed, without the line's end; `run` shows it and fails when the command fails.
     console.println($(NAME=tondo printenv NAME).text()?)

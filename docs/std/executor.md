@@ -11,7 +11,7 @@ import std.executor
 let pool = executor.pool(2, 8)?
 var squares = Group[Int]()
 for n in 1..=4 {
-    squares.add(pool.submit(() { n * n })?)
+    squares.add(pool.submit(() => n * n)?)
 }
 console.println("{squares.wait()}")
 pool.shutdown()

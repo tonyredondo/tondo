@@ -15,7 +15,7 @@ each thing becomes.
 | `HashMap<K, V>`, `{}` | `Map[K, V]`, `[:]` |
 | `null`, `nil`, `None`, `Some(x)` | `none`, `some(x)` |
 | `x as Int` | `Int(x)` |
-| `\|x\| x * 2`, `x => x * 2` | `(x) { x * 2 }` |
+| `\|x\| x * 2`, `lambda x: x * 2`, `x => { ... }`, `(x: Int) => x * 2` | `x => x * 2`; with statements or types a block, with no arrow: `(x) { ... }`, `(x: Int): Int { x * 2 }` |
 | `struct P { }` and `impl P { fn m() }` | `type P = { }` and `fn P.m(self)` |
 | `try`, `catch`, `throw` | `T ! E`, `?`, `match`, `fail error` |
 | `defer func() { recover() }()` | `recover { ... }`, a `T ! Panic` |

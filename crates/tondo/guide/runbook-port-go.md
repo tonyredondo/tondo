@@ -23,7 +23,7 @@ follows; this is what each thing of Go becomes.
 | a pointer that may be `nil` | `T?`, with `none`, `match`, `?.` and `?? fallback` |
 | `v, ok := m[k]` | `m.get(k)`, a `V?`; `m[k] ?? 0` |
 | `[]T`, `append(s, x)`, `len(s)`, `s[1:3]` | `Array[T]`, `s.push(x)`, `s.length()`, `s[1:3]` |
-| a loop that appends what each turn computes, `out = append(out, f(x))` | `let out = for x in xs { ... }`, whose turn ends with its value; `xs.map((x) { f(x) })` for one expression |
+| a loop that appends what each turn computes, `out = append(out, f(x))` | `let out = for x in xs { ... }`, whose turn ends with its value; `xs.map(x => f(x))` for one expression |
 | `map[K]V{}`, `delete(m, k)`, `m[k]++` | `Map[K, V]`, `[:]`, `m.remove(k)`, `m[k, default: 0] += 1` |
 | `for i, x := range xs`, `for k, v := range m` | `for (i, x) in xs.enumerate()`, `for (k, v) in m` |
 | `for cond { }`, `for { }` | the same |
@@ -32,7 +32,7 @@ follows; this is what each thing of Go becomes.
 | `interface` | `trait`, and `impl Trait for Type` says who implements it |
 | `interface{}`, `any` | an `enum` of the cases, or a type parameter |
 | an embedded struct | a field, and the methods that pass the call on |
-| `go f()` with a `sync.WaitGroup` | `spawn f()`; `xs.map((x) { spawn f(x) }).wait()` waits for many and gives their results |
+| `go f()` with a `sync.WaitGroup` | `spawn f()`; `xs.map(x => spawn f(x)).wait()` waits for many and gives their results |
 | `go f()` that outlives its function | `spawn detached f()` |
 | `make(chan T, n)`, `<-ch`, `select` | `channel[T](n)`, `receive()`, `select` |
 | a `sync.Mutex` beside what it guards | `sync.Mutex(value)`: the lock holds the value |
@@ -245,12 +245,12 @@ fn main() {
             }
         }
     }
-    let totals = lines.map((line) { spawn line.total() }).wait()
+    let totals = lines.map(line => spawn line.total()).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
     console.println("total {money(totals.sum())}")
-    match lines.maxBy((line) { line.total() }) {
+    match lines.maxBy(line => line.total()) {
         some(dearest) => console.println("dearest: {dearest.name}")
         none => {}
     }

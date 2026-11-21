@@ -25,7 +25,7 @@ reports and the rest, is in [the toolchain](../toolchain.md).
 
 ```tondo test
 fn parse(text: String): Int ! String {
-    Int.parse(text.trim()).mapErr((_) { "`{text}` is not a number" })
+    Int.parse(text.trim()).mapErr(_ => "`{text}` is not a number")
 }
 
 test parsesANumber {
@@ -247,7 +247,7 @@ import std.testing
 type Report = { title: String, lines: Array[String], total: Int }
 
 fn report(values: Array[Int]): Report {
-    Report { title: "values", lines: values.map((value) { "{value}" }), total: values.sum() }
+    Report { title: "values", lines: values.map(value => "{value}"), total: values.sum() }
 }
 
 test reportsAsBefore {
@@ -349,8 +349,8 @@ type Point = { x: Int, y: Int }
 
 test encoding {
     for size in [10, 1_000] {
-        let points = (0..size).map((n) { Point { x: n, y: n * 2 } }).collect()
-        testing.bench("encode {size} points", () { json.encode(points) })?
+        let points = (0..size).map(n => Point { x: n, y: n * 2 }).collect()
+        testing.bench("encode {size} points", () => json.encode(points))?
     }
 }
 ```

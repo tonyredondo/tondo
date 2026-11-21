@@ -97,7 +97,7 @@ pub fn Product(name: String, price: Int): Product {
 // src/catalog/search.to
 /// The products whose name has the text.
 pub fn search(products: Array[Product], text: String): Array[Product] {
-    products.filter((product) { product.name.contains(text) })
+    products.filter(product => product.name.contains(text))
 }
 
 fn margin(product: Product): Int {

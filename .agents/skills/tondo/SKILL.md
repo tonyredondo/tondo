@@ -80,6 +80,9 @@ with statements cannot be imported.
   or `{name:<12}`; `{{` is a literal brace. `+` does not join strings.
 - Methods are declared outside the type: `fn User.greet(self): String`.
   `mut self` changes fields, `var self` can replace the value.
+- A closure of one expression is an arrow: `x => x * 2`, `(a, b) => a + b`,
+  `() => clock.now()`. With statements, or with a type written, it is a
+  block with no arrow: `(x: Int): Int { ... }`.
 - A trait's method is called with a dot, as any other: `user.display()`.
   When two traits of a value give the same name, the call names one:
   `Display.display(user)`.

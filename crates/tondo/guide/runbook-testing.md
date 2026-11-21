@@ -112,7 +112,7 @@ test anyTextIsAnEventOrSaysWhy {
 }
 
 test applying {
-    testing.bench("apply", () { apply(fresh(), Event.Pay) })?
+    testing.bench("apply", () => apply(fresh(), Event.Pay))?
 }
 
 test payAndCancelAtOnce {

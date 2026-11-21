@@ -93,9 +93,7 @@ import std.console
 
 fn main() {
     let name = "worker"
-    let job = spawn (() {
-        "{name} done"
-    })()
+    let job = spawn (() => "{name} done")()
     console.println(job.wait())
 }
 ```
@@ -254,7 +252,7 @@ fn fetch(id: Int): String {
 }
 
 fn main() {
-    let pages = [1, 2, 3].map((id) { spawn fetch(id) }).wait()
+    let pages = [1, 2, 3].map(id => spawn fetch(id)).wait()
     console.println("{pages}")
 }
 ```
@@ -279,7 +277,7 @@ fn load(id: Int): String ! String {
 }
 
 fn main() {
-    let loaded = [1, 2, 3].map((id) { spawn load(id) }).wait()
+    let loaded = [1, 2, 3].map(id => spawn load(id)).wait()
     console.println("{loaded}")
 }
 ```
@@ -336,7 +334,7 @@ fn load(id: Int): String ! String {
 }
 
 fn loadAll(ids: Array[Int]): Array[String] ! String {
-    ids.map((id) { spawn load(id) }).waitOrCancel()
+    ids.map(id => spawn load(id)).waitOrCancel()
 }
 
 fn main() {
@@ -567,7 +565,7 @@ fn main() {
     let open = sync.Atomic(0)
     let most = sync.Atomic(0)
     let ids = (1..=20).collect()
-    let done = within tasks.limit(3) { ids.map((id) { spawn fetch(id, open, most) }).wait() }
+    let done = within tasks.limit(3) { ids.map(id => spawn fetch(id, open, most)).wait() }
     console.println("{done.length()} done, {most.load()} at once at most")
 }
 ```
@@ -618,7 +616,7 @@ fn fetch(open: sync.Atomic[Int], most: sync.Atomic[Int]) {
 fn handle(fetching: tasks.Limit, open: sync.Atomic[Int], most: sync.Atomic[Int]) {
     within fetching {
         within tasks.limit(3) {
-            _ = (1..=10).collect().map((_) { spawn fetch(open, most) }).wait()
+            _ = (1..=10).collect().map(_ => spawn fetch(open, most)).wait()
         }
     }
 }
@@ -651,7 +649,7 @@ fn fetch(id: Int): Int {
 }
 
 fn fetchAll(ids: Array[Int]): Array[Int] {
-    ids.map((id) { spawn fetch(id) }).wait()
+    ids.map(id => spawn fetch(id)).wait()
 }
 
 fn main() {
@@ -1165,7 +1163,7 @@ fn main() {
   and then changes it, as a consumer that waits for a queue to have
   something.
 - `RwLock` is the same for a value read far more than written:
-  `lock.read((value) { ... })` lets readers in together.
+  `lock.read(value => ...)` lets readers in together.
 
 Safe code has no data races: the compiler lets a value cross to another task
 only by copy or move, and only the types of `std.sync` are shared. Nothing
@@ -1291,7 +1289,7 @@ which a program cannot see: that is what lets a read take no lock.
 | Tool | For |
 | --- | --- |
 | `sync.Semaphore(n)` | at most `n` at once: `let permit = semaphore.acquire()`, then `permit.release()` |
-| `sync.Once[T]()` | a value computed once, by whoever asks first: `once.getOrInit(() { ... })` |
+| `sync.Once[T]()` | a value computed once, by whoever asks first: `once.getOrInit(() => ...)` |
 | `sync.Barrier(n)` | `n` tasks that start a phase together |
 | `sync.RateLimiter(100, per: time.seconds(1))` | pacing: `allow()` asks, `wait()` waits for a turn |
 | `sync.retry(work, attempts: 5)` | failing work tried again, with a growing, random delay |
@@ -1331,7 +1329,7 @@ import std.executor
 
 fn main(): !(executor.ExecutorError | executor.SubmitError) {
     let pool = executor.pool(2, 8)?             // 2 at a time, 8 waiting
-    let squares = for n in 1..=5 { pool.submit(() { n * n })? }
+    let squares = for n in 1..=5 { pool.submit(() => n * n)? }
     console.println("{squares.wait()}")
     pool.shutdown()
 }

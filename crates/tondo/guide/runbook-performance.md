@@ -115,7 +115,7 @@ fn main() {}
 import std.testing
 
 test primes {
-    testing.bench("isPrime", () { isPrime(10007) })?
+    testing.bench("isPrime", () => isPrime(10007))?
 }
 ```
 

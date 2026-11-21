@@ -175,7 +175,7 @@ fn size(url: String): Int {
 }
 
 fn sizes(urls: Array[String]): Array[Int] {
-    urls.map((url) { spawn size(url) }).wait()
+    urls.map(url => spawn size(url)).wait()
 }
 
 fn main() {
@@ -227,7 +227,7 @@ memory: there is nothing to own, to borrow for long, or to annotate.
 - **Operators are closed.** A type takes `+ - * /` through two traits,
   `Additive` and `Number`, and no other operator.
 - **Spelling.** `var x` for `let mut x`, `fn f(): Int` for `-> Int`,
-  `Array[T]` for `Vec<T>`, `(x) { x * 2 }` for `|x| x * 2`, and `some`,
+  `Array[T]` for `Vec<T>`, `x => x * 2` for `|x| x * 2`, and `some`,
   `none`, `ok`, `err` in lower case.
 
 A function that returns one of its arguments needs a lifetime in Rust, to
@@ -379,7 +379,7 @@ fn size(url: String): Int ! http.HttpError {
 }
 
 fn sizes(urls: Array[String]): Array[Int] {
-    urls.map((url) { spawn size(url) }).waitOrCancel() ?? []
+    urls.map(url => spawn size(url)).waitOrCancel() ?? []
 }
 
 fn main() {

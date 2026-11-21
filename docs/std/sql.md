@@ -30,7 +30,7 @@ fn main(): !sql.SqlError {
 
     let before = 1970
     let old = db.query[Book]("SELECT id, title, year, read FROM books WHERE year < {before} ORDER BY year")?
-    console.println("{old.map((book) { "{book.title} ({book.year})" })}")
+    console.println("{old.map(book => "{book.title} ({book.year})")}")
 
     let count = db.queryOne[Int]("SELECT count(*) FROM books")?
     let missing = db.queryOne[Book?]("SELECT id, title, year, read FROM books WHERE id = {99}")?
@@ -84,7 +84,7 @@ fn main(): !sql.SqlError {
     move(db, "ada", "leo", 30)?
     console.println("{move(db, "leo", "ada", 500).isErr()}")
     let accounts = db.query[Account]("SELECT name, balance FROM accounts ORDER BY name")?
-    console.println("{accounts.map((account) { "{account.name} {account.balance}" })}")
+    console.println("{accounts.map(account => "{account.name} {account.balance}")}")
 }
 ```
 

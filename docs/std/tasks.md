@@ -18,7 +18,7 @@ fn fetch(id: Int): Int {
 fn main() {
     let ids = [1, 2, 3, 4, 5, 6]
     let fetched =
-        within time.seconds(5), tasks.limit(2) { ids.map((id) { spawn fetch(id) }).wait() }
+        within time.seconds(5), tasks.limit(2) { ids.map(id => spawn fetch(id)).wait() }
     _ = fetched
 }
 ```

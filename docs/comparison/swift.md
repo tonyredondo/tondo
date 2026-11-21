@@ -139,7 +139,7 @@ import std.console
 type User = { name: String, email: String? }
 
 fn find(users: Array[User], name: String): User? {
-    users.find((user) { user.name == name })
+    users.find(user => user.name == name)
 }
 
 fn main() {
@@ -234,7 +234,7 @@ impl Display for ConfigError {
 
 fn port(settings: Map[String, String], key: String): Int ! ConfigError {
     let text = settings.get(key) ?? fail Missing(key)
-    let value = Int.parse(text).mapErr((_) { ConfigError.NotANumber(key, text) })?
+    let value = Int.parse(text).mapErr(_ => ConfigError.NotANumber(key, text))?
     if value < 1 or value > 65535 {
         fail OutOfRange(key, value)
     }
@@ -503,11 +503,11 @@ fn main() {
         counts[word, default: 0] += 1
     }
     // The three most frequent; those that tie stay in the order they came.
-    let top = counts.entries().collect().sortedBy((entry) { -entry.1 }).take(3)
-    console.println(top.map((entry) { "{entry.0} {entry.1}" }).join(", "))
+    let top = counts.entries().collect().sortedBy(entry => -entry.1).take(3)
+    console.println(top.map(entry => "{entry.0} {entry.1}").join(", "))
 
-    let lengths = text.split(" ").map((word) { word.length() })
-    console.println("{lengths.filter((n) { n > 2 }).length()} long words, {lengths.sum()} letters")
+    let lengths = text.split(" ").map(word => word.length())
+    console.println("{lengths.filter(n => n > 2).length()} long words, {lengths.sum()} letters")
 }
 ```
 
@@ -518,8 +518,9 @@ to 3, be 3, or 1
 
 - `Array[T]`, `Map[K, V]`, `Set[T]` and `Deque[T]` are the collections,
   with `map`, `filter`, `sortedBy`, `take`, `sum` and `join` as methods.
-- A closure is `(word) { word.length() }`. There is no `$0`, and no
-  trailing closure outside the parentheses.
+- A closure is `word => word.length()`, and with statements a block,
+  `(word) { ... }`. There is no `$0`, and no trailing closure outside the
+  parentheses.
 - `"{name} is {age}"` interpolates, with formats after a colon:
   `{price:.2}`.
 - A string is indexed with integers: `text[0]`, `text[1:4]`. Positions
@@ -838,7 +839,7 @@ In Tondo a test is a `test` block, in a file beside the code it tests:
 ```tondo test
 /// The words of a title, each with a capital.
 fn titleCase(text: String): String {
-    text.split(" ").filter((word) { not word.isEmpty() }).map((word) { "{word[0:1].toUpper()}{word[1:].toLower()}" }).join(" ")
+    text.split(" ").filter(word => not word.isEmpty()).map(word => "{word[0:1].toUpper()}{word[1:].toLower()}").join(" ")
 }
 
 test capitalizesEachWord {
@@ -927,7 +928,7 @@ Hello, Ada! (3)
 | `Point(x: 1, y: 2)` | `Point { x: 1, y: 2 }` |
 | `inout`, `&value` | `mut`, `mut value` |
 | `[T]`, `[K: V]`, `Set<T>` | `Array[T]`, `Map[K, V]`, `Set[T]` |
-| `{ $0 * 2 }` | `(x) { x * 2 }` |
+| `{ $0 * 2 }` | `x => x * 2` |
 | `"\(name) is \(age)"` | `"{name} is {age}"` |
 | `a + b` for strings and arrays | `"{a}{b}"`, `a.concat(b)` |
 | `items.count`, `text.count` | `items.length()`, `text.length()` |

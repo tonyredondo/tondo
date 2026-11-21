@@ -149,7 +149,7 @@ import std.console
 type User = { name: String, email: String? }
 
 fn find(users: Array[User], name: String): User? {
-    users.find((user) { user.name == name })
+    users.find(user => user.name == name)
 }
 
 fn main() {
@@ -263,7 +263,7 @@ impl Display for ConfigError {
 
 fn port(settings: Map[String, String], key: String): Int ! ConfigError {
     let text = settings.get(key) ?? fail Missing(key)
-    let value = Int.parse(text).mapErr((_) { ConfigError.NotANumber(key, text) })?
+    let value = Int.parse(text).mapErr(_ => ConfigError.NotANumber(key, text))?
     if value < 1 or value > 65535 {
         fail OutOfRange(key, value)
     }
@@ -549,11 +549,11 @@ fn main() {
         counts[word, default: 0] += 1
     }
     // The three most frequent; those that tie stay in the order they came.
-    let top = counts.entries().collect().sortedBy((entry) { -entry.1 }).take(3)
-    console.println(top.map((entry) { "{entry.0} {entry.1}" }).join(", "))
+    let top = counts.entries().collect().sortedBy(entry => -entry.1).take(3)
+    console.println(top.map(entry => "{entry.0} {entry.1}").join(", "))
 
-    let lengths = text.split(" ").map((word) { word.length() })
-    console.println("{lengths.filter((n) { n > 2 }).length()} long words, {lengths.sum()} letters")
+    let lengths = text.split(" ").map(word => word.length())
+    console.println("{lengths.filter(n => n > 2).length()} long words, {lengths.sum()} letters")
 }
 ```
 
@@ -567,8 +567,9 @@ to 3, be 3, or 1
   before and usually no `.collect()` after.
 - `counts[word] = ...` adds or replaces. There is no entry API, because
   there is no borrow to keep alive across the lookup and the write.
-- A closure is `(word) { word.length() }`. It captures by value, so there
-  is no `move` and no closure that cannot be returned.
+- A closure is `word => word.length()`, and with statements a block,
+  `(word) { ... }`. It captures by value, so there is no `move` and no
+  closure that cannot be returned.
 - Indexing with a number out of range panics, and `get` gives an option, in
   both languages. A Tondo index can be negative, from the end, and a slice
   is `values[1:3]`.
@@ -910,7 +911,7 @@ In Tondo a test is a `test` block, in a file beside the code:
 ```tondo test
 /// The words of a title, each with a capital.
 fn titleCase(text: String): String {
-    text.split(" ").filter((word) { not word.isEmpty() }).map((word) { "{word[0:1].toUpper()}{word[1:].toLower()}" }).join(" ")
+    text.split(" ").filter(word => not word.isEmpty()).map(word => "{word[0:1].toUpper()}{word[1:].toLower()}").join(" ")
 }
 
 test capitalizesEachWord {
@@ -1104,7 +1105,7 @@ optimized less than LLVM would.
 | `if let Some(x) = y` | `match y` |
 | `&x`, `&mut x` at a call | `ref x`, `mut x`, or nothing |
 | `x.clone()` | `x` |
-| `\|x\| x * 2` | `(x) { x * 2 }` |
+| `\|x\| x * 2` | `x => x * 2` |
 | `Shape::Circle` | `Shape.Circle` |
 | `impl Point { fn area(&self) }` | `fn Point.area(self)` |
 | `x as i64` | `Int(x)`, which fails if it does not fit |

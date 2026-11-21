@@ -325,8 +325,8 @@ fn main() {
     console.println("{Char.from(955)} {Char.from(0x1F642)} {'a' < 'b'} {('a'..='e').collect()}")
 
     let text = "Hello, World 2024!"
-    let letters = text.chars().filter((c) { c.isLetter() }).count()
-    let initials = text.words().map((word) { word[0] }).filter((c) { c.isUpper() })
+    let letters = text.chars().filter(c => c.isLetter()).count()
+    let initials = text.words().map(word => word[0]).filter(c => c.isUpper())
     console.println("{letters} letters, initials {initials}")
 }
 ```
@@ -426,7 +426,7 @@ fn main() {
 
     // Taking the accents off: decompose, then drop the marks.
     let decomposed = text.normalize("Crème brûlée", text.Normalization.Nfd)
-    let plain = decomposed.chars().filter((c) { not c.isMark() }).collect().join("")
+    let plain = decomposed.chars().filter(c => not c.isMark()).collect().join("")
     console.println(plain)
     console.println("{text.category('λ')} {text.script('λ')} {text.script('字')}")
 }
@@ -456,11 +456,11 @@ fn main() {
     let names = ["Zoe", "ñandú", "nube", "Ana", "ana"]
     let spanish = text.collator("es")
     console.println("{names.sorted()}")
-    console.println("{names.sortedWith((a, b) { spanish.compare(a, b) })}")
+    console.println("{names.sortedWith((a, b) => spanish.compare(a, b))}")
 
     let files = ["file10", "file2", "file1"]
     let natural = text.collator("en", numeric: true)
-    console.println("{files.sortedWith((a, b) { natural.compare(a, b) })}")
+    console.println("{files.sortedWith((a, b) => natural.compare(a, b))}")
 
     console.println("{format.number(1234567.891, "en")} | {format.number(1234567.891, "de")} | {format.number(1234567.891, "fr")}")
     console.println("{format.currency(9.5, "EUR", "es")} | {format.percent(0.256, decimals: 1)}")

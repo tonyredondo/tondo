@@ -69,7 +69,7 @@ It wrote, in the project's tests:
 // From a dump of the program as it ran
 test benchIsPrime {
     let number = 2147483647
-    testing.bench("isPrime", () { isPrime(number) })
+    testing.bench("isPrime", () => isPrime(number))
 }
 ```
 
@@ -91,7 +91,7 @@ src/main_test.to: `benchSquares` measures `squares` with the recording's values:
 // From a recording: the call of squares at probe 44, which ran 15003 lines
 test benchSquares {
     let upTo = 5000
-    testing.bench("squares", () { squares(upTo) })
+    testing.bench("squares", () => squares(upTo))
 }
 ```
 
@@ -549,12 +549,12 @@ import std.console
 
 /// The sum of the squares of the even numbers, with an array at each step.
 fn byArrays(numbers: Array[Int]): Int {
-    numbers.filter((n) { n % 2 == 0 }).map((n) { n * n }).sum()
+    numbers.filter(n => n % 2 == 0).map(n => n * n).sum()
 }
 
 /// The same, a number at a time.
 fn byChain(numbers: Array[Int]): Int {
-    numbers.iter().filter((n) { n % 2 == 0 }).map((n) { n * n }).sum()
+    numbers.iter().filter(n => n % 2 == 0).map(n => n * n).sum()
 }
 
 fn main() {
@@ -569,9 +569,9 @@ fn main() {
 
 ```text
 $ tondo optimizations squares.to --function byChain --kind call
-squares.to:10:5: `numbers.iter().filter((n) { n % 2 == 0 }).map((n) { n * n }…` in `Iterator.sum[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int]`, `self.sumBy((item) { item })` stays a call of `Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int]`: its body costs 48, more than the 30 inlining takes (in byChain, main)
-squares.to:10:27: `(n) { n % 2 == 0 }` is called by its body where a record holds it, as an iterator's adapter does (in prelude.FilterIterator.next[prelude.ArrayIterator[Int], Int])
-squares.to:10:51: `(n) { n * n }` is called by its body where a record holds it, as an iterator's adapter does (in Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int])
+squares.to:10:5: `numbers.iter().filter(n => n % 2 == 0).map(n => n * n).sum()` in `Iterator.sum[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int]`, `self.sumBy(item => item)` stays a call of `Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int]`: its body costs 48, more than the 30 inlining takes (in byChain, main)
+squares.to:10:27: `n => n % 2 == 0` is called by its body where a record holds it, as an iterator's adapter does (in prelude.FilterIterator.next[prelude.ArrayIterator[Int], Int])
+squares.to:10:48: `n => n * n` is called by its body where a record holds it, as an iterator's adapter does (in Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int])
 ```
 
 The chain is run by the standard library's `sumBy`, which `sum` calls: a
@@ -589,10 +589,10 @@ nothing of the chain is on the heap:
 
 ```text
 $ tondo optimizations squares.to --function byChain --kind region
-squares.to:10:27: `(n) { n % 2 == 0 }` goes in a region of `byChain` (in byChain)
-squares.to:10:27: `(n) { n % 2 == 0 }` goes in a region of `main` (in main)
-squares.to:10:51: `(n) { n * n }` goes in a region of `byChain` (in byChain)
-squares.to:10:51: `(n) { n * n }` goes in a region of `main` (in main)
+squares.to:10:27: `n => n % 2 == 0` goes in a region of `byChain` (in byChain)
+squares.to:10:27: `n => n % 2 == 0` goes in a region of `main` (in main)
+squares.to:10:48: `n => n * n` goes in a region of `byChain` (in byChain)
+squares.to:10:48: `n => n * n` goes in a region of `main` (in main)
 ```
 
 Those of `byArrays` are made in the frame, since its methods only call

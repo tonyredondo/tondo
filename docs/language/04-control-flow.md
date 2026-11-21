@@ -298,9 +298,10 @@ fn main() {
 - A value is wanted on the right of `let` or `=`, in an argument, after
   `return`, and at the end of a block that has to give a value: the body of
   a function with a result type, as `visible`, a branch of an `if` or an arm
-  of a `match` whose value is used, a turn of another such loop, and a
-  closure whose result is written or expected. Anywhere else a `for` is the
-  statement it always was.
+  of a `match` whose value is used, a turn of another such loop, a closure
+  whose result is written or expected, and the body of an arrow,
+  `row => for x in row { x * 10 }`. Anywhere else a `for` is the statement
+  it always was.
 - A turn gives what its body ends with. `continue` gives nothing on its
   turn, which is how an element is left out, and `break` ends the loop with
   what the turns before it gave.
@@ -310,7 +311,7 @@ fn main() {
 - To call a method on one, put it in parentheses:
   `(for word in words { word.length() }).sum()`.
 
-For one expression, `words.map((word) { word.length() })` says the same and
+For one expression, `words.map(word => word.length())` says the same and
 stays the short form
 ([Collections](08-collections.md#the-methods-of-an-array)). The loop is for
 a turn that takes more than that: several lines, some elements left out, an
@@ -363,19 +364,16 @@ error[E1623]: this turn gives a value only when its condition holds, and a turn 
 A loop that ends a block that need not give a value stays a statement, so
 that a loop run for its effects never turns into an array nobody asked for.
 That is the body of a function without a result type, and of a closure
-whose result nothing states: the one `map` takes may give a value of any
-type, or none. There `return` says that the loop is the closure's value:
+written as a block whose result nothing states: the one `map` takes may give
+a value of any type, or none. The body of an arrow is a value, so the loop
+there gives its array:
 
 ```tondo
 import std.console
 
 fn main() {
     let rows = [[1, 2], [3]]
-    let scaled = rows.map(
-        (row) {
-            return for x in row { x * 10 }
-        },
-    )
+    let scaled = rows.map(row => for x in row { x * 10 })
     console.println("{scaled}")
 }
 ```
@@ -384,16 +382,20 @@ fn main() {
 [[10, 20], [30]]
 ```
 
-Without the `return`, that closure holds a statement whose value is
-dropped, and the compiler says so with what to write:
+Written as a block, `(row) { for x in row { x * 10 } }`, that closure holds a
+statement whose value is dropped, and the compiler says so with what to
+write:
 
 ```text
-error[E1306]: this value does nothing: use it, return it from a function that declares its type, or discard it with `_ = ...`; a `for` gives its values when it is returned, as `return for ... { ... }`
+error[E1306]: this value does nothing: use it, return it from a function that declares its type, or discard it with `_ = ...`; a `for` gives its values as an arrow's body, as `row => for ... { ... }`
 ```
 
-A closure that has to give an array needs no `return`, since a value is
-wanted there: the one `flatMap` takes, or one passed where a
-`fn(Int): Array[Int]` is expected.
+A block that has statements before its loop says it with `return`, as
+`return for x in row { x * 10 }` on its last line. And a closure that has to
+give an array needs neither, since a value is wanted there: the one `flatMap`
+takes, or one passed where a `fn(Int): Array[Int]` is expected. An arrow
+that has to give nothing, as one passed where a `fn(Array[Int])` is
+expected, holds the loop it would be anywhere else.
 
 ## defer
 

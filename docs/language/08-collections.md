@@ -97,7 +97,7 @@ fn main() {
 
     values.sort()
     values.reverse()
-    values.retain((n) { n % 2 == 0 })
+    values.retain(n => n % 2 == 0)
     console.println("{values}")
 }
 ```
@@ -118,10 +118,10 @@ that gives a new array and leaves the original alone.
 | In place, on a `var` | A new array |
 | --- | --- |
 | `values.sort()` | `values.sorted()` |
-| `values.sortBy((v) { ... })` | `values.sortedBy((v) { ... })` |
+| `values.sortBy(v => ...)` | `values.sortedBy(v => ...)` |
 | `values.reverse()` | `values.reversed()` |
 | `values[i] = x` | `values.replaced(i, x)` |
-| `values.retain((v) { ... })` | `values.filter((v) { ... })` |
+| `values.retain(v => ...)` | `values.filter(v => ...)` |
 | `values.extend(other)` | `values.concat(other)` |
 
 ## Arithmetic on arrays
@@ -214,16 +214,16 @@ fn main() {
         Item { name: "ink", price: 5, tags: ["office", "refill"] },
         Item { name: "tea", price: 4, tags: ["kitchen"] },
     ]
-    let names = items.map((item) { item.name })
-    let cheap = items.filter((item) { item.price < 5 }).map((item) { item.name })
-    let total = items.sumBy((item) { item.price })
-    let dearest = items.maxBy((item) { item.price })?.name ?? "nothing"
-    let tags = items.flatMap((item) { item.tags }).unique()
-    let byTag = items.countBy((item) { item.tags[0] })
+    let names = items.map(item => item.name)
+    let cheap = items.filter(item => item.price < 5).map(item => item.name)
+    let total = items.sumBy(item => item.price)
+    let dearest = items.maxBy(item => item.price)?.name ?? "nothing"
+    let tags = items.flatMap(item => item.tags).unique()
+    let byTag = items.countBy(item => item.tags[0])
     console.println("{names.join(", ")} | {cheap} | {total} | {dearest}")
     console.println("{tags} {byTag}")
-    console.println("{items.any((item) { item.price > 4 })} {items.find((item) { item.name == "tea" }).isSome()}")
-    console.println("{[1, 2, 3, 4, 5].chunks(2)} {[1, 2, 3, 4].windows(2)} {[1, 2, 3, 4].partition((n) { n > 2 })}")
+    console.println("{items.any(item => item.price > 4)} {items.find(item => item.name == "tea").isSome()}")
+    console.println("{[1, 2, 3, 4, 5].chunks(2)} {[1, 2, 3, 4].windows(2)} {[1, 2, 3, 4].partition(n => n > 2)}")
 }
 ```
 
@@ -257,15 +257,15 @@ fn main() {
         Order { customer: 1, total: 12.5 },
         Order { customer: 2, total: 7.5 },
     ]
-    for (order, customer) in orders.joinBy(customers, (order) { order.customer }, (customer) { customer.id }) {
+    for (order, customer) in orders.joinBy(customers, order => order.customer, customer => customer.id) {
         console.println("{customer.name} {order.total}")
     }
-    let byId = customers.keyedBy((customer) { customer.id })
-    let totals = orders.map((order) { order.total })
-    console.println("{byId[2]?.name ?? "nobody"} {totals.average()} {totals.scan(0.0, (sum, total) { sum + total })}")
-    console.println("{totals.takeWhile((total) { total > 10.0 })} {totals.dropWhile((total) { total > 10.0 })}")
-    let buyers = orders.map((order) { order.customer }).toSet()
-    console.println("{orders.uniqueBy((order) { order.customer }).length()} {totals.indexOf(7.5)} {buyers}")
+    let byId = customers.keyedBy(customer => customer.id)
+    let totals = orders.map(order => order.total)
+    console.println("{byId[2]?.name ?? "nobody"} {totals.average()} {totals.scan(0.0, (sum, total) => sum + total)}")
+    console.println("{totals.takeWhile(total => total > 10.0)} {totals.dropWhile(total => total > 10.0)}")
+    let buyers = orders.map(order => order.customer).toSet()
+    console.println("{orders.uniqueBy(order => order.customer).length()} {totals.indexOf(7.5)} {buyers}")
 }
 ```
 
@@ -286,7 +286,7 @@ Leo some(20.0) [40.0, 52.5, 60.0]
   as many values as the array.
 - `average` is of floats and of `math.Decimal`. For integers it does not
   compile, and the error says to make them floats first.
-- There is no `flatten`: `flatMap((inner) { inner })` says it.
+- There is no `flatten`: `flatMap(inner => inner)` says it.
 
 These methods take closures compiled in place, so a chain of them is not
 slower than the loop that would replace it, and `tondo optimizations` says
@@ -367,8 +367,8 @@ fn main() {
     // A record as a key, and a map built from others.
     var visited: Map[Point, String] = [:]
     visited[Point { x: 0, y: 0 }] = "start"
-    let frequent = counts.filter((_, count) { count > 1 })
-    let doubled = counts.mapValues((count) { count * 2 })
+    let frequent = counts.filter((_, count) => count > 1)
+    let doubled = counts.mapValues(count => count * 2)
     let merged = frequent.merge(["and": 1])
     console.println("{visited.length()} {frequent} {doubled["to"] ?? 0} {merged}")
 }
@@ -396,12 +396,12 @@ fn main() {
     console.println("{editors.union(admins)} {editors.intersection(admins)} {editors.difference(admins)}")
     console.println("{Set["leo"].isSubset(admins)} {editors == Set["leo", "ana"]}")
     console.println("{editors.symmetricDifference(admins)} {admins.isSuperset(Set["zoe"])} {editors.isDisjoint(Set["eva"])}")
-    console.println("{admins.filter((name) { name > "m" })} {admins.map((name) { name.length() })}")
+    console.println("{admins.filter(name => name > "m")} {admins.map(name => name.length())}")
 
     var team = editors
     team.extend(admins)
     team.subtract(Set["ana"])
-    team.retain((name) { name != "zoe" })
+    team.retain(name => name != "zoe")
     console.println("{team} {editors}")
 
     var empty = Set[Int]()
@@ -482,7 +482,7 @@ fn main() {
 
 A range is of integers or of characters, and goes up by one. One whose start
 is past its end is empty. For another step or direction, take the array and
-slice it, or use the adapters below: `(0..10).filter((n) { n % 3 == 0 })`.
+slice it, or use the adapters below: `(0..10).filter(n => n % 3 == 0)`.
 
 ## Iterators
 
@@ -495,27 +495,27 @@ import std.console
 
 fn main() {
     let squares = (1..=1_000_000)
-        .map((n) { n * n })
-        .filter((n) { n % 3 == 1 })
+        .map(n => n * n)
+        .filter(n => n % 3 == 1)
         .take(4)
         .collect()
     console.println("{squares}")
 
-    let letters = "Hello, World".chars().filter((c) { c.isUpper() }).collect()
+    let letters = "Hello, World".chars().filter(c => c.isUpper()).collect()
     let numbered = ["a", "b"].iter().enumerate().collect()
     let pairs = (0..3).zip("abc".chars()).collect()
     console.println("{letters} {numbered} {pairs}")
 
-    let total = (1..=10).reduce(0, (sum, n) { sum + n })
-    let firstBig = (1..=100).find((n) { n * n > 50 })
+    let total = (1..=10).reduce(0, (sum, n) => sum + n)
+    let firstBig = (1..=100).find(n => n * n > 50)
     console.println("{total} {firstBig} {(1..=10).count()} {(0..5).chain(10..12).collect()}")
 
-    let evenSquares = (1..=10).filter((n) { n % 2 == 0 }).sumBy((n) { n * n })
-    let longest = ["pen", "paper", "ink"].iter().maxBy((word) { word.length() })
-    console.println("{evenSquares} {longest} {(1..=7).countBy((n) { n % 3 })}")
+    let evenSquares = (1..=10).filter(n => n % 2 == 0).sumBy(n => n * n)
+    let longest = ["pen", "paper", "ink"].iter().maxBy(word => word.length())
+    console.println("{evenSquares} {longest} {(1..=7).countBy(n => n % 3)}")
 
-    let odds = (1..=9).filter((n) { n % 2 == 1 })
-    let halves = [1.0, 2.0, 6.0].iter().map((x) { x / 2.0 })
+    let odds = (1..=9).filter(n => n % 2 == 1)
+    let halves = [1.0, 2.0, 6.0].iter().map(x => x / 2.0)
     console.println("{odds.sum()} {odds.max()} {halves.average()} {"banana".chars().toSet()}")
 }
 ```
@@ -584,7 +584,7 @@ fn main() {
         console.println("{n}")
     }
     let fibonacci = Fibonacci { current: 0, following: 1 }
-    console.println("{fibonacci.takeWhile((n) { n < 60 }).filter((n) { n % 2 == 0 }).collect()}")
+    console.println("{fibonacci.takeWhile(n => n < 60).filter(n => n % 2 == 0).collect()}")
 }
 ```
 

@@ -152,7 +152,7 @@ import std.console
 type User = { name: String, email: String? }
 
 fn find(users: Array[User], name: String): User? {
-    users.find((user) { user.name == name })
+    users.find(user => user.name == name)
 }
 
 fn main() {
@@ -262,7 +262,7 @@ impl Display for ConfigError {
 
 fn port(settings: Map[String, String], key: String): Int ! ConfigError {
     let text = settings.get(key) ?? fail Missing(key)
-    let value = Int.parse(text).mapErr((_) { ConfigError.NotANumber(key, text) })?
+    let value = Int.parse(text).mapErr(_ => ConfigError.NotANumber(key, text))?
     if value < 1 or value > 65535 {
         fail OutOfRange(key, value)
     }
@@ -556,13 +556,13 @@ import std.console
 
 fn main() {
     let text = "to be or not to be that is the question to be"
-    let counts = text.split(" ").countBy((word) { word })
+    let counts = text.split(" ").countBy(word => word)
     // The three most frequent; those that tie stay in the order they came.
-    let top = counts.entries().collect().sortedBy((entry) { -entry.1 }).take(3)
-    console.println(top.map((entry) { "{entry.0} {entry.1}" }).join(", "))
+    let top = counts.entries().collect().sortedBy(entry => -entry.1).take(3)
+    console.println(top.map(entry => "{entry.0} {entry.1}").join(", "))
 
-    let lengths = text.split(" ").map((word) { word.length() })
-    console.println("{lengths.filter((n) { n > 2 }).length()} long words, {lengths.sum()} letters")
+    let lengths = text.split(" ").map(word => word.length())
+    console.println("{lengths.filter(n => n > 2).length()} long words, {lengths.sum()} letters")
 }
 ```
 
@@ -574,10 +574,11 @@ to 3, be 3, or 1
 - `Array[T]`, `Map[K, V]`, `Set[T]` and `Deque[T]` are the collections.
   There is one of each, with no interface above it and no choice of
   implementation to make.
-- A closure is `(word) { word.length() }`. It takes copies of the values
-  around it, so nothing has to be "effectively final", and it cannot change
-  a variable outside behind the reader's back: for that it is lent the
-  variable, or shares an `Atomic`.
+- A closure is `word => word.length()`, and with statements a block with
+  no arrow, `(word) { ... }`. It takes copies of the values around it, so
+  nothing has to be "effectively final", and it cannot change a variable
+  outside behind the reader's back: for that it is lent the variable, or
+  shares an `Atomic`.
 - `"{name} is {age}"` builds a string, with formats as `{price:.2}`. There
   is no `+` between strings and no `String.format`.
 - A string's length is its characters, not UTF-16 units.
@@ -904,7 +905,7 @@ In Tondo a test is a `test` block, in a file beside the code it tests:
 ```tondo test
 /// The words of a title, each with a capital.
 fn titleCase(text: String): String {
-    text.split(" ").filter((word) { not word.isEmpty() }).map((word) { "{word[0:1].toUpper()}{word[1:].toLower()}" }).join(" ")
+    text.split(" ").filter(word => not word.isEmpty()).map(word => "{word[0:1].toUpper()}{word[1:].toLower()}").join(" ")
 }
 
 test capitalizesEachWord {
@@ -1045,7 +1046,7 @@ Hello, Ada! (3)
 | `static` methods in a utility class | functions of a module |
 | `List<T>`, `Map<K, V>`, `Set<T>` | `Array[T]`, `Map[K, V]`, `Set[T]` |
 | `list.stream().map(f).toList()` | `list.map(f)` |
-| `x -> x * 2` | `(x) { x * 2 }` |
+| `x -> x * 2` | `x => x * 2` |
 | `String.format("%s is %d", name, age)` | `"{name} is {age}"` |
 | `"a" + b` | `"a{b}"` |
 | `for (var x : xs)`, `while (c)` | `for x in xs`, `for c` |

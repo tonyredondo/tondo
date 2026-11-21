@@ -80,14 +80,14 @@ import std.sync
 
 /// Takes the next job, waiting while there is none.
 fn take(jobs: sync.Mutex[Array[String]]): String {
-    jobs.updateWhen((waiting) { not waiting.isEmpty() }, (waiting) { waiting.removeAt(0) ?? "" })
+    jobs.updateWhen(waiting => not waiting.isEmpty(), waiting => waiting.removeAt(0) ?? "")
 }
 
 fn main() {
     let empty: Array[String] = []
     let jobs = sync.Mutex(empty)
     let worker = spawn take(jobs)               // waits: there is nothing yet
-    jobs.update((waiting) { waiting.push("resize the images") })
+    jobs.update(waiting => waiting.push("resize the images"))
     console.println(worker.wait())
 }
 ```

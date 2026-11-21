@@ -233,7 +233,7 @@ fn parse(text: String): Int ! ParseError {
     if text.isEmpty() {
         fail Empty
     }
-    Int.parse(text).mapErr((_) { ParseError.NotANumber(text) })
+    Int.parse(text).mapErr(_ => ParseError.NotANumber(text))
 }
 
 fn load(path: String): Int ! (fs.FsError | ParseError) {
@@ -273,12 +273,12 @@ code's back: to change an error, call `mapErr`.
 | --- | --- | --- |
 | ask | `isSome()`, `isNone()` | `isOk()`, `isErr()` |
 | give a fallback | `value ?? fallback` | `value ?? fallback` |
-| change the value | `map((x) { ... })` | `map((x) { ... })` |
-| change the error | | `mapErr((e) { ... })` |
-| go on with something that may be missing or fail | `andThen((x) { ... })` | `andThen((x) { ... })` |
+| change the value | `map(x => ...)` | `map(x => ...)` |
+| change the error | | `mapErr(e => ...)` |
+| go on with something that may be missing or fail | `andThen(x => ...)` | `andThen(x => ...)` |
 | take another when it is missing | `value ?? other` | |
 | go on along a chain while there is a value | `value?.field` | |
-| keep it only if | `filter((x) { ... })` | |
+| keep it only if | `filter(x => ...)` | |
 | turn into the other | `okOr(error)` | `ok()`, `err()` |
 | insist, and panic otherwise | `expect("why it is there")` | `expect("why it worked")` |
 | say what was going on | `context("doing this")` | `context("doing this")` |
@@ -287,18 +287,18 @@ code's back: to change an error, call `mapErr`.
 import std.console
 
 fn parse(text: String): Int ! String {
-    Int.parse(text).mapErr((_) { "`{text}` is not a number" })
+    Int.parse(text).mapErr(_ => "`{text}` is not a number")
 }
 
 fn main() {
     let fallback = parse("x") ?? 0
-    let doubled = parse("21").map((n) { n * 2 })
-    let chained = parse("4").andThen((n) { parse("{n}0") })
+    let doubled = parse("21").map(n => n * 2)
+    let chained = parse("4").andThen(n => parse("{n}0"))
     let maybe = parse("").ok()
     let required = some(5).okOr("missing")
     console.println("{fallback} {doubled} {chained} {maybe} {required}")
     let missing: Int? = none
-    console.println("{some(3).filter((n) { n > 5 })} {missing ?? some(1)} {parse("7").expect("a literal")}")
+    console.println("{some(3).filter(n => n > 5)} {missing ?? some(1)} {parse("7").expect("a literal")}")
 }
 ```
 
@@ -484,7 +484,7 @@ pub fn loadSettings(path: String): Settings ! SettingsError {
         err(NotFound) => fail Missing(path)
         err(error) => fail Unreadable(error)
     }
-    json.decode[Settings](text).mapErr((error) { SettingsError.Invalid("{error}") })
+    json.decode[Settings](text).mapErr(error => SettingsError.Invalid("{error}"))
 }
 
 fn main() {

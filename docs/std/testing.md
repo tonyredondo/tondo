@@ -33,7 +33,7 @@ test retriesWithoutWaiting {
 }
 
 test isMeasured {
-    testing.bench("sum", () { [1, 2, 3].sum() })?
+    testing.bench("sum", () => [1, 2, 3].sum())?
 }
 ```
 

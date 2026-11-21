@@ -33,7 +33,7 @@ this is what each thing of Kotlin becomes.
 | `listOf(1, 2)`, `mapOf("a" to 1)`, `setOf(1)` | `[1, 2]`, `["a": 1]`, `Set[1]` |
 | `xs.size`, `xs += x`, `xs.isEmpty()`, `xs.first()` | `xs.length()`, `xs.push(x)`, `xs.isEmpty()`, `xs.first()` |
 | `map`, `filter`, `fold`, `any`, `all`, `sortedBy`, `maxByOrNull`, `groupBy` | `map`, `filter`, `reduce`, `any`, `all`, `sortedBy`, `maxBy`, `groupBy` |
-| `xs.map { it * 2 }`, `{ x -> x * 2 }` | `xs.map((x) { x * 2 })` |
+| `xs.map { it * 2 }`, `{ x -> x * 2 }` | `xs.map(x => x * 2)`, and `(x) { ... }` with statements |
 | `for (x in xs)`, `for ((i, x) in xs.withIndex())`, `for (i in 0 until n)` | `for x in xs`, `for (i, x) in xs.enumerate()`, `for i in 0..n` |
 | `"$name: ${price}"`, `"%.2f".format(price)` | `"{name}: {price:.2}"` |
 | `if (c) a else b` | `if c { a } else { b }` |
@@ -239,12 +239,12 @@ fn main() {
             }
         }
     }
-    let totals = lines.map((line) { spawn line.total() }).wait()
+    let totals = lines.map(line => spawn line.total()).wait()
     for (index, line) in lines.enumerate() {
         console.println("{line.name}: {money(totals[index])}")
     }
     console.println("total {money(totals.sum())}")
-    match lines.maxBy((line) { line.total() }) {
+    match lines.maxBy(line => line.total()) {
         some(dearest) => console.println("dearest: {dearest.name}")
         none => {}
     }

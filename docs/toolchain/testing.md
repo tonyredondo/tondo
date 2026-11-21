@@ -388,7 +388,7 @@ fn squares(limit: Int): Array[Int] {
 }
 
 test theSquaresTakeOneAllocation {
-    assert(testing.allocations(() { squares(100) }) <= 1)
+    assert(testing.allocations(() => squares(100)) <= 1)
 }
 ```
 

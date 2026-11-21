@@ -83,7 +83,7 @@ api {"module": "String.words"}
 
 ```edit src/main.to
 -    panic("`initials` is not ported yet: {name}")
-+    name.words().map((word) { word.slice(0, 1) ?? "" }).join("").toUpper()
++    name.words().map(word => word.slice(0, 1) ?? "").join("").toUpper()
 ```
 
 ```mcp
