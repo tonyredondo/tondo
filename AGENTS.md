@@ -342,7 +342,7 @@ by counting with atomics and printing from a thread of its own what stops
 moving: a lock or a print on the path changes the timing that loses the
 wake.
 
-The scheduler itself is held to its word by three things:
+The scheduler itself is held to its word by four things:
 
 - `TONDO_CHECK_SCHEDULER=1` in the environment of a program makes the runtime
   check as it runs what its scheduler promises (16.14 of the language's
@@ -358,6 +358,13 @@ The scheduler itself is held to its word by three things:
   time, and a computation sized by this machine runs for a minute on another.
   A bound, in a case or in a model, is counted in its own unit, looks, steps
   or turns until told, never in another thread's time.
+- `TONDO_CASES_STALLS=<seed>` in the environment of the cases stops each
+  case's program as a busy machine does: every thread at once, three times
+  in its first second, and in the debug step one thread at a time inside the
+  runtime, where the seed says. What counts on a margin of time, a case or a
+  wait of the runtime, fails there and says when it stood still. A case red
+  with a seed and green without holds a duration to find: the seed gives the
+  same stops again, and a run without one only hides it.
 - A model says at its top what it assumes of the code, and whoever changes
   that code reads the list: a model whose monitor looks at every step cannot
   see a monitor that sleeps.
