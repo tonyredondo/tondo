@@ -28,7 +28,7 @@ fn turns(dir: String): String {
         let file = path.join(dir, "file{i}.txt")
         _ = fs.writeText(file, "first {i}\nsecond {i}\n")
         counted += (path.fileName(file) ?? "").length() + (path.extension(file) ?? "").length()
-        note.text = path.parent(file).map((parent) { "{parent.length() > 0}" }) ?? ""
+        note.text = path.parent(file).map(parent => "{parent.length() > 0}") ?? ""
         counted += (fs.readText(file) ?? "").length()
         counted += (fs.list(dir) ?? []).length()
         var opened = fs.open(file, fs.OpenMode.Read) ?? panic("no file")

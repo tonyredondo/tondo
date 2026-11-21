@@ -7,7 +7,7 @@ import std.net
 
 fn main(): !(http.HttpError | net.NetError) {
     var app = http.App()
-    app.get("/", (_) { http.Reply.text("here") })
+    app.get("/", _ => http.Reply.text("here"))
     var open = 0
     for _ in 0..50 {
         let server = app.start()?

@@ -31,7 +31,7 @@ fn turns(pattern: regex.Regex, file: String): String {
         let packed = gzip.compress(data)
         counted += (gzip.decompress(packed) ?? []).length()
         sender.send(encoding.hexDecode("0{i}") ?? [])
-        counted += ((pattern.find("ab{i}") ?? none).map((m) { m.span.end }) ?? 0)
+        counted += ((pattern.find("ab{i}") ?? none).map(m => m.span.end) ?? 0)
         counted += (fs.readBytes(file) ?? []).length()
         let buffer = io.Buffer()
         _ = buffer.writer().write("buffer {i}")

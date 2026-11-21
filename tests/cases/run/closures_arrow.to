@@ -1,0 +1,67 @@
+// A closure whose body is one expression is written with an arrow (11.8):
+// `x => e`, `(a, b) => e`, `() => e`. Its body is the longest expression
+// that follows, and a place where a value is wanted: a `for` there gives its
+// values, unless the closure gives `Unit`, where it is the loop it is
+// elsewhere. An `if` without `else` is the same in both forms.
+
+import std.console
+import std.sync
+
+type Item = {
+    parts: Array[Int]
+}
+
+fn each[F: CallMut[fn(Item)]](items: Array[Item], given: F) {
+    var visit = given
+    for item in items {
+        visit(item)
+    }
+}
+
+fn main() {
+    let xs = [1, 2, 3]
+    console.println("{xs.map(x => x * 2)}")
+    console.println("{xs.map(x => x * 2).sumBy(x => x)}")
+    let add: fn(Int, Int): Int = (a, b) => a + b
+    let answer: fn(): Int = () => 42
+    let curried: fn(Int): fn(Int): Int = a => b => a + b
+    let ignored: fn(Int): Int = _ => 7
+    console.println("{add(2, 3)} {answer()} {curried(1)(2)} {ignored(0)}")
+    console.println("{xs.sortedBy(x => -x)}")
+    let rows = [[1, 2], [3]]
+    console.println("{rows.map(row => for x in row { x * 10 })}")
+    let doubled: fn(Array[Int]): Array[Int] = values => for x in values { x * 2 }
+    console.println("{doubled([4, 5])}")
+    let seen = sync.Atomic(0)
+    let items = [Item { parts: [1, 2] }, Item { parts: [3] }]
+    each(items, item => for part in item.parts { seen.add(part) })
+    console.println("{seen.load()}")
+    each(
+        items,
+        item => if item.parts.length() > 1 {
+            console.println("two parts")
+        },
+    )
+    let printed = xs.map(
+        x => if x > 2 {
+            console.println("{x} is the largest")
+        },
+    )
+    console.println("{printed.length()}")
+    match some(3) {
+        some(v) if xs.any(x => x == v) => console.println("found {v}")
+        _ => console.println("none")
+    }
+}
+
+// expect-stdout: [2, 4, 6]
+// expect-stdout: 12
+// expect-stdout: 5 42 3 7
+// expect-stdout: [3, 2, 1]
+// expect-stdout: [[10, 20], [30]]
+// expect-stdout: [8, 10]
+// expect-stdout: 6
+// expect-stdout: two parts
+// expect-stdout: 3 is the largest
+// expect-stdout: 3
+// expect-stdout: found 3

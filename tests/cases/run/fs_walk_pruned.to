@@ -19,9 +19,9 @@ fn main(): !fs.FsError {
         fs.writeText(path, "")?
     }
     let short = (entries: Array[fs.Entry]) {
-        entries.map((entry) { entry.path.removePrefix("{dir}/") })
+        entries.map(entry => entry.path.removePrefix("{dir}/"))
     }
-    let pruned = fs.walk(dir, enter: (entry) { not entry.path.endsWith("/node_modules") })?
+    let pruned = fs.walk(dir, enter: entry => not entry.path.endsWith("/node_modules"))?
     console.println("{short(pruned)}")
     fs.setPermissions("{dir}/locked", 0o000)?
     let unreadable = env.user().id != 0

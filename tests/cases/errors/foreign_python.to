@@ -25,10 +25,10 @@ fn main() {
 // expect-error: E0004 several values are one parameter of type `Array[T]`
 // expect-error: E0002 a comment is `// text`
 // expect-error: E0004 a block is in braces, not after `:`
-// expect-error: E0004 an array of results is `xs.map((x) { x * 2 })`
+// expect-error: E0004 an array of results is `xs.map(x => x * 2)`
 // expect-error: E0004 a map is in brackets, `["a": 1]`
 // expect-error: E0004 a string interpolates as it is: `"total {x}"`
-// expect-error: E0004 a closure is `(x) { x * 2 }`
+// expect-error: E0004 a closure is `x => x * 2`
 // expect-error: E0004 a value that depends on a condition is `if condition { a } else { b }`
 // expect-error: E0004 `x == none` asks whether an optional has no value
 // expect-error: E0004 `not values.contains(x)` asks whether it is not there

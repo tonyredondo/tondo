@@ -76,7 +76,7 @@ fn kept(n: Int): Array[String] {
 
 fn captured(n: Int): fn(): String {
     let text = "captured {n * 1_000}"
-    () { text }
+    () => text
 }
 
 fn sent(out: Sender[String], n: Int) {

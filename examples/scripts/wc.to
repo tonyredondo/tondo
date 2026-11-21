@@ -34,9 +34,9 @@ if counts.isEmpty() {
 if counts.length() > 1 {
     counts.push(
         Count {
-            lines: counts.sumBy((each) { each.lines })
-            words: counts.sumBy((each) { each.words })
-            characters: counts.sumBy((each) { each.characters })
+            lines: counts.sumBy(each => each.lines)
+            words: counts.sumBy(each => each.words)
+            characters: counts.sumBy(each => each.characters)
             file: "total"
         },
     )

@@ -98,7 +98,7 @@ fn steps(server: Server, drains: Bool): Array[model.Step[Server]] {
             next.push(model.step("drained", server with { phase: Phase.Closed }))
         }
         let cut = conns.map(
-            (conn) { if isOpen(conn) and conn != Conn.Counted { Conn.Cut } else { conn } },
+            conn => if isOpen(conn) and conn != Conn.Counted { Conn.Cut } else { conn },
         )
         next.push(model.step("grace", server with { phase: Phase.Closed, conns: (cut) }))
     }
@@ -122,9 +122,7 @@ fn check(drains: Bool): model.Checked ! model.Violation {
             server.serving or
                 server.phase != Phase.Draining or
                 server.conns.all(
-                    (conn) {
-                        conn != Conn.Queued and conn != Conn.Answering and conn != Conn.Answered
-                    },
+                    conn => conn != Conn.Queued and conn != Conn.Answering and conn != Conn.Answered,
                 )
         },
         name: "Answered",
@@ -135,12 +133,7 @@ fn check(drains: Bool): model.Checked ! model.Violation {
         name: "Freed",
     )
     let over = (server: Server) { not server.serving and server.stopper == Stopper.Done }
-    model.check(
-        start,
-        (server) { steps(server, drains) },
-        holds: [answered, freed],
-        ends: some(over),
-    )
+    model.check(start, server => steps(server, drains), holds: [answered, freed], ends: some(over))
 }
 
 test drainAsTlcDoes {

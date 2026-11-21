@@ -91,7 +91,7 @@ fn main(): !(http.HttpError | net.NetError | io.IoError) {
     // Behind a trusted proxy, its headers name the host and the scheme.
     var proxied = http.App()
     proxied.trustProxies(net.network("127.0.0.0/8")?)
-    proxied.get("/where", (request) { http.Reply.text("{request.url()}") })
+    proxied.get("/where", request => http.Reply.text("{request.url()}"))
     let behind = proxied.start()?
     let client = http.Client(baseUrl: behind.url())
     let forwarded = ["X-Forwarded-Proto": "https", "X-Forwarded-Host": "example.com, proxy.local"]

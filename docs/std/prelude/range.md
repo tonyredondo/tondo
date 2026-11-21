@@ -29,7 +29,7 @@ import std.console
 let hours = 9..17
 let week = 1..=7
 console.println("{hours.start()}..{hours.end()} has 12: {hours.contains(12)}, inclusive: {week.isInclusive()}")
-console.println("{(0..10).filter((n) { n % 3 == 0 }).collect()} {(5..5).isEmpty()}")
+console.println("{(0..10).filter(n => n % 3 == 0).collect()} {(5..5).isEmpty()}")
 ```
 
 Implements `Iterator[T]`, `Display`.
@@ -167,7 +167,7 @@ impl Iterator[Int] for Fibonacci {
     }
 }
 
-let evens = Fibonacci { a: 0, b: 1 }.filter((n) { n % 2 == 0 }).take(5).collect()
+let evens = Fibonacci { a: 0, b: 1 }.filter(n => n % 2 == 0).take(5).collect()
 console.println("{evens}")
 ```
 
@@ -178,7 +178,7 @@ pub fn Iterator[T: Additive].sum(self): T
 ```
 
 The sum of the elements, as `Array.sum`, and of floats in the same
-order: `[1, 2, 3].iter().map((n) { n * n }).sum()` is `14`.
+order: `[1, 2, 3].iter().map(n => n * n).sum()` is `14`.
 
 #### Iterator.min
 

@@ -36,13 +36,13 @@ fn worker(yields: Yields, w: Int, after: Worker): Yields {
 
 fn steps(yields: Yields, asks: Bool, back: Bool): Array[model.Step[Yields]] {
     var next: Array[model.Step[Yields]] = []
-    let idle = yields.workers.any((each) { each.task == -1 })
+    let idle = yields.workers.any(each => each.task == -1)
     // The monitor: asleep but while every worker is busy and a task waits.
     let watching = not idle and not yields.queue.isEmpty()
     let looked = yields.workers.map(
-        (each) { each with { seen: if watching { each.started } else { -1 } } },
+        each => each with { seen: if watching { each.started } else { -1 } },
     )
-    let stuck = watching and yields.workers.any((each) { each.seen == each.started })
+    let stuck = watching and yields.workers.any(each => each.seen == each.started)
     next.push(model.step("look", yields with { workers: looked, bit: yields.bit or stuck }))
     for (w, each) in yields.workers.enumerate() {
         if each.task == -1 {
@@ -95,7 +95,7 @@ fn check(asks: Bool, back: Bool): model.Checked ! model.Violation {
         (yields: Yields) {
             (0..3).all(
                 (task) {
-                    let running = yields.workers.filter((each) { each.task == task }).length()
+                    let running = yields.workers.filter(each => each.task == task).length()
                     let queued = if yields.queue.contains(task) { 1 } else { 0 }
                     running + queued <= 1
                 },
@@ -110,7 +110,7 @@ fn check(asks: Bool, back: Bool): model.Checked ! model.Violation {
         model.weak("end", each: true),
         model.weak("checkpoint", each: true),
     ]
-    model.check(start, (yields) { steps(yields, asks, back) }, holds: [once, runs], fair: fair)
+    model.check(start, yields => steps(yields, asks, back), holds: [once, runs], fair: fair)
 }
 
 test aTaskThatWaitsRunsWhenTheOthersAsk {

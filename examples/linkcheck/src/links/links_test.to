@@ -47,13 +47,11 @@ test aSiteIsASchemeAHostAndAPort {
 fn linked(): String {
     (0..200)
         .map(
-            (n) {
-                match n % 4 {
-                    0 => "<a href='/docs/page{n}.html'>Page {n}</a>"
-                    1 => "<a href='../up{n}.html#part'>Up</a>"
-                    2 => "<img src='img/{n}.png'>"
-                    _ => "<a href='mailto:someone{n}@example.com'>Write</a>"
-                }
+            n => match n % 4 {
+                0 => "<a href='/docs/page{n}.html'>Page {n}</a>"
+                1 => "<a href='../up{n}.html#part'>Up</a>"
+                2 => "<img src='img/{n}.png'>"
+                _ => "<a href='mailto:someone{n}@example.com'>Write</a>"
             },
         )
         .collect()
@@ -63,5 +61,5 @@ fn linked(): String {
 test aPageOfTwoHundredLinksIsRead {
     let html = linked()
     let home = url.parse("https://example.com/blog/2026/post.html")?
-    testing.bench("links of a page", () { targets(home, html) })?
+    testing.bench("links of a page", () => targets(home, html))?
 }

@@ -15,7 +15,7 @@ import std.time as __time
 /// import std.http
 ///
 /// var app = http.App()
-/// app.get("/", (_) { http.Reply.text("hello").header("X-Version", "2").cookie("session", "abc") })
+/// app.get("/", _ => http.Reply.text("hello").header("X-Version", "2").cookie("session", "abc"))
 /// let response = app.client().get("/")?
 /// console.println("{response.status()} {response.reason()} {response.version()}")
 /// console.println("{response.header("x-version")} {response.cookie("session")} {response.text()?}")
@@ -173,7 +173,7 @@ fn windows1252(contentType: String): Bool ! String {
         "us-ascii",
         "ascii",
     ]
-    if labels.any((label) { label == charset }) {
+    if labels.any(label => label == charset) {
         return true
     }
     fail "it is in `{charset}`, a charset Tondo does not decode"
@@ -206,7 +206,7 @@ pub fn Response.copyTo(self, output: __io.Writer): Int ! HttpError {
 /// import std.http
 ///
 /// var app = http.App()
-/// app.get("/log", (_) { http.Reply.text("one\ntwo\nthree\n") })
+/// app.get("/log", _ => http.Reply.text("one\ntwo\nthree\n"))
 /// // Each line as it arrives, without the whole body in memory.
 /// for line in app.client().get("/log")?.lines() {
 ///     console.println("> {line?}")
@@ -370,7 +370,7 @@ pub type Client = {
 /// import std.http
 ///
 /// var app = http.App()
-/// app.get("/me", (request) { http.Reply.text(request.header("Authorization") ?? "anonymous") })
+/// app.get("/me", request => http.Reply.text(request.header("Authorization") ?? "anonymous"))
 /// var client = app.client()
 /// // Every request of the client through this hook: logged and authorized.
 /// client.use((request, next) {
@@ -518,9 +518,8 @@ pub fn Client.request(
         none => 0
     }
     let connection = self.native
-    var outgoing: fn(ClientRequest): Response ! HttpError = (request) {
+    var outgoing: fn(ClientRequest): Response ! HttpError = request =>
         deliver(connection, request, limit)?
-    }
     for hook in self.hooks.reversed() {
         outgoing = hooked(hook, outgoing)
     }
@@ -550,7 +549,7 @@ fn hooked(
     hook: fn(ClientRequest, fn(ClientRequest): Response ! HttpError): Response ! HttpError,
     next: fn(ClientRequest): Response ! HttpError,
 ): fn(ClientRequest): Response ! HttpError {
-    (request) { hook(request, next)? }
+    request => hook(request, next)?
 }
 
 /// Sends a request, with a limit in milliseconds, or 0 for none.

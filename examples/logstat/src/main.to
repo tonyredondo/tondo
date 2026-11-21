@@ -77,13 +77,11 @@ fn slow(options: Slow) {
         return
     }
     let rows = found.map(
-        (entry) {
-            SlowRow {
-                at: entry.at
-                request: "{entry.method} {entry.path}"
-                status: entry.status
-                took: "{entry.took.milliseconds()} ms"
-            }
+        entry => SlowRow {
+            at: entry.at
+            request: "{entry.method} {entry.path}"
+            status: entry.status
+            took: "{entry.took.milliseconds()} ms"
         },
     )
     console.println(cli.table(rows))

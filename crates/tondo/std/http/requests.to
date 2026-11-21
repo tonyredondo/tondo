@@ -82,7 +82,7 @@ pub fn Problem.notFound(message: String = "not found"): Problem {
 /// A `422 Unprocessable Content` problem: a value that breaks the rules of
 /// its type, each violation in the `errors` of the reply.
 pub fn Problem.invalid(violations: Array[__serialization.Violation]): Problem {
-    let shown = violations.map((violation) { "{violation}" }).join("; ")
+    let shown = violations.map(violation => "{violation}").join("; ")
     Problem { status: 422, message: "the value breaks the rules of its type: {shown}", violations }
 }
 
@@ -142,7 +142,7 @@ pub fn Request.method(self): String {
 /// for a tracer or a metric without growing with each value of a parameter,
 /// as the path does.
 pub fn Request.route(self): String? {
-    self.chosen.map((route) { "/{route.pattern.join("/")}" })
+    self.chosen.map(route => "/{route.pattern.join("/")}")
 }
 
 /// The path, without the query.
@@ -195,10 +195,7 @@ fn Request.forwarded(self, name: String): String? {
     if self.trusted.isEmpty() or not trusts(self.trusted, hostOf(self.remoteAddress())) {
         return none
     }
-    self
-        .header(name)
-        .map((value) { value.split(",")[0].trim() })
-        .filter((value) { not value.isEmpty() })
+    self.header(name).map(value => value.split(",")[0].trim()).filter(value => not value.isEmpty())
 }
 
 /// The protocol: `HTTP/1.1` or `HTTP/2`.
@@ -250,7 +247,7 @@ pub fn Request.clientIp(self): String {
             last
         }
         none => match self.header("x-real-ip") {
-            some(real) => __net.ip(real.trim()).map((address) { "{address}" }) ?? remote
+            some(real) => __net.ip(real.trim()).map(address => "{address}") ?? remote
             none => remote
         }
     }
@@ -303,7 +300,7 @@ pub fn Request.query(self, name: String): String? {
 
 /// Every value of a query parameter, decoded.
 pub fn Request.queryValues(self, name: String): Array[String] {
-    pairsOf(self.queryText).filter((pair) { pair.0 == name }).map((pair) { pair.1 })
+    pairsOf(self.queryText).filter(pair => pair.0 == name).map(pair => pair.1)
 }
 
 /// The query string read into a `T`: each field from the parameter of its
@@ -443,7 +440,7 @@ fn pairsOf(text: String): Array[(String, String)] {
 }
 
 fn readInto[T: __serialization.Decode](pairs: Array[(String, String)], what: String): T ! Problem {
-    readGiven[T](pairs.map((pair) { (pair.0, Given.Text(pair.1)) }), what)?
+    readGiven[T](pairs.map(pair => (pair.0, Given.Text(pair.1))), what)?
 }
 
 /// A value of a form: a text, or a file of a multipart one.
@@ -527,7 +524,7 @@ fn foldedName(name: String): String {
 
 impl __serialization.Source for Fields {
     fn next(self): __serialization.Event? ! __serialization.Error {
-        self.events.update((events) { events.pop() })
+        self.events.update(events => events.pop())
     }
 
     fn skip(self, first: __serialization.Event): !__serialization.Error {
@@ -563,12 +560,12 @@ impl __serialization.Source for Fields {
 
     /// The field a parameter is, by its name without case, `_` or `-`.
     fn nextField(self, names: Array[String]): Int? ! __serialization.Error {
-        let wanted = names.map((name) { foldedName(name) })
+        let wanted = names.map(name => foldedName(name))
         for {
             match self.next()? {
                 some(__serialization.Event.Key(key)) => {
                     let given = foldedName(key)
-                    match wanted.findIndex((name) { name == given }) {
+                    match wanted.findIndex(name => name == given) {
                         some(index) => {
                             self.current.set(key)
                             return index

@@ -16,7 +16,7 @@
 //
 // /// The books whose title has the text.
 // pub fn Library.search(self, text: String): Array[Book] {
-//     self.books.filter((book) { book.title.contains(text) })
+//     self.books.filter(book => book.title.contains(text))
 // }
 //
 // let schema = graphql.schema(Library { books: [Book { id: 1, title: "Tondo" }] })
@@ -47,7 +47,7 @@ import std.sync as __sync
 /// pub type Library = { books: Array[Book] }
 ///
 /// pub fn Library.search(self, text: String): Array[Book] {
-///     self.books.filter((book) { book.title.contains(text) })
+///     self.books.filter(book => book.title.contains(text))
 /// }
 ///
 /// let schema = graphql.schema(Library { books: [Book { id: 1, title: "Tondo" }, Book { id: 2, title: "Go" }] })
@@ -141,16 +141,16 @@ fn described(
         }
         __reflect.TypeKind.Enum if inner
             .variants()
-            .all((v) { v.payloadKind() == __reflect.VariantPayloadKind.Unit }) => {
+            .all(v => v.payloadKind() == __reflect.VariantPayloadKind.Unit) => {
             let name = nameOf(inner, "")
-            if not types.any((t) { t.name == name }) {
+            if not types.any(t => t.name == name) {
                 types.push(
                     Named {
                         name
                         kind: Kind.Enum
                         docs: inner.docs()
                         fields: []
-                        values: inner.variants().map((v) { v.externalName() })
+                        values: inner.variants().map(v => v.externalName())
                         origin: inner.qualifiedName()
                     },
                 )
@@ -179,7 +179,7 @@ fn standardScalar(info: __reflect.TypeInfo): String? {
 
 fn scalar(name: String, info: __reflect.TypeInfo, types: var Array[Named]): String {
     let builtIn = name == "ID"
-    if not builtIn and not types.any((t) { t.name == name }) {
+    if not builtIn and not types.any(t => t.name == name) {
         types.push(
             Named {
                 name
@@ -208,11 +208,11 @@ fn nameOf(info: __reflect.TypeInfo, suffix: String): String {
 fn objectOf(info: __reflect.TypeInfo, input: Bool, types: var Array[Named], root: String): String {
     let origin = info.qualifiedName()
     let kind = if input { Kind.Input } else { Kind.Object }
-    match types.find((t) { t.origin == origin and t.kind == kind }) {
+    match types.find(t => t.origin == origin and t.kind == kind) {
         some(found) => return found.name
         none => {}
     }
-    let clash = types.any((t) { t.origin == origin })
+    let clash = types.any(t => t.origin == origin)
     let name = if not root.isEmpty() {
         root
     } else if input and clash {
@@ -224,7 +224,7 @@ fn objectOf(info: __reflect.TypeInfo, input: Bool, types: var Array[Named], root
     types.push(Named { name, kind, docs: info.docs(), fields: [], values: [], origin })
     var fields: Array[Member] = []
     // What reflection only carries, as a database, is no field.
-    for field in info.fields().filter((f) { f.typeInfo().kind() != __reflect.TypeKind.Opaque }) {
+    for field in info.fields().filter(f => f.typeInfo().kind() != __reflect.TypeKind.Opaque) {
         fields.push(
             Member {
                 name: field.externalName()
@@ -267,13 +267,13 @@ fn objectOf(info: __reflect.TypeInfo, input: Bool, types: var Array[Named], root
             }
         }
     }
-    let index = types.findIndex((t) { t.name == name and t.kind == kind }) ?? 0
+    let index = types.findIndex(t => t.name == name and t.kind == kind) ?? 0
     types[index] = types[index] with { fields: fields }
     name
 }
 
 fn Schema.named(self, name: String): Named? {
-    self.types.find((t) { t.name == name and t.kind != Kind.Input })
+    self.types.find(t => t.name == name and t.kind != Kind.Input)
 }
 
 /// The schema in the language of GraphQL's schemas.
@@ -454,7 +454,7 @@ fn tokens(source: String): Array[Token] ! Unreadable {
                             'u' => {
                                 let digits = (chars.slice(at + 1, (at + 5).min(chars.length())) ??
                                     [])
-                                    .map((d) { "{d}" })
+                                    .map(d => "{d}")
                                     .join("")
                                 at += 4
                                 match Int.parse(digits, radix: 16) {
@@ -799,7 +799,7 @@ fn valueOf(literal: Literal, variables: Map[String, __json.Value]): __json.Value
     match literal {
         Literal.Variable(name) => variables.get(name) ?? __json.Value.Null
         Literal.Constant(value) => value
-        Literal.Listed(items) => __json.Value.Array(items.map((item) { valueOf(item, variables) }))
+        Literal.Listed(items) => __json.Value.Array(items.map(item => valueOf(item, variables)))
         Literal.Members(members) => {
             var object: Map[String, __json.Value] = [:]
             for (name, member) in members {
@@ -853,7 +853,7 @@ fn Schema.executed(
         err(problem) => return failedWith(problem.message, problem.line, problem.column)
     }
     let chosen = match operation {
-        some(name) => read.operations.find((each) { each.name == some(name) })
+        some(name) => read.operations.find(each => each.name == some(name))
         none if read.operations.length() == 1 => read.operations.first()
         none => none
     }
@@ -915,17 +915,15 @@ fn failedWith(message: String, line: Int, column: Int): String {
 fn Run.failed(self, message: String, field: Field, path: String) {
     let error =
         "{{\"message\":{__json.encode(message)},\"locations\":[{{\"line\":{field.line},\"column\":{field.column}}}],\"path\":[{path}]}}"
-    self.errors.update((all) { all.push(error) })
+    self.errors.update(all => all.push(error))
 }
 
 /// Whether `@skip` and `@include` keep a selection.
 fn Run.kept(self, directives: Array[Directive]): Bool {
     let variables = self.variables
     for directive in directives {
-        let condition = directive.arguments
-            .find((a) { a.0 == "if" })
-            .map((a) { valueOf(a.1, variables) })
-        let truth = condition.andThen((value) { value.asBool() }) ?? false
+        let condition = directive.arguments.find(a => a.0 == "if").map(a => valueOf(a.1, variables))
+        let truth = condition.andThen(value => value.asBool()) ?? false
         if directive.name == "skip" and truth {
             return false
         }
@@ -954,7 +952,7 @@ fn Run.collected(self, typeName: String, selections: Array[Selection], into: var
                 }
             }
             Selection.Inline(condition, directives, inner) => {
-                if self.kept(directives) and (condition.map((on) { on == typeName }) ?? true) {
+                if self.kept(directives) and (condition.map(on => on == typeName) ?? true) {
                     self.collected(typeName, inner, var into)
                 }
             }
@@ -977,7 +975,7 @@ fn Run.selected(
     var keys: Array[String] = []
     for field in fields {
         let key = field.label ?? field.name
-        if keys.any((seen) { seen == key }) {
+        if keys.any(seen => seen == key) {
             continue
         }
         keys.push(key)
@@ -999,13 +997,9 @@ fn Run.resolved(self, node: Node, typeName: String, field: Field, path: String):
             meta
         } else {
             let variables = self.variables
-            let wanted = field.arguments
-                .find((a) { a.0 == "name" })
-                .map((a) { valueOf(a.1, variables) })
-            let name = wanted.andThen((v) { v.asText() }) ?? ""
-            (meta.field("types").asArray() ?? []).find(
-                (t) { t.field("name").asText() == some(name) },
-            ) ??
+            let wanted = field.arguments.find(a => a.0 == "name").map(a => valueOf(a.1, variables))
+            let name = wanted.andThen(v => v.asText()) ?? ""
+            (meta.field("types").asArray() ?? []).find(t => t.field("name").asText() == some(name)) ??
                 __json.Value.Null
         }
         return self.completed(
@@ -1023,13 +1017,11 @@ fn Run.resolved(self, node: Node, typeName: String, field: Field, path: String):
         Node.Data(value) => {
             let member = match self.schema
                 .named(typeName)
-                .andThen((named) { named.fields.find((m) { m.name == field.name }) }) {
+                .andThen(named => named.fields.find(m => m.name == field.name)) {
                 some(found) => found
                 none => {
                     let known =
-                        self.schema
-                            .named(typeName)
-                            .map((named) { named.fields.map((m) { m.name }) }) ??
+                        self.schema.named(typeName).map(named => named.fields.map(m => m.name)) ??
                             []
                     let listed = if known.isEmpty() { "none" } else { known.join(", ") }
                     self.failed(
@@ -1068,13 +1060,13 @@ fn Run.called(
     path: String,
 ): __reflect.Value? {
     let info = target.typeInfo()
-    let method = info.methods().find((m) { m.name() == member.name })?
+    let method = info.methods().find(m => m.name() == member.name)?
     var args: Array[__reflect.Value] = []
     let variables = self.variables
     for parameter in method.function().parameters() {
         let given = field.arguments
-            .find((a) { a.0 == parameter.name() })
-            .map((a) { valueOf(a.1, variables) })
+            .find(a => a.0 == parameter.name())
+            .map(a => valueOf(a.1, variables))
         match __shapes.fromJson(parameter.typeInfo(), given ?? __json.Value.Null, parameter.name()) {
             ok(value) => args.push(value)
             err(problem) => {
@@ -1221,8 +1213,8 @@ fn metaType(typeName: String, field: String): String {
 
 /// The schema as introspection describes it.
 fn introspection(of: Schema): __json.Value {
-    let kinds = of.types.map((named) { (named.name, kindName(named.kind)) })
-    var types = of.types.map((named) { typeDescription(named, kinds) })
+    let kinds = of.types.map(named => (named.name, kindName(named.kind)))
+    var types = of.types.map(named => typeDescription(named, kinds))
     for name in ["String", "Int", "Float", "Boolean", "ID"] {
         types.push(jsonObject(["kind": jsonText("SCALAR"), "name": jsonText(name)]))
     }
@@ -1271,26 +1263,24 @@ fn kindName(kind: Kind): String {
 fn typeDescription(named: Named, kinds: Array[(String, String)]): __json.Value {
     let kind = kindName(named.kind)
     let fields = named.fields.map(
-        (member) {
-            jsonObject(
-                [
-                    "name": jsonText(member.name),
-                    "description": member.docs.map((d) { jsonText(d) }) ?? __json.Value.Null,
-                    "args": __json.Value.Array(
-                        member.arguments.map((a) { inputValue(a.name, a.reference, a.docs, kinds) }),
-                    ),
-                    "type": typeReference(member.reference, kinds),
-                    "isDeprecated": __json.Value.Bool(false),
-                    "deprecationReason": __json.Value.Null,
-                ],
-            )
-        },
+        member => jsonObject(
+            [
+                "name": jsonText(member.name),
+                "description": member.docs.map(d => jsonText(d)) ?? __json.Value.Null,
+                "args": __json.Value.Array(
+                    member.arguments.map(a => inputValue(a.name, a.reference, a.docs, kinds)),
+                ),
+                "type": typeReference(member.reference, kinds),
+                "isDeprecated": __json.Value.Bool(false),
+                "deprecationReason": __json.Value.Null,
+            ],
+        ),
     )
     jsonObject(
         [
             "kind": jsonText(kind),
             "name": jsonText(named.name),
-            "description": named.docs.map((d) { jsonText(d) }) ?? __json.Value.Null,
+            "description": named.docs.map(d => jsonText(d)) ?? __json.Value.Null,
             "fields": if named.kind == Kind.Object {
                 __json.Value.Array(fields)
             } else {
@@ -1298,7 +1288,7 @@ fn typeDescription(named: Named, kinds: Array[(String, String)]): __json.Value {
             },
             "inputFields": if named.kind == Kind.Input {
                 __json.Value.Array(
-                    named.fields.map((m) { inputValue(m.name, m.reference, m.docs, kinds) }),
+                    named.fields.map(m => inputValue(m.name, m.reference, m.docs, kinds)),
                 )
             } else {
                 __json.Value.Null
@@ -1312,16 +1302,14 @@ fn typeDescription(named: Named, kinds: Array[(String, String)]): __json.Value {
             "enumValues": if named.kind == Kind.Enum {
                 __json.Value.Array(
                     named.values.map(
-                        (v) {
-                            jsonObject(
-                                [
-                                    "name": jsonText(v),
-                                    "description": __json.Value.Null,
-                                    "isDeprecated": __json.Value.Bool(false),
-                                    "deprecationReason": __json.Value.Null,
-                                ],
-                            )
-                        },
+                        v => jsonObject(
+                            [
+                                "name": jsonText(v),
+                                "description": __json.Value.Null,
+                                "isDeprecated": __json.Value.Bool(false),
+                                "deprecationReason": __json.Value.Null,
+                            ],
+                        ),
                     ),
                 )
             } else {
@@ -1340,7 +1328,7 @@ fn inputValue(
     jsonObject(
         [
             "name": jsonText(name),
-            "description": docs.map((d) { jsonText(d) }) ?? __json.Value.Null,
+            "description": docs.map(d => jsonText(d)) ?? __json.Value.Null,
             "type": typeReference(reference, kinds),
             "defaultValue": __json.Value.Null,
         ],
@@ -1368,7 +1356,7 @@ fn typeReference(reference: String, kinds: Array[(String, String)]): __json.Valu
             ],
         )
     }
-    let kind = kinds.find((pair) { pair.0 == reference }).map((pair) { pair.1 }) ?? "SCALAR"
+    let kind = kinds.find(pair => pair.0 == reference).map(pair => pair.1) ?? "SCALAR"
     jsonObject(["kind": jsonText(kind), "name": jsonText(reference), "ofType": __json.Value.Null])
 }
 

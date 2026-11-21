@@ -332,7 +332,7 @@ fn element(spec: Spec): __reflect.TypeInfo {
 
 /// Whether an enum is a choice of values: none of its variants has data.
 fn choices(info: __reflect.TypeInfo): Bool {
-    info.variants().all((variant) { variant.payloadKind() == __reflect.VariantPayloadKind.Unit })
+    info.variants().all(variant => variant.payloadKind() == __reflect.VariantPayloadKind.Unit)
 }
 
 fn usageError(path: String, problem: String, usage: String): CliError {
@@ -372,8 +372,8 @@ fn subcommand(
         fail CliError { message: helpOf(info, path), help: true }
     }
     let variants = info.variants()
-    let names = variants.map((variant) { kebab(variant.name()) })
-    let chosen = match variants.find((variant) { kebab(variant.name()) == first }) {
+    let names = variants.map(variant => kebab(variant.name()))
+    let chosen = match variants.find(variant => kebab(variant.name()) == first) {
         some(chosen) => chosen
         none => fail usageError(path, "unknown command `{first}`{suggested(first, names)}", usage)
     }
@@ -437,11 +437,11 @@ fn members(
 ): Map[String, __reflect.Value] ! CliError {
     let specs = specsOf(fields)
     let usage = recordUsage(specs, path)
-    let options = specs.filter((spec) { not spec.positional and not spec.rest })
-    let arguments = specs.filter((spec) { spec.positional })
-    let rest = specs.find((spec) { spec.rest })
+    let options = specs.filter(spec => not spec.positional and not spec.rest)
+    let arguments = specs.filter(spec => spec.positional)
+    let rest = specs.find(spec => spec.rest)
     // Those of the commands around it that it does not shadow.
-    let shared = outer.filter((spec) { not options.any((own) { own.name == spec.name }) })
+    let shared = outer.filter(spec => not options.any(own => own.name == spec.name))
     var written: Map[String, Array[String]] = [:]
     var found: Map[String, __reflect.Value] = [:]
     var position = 0
@@ -469,16 +469,16 @@ fn members(
                 none => (arg.removePrefix("--"), none)
             }
             // Its own, one of the commands around it, or what it passes on.
-            let (spec, owner) = match options.find((spec) { spec.name == name }) {
+            let (spec, owner) = match options.find(spec => spec.name == name) {
                 some(spec) => (spec, true)
-                none => match (shared.find((spec) { spec.name == name }), rest) {
+                none => match (shared.find(spec => spec.name == name), rest) {
                     (some(spec), _) => (spec, false)
                     (none, some(passed)) => {
                         written[passed.field] = (written.get(passed.field) ?? []).concat([arg])
                         continue
                     }
                     (none, none) => {
-                        let known = options.map((spec) { "--{spec.name}" })
+                        let known = options.map(spec => "--{spec.name}")
                         fail usageError(
                             path,
                             "unknown option `--{name}`{suggested("--{name}", known)}",
@@ -509,7 +509,7 @@ fn members(
             // Letters this command does not know go on whole, with a `Rest`.
             let letters = arg.slice(1, arg.length()) ?? ""
             let knows = (letter: Char) {
-                options.concat(shared).any((spec) { spec.short == some("{letter}") })
+                options.concat(shared).any(spec => spec.short == some("{letter}"))
             }
             match rest {
                 some(passed) if not letters.chars().all(knows) => {
@@ -523,9 +523,9 @@ fn members(
             for at < arg.length() {
                 let letter = "{arg[at]}"
                 at += 1
-                let (spec, owner) = match options.find((spec) { spec.short == some(letter) }) {
+                let (spec, owner) = match options.find(spec => spec.short == some(letter)) {
                     some(spec) => (spec, true)
-                    none => match shared.find((spec) { spec.short == some(letter) }) {
+                    none => match shared.find(spec => spec.short == some(letter)) {
                         some(spec) => (spec, false)
                         none => fail usageError(path, "unknown option `-{letter}`", usage)
                     }
@@ -591,7 +591,7 @@ fn members(
         }
         var texts = written.get(spec.field) ?? []
         if texts.isEmpty() {
-            match spec.env.map((name) { __env.get(name) }).find((value) { value.isSome() }) {
+            match spec.env.map(name => __env.get(name)).find(value => value.isSome()) {
                 some(some(value)) => texts = [value]
                 _ => {}
             }
@@ -632,7 +632,7 @@ fn members(
     }
     // What a command around it has, for that command.
     for (field, texts) in written {
-        if not specs.any((spec) { spec.field == field }) {
+        if not specs.any(spec => spec.field == field) {
             lifted[field] = (lifted.get(field) ?? []).concat(texts)
         }
     }
@@ -653,8 +653,8 @@ fn typed(
             err(problem) => fail usageError(path, "{shown}: {problem}", usage)
         }
         __reflect.TypeKind.Enum if choices(info) => {
-            let names = info.variants().map((variant) { kebab(variant.name()) })
-            match info.variants().find((variant) { kebab(variant.name()) == written }) {
+            let names = info.variants().map(variant => kebab(variant.name()))
+            match info.variants().find(variant => kebab(variant.name()) == written) {
                 some(variant) => __shapes.variant(variant.name(), [:], [])
                 none => fail usageError(
                     path,
@@ -765,16 +765,16 @@ fn summary(docs: String?): String {
 }
 
 fn commandsUsage(info: __reflect.TypeInfo, path: String): String {
-    let rows = info.variants().map((variant) { (kebab(variant.name()), summary(variant.docs())) })
+    let rows = info.variants().map(variant => (kebab(variant.name()), summary(variant.docs())))
     "Usage: {path} <command>\n\nCommands:\n{lined(rows)}"
 }
 
 fn recordUsage(specs: Array[Spec], path: String): String {
     var line = "Usage: {path}"
-    if specs.any((spec) { not spec.positional }) {
+    if specs.any(spec => not spec.positional) {
         line = "{line} [options]"
     }
-    for spec in specs.filter((spec) { spec.positional or spec.rest }) {
+    for spec in specs.filter(spec => spec.positional or spec.rest) {
         if spec.rest {
             line = "{line} [-- <{spec.name}>...]"
             continue
@@ -791,7 +791,7 @@ fn recordUsage(specs: Array[Spec], path: String): String {
 
 fn recordHelp(specs: Array[Spec], docs: String?, path: String): String {
     var written = describe(docs, recordUsage(specs, path))
-    let arguments = specs.filter((spec) { spec.positional })
+    let arguments = specs.filter(spec => spec.positional)
     if not arguments.isEmpty() {
         written =
             "{written}\nArguments:\n{lined(arguments.map((spec) { ("<{spec.name}>", details(spec)) }))}"
@@ -799,13 +799,13 @@ fn recordHelp(specs: Array[Spec], docs: String?, path: String): String {
             if arityOf(spec) == Arity.Commands {
                 let rows = spec.info
                     .variants()
-                    .map((variant) { (kebab(variant.name()), summary(variant.docs())) })
+                    .map(variant => (kebab(variant.name()), summary(variant.docs())))
                 written = "{written}\nCommands:\n{lined(rows)}"
             }
         }
     }
     var rows: Array[(String, String)] = []
-    for spec in specs.filter((spec) { not spec.positional and not spec.hidden and not spec.rest }) {
+    for spec in specs.filter(spec => not spec.positional and not spec.hidden and not spec.rest) {
         let letter = match spec.short {
             some(short) => "-{short}, "
             none => "    "
@@ -828,7 +828,7 @@ fn asTyped(value: __reflect.Value): String {
         __reflect.TypeKind.Enum => kebab(value.variant() ?? "{value}")
         __reflect.TypeKind.Applied(__reflect.AppliedKind.Array) => value
             .elements()
-            .map((item) { asTyped(item) })
+            .map(item => asTyped(item))
             .join(", ")
         _ => "{value}"
     }
@@ -839,8 +839,7 @@ fn details(spec: Spec): String {
     var written = summary(spec.docs)
     let values = element(spec)
     if values.kind() == __reflect.TypeKind.Enum and choices(values) {
-        written =
-            "{written} [{values.variants().map((variant) { kebab(variant.name()) }).join(", ")}]"
+        written = "{written} [{values.variants().map(variant => kebab(variant.name())).join(", ")}]"
     }
     match (spec.default, spec.fallback) {
         (some(value), _) => written = "{written} [default: {value}]"
@@ -875,7 +874,7 @@ fn completedOf(
     match info.kind() {
         __reflect.TypeKind.Enum => {
             found.push(
-                Completed { path, words: info.variants().map((variant) { kebab(variant.name()) }) },
+                Completed { path, words: info.variants().map(variant => kebab(variant.name())) },
             )
             for variant in info.variants() {
                 let inner = path.concat([kebab(variant.name())])
@@ -913,11 +912,11 @@ fn fieldsCompleted(
         }
     }
     let own = words
-    words.extend(shared.filter((word) { not own.any((known) { known == word }) }))
+    words.extend(shared.filter(word => not own.any(known => known == word)))
     var found: Array[Completed] = []
     for spec in specs {
         if arityOf(spec) == Arity.Commands {
-            found.extend(completedOf(spec.info, path, words.filter((word) { word != "--help" })))
+            found.extend(completedOf(spec.info, path, words.filter(word => word != "--help")))
         }
     }
     found.insert(0, Completed { path, words })
@@ -1007,7 +1006,7 @@ pub fn isTerminal(): Bool {
 /// console.println("─".repeat(cli.terminalWidth()))
 /// ```
 pub fn terminalWidth(): Int {
-    terminalSize().map((found) { found.columns }) ?? 80
+    terminalSize().map(found => found.columns) ?? 80
 }
 
 /// The size of a terminal, in characters.
@@ -1748,16 +1747,16 @@ pub fn table[T: __reflect.Reflect](
         return tableOfArrays(rows, columns, title, border)
     }
     let fields = info.fields()
-    let names = if columns.isEmpty() { fields.map((field) { field.name() }) } else { columns }
+    let names = if columns.isEmpty() { fields.map(field => field.name()) } else { columns }
     for name in names {
-        if not fields.any((field) { field.name() == name }) {
+        if not fields.any(field => field.name() == name) {
             panic(
-                "`{info}` has no field `{name}`: its fields are {fields.map((field) { field.name() }).join(", ")}",
+                "`{info}` has no field `{name}`: its fields are {fields.map(field => field.name()).join(", ")}",
             )
         }
     }
     var cells: Array[Array[String]] = []
-    var right: Array[Bool] = names.map((_) { false })
+    var right: Array[Bool] = names.map(_ => false)
     for row in rows {
         let value = __reflect.valueOf(row)
         let secrets = secretFields(value)
@@ -1784,7 +1783,7 @@ fn tableOfArrays[T: __reflect.Reflect](
     title: String,
     border: Border,
 ): String {
-    let values = rows.map((row) { __reflect.valueOf(row).elements() })
+    let values = rows.map(row => __reflect.valueOf(row).elements())
     var wide = headers.length()
     for line in values {
         wide = wide.max(line.length())
@@ -1797,8 +1796,8 @@ fn tableOfArrays[T: __reflect.Reflect](
         names.push("")
     }
     var cells: Array[Array[String]] = []
-    var right: Array[Bool] = names.map((_) { false })
-    var words: Array[Bool] = names.map((_) { false })
+    var right: Array[Bool] = names.map(_ => false)
+    var words: Array[Bool] = names.map(_ => false)
     for line in values {
         var written: Array[String] = []
         for index in 0..wide {
@@ -1832,7 +1831,7 @@ fn bordered(
     title: String,
     border: Border,
 ): String {
-    var widths = names.map((name) { widest(name) })
+    var widths = names.map(name => widest(name))
     for line in cells {
         for index in 0..line.length() {
             widths[index] = widths[index].max(widest(line[index]))
@@ -1842,7 +1841,7 @@ fn bordered(
     let edge = edges(border)
     // The lines of a row, as tall as its tallest cell.
     let row = (line: Array[String]) {
-        let parts = line.map((cell) { linesOf(cell) })
+        let parts = line.map(cell => linesOf(cell))
         var tall = 1
         for part in parts {
             tall = tall.max(part.length())
@@ -1866,7 +1865,7 @@ fn bordered(
         written
     }
     let across = (left: String, middle: String, end: String) {
-        "{left}{widths.map((wide) { edge.across.repeat(wide + 2) }).join(middle)}{end}\n"
+        "{left}{widths.map(wide => edge.across.repeat(wide + 2)).join(middle)}{end}\n"
     }
     var written = ""
     let total = if grid {
@@ -1880,7 +1879,7 @@ fn bordered(
     if not grid {
         written = "{written}{across(edge.topLeft, edge.topJoin, edge.topRight)}"
     }
-    if names.any((name) { not name.isEmpty() }) {
+    if names.any(name => not name.isEmpty()) {
         written = "{written}{row(names)}"
         if not grid {
             written = "{written}{across(edge.leftJoin, edge.cross, edge.rightJoin)}"
@@ -1911,7 +1910,7 @@ fn cellOf(value: __reflect.Value): String {
 /// Whether a value has a part, at any depth, that shows as `<secret>`.
 fn keepsSecrets(value: __reflect.Value): Bool {
     let secrets = secretFields(value)
-    partsOf(value).any((part) { hiddenPart(secrets, part.0, part.1) or keepsSecrets(part.1) })
+    partsOf(value).any(part => hiddenPart(secrets, part.0, part.1) or keepsSecrets(part.1))
 }
 
 /// A value as the tools show it, with `<secret>` for what is secret; a text
@@ -1985,9 +1984,9 @@ type Edges = {
 
 fn edges(border: Border): Edges {
     let drawn = (corners: String, lines: String, joins: String) {
-        let corner: Array[String] = corners.chars().map((one) { "{one}" }).collect()
-        let line: Array[String] = lines.chars().map((one) { "{one}" }).collect()
-        let join: Array[String] = joins.chars().map((one) { "{one}" }).collect()
+        let corner: Array[String] = corners.chars().map(one => "{one}").collect()
+        let line: Array[String] = lines.chars().map(one => "{one}").collect()
+        let join: Array[String] = joins.chars().map(one => "{one}").collect()
         Edges {
             topLeft: corner[0]
             topRight: corner[1]
@@ -2021,7 +2020,7 @@ fn linesOf(text: String): Array[String] {
 
 /// The columns of a text's widest line.
 fn widest(text: String): Int {
-    linesOf(text).map((line) { visible(line) }).max() ?? 0
+    linesOf(text).map(line => visible(line)).max() ?? 0
 }
 
 /// A line of `text` in the middle of `room` columns.
@@ -2082,7 +2081,7 @@ pub fn panel(
     }
     written.push("{edge.bottomLeft}{edge.across.repeat(inside)}{edge.bottomRight}")
     if border == Border.None {
-        written = written.map((line) { line.trimEnd() })
+        written = written.map(line => line.trimEnd())
     }
     written.join("\n")
 }
@@ -2142,9 +2141,9 @@ pub fn beside(texts: Array[String], gap: Int = 2, width: Int? = none): String {
     }
     var written: Array[String] = []
     for row in rows {
-        let blocks = row.map((text) { linesOf(text) })
-        let widths = row.map((text) { widest(text) })
-        let tall = blocks.map((block) { block.length() }).max() ?? 0
+        let blocks = row.map(text => linesOf(text))
+        let widths = row.map(text => widest(text))
+        let tall = blocks.map(block => block.length()).max() ?? 0
         for at in 0..tall {
             var line = ""
             for index in 0..blocks.length() {
@@ -2200,14 +2199,11 @@ fn secretFields(value: __reflect.Value): Array[String] {
     let info = value.typeInfo()
     let fields = match value.variant() {
         some(name) =>
-            info
-                .variants()
-                .find((variant) { variant.name() == name })
-                .map((variant) { variant.fields() }) ??
+            info.variants().find(variant => variant.name() == name).map(variant => variant.fields()) ??
                 []
         none => info.fields()
     }
-    fields.filter((field) { field.secret() }).map((field) { field.name() })
+    fields.filter(field => field.secret()).map(field => field.name())
 }
 
 /// Whether a part shows as `<secret>`: a field `@secret`, or a value of a
@@ -2227,13 +2223,13 @@ fn partsOf(value: __reflect.Value): Array[(String, __reflect.Value)] {
     }
     let fields = value.fields()
     if not fields.isEmpty() {
-        return fields.map((field) { (field.name, field.value) })
+        return fields.map(field => (field.name, field.value))
     }
     let entries = value.entries()
     if not entries.isEmpty() {
-        return entries.map((entry) { ("{entry.0}", entry.1) })
+        return entries.map(entry => ("{entry.0}", entry.1))
     }
-    value.elements().map((item) { ("", item) })
+    value.elements().map(item => ("", item))
 }
 
 /// The text of a node: its value when it has no parts, else its type, or
@@ -2316,11 +2312,11 @@ fn branches(value: __reflect.Value, indent: String, written: var Array[String]) 
 /// ```
 pub fn bars(values: Array[(String, Float)], width: Int? = none): String {
     let columns = width ?? terminalWidth()
-    let labels = values.map((entry) { visible(entry.0) }).max() ?? 0
-    let numbers = values.map((entry) { numeral(entry.1) })
-    let digits = numbers.map((text) { visible(text) }).max() ?? 0
+    let labels = values.map(entry => visible(entry.0)).max() ?? 0
+    let numbers = values.map(entry => numeral(entry.1))
+    let digits = numbers.map(text => visible(text)).max() ?? 0
     let room = (columns - labels - digits - 3).max(1)
-    let largest = values.map((entry) { entry.1.max(0.0) }).max() ?? 0.0
+    let largest = values.map(entry => entry.1.max(0.0)).max() ?? 0.0
     var written: Array[String] = []
     for index in 0..values.length() {
         let (name, value) = values[index]
@@ -2364,7 +2360,7 @@ fn numeral(value: Float): String {
 /// ```
 pub fn breakdown(parts: Array[(String, Float)], width: Int? = none): String {
     let columns = (width ?? terminalWidth()).max(1)
-    let total = parts.map((part) { part.1.max(0.0) }).sum()
+    let total = parts.map(part => part.1.max(0.0)).sum()
     let paint = painting()
     let colors = ["34", "32", "33", "35", "36", "31", "94", "92"]
     let shades = ["█", "▓", "▒", "░"]
@@ -2457,8 +2453,8 @@ pub fn calendar(
     let now = __time.localNow()
     let today = if paint and now.year == year and now.month == month { now.day } else { 0 }
     let picked = marked
-        .filter((date) { date.year == year and date.month == month })
-        .map((date) { date.day })
+        .filter(date => date.year == year and date.month == month)
+        .map(date => date.day)
     var lines = [
         centered(capitalized(start.format("%B %Y", locale)), 28).trimEnd(),
         names.join("").trimEnd(),
@@ -2673,20 +2669,17 @@ fn maskedRecord(object: Map[String, __json.Value], value: __reflect.Value): __js
     let info = value.typeInfo()
     let declared = match value.variant() {
         some(name) =>
-            info
-                .variants()
-                .find((variant) { variant.name() == name })
-                .map((variant) { variant.fields() }) ??
+            info.variants().find(variant => variant.name() == name).map(variant => variant.fields()) ??
                 []
         none => info.fields()
     }
     var changed = object
     for field in value.fields() {
-        let described = declared.find((one) { one.name() == field.name })
-        let name = described.map((one) { one.externalName() }) ?? field.name
+        let described = declared.find(one => one.name() == field.name)
+        let name = described.map(one => one.externalName()) ?? field.name
         match object[name] {
             some(inner) => {
-                let hidden = described.map((one) { one.secret() }) ?? false
+                let hidden = described.map(one => one.secret()) ?? false
                 changed[name] = if hidden {
                     __json.Value.Text("<secret>")
                 } else {
@@ -2808,10 +2801,10 @@ pub fn Pane.rooms(self, size: Size): Map[String, Size] {
 /// What each part takes of `room`: its fixed size, then shares of what is
 /// left by ratio, the last taking what rounding leaves.
 fn shares(parts: Array[Pane], room: Int): Array[Int] {
-    let fixed = parts.map((part) { (part.size ?? 0).max(0) }).sum()
+    let fixed = parts.map(part => (part.size ?? 0).max(0)).sum()
     let left = (room - fixed).max(0)
-    let flexible = parts.filter((part) { part.size.isNone() })
-    let ratios = flexible.map((part) { part.ratio.max(0) }).sum()
+    let flexible = parts.filter(part => part.size.isNone())
+    let ratios = flexible.map(part => part.ratio.max(0)).sum()
     var given: Array[Int] = []
     var spent = 0
     var seen = 0
@@ -2860,9 +2853,9 @@ fn paneLines(pane: Pane, rows: Int, columns: Int): Array[String] {
         return lines
     }
     let blocks = (0..pane.parts.length())
-        .map((index) { paneLines(pane.parts[index], rows, given[index]) })
+        .map(index => paneLines(pane.parts[index], rows, given[index]))
         .collect()
-    (0..rows).map((row) { blocks.map((block) { block.get(row) ?? "" }).join("") }).collect()
+    (0..rows).map(row => blocks.map(block => block.get(row) ?? "").join("")).collect()
 }
 
 /// The rooms of the named panes inside a pane at `rows` by `columns`.
@@ -3014,12 +3007,10 @@ fn spinning(spinner: Progress) {
 /// Counts `by` more steps done.
 pub fn Progress.advance(self, by: Int = 1) {
     self.state.update(
-        (bar) {
-            if not bar.finished {
-                bar.done += by
-                bar.frame += 1
-                drawBar(bar)
-            }
+        bar => if not bar.finished {
+            bar.done += by
+            bar.frame += 1
+            drawBar(bar)
         },
     )
 }
@@ -3027,11 +3018,9 @@ pub fn Progress.advance(self, by: Int = 1) {
 /// Says what the work does now, in place of its label.
 pub fn Progress.say(self, label: String) {
     self.state.update(
-        (bar) {
-            if not bar.finished {
-                bar.label = label
-                drawBar(bar)
-            }
+        bar => if not bar.finished {
+            bar.label = label
+            drawBar(bar)
         },
     )
 }
@@ -3167,7 +3156,7 @@ pub fn ask(question: String, default: String = ""): String {
 pub fn confirm(question: String, default: Bool = false): Bool {
     let hint = if default { "[Y/n]" } else { "[y/N]" }
     for {
-        match answer("{question} {hint}: ").map((text) { text.toLower() }) {
+        match answer("{question} {hint}: ").map(text => text.toLower()) {
             some(text) if text == "y" or text == "yes" => return true
             some(text) if text == "n" or text == "no" => return false
             some(text) if not text.isEmpty() => {}
@@ -3225,7 +3214,7 @@ pub fn choose(question: String, options: Array[String], search: Bool = false): I
 ///
 /// let parts = ["docs", "tests", "examples"]
 /// let picked = cli.chooseMany("Install", parts, chosen: [0])
-/// console.println(picked.map((index) { parts[index] }).join(", "))
+/// console.println(picked.map(index => parts[index]).join(", "))
 /// ```
 pub fn chooseMany(
     question: String,
@@ -3233,7 +3222,7 @@ pub fn chooseMany(
     chosen: Array[Int] = [],
     search: Bool = false,
 ): Array[Int] {
-    let first = chosen.filter((index) { index >= 0 and index < options.length() })
+    let first = chosen.filter(index => index >= 0 and index < options.length())
     if not options.isEmpty() and isTerminal() {
         match selected(question, options, first, search) {
             some(marked) => return marked
@@ -3287,9 +3276,7 @@ fn selected(
     var watching = true
     let many = marked.isSome()
     let initial = marked ?? []
-    var marks: Array[Bool] = (0..options.length())
-        .map((index) { initial.contains(index) })
-        .collect()
+    var marks: Array[Bool] = (0..options.length()).map(index => initial.contains(index)).collect()
     var choice = Choice {
         question
         options
@@ -3334,7 +3321,7 @@ fn selected(
             }
             some(Key.Backspace) if search => {
                 let kept: Array[Char] = query.chars().collect()
-                query = kept.take(kept.length() - 1).map((c) { "{c}" }).join("")
+                query = kept.take(kept.length() - 1).map(c => "{c}").join("")
                 choice.narrow(query)
             }
             some(Key.Enter) if many or not choice.shown.isEmpty() => break
@@ -3347,11 +3334,11 @@ fn selected(
     fsNative.terminalRelease(ref mode)
     choice.clear()
     let picked: Array[Int] = if many {
-        (0..options.length()).filter((index) { marks[index] }).collect()
+        (0..options.length()).filter(index => marks[index]).collect()
     } else {
         [choice.shown.get(choice.chosen) ?? 0]
     }
-    __console.println("{question}: {picked.map((index) { options[index] }).join(", ")}")
+    __console.println("{question}: {picked.map(index => options[index]).join(", ")}")
     _ = __console.flush()
     picked
 }
@@ -3487,7 +3474,7 @@ pub fn secret(question: String): String {
     __console.print("{question}: ")
     _ = __console.flush()
     let mode = asking(false)
-    let text = __console.readLine().map((text) { text.trim() })
+    let text = __console.readLine().map(text => text.trim())
     let hidden = fsNative.terminalStatus(ref mode) == 0
     fsNative.terminalRelease(ref mode)
     if hidden {
@@ -3500,7 +3487,7 @@ fn answer(prompt: String): String? {
     __console.print(prompt)
     _ = __console.flush()
     let mode = asking(true)
-    let line = __console.readLine().map((text) { text.trim() })
+    let line = __console.readLine().map(text => text.trim())
     fsNative.terminalRelease(ref mode)
     line
 }

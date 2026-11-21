@@ -82,7 +82,7 @@ fn main() {
         err(stopped) => console.println("{stopped.message}")
     }
     let job = spawn slowValue()
-    Counts.started.updateWhen((started) { started }, (_) {})
+    Counts.started.updateWhen(started => started, (_) {})
     job.cancel()
     console.println("slow: {Patterns.slow}")
 }

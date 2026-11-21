@@ -6,7 +6,7 @@ fn main() {
     let counts = ["b": 2, "a": 1]
     let keys = counts.keys().sorted()
     let values = counts.values().toArray()
-    let evens = (0..10).filter((n) { n % 2 == 0 }).reversed()
+    let evens = (0..10).filter(n => n % 2 == 0).reversed()
     let shown = "{counts.keys()}"
     let at = counts.keys().position
 }

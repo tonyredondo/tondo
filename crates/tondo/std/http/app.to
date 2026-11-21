@@ -32,13 +32,13 @@ type Route = {
 ///
 /// var api = http.App()
 /// api.get("/todos/:id", (request) { http.Reply.json(Todo { id: request.intParam("id")?, title: "Write docs" }) })
-/// api.post("/todos", (request) { http.Reply.json(request.json[Todo]()?, status: 201) })
+/// api.post("/todos", request => http.Reply.json(request.json[Todo]()?, status: 201))
 ///
 /// var app = http.App()
 /// app.cors(["https://example.com"])
 /// app.compress()
 /// app.mount("/api", api)
-/// app.get("/health", (_) { http.Reply.text("ok") })
+/// app.get("/health", _ => http.Reply.text("ok"))
 /// console.println(app.client().get("/api/todos/1")?.text()?)
 /// ```
 pub type App = {
@@ -97,7 +97,7 @@ pub fn App.route(
 ) {
     let verb = method.toUpper()
     let pattern = routeSegments(path)
-    match self.routes.find((route) { route.method == verb and route.pattern == pattern }) {
+    match self.routes.find(route => route.method == verb and route.pattern == pattern) {
         some(_) => panic(
             "the route `{verb} /{pattern.join("/")}` is added twice, and only the first would answer: remove one; a path answers with its trailing `/` or without it",
         )
@@ -130,7 +130,7 @@ pub fn App.route(
 ///     log.info("served", ["path": request.path(), "status": "{reply.status()}", "took": "{started.elapsed()}"])
 ///     reply
 /// })
-/// app.get("/", (_) { http.Reply.text("hello") })
+/// app.get("/", _ => http.Reply.text("hello"))
 /// ```
 pub fn App.use(mut self, middleware: fn(Request, fn(Request): Reply ! Problem): Reply ! Problem) {
     self.layers.push(middleware)
@@ -152,7 +152,7 @@ pub fn App.cors(
     maxAge: __time.Duration = __time.seconds(600),
 ) {
     let policy = Cors { origins, headers, exposed, credentials, maxAge }
-    self.use((request, next) { policy.answer(request, next)? })
+    self.use((request, next) => policy.answer(request, next)?)
 }
 
 /// What `App.cors` lets other origins do.
@@ -330,7 +330,7 @@ fn listingPage(base: String, relative: String, tree: __fs.FileSystem, at: String
         err(_) => fail Problem.notFound()
     }
     let parts = segments(relative)
-    let encoded = parts.map((part) { __encoding.urlEncode(part) })
+    let encoded = parts.map(part => __encoding.urlEncode(part))
     let here = if encoded.isEmpty() { base } else { "{base}/{encoded.join("/")}" }
     var rows: Array[String] = []
     if not parts.isEmpty() {
@@ -343,7 +343,7 @@ fn listingPage(base: String, relative: String, tree: __fs.FileSystem, at: String
         let shown = escaped(name)
         let child = if at.isEmpty() { name } else { "{at}/{name}" }
         let found = tree.metadata(child)
-        if found.map((entry) { entry.kind == __fs.FileKind.Directory }) ?? false {
+        if found.map(entry => entry.kind == __fs.FileKind.Directory) ?? false {
             rows.push("<tr><td><a href=\"{href}\">{shown}/</a></td><td></td><td></td></tr>")
         } else {
             let size = match found {
@@ -505,9 +505,11 @@ impl __serialization.Decode for Saved {
 /// middleware whose replies it compresses.
 pub fn App.compress(mut self, minimum: Int = 1024) {
     self.use(
-        (request, next) {
-            compressed(next(request)?, request.header("accept-encoding") ?? "", minimum)
-        },
+        (request, next) => compressed(
+            next(request)?,
+            request.header("accept-encoding") ?? "",
+            minimum,
+        ),
     )
 }
 
@@ -521,9 +523,9 @@ fn encodingFor(accepted: String): String? {
         let name = parts[0].trim().toLowerAscii()
         let weight =
             ((parts.slice(1, parts.length()) ?? [])
-                .map((p) { p.trim() })
-                .find((p) { p.startsWith("q=") })
-                .andThen((p) { Float.parse(p.removePrefix("q=")).ok() }) ??
+                .map(p => p.trim())
+                .find(p => p.startsWith("q="))
+                .andThen(p => Float.parse(p.removePrefix("q=")).ok()) ??
                 1.0)
         // zstd before gzip when the client weighs them the same.
         let known = name == "zstd" or name == "gzip"
@@ -648,16 +650,17 @@ fn App.pipeline(self): fn(Request): Reply ! Problem {
                 Route {
                     method: "GET"
                     pattern: segments(path)
-                    handler: (_request) {
-                        Reply.bytes(document.bytes(), contentType: "application/json")
-                    }
+                    handler: _request => Reply.bytes(
+                        document.bytes(),
+                        contentType: "application/json",
+                    )
                 },
             )
         }
         none => {}
     }
     let routes = app.routes
-    var handler: fn(Request): Reply ! Problem = (request) { dispatch(request)? }
+    var handler: fn(Request): Reply ! Problem = request => dispatch(request)?
     for layer in self.layers.reversed() {
         handler = wrapped(layer, handler)
     }
@@ -680,7 +683,7 @@ fn wrapped(
     layer: fn(Request, fn(Request): Reply ! Problem): Reply ! Problem,
     next: fn(Request): Reply ! Problem,
 ): fn(Request): Reply ! Problem {
-    (request) { layer(request, next)? }
+    request => layer(request, next)?
 }
 
 /// The request with the route that answers it: of its method, or `GET` for
@@ -847,7 +850,7 @@ fn routeSegments(path: String): Array[String] {
             continue
         }
         let name = part.slice(1, part.length()) ?? ""
-        let named = name.chars().all((c) { c.isLetter() or c.isDigit() or c == '_' })
+        let named = name.chars().all(c => c.isLetter() or c.isDigit() or c == '_')
         if name.isEmpty() or not named or name.chars().collect()[0].isDigit() {
             panic(
                 "the segment `{part}` of the route `{path}`: a parameter takes a whole segment and is named like a binding, as `:file`; split the parts of one in the handler",

@@ -41,7 +41,7 @@ fn main() {
         Order { user: 2, total: 2.0 },
         Order { user: 3, total: 9.0 },
     ]
-    for (order, user) in orders.joinBy(users, (o) { o.user }, (u) { u.id }) {
+    for (order, user) in orders.joinBy(users, o => o.user, u => u.id) {
         console.println("{user.name} {order.total}")
     }
     let nobody: Array[User] = []
@@ -50,7 +50,7 @@ fn main() {
     )
 
     // Ending a chain without collecting it.
-    let evens = [3, 1, 4, 1, 5, 9, 2, 6].iter().filter((n) { n % 2 == 0 })
+    let evens = [3, 1, 4, 1, 5, 9, 2, 6].iter().filter(n => n % 2 == 0)
     console.println(
         "{evens.minBy((n) { n })} {evens.maxBy((n) { n })} {evens.countBy((n) { n > 3 })}",
     )

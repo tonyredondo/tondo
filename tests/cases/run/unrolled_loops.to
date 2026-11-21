@@ -87,7 +87,7 @@ fn main() {
     console.println("{turns(max - 5, max)} {turns(min, min + 3)} {turns(min, min + 7)}")
     var made: Array[fn(): Int] = []
     for i in 0..6 {
-        made.push(() { i * 10 })
+        made.push(() => i * 10)
     }
     console.println("{made.map((f) { f() })}")
     var seen: Array[(Int, Int)] = []

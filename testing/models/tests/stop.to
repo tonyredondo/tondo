@@ -67,7 +67,7 @@ fn steps(world: World, oneAtATime: Bool): Array[model.Step[World]] {
                 )
             }
             Stopper.Stopping => {
-                if world.threads.all((thread) { not thread.running }) {
+                if world.threads.all(thread => not thread.running) {
                     next.push(model.step("stopped", turns(Stopper.Inside)))
                 }
                 // It gives up, as when a task runs long without a safe point.
@@ -92,15 +92,15 @@ fn check(oneAtATime: Bool): model.Checked ! model.Violation {
         stoppers: ([Stopper.Idle, Stopper.Idle])
         owner: none
     }
-    let inside = (world: World) { world.stoppers.count((stopper) { stopper == Stopper.Inside }) }
+    let inside = (world: World) { world.stoppers.count(stopper => stopper == Stopper.Inside) }
     // While a stopper is inside, no thread runs Tondo code.
     let quiet = model.always(
-        (world: World) { inside(world) == 0 or world.threads.all((thread) { thread.at != At.In }) },
+        (world: World) { inside(world) == 0 or world.threads.all(thread => thread.at != At.In) },
         name: "Quiet",
     )
     // And no other stopper is inside with it.
     let alone = model.always((world: World) { inside(world) <= 1 }, name: "Alone")
-    model.check(start, (world) { steps(world, oneAtATime) }, holds: [quiet, alone])
+    model.check(start, world => steps(world, oneAtATime), holds: [quiet, alone])
 }
 
 // A thread that waits while the world is stopped goes on once it resumes, if
@@ -122,7 +122,7 @@ fn waits(fair: model.Fair): model.Checked ! model.Violation {
     // Stoppers end what they do.
     model.check(
         start,
-        (world) { steps(world, true) },
+        world => steps(world, true),
         holds: [goesOn],
         fair: [model.weak("done"), model.weak("resume"), fair],
     )

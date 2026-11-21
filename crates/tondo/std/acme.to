@@ -9,7 +9,7 @@
 // import std.http
 //
 // var app = http.App()
-// app.get("/", (_) { http.Reply.text("hello") })
+// app.get("/", _ => http.Reply.text("hello"))
 // app.listen(port: 443, tls: acme.tls(["example.com"], email: "me@example.com"))?
 // ```
 
@@ -182,7 +182,7 @@ fn Keeper.kept(self): (String, String, __time.Duration, __time.Duration)? {
         ok(found) => found.get(0)?
         err(_) => return none
     }
-    if key.isEmpty() or not self.domains.all((name) { first.names.any((held) { held == name }) }) {
+    if key.isEmpty() or not self.domains.all(name => first.names.any(held => held == name)) {
         return none
     }
     (chain, key, first.validFrom.sinceEpoch(), first.validUntil.sinceEpoch())
@@ -191,8 +191,8 @@ fn Keeper.kept(self): (String, String, __time.Duration, __time.Duration)? {
 /// A file of the cache, which only its owner reads.
 fn stored(folder: String, name: String, text: String): !AcmeError {
     let path = "{folder}/{name}"
-    let written = __fs.createDirectory(folder).andThen((_) { __fs.writeText(path, text) })
-    match written.andThen((_) { __fs.setPermissions(path, 0o600) }) {
+    let written = __fs.createDirectory(folder).andThen(_ => __fs.writeText(path, text))
+    match written.andThen(_ => __fs.setPermissions(path, 0o600)) {
         ok(_) => {}
         err(error) => fail AcmeError { message: "{path}: {error}" }
     }
@@ -322,7 +322,7 @@ fn Session.nonceNow(self): String ! AcmeError {
 fn Keeper.obtained(self): (String, String) ! AcmeError {
     let session = self.session()?
     let identifiers = self.domains.map(
-        (name) { "{{\"type\":\"dns\",\"value\":{__json.encode(name)}}}" },
+        name => "{{\"type\":\"dns\",\"value\":{__json.encode(name)}}}",
     )
     let created =
         session.post(
@@ -393,7 +393,7 @@ fn Keeper.authorized(self, session: Session, url: String): !AcmeError {
         }
         if status != "pending" {
             let why = alpnChallenge(now).andThen(
-                (each) { each.field("error").field("detail").asText() },
+                each => each.field("error").field("detail").asText(),
             )
             fail AcmeError { message: "the check of {name} failed: {why ?? status}" }
         }
@@ -429,7 +429,7 @@ fn member(value: __json.Value, key: String): String {
 /// The TLS-ALPN-01 challenge of an authorization.
 fn alpnChallenge(authorization: __json.Value): __json.Value? {
     (authorization.field("challenges").asArray() ?? []).find(
-        (each) { member(each, "type") == "tls-alpn-01" },
+        each => member(each, "type") == "tls-alpn-01",
     )
 }
 
@@ -472,7 +472,7 @@ fn sequence(parts: Array[Array[Byte]]): Array[Byte] {
 }
 
 fn oid(text: String): Array[Byte] {
-    let arcs = text.split(".").map((part) { Int.parse(part) ?? 0 })
+    let arcs = text.split(".").map(part => Int.parse(part) ?? 0)
     var content = [Byte(UInt8.wrapping(arcs[0] * 40 + arcs[1]))]
     for arc in (arcs.slice(2, arcs.length()) ?? []) {
         var digits = [Byte(UInt8.wrapping(arc & 127))]
@@ -509,17 +509,12 @@ fn distinguished(common: String): Array[Byte] {
 
 /// The extension of the names a certificate is for.
 fn alternativeNames(names: Array[String]): Array[Byte] {
-    sequence([oid("2.5.29.17"), tlv(0x04, sequence(names.map((each) { tlv(0x82, each.bytes()) })))])
+    sequence([oid("2.5.29.17"), tlv(0x04, sequence(names.map(each => tlv(0x82, each.bytes()))))])
 }
 
 /// The key's SubjectPublicKeyInfo.
 fn spkiOf(key: __crypto.PrivateKey): Array[Byte] {
-    let body = key
-        .publicKey()
-        .pem()
-        .lines()
-        .filter((line) { not line.startsWith("-----") })
-        .join("")
+    let body = key.publicKey().pem().lines().filter(line => not line.startsWith("-----")).join("")
     __encoding.base64Decode(body) ?? []
 }
 

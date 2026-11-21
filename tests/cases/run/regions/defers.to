@@ -36,7 +36,7 @@ fn turns(log: sync.Mutex[Array[String]]) {
         let list = List.Cons(i, List.Cons(i + 2, List.Nil))
         defer {
             // tondo: allow W1017: no task of this program is cancelled
-            log.update((all) { all.push("{grown}/{sum(list)}") })
+            log.update(all => all.push("{grown}/{sum(list)}"))
         }
         _ = noise()
     }
@@ -50,7 +50,7 @@ fn ends(log: sync.Mutex[Array[String]], i: Int, fails: Bool) {
     let pair = [i, i + 4]
     defer {
         // tondo: allow W1017: no task of this program is cancelled
-        log.update((all) { all.push("{grown} {pair}") })
+        log.update(all => all.push("{grown} {pair}"))
     }
     if fails {
         panic("stopped {i}")
@@ -69,7 +69,7 @@ fn later(log: sync.Mutex[Array[String]], i: Int) {
     let made = fresh(i)
     defer {
         // tondo: allow W1017: no task of this program is cancelled
-        log.update((all) { all.push("{made}") })
+        log.update(all => all.push("{made}"))
     }
     _ = noise()
 }

@@ -2,8 +2,8 @@
 // another, and the error says the function type that holds either.
 
 fn main() {
-    var pick = () { 1 }
-    pick = () { 2 }
+    var pick = () => 1
+    pick = () => 2
     _ = pick
 }
 

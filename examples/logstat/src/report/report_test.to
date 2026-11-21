@@ -9,7 +9,7 @@ fn sample(): Array[entries.Entry] {
         "t POST /orders 500 900ms",
         "t GET /health 200 1ms",
     ]
-    lines.map((line) { entries.parse(line).expect("a sample line") })
+    lines.map(line => entries.parse(line).expect("a sample line"))
 }
 
 test routesAreCountedTogether {
@@ -24,13 +24,13 @@ test routesAreCountedTogether {
                 mean: "20 ms"
             },
     )
-    assert(rows.map((row) { row.route }) == ["/users/:id", "/orders", "/health"])
+    assert(rows.map(row => row.route) == ["/users/:id", "/orders", "/health"])
     assert(rows[1].errors == 1)
 }
 
 test slowRequestsComeSlowestFirst {
     let slow = slowerThan(sample(), time.milliseconds(20))
-    assert(slow.map((entry) { entry.path }) == ["/orders", "/users/9"])
+    assert(slow.map(entry => entry.path) == ["/orders", "/users/9"])
     assert(slowerThan(sample(), time.seconds(5)).isEmpty())
 }
 
@@ -63,7 +63,7 @@ test aThousandLinesAreAReport {
     testing.bench(
         "report of 1000 lines",
         () {
-            let found = lines.map((line) { entries.parse(line).expect("a line of the log") })
+            let found = lines.map(line => entries.parse(line).expect("a line of the log"))
             byRoute(found)
         },
     )?

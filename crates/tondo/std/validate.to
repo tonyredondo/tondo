@@ -157,7 +157,7 @@ pub type Invalid = {
 /// Each violation, `path: message`, after one another.
 impl Display for Invalid {
     fn display(self): String {
-        self.violations.map((violation) { "{violation}" }).join("; ")
+        self.violations.map(violation => "{violation}").join("; ")
     }
 }
 
@@ -270,13 +270,13 @@ fn rulesOf(field: __reflect.FieldInfo, written: __reflect.Value, path: String): 
     }
     match field.annotation[Min]() {
         some(rule) => outcomes.push(
-            __rules.atLeast(path, number, rule.value).map((_) { least(path, shown(rule.value)) }),
+            __rules.atLeast(path, number, rule.value).map(_ => least(path, shown(rule.value))),
         )
         none => {}
     }
     match field.annotation[Max]() {
         some(rule) => outcomes.push(
-            __rules.atMost(path, number, rule.value).map((_) { most(path, shown(rule.value)) }),
+            __rules.atMost(path, number, rule.value).map(_ => most(path, shown(rule.value))),
         )
         none => {}
     }

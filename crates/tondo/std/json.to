@@ -231,7 +231,7 @@ impl __reflect.Reflect for Value {
                     members.keys().collect(),
                 )
             }
-            Value.Array(items) => match Int.parse(name).ok().andThen((index) { items.get(index) }) {
+            Value.Array(items) => match Int.parse(name).ok().andThen(index => items.get(index)) {
                 some(found) => reflected(found)
                 none => fail __reflect.ReflectError.noField("json.Value", name, [])
             }
@@ -251,7 +251,7 @@ impl __reflect.Reflect for Value {
             Value.Object(members) =>
                 some(members
                     .entries()
-                    .map((pair) { (__reflect.valueOf(pair.0), reflected(pair.1)) })
+                    .map(pair => (__reflect.valueOf(pair.0), reflected(pair.1)))
                     .collect())
             _ => none
         }

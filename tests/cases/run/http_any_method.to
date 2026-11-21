@@ -9,9 +9,9 @@ fn main(): !http.HttpError {
     app.route(
         "*",
         "/things/:id",
-        (request) { http.Reply.text("any {request.method()} {request.param("id")}") },
+        request => http.Reply.text("any {request.method()} {request.param("id")}"),
     )
-    app.get("/things/:id", (request) { http.Reply.text("get {request.param("id")}") })
+    app.get("/things/:id", request => http.Reply.text("get {request.param("id")}"))
     let client = app.client()
     for method in ["GET", "POST", "DELETE"] {
         let reply = client.request(method, "/things/7")?

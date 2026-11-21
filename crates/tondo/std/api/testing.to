@@ -79,7 +79,7 @@ pub fn keep[T](value: T)
 ///
 /// test theReceiptDoesNotAllocateForEachLine {
 ///     let lines = [10, 20, 30, 40]
-///     assert(testing.allocations(() { receipt(lines) }) <= 3)
+///     assert(testing.allocations(() => receipt(lines)) <= 3)
 /// }
 /// ```
 pub fn allocations[T, F: CallMut[fn(): T]](body: F): Int
@@ -100,7 +100,7 @@ pub fn allocations[T, F: CallMut[fn(): T]](body: F): Int
 /// }
 ///
 /// test squaresStayOffTheHeap {
-///     assert(testing.heapAllocations(() { squares(100) }) == 0)
+///     assert(testing.heapAllocations(() => squares(100)) == 0)
 /// }
 /// ```
 pub fn heapAllocations[T, F: CallMut[fn(): T]](body: F): Int

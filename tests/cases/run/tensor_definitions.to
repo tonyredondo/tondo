@@ -53,11 +53,11 @@ fn broadcast(left: math.Tensor[Int], right: math.Tensor[Int], op: Int): math.Ten
     let rank = if left.rank() > right.rank() { left.rank() } else { right.rank() }
     let a = [1].repeat(rank - left.rank()).concat(left.shape())
     let b = [1].repeat(rank - right.rank()).concat(right.shape())
-    let shape = (0..rank).map((axis) { if a[axis] == 1 { b[axis] } else { a[axis] } }).collect()
+    let shape = (0..rank).map(axis => if a[axis] == 1 { b[axis] } else { a[axis] }).collect()
     var values: Array[Int] = []
     for index in indexes(shape) {
         let at = (sizes: Array[Int]) {
-            (0..rank).map((axis) { if sizes[axis] == 1 { 0 } else { index[axis] } }).collect()
+            (0..rank).map(axis => if sizes[axis] == 1 { 0 } else { index[axis] }).collect()
         }
         let x = left.values()[offset(a, at(a))]
         let y = right.values()[offset(b, at(b))]
@@ -86,7 +86,7 @@ fn main() {
     assert(changed.at(1, 2, 2) == 100 and cube.at(1, 2, 2) != 100)
     // `slice` and `transposed`.
     for axis in 0..3 {
-        let rest = (0..3).filter((other) { other != axis }).collect()
+        let rest = (0..3).filter(other => other != axis).collect()
         for at in 0..cube.shape()[axis] {
             let part = cube.slice(axis, at)
             for index in indexes(part.shape()) {
@@ -98,7 +98,7 @@ fn main() {
                 )
                 checked += 1
             }
-            assert(part.shape() == rest.map((other) { cube.shape()[other] }))
+            assert(part.shape() == rest.map(other => cube.shape()[other]))
         }
     }
     for order in [[2, 1, 0], [1, 0, 2], [0, 2, 1]] {
@@ -181,7 +181,7 @@ fn main() {
         math.Tensor[Int].zeros([0, 3]).max() == none and
             math.Tensor[Int].zeros([0]).indexOfMax() == none,
     )
-    let floats = math.Tensor((0..100).map((n) { Float(n) / 7.0 }).collect(), [10, 10])
+    let floats = math.Tensor((0..100).map(n => Float(n) / 7.0).collect(), [10, 10])
     assert(floats.sum() == floats.values().sum())
     // Written and read back.
     let fromJson: math.Tensor[Int] = json.decode(json.encode(cube))?

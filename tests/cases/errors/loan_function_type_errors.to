@@ -9,7 +9,7 @@ fn main() {
     let plain: fn(Array[Float], Float) = scale
     let grow = (values: mut Array[Int]) { values.push(1) }
     let keep = (values: mut Array[Int]) {
-        let inner = () { values.length() }
+        let inner = () => values.length()
     }
     op(mut numbers, mut numbers[0])
 }

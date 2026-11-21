@@ -19,8 +19,8 @@ fn main(): !(archive.ArchiveError | fs.FsError) {
         let read = archive.open(path)?
         let files = read
             .entries()
-            .filter((e) { e.kind == archive.EntryKind.File })
-            .map((e) { e.name.length() })
+            .filter(e => e.kind == archive.EntryKind.File)
+            .map(e => e.name.length())
         console.println("{name} {read.format()} {read.entries().length()} {files}")
         console.println(
             "  {read.readText("css/site.css")?} {read.files().readText("{"x".repeat(120)}/long.txt")?}",

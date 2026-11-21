@@ -60,7 +60,7 @@ pub type User = {
 }
 
 fn hex(bytes: Array[Byte]): String {
-    bytes.map((b) { Int(b).toString(16).padStart(2, "0") }).join("")
+    bytes.map(b => Int(b).toString(16).padStart(2, "0")).join("")
 }
 
 fn main(): !protobuf.ProtobufError {

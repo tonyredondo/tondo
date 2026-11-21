@@ -66,10 +66,10 @@ test theMostFrequentWordsComeFirst {
 /// A text of two thousand words, some with accents and capitals.
 fn essay(): String {
     let words = ["Crème", "brûlée", "is", "a", "dessert", "of", "cream", "and", "Sugar", "burnt"]
-    (0..2000).map((n) { words[n % words.length()] }).collect().join(" ")
+    (0..2000).map(n => words[n % words.length()]).collect().join(" ")
 }
 
 test anEssayIsCounted {
     let written = essay()
-    testing.bench("frequencies of 2000 words", () { frequencies(written) })?
+    testing.bench("frequencies of 2000 words", () => frequencies(written))?
 }

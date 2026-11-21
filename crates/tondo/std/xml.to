@@ -99,7 +99,7 @@ impl Display for XmlError {
 ///
 /// let feed = xml.parse(r"""<feed><entry id="1"><title>Tea</title></entry><entry id="2"><title>Cake</title></entry></feed>""")?
 /// for entry in feed.children("entry") {
-///     let title = entry.child("title").map((title) { title.text() }) ?? ""
+///     let title = entry.child("title").map(title => title.text()) ?? ""
 ///     console.println("{entry.attribute("id") ?? "?"}: {title}")
 /// }
 /// ```
@@ -608,7 +608,7 @@ const TextKey: String = "#text"
 
 impl serialization.Source for Reader {
     fn next(self): serialization.Event? ! serialization.Error {
-        self.state.update((reading) { reading.next() })
+        self.state.update(reading => reading.next())
     }
 
     fn skip(self, first: serialization.Event): !serialization.Error {
@@ -623,7 +623,7 @@ impl serialization.Source for Reader {
     }
 
     fn failure(self, kind: serialization.ErrorKind, message: String): serialization.Error {
-        self.state.update((reading) { reading.failure(kind, message) })
+        self.state.update(reading => reading.failure(kind, message))
     }
 
     /// An empty list is no element at all.
@@ -643,7 +643,7 @@ impl serialization.Source for Reader {
     fn beginMap(self, first: serialization.Event, name: String): !serialization.Error {
         let opened = match first {
             serialization.Event.BeginMap => true
-            serialization.Event.Untyped(_) => self.state.update((reading) { reading.reopen() })
+            serialization.Event.Untyped(_) => self.state.update(reading => reading.reopen())
             _ => false
         }
         if not opened {
@@ -652,7 +652,7 @@ impl serialization.Source for Reader {
     }
 
     fn beginList(self, first: serialization.Event, name: String): !serialization.Error {
-        if not self.state.update((reading) { reading.list(first) }) {
+        if not self.state.update(reading => reading.list(first)) {
             fail self.mismatch(first, "elements for `{name}`")
         }
     }
@@ -662,7 +662,7 @@ impl serialization.Source for Reader {
             some(key) => key
             none => return none
         }
-        let written = self.state.update((reading) { reading.written(names) })
+        let written = self.state.update(reading => reading.written(names))
         for index in 0..written.length() {
             if written[index] == key {
                 return index
@@ -831,7 +831,7 @@ fn membersOf(item: Item, notes: Array[Array[serialization.Note]]): Array[(String
             _ => {}
         }
     }
-    if notes.any((noted) { marked(noted, "Text") }) {
+    if notes.any(noted => marked(noted, "Text")) {
         members.push((TextKey, Piece.Characters(treeOf(item).text())))
     }
     members
@@ -957,10 +957,8 @@ impl serialization.Sink for Writer {
 
     fn beginRecord(self, record: serialization.Record) {
         self.state.update(
-            (writing) {
-                if writing.open.isEmpty() {
-                    writing.name = renamed(record.notes, record.name)
-                }
+            writing => if writing.open.isEmpty() {
+                writing.name = renamed(record.notes, record.name)
             },
         )
         self.beginMap(record.count)
@@ -976,7 +974,7 @@ impl serialization.Sink for Writer {
     }
 
     fn beginList(self, _count: Int) {
-        self.state.update((writing) { writing.begin(true) })
+        self.state.update(writing => writing.begin(true))
     }
 
     fn endList(self) {
@@ -988,7 +986,7 @@ impl serialization.Sink for Writer {
     }
 
     fn beginMap(self, _count: Int) {
-        self.state.update((writing) { writing.begin(false) })
+        self.state.update(writing => writing.begin(false))
     }
 
     fn key(self, name: String) {
@@ -1008,7 +1006,7 @@ impl serialization.Sink for Writer {
     }
 
     fn endMap(self) {
-        self.state.update((writing) { writing.end() })
+        self.state.update(writing => writing.end())
     }
 
     fn omitsNone(self): Bool {
@@ -1017,7 +1015,7 @@ impl serialization.Sink for Writer {
 }
 
 fn Writer.scalar(self, value: String) {
-    self.state.update((writing) { writing.scalar(value) })
+    self.state.update(writing => writing.scalar(value))
 }
 
 /// The name of the next element: its list's, in a list.
@@ -1105,7 +1103,7 @@ fn lineAt(depth: Int): String {
 
 /// Whether the notes have std.xml's annotation `name`.
 fn marked(notes: Array[serialization.Note], name: String): Bool {
-    notes.any((note) { note.format == "xml" and note.name == name })
+    notes.any(note => note.format == "xml" and note.name == name)
 }
 
 /// The name the notes' `@xml.Name` gives, or `name`, as a name of XML.
@@ -1153,12 +1151,12 @@ fn decodeName(name: String): String {
         for end < chars.length() and end - at < 11 and chars[end] != '_' {
             end += 1
         }
-        let digits = (chars.slice(at + 2, end) ?? []).map((c) { "{c}" }).join("")
+        let digits = (chars.slice(at + 2, end) ?? []).map(c => "{c}").join("")
         let code = if chars[at] == '_' and
             chars.get(at + 1) == 'x' and
             chars.get(end) == '_' and
             (digits.length() == 4 or digits.length() == 8) {
-            Int.parse(digits, radix: 16).ok().andThen((code) { Char.from(code) })
+            Int.parse(digits, radix: 16).ok().andThen(code => Char.from(code))
         } else {
             none
         }

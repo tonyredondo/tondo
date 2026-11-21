@@ -101,8 +101,8 @@ import std.console
 import std.executor
 
 let pool = executor.pool(1, 0)?
-let first = pool.trySubmit(() { 1 })?
-match pool.trySubmit(() { 2 }) {
+let first = pool.trySubmit(() => 1)?
+match pool.trySubmit(() => 2) {
     ok(job) => console.println("{job.wait()}")
     err(executor.SubmitError.Saturated) => console.println("busy: try later")
     err(executor.SubmitError.Closed) => console.println("shut down")
@@ -166,7 +166,7 @@ import std.executor
 
 // Blocking work, as a C library's, on two threads of its own.
 let pool = executor.pool(2, 16)?
-let checksum = pool.submit(() { 6 * 7 })?
+let checksum = pool.submit(() => 6 * 7)?
 console.println("{checksum.wait()}")
 pool.shutdown()
 ```

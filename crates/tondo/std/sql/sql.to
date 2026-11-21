@@ -294,7 +294,7 @@ type Capture = {
 }
 
 fn Capture.put(self, value: Value) {
-    self.values.update((values) { values.push(value) })
+    self.values.update(values => values.push(value))
 }
 
 impl __serialization.Sink for Capture {
@@ -525,7 +525,7 @@ pub type Done = {
 ///     placeholder: (index) { "${index}" }
 ///     identifier: (name) { "\"{name}\"" }
 ///     connect: echoing
-///     place: (_) { ("echo", none) }
+///     place: _ => ("echo", none)
 /// }
 /// let db = sql.open("echo:", driver: some(driver))?
 /// console.println(db.queryOne[String]("SELECT * FROM {sql.identifier("users")} WHERE id = {7}")?)
@@ -552,7 +552,7 @@ pub type Connection = {
 ///         placeholder: (index) { ":{index}" }
 ///         identifier: (name) { "\"{name.replace("\"", "\"\"")}\"" }
 ///         connect: (url) { fail sql.SqlError.of(sql.ErrorKind.Connection, "no Oracle client at {url}") }
-///         place: (url) { (url.split("/").last() ?? "", none) }
+///         place: url => (url.split("/").last() ?? "", none)
 ///     }
 /// }
 ///

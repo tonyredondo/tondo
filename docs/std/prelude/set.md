@@ -86,7 +86,7 @@ pub fn Set[T: Key].map[U: Key](self, transform: fn(T): U): Set[U]
 ```
 
 The set of what the function gives for each element, which may be
-fewer: `Set[1, 2, 3].map((n) { n % 2 })` is `Set[1, 0]`.
+fewer: `Set[1, 2, 3].map(n => n % 2)` is `Set[1, 0]`.
 
 #### Set.extend
 

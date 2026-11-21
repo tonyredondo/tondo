@@ -131,7 +131,7 @@ pub fn metadata(path: String): Metadata ! __fs.FsError {
 /// The tree under `root`, without `root`: each directory before what it
 /// holds and siblings sorted by bytes, without following links. `enter`
 /// says whether to go into each directory, which is listed either way:
-/// `(entry) { not entry.path.endsWith("/node_modules") }`. With
+/// `entry => not entry.path.endsWith("/node_modules")`. With
 /// `skipUnreadable`, a directory below `root` that cannot be read is left
 /// out rather than failing the walk.
 ///
@@ -237,7 +237,7 @@ pub fn glob(pattern: String, skipUnreadable: Bool = false): Array[String] ! __fs
 
 /// Whether a component of a pattern has a wildcard.
 fn wild(part: String): Bool {
-    part.chars().any((c) { c == '*' or c == '?' or c == '[' or c == '{' or c == '\\' })
+    part.chars().any(c => c == '*' or c == '?' or c == '[' or c == '{' or c == '\\')
 }
 
 /// How deep a walk the rest of a pattern needs: its components, or every
@@ -457,7 +457,7 @@ pub fn FileSystem.sub(self, directory: String): FileSystem {
 pub fn FileSystem.directory(self): String? {
     match self.tree {
         Tree.Disk(root) => root
-        Tree.Under(inner, prefix) => inner[0].directory().map((root) { __path.join(root, prefix) })
+        Tree.Under(inner, prefix) => inner[0].directory().map(root => __path.join(root, prefix))
         _ => none
     }
 }
@@ -467,11 +467,11 @@ pub fn FileSystem.directory(self): String? {
 pub fn FileSystem.tag(self, path: String): String? {
     let at = placed(path) ?? path
     match self.tree {
-        Tree.Kept(names, _, tags) => indexOf(names, at).map((index) { tags[index] })
+        Tree.Kept(names, _, tags) => indexOf(names, at).map(index => tags[index])
         Tree.Layers(layers) => layers
             .iter()
-            .find((layer) { layer.exists(at) })
-            .andThen((layer) { layer.tag(at) })
+            .find(layer => layer.exists(at))
+            .andThen(layer => layer.tag(at))
         Tree.Under(inner, prefix) => inner[0].tag(__path.join(prefix, at))
         _ => none
     }
@@ -482,7 +482,7 @@ pub fn FileSystem.readBytes(self, path: String): Array[Byte] ! __fs.FsError {
     let at = placed(path)?
     match self.tree {
         Tree.Disk(root) => __fs.readBytes(below(root, at))?
-        Tree.Memory(stored) => match stored.update((s) { s.files.get(at) }) {
+        Tree.Memory(stored) => match stored.update(s => s.files.get(at)) {
             some(contents) => contents
             none => fail missing(stored, at)
         }
@@ -556,10 +556,10 @@ pub fn FileSystem.exists(self, path: String): Bool {
     match self.tree {
         Tree.Disk(root) => __fs.exists(below(root, at))
         Tree.Memory(stored) =>
-            at.isEmpty() or stored.update((s) { at in s.files or at in s.directories })
+            at.isEmpty() or stored.update(s => at in s.files or at in s.directories)
         Tree.Kept(names, _, _) =>
             at.isEmpty() or indexOf(names, at).isSome() or keptDirectory(names, at)
-        Tree.Layers(layers) => layers.iter().any((layer) { layer.exists(at) })
+        Tree.Layers(layers) => layers.iter().any(layer => layer.exists(at))
         Tree.Under(inner, prefix) => inner[0].exists(__path.join(prefix, at))
     }
 }
@@ -571,7 +571,7 @@ pub fn FileSystem.list(self, path: String = ""): Array[String] ! __fs.FsError {
         Tree.Disk(root) => __fs.list(below(root, at))?
         Tree.Memory(stored) => {
             let (files, directories) = stored.update(
-                (s) { (s.files.keys().collect(), s.directories.keys().collect()) },
+                s => (s.files.keys().collect(), s.directories.keys().collect()),
             )
             if not at.isEmpty() and not (at in directories) {
                 fail missing(stored, at)
@@ -632,7 +632,7 @@ pub fn FileSystem.metadata(self, path: String): Metadata ! __fs.FsError {
         Tree.Disk(root) => metadata(below(root, at))?
         Tree.Memory(stored) => {
             let (file, written, folder) = stored.update(
-                (s) { (s.files.get(at), s.written.get(at), at.isEmpty() or at in s.directories) },
+                s => (s.files.get(at), s.written.get(at), at.isEmpty() or at in s.directories),
             )
             match (file, written) {
                 (some(contents), some(when)) => Metadata {
@@ -749,18 +749,18 @@ pub fn FileSystem.remove(self, path: String, recursive: Bool = false): !__fs.FsE
                         return 1
                     }
                     let held =
-                        s.files.keys().any((name) { name.startsWith(prefix) }) or
-                            s.directories.keys().any((name) { name.startsWith(prefix) })
+                        s.files.keys().any(name => name.startsWith(prefix)) or
+                            s.directories.keys().any(name => name.startsWith(prefix))
                     if held and not recursive {
                         return 2
                     }
-                    for name in s.files.keys().filter((name) { name.startsWith(prefix) }).collect() {
+                    for name in s.files.keys().filter(name => name.startsWith(prefix)).collect() {
                         _ = s.files.remove(name)
                         _ = s.written.remove(name)
                     }
                     for name in s.directories
                         .keys()
-                        .filter((name) { name.startsWith(prefix) })
+                        .filter(name => name.startsWith(prefix))
                         .collect() {
                         _ = s.directories.remove(name)
                     }
@@ -801,7 +801,7 @@ fn below(root: String, at: String): String {
 }
 
 fn missing(stored: __sync.Mutex[Stored], at: String): __fs.FsError {
-    if stored.update((s) { at in s.directories }) {
+    if stored.update(s => at in s.directories) {
         __fs.FsError.IsADirectory
     } else {
         __fs.FsError.NotFound
@@ -809,12 +809,12 @@ fn missing(stored: __sync.Mutex[Stored], at: String): __fs.FsError {
 }
 
 fn indexOf(names: Array[String], at: String): Int? {
-    names.iter().enumerate().find((pair) { pair.1 == at }).map((pair) { pair.0 })
+    names.iter().enumerate().find(pair => pair.1 == at).map(pair => pair.0)
 }
 
 fn keptDirectory(names: Array[String], at: String): Bool {
     let prefix = "{at}/"
-    names.iter().any((name) { name.startsWith(prefix) })
+    names.iter().any(name => name.startsWith(prefix))
 }
 
 /// The directories a file's path is in: `a` and `a/b` for `a/b/c`.
@@ -834,7 +834,7 @@ fn children(paths: Array[String], at: String): Array[String] {
     for path in paths {
         if path.startsWith(prefix) and path != at {
             let rest = path.removePrefix(prefix)
-            found.push(rest.splitOnce("/").map((parts) { parts.0 }) ?? rest)
+            found.push(rest.splitOnce("/").map(parts => parts.0) ?? rest)
         }
     }
     found

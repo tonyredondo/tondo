@@ -158,11 +158,11 @@ pub enum Queue[T] {
 impl[T: reflect.Reflect] reflect.Reflect for Queue[T] {
     fn reflectShow(self, nested: Bool): String {
         _ = nested
-        "Queue([{self.items().map((item) { item.reflectShow(true) }).join(", ")}])"
+        "Queue([{self.items().map(item => item.reflectShow(true)).join(", ")}])"
     }
 
     fn reflectElements(self): Array[reflect.Value]? {
-        some(self.items().map((item) { reflect.valueOf(item) }))
+        some(self.items().map(item => reflect.valueOf(item)))
     }
 }
 
@@ -248,7 +248,7 @@ pub fn Queue[T: Equatable].contains(self, item: T): Bool {
 /// The queue without the first `item` in it.
 pub fn Queue[T: Equatable].without(self, item: T): Queue[T] {
     var items = self.items()
-    match items.findIndex((other) { other == item }) {
+    match items.findIndex(other => other == item) {
         some(at) => {
             _ = items.removeAt(at)
             Queue(items)
@@ -274,11 +274,11 @@ pub type Bag[T] = {
 impl[T: reflect.Reflect] reflect.Reflect for Bag[T] {
     fn reflectShow(self, nested: Bool): String {
         _ = nested
-        "Bag([{self.items().map((item) { item.reflectShow(true) }).join(", ")}])"
+        "Bag([{self.items().map(item => item.reflectShow(true)).join(", ")}])"
     }
 
     fn reflectElements(self): Array[reflect.Value]? {
-        some(self.items().map((item) { reflect.valueOf(item) }))
+        some(self.items().map(item => reflect.valueOf(item)))
     }
 }
 
@@ -300,7 +300,7 @@ impl[T: serialization.Decode] serialization.Decode for Bag[T] {
 
 /// A bag of the items.
 pub fn Bag[T: reflect.Reflect](items: Array[T]): Bag[T] {
-    Bag { held: Queue(items.sortedBy((item) { "{reflect.valueOf(item)}" })) }
+    Bag { held: Queue(items.sortedBy(item => "{reflect.valueOf(item)}")) }
 }
 
 /// The bag with `item` once more.
@@ -322,7 +322,7 @@ pub fn Bag[T].items(self): Array[T] {
 
 /// How many times `item` is in it.
 pub fn Bag[T: Equatable].count(self, item: T): Int {
-    self.items().count((other) { other == item })
+    self.items().count(other => other == item)
 }
 
 /// Whether `item` is in it.
@@ -527,7 +527,7 @@ pub fn strong(name: String, each: Bool = false): Fair {
 
 /// The fairness asked, with one for each step that one `each` stands for.
 fn perStep[S](graph: Graph[S], fair: Array[Fair]): Array[Fair] {
-    if not fair.any((one) { one.each }) {
+    if not fair.any(one => one.each) {
         return fair
     }
     var named = Set[String]()
@@ -714,10 +714,10 @@ fn checking[S: reflect.Reflect + serialization.Encode + serialization.Decode](
     properties(graph, holds, fair)?
     Checked {
         states: graph.count
-        steps: graph.edges.map((out) { out.length() }).sum()
+        steps: graph.edges.map(out => out.length()).sum()
         depth: graph.depth
         never: []
-        vacuous: vacuous(holds, (applies) { eachState(graph, applies).any((held) { held }) })
+        vacuous: vacuous(holds, applies => eachState(graph, applies).any(held => held))
     }
 }
 
@@ -727,15 +727,12 @@ fn reported(kind: String, result: Checked ! Violation): Checked ! Violation {
     if modelNative.recording() {
         let listed = (list: Array[Visit]) {
             let entries = list.map(
-                (visit) {
-                    "{{\"step\":{json.encode(visit.step)},\"state\":{json.encode(visit.state)}}}"
-                },
+                visit =>
+                    "{{\"step\":{json.encode(visit.step)},\"state\":{json.encode(visit.state)}}}",
             )
             "[{entries.join(",")}]"
         }
-        let quoted = (list: Array[String]) {
-            "[{list.map((name) { json.encode(name) }).join(",")}]"
-        }
+        let quoted = (list: Array[String]) { "[{list.map(name => json.encode(name)).join(",")}]" }
         let text = match result {
             ok(checked) =>
                 "{{\"kind\":{json.encode(kind)},\"states\":{checked.states},\"steps\":{checked.steps},\"depth\":{checked.depth},\"never\":{quoted(checked.never)},\"vacuous\":{quoted(checked.vacuous)},\"broken\":null}}"
@@ -886,13 +883,13 @@ fn machining[
             _ = named.insert(edge.name)
         }
     }
-    let never = all.map((event) { shown(event) }).filter((name) { not named.contains(name) })
+    let never = all.map(event => shown(event)).filter(name => not named.contains(name))
     Checked {
         states: graph.count
-        steps: graph.edges.map((out) { out.length() }).sum()
+        steps: graph.edges.map(out => out.length()).sum()
         depth: graph.depth
         never
-        vacuous: vacuous(holds, (applies) { eachState(graph, applies).any((held) { held }) })
+        vacuous: vacuous(holds, applies => eachState(graph, applies).any(held => held))
     }
 }
 
@@ -967,7 +964,7 @@ fn written(info: reflect.TypeInfo, depth: Int): Array[String] ! String {
         }
         reflect.TypeKind.Tuple => {
             combinations(valuesOfEach(info.tupleElements(), depth)?).map(
-                (values) { "[{values.join(",")}]" },
+                values => "[{values.join(",")}]",
             )
         }
         reflect.TypeKind.Applied(reflect.AppliedKind.Option) => {
@@ -980,11 +977,11 @@ fn written(info: reflect.TypeInfo, depth: Int): Array[String] ! String {
 }
 
 fn record(fields: Array[reflect.FieldInfo], depth: Int): Array[String] ! String {
-    let parts = valuesOfEach(fields.map((field) { field.typeInfo() }), depth)?
-    let names = fields.map((field) { json.encode(field.externalName()) })
+    let parts = valuesOfEach(fields.map(field => field.typeInfo()), depth)?
+    let names = fields.map(field => json.encode(field.externalName()))
     combinations(parts).map(
         (values) {
-            let pairs = names.zip(values).map((pair) { "{pair.0}:{pair.1}" })
+            let pairs = names.zip(values).map(pair => "{pair.0}:{pair.1}")
             "{{{pairs.join(",")}}}"
         },
     )
@@ -1052,7 +1049,7 @@ fn explore[S: reflect.Reflect + serialization.Encode + serialization.Decode](
         }
     }
     let canonicalSteps = (current: S): Array[Step[S]] ! String {
-        steps(current)?.map((taken) { taken with { state: canonical(taken.state) } })
+        steps(current)?.map(taken => taken with { state: canonical(taken.state) })
     }
     match disk {
         some(directory) => return exploreOnDisk(
@@ -1235,13 +1232,13 @@ fn holdsMaps(info: reflect.TypeInfo, seen: var Set[String]): Bool {
     match info.kind() {
         reflect.TypeKind.Applied(reflect.AppliedKind.Map) => return true
         reflect.TypeKind.Union => return true
-        reflect.TypeKind.Record => inside.extend(info.fields().map((field) { field.typeInfo() }))
+        reflect.TypeKind.Record => inside.extend(info.fields().map(field => field.typeInfo()))
         reflect.TypeKind.Tuple => inside.extend(info.tupleElements())
-        reflect.TypeKind.Newtype => inside.extend(info.underlying().map((under) { [under] }) ?? [])
+        reflect.TypeKind.Newtype => inside.extend(info.underlying().map(under => [under]) ?? [])
         reflect.TypeKind.Enum => {
             for variant in info.variants() {
                 inside.extend(variant.tupleElements())
-                inside.extend(variant.fields().map((field) { field.typeInfo() }))
+                inside.extend(variant.fields().map(field => field.typeInfo()))
             }
         }
         _ => {}
@@ -1267,7 +1264,7 @@ fn sortedJson(value: json.Value): String {
             var keys: Array[String] = entries.keys().collect()
             keys.sort()
             let pairs = keys.map(
-                (key) { "{json.encode(key)}:{sortedJson(entries.get(key) ?? json.Value.Null)}" },
+                key => "{json.encode(key)}:{sortedJson(entries.get(key) ?? json.Value.Null)}",
             )
             "{{{pairs.join(",")}}}"
         }
@@ -1290,7 +1287,7 @@ fn ahead[S](
     for chunk in ids.chunks((ids.length() + workers - 1) / workers) {
         group.add(spawn successors(states, chunk, steps))
     }
-    group.wait().flatMap((part) { part })
+    group.wait().flatMap(part => part)
 }
 
 fn successors[S](
@@ -1579,7 +1576,7 @@ fn automaton[S](formulas: Formulas[S], root: Int): Array[Node] {
             Op.False => {}
             Op.Atom(atom, positive) => {
                 let opposite = formulas.numbers.get(Op.Atom(atom, not positive))
-                if not (opposite.map((id) { node.old.contains(id) }) ?? false) {
+                if not (opposite.map(id => node.old.contains(id)) ?? false) {
                     pending.push(node with { old: old })
                 }
             }
@@ -1613,7 +1610,7 @@ fn automaton[S](formulas: Formulas[S], root: Int): Array[Node] {
             }
         }
     }
-    done.map((node) { Node { incoming: node.incoming, old: node.old } })
+    done.map(node => Node { incoming: node.incoming, old: node.old })
 }
 
 /// The model and the automaton, gone along together: each node a state and a
@@ -1638,15 +1635,13 @@ fn later[S: reflect.Reflect + serialization.Decode](
     // What each atom says of each state, once.
     let values = eachState(
         graph,
-        (current: S) { formulas.atoms.map((predicate) { predicate(current) }) },
+        (current: S) { formulas.atoms.map(predicate => predicate(current)) },
     )
     let fits = (at: Int, node: Int) {
         sorted(nodes[node].old).all(
-            (id) {
-                match formulas.ops[id] {
-                    Op.Atom(atom, positive) => values[at][atom] == positive
-                    _ => true
-                }
+            id => match formulas.ops[id] {
+                Op.Atom(atom, positive) => values[at][atom] == positive
+                _ => true
             },
         )
     }
@@ -1703,14 +1698,14 @@ fn later[S: reflect.Reflect + serialization.Decode](
         match formulas.ops[formula] {
             Op.Until(_, b) => accepting.push(
                 product.nodes.map(
-                    (node) { not nodes[node].old.contains(formula) or nodes[node].old.contains(b) },
+                    node => not nodes[node].old.contains(formula) or nodes[node].old.contains(b),
                 ),
             )
             _ => {}
         }
     }
     let enabled = (one: Fair, node: Int) {
-        graph.edges[product.states[node]].any((edge) { edge.name == one.step })
+        graph.edges[product.states[node]].any(edge => edge.name == one.step)
     }
     match fairLoop(product, accepting, fair, enabled) {
         some(loop) => {
@@ -1739,7 +1734,7 @@ fn later[S: reflect.Reflect + serialization.Decode](
             fail Violation {
                 what: "`{name}` does not hold"
                 path: path.reversed()
-                loop: loop.drop(1).map((stop) { visit(stop.0, stop.1) })
+                loop: loop.drop(1).map(stop => visit(stop.0, stop.1))
                 property: name
             }
         }
@@ -1764,36 +1759,32 @@ fn fairLoop(
         }
         for part in components(product.edges, region) {
             let inside = setOf(part)
-            let looped = part.any(
-                (at) { product.edges[at].any((edge) { inside.contains(edge.to) }) },
-            )
+            let looped = part.any(at => product.edges[at].any(edge => inside.contains(edge.to)))
             if not looped {
                 continue
             }
             let taken = (one: Fair) {
                 part.any(
-                    (at) {
-                        product.edges[at].any(
-                            (edge) { edge.name == one.step and inside.contains(edge.to) },
-                        )
-                    },
+                    at => product.edges[at].any(
+                        edge => edge.name == one.step and inside.contains(edge.to),
+                    ),
                 )
             }
             // A strong step possible here and never taken: the loops left
             // are those that avoid where it is possible.
             match fair.find(
-                (one) { one.strong and not taken(one) and part.any((at) { enabled(one, at) }) },
+                one => one.strong and not taken(one) and part.any(at => enabled(one, at)),
             ) {
                 some(owed) => {
-                    pending.push(part.filter((at) { not enabled(owed, at) }))
+                    pending.push(part.filter(at => not enabled(owed, at)))
                     continue
                 }
                 none => {}
             }
             let unfair = fair.any(
-                (one) { not one.strong and not taken(one) and part.all((at) { enabled(one, at) }) },
+                one => not one.strong and not taken(one) and part.all(at => enabled(one, at)),
             )
-            let accepted = accepting.all((set) { part.any((at) { set[at] }) })
+            let accepted = accepting.all(set => part.any(at => set[at]))
             if unfair or not accepted {
                 continue
             }
@@ -1817,7 +1808,7 @@ fn fairLoop(
                 match route(product.edges, inside, here, target) {
                     some(way) => {
                         loop.extend(way)
-                        here = way.last().map((last) { last.0 }) ?? here
+                        here = way.last().map(last => last.0) ?? here
                     }
                     none => {}
                 }
@@ -2035,7 +2026,7 @@ fn following[S: reflect.Reflect + serialization.Encode + serialization.Decode](
         }
         if next.length() == 0 {
             var paths = now.values()
-            let path = paths.next().map((found) { found.1 }) ?? []
+            let path = paths.next().map(found => found.1) ?? []
             fail Violation { what: "the code took `{took}` where the model cannot", path, loop: [] }
         }
         now = next
@@ -2081,7 +2072,7 @@ fn following[S: reflect.Reflect + serialization.Encode + serialization.Decode](
 ///     model.mark("add")
 /// }
 /// let holds = [model.always((n: Int) { n <= 1 }), model.eventually((n: Int) { n == 1 })]
-/// match model.watch(() { count.load() }, holds, add) {
+/// match model.watch(() => count.load(), holds, add) {
 ///     ok(checked) => console.println("{checked.states} states")
 ///     err(broken) => console.println("{broken}")
 /// }
@@ -2105,7 +2096,7 @@ fn watching[S: reflect.Reflect](
         code,
         (name: String) {
             let now = observe()
-            seen.update((all) { all.push((name, now)) })
+            seen.update(all => all.push((name, now)))
         },
     )
     let run = seen.update(
@@ -2114,14 +2105,14 @@ fn watching[S: reflect.Reflect](
             all
         },
     )
-    let trace = run.map((one) { one.1 })
+    let trace = run.map(one => one.1)
     let upTo = (end: Int) {
-        run.take(end + 1).map((one) { Visit { step: one.0, state: shown(one.1) } })
+        run.take(end + 1).map(one => Visit { step: one.0, state: shown(one.1) })
     }
     for property in holds {
         match property.kind {
             Kind.Invariant(predicate) => {
-                match trace.findIndex((current) { not predicate(current) }) {
+                match trace.findIndex(current => not predicate(current)) {
                     some(at) => fail Violation {
                         what: "`{property.name}` does not hold"
                         path: upTo(at)
@@ -2158,7 +2149,7 @@ fn watching[S: reflect.Reflect](
         steps: trace.length() - 1
         depth: trace.length() - 1
         never: []
-        vacuous: vacuous(holds, (applies) { trace.any(applies) })
+        vacuous: vacuous(holds, applies => trace.any(applies))
     }
 }
 

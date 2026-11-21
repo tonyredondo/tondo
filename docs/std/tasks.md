@@ -115,7 +115,7 @@ fn twice(n: Int): Int {
 }
 
 let fetching = tasks.limit(2)
-let first = within fetching { [1, 2, 3].map((n) { spawn twice(n) }).wait() }
-let second = within fetching { [4, 5].map((n) { spawn twice(n) }).wait() }
+let first = within fetching { [1, 2, 3].map(n => spawn twice(n)).wait() }
+let second = within fetching { [4, 5].map(n => spawn twice(n)).wait() }
 console.println("{first} {second}")
 ```

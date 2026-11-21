@@ -54,7 +54,7 @@ fn main() {
     job.cancel()
     console.println("after cancel: {Ctx.name}")
     with Ctx { name: "outer", hits: Ctx.hits + 1 }
-    let show = () { "closure sees {Ctx.name}" }
+    let show = () => "closure sees {Ctx.name}"
     let (out, seen) = channel[String](1)
     spawn detached report(out)
     console.println(seen.receive() ?? "nothing")

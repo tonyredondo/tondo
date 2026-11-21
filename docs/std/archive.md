@@ -131,7 +131,7 @@ it changed, its Unix permissions, and the target of a link.
 import std.archive
 import std.console
 
-let largest = archive.open("site.zip")?.entries().sortedBy((entry) { -entry.size }).first()
+let largest = archive.open("site.zip")?.entries().sortedBy(entry => -entry.size).first()
 console.println("{largest.map((entry) { entry.name })}")
 ```
 

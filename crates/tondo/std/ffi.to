@@ -408,7 +408,7 @@ pub unsafe fn writeCString(text: String, to: Pointer[CChar], capacity: Int): Int
         encoded.length(),
         capacity,
         "writeCString",
-        (at) { encoded[at] >= 0x80 and encoded[at] < 0xC0 },
+        at => encoded[at] >= 0x80 and encoded[at] < 0xC0,
     )
     if capacity > 0 {
         for at in 0..fits {
@@ -501,7 +501,7 @@ pub fn Guid.parse(written: String): Guid? {
         false => written
     }
     let parts = inner.split("-")
-    let sizes = parts.map((part) { part.length() })
+    let sizes = parts.map(part => part.length())
     if sizes != [8, 4, 4, 4, 12] {
         return none
     }
@@ -525,7 +525,7 @@ pub fn Guid.parse(written: String): Guid? {
         value
     }
     // Eight, four and two digits fit the fields they are read for.
-    let tail: Array[Byte] = (0..8).map((at) { Byte(number(16 + 2 * at, 2)) ?? Byte(0u8) }).collect()
+    let tail: Array[Byte] = (0..8).map(at => Byte(number(16 + 2 * at, 2)) ?? Byte(0u8)).collect()
     Guid {
         data1: UInt32(number(0, 8)) ?? 0u32
         data2: UInt16(number(8, 4)) ?? 0u16
@@ -744,7 +744,7 @@ pub unsafe fn writeWide(text: String, to: WideString, capacity: Int): Int {
         units.length(),
         capacity,
         "writeWide",
-        (at) { units[at] >= 0xDC00 and units[at] < 0xE000 },
+        at => units[at] >= 0xDC00 and units[at] < 0xE000,
     )
     if capacity > 0 {
         for at in 0..fits {

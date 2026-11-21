@@ -202,7 +202,7 @@ fn hello(request: HelloRequest): HelloReply ! grpc.Status {
 }
 
 var app = http.App()
-app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
+app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: call => grpc.unary(call, hello)? }] })
 let server = app.start()?
 let client = grpc.connect(server.url())?
 match client.unary[HelloRequest, HelloReply]("/demo.Greeter/Hello", HelloRequest {}) {
@@ -269,7 +269,7 @@ fn hello(request: HelloRequest): HelloReply ! grpc.Status {
 }
 
 var app = http.App()
-app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
+app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: call => grpc.unary(call, hello)? }] })
 let server = app.start()?
 let client = grpc.connect(server.url())?
 for name in ["Ada", "42"] {
@@ -333,7 +333,7 @@ fn hello(request: HelloRequest): HelloReply ! grpc.Status {
 }
 
 var app = http.App()
-app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
+app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: call => grpc.unary(call, hello)? }] })
 let server = app.start()?
 let client = grpc.connect(server.url())?
 let metadata = ["authorization": "Bearer secret"]
@@ -375,7 +375,7 @@ fn countdown(request: HelloRequest, replies: Sender[HelloReply]): !grpc.Status {
 }
 
 var app = http.App()
-app.grpc(grpc.Service { name: "demo.Launch", methods: [grpc.Method { name: "Countdown", handler: (call) { grpc.serverStream(call, countdown)? } }] })
+app.grpc(grpc.Service { name: "demo.Launch", methods: [grpc.Method { name: "Countdown", handler: call => grpc.serverStream(call, countdown)? }] })
 let server = app.start()?
 let replies = grpc.connect(server.url())?.serverStream[HelloRequest, HelloReply]("/demo.Launch/Countdown", HelloRequest { name: "lift-off" })
 for reply in replies {
@@ -424,7 +424,7 @@ fn hello(request: HelloRequest): HelloReply ! grpc.Status {
 // A service written by hand; a `.proto` file under `src` makes one too.
 let greeter = grpc.Service {
     name: "demo.Greeter"
-    methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }]
+    methods: [grpc.Method { name: "Hello", handler: call => grpc.unary(call, hello)? }]
 }
 var app = http.App()
 app.grpc(greeter.onCall((call, next) {
@@ -523,7 +523,7 @@ fn hello(request: HelloRequest): HelloReply ! grpc.Status {
 }
 
 // With no side effects, Connect clients may call it with a `GET`, which caches.
-let method = grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? }, noSideEffects: true }
+let method = grpc.Method { name: "Hello", handler: call => grpc.unary(call, hello)?, noSideEffects: true }
 var app = http.App()
 app.grpc(grpc.Service { name: "demo.Greeter", methods: [method] })
 let server = app.start()?
@@ -562,7 +562,7 @@ fn hello(request: HelloRequest): HelloReply ! grpc.Status {
     HelloReply { message: "Hello, {request.name}!" }
 }
 
-let greeter = grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] }
+let greeter = grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: call => grpc.unary(call, hello)? }] }
 var app = http.App()
 // Each message of each call, as the service receives or sends it.
 app.grpc(greeter.onMessage((call, direction, message) {
@@ -724,7 +724,7 @@ fn hello(request: HelloRequest): HelloReply ! grpc.Status {
 }
 
 var app = http.App()
-app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
+app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: call => grpc.unary(call, hello)? }] })
 let server = app.start()?
 // A channel keeps its connection for every call; its interceptors see each.
 let client = grpc.connect(server.url())?.onCall((call, next) {
@@ -838,7 +838,7 @@ fn greetAll(requests: grpc.Stream[HelloRequest]): HelloReply ! grpc.Status {
 }
 
 var app = http.App()
-app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "GreetAll", handler: (call) { grpc.clientStream(call, greetAll)? } }] })
+app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "GreetAll", handler: call => grpc.clientStream(call, greetAll)? }] })
 let server = app.start()?
 let upload = grpc.connect(server.url())?.clientStream[HelloRequest, HelloReply]("/demo.Greeter/GreetAll")
 for name in ["Ada", "Bo", "Cy"] {
@@ -904,7 +904,7 @@ fn echo(requests: grpc.Stream[HelloRequest], replies: Sender[HelloReply]): !grpc
 }
 
 var app = http.App()
-app.grpc(grpc.Service { name: "demo.Echo", methods: [grpc.Method { name: "Echo", handler: (call) { grpc.bidiStream(call, echo)? } }] })
+app.grpc(grpc.Service { name: "demo.Echo", methods: [grpc.Method { name: "Echo", handler: call => grpc.bidiStream(call, echo)? }] })
 let server = app.start()?
 let talk = grpc.connect(server.url())?.bidiStream[HelloRequest, HelloReply]("/demo.Echo/Echo")
 talk.send(HelloRequest { name: "one" })?

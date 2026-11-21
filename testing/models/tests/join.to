@@ -207,7 +207,7 @@ fn check(leak: Bool): model.Checked ! model.Violation {
         (join: Join) { not over(join) or (join.rc == 0 and join.freed) },
         name: "NoLeak",
     )
-    model.check(start, (join) { steps(join, leak) }, holds: [safe, noLeak], ends: some(over))
+    model.check(start, join => steps(join, leak), holds: [safe, noLeak], ends: some(over))
 }
 
 test joinAsTlcDoes {

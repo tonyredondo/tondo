@@ -24,14 +24,13 @@ pub fn Chat.routes(self): http.App {
     let counts = self.counts
     let ids = sync.Atomic(0)
     var app = http.App()
-    app.get("/rooms", (_) { http.Reply.json(counts.snapshot()) })
+    app.get("/rooms", _ => http.Reply.json(counts.snapshot()))
     app.websocket(
         "/ws/:room",
-        (request, socket) {
+        (request, socket) =>
             talk(hub, ids.add(1), request, socket).mapErr(
-                (error) { http.HttpError.Protocol("{error}") },
-            )?
-        },
+                error => http.HttpError.Protocol("{error}"),
+            )?,
     )
     app.files("", embed.files("public"))
     app

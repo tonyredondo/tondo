@@ -25,5 +25,5 @@ fn main() {
 // expect-error: E0004 there is no `try`
 // expect-error: E0004 use `match value { pattern => result }`
 // expect-error: E0004 Tondo has no `===`
-// expect-error: E0004 a closure is `(x) { x * 2 }`
+// expect-error: E0004 a closure is `x => x * 2`
 // expect-error: E0004 `as` only renames an import; a conversion is a call

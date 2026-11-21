@@ -88,16 +88,16 @@ fn changed(pool: Pool, w: Int, after: Worker): Pool {
 }
 
 fn idle(pool: Pool): Array[Int] {
-    pool.workers.enumerate().filter((pair) { pair.1.phase == Phase.Asleep }).map((pair) { pair.0 })
+    pool.workers.enumerate().filter(pair => pair.1.phase == Phase.Asleep).map(pair => pair.0)
 }
 
 // Some worker has tasks of its own.
 fn waiting(pool: Pool): Bool {
-    pool.workers.any((each) { not each.own.isEmpty() })
+    pool.workers.any(each => not each.own.isEmpty())
 }
 
 fn nexts(pool: Pool): Array[Int] {
-    pool.workers.enumerate().filter((pair) { pair.1.next.isSome() }).map((pair) { pair.0 })
+    pool.workers.enumerate().filter(pair => pair.1.next.isSome()).map(pair => pair.0)
 }
 
 fn work(pool: Pool): Bool {
@@ -412,7 +412,7 @@ fn check(change: Change): model.Checked ! model.Violation {
         (pool: Pool) {
             let workers = pool.workers
             [Task.A, Task.B, Task.P].all(
-                (task) { workers.count((each) { each.current == some(task) }) <= 1 },
+                task => workers.count(each => each.current == some(task)) <= 1,
             )
         },
         name: "OneWorker",
@@ -422,10 +422,10 @@ fn check(change: Change): model.Checked ! model.Violation {
             nexts(pool).isEmpty() and
             not waiting(pool) and
             pool.workers.all(
-                (each) { each.current.isNone() or not change.cEnds and each.phase == Phase.C },
+                each => each.current.isNone() or not change.cEnds and each.phase == Phase.C,
             )
     }
-    model.check(start, (pool) { steps(pool, change) }, holds: [oneWorker], ends: some(allDone))
+    model.check(start, pool => steps(pool, change), holds: [oneWorker], ends: some(allDone))
 }
 
 test wakeAsTlcDoes {

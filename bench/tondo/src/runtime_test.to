@@ -59,7 +59,7 @@ fn selected(count: Int): Int {
 }
 
 test runtime {
-    testing.bench("join 1", () { (spawn nine()).wait() })
-    testing.bench("mutex 4x1000", () { contended(4, 1000) })
-    testing.bench("select 1000", () { selected(1000) })
+    testing.bench("join 1", () => (spawn nine()).wait())
+    testing.bench("mutex 4x1000", () => contended(4, 1000))
+    testing.bench("select 1000", () => selected(1000))
 }

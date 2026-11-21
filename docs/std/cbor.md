@@ -83,7 +83,7 @@ import std.console
 type Point = { x: Int, y: Int }
 
 let value = cbor.parse(cbor.encode(Point { x: 1, y: 2 }))?
-console.println("{value.get("x").andThen((x) { x.asInt() })} {value.find("y")}")
+console.println("{value.get("x").andThen(x => x.asInt())} {value.find("y")}")
 ```
 
 Implements `Display`, `serialization.Encode`, `serialization.Decode`.

@@ -10,20 +10,16 @@ fn main(): !(http.HttpError | net.NetError) {
     var app = http.App()
     app.get(
         "/login",
-        (_) {
-            http.Reply
-                .text("in")
-                .cookie("session", "a b;c", maxAge: time.hours(1))
-                .cookie("theme", "dark", httpOnly: false, sameSite: http.SameSite.None)
-        },
+        _ => http.Reply
+            .text("in")
+            .cookie("session", "a b;c", maxAge: time.hours(1))
+            .cookie("theme", "dark", httpOnly: false, sameSite: http.SameSite.None),
     )
     app.get(
         "/me",
-        (request) {
-            http.Reply.text(
-                "{request.cookie("session")} {request.cookies().length()} {request.clientIp()}",
-            )
-        },
+        request => http.Reply.text(
+            "{request.cookie("session")} {request.cookies().length()} {request.clientIp()}",
+        ),
     )
     let server = app.start()?
     let browser = http.Client(baseUrl: server.url(), cookies: true)
@@ -40,7 +36,7 @@ fn main(): !(http.HttpError | net.NetError) {
     // Behind a trusted proxy.
     var proxied = http.App()
     proxied.trustProxies(net.network("127.0.0.0/8")?)
-    proxied.get("/ip", (request) { http.Reply.text(request.clientIp()) })
+    proxied.get("/ip", request => http.Reply.text(request.clientIp()))
     let behind = proxied.start()?
     let client = http.Client(baseUrl: behind.url())
     console.println(

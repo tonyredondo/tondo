@@ -8,7 +8,7 @@ import std.cli
 import std.console
 
 fn main() {
-    let log = (1..=30).map((n) { "line {n}" }).collect().join("\n")
+    let log = (1..=30).map(n => "line {n}").collect().join("\n")
     let screen = cli.Pane.rows(
         [
             cli.Pane("Orders today", size: 1),

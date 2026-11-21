@@ -19,7 +19,7 @@ fn main(): !http.HttpError {
         (request) {
             let profile = request.formAs[Profile]()?
             let avatar = profile.avatar
-            let extras = profile.extras.map((file) { file.fileName })
+            let extras = profile.extras.map(file => file.fileName)
             http.Reply.text(
                 "{profile.name} {profile.age} {avatar.name} {avatar.fileName} {avatar.contentType} {avatar.bytes.length()} {extras} {profile.note.isNone()}",
             )

@@ -31,7 +31,7 @@ fn waiter(
 }
 
 fn main() {
-    match recover { [1, 2, 3].map((n) { spawn crash(n) }).wait() } {
+    match recover { [1, 2, 3].map(n => spawn crash(n)).wait() } {
         ok(values) => console.println("{values}")
         err(stopped) => console.println("recovered {stopped.message}")
     }

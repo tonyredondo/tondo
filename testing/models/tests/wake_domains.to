@@ -81,11 +81,11 @@ fn changed(pool: Pool, w: Int, after: Worker): Pool {
 }
 
 fn idle(pool: Pool): Array[Int] {
-    pool.workers.enumerate().filter((pair) { pair.1.phase == Phase.Asleep }).map((pair) { pair.0 })
+    pool.workers.enumerate().filter(pair => pair.1.phase == Phase.Asleep).map(pair => pair.0)
 }
 
 fn idleIn(pool: Pool, domain: Int): Array[Int] {
-    idle(pool).filter((v) { pool.workers[v].domain == domain })
+    idle(pool).filter(v => pool.workers[v].domain == domain)
 }
 
 // Those asleep in the domain, or in any when it has none: whom a worker
@@ -105,11 +105,11 @@ fn sought(pool: Pool, domain: Int, value: Bool): Pool {
 
 // Some worker has tasks of its own.
 fn waiting(pool: Pool): Bool {
-    pool.workers.any((each) { not each.own.isEmpty() })
+    pool.workers.any(each => not each.own.isEmpty())
 }
 
 fn nexts(pool: Pool): Array[Int] {
-    pool.workers.enumerate().filter((pair) { pair.1.next.isSome() }).map((pair) { pair.0 })
+    pool.workers.enumerate().filter(pair => pair.1.next.isSome()).map(pair => pair.0)
 }
 
 fn work(pool: Pool): Bool {
@@ -307,7 +307,7 @@ fn steps(pool: Pool, change: Change): Array[model.Step[Pool]] {
                 let sleeping = if not own.isEmpty() {
                     if seekingIn(pool, it.domain) { [] } else { own }
                 } else {
-                    idle(pool).filter((v) { not seekingIn(pool, worker(pool, v).domain) })
+                    idle(pool).filter(v => not seekingIn(pool, worker(pool, v).domain))
                 }
                 for v in sleeping {
                     next.push(model.step("wake idle", toldToSeek(runs, v)))
@@ -423,16 +423,14 @@ fn check(change: Change, domains: Array[Int]): model.Checked ! model.Violation {
     }
     let count = domains.reduce(
         0,
-        (most, domain) { if domain + 1 > most { domain + 1 } else { most } },
+        (most, domain) => if domain + 1 > most { domain + 1 } else { most },
     )
     let first = domains
         .enumerate()
         .map(
-            (pair) {
-                spare with {
-                    domain: pair.1
-                    phase: if pair.0 == 0 { Phase.Look } else { Phase.Spare }
-                }
+            pair => spare with {
+                domain: pair.1
+                phase: if pair.0 == 0 { Phase.Look } else { Phase.Spare }
             },
         )
     let start = Pool {
@@ -440,7 +438,7 @@ fn check(change: Change, domains: Array[Int]): model.Checked ! model.Violation {
         queue: model.Bag([Task.A])
         parked: model.Bag([Task.P])
         todo: model.Bag([Task.B])
-        seeking: (0..count).map((_) { false }).collect()
+        seeking: (0..count).map(_ => false).collect()
         surplus: 0
     }
     // A task runs on one worker at a time.
@@ -448,7 +446,7 @@ fn check(change: Change, domains: Array[Int]): model.Checked ! model.Violation {
         (pool: Pool) {
             let workers = pool.workers
             [Task.A, Task.B, Task.P].all(
-                (task) { workers.count((each) { each.current == some(task) }) <= 1 },
+                task => workers.count(each => each.current == some(task)) <= 1,
             )
         },
         name: "OneWorker",
@@ -458,10 +456,10 @@ fn check(change: Change, domains: Array[Int]): model.Checked ! model.Violation {
             nexts(pool).isEmpty() and
             not waiting(pool) and
             pool.workers.all(
-                (each) { each.current.isNone() or not change.cEnds and each.phase == Phase.C },
+                each => each.current.isNone() or not change.cEnds and each.phase == Phase.C,
             )
     }
-    model.check(start, (pool) { steps(pool, change) }, holds: [oneWorker], ends: some(allDone))
+    model.check(start, pool => steps(pool, change), holds: [oneWorker], ends: some(allDone))
 }
 
 // One domain is the protocol of wake.to, as many states as TLC finds there.

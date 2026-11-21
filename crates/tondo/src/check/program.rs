@@ -940,7 +940,7 @@ impl<'a> Checker<'a> {
             return self.arity_error(span, 2, args.len());
         };
         let ast::ExprKind::Closure(closure) = &body.value.kind else {
-            let message = "`bench` takes a name and a closure: `testing.bench(\"parse\", () { json.parse(text) })?`";
+            let message = "`bench` takes a name and a closure: `testing.bench(\"parse\", () => json.parse(text))?`";
             self.diags.error("E1102", body.value.span, message);
             return Self::error_expr(span);
         };
@@ -948,7 +948,7 @@ impl<'a> Checker<'a> {
             Some(test) if cx.test_member => self.test_nodes[test as usize].bench = true,
             _ => {
                 let message = "`testing.bench` measures in the body of a `test`, which it makes a benchmark: call it \
-                               there, as `test parsing { testing.bench(\"parse\", () { json.parse(text) })? }`, not \
+                               there, as `test parsing { testing.bench(\"parse\", () => json.parse(text))? }`, not \
                                in a closure, a function or a suite's setup";
                 self.diags.error("E2006", span, message);
             }
@@ -1070,7 +1070,7 @@ impl<'a> Checker<'a> {
             return self.arity_error(span, 1, args.len());
         };
         let ast::ExprKind::Closure(closure) = &body.value.kind else {
-            let message = "`allocations` takes a closure: `testing.allocations(() { receipt(lines) })`";
+            let message = "`allocations` takes a closure: `testing.allocations(() => receipt(lines))`";
             self.diags.error("E1102", body.value.span, message);
             return Self::error_expr(span);
         };

@@ -9,7 +9,7 @@ import std.reflect as __reflect
 /// `app.grpc(grpc.reflection([users, health.service()]))`. It lists these
 /// services and gives the files that declare them.
 pub fn reflection(services: Array[Service]): Service {
-    let names = services.map((service) { service.name })
+    let names = services.map(service => service.name)
     var files: Array[__protobuf.FileDescriptor] = []
     for service in services {
         files.extend(service.files)
@@ -20,7 +20,7 @@ pub fn reflection(services: Array[Service]): Service {
         methods: [
             Method {
                 name: "ServerReflectionInfo"
-                handler: (exchange) {
+                handler: exchange =>
                     bidiStream[ReflectionRequest, ReflectionResponse](
                         exchange,
                         (input, out) {
@@ -29,7 +29,6 @@ pub fn reflection(services: Array[Service]): Service {
                             }
                         },
                     )?
-                }
             },
         ]
         also: ["grpc.reflection.v1alpha.ServerReflection"]
@@ -44,7 +43,7 @@ fn flattened(files: Array[__protobuf.FileDescriptor]): Array[__protobuf.FileDesc
     for at < queue.length() {
         let file = queue[at]
         at += 1
-        if not all.any((known) { known.name == file.name }) {
+        if not all.any(known => known.name == file.name) {
             all.push(file)
             queue.extend(file.imports)
         }
@@ -61,15 +60,15 @@ fn answered(
     let missing = (what: String) { Answer.Failure(Int32.wrapping(Code.NotFound.number()), what) }
     let answer = match request.asked {
         Asked.Services(_) => Answer.Services(names)
-        Asked.FileByName(name) => match files.find((file) { file.name == name }) {
-            some(file) => Answer.Files(flattened([file]).map((each) { each.bytes }))
+        Asked.FileByName(name) => match files.find(file => file.name == name) {
+            some(file) => Answer.Files(flattened([file]).map(each => each.bytes))
             none => missing("no file `{name}`")
         }
-        Asked.Symbol(symbol) => match files.find((file) { file.symbols.contains(symbol) }) {
-            some(file) => Answer.Files(flattened([file]).map((each) { each.bytes }))
+        Asked.Symbol(symbol) => match files.find(file => file.symbols.contains(symbol)) {
+            some(file) => Answer.Files(flattened([file]).map(each => each.bytes))
             none => missing("no symbol `{symbol}`")
         }
-        Asked.ExtensionsOf(name) => if files.any((file) { file.symbols.contains(name) }) {
+        Asked.ExtensionsOf(name) => if files.any(file => file.symbols.contains(name)) {
             Answer.Extensions(name)
         } else {
             missing("no message `{name}`")

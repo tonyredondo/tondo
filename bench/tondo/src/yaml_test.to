@@ -21,6 +21,6 @@ test yaml {
         )
     }
     let text = yaml.encode(servers)
-    testing.bench("encode 100 structs", () { yaml.encode(servers) })
-    testing.bench("decode 100 structs", () { yaml.decode[Array[Server]](text) })?
+    testing.bench("encode 100 structs", () => yaml.encode(servers))
+    testing.bench("decode 100 structs", () => yaml.decode[Array[Server]](text))?
 }

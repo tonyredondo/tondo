@@ -13,25 +13,25 @@ pub type RouteRow = {
 /// What every route did: how many requests, how many failed, and how long
 /// they took, the busiest first.
 pub fn byRoute(found: Array[entries.Entry]): Array[RouteRow] {
-    let groups = found.groupBy((entry) { entries.route(entry.path) })
+    let groups = found.groupBy(entry => entries.route(entry.path))
     let rows = for (route, group) in groups {
-        let times = group.map((entry) { entry.took.milliseconds() })
+        let times = group.map(entry => entry.took.milliseconds())
         RouteRow {
             route
             requests: group.length()
-            errors: group.count((entry) { entry.status >= 500 })
+            errors: group.count(entry => entry.status >= 500)
             slowest: milliseconds(times.max() ?? 0)
             mean: milliseconds(times.sum() / group.length())
         }
     }
-    rows.sortedBy((row) { -row.requests })
+    rows.sortedBy(row => -row.requests)
 }
 
 /// The entries that took longer than a limit, the slowest first.
 pub fn slowerThan(found: Array[entries.Entry], limit: time.Duration): Array[entries.Entry] {
     found
-        .filter((entry) { limit.isLessThan(entry.took) })
-        .sortedBy((entry) { -entry.took.milliseconds() })
+        .filter(entry => limit.isLessThan(entry.took))
+        .sortedBy(entry => -entry.took.milliseconds())
 }
 
 /// How many entries each class of status has: `2xx`, `4xx`, `5xx`.

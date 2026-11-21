@@ -39,7 +39,7 @@ fn fetch(id: Int, _permit: sync.Permit, active: sync.Atomic[Int], peak: sync.Ato
 
 fn produce(items: sync.Mutex[Array[Int]], count: Int) {
     for i in 0..count {
-        items.update((list) { list.push(i) })
+        items.update(list => list.push(i))
     }
 }
 
@@ -116,7 +116,7 @@ fn main() {
     let items = sync.Mutex(Array[Int]())
     spawn produce(items, 5)
     let taken = items.updateWhen(
-        (list) { list.length() >= 5 },
+        list => list.length() >= 5,
         (list) {
             let count = list.length()
             list.clear()
@@ -124,13 +124,13 @@ fn main() {
         },
     )
     console.println("taken {taken}")
-    match items.tryUpdate((list) { list.length() }) {
+    match items.tryUpdate(list => list.length()) {
         some(count) => console.println("try {count}")
         none => console.println("busy")
     }
 
     let table = sync.RwLock(["a": 1])
-    let size = table.read((t) { t.length() })
+    let size = table.read(t => t.length())
     table.update(
         (t) {
             _ = t.insert("b", 2)
@@ -156,7 +156,7 @@ fn main() {
     let config = sync.Once[String]()
     console.println("ready {config.isReady()}")
     for _ in 0..2 {
-        match config.getOrInit(() { load(attempts) }) {
+        match config.getOrInit(() => load(attempts)) {
             ok(value) => console.println("config {value}")
             err(error) => console.println("failed: {error}")
         }

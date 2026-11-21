@@ -7,7 +7,7 @@ import std.console
 import std.text
 
 fn sorted(words: Array[String], order: text.Collator): String {
-    words.sortedWith((a, b) { order.compare(a, b) }).join(" ")
+    words.sortedWith((a, b) => order.compare(a, b)).join(" ")
 }
 
 fn main() {
@@ -38,9 +38,9 @@ fn main() {
     let plain = text
         .normalize("Crème brûlée", text.Normalization.Nfd)
         .chars()
-        .filter((c) { not c.isMark() })
+        .filter(c => not c.isMark())
         .collect()
-        .map((c) { "{c}" })
+        .map(c => "{c}")
         .join("")
     console.println(plain)
 

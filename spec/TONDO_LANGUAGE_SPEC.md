@@ -3072,7 +3072,7 @@ Un range puede:
 
 No es un array y no asigna memoria proporcional a su longitud. Es un valor `Copy`
 que implementa `Iterator[T]`, así que admite los adaptadores del prelude:
-`(0..10).map((n) { n * n })`.
+`(0..10).map(n => n * n)`.
 
 ### 10.17 `Iterator[T]`
 
@@ -3480,7 +3480,7 @@ parámetro del trait y los constraints que el método pide de ellos:
 
 ~~~tondo
 pub fn Iterator[T: Additive].sum(self): T {
-    self.sumBy((item) { item })
+    self.sumBy(item => item)
 }
 ~~~
 
@@ -3672,7 +3672,7 @@ let upper = names.map(String.toUpper)
 let checked = Int.parse("12").mapErr(NoteError.Files)
 ~~~
 
-Se compilan como el cierre que sustituyen, `(name) { name.toUpper() }`, y como
+Se compilan como el cierre que sustituyen, `name => name.toUpper()`, y como
 cualquier valor `fn(...)` olvidan los valores por omisión. Donde no se espera un
 tipo de función, `String.toUpper` sigue siendo `E1102`, que dice cómo darlo.
 
@@ -3713,17 +3713,14 @@ omitirse y, si el entorno lo permite, el cierre se convierte a esa representaci�
 uniforme:
 
 ~~~tondo
-let operation: fn(Int): Int = (value) {
-    value * 2
-}
+let operation: fn(Int): Int = value => value * 2
 ~~~
 
 Donde se espera una función opcional, `(fn(...): R)?`, un cierre es esa
-función, que pasa como `some`: `retry(work, when: (error) { error == Busy })`.
+función, que pasa como `some`: `retry(work, when: error => error == Busy)`.
 
 Sin firma esperada, cada parámetro declara su tipo. El retorno puede inferirse
-desde el cuerpo o escribirse después de `:`. No se utiliza una flecha para
-separar parámetros y retorno.
+desde el cuerpo o escribirse después de `:`.
 
 Sin firma esperada ni retorno escrito, el cierre también infiere el error con
 que falla: la unión cerrada de los errores de sus `fail` y sus `?`, como `main`
@@ -3745,7 +3742,31 @@ let load = (name: String) {
 Aquí `load` es `fn(String): String ! LoadError`. Con un retorno escrito sin
 error, como `(name: String): String { ... }`, un `fail` es `E1302`.
 
-El cierre sin parámetros es `() { ... }`. Los paréntesis son siempre obligatorios, también para un único parámetro.
+Un cierre cuyo cuerpo es una sola expresión se escribe con una flecha, sin
+llaves: `x => x * 2`, `(a, b) => a + b`, `() => clock.now()`. Un único parámetro
+va sin paréntesis; ninguno o varios, entre ellos. El cuerpo de una flecha es una
+expresión, un sitio donde se espera un valor: un `for` allí es el que da sus
+valores (13.3), salvo que el cierre deba dar `Unit`, donde es el bucle que es en
+cualquier otro sitio. Por lo demás es el mismo cierre que `(x) { x * 2 }`, y la
+forma en que se escribe: el formatter (21.3) escribe con flecha todo cierre sin
+tipos, modificadores ni resultado escritos cuyo bloque no tiene sentencias, acaba
+en una expresión y no tiene comentarios, y nunca escribe una flecha como bloque.
+
+~~~tondo
+let pages = urls.map(url => spawn fetch(url)).wait()
+let adults = people.filter(person => person.age >= 18)
+~~~
+
+La flecha no lleva tipos, modificadores (`ref`, `mut`, `var`, `unsafe`) ni
+resultado: un cierre que los necesita, o cuyo cuerpo tiene sentencias, usa la
+forma de bloque, en la que los paréntesis son siempre obligatorios, también con
+un único parámetro: `(value: Int): Int { value * 2 }`, `() { ... }`.
+`x => { ... }` y `(x: Int) => ...` son `E0004`, que dice escribir `(x) { ... }`
+o `(x: Int) { ... }`. El cuerpo de una flecha es la expresión más larga que la
+sigue: en `xs.map(x => x * 2).sum()` termina en `)`, y en una lista de argumentos
+en la coma. En la guarda de un arm de `match` y en la operación de un arm de
+`select`, un `=>` fuera de paréntesis es el del arm: una flecha allí va entre
+paréntesis.
 
 Un cierre puede anteponer `unsafe` cuando su llamador deba cumplir precondiciones
 raw:
@@ -3809,9 +3830,7 @@ let countValues = (values: ...String): Int {
     values.length()
 }
 
-let countNames: fn(...String): Int = (names) {
-    names.length()
-}
+let countNames: fn(...String): Int = names => names.length()
 ~~~
 
 Dentro del cierre, `values` y `names` tienen tipo `Array[String]`. Solo puede
@@ -3867,9 +3886,7 @@ y una llamada que extraiga esa captura consume el cierre:
 ~~~tondo fragment spec.resource
 fn reserveCleanup(): !AcquireError {
     let resource = acquire()?
-    let release = () {
-        Resource.release(resource)
-    }
+    let release = () => Resource.release(resource)
 
     defer release()
 }
@@ -4074,13 +4091,13 @@ resultados que no son `Copy`, así que una tarea por elemento se lanza y se
 espera en una línea:
 
 ~~~tondo
-let pages = urls.map((url) { spawn fetch(url) }).wait()   // Array[Page ! HttpError]
+let pages = urls.map(url => spawn fetch(url)).wait()   // Array[Page ! HttpError]
 ~~~
 
 `waitOrCancel()?` propaga ese primer error:
 
 ~~~tondo
-let pages = urls.map((url) { spawn fetch(url) }).waitOrCancel()?   // Array[Page]
+let pages = urls.map(url => spawn fetch(url)).waitOrCancel()?   // Array[Page]
 ~~~
 
 Sobre tareas que no pueden fallar, `waitOrCancel()` produce `E1620`, que dice
@@ -4573,7 +4590,7 @@ plazas; con `n` menor que 1 es un pánico que dice escribir 1 o más:
 
 ~~~tondo
 let pages = within tasks.limit(64) {
-    urls.map((url) { spawn fetch(url) }).wait()
+    urls.map(url => spawn fetch(url)).wait()
 }
 ~~~
 
@@ -9004,6 +9021,13 @@ Estas reglas determinan dónde aparecen las primitivas anteriores:
   `"{" + indent(softline + expresión) + softline + "}"` y se emite
   `{ expresión }` cuando cabe. Las ramas de una cadena `if`/`else` forman un
   único grupo: caben todas en una línea o se parten todas.
+- Un cierre sin tipos, modificadores ni resultado escritos cuyo bloque no tiene
+  sentencias (23.14), acaba en una expresión que no es un bloque entre llaves y
+  no tiene comentarios se emite con flecha, `x => cuerpo`, sin paréntesis con un
+  único parámetro; el cuerpo sigue a `=>` como el lado derecho de una
+  asignación. Una flecha nunca se emite como bloque, y una flecha a la que sigue
+  más de su expresión, como el operando izquierdo de un operador, se emite entre
+  paréntesis.
 - `} else {` y `} else if ... {` forman una misma línea lógica: un `else` que
   la fuente tenía al comienzo de una línea pasa a la línea de la `}` anterior.
 - Declaraciones de nivel superior se separan por exactamente una línea vacía.
@@ -10826,12 +10850,21 @@ La alternativa con coma existe para código compacto o migrado: según 5.2, la
 nueva línea física posterior a `,` queda suprimida y es la propia coma la que
 termina el arm. El formatter canónico emite un arm por línea y omite esa coma.
 
+En la guarda de un `match_arm` y en la operación de un `select_arm`, una
+`arrow_closure` solo aparece dentro de delimitadores: un `=>` fuera de ellos
+termina la cabecera del arm (11.8).
+
 ### 23.18 Cierres
 
 ~~~ebnf
 closure_expression
                 = [ function_modifiers ], closure_parameter_list,
-                  [ outcome_annotation ], block ;
+                  [ outcome_annotation ], block
+                | arrow_closure ;
+
+arrow_closure   = ( identifier
+                  | "(", [ identifier, { ",", identifier }, [ "," ] ], ")" ),
+                  "=>", expression ;
 
 closure_parameter_list
                 = "(", [ closure_parameter,
@@ -10849,7 +10882,10 @@ parámetro `...T` debe ser único, final, nombrado y no puede tener
 cierre puede escribir solo su nombre. `_` puede conservar un modificador
 explícito con las reglas de 11.3, pero nunca ser variádico. El parser reconoce una
 `closure_parameter_list` cuando una lista entre paréntesis aparece seguida de una
-anotación de resultado opcional y un bloque. `fn` no introduce cierres.
+anotación de resultado opcional y un bloque. `fn` no introduce cierres. Reconoce
+una `arrow_closure` cuando un identificador, o una lista entre paréntesis de
+identificadores, va seguido de `=>`; su cuerpo es la `expression` más larga que
+sigue, que no empieza por `{` (11.8).
 
 In an `if`, `for` or `match` header, the final brace block belongs to the control
 construct. A parenthesized operand before that block remains a group or tuple;

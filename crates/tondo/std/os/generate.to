@@ -50,7 +50,7 @@ fn generated(argument: String): String {
 
 /// The file of a system's module for a target.
 fn calls(target: String): String {
-    let system = target.splitOnce("_").map((parts) { parts.0 }) ?? target
+    let system = target.splitOnce("_").map(parts => parts.0) ?? target
     "crates/tondo/std/os/{system}/calls_{target}.to"
 }
 
@@ -60,11 +60,8 @@ fn includes(target: String): String ! String {
         return "/usr/include"
     }
     let sdk =
-        process
-            .command("xcrun", "--show-sdk-path")
-            .output()
-            .mapErr((e) { "cannot run xcrun: {e}" })?
-    let path = sdk.text().mapErr((e) { "what xcrun gave is not text: {e}" })?
+        process.command("xcrun", "--show-sdk-path").output().mapErr(e => "cannot run xcrun: {e}")?
+    let path = sdk.text().mapErr(e => "what xcrun gave is not text: {e}")?
     "{path.trim()}/usr/include"
 }
 
@@ -112,14 +109,14 @@ fn bound(target: String, headers: Array[String]): !String {
     let tondo = env.get("TONDO") ?? "tondo"
     let written = "/tmp/tondo-os-{target}.to"
     let root = includes(target)?
-    let paths = headers.map((header) { "{root}/{header}" })
+    let paths = headers.map(header => "{root}/{header}")
     let options = ["--included", "--fails", "crates/tondo/std/os/fails.txt", "--output", written]
     _ =
         process
             .command(tondo, "bind", ...paths.concat(options))
             .check()
-            .mapErr((e) { "tondo bind: {e}" })?
-    var text = fs.readText(written).mapErr((e) { "cannot read {written}: {e}" })?
+            .mapErr(e => "tondo bind: {e}")?
+    var text = fs.readText(written).mapErr(e => "cannot read {written}: {e}")?
     // Its first line says how to write it again, as this program does, and
     // still that `tondo bind` wrote it, which keeps C's names.
     let lines = text.lines()
@@ -127,14 +124,14 @@ fn bound(target: String, headers: Array[String]): !String {
     text = typedFlags("{generated(target)}\n{rest}")
     // `syscall` is the module's own, which takes the arguments as `Int`.
     if target.startsWith("linux") {
-        let kept = text.lines().filter((line) { not line.startsWith("pub extern fn syscall(") })
+        let kept = text.lines().filter(line => not line.startsWith("pub extern fn syscall("))
         text = "{kept.join("\n")}\n"
     }
     let file = calls(target)
     let directory = (file.splitOnce("/calls_") ?? (file, "")).0
     _ = fs.createDirectory(directory)
-    fs.writeText(file, text).mapErr((e) { "cannot write {file}: {e}" })?
-    _ = process.command(tondo, "fmt", file).check().mapErr((e) { "tondo fmt: {e}" })?
+    fs.writeText(file, text).mapErr(e => "cannot write {file}: {e}")?
+    _ = process.command(tondo, "fmt", file).check().mapErr(e => "tondo fmt: {e}")?
     console.println("wrote {file}")
 }
 
@@ -154,7 +151,7 @@ fn declarations(text: String, parameter: regex.Regex): Array[Declaration] ! Stri
     var found: Array[Declaration] = []
     for block in text.split("\n\n") {
         let lines = block.lines()
-        let at = lines.findIndex((line) { line.startsWith("pub ") }) ?? -1
+        let at = lines.findIndex(line => line.startsWith("pub ")) ?? -1
         if at < 0 {
             continue
         }
@@ -168,10 +165,10 @@ fn declarations(text: String, parameter: regex.Regex): Array[Declaration] ! Stri
         let shape = match kind {
             "const" => ((after.splitOnce(": ") ?? ("", "")).1.splitOnce(" = ") ?? ("", "")).0
             "fn" => {
-                let signature = lines.drop(at).map((line) { line.trim() }).join("")
+                let signature = lines.drop(at).map(line => line.trim()).join("")
                 let head = (signature.splitOnce(" {{") ?? (signature, "")).0
                 let flat = head.split(", ").join(",").split(",)").join(")")
-                parameter.replaceAll(flat, r"$1").mapErr((e) { "{e}" })?
+                parameter.replaceAll(flat, r"$1").mapErr(e => "{e}")?
             }
             _ => kind
         }
@@ -254,16 +251,16 @@ fn named(word: String, aliases: Map[String, String]): String {
 /// that name what is not shared, which checking each target's file finds.
 fn shared(): !String {
     let tondo = env.get("TONDO") ?? "tondo"
-    let parameter = regex.Regex.compile(r"([(,])[A-Za-z_][A-Za-z0-9_]*: ").mapErr((e) { "{e}" })?
+    let parameter = regex.Regex.compile(r"([(,])[A-Za-z_][A-Za-z0-9_]*: ").mapErr(e => "{e}")?
     var all: Array[Array[Declaration]] = []
     var shapes: Array[Map[String, String]] = []
     var written: Array[Map[String, String]] = []
     for target in targets() {
         let file = calls(target)
-        let text = fs.readText(file).mapErr((e) { "cannot read {file}: {e}" })?
+        let text = fs.readText(file).mapErr(e => "cannot read {file}: {e}")?
         let found = declarations(text, parameter)?
         var aliases = cAliases()
-        for declaration in found.filter((d) { d.shape == "alias" }) {
+        for declaration in found.filter(d => d.shape == "alias") {
             let definition = (declaration.text.lines().last() ?? "").splitOnce(" = ")
             aliases[declaration.name] = (definition ?? ("", "")).1.trim()
         }
@@ -279,9 +276,9 @@ fn shared(): !String {
         written.push(writes)
     }
     let own = "crates/tondo/std/os/unix/calls_unix.to"
-    let ownText = fs.readText(own).mapErr((e) { "cannot read {own}: {e}" })?
+    let ownText = fs.readText(own).mapErr(e => "cannot read {own}: {e}")?
     let taken =
-        declarations(ownText, parameter)?.map((d) { (d.name.splitOnce(".") ?? (d.name, "")).0 })
+        declarations(ownText, parameter)?.map(d => (d.name.splitOnce(".") ?? (d.name, "")).0)
     var kept: Set[String] = Set[]
     for declaration in all[0] {
         // One shape, or for a constant one alias of each target's own, as
@@ -291,10 +288,10 @@ fn shared(): !String {
             written[0].get(declaration.name),
         )
         let sameAlias = match firstWritten {
-            some(_) => written.all((shape) { shape.get(declaration.name) == firstWritten })
+            some(_) => written.all(shape => shape.get(declaration.name) == firstWritten)
             none => false
         }
-        let everywhere = shapes.all((shape) { shape.get(declaration.name) == first }) or sameAlias
+        let everywhere = shapes.all(shape => shape.get(declaration.name) == first) or sameAlias
         if everywhere and not taken.contains(declaration.name) {
             kept.insert(declaration.name)
         }
@@ -303,14 +300,14 @@ fn shared(): !String {
     // own, as the union glibc puts in `termios`; a declaration that names
     // what its target does not have is left out. Checking each file finds
     // both, until all four check.
-    var extras: Array[Set[String]] = targets().map((_) { Set[String]() })
+    var extras: Array[Set[String]] = targets().map(_ => Set[String]())
     _ = fs.createDirectory("/tmp/tondo-os-shared")
     for _ in 0..30 {
         var changed = 0
         for (index, target) in targets().enumerate() {
             let check = "/tmp/tondo-os-shared/shared_{target}.to"
             let blocks = all[index].filter(
-                (d) { kept.contains(d.name) or extras[index].contains(d.name) },
+                d => kept.contains(d.name) or extras[index].contains(d.name),
             )
             var text = "import std.ffi\nimport std.os\n"
             var starts: Array[(Int, String)] = []
@@ -318,20 +315,19 @@ fn shared(): !String {
                 starts.push((text.lines().length() + 1, block.name))
                 text = "{text}\n{block.text}\n"
             }
-            fs.writeText(check, text).mapErr((e) { "cannot write {check}: {e}" })?
-            let ran =
-                process.command(tondo, "check", check, "--json").output().mapErr((e) { "{e}" })?
-            let said = ran.text().mapErr((e) { "{e}" })?
-            let checked = json.decode[Checked](said).mapErr((e) { "what `tondo check` gave: {e}" })?
-            for diagnostic in checked.diagnostics.filter((d) { d.severity == "error" }) {
+            fs.writeText(check, text).mapErr(e => "cannot write {check}: {e}")?
+            let ran = process.command(tondo, "check", check, "--json").output().mapErr(e => "{e}")?
+            let said = ran.text().mapErr(e => "{e}")?
+            let checked = json.decode[Checked](said).mapErr(e => "what `tondo check` gave: {e}")?
+            for diagnostic in checked.diagnostics.filter(d => d.severity == "error") {
                 let missing = (diagnostic.message.split("`").drop(1).first() ?? "")
-                if all[index].any((d) { d.name == missing }) and not extras[index].contains(missing) {
+                if all[index].any(d => d.name == missing) and not extras[index].contains(missing) {
                     extras[index].insert(missing)
                     changed += 1
                     continue
                 }
                 let line = (diagnostic.range?.start.line ?? -1) + 1
-                let owner = (starts.filter((start) { start.0 <= line }).last() ?? (0, "")).1
+                let owner = (starts.filter(start => start.0 <= line).last() ?? (0, "")).1
                 if kept.contains(owner) {
                     kept.remove(owner)
                     changed += 1
@@ -348,12 +344,12 @@ fn shared(): !String {
     for (index, target) in targets().enumerate() {
         let file = "crates/tondo/std/os/unix/shared_{target}.to"
         let blocks = all[index]
-            .filter((d) { kept.contains(d.name) or extras[index].contains(d.name) })
-            .map((d) { d.text })
+            .filter(d => kept.contains(d.name) or extras[index].contains(d.name))
+            .map(d => d.text)
         let text =
             "{generated("shared")}\n\nimport std.ffi\nimport std.os\n\n{blocks.join("\n\n")}\n"
-        fs.writeText(file, text).mapErr((e) { "cannot write {file}: {e}" })?
-        _ = process.command(tondo, "fmt", file).check().mapErr((e) { "tondo fmt: {e}" })?
+        fs.writeText(file, text).mapErr(e => "cannot write {file}: {e}")?
+        _ = process.command(tondo, "fmt", file).check().mapErr(e => "tondo fmt: {e}")?
         console.println("wrote {file}: {blocks.length()} declarations")
     }
 }

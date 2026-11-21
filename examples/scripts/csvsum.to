@@ -31,7 +31,7 @@ var totals: Map[String, (Int, Float)] = [:]
 var skipped = 0
 for record in csv.records(io.reader(fs.readText(file)?)) {
     let fields = record?
-    match (fields.get(by), fields.get(amount).andThen((text) { Float.parse(text.trim()).ok() })) {
+    match (fields.get(by), fields.get(amount).andThen(text => Float.parse(text.trim()).ok())) {
         (some(key), some(value)) => {
             let (rows, sum) = totals.get(key) ?? (0, 0.0)
             totals[key] = (rows + 1, sum + value)
@@ -42,7 +42,7 @@ for record in csv.records(io.reader(fs.readText(file)?)) {
 
 let rows = for (key, (count, sum)) in totals { Row { group: key, rows: count, total: "{sum:.2}" } }
 console.println("{amount} by {by}")
-console.println(cli.table(rows.sortedBy((row) { row.group })))
+console.println(cli.table(rows.sortedBy(row => row.group)))
 if skipped > 0 {
     console.eprintln("{skipped} rows without a `{by}` or a number in `{amount}` were left out")
 }

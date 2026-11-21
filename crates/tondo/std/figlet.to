@@ -41,7 +41,7 @@ pub fn figlet(text: String, font: String? = none, width: Int? = none): String {
         blocks.push(lettered(face, line))
     }
     blocks
-        .map((block) { linesOf(block).map((row) { clipped(row, room).trimEnd() }).join("\n") })
+        .map(block => linesOf(block).map(row => clipped(row, room).trimEnd()).join("\n"))
         .join("\n")
 }
 
@@ -117,7 +117,7 @@ fn rowsOf(lines: Array[String], at: Int, height: Int): Array[String] {
                         for end > 0 and row[end - 1] == mark {
                             end -= 1
                         }
-                        row.take(end).map((c) { "{c}" }).join("")
+                        row.take(end).map(c => "{c}").join("")
                     }
                     none => ""
                 }
@@ -137,10 +137,10 @@ fn lettered(face: Face, text: String): String {
     var previous = 0
     for c in text.chars() {
         let letter = match face.letters[c.code()] {
-            some(found) => found.map((row) { row.chars().collect() })
+            some(found) => found.map(row => row.chars().collect())
             none => continue
         }
-        let wide = letter.map((row) { row.length() }).max() ?? 0
+        let wide = letter.map(row => row.length()).max() ?? 0
         let amount = if face.layout == 0 { 0 } else { overlap(face, rows, letter, previous, wide) }
         for index in 0..face.height {
             var row = rows[index]
@@ -160,9 +160,7 @@ fn lettered(face: Face, text: String): String {
         }
         previous = wide
     }
-    rows
-        .map((row) { row.map((c) { if c == face.blank { " " } else { "{c}" } }).join("") })
-        .join("\n")
+    rows.map(row => row.map(c => if c == face.blank { " " } else { "{c}" }).join("")).join("\n")
 }
 
 /// How many columns a letter can go into what is written, as FIGlet
@@ -240,7 +238,7 @@ fn smushed(face: Face, left: Char, right: Char, previous: Int, wide: Int): Char?
     }
     if rules & 4 != 0 {
         let classes = ["|", "/\\", "[]", "{{}}", "()", "<>"]
-        let rank = (c: Char) { classes.findIndex((class) { class.contains("{c}") }) }
+        let rank = (c: Char) { classes.findIndex(class => class.contains("{c}")) }
         match (rank(left), rank(right)) {
             (some(one), some(two)) if one < two => return right
             (some(one), some(two)) if two < one => return left

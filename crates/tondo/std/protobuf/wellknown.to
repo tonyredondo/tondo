@@ -141,7 +141,7 @@ impl Message for Any {
 
     fn readJson(input: JsonReader, value: __json.Value): Any ! ProtobufError {
         let fields = input.fields(value, "$")?
-        let typeUrl = match fields.find((field) { field.0 == "@type" }) {
+        let typeUrl = match fields.find(field => field.0 == "@type") {
             some((_, __json.Value.Text(url))) => url
             _ => fail jsonError(
                 serialization.ErrorKind.Missing,
@@ -151,7 +151,7 @@ impl Message for Any {
         }
         let name = typeUrl.split("/").last() ?? typeUrl
         let held = if specialJson(name) {
-            match fields.find((field) { field.0 == "value" }) {
+            match fields.find(field => field.0 == "value") {
                 some((_, inner)) => inner
                 none => __json.Value.Null
             }
@@ -234,7 +234,7 @@ impl Message for FieldMask {
     fn writeJson(self, out: JsonWriter): !ProtobufError {
         out.string(
             self.paths
-                .map((path) { path.split(".").map((part) { lowerCamel(part) }).join(".") })
+                .map(path => path.split(".").map(part => lowerCamel(part)).join("."))
                 .join(","),
         )
     }
@@ -247,7 +247,7 @@ impl Message for FieldMask {
         FieldMask {
             paths: text
                 .split(",")
-                .map((path) { path.split(".").map((part) { snakeCase(part) }).join(".") })
+                .map(path => path.split(".").map(part => snakeCase(part)).join("."))
         }
     }
 }

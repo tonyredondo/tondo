@@ -67,9 +67,9 @@ fn main() {
         }
         if not broken.isEmpty() {
             let rows = broken.map(
-                (link) { Row { link: link.url, answer: "{link.outcome}", linkedFrom: link.from } },
+                link => Row { link: link.url, answer: "{link.outcome}", linkedFrom: link.from },
             )
-            console.println(cli.table(rows.sortedBy((row) { row.link })))
+            console.println(cli.table(rows.sortedBy(row => row.link)))
         }
     }
     if not broken.isEmpty() {

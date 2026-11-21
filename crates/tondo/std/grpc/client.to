@@ -66,7 +66,7 @@ pub enum Balancing {
 /// }
 ///
 /// var app = http.App()
-/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: call => grpc.unary(call, hello)? }] })
 /// let server = app.start()?
 /// // A channel keeps its connection for every call; its interceptors see each.
 /// let client = grpc.connect(server.url())?.onCall((call, next) {
@@ -255,7 +255,7 @@ fn Channel.layered(self, at: Int, slot: grpcNative.Native, rpc: Call, opening: O
     }
     let layer = self.layers[at]
     let connection = self
-    layer(rpc, (next) { connection.layered(at + 1, slot, next, opening)? })?
+    layer(rpc, next => connection.layered(at + 1, slot, next, opening)?)?
 }
 
 /// The next message a call receives, `none` after the last, or its status
@@ -362,7 +362,7 @@ pub fn Channel.serverStream[
 /// }
 ///
 /// var app = http.App()
-/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "GreetAll", handler: (call) { grpc.clientStream(call, greetAll)? } }] })
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "GreetAll", handler: call => grpc.clientStream(call, greetAll)? }] })
 /// let server = app.start()?
 /// let upload = grpc.connect(server.url())?.clientStream[HelloRequest, HelloReply]("/demo.Greeter/GreetAll")
 /// for name in ["Ada", "Bo", "Cy"] {
@@ -426,7 +426,7 @@ pub fn Upload[
 /// }
 ///
 /// var app = http.App()
-/// app.grpc(grpc.Service { name: "demo.Echo", methods: [grpc.Method { name: "Echo", handler: (call) { grpc.bidiStream(call, echo)? } }] })
+/// app.grpc(grpc.Service { name: "demo.Echo", methods: [grpc.Method { name: "Echo", handler: call => grpc.bidiStream(call, echo)? }] })
 /// let server = app.start()?
 /// let talk = grpc.connect(server.url())?.bidiStream[HelloRequest, HelloReply]("/demo.Echo/Echo")
 /// talk.send(HelloRequest { name: "one" })?

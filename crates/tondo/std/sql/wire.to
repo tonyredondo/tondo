@@ -174,7 +174,7 @@ fn reached(settings: Settings): __net.Stream ! SqlError {
 fn tlsWanted(settings: Settings): Bool {
     let local =
         settings.host == "localhost" or
-            (__net.ip(settings.host).map((ip) { ip.isLoopback() }) ?? false)
+            (__net.ip(settings.host).map(ip => ip.isLoopback()) ?? false)
     settings.tls == "require" or (settings.tls == "prefer" and not local)
 }
 

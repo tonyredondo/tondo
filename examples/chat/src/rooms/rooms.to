@@ -157,8 +157,8 @@ fn line(event: Event): String {
 fn people(state: State, room: String): Array[String] {
     state.members
         .values()
-        .filter((member) { member.room == room })
-        .map((member) { member.name })
+        .filter(member => member.room == room)
+        .map(member => member.name)
         .collect()
 }
 

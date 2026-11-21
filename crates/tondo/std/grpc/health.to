@@ -92,30 +92,27 @@ pub fn Health.service(self): Service {
         methods: [
             Method {
                 name: "Check"
-                handler: (exchange) {
+                handler: exchange =>
                     unary[HealthRequest, HealthReply](
                         exchange,
-                        (request) { checked(statuses, request.service)? },
+                        request => checked(statuses, request.service)?,
                     )?
-                }
             },
             Method {
                 name: "List"
-                handler: (exchange) {
+                handler: exchange =>
                     unary[HealthListRequest, HealthList](
                         exchange,
-                        (_) { HealthList { statuses: statuses.get() } },
+                        _ => HealthList { statuses: statuses.get() },
                     )?
-                }
             },
             Method {
                 name: "Watch"
-                handler: (exchange) {
+                handler: exchange =>
                     serverStream[HealthRequest, HealthReply](
                         exchange,
-                        (request, out) { followed(statuses, request.service, out) },
+                        (request, out) => followed(statuses, request.service, out),
                     )?
-                }
             },
         ]
         files: [healthFile()]
@@ -145,8 +142,8 @@ fn followed(
     for {
         let before = last
         let now = statuses.updateWhen(
-            (all) { some(all.get(service) ?? ServingStatus.ServiceUnknown) != before },
-            (all) { all.get(service) ?? ServingStatus.ServiceUnknown },
+            all => some(all.get(service) ?? ServingStatus.ServiceUnknown) != before,
+            all => all.get(service) ?? ServingStatus.ServiceUnknown,
         )
         out.send(HealthReply { status: now })
         last = now

@@ -926,7 +926,7 @@ import std.text
 text.category('é') == text.Category.LowercaseLetter
 text.script('字') == text.Script.Han
 let order = text.collator("es")
-let sorted = ["zorro", "ñu", "nube"].sortedWith((a, b) { order.compare(a, b) })   // nube ñu zorro
+let sorted = ["zorro", "ñu", "nube"].sortedWith((a, b) => order.compare(a, b))   // nube ñu zorro
 ~~~
 
 ~~~tondo pseudocode
@@ -1292,7 +1292,7 @@ pub fn File.reader(self): io.Reader
   nombra no se recorre. Un directorio que no se puede leer hace fallar el
   recorrido con su error; con `skipUnreadable`, uno bajo `root` se deja
   fuera, sin su contenido. `enter` decide si se entra en cada directorio,
-  que se da en cualquier caso: `(entry) { not entry.path.endsWith("/node_modules") }`.
+  que se da en cualquier caso: `entry => not entry.path.endsWith("/node_modules")`.
 - `glob` da los paths que casan con el patrón (`path.matches`, 10.4), archivos y
   directorios, ordenados por bytes; un array vacío si no casa ninguno. Recorre,
   como `walk`, desde la parte del patrón sin comodines: `content/**/*.md`
@@ -2596,8 +2596,8 @@ ni un executor global, ni una segunda forma de esperar o cancelar.
 import std.executor
 
 let pool = executor.pool(4, 16)?                    // ! ExecutorError
-let job = pool.submit(() { fetch(url) })?           // Join[T] ! SubmitError
-match pool.trySubmit(() { work() }) {
+let job = pool.submit(() => fetch(url))?           // Join[T] ! SubmitError
+match pool.trySubmit(() => work()) {
     ok(other) => other.wait()
     err(executor.SubmitError.Saturated) => retryLater()
     err(executor.SubmitError.Closed) => {}
@@ -2973,7 +2973,7 @@ fn iter(self): ArrayIterator[T]                     // Iterator[T], perezoso
 ~~~
 
 - `map` y `flatMap` aceptan resultados que no son `Copy` (`U: ~Copy`), como el
-  `Join` de un `spawn`: `urls.map((url) { spawn fetch(url) })` da un
+  `Join` de un `spawn`: `urls.map(url => spawn fetch(url))` da un
   `Array[Join[…]]`, que se espera con `wait()`, o con `waitOrCancel()` para los
   valores o el primer error, que cancela las demás (lenguaje 11.11).
 - `minBy` y `maxBy` dan el primer elemento de la clave menor o mayor, `none`
@@ -2992,7 +2992,7 @@ fn iter(self): ArrayIterator[T]                     // Iterator[T], perezoso
   enteros es el error `E1105`, que dice cómo dividir su `sum()` como floats, y
   `averageBy` igual.
 - `scan` da el valor acumulado tras cada elemento, tantos como elementos, sin
-  `initial`: `[1, 2, 3].scan(0, (a, x) { a + x })` es `[1, 3, 6]`.
+  `initial`: `[1, 2, 3].scan(0, (a, x) => a + x)` es `[1, 3, 6]`.
 - `findLast` y `findLastIndex` buscan desde el final; `indexOf` da el primer
   índice de un elemento igual a `value`.
 - `joinBy` empareja cada elemento con cada uno de `other` de la misma clave,
@@ -3000,7 +3000,7 @@ fn iter(self): ArrayIterator[T]                     // Iterator[T], perezoso
   Un elemento sin pareja queda fuera.
 - `toSet` da el set de los elementos, en el orden en que aparecen.
 - No hay `flatten`, que sería un método de una sola instancia, `Array[Array[T]]`:
-  `flatMap((inner) { inner })` aplana.
+  `flatMap(inner => inner)` aplana.
 
 `Map[K, V]`: `mapValues(fn(V): W): Map[K, W]`,
 `filter(fn(K, V): Bool): Map[K, V]` y `merge(other): Map[K, V]`, donde gana
@@ -3042,8 +3042,8 @@ Estos métodos trabajan sobre una copia del iterador, así que su tipo es `Copy`
 con uno afín, el error dice que se recorra con `for`.
 
 Un cierre que se pasa a estos métodos toma los tipos de sus parámetros de la
-llamada: `numbers.map((n) { n * 2 })`, `(0..10).filter((n) { n % 2 == 0 })` o
-`text.chars().filter((c) { c.isLetter() })`.
+llamada: `numbers.map(n => n * 2)`, `(0..10).filter(n => n % 2 == 0)` o
+`text.chars().filter(c => c.isLetter())`.
 
 `std.math` da las operaciones escalares con la semántica de IEEE-754 y sin
 fast-math. Una operación fuera de su dominio da `NaN` o un infinito, como `/`
@@ -5544,7 +5544,7 @@ import std.profile
 
 fn serve(request: Request): Response ! fs.FsError {
     let cpu = profile.startCpu()
-    let response = profile.withLabels(["endpoint": request.path], () { handle(request) })
+    let response = profile.withLabels(["endpoint": request.path], () => handle(request))
     fs.writeBytes("cpu.pprof", cpu.stop().pprof())?
     response
 }
@@ -5647,7 +5647,7 @@ const Site: fs.FileSystem = embed.files("static")
 
 fn main(): !http.HttpError {
     var app = http.App()
-    app.get("/banner", (request) { http.Reply.text(Banner) })
+    app.get("/banner", request => http.Reply.text(Banner))
     app.files("/", Site)
     app.listen(port: 8080)?
 }
@@ -6981,7 +6981,7 @@ import std.http
 
 fn main(): !http.HttpError {
     var app = http.App()
-    app.get("/", (_) { http.Reply.text("hello") })
+    app.get("/", _ => http.Reply.text("hello"))
     app.listen(port: 443, tls: acme.tls(["example.com", "www.example.com"], email: "me@example.com"))?
 }
 ~~~
@@ -7035,7 +7035,7 @@ pub type Library = { books: Array[Book] }
 
 /// The books whose title has the text.
 pub fn Library.matching(self, text: String): Array[Book] {
-    self.books.filter((book) { book.title.contains(text) })
+    self.books.filter(book => book.title.contains(text))
 }
 
 fn main(): !http.HttpError {

@@ -544,7 +544,7 @@ import std.console
 import std.http
 
 var app = http.App()
-app.get("/", (_) { http.Reply.text("hello").header("X-Version", "2").cookie("session", "abc") })
+app.get("/", _ => http.Reply.text("hello").header("X-Version", "2").cookie("session", "abc"))
 let response = app.client().get("/")?
 console.println("{response.status()} {response.reason()} {response.version()}")
 console.println("{response.header("x-version")} {response.cookie("session")} {response.text()?}")
@@ -698,7 +698,7 @@ import std.console
 import std.http
 
 var app = http.App()
-app.get("/log", (_) { http.Reply.text("one\ntwo\nthree\n") })
+app.get("/log", _ => http.Reply.text("one\ntwo\nthree\n"))
 // Each line as it arrives, without the whole body in memory.
 for line in app.client().get("/log")?.lines() {
     console.println("> {line?}")
@@ -959,7 +959,7 @@ import std.console
 import std.http
 
 var app = http.App()
-app.get("/me", (request) { http.Reply.text(request.header("Authorization") ?? "anonymous") })
+app.get("/me", request => http.Reply.text(request.header("Authorization") ?? "anonymous"))
 var client = app.client()
 // Every request of the client through this hook: logged and authorized.
 client.use((request, next) {
@@ -1757,10 +1757,10 @@ import std.console
 import std.http
 
 var app = http.App()
-app.get("/", (_) { http.Reply.html("<h1>Home</h1>") })
-app.get("/old", (_) { http.Reply.redirect("/", status: 301) })
-app.get("/data", (_) { http.Reply.json(["ok": true]).header("Cache-Control", "no-store") })
-app.delete("/items/:id", (_) { http.Reply.empty() })
+app.get("/", _ => http.Reply.html("<h1>Home</h1>"))
+app.get("/old", _ => http.Reply.redirect("/", status: 301))
+app.get("/data", _ => http.Reply.json(["ok": true]).header("Cache-Control", "no-store"))
+app.delete("/items/:id", _ => http.Reply.empty())
 let client = app.client()
 console.println(client.get("/old")?.text()?)
 let data = client.get("/data")?
@@ -2056,13 +2056,13 @@ pub type Todo = { id: Int, title: String }
 
 var api = http.App()
 api.get("/todos/:id", (request) { http.Reply.json(Todo { id: request.intParam("id")?, title: "Write docs" }) })
-api.post("/todos", (request) { http.Reply.json(request.json[Todo]()?, status: 201) })
+api.post("/todos", request => http.Reply.json(request.json[Todo]()?, status: 201))
 
 var app = http.App()
 app.cors(["https://example.com"])
 app.compress()
 app.mount("/api", api)
-app.get("/health", (_) { http.Reply.text("ok") })
+app.get("/health", _ => http.Reply.text("ok"))
 console.println(app.client().get("/api/todos/1")?.text()?)
 ```
 
@@ -2168,7 +2168,7 @@ app.use((request, next) {
     log.info("served", ["path": request.path(), "status": "{reply.status()}", "took": "{started.elapsed()}"])
     reply
 })
-app.get("/", (_) { http.Reply.text("hello") })
+app.get("/", _ => http.Reply.text("hello"))
 ```
 
 #### App.cors
@@ -2421,7 +2421,7 @@ import std.http
 import std.time
 
 var app = http.App()
-app.get("/health", (_) { http.Reply.text("ok") })
+app.get("/health", _ => http.Reply.text("ok"))
 // A server that runs while the program goes on, as a test's.
 let server = app.start()?
 console.println("{server.url()}: {http.get("{server.url()}/health")?.text()?}")
@@ -2464,7 +2464,7 @@ import std.console
 import std.http
 
 var app = http.App()
-app.get("/health", (_) { http.Reply.text("ok") })
+app.get("/health", _ => http.Reply.text("ok"))
 let server = app.start(port: 0, host: "0.0.0.0")?
 // The port it took, which it listens on now.
 console.println("listening on {server.url()}")
@@ -2494,7 +2494,7 @@ What a server shows and asks of TLS: `net.Tls`.
 import std.http
 
 var app = http.App()
-app.get("/", (_) { http.Reply.text("hello over HTTPS") })
+app.get("/", _ => http.Reply.text("hello over HTTPS"))
 app.listen(port: 8443, tls: some(http.Tls.files("cert.pem", "key.pem")))?
 ```
 
@@ -2510,7 +2510,7 @@ A version of TLS: `net.TlsVersion`.
 import std.http
 
 var app = http.App()
-app.get("/", (_) { http.Reply.text("TLS 1.3 only") })
+app.get("/", _ => http.Reply.text("TLS 1.3 only"))
 let tls = http.Tls.files("cert.pem", "key.pem", minimumVersion: http.TlsVersion.Tls13)
 app.listen(port: 8443, tls: some(tls))?
 ```

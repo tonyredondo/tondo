@@ -30,9 +30,7 @@ impl Display for NoteError {
 /// A name is what a file can be called anywhere, and nothing that could
 /// leave the directory of the notes.
 fn checked(name: String): String ! NoteError {
-    let fine = name
-        .chars()
-        .all((c) { (c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c == '-' })
+    let fine = name.chars().all(c => (c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c == '-')
     if not fine or name.isEmpty() {
         fail BadName(name)
     }
@@ -55,8 +53,8 @@ fn parsed(name: String, content: String): Note {
             let tags = first
                 .removePrefix("tags:")
                 .split(",")
-                .map((tag) { tag.trim() })
-                .filter((tag) { not tag.isEmpty() })
+                .map(tag => tag.trim())
+                .filter(tag => not tag.isEmpty())
             Note { name, tags, text: rest.trim() }
         }
         _ => Note { name, text: content.trim() }
@@ -105,7 +103,7 @@ pub type Match = {
 
 /// The words of a text, in lower case.
 fn terms(words: String): Array[String] {
-    words.toLower().split(" ").map((word) { word.trim() }).filter((word) { not word.isEmpty() })
+    words.toLower().split(" ").map(word => word.trim()).filter(word => not word.isEmpty())
 }
 
 /// The notes that say the most of some words, the best first. A word in a
@@ -118,15 +116,13 @@ pub fn search(files: fs.FileSystem, query: String, limit: Int = 5): Array[Match]
         for word in wanted {
             score += body.count(word)
             score += 3 * note.name.count(word)
-            score += 2 * note.tags.filter((tag) { tag.toLower() == word }).length()
+            score += 2 * note.tags.filter(tag => tag.toLower() == word).length()
         }
         if score == 0 {
             continue
         }
-        let line = note.text
-            .lines()
-            .find((each) { wanted.any((word) { each.toLower().contains(word) }) })
+        let line = note.text.lines().find(each => wanted.any(word => each.toLower().contains(word)))
         Match { name: note.name, score, line: line ?? "" }
     }
-    found.sortedBy((each) { -each.score }).take(limit)
+    found.sortedBy(each => -each.score).take(limit)
 }

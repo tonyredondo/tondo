@@ -358,7 +358,7 @@ pub fn Set.addFiles(mut self, files: __fs.FileSystem, pattern: String = "**"): !
         err(error) => fail failed(error, pattern)
     }
     for path in paths {
-        if files.metadata(path).map((found) { found.kind == __fs.FileKind.Directory }) ?? false {
+        if files.metadata(path).map(found => found.kind == __fs.FileKind.Directory) ?? false {
             continue
         }
         match files.readText(path) {
@@ -566,7 +566,7 @@ fn quoted(names: Array[String]): String {
     if names.isEmpty() {
         return "none"
     }
-    names.map((name) { "`{name}`" }).join(", ")
+    names.map(name => "`{name}`").join(", ")
 }
 
 fn Run.template(
@@ -796,14 +796,8 @@ fn Run.evaluate(self, scope: Scope, code: Code): __reflect.Value ! TemplateError
             }
             Op.Map(count) => {
                 let pairs = taken(var stack, count * 2)
-                let keys = pairs
-                    .enumerate()
-                    .filter((pair) { pair.0 % 2 == 0 })
-                    .map((pair) { pair.1 })
-                let values = pairs
-                    .enumerate()
-                    .filter((pair) { pair.0 % 2 == 1 })
-                    .map((pair) { pair.1 })
+                let keys = pairs.enumerate().filter(pair => pair.0 % 2 == 0).map(pair => pair.1)
+                let values = pairs.enumerate().filter(pair => pair.0 % 2 == 1).map(pair => pair.1)
                 _ = self.oneType(scope, values, at, "a map's values")?
                 stack.push(
                     match self.oneType(scope, keys, at, "a map's keys")? {
@@ -834,7 +828,7 @@ fn Run.evaluate(self, scope: Scope, code: Code): __reflect.Value ! TemplateError
                 stack.push(__reflect.valueOf(self.shown(scope, value, format, at)?))
             }
             Op.Join(count) => {
-                let texts = taken(var stack, count).map((piece) { "{piece}" })
+                let texts = taken(var stack, count).map(piece => "{piece}")
                 stack.push(__reflect.valueOf(texts.join("")))
             }
             Op.Name(name) => stack.push(self.named(scope, name, at)?)
@@ -933,8 +927,8 @@ fn Run.oneType(
     at: Int,
     what: String,
 ): String ! TemplateError {
-    let first = values.first().map((value) { value.typeName() }) ?? ""
-    match values.find((value) { value.typeName() != first }) {
+    let first = values.first().map(value => value.typeName()) ?? ""
+    match values.find(value => value.typeName() != first) {
         some(other) => {
             let hint = if what == "a map's values" {
                 ": to pass several values, name them: `include \"card.html\" title: ..., size: ...`"
@@ -980,7 +974,7 @@ fn Run.named(self, scope: Scope, name: String, at: Int): __reflect.Value ! Templ
     match scope.data.optional(name) {
         ok(some(value)) => value
         _ => {
-            let fields = scope.data.fields().map((field) { field.name })
+            let fields = scope.data.fields().map(field => field.name)
             let message = match fields.isEmpty() {
                 true =>
                     "unknown name `{name}`: it is no binding, and the data, `{scope.data.typeName()}`, has no fields"
@@ -1030,7 +1024,7 @@ fn Run.index(
     }
     let position = self.integer(scope, key, at)?
     let items = if kind == "String" {
-        textNative.split(target.to[String]() ?? "", "", 0).map((c) { __reflect.valueOf(c) })
+        textNative.split(target.to[String]() ?? "", "", 0).map(c => __reflect.valueOf(c))
     } else {
         target.elements()
     }
@@ -1204,9 +1198,9 @@ fn Run.binary(
             return __reflect.valueOf((right.to[String]() ?? "").contains("{left}"))
         }
         if kind.startsWith("Map[") {
-            return __reflect.valueOf(right.entries().any((entry) { same(entry.0, left) }))
+            return __reflect.valueOf(right.entries().any(entry => same(entry.0, left)))
         }
-        return __reflect.valueOf(right.elements().any((item) { same(item, left) }))
+        return __reflect.valueOf(right.elements().any(item => same(item, left)))
     }
     let both = left.typeName() == "String" and right.typeName() == "String"
     if both and operator in ["<", "<=", ">", ">="] {
@@ -1280,7 +1274,7 @@ fn Run.call(
 ): __reflect.Value ! TemplateError {
     var known: Array[String] = []
     for helper in self.set.helpers {
-        let methods = helper.typeInfo().methods().map((method) { method.name() })
+        let methods = helper.typeInfo().methods().map(method => method.name())
         if name in methods {
             return match helper.call(name, ...args) {
                 ok(value) => self.outcome(scope, value, at)?
@@ -1353,7 +1347,7 @@ fn Run.method(
 }
 
 fn argument(args: Array[__reflect.Value], index: Int): String {
-    args.get(index).map((value) { "{value}" }) ?? ""
+    args.get(index).map(value => "{value}") ?? ""
 }
 
 fn textMethod(value: String, name: String, args: Array[__reflect.Value]): __reflect.Value? {
@@ -1396,14 +1390,14 @@ fn arrayMethod(
     let result = match (name, args.length()) {
         ("length", 0) => __reflect.valueOf(items.length())
         ("isEmpty", 0) => __reflect.valueOf(items.isEmpty())
-        ("contains", 1) => __reflect.valueOf(items.any((item) { same(item, args[0]) }))
+        ("contains", 1) => __reflect.valueOf(items.any(item => same(item, args[0])))
         ("first", 0) => __reflect.valueOf(items.first())
         ("last", 0) => __reflect.valueOf(items.last())
         ("get", 1) => __reflect.valueOf(items.get(count))
         ("take", 1) => __reflect.valueOf(items.take(count))
         ("drop", 1) => __reflect.valueOf(items.drop(count))
         ("reversed", 0) => __reflect.valueOf(items.reversed())
-        ("join", 1) => __reflect.valueOf(items.map((item) { "{item}" }).join(argument(args, 0)))
+        ("join", 1) => __reflect.valueOf(items.map(item => "{item}").join(argument(args, 0)))
         ("concat", 1) => __reflect.valueOf(items.concat(args[0].elements()))
         ("enumerate", 0) => {
             var pairs: Array[Array[__reflect.Value]] = []
@@ -1425,7 +1419,7 @@ fn mapMethod(
     let result = match (name, args.length()) {
         ("length", 0) => __reflect.valueOf(entries.length())
         ("isEmpty", 0) => __reflect.valueOf(entries.isEmpty())
-        ("contains", 1) => __reflect.valueOf(entries.any((entry) { same(entry.0, args[0]) }))
+        ("contains", 1) => __reflect.valueOf(entries.any(entry => same(entry.0, args[0])))
         ("get", 1) => {
             var found: __reflect.Value? = none
             for (key, value) in entries {
@@ -1435,9 +1429,9 @@ fn mapMethod(
             }
             __reflect.valueOf(found)
         }
-        ("keys", 0) => __reflect.valueOf(entries.map((entry) { entry.0 }))
-        ("values", 0) => __reflect.valueOf(entries.map((entry) { entry.1 }))
-        ("entries", 0) => __reflect.valueOf(entries.map((entry) { [entry.0, entry.1] }))
+        ("keys", 0) => __reflect.valueOf(entries.map(entry => entry.0))
+        ("values", 0) => __reflect.valueOf(entries.map(entry => entry.1))
+        ("entries", 0) => __reflect.valueOf(entries.map(entry => [entry.0, entry.1]))
         _ => return none
     }
     result
@@ -1584,11 +1578,9 @@ fn parsedOf(value: __json.Value): Parsed {
         }
         nodes: nodesOf(value.field("nodes"))
         defines: (value.field("defines").asArray() ?? []).map(
-            (each) {
-                Definition {
-                    name: each.field("name").asText() ?? ""
-                    nodes: nodesOf(each.field("nodes"))
-                }
+            each => Definition {
+                name: each.field("name").asText() ?? ""
+                nodes: nodesOf(each.field("nodes"))
             },
         )
         error: value.field("error").asText()
@@ -1628,17 +1620,15 @@ fn nodeOf(value: __json.Value): Node {
         }
         "If" => Node.If {
             branches: (field("branches").asArray() ?? []).map(
-                (branch) {
-                    Branch {
-                        condition: codeOf(branch.field("condition"))
-                        body: nodesOf(branch.field("body"))
-                    }
+                branch => Branch {
+                    condition: codeOf(branch.field("condition"))
+                    body: nodesOf(branch.field("body"))
                 },
             )
             otherwise: optionalNodes(field("otherwise"))
         }
         "For" => Node.For {
-            names: (field("names").asArray() ?? []).map((n) { n.asText() ?? "" })
+            names: (field("names").asArray() ?? []).map(n => n.asText() ?? "")
             items: codeOf(field("items"))
             body: nodesOf(field("body"))
             otherwise: optionalNodes(field("otherwise"))
@@ -1668,11 +1658,9 @@ fn nodeOf(value: __json.Value): Node {
                 false => codeOf(field("data"))
             }
             named: (field("named").asArray() ?? []).map(
-                (each) {
-                    NamedValue {
-                        name: each.field("name").asText() ?? ""
-                        value: codeOf(each.field("value"))
-                    }
+                each => NamedValue {
+                    name: each.field("name").asText() ?? ""
+                    value: codeOf(each.field("value"))
                 },
             )
             at: field("at").asInt() ?? 0
@@ -1685,7 +1673,7 @@ fn nodeOf(value: __json.Value): Node {
 fn codeOf(value: __json.Value): Code {
     Code {
         ops: (value.field("ops").asArray() ?? []).map(opOf)
-        at: (value.field("at").asArray() ?? []).map((n) { n.asInt() ?? 0 })
+        at: (value.field("at").asArray() ?? []).map(n => n.asInt() ?? 0)
     }
 }
 

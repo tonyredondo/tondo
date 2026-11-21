@@ -13,8 +13,8 @@ fn elsewhere(asked: sync.Stack[String]): http.Server ! http.HttpError {
             next(request)?
         },
     )
-    app.get("/there", (_) { http.Reply.html(r"""<a href="/deeper">deeper</a>""") })
-    app.get("/deeper", (_) { http.Reply.html("the end") })
+    app.get("/there", _ => http.Reply.html(r"""<a href="/deeper">deeper</a>"""))
+    app.get("/deeper", _ => http.Reply.html("the end"))
     app.start()?
 }
 
@@ -24,39 +24,33 @@ fn small(outside: String): http.Server ! http.HttpError {
     var app = http.App()
     app.get(
         "/",
-        (_) {
-            http.Reply.html(
-                """
+        _ => http.Reply.html(
+            """
             <a name="top"></a>
             <a href="/guide">Guide</a> <a href="about.html">About</a>
             <a href="/missing">Missing</a> <a href="#top">Top</a>
             <a href="mailto:hello@example.com">Write</a>
             <a href="{outside}/there">There</a> <a href="{outside}/gone">Gone</a>
         """,
-            )
-        },
+        ),
     )
     app.get(
         "/guide",
-        (_) {
-            http.Reply.html(
-                r"""<a href="/">Home</a> <a href="/about.html#us">About</a> <a href="/old">Old</a>""",
-            )
-        },
+        _ => http.Reply.html(
+            r"""<a href="/">Home</a> <a href="/about.html#us">About</a> <a href="/old">Old</a>""",
+        ),
     )
     app.get(
         "/about.html",
-        (_) { http.Reply.html(r"""<img src="/logo.svg"> <a href="/guide">Guide</a>""") },
+        _ => http.Reply.html(r"""<img src="/logo.svg"> <a href="/guide">Guide</a>"""),
     )
     app.get(
         "/logo.svg",
-        (_) {
-            http.Reply
-                .text(r"""<svg><a href="/not-read"/></svg>""")
-                .header("Content-Type", "image/svg+xml")
-        },
+        _ => http.Reply
+            .text(r"""<svg><a href="/not-read"/></svg>""")
+            .header("Content-Type", "image/svg+xml"),
     )
-    app.get("/old", (_) { http.Reply.redirect("/guide") })
+    app.get("/old", _ => http.Reply.redirect("/guide"))
     app.start()?
 }
 
@@ -102,9 +96,9 @@ test saysWhereABrokenLinkIs {
     let server = small(other.url())?
     defer server.stop()
 
-    let broken = crawl.crawl("{server.url()}/")?.broken().sortedBy((link) { link.url })
-    assert(broken.map((link) { link.from }) == ["{server.url()}/", "{server.url()}/"])
-    assert(broken.map((link) { "{link.outcome}" }) == ["404", "404"])
+    let broken = crawl.crawl("{server.url()}/")?.broken().sortedBy(link => link.url)
+    assert(broken.map(link => link.from) == ["{server.url()}/", "{server.url()}/"])
+    assert(broken.map(link => "{link.outcome}") == ["404", "404"])
 }
 
 test onlyAsksWhetherAnotherSiteIsThere {
@@ -129,11 +123,7 @@ test keepsToItsWorkers {
     var app = http.App()
     app.get(
         "/",
-        (_) {
-            http.Reply.html(
-                (1..=12).map((n) { "<a href=\"/page/{n}\">{n}</a>" }).collect().join(" "),
-            )
-        },
+        _ => http.Reply.html((1..=12).map(n => "<a href=\"/page/{n}\">{n}</a>").collect().join(" ")),
     )
     app.get(
         "/page/:n",
@@ -163,7 +153,7 @@ test keepsToItsWorkers {
 
 test anAddressThatDoesNotAnswerInTimeIsUnreachable {
     var app = http.App()
-    app.get("/", (_) { http.Reply.html(r"""<a href="/slow">Slow</a>""") })
+    app.get("/", _ => http.Reply.html(r"""<a href="/slow">Slow</a>"""))
     app.get(
         "/slow",
         (_) {
@@ -175,7 +165,7 @@ test anAddressThatDoesNotAnswerInTimeIsUnreachable {
     defer server.stop()
 
     let report = crawl.crawl("{server.url()}/", crawl.Options { timeout: time.milliseconds(500) })?
-    assert(report.broken().map((link) { "{link.outcome}" }) == ["no answer in time"])
+    assert(report.broken().map(link => "{link.outcome}") == ["no answer in time"])
 }
 
 test stopsAtItsLimit {

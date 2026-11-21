@@ -365,6 +365,35 @@ fn hover_tells_where_a_context_got_its_value() {
     editor.stop();
 }
 
+const ARROWS: &str = "import std.console\n\nfn twice(n: Int): Int {\n    n * 2\n}\n\nfn main() {\n    let xs = [1, 2]\n    let doubled = xs.map(x => twice(x))\n    let tripled = xs.map((y) { y * 3 })\n    console.println(\"{doubled} {tripled}\")\n}\n";
+
+/// Inside an arrow (11.8) as inside a block: the type of its parameter as a
+/// hint, which offers no edit, as an arrow takes no type; hover; and the
+/// signature of a call in its body.
+#[test]
+fn arrows_have_hints_hover_and_signatures() {
+    let dir = project("lsp-arrows", &[("main.to", ARROWS)]);
+    let mut editor = Editor::start();
+    let uri = editor.open(&dir.join("main.to"));
+    let range = json!({ "start": { "line": 0, "character": 0 }, "end": { "line": 20, "character": 0 } });
+    let hints = editor.request("textDocument/inlayHint", json!({ "textDocument": { "uri": uri }, "range": range }));
+    let hint = |line: u64| {
+        hints.as_array().unwrap().iter().find(|h| h["position"]["line"] == line && h["label"] == ": Int").cloned()
+    };
+    let arrow = hint(8).unwrap_or_else(|| panic!("{hints}"));
+    assert!(arrow.get("textEdits").is_none(), "{arrow}");
+    let block = hint(9).unwrap_or_else(|| panic!("{hints}"));
+    assert_eq!(block["textEdits"][0]["newText"], ": Int", "{block}");
+    // As a block's parameter is shown.
+    let hover = editor.at("textDocument/hover", &uri, ARROWS, "x => twice(x)", "x)", json!({}));
+    assert_eq!(hover["contents"]["value"], "```tondo\nlet x: Int\n```", "{hover}");
+    let block = editor.at("textDocument/hover", &uri, ARROWS, "(y) { y * 3 }", "y * 3", json!({}));
+    assert_eq!(block["contents"]["value"], "```tondo\nlet y: Int\n```", "{block}");
+    let help = editor.at("textDocument/signatureHelp", &uri, ARROWS, "x => twice(x)", "x)", json!({}));
+    assert_eq!(help["signatures"][0]["label"], "fn twice(n: Int): Int", "{help}");
+    editor.stop();
+}
+
 const NUMBERS: &str = "import std.console\n\nfn main() {\n    let word: UInt16 = 0x1234\n    console.println(\"{word.reverseBytes()}\")\n}\n";
 
 #[test]

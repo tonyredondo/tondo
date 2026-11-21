@@ -16,7 +16,7 @@ fn apply(f: fn(Int): Int, times: Int): Int {
 }
 
 test calls {
-    testing.bench("fib 25", () { fib(25) })
+    testing.bench("fib 25", () => fib(25))
     let step = 3
-    testing.bench("closure 1000", () { apply((x: Int): Int { x + step }, 1000) })
+    testing.bench("closure 1000", () => apply((x: Int): Int { x + step }, 1000))
 }

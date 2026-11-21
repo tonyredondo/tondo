@@ -26,7 +26,7 @@ fn main() {
         kept.push("entry {i} ".repeat(320))
     }
     let cpu = profile.startCpu()
-    let job = profile.withLabels(["job": "crunch"], () { spawn crunch() })
+    let job = profile.withLabels(["job": "crunch"], () => spawn crunch())
     let total = job.wait()
     let taken = cpu.stop()
     // A gzipped pprof, and a stack that went through `fib`.

@@ -38,7 +38,7 @@ impl Ordered for Version {
 }
 
 let versions = [Version { major: 1, minor: 10 }, Version { major: 1, minor: 2 }, Version { major: 0, minor: 9 }]
-let newest = versions.sortedBy((version) { version }).last().expect("versions")
+let newest = versions.sortedBy(version => version).last().expect("versions")
 console.println("{newest.major}.{newest.minor} {Version { major: 1, minor: 2 } < Version { major: 1, minor: 10 }}")
 ```
 

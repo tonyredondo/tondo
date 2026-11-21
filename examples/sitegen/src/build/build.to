@@ -57,7 +57,7 @@ pub fn load(site: fs.FileSystem): Array[content.Page] ! BuildError {
         let name = path.removePrefix("content/")
         content.parse(name, text).mapErr(BuildError.Content)?
     }
-    pages.sortedBy((page) { page.meta.date }).reversed()
+    pages.sortedBy(page => page.meta.date).reversed()
 }
 
 /// One page as HTML.
@@ -84,29 +84,29 @@ pub fn build(site: fs.FileSystem, out: fs.FileSystem, name: String): Built ! Bui
     var theme = template.Set.html()
     theme.addFiles(site.sub("theme"), "**/*.html").mapErr(BuildError.Template)?
     let all = load(site)?
-    let pages = all.filter((page) { not page.meta.draft })
+    let pages = all.filter(page => not page.meta.draft)
 
     // Each page is rendered in a task of its own; the first that fails
     // cancels the rest.
-    let rendering = pages.map((page) { spawn renderPost(theme, name, page) })
+    let rendering = pages.map(page => spawn renderPost(theme, name, page))
     let rendered = rendering.waitOrCancel().mapErr(BuildError.Template)?
 
     var files = for (page, html) in pages.zip(rendered) {
         write(out, "posts/{page.slug}.html", html)?
     }
 
-    let links = pages.map((page) { link(page) })
+    let links = pages.map(page => link(page))
     let index = theme.render("index.html", IndexView { site: name, heading: "Posts", posts: links })
     files.push(write(out, "index.html", index.mapErr(BuildError.Template)?)?)
 
     let byTag = pages
-        .flatMap((page) { page.meta.tags.map((tag) { (tag, page) }) })
-        .groupBy((pair) { pair.0 })
+        .flatMap(page => page.meta.tags.map(tag => (tag, page)))
+        .groupBy(pair => pair.0)
     for (tag, tagged) in byTag {
         let view = IndexView {
             site: name
             heading: "Tagged {tag}"
-            posts: tagged.map((pair) { link(pair.1) })
+            posts: tagged.map(pair => link(pair.1))
         }
         let html = theme.render("index.html", view).mapErr(BuildError.Template)?
         files.push(write(out, "tags/{tag}.html", html)?)

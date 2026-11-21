@@ -153,6 +153,7 @@ fn check_with<'a>(
         model_steps: Vec::new(),
         model_names: Vec::new(),
         interpolating: false,
+        arrow_head: String::new(),
         script_bindings: Vec::new(),
         scripting: false,
         naming: String::new(),
@@ -933,6 +934,8 @@ struct Checker<'a> {
     /// Inside the `{...}` of a string, where an unknown name may be text
     /// that meant a brace.
     interpolating: bool,
+    /// The arrow `TurnHint::Arrow` writes: `row` or `(a, b)`.
+    arrow_head: String,
     /// The bindings of a root script's statements, which its functions do
     /// not see (20.3), and whether its statements are being checked.
     script_bindings: Vec<String>,
@@ -1318,6 +1321,16 @@ struct FnCx {
     array_body: bool,
     /// Set while the next block checked is a closure's body.
     closure_body: bool,
+    /// The head of the arrow that closure could be written as, `row` or
+    /// `(a, b)`, when it has no types, result or `unsafe`.
+    arrow_head: Option<String>,
+    /// That head, while the `for` that alone ends that closure's body is
+    /// checked.
+    end_arrow: Option<String>,
+    /// And that closure is an arrow, whose body is a place where a value is
+    /// wanted: a `for` there gives its values unless the closure gives
+    /// `Unit` (11.8).
+    arrow_body: bool,
     /// The body of the `for` that ends the closure being checked: its value
     /// is dropped where none does anything (E1306).
     end_for: Option<Span>,
@@ -1326,12 +1339,14 @@ struct FnCx {
 
 /// What a dropped value at the end of a `for`'s body adds, of how the loop
 /// gives its values (13.3): none elsewhere, `let values = for ...` for a
-/// statement, `return for ...` for one that ends a closure.
+/// statement, `return for ...` for one that ends a closure, and the arrow
+/// for one that ends a closure an arrow can write (11.8).
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum TurnHint {
     None,
     Bind,
     Return,
+    Arrow,
 }
 
 /// What the place of a block, an `if`, a `match`, a `select` or a `for`

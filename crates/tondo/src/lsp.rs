@@ -2389,14 +2389,21 @@ impl Server {
                 continue;
             }
             let position = position(&source.text, (span.end - source.base) as usize, self.units);
-            let write = json!({ "range": { "start": position, "end": position }, "newText": format!(": {ty}") });
-            hints.push(json!({
+            let mut hint = json!({
                 "position": position,
                 "label": format!(": {ty}"),
                 "kind": 1,
                 "tooltip": "the type Tondo infers here",
-                "textEdits": [write],
-            }));
+            });
+            // An arrow's parameter takes no type (11.8): the hint is not one to write.
+            let head_end = after.find(')').map_or(after, |close| &after[close + 1..]);
+            let arrow = after.trim_start().starts_with("=>")
+                || (after.trim_start().starts_with([',', ')']) && head_end.trim_start().starts_with("=>"));
+            if !arrow {
+                let write = json!({ "range": { "start": position, "end": position }, "newText": format!(": {ty}") });
+                hint["textEdits"] = json!([write]);
+            }
+            hints.push(hint);
         }
         // The type of each line of a chain of calls written over several.
         let text = &source.text;

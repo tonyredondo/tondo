@@ -14,10 +14,10 @@ import std.time as __time
 fn mysql(): Driver {
     Driver {
         system: "mysql"
-        placeholder: (_) { "?" }
-        identifier: (name) { "`{name.replace("`", "``")}`" }
+        placeholder: _ => "?"
+        identifier: name => "`{name.replace("`", "``")}`"
         connect: (url): Connection ! SqlError { connectMySql(url)? }
-        place: (url) { placeOf(url) }
+        place: url => placeOf(url)
     }
 }
 
@@ -429,7 +429,7 @@ fn MySql.result(self, binary: Operation?): (Bool, Outcome) ! SqlError {
             return (
                 status & MysqlMoreResults != 0,
                 Outcome {
-                    columns: fields.map((field) { field.name })
+                    columns: fields.map(field => field.name)
                     rows
                     affected: 0
                     lastId: none
@@ -613,7 +613,7 @@ fn mysqlError(packet: Array[Byte], connecting: Bool): SqlError {
     let said = String.fromBytes(packet.slice(start, packet.length()) ?? []) ?? ""
     let quoted = (after: String, close: String): String? {
         match said.splitOnce(after) {
-            some((_, rest)) => rest.splitOnce(close).map((found) { found.0 })
+            some((_, rest)) => rest.splitOnce(close).map(found => found.0)
             none => none
         }
     }
@@ -690,7 +690,7 @@ fn signedLittle(bytes: Array[Byte], at: Int, count: Int): Int {
 /// The bytes sealed with RSA-OAEP and SHA-1 for the public key of a PEM, as
 /// MySQL takes a password without TLS.
 fn rsaSealed(pem: String, message: Array[Byte]): Array[Byte] ! SqlError {
-    let body = pem.lines().filter((line) { not line.startsWith("-----") }).join("")
+    let body = pem.lines().filter(line => not line.startsWith("-----")).join("")
     let der = (__encoding.base64Decode(body) ?? [])
     // SubjectPublicKeyInfo: a sequence of the algorithm and a bit string
     // that holds the sequence of the modulus and the exponent.

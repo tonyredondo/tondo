@@ -231,7 +231,7 @@ pub fn Writer.write(self, fields: Array[String]): !__io.IoError {
 
 /// The CSV text of the records, a line each.
 pub fn format(table: Array[Array[String]], separator: Char = ','): String {
-    table.map((fields) { "{csvLine(fields, separator)}\n" }).join("")
+    table.map(fields => "{csvLine(fields, separator)}\n").join("")
 }
 
 /// The CSV text of records with the same names: a header with the first
@@ -243,7 +243,7 @@ pub fn formatRecords(entries: Array[Map[String, String]], separator: Char = ',')
     }
     var table = [names]
     for entry in entries {
-        table.push(names.map((name) { entry[name] ?? "" }))
+        table.push(names.map(name => entry[name] ?? ""))
     }
     format(table, separator)
 }

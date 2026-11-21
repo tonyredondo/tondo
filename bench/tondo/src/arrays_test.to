@@ -29,12 +29,12 @@ fn indexed(values: Array[Int]): Int {
 }
 
 test arrays {
-    testing.bench("push 1000", () { pushed(1000) })
+    testing.bench("push 1000", () => pushed(1000))
     let values = shuffled(10_000)
-    testing.bench("sort 10000", () { values.sorted() })
+    testing.bench("sort 10000", () => values.sorted())
     testing.bench(
         "map filter sum 10000",
-        () { values.map((x) { x * 2 }).filter((x) { x % 3 == 0 }).sum() },
+        () => values.map(x => x * 2).filter(x => x % 3 == 0).sum(),
     )
-    testing.bench("index sum 10000", () { indexed(values) })
+    testing.bench("index sum 10000", () => indexed(values))
 }

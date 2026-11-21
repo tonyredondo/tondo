@@ -140,7 +140,7 @@ import std.xml
 
 let feed = xml.parse(r"""<feed><entry id="1"><title>Tea</title></entry><entry id="2"><title>Cake</title></entry></feed>""")?
 for entry in feed.children("entry") {
-    let title = entry.child("title").map((title) { title.text() }) ?? ""
+    let title = entry.child("title").map(title => title.text()) ?? ""
     console.println("{entry.attribute("id") ?? "?"}: {title}")
 }
 ```

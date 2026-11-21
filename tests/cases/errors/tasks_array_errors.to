@@ -3,14 +3,14 @@ fn square(n: Int): Int {
 }
 
 fn main() {
-    let jobs = [1, 2].map((n) { spawn square(n) })
+    let jobs = [1, 2].map(n => spawn square(n))
     let first = jobs.wait()
     let again = jobs.wait()
     let numbers = [1, 2]
     let waited = numbers.wait()
-    let joined = [3].map((n) { spawn square(n) }).waitAll()
-    let each = [4].map((n) { spawn square(n) }).all()
-    let lazy = [5, 6].iter().map((n) { spawn square(n) }).collect()
+    let joined = [3].map(n => spawn square(n)).waitAll()
+    let each = [4].map(n => spawn square(n)).all()
+    let lazy = [5, 6].iter().map(n => spawn square(n)).collect()
     let total = first.length() + again.length() + waited.length()
 }
 

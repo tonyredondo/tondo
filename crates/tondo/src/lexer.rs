@@ -589,7 +589,7 @@ copies, and `derive Json for T` writes the rest; an annotation is `@name`"
                     "unexpected character `$`: a string interpolates as it is, `\"total {x}\"`".to_string()
                 }
                 ('$', Some('0'..='9')) => {
-                    "unexpected character `$`: a closure names its parameters, `(x) { x * 2 }`".to_string()
+                    "unexpected character `$`: a closure names its parameters, `x => x * 2`".to_string()
                 }
                 _ => format!("unexpected character `{c}`"),
             };

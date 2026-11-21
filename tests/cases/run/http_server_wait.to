@@ -13,7 +13,7 @@ fn main(): !http.HttpError {
     let (started, began) = channel[Unit](1)
     let (release, released) = channel[Unit](1)
     var app = http.App()
-    app.get("/health", (_) { http.Reply.text("ok") })
+    app.get("/health", _ => http.Reply.text("ok"))
     app.get(
         "/slow",
         (_) {

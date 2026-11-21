@@ -89,7 +89,7 @@ options.caseInsensitive = true
 options.multiLine = true
 let heading = regex.Regex.compile(r"^# (\w+)$", options: options)?
 for found in heading.findAll("# Intro\ntext\n# USAGE\n")? {
-    console.println(found?.capture(1).map((title) { title.text }) ?? "")
+    console.println(found?.capture(1).map(title => title.text) ?? "")
 }
 ```
 
@@ -301,8 +301,8 @@ import std.regex
 let pair = regex.Regex.compile(r"(\w+)=(\w+)")?
 for found in pair.findAll("a=1 b=2")? {
     let item = found?
-    let key = item.capture(1).map((capture) { capture.text }) ?? ""
-    let value = item.capture(2).map((capture) { capture.text }) ?? ""
+    let key = item.capture(1).map(capture => capture.text) ?? ""
+    let value = item.capture(2).map(capture => capture.text) ?? ""
     console.println("{item.text}: {key} is {value}")
 }
 ```
@@ -362,7 +362,7 @@ import std.regex
 let date = regex.Regex.compile(r"(?<year>\d{4})-(?<month>\d{2})")?
 match date.find("due 2026-11")? {
     some(found) => {
-        let year = found.captureName("year").map((part) { part.text })
+        let year = found.captureName("year").map(part => part.text)
         console.println("{year} {found.text}")
     }
     none => console.println("no date")

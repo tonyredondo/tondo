@@ -28,13 +28,13 @@ fn readable(bytes: Int): String {
 
 let arguments = env.args()
 let root = arguments.get(0) ?? "."
-let wanted = (arguments.get(1).andThen((text) { Int.parse(text).ok() }) ?? 10)
+let wanted = (arguments.get(1).andThen(text => Int.parse(text).ok()) ?? 10)
 
 // Directories whose name starts with a dot, as `.git`, are not entered.
 let entries =
     fs.walk(
         root,
-        enter: some((entry) { not (entry.path.split("/").last() ?? "").startsWith(".") }),
+        enter: some(entry => not (entry.path.split("/").last() ?? "").startsWith(".")),
         skipUnreadable: true,
     )?
 let sized = for entry in entries {
@@ -46,6 +46,6 @@ let sized = for entry in entries {
         err(_) => continue  // gone since it was listed
     }
 }
-let largest = sized.sortedBy((pair) { -pair.0 }).take(wanted)
-console.println(cli.table(largest.map((pair) { Found { size: readable(pair.0), file: pair.1 } })))
-console.println("{sized.length()} files, {readable(sized.sumBy((pair) { pair.0 }))} in all")
+let largest = sized.sortedBy(pair => -pair.0).take(wanted)
+console.println(cli.table(largest.map(pair => Found { size: readable(pair.0), file: pair.1 })))
+console.println("{sized.length()} files, {readable(sized.sumBy(pair => pair.0))} in all")

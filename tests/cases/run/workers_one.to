@@ -31,8 +31,8 @@ fn main() {
     let added =
         diagnostics
             .metrics()
-            .find((metric) { metric.name == "workers.added" })
-            .map((metric) { metric.value }) ??
+            .find(metric => metric.name == "workers.added")
+            .map(metric => metric.value) ??
             0
     console.println("one at a time, but beside a worker added: {overlaps.load() == 0 or added > 0}")
 }

@@ -175,7 +175,7 @@ impl[K: Key, V] Iterator[K] for MapKeys[K, V]
 /// import std.console
 ///
 /// let stock = ["lamp": 3, "desk": 0, "chair": 8]
-/// let total = stock.values().reduce(0, (sum, count) { sum + count })
+/// let total = stock.values().reduce(0, (sum, count) => sum + count)
 /// console.println("{total} {stock.values().filter((count) { count > 0 }).count()}")
 /// ```
 pub type MapValues[K, V] = {
@@ -192,7 +192,7 @@ impl[K: Key, V] Iterator[V] for MapValues[K, V]
 /// import std.console
 ///
 /// let ages = ["ana": 36, "leo": 41]
-/// for (name, age) in ages.entries().filter((entry) { entry.1 > 40 }) {
+/// for (name, age) in ages.entries().filter(entry => entry.1 > 40) {
 ///     console.println("{name} {age}")
 /// }
 /// console.println("{ages.entries().collect()}")

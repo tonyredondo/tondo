@@ -24,9 +24,10 @@ fn routes(dir: String): http.App {
     )
     app.get(
         "/bytes/:n",
-        (request) {
-            http.Reply.bytes([Byte(65u8), Byte(66u8)], contentType: "text/x-{request.param("n")}")
-        },
+        request => http.Reply.bytes(
+            [Byte(65u8), Byte(66u8)],
+            contentType: "text/x-{request.param("n")}",
+        ),
     )
     app.get(
         "/file/:n",

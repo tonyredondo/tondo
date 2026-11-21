@@ -20,10 +20,10 @@ fn numbers(count: Int): String {
 }
 
 test json {
-    testing.bench("parse object", () { json.parse(Document) })?
+    testing.bench("parse object", () => json.parse(Document))?
     let array = numbers(1000)
-    testing.bench("parse 1000 numbers", () { json.parse(array) })?
-    testing.bench("decode struct", () { json.decode[Item](Document) })?
+    testing.bench("parse 1000 numbers", () => json.parse(array))?
+    testing.bench("decode struct", () => json.decode[Item](Document))?
     var items: Array[Item] = []
     for i in 0..100 {
         items.push(
@@ -36,5 +36,5 @@ test json {
             },
         )
     }
-    testing.bench("encode 100 structs", () { json.encode(items) })
+    testing.bench("encode 100 structs", () => json.encode(items))
 }

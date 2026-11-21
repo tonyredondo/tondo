@@ -99,7 +99,7 @@ fn check(guarded: Bool): model.Checked ! model.Violation {
     )
     model.check(
         start,
-        (reload) { steps(reload, guarded) },
+        reload => steps(reload, guarded),
         holds: [quiet],
         ends: some((reload: Reload) { reload.converted and reload.tool == Tool.Idle }),
     )

@@ -37,7 +37,7 @@ import std.time as __time
 /// // A service written by hand; a `.proto` file under `src` makes one too.
 /// let greeter = grpc.Service {
 ///     name: "demo.Greeter"
-///     methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }]
+///     methods: [grpc.Method { name: "Hello", handler: call => grpc.unary(call, hello)? }]
 /// }
 /// var app = http.App()
 /// app.grpc(greeter.onCall((call, next) {
@@ -84,7 +84,7 @@ pub type Service = {
 /// }
 ///
 /// // With no side effects, Connect clients may call it with a `GET`, which caches.
-/// let method = grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? }, noSideEffects: true }
+/// let method = grpc.Method { name: "Hello", handler: call => grpc.unary(call, hello)?, noSideEffects: true }
 /// var app = http.App()
 /// app.grpc(grpc.Service { name: "demo.Greeter", methods: [method] })
 /// let server = app.start()?
@@ -119,7 +119,7 @@ pub type Method = {
 ///     HelloReply { message: "Hello, {request.name}!" }
 /// }
 ///
-/// let greeter = grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] }
+/// let greeter = grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: call => grpc.unary(call, hello)? }] }
 /// var app = http.App()
 /// // Each message of each call, as the service receives or sends it.
 /// app.grpc(greeter.onMessage((call, direction, message) {
@@ -201,12 +201,12 @@ impl __http.GrpcService for Service {
                 let compressing = self.compressing
                 app.post(
                     path,
-                    (request) { serve(request, path, handler, layers, watchers, compressing)? },
+                    request => serve(request, path, handler, layers, watchers, compressing)?,
                 )
                 if method.noSideEffects {
                     app.get(
                         path,
-                        (request) { serve(request, path, handler, layers, watchers, compressing)? },
+                        request => serve(request, path, handler, layers, watchers, compressing)?,
                     )
                 }
             }
@@ -364,7 +364,7 @@ fn serve(
     } else {
         metadata.get(encodingHeader) ?? "identity"
     }
-    let accepted = (metadata.get(acceptHeader) ?? "").split(",").map((name) { name.trim() })
+    let accepted = (metadata.get(acceptHeader) ?? "").split(",").map(name => name.trim())
     let compressed = compressing and accepted.contains("gzip")
     // A unary reply of Connect says how it is compressed when it is sent.
     if wire != Wire.Connect {
@@ -534,7 +534,7 @@ fn intercepted(
         return
     }
     let layer = layers[at]
-    layer(Incoming.call, () { intercepted(layers, at + 1, server, handler)? })?
+    layer(Incoming.call, () => intercepted(layers, at + 1, server, handler)?)?
 }
 
 /// Lets the server's headers go.
@@ -606,10 +606,10 @@ pub fn ServerCall.send[T: __protobuf.Message + __reflect.Reflect](self, message:
 /// A message of a request, from its bytes or its JSON, or what is wrong.
 fn messageOf[T: __protobuf.Message](bytes: Array[Byte], json: Bool): T ! String {
     if not json {
-        return __protobuf.decode[T](bytes).mapErr((error) { "{error}" })?
+        return __protobuf.decode[T](bytes).mapErr(error => "{error}")?
     }
-    let text = String.fromBytes(bytes).mapErr((error) { "{error}" })?
-    __protobuf.fromJson[T](text, ignoreUnknown: true).mapErr((error) { "{error}" })?
+    let text = String.fromBytes(bytes).mapErr(error => "{error}")?
+    __protobuf.fromJson[T](text, ignoreUnknown: true).mapErr(error => "{error}")?
 }
 
 /// A frame as gRPC, gRPC-Web and Connect write them: its flags, its

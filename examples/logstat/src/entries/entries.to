@@ -93,7 +93,7 @@ pub fn read(path: String): Read ! fs.FsError {
 /// the order the files were named.
 pub fn readAll(paths: Array[String]): Read ! fs.FsError {
     var all = Read { entries: [], skipped: 0 }
-    for part in paths.map((path) { spawn read(path) }).waitOrCancel()? {
+    for part in paths.map(path => spawn read(path)).waitOrCancel()? {
         all.entries.extend(part.entries)
         all.skipped += part.skipped
     }

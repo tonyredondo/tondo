@@ -6,10 +6,10 @@ import std.internal.sql as sqlNative
 fn sqlite(): Driver {
     Driver {
         system: "sqlite"
-        placeholder: (_) { "?" }
-        identifier: (name) { "\"{name.replace("\"", "\"\"")}\"" }
+        placeholder: _ => "?"
+        identifier: name => "\"{name.replace("\"", "\"\"")}\""
         connect: (url): Connection ! SqlError { connectSqlite(url)? }
-        place: (url) { (url.removePrefix("sqlite:"), none) }
+        place: url => (url.removePrefix("sqlite:"), none)
     }
 }
 

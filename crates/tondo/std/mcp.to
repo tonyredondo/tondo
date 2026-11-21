@@ -18,7 +18,7 @@
 //
 // /// Adds numbers.
 // pub fn Calculator.add(self, input: Sum): Int {
-//     input.numbers.reduce(0, (total, n) { total + n })
+//     input.numbers.reduce(0, (total, n) => total + n)
 // }
 //
 // mcp.serve(Calculator {})?
@@ -144,14 +144,12 @@ type Output = {
 fn answer(state: Served, line: String, out: __sync.Mutex[Output]) {
     match reply(state, line) {
         some(text) => out.update(
-            (output) {
-                if output.failure.isNone() {
-                    match output.writer.writeLine(text) {
-                        ok(_) => {}
-                        err(problem) => output.failure = "{problem}"
-                    }
-                    _ = output.writer.flush()
+            output => if output.failure.isNone() {
+                match output.writer.writeLine(text) {
+                    ok(_) => {}
+                    err(problem) => output.failure = "{problem}"
                 }
+                _ = output.writer.flush()
             },
         )
         none => {}
@@ -183,12 +181,11 @@ fn served[T: __reflect.Reflect](server: T, name: String, version: String): Serve
         version
         instructions: info.docs()
         tools: methods.filter(
-            (method) {
-                method.annotation[Resource]().isNone() and method.annotation[Prompt]().isNone()
-            },
+            method =>
+                method.annotation[Resource]().isNone() and method.annotation[Prompt]().isNone(),
         )
-        resources: methods.filter((method) { method.annotation[Resource]().isSome() })
-        prompts: methods.filter((method) { method.annotation[Prompt]().isSome() })
+        resources: methods.filter(method => method.annotation[Resource]().isSome())
+        prompts: methods.filter(method => method.annotation[Prompt]().isSome())
     }
 }
 
@@ -295,12 +292,12 @@ fn handle(state: Served, method: String, params: __json.Value): String ! RpcFail
         "tools/list" => "{{\"tools\":[{state.tools.map(toolOf).join(",")}]}}"
         "tools/call" => call(state, params)?
         "resources/list" => {
-            let fixed = state.resources.filter((found) { not resourceOf(found).uri.contains("{{") })
-            "{{\"resources\":[{fixed.map((found) { resourceListed(found, "uri") }).join(",")}]}}"
+            let fixed = state.resources.filter(found => not resourceOf(found).uri.contains("{{"))
+            "{{\"resources\":[{fixed.map(found => resourceListed(found, "uri")).join(",")}]}}"
         }
         "resources/templates/list" => {
-            let templated = state.resources.filter((found) { resourceOf(found).uri.contains("{{") })
-            "{{\"resourceTemplates\":[{templated.map((found) { resourceListed(found, "uriTemplate") }).join(",")}]}}"
+            let templated = state.resources.filter(found => resourceOf(found).uri.contains("{{"))
+            "{{\"resourceTemplates\":[{templated.map(found => resourceListed(found, "uriTemplate")).join(",")}]}}"
         }
         "resources/read" => read(state, params.field("uri").asText() ?? "")?
         "prompts/list" => "{{\"prompts\":[{state.prompts.map(promptOf).join(",")}]}}"
@@ -331,20 +328,18 @@ fn argumentsOf(method: __reflect.MethodInfo): (Array[Argument], Bool) {
         let fields = params[0].typeInfo().fields()
         return (
             fields.map(
-                (field) {
-                    Argument {
-                        name: field.externalName()
-                        info: field.typeInfo()
-                        docs: field.docs()
-                        defaulted: field.default().isSome()
-                    }
+                field => Argument {
+                    name: field.externalName()
+                    info: field.typeInfo()
+                    docs: field.docs()
+                    defaulted: field.default().isSome()
                 },
             ),
             true,
         )
     }
     (
-        params.map((param) { Argument { name: param.name(), info: param.typeInfo(), docs: none } }),
+        params.map(param => Argument { name: param.name(), info: param.typeInfo(), docs: none }),
         false,
     )
 }
@@ -366,13 +361,11 @@ fn toolOf(method: __reflect.MethodInfo): String {
 
 fn objectSchema(arguments: Array[Argument]): String {
     let properties = arguments.map(
-        (argument) {
-            "{quote(argument.name)}:{described(schemaOf(argument.info, 0), argument.docs)}"
-        },
+        argument => "{quote(argument.name)}:{described(schemaOf(argument.info, 0), argument.docs)}",
     )
     let required = arguments
-        .filter((argument) { not optional(argument.info) and not argument.defaulted })
-        .map((argument) { quote(argument.name) })
+        .filter(argument => not optional(argument.info) and not argument.defaulted)
+        .map(argument => quote(argument.name))
     "{{\"type\":\"object\",\"properties\":{{{properties.join(",")}}},\"required\":[{required.join(",")}]}}"
 }
 
@@ -392,7 +385,7 @@ fn schemaOf(info: __reflect.TypeInfo, depth: Int): String {
         return "{{}}"
     }
     let inner = (index: Int) {
-        info.genericArguments().get(index).map((t) { schemaOf(t, depth + 1) }) ?? "{{}}"
+        info.genericArguments().get(index).map(t => schemaOf(t, depth + 1)) ?? "{{}}"
     }
     match info.kind() {
         __reflect.TypeKind.Primitive(kind) => match kind {
@@ -415,21 +408,19 @@ fn schemaOf(info: __reflect.TypeInfo, depth: Int): String {
             let fields = info
                 .fields()
                 .map(
-                    (field) {
-                        Argument {
-                            name: field.externalName()
-                            info: field.typeInfo()
-                            docs: field.docs()
-                            defaulted: field.default().isSome()
-                        }
+                    field => Argument {
+                        name: field.externalName()
+                        info: field.typeInfo()
+                        docs: field.docs()
+                        defaulted: field.default().isSome()
                     },
                 )
             objectSchema(fields)
         }
         __reflect.TypeKind.Enum if info
             .variants()
-            .all((v) { v.payloadKind() == __reflect.VariantPayloadKind.Unit }) => {
-            "{{\"type\":\"string\",\"enum\":[{info.variants().map((v) { quote(v.externalName()) }).join(",")}]}}"
+            .all(v => v.payloadKind() == __reflect.VariantPayloadKind.Unit) => {
+            "{{\"type\":\"string\",\"enum\":[{info.variants().map(v => quote(v.externalName())).join(",")}]}}"
         }
         __reflect.TypeKind.Newtype => match info.underlying() {
             some(underlying) => schemaOf(underlying, depth + 1)
@@ -465,7 +456,7 @@ fn outputOf(method: __reflect.MethodInfo): String? {
 
 fn call(state: Served, params: __json.Value): String ! RpcFailure {
     let name = params.field("name").asText() ?? ""
-    let method = match state.tools.find((method) { method.name() == name }) {
+    let method = match state.tools.find(method => method.name() == name) {
         some(method) => method
         none => fail RpcFailure {
             code: -32602
@@ -484,7 +475,7 @@ fn call(state: Served, params: __json.Value): String ! RpcFailure {
     // which corrects its call.
     let parameters = method.function().parameters()
     for (index, arg) in args.iter().enumerate() {
-        let info = parameters.get(index).map((parameter) { parameter.typeInfo() }) ?? arg.typeInfo()
+        let info = parameters.get(index).map(parameter => parameter.typeInfo()) ?? arg.typeInfo()
         match __validate.checkAs(arg, info) {
             ok(_) => {}
             err(invalid) => return errorResult(
@@ -605,7 +596,7 @@ fn read(state: Served, uri: String): String ! RpcFailure {
         let args = method
             .function()
             .parameters()
-            .map((param) { __reflect.valueOf(parts.get(param.name()) ?? "") })
+            .map(param => __reflect.valueOf(parts.get(param.name()) ?? ""))
         let value = match recover { state.target.call(method.name(), ...args) } {
             ok(ok(value)) => value
             ok(err(problem)) => fail RpcFailure { code: -32603, message: "{problem}" }
@@ -640,16 +631,15 @@ fn promptOf(method: __reflect.MethodInfo): String {
         .function()
         .parameters()
         .map(
-            (param) {
-                "{{\"name\":{quote(param.name())},\"required\":{not optional(param.typeInfo())}}}"
-            },
+            param =>
+                "{{\"name\":{quote(param.name())},\"required\":{not optional(param.typeInfo())}}}",
         )
     "{{\"name\":{quote(method.name())},\"description\":{quote(method.docs() ?? "")},\"arguments\":[{arguments.join(",")}]}}"
 }
 
 fn prompt(state: Served, params: __json.Value): String ! RpcFailure {
     let name = params.field("name").asText() ?? ""
-    let method = match state.prompts.find((method) { method.name() == name }) {
+    let method = match state.prompts.find(method => method.name() == name) {
         some(method) => method
         none => fail RpcFailure {
             code: -32602

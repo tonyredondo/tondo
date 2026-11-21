@@ -302,7 +302,7 @@ fn talk(
     // A middleware that answered instead never upgrades: the wait ends.
     let upgraded =
         within __time.seconds(30) {
-            handoff.updateWhen((pending) { pending.given }, (pending) { pending.socket })
+            handoff.updateWhen(pending => pending.given, pending => pending.socket)
         }
     match upgraded {
         ok(some(socket)) => {

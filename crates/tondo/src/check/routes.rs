@@ -86,7 +86,13 @@ impl Syntax {
             .iter()
             .map(|name| ast::ClosureParam { name: self.ident(name), ty: None, mode: ast::Mode::Value, variadic: false })
             .collect();
-        self.expr(ast::ExprKind::Closure(Box::new(ast::Closure { is_unsafe: false, params, result: None, body })))
+        self.expr(ast::ExprKind::Closure(Box::new(ast::Closure {
+            is_unsafe: false,
+            params,
+            result: None,
+            body,
+            arrow: false,
+        })))
     }
 
     fn block(&self, stmts: Vec<ast::Stmt>, tail: ast::Expr) -> ast::Block {

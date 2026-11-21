@@ -39,7 +39,7 @@ fn main() {
     }
     _ = group.wait()
     let lines = written.text()?.lines()
-    let shown = lines.count((line) { line.contains(" job=j") })
+    let shown = lines.count(line => line.contains(" job=j"))
     console.println("{shown} of {lines.length()} events show their job")
 }
 

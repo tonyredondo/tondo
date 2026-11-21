@@ -144,7 +144,7 @@ import std.fs
 import std.profile
 
 profile.startMemory()
-let lists = (0..1000).map((n) { [n] }).collect()
+let lists = (0..1000).map(n => [n]).collect()
 fs.writeBytes("memory.pb.gz", profile.memory().pprof())?
 _ = lists
 ```

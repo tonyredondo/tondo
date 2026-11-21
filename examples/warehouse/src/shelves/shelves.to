@@ -90,7 +90,7 @@ impl stock.StockService for Shelves {
         }
         // Reading how many there are and taking them is one step: two
         // orders for the last unit cannot both get it.
-        self.state.update((now) { now.change(request.sku, -request.quantity) })
+        self.state.update(now => now.change(request.sku, -request.quantity))
     }
 
     /// The client sends lines until it is done, and is told the total.
@@ -101,7 +101,7 @@ impl stock.StockService for Shelves {
             if units.quantity <= 0 {
                 fail invalid("a delivery of `{units.sku}` brings at least one unit")
             }
-            self.state.update((now) { now.change(units.sku, units.quantity) })?
+            self.state.update(now => now.change(units.sku, units.quantity))?
             done.items += 1
             done.units += units.quantity
         }
@@ -124,8 +124,8 @@ impl stock.StockService for Shelves {
         for {
             // Waits, with no polling, for a change this watcher has not seen.
             let (version, news) = self.state.updateWhen(
-                (now) { now.version > seen },
-                (now) { (now.version, now.since(seen)) },
+                now => now.version > seen,
+                now => (now.version, now.since(seen)),
             )
             let changes = match news {
                 some(kept) => kept

@@ -253,7 +253,7 @@ pub fn walk(
 The tree under `root`, without `root`: each directory before what it
 holds and siblings sorted by bytes, without following links. `enter`
 says whether to go into each directory, which is listed either way:
-`(entry) { not entry.path.endsWith("/node_modules") }`. With
+`entry => not entry.path.endsWith("/node_modules")`. With
 `skipUnreadable`, a directory below `root` that cannot be read is left
 out rather than failing the walk.
 

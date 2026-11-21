@@ -245,7 +245,7 @@ import std.meta
 
 /// Writes `impl Describe`: the public fields with their values.
 pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
-    let shown = request.target().fields().filter((field) { not field.private }).map((field) { "{field.name}={{self.{field.name}}}" })
+    let shown = request.target().fields().filter(field => not field.private).map((field) { "{field.name}={{self.{field.name}}}" })
     var out = request.sourceBuilder()
     out.add(meta.code(r"""
         impl $trait for $type {
@@ -283,7 +283,7 @@ pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
         } else if variant.elements.isEmpty() {
             ""
         } else {
-            "({variant.elements.map((_) { "_" }).join(", ")})"
+            "({variant.elements.map(_ => "_").join(", ")})"
         }
         arms.push("{target.name()}.{variant.name}{pattern} => \"{variant.name}\"")
     }
@@ -417,7 +417,7 @@ pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Err
     var names: Array[String] = []
     for declaration in request.declarations() {
         if declaration.kind() == meta.DeclarationKind.Record {
-            let fields = declaration.fields().map((field) { field.name }).join(" ")
+            let fields = declaration.fields().map(field => field.name).join(" ")
             names.push("\"{declaration.module()}.{declaration.typeName()}: {fields}\"")
         }
     }

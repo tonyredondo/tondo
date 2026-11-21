@@ -318,9 +318,9 @@ pub fn exif(bytes: Array[Byte]): Exif? {
         at += 2
     }
     some(Exif {
-        date: given(0).andThen((written) { __time.parseDateTime(written).ok() })
-        latitude: given(1).andThen((written) { Float.parse(written).ok() })
-        longitude: given(2).andThen((written) { Float.parse(written).ok() })
+        date: given(0).andThen(written => __time.parseDateTime(written).ok())
+        latitude: given(1).andThen(written => Float.parse(written).ok())
+        longitude: given(2).andThen(written => Float.parse(written).ok())
         camera: given(3)
         orientation: Int.parse(texts[4]) ?? 1
         tags

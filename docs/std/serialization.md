@@ -92,7 +92,7 @@ impl serialization.Decode for Celsius {
 }
 
 let readings = json.decode[Array[Celsius]](r"""[21, 19.5, "22C"]""")?
-console.println("{readings.map((reading) { reading.degrees })}")
+console.println("{readings.map(reading => reading.degrees)}")
 ```
 
 ### ErrorKind

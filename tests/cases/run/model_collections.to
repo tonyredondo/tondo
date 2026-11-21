@@ -32,7 +32,7 @@ fn main() {
             start,
             steps,
             holds: [both],
-            ends: some((office: Office) { office.done.all((one) { one }) }),
+            ends: some((office: Office) { office.done.all(one => one) }),
         ),
     )
     console.println("{checked.states} states")

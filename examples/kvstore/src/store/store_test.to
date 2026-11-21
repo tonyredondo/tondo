@@ -48,7 +48,7 @@ fn commands(store: Store): Array[protocol.Command] {
         out.push(protocol.Command.Get(key))
         out.push(protocol.Command.Delete(key))
         // Counting up to 2 keeps the states finite.
-        let small = (store.values[key].andThen((text) { Int.parse(text).ok() }) ?? 0) < 2
+        let small = (store.values[key].andThen(text => Int.parse(text).ok()) ?? 0) < 2
         if small {
             out.push(protocol.Command.Increment { key, by: 1 })
         }
@@ -67,8 +67,7 @@ fn after(store: Store, command: protocol.Command): Store {
 test theCountOfNumbersIsAlwaysRight {
     let counted = model.always(
         (store: Store) {
-            store.numbers ==
-                store.values.values().collect().count((text) { Int.parse(text).isOk() })
+            store.numbers == store.values.values().collect().count(text => Int.parse(text).isOk())
         },
         name: "numbers counts the numeric values",
     )
@@ -98,5 +97,5 @@ fn session(): Array[String] {
 
 test aThousandCommandsAreApplied {
     let lines = session()
-    testing.bench("1000 commands", () { protocol.format(run(lines).reply) })?
+    testing.bench("1000 commands", () => protocol.format(run(lines).reply))?
 }

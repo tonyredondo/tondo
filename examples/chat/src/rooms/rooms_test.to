@@ -19,8 +19,8 @@ fn guestBehind(gate: sync.Mutex[Bool], capacity: Int = 16): Guest ! executor.Exe
             0,
             capacity,
             (_: var Int, text: String) {
-                seen.update((lines) { lines.push(text) })
-                gate.updateWhen((open) { open }, (_) {})
+                seen.update(lines => lines.push(text))
+                gate.updateWhen(open => open, (_) {})
             },
         )?
     Guest { mailbox, seen }
@@ -33,7 +33,7 @@ fn guest(capacity: Int = 16): Guest ! executor.ExecutorError {
 
 /// Waits until a guest took so many lines.
 fn waitFor(who: ref Guest, lines: Int) {
-    who.seen.updateWhen((taken) { taken.length() >= lines }, (_) {})
+    who.seen.updateWhen(taken => taken.length() >= lines, (_) {})
 }
 
 /// What a guest was told, a few words for each line.

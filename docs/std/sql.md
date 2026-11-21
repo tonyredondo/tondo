@@ -503,7 +503,7 @@ let driver = sql.Driver {
     placeholder: (index) { "${index}" }
     identifier: (name) { "\"{name}\"" }
     connect: echoing
-    place: (_) { ("echo", none) }
+    place: _ => ("echo", none)
 }
 let db = sql.open("echo:", driver: some(driver))?
 console.println(db.queryOne[String]("SELECT * FROM {sql.identifier("users")} WHERE id = {7}")?)
@@ -539,7 +539,7 @@ fn oracle(): sql.Driver {
         placeholder: (index) { ":{index}" }
         identifier: (name) { "\"{name.replace("\"", "\"\"")}\"" }
         connect: (url) { fail sql.SqlError.of(sql.ErrorKind.Connection, "no Oracle client at {url}") }
-        place: (url) { (url.split("/").last() ?? "", none) }
+        place: url => (url.split("/").last() ?? "", none)
     }
 }
 

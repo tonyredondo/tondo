@@ -324,7 +324,7 @@ pub fn entries[K: Key + Ordered, V](map: Map[K, V], sorted: Bool): Array[(K, V)]
     for (key, value) in map {
         pairs.push((key, value))
     }
-    if sorted { pairs.sortedBy((pair) { pair.0 }) } else { pairs }
+    if sorted { pairs.sortedBy(pair => pair.0) } else { pairs }
 }
 
 /// A reader of no fields, for a message every field of which has its zero.

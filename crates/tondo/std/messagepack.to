@@ -34,7 +34,7 @@ import std.serialization
 /// type Point = { x: Int, y: Int }
 ///
 /// let value = messagepack.parse(messagepack.encode(Point { x: 1, y: 2 }))?
-/// let x = value.get("x").andThen((x) { x.asInt() })
+/// let x = value.get("x").andThen(x => x.asInt())
 /// console.println("x is {x ?? 0}, z is set: {value.get("z").isSome()}")
 /// ```
 pub enum Value {
@@ -343,7 +343,7 @@ fn Reader.error(self, kind: serialization.ErrorKind): MessagePackError {
 /// out.beginArray(1)
 /// out.string("math")
 /// let bytes = out.finish()
-/// console.println("{bytes.length()} bytes: {messagepack.parse(bytes)?.get("name").andThen((name) { name.asText() })}")
+/// console.println("{bytes.length()} bytes: {messagepack.parse(bytes)?.get("name").andThen(name => name.asText())}")
 /// ```
 pub type Writer = {
     priv native: packnative.Native

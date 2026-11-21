@@ -14,7 +14,8 @@ pub fn parse_file(file: &SourceFile, diags: &mut Diagnostics) -> Module {
 pub fn parse_with_parens(file: &SourceFile, diags: &mut Diagnostics) -> (Module, Vec<Span>) {
     let before = diags.list.len();
     let tokens = lexer::lex(file, None, diags);
-    let mut parser = Parser { file, tokens, pos: 0, diags, recovering: false, no_brace: false, parens: Vec::new() };
+    let mut parser =
+        Parser { file, tokens, pos: 0, diags, recovering: false, no_brace: false, no_arrow: false, parens: Vec::new() };
     let mut module = parser.module();
     module.malformed = parser.diags.list[before..].iter().any(|d| d.severity == crate::diag::Severity::Error);
     (module, parser.parens)
@@ -25,7 +26,8 @@ pub fn parse_with_parens(file: &SourceFile, diags: &mut Diagnostics) -> (Module,
 /// not read.
 pub fn parse_expression(file: &SourceFile, span: Span, diags: &mut Diagnostics) -> Option<Expr> {
     let tokens = lexer::lex(file, Some(span), diags);
-    let mut parser = Parser { file, tokens, pos: 0, diags, recovering: false, no_brace: false, parens: Vec::new() };
+    let mut parser =
+        Parser { file, tokens, pos: 0, diags, recovering: false, no_brace: false, no_arrow: false, parens: Vec::new() };
     parser.skip_newlines();
     let expr = parser.expression().ok()?;
     parser.skip_newlines();
@@ -38,7 +40,8 @@ pub fn parse_expression(file: &SourceFile, span: Span, diags: &mut Diagnostics) 
 /// The pattern written in `span` of a file, as a template's `for` binds.
 pub fn parse_pattern(file: &SourceFile, span: Span, diags: &mut Diagnostics) -> Option<Pattern> {
     let tokens = lexer::lex(file, Some(span), diags);
-    let mut parser = Parser { file, tokens, pos: 0, diags, recovering: false, no_brace: false, parens: Vec::new() };
+    let mut parser =
+        Parser { file, tokens, pos: 0, diags, recovering: false, no_brace: false, no_arrow: false, parens: Vec::new() };
     parser.skip_newlines();
     let pattern = parser.pattern().ok()?;
     parser.skip_newlines();
@@ -75,8 +78,16 @@ pub(crate) fn syntax_items(file: &SourceFile) -> Option<Vec<(&'static str, u32)>
     let attempt = |pos: usize, production: &str| -> Option<usize> {
         let mut scratch = Diagnostics::default();
         let tokens = tokens.clone();
-        let mut parser =
-            Parser { file, tokens, pos, diags: &mut scratch, recovering: false, no_brace: false, parens: Vec::new() };
+        let mut parser = Parser {
+            file,
+            tokens,
+            pos,
+            diags: &mut scratch,
+            recovering: false,
+            no_brace: false,
+            no_arrow: false,
+            parens: Vec::new(),
+        };
         let parsed = match production {
             "top_decl" | "function_signature" if parser.at_declaration() => match parser.declaration() {
                 Ok(Some(Item::Fn(f))) => {
@@ -120,8 +131,16 @@ pub(crate) fn syntax_items(file: &SourceFile) -> Option<Vec<(&'static str, u32)>
     }
     // A block on its own.
     let mut scratch = Diagnostics::default();
-    let mut parser =
-        Parser { file, tokens, pos: 0, diags: &mut scratch, recovering: false, no_brace: false, parens: Vec::new() };
+    let mut parser = Parser {
+        file,
+        tokens,
+        pos: 0,
+        diags: &mut scratch,
+        recovering: false,
+        no_brace: false,
+        no_arrow: false,
+        parens: Vec::new(),
+    };
     parser.skip_newlines();
     let block = parser.block().is_ok();
     parser.skip_newlines();
@@ -138,6 +157,10 @@ struct Parser<'a> {
     recovering: bool,
     /// Inside an `if`/`for` header, where `{` starts the control block.
     no_brace: bool,
+    /// In a `match` arm's guard or a `select` arm's operation, outside any
+    /// delimiters, where `=>` ends the arm's head: an arrow there goes in
+    /// parentheses (11.8).
+    no_arrow: bool,
     /// Expressions written in parentheses.
     parens: Vec<Span>,
 }
@@ -201,6 +224,16 @@ pub(crate) fn keyword_at(tokens: &[Token], at: usize) -> bool {
 }
 
 impl Parser<'_> {
+    /// Parses inside delimiters, where `{` starts a block or a closure and
+    /// `=>` an arrow, whatever header or arm is around them.
+    fn delimited<T>(&mut self, parse: impl FnOnce(&mut Self) -> T) -> T {
+        let no_brace = std::mem::replace(&mut self.no_brace, false);
+        let no_arrow = std::mem::replace(&mut self.no_arrow, false);
+        let result = parse(self);
+        (self.no_brace, self.no_arrow) = (no_brace, no_arrow);
+        result
+    }
+
     // ---- token helpers ----------------------------------------------------
 
     fn tok(&self) -> &Tok {
@@ -357,7 +390,7 @@ impl Parser<'_> {
             && matches!(self.tokens[open - 2].tok, Tok::Dot)
         {
             return Some(
-                "a closure is passed in the call's parentheses, its parameters named: `xs.map((x) { x * 2 })`".into(),
+                "a closure is passed in the call's parentheses, its parameters named: `xs.map(x => x * 2)`".into(),
             );
         }
         let hint = match (previous, here, next) {
@@ -490,7 +523,7 @@ impl Parser<'_> {
             }
             // `[x * 2 for x in xs]`
             (_, Tok::Kw(Kw::For), _) if what == "`]`" => {
-                "an array of results is `xs.map((x) { x * 2 })`, with `filter((x) { ... })` for an `if`".into()
+                "an array of results is `xs.map(x => x * 2)`, with `filter(x => ...)` for an `if`".into()
             }
             // `1 if c else 2`, `c ? 1 : 2`
             (_, Tok::Kw(Kw::If), _) | (Tok::Question, Tok::Ident(_) | Tok::Int { .. } | Tok::Str(_), _)
@@ -594,7 +627,7 @@ impl Parser<'_> {
                 };
                 match called {
                     Some("when" | "switch") => "use `match value { pattern => result }`, one arm per line".into(),
-                    _ => "a closure is passed in the call's parentheses, its parameters named: `xs.map((x) { x * 2 })`"
+                    _ => "a closure is passed in the call's parentheses, its parameters named: `xs.map(x => x * 2)`"
                         .into(),
                 }
             }
@@ -624,7 +657,7 @@ impl Parser<'_> {
                 "type parameters and arguments go in brackets, as in `Array[Int]` and `fn first[T](values: Array[T]): T`"
             }
             (Tok::Ident(_) | Tok::RParen, Tok::FatArrow, _) | (_, Tok::Pipe, _) => {
-                "a closure is `(x) { x * 2 }`, with types when the context does not give them: `(x: Int): Int { x * 2 }`"
+                "a closure is `x => x * 2`, or `(x: Int): Int { x * 2 }` with types or statements"
             }
             (Tok::EqEq, Tok::Eq, _) | (Tok::NotEq, Tok::Eq, _) => "`==` and `!=` compare values; Tondo has no `===`",
             (_, Tok::LBracket, _) if what == "type" => "an array type is `Array[Int]`; a C array of four is `Int[4]`",
@@ -1239,10 +1272,7 @@ impl Parser<'_> {
     }
 
     fn field_inits(&mut self) -> PResult<Vec<FieldInit>> {
-        let no_brace = std::mem::replace(&mut self.no_brace, false);
-        let result = self.field_inits_inner();
-        self.no_brace = no_brace;
-        result
+        self.delimited(|this| this.field_inits_inner())
     }
 
     fn field_inits_inner(&mut self) -> PResult<Vec<FieldInit>> {
@@ -1574,10 +1604,7 @@ impl Parser<'_> {
     // ---- statements ------------------------------------------------------
 
     fn block(&mut self) -> PResult<Block> {
-        let no_brace = std::mem::replace(&mut self.no_brace, false);
-        let result = self.block_inner();
-        self.no_brace = no_brace;
-        result
+        self.delimited(|this| this.block_inner())
     }
 
     fn block_inner(&mut self) -> PResult<Block> {
@@ -1883,10 +1910,7 @@ impl Parser<'_> {
         let scrutinee = scrutinee?;
         self.record_in_header(&scrutinee)?;
         let scrutinee = Box::new(scrutinee);
-        let no_brace = std::mem::replace(&mut self.no_brace, false);
-        let arms = self.match_arms();
-        self.no_brace = no_brace;
-        let arms = arms?;
+        let arms = self.delimited(|this| this.match_arms())?;
         Ok(Expr { kind: ExprKind::Match { scrutinee, arms }, span: start.to(self.prev_span()) })
     }
 
@@ -1922,7 +1946,10 @@ impl Parser<'_> {
         } else {
             first
         };
-        let guard = if self.eat_kw(Kw::If) { Some(self.expression()?) } else { None };
+        let guard = if self.eat_kw(Kw::If) { Some(self.arm_head(|this| this.expression())?) } else { None };
+        if guard.is_some() && self.arrow_ahead() {
+            return self.error("an arrow in a guard goes in parentheses, as `if ready(x => x > 0) =>`");
+        }
         self.expect(Tok::FatArrow)?;
         let body = self.arm_body()?;
         Ok(MatchArm { span: pattern.span.to(self.prev_span()), pattern, guard, body })
@@ -1931,10 +1958,7 @@ impl Parser<'_> {
     /// `select { arms }` (11.14).
     fn select_expression(&mut self) -> PResult<Expr> {
         let start = self.bump();
-        let no_brace = std::mem::replace(&mut self.no_brace, false);
-        let arms = self.select_arms();
-        self.no_brace = no_brace;
-        let arms = arms?;
+        let arms = self.delimited(|this| this.select_arms())?;
         Ok(Expr { kind: ExprKind::Select(arms), span: start.to(self.prev_span()) })
     }
 
@@ -1963,10 +1987,13 @@ impl Parser<'_> {
         } else if self.eat_kw(Kw::Let) {
             let pattern = self.pattern()?;
             self.expect(Tok::Eq)?;
-            (Some(pattern), Some(self.expression()?))
+            (Some(pattern), Some(self.arm_head(|this| this.expression())?))
         } else {
-            (None, Some(self.expression()?))
+            (None, Some(self.arm_head(|this| this.expression())?))
         };
+        if operation.is_some() && self.arrow_ahead() {
+            return self.error("an arrow in a select's operation goes in parentheses, as `ready(x => x > 0) =>`");
+        }
         self.expect(Tok::FatArrow)?;
         let body = self.arm_body()?;
         Ok(SelectArm { pattern, operation, body, span: start.to(self.prev_span()) })
@@ -2453,7 +2480,7 @@ impl Parser<'_> {
     fn try_closure(&mut self) -> Option<PResult<Expr>> {
         let (pos, errors, recovering) = (self.pos, self.diags.list.len(), self.recovering);
         let start = self.span();
-        let header = (|| -> PResult<(Vec<ClosureParam>, Option<TypeExpr>)> {
+        let header = (|| -> PResult<(Vec<ClosureParam>, Option<TypeExpr>, bool)> {
             self.expect(Tok::LParen)?;
             let mut params = Vec::new();
             loop {
@@ -2486,21 +2513,130 @@ impl Parser<'_> {
             self.skip_newlines();
             self.expect(Tok::RParen)?;
             let result = if self.eat(&Tok::Colon) { Some(self.result_type()?) } else { None };
+            // An arrow with what only the block form writes, said below.
+            let written = result.is_some() || params.iter().any(|p| p.ty.is_some() || p.mode != Mode::Value);
+            if self.at(&Tok::FatArrow) && written && !self.no_arrow {
+                return Ok((params, result, true));
+            }
             if !self.at(&Tok::LBrace) {
                 return Err(());
             }
-            Ok((params, result))
+            Ok((params, result, false))
         })();
-        let Ok((params, result)) = header else {
+        let Ok((params, result, typed_arrow)) = header else {
             self.pos = pos;
             self.diags.list.truncate(errors);
             self.recovering = recovering;
             return None;
         };
+        if typed_arrow {
+            let message = "an arrow takes no types, modes or result: a closure with them has a block, as `(x: Int): Int { x * 2 }`";
+            self.diags.error("E0004", self.span(), message);
+            self.bump();
+            return Some(self.expression().map(|body| {
+                let span = start.to(body.span);
+                let body = Block { stmts: Vec::new(), span: body.span, tail: Some(Box::new(body)) };
+                let closure = Closure { is_unsafe: false, params, result, body, arrow: true };
+                Expr { kind: ExprKind::Closure(Box::new(closure)), span }
+            }));
+        }
         Some(self.block().map(|body| {
             let span = start.to(body.span);
-            Expr { kind: ExprKind::Closure(Box::new(Closure { is_unsafe: false, params, result, body })), span }
+            let closure = Closure { is_unsafe: false, params, result, body, arrow: false };
+            Expr { kind: ExprKind::Closure(Box::new(closure)), span }
         }))
+    }
+
+    /// `x => body`, `(a, b) => body` or `() => body` (11.8): a closure whose
+    /// body is one expression, the longest that follows; `None`, with
+    /// nothing consumed, when the tokens ahead are not one.
+    fn try_arrow(&mut self) -> Option<PResult<Expr>> {
+        if self.no_arrow {
+            return None;
+        }
+        // `test => ...`: a keyword names no parameter, as in a block's list.
+        if let Tok::Kw(kw) = self.tok()
+            && self.nth(1) == &Tok::FatArrow
+            && !matches!(kw, Kw::None | Kw::True | Kw::False | Kw::SelfValue)
+        {
+            let message = format!("`{}` is a keyword and cannot name a parameter: choose another name", kw.as_str());
+            return Some(self.error(message));
+        }
+        if !self.arrow_ahead() {
+            return None;
+        }
+        let start = self.span();
+        let mut names = Vec::new();
+        match self.tok().clone() {
+            Tok::Ident(name) => names.push(Ident { name, span: self.bump() }),
+            Tok::LParen => {
+                self.bump();
+                while !self.eat(&Tok::RParen) {
+                    match self.tok().clone() {
+                        Tok::Ident(name) => names.push(Ident { name, span: self.bump() }),
+                        _ => {
+                            self.bump();
+                        }
+                    }
+                }
+            }
+            _ => return None,
+        }
+        self.bump();
+        self.skip_newlines();
+        let statement = matches!(
+            self.tok(),
+            Tok::Kw(Kw::Let | Kw::Var | Kw::Return | Kw::Fail | Kw::Break | Kw::Continue | Kw::Defer)
+        );
+        if self.at(&Tok::LBrace) || statement {
+            let list: Vec<&str> = names.iter().map(|name| name.name.as_str()).collect();
+            let message = format!(
+                "an arrow's body is one expression: a closure with statements has a block, `({}) {{ ... }}`",
+                list.join(", ")
+            );
+            return Some(self.error(message));
+        }
+        Some(self.expression().map(|body| {
+            let span = start.to(body.span);
+            let params = names
+                .into_iter()
+                .map(|name| ClosureParam { name, ty: None, mode: Mode::Value, variadic: false })
+                .collect();
+            let body = Block { stmts: Vec::new(), span: body.span, tail: Some(Box::new(body)) };
+            let closure = Closure { is_unsafe: false, params, result: None, body, arrow: true };
+            Expr { kind: ExprKind::Closure(Box::new(closure)), span }
+        }))
+    }
+
+    /// Whether an arrow's head is next: `x =>`, or names between commas in
+    /// parentheses and `=>`.
+    fn arrow_ahead(&self) -> bool {
+        match self.tok() {
+            Tok::Ident(_) => self.nth(1) == &Tok::FatArrow,
+            Tok::LParen => {
+                let (mut at, mut name) = (1, true);
+                loop {
+                    match self.nth(at) {
+                        Tok::Newline => {}
+                        Tok::RParen => return self.nth(at + 1) == &Tok::FatArrow,
+                        Tok::Ident(_) if name => name = false,
+                        Tok::Comma if !name => name = true,
+                        _ => return false,
+                    }
+                    at += 1;
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Parses where `=>` ends an arm's head, so that an arrow there goes in
+    /// parentheses.
+    fn arm_head<T>(&mut self, parse: impl FnOnce(&mut Self) -> T) -> T {
+        let no_arrow = std::mem::replace(&mut self.no_arrow, true);
+        let result = parse(self);
+        self.no_arrow = no_arrow;
+        result
     }
 
     /// `[Type, ...]` directly followed by a call. Undone without diagnostics
@@ -2532,10 +2668,7 @@ impl Parser<'_> {
     /// `base[index]` or `base[start:end:step]` (23.22).
     fn index_or_slice(&mut self, base: Expr) -> PResult<Expr> {
         self.bump();
-        let no_brace = std::mem::replace(&mut self.no_brace, false);
-        let result = self.index_or_slice_inner(base);
-        self.no_brace = no_brace;
-        result
+        self.delimited(|this| this.index_or_slice_inner(base))
     }
 
     fn index_or_slice_inner(&mut self, base: Expr) -> PResult<Expr> {
@@ -2631,10 +2764,7 @@ impl Parser<'_> {
     fn call_arguments(&mut self) -> PResult<Vec<Arg>> {
         // Inside the parentheses a block or closure is unambiguous, even in a
         // header such as `match` or `for` (23.17).
-        let no_brace = std::mem::replace(&mut self.no_brace, false);
-        let args = self.call_arguments_inner();
-        self.no_brace = no_brace;
-        args
+        self.delimited(|this| this.call_arguments_inner())
     }
 
     fn call_arguments_inner(&mut self) -> PResult<Vec<Arg>> {
@@ -2667,6 +2797,11 @@ impl Parser<'_> {
 
     fn primary(&mut self) -> PResult<Expr> {
         let start = self.span();
+        if matches!(self.tok(), Tok::Ident(_) | Tok::LParen | Tok::Kw(_))
+            && let Some(arrow) = self.try_arrow()
+        {
+            return arrow;
+        }
         let kind = match self.tok().clone() {
             Tok::Int { value, suffix } => {
                 self.bump();
@@ -2704,10 +2839,7 @@ impl Parser<'_> {
                 let constructor = CONTEXTUAL_CONSTRUCTORS.iter().find(|c| **c == name).unwrap();
                 self.bump();
                 self.bump();
-                let no_brace = std::mem::replace(&mut self.no_brace, false);
-                let value = self.expression();
-                self.no_brace = no_brace;
-                let value = value?;
+                let value = self.delimited(|this| this.expression())?;
                 self.expect(Tok::RParen)?;
                 ExprKind::Construct(constructor, Box::new(value))
             }
@@ -2799,36 +2931,34 @@ impl Parser<'_> {
     /// `[]`, `[a, b]`; map literals use `:` (23.23).
     fn bracket_literal(&mut self) -> PResult<Expr> {
         let start = self.bump();
-        let no_brace = std::mem::replace(&mut self.no_brace, false);
-        let result = (|| -> PResult<ExprKind> {
-            if self.at(&Tok::Colon) && self.nth(1) == &Tok::RBracket {
-                self.bump();
-                self.bump();
+        let result = self.delimited(|this| -> PResult<ExprKind> {
+            if this.at(&Tok::Colon) && this.nth(1) == &Tok::RBracket {
+                this.bump();
+                this.bump();
                 return Ok(ExprKind::Map(Vec::new()));
             }
-            if self.eat(&Tok::RBracket) {
+            if this.eat(&Tok::RBracket) {
                 return Ok(ExprKind::Array(Vec::new()));
             }
-            let first = self.expression()?;
-            if self.eat(&Tok::Colon) {
+            let first = this.expression()?;
+            if this.eat(&Tok::Colon) {
                 // A `:` after the first entry's key makes it a map (23.23).
-                let mut pairs = vec![(first, self.expression()?)];
-                while self.eat(&Tok::Comma) && !self.at(&Tok::RBracket) {
-                    let key = self.expression()?;
-                    self.expect(Tok::Colon)?;
-                    pairs.push((key, self.expression()?));
+                let mut pairs = vec![(first, this.expression()?)];
+                while this.eat(&Tok::Comma) && !this.at(&Tok::RBracket) {
+                    let key = this.expression()?;
+                    this.expect(Tok::Colon)?;
+                    pairs.push((key, this.expression()?));
                 }
-                self.expect(Tok::RBracket)?;
+                this.expect(Tok::RBracket)?;
                 return Ok(ExprKind::Map(pairs));
             }
             let mut items = vec![first];
-            while self.eat(&Tok::Comma) && !self.at(&Tok::RBracket) {
-                items.push(self.expression()?);
+            while this.eat(&Tok::Comma) && !this.at(&Tok::RBracket) {
+                items.push(this.expression()?);
             }
-            self.expect(Tok::RBracket)?;
+            this.expect(Tok::RBracket)?;
             Ok(ExprKind::Array(items))
-        })();
-        self.no_brace = no_brace;
+        });
         Ok(Expr { kind: result?, span: start.to(self.prev_span()) })
     }
 
@@ -2837,10 +2967,8 @@ impl Parser<'_> {
         if self.eat(&Tok::RParen) {
             return Ok(Expr { kind: ExprKind::Unit, span: start.to(self.prev_span()) });
         }
-        let outer_no_brace = std::mem::replace(&mut self.no_brace, false);
-        let result = self.paren_inner(start, outer_no_brace);
-        self.no_brace = outer_no_brace;
-        result
+        let outer_no_brace = self.no_brace;
+        self.delimited(|this| this.paren_inner(start, outer_no_brace))
     }
 
     fn paren_inner(&mut self, start: Span, outer_no_brace: bool) -> PResult<Expr> {
@@ -2931,6 +3059,7 @@ impl Parser<'_> {
                             diags: &mut *self.diags,
                             recovering: false,
                             no_brace: false,
+                            no_arrow: false,
                             parens: Vec::new(),
                         };
                         inner.skip_newlines();
@@ -3028,6 +3157,7 @@ impl Parser<'_> {
                         diags: &mut *self.diags,
                         recovering: false,
                         no_brace: false,
+                        no_arrow: false,
                         parens: Vec::new(),
                     };
                     inner.skip_newlines();
@@ -3110,7 +3240,7 @@ fn foreign_word(word: &str, next: &Tok) -> Option<String> {
             ),
         },
         ("void", Tok::Ident(_)) => format!("a function is `fn {name}(value: Type) {{ ... }}`, with no result for none"),
-        ("lambda", _) => "a closure is `(x) { x * 2 }`".into(),
+        ("lambda", _) => "a closure is `x => x * 2`".into(),
         ("val" | "auto", Tok::Ident(_)) => {
             format!("a binding is `let {name} = value`, or `var {name} = value` for one that changes")
         }

@@ -23,22 +23,21 @@ fn waits(total: Int, i: Int): Int {
 
 /// The library of `c/callers.c`, or why there is none.
 fn callers(): ffi.Library ! String {
-    let dir =
-        fs.createTemporaryDirectory(pattern: "tondo-ffi-*").mapErr((e) { "no directory: {e}" })?
+    let dir = fs.createTemporaryDirectory(pattern: "tondo-ffi-*").mapErr(e => "no directory: {e}")?
     let (source, library) = (
         path.join(dir, "callers.c"),
         path.join(dir, ffi.libraryFileName("callers")),
     )
-    fs.writeText(source, Callers).mapErr((e) { "cannot write {source}: {e}" })?
+    fs.writeText(source, Callers).mapErr(e => "cannot write {source}: {e}")?
     let built =
         process
             .command("cc", "-O2", "-shared", "-fPIC", "-o", library, source, "-lpthread")
             .output()
-            .mapErr((e) { "no C compiler: {e}" })?
+            .mapErr(e => "no C compiler: {e}")?
     if built.statuses.isEmpty() or not built.statuses[0].success {
         fail "cc failed: {String.fromBytes(built.stderr) ?? ""}"
     }
-    let loaded = ffi.Library.open(library).mapErr((e) { "cannot load {library}: {e}" })
+    let loaded = ffi.Library.open(library).mapErr(e => "cannot load {library}: {e}")
     // Loaded, it needs its file no more.
     _ = fs.remove(dir, recursive: true)
     loaded
@@ -56,8 +55,8 @@ test ffi {
                 "calls_from_threads",
             )?
         }
-    testing.bench("callback 1000", () { unsafe { calls(add, 1000) } })
-    testing.bench("from a C thread 1000", () { unsafe { threads(add, 1, 1000) } })
-    testing.bench("from C threads 8x1000", () { unsafe { threads(add, 8, 1000) } })
-    testing.bench("waits from a C thread 100", () { unsafe { threads(waits, 1, 100) } })
+    testing.bench("callback 1000", () => unsafe { calls(add, 1000) })
+    testing.bench("from a C thread 1000", () => unsafe { threads(add, 1, 1000) })
+    testing.bench("from C threads 8x1000", () => unsafe { threads(add, 8, 1000) })
+    testing.bench("waits from a C thread 100", () => unsafe { threads(waits, 1, 100) })
 }

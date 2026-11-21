@@ -440,7 +440,7 @@ fn asked(peer: Peer, method: Int, input: Array[Byte]): (Int, Array[Byte]) ! Erro
         fail Error.Closed
     }
     let request = triple(id, method, input)
-    let written = peer.input.update((writer) { framed(writer, request) })
+    let written = peer.input.update(writer => framed(writer, request))
     if written.isErr() {
         _ = peer.waiting.remove(id)
         fail Error.Closed
@@ -498,7 +498,7 @@ fn split(bytes: Array[Byte]): (Int, Int, Array[Byte]) ! Error {
         ok(parts) => parts
         err(error) => fail Error.Format("{error}")
     }
-    let number = (index: Int) { parts.at(index).map((part) { part.asInt() }) ?? none }
+    let number = (index: Int) { parts.at(index).map(part => part.asInt()) ?? none }
     match (number(0), number(1), parts.at(2)) {
         (some(first), some(second), some(value)) => (first, second, messagepack.encode(value))
         _ => fail Error.Format("a frame of three parts, the first two numbers")
@@ -526,7 +526,7 @@ fn exactly(stream: io.Reader, count: Int): Array[Byte]? {
 /// Writes `bytes` to `writer` as a frame.
 fn framed(writer: io.Writer, bytes: Array[Byte]): !io.IoError {
     let length = bytes.length()
-    let head = [24, 16, 8, 0].map((shift) { Byte(length >> shift & 255) ?? 0 })
+    let head = [24, 16, 8, 0].map(shift => Byte(length >> shift & 255) ?? 0)
     writer.writeBytes(head.concat(bytes))?
     writer.flush()?
 }
@@ -538,7 +538,7 @@ fn framed(writer: io.Writer, bytes: Array[Byte]): !io.IoError {
 pub fn serve(contract: Description, answer: fn(Int, Array[Byte]): (Int, Array[Byte])): !Error {
     let input = console.stdin()
     let output = sync.Mutex(console.stdout())
-    if output.update((writer) { framed(writer, contract.bytes()) }).isErr() {
+    if output.update(writer => framed(writer, contract.bytes())).isErr() {
         fail Error.Closed
     }
     var group = Group[Unit]()
@@ -562,7 +562,7 @@ fn replied(
     given: Array[Byte],
 ) {
     let (status, payload) = answered(answer, method, given)
-    _ = output.update((writer) { framed(writer, triple(id, status, payload)) })
+    _ = output.update(writer => framed(writer, triple(id, status, payload)))
 }
 
 /// The answer of a method, with a panic of it as `Panicked`.

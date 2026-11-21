@@ -27,7 +27,7 @@ fn request(shared: tasks.Limit, total: sync.Atomic[Int], over: sync.Atomic[Int])
     let done =
         within shared {
             within tasks.limit(3) {
-                (0..10).collect().map((_) { spawn both(mine, mineOver, total, over) }).wait()
+                (0..10).collect().map(_ => spawn both(mine, mineOver, total, over)).wait()
             }
         }
     done.length() + mineOver.load() * 1000
@@ -84,9 +84,7 @@ fn main() {
     let running = sync.Atomic(0)
     let over = sync.Atomic(0)
     let values =
-        within tasks.limit(3) {
-            (0..20).collect().map((_) { spawn counted(running, over, 3) }).wait()
-        }
+        within tasks.limit(3) { (0..20).collect().map(_ => spawn counted(running, over, 3)).wait() }
     console.println("{values.length()} done, over 3: {over.load()}")
 
     // A server's limit of 4 shared by two requests of 3 each.

@@ -17,7 +17,7 @@ test urlReadsAnyText {
             match url.parse(text) {
                 ok(read) => {
                     let again = url.parse("{read}")
-                    assert(again.map((written) { "{written}" }) == ok("{read}"), "{read}")
+                    assert(again.map(written => "{written}") == ok("{read}"), "{read}")
                 }
                 err(_) => {}
             }

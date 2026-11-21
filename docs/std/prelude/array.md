@@ -52,7 +52,7 @@ pub fn Array[T].flatMap[U: ~Copy](self, transform: fn(T): Array[U]): Array[U]
 
 The elements of the arrays the function gives for each element, in
 order. It flattens an array of arrays, which has no `flatten` of its own:
-`[[1, 2], [3]].flatMap((inner) { inner })` is `[1, 2, 3]`.
+`[[1, 2], [3]].flatMap(inner => inner)` is `[1, 2, 3]`.
 
 #### Array.reduce
 
@@ -265,7 +265,7 @@ pub fn Array[T].minBy[K: Ordered](self, key: fn(T): K): T?
 
 The first element of the smallest key, or `none` when the array is
 empty; `key` is called once for each element:
-`users.minBy((user) { user.age })` is the youngest.
+`users.minBy(user => user.age)` is the youngest.
 
 #### Array.maxBy
 
@@ -275,7 +275,7 @@ pub fn Array[T].maxBy[K: Ordered](self, key: fn(T): K): T?
 
 The first element of the largest key, or `none` when the array is
 empty; `key` is called once for each element:
-`users.maxBy((user) { user.age })` is the oldest.
+`users.maxBy(user => user.age)` is the oldest.
 
 #### Array.uniqueBy
 
@@ -284,7 +284,7 @@ pub fn Array[T].uniqueBy[K: Key](self, key: fn(T): K): Array[T]
 ```
 
 The first element of each key, in order, as `unique` keeps the first of
-equal elements: `["ab", "ac", "b"].uniqueBy((w) { w[0] })` is
+equal elements: `["ab", "ac", "b"].uniqueBy(w => w[0])` is
 `["ab", "b"]`.
 
 #### Array.takeWhile
@@ -294,7 +294,7 @@ pub fn Array[T].takeWhile(self, predicate: fn(T): Bool): Array[T]
 ```
 
 The elements before the first that fails the test:
-`[1, 2, 5, 1].takeWhile((n) { n < 3 })` is `[1, 2]`.
+`[1, 2, 5, 1].takeWhile(n => n < 3)` is `[1, 2]`.
 
 #### Array.dropWhile
 
@@ -303,7 +303,7 @@ pub fn Array[T].dropWhile(self, predicate: fn(T): Bool): Array[T]
 ```
 
 The first element that fails the test and all after it, what
-`takeWhile` leaves: `[1, 2, 5, 1].dropWhile((n) { n < 3 })` is `[5, 1]`.
+`takeWhile` leaves: `[1, 2, 5, 1].dropWhile(n => n < 3)` is `[5, 1]`.
 
 #### Array.toMap
 
@@ -313,7 +313,7 @@ pub fn Array[T].toMap[K: Key, V](self, entry: fn(T): (K, V)): Map[K, V]
 
 A map of the pair each element gives, in the order the keys first
 appear; of a key given twice, the last value:
-`users.toMap((user) { (user.id, user.name) })`.
+`users.toMap(user => (user.id, user.name))`.
 
 #### Array.keyedBy
 
@@ -322,7 +322,7 @@ pub fn Array[T].keyedBy[K: Key](self, key: fn(T): K): Map[K, T]
 ```
 
 The elements by a key of each, in the order the keys first appear; of a
-key given twice, the last element: `users.keyedBy((user) { user.id })`.
+key given twice, the last element: `users.keyedBy(user => user.id)`.
 
 #### Array.countBy
 
@@ -331,7 +331,7 @@ pub fn Array[T].countBy[K: Key](self, key: fn(T): K): Map[K, Int]
 ```
 
 How many elements have each key, in the order the keys first appear:
-`["a", "bb", "c"].countBy((w) { w.length() })` is `[1: 2, 2: 1]`.
+`["a", "bb", "c"].countBy(w => w.length())` is `[1: 2, 2: 1]`.
 
 #### Array.sumBy
 
@@ -340,7 +340,7 @@ pub fn Array[T].sumBy[N: Additive](self, value: fn(T): N): N
 ```
 
 The sum of `value` of each element, zero for an empty array; floats add
-in the order 18.5 fixes, as `sum`: `orders.sumBy((o) { o.total })`.
+in the order 18.5 fixes, as `sum`: `orders.sumBy(o => o.total)`.
 
 #### Array.average
 
@@ -359,7 +359,7 @@ pub fn Array[T].averageBy[N: Fractional](self, value: fn(T): N): N?
 ```
 
 The average of `value` of each element, or `none` when the array is
-empty: `readings.averageBy((r) { r.celsius })`.
+empty: `readings.averageBy(r => r.celsius)`.
 
 #### Array.scan
 
@@ -369,7 +369,7 @@ pub fn Array[T].scan[A](self, initial: A, combine: fn(A, T): A): Array[A]
 
 The value `combine` builds after each element, from `initial`: as many
 values as elements, `initial` not among them.
-`[1, 2, 3].scan(0, (total, n) { total + n })` is `[1, 3, 6]`.
+`[1, 2, 3].scan(0, (total, n) => total + n)` is `[1, 3, 6]`.
 
 #### Array.findLast
 
@@ -410,7 +410,7 @@ pub fn Array[T].joinBy[U, K: Key](
 Each element paired with each of `other` that has the same key, in the
 order of the array and then of `other`, as the inner join of two
 tables; an element with no pair is left out:
-`orders.joinBy(users, (order) { order.user }, (user) { user.id })`.
+`orders.joinBy(users, order => order.user, user => user.id)`.
 
 #### Array.toSet
 

@@ -38,7 +38,7 @@ pub fn Tensor[T: Number](values: Array[T], shape: Array[Int]? = none): Tensor[T]
 
 /// A tensor of rank 2 whose rows are `rows`, all of one length (`P0006`).
 pub fn Tensor[T: Number].fromRows(rows: Array[Array[T]]): Tensor[T] {
-    let columns = rows.get(0).map((row) { row.length() }) ?? 0
+    let columns = rows.get(0).map(row => row.length()) ?? 0
     var values: Array[T] = []
     for row in rows {
         if row.length() != columns {
@@ -136,7 +136,7 @@ pub fn Tensor[T: Number].reshape(self, shape: Array[Int]): Tensor[T] {
 /// swaps the rows and columns of a matrix.
 pub fn Tensor[T: Number].transposed(self, axes: Array[Int]? = none): Tensor[T] {
     let rank = self.sizes.length()
-    let order = axes ?? (0..rank).map((axis) { rank - 1 - axis }).collect()
+    let order = axes ?? (0..rank).map(axis => rank - 1 - axis).collect()
     var seen = [false].repeat(rank)
     for axis in order {
         if order.length() != rank or axis < 0 or axis >= rank or seen[axis] {
@@ -149,8 +149,8 @@ pub fn Tensor[T: Number].transposed(self, axes: Array[Int]? = none): Tensor[T] {
     }
     let sizes = self.sizes
     let strides = strided(sizes)
-    let shape = order.map((axis) { sizes[axis] })
-    let steps = order.map((axis) { strides[axis] })
+    let shape = order.map(axis => sizes[axis])
+    let steps = order.map(axis => strides[axis])
     Tensor { sizes: shape, items: gathered(self.items, shape, steps, 0) }
 }
 
@@ -206,7 +206,7 @@ pub fn Tensor[T: Fractional].mean(self): T {
 pub fn Tensor[T: Fractional].meanAlong(self, axis: Int): Tensor[T] {
     let sums = self.sumAlong(axis)
     let size = Number.fromInt[T](self.sizes[axis])
-    Tensor { sizes: sums.sizes, items: sums.items.map((sum) { sum.dividedBy(size) }) }
+    Tensor { sizes: sums.sizes, items: sums.items.map(sum => sum.dividedBy(size)) }
 }
 
 /// The smallest value, the first of equal ones, or `none` when it has none.
@@ -334,7 +334,7 @@ fn shown[T: Number + Display](values: Array[T], shape: Array[Int], axis: Int, st
     }
     let inner = counted(shape[axis + 1:])
     let parts = (0..shape[axis])
-        .map((index) { shown(values, shape, axis + 1, start + index * inner) })
+        .map(index => shown(values, shape, axis + 1, start + index * inner))
         .collect()
     "[{parts.join(", ")}]"
 }
@@ -423,12 +423,10 @@ fn combined[T: Number](left: Tensor[T], right: Tensor[T], op: Int): Tensor[T] {
     } else {
         (0..rank)
             .map(
-                (axis) {
-                    if sizeAt(left.sizes, rank, axis) == 1 {
-                        sizeAt(right.sizes, rank, axis)
-                    } else {
-                        sizeAt(left.sizes, rank, axis)
-                    }
+                axis => if sizeAt(left.sizes, rank, axis) == 1 {
+                    sizeAt(right.sizes, rank, axis)
+                } else {
+                    sizeAt(left.sizes, rank, axis)
                 },
             )
             .collect()
@@ -535,7 +533,7 @@ fn broadcast(own: Array[Int], shape: Array[Int]): Array[Int] {
     let padded = [1].repeat(shape.length() - own.length()).concat(own)
     let strides = strided(padded)
     (0..padded.length())
-        .map((axis) { if padded[axis] == 1 and shape[axis] != 1 { 0 } else { strides[axis] } })
+        .map(axis => if padded[axis] == 1 and shape[axis] != 1 { 0 } else { strides[axis] })
         .collect()
 }
 

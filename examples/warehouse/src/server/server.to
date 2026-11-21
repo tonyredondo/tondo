@@ -10,7 +10,7 @@ import warehouse.shelves
 /// balancers ask; and reflection, with which `grpcurl` lists and calls a
 /// server without its `.proto` files.
 pub fn app(stockroom: shelves.Shelves, key: String): http.App {
-    let service = stock.stockService(stockroom).onCall((call, next) { guard(key, call, next)? })
+    let service = stock.stockService(stockroom).onCall((call, next) => guard(key, call, next)?)
     let health = grpc.Health()
     health.set("warehouse.v1.StockService", grpc.ServingStatus.Serving)
     var routes = http.App()

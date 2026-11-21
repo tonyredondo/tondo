@@ -964,7 +964,7 @@ impl<'a> Checker<'a> {
             // which nobody sees once the lock is let go.
             Some(callable) if callable.mutates => {
                 let message = "this function changes its captures, which only changes its own copy of them: \
-                    give what it computes back instead, as `let seen = lock.update((value) { value })`";
+                    give what it computes back instead, as `let seen = lock.update(value => value)`";
                 self.diags.error("E1108", value.span, message);
                 None
             }

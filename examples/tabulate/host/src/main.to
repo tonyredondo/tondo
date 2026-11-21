@@ -16,7 +16,7 @@ impl api.Renderer for Plain {
     }
 
     fn render(self, table: api.Table): String ! plugin.Error {
-        var widths = table.columns.map((column) { column.length() })
+        var widths = table.columns.map(column => column.length())
         for cells in table.rows {
             for (index, cell) in cells.enumerate() {
                 if index < widths.length() {

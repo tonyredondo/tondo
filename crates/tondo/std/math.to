@@ -223,7 +223,7 @@ pub fn fma(a: Float, b: Float, c: Float): Float {
 pub fn dot[T: Number](a: Array[T], b: Array[T]): T {
     if a.length() != b.length() {
         // The panic of arrays of other lengths, as `a * b` gives it.
-        _ = a.map((_) { 0 }) * b.map((_) { 0 })
+        _ = a.map(_ => 0) * b.map(_ => 0)
     }
     var total = Additive.zero[T]()
     for (index, value) in a.enumerate() {
@@ -896,7 +896,7 @@ pub fn Decimal.parse(text: String): Decimal ! MathError {
     }
     let (whole, fraction) = mantissa.splitOnce(".") ?? (mantissa, "")
     let signless = whole.removePrefix("-").removePrefix("+")
-    if (signless.isEmpty() and fraction.isEmpty()) or not fraction.chars().all((c) { c.isDigit() }) {
+    if (signless.isEmpty() and fraction.isEmpty()) or not fraction.chars().all(c => c.isDigit()) {
         fail MathError.NotANumber(text)
     }
     let digits = "{whole}{fraction}"

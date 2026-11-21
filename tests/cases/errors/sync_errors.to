@@ -14,7 +14,7 @@ fn main() {
     let missing = counter.length()
     let flag = sync.Mutex(true)
     _ = flag.updateWhen(
-        (f) { 1 },
+        f => 1,
         (f) {
             f = false
         },

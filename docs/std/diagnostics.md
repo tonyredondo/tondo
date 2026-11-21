@@ -160,7 +160,7 @@ grows.
 import std.console
 import std.diagnostics
 
-for metric in diagnostics.metrics().filter((m) { m.name.startsWith("tasks.") }) {
+for metric in diagnostics.metrics().filter(m => m.name.startsWith("tasks.")) {
     console.println("{metric.name} = {metric.value}{metric.unit}")
 }
 ```

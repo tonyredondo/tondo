@@ -36,7 +36,7 @@ pub fn Helpers.checked(self, n: Int): Int ! template.TemplateError {
 }
 
 pub fn Helpers.kinds(self, values: ...reflect.Value): String {
-    values.map((value) { value.typeName() }).join(" ")
+    values.map(value => value.typeName()).join(" ")
 }
 
 // A type annotated for XML is still read by reflection.

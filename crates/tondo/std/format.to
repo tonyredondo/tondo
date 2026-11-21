@@ -454,7 +454,7 @@ fn patternOf(text: String): Pattern {
         none => (text, none)
     }
     let (prefix, digits, suffix) = partsOf(positive)
-    let whole = digits.splitOnce(".").map((parts) { parts.0 }) ?? digits
+    let whole = digits.splitOnce(".").map(parts => parts.0) ?? digits
     let groups = whole.split(",")
     let count = groups.length()
     let primary = if count > 1 { groups[count - 1].length() } else { 0 }
@@ -486,7 +486,7 @@ fn partsOf(text: String): (String, String, String) {
         last -= 1
     }
     let part = (start: Int, end: Int): String {
-        (chars.slice(start, end) ?? []).map((c) { "{c}" }).join("")
+        (chars.slice(start, end) ?? []).map(c => "{c}").join("")
     }
     (part(0, first), part(first, last), part(last, chars.length()))
 }
@@ -502,8 +502,7 @@ fn written(parts: __formats.Digits, symbols: Symbols, pattern: Pattern, symbol: 
     if parts.special.isNone() and not parts.fraction.isEmpty() {
         body = "{body}{symbols.decimal}{localDigits(parts.fraction, symbols)}"
     }
-    let zero =
-        parts.special.isNone() and "{parts.whole}{parts.fraction}".chars().all((c) { c == '0' })
+    let zero = parts.special.isNone() and "{parts.whole}{parts.fraction}".chars().all(c => c == '0')
     var prefix = pattern.prefix
     var suffix = pattern.suffix
     if parts.negative and not zero {
@@ -516,7 +515,7 @@ fn written(parts: __formats.Digits, symbols: Symbols, pattern: Pattern, symbol: 
         }
     }
     // A symbol of letters is kept apart from the digits it touches.
-    let lettered = (found: Char?): Bool { found.map((c) { c.isLetter() }) ?? false }
+    let lettered = (found: Char?): Bool { found.map(c => c.isLetter()) ?? false }
     let before = if prefix.endsWith("¤") and
         lettered(symbol.chars().collect().get(symbol.length() - 1)) {
         "{symbol}\u{a0}"
@@ -562,7 +561,7 @@ fn localDigits(text: String, symbols: Symbols): String {
     let local = symbols.digits.chars().collect()
     text
         .chars()
-        .map((c) { if c.isDigit() { "{local.get(c.code() - '0'.code()) ?? c}" } else { "{c}" } })
+        .map(c => if c.isDigit() { "{local.get(c.code() - '0'.code()) ?? c}" } else { "{c}" })
         .collect()
         .join("")
 }

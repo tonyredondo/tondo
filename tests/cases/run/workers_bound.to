@@ -12,7 +12,7 @@ import std.sync
 import std.time
 
 fn counted(name: String): Int {
-    diagnostics.metrics().find((each) { each.name == name }).map((each) { each.value }) ?? -1
+    diagnostics.metrics().find(each => each.name == name).map(each => each.value) ?? -1
 }
 
 /// Turns until `stop` is set, without waiting; every million turns it looks

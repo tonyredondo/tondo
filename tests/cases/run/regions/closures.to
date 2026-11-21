@@ -36,7 +36,7 @@ fn turns(): Array[fn(): String] {
         var grown = [i]
         grown.push(i * 2)
         let list = List.Cons(i, List.Cons(i * 10, List.Nil))
-        shown.push(() { "{values}/{grown}/{sum(list)}" })
+        shown.push(() => "{values}/{grown}/{sum(list)}")
     }
     shown
 }
@@ -45,7 +45,7 @@ fn turns(): Array[fn(): String] {
 fn counter(i: Int): fn(): String {
     var seen = [i, i + 20]
     seen.push(i)
-    () { "{seen}" }
+    () => "{seen}"
 }
 
 /// Given to a function value, which keeps it.
@@ -72,11 +72,11 @@ fn main() {
         counters.push(counter(i))
     }
     let kept = sync.Mutex(Array[Array[Int]]())
-    keepAll((values) { kept.update((all) { all.push(values) }) })
+    keepAll(values => kept.update(all => all.push(values)))
     var later: Array[fn(): String] = []
     for i in 0..2 {
         let made = fresh(i)
-        later.push(() { "{made}" })
+        later.push(() => "{made}")
     }
     let quiet = noise()
     var lines: Array[String] = []

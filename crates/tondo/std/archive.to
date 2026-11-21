@@ -77,7 +77,7 @@ pub enum EntryKind {
 /// import std.archive
 /// import std.console
 ///
-/// let largest = archive.open("site.zip")?.entries().sortedBy((entry) { -entry.size }).first()
+/// let largest = archive.open("site.zip")?.entries().sortedBy(entry => -entry.size).first()
 /// console.println("{largest.map((entry) { entry.name })}")
 /// ```
 pub type Entry = {
@@ -143,7 +143,7 @@ pub fn open(path: String): Archive ! ArchiveError {
 pub fn read(bytes: Array[Byte]): Archive ! ArchiveError {
     let starts = (signature: Array[Int]): Bool {
         bytes.length() >= signature.length() and
-            (0..signature.length()).all((at) { Int(bytes[at]) == signature[at] })
+            (0..signature.length()).all(at => Int(bytes[at]) == signature[at])
     }
     if starts([0x50, 0x4b, 0x03, 0x04]) or starts([0x50, 0x4b, 0x05, 0x06]) {
         return readZip(bytes)
@@ -505,7 +505,7 @@ fn littleBytes(value: Int, count: Int): Array[Byte] {
 
 fn textOf(bytes: Array[Byte], start: Int, end: Int): String {
     let part = bytes.slice(start, end) ?? []
-    let length = part.iter().takeWhile((b) { b != Byte(0u8) }).count()
+    let length = part.iter().takeWhile(b => b != Byte(0u8)).count()
     String.fromBytes(part.slice(0, length) ?? []) ?? ""
 }
 
@@ -525,15 +525,15 @@ fn readTar(bytes: Array[Byte], format: Format): Archive ! ArchiveError {
     var extended: Map[String, String] = [:]
     for at + 512 <= bytes.length() {
         let header = bytes.slice(at, at + 512) ?? []
-        if header.iter().all((b) { b == Byte(0u8) }) {
+        if header.iter().all(b => b == Byte(0u8)) {
             break
         }
         // The checksum counts its own field as spaces.
         let sum = header
             .iter()
             .enumerate()
-            .map((pair) { if pair.0 >= 148 and pair.0 < 156 { 32 } else { Int(pair.1) } })
-        if sum.reduce(0, (total, b) { total + b }) != octal(header, 148, 8) {
+            .map(pair => if pair.0 >= 148 and pair.0 < 156 { 32 } else { Int(pair.1) })
+        if sum.reduce(0, (total, b) => total + b) != octal(header, 148, 8) {
             fail if entries.isEmpty() {
                 problem("the bytes are not an archive: zip, tar, tar.gz or tar.zst")
             } else {
@@ -700,8 +700,8 @@ fn tarHeader(name: String, kind: Int, size: Int, entry: Entry, target: String): 
     let sum = before
         .concat("        ".bytes())
         .concat(after)
-        .map((b) { Int(b) })
-        .reduce(0, (total, b) { total + b })
+        .map(b => Int(b))
+        .reduce(0, (total, b) => total + b)
     let checksum = padField(sum.toString(radix: 8).padStart(6, "0"), 7).concat(" ".bytes())
     before.concat(checksum).concat(after)
 }

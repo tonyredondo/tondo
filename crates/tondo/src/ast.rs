@@ -735,6 +735,9 @@ pub struct Closure {
     pub params: Vec<ClosureParam>,
     pub result: Option<TypeExpr>,
     pub body: Block,
+    /// Written `x => body` (11.8): its body, the block's only expression, is
+    /// a place where a value is wanted, unless the closure gives `Unit`.
+    pub arrow: bool,
 }
 
 #[derive(Clone, Debug)]

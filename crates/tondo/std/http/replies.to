@@ -29,10 +29,10 @@ enum Payload {
 /// import std.http
 ///
 /// var app = http.App()
-/// app.get("/", (_) { http.Reply.html("<h1>Home</h1>") })
-/// app.get("/old", (_) { http.Reply.redirect("/", status: 301) })
-/// app.get("/data", (_) { http.Reply.json(["ok": true]).header("Cache-Control", "no-store") })
-/// app.delete("/items/:id", (_) { http.Reply.empty() })
+/// app.get("/", _ => http.Reply.html("<h1>Home</h1>"))
+/// app.get("/old", _ => http.Reply.redirect("/", status: 301))
+/// app.get("/data", _ => http.Reply.json(["ok": true]).header("Cache-Control", "no-store"))
+/// app.delete("/items/:id", _ => http.Reply.empty())
 /// let client = app.client()
 /// console.println(client.get("/old")?.text()?)
 /// let data = client.get("/data")?
@@ -258,9 +258,8 @@ fn problemReply(problem: Problem): Reply {
     var errors = ""
     if not problem.violations.isEmpty() {
         let each = problem.violations.map(
-            (violation) {
-                "{{\"path\":{__json.encode(violation.path)},\"message\":{__json.encode(violation.message)}}}"
-            },
+            violation =>
+                "{{\"path\":{__json.encode(violation.path)},\"message\":{__json.encode(violation.message)}}}",
         )
         errors = ",\"errors\":[{each.join(",")}]"
     }

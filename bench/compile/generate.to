@@ -68,8 +68,8 @@ pub fn run@(seed: Int): Int ! json.JsonError {
 /// Writes `text` to `file`, with the directories it is in.
 fn write(file: String, text: String): !String {
     let directory = path.parent(file) ?? "."
-    fs.createDirectory(directory).mapErr((e) { "cannot create {directory}: {e}" })?
-    fs.writeText(file, text).mapErr((e) { "cannot write {file}: {e}" })?
+    fs.createDirectory(directory).mapErr(e => "cannot create {directory}: {e}")?
+    fs.writeText(file, text).mapErr(e => "cannot write {file}: {e}")?
 }
 
 fn main(): !String {
@@ -77,7 +77,7 @@ fn main(): !String {
     if arguments.length() != 2 {
         fail "usage: tondo run bench/compile/generate.to -- <lines> <directory>"
     }
-    let wanted = Int.parse(arguments[0]).mapErr((_) { "the lines are a number: {arguments[0]}" })?
+    let wanted = Int.parse(arguments[0]).mapErr(_ => "the lines are a number: {arguments[0]}")?
     let root = arguments[1]
     write(path.join(root, "tondo.toml"), "[package]\nname = \"generated\"\n")?
     var (lines, units, modules) = (0, 0, 0)

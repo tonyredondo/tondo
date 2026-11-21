@@ -758,7 +758,7 @@ fn jsonToBytes[T: Message](value: __json.Value, input: JsonReader): Array[Byte] 
 
 /// The message type of a full name among the program's.
 fn knownMessage(name: String): Known? {
-    knownMessages().find((known) { known.name == name })
+    knownMessages().find(known => known.name == name)
 }
 
 /// Every message type of the program, which the compiler lists here.

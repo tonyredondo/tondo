@@ -688,7 +688,7 @@ fn describe(info: reflect.TypeInfo): String {
     match info.kind() {
         reflect.TypeKind.Record => "a record of {info.fields().length()} fields"
         reflect.TypeKind.Enum => "an enum of {info.variants().length()} variants"
-        reflect.TypeKind.Newtype => "a newtype of {info.underlying().map((inner) { inner.qualifiedName() }) ?? "?"}"
+        reflect.TypeKind.Newtype => "a newtype of {info.underlying().map(inner => inner.qualifiedName()) ?? "?"}"
         reflect.TypeKind.Primitive(_) => "a primitive"
         _ => "another kind"
     }
@@ -754,7 +754,7 @@ for variant in reflect.typeInfo[Event]().variants() {
     let holds = match variant.payloadKind() {
         reflect.VariantPayloadKind.Unit => "nothing"
         reflect.VariantPayloadKind.Tuple => "{variant.tupleElements().length()} values"
-        reflect.VariantPayloadKind.Record => "fields {variant.fields().map((field) { field.name() })}"
+        reflect.VariantPayloadKind.Record => "fields {variant.fields().map(field => field.name())}"
     }
     console.println("{variant.name()} holds {holds}")
 }
@@ -840,7 +840,7 @@ impl reflect.Reflect for Handle {
 }
 
 let info = reflect.typeInfo[Handle]()
-console.println("{info.fields().map((field) { field.name() })} {info.fields()[0].docs()}")
+console.println("{info.fields().map(field => field.name())} {info.fields()[0].docs()}")
 ```
 
 #### TypeDescription.of
@@ -875,7 +875,7 @@ pub fn User.greet(self, greeting: String): String {
 
 let info = reflect.typeInfo[User]()
 console.println("{info.qualifiedName()}: {info.docs() ?? ""}")
-console.println("fields {info.fields().map((field) { field.name() })}, methods {info.methods().map((method) { method.name() })}")
+console.println("fields {info.fields().map(field => field.name())}, methods {info.methods().map(method => method.name())}")
 console.println("{reflect.typeOf(User { name: "Ada", age: 36 }).id() == info.id()}")
 ```
 
@@ -1022,7 +1022,7 @@ pub type User = {
 }
 
 for field in reflect.typeInfo[User]().fields() {
-    let column = field.annotation[Column]().map((column) { column.name }) ?? field.externalName()
+    let column = field.annotation[Column]().map(column => column.name) ?? field.externalName()
     console.println("{field.ordinal()} {field.name()} -> {column}, default {field.default()}, docs {field.docs()}")
 }
 ```

@@ -13,7 +13,7 @@
 // let pool = executor.pool(2, 8)?
 // var squares = Group[Int]()
 // for n in 1..=4 {
-//     squares.add(pool.submit(() { n * n })?)
+//     squares.add(pool.submit(() => n * n)?)
 // }
 // console.println("{squares.wait()}")
 // pool.shutdown()
@@ -59,8 +59,8 @@ impl Display for ExecutorError {
 /// import std.executor
 ///
 /// let pool = executor.pool(1, 0)?
-/// let first = pool.trySubmit(() { 1 })?
-/// match pool.trySubmit(() { 2 }) {
+/// let first = pool.trySubmit(() => 1)?
+/// match pool.trySubmit(() => 2) {
 ///     ok(job) => console.println("{job.wait()}")
 ///     err(executor.SubmitError.Saturated) => console.println("busy: try later")
 ///     err(executor.SubmitError.Closed) => console.println("shut down")
@@ -135,7 +135,7 @@ impl Display for SendError {
 ///
 /// // Blocking work, as a C library's, on two threads of its own.
 /// let pool = executor.pool(2, 16)?
-/// let checksum = pool.submit(() { 6 * 7 })?
+/// let checksum = pool.submit(() => 6 * 7)?
 /// console.println("{checksum.wait()}")
 /// pool.shutdown()
 /// ```
@@ -309,7 +309,7 @@ pub fn Actor[M, E].reference(self): ActorRef[M] {
 /// handler, if one stopped it. Stopping it again gives the same.
 pub fn Actor[M, E].stop(self): !E {
     self.mailbox.value.close()
-    let ended = self.outcome.updateWhen((result) { result.isSome() }, (result) { result })
+    let ended = self.outcome.updateWhen(result => result.isSome(), result => result)
     match ended {
         some(result) => result?
         none => {}

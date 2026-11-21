@@ -70,5 +70,5 @@ pub fn frequencies(words: String): Array[(String, Int)] {
         }
     }
     let pairs = for (word, count) in counts { (word, count) }
-    pairs.sortedBy((pair) { -pair.1 })
+    pairs.sortedBy(pair => -pair.1)
 }

@@ -31,6 +31,6 @@ fn users(count: Int): Int {
 }
 
 test structs {
-    testing.bench("points 1000", () { points(1000) })
-    testing.bench("users 1000", () { users(1000) })
+    testing.bench("points 1000", () => points(1000))
+    testing.bench("users 1000", () => users(1000))
 }

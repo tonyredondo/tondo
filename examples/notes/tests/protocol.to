@@ -47,7 +47,7 @@ test saysWhatItOffers {
     let listed = ask(server, "tools/list")?
     let names = listed.find("result.tools")?.asArray() ?? []
     assert(
-        names.map((tool) { tool.field("name").asText() ?? "" }) ==
+        names.map(tool => tool.field("name").asText() ?? "") ==
             ["write", "search", "list", "remove"],
     )
     // The schema of a tool is its record: the documentation, and what is required.

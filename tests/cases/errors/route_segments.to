@@ -5,9 +5,9 @@ import std.http
 
 fn main() {
     var app = http.App()
-    app.get("/files/:name.:ext", () { "x" })
-    app.get("/a/*rest/b", () { "y" })
-    app.get("/v1/items:batch", () { "a colon inside a segment is text" })
+    app.get("/files/:name.:ext", () => "x")
+    app.get("/a/*rest/b", () => "y")
+    app.get("/v1/items:batch", () => "a colon inside a segment is text")
 }
 
 // expect-error: E1102 the segment `:name.:ext` of the route `/files/:name.:ext`: a parameter takes a whole segment and is named like a binding, as `:file`; split the parts of one in the handler

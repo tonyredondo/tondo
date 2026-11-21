@@ -35,8 +35,8 @@ test listsAndFilters {
 
     let all: Array[store.Task] = client.get("/tasks")?.json()?
     let done: Array[store.Task] = client.get("/tasks", query: ["done": "true"])?.json()?
-    assert(all.map((task) { task.title }) == ["one", "two"])
-    assert(done.map((task) { task.title }) == ["two"])
+    assert(all.map(task => task.title) == ["one", "two"])
+    assert(done.map(task => task.title) == ["two"])
 }
 
 test aMissingTaskIsA404 {

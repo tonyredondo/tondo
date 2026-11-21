@@ -33,7 +33,7 @@ fn main() {
     abs(1)
     let offset = 3
     unsafe {
-        sort((value) { value + offset })
+        sort(value => value + offset)
         let handle = ffi.allocate[Int]().cast[Handle]()
         handle.read()
         let made = Handle {}

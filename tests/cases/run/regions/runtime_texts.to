@@ -58,7 +58,7 @@ fn shared(): String {
     var boxed: Array[reflect.Value] = []
     for i in 0..3 {
         let captured = "captured {i}".toLowerAscii()
-        shown.push(() { captured })
+        shown.push(() => captured)
         sender.send("sent {i}".toLowerAscii())
         let given = "given {i}".toLowerAscii()
         group.add(spawn given.toUpper())
@@ -80,7 +80,7 @@ fn into(notes: var Array[Note], log: sync.Mutex[Array[String]], i: Int) {
     let read = "deferred {i}".toLowerAscii()
     defer {
         // tondo: allow W1017: no task of this program is cancelled
-        log.update((all) { all.push(read) })
+        log.update(all => all.push(read))
     }
 }
 
@@ -101,7 +101,7 @@ fn parts(): String {
         let pieces = "a{i},b{i},c{i},d{i}".split(",")
         sender.send(pieces[0])
         let captured = pieces[1]
-        shown.push(() { captured })
+        shown.push(() => captured)
         note.text = pieces[2]
         kept.push(pieces[3])
         let words = "one two {i}".words()

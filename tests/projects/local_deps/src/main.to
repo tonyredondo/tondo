@@ -8,7 +8,7 @@ fn main() {
     console.println("{area.of(rect)}")
     // `env.build()` reports the versions of tondo.toml.
     let build = env.build()
-    let used = build.dependencies.map((d) { "{d.name} {d.version}" })
+    let used = build.dependencies.map(d => "{d.name} {d.version}")
     console.println("{build.name} {build.version} {used}")
 }
 

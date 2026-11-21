@@ -9192,3 +9192,44 @@ marked with nobody behind it, and with the domain given as each is added
 it finds none in sixteen states. next.to, wake.to and wake_domains.to say
 in their lists that they take a mark to have a worker behind it, which
 handover.to and the seventh rule hold.
+
+## A closure of one expression is an arrow
+
+Tony asked for one form for a closure whose body is one expression, and
+chose the arrow: `x => x * 2`, `(a, b) => a + b`, `() => clock.now()` ("Ala
+esa sintaxis mola"; "Estoy de acuerdo que exista una sola forma"). The
+block form stays for a closure with types, modes, a result or statements,
+`(value: Int): Int { value * 2 }`, and `tondo fmt` writes the arrow for
+every other: a closure with no types, modes, result or `unsafe` whose block
+holds no statement, ends in an expression that is not a block in braces,
+and has no comments. It never writes an arrow back as a block, and puts in
+parentheses an arrow that more of an expression follows, as the left side
+of `??`, since an arrow's body is the longest expression after it.
+
+An arrow's body is a place where a value is wanted. Everywhere but one it
+means what the block's end meant, an `if` with no `else` included. The
+exception is a `for`: at the end of a block whose closure's result nothing
+states, it is a statement, which E1306 reports when its body's value is
+dropped; as an arrow's body it gives its values, unless the closure must
+give `Unit`, where it is the loop it is everywhere else. So
+`rows.map(row => for x in row { x * 10 })` is `[[10, 20], [30]]`, while
+`(row) { for x in row { x * 10 } }` stays E1306, whose hint now writes the
+arrow, `row => for ... { ... }`, where the closure can be one, and
+`return for` where it has types.
+
+In a `match` guard and in a `select` operation, `=>` ends the arm's head, so
+an arrow there goes in parentheses; where the guard stops before `x =>` or
+`(a, b) =>`, E0004 says so in those words. `x => { ... }` and an arrow with
+types or a result are E0004 too, with the block to write. The language
+server shows an arrow's parameter's type as a hint it offers no edit for,
+since an arrow takes no type, and the VS Code grammar marks the parameters.
+
+The change went through every `.to` file that was formatted before: 65 of
+the standard library, 41 of the examples, 19 of the benchmarks, 15 models
+and fuzz targets, 3 projects and 85 cases, about a thousand closures, with
+the closures written in the standard library's comments, whose examples
+make docs/std, and in the specification. A file that was not formatted
+before keeps its author's layout and its closures as blocks, which still
+compile: rewriting it with `tondo fmt` would have changed much more than its
+closures. The formatter leaves what a string interpolates as it was
+written, so the closures there were changed by hand.

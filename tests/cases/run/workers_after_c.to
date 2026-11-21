@@ -12,7 +12,7 @@ import std.sync
 extern fn usleep(micros: ffi.CUInt): ffi.CInt
 
 fn counted(name: String): Int {
-    diagnostics.metrics().find((each) { each.name == name }).map((each) { each.value }) ?? -1
+    diagnostics.metrics().find(each => each.name == name).map(each => each.value) ?? -1
 }
 
 /// Calls C for a moment, then wakes the task that waits, then computes

@@ -19,7 +19,7 @@ const Authority: String = embed.text("tls/ca.pem")
 
 fn app(): http.App {
     var routes = http.App()
-    routes.get("/hello", () { "hello" })
+    routes.get("/hello", () => "hello")
     routes.post("/json", (input: Payload) { input with { count: input.count + 1 } })
     routes
 }
@@ -65,13 +65,13 @@ fn together(
 test http {
     let plain = app().start()?
     let client = http.Client(baseUrl: plain.url())
-    testing.bench("hello 1x1000", () { hellos(client, 1000) })?
-    testing.bench("hello 64x100", () { together(64, 100, client, hellos) })?
-    testing.bench("json 64x100", () { together(64, 100, client, posts) })?
+    testing.bench("hello 1x1000", () => hellos(client, 1000))?
+    testing.bench("hello 64x100", () => together(64, 100, client, hellos))?
+    testing.bench("json 64x100", () => together(64, 100, client, posts))?
     plain.stop()
     let secure = app().start(tls: net.Tls.pem(Certificate, Key))?
     let trusting = http.Client(baseUrl: secure.url(), trust: Authority)
-    testing.bench("tls 64x100", () { together(64, 100, trusting, hellos) })?
+    testing.bench("tls 64x100", () => together(64, 100, trusting, hellos))?
     secure.stop()
 }
 
@@ -112,13 +112,13 @@ test net {
     let listener = net.listen("127.0.0.1", 0)?
     let server = spawn serve(listener)
     let stream = net.connect("127.0.0.1", listener.address().port)?
-    testing.bench("echo 1x1000", () { roundTrips(stream, 1000) })?
+    testing.bench("echo 1x1000", () => roundTrips(stream, 1000))?
     stream.close()?
     server.cancel()
     let secureListener = net.listen("127.0.0.1", 0, tls: net.Tls.pem(Certificate, Key))?
     let secureServer = spawn serve(secureListener)
     let secure = net.connectTls("127.0.0.1", secureListener.address().port, trust: Authority)?
-    testing.bench("tls echo 1x1000", () { roundTrips(secure, 1000) })?
+    testing.bench("tls echo 1x1000", () => roundTrips(secure, 1000))?
     secure.close()?
     secureServer.cancel()
 }

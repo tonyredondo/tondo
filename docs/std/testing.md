@@ -165,7 +165,7 @@ fn receipt(lines: Array[Int]): String {
 
 test theReceiptDoesNotAllocateForEachLine {
     let lines = [10, 20, 30, 40]
-    assert(testing.allocations(() { receipt(lines) }) <= 3)
+    assert(testing.allocations(() => receipt(lines)) <= 3)
 }
 ```
 
@@ -191,7 +191,7 @@ fn squares(count: Int): Int {
 }
 
 test squaresStayOffTheHeap {
-    assert(testing.heapAllocations(() { squares(100) }) == 0)
+    assert(testing.heapAllocations(() => squares(100)) == 0)
 }
 ```
 

@@ -34,6 +34,9 @@
       "include": "#constants"
     },
     {
+      "include": "#arrows"
+    },
+    {
       "include": "#types"
     },
     {
@@ -235,6 +238,38 @@
     "constants": {
       "match": "\\b(true|false|none|some|ok|err)\\b",
       "name": "constant.language.tondo"
+    },
+    "arrows": {
+      "comment": "An arrow closure's parameters, `x =>` and `(a, b) =>` (language 11.8).",
+      "patterns": [
+        {
+          "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(=>)",
+          "captures": {
+            "1": {
+              "name": "variable.parameter.tondo"
+            },
+            "2": {
+              "name": "keyword.operator.arrow.tondo"
+            }
+          }
+        },
+        {
+          "match": "\\(\\s*([a-z_][A-Za-z0-9_]*(?:\\s*,\\s*[a-z_][A-Za-z0-9_]*)*)?\\s*\\)\\s*(=>)",
+          "captures": {
+            "1": {
+              "patterns": [
+                {
+                  "match": "[a-z_][A-Za-z0-9_]*",
+                  "name": "variable.parameter.tondo"
+                }
+              ]
+            },
+            "2": {
+              "name": "keyword.operator.arrow.tondo"
+            }
+          }
+        }
+      ]
     },
     "types": {
       "match": "\\b[A-Z][A-Za-z0-9_]*\\b",

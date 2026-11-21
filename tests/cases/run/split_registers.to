@@ -25,8 +25,8 @@ fn orders(): Array[Order] {
 fn lazy(all: Array[Order]): Int {
     all
         .iter()
-        .filter((order) { order.cents > 4000 })
-        .sumBy((order) { order.cents + order.region.length() })
+        .filter(order => order.cents > 4000)
+        .sumBy(order => order.cents + order.region.length())
 }
 
 fn kept(all: Array[Order]): Array[Order] {

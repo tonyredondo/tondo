@@ -33,10 +33,10 @@ fn main(): !http.HttpError {
             reply.header("x-type", reply.headers().get("content-type") ?? "none")
         },
     )
-    app.post("/small", (request) { http.Reply.text("got {request.bytes()?.length()}") })
+    app.post("/small", request => http.Reply.text("got {request.bytes()?.length()}"))
     app.post(
         "/large",
-        (request) { http.Reply.text("got {request.limitBody(5000).bytes()?.length()}") },
+        request => http.Reply.text("got {request.limitBody(5000).bytes()?.length()}"),
     )
     app.get(
         "/search",
@@ -47,9 +47,9 @@ fn main(): !http.HttpError {
             )
         },
     )
-    app.post("/search", (request) { http.Reply.text("{request.formAs[Search]()?.text}") })
+    app.post("/search", request => http.Reply.text("{request.formAs[Search]()?.text}"))
     app.post("/json", (search: Search) { http.Reply.text("got {search.text.length()}") })
-    app.get("/page", (_) { http.Reply.text("words ".repeat(500)) })
+    app.get("/page", _ => http.Reply.text("words ".repeat(500)))
     app.websocket(
         "/chat",
         (request, socket) {

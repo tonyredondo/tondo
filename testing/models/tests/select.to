@@ -43,7 +43,7 @@ type Select = {
 const Capacity = 1
 
 fn waitersGone(now: Select): Array[Channel] {
-    now.channels.map((ch) { ch with { waiter: false } })
+    now.channels.map(ch => ch with { waiter: false })
 }
 
 fn steps(now: Select, claim: Bool): Array[model.Step[Select]] {
@@ -70,7 +70,7 @@ fn steps(now: Select, claim: Bool): Array[model.Step[Select]] {
             }
         }
         if not channels.any(ready) {
-            let waiting = channels.map((ch) { ch with { waiter: true } })
+            let waiting = channels.map(ch => ch with { waiter: true })
             next.push(
                 model.step("register", now with { channels: waiting, selecting: Selecting.Blocked }),
             )
@@ -150,28 +150,26 @@ fn check(claim: Bool): model.Checked ! model.Violation {
                     channels[c].got
                 _ => true
             }
-            (channels.count((ch) { ch.got }) <= 1 or now.selecting == Selecting.Start) and handed
+            (channels.count(ch => ch.got) <= 1 or now.selecting == Selecting.Start) and handed
         },
         name: "OneWins",
     )
     // A value is in a buffer, or was got: none is lost.
     let kept = model.always(
         (now: Select) {
-            now.channels.all((ch) { ch.sender != Sender.Sent or ch.got or ch.buffer > 0 })
+            now.channels.all(ch => ch.sender != Sender.Sent or ch.got or ch.buffer > 0)
         },
         name: "Kept",
     )
     // No waiter outlives the now.
     let gone = model.always(
-        (now: Select) {
-            now.selecting != Selecting.Done or now.channels.all((ch) { not ch.waiter })
-        },
+        (now: Select) { now.selecting != Selecting.Done or now.channels.all(ch => not ch.waiter) },
         name: "Gone",
     )
     let over = (now: Select) {
-        now.selecting == Selecting.Done and now.channels.all((ch) { ch.sender != Sender.Start })
+        now.selecting == Selecting.Done and now.channels.all(ch => ch.sender != Sender.Start)
     }
-    model.check(start, (now) { steps(now, claim) }, holds: [oneWins, kept, gone], ends: some(over))
+    model.check(start, now => steps(now, claim), holds: [oneWins, kept, gone], ends: some(over))
 }
 
 test selectAsTlcDoes {

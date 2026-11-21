@@ -88,5 +88,5 @@ fn blog(): fs.FileSystem ! fs.FsError {
 
 test aSiteOfFiftyPostsIsBuilt {
     let site = blog()?
-    testing.bench("site of 50 posts", () { build(site, fs.memory(), "Bench") })?
+    testing.bench("site of 50 posts", () => build(site, fs.memory(), "Bench"))?
 }

@@ -170,7 +170,7 @@ The general category of a character in Unicode.
 import std.console
 import std.text
 
-let letters = "a1B".chars().filter((c) { text.category(c) == text.Category.UppercaseLetter }).collect()
+let letters = "a1B".chars().filter(c => text.category(c) == text.Category.UppercaseLetter).collect()
 console.println("{letters}")
 ```
 
@@ -415,7 +415,7 @@ import std.console
 import std.text
 
 let spanish = text.collator("es", numeric: true)
-let sorted = ["ñu", "nube", "file10", "file9"].sortedWith((a, b) { spanish.compare(a, b) })
+let sorted = ["ñu", "nube", "file10", "file9"].sortedWith((a, b) => spanish.compare(a, b))
 console.println("{sorted}")
 ```
 
@@ -426,7 +426,7 @@ pub fn Collator.compare(self, a: String, b: String): Int
 ```
 
 -1, 0 or 1 as `a` goes before `b`, with it or after it, as `sortedWith`
-takes: `names.sortedWith((a, b) { order.compare(a, b) })`.
+takes: `names.sortedWith((a, b) => order.compare(a, b))`.
 
 ### For other types
 

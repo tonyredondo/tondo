@@ -17,14 +17,14 @@ fn show(client: http.Client, path: String): !http.HttpError {
 
 fn main(): !http.HttpError {
     var app = http.App()
-    app.get("/users/:id", (request) { http.Reply.text("user {request.param("id")}") })
-    app.get("/users/me", (_) { http.Reply.text("me") })
+    app.get("/users/:id", request => http.Reply.text("user {request.param("id")}"))
+    app.get("/users/me", _ => http.Reply.text("me"))
     app.get(
         "/users/:id/posts/:post",
-        (request) { http.Reply.text("post {request.param("post")} of {request.param("id")}") },
+        request => http.Reply.text("post {request.param("post")} of {request.param("id")}"),
     )
-    app.get("/files/*path", (request) { http.Reply.text("file [{request.param("path")}]") })
-    app.post("/only", (_) { http.Reply.text("posted") })
+    app.get("/files/*path", request => http.Reply.text("file [{request.param("path")}]"))
+    app.post("/only", _ => http.Reply.text("posted"))
     let client = app.client()
     for path in [
         "/users/7",

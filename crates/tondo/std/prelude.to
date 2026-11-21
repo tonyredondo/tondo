@@ -35,7 +35,7 @@ pub alias Panic = __panics.Panic
 /// }
 ///
 /// let versions = [Version { major: 1, minor: 10 }, Version { major: 1, minor: 2 }, Version { major: 0, minor: 9 }]
-/// let newest = versions.sortedBy((version) { version }).last().expect("versions")
+/// let newest = versions.sortedBy(version => version).last().expect("versions")
 /// console.println("{newest.major}.{newest.minor} {Version { major: 1, minor: 2 } < Version { major: 1, minor: 10 }}")
 /// ```
 pub trait Ordered {
@@ -830,7 +830,7 @@ pub fn Array[T].filter(self, keep: fn(T): Bool): Array[T] {
 
 /// The elements of the arrays the function gives for each element, in
 /// order. It flattens an array of arrays, which has no `flatten` of its own:
-/// `[[1, 2], [3]].flatMap((inner) { inner })` is `[1, 2, 3]`.
+/// `[[1, 2], [3]].flatMap(inner => inner)` is `[1, 2, 3]`.
 pub fn Array[T].flatMap[U: ~Copy](self, transform: fn(T): Array[U]): Array[U] {
     var out: Array[U] = []
     for item in self {
@@ -1158,7 +1158,7 @@ pub fn Array[T].partition(self, predicate: fn(T): Bool): (Array[T], Array[T]) {
 
 /// The first element of the smallest key, or `none` when the array is
 /// empty; `key` is called once for each element:
-/// `users.minBy((user) { user.age })` is the youngest.
+/// `users.minBy(user => user.age)` is the youngest.
 pub fn Array[T].minBy[K: Ordered](self, key: fn(T): K): T? {
     // The index of the best and its key, so that no element is copied
     // until the end.
@@ -1178,7 +1178,7 @@ pub fn Array[T].minBy[K: Ordered](self, key: fn(T): K): T? {
 
 /// The first element of the largest key, or `none` when the array is
 /// empty; `key` is called once for each element:
-/// `users.maxBy((user) { user.age })` is the oldest.
+/// `users.maxBy(user => user.age)` is the oldest.
 pub fn Array[T].maxBy[K: Ordered](self, key: fn(T): K): T? {
     if self.isEmpty() {
         return none
@@ -1195,7 +1195,7 @@ pub fn Array[T].maxBy[K: Ordered](self, key: fn(T): K): T? {
 }
 
 /// The first element of each key, in order, as `unique` keeps the first of
-/// equal elements: `["ab", "ac", "b"].uniqueBy((w) { w[0] })` is
+/// equal elements: `["ab", "ac", "b"].uniqueBy(w => w[0])` is
 /// `["ab", "b"]`.
 pub fn Array[T].uniqueBy[K: Key](self, key: fn(T): K): Array[T] {
     var seen: Set[K] = Set[]
@@ -1209,20 +1209,20 @@ pub fn Array[T].uniqueBy[K: Key](self, key: fn(T): K): Array[T] {
 }
 
 /// The elements before the first that fails the test:
-/// `[1, 2, 5, 1].takeWhile((n) { n < 3 })` is `[1, 2]`.
+/// `[1, 2, 5, 1].takeWhile(n => n < 3)` is `[1, 2]`.
 pub fn Array[T].takeWhile(self, predicate: fn(T): Bool): Array[T] {
-    self[:self.findIndex((item) { not predicate(item) }) ?? self.length()]
+    self[:self.findIndex(item => not predicate(item)) ?? self.length()]
 }
 
 /// The first element that fails the test and all after it, what
-/// `takeWhile` leaves: `[1, 2, 5, 1].dropWhile((n) { n < 3 })` is `[5, 1]`.
+/// `takeWhile` leaves: `[1, 2, 5, 1].dropWhile(n => n < 3)` is `[5, 1]`.
 pub fn Array[T].dropWhile(self, predicate: fn(T): Bool): Array[T] {
-    self[self.findIndex((item) { not predicate(item) }) ?? self.length():]
+    self[self.findIndex(item => not predicate(item)) ?? self.length():]
 }
 
 /// A map of the pair each element gives, in the order the keys first
 /// appear; of a key given twice, the last value:
-/// `users.toMap((user) { (user.id, user.name) })`.
+/// `users.toMap(user => (user.id, user.name))`.
 pub fn Array[T].toMap[K: Key, V](self, entry: fn(T): (K, V)): Map[K, V] {
     var out: Map[K, V] = [:]
     for item in self {
@@ -1233,7 +1233,7 @@ pub fn Array[T].toMap[K: Key, V](self, entry: fn(T): (K, V)): Map[K, V] {
 }
 
 /// The elements by a key of each, in the order the keys first appear; of a
-/// key given twice, the last element: `users.keyedBy((user) { user.id })`.
+/// key given twice, the last element: `users.keyedBy(user => user.id)`.
 pub fn Array[T].keyedBy[K: Key](self, key: fn(T): K): Map[K, T] {
     var out: Map[K, T] = [:]
     for item in self {
@@ -1243,7 +1243,7 @@ pub fn Array[T].keyedBy[K: Key](self, key: fn(T): K): Map[K, T] {
 }
 
 /// How many elements have each key, in the order the keys first appear:
-/// `["a", "bb", "c"].countBy((w) { w.length() })` is `[1: 2, 2: 1]`.
+/// `["a", "bb", "c"].countBy(w => w.length())` is `[1: 2, 2: 1]`.
 pub fn Array[T].countBy[K: Key](self, key: fn(T): K): Map[K, Int] {
     var out: Map[K, Int] = [:]
     for item in self {
@@ -1253,7 +1253,7 @@ pub fn Array[T].countBy[K: Key](self, key: fn(T): K): Map[K, Int] {
 }
 
 /// The sum of `value` of each element, zero for an empty array; floats add
-/// in the order 18.5 fixes, as `sum`: `orders.sumBy((o) { o.total })`.
+/// in the order 18.5 fixes, as `sum`: `orders.sumBy(o => o.total)`.
 pub fn Array[T].sumBy[N: Additive](self, value: fn(T): N): N {
     // Of `Float` and `Float32`, `sumByFloat` and `sumByFloat32`.
     var total = Additive.zero[N]()
@@ -1482,7 +1482,7 @@ pub fn Array[T: Fractional].average(self): T? {
 }
 
 /// The average of `value` of each element, or `none` when the array is
-/// empty: `readings.averageBy((r) { r.celsius })`.
+/// empty: `readings.averageBy(r => r.celsius)`.
 pub fn Array[T].averageBy[N: Fractional](self, value: fn(T): N): N? {
     if self.isEmpty() {
         return none
@@ -1492,7 +1492,7 @@ pub fn Array[T].averageBy[N: Fractional](self, value: fn(T): N): N? {
 
 /// The value `combine` builds after each element, from `initial`: as many
 /// values as elements, `initial` not among them.
-/// `[1, 2, 3].scan(0, (total, n) { total + n })` is `[1, 3, 6]`.
+/// `[1, 2, 3].scan(0, (total, n) => total + n)` is `[1, 3, 6]`.
 pub fn Array[T].scan[A](self, initial: A, combine: fn(A, T): A): Array[A] {
     var out: Array[A] = []
     var total = initial
@@ -1541,7 +1541,7 @@ pub fn Array[T: Equatable].indexOf(self, value: T): Int? {
 /// Each element paired with each of `other` that has the same key, in the
 /// order of the array and then of `other`, as the inner join of two
 /// tables; an element with no pair is left out:
-/// `orders.joinBy(users, (order) { order.user }, (user) { user.id })`.
+/// `orders.joinBy(users, order => order.user, user => user.id)`.
 pub fn Array[T].joinBy[U, K: Key](
     self,
     other: Array[U],
@@ -1719,7 +1719,7 @@ pub fn Set[T: Key].filter(self, keep: fn(T): Bool): Set[T] {
 }
 
 /// The set of what the function gives for each element, which may be
-/// fewer: `Set[1, 2, 3].map((n) { n % 2 })` is `Set[1, 0]`.
+/// fewer: `Set[1, 2, 3].map(n => n % 2)` is `Set[1, 0]`.
 pub fn Set[T: Key].map[U: Key](self, transform: fn(T): U): Set[U] {
     var out: Set[U] = Set[]
     for item in self {
@@ -1778,7 +1778,7 @@ pub fn Set[T: Key].retain(var self, keep: fn(T): Bool) {
 ///     }
 /// }
 ///
-/// let evens = Fibonacci { a: 0, b: 1 }.filter((n) { n % 2 == 0 }).take(5).collect()
+/// let evens = Fibonacci { a: 0, b: 1 }.filter(n => n % 2 == 0).take(5).collect()
 /// console.println("{evens}")
 /// ```
 pub trait Iterator[T] {
@@ -1995,9 +1995,9 @@ pub trait Iterator[T] {
 }
 
 /// The sum of the elements, as `Array.sum`, and of floats in the same
-/// order: `[1, 2, 3].iter().map((n) { n * n }).sum()` is `14`.
+/// order: `[1, 2, 3].iter().map(n => n * n).sum()` is `14`.
 pub fn Iterator[T: Additive].sum(self): T {
-    self.sumBy((item) { item })
+    self.sumBy(item => item)
 }
 
 /// The smallest element, the first of equal ones, or `none` when there is
@@ -2032,7 +2032,7 @@ pub fn Iterator[T: Ordered].max(self): T? {
 /// `Array.average`. Of integers, which it would round, `map` them to
 /// floats first.
 pub fn Iterator[T: Fractional].average(self): T? {
-    self.averageBy((item) { item })
+    self.averageBy(item => item)
 }
 
 /// The set of the elements, in the order they first appear, as
@@ -2052,7 +2052,7 @@ pub fn Iterator[T: Key].toSet(self): Set[T] {
 /// import std.console
 ///
 /// // Each line's length, computed as the loop asks, with no array between.
-/// for size in "tea\ncake\nbiscuits".lines().iter().map((line) { line.length() }) {
+/// for size in "tea\ncake\nbiscuits".lines().iter().map(line => line.length()) {
 ///     console.println("{size}")
 /// }
 /// ```
@@ -2074,7 +2074,7 @@ impl[I: Iterator[T], T, U] Iterator[U] for MapIterator[I, T, U] {
 /// import std.console
 ///
 /// let words = ["apple", "Banana", "cherry", "Date"]
-/// let capitalized = words.iter().filter((word) { word.chars().take(1).any((c) { c.isUpper() }) })
+/// let capitalized = words.iter().filter(word => word.chars().take(1).any(c => c.isUpper()))
 /// console.println("{capitalized.collect()}")
 /// ```
 pub type FilterIterator[I, T] = {
@@ -2103,7 +2103,7 @@ impl[I: Iterator[T], T] Iterator[T] for FilterIterator[I, T] {
 /// import std.console
 ///
 /// // The first three squares above 50: the rest are never computed.
-/// let squares = (1..=1000).map((n) { n * n }).filter((square) { square > 50 }).take(3).collect()
+/// let squares = (1..=1000).map(n => n * n).filter(square => square > 50).take(3).collect()
 /// console.println("{squares}")
 /// ```
 pub type TakeIterator[I, T] = {
@@ -2158,7 +2158,7 @@ impl[I: Iterator[T], T] Iterator[T] for SkipIterator[I, T] {
 /// import std.console
 ///
 /// let log = ["boot", "load config", "ERROR disk", "retry"]
-/// let before = log.iter().takeWhile((line) { not line.startsWith("ERROR") }).collect()
+/// let before = log.iter().takeWhile(line => not line.startsWith("ERROR")).collect()
 /// console.println("{before}")
 /// ```
 pub type TakeWhileIterator[I, T] = {
@@ -2189,7 +2189,7 @@ impl[I: Iterator[T], T] Iterator[T] for TakeWhileIterator[I, T] {
 /// import std.console
 ///
 /// let text = "   \n\n  first line\nsecond"
-/// let content = text.lines().iter().skipWhile((line) { line.trim().isEmpty() }).collect()
+/// let content = text.lines().iter().skipWhile(line => line.trim().isEmpty()).collect()
 /// console.println("{content}")
 /// ```
 pub type SkipWhileIterator[I, T] = {
@@ -2311,7 +2311,7 @@ impl[I: Iterator[T], J: Iterator[T], T] Iterator[T] for ChainIterator[I, J, T] {
 /// import std.console
 ///
 /// let sentences = ["a quick fox", "jumps over"]
-/// let words = sentences.iter().flatMap((sentence) { sentence.split(" ") }).collect()
+/// let words = sentences.iter().flatMap(sentence => sentence.split(" ")).collect()
 /// console.println("{words.length()} words: {words}")
 /// ```
 pub type FlatMapIterator[I, T, U] = {
@@ -2423,7 +2423,7 @@ impl Discrete for Char {
 /// let hours = 9..17
 /// let week = 1..=7
 /// console.println("{hours.start()}..{hours.end()} has 12: {hours.contains(12)}, inclusive: {week.isInclusive()}")
-/// console.println("{(0..10).filter((n) { n % 3 == 0 }).collect()} {(5..5).isEmpty()}")
+/// console.println("{(0..10).filter(n => n % 3 == 0).collect()} {(5..5).isEmpty()}")
 /// ```
 pub type Range[T] = {
     priv lower: T
@@ -2499,7 +2499,7 @@ fn textHas(value: Char, text: String): Bool {
 /// import std.console
 ///
 /// let word = "Año"
-/// let vowels = word.chars().filter((c) { "aeiouáéíóú".contains("{c.toLower()}") }).count()
+/// let vowels = word.chars().filter(c => "aeiouáéíóú".contains("{c.toLower()}")).count()
 /// console.println("{word.chars().count()} characters, {vowels} vowels, {word.byteLength()} bytes")
 /// ```
 pub type CharIterator = {
@@ -2538,8 +2538,8 @@ pub fn String.chars(self): CharIterator {
 ///
 /// let prices = [3, 12, 7, 25]
 /// // Stops at the first match without looking at the rest.
-/// let firstExpensive = prices.iter().find((price) { price > 10 })
-/// let total = prices.iter().reduce(0, (sum, price) { sum + price })
+/// let firstExpensive = prices.iter().find(price => price > 10)
+/// let total = prices.iter().reduce(0, (sum, price) => sum + price)
 /// console.println("{firstExpensive} {total} {prices.iter().all((price) { price > 0 })}")
 /// ```
 pub type ArrayIterator[T] = {

@@ -23,12 +23,10 @@ fn openApiDocument(
     var paths: Map[String, Array[String]] = [:]
     for (method, route, operation) in operations {
         let parts = segments(route).map(
-            (part) {
-                if part.startsWith(":") or part.startsWith("*") {
-                    "{{{part.slice(1, part.length()) ?? ""}}}"
-                } else {
-                    part
-                }
+            part => if part.startsWith(":") or part.startsWith("*") {
+                "{{{part.slice(1, part.length()) ?? ""}}}"
+            } else {
+                part
             },
         )
         let path = "/{parts.join("/")}"

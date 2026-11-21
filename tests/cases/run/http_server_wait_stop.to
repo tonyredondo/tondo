@@ -10,7 +10,7 @@ import std.time
 
 fn main(): !http.HttpError {
     var app = http.App()
-    app.get("/health", (_) { http.Reply.text("ok") })
+    app.get("/health", _ => http.Reply.text("ok"))
     let server = app.start(port: 0)?
     spawn detached stops(server)
     server.wait()

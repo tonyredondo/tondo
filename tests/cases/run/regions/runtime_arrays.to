@@ -76,7 +76,7 @@ fn shared(): String {
     var group = Group[Int]()
     for i in 0..3 {
         let captured = [i, i + 1].concat([i + 2])
-        shown.push(() { "{captured}" })
+        shown.push(() => "{captured}")
         sender.send([i].repeat(3))
         let given = [i + 1, i].sorted()
         group.add(spawn given.length())
@@ -93,7 +93,7 @@ fn shared(): String {
 /// result gives it back at most, and keeps none of the operands.
 fn copied(): String {
     let values = [3, 1, 2]
-    let doubled = values.map((n) { n * 2 })
+    let doubled = values.map(n => n * 2)
     let all = values.concat(doubled)
     "{all.sorted()}"
 }
@@ -121,7 +121,7 @@ fn main() {
         counted += fresh(i).length()
     }
     let log = sync.Mutex(Array[Array[Int]]())
-    log.update((all) { all.push([1].concat([2])) })
+    log.update(all => all.push([1].concat([2])))
     let quiet = noise()
     console.println(a)
     console.println(c)

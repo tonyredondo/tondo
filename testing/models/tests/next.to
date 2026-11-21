@@ -235,7 +235,7 @@ fn check(fixes: Fixes, landing: Landing = Landing.Next): model.Checked ! model.V
         (state: State) { not state.landed or state.phase == Phase.Runs or state.age <= Bound },
         name: "the woken task runs within two looks of the monitor",
     )
-    model.check(start, (state) { steps(state, fixes, landing) }, holds: [soon])
+    model.check(start, state => steps(state, fixes, landing), holds: [soon])
 }
 
 // What the code does: a task landing in a next wakes the monitor, idle

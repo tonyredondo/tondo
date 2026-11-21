@@ -19,7 +19,7 @@ pub fn Recorder.events(self): Array[String] {
 }
 
 fn Recorder.record(self, event: String) {
-    self.heard.update((events) { events.push(event) })
+    self.heard.update(events => events.push(event))
 }
 
 impl api.Callback for Recorder {

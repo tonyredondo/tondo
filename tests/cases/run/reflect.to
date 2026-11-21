@@ -134,7 +134,7 @@ fn main(): !reflect.ReflectError {
     // What the tools show as `<secret>`: a `@secret` field, and a value of a
     // secret type.
     let login = reflect.typeInfo[Login]()
-    let secrets = login.fields().map((field) { "{field.name()} {field.secret()}" })
+    let secrets = login.fields().map(field => "{field.name()} {field.secret()}")
     console.println(
         "{secrets} {reflect.typeInfo[Pin]().secret()} {reflect.typeInfo[Int]().secret()}",
     )

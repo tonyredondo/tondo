@@ -14,7 +14,7 @@ fn main(): !(http.HttpError | fs.FsError) {
     let (started, began) = channel[Unit](1)
     let (release, released) = channel[Unit](1)
     var app = http.App()
-    app.get("/ready", (_) { http.Reply.text("ready") })
+    app.get("/ready", _ => http.Reply.text("ready"))
     app.get(
         "/slow",
         (_) {

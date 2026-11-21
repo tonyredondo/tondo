@@ -50,7 +50,7 @@ import std.time as __time
 /// }
 ///
 /// var app = http.App()
-/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: call => grpc.unary(call, hello)? }] })
 /// let server = app.start()?
 /// let client = grpc.connect(server.url())?
 /// match client.unary[HelloRequest, HelloReply]("/demo.Greeter/Hello", HelloRequest {}) {
@@ -214,7 +214,7 @@ impl Display for Code {
 /// }
 ///
 /// var app = http.App()
-/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: call => grpc.unary(call, hello)? }] })
 /// let server = app.start()?
 /// let client = grpc.connect(server.url())?
 /// for name in ["Ada", "42"] {
@@ -292,7 +292,7 @@ fn statusOf(code: Int, message: String, trailers: Array[String]): Status {
             let decoded = __encoding
                 .base64Decode(trailers[at + 1])
                 .ok()
-                .andThen((bytes) { __protobuf.decode[RpcStatus](bytes).ok() })
+                .andThen(bytes => __protobuf.decode[RpcStatus](bytes).ok())
             match decoded {
                 some(rpc) => details = rpc.details
                 none => {}
@@ -333,7 +333,7 @@ fn statusOf(code: Int, message: String, trailers: Array[String]): Status {
 /// }
 ///
 /// var app = http.App()
-/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: (call) { grpc.unary(call, hello)? } }] })
+/// app.grpc(grpc.Service { name: "demo.Greeter", methods: [grpc.Method { name: "Hello", handler: call => grpc.unary(call, hello)? }] })
 /// let server = app.start()?
 /// let client = grpc.connect(server.url())?
 /// let metadata = ["authorization": "Bearer secret"]
@@ -405,7 +405,7 @@ enum Source {
 /// }
 ///
 /// var app = http.App()
-/// app.grpc(grpc.Service { name: "demo.Launch", methods: [grpc.Method { name: "Countdown", handler: (call) { grpc.serverStream(call, countdown)? } }] })
+/// app.grpc(grpc.Service { name: "demo.Launch", methods: [grpc.Method { name: "Countdown", handler: call => grpc.serverStream(call, countdown)? }] })
 /// let server = app.start()?
 /// let replies = grpc.connect(server.url())?.serverStream[HelloRequest, HelloReply]("/demo.Launch/Countdown", HelloRequest { name: "lift-off" })
 /// for reply in replies {

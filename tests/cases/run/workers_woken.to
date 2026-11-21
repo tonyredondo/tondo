@@ -22,7 +22,7 @@ fn compute(began: Sender[Unit], stop: sync.Atomic[Bool]): Int {
 }
 
 fn counted(name: String): Int {
-    diagnostics.metrics().find((each) { each.name == name }).map((each) { each.value }) ?? -1
+    diagnostics.metrics().find(each => each.name == name).map(each => each.value) ?? -1
 }
 
 fn main() {

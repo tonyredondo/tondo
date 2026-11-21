@@ -963,6 +963,36 @@ impl Formatter<'_> {
         }
     }
 
+    /// Whether a closure is written with an arrow (11.8, 21.3): one that was,
+    /// and one without `unsafe`, types or result whose block holds one
+    /// expression and no comments, which a block in braces would not be as
+    /// an arrow's body.
+    fn arrow(&self, closure: &Closure, span: Span) -> bool {
+        if closure.arrow {
+            return true;
+        }
+        let one = match (&closure.body.stmts[..], &closure.body.tail) {
+            ([], Some(tail)) => !matches!(tail.kind, ExprKind::Block(_)) || self.parenthesized(tail),
+            _ => false,
+        };
+        one && !closure.is_unsafe
+            && closure.result.is_none()
+            && closure.params.iter().all(|p| p.ty.is_none())
+            && !self.comments.iter().any(|c| c.start >= span.start && c.end <= span.end)
+    }
+
+    /// An operand that more of the expression follows: an arrow, whose body
+    /// would take it, in parentheses.
+    fn operand(&mut self, operand: &Expr) -> Doc {
+        let doc = self.expr(operand);
+        match &operand.kind {
+            ExprKind::Closure(closure) if !self.parenthesized(operand) && self.arrow(closure, operand.span) => {
+                concat(vec![text("("), doc, text(")")])
+            }
+            _ => doc,
+        }
+    }
+
     /// Whether a block holds only a value and no comments.
     fn is_simple(&self, block: &Block) -> bool {
         block.stmts.is_empty()
@@ -1199,7 +1229,7 @@ impl Formatter<'_> {
                 let mut docs = Vec::new();
                 let mut current = expr;
                 while let ExprKind::Coalesce(value, fallback) = &current.kind {
-                    let value = self.expr(value);
+                    let value = self.operand(value);
                     docs.push(if docs.is_empty() { value } else { indent(concat(vec![Doc::Softline, value])) });
                     docs.push(text(" ??"));
                     match &fallback.kind {
@@ -1277,6 +1307,16 @@ impl Formatter<'_> {
                     .collect();
                 self.list("[", items, "]")
             }
+            ExprKind::Closure(closure) if self.arrow(closure, expr.span) => {
+                // `x => body`, its body laid out as an assignment's (21.3).
+                let names: Vec<&str> = closure.params.iter().map(|p| p.name.name.as_str()).collect();
+                let head = match names.as_slice() {
+                    [one] => text(one.to_string()),
+                    _ => text(format!("({})", names.join(", "))),
+                };
+                let body = closure.body.tail.as_deref().expect("an arrow has one expression");
+                self.assignment(head, "=>", body)
+            }
             ExprKind::Closure(closure) => {
                 let params = closure
                     .params
@@ -1349,11 +1389,11 @@ impl Formatter<'_> {
             && (top || !self.parenthesized(expr))
         {
             self.binary_chain(left, chain, false, out);
-            let right = self.expr(right);
+            let right = if top { self.expr(right) } else { self.operand(right) };
             out.push((Some(*op), right));
             return;
         }
-        let doc = self.expr(expr);
+        let doc = self.operand(expr);
         out.push((None, doc));
     }
 
@@ -1707,6 +1747,39 @@ mod tests {
         let file = sources.add(Path::new("test.to"), source.to_string());
         let mut diags = Diagnostics::default();
         super::format(sources.file(file), &mut diags).unwrap_or_else(|| panic!("{}", diags.render(&sources)))
+    }
+
+    /// A closure whose block holds one expression is written with an arrow
+    /// (11.8, 21.3); one with types, `unsafe`, a statement, a comment or a
+    /// block as its value keeps its block, and an arrow stays one.
+    #[test]
+    fn arrows() {
+        let pairs = [
+            ("let a=xs.map((x){x*2})\n", "let a = xs.map(x => x * 2)\n"),
+            ("let c=(p,q){p+q}\nlet d=(){42}\n", "let c = (p, q) => p + q\nlet d = () => 42\n"),
+            ("let e=(m){(n){m+n}}\n", "let e = m => n => m + n\n"),
+            ("let p=xs.map((x)=>x+1)\n", "let p = xs.map(x => x + 1)\n"),
+            ("let h=(x:Int):Int{x*3}\n", "let h = (x: Int): Int { x * 3 }\n"),
+            ("let i=unsafe (x:Int){x}\n", "let i = unsafe (x: Int) { x }\n"),
+            ("let j=xs.map((x){{x}})\n", "let j = xs.map((x) { { x } })\n"),
+            ("let g=f((x){let y=x\ny})\n", "let g = f(\n    (x) {\n        let y = x\n        y\n    },\n)\n"),
+            ("let f=f((x){\n// twice\nx*2})\n", "let f = f(\n    (x) {\n        // twice\n        x * 2\n    },\n)\n"),
+            // An arrow's `for` gives its values: it is never written back as a block.
+            ("let k=rows.map(row=>for v in row{v*10})\n", "let k = rows.map(row => for v in row { v * 10 })\n"),
+            // Its body takes all that follows it, so more of the expression puts it in parentheses.
+            (
+                "let m=(x){x}??other\nlet l=(maybe??(x){x})(3)\n",
+                "let m = (x => x) ?? other\nlet l = (maybe ?? x => x)(3)\n",
+            ),
+            (
+                "let o=items.map((item){item.first + item.second + item.third + item.fourth + item.fifth + item.sixth + item.seventh})\n",
+                "let o = items.map(\n    item =>\n        item.first + item.second + item.third + item.fourth + item.fifth + item.sixth + item.seventh,\n)\n",
+            ),
+        ];
+        for (input, output) in pairs {
+            assert_eq!(format(input), output, "{input}");
+            assert_eq!(format(output), output, "{output}");
+        }
     }
 
     /// The pairs of 21.7.

@@ -31,7 +31,7 @@ fn later(): Int {
 
 fn main(): !(json.JsonError | time.TimeError) {
     let pair = (made(), 2)
-    let groups = [1, 2, 3, 4].groupBy[Int]((n) { n % 2 })
+    let groups = [1, 2, 3, 4].groupBy[Int](n => n % 2)
     console.println(
         "{made().get[Int](2)} {pair.0.get[String]("x")} {groups[0]} {[1, 2].map[String]((n) { "{n}" })}",
     )

@@ -30,8 +30,8 @@ import std.serialization
 /// import std.yaml
 ///
 /// let config = yaml.parse("server:\n  host: localhost\n  ports: [8080, 8081]\n")?
-/// let host = config.find("server.host").andThen((value) { value.asText() })
-/// let ports = config.find("server.ports").andThen((value) { value.asArray() }) ?? []
+/// let host = config.find("server.host").andThen(value => value.asText())
+/// let ports = config.find("server.ports").andThen(value => value.asArray()) ?? []
 /// console.println("{host ?? "?"} with {ports.length()} ports")
 /// ```
 pub enum Value {
@@ -165,7 +165,7 @@ impl __reflect.Reflect for Value {
                     members.keys().collect(),
                 )
             }
-            Value.Array(items) => match Int.parse(name).ok().andThen((index) { items.get(index) }) {
+            Value.Array(items) => match Int.parse(name).ok().andThen(index => items.get(index)) {
                 some(found) => reflected(found)
                 none => fail __reflect.ReflectError.noField("yaml.Value", name, [])
             }
@@ -185,7 +185,7 @@ impl __reflect.Reflect for Value {
             Value.Map(members) =>
                 some(members
                     .entries()
-                    .map((pair) { (__reflect.valueOf(pair.0), reflected(pair.1)) })
+                    .map(pair => (__reflect.valueOf(pair.0), reflected(pair.1)))
                     .collect())
             _ => none
         }
@@ -715,7 +715,7 @@ pub fn Document.value(self): Value {
 /// the text.
 pub fn Document.find(self, path: String): Node? {
     let written = joined(segments(path)?)
-    let index = self.paths.findIndex((each) { each == written })?
+    let index = self.paths.findIndex(each => each == written)?
     let value = valueAt(self.root, written)?
     let style = match self.number(index, 7) {
         0 => NodeStyle.Plain
@@ -764,7 +764,7 @@ pub fn Document.writeTo(self, out: yamlio.Writer): !yamlio.IoError {
 pub fn Document.set[T: serialization.Encode](mut self, path: String, value: T): !YamlError {
     let place = canonical(path)?
     let written = encode(value).trimEnd()
-    let changed = match self.paths.findIndex((each) { each == place }) {
+    let changed = match self.paths.findIndex(each => each == place) {
         some(index) => self.replaced(index, written)
         none => self.added(place, written)?
     }
@@ -782,7 +782,7 @@ pub fn Document.insert[T: serialization.Encode](
     value: T,
 ): !YamlError {
     let place = canonical(path)?
-    let items = match valueAt(self.root, place).map((found) { found.content() }) {
+    let items = match valueAt(self.root, place).map(found => found.content()) {
         some(Value.Array(items)) => items
         _ => fail documentError("there is no sequence at `{path}` to insert into", place)
     }
@@ -796,8 +796,8 @@ pub fn Document.insert[T: serialization.Encode](
         self.set("{place}[{index}]", value)?
         return
     }
-    let list = self.paths.findIndex((each) { each == place }) ?? 0
-    let item = self.paths.findIndex((each) { each == "{place}[{index}]" }) ?? 0
+    let list = self.paths.findIndex(each => each == place) ?? 0
+    let item = self.paths.findIndex(each => each == "{place}[{index}]") ?? 0
     let indent = self.number(item, 6)
     let line = self.lineStart(self.number(item, 1))
     let written = encode(value).trimEnd()
@@ -824,14 +824,14 @@ pub fn Document.remove(mut self, path: String): !YamlError {
     if parts.isEmpty() {
         fail documentError("a document keeps its root: set it instead", place)
     }
-    let index = match self.paths.findIndex((each) { each == place }) {
+    let index = match self.paths.findIndex(each => each == place) {
         some(found) => found
         none => fail documentError("there is no value at `{path}` in the text to remove", place)
     }
     let parentPath = joined(parts.slice(0, parts.length() - 1) ?? [])
-    let parent = self.paths.findIndex((each) { each == parentPath }) ?? 0
+    let parent = self.paths.findIndex(each => each == parentPath) ?? 0
     let (key, at) = parts[parts.length() - 1]
-    let rest = match valueAt(self.root, parentPath).map((found) { found.content() }) {
+    let rest = match valueAt(self.root, parentPath).map(found => found.content()) {
         some(Value.Map(members)) => {
             var kept = members
             _ = kept.remove(key)
@@ -963,7 +963,7 @@ fn Document.spliced(self, start: Int, end: Int, replacement: String): String {
 /// value set in its place replaces: an anchor and a comment.
 fn withoutTag(rest: String): String {
     let at = rest.find("#") ?? rest.length()
-    let before = (rest.slice(0, at) ?? "").split(" ").filter((word) { not word.startsWith("!") })
+    let before = (rest.slice(0, at) ?? "").split(" ").filter(word => not word.startsWith("!"))
     "{before.join(" ")}{rest.slice(at, rest.length()) ?? ""}"
 }
 
@@ -973,7 +973,7 @@ fn indentedAfterFirst(text: String, width: Int): String {
     text
         .lines()
         .enumerate()
-        .map((pair) { if pair.0 == 0 { pair.1 } else { "{pad}{pair.1}" } })
+        .map(pair => if pair.0 == 0 { pair.1 } else { "{pad}{pair.1}" })
         .join("\n")
 }
 
@@ -1044,11 +1044,11 @@ fn Document.added(self, path: String, written: String): String ! YamlError {
     // The longest part of the path the document has.
     var known = parts.length() - 1
     for known > 0 and
-        self.paths.findIndex((each) { each == joined(parts.slice(0, known) ?? []) }).isNone() {
+        self.paths.findIndex(each => each == joined(parts.slice(0, known) ?? [])).isNone() {
         known -= 1
     }
     let parentPath = joined(parts.slice(0, known) ?? [])
-    let parent = match self.paths.findIndex((each) { each == parentPath }) {
+    let parent = match self.paths.findIndex(each => each == parentPath) {
         some(found) => found
         none => fail documentError(
             "the document is empty, so `set` has nowhere to add a value",

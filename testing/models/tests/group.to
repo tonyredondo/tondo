@@ -77,13 +77,13 @@ fn steps(group: Group, looks: Bool): Array[model.Step[Group]] {
         )
         none => {}
     }
-    if group.owner == Owner.Adding and group.adding.isNone() and tasks.all((task) { task.added }) {
+    if group.owner == Owner.Adding and group.adding.isNone() and tasks.all(task => task.added) {
         next.push(model.step("added", group with { owner: Owner.Next }))
     }
     // `next`: a result, none when all were taken, or it waits.
     if group.owner == Owner.Next and not group.blocked {
-        let ready = tasks.enumerate().filter((pair) { pair.1.finished and not pair.1.taken })
-        if tasks.all((task) { task.taken == task.added }) {
+        let ready = tasks.enumerate().filter(pair => pair.1.finished and not pair.1.taken)
+        if tasks.all(task => task.taken == task.added) {
             next.push(model.step("take", group with { owner: Owner.Over }))
         } else if ready.isEmpty() {
             next.push(model.step("take", group with { blocked: true }))
@@ -109,19 +109,19 @@ fn check(looks: Bool): model.Checked ! model.Violation {
         (group: Group) {
             let tasks = group.tasks
             group.running >= 0 and
-                group.running + tasks.count((task) { task.finished }) ==
-                    tasks.count((task) { task.added })
+                group.running + tasks.count(task => task.finished) ==
+                    tasks.count(task => task.added)
         },
         name: "Counted",
     )
     // The group never hears of a task that is not done.
     let told = model.always(
-        (group: Group) { group.tasks.all((task) { not task.finished or task.done }) },
+        (group: Group) { group.tasks.all(task => not task.finished or task.done) },
         name: "Told",
     )
     model.check(
         start,
-        (group) { steps(group, looks) },
+        group => steps(group, looks),
         holds: [counted, told],
         ends: some((group: Group) { group.owner == Owner.Over }),
     )

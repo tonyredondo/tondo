@@ -10,7 +10,7 @@ fn changing(count: mut Int) {
 }
 
 fn kept(name: ref String): fn(): Int {
-    () { name.length() }
+    () => name.length()
 }
 
 fn main() {

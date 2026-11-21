@@ -6,13 +6,13 @@ import std.console
 import std.http
 
 fn shown(response: http.Response, names: Array[String]): String {
-    names.map((name) { "{response.header(name) ?? "-"}" }).join(" ")
+    names.map(name => "{response.header(name) ?? "-"}").join(" ")
 }
 
 fn main(): !http.HttpError {
     var app = http.App()
     app.cors(["https://good.example"], exposed: ["x-total"])
-    app.post("/items", (_) { http.Reply.text("made").header("x-total", "1") })
+    app.post("/items", _ => http.Reply.text("made").header("x-total", "1"))
     app.get(
         "/broken",
         (_) {

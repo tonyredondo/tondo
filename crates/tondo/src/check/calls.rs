@@ -1231,7 +1231,7 @@ impl<'a> Checker<'a> {
     }
 
     /// The first field of a record whose type implements `trait_id`, and a
-    /// name for the record, as a hint writes them: `sumBy((user) { user.age })`.
+    /// name for the record, as a hint writes them: `sumBy(user => user.age)`.
     fn field_with(&mut self, ty: Ty, trait_id: Option<TraitId>) -> Option<(String, String)> {
         let trait_id = trait_id?;
         let TyKind::Adt(id) = *self.types.kind(ty) else { return None };
@@ -3267,7 +3267,7 @@ impl<'a> Checker<'a> {
             .collect();
         let values = (0..modes.len()).map(|index| path(&[ident(&format!("·{index}"))])).collect();
         let body = ast::Block { stmts: Vec::new(), tail: Some(Box::new(call(values, &modes))), span };
-        let closure = ast::Closure { is_unsafe: false, params, result: None, body };
+        let closure = ast::Closure { is_unsafe: false, params, result: None, body, arrow: false };
         Some(ast::Expr { kind: ast::ExprKind::Closure(Box::new(closure)), span })
     }
 
@@ -3702,20 +3702,20 @@ impl<'a> Checker<'a> {
                         && missing == "`Additive`"
                         && let Some((item, field)) = self.field_with(actual, self.additive) =>
                     {
-                        format!(": to add a field of each, `sumBy(({item}) {{ {item}.{field} }})`")
+                        format!(": to add a field of each, `sumBy({item} => {item}.{field})`")
                     }
                     None if matches!(signature.name.as_str(), "Array.min" | "Array.max" | "Iterator.min" | "Iterator.max")
                         && missing == "`Ordered`"
                         && let Some((item, field)) = self.field_with(actual, self.ordered) =>
                     {
                         let by = if signature.name.ends_with("min") { "minBy" } else { "maxBy" };
-                        format!(": by a field of each, `{by}(({item}) {{ {item}.{field} }})`")
+                        format!(": by a field of each, `{by}({item} => {item}.{field})`")
                     }
                     None if matches!(signature.name.as_str(), "Array.average" | "Iterator.average")
                         && missing == "`Fractional`"
                         && let Some((item, field)) = self.field_with(actual, self.fractional) =>
                     {
-                        format!(": of a field of each, `averageBy(({item}) {{ {item}.{field} }})`")
+                        format!(": of a field of each, `averageBy({item} => {item}.{field})`")
                     }
                     // A lazy chain's values are copied as it goes: tasks are
                     // made by the array's own `map`.
@@ -3728,7 +3728,7 @@ impl<'a> Checker<'a> {
                             .into()
                     }
                     None if signature.name == "Iterator.average" && missing == "`Fractional`" => {
-                        ": an average is of floats; for integers, make them floats first, as in `map((n) { Float(n) }).average()`".into()
+                        ": an average is of floats; for integers, make them floats first, as in `map(n => Float(n)).average()`".into()
                     }
                     // And their average (14.5).
                     None if signature.name == "Array.average" && missing == "`Fractional`" => {
@@ -3737,7 +3737,7 @@ impl<'a> Checker<'a> {
                     None if matches!(signature.name.as_str(), "Array.averageBy" | "Iterator.averageBy")
                         && missing == "`Fractional`" =>
                     {
-                        ": an average is of floats; give `value` as a float, as in `averageBy((item) { Float(item.count) })`".into()
+                        ": an average is of floats; give `value` as a float, as in `averageBy(item => Float(item.count))`".into()
                     }
                     None => String::new(),
                 };
@@ -4025,7 +4025,7 @@ impl<'a> Checker<'a> {
                 })
                 .collect();
             let body = ast::Block { stmts: Vec::new(), tail: Some(Box::new(call)), span };
-            let closure = ast::Closure { is_unsafe: false, params, result: None, body };
+            let closure = ast::Closure { is_unsafe: false, params, result: None, body, arrow: false };
             let wrapped = ast::Expr { kind: ast::ExprKind::Closure(Box::new(closure)), span };
             return Some(self.expr(cx, &wrapped, Some(expected)));
         }

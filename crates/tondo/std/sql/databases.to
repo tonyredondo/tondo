@@ -198,16 +198,16 @@ pub fn Database.transaction[T: ~Copy](self, work: fn(Database): T ! SqlError): T
     match recover { work(inner) } {
         ok(ok(value)) => {
             let committed = inner.run(Operation.Commit, raw(commit))
-            done(committed.map((_) { () }))
+            done(committed.map(_ => ()))
             _ = committed?
             value
         }
         ok(err(error)) => {
-            done(inner.run(Operation.Rollback, raw(rollback)).map((_) { () }))
+            done(inner.run(Operation.Rollback, raw(rollback)).map(_ => ()))
             fail error
         }
         err(stopped) => {
-            done(inner.run(Operation.Rollback, raw(rollback)).map((_) { () }))
+            done(inner.run(Operation.Rollback, raw(rollback)).map(_ => ()))
             stopped.resume()
         }
     }
@@ -307,14 +307,14 @@ fn Database.through(self, statement: Statement, layer: Int): Outcome ! SqlError 
 
 /// An idle connection, or a new one.
 fn Database.take(self): Connection ! SqlError {
-    match self.idle.update((idle) { idle.pop() }) {
+    match self.idle.update(idle => idle.pop()) {
         some(connection) => connection
         none => (self.driver.connect)(self.url)?
     }
 }
 
 fn Database.give(self, connection: Connection) {
-    self.idle.update((idle) { idle.push(connection) })
+    self.idle.update(idle => idle.push(connection))
 }
 
 /// A row as a `T`: a record by its columns' names, or the value of its only
@@ -419,7 +419,7 @@ fn folded(name: String): String {
 
 impl __serialization.Source for Row {
     fn next(self): __serialization.Event? ! __serialization.Error {
-        self.events.update((events) { events.pop() })
+        self.events.update(events => events.pop())
     }
 
     fn skip(self, first: __serialization.Event): !__serialization.Error {
@@ -446,7 +446,7 @@ impl __serialization.Source for Row {
 
     /// The field a column is, by its name without case or `_`.
     fn nextField(self, names: Array[String]): Int? ! __serialization.Error {
-        let wanted = names.map((name) { folded(name) })
+        let wanted = names.map(name => folded(name))
         for {
             match self.next()? {
                 some(__serialization.Event.Key(key)) => {
@@ -484,7 +484,7 @@ impl __serialization.Source for Row {
                     events.push(__serialization.Event.Int(Int(bytes[index])))
                     index -= 1
                 }
-                self.events.update((pending) { pending.extend(events) })
+                self.events.update(pending => pending.extend(events))
             }
             __serialization.Event.Untyped(text) => self.opened(text, first, "a list")?
             _ => fail self.mismatch(first, name)
@@ -508,5 +508,5 @@ fn Row.opened(
     jsonEvents(parsed, var events)
     _ = events.removeAt(0)
     events.reverse()
-    self.events.update((pending) { pending.extend(events) })
+    self.events.update(pending => pending.extend(events))
 }

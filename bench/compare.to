@@ -74,9 +74,9 @@ fn tondoSide(
                 ...level,
             )
             .output()
-            .mapErr((e) { "cannot run {tondo}: {e}" })?
-    let text = ran.text().mapErr((e) { "tondo's report is not text: {e}" })?
-    let report = json.parse(text).mapErr((e) { "tondo gave no report: {e}" })?
+            .mapErr(e => "cannot run {tondo}: {e}")?
+    let text = ran.text().mapErr(e => "tondo's report is not text: {e}")?
+    let report = json.parse(text).mapErr(e => "tondo gave no report: {e}")?
     var measured: Map[String, Measure] = [:]
     for entry in (report.field("tests").asArray() ?? []) {
         let name = entry.field("name").asText() ?? ""
@@ -131,11 +131,11 @@ fn goSide(seconds: String, level: String): Map[String, Measure] ! String {
                 ["test", "-run", "^$", "-bench", ".", "-benchmem", "-benchtime", "{seconds}s"],
             )
             .output()
-            .mapErr((e) { "cannot run go: {e}" })?
+            .mapErr(e => "cannot run go: {e}")?
     if ran.statuses.isEmpty() or not ran.statuses[0].success {
         fail "go test failed: {String.fromBytes(ran.stderr) ?? ""}{String.fromBytes(ran.stdout) ?? ""}"
     }
-    benchmarked(ran.text().mapErr((e) { "go's output is not text: {e}" })?)
+    benchmarked(ran.text().mapErr(e => "go's output is not text: {e}")?)
 }
 
 /// The lines `go test -bench` writes, as bench/csharp writes them too:
@@ -179,7 +179,7 @@ fn benchmarked(text: String): Map[String, Measure] {
 /// The latencies a program of bench/latency writes, a line of JSON for each
 /// server: the median and the 99th percentile, in microseconds, by name.
 fn latencies(command: Command): Map[String, (Int, Int)] ! String {
-    let ran = command.output().mapErr((e) { "cannot measure latency: {e}" })?
+    let ran = command.output().mapErr(e => "cannot measure latency: {e}")?
     if ran.statuses.isEmpty() or not ran.statuses[0].success {
         fail "measuring latency failed: {String.fromBytes(ran.stderr) ?? ""}"
     }
@@ -251,12 +251,12 @@ fn goCounts(measured: Map[String, Measure], level: String): Map[String, Measure]
     let dir =
         fs
             .createTemporaryDirectory(pattern: "go-bench-*")
-            .mapErr((e) { "cannot make a directory: {e}" })?
+            .mapErr(e => "cannot make a directory: {e}")?
     let binary = "{dir}/bench.test"
     _ =
         goCommand(level, ["test", "-c", "-o", binary])
             .check()
-            .mapErr((e) { "cannot build Go's benchmarks: {e}" })?
+            .mapErr(e => "cannot build Go's benchmarks: {e}")?
     var counted: Map[String, Measure] = [:]
     for (key, measure) in measured {
         let parts = key.split("/")
@@ -378,7 +378,7 @@ fn tondoAgain(name: String, tondo: String, seconds: String, cpu: String): Measur
 
 fn median(values: Array[Float]): Float {
     var sorted = values
-    sorted.sortBy((value) { value })
+    sorted.sortBy(value => value)
     if sorted.isEmpty() { 0.0 } else { sorted[sorted.length() / 2] }
 }
 
@@ -429,7 +429,7 @@ fn againstOld(
     for (name, _) in (news.first() ?? [:]) {
         rows.push((name, combined(olds, name), combined(news, name)))
     }
-    rows.sortBy((row) { -row.2.nanoseconds / row.1.nanoseconds })
+    rows.sortBy(row => -row.2.nanoseconds / row.1.nanoseconds)
     var lines: Array[String] = [
         "| Benchmark | Before | Now | Change | Allocs/op before | Allocs/op now |",
         "|---|---:|---:|---:|---:|---:|",
@@ -454,7 +454,7 @@ fn againstOld(
     let table = lines.join("\n")
     console.println(table)
     if output != "" {
-        fs.writeText(output, "{table}\n").mapErr((e) { "cannot write {output}: {e}" })?
+        fs.writeText(output, "{table}\n").mapErr(e => "cannot write {output}: {e}")?
     }
     if not regressed.isEmpty() {
         fail "regressed: {regressed.join(", ")}"
@@ -544,7 +544,7 @@ fn main(): !String {
         rows[index] = row
     }
     // The slowest against Go first.
-    rows.sortBy((row) { -row.tondo.nanoseconds / row.go.nanoseconds })
+    rows.sortBy(row => -row.tondo.nanoseconds / row.go.nanoseconds)
     var lines: Array[String] = [
         "| Benchmark | Tondo | Go | Tondo/Go | Allocs/op Tondo | Allocs/op Go | B/op Tondo | B/op Go | Ins/op Tondo | Ins/op Go | Cycles/op Tondo | Cycles/op Go |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
@@ -638,6 +638,6 @@ fn main(): !String {
     let table = lines.join("\n")
     console.println(table)
     if output != "" {
-        fs.writeText(output, "{table}\n").mapErr((e) { "cannot write {output}: {e}" })?
+        fs.writeText(output, "{table}\n").mapErr(e => "cannot write {output}: {e}")?
     }
 }

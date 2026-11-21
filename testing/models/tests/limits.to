@@ -151,13 +151,13 @@ fn check(rollback: Bool): model.Checked ! model.Violation {
         spawners: [spawner([0, 1]), spawner([1, 0])]
     }
     let bounded = model.always(
-        (limits: Limits) { (0..2).all((l) { limits.taken[l] <= limits.places[l] }) },
+        (limits: Limits) { (0..2).all(l => limits.taken[l] <= limits.places[l]) },
         name: "Bounded",
     )
     let over = (limits: Limits) {
-        limits.spawners.all((each) { each.pc == Pc.Idle and each.rounds == 0 })
+        limits.spawners.all(each => each.pc == Pc.Idle and each.rounds == 0)
     }
-    model.check(start, (limits) { steps(limits, rollback) }, holds: [bounded], ends: some(over))
+    model.check(start, limits => steps(limits, rollback), holds: [bounded], ends: some(over))
 }
 
 test limitsEndAndHoldTheirPlaces {

@@ -128,10 +128,10 @@ fn steps(chan: Chan, wakes: Bool): Array[model.Step[Chan]] {
     // `close_waits`: the waits of the channel end, the senders' with a panic.
     if not chan.closed {
         let receivers = chan.receivers.map(
-            (receiver) { if receiver == Receiver.Waiting { Receiver.Ended } else { receiver } },
+            receiver => if receiver == Receiver.Waiting { Receiver.Ended } else { receiver },
         )
         let senders = chan.senders.map(
-            (sender) { if sender == Sender.Waiting { Sender.Panicked } else { sender } },
+            sender => if sender == Sender.Waiting { Sender.Panicked } else { sender },
         )
         next.push(
             model.step(
@@ -167,10 +167,10 @@ fn check(wakes: Bool): model.Checked ! model.Violation {
         got: ([model.Bag([]), model.Bag([])])
         cancels: 2
     }
-    let got = (chan: Chan, s: Int) { chan.got.any((bag) { bag.contains(s) }) }
+    let got = (chan: Chan, s: Int) { chan.got.any(bag => bag.contains(s)) }
     // A value goes to one receiver, once.
     let once = model.always(
-        (chan: Chan) { (0..3).all((s) { chan.got.map((bag) { bag.count(s) }).sum() <= 1 }) },
+        (chan: Chan) { (0..3).all(s => chan.got.map(bag => bag.count(s)).sum() <= 1) },
         name: "Once",
     )
     // A value is never lost: what was sent is in the buffer or was received.
@@ -179,9 +179,8 @@ fn check(wakes: Bool): model.Checked ! model.Violation {
             chan.senders
                 .enumerate()
                 .all(
-                    (pair) {
-                        pair.1 != Sender.Sent or got(chan, pair.0) or chan.buffer.contains(pair.0)
-                    },
+                    pair =>
+                        pair.1 != Sender.Sent or got(chan, pair.0) or chan.buffer.contains(pair.0),
                 )
         },
         name: "Kept",
@@ -192,10 +191,9 @@ fn check(wakes: Bool): model.Checked ! model.Violation {
             chan.senders
                 .enumerate()
                 .all(
-                    (pair) {
+                    pair =>
                         (pair.1 != Sender.Panicked and pair.1 != Sender.Cancelled) or
-                            not got(chan, pair.0)
-                    },
+                            not got(chan, pair.0),
                 )
         },
         name: "NotBoth",
@@ -211,18 +209,17 @@ fn check(wakes: Bool): model.Checked ! model.Violation {
     )
     let bounded = model.always((chan: Chan) { chan.buffer.length() <= Capacity }, name: "Bounded")
     let ended = (chan: Chan) {
-        chan.senders.all((sender) { sender != Sender.Start }) and
+        chan.senders.all(sender => sender != Sender.Start) and
             chan.receivers.all(
-                (receiver) {
+                receiver =>
                     receiver == Receiver.Ended or
                         receiver == Receiver.Cancelled or
-                        receiver == Receiver.Waiting
-                },
+                        receiver == Receiver.Waiting,
             )
     }
     model.check(
         start,
-        (chan) { steps(chan, wakes) },
+        chan => steps(chan, wakes),
         holds: [once, kept, notBoth, noUselessWait, bounded],
         ends: some(ended),
     )

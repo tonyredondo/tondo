@@ -50,7 +50,7 @@ fn copies(): String {
         turn.push(i)
         turn.push(i * 10)
         let copy = turn
-        let shown = () { "{copy}" }
+        let shown = () => "{copy}"
         let head = turn[0:1]
         kept.push(copy)
         turn = []

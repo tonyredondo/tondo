@@ -39,4 +39,4 @@ for line in log {
         _ => {}
     }
 }
-console.println(cli.table(authors.values().collect().sortedBy((each) { -each.commits })))
+console.println(cli.table(authors.values().collect().sortedBy(each => -each.commits)))

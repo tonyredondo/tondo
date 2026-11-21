@@ -39,7 +39,7 @@ fn ring(i: Int): Ref[Node] {
             links["a"] = a
         },
     )
-    a.value.seen.update((seen) { seen.insert(a) })
+    a.value.seen.update(seen => seen.insert(a))
     a
 }
 
@@ -47,7 +47,7 @@ fn ring(i: Int): Ref[Node] {
 fn grove(): Ref[Grove] {
     let made = Ref(Grove { tree: sync.Mutex(Tree.Leaf(none)), pairs: sync.Mutex([]) })
     made.value.tree.set(Tree.Branch(Tree.Leaf(none), Tree.Branch(Tree.Leaf(made), Tree.Leaf(none))))
-    made.value.pairs.update((pairs) { pairs.push((1, () { made })) })
+    made.value.pairs.update(pairs => pairs.push((1, () => made)))
     made
 }
 
@@ -66,7 +66,7 @@ fn main() {
         _ = grove()
     }
     let b = kept.value.links.get()["b"]
-    let back = b.map((other) { other.value.links.get()["a"] == some(kept) })
+    let back = b.map(other => other.value.links.get()["a"] == some(kept))
     let pair = held.value.pairs.get()[0]
     console.println(
         "{back} {kept.value.seen.get().contains(kept)} {depth(held.value.tree.get())} {pair.1() == held}",

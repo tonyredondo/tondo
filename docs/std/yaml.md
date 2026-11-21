@@ -116,8 +116,8 @@ import std.console
 import std.yaml
 
 let config = yaml.parse("server:\n  host: localhost\n  ports: [8080, 8081]\n")?
-let host = config.find("server.host").andThen((value) { value.asText() })
-let ports = config.find("server.ports").andThen((value) { value.asArray() }) ?? []
+let host = config.find("server.host").andThen(value => value.asText())
+let ports = config.find("server.ports").andThen(value => value.asArray()) ?? []
 console.println("{host ?? "?"} with {ports.length()} ports")
 ```
 

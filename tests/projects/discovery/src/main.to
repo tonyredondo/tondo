@@ -27,7 +27,7 @@ impl greeter.Greeter for Greetings {
 }
 
 fn hex(bytes: Array[Byte]): String {
-    bytes.map((b) { Int(b).toString(16).padStart(2, "0") }).join("")
+    bytes.map(b => Int(b).toString(16).padStart(2, "0")).join("")
 }
 
 /// The status a watch sees, and the next once it changes. The watch ends
@@ -86,7 +86,7 @@ fn main(): !(http.HttpError | grpc.Status) {
     for each in asking.replies() {
         match each?.messageResponse {
             some(reflection.ServerReflectionResponseMessageResponse.ListServicesResponse(list)) => {
-                console.println(list.service.map((s) { s.name }).join(", "))
+                console.println(list.service.map(s => s.name).join(", "))
             }
             some(reflection.ServerReflectionResponseMessageResponse.FileDescriptorResponse(files)) => {
                 console.println(

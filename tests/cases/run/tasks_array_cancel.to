@@ -39,8 +39,8 @@ fn main() {
     for line in heard {
         order.push(line)
     }
-    let second = order.findIndex((line) { line == "second stopped" }) ?? -1
-    let first = order.findIndex((line) { line == "first stopped" }) ?? -1
+    let second = order.findIndex(line => line == "second stopped") ?? -1
+    let first = order.findIndex(line => line == "first stopped") ?? -1
     console.println("{order.sorted()}")
     console.println("the second stopped before the first: {second < first}")
     holdFirst.close()

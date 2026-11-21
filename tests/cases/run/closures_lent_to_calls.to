@@ -11,12 +11,12 @@ type Order = {
 }
 
 fn best(all: Array[Order], least: Int): Int {
-    (all.maxBy((order) { order.cents + least }) ?? Order { id: 0, cents: 0 }).id
+    (all.maxBy(order => order.cents + least) ?? Order { id: 0, cents: 0 }).id
 }
 
 fn kept(handlers: Array[fn(Int): Int], scale: Int): Array[fn(Int): Int] {
     var all = handlers
-    all.push((n) { n * scale })
+    all.push(n => n * scale)
     all
 }
 

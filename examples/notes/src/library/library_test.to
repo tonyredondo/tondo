@@ -38,7 +38,7 @@ test readsBackWhatItWrote {
 }
 
 test listsEveryNoteByName {
-    assert(all(shelf()?)?.map((note) { note.name }) == ["black-tea", "bread", "green-tea"])
+    assert(all(shelf()?)?.map(note => note.name) == ["black-tea", "bread", "green-tea"])
 }
 
 test aNoteThatIsNotThereIsNotFound {
@@ -71,7 +71,7 @@ test removesANote {
 test findsTheNotesThatSayTheMost {
     let files = shelf()?
     let found = search(files, "Sencha boiling")?
-    assert(found.map((each) { (each.name, each.score) }) == [("green-tea", 2), ("black-tea", 1)])
+    assert(found.map(each => (each.name, each.score)) == [("green-tea", 2), ("black-tea", 1)])
     assert(found[0].line == "Buy sencha.")
 }
 
@@ -81,7 +81,7 @@ test aWordInTheNameOrTheTagsCountsMore {
     let found = search(files, "tea")?
     // Three for the name and two for the tag, against three in the text.
     assert(
-        found.map((each) { (each.name, each.score) }) ==
+        found.map(each => (each.name, each.score)) ==
             [("black-tea", 5), ("green-tea", 5), ("kettle", 3)],
     )
 }
@@ -111,5 +111,5 @@ fn archive(): fs.FileSystem ! NoteError {
 
 test anArchiveIsSearched {
     let files = archive()?
-    testing.bench("search of 200 notes", () { search(files, "tea boiling degrees") })?
+    testing.bench("search of 200 notes", () => search(files, "tea boiling degrees"))?
 }

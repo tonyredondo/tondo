@@ -103,7 +103,7 @@ fn check(notifyOnParking: Bool): model.Checked ! model.Violation {
     )
     model.check(
         start,
-        (task) { steps(task, notifyOnParking) },
+        task => steps(task, notifyOnParking),
         holds: [queued, lost],
         ends: some((task: Task) { task.pc == Pc.Done }),
     )
@@ -118,11 +118,11 @@ test aNotifiedTaskIsDone {
         (task: Task) { task.pc == Pc.Done },
         name: "a notified task is done",
     )
-    let own = ["check", "park", "out", "resume"].map((name) { model.weak(name) })
+    let own = ["check", "park", "out", "resume"].map(name => model.weak(name))
     model.expect(
         model.check(
             start,
-            (task) { steps(task, false) },
+            task => steps(task, false),
             holds: [done],
             fair: own,
             ends: some((task: Task) { task.pc == Pc.Done }),

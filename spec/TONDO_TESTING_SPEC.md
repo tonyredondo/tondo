@@ -2463,7 +2463,7 @@ es, por lo que dice su cuerpo.
 test parsing {
     for size in [10, 1_000] {
         let text = document(size)
-        testing.bench("parse {size}", () { json.parse(text) })?
+        testing.bench("parse {size}", () => json.parse(text))?
     }
 }
 ~~~
@@ -2516,7 +2516,7 @@ heap y la de las regiones, no `allocs/op` solo; `testing.heapAllocations(body)`
 cuenta solo el heap, lo que dice `allocs/op`. El closure se hace antes de que
 empiece la cuenta, y lo que da se conserva, como con `testing.keep`. Cuenta en
 el build de los tests, que es optimizado salvo con `--debug`, como el de
-`--bench`: un test con `assert(testing.allocations(() { receipt(lines) }) <= 7)`
+`--bench`: un test con `assert(testing.allocations(() => receipt(lines)) <= 7)`
 mantiene una función en las asignaciones que hace ahora, vayan donde el
 optimizador las ponga, y falla cuando el compilador o el código hacen más. La
 única excepción es el texto de más de siete bytes que una función copia al
@@ -4725,7 +4725,7 @@ import std.testing
 
 test sorting {
     let values = shuffled(10_000)
-    testing.bench("sort 10000", () { values.sorted() })
+    testing.bench("sort 10000", () => values.sorted())
 }
 ~~~
 

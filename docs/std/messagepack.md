@@ -102,7 +102,7 @@ import std.messagepack
 type Point = { x: Int, y: Int }
 
 let value = messagepack.parse(messagepack.encode(Point { x: 1, y: 2 }))?
-let x = value.get("x").andThen((x) { x.asInt() })
+let x = value.get("x").andThen(x => x.asInt())
 console.println("x is {x ?? 0}, z is set: {value.get("z").isSome()}")
 ```
 
@@ -276,7 +276,7 @@ out.string("tags")
 out.beginArray(1)
 out.string("math")
 let bytes = out.finish()
-console.println("{bytes.length()} bytes: {messagepack.parse(bytes)?.get("name").andThen((name) { name.asText() })}")
+console.println("{bytes.length()} bytes: {messagepack.parse(bytes)?.get("name").andThen(name => name.asText())}")
 ```
 
 Implements `serialization.Sink`.

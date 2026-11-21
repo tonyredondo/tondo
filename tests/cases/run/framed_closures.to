@@ -57,14 +57,14 @@ fn kept(): Array[fn(): String] {
     var all: Array[fn(): String] = []
     for i in 0..3 {
         let text = "kept {i * 1_000}"
-        all.push(() { text })
+        all.push(() => text)
     }
     all
 }
 
 fn wrapped(text: String): fn(): Int {
-    let measure = () { text.length() }
-    () { measure() * 2 }
+    let measure = () => text.length()
+    () => measure() * 2
 }
 
 fn run(f: fn(): String): String {
@@ -84,7 +84,7 @@ fn main() {
     for f in kept() {
         texts.push(f())
     }
-    let job = spawn run(() { "sent {one(7)}" })
+    let job = spawn run(() => "sent {one(7)}")
     console.println("{one(2)} {texts} {wrapped("abc")()} {job.wait()}")
 }
 

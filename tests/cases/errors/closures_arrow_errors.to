@@ -1,0 +1,41 @@
+// An arrow takes neither a block nor types, modes or a result: a closure
+// with them has a block (11.8). In a guard and in a select's operation, `=>`
+// ends the arm's head, so an arrow there goes in parentheses.
+
+fn check(ready: Bool): Bool {
+    ready
+}
+
+fn blocked(): fn(Int): Int {
+    x => { x * 2 }
+}
+
+fn failing(): fn(): Int ! String {
+    () => fail "busy"
+}
+
+fn keyword(): fn(Int): Int {
+    let named: fn(Int): Int = test => 1
+    named
+}
+
+fn typed(): fn(Int): Int {
+    (x: Int) => x * 2
+}
+
+fn guarded(value: Int?): Int {
+    match value {
+        some(v) if check x => x > v => 1
+        _ => 0
+    }
+}
+
+fn main() {
+    _ = (blocked(), failing(), keyword(), typed(), guarded(none))
+}
+
+// expect-error: E0004 an arrow's body is one expression: a closure with statements has a block, `(x) { ... }`
+// expect-error: E0004 an arrow's body is one expression: a closure with statements has a block, `() { ... }`
+// expect-error: E0004 `test` is a keyword and cannot name a parameter: choose another name
+// expect-error: E0004 an arrow takes no types, modes or result: a closure with them has a block, as `(x: Int): Int { x * 2 }`
+// expect-error: E0004 an arrow in a guard goes in parentheses, as `if ready(x => x > 0) =>`

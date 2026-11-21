@@ -65,7 +65,7 @@ pub type Report = {
 
 /// The addresses that are not there, or that did not answer.
 pub fn Report.broken(self): Array[Checked] {
-    self.checked.filter((link) { not link.isFine() })
+    self.checked.filter(link => not link.isFine())
 }
 
 /// Why a crawl could not start.

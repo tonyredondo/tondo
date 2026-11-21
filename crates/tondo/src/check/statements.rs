@@ -134,6 +134,13 @@ impl<'a> Checker<'a> {
     pub(super) fn block(&mut self, cx: &mut FnCx, b: &ast::Block, expected: Option<Ty>) -> hir::Block {
         let wants = std::mem::take(&mut cx.wants);
         let closure = std::mem::take(&mut cx.closure_body);
+        let head = std::mem::take(&mut cx.arrow_head);
+        // An arrow's body is its block's only expression: a `for` there,
+        // whose closure's result nothing states, gives its values (11.8).
+        let arrow = std::mem::take(&mut cx.arrow_body);
+        if arrow && expected.is_none() && b.tail.as_ref().is_some_and(|t| matches!(t.kind, ast::ExprKind::For(..))) {
+            return self.block_with(cx, b, None, Ending::LastFor, false);
+        }
         // A block that must give a value: a `for` that ends it is one (13.3).
         let gives = match expected {
             Some(ty) => ty != Ty::UNIT && ty != Ty::NEVER && !self.types.has_error(ty),
@@ -141,7 +148,15 @@ impl<'a> Checker<'a> {
             None => wants == Wants::Value,
         };
         let ending = if gives { Ending::LastFor } else { Ending::Plain };
-        self.block_with(cx, b, expected, ending, closure && expected.is_none() && !gives)
+        let ends_closure = closure && expected.is_none() && !gives;
+        // A `for` alone in it: an arrow gives its values.
+        if ends_closure
+            && b.tail.is_none()
+            && matches!(b.stmts[..], [ast::Stmt { kind: ast::StmtKind::For { .. }, .. }])
+        {
+            cx.end_arrow = head;
+        }
+        self.block_with(cx, b, expected, ending, ends_closure)
     }
 
     /// What a block, `if`, `match`, `select` or `for` checked as `value`
@@ -219,12 +234,16 @@ impl<'a> Checker<'a> {
                 let value = self.expr(cx, t, expected);
                 self.unchanged_entries(cx, entries);
                 if expected == Some(Ty::UNIT) {
-                    let hint = match cx.turn_body {
-                        Some((span, true)) if span == b.span => TurnHint::Return,
-                        Some((span, false)) if span == b.span => TurnHint::Bind,
+                    let hint = match (cx.turn_body, &cx.end_arrow) {
+                        (Some((span, true)), Some(head)) if span == b.span => {
+                            self.arrow_head = head.clone();
+                            TurnHint::Arrow
+                        }
+                        (Some((span, true)), None) if span == b.span => TurnHint::Return,
+                        (Some((span, false)), _) if span == b.span => TurnHint::Bind,
                         _ => TurnHint::None,
                     };
-                    if self.dropped_value(t, &value, hint) && hint == TurnHint::Return {
+                    if self.dropped_value(t, &value, hint) && matches!(hint, TurnHint::Return | TurnHint::Arrow) {
                         cx.end_dropped = true;
                     }
                 }
@@ -247,6 +266,7 @@ impl<'a> Checker<'a> {
         let dropped = ends_closure && std::mem::take(&mut cx.end_dropped);
         if ends_closure {
             cx.end_for = None;
+            cx.end_arrow = None;
         }
         let ty = match &tail {
             None if turn => {

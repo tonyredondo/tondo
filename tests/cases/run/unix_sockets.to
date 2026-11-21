@@ -62,7 +62,7 @@ fn main(): !(net.NetError | fs.FsError | http.HttpError) {
 
     // HTTP over a Unix socket.
     var app = http.App()
-    app.get("/v0.4/traces", (request) { http.Reply.text("traces at {request.route()}") })
+    app.get("/v0.4/traces", request => http.Reply.text("traces at {request.route()}"))
     let server = app.start(socket: "{base}.http")?
     let agent = http.Client(baseUrl: server.url(), socket: "{base}.http")
     console.println(agent.get("/v0.4/traces")?.text()?)

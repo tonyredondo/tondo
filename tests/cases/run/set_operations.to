@@ -32,7 +32,7 @@ fn main() {
     less.subtract(b)
     console.println("{less} {less == a.difference(b)}")
     var evens = a
-    evens.retain((n) { n % 2 == 0 })
+    evens.retain(n => n % 2 == 0)
     console.println("{evens} {a}")
     var nothing = empty
     nothing.extend(empty)

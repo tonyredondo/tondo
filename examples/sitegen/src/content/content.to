@@ -46,7 +46,7 @@ pub fn parse(name: String, text: String): Page ! ContentError {
         none => fail NoFrontMatter(name)
     }
     let meta =
-        yaml.decode[Meta](front).mapErr((error) { ContentError.BadFrontMatter(name, "{error}") })?
+        yaml.decode[Meta](front).mapErr(error => ContentError.BadFrontMatter(name, "{error}"))?
     Page { slug: name.removeSuffix(".md"), meta, body: body.trim() }
 }
 

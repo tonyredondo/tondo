@@ -88,33 +88,24 @@ pub fn scalar(kind: __reflect.PrimitiveKind, written: String): __reflect.Value !
             some(c) if written.length() == 1 => some(__reflect.valueOf(c))
             _ => none
         }
-        __reflect.PrimitiveKind.Int => Int.parse(written).ok().map((v) { __reflect.valueOf(v) })
-        __reflect.PrimitiveKind.Int8 => Int8.parse(written).ok().map((v) { __reflect.valueOf(v) })
-        __reflect.PrimitiveKind.Int16 => Int16.parse(written).ok().map((v) { __reflect.valueOf(v) })
-        __reflect.PrimitiveKind.Int32 => Int32.parse(written).ok().map((v) { __reflect.valueOf(v) })
-        __reflect.PrimitiveKind.Int128 => Int128
-            .parse(written)
-            .ok()
-            .map((v) { __reflect.valueOf(v) })
-        __reflect.PrimitiveKind.UInt => UInt.parse(written).ok().map((v) { __reflect.valueOf(v) })
-        __reflect.PrimitiveKind.UInt8 => UInt8.parse(written).ok().map((v) { __reflect.valueOf(v) })
-        __reflect.PrimitiveKind.UInt16 => UInt16
-            .parse(written)
-            .ok()
-            .map((v) { __reflect.valueOf(v) })
-        __reflect.PrimitiveKind.UInt32 => UInt32
-            .parse(written)
-            .ok()
-            .map((v) { __reflect.valueOf(v) })
+        __reflect.PrimitiveKind.Int => Int.parse(written).ok().map(v => __reflect.valueOf(v))
+        __reflect.PrimitiveKind.Int8 => Int8.parse(written).ok().map(v => __reflect.valueOf(v))
+        __reflect.PrimitiveKind.Int16 => Int16.parse(written).ok().map(v => __reflect.valueOf(v))
+        __reflect.PrimitiveKind.Int32 => Int32.parse(written).ok().map(v => __reflect.valueOf(v))
+        __reflect.PrimitiveKind.Int128 => Int128.parse(written).ok().map(v => __reflect.valueOf(v))
+        __reflect.PrimitiveKind.UInt => UInt.parse(written).ok().map(v => __reflect.valueOf(v))
+        __reflect.PrimitiveKind.UInt8 => UInt8.parse(written).ok().map(v => __reflect.valueOf(v))
+        __reflect.PrimitiveKind.UInt16 => UInt16.parse(written).ok().map(v => __reflect.valueOf(v))
+        __reflect.PrimitiveKind.UInt32 => UInt32.parse(written).ok().map(v => __reflect.valueOf(v))
         __reflect.PrimitiveKind.UInt128 => UInt128
             .parse(written)
             .ok()
-            .map((v) { __reflect.valueOf(v) })
-        __reflect.PrimitiveKind.Float => Float.parse(written).ok().map((v) { __reflect.valueOf(v) })
+            .map(v => __reflect.valueOf(v))
+        __reflect.PrimitiveKind.Float => Float.parse(written).ok().map(v => __reflect.valueOf(v))
         __reflect.PrimitiveKind.Float32 => Float32
             .parse(written)
             .ok()
-            .map((v) { __reflect.valueOf(v) })
+            .map(v => __reflect.valueOf(v))
         _ => none
     }
     match found {
@@ -171,16 +162,14 @@ pub fn jsonOf(value: __reflect.Value): String {
         }
     }
     if kind.startsWith("Map[") {
-        let members = value
-            .entries()
-            .map((entry) { "{__json.encode("{entry.0}")}:{jsonOf(entry.1)}" })
+        let members = value.entries().map(entry => "{__json.encode("{entry.0}")}:{jsonOf(entry.1)}")
         return "{{{members.join(",")}}}"
     }
     if kind.startsWith("Array[") or kind.startsWith("Set[") or kind.startsWith("Deque[") {
         return "[{value.elements().map(jsonOf).join(",")}]"
     }
     let fields = value.fields()
-    match value.variant().map((name) { externalVariant(value.typeInfo(), name) }) {
+    match value.variant().map(name => externalVariant(value.typeInfo(), name)) {
         some(name) if fields.isEmpty() and value.elements().isEmpty() => return __json.encode(name)
         some(name) if fields.isEmpty() => {
             let items = value.elements()
@@ -196,14 +185,13 @@ pub fn jsonOf(value: __reflect.Value): String {
     if not fields.isEmpty() {
         let declared = match value.variant() {
             some(name) =>
-                value.typeInfo().variants().find((v) { v.name() == name }).map((v) { v.fields() }) ??
-                    []
+                value.typeInfo().variants().find(v => v.name() == name).map(v => v.fields()) ?? []
             none => value.typeInfo().fields()
         }
         let members = fields.map(
             (field) {
                 let external =
-                    declared.find((f) { f.name() == field.name }).map((f) { f.externalName() }) ??
+                    declared.find(f => f.name() == field.name).map(f => f.externalName()) ??
                         field.name
                 "{__json.encode(external)}:{jsonOf(field.value)}"
             },
@@ -222,7 +210,7 @@ pub fn jsonOf(value: __reflect.Value): String {
 /// The name outside the program of the variant `name` of an enum: its
 /// `@name`, or its own (language 9.4).
 fn externalVariant(info: __reflect.TypeInfo, name: String): String {
-    info.variants().find((v) { v.name() == name }).map((v) { v.externalName() }) ?? name
+    info.variants().find(v => v.name() == name).map(v => v.externalName()) ?? name
 }
 
 /// The value of a type that JSON writes, at `place` for messages.
@@ -239,10 +227,10 @@ pub fn fromJson(
             let text = match kind {
                 __reflect.PrimitiveKind.String => json.asText()
                 __reflect.PrimitiveKind.Char => json.asText()
-                __reflect.PrimitiveKind.Bool => json.asBool().map((b) { "{b}" })
-                __reflect.PrimitiveKind.Float => json.asFloat().map((f) { "{f}" })
-                __reflect.PrimitiveKind.Float32 => json.asFloat().map((f) { "{f}" })
-                _ => json.asInt().map((n) { "{n}" })
+                __reflect.PrimitiveKind.Bool => json.asBool().map(b => "{b}")
+                __reflect.PrimitiveKind.Float => json.asFloat().map(f => "{f}")
+                __reflect.PrimitiveKind.Float32 => json.asFloat().map(f => "{f}")
+                _ => json.asInt().map(n => "{n}")
             }
             match text {
                 some(written) => match scalar(kind, written) {
@@ -294,7 +282,7 @@ pub fn fromJson(
         __reflect.TypeKind.Enum => {
             // By the name outside the program, `@name`'s.
             match json.asText() {
-                some(name) => match info.variants().find((v) { v.externalName() == name }) {
+                some(name) => match info.variants().find(v => v.externalName() == name) {
                     some(found) => return variant(found.name(), [:], [])
                     none => {}
                 }
@@ -302,9 +290,9 @@ pub fn fromJson(
             }
             for (external, payload) in (json.asObject() ?? [:]) {
                 let name =
-                    info.variants().find((v) { v.externalName() == external }).map((v) { v.name() }) ??
+                    info.variants().find(v => v.externalName() == external).map(v => v.name()) ??
                         external
-                match info.variants().find((v) { v.name() == name }) {
+                match info.variants().find(v => v.name() == name) {
                     some(found) if found.payloadKind() == __reflect.VariantPayloadKind.Record => {
                         return variant(
                             name,
@@ -334,7 +322,7 @@ pub fn fromJson(
                     _ => {}
                 }
             }
-            fail wrong("one of {info.variants().map((v) { v.externalName() }).join(", ")}")
+            fail wrong("one of {info.variants().map(v => v.externalName()).join(", ")}")
         }
         __reflect.TypeKind.Newtype => match info.underlying() {
             some(underlying) => fromJson(underlying, json, place)?

@@ -141,7 +141,7 @@ fn main(): !(mcp.McpError | http.HttpError | net.NetError) {
         let reply = json.parse(line) ?? json.Value.Null
         replies.push((reply.field("id").asInt() ?? 0, line))
     }
-    for (_, line) in replies.sortedWith((a, b) { a.0 - b.0 }) {
+    for (_, line) in replies.sortedWith((a, b) => a.0 - b.0) {
         console.println(line)
     }
 

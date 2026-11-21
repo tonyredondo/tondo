@@ -34,7 +34,7 @@ pub fn relative(from: String, to: String): String? {
     if base.startsWith("/") != target.startsWith("/") {
         return none
     }
-    let parts = (path: String) { path.split("/").filter((p) { not p.isEmpty() and p != "." }) }
+    let parts = (path: String) { path.split("/").filter(p => not p.isEmpty() and p != ".") }
     let (up, down) = (parts(base), parts(target))
     var common = 0
     for common < up.length() and common < down.length() and up[common] == down[common] {
@@ -59,7 +59,7 @@ pub fn relative(from: String, to: String): String? {
 /// is a pattern: a `[` or `{` without its closing is itself.
 pub fn matches(pattern: String, path: String): Bool {
     let names = path.split("/")
-    expand(pattern).any((alternative) { components(alternative.split("/"), 0, names, 0) })
+    expand(pattern).any(alternative => components(alternative.split("/"), 0, names, 0))
 }
 
 /// The patterns a pattern's braces stand for: `a{b,c}` is `ab` and `ac`.
@@ -99,9 +99,7 @@ fn expand(pattern: String): Array[String] {
             continue
         }
         cuts.push(end)
-        let text = (from: Int, to: Int) {
-            (chars.slice(from, to) ?? []).map((c) { "{c}" }).join("")
-        }
+        let text = (from: Int, to: Int) { (chars.slice(from, to) ?? []).map(c => "{c}").join("") }
         var out: Array[String] = []
         for index in 0..cuts.length() - 1 {
             let choice = text(cuts[index] + 1, cuts[index + 1])

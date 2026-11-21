@@ -50,6 +50,9 @@ impl<'a> Checker<'a> {
             wants: Wants::Nothing,
             array_body: false,
             closure_body: false,
+            arrow_body: false,
+            arrow_head: None,
+            end_arrow: None,
             end_for: None,
             end_dropped: false,
         }
@@ -377,7 +380,7 @@ impl<'a> Checker<'a> {
             let message = format!(
                 "this value does nothing: use it, return it from a function that declares its type, \
                 or discard it with `_ = ...`{}",
-                Self::turn_hint(turn)
+                self.turn_hint(turn)
             );
             self.diags.error("E1306", value.span, message);
             let start = Span::new(value.span.start, value.span.start);
@@ -400,7 +403,7 @@ impl<'a> Checker<'a> {
         let message = format!(
             "nothing uses the `String` of this call, and making it has a cost: write it with \
             `console.println(...)`, or discard it with `_ = ...`{}",
-            Self::turn_hint(turn)
+            self.turn_hint(turn)
         );
         self.diags.warning("W1018", value.span, message);
         let (start, end) = (Span::new(value.span.start, value.span.start), Span::new(value.span.end, value.span.end));
@@ -436,13 +439,16 @@ impl<'a> Checker<'a> {
 
     /// What a dropped value at the end of a `for`'s body adds: how the loop
     /// gives its values, for one who expected them.
-    fn turn_hint(turn: TurnHint) -> &'static str {
+    fn turn_hint(&self, turn: TurnHint) -> String {
         match turn {
             TurnHint::Bind => {
-                "; a `for` gives its values when it is bound or returned, as `let values = for ... { ... }`"
+                "; a `for` gives its values when it is bound or returned, as `let values = for ... { ... }`".into()
             }
-            TurnHint::Return => "; a `for` gives its values when it is returned, as `return for ... { ... }`",
-            TurnHint::None => "",
+            TurnHint::Return => "; a `for` gives its values when it is returned, as `return for ... { ... }`".into(),
+            TurnHint::Arrow => {
+                format!("; a `for` gives its values as an arrow's body, as `{} => for ... {{ ... }}`", self.arrow_head)
+            }
+            TurnHint::None => String::new(),
         }
     }
 
@@ -467,7 +473,7 @@ impl<'a> Checker<'a> {
     pub(super) fn result_unused(&mut self, span: Span, turn: TurnHint) {
         let message = format!(
             "nothing uses what this call gives, and it does nothing else: use it, or discard it with `_ = ...`{}",
-            Self::turn_hint(turn)
+            self.turn_hint(turn)
         );
         self.diags.warning("W1018", span, message);
         self.diags.fix("discard it with `_ = ...`", false, vec![(Span::new(span.start, span.start), "_ = ".into())]);
@@ -731,23 +737,36 @@ impl<'a> Checker<'a> {
             _ => expected,
         };
         let parts = (&closure.params[..], closure.result.as_ref(), &closure.body);
-        self.closure_parts(cx, parts, expected, false, closure.is_unsafe, span)
+        self.closure_parts(cx, parts, expected, (false, closure.arrow), closure.is_unsafe, span)
     }
 
     /// A closure from its parts; a `defer` block is a closure without
-    /// parameters whose body cannot leave its scope (13.7).
+    /// parameters whose body cannot leave its scope (13.7), and an arrow
+    /// one whose body is a place where a value is wanted (11.8).
     pub(super) fn closure_parts(
         &mut self,
         cx: &mut FnCx,
         (closure_params, closure_result, closure_body): (&[ast::ClosureParam], Option<&ast::TypeExpr>, &ast::Block),
         expected: Option<Ty>,
-        deferred: bool,
+        (deferred, arrow): (bool, bool),
         is_unsafe: bool,
         span: Span,
     ) -> hir::Expr {
         let kind = ClosureKind { deferred, is_unsafe, test: false, infer_error: false };
+        // The arrow a hint may write for it.
+        let plain = !deferred && !arrow && !is_unsafe && closure_result.is_none();
+        let head = match closure_params {
+            [one] if one.ty.is_none() => Some(one.name.name.clone()),
+            params if params.iter().all(|p| p.ty.is_none()) => {
+                let names: Vec<&str> = params.iter().map(|p| p.name.name.as_str()).collect();
+                Some(format!("({})", names.join(", ")))
+            }
+            _ => None,
+        };
         let body = |this: &mut Self, cx: &mut FnCx, success| {
             cx.closure_body = !deferred;
+            cx.arrow_body = arrow;
+            cx.arrow_head = head.filter(|_| plain);
             this.block(cx, closure_body, success)
         };
         self.closure_with(cx, (closure_params, closure_result), expected, kind, span, body)
@@ -955,7 +974,7 @@ impl<'a> Checker<'a> {
             ast::Defer::Block(block) => {
                 // A cleanup gives nothing back: its final value is dropped (11.9).
                 let unit = self.types.intern(TyKind::Fn(Vec::new(), Ty::UNIT, false, Vec::new(), false));
-                self.closure_parts(cx, (&[], None, block), Some(unit), true, false, span)
+                self.closure_parts(cx, (&[], None, block), Some(unit), (true, false), false, span)
             }
             ast::Defer::Call(call) => {
                 if !matches!(call.kind, ast::ExprKind::Call { .. }) {
@@ -1081,7 +1100,7 @@ impl<'a> Checker<'a> {
         // In a loop the block is the iteration, so the tasks would run one
         // at a time: almost never what a loop that spawns wants.
         if !cx.loops.is_empty() {
-            let message = "each iteration waits for this task at its end, so the tasks run one at a time; map the values to tasks and `wait()` for the array, as `values.map((value) { spawn work(value) }).wait()`, or add them to a `Group`, or `spawn detached` lets them run at once without waiting";
+            let message = "each iteration waits for this task at its end, so the tasks run one at a time; map the values to tasks and `wait()` for the array, as `values.map(value => spawn work(value)).wait()`, or add them to a `Group`, or `spawn detached` lets them run at once without waiting";
             self.diags.warning("W1013", call.span, message);
             let start = Span::new(call.span.start, call.span.start);
             // A task that can fail is let go with its failure on purpose.
@@ -1190,7 +1209,7 @@ impl<'a> Checker<'a> {
             && matches!(callee.kind, ast::ExprKind::Field(..) | ast::ExprKind::Path(_))
         {
             let body = ast::Block { stmts: Vec::new(), tail: Some(Box::new(call.clone())), span: call.span };
-            let closure = ast::Closure { is_unsafe: false, params: Vec::new(), result: None, body };
+            let closure = ast::Closure { is_unsafe: false, params: Vec::new(), result: None, body, arrow: false };
             let wrapped = ast::Expr { kind: ast::ExprKind::Closure(Box::new(closure)), span: call.span };
             let closure = self.expr(cx, &wrapped, None);
             if self.types.closure_calls(closure.ty).is_some_and(|(mutates, _)| mutates) {

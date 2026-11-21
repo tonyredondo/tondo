@@ -11,11 +11,11 @@ type Order = {
 }
 
 fn total(amounts: Array[Int]): Int {
-    amounts.iter().map((n) { n * 2 }).filter((n) { n % 3 == 0 }).sumBy((n) { n })
+    amounts.iter().map(n => n * 2).filter(n => n % 3 == 0).sumBy(n => n)
 }
 
 fn large(orders: Array[Order]): Int {
-    orders.iter().filter((order) { order.cents > 500 }).count()
+    orders.iter().filter(order => order.cents > 500).count()
 }
 
 fn main() {
@@ -31,5 +31,5 @@ fn main() {
 // expect-stdout: 2
 // expect-stdout: 0
 // expect-optimization: 14:24 call is called by its body where a record holds it
-// expect-optimization: 14:46 call is called by its body where a record holds it
+// expect-optimization: 14:43 call is called by its body where a record holds it
 // expect-optimization: 18:26 call is called by its body where a record holds it

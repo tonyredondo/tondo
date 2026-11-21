@@ -61,7 +61,7 @@ pub type Book = { id: Int, title: String }
 pub type Library = { books: Array[Book] }
 
 pub fn Library.search(self, text: String): Array[Book] {
-    self.books.filter((book) { book.title.contains(text) })
+    self.books.filter(book => book.title.contains(text))
 }
 
 let schema = graphql.schema(Library { books: [Book { id: 1, title: "Tondo" }, Book { id: 2, title: "Go" }] })

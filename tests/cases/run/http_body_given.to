@@ -21,8 +21,8 @@ fn main(): !http.HttpError {
             next(request)?
         },
     )
-    app.post("/given", (request) { http.Reply.text("[{request.text()?}]") })
-    app.post("/given/json", (request) { http.Reply.text("{request.json[Map[String, Int]]()?}") })
+    app.post("/given", request => http.Reply.text("[{request.text()?}]"))
+    app.post("/given/json", request => http.Reply.text("{request.json[Map[String, Int]]()?}"))
     app.post(
         "/given/parts",
         (request) {
@@ -34,8 +34,8 @@ fn main(): !http.HttpError {
             http.Reply.text("{names}")
         },
     )
-    app.post("/twice", (request) { http.Reply.text("[{request.text()?}]") })
-    app.post("/form", (request) { http.Reply.text("{request.form()?}") })
+    app.post("/twice", request => http.Reply.text("[{request.text()?}]"))
+    app.post("/form", request => http.Reply.text("{request.form()?}"))
     let client = app.client()
     console.println(client.post("/given", body: http.Body.text("hello"))?.text()?)
     console.println(client.post("/given/json", body: http.Body.text("{{\"a\": 1}}"))?.text()?)

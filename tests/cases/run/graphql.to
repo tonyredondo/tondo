@@ -52,7 +52,7 @@ pub type Query = {
 
 /// A user by id.
 pub fn Query.user(self, id: Int): User? {
-    self.users.get().find((u) { u.id == id })
+    self.users.get().find(u => u.id == id)
 }
 
 /// Every user.

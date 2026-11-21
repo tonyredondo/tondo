@@ -93,8 +93,8 @@ fn steps(
     limits: Bool,
 ): Array[model.Step[Watched]] {
     var next: Array[model.Step[Watched]] = []
-    let present = state.workers.filter((each) { each.task != -2 })
-    let idle = present.any((each) { each.task == -1 })
+    let present = state.workers.filter(each => each.task != -2)
+    let idle = present.any(each => each.task == -1)
     let watching = not idle and not state.queue.isEmpty()
     let room = not limits or present.length() < 2 * Base
     let looked = state.workers
@@ -121,14 +121,14 @@ fn steps(
                 }
             },
         )
-    let stuck = looked.any((each) { each.task >= 0 and each.looks >= 2 })
+    let stuck = looked.any(each => each.task >= 0 and each.looks >= 2)
     next.push(model.step("look", state with { workers: looked, bit: state.bit or stuck }))
     for (w, each) in state.workers.enumerate() {
         // The monitor marks a worker it found stuck, whatever it runs now,
         // and starts a surplus worker.
         if each.pending {
             let marked = worker(state, w, each with { replaced: true, pending: false })
-            let spare = marked.workers.findIndex((one) { one.task == -2 })
+            let spare = marked.workers.findIndex(one => one.task == -2)
             let started = match spare {
                 some(at) if room => worker(marked, at, marked.workers[at] with { task: -1 })
                 _ => marked
@@ -217,7 +217,7 @@ fn check(
         surplus: 0
         ended: [false, false, false, false]
     }
-    let present = (state: Watched) { state.workers.filter((each) { each.task != -2 }).length() }
+    let present = (state: Watched) { state.workers.filter(each => each.task != -2).length() }
     let bounded = model.always(
         (state: Watched) { present(state) <= 2 * Base },
         name: "at most twice the workers",
@@ -242,7 +242,7 @@ fn check(
     ]
     model.check(
         start,
-        (state) { steps(state, fixed, asks, added, limits) },
+        state => steps(state, fixed, asks, added, limits),
         holds: [bounded, runs, back],
         fair: fair,
     )

@@ -53,7 +53,7 @@ pub type Dependency = {
 
 /// The user's home directory, `$HOME`; `none` when it is not set.
 pub fn homeDirectory(): String? {
-    __env.get("HOME").filter((home) { not home.isEmpty() })
+    __env.get("HOME").filter(home => not home.isEmpty())
 }
 
 /// Where programs keep the user's settings: `$XDG_CONFIG_HOME` or
@@ -70,11 +70,11 @@ pub fn cacheDirectory(): String? {
 
 fn userDirectory(variable: String, linux: String, macos: String): String? {
     if envNative.target().endsWith("macos") {
-        return homeDirectory().map((home) { "{home}/{macos}" })
+        return homeDirectory().map(home => "{home}/{macos}")
     }
     match __env.get(variable) {
         some(set) if set.startsWith("/") => set
-        _ => homeDirectory().map((home) { "{home}/{linux}" })
+        _ => homeDirectory().map(home => "{home}/{linux}")
     }
 }
 

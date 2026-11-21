@@ -46,5 +46,5 @@ fn main() {
 // expect-error: E0004 expected expression, found `}`
 // expect-error: E0004 unexpected `}`
 // expect-error: E0004 a range is `0..3`, without its end, or `0..=3` with it
-// expect-error: E0002 a closure names its parameters, `(x) { x * 2 }`
+// expect-error: E0002 a closure names its parameters, `x => x * 2`
 // expect-error: E0004 expected field name, found number

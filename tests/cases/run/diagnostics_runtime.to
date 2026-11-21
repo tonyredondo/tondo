@@ -31,7 +31,7 @@ fn main() {
     let served = diagnostics.counter("served")
     served.add(3)
     let metrics = diagnostics.metrics()
-    let named = (name: String) { metrics.find((m) { m.name == name }) }
+    let named = (name: String) { metrics.find(m => m.name == name) }
     console.println("{named("memory.held").map((m) { m.gauge and m.unit == "bytes" })}")
     console.println("{named("memory.allocated").map((m) { m.value > 0 and not m.gauge })}")
     console.println(

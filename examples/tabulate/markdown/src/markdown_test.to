@@ -17,12 +17,12 @@ fn sales(): api.Table {
         title: "Sales"
         columns: ["region", "month", "units", "amount"]
         rows: (0..200)
-            .map((n) { ["region {n % 7}", "2026-{n % 12 + 1:02}", "{n * 3}", "{n}.50"] })
+            .map(n => ["region {n % 7}", "2026-{n % 12 + 1:02}", "{n * 3}", "{n}.50"])
             .collect()
     }
 }
 
 test aTableOfTwoHundredRowsIsRendered {
     let table = sales()
-    testing.bench("table of 200 rows", () { Markdown {}.render(table) })?
+    testing.bench("table of 200 rows", () => Markdown {}.render(table))?
 }

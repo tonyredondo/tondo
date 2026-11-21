@@ -38,9 +38,9 @@ fn main() {
     var name = "x".repeat(40)
     shout(var name)
     let cell = sync.Mutex(100)
-    cell.update((n) { twice(var n) })
+    cell.update(n => twice(var n))
     let texts = sync.Mutex("cell")
-    texts.update((t) { shout(var t) })
+    texts.update(t => shout(var t))
     console.println(
         "{local} {pair.count} {pair.name} {numbers} {words} {name.length()} {cell.get()} {texts.get()}",
     )
@@ -50,4 +50,4 @@ fn main() {
 // expect-optimization: 23:5 inlined
 // expect-optimization: 31:5 inlined
 // expect-optimization: 34:5 inlined
-// expect-optimization: 41:23 inlined
+// expect-optimization: 41:22 inlined

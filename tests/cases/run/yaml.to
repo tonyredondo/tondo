@@ -61,7 +61,7 @@ fn main(): !yaml.YamlError {
     report(
         yaml
             .parse("a: yes\nb: True\nc: ~\nd: 0x1F\ne: 1e3\nf: '12'\n")
-            .map((v) { console.println("{v}") }),
+            .map(v => console.println("{v}")),
     )
 }
 

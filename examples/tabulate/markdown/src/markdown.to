@@ -10,12 +10,7 @@ impl api.Renderer for Markdown {
     }
 
     fn render(self, table: api.Table): String ! plugin.Error {
-        var lines = [
-            "## {table.title}",
-            "",
-            row(table.columns),
-            row(table.columns.map((_) { "---" })),
-        ]
+        var lines = ["## {table.title}", "", row(table.columns), row(table.columns.map(_ => "---"))]
         for cells in table.rows {
             lines.push(row(cells))
         }

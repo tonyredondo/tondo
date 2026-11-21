@@ -588,7 +588,7 @@ fn alternativeNames(der: Array[Byte], extensions: Element): Array[String] ! Cryp
 
 fn ipText(bytes: Array[Byte]): String {
     if bytes.length() == 4 {
-        return bytes.map((b) { "{Int(b)}" }).join(".")
+        return bytes.map(b => "{Int(b)}").join(".")
     }
     var groups: Array[Int] = []
     var index = 0
@@ -604,7 +604,7 @@ fn ipText(bytes: Array[Byte]): String {
             (best, bestLength) = (at - run + 1, run)
         }
     }
-    let hex = (part: Array[Int]): String { part.map((g) { g.toString(radix: 16) }).join(":") }
+    let hex = (part: Array[Int]): String { part.map(g => g.toString(radix: 16)).join(":") }
     if best < 0 {
         return hex(groups)
     }
@@ -791,7 +791,7 @@ fn oidOf(der: Array[Byte], at: Element): String {
 
 /// An object identifier's DER content.
 fn oidBytes(oid: String): Array[Byte] {
-    let numbers = oid.split(".").map((part) { Int.parse(part) ?? 0 })
+    let numbers = oid.split(".").map(part => Int.parse(part) ?? 0)
     var bytes: Array[Byte] = []
     var values = [numbers[0] * 40 + numbers[1]]
     values.extend(numbers.slice(2, numbers.length()) ?? [])

@@ -174,7 +174,7 @@ pub fn rounded(parts: Digits, decimals: Int?): Digits {
     }
     let dropped = (parts.fraction.slice(wanted, parts.fraction.length()) ?? "").chars().collect()
     var kept = "{parts.whole}{parts.fraction.slice(0, wanted) ?? ""}".chars().collect()
-    let beyond = (dropped.slice(1, dropped.length()) ?? []).filter((c) { c != '0' }).length() > 0
+    let beyond = (dropped.slice(1, dropped.length()) ?? []).filter(c => c != '0').length() > 0
     let last = kept.get(kept.length() - 1) ?? '0'
     let odd = (last.code() - '0'.code()) % 2 == 1
     let up = dropped[0] > '5' or (dropped[0] == '5' and (beyond or odd))
@@ -194,7 +194,7 @@ pub fn rounded(parts: Digits, decimals: Int?): Digits {
             kept.insert(0, '1')
         }
     }
-    let digits = kept.map((c) { "{c}" }).join("")
+    let digits = kept.map(c => "{c}").join("")
     let point = digits.length() - wanted
     Digits {
         negative: parts.negative
@@ -219,6 +219,6 @@ pub fn formatNumeric(
     let parts = rounded(digitsOf(shown), if precision >= 0 { precision } else { none })
     let whole = if parts.whole.isEmpty() { "0" } else { parts.whole }
     let digits = if parts.fraction.isEmpty() { whole } else { "{whole}.{parts.fraction}" }
-    let negative = parts.negative and "{parts.whole}{parts.fraction}".chars().any((c) { c != '0' })
+    let negative = parts.negative and "{parts.whole}{parts.fraction}".chars().any(c => c != '0')
     formatNumber(negative, "", digits, plus, zero, width, fill, align)
 }

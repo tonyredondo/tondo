@@ -52,7 +52,7 @@ import std.reflect as __reflect
 /// }
 ///
 /// let readings = json.decode[Array[Celsius]](r"""[21, 19.5, "22C"]""")?
-/// console.println("{readings.map((reading) { reading.degrees })}")
+/// console.println("{readings.map(reading => reading.degrees)}")
 /// ```
 pub enum Event {
     Null
@@ -451,7 +451,7 @@ pub trait Source {
 
     /// The error of a value that breaks the rules of its type.
     fn invalid(self, violations: Array[Violation]): Error {
-        let shown = violations.map((violation) { "{violation}" }).join("; ")
+        let shown = violations.map(violation => "{violation}").join("; ")
         var error = self.failure(ErrorKind.Invalid, shown)
         error.violations = violations
         error

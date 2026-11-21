@@ -440,7 +440,7 @@ let add = () {
     model.mark("add")
 }
 let holds = [model.always((n: Int) { n <= 1 }), model.eventually((n: Int) { n == 1 })]
-match model.watch(() { count.load() }, holds, add) {
+match model.watch(() => count.load(), holds, add) {
     ok(checked) => console.println("{checked.states} states")
     err(broken) => console.println("{broken}")
 }

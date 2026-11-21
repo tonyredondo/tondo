@@ -1111,7 +1111,7 @@ import std.console
 
 let parts = ["docs", "tests", "examples"]
 let picked = cli.chooseMany("Install", parts, chosen: [0])
-console.println(picked.map((index) { parts[index] }).join(", "))
+console.println(picked.map(index => parts[index]).join(", "))
 ```
 
 #### secret

@@ -77,8 +77,8 @@ import std.console
 import std.toml
 
 let config = toml.parse("[server]\nhost = \"localhost\"\nports = [8080, 8081]\n")?
-let host = config.find("server.host").andThen((value) { value.asText() })
-let port = config.find("server.ports").andThen((ports) { ports.at(1) }).andThen((value) { value.asInt() })
+let host = config.find("server.host").andThen(value => value.asText())
+let port = config.find("server.ports").andThen(ports => ports.at(1)).andThen(value => value.asInt())
 console.println("{host ?? "?"}:{port ?? 0}")
 ```
 

@@ -13,10 +13,10 @@ import std.time as __time
 fn postgres(): Driver {
     Driver {
         system: "postgresql"
-        placeholder: (position) { "${position}" }
-        identifier: (name) { "\"{name.replace("\"", "\"\"")}\"" }
+        placeholder: position => "${position}"
+        identifier: name => "\"{name.replace("\"", "\"\"")}\""
         connect: (url): Connection ! SqlError { connectPostgres(url)? }
-        place: (url) { placeOf(url) }
+        place: url => placeOf(url)
     }
 }
 
@@ -130,7 +130,7 @@ fn Postgres.start(self, settings: Settings): !SqlError {
                     for at < body.length() - 1 {
                         offered.push(cstringAt(body, var at))
                     }
-                    if not offered.any((mechanism) { mechanism == "SCRAM-SHA-256" }) {
+                    if not offered.any(mechanism => mechanism == "SCRAM-SHA-256") {
                         fail lost(
                             "the server asks for {offered.join(", ")}: tondo speaks SCRAM-SHA-256",
                         )
@@ -417,7 +417,7 @@ fn Postgres.bound(self, prepared: Prepared, statement: Statement): Outcome ! Sql
                 }
                 let query = statement.operation == Operation.Query
                 return Outcome {
-                    columns: prepared.columns.map((column) { column.name })
+                    columns: prepared.columns.map(column => column.name)
                     rows
                     affected: if query { 0 } else { affected }
                     lastId: none
@@ -454,16 +454,12 @@ fn postgresText(value: Value): String {
         Value.Bytes(bytes) => "\\x{__encoding.hexEncode(bytes)}"
         Value.List(values) => {
             let elements = values.map(
-                (element) {
-                    match element {
-                        Value.Null => "NULL"
-                        Value.List(_) => postgresText(element)
-                        _ => {
-                            let text = postgresText(element)
-                                .replace("\\", "\\\\")
-                                .replace("\"", "\\\"")
-                            "\"{text}\""
-                        }
+                element => match element {
+                    Value.Null => "NULL"
+                    Value.List(_) => postgresText(element)
+                    _ => {
+                        let text = postgresText(element).replace("\\", "\\\\").replace("\"", "\\\"")
+                        "\"{text}\""
                     }
                 },
             )
@@ -551,7 +547,7 @@ fn postgresValue(oid: Int, bytes: Array[Byte]): Value {
                 hex.slice(16, 20),
                 hex.slice(20, 32),
             ]
-            Value.Text(parts.map((part) { part ?? "" }).join("-"))
+            Value.Text(parts.map(part => part ?? "").join("-"))
         }
         // jsonb in binary: a version, 1, and its text.
         3802 => Value.Text(String.fromBytes(bytes.slice(1, bytes.length()) ?? []) ?? "")
