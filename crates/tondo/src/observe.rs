@@ -2527,7 +2527,7 @@ fn task_text(task: &Value, whole: bool) -> String {
         out.push_str(&format!("  waited {waited} for {wait}\n"));
     }
     if task["ready"].is_object() {
-        out.push_str(&format!("  {}\n", ready_text(&task["id"], &task["ready"])));
+        out.push_str(&format!("  {}\n", ready_where(&task["ready"])));
     }
     out.push_str(&wakes_text(task));
     // A short view shows the program's frames; the whole one, every frame.
@@ -3127,15 +3127,20 @@ pub(crate) fn ready_place(ready: &Value) -> String {
     }
 }
 
-/// A ready task's line, with the time its slot keeps.
-fn ready_text(id: &Value, ready: &Value) -> String {
+/// Where a ready task waits, with the time its slot keeps.
+fn ready_where(ready: &Value) -> String {
     let seconds = |ms: &Value| ms.as_f64().map(|ms| duration(ms / 1000.0));
     let place = ready_place(ready);
     match (seconds(&ready["waited_ms"]), seconds(&ready["untaken_ms"])) {
-        (Some(time), _) => format!("task {id} is ready {place}, for {time}"),
-        (_, Some(time)) => format!("task {id} is ready {place}, which no other worker has taken from for {time}"),
-        _ => format!("task {id} is ready {place}"),
+        (Some(time), _) => format!("{place}, for {time}"),
+        (_, Some(time)) => format!("{place}, which no other worker has taken from for {time}"),
+        _ => place,
     }
+}
+
+/// A ready task's line, standing alone.
+fn ready_text(id: &Value, ready: &Value) -> String {
+    format!("task {id} is ready {}", ready_where(ready))
 }
 
 /// What `blocked` says of the scheduler: the ready tasks still for a second
@@ -3216,7 +3221,8 @@ pub(crate) fn blocked_text(graph: &Value) -> String {
         };
         format!("{line}\n{}", wakes_text(t)).trim_end().to_string()
     });
-    format!("{}\n{}{scheduled}", lines.collect::<Vec<_>>().join("\n"), why_text(graph)).trim_end().to_string()
+    let parts = [lines.collect::<Vec<_>>().join("\n"), why_text(graph), scheduled];
+    parts.iter().map(|part| part.trim_end()).filter(|part| !part.is_empty()).collect::<Vec<_>>().join("\n")
 }
 
 /// What `tondo logpoint` is asked for.

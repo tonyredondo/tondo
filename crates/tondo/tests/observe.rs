@@ -218,7 +218,6 @@ fn a_tasks_profile_without_a_duration() {
 /// regions hold now and the values they made, and a dump what they hold
 /// by site, sampled.
 const COMPUTING: &str = "import std.console
-import std.time
 
 fn spin(n: Int): Int {
     var total = 0
@@ -235,8 +234,7 @@ fn main() {
     }
     console.println(\"started\")
     let _ = console.flush()
-    time.sleep(time.seconds(120))
-    _ = jobs.length()
+    _ = jobs.wait()
 }
 ";
 
@@ -293,9 +291,27 @@ fn a_dump_shows_the_schedulers_state() {
     }
     let why = tondo(&["dump", "read", file.to_str().unwrap(), "why", "--json"]);
     assert_eq!(why["why"]["lost"], json!([]), "{}", why["why"]);
-    let blocked = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["blocked", &pid]).output().unwrap();
-    let said = String::from_utf8_lossy(&blocked.stdout);
-    assert!(said.contains(" started, ") && said.contains("; monitor ") && said.contains("ready"), "{said}");
+    // Main's wait, the longest, then the ready tasks and the workers, each
+    // on a line of its own; a task has its line once it has been still a
+    // second.
+    let said = until("a ready task's line in `blocked`", || {
+        let blocked = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["blocked", &pid]).output().unwrap();
+        let said = String::from_utf8_lossy(&blocked.stdout).into_owned();
+        said.contains(" is ready ").then_some(said)
+    });
+    let lines: Vec<&str> = said.lines().collect();
+    assert!(lines.iter().any(|line| line.starts_with("the longest wait: task 1,")), "{said}");
+    assert!(lines.iter().any(|line| line.starts_with("workers: ") && line.contains("; monitor ")), "{said}");
+    assert!(lines.iter().any(|line| line.starts_with("task ") && line.contains(" is ready ")), "{said}");
+    for line in lines.iter().filter(|line| line.contains(" is ready ") || line.contains(" ready: ")) {
+        assert!(line.starts_with("task ") || line.chars().next().is_some_and(|c| c.is_ascii_digit()), "{said}");
+    }
+    // Under a task's own line, the place alone.
+    let read =
+        Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", "read"]).arg(&file).arg("tasks").output().unwrap();
+    let read = String::from_utf8_lossy(&read.stdout);
+    assert!(read.contains("\n  in worker ") || read.contains("\n  beside worker "), "{read}");
+    assert!(!read.contains("\n  task "), "{read}");
     // Through a hundred looks a task is a wake lost; through 99, not yet.
     let at = tasks.iter().position(|task| task["ready"].is_object()).unwrap();
     let id = dump["tasks"][at]["id"].clone();
