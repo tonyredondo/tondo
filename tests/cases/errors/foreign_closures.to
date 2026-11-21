@@ -1,0 +1,18 @@
+// Closures as other languages write them, each with what Tondo writes.
+
+fn main() {
+    let xs = [1, 2]
+    // Java's, Kotlin's and Scala's
+    let arrow = xs.map(x -> x * 2)
+    let parenthesized = xs.map((x) -> x * 2)
+    // Go's, with its types
+    let go = xs.map(func(x int) int { return x * 2 })
+    // A function's keyword where a value goes
+    let keyword = xs.map(fn(x) { x * 2 })
+    _ = (arrow, parenthesized, go, keyword)
+}
+
+// expect-error: E0004 expected expression, found `>`: a closure is `x => x * 2`, or `(x: Int): Int { x * 2 }` with types or statements
+// expect-error: E0004 expected expression, found `>`: a closure is `x => x * 2`, or `(x: Int): Int { x * 2 }` with types or statements
+// expect-error: E0004 expected `)`, found identifier `int`: a closure is `x => ...`, or `(x: Int): Int { ... }` with types or statements
+// expect-error: E0004 expected expression, found `fn`: a closure is written without `fn`: `x => x * 2`, or `(x: Int): Int { x * 2 }` with types or statements

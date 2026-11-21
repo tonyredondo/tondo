@@ -414,6 +414,16 @@ impl Parser<'_> {
             {
                 "a field is read with `.`, as `p.name`: there are no pointers".into()
             }
+            // `x -> x * 2` and `(a, b) -> a + b` as an argument: Java's and
+            // Kotlin's closures, where `p->name` holds no blank
+            (Tok::Minus, Tok::Gt, _)
+                if matches!(self.back(2), Tok::RParen)
+                    || matches!(self.back(2), Tok::Ident(_))
+                        && matches!(self.back(3), Tok::LParen | Tok::Comma | Tok::LBrace)
+                        && self.tokens[self.pos - 2].span.end < self.tokens[self.pos - 1].span.start =>
+            {
+                "a closure is `x => x * 2`, or `(x: Int): Int { x * 2 }` with types or statements".into()
+            }
             // `p->name`, read as `p - >`
             (Tok::Minus, Tok::Gt, Tok::Ident(_)) if matches!(self.back(2), Tok::Ident(_)) => {
                 "a field is read with `.`, as `p.name`: there are no pointers".into()
@@ -489,6 +499,21 @@ impl Parser<'_> {
                         type_named(ty)
                     ),
                 }
+            }
+            // `func(x int) int { ... }` as a value: Go's closure
+            (Tok::Ident(param), Tok::Ident(ty), _)
+                if matches!(self.back(2), Tok::LParen)
+                    && word(self.back(3)).is_some_and(|w| matches!(w, "func" | "function"))
+                    && !matches!(self.back(4), Tok::Newline | Tok::Eof) =>
+            {
+                let result = match (self.nth(1), self.nth(2)) {
+                    (Tok::RParen, Tok::Ident(result)) => type_named(result),
+                    _ => "Result".into(),
+                };
+                format!(
+                    "a closure is `{param} => ...`, or `({param}: {}): {result} {{ ... }}` with types or statements",
+                    type_named(ty)
+                )
             }
             // `func (a Account) total()`
             (Tok::Ident(_), Tok::Ident(ty), _)
@@ -658,6 +683,10 @@ impl Parser<'_> {
             }
             (Tok::Ident(_) | Tok::RParen, Tok::FatArrow, _) | (_, Tok::Pipe, _) => {
                 "a closure is `x => x * 2`, or `(x: Int): Int { x * 2 }` with types or statements"
+            }
+            // `fn(x) { x * 2 }` where a value goes
+            (_, Tok::Kw(Kw::Fn), Tok::LParen) if what == "expression" => {
+                "a closure is written without `fn`: `x => x * 2`, or `(x: Int): Int { x * 2 }` with types or statements"
             }
             (Tok::EqEq, Tok::Eq, _) | (Tok::NotEq, Tok::Eq, _) => "`==` and `!=` compare values; Tondo has no `===`",
             (_, Tok::LBracket, _) if what == "type" => "an array type is `Array[Int]`; a C array of four is `Int[4]`",
