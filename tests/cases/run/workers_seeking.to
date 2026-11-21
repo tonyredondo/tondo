@@ -29,12 +29,12 @@ fn compute(began: sync.Atomic[Int], stop: sync.Atomic[Bool]): Int {
 }
 
 fn counted(name: String): Int {
-    diagnostics.metrics().find((each) { each.name == name }).map((each) { each.value }) ?? -1
+    diagnostics.metrics().find(each => each.name == name).map(each => each.value) ?? -1
 }
 
 fn ran(): Int ! String {
-    let output = process.command("true").output().mapErr((e) { "{e}" })?
-    output.text().mapErr((e) { "{e}" })?.length()
+    let output = process.command("true").output().mapErr(e => "{e}")?
+    output.text().mapErr(e => "{e}")?.length()
 }
 
 fn main(): !String {

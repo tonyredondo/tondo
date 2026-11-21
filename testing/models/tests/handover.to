@@ -35,9 +35,9 @@ type Pool = {
 fn steps(pool: Pool, direct: Bool): Array[model.Step[Pool]] {
     var next: Array[model.Step[Pool]] = []
     // The monitor adds the next worker, in the same look as the one before.
-    let added = pool.given.count((given) { given != -2 })
+    let added = pool.given.count(given => given != -2)
     if added < pool.given.length() {
-        let free = (0..pool.seeking.length()).filter((d) { not pool.seeking[d] }).collect()
+        let free = (0..pool.seeking.length()).filter(d => not pool.seeking[d]).collect()
         let domain = if free.isEmpty() { -1 } else { free[0] }
         let marked = if domain >= 0 { pool.seeking.replaced(domain, true) } else { pool.seeking }
         let after = if direct {
@@ -93,11 +93,10 @@ fn check(direct: Bool): model.Checked ! model.Violation {
             (0..pool.seeking.length()).all(
                 (d) {
                     let coming = (0..pool.given.length()).any(
-                        (w) {
+                        w =>
                             pool.given[w] != -2 and
                                 not pool.started[w] and
-                                (if direct { pool.given[w] == d } else { pool.slot == d })
-                        },
+                                (if direct { pool.given[w] == d } else { pool.slot == d }),
                     )
                     not pool.seeking[d] or pool.owner[d] >= 0 or coming
                 },
@@ -105,7 +104,7 @@ fn check(direct: Bool): model.Checked ! model.Violation {
         },
         name: "every domain marked as sought has a worker behind it",
     )
-    model.check(start, (pool) { steps(pool, direct) }, holds: [behind])
+    model.check(start, pool => steps(pool, direct), holds: [behind])
 }
 
 // What the code does: each worker is given its domain as it is added.
