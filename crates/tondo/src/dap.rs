@@ -951,8 +951,8 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
     // A recording of the end of a run starts at a copy of the program.
     let held = replay.as_deref().map(crate::debug::held_copy).transpose()?.flatten();
     let mut copied = None;
-    let (program, child, tested) = if let (Some(dir), Some((_, pid))) = (&replay, held) {
-        let first = crate::debug::resumed(pid, 0, true, None)?;
+    let (program, child, tested) = if let (Some(dir), Some(copy)) = (&replay, held) {
+        let first = crate::debug::resumed(copy, 0, true, None)?;
         let program = observe::started(&dir.join("program"), first.pid())?;
         copied = Some(first);
         (program, None, None)

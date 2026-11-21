@@ -388,7 +388,7 @@ pub fn debug(debugged: Debugged, json: bool) -> Result<i32, String> {
             (observe::started(&executable, child.id())?, Some(child))
         }
         Debugged::Replayed(dir) if held.is_some() => {
-            let first = resumed(held.map_or(0, |(_, pid)| pid), 0, false, None)?;
+            let first = resumed(held.unwrap_or_default(), 0, false, None)?;
             let program = observe::started(&dir.join("program"), first.pid())?;
             copied = Some(first);
             (program, None)
@@ -832,11 +832,12 @@ pub(crate) fn search_cancelled() -> bool {
     SEARCH.lock().unwrap().1
 }
 
-/// A replay forked from a checkpoint, which shows what the program writes
-/// from probe `shown` on: to pipes the caller reads when `piped`, or here;
-/// nowhere when nothing shows, but for why it ended, in `report`.
+/// A replay forked from a checkpoint, the copy `(tick, pid)` taken at that
+/// probe, which shows what the program writes from probe `shown` on: to
+/// pipes the caller reads when `piped`, or here; nowhere when nothing shows,
+/// but for why it ended, in `report`.
 pub(crate) fn resumed(
-    checkpoint: u32,
+    (tick, checkpoint): (u64, u32),
     shown: u64,
     piped: bool,
     report: Option<std::fs::File>,
@@ -875,8 +876,16 @@ pub(crate) fn resumed(
     given(&stream, &format!("resume {shown} {}\n", std::process::id()), &fds).map_err(cannot)?;
     let mut line = String::new();
     std::io::BufReader::new(&stream).read_line(&mut line).map_err(|e| e.to_string())?;
-    let pid: u32 = line.trim().parse().map_err(|_| format!("the checkpoint {checkpoint} did not fork"))?;
+    let mut answer = line.split_whitespace();
+    let pid: u32 =
+        answer.next().and_then(|pid| pid.parse().ok()).ok_or(format!("the checkpoint {checkpoint} did not fork"))?;
     own(pid as i32);
+    // The probe the copy is at, which a copy of an older runtime does not
+    // say: one labelled with another would replay from the wrong place.
+    if let Some(at) = answer.next().and_then(|at| at.parse::<u64>().ok()).filter(|&at| at != tick) {
+        Running::Forked(pid, output).end();
+        return Err(format!("the copy taken at probe {tick} is at probe {at}"));
+    }
     Ok(Running::Forked(pid, output))
 }
 
@@ -1045,7 +1054,7 @@ impl Replaying {
                 })
                 .map_err(|e| format!("cannot start {}: {e}", executable.display()))?,
             ),
-            Some((_, checkpoint)) => resumed(checkpoint, shown, self.piped || self.test.is_some(), report_file())?,
+            Some(copy) => resumed(copy, shown, self.piped || self.test.is_some(), report_file())?,
         };
         match (&mut running, self.test, self.piped) {
             (Running::Started(child), Some(node), false) => tested(child.stdout.take(), child.stderr.take(), node),
@@ -2587,5 +2596,46 @@ fn lines_back(count: u64) -> String {
     match count {
         1 => "1 line back".into(),
         count => format!("{count} lines back"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, Write};
+    use std::os::unix::process::ExitStatusExt;
+
+    /// A copy that says it is at another probe than the one it was taken at
+    /// is refused, and the replay it forked ends; one at its probe is taken.
+    #[test]
+    fn a_copy_at_another_probe_is_refused() {
+        for (answered, refused) in [(7, true), (5, false)] {
+            let mut copy = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+            let mut forked = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+            std::fs::create_dir_all(observe::directory()).unwrap();
+            let path = observe::directory().join(format!("{}.checkpoint", copy.id()));
+            let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+            let pid = forked.id();
+            let answering = std::thread::spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                std::io::BufReader::new(&stream).read_line(&mut line).unwrap();
+                writeln!(&stream, "{pid} {answered}").unwrap();
+                line
+            });
+            let replay = resumed((5, copy.id()), 0, true, None);
+            assert!(answering.join().unwrap().starts_with("resume 0 "));
+            match replay {
+                Err(message) => assert!(refused && message == "the copy taken at probe 5 is at probe 7", "{message}"),
+                Ok(running) => {
+                    assert!(!refused, "a copy at probe 7 was taken for probe 5");
+                    running.end();
+                }
+            }
+            assert_eq!(forked.wait().unwrap().signal(), Some(libc::SIGKILL));
+            let _ = copy.kill();
+            let _ = copy.wait();
+            let _ = std::fs::remove_file(path);
+        }
     }
 }

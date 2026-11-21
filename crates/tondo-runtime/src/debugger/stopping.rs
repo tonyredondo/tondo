@@ -1603,7 +1603,9 @@ pub(super) fn kept(table: &Table) -> i32 {
                 given.iter().for_each(|&fd| unsafe {
                     libc::close(fd);
                 });
-                let _ = writeln!(stream, "{pid}");
+                // With the probe it is at, which the debugger checks
+                // against the one it took it at.
+                let _ = writeln!(stream, "{pid} {}", crate::replay::ticks());
             }
         }
     }
