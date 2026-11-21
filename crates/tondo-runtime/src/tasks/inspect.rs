@@ -115,14 +115,17 @@ pub(crate) fn snapshot(here: Option<Vec<usize>>) -> Vec<Shot> {
     // stack, and a profile of the tasks would leave it out. A worker is out
     // of that in microseconds, or stops where it is when the world stands
     // still, unless a busy machine leaves it unrun a while; so the snapshot
-    // is taken again until no other task is so, for as long as a stop of
-    // the world waits for its workers.
+    // is taken again until no other task is so, a thousand times at most,
+    // about as long as a stop of the world waits for its workers. Counted in
+    // tries, not by the clock: a process the system stops meanwhile loses no
+    // try, where it would lose the time.
     let me = unsafe { current().as_ref() }.map(|task| task.id);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(100);
+    let mut tries = 0;
     loop {
         let shots = snapshot_once(here.clone());
         let between = shots.iter().any(|shot| shot.state == "runs" && shot.stack.is_empty() && Some(shot.id) != me);
-        if !between || std::time::Instant::now() >= deadline {
+        tries += 1;
+        if !between || tries >= 1000 {
             return shots;
         }
         std::thread::sleep(std::time::Duration::from_micros(100));
