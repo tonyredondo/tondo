@@ -91,9 +91,29 @@ pub(crate) fn str_in(region: *mut super::regions::Region, bytes: &[u8]) -> *mut 
     str_in_region(region, bytes)
 }
 
-/// `str_in` of more than `SHORT_MAX` bytes in a region.
+/// `str_in` of more than `SHORT_MAX` bytes in a region: one too short to
+/// keep positions, in a region that does not grow and has room, made with
+/// nothing to save; any other apart.
 #[inline(never)]
 fn str_in_region(region: *mut super::regions::Region, bytes: &[u8]) -> *mut Str {
+    let n = bytes.len();
+    if n < POSITIONED_FROM
+        && !super::regions::grows(region)
+        && let Some(at) = unsafe { super::regions::bump(region, HEADER + n) }
+    {
+        let text = at as *mut Str;
+        unsafe {
+            text.write(Str { rc: AtomicUsize::new(super::regions::LAST_IN_REGION), len: n, cap: n });
+            super::builder::copy_upto_64(bytes, at.add(HEADER));
+        }
+        return text;
+    }
+    str_in_region_slowly(region, bytes)
+}
+
+#[cold]
+#[inline(never)]
+fn str_in_region_slowly(region: *mut super::regions::Region, bytes: &[u8]) -> *mut Str {
     unsafe {
         let size = match super::regions::grows(region) {
             true => super::meta::good(HEADER + bytes.len()),

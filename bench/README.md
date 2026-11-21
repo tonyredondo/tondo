@@ -199,7 +199,13 @@ The rows still behind Go, and why:
   Tondo copies that part too, where Go reads the old bytes: 3.3×, 359
   instructions against Go's 113, and its region's 80 bytes. A view of the
   text would close both; lending a part only read was built, measured and
-  set aside, as `docs/decisions.md` says.
+  set aside, as `docs/decisions.md` says. Since this table, making a text
+  of under 64 bytes in a region and emptying the turn's region save no
+  registers, and the copy of 17 to 64 bytes takes no call of `memcpy`: the
+  two rows take 325 and 332 instructions. Of the 325, the copy and its
+  region are 156, and the two rows stay behind Go for them, by the
+  decision of 2026-11-21 not to share a text's bytes: a third kind of text
+  would cost every operation on texts a branch, in code that never trims.
 - `texts/chars ascii` and `other`: the loop reads an ASCII character in
   place and the text's length once, before it, but checks its count for
   overflow each turn and jumps twice for each ASCII character, out of the

@@ -462,7 +462,9 @@ pub unsafe extern "C" fn tondo_rt_str_append_int(s: *mut Str, value: i64, region
 }
 
 /// Copies `bytes` to `to`: a few bytes, as a string's usual piece, in two
-/// moves of a word that may overlap rather than a call of `memcpy`.
+/// moves of a word that may overlap rather than a call of `memcpy`; up to 64
+/// by a call of `copy_medium`, whose moves inlined everywhere would keep the
+/// callers of this one from being inlined in turn.
 #[inline(always)]
 pub(crate) unsafe fn copy_short(bytes: &[u8], to: *mut u8) {
     let (from, n) = (bytes.as_ptr(), bytes.len());
@@ -482,7 +484,41 @@ pub(crate) unsafe fn copy_short(bytes: &[u8], to: *mut u8) {
                 *to.add(n - 1) = *from.add(n - 1);
             }
             0 => {}
+            17..=64 => copy_medium(bytes, to),
             _ => std::ptr::copy_nonoverlapping(from, to, n),
+        }
+    }
+}
+
+/// `copy_upto_64` of 17 to 64 bytes, out of line.
+#[inline(never)]
+unsafe fn copy_medium(bytes: &[u8], to: *mut u8) {
+    unsafe { copy_upto_64(bytes, to) }
+}
+
+/// Copies up to 64 bytes to `to` in moves of 16 bytes or of a word that may
+/// overlap: `memcpy`'s dispatch costs more than the copy of so few. Inlined
+/// where a leaf makes a text, as `str_in_region`; elsewhere through
+/// `copy_short`.
+#[inline(always)]
+pub(crate) unsafe fn copy_upto_64(bytes: &[u8], to: *mut u8) {
+    let (from, n) = (bytes.as_ptr(), bytes.len());
+    let move16 = |at: usize| unsafe {
+        to.add(at).cast::<u128>().write_unaligned(from.add(at).cast::<u128>().read_unaligned());
+    };
+    unsafe {
+        match n {
+            33..=64 => {
+                move16(0);
+                move16(16);
+                move16(n - 32);
+                move16(n - 16);
+            }
+            17..=32 => {
+                move16(0);
+                move16(n - 16);
+            }
+            _ => copy_short(bytes, to),
         }
     }
 }
@@ -752,4 +788,27 @@ pub unsafe extern "C" fn tondo_rt_sb_quoted(b: *mut Builder, s: *const Str) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_sb_finish(b: *mut Builder) -> *mut Str {
     unsafe { b.read() }.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{copy_short, copy_upto_64};
+
+    /// Every length up to past the moves' edges, inline or by a call: the
+    /// bytes land where they go, all of them, and none before or after.
+    #[test]
+    fn a_short_copy_writes_its_bytes_and_no_others() {
+        let from: Vec<u8> = (0..80u8).map(|b| b.wrapping_mul(7).wrapping_add(1)).collect();
+        for n in [0, 1, 3, 7, 8, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 70] {
+            for offset in [0, 1, 7] {
+                let copies: [unsafe fn(&[u8], *mut u8); 2] = [copy_short, copy_upto_64];
+                for copy in copies.into_iter().filter(|_| n <= 64 || offset == 0) {
+                    let mut to = [0xAAu8; 96];
+                    unsafe { copy(&from[offset..offset + n], to.as_mut_ptr().add(8)) };
+                    assert_eq!(&to[8..8 + n], &from[offset..offset + n], "{n} bytes from {offset}");
+                    assert!(to[..8].iter().chain(&to[8 + n..]).all(|&b| b == 0xAA), "{n} bytes from {offset}");
+                }
+            }
+        }
+    }
 }

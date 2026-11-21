@@ -292,6 +292,21 @@ pub unsafe extern "C" fn tondo_rt_region_alloc(region: *mut Region, size: usize)
     }
 }
 
+/// Room for `size` bytes in the region's current chunk, when there is: the
+/// fast path of `tondo_rt_region_alloc`, for a caller with a slow path of its
+/// own.
+#[inline(always)]
+pub(crate) unsafe fn bump(region: *mut Region, size: usize) -> Option<*mut u8> {
+    let size = (size + 15) & !15;
+    let r = unsafe { &mut *region };
+    if r.ptr != 0 && r.ptr + size <= r.end {
+        let at = r.ptr;
+        r.ptr += size;
+        return Some(at as *mut u8);
+    }
+    None
+}
+
 /// Room when `end` leaves none: in the current chunk while what the region
 /// makes is counted, and counted; else in a new chunk, or in one of its own
 /// for a large value, which leaves the current chunk's room for the next.
@@ -513,6 +528,16 @@ pub unsafe extern "C" fn tondo_rt_region_reset(region: *mut Region) {
             r.ptr = chunk as usize + CHUNK_HEADER;
             return;
         }
+        reset_slowly(r, counting)
+    }
+}
+
+/// `tondo_rt_region_reset` of a region checked, counted, or of more than one
+/// chunk: apart, so that the usual turn's reset saves nothing.
+#[cold]
+#[inline(never)]
+unsafe fn reset_slowly(r: &mut Region, counting: bool) {
+    unsafe {
         // Checked, a turn's chunks all go, so that the next turn writes
         // nothing where a value of this one was.
         if checked::on() {
