@@ -1,0 +1,41 @@
+// A worker whose task called C before, and now computes without asking, is
+// held like any other: with one worker given, the watcher puts another
+// beside it (16.14) and the task it woke runs there. That the worker once
+// called C changes nothing of it: the monitor's watch of calls of C is for
+// a call that goes on, and this one ended.
+
+import std.console
+import std.diagnostics
+import std.ffi
+import std.sync
+
+extern fn usleep(micros: ffi.CUInt): ffi.CInt
+
+fn counted(name: String): Int {
+    diagnostics.metrics().find((each) { each.name == name }).map((each) { each.value }) ?? -1
+}
+
+/// Calls C for a moment, then wakes the task that waits, then computes
+/// until `stop` is set.
+fn compute(began: Sender[Unit], stop: sync.Atomic[Bool]) {
+    unsafe {
+        _ = usleep(1000u32)
+    }
+    began.send(())
+    for not stop.load() {}
+}
+
+fn main() {
+    let (began, beginning) = channel[Unit]()
+    let stop = sync.Atomic(false)
+    let job = spawn compute(began, stop)
+    _ = beginning.receive()
+    console.println("main ran beside the computation: workers added {counted("workers.added")}")
+    stop.store(true)
+    job.wait()
+}
+
+// expect-env: TONDO_WORKERS=1
+// expect-no-schedule: the explorer runs one worker and adds none, so a computation that does not ask holds it, by design
+// expect-no-replay: a recorded run, too, runs its tasks on one worker that adds none
+// expect-stdout: main ran beside the computation: workers added 1
