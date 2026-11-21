@@ -7,6 +7,11 @@
 //!
 //! The array is a local nothing changes, lends or lets go but where the
 //! function returns; the element is copied out of it and retained at once.
+//! A part of a parameter is the same: the caller keeps the parameter alive
+//! through the call, and a plain one, not `var` or `mut`, nothing in the
+//! function writes, as a specialized adapter's copy of its iterator's
+//! record takes the record's array and closures, which it then reads or
+//! calls no more, and kept them, and their registers, to the end.
 //! Every local the copy reaches through copies whole is given values only
 //! by those copies, or zero, and is read only where nothing keeps it: an
 //! operation, a comparison, a call, which borrows its arguments, or a copy
@@ -43,7 +48,10 @@ fn borrowed_in(body: &mut Body, types: &Types, loans: &[Vec<bool>]) {
             let Statement::Assign(place, rvalue, _) = statement else { continue };
             let Rvalue::Use(Operand::Copy(from)) = &**rvalue else { continue };
             let element = from.path.iter().any(|proj| matches!(proj, Proj::Index(..) | Proj::InBounds(_)));
-            if !place.path.is_empty() || !element || !types.needs_drop(body.locals[place.local.0 as usize]) {
+            if !place.path.is_empty() || !(element || part_of_parameter(body, from)) {
+                continue;
+            }
+            if !types.needs_drop(body.locals[place.local.0 as usize]) {
                 continue;
             }
             let (mut here, mut start) = (index, at + 1);
@@ -71,15 +79,44 @@ fn borrowed_in(body: &mut Body, types: &Types, loans: &[Vec<bool>]) {
             }
         }
     }
-    for (block, retain, local, array) in sources {
-        if let Some(reached) = only_read(body, types, loans, local, array, (block, retain)) {
-            drop_counts(body, &reached, (block, retain));
+    // The last first: dropping a retain moves the statements after it, and
+    // so the places of the retains still to look at, but none before it.
+    sources.sort_by_key(|&(block, retain, ..)| std::cmp::Reverse((block, retain)));
+    for (block, retain, local, holder) in sources {
+        let parameter = body.params.contains(&holder);
+        match only_read(body, types, loans, local, holder, (block, retain)) {
+            Ok(reached) => {
+                drop_counts(body, &reached, (block, retain));
+                if parameter {
+                    crate::mir_text::note(body, "borrowed", || {
+                        format!(
+                            "l{}, a part of parameter l{}, needs no count of its own: the caller keeps the parameter, and nothing here writes, keeps or lets it go",
+                            local.0, holder.0
+                        )
+                    });
+                }
+            }
+            Err(why) if parameter => crate::mir_text::note(body, "borrowed", || {
+                format!("l{}, a part of parameter l{}, keeps its count: {why}", local.0, holder.0)
+            }),
+            Err(_) => {}
         }
     }
 }
 
-/// The locals a borrowed element reaches, when it can be borrowed: what
-/// holds it is only read, and its array stays as it is wherever it is read.
+/// Whether a place is a part of a plain parameter, by fields alone: one the
+/// caller keeps alive through the call and the function cannot write, as
+/// it could a `var` or `mut` one, which is lent.
+fn part_of_parameter(body: &Body, place: &Place) -> bool {
+    let Some(index) = body.params.iter().position(|&param| param == place.local) else { return false };
+    !place.path.is_empty()
+        && place.path.iter().all(|proj| matches!(proj, Proj::Field(_)))
+        && !body.loans.get(index).copied().unwrap_or(false)
+}
+
+/// The locals a borrowed element or part reaches, when it can be borrowed:
+/// what holds it is only read, and its array or parameter stays as it is
+/// wherever it is read; or why not, which a note says.
 fn only_read(
     body: &Body,
     types: &Types,
@@ -87,7 +124,7 @@ fn only_read(
     source: Local,
     array: Local,
     retain: (usize, usize),
-) -> Option<Vec<bool>> {
+) -> Result<Vec<bool>, &'static str> {
     let count = body.locals.len();
     let mut reached = vec![false; count];
     reached[source.0 as usize] = true;
@@ -117,7 +154,7 @@ fn only_read(
             .count()
     };
     if reached[array.0 as usize] || assigned(array) > 1 || assigned(source) != 1 {
-        return None;
+        return Err("it or what holds it is given a value more than once");
     }
     let holds = |local: Local| reached[local.0 as usize];
     let reads = |operand: &Operand| matches!(operand, Operand::Copy(place) if holds(place.local));
@@ -134,7 +171,7 @@ fn only_read(
                 // The array, let go only on the way out.
                 Statement::Release(place) if place.local == array => {
                     if !returns || !place.path.is_empty() {
-                        return None;
+                        return Err("what holds it is let go before the function returns");
                     }
                     array_gone = true;
                 }
@@ -142,7 +179,7 @@ fn only_read(
                     if place.local == array {
                         // Its one value, before any element is read.
                         if !place.path.is_empty() {
-                            return None;
+                            return Err("what holds it is written");
                         }
                         continue;
                     }
@@ -167,13 +204,13 @@ fn only_read(
                             loan && matches!(arg, Operand::Copy(p) if holds(p.local) || p.local == array)
                         })
                     {
-                        return None;
+                        return Err("a call is lent it, or what holds it, and may write it");
                     }
                     let mut used = Vec::new();
                     crate::mir::rvalue_uses(rvalue, &mut used);
                     let element_read = used.iter().any(|&local| holds(local));
                     if array_gone && element_read {
-                        return None;
+                        return Err("it is read after what holds it is let go");
                     }
                     if holds(place.local) {
                         // Given a value only by a copy of the element, or
@@ -183,7 +220,7 @@ fn only_read(
                                 if from.path.is_empty() && holds(from.local)
                                     || place.local == source && from.local == array);
                         if !copied {
-                            return None;
+                            return Err("a value not its own is put where it is held");
                         }
                         continue;
                     }
@@ -191,7 +228,7 @@ fn only_read(
                         if matches!(&**rvalue, Rvalue::Mutate(_, target, ..) | Rvalue::AssignSlice(target, ..)
                             if target.local == array)
                         {
-                            return None;
+                            return Err("what holds it is changed");
                         }
                         continue;
                     }
@@ -204,35 +241,38 @@ fn only_read(
                             pieces.iter().all(|piece| !matches!(piece, Piece::Taken(p) if holds(p.local)))
                         }
                         Rvalue::Call(crate::hir::Callee::Fn(_), _) | Rvalue::CallIndirect(..) => true,
+                        // A part of it read, as an element of a borrowed
+                        // array, which takes nothing of the whole.
+                        Rvalue::Use(Operand::Copy(part)) => holds(part.local) && !part.path.is_empty(),
                         _ => false,
                     };
                     if !read_only {
-                        return None;
+                        return Err("something keeps it: it is stored, or put in a value");
                     }
                 }
                 Statement::Retain(place) | Statement::Release(place) | Statement::Moved(place) => {
                     if holds(place.local) || place.local == array {
-                        return None;
+                        return Err("its count, or what holds it, is taken or let go elsewhere");
                     }
                 }
                 Statement::Lend(alias, place) => {
                     if holds(place.local) || place.local == array || holds(*alias) {
-                        return None;
+                        return Err("it is lent");
                     }
                 }
                 Statement::LendAt(alias, operand) => {
                     if reads(operand) || holds(*alias) {
-                        return None;
+                        return Err("it is lent");
                     }
                 }
                 Statement::DeferPush(_, place) => {
                     if holds(place.local) {
-                        return None;
+                        return Err("a `defer` keeps it");
                     }
                 }
                 Statement::Failing(operand, ..) => {
                     if reads(operand) {
-                        return None;
+                        return Err("a failure carries it");
                     }
                 }
                 Statement::DeferPop | Statement::OsrLoad(_) => {}
@@ -241,10 +281,10 @@ fn only_read(
         if let Terminator::Return(operand) = &block.terminator
             && reads(operand)
         {
-            return None;
+            return Err("it is returned");
         }
     }
-    Some(reached)
+    Ok(reached)
 }
 
 /// Drops the element's retain and every release of what it reached.
