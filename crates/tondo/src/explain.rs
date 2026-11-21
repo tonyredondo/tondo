@@ -506,7 +506,7 @@ pub fn text(explained: &serde_json::Value) -> String {
     let advice = match get("kind") {
         "panic" => {
             "\nA panic says where it happened and the stack of calls; under `tondo debug` it stops there. \
-             `recover { ... }` stops it, unless it is a deadlock or the test runner's; \
+             `recover { ... }` stops it, unless it is a deadlock, the scheduler's (`P0020`) or the test runner's; \
              `TONDO_PANIC_FORMAT=json` writes it as JSON (`tondo guide errors`).\n"
         }
         _ => {
