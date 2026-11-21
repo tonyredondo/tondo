@@ -153,6 +153,12 @@ jobs:
           for seed in 1 2 3; do
             TONDO_CASES_SCHEDULE="$GITHUB_RUN_NUMBER$seed" cargo test -p tondo --test cases cases
           done
+      # What a case waits for holds when the machine stops its program, all
+      # of it or one thread of its runtime, and each night stops it elsewhere.
+      - run: cargo test -p tondo --test cases cases
+        env:
+          TONDO_CASES_DEBUG: 1
+          TONDO_CASES_STALLS: ${{ github.run_number }}
 
   # The models of the runtime, in every order of their steps, with TLC as
   # `std.model` checks them, and random formulas both must judge the same.
