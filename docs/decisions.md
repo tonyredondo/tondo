@@ -9276,3 +9276,40 @@ worker and for the task that leaves its worker, which every case of a
 worker put beside reaches: three of them hang when the retirement is
 miscounted there. What no case reaches is that one call of the idle path,
 named here.
+
+## A listing is held to what it shows
+
+The docs test held the manual's programs and what they print, and nothing
+held a listing, a `$ tondo …` line and what the tool printed: five were
+stale in one week, and a hand run found them. The pages now mark the
+listings the test runs, and the test holds what a page quotes of a
+diagnostic.
+
+A `text listing` is a listing the test runs. Each `$ tondo …` line is split
+into words without a shell, which a `|` or a `>` asks for and the test
+refuses, and runs in a directory of the page's own with a cache of its own,
+holding the files the page named before it; what the command prints,
+standard output and then standard error, is every line up to the next `$`,
+but for one blank line before it, compared without the blanks at the ends of
+lines. Its exit status is not compared. `TONDO_UPDATE_DOCS=1` writes the
+lines again.
+
+A program with `file=<name>` is one a listing can name, and still an example
+that compiles and whose output is held. A `diff file=<new> from=<old>` shows
+a variant as what it changes, so that the page does not repeat the program:
+lines with `-` go, with `+` come, and with one space are context, and what
+goes, with its context, must be in the file exactly once. Without `from=`,
+the file itself changes. The variant is an example too. `diff` and not
+`edit`, as the runbooks write it, because GitHub colours it, and the pages
+are read there.
+
+A plain `text` block right after a `tondo error <code>` or `tondo warning
+<code>` program quotes its diagnostic: each of its lines must be a line of
+what `tondo check` prints for the program, in order, so a page may quote the
+first line alone or the message with its excerpt. These are not written
+again under `TONDO_UPDATE_DOCS`: which printed line takes the place of one
+that is gone is a guess, and the failure shows the whole diagnostic.
+
+Listings with times, sizes or dumps, and those of a project built up by
+commands, stay plain `text`, held by nothing, and the pages say what they
+leave out rather than mark a listing that shows less than the tool prints.
