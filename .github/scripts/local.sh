@@ -2,7 +2,7 @@
 # What CI and the Nightly run, on this machine, in containers, on the last
 # commit of this repository, so that a failure shows before a push:
 #
-#   .github/scripts/local.sh <out> [services] [nocc] [musl] [emulated] [emuloop] [stress] [sweep] [editor] [containers]
+#   .github/scripts/local.sh <out> [services] [nocc] [musl] [emulated] [emuloop] [stress] [sweep] [heap] [editor] [containers]
 #
 # Each stage prints its status and leaves its output in <out>/<stage>.txt.
 # `musl`, `emulated` and `emuloop` have targets of their own, so they can run
@@ -17,7 +17,9 @@
 # init, is what brings races out. STRESS_ONLY=<name> runs only the tests whose
 # names hold it, and not the cases, and STRESS_CPUS=<n> only on n cores: one
 # test that fails now and then, run until it does. `sweep` runs the tools over every case, as the
-# Nightly does, and `editor` the extension in a real VS Code, in a container, so
+# Nightly does; `heap` the cases, the examples' tests and the models' with
+# mimalloc's own checks in the runtime, as the Nightly does too, and as the
+# gate does for a change to the passes that decide counts; and `editor` the extension in a real VS Code, in a container, so
 # that it touches nothing of this machine's. `containers` runs the scenarios
 # of debugging in containers (containers.sh) with a static tondo built in
 # musl's target, so not beside `musl`; their eighth, across architectures, is
@@ -113,6 +115,19 @@ containers() {
 
 sweep() {
   TONDO_SWEEP=1 cargo test -p tondo --test lsp --test observe --test cli -- the_server_outlives a_damaged_dump the_compiler_outlives
+}
+
+# With mimalloc's own checks in the runtime (TONDO_RUNTIME_HEAP_CHECKS): a
+# block freed twice or written after it was freed shows where it happens,
+# which a run without them may never show. A target of its own, so that the
+# others keep theirs; each part runs, whatever the one before gave.
+heap() {
+  export TONDO_RUNTIME_HEAP_CHECKS=1 CARGO_TARGET_DIR=$S/heap-target
+  local status=0
+  cargo test --workspace --test cases cases || status=1
+  cargo test -p tondo --test examples || status=1
+  cargo build -q -p tondo && (cd testing/models && "$CARGO_TARGET_DIR/debug/tondo" test --models) || status=1
+  return $status
 }
 
 # The tests that race, under emulation, again and again, on few cores.

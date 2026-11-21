@@ -157,12 +157,20 @@ fn build_runtime(runtime: &Path, root: &Path, target: &str, inputs: u64) -> (Pat
     // profiler to link with.
     let coverage = env::var_os("TONDO_RUNTIME_COVERAGE").is_some_and(|value| value == "1")
         && env::var("HOST").is_ok_and(|host| host == target);
+    // `TONDO_RUNTIME_HEAP_CHECKS=1`, to run the tests with mimalloc's own
+    // checks of its heap: a block freed twice or written after it was freed
+    // shows where it happens, which a run without them may never show. Never
+    // in a release, whose allocator must cost nothing.
+    println!("cargo:rerun-if-env-changed=TONDO_RUNTIME_HEAP_CHECKS");
+    let heap = env::var_os("TONDO_RUNTIME_HEAP_CHECKS").is_some_and(|value| value == "1");
     // Its own build directory, so this build does not wait for the one
     // that runs it; and one for each way, so that neither undoes the other.
-    let mode = match (coverage, fast) {
-        (true, _) => "runtime-coverage",
-        (false, true) => "runtime-fast",
-        (false, false) => "runtime",
+    let mode = match (coverage, heap, fast) {
+        (true, ..) => "runtime-coverage",
+        (false, true, true) => "runtime-heap-checks-fast",
+        (false, true, false) => "runtime-heap-checks",
+        (false, false, true) => "runtime-fast",
+        (false, false, false) => "runtime",
     };
     let target_dir = root.join(mode);
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
@@ -171,6 +179,7 @@ fn build_runtime(runtime: &Path, root: &Path, target: &str, inputs: u64) -> (Pat
         .args(["rustc", "--package", "tondo-runtime", "--lib", "--release", "--crate-type", "staticlib"])
         .args(["--target", target, "--target-dir"])
         .arg(&target_dir)
+        .args(heap.then_some(["--features", "heap-checks"]).into_iter().flatten())
         // Frame pointers let a panic walk the stack through the runtime; one
         // codegen unit inlines across the whole runtime, so adding a module
         // does not change how another's hot paths are compiled; and each

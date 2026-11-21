@@ -66,6 +66,12 @@ unicode-normalization = "0.1"
 url = "2.5.8"
 webpki-roots = "1.0.10"
 
+[features]
+# mimalloc's own checks, for the toolchain's tests and never for a release:
+# a block freed twice, or written after it was freed, shows where it
+# happens (`TONDO_RUNTIME_HEAP_CHECKS=1` in the compiler's build).
+heap-checks = ["mimalloc/debug", "mimalloc/secure"]
+
 [build-dependencies]
 flate2 = "1"
 
