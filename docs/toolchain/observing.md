@@ -199,10 +199,41 @@ It says who waits for whom, so a deadlock reads off as a chain that comes
 back to where it started. A program whose every task waits does not hang:
 it ends by itself with `P0013`, and says where each one waited.
 
-A task that is ready and is not run while a worker is free waits for
-nothing of the program's: the fault would be the scheduler's. A program
-started with `TONDO_CHECK_SCHEDULER=1` checks its scheduler as it runs, and
-ends with a panic of its own at the first rule that breaks:
+After the waits come the tasks that are ready and have no worker yet, and
+the workers. Of the three long sums held to one core, the program of
+[the picture of tasks](#where-the-time-goes-profile) below:
+
+```text
+$ tondo blocked backlog
+task 1 at backlog.to:16 in main has waited 3.3 s for task 2 to end
+task 2 holds up 1 task (1): it runs at backlog.to:7 in busy
+the longest wait: task 1, 3.3 s at backlog.to:16 in main, for task 2 to end
+task 4 is ready in worker 0's queue, which no other worker has taken from for 3.1 s
+workers: 2 started, 0 asleep, none told to look; monitor watching
+```
+
+A ready task is in one of three places: beside a worker, when the task
+that worker runs woke it; in a worker's queue, when a task of that worker
+started it; or in the queue every worker takes from. `blocked` gives a line
+to each that has been in its place for a second or more, with how long, and
+counts the others by place. For a worker's queue the time is how long no
+other worker has taken from it, which is what a task waiting there wants to
+know. The last line is of the workers and of the monitor that watches them,
+and `--json` has each worker with the task it runs.
+
+Here two workers compute and none sleeps, so the third sum is work with no
+core to do it: the program's own business, which a `tasks.checkpoint()` in
+the loop settles ([A task that only
+computes](../language/13-tasks.md#a-task-that-only-computes)). A task that
+is ready while a worker sleeps is another matter: it waits for nothing of
+the program's, and the fault would be the scheduler's. A dump taken on
+demand looks for it, a hundred times a millisecond apart, and its `why`
+names as lost a task that stayed ready where it was through every look
+while a worker slept. It counts its own looks and not the clock, by which a
+program just resumed from a pause would seem to have lost what it is about
+to run. And a program started with `TONDO_CHECK_SCHEDULER=1` checks its
+scheduler as it runs, and ends with a panic of its own at the first rule
+that breaks:
 
 ```text
 panic[P0020]: scheduler-rule: task 43 has been ready for 500 looks in the shared queue, while a worker has slept for 543 looks: a wake the scheduler lost, not the program's (16.14)
@@ -448,7 +479,8 @@ sum is `ready` and has not had a worker yet, so it is counted in `main`, at
 the line that spawned it, which `--lines` names: `backlog.to:15`. Tasks
 that pile up `ready` are work with no core to do it, and the counters say
 it of this program too: `tasks ready 1`, and `workers total 2` of a `limit`
-of 1, with `added 1`. Busy in a loop of arithmetic, it is also one that did
+of 1, with `added 1`; [`tondo blocked`](#what-it-waits-for-blocked) says
+where the third sum waits. Busy in a loop of arithmetic, it is also one that did
 not stand still for its picture, and the command said so.
 
 ## Everything at once: dump
@@ -486,7 +518,10 @@ what it waits for, the counters, and the live memory by the line that
 allocated it. The command prints a summary of it, and `dump read` shows
 each part. It is the
 same file a crash leaves, read with the same commands
-([Debugging](debugging.md#a-failure-somewhere-else-dumps)).
+([Debugging](debugging.md#a-failure-somewhere-else-dumps)). A task that is
+ready says where it waits for a worker, as in `blocked`, and the dump keeps
+the scheduler as it stood, `scheduler` in the file: each worker with the
+task it runs, how many sleep, and what the monitor was doing.
 
 The memory is given for the heap and for regions apart. Of a program that
 filled an array of two hundred thousand numbers which never leaves `main`,

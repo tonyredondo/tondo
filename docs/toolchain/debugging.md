@@ -423,7 +423,11 @@ $ tondo dump group dumps
 
 `why` and `tasks` also name a task that ended with an error nobody had
 read, which is often what the tasks that wait were waiting for
-([Deadlocks](../language/13-tasks.md#deadlocks)).
+([Deadlocks](../language/13-tasks.md#deadlocks)). `tasks` says of a ready
+task where it waits for a worker, and `why` names as lost one that a dump
+taken on demand saw ready in the same place through a hundred looks while a
+worker slept: a wake the scheduler lost, which is a defect of Tondo's to
+report with the dump ([Observing](observing.md#what-it-waits-for-blocked)).
 
 A field marked `@secret` shows as `<secret>` in dumps and in the debugger.
 

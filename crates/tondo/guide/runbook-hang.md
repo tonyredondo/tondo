@@ -136,8 +136,13 @@ beside one held for a tenth of a second. Give that loop a
 `tasks.checkpoint()`: it then gives its worker to the tasks that wait, and
 a cancel or a deadline stops it there (`tondo guide tasks`).
 
-A task that `blocked` shows as ready, for long, while a worker is free, waits
-for nothing of the program's. Run the program with
+`blocked` lists, after the waits, each task that has been ready for a second
+or more, with where it waits for a worker, and then the workers: how many
+started, how many sleep. Ready tasks with no worker asleep are the case
+above, work with no core. A task ready while a worker sleeps waits for
+nothing of the program's: a `dump` of the running program looks a hundred
+times, and its `why` names the task as lost when it never moved. To have the
+runtime judge it as it runs, start the program with
 `TONDO_CHECK_SCHEDULER=1`: the runtime then checks what its scheduler
 promises and ends with `P0020` at the first rule that breaks, naming the
 task, the worker and what each worker was doing, with a dump. It has no
