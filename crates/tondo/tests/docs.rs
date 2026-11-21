@@ -226,11 +226,13 @@ fn markdown(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// The documents whose examples are held: the manual and the examples' pages,
-/// not the records of decisions and plans, whose code is of its day.
+/// The documents whose examples are held: the README, the manual and the
+/// examples' pages, not the records of decisions and plans, whose code is of
+/// its day.
 fn documents() -> Vec<PathBuf> {
     let root = root();
-    let mut out = vec![root.join("docs/tour.md"), root.join("docs/toolchain.md"), root.join("docs/comparison.md")];
+    let mut out =
+        ["README.md", "docs/tour.md", "docs/toolchain.md", "docs/comparison.md"].map(|page| root.join(page)).to_vec();
     for dir in ["docs/language", "docs/toolchain", "docs/comparison", "docs/std", "examples"] {
         markdown(&root.join(dir), &mut out);
     }

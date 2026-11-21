@@ -182,6 +182,18 @@ fn main() {
 And when the code is wrong, the compiler answers with what to write instead.
 These are two habits from other languages:
 
+```tondo error E1001 file=hello.to
+import std.console
+
+fn main() {
+    let name = "Ada"
+    console.println(name.upper())
+    if name.length() > 2 {
+        console.println("long: " + name)
+    }
+}
+```
+
 ```text
 error[E1001]: `String` has no method `upper`: use `toUpper()`
  --> hello.to:5:26
@@ -220,7 +232,7 @@ as parameters, exact decimals, reflection, and calling C.
 [The toolchain](docs/toolchain.md) shows each of them with its commands.
 One example: this test passes almost every time it runs.
 
-```tondo test
+```tondo test failing
 import std.sync
 
 fn deposit(balance: sync.Mutex[Int], amount: Int) {

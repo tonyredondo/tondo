@@ -1,6 +1,6 @@
-//! Every example of `tondo guide` and of the README compiles, as a library
-//! for C when its info string says `library`, and every example of a mistake
-//! fails with the error it names. The test `docs` holds those of the manual.
+//! Every example of `tondo guide` compiles, as a library for C when its info
+//! string says `library`, and every example of a mistake fails with the error
+//! it names. The test `docs` holds those of the manual and of the README.
 
 use std::path::Path;
 use std::process::Command;
@@ -26,11 +26,7 @@ fn examples_compile_and_the_guides_tests_pass() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("guide");
     let _ = std::fs::remove_dir_all(&dir);
     let mut jobs = Vec::new();
-    // The guide's tests run, and pass; those of the README may show a
-    // failure on purpose, and only build.
-    let readme = ("readme", include_str!("../../../README.md"), false);
-    let topics = tondo::guide::TOPICS.iter().map(|&(topic, text)| (topic, text, true));
-    for (topic, text, run) in topics.chain([readme]) {
+    for &(topic, text) in tondo::guide::TOPICS {
         for (index, (info, code)) in examples(text).into_iter().enumerate() {
             let case = dir.join(format!("{topic}-{index}"));
             std::fs::create_dir_all(&case).unwrap();
@@ -45,7 +41,7 @@ fn examples_compile_and_the_guides_tests_pass() {
                 }
                 false => std::fs::write(case.join("main.to"), code.replace("<port>", "8080")).unwrap(),
             }
-            jobs.push((format!("{topic} example {index} ({info})"), info, case, code, run));
+            jobs.push((format!("{topic} example {index} ({info})"), info, case, code));
         }
     }
     let failures: Vec<String> = std::thread::scope(|scope| {
@@ -54,11 +50,10 @@ fn examples_compile_and_the_guides_tests_pass() {
             .map(|chunk| {
                 scope.spawn(move || {
                     let mut failures = Vec::new();
-                    for (name, info, case, code, run) in chunk {
+                    for (name, info, case, code) in chunk {
                         // A test needs a project, whose tests `--list` builds.
                         let checks: &[&str] = match info == "tondo test" {
-                            true if *run => &["test"],
-                            true => &["test", "--list"],
+                            true => &["test"],
                             false => &["check", "main.to"],
                         };
                         // Run with the memory of each region that ends made
