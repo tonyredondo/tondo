@@ -199,6 +199,31 @@ It says who waits for whom, so a deadlock reads off as a chain that comes
 back to where it started. A program whose every task waits does not hang:
 it ends by itself with `P0013`, and says where each one waited.
 
+A task that is ready and is not run while a worker is free waits for
+nothing of the program's: the fault would be the scheduler's. A program
+started with `TONDO_CHECK_SCHEDULER=1` checks its scheduler as it runs, and
+ends with a panic of its own at the first rule that breaks:
+
+```text
+panic[P0020]: scheduler-rule: task 43 has been ready for 500 looks in the shared queue, while a worker has slept for 543 looks: a wake the scheduler lost, not the program's (16.14)
+```
+
+Under that line come each worker with what it runs, the monitor, the queue
+and the timers, and the program leaves a dump. What it holds is what the
+language promises of tasks: a task that is ready, or a timer that is due,
+is not left while a worker sleeps; a worker one task has held for long
+while others wait gets another beside it, and one held as long in a call
+of C gets another in its place; the workers never pass twice their number,
+nor fall below it; the monitor goes on looking while a task waits beside a
+worker; and no part of the machine counts as searched for tasks while
+every worker sleeps. It judges by what it sees, tasks ready and workers
+asleep, and takes no word of the scheduler's for it. It counts in looks of
+its own, a millisecond apart, so a machine that stops the whole process
+for a while breaks no rule. It has no effect under `tondo test --schedules` or in a
+recorded run and its replay, where one task runs at a time by design, and
+a program started without the variable pays nothing for it. A `P0020` is a
+defect of Tondo's to report, with the dump.
+
 ## What a line holds: logpoint
 
 ```text

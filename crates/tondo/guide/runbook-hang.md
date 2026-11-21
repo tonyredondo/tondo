@@ -136,6 +136,14 @@ beside one held for a tenth of a second. Give that loop a
 `tasks.checkpoint()`: it then gives its worker to the tasks that wait, and
 a cancel or a deadline stops it there (`tondo guide tasks`).
 
+A task that `blocked` shows as ready, for long, while a worker is free, waits
+for nothing of the program's. Run the program with
+`TONDO_CHECK_SCHEDULER=1`: the runtime then checks what its scheduler
+promises and ends with `P0020` at the first rule that breaks, naming the
+task, the worker and what each worker was doing, with a dump. It has no
+effect under `--schedules` or in a recorded run, and costs nothing when it
+is not set. A `P0020` is a defect of Tondo's: report it with the dump.
+
 For a test that hangs, `test` takes `flags` with `--timeout <seconds>`;
 `lock_order` finds locks taken in opposite orders, which only sometimes hang.
 What a program that runs is doing, when it is slow rather than stopped:

@@ -531,9 +531,13 @@ What panics:
 | `P0012` | a send on a closed channel |
 | `P0013` | a deadlock: every task waits for another |
 | `P0014` | a task takes a lock it already holds |
+| `P0020` | the runtime's scheduler broke a rule it promises, in a program started with `TONDO_CHECK_SCHEDULER=1` |
 
-`tondo explain P0005` says what any of them means, with an example. A panic
-is not for input. What comes from outside is checked and answered with an
+`tondo explain P0005` says what any of them means, with an example. Two of
+them are the runtime's and not the program's, and no `recover` stops them:
+`P0013`, which leaves no task to recover it, and `P0020`
+([A running program](../toolchain/observing.md#what-it-waits-for-blocked)).
+A panic is not for input. What comes from outside is checked and answered with an
 error, and for each thing that panics there is a way to ask first:
 `array.get(i)` gives an option where `array[i]` would panic, and
 `a.checkedAdd(b)` where `a + b` would.
