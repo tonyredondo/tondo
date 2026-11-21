@@ -332,6 +332,22 @@ fn a_dump_shows_the_schedulers_state() {
             "{text}"
         );
     }
+    // The tools give each place's fields as the runtime writes them, the
+    // names they are read by: one shape of `ready` for each place.
+    let places = [
+        json!({ "in": "next", "worker": 0, "waited_ms": 5 }),
+        json!({ "in": "own", "worker": 1, "untaken_ms": 7, "unmoved_looks": 3 }),
+        json!({ "in": "shared" }),
+    ];
+    for (index, place) in places.iter().enumerate() {
+        dump["tasks"][index]["ready"] = place.clone();
+    }
+    let placed = dir.join("placed.dump.json");
+    std::fs::write(&placed, dump.to_string()).unwrap();
+    let read = tondo(&["dump", "read", placed.to_str().unwrap(), "tasks", "--json"]);
+    for (index, place) in places.iter().enumerate() {
+        assert_eq!(&read["tasks"][index]["ready"], place, "{}", read["tasks"][index]);
+    }
 }
 
 #[test]

@@ -138,3 +138,41 @@ pub(crate) fn viewed(
     drop(alive);
     (ready, out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Ready;
+
+    fn keys(ready: &Ready) -> Vec<String> {
+        let json = ready.json();
+        json.trim_matches(|c| c == '{' || c == '}')
+            .split(',')
+            .map(|field| field.split(':').next().unwrap().trim_matches('"').to_string())
+            .collect()
+    }
+
+    /// A ready task's place, by what a dump writes of each: `worker` but
+    /// for the shared queue, the time of its place where it has one and
+    /// the dump keeps times, and the looks where a dump on demand or the
+    /// checker counted them. The tools read these names.
+    #[test]
+    fn a_ready_tasks_place_has_the_fields_of_its_place() {
+        let place = |place, worker, waited_ms, untaken_ms, unmoved_looks| Ready {
+            place,
+            worker,
+            waited_ms,
+            untaken_ms,
+            unmoved_looks,
+        };
+        assert_eq!(keys(&place("next", Some(2), Some(5), None, None)), ["in", "worker", "waited_ms"]);
+        assert_eq!(keys(&place("own", Some(0), None, Some(7), None)), ["in", "worker", "untaken_ms"]);
+        assert_eq!(keys(&place("shared", None, None, None, None)), ["in"]);
+        // Under a debugger, without times; on demand, with its looks.
+        assert_eq!(keys(&place("next", Some(1), None, None, None)), ["in", "worker"]);
+        assert_eq!(keys(&place("shared", None, None, None, Some(100))), ["in", "unmoved_looks"]);
+        assert_eq!(
+            place("own", Some(3), None, Some(12), Some(4)).json(),
+            r#"{"in":"own","worker":3,"untaken_ms":12,"unmoved_looks":4}"#
+        );
+    }
+}
