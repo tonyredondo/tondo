@@ -22,7 +22,7 @@
 .tasks[].frames[].frame: number
 .tasks[].id: number
 .tasks[].locks[]
-.tasks[].ready: null
+.tasks[].ready (varies)
 .tasks[].request: null
 .tasks[].runs: string
 .tasks[].spawned[]

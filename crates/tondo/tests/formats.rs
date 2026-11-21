@@ -114,9 +114,11 @@ fn a_panic_and_its_dump_keep_their_formats() {
     let (_, said) = tondo(&dir, &["run", "falls.to"], &[("TONDO_DUMP", "off"), ("TONDO_PANIC_FORMAT", "json")]);
     let panic: Value = serde_json::from_str(said.lines().next().unwrap()).unwrap();
     recorded("panic.json", &(serde_json::to_string_pretty(&panic).unwrap() + "\n"));
-    // The dump, whose samples of memory are taken by chance.
+    // The dump, whose samples of memory are taken by chance, and the
+    // domains sought at the instant it was taken, which the scheduler's
+    // timing decides.
     let written: Value = serde_json::from_str(&std::fs::read_to_string(&dump).unwrap()).unwrap();
-    recorded("dump.shape", &shape(&written, &[".heap.samples", ".events"]));
+    recorded("dump.shape", &shape(&written, &[".heap.samples", ".events", ".scheduler.sought"]));
     // What `tondo dump read` gives of it, as the tools read it: the locals
     // of the task that fell, whose binding has parts.
     let fell = written["values"]
@@ -132,8 +134,13 @@ fn a_panic_and_its_dump_keep_their_formats() {
         args.push("--json");
         let (read, _) = tondo(&dir, &args, &[]);
         let read: Value = serde_json::from_str(&read).unwrap_or_else(|_| panic!("{view:?}: {read}"));
-        // What `why` says of memory comes from those samples.
-        let vary: &[&str] = if view[0] == "why" { &[".why.memory"] } else { &[] };
+        // What `why` says of memory comes from those samples, and whether
+        // a task is ready, and where, from the instant of the dump.
+        let vary: &[&str] = match view[0] {
+            "why" => &[".why.memory"],
+            "tasks" => &[".tasks[].ready"],
+            _ => &[],
+        };
         recorded(&format!("dump-{}.shape", view[0]), &shape(&read, vary));
     }
 }

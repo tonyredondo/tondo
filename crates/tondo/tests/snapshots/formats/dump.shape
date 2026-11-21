@@ -35,7 +35,7 @@
 .scheduler.asleep: number
 .scheduler.monitor: string
 .scheduler.retiring: number
-.scheduler.sought[]
+.scheduler.sought (varies)
 .scheduler.standing_in: number
 .scheduler.timer_due: bool
 .scheduler.told: bool
