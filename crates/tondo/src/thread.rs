@@ -159,9 +159,27 @@ fn order(body: &Body) -> Vec<usize> {
     number
 }
 
+/// What a copy of a block may repeat: what `pure` says, and a read of
+/// whether the task was cancelled, which an inlined call leaves between
+/// the join of a callee's ways and the caller's test of what it gave.
+fn copyable(statement: &Statement) -> bool {
+    pure(statement)
+        || matches!(statement, Statement::Assign(place, value, _) if place.path.is_empty() && matches!(**value, Rvalue::Cancelled))
+}
+
+/// The edge of a way into `target`: a jump, or one of a branch's two.
+fn edge_into(terminator: &Terminator, target: usize) -> bool {
+    match terminator {
+        Terminator::Goto(to) => to.0 as usize == target,
+        Terminator::Branch(_, then, otherwise) => (then.0 as usize == target) != (otherwise.0 as usize == target),
+        _ => false,
+    }
+}
+
 /// Copies each short block that ends in a test into the ways into it that
-/// end in a jump to it, but a loop's head: the copy is merged into the way
-/// when both are in one scope, or follows it as a block of its own.
+/// end in a jump to it or branch to it, but a loop's head: the copy is
+/// merged into a way that jumps when both are in one scope, or follows the
+/// way as a block of its own, as it does a branch's edge.
 fn duplicate(body: &mut Body) -> bool {
     let number = order(body);
     let mut predecessors = vec![Vec::new(); body.blocks.len()];
@@ -181,9 +199,7 @@ fn duplicate(body: &mut Body) -> bool {
         if stale[target]
             || ways.len() < 2
             || ways.iter().any(|&way| number[way] >= number[target])
-            || !ways
-                .iter()
-                .all(|&way| matches!(body.blocks[way].terminator, Terminator::Goto(to) if to.0 as usize == target))
+            || !ways.iter().all(|&way| edge_into(&body.blocks[way].terminator, target))
         {
             continue;
         }
@@ -194,7 +210,7 @@ fn duplicate(body: &mut Body) -> bool {
             let block = *chain.last().unwrap();
             let data = &body.blocks[block];
             statements += data.stmts.len();
-            if statements > SHORT || !data.stmts.iter().all(pure) {
+            if statements > SHORT || !data.stmts.iter().all(copyable) {
                 break false;
             }
             match data.terminator {
@@ -219,17 +235,32 @@ fn duplicate(body: &mut Body) -> bool {
             continue;
         }
         let test = *chain.last().unwrap();
+        // A copy this round made, which a branch's edge now goes to, is
+        // past what the round knows, and no target of it.
         for to in successors(&body.blocks[test].terminator) {
-            stale[to] = true;
+            if let Some(stale) = stale.get_mut(to) {
+                *stale = true;
+            }
         }
+        let branching =
+            ways.iter().filter(|&&way| matches!(body.blocks[way].terminator, Terminator::Branch(..))).count();
+        let (count, at) = (ways.len(), target);
+        crate::mir_text::note(body, "thread", || match branching {
+            0 => format!("b{at}, short and ending in a test, copied into the {count} ways that jump to it"),
+            _ => format!(
+                "b{at}, short and ending in a test, copied into its {count} ways, {branching} of them a branch's edge"
+            ),
+        });
         for way in ways {
             // Each block of the chain in turn: merged into the one before
-            // when both are in one scope, or after it as its own.
+            // when both are in one scope and that one jumps, or after it as
+            // its own, where a branch's edge into the chain goes.
             let mut current = way;
             for &block in &chain {
                 let copy = body.blocks[block].clone();
                 let scope = body.scopes.get(block).copied().flatten();
-                if body.scopes.get(current).copied().flatten() == scope {
+                let jumps = matches!(body.blocks[current].terminator, Terminator::Goto(_));
+                if jumps && body.scopes.get(current).copied().flatten() == scope {
                     let into = &mut body.blocks[current];
                     into.stmts.extend(copy.stmts);
                     into.terminator = copy.terminator;
@@ -237,9 +268,15 @@ fn duplicate(body: &mut Body) -> bool {
                     body.blocks.push(copy);
                     body.scopes.resize(body.blocks.len() - 1, None);
                     body.scopes.push(scope);
-                    let new = body.blocks.len() - 1;
-                    body.blocks[current].terminator = Terminator::Goto(BlockId(new as u32));
-                    current = new;
+                    let new = BlockId((body.blocks.len() - 1) as u32);
+                    match &mut body.blocks[current].terminator {
+                        Terminator::Branch(_, then, otherwise) => {
+                            let edge = if then.0 as usize == block { then } else { otherwise };
+                            *edge = new;
+                        }
+                        terminator => *terminator = Terminator::Goto(new),
+                    }
+                    current = new.0 as usize;
                 }
             }
         }
@@ -302,8 +339,12 @@ fn fold(body: &mut Body, changing: &[bool], followed: &[bool]) -> bool {
         {
             match known.get(&local) {
                 Some(Known::Const(Const::Bool(value))) => {
-                    *terminator = Terminator::Goto(if *value { *then } else { *otherwise });
+                    let to = if *value { *then } else { *otherwise };
+                    *terminator = Terminator::Goto(to);
                     folded = true;
+                    crate::mir_text::note(body, "thread", || {
+                        format!("b{block}'s test of l{} goes to b{}: every way into it knows it", local.0, to.0)
+                    });
                 }
                 Some(Known::Copy(other)) => {
                     *place = Place::local(*other);

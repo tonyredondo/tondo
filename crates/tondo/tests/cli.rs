@@ -1414,6 +1414,38 @@ fn a_test_the_facts_decide_is_a_jump() {
     assert_eq!(String::from_utf8_lossy(&ran.stdout), "19.30600052603572 -1.0 2.0\n");
 }
 
+/// A test of what each way into a join already decided is threaded through
+/// the join, a read of the cancellation between them included, as the
+/// `next()` of an inlined iterator leaves it: a chain's `Int?` is not made
+/// and tested at each element. A way that gives a value nothing knows keeps
+/// its test, and a value read again after the join is still there.
+#[test]
+fn a_test_each_way_decided_is_threaded_through_the_join() {
+    let source: &[u8] = b"import std.console\n\nfn doubled(xs: Array[Int]): Int {\n    \
+        xs.iter().map(n => n * 2).filter(n => n % 3 == 0).sumBy(n => n)\n}\n\n\
+        fn found(xs: Array[Int], at: Int): Int? {\n    if at < 0 {\n        return xs.first()\n    }\n    \
+        some(at)\n}\n\nfn picked(xs: Array[Int], at: Int): Int {\n    match found(xs, at) {\n        \
+        some(value) => value\n        none => -1\n    }\n}\n\nfn both(xs: Array[Int], at: Int): Int {\n    \
+        let value = found(xs, at)\n    let shown = match value {\n        some(v) => v\n        none => -1\n    }\n    \
+        shown + (value ?? 7)\n}\n\nfn main() {\n    let xs = [1, 2, 3, 4, 5, 6]\n    \
+        console.println(\"{doubled(xs)} {picked(xs, 2)} {picked(xs, -1)} {picked([], -1)}\")\n    \
+        console.println(\"{both(xs, 2)} {both([5], -1)} {both([], -1)}\")\n}\n";
+    let dir = project_at("threaded-joins", &[("main.to", source)]);
+    let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["build", "main.to", "--output", "main"])
+        .env("TONDO_DUMP_MIR", "sumBy@thread")
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let dumped = String::from_utf8_lossy(&ran.stderr);
+    assert!(ran.status.success(), "{dumped}");
+    // The chain's copy of `sumBy`: a test copied into a branch's edge, and
+    // folded where every way into it knows the tag.
+    assert!(dumped.contains("of them a branch's edge") && dumped.contains("every way into it knows it"), "{dumped}");
+    let ran = Command::new(dir.join("main")).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&ran.stdout), "18 2 1 -1\n4 10 6\n");
+}
+
 /// `TONDO_LAYOUT_SEED` lays a build's functions out in another order, the
 /// same for the same seed: the program does what it did, its panics name
 /// the same frames, and only where its code lies changes.
