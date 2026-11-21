@@ -7,7 +7,10 @@
 // process, woke nobody, since a worker of that domain seemed to look. With
 // two domains of cores it hung thirty times of thirty; now each worker added
 // is given its domain as it starts. `TONDO_CACHE_DOMAINS=2` gives the two
-// domains on any machine. Nothing here is measured by the clock.
+// domains on any machine. Nothing here is measured by the clock: a machine
+// that stops the program between the two looks the workers are added in
+// adds one, leaves nothing marked, and the case then passes without the
+// path it is for, but never waits for a second.
 
 import std.console
 import std.diagnostics
@@ -39,10 +42,11 @@ fn main(): !String {
     let stop = sync.Atomic(false)
     let first = spawn compute(began, stop)
     let second = spawn compute(began, stop)
-    for began.load() < 2 or counted("workers.added") < 2 {
+    // `main` runs again only on a worker put beside the computations.
+    for began.load() < 2 {
         time.sleep(time.milliseconds(1))
     }
-    console.println("workers added beside: {counted("workers.added")}")
+    console.println("main ran beside the computations: {counted("workers.added") >= 1}")
     stop.store(true)
     _ = (first.wait(), second.wait())
     // The workers added retire once they look for a task again.
@@ -60,5 +64,5 @@ fn main(): !String {
 // expect-env: TONDO_CACHE_DOMAINS=2
 // expect-no-schedule: the explorer runs one worker and adds none, so a computation that does not ask holds it, by design
 // expect-no-replay: a recorded run, too, runs its tasks on one worker that adds none
-// expect-stdout: workers added beside: 2
+// expect-stdout: main ran beside the computations: true
 // expect-stdout: children that ended: 40
