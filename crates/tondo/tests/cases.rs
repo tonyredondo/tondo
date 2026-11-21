@@ -596,11 +596,23 @@ fn run_with_timeout(command: &mut Command, seconds: u64, stops: &[Stop]) -> Resu
         let watched = !stops.is_empty();
         move || {
             if watched {
-                let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-                let flags = libc::WEXITED | libc::WNOWAIT;
-                while unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, flags) } == -1
-                    && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
-                {}
+                // macOS reports a stop and a continue here too, though only
+                // an end was asked for: wait again until the report is one.
+                loop {
+                    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+                    let flags = libc::WEXITED | libc::WNOWAIT;
+                    if unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, flags) } == -1 {
+                        if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                            continue;
+                        }
+                        break;
+                    }
+                    if matches!(info.si_code, libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED) {
+                        break;
+                    }
+                    // While it stands, macOS gives the stop back at once.
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
                 *over.lock().unwrap() = true;
             }
             done.send(child.wait())
