@@ -199,7 +199,7 @@ impl {name} for {name}Plugin {{
 /// Serves `implementation` to the program that started this one, over
 /// its standard input and output, until that program closes its end.
 pub fn serve{name}[__Implementation: {name} + Send + Share](implementation: __Implementation): !{p}.Error {{
-    {p}.serve({name}Plugin.contract(), (method, given) {{ {name}Plugin.answer(implementation, method, given) }})
+    {p}.serve({name}Plugin.contract(), (method, given) => {name}Plugin.answer(implementation, method, given))
 }}
 
 /// The answer of `implementation` to a call of method number `method` with
@@ -265,7 +265,7 @@ fn entries(f: &ast::FnDecl, plugin: &str, sources: &SourceMap) -> Result<String,
 pub extern fn tondo_plugin_contract(bytes: Pointer[Pointer[Byte]], length: Pointer[__ffi.CSize]) {{
     let implementation = {name}()
     unsafe {{
-        {p}.offer({plugin_type}.contract(), (method, given) {{ {plugin_type}.answer(implementation, method, given) }}, bytes, length)
+        {p}.offer({plugin_type}.contract(), (method, given) => {plugin_type}.answer(implementation, method, given), bytes, length)
     }}
 }}
 

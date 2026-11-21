@@ -378,7 +378,7 @@ for name in ["ada", "bo", "ada"] {
     group.add(spawn claim(taken, name))
 }
 let claimed = group.wait()
-console.println("{claimed.filter((won) { won }).length()} claimed, {taken.snapshot()}")
+console.println("{claimed.filter(won => won).length()} claimed, {taken.snapshot()}")
 ```
 
 #### Set.length

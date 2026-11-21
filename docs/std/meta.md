@@ -245,7 +245,7 @@ import std.meta
 
 /// Writes `impl Describe`: the public fields with their values.
 pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
-    let shown = request.target().fields().filter(field => not field.private).map((field) { "{field.name}={{self.{field.name}}}" })
+    let shown = request.target().fields().filter(field => not field.private).map(field => "{field.name}={{self.{field.name}}}")
     var out = request.sourceBuilder()
     out.add(meta.code(r"""
         impl $trait for $type {
@@ -324,7 +324,7 @@ pub fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Err
         if declaration.kind() != meta.DeclarationKind.Function {
             continue
         }
-        let parameters = declaration.parameters().map((parameter) { "{parameter.name}: {parameter.typeRef.identity()}" })
+        let parameters = declaration.parameters().map(parameter => "{parameter.name}: {parameter.typeRef.identity()}")
         routes.push("\"{declaration.name()}({parameters.join(", ")})\"")
     }
     var out = request.sourceBuilder()
@@ -351,7 +351,7 @@ import std.meta
 /// `impl[T: Show] Show for Box[T]`.
 pub fn provide(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error {
     let target = request.target()
-    let binders = target.generics().map((generic) { "{generic.name}: {request.traitName()}" })
+    let binders = target.generics().map(generic => "{generic.name}: {request.traitName()}")
     let header = if binders.isEmpty() { "impl" } else { "impl[{binders.join(", ")}]" }
     var out = request.sourceBuilder()
     out.add(meta.code(r"""

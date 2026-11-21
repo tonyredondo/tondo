@@ -1263,7 +1263,7 @@ fn reproduction(dump: &Value, frame: Option<u64>, bench: bool) -> Result<Reprodu
             _ => format!("{function}({})", arguments.join(", ")),
         };
         body.push_str(&match (bench, gives) {
-            (true, _) => format!("    testing.bench(\"{function}\", () {{ {called} }})\n"),
+            (true, _) => format!("    testing.bench(\"{function}\", () => {called})\n"),
             (false, true) => format!("    _ = {called}{question}\n"),
             (false, false) => format!("    {called}{question}\n"),
         });

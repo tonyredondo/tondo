@@ -2055,7 +2055,7 @@ import std.http
 pub type Todo = { id: Int, title: String }
 
 var api = http.App()
-api.get("/todos/:id", (request) { http.Reply.json(Todo { id: request.intParam("id")?, title: "Write docs" }) })
+api.get("/todos/:id", request => http.Reply.json(Todo { id: request.intParam("id")?, title: "Write docs" }))
 api.post("/todos", request => http.Reply.json(request.json[Todo]()?, status: 201))
 
 var app = http.App()
@@ -2400,7 +2400,7 @@ import std.time
 
 var app = http.App()
 // Videos up to 1 GB on this route; 10 MiB on the others.
-app.post("/videos", (request) { http.Reply.text("{request.limitBody(1_000_000_000).saveTo("video.mp4")?} bytes") })
+app.post("/videos", request => http.Reply.text("{request.limitBody(1_000_000_000).saveTo("video.mp4")?} bytes"))
 let limits = http.Limits.Standard with { headTimeout: time.seconds(10) }
 app.listen(port: 8080, limits: some(limits))?
 ```

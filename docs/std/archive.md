@@ -132,7 +132,7 @@ import std.archive
 import std.console
 
 let largest = archive.open("site.zip")?.entries().sortedBy(entry => -entry.size).first()
-console.println("{largest.map((entry) { entry.name })}")
+console.println("{largest.map(entry => entry.name)}")
 ```
 
 ### ArchiveError

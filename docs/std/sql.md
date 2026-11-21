@@ -500,8 +500,8 @@ fn echoing(_: String): sql.Connection ! sql.SqlError {
 
 let driver = sql.Driver {
     system: "echo"
-    placeholder: (index) { "${index}" }
-    identifier: (name) { "\"{name}\"" }
+    placeholder: index => "${index}"
+    identifier: name => "\"{name}\""
     connect: echoing
     place: _ => ("echo", none)
 }
@@ -536,8 +536,8 @@ import std.sql
 fn oracle(): sql.Driver {
     sql.Driver {
         system: "oracle"
-        placeholder: (index) { ":{index}" }
-        identifier: (name) { "\"{name.replace("\"", "\"\"")}\"" }
+        placeholder: index => ":{index}"
+        identifier: name => "\"{name.replace("\"", "\"\"")}\""
         connect: (url) { fail sql.SqlError.of(sql.ErrorKind.Connection, "no Oracle client at {url}") }
         place: url => (url.split("/").last() ?? "", none)
     }

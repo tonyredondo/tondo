@@ -558,7 +558,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
     if selected.is_empty() || !missing.is_empty() {
         let message = match &options.selector {
             Selector::All if options.bench.is_some() => "the project has no benchmarks: a test that calls \
-                `testing.bench(\"name\", () { ... })` in its body is one"
+                `testing.bench(\"name\", () => ...)` in its body is one"
                 .into(),
             Selector::All if options.models => "the project checks no models: a test that calls \
                 `model.check`, `model.machine`, `model.follows` or `model.watch` in its body is one"

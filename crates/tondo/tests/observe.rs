@@ -6937,7 +6937,7 @@ fn a_failure_in_a_dump_becomes_a_test() {
     );
     let written = std::fs::read_to_string(dir.join("src/main_test.to")).unwrap();
     assert!(written.starts_with("import std.testing\n\n// From a dump:"), "{written}");
-    assert!(written.contains("    testing.bench(\"charge\", () { charge(item, rate, mode) })\n"), "{written}");
+    assert!(written.contains("    testing.bench(\"charge\", () => charge(item, rate, mode))\n"), "{written}");
 }
 
 /// A dump of a debug build stops a task that computes, without calling
@@ -7004,7 +7004,7 @@ fn a_dump_stops_a_task_that_computes_at_its_next_line() {
     let written = std::fs::read_to_string(dir.join("src/main_test.to")).unwrap();
     assert!(written.contains("// From a dump of the program as it ran\ntest benchSpin {\n"), "{written}");
     assert!(
-        written.contains("    let rounds = 200000\n    testing.bench(\"spin\", () { spin(seed, rounds) })\n"),
+        written.contains("    let rounds = 200000\n    testing.bench(\"spin\", () => spin(seed, rounds))\n"),
         "{written}"
     );
 }
@@ -7032,7 +7032,7 @@ fn a_recorded_call_becomes_a_benchmark() {
     assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
     let written = std::fs::read_to_string(dir.join("src/main_test.to")).unwrap();
     assert!(written.contains("    let rounds = 500\n    let label = \"r500\"\n"), "{written}");
-    assert!(written.contains("testing.bench(\"work\", () { work(rounds, label) })"), "{written}");
+    assert!(written.contains("testing.bench(\"work\", () => work(rounds, label))"), "{written}");
     // After the longest call ends, the next is the last, of 40 rounds.
     let said = written.split("// From a recording: the call of work at probe ").nth(1).unwrap_or_default();
     let numbers: Vec<u64> = said.split(|c: char| !c.is_ascii_digit()).filter_map(|n| n.parse().ok()).take(2).collect();

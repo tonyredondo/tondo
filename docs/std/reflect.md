@@ -1420,7 +1420,7 @@ pub fn Volume.set(mut self, @Bounds(min: 0, max: 11) level: Int, fade: Bool) {
 
 let method = reflect.typeInfo[Volume]().methods()[0]
 for parameter in method.function().parameters() {
-    let range = parameter.annotation[Bounds]().map((bounds) { " in {bounds.min}..={bounds.max}" }) ?? ""
+    let range = parameter.annotation[Bounds]().map(bounds => " in {bounds.min}..={bounds.max}") ?? ""
     console.println("{parameter.position()} {parameter.name()}: {parameter.typeInfo().qualifiedName()}{range}")
 }
 ```

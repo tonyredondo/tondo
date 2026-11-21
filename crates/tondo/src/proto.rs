@@ -1457,7 +1457,7 @@ impl Translator<'_> {
             });
             let safe = if safe { ", noSideEffects: true" } else { "" };
             methods.push(format!(
-                "            grpc.Method {{ name: {:?}, handler: (call) {{ {handler} }}{safe} }},",
+                "            grpc.Method {{ name: {:?}, handler: call => {handler}{safe} }},",
                 method.name
             ));
             let _ = write!(

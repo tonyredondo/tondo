@@ -31,7 +31,7 @@ type Route = {
 /// pub type Todo = { id: Int, title: String }
 ///
 /// var api = http.App()
-/// api.get("/todos/:id", (request) { http.Reply.json(Todo { id: request.intParam("id")?, title: "Write docs" }) })
+/// api.get("/todos/:id", request => http.Reply.json(Todo { id: request.intParam("id")?, title: "Write docs" }))
 /// api.post("/todos", request => http.Reply.json(request.json[Todo]()?, status: 201))
 ///
 /// var app = http.App()
