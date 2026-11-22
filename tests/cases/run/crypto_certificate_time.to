@@ -1,0 +1,59 @@
+// A certificate's time whose fields a calendar does not hold is not read:
+// read as it was, a month 13 or a 31st of April became another date without
+// a word, in the certificate's validity. The certificate is crypto.to's,
+// its first time, 261030070240Z, changed.
+import std.console
+import std.crypto
+import std.encoding
+
+fn body(): String {
+    """
+MIIB/DCCAaKgAwIBAgIUJrsbVOV0TO1roYzECZI/wS2s4xMwCgYIKoZIzj0EAwIw
+MjELMAkGA1UEBhMCVVMxDTALBgNVBAoMBEFjbWUxFDASBgNVBAMMC2V4YW1wbGUu
+Y29tMB4XDTI2MTAzMDA3MDI0MFoXDTI2MTEyOTA3MDI0MFowMjELMAkGA1UEBhMC
+VVMxDTALBgNVBAoMBEFjbWUxFDASBgNVBAMMC2V4YW1wbGUuY29tMFkwEwYHKoZI
+zj0CAQYIKoZIzj0DAQcDQgAECCQ5cUnaynmRy21fHJ3dcgbQvMSzJwI7jTToMf6n
+hdQUqSGqER1iTP6JXQ90HXZ94JA5L/CRWCExYOnkg2xpI6OBlTCBkjAdBgNVHQ4E
+FgQUugEBTMXlfKHduyntzt+q5khvJCkwHwYDVR0jBBgwFoAUugEBTMXlfKHduynt
+zt+q5khvJCkwDwYDVR0TAQH/BAUwAwEB/zA/BgNVHREEODA2ggtleGFtcGxlLmNv
+bYIPd3d3LmV4YW1wbGUuY29thwR/AAABhxAAAAAAAAAAAAAAAAAAAAABMAoGCCqG
+SM49BAMCA0gAMEUCIQCLeD545e6JY6MxJBoqOoKN6R53tlRX+ZI3AY7p/rnAVAIg
+U5n3h0U1OtPETFxbgfVc+NIhIGQvjCLiE2AxLFMVWOA=
+"""
+}
+
+/// The certificate with its first time's bytes, 13 from where `time`
+/// starts, as `time` says.
+fn withTime(time: String): String {
+    var der = encoding.base64Decode(body().replace("\n", "")) ?? []
+    let first = "261030070240Z".bytes()
+    var at = 0
+    for der.slice(at, at + first.length()) != ok(first) {
+        at += 1
+    }
+    for (index, byte) in time.bytes().iter().enumerate() {
+        der[at + index] = byte
+    }
+    "-----BEGIN CERTIFICATE-----\n{encoding.base64Encode(der)}\n-----END CERTIFICATE-----\n"
+}
+
+fn main() {
+    for time in [
+        "261030070240Z",
+        "261330070240Z",
+        "260431070240Z",
+        "261030250240Z",
+        "2610300702AAZ",
+    ] {
+        match crypto.certificates(withTime(time)) {
+            ok(read) => console.println("{read[0].validFrom}")
+            err(error) => console.println("{error}")
+        }
+    }
+}
+
+// expect-stdout: 2026-10-30T07:02:40Z
+// expect-stdout: the certificate's time `261330070240Z` is not read
+// expect-stdout: the certificate's time `260431070240Z` is not read
+// expect-stdout: the certificate's time `261030250240Z` is not read
+// expect-stdout: the certificate's time `2610300702AAZ` is not read

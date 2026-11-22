@@ -9539,3 +9539,22 @@ length is not twice the size, read with the first byte highest to order;
 longer texts still go to libc, whose way past 32 bytes has no such guess.
 The pending list named needles of up to 8 bytes; 32 is where libc's short
 way ends, so every compare that took that way is covered.
+
+## What a file says is checked before it is used
+
+A library that reads bytes a program was given, as an upload or a
+certificate a peer sent, fails with its own error on any of them: never a
+panic, which ends a server, and never a loop that does not end. The
+archive's readers took sizes, offsets and times from the file and added
+or multiplied them plainly: a size in base 256 or a time of twelve octal
+digits overflowed, a PAX size of -2048 sent the tar reader back to the
+header before it for ever, and ZIP64's eight-byte numbers overflowed as
+they were read. Every number they read now goes through the checked
+forms, a size must lie between zero and the bytes that are left, an
+offset inside the file, and a time within what `time.seconds` holds;
+anything else is the archive's `ArchiveError`. Each of their loops is
+shown to end on any bytes, as its turn moves past at least one block or
+record or fails. A certificate's time whose fields a calendar does not
+hold was read as another date without a word; it is now not read, as a
+short one was not. A search in testing/fuzz reads any bytes as an
+archive, so that the Nightly keeps looking.

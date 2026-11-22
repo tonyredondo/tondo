@@ -492,6 +492,15 @@ fn little(bytes: Array[Byte], at: Int, count: Int): Int {
     value
 }
 
+/// An eight-byte little-endian number of ZIP64, or none when its high bit
+/// makes it larger than Int holds.
+fn wide(bytes: Array[Byte], at: Int): Int? {
+    if Int(bytes.get(at + 7) ?? Byte(0u8)) >= 0x80 {
+        return none
+    }
+    little(bytes, at, 8)
+}
+
 /// `value` as `count` little-endian bytes.
 fn littleBytes(value: Int, count: Int): Array[Byte] {
     var out: Array[Byte] = []
@@ -533,16 +542,18 @@ fn readTar(bytes: Array[Byte], format: Format): Archive ! ArchiveError {
             .iter()
             .enumerate()
             .map(pair => if pair.0 >= 148 and pair.0 < 156 { 32 } else { Int(pair.1) })
-        if sum.reduce(0, (total, b) => total + b) != octal(header, 148, 8) {
-            fail if entries.isEmpty() {
-                problem("the bytes are not an archive: zip, tar, tar.gz or tar.zst")
-            } else {
-                problem("the tar is damaged after `{entries[entries.length() - 1].name}`")
-            }
+        if some(sum.reduce(0, (total, b) => total + b)) != octal(header, 148, 8) {
+            fail damaged(entries)
         }
-        let size = match extended.get("size") {
-            some(text) => Int.parse(text) ?? 0
+        // A size the bytes left hold, so that each turn moves past at least
+        // the header: the loop ends on any bytes.
+        let declared = match extended.get("size") {
+            some(text) => Int.parse(text).ok()
             none => octal(header, 124, 12)
+        }
+        let size = match declared {
+            some(size) if size >= 0 and size <= bytes.length() - (at + 512) => size
+            _ => fail damaged(entries)
         }
         let kind = Int(header[156])
         let data = bytes.slice(at + 512, at + 512 + size) ?? []
@@ -573,9 +584,16 @@ fn readTar(bytes: Array[Byte], format: Format): Archive ! ArchiveError {
         let name = ((extended.get("path") ?? longName) ?? named).removePrefix("./")
         let target = (extended.get("linkpath") ?? longTarget) ?? textOf(header, 157, 257)
         let seconds = match extended.get("mtime") {
-            some(text) => Int.parse(text.split(".")[0]) ?? 0
+            some(text) => Int.parse(text.split(".")[0]).ok()
             none => octal(header, 136, 12)
         }
+        // A time `time.seconds` holds: the year 2262 and the bytes' range
+        // of twelve octal digits do not fit in its nanoseconds.
+        let modified = match seconds {
+            some(n) if n.checkedMul(1000000000).isSome() => __time.utc(__time.seconds(n))
+            _ => fail damaged(entries)
+        }
+        let permissions = octal(header, 100, 8) ?? fail damaged(entries)
         let entryKind = match kind {
             0x35 => some(EntryKind.Directory)
             0x32 => EntryKind.Symlink
@@ -596,8 +614,8 @@ fn readTar(bytes: Array[Byte], format: Format): Archive ! ArchiveError {
                         name: name
                         kind: found
                         size: size
-                        modified: __time.utc(__time.seconds(seconds))
-                        permissions: octal(header, 100, 8) & 0o7777
+                        modified: modified
+                        permissions: permissions & 0o7777
                         target: if found == EntryKind.Symlink { target } else { none }
                     },
                 )
@@ -610,12 +628,12 @@ fn readTar(bytes: Array[Byte], format: Format): Archive ! ArchiveError {
 }
 
 /// A number of a tar header: octal text, or base 256 when its first byte
-/// has its high bit.
-fn octal(header: Array[Byte], at: Int, count: Int): Int {
+/// has its high bit; none when it does not fit in Int.
+fn octal(header: Array[Byte], at: Int, count: Int): Int? {
     if Int(header[at]) & 0x80 != 0 {
         var value = Int(header[at]) & 0x7f
         for index in at + 1..at + count {
-            value = value * 256 + Int(header[index])
+            value = value.checkedMul(256)?.checkedAdd(Int(header[index]))?
         }
         return value
     }
@@ -623,10 +641,20 @@ fn octal(header: Array[Byte], at: Int, count: Int): Int {
     var value = 0
     for c in text.chars() {
         if c >= '0' and c <= '7' {
-            value = value * 8 + c.code() - '0'.code()
+            value = value.checkedMul(8)?.checkedAdd(c.code() - '0'.code())?
         }
     }
     value
+}
+
+/// What a tar whose bytes do not hold together is: no archive, when it has
+/// no entry yet, or one damaged after its last.
+fn damaged(entries: Array[Entry]): ArchiveError {
+    if entries.isEmpty() {
+        problem("the bytes are not an archive: zip, tar, tar.gz or tar.zst")
+    } else {
+        problem("the tar is damaged after `{entries[entries.length() - 1].name}`")
+    }
 }
 
 /// PAX records: `length key=value\n`, one after another.
@@ -728,21 +756,27 @@ fn readZip(bytes: Array[Byte]): Archive ! ArchiveError {
     if end < 0 {
         fail problem("the zip has no central directory")
     }
+    let broken = problem("the zip's central directory is damaged")
     var count = little(bytes, end + 10, 2)
     var at = little(bytes, end + 16, 4)
     // ZIP64: its own end of the central directory, which a locator names.
     if (count == 0xffff or at == 0xffffffff) and
         end >= 20 and
         little(bytes, end - 20, 4) == 0x07064b50 {
-        let record = little(bytes, end - 12, 8)
-        count = little(bytes, record + 32, 8)
-        at = little(bytes, record + 48, 8)
+        let record = match wide(bytes, end - 12) {
+            some(record) if record <= bytes.length() - 56 => record
+            _ => fail broken
+        }
+        count = wide(bytes, record + 32) ?? fail broken
+        at = wide(bytes, record + 48) ?? fail broken
     }
     var entries: Array[Entry] = []
     var contents: Array[Array[Byte]] = []
+    // Each record moves past at least its 46 bytes, and one that would
+    // start past them fails: the walk ends on any count.
     for _ in 0..count {
-        if little(bytes, at, 4) != 0x02014b50 {
-            fail problem("the zip's central directory is damaged")
+        if at > bytes.length() - 46 or little(bytes, at, 4) != 0x02014b50 {
+            fail broken
         }
         let madeBy = little(bytes, at + 5, 1)
         let method = little(bytes, at + 10, 2)
@@ -766,16 +800,17 @@ fn readZip(bytes: Array[Byte]): Archive ! ArchiveError {
             let (tag, length) = (little(bytes, extra, 2), little(bytes, extra + 2, 2))
             var field = extra + 4
             if tag == 0x0001 {
+                let entry = problem("`{name}` of the zip is damaged")
                 if size == 0xffffffff {
-                    size = little(bytes, field, 8)
+                    size = wide(bytes, field) ?? fail entry
                     field += 8
                 }
                 if packedSize == 0xffffffff {
-                    packedSize = little(bytes, field, 8)
+                    packedSize = wide(bytes, field) ?? fail entry
                     field += 8
                 }
                 if local == 0xffffffff {
-                    local = little(bytes, field, 8)
+                    local = wide(bytes, field) ?? fail entry
                 }
             } else if tag == 0x5455 and length >= 5 and little(bytes, field, 1) & 1 == 1 {
                 modified = __time.utc(__time.seconds(little(bytes, field + 1, 4)))
@@ -791,7 +826,14 @@ fn readZip(bytes: Array[Byte]): Archive ! ArchiveError {
         } else {
             EntryKind.File
         }
+        // The entry's local header and its bytes, inside the file.
+        if local > bytes.length() - 30 {
+            fail problem("`{name}` of the zip is damaged")
+        }
         let start = local + 30 + little(bytes, local + 26, 2) + little(bytes, local + 28, 2)
+        if start > bytes.length() or packedSize > bytes.length() - start {
+            fail problem("`{name}` of the zip is damaged")
+        }
         let packed = bytes.slice(start, start + packedSize) ?? []
         let data = match method {
             0 => packed

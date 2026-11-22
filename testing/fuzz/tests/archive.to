@@ -1,0 +1,79 @@
+import std.archive
+import std.io
+import std.testing
+
+test archiveReadsAnyBytes {
+    let seeds = [
+        written(archive.Format.Tar),
+        written(archive.Format.Zip),
+        "x".repeat(600).bytes(),
+        [],
+    ]
+    testing.fuzz(
+        "read",
+        seeds,
+        (bytes: Array[Byte]) {
+            // Compressed bytes are left out: a few kilobytes of gzip or
+            // Zstandard can inflate to more than a worker may hold, which
+            // `read` does before it reads a header (docs/pending.md); the
+            // search looks at the readers' own numbers.
+            if not compressed(bytes) {
+                match archive.read(checksummed(bytes)) {
+                    ok(read) => {
+                        for entry in read.entries() {
+                            _ = read.readBytes(entry.name)
+                        }
+                    }
+                    err(_) => {}
+                }
+            }
+        },
+    )?
+}
+
+/// An archive the library writes: a file with a long name, a directory and
+/// a short file, so that tar has a PAX header and zip its extra fields.
+fn written(format: archive.Format): Array[Byte] {
+    let buffer = io.Buffer()
+    let out = archive.writer(buffer.writer(), format)
+    _ = out.add("{"x".repeat(120)}/long.txt", "long name".bytes())
+    _ = out.addDirectory("dir")
+    _ = out.add("dir/a.txt", "hello".bytes())
+    _ = out.finish()
+    buffer.bytes()
+}
+
+/// The bytes with the checksum of each block that is a ustar header
+/// written again: otherwise almost every change the search makes to a
+/// header's numbers stops at its checksum, and the numbers are never read.
+fn checksummed(bytes: Array[Byte]): Array[Byte] {
+    var out = bytes
+    var at = 0
+    for at + 512 <= out.length() {
+        if out.slice(at + 257, at + 262) == ok("ustar".bytes()) {
+            var sum = 0
+            for index in 0..512 {
+                sum += if index >= 148 and index < 156 { 32 } else { Int(out[at + index]) }
+            }
+            let field = sum
+                .toString(radix: 8)
+                .padStart(6, "0")
+                .bytes()
+                .concat([Byte(0u8), Byte(32u8)])
+            for (index, byte) in field.iter().enumerate() {
+                out[at + 148 + index] = byte
+            }
+        }
+        at += 512
+    }
+    out
+}
+
+/// Whether bytes start as gzip or Zstandard does.
+fn compressed(bytes: Array[Byte]): Bool {
+    let starts = (signature: Array[Int]): Bool {
+        bytes.length() >= signature.length() and
+            (0..signature.length()).all(at => Int(bytes[at]) == signature[at])
+    }
+    starts([0x1f, 0x8b]) or starts([0x28, 0xb5, 0x2f, 0xfd])
+}

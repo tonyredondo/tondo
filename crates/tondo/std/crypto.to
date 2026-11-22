@@ -18,6 +18,7 @@ import std.internal.codec as codecNative
 import std.random as __random
 import std.reflect as __reflect
 import std.time as __time
+import std.timetext as __timetext
 
 /// Why a key, a PEM text, a certificate or sealed data could not be used.
 ///
@@ -655,14 +656,33 @@ fn timeOf(der: Array[Byte], at: Element): __time.DateTime ! CryptoError {
     if full.length() < 14 {
         fail failure("the certificate's time `{text}` is not read")
     }
-    let number = (start: Int, end: Int): Int { Int.parse(full.slice(start, end) ?? "") ?? 0 }
+    // Digits a calendar holds, or the time is not read: a field out of
+    // range would otherwise make another date without a word.
+    let number = (start: Int, end: Int): Int { Int.parse(full.slice(start, end) ?? "") ?? -1 }
+    let (year, month, day) = (number(0, 4), number(4, 6), number(6, 8))
+    let (hour, minute, second) = (number(8, 10), number(10, 12), number(12, 14))
+    let valid =
+        year >= 0 and
+            month >= 1 and
+            month <= 12 and
+            day >= 1 and
+            day <= __timetext.daysIn(year, month) and
+            hour >= 0 and
+            hour <= 23 and
+            minute >= 0 and
+            minute <= 59 and
+            second >= 0 and
+            second <= 59
+    if not valid {
+        fail failure("the certificate's time `{text}` is not read")
+    }
     __time.DateTime {
-        year: number(0, 4)
-        month: number(4, 6)
-        day: number(6, 8)
-        hour: number(8, 10)
-        minute: number(10, 12)
-        second: number(12, 14)
+        year: year
+        month: month
+        day: day
+        hour: hour
+        minute: minute
+        second: second
         nanosecond: 0
     }
 }

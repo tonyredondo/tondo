@@ -1,0 +1,182 @@
+// An archive's numbers that do not fit in Int, sizes below zero or past the
+// bytes that are left, and offsets outside the file fail the read with an
+// ArchiveError, never a panic or a loop: each archive here is one the
+// library writes, with chosen bytes changed. Before, a size past the bytes
+// left was read as less, a PAX size of -1024 read an entry twice, and one
+// of -2048 sent the reader back to the PAX header for ever: a read that
+// never ends fails this case by the runner's timeout.
+import std.archive
+import std.console
+import std.io
+
+/// A tar of `a.txt` and `b.txt`: each header 512 bytes and each body one
+/// block, so b.txt's header is at 1024.
+fn twoFiles(): Array[Byte] ! archive.ArchiveError {
+    let buffer = io.Buffer()
+    let out = archive.writer(buffer.writer(), archive.Format.Tar)
+    out.add("a.txt", "hello".bytes())?
+    out.add("b.txt", "world".bytes())?
+    out.finish()?
+    buffer.bytes()
+}
+
+/// A tar whose second name is too long for its header: a PAX header at
+/// 1024 comes first, its records in the block at 1536.
+fn longSecond(): Array[Byte] ! archive.ArchiveError {
+    let buffer = io.Buffer()
+    let out = archive.writer(buffer.writer(), archive.Format.Tar)
+    out.add("a.txt", "hello".bytes())?
+    out.add("{"x".repeat(120)}/b.txt", "world".bytes())?
+    out.finish()?
+    buffer.bytes()
+}
+
+/// A zip of `a.txt`.
+fn oneFile(): Array[Byte] ! archive.ArchiveError {
+    let buffer = io.Buffer()
+    let out = archive.writer(buffer.writer(), archive.Format.Zip)
+    out.add("a.txt", "hello".bytes())?
+    out.finish()?
+    buffer.bytes()
+}
+
+fn patched(bytes: Array[Byte], at: Int, values: Array[Byte]): Array[Byte] {
+    var out = bytes
+    for (index, value) in values.iter().enumerate() {
+        out[at + index] = value
+    }
+    out
+}
+
+fn filled(value: Int, count: Int): Array[Byte] {
+    var out: Array[Byte] = []
+    for _ in 0..count {
+        out.push(Byte(UInt8.wrapping(value)))
+    }
+    out
+}
+
+/// `count` bytes of `value`, little-endian.
+fn little(value: Int, count: Int): Array[Byte] {
+    var out: Array[Byte] = []
+    for index in 0..count {
+        out.push(Byte(UInt8.wrapping(value >> (8 * index))))
+    }
+    out
+}
+
+fn number(bytes: Array[Byte], at: Int, count: Int): Int {
+    var value = 0
+    for index in 0..count {
+        value |= Int(bytes[at + index]) << (8 * index)
+    }
+    value
+}
+
+/// The tar header at `at` with its checksum written again, so that the
+/// reader looks past it at the numbers changed.
+fn checksummed(bytes: Array[Byte], at: Int): Array[Byte] {
+    var sum = 0
+    for index in 0..512 {
+        sum += if index >= 148 and index < 156 { 32 } else { Int(bytes[at + index]) }
+    }
+    let field = "{sum.toString(radix: 8).padStart(6, "0")}".bytes().concat([Byte(0u8), Byte(32u8)])
+    patched(bytes, at + 148, field)
+}
+
+fn said(bytes: Array[Byte]): String {
+    match archive.read(bytes) {
+        ok(read) => "read {read.entries().length()} entries"
+        err(error) => "{error}"
+    }
+}
+
+fn main(): !archive.ArchiveError {
+    let tar = twoFiles()?
+    console.println(said(tar))
+    // A size in base 256 past Int, in the second header and in the first.
+    console.println(said(checksummed(patched(tar, 1024 + 124, filled(0xff, 12)), 1024)))
+    console.println(said(checksummed(patched(tar, 124, filled(0xff, 12)), 0)))
+    // A time of twelve octal digits, past what a time holds.
+    console.println(said(checksummed(patched(tar, 1024 + 136, "777777777777".bytes()), 1024)))
+    // A size past the bytes that are left.
+    let past = "00000077777".bytes().concat([Byte(0u8)])
+    console.println(said(checksummed(patched(tar, 1024 + 124, past), 1024)))
+    // PAX records of the next entry: a size past Int, one below zero, a time
+    // past what a time holds.
+    let long = longSecond()?
+    console.println(said(long))
+    for record in [
+        "29 size=9223372036854775807\n",
+        "14 size=-1024\n",
+        "14 size=-2048\n",
+        "20 mtime=99999999999\n",
+    ] {
+        console.println(said(patched(long, 1536, record.bytes())))
+    }
+
+    let zip = oneFile()?
+    console.println(said(zip))
+    let end = zip.length() - 22
+    let central = number(zip, end + 16, 4)
+    let ending = patched(zip.slice(end, zip.length()) ?? [], 10, filled(0xff, 2))
+    let locator = (at: Array[Byte]): Array[Byte] {
+        [Byte(0x50u8), Byte(0x4bu8), Byte(0x06u8), Byte(0x07u8)]
+            .concat(filled(0, 4))
+            .concat(at)
+            .concat(little(1, 4))
+    }
+    // ZIP64's end named at an offset past Int.
+    console.println(said((zip.slice(0, end) ?? []).concat(locator(filled(0xff, 8))).concat(ending)))
+    // ZIP64's end with a count past Int, and with one past what the bytes hold.
+    for count in [filled(0xff, 8), little(Int.Max, 8)] {
+        let record = [Byte(0x50u8), Byte(0x4bu8), Byte(0x06u8), Byte(0x06u8)]
+            .concat(filled(0, 28))
+            .concat(count)
+            .concat(filled(0, 8))
+            .concat(little(central, 8))
+        let bytes = (zip.slice(0, end) ?? [])
+            .concat(record)
+            .concat(locator(little(end, 8)))
+            .concat(ending)
+        console.println(said(bytes))
+    }
+    // The entry's packed size in a ZIP64 field past Int.
+    let name = number(zip, central + 28, 2)
+    let extra = number(zip, central + 30, 2)
+    let field = little(1, 2).concat(little(8, 2)).concat(filled(0xff, 8))
+    let marked = patched(
+        patched(zip, central + 20, filled(0xff, 4)),
+        central + 30,
+        little(extra + 12, 2),
+    )
+    let at = central + 46 + name
+    console.println(
+        said(
+            (marked.slice(0, at) ?? [])
+                .concat(field)
+                .concat(marked.slice(at, marked.length()) ?? []),
+        ),
+    )
+    // A local header past the file, and a packed size past the bytes left.
+    console.println(said(patched(zip, central + 42, little(0xfffffffe, 4))))
+    console.println(said(patched(zip, central + 20, little(0x7fffffff, 4))))
+}
+
+// expect-stdout: read 2 entries
+// expect-stdout: the tar is damaged after `a.txt`
+// expect-stdout: the bytes are not an archive: zip, tar, tar.gz or tar.zst
+// expect-stdout: the tar is damaged after `a.txt`
+// expect-stdout: the tar is damaged after `a.txt`
+// expect-stdout: read 2 entries
+// expect-stdout: the tar is damaged after `a.txt`
+// expect-stdout: the tar is damaged after `a.txt`
+// expect-stdout: the tar is damaged after `a.txt`
+// expect-stdout: the tar is damaged after `a.txt`
+// expect-stdout: read 1 entries
+// expect-stdout: the zip's central directory is damaged
+// expect-stdout: the zip's central directory is damaged
+// expect-stdout: the zip's central directory is damaged
+// expect-stdout: `a.txt` of the zip is damaged
+// expect-stdout: `a.txt` of the zip is damaged
+// expect-stdout: `a.txt` of the zip is damaged
