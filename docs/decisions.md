@@ -9409,3 +9409,27 @@ and a loop over `0..text.byteLength()` reads in place with no check at all,
 which `tondo optimizations` says. It is an offset, not an index: it does
 not count from the end, so a negative one panics with `P0001` as one past
 the end does, with the index and the length as its data.
+
+## A parameter moved on one way is let go of after the join
+
+A function that takes its parameter, gives it up on one way of an `if`,
+as `var copy = values` that a push then changes, and only reads it on the
+other has one release after the join. The move zeroed the parameter on
+its way, so that release lets go of the reference the other way holds
+and of nothing on this one: the code was right. A debug `tondo` stopped
+on it in its check of the MIR, which knew a parameter only as held,
+released or moved. Making `moves` keep the count on such a way would have
+suited the check and cost the program: the push copied the array its
+caller had given away, with 9% more instructions and 8 kB on the heap
+for an array of a thousand. So the check learned the state it lacked,
+held on one way and moved on another, which a release ends and nothing
+else may name. It rests on two facts, which its comment states: every
+build zeroes a moved place, a release one, a debug one, a live build's new
+code and an entry by OSR alike, as they share one code generator; and
+every release finds nothing to let go of in zeros, which every local
+released on a way that never assigned it rests on already. That state
+joined with a way that released the parameter stays an error, as whatever
+follows is wrong on one of the two. The case of the shape holds the first
+fact at every push: it makes new arrays after each call, and with a code
+generator made to stop zeroing a moved place it failed in every mode on the
+runtime as it ships, where without them only mimalloc's own checks saw it.

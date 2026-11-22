@@ -301,18 +301,42 @@ fn read_besides_target(statement: &Statement, place: &Place) -> bool {
 }
 
 /// What a taken parameter holds at a point: the reference its caller gave,
-/// or none, released or moved away.
+/// or none, released or moved away; or, past a join of a way that holds it
+/// and one that moved it, either of the two.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Taken {
     Owned,
     Released,
     Moved,
+    /// The reference on one way, the zeros of a move on another. Releasing
+    /// it lets go of the reference once, as two facts hold: every kind of
+    /// build zeroes a moved place, a release build, a debug one, a live
+    /// build's new code and an entry by OSR alike, as they share the one
+    /// code generator (`Statement::Moved`); and every release finds
+    /// nothing to let go of in zeros, the runtime's calls by testing for
+    /// null and those written in place by testing the word, which a local
+    /// released on a way that never assigned it rests on too. Anything
+    /// else that names it reads zeros on one way.
+    Either,
+}
+
+/// The state past a join of two ways, or none where one released the
+/// parameter and the other may still hold it: whatever follows, a release
+/// or none, is wrong on one of them.
+fn joined(a: Taken, b: Taken) -> Option<Taken> {
+    use Taken::*;
+    match (a, b) {
+        _ if a == b => Some(a),
+        (Owned | Moved | Either, Owned | Moved | Either) => Some(Either),
+        (Released, Moved) | (Moved, Released) => Some(Released),
+        _ => None,
+    }
 }
 
 /// Where a function lets go of a parameter it takes (`takes`) other than
-/// once on every way out: it releases it twice, reads it once released,
-/// returns still holding it, or comes to one block holding it on one way
-/// and not on another.
+/// once on every way out: it releases it twice, reads it once released or
+/// where one way moved it, returns still holding it on a way, or comes to
+/// one block having released it on one way and holding it on another.
 pub fn taken_once(body: &Body) -> Option<String> {
     for (at, &param) in body.params.iter().enumerate() {
         if !body.takes.get(at).copied().unwrap_or(false) {
@@ -354,37 +378,66 @@ pub fn taken_once(body: &Body) -> Option<String> {
                 let (mut used, mut defined) = (Vec::new(), Vec::new());
                 statement_locals(statement, &mut used, &mut defined);
                 state = match (statement, state) {
-                    (Statement::Release(place), Taken::Owned) if place.local == param && place.path.is_empty() => {
+                    (Statement::Release(place), Taken::Owned | Taken::Either)
+                        if place.local == param && place.path.is_empty() =>
+                    {
                         Taken::Released
                     }
                     (Statement::Release(place), Taken::Released) if place.local == param => {
                         return Some(format!("releases its parameter `l{}` twice, in b{block}", param.0));
                     }
                     (Statement::Release(place), Taken::Moved) if place.local == param => Taken::Moved,
+                    // A part held in the parameter's own room, which the
+                    // move zeroed with the rest.
+                    (Statement::Release(place), Taken::Either)
+                        if place.local == param
+                            && place.path.iter().all(|step| matches!(step, Proj::Field(_) | Proj::Variant(..))) =>
+                    {
+                        Taken::Either
+                    }
                     (Statement::Moved(place), _) if place.local == param && place.path.is_empty() => Taken::Moved,
                     (Statement::Clear(local), _) if *local == param => Taken::Moved,
                     (_, Taken::Released) if used.contains(&param) => {
                         return Some(format!("reads its parameter `l{}` after releasing it, in b{block}", param.0));
                     }
+                    (_, Taken::Either) if used.contains(&param) || defined.contains(&param) => {
+                        return Some(format!(
+                            "uses its parameter `l{}` in b{block}, where one way moved it and another holds it",
+                            param.0
+                        ));
+                    }
                     (_, state) => state,
                 };
             }
             let data = &body.blocks[block];
-            if matches!(data.terminator, Terminator::Return(_)) && state == Taken::Owned {
-                return Some(format!("returns from b{block} still holding its parameter `l{}`", param.0));
+            let mut used = Vec::new();
+            terminator_uses(&data.terminator, &mut used);
+            if state == Taken::Either && used.contains(&param) {
+                return Some(format!(
+                    "uses its parameter `l{}` at the end of b{block}, where one way moved it and another holds it",
+                    param.0
+                ));
+            }
+            if matches!(data.terminator, Terminator::Return(_)) && matches!(state, Taken::Owned | Taken::Either) {
+                return Some(format!("returns from b{block} still holding its parameter `l{}` ({state:?})", param.0));
             }
             for next in successors(&data.terminator) {
-                match entry[next] {
+                let Some(before) = entry[next] else {
+                    entry[next] = Some(state);
+                    pending.push(next);
+                    continue;
+                };
+                match joined(before, state) {
                     None => {
-                        entry[next] = Some(state);
-                        pending.push(next);
-                    }
-                    Some(before) if before != state => {
                         return Some(format!(
-                            "comes to b{next} holding its parameter `l{}` on one way ({before:?}) and not on another \
-                             ({state:?})",
+                            "comes to b{next} having released its parameter `l{}` on one way and holding it on \
+                             another ({before:?}, {state:?})",
                             param.0
                         ));
+                    }
+                    Some(after) if after != before => {
+                        entry[next] = Some(after);
+                        pending.push(next);
                     }
                     Some(_) => {}
                 }
@@ -425,5 +478,142 @@ mod tests {
         let found = unassigned(main, &program.types).expect("the read of what the call gave");
         assert!(found.contains("before every path to it assigns it"), "{found}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The MIR of a function that takes an array, `p`, and is given a flag,
+    /// with `blocks(p, flag, other)` for its code, `other` a local of the
+    /// array's type.
+    fn taking(blocks: impl FnOnce(Local, Local, Local) -> Vec<BlockData>) -> Body {
+        static LOWERED: std::sync::OnceLock<Body> = std::sync::OnceLock::new();
+        let lowered = LOWERED.get_or_init(|| {
+            let dir = std::env::temp_dir().join(format!("tondo-verify-taking-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("main.to");
+            let source = "fn given(values: Array[Int], flag: Bool): Int {\n    if flag { values.length() } else { 0 }\n}\n\n\
+                fn main() {\n    let _ = given([1], true)\n}\n";
+            std::fs::write(&path, source).unwrap();
+            let analysis = crate::driver::analyze(&path).unwrap();
+            let bodies = crate::lower::lower(analysis.program.as_ref().unwrap(), false, false, None);
+            let _ = std::fs::remove_dir_all(&dir);
+            bodies.into_iter().find(|body| body.name.ends_with("given")).unwrap()
+        });
+        let mut body = lowered.clone();
+        let (p, flag) = (body.params[0], body.params[1]);
+        let other = Local(body.locals.len() as u32);
+        body.locals.push(body.locals[p.0 as usize]);
+        body.takes = vec![true, false];
+        body.blocks = blocks(p, flag, other);
+        body
+    }
+
+    fn block(stmts: Vec<Statement>, terminator: Terminator) -> BlockData {
+        BlockData { stmts, terminator }
+    }
+
+    fn goto(to: u32) -> Terminator {
+        Terminator::Goto(BlockId(to))
+    }
+
+    fn branch(flag: Local, then: u32, otherwise: u32) -> Terminator {
+        Terminator::Branch(Operand::local(flag), BlockId(then), BlockId(otherwise))
+    }
+
+    fn back() -> Terminator {
+        Terminator::Return(Operand::Const(Const::Unit))
+    }
+
+    fn read(target: Local, source: Local) -> Statement {
+        Statement::Assign(Place::local(target), Box::new(Rvalue::Use(Operand::local(source))), Default::default())
+    }
+
+    /// Two ways into a block, one that moved the parameter and one that
+    /// holds it, then `after`, and the function returns.
+    fn joined_after(after: impl FnOnce(Local, Local) -> Vec<Statement>) -> Option<String> {
+        taken_once(&taking(|p, flag, other| {
+            vec![
+                block(vec![], branch(flag, 1, 2)),
+                block(vec![read(other, p), Statement::Moved(Place::local(p))], goto(3)),
+                block(vec![], goto(3)),
+                block(after(p, other), back()),
+            ]
+        }))
+    }
+
+    /// Past a join of a way that moved the parameter and one that holds
+    /// it, a release lets it go, as the move zeroed it on the one way; a
+    /// read, or a return without the release, is wrong on one of them.
+    #[test]
+    fn a_join_of_a_moved_way_and_a_held_one_takes_one_release() {
+        assert_eq!(joined_after(|p, _| vec![Statement::Release(Place::local(p))]), None);
+        let read = joined_after(|p, other| vec![read(other, p), Statement::Release(Place::local(p))]);
+        assert!(read.as_ref().is_some_and(|found| found.contains("where one way moved it")), "{read:?}");
+        let kept = joined_after(|_, _| vec![]);
+        assert!(kept.as_ref().is_some_and(|found| found.contains("still holding")), "{kept:?}");
+        let twice = joined_after(|p, _| vec![Statement::Release(Place::local(p)), Statement::Release(Place::local(p))]);
+        assert!(twice.as_ref().is_some_and(|found| found.contains("twice")), "{twice:?}");
+    }
+
+    /// A way that released the parameter joined with one that holds it,
+    /// or with a join that may, leaks it or releases it twice, whatever
+    /// follows, which is why the join is the error (here it ends nowhere,
+    /// so that nothing after it is); joined with one that moved it, it is
+    /// released.
+    #[test]
+    fn a_released_way_joins_only_one_that_holds_nothing() {
+        let release = |p: Local| Statement::Release(Place::local(p));
+        let held = taken_once(&taking(|p, flag, _| {
+            vec![
+                block(vec![], branch(flag, 1, 2)),
+                block(vec![release(p)], goto(3)),
+                block(vec![], goto(3)),
+                block(vec![], Terminator::Unreachable),
+            ]
+        }));
+        assert!(held.as_ref().is_some_and(|found| found.contains("having released")), "{held:?}");
+        let either = taken_once(&taking(|p, flag, _| {
+            vec![
+                block(vec![], branch(flag, 1, 2)),
+                block(vec![Statement::Moved(Place::local(p))], goto(3)),
+                block(vec![], goto(3)),
+                block(vec![], branch(flag, 4, 5)),
+                block(vec![release(p)], goto(6)),
+                block(vec![], goto(6)),
+                block(vec![], Terminator::Unreachable),
+            ]
+        }));
+        assert!(either.as_ref().is_some_and(|found| found.contains("having released")), "{either:?}");
+        let moved = |after: fn(Local) -> Vec<Statement>| {
+            taken_once(&taking(|p, flag, _| {
+                vec![
+                    block(vec![], branch(flag, 1, 2)),
+                    block(vec![release(p)], goto(3)),
+                    block(vec![Statement::Moved(Place::local(p))], goto(3)),
+                    block(after(p), back()),
+                ]
+            }))
+        };
+        assert_eq!(moved(|_| vec![]), None);
+        let twice = moved(|p| vec![Statement::Release(Place::local(p))]);
+        assert!(twice.as_ref().is_some_and(|found| found.contains("twice")), "{twice:?}");
+    }
+
+    /// A loop's head is a join: held on the way in and moved on the way
+    /// back, the loop's body may not read the parameter, but its way out
+    /// releases it.
+    #[test]
+    fn a_loop_that_moves_its_parameter_joins_at_its_head() {
+        let looped = |turn: fn(Local, Local) -> Vec<Statement>| {
+            taken_once(&taking(|p, flag, other| {
+                vec![
+                    block(vec![], goto(1)),
+                    block(vec![], branch(flag, 2, 3)),
+                    block(turn(p, other), goto(1)),
+                    block(vec![Statement::Release(Place::local(p))], back()),
+                ]
+            }))
+        };
+        assert_eq!(looped(|p, _| vec![Statement::Moved(Place::local(p))]), None);
+        let read = looped(|p, other| vec![read(other, p), Statement::Moved(Place::local(p))]);
+        assert!(read.as_ref().is_some_and(|found| found.contains("where one way moved it")), "{read:?}");
     }
 }
