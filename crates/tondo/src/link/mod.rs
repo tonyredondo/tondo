@@ -69,6 +69,21 @@ pub enum Product<'a> {
     Library { exports: &'a [String] },
 }
 
+/// Puts the elements of a list at the positions of each group in another
+/// order among themselves, the same for the same seed (`TONDO_LAYOUT_SEED`),
+/// by another stream of it than the one that orders the program's functions.
+fn shuffle(seed: u64, groups: &[Vec<usize>], mut swap: impl FnMut(usize, usize)) {
+    let mut state = (seed ^ 0x6c69_6e6b_6f72_6465).wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+    for group in groups {
+        for k in (1..group.len()).rev() {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            swap(group[k], group[(state % (k as u64 + 1)) as usize]);
+        }
+    }
+}
+
 /// Links the program's object with archives (the runtime first), the
 /// system libraries the runtime needs (`-lname` and files, as Rust lists
 /// them) and the native libraries of `[native]`. A static executable
@@ -196,6 +211,7 @@ pub fn link(
         library: exports.map(|exports| (name, exports)),
         strip,
         recordable,
+        layout: crate::driver::layout_seed(),
     };
     let bytes = elf::link(inputs).map_err(|message| match message.strip_prefix("undefined: ") {
         Some(names) => {
@@ -498,6 +514,7 @@ fn link_macho(
         strip,
         identifier,
         recordable,
+        layout: crate::driver::layout_seed(),
     };
     let bytes = macho::link(inputs)?;
     write_output(output, &bytes)?;

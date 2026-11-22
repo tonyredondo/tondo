@@ -106,6 +106,9 @@ pub struct Inputs<'a> {
     /// The C library's functions that `RECORDED` names are the runtime's
     /// wrappers.
     pub recordable: bool,
+    /// `TONDO_LAYOUT_SEED`: the archives' sections, the runtime's functions
+    /// and data among them, in another order, the same for the same seed.
+    pub layout: Option<u64>,
 }
 
 /// What the runtime records of a run, and replays (toolchain 7.6): in an
@@ -1160,6 +1163,30 @@ impl<'a> Linker<'a> {
             }
         }
         placed.sort_by_key(|&(out, priority, bounded, ..)| (out, priority, bounded));
+        if let Some(seed) = inputs.layout {
+            let objects = inputs.objects.len();
+            let movable = |&(out, priority, bounded, i, s): &(Out, u64, &[u8], usize, usize)| {
+                let name = self.inputs[i]
+                    .file
+                    .section_by_index(object::SectionIndex(s))
+                    .ok()
+                    .and_then(|s| s.name_bytes().ok());
+                i >= objects
+                    && priority == 0
+                    && bounded.is_empty()
+                    && matches!(out, Out::Text | Out::Rodata | Out::DataRelRo | Out::Data | Out::Bss)
+                    && !name.is_some_and(|n| n == b".init" || n == b".fini")
+            };
+            // Each output's on its own, as the sort left them together.
+            let mut groups: Vec<Vec<usize>> = Vec::new();
+            for at in (0..placed.len()).filter(|&at| movable(&placed[at])) {
+                match groups.last_mut() {
+                    Some(group) if placed[group[0]].0 == placed[at].0 => group.push(at),
+                    _ => groups.push(vec![at]),
+                }
+            }
+            super::shuffle(seed, &groups, |a, b| placed.swap(a, b));
+        }
         for (out, _, bounded, i, s) in placed {
             let section = self.inputs[i].file.section_by_index(object::SectionIndex(s)).unwrap();
             let (align, size) = (section.align().max(1), section.size());

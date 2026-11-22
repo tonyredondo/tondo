@@ -139,6 +139,9 @@ pub struct Inputs<'a> {
     /// The C library's functions that `RECORDED` names are the runtime's
     /// wrappers.
     pub recordable: bool,
+    /// `TONDO_LAYOUT_SEED`: the archives' atoms, the runtime's functions and
+    /// data among them, in another order, the same for the same seed.
+    pub layout: Option<u64>,
 }
 
 /// What the runtime records of a run, and replays (toolchain 7.6): in an
@@ -1248,6 +1251,18 @@ impl<'a> Linker<'a> {
                     }
                 }
             }
+        }
+        // Another order of the archives' atoms in each regular section or
+        // zero-filled one, the same for the same seed; the program's keep
+        // their places, which its own seed ordered.
+        if let Some(seed) = inputs.layout {
+            let mut groups: Vec<Vec<usize>> = vec![Vec::new(); self.outs.len()];
+            for (at, &(out, i, _)) in placements.iter().enumerate() {
+                if i >= inputs.objects.len() && matches!(self.outs[out].kind, S_REGULAR | S_ZEROFILL) {
+                    groups[out].push(at);
+                }
+            }
+            super::shuffle(seed, &groups, |a, b| placements.swap(a, b));
         }
         // The program's DWARF, unless stripped: its sections whole, in a
         // segment of their own that is mapped with no access, as Go's.
@@ -2541,6 +2556,7 @@ pub(crate) fn example(strip: bool) -> Vec<u8> {
         strip,
         identifier: "example".into(),
         recordable: false,
+        layout: None,
     })
     .unwrap()
 }

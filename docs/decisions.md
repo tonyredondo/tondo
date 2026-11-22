@@ -9456,3 +9456,27 @@ paid a swap. The window was shown by a stall point in it, which broke
 the old code at all twelve seeds tried where five hundred plain rounds
 never did: a window between two steps is found by stopping a thread in
 it, not by running more rounds.
+
+## A layout seed orders the runtime too
+
+`--layouts` and `TONDO_LAYOUT_SEED` ordered only the program's functions,
+so a change to the runtime was measured in one arrangement of the
+runtime, and what the change moved there the rule could not tell from
+what it did. On 2026-11-22 a change that read the scheduler's clock
+straight left textkit's `frequencies of 2000 words` 4% slower past every
+order of the program: 337–345 µs before, 352–360 after, with the same
+instructions, 157% more misses of the first-level data cache, and none of
+the changed code run. The misses were on the stack's lines, a load from
+the frame, a `call`, a `ret`, across the hot functions, not on one table:
+the runtime's text came out 128 bytes shorter, so all that followed it fell
+in other sets of that cache, each the lines of one address modulo 4096. A
+throwaway runtime with an unrelated read at each task's start ran textkit
+at 320–326 µs, faster than both, at any shift of its stacks: a row can move
+five percent with an edit it never runs. So the link orders the archives'
+sections on ELF and their atoms on Mach-O, the runtime's functions and data
+among them, by the seed too, from a stream of its own. One seed per build
+orders the program and the runtime, so `--layouts n` stays n builds; the
+same seed gives the same bytes; a build without one is what it was. The
+program's object moves as one block, which its seed orders inside, and
+thread-local data, constructors and sections bounded by a symbol keep
+their places.

@@ -1489,7 +1489,8 @@ fn a_part_of_a_parameter_only_read_needs_no_count() {
 
 /// `TONDO_LAYOUT_SEED` lays a build's functions out in another order, the
 /// same for the same seed: the program does what it did, its panics name
-/// the same frames, and only where its code lies changes.
+/// the same frames, and only where its code lies changes. The runtime's
+/// functions and data move too, as the link orders them by the seed.
 #[test]
 fn a_layout_seed_moves_the_code_and_nothing_else() {
     let source: &[u8] = b"fn twice(n: Int): Int {\n    n * 2\n}\n\nfn deep(n: Int): Int {\n    if n == 0 {\n        \
@@ -1522,6 +1523,30 @@ fn a_layout_seed_moves_the_code_and_nothing_else() {
     assert_eq!((&said_one, &said_two), (&said, &said));
     assert_eq!(one, again);
     assert!(one != plain && two != one);
+    // The runtime's symbols, functions and data apart, by where they lie.
+    let runtime = |bytes: &[u8]| {
+        use object::{Object, ObjectSymbol, SymbolKind};
+        let file = object::File::parse(bytes).unwrap();
+        let mut found = std::collections::BTreeMap::new();
+        for symbol in file.symbols() {
+            let Ok(name) = symbol.name() else { continue };
+            let name = name.trim_start_matches('_');
+            let ours = name.starts_with("tondo_rt_") || name.contains("13tondo_runtime");
+            if ours && matches!(symbol.kind(), SymbolKind::Text | SymbolKind::Data) {
+                found.insert(name.to_string(), (symbol.kind() == SymbolKind::Data, symbol.address()));
+            }
+        }
+        found
+    };
+    let (plain, one, two) = (runtime(&plain), runtime(&one), runtime(&two));
+    assert_eq!(one.keys().collect::<Vec<_>>(), two.keys().collect::<Vec<_>>());
+    let moved = |data: bool, from: &std::collections::BTreeMap<String, (bool, u64)>| {
+        one.iter().filter(|(name, (is, at))| *is == data && from.get(*name).is_some_and(|(_, was)| was != at)).count()
+    };
+    let (functions, data) = (one.values().filter(|(is, _)| !is).count(), one.values().filter(|(is, _)| *is).count());
+    assert!(functions > 100 && data > 10, "{functions} functions, {data} data");
+    assert!(moved(false, &two) > functions / 2 && moved(true, &two) > data / 2, "between two seeds");
+    assert!(moved(false, &plain) > functions / 2 && moved(true, &plain) > data / 2, "against no seed");
 }
 
 /// `--no-logpoints`, or `logpoints = false` in a project's `[build]`, builds

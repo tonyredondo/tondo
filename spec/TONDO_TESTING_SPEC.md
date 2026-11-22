@@ -2630,10 +2630,11 @@ el código o con lo que corre al lado. Un benchmark cuyas instrucciones no
 contó uno de los lados empeora con esa razón. `--regression-by time`, el
 valor por defecto, juzga el tiempo.
 
-`--layouts <n>`, de 2 a 16, compila además los tests con sus funciones en
-otros `n - 1` órdenes y mide cada benchmark también en cada uno, con
-`--bench-time` cada vez: el tiempo de un benchmark se mueve hasta un tercio
-solo con dónde cae su código. Sus medidas siguen siendo las del orden de
+`--layouts <n>`, de 2 a 16, compila además los tests con sus funciones, las
+del runtime y los datos de este, en otros `n - 1` órdenes y mide cada
+benchmark también en cada uno, con `--bench-time` cada vez: el tiempo de un
+benchmark se mueve hasta un tercio solo con dónde caen su código y sus
+datos. Sus medidas siguen siendo las del orden de
 siempre, y la línea para personas añade el rango de las medianas de los
 órdenes; el reporte las da en `layouts_ns_per_op`, la de siempre primero.
 Comparado con una línea base que también se midió en varios órdenes, un
