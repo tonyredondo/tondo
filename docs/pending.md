@@ -146,6 +146,7 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 | What | Since |
 | --- | --- |
 | The views of texts, once their two numbers are in | 2026-11-22 |
+| QUIC, HTTP/3 and WebTransport, beside the HTTP/1, HTTP/2 and WebSockets the library has: asked for by the maintainer on 2026-11-22, to be weighed first. Owed to him: how hard each is on the runtime's own poller and its rustls, with the choices for the protocol's code, what the API would be beside `WebSocket`, how it is tested against browsers and other servers, and its rows against Go's | 2026-11-22 |
 
 ## Parked
 
