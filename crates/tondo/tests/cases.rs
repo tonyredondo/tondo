@@ -512,8 +512,11 @@ fn why_it_hangs(pid: u32) -> String {
     let dump = dir.join(format!("hung-{pid}.dump.json"));
     let tondo = env!("CARGO_BIN_EXE_tondo");
     let dumped = Command::new(tondo).args(["dump", &pid.to_string(), "--output"]).arg(&dump).output();
-    if !dumped.is_ok_and(|output| output.status.success()) {
-        return String::new();
+    match &dumped {
+        Ok(output) if output.status.success() => {}
+        // What kept the dump from coming, said rather than left out.
+        Ok(output) => return format!("\n--- no dump: {}", String::from_utf8_lossy(&output.stderr).trim()),
+        Err(error) => return format!("\n--- no dump: tondo dump did not start: {error}"),
     }
     let read = |view: &str| {
         let shown = Command::new(tondo).args(["dump", "read"]).arg(&dump).arg(view).output();
@@ -522,22 +525,36 @@ fn why_it_hangs(pid: u32) -> String {
     format!("\n--- why\n{}\n--- tasks\n{}\n--- dump: {}", read("why"), read("tasks"), dump.display())
 }
 
-/// A program that does not end says why in the failure of its case.
+/// A program that does not end says why in the failure of its case. It is
+/// asked once it says it waits, by its own word: asked at a time, as when
+/// the cases' runner gave it two seconds, a program not yet started that
+/// far, under the load of every test at once in alpine's container, served
+/// no dump, and the case said only that it timed out.
 #[test]
 fn a_case_that_hangs_says_why() {
+    use std::io::BufRead;
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("hangs");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let source = "import std.time\n\nfn main() {\n    time.sleep(time.seconds(120))\n}\n";
+    let source = "import std.console\nimport std.time\n\nfn main() {\n    console.eprintln(\"waits\")\n    time.sleep(time.seconds(120))\n}\n";
     std::fs::write(dir.join("hangs.to"), source).unwrap();
     let compiler = env!("CARGO_BIN_EXE_tondo");
     let built =
         Command::new(compiler).args(["build", "hangs.to", "--output", "hangs"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let mut program = Command::new(dir.join("hangs"));
-    program.env("TONDO_DIAGNOSTICS", "1").env("TONDO_CI_DUMPS", &dir);
-    let failure = run_with_timeout(&mut program, 2, &[]).err().unwrap_or_default();
-    assert!(failure.contains("timed out") && failure.contains("hangs.to:4 in main"), "{failure}");
+    let mut program = Command::new(dir.join("hangs"))
+        .env("TONDO_DIAGNOSTICS", "1")
+        .env("TONDO_CI_DUMPS", &dir)
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut said = String::new();
+    std::io::BufReader::new(program.stderr.take().unwrap()).read_line(&mut said).unwrap();
+    assert_eq!(said.trim(), "waits");
+    let why = why_it_hangs(program.id());
+    let _ = program.kill();
+    let _ = program.wait();
+    assert!(why.contains("hangs.to:6 in main"), "{why}");
 }
 
 /// Runs a program, failing the case when it has not finished in time, and
