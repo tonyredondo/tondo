@@ -1,6 +1,11 @@
 import std.testing
 import std.toml
 
+// Blind inside its reader: TOML is read by native code (runtime/toml.rs),
+// which has no counters, so the search sees only the Tondo around it; the
+// coverage it prints is the share of the build's Tondo code, the library's
+// included, that its inputs reached, not of the reader.
+
 test tomlReadsAnyText {
     let seeds = [
         "a = 1\n[b]\nc = [1, 2.5, true, \"x\"]\nd = 1979-05-27T07:32:00Z\n[[e]]\nf = 'g'\n",

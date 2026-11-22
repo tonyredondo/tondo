@@ -1,6 +1,11 @@
 import std.json
 import std.testing
 
+// Blind inside its reader: json is read by native code (runtime/json.rs),
+// which has no counters, so the search sees only the Tondo around it; the
+// coverage it prints is the share of the build's Tondo code, the library's
+// included, that its inputs reached, not of the reader.
+
 test jsonReadsAnyText {
     let seeds = [
         "{{\"a\": [1, -2.5e3, true, null, \"x\\u00e9\"]}}",

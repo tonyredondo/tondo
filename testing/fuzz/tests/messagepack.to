@@ -1,6 +1,11 @@
 import std.messagepack
 import std.testing
 
+// Blind inside its reader: MessagePack is read by native code
+// (runtime/msgpack.rs), which has no counters, so the search sees only the
+// Tondo around it; the coverage it prints is the share of the build's Tondo
+// code, the library's included, that its inputs reached, not of the reader.
+
 test messagepackReadsAnyBytes {
     testing.fuzz(
         "parse",
