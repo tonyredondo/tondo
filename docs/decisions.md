@@ -9756,3 +9756,28 @@ task's 64 MiB at 43,644 levels. Both readers now refuse a list or map
 past 128 levels, as JSON's does, with the depth in the error; in YAML an
 alias counts the depth its anchor adds where it is repeated. What the
 program builds deep and writes out is its own doing and is not bounded.
+
+## A program started by its name is looked up by the runtime
+
+Starting a child by its name took a third of a second on macOS under the
+regions' checks, which every case sets, and 2 to 7 ms without them, where
+by its path it took a millisecond either way. Every start sets the
+child's environment, `PATH` included, and std's rule (1.98.1,
+`sys/process/unix`) is then to fork and exec a program that has no `/`,
+since `posix_spawnp` would look it up on the parent's `PATH`; the fork
+copies the parent's map of memory, whose cost grows with its size, and
+the checks set 64 TiB of it apart. Now the runtime looks the name up
+itself, as `execvp` would in the child: on the child's `PATH`, an empty
+or relative entry from its directory, entries where nothing may be run
+passed over, the C library's own `PATH` when the child has none, and
+`NotFound` or `PermissionDenied` as `execvp` says. It hands std the path,
+and the start goes through `posix_spawn`: no fork, under the checks or
+not. A file the system runs only through `execvp`, a script with no
+`#!`, is started by its name as before: glibc's and macOS's `execvp` hand
+it to the shell, and musl's, which a static build links, refuses it. And
+`argv[0]` stays the name.
+
+What still forks, by std's rule: a start on glibc before 2.24, and on
+macOS one with a directory and a relative path, which the plan's name
+with a `/` can give. A process group goes through `posix_spawn`'s own
+attribute.

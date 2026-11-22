@@ -1,0 +1,79 @@
+// A program started by its name is looked up as `execvp` does in the
+// child, on the child's own `PATH`, and then started by its path, which
+// takes no copy of the program's memory: a name with a `/` is not looked
+// up; an empty entry, or one that is not absolute, is from the child's
+// directory; an entry where nothing may be run is passed over; with no
+// `PATH`, the C library's own is used. Nothing to run is `NotFound`, and
+// only files that may not be run `PermissionDenied`. A script with no `#!`
+// starts by its name as before, which `execvp` hands to the shell or not as
+// its C library does, and `argv[0]`, which `ps` shows, stays the name the
+// plan gave.
+import std.console
+import std.env
+import std.fs
+import std.process
+
+fn said(outcome: String ! process.ProcessError): String {
+    match outcome {
+        ok(text) => text
+        err(error) => "{error}"
+    }
+}
+
+fn tool(directory: String, text: String, runs: Bool) {
+    _ = fs.createDirectory(directory)
+    let file = "{directory}/lookup-tool"
+    _ = fs.writeText(file, text)
+    _ = fs.setPermissions(file, if runs { 0o755 } else { 0o644 })
+}
+
+fn main() {
+    let here = env.currentDirectory()
+    tool("only-text", "#!/bin/sh\necho not this one\n", false)
+    tool("tools", "#!/bin/sh\necho the tool in tools\n", true)
+    tool("bare", "echo a script with no shebang\n", true)
+    let tools = "{here}/tools"
+    console.println(
+        "on a PATH set for the child: {said(process.command("lookup-tool").env("PATH", tools).text())}",
+    )
+    console.println(
+        "a name with a slash: {said(process.command("tools/lookup-tool").env("PATH", "/nowhere").text())}",
+    )
+    console.println(
+        "an empty entry, from the child's directory: {said(process.command("lookup-tool").env("PATH", "").directory("tools").text())}",
+    )
+    console.println(
+        "an entry that is not absolute: {said(process.command("lookup-tool").env("PATH", "tools").text())}",
+    )
+    console.println(
+        "a file that may not be run, passed over: {said(process.command("lookup-tool").env("PATH", "{here}/only-text:{tools}").text())}",
+    )
+    console.println(
+        "only files that may not be run: {said(process.command("lookup-tool").env("PATH", "{here}/only-text").text())}",
+    )
+    console.println(
+        "nothing at all: {said(process.command("lookup-tool").env("PATH", "{here}/nowhere").text())}",
+    )
+    console.println(
+        "no PATH in the child's environment: {said(process.command("sh", "-c", "echo the default").clearEnv().text())}",
+    )
+    // A script with no `#!` starts by its name, as before, and is what
+    // `execvp` makes of it: glibc's and macOS's hand it to the shell, and
+    // musl's, which a static build links, refuses it as a host failure.
+    let bare = said(process.command("lookup-tool").env("PATH", "{here}/bare").text())
+    let asExecvp = bare == "a script with no shebang" or bare == "host"
+    console.println("a script with no shebang, as execvp: {asExecvp}")
+    // `argv[0]`, which `ps` shows first, is the name and not the path found.
+    console.println("argv[0]: {said(process.command("sh", "-c", "echo $0").text())}")
+}
+
+// expect-stdout: on a PATH set for the child: the tool in tools
+// expect-stdout: a name with a slash: the tool in tools
+// expect-stdout: an empty entry, from the child's directory: the tool in tools
+// expect-stdout: an entry that is not absolute: the tool in tools
+// expect-stdout: a file that may not be run, passed over: the tool in tools
+// expect-stdout: only files that may not be run: permission denied
+// expect-stdout: nothing at all: not found
+// expect-stdout: no PATH in the child's environment: the default
+// expect-stdout: a script with no shebang, as execvp: true
+// expect-stdout: argv[0]: sh

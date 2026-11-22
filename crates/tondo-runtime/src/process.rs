@@ -13,7 +13,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -596,11 +596,13 @@ fn spawn(plan: &PlanObject, defaults: Defaults) -> std::io::Result<Running> {
     let started = (|| {
         for (index, stage) in stages.iter().enumerate() {
             let last = index + 1 == stages.len();
-            let mut command = std::process::Command::new(&stage.program);
+            let path = child_path(stage, &environment);
+            let found = located(&stage.program, path.as_deref(), stage.directory.as_deref())?;
+            let mut command =
+                std::process::Command::new(found.as_deref().map_or(stage.program.as_os_str(), Path::as_os_str));
             command.args(&stage.arguments).env_clear();
-            if let Some(invoked) = &stage.invoked {
-                command.arg0(invoked);
-            }
+            // Its `argv[0]`, which `ps` shows, stays the name the plan gave.
+            command.arg0(stage.invoked.as_ref().unwrap_or(&stage.program));
             // The first stage leads the group, and the others join it.
             if stage.group {
                 command.process_group(running.group.map_or(0, |group| group as i32));
@@ -704,6 +706,85 @@ fn spawn(plan: &PlanObject, defaults: Defaults) -> std::io::Result<Running> {
     }
     LIVE.lock().unwrap_or_else(|e| e.into_inner()).extend(running.pids.iter().map(|&pid| (pid, running.group)));
     Ok(running)
+}
+
+/// The `PATH` a stage's program is looked up on: its environment's.
+fn child_path(stage: &Stage, environment: &[(OsString, OsString)]) -> Option<OsString> {
+    let mut path = if stage.clear_env {
+        None
+    } else {
+        environment.iter().find(|(name, _)| name == "PATH").map(|(_, value)| value.clone())
+    };
+    for (name, value) in &stage.env {
+        if name == "PATH" {
+            path = value.clone();
+        }
+    }
+    path
+}
+
+/// What `execvp` looks on when the child's environment has no `PATH`: the
+/// C library's own.
+#[cfg(target_os = "macos")]
+const DEFAULT_PATH: &str = "/usr/bin:/bin";
+#[cfg(all(target_os = "linux", target_env = "musl"))]
+const DEFAULT_PATH: &str = "/usr/local/bin:/bin:/usr/bin";
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
+const DEFAULT_PATH: &str = "/bin:/usr/bin";
+
+/// The file a child runs for `program`, looked up as `execvp` would in the
+/// child: a name with a `/` is not looked up; an entry of `path` that is
+/// empty, or not absolute, is from the child's `directory`; an entry where
+/// nothing it may run is found is passed over; with no `PATH`, the C
+/// library's own. Nothing to run is `NotFound`, and only files it may not
+/// run `PermissionDenied`, as `execvp` says.
+///
+/// Given its path, std starts a child with `posix_spawn`; by a name looked
+/// up on a `PATH` set for the child, as every start sets its environment,
+/// it forks and execs, copying the parent's map of memory, which with the
+/// regions' checks took a third of a second on macOS where `posix_spawn`
+/// takes a millisecond. `None` starts it by its name as before: one with a
+/// `/`, or a file that only `execvp` runs, a script with no `#!` that it
+/// hands to the shell.
+fn located(program: &OsStr, path: Option<&OsStr>, directory: Option<&Path>) -> std::io::Result<Option<PathBuf>> {
+    if program.is_empty() || program.as_bytes().contains(&b'/') {
+        return Ok(None);
+    }
+    let here = std::env::current_dir()?;
+    let directory = directory.map_or_else(|| here.clone(), |directory| here.join(directory));
+    let path = path.map_or(DEFAULT_PATH.as_bytes(), OsStr::as_bytes);
+    let mut denied = false;
+    for entry in path.split(|&byte| byte == b':') {
+        let file = directory.join(OsStr::from_bytes(entry)).join(program);
+        match std::fs::metadata(&file) {
+            Ok(found) if found.is_file() && runnable(&file) => return Ok(started_by_path(file)),
+            Ok(_) => denied = true,
+            Err(error) if error.kind() == ErrorKind::PermissionDenied => denied = true,
+            Err(_) => {}
+        }
+    }
+    Err(if denied { ErrorKind::PermissionDenied } else { ErrorKind::NotFound }.into())
+}
+
+/// Whether this process may run the file.
+fn runnable(file: &Path) -> bool {
+    let Ok(name) = std::ffi::CString::new(file.as_os_str().as_bytes()) else { return false };
+    unsafe { libc::access(name.as_ptr(), libc::X_OK) == 0 }
+}
+
+/// The file when the system runs it by itself, as its first bytes say: a
+/// `#!` line, or an executable of ELF or Mach-O. Another goes to `execvp`.
+fn started_by_path(file: PathBuf) -> Option<PathBuf> {
+    let mut head = [0u8; 4];
+    let read = std::fs::File::open(&file).and_then(|mut opened| opened.read(&mut head)).unwrap_or(0);
+    let shebang = read >= 2 && head.starts_with(b"#!");
+    let binary = read == 4
+        && (head == *b"\x7fELF"
+            || matches!(
+                u32::from_be_bytes(head),
+                0xfeed_face | 0xfeed_facf | 0xcefa_edfe | 0xcffa_edfe | 0xcafe_babe | 0xbeba_feca
+            ));
+    (shebang || binary).then_some(file)
 }
 
 /// The children of processes that started and nobody waited for, which a
