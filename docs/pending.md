@@ -33,14 +33,15 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 
 | Row | Behind by | What is left | Since |
 | --- | --- | --- | --- |
-| texts/trim, texts/trim read | 3.4×, 3.25× | `trim` in Tondo measured again on today's main, then the inliner weighing a call by what inlining buys, and a region for the copy of a function over its budget that returns its parameter or what it made. The two forms of 2026-11-20 lost by 12.9% for those two causes | 2026-11-20, [decisions](decisions.md): "Trim stays a native until a call is weighed by what inlining buys" |
-| queries/numbers iter map filter sum | 275.0k instructions against 142.8k | The loop's fast arm placed after its branch; the two reads of the task's attention an element, once it is said which check they are; the address of that flag held in a register through the loop; the total kept on the stack | 2026-11-21 |
+| texts/trim, texts/trim read | 3.4×, 3.25× | `trim` in Tondo measured again on today's main; then the inliner weighing a call by what inlining buys, and a region for the copy of a function over its budget that returns its parameter or what it made; then what still stays behind Go, by function and with its machine code, as a list for the optimizer. The two forms of 2026-11-20 lost by 12.9% for those two causes | 2026-11-20, [decisions](decisions.md): "Trim stays a native until a call is weighed by what inlining buys" |
+| queries/numbers iter map filter sum | 275.0k instructions against 142.8k, with no count for a parameter's parts (285.1k without) | The loop's fast arm placed after its branch; the two reads of the task's attention an element, once it is said which check they are; the address of that flag held in a register through the loop; and where the total lives, to read again in the machine code | 2026-11-21 |
 | queries/iter filter sumBy, queries/countBy | 1.71×, 1.18× | The same loop's rest; `countBy` by its own profile | 2026-11-21 |
-| texts/chars ascii, texts/chars other | 2.24×, 1.54× | Two taken jumps a byte against Go's one: the fast arm after its branch | 2026-11-21 |
+| texts/chars ascii, texts/chars other | 2.24×, 1.54× | Two taken jumps a byte against Go's one, which the fast arm after its branch lifts; and the loop's count checked for overflow each turn, which is Tondo's to keep unless it is proven | 2026-11-21 |
 | programs/sum lines | 2.40×, 5 allocations against 2 | Its profile first: the reader and `readLine`'s path. Its lines are short texts, which nothing copies | 2026-11-21 |
 | net/tls echo | 1.03–1.05× | rustls's buffers, an allocation a record each way, which its API without buffers would not make | 2026-11-12, [speed plan](speed.md), H2 |
 | ffi from a C thread, texts/toUpper other, tasks/spawn, runtime/mutex 4x1000, programs/count words | under 1.10× | No piece yet | 2026-11-21 |
 | The table at x86-64-v3 | of 2026-11-15, before a week of the optimizer's work | Taken again with the next table | 2026-11-14 |
+| A new table against Go | | After the chain's two pieces, the fast arm and the attention's reads | 2026-11-21 |
 
 ## Speed work decided and not done
 
@@ -68,6 +69,8 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 | What each worker runs, in the text of `tondo blocked` and of a dump: today only in their JSON | 2026-11-21 | The same |
 | An example in `tondo explain` for the codes that have none: 17 of 180 have one, from the guide's blocks | 2026-11-21 | |
 | The idle path's call that lets a worker put beside another go: reached only when a held task ends between the monitor's read and its mark | 2026-11-21 | `testing/mutants/explained.txt` when a run lists it |
+| The scheduler's one mutant left open: a worker that looks for tasks and finds one elsewhere wakes the next if the shared queue filled meanwhile, which neither a test nor the model shows. The model of waking needs a task woken outside any task, and its fairness made to follow the code | 2026-11-08 | [the refactor](refactor.md), status of phase 0 |
+| The heap's checks in the Nightly on musl and macOS: on Linux with glibc alone to begin with, until its first clean runs | 2026-11-22 | `.github/workflows/nightly.yml` |
 
 ## The manual
 
@@ -91,3 +94,9 @@ interfaces, an image to debug in containers, the mouse in a terminal, a
 newer allocator on macOS, and a first release. And, by the maintainer's
 word of 2026-11-22, trying the editor's extension in a real VS Code and
 publishing it: not yet.
+
+By the maintainer's decisions of 2026-11-09, in [the speed plan](speed.md)'s
+status, and not forgotten: Cranelift's code kept by function (F2), later;
+the checker on every core (J), left as its numbers say; and a reader of
+TOML's events without the tree, which waits for a program that decodes
+TOML often.
