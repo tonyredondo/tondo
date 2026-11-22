@@ -6,6 +6,10 @@
 # the owner of the checkout, with what they use installed: a C compiler,
 # git, curl and kill.
 export DEBIAN_FRONTEND=noninteractive
+# Each test's output and panic as it happens, not in the summary at the
+# binary's end: a binary the watch below kills still leaves the words of
+# the tests that failed before.
+export RUST_TEST_NOCAPTURE=1
 apt-get update -qq && apt-get install -y -qq gcc git curl procps > /dev/null || exit 1
 exec setpriv --reuid="${OWNER%:*}" --regid="${OWNER#*:}" --clear-groups env HOME=/tmp sh -c '
 # A test binary that has not ended in an hour and a half has hung: it fails,
