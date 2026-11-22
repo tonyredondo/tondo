@@ -33,8 +33,7 @@ before the chain's rest because the chain's adapters wait for it too.
    clock read at each spawn and join and the compare of a short needle, and
    the Nightly's first run with the stops and the heap's checks. First
    because both say whether what is on main is sound, and anything they
-   find is fixed before more is built on it. With it, the check of the MIR that stops a debug
-   `tondo` on valid code, which a program of twelve lines reaches today.
+   find is fixed before more is built on it.
 2. **`trim`**: the inliner weighing a call by what inlining buys and a
    region for the copy, which the plain form in Tondo, measured again,
    waits for; then the list of what stays behind Go. Second because its rows
@@ -111,7 +110,6 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 | --- | --- | --- |
 | observe's `debugger_goes_back_in_a_replay` fails now and then under load. A copy says its probe since 2026-11-21: the line it prints at its next failure is the lead | 2026-11-16 | `crates/tondo/tests/observe.rs` |
 | `every_debugged_program_s_end_reaches_the_editor` fails now and then on x86-64 macOS: once on 2026-11-20, not reproduced in 57,000 rounds here, and again on 2026-11-22, where the test said what it saw: round 26, the session answered `initialize`, `launch` and `configurationDone` and gave one `output`, then neither `exited` nor `terminated`. Next: at its limit the test says whether the program still runs and where, and what the adapter last read | 2026-11-20 | `crates/tondo/tests/observe.rs`; CI run 44964356533 |
-| A debug build of `tondo`, the one the tests run, stops in its own check of the MIR on valid code: a function that takes its parameter and gives it up on one way of an `if` and not on the other ("holding its parameter `l0` on one way (Moved) and not on another (Owned)"). A release `tondo` builds it and its program is right, as a moved local is zeroed. `moves` is to stop counting a release reached through a join as giving the value up: a push of its own, after what is owed and before the inliner's weighing, which a larger budget makes meet it often | 2026-11-22 | `crates/tondo/src/moves.rs`, `verify.rs` |
 | The time a task has been ready in the queue every worker takes from, only if a stamp at each enqueue measures clean | 2026-11-21 | [decisions](decisions.md): "The scheduler's state where people look" |
 | What each worker runs, in the text of `tondo blocked` and of a dump: today only in their JSON | 2026-11-21 | The same |
 | An example in `tondo explain` for the codes that have none: 17 of 180 have one, from the guide's blocks. The others get a program that gives the code alone, a case of `tests/cases` named beside the code, shown with what the checker says of it when asked, or with its panic's line: 94 codes have such a case today, and the rest get one written, but those that take a project, a command or the test runner, listed with why | 2026-11-21 | `crates/tondo/src/explain.rs` |
