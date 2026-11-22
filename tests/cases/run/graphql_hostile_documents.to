@@ -1,0 +1,86 @@
+// Documents any client can send a GraphQL server, which ended the program
+// or held it: a fragment that spreads itself, through another or inside a
+// field, recursed until the stack ended, as the fuzz search found; a
+// document nested 100,000 deep, in its selections, lists or objects, ended
+// the stack of the parser; and fragments that each spread the next one
+// twice doubled the work at each, some 900 bytes holding 312 MiB. Now the
+// first two are errors of the document and the third is answered at once:
+// a regression in it would take the case past the runner's timeout.
+import std.console
+import std.graphql
+
+pub type Book = {
+    id: Int
+    title: String
+    related: Array[Book]
+}
+
+pub type Library = {
+    books: Array[Book]
+}
+
+/// The first line of an answer, the message of its first error if it has
+/// one.
+fn shown(answer: String): String {
+    let marker = "\"message\":\""
+    match answer.find(marker) {
+        some(at) => {
+            let rest = answer.slice(at + marker.length(), answer.length()) ?? ""
+            rest.slice(0, rest.find("\"") ?? rest.length()) ?? rest
+        }
+        none => answer
+    }
+}
+
+fn main() {
+    let schema = graphql.schema(Library { books: [Book { id: 1, title: "Tondo", related: [] }] })
+    let cycles = [
+        r"""fragment F on Book { id ...F } { books { ...F } }""",
+        r"""fragment F on Book { ...G } fragment G on Book { title ...F } { books { ...F } }""",
+        r"""fragment F on Book { related { ...F } } { books { ...F } }""",
+    ]
+    for document in cycles {
+        console.println(shown("{schema.execute(document)}"))
+    }
+    // Nested to the bound, read; one deeper, refused.
+    let open = r"{"
+    let close = r"}"
+    let list = r"{ books(x: "
+    let tail = r") { id } }"
+    let books = r"{ books "
+    let innermost = r"{ id"
+    let member = r"{a: "
+    let start = r"{ books { "
+    let spread = r"... on Book { "
+    let end = r" } }"
+    for depth in [256, 257] {
+        let fields = "{books.repeat(depth - 1)}{innermost}{close.repeat(depth)}"
+        console.println("{depth} fields: {shown("{schema.execute(fields)}")}")
+        // The document's own selection set is one of the levels.
+        let lists = "{list}{"[".repeat(depth - 1)}{"]".repeat(depth - 1)}{tail}"
+        console.println("{depth} lists: {shown("{schema.execute(lists)}")}")
+    }
+    let objects = "{list}{member.repeat(1000)}1{close.repeat(1000)}{tail}"
+    console.println("objects: {shown("{schema.execute(objects)}")}")
+    let inline = "{start}{spread.repeat(1000)}id{close.repeat(1000)}{end}"
+    console.println("inline: {shown("{schema.execute(inline)}")}")
+    // Thirty fragments, each spreading the next twice.
+    var doubled = r"{ books { ...F0 } } "
+    for level in 0..30 {
+        doubled =
+            "{doubled}fragment F{level} on Book {open} ...F{level + 1} ...F{level + 1} {close} "
+    }
+    doubled = "{doubled}fragment F30 on Book {open} id {close}"
+    console.println("doubled: {schema.execute(doubled)}")
+}
+
+// expect-stdout: the fragment `F` spreads itself, which GraphQL does not allow
+// expect-stdout: the fragment `F` spreads itself, which GraphQL does not allow
+// expect-stdout: the fragment `F` spreads itself, which GraphQL does not allow
+// expect-stdout: 256 fields: `Book` has no field `books`; its fields: id, title, related
+// expect-stdout: 256 lists: {"data":{"books":[{"id":1}]}}
+// expect-stdout: 257 fields: the document nests deeper than 256 selections, lists or objects
+// expect-stdout: 257 lists: the document nests deeper than 256 selections, lists or objects
+// expect-stdout: objects: the document nests deeper than 256 selections, lists or objects
+// expect-stdout: inline: the document nests deeper than 256 selections, lists or objects
+// expect-stdout: doubled: {"data":{"books":[{"id":1}]}}

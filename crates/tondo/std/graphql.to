@@ -548,6 +548,40 @@ fn blockText(raw: String): String {
 type Reader = {
     tokens: Array[Token]
     at: __sync.Mutex[Int]
+    /// How many selection sets, lists, objects and list types it is inside.
+    depth: __sync.Mutex[Int]
+}
+
+/// The deepest a document may nest, as a regex's syntax may by default:
+/// the recursion that reads a document ended the program's stack for one
+/// of some 800 KB nested 100,000 deep, which a client can send.
+const MostNested: Int = 256
+
+/// Enters a nesting, refused past `MostNested`. Its `leave` comes when it
+/// is read; a document that fails meanwhile is not read further.
+fn Reader.enter(self): !Unreadable {
+    let depth = self.depth.update(
+        (inside) {
+            inside += 1
+            inside
+        },
+    )
+    if depth > MostNested {
+        let token = self.peek()
+        fail Unreadable {
+            message: "the document nests deeper than {MostNested} selections, lists or objects"
+            line: token.line
+            column: token.column
+        }
+    }
+}
+
+fn Reader.leave(self) {
+    self.depth.update(
+        (inside) {
+            inside -= 1
+        },
+    )
 }
 
 fn Reader.peek(self): Token {
@@ -586,7 +620,7 @@ fn Reader.name(self): String ! Unreadable {
 }
 
 fn parsed(source: String): Document ! Unreadable {
-    let reader = Reader { tokens: tokens(source)?, at: __sync.Mutex(0) }
+    let reader = Reader { tokens: tokens(source)?, at: __sync.Mutex(0), depth: __sync.Mutex(0) }
     var operations: Array[Operation] = []
     var fragments: Map[String, Fragment] = [:]
     for not reader.is("end") {
@@ -656,8 +690,10 @@ fn parsed(source: String): Document ! Unreadable {
 fn Reader.typeReference(self): String ! Unreadable {
     var written = if self.is("[") {
         _ = self.take()
+        self.enter()?
         let inner = self.typeReference()?
         _ = self.expect("]")?
+        self.leave()
         "[{inner}]"
     } else {
         self.name()?
@@ -671,6 +707,7 @@ fn Reader.typeReference(self): String ! Unreadable {
 
 fn Reader.selections(self): Array[Selection] ! Unreadable {
     _ = self.expect("{{")?
+    self.enter()?
     var found: Array[Selection] = []
     for not self.is("}}") {
         if self.is("end") {
@@ -723,6 +760,7 @@ fn Reader.selections(self): Array[Selection] ! Unreadable {
         )
     }
     _ = self.take()
+    self.leave()
     found
 }
 
@@ -764,14 +802,17 @@ fn Reader.literal(self): Literal ! Unreadable {
             enumerated => Literal.Constant(__json.Value.Text(enumerated))
         }
         "[" => {
+            self.enter()?
             var items: Array[Literal] = []
             for not self.is("]") {
                 items.push(self.literal()?)
             }
             _ = self.take()
+            self.leave()
             Literal.Listed(items)
         }
         "{{" => {
+            self.enter()?
             var members: Array[(String, Literal)] = []
             for not self.is("}}") {
                 let name = self.name()?
@@ -779,6 +820,7 @@ fn Reader.literal(self): Literal ! Unreadable {
                 members.push((name, self.literal()?))
             }
             _ = self.take()
+            self.leave()
             Literal.Members(members)
         }
         _ => fail Unreadable {
@@ -852,6 +894,16 @@ fn Schema.executed(
         ok(found) => found
         err(problem) => return failedWith(problem.message, problem.line, problem.column)
     }
+    // GraphQL refuses a fragment that spreads itself, through others or
+    // not: run, it would collect its own fields until the stack ends.
+    match cycle(read.fragments) {
+        some(name) => return failedWith(
+            "the fragment `{name}` spreads itself, which GraphQL does not allow",
+            1,
+            1,
+        )
+        none => {}
+    }
     let chosen = match operation {
         some(name) => read.operations.find(each => each.name == some(name))
         none if read.operations.length() == 1 => read.operations.first()
@@ -908,6 +960,58 @@ fn Schema.executed(
     }
 }
 
+/// The fragments a selection set spreads, in its fields' selections too.
+fn spreads(selections: Array[Selection]): Array[String] {
+    var names: Array[String] = []
+    for selection in selections {
+        match selection {
+            Selection.Picked(field) => names.extend(spreads(field.selections))
+            Selection.Spread(name, _) => names.push(name)
+            Selection.Inline(_, _, inner) => names.extend(spreads(inner))
+        }
+    }
+    names
+}
+
+/// A fragment that spreads itself, through others or not: walked with a
+/// path of its own rather than by recursion, so that a long chain of
+/// fragments does not end the stack either.
+fn cycle(fragments: Map[String, Fragment]): String? {
+    var edges: Map[String, Array[String]] = [:]
+    for (name, fragment) in fragments {
+        edges[name] = spreads(fragment.selections).filter(target => fragments.contains(target))
+    }
+    // 1 on the path being walked, 2 walked to its end.
+    var state: Map[String, Int] = [:]
+    for (start, _) in edges {
+        if state.contains(start) {
+            continue
+        }
+        state[start] = 1
+        var path: Array[(String, Int)] = [(start, 0)]
+        for not path.isEmpty() {
+            let (name, next) = path[path.length() - 1]
+            let targets = edges.get(name) ?? []
+            if next >= targets.length() {
+                state[name] = 2
+                _ = path.pop()
+                continue
+            }
+            path[path.length() - 1] = (name, next + 1)
+            let target = targets[next]
+            match state.get(target) {
+                some(1) => return target
+                some(_) => {}
+                none => {
+                    state[target] = 1
+                    path.push((target, 0))
+                }
+            }
+        }
+    }
+    none
+}
+
 fn failedWith(message: String, line: Int, column: Int): String {
     "{{\"errors\":[{{\"message\":{__json.encode(message)},\"locations\":[{{\"line\":{line},\"column\":{column}}}]}}]}}"
 }
@@ -934,8 +1038,18 @@ fn Run.kept(self, directives: Array[Directive]): Bool {
     true
 }
 
-/// The fields a selection set picks on a type, fragments spread.
-fn Run.collected(self, typeName: String, selections: Array[Selection], into: var Array[Field]) {
+/// The fields a selection set picks on a type, fragments spread: each
+/// fragment once, as GraphQL's CollectFields does with its visited
+/// fragments. A second spread of one gives fields the first gave, and
+/// without the set fragments that spread the next one twice doubled the
+/// work at each: some 900 bytes held 312 MiB.
+fn Run.collected(
+    self,
+    typeName: String,
+    selections: Array[Selection],
+    into: var Array[Field],
+    visited: var Array[String],
+) {
     for selection in selections {
         match selection {
             Selection.Picked(field) => {
@@ -944,16 +1058,20 @@ fn Run.collected(self, typeName: String, selections: Array[Selection], into: var
                 }
             }
             Selection.Spread(name, directives) => {
+                if name in visited or not self.kept(directives) {
+                    continue
+                }
                 match self.fragments.get(name) {
-                    some(fragment) if self.kept(directives) and fragment.on == typeName => {
-                        self.collected(typeName, fragment.selections, var into)
+                    some(fragment) if fragment.on == typeName => {
+                        visited.push(name)
+                        self.collected(typeName, fragment.selections, var into, var visited)
                     }
                     _ => {}
                 }
             }
             Selection.Inline(condition, directives, inner) => {
                 if self.kept(directives) and (condition.map(on => on == typeName) ?? true) {
-                    self.collected(typeName, inner, var into)
+                    self.collected(typeName, inner, var into, var visited)
                 }
             }
         }
@@ -970,7 +1088,8 @@ fn Run.selected(
     path: String,
 ): String? {
     var fields: Array[Field] = []
-    self.collected(typeName, selections, var fields)
+    var visited: Array[String] = []
+    self.collected(typeName, selections, var fields, var visited)
     var written: Array[String] = []
     var keys: Array[String] = []
     for field in fields {

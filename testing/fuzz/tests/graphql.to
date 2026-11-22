@@ -1,0 +1,34 @@
+import std.graphql
+import std.testing
+
+/// Any document a client sends, run against a schema: an answer, with its
+/// errors, and never a panic or a hang. Most of what the search makes is no
+/// document at all; the seeds give it the forms a parser meets: fields,
+/// arguments, variables, fragments, directives and introspection.
+test graphqlRunsAnyDocument {
+    let schema = graphql.schema(
+        Library {
+            books: [
+                Book { id: 1, title: "Tondo", pages: 300, tags: ["language"] },
+                Book { id: 2, title: "Go", pages: 250, tags: [] },
+            ]
+        },
+    )
+    let seeds = [
+        r"""{ books { id title } }""",
+        r"""query Find($t: String!, $n: Int = 1) { search(text: $t, limit: $n) { title pages tags } }""",
+        r"""{ book(id: 1) { title } b: book(id: 3) { id } __typename }""",
+        r"""{ __schema { types { name kind fields(includeDeprecated: true) { name args { name } } } } }""",
+        r"""fragment F on Book { title ... on Book { pages } } { books { ...F id @include(if: true) } }""",
+        r"""mutation { nothing }""",
+        r"""{ search(text: "é\"", limit: -1) { title } }""",
+        "",
+    ]
+    testing.fuzz(
+        "document",
+        seeds,
+        (document: String) {
+            _ = schema.execute(document)
+        },
+    )?
+}

@@ -9594,3 +9594,18 @@ anything is allocated, and says what the image declares and what a read
 may hold. An image of more than 512 MiB of pixels, some 134 megapixels in
 RGBA, is no longer read; whether, and how, a program may raise that, and
 what bounds an archive's inflating, are the maintainer's to decide.
+
+## A GraphQL document is read and run within bounds of its own
+
+A GraphQL server reads documents from any client, and three shapes of one
+ended or held the program. A fragment that spreads itself, directly,
+through another or inside a field, recursed until the stack ended, as the
+fuzz search found in its first forty seconds: GraphQL refuses such a
+document ("Fragments must not form cycles"), and so does the library now,
+before it runs. A document nested 100,000 deep, in selection sets, inline
+fragments, lists or objects, some 800 KB, ended the stack of the reader:
+past 256 levels, the default a regex's syntax may nest, it is an error of
+the document. And fragments that each spread the next one twice doubled
+the work at each level, some 900 bytes holding 312 MiB: fields are now
+collected as GraphQL's CollectFields collects them, each fragment once
+per selection set, which gives the same answer in linear time.

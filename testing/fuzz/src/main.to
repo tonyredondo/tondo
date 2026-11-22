@@ -35,3 +35,27 @@ pub fn sample(): Sample {
 }
 
 fn main() {}
+
+// What the GraphQL search asks of a schema: a query with fields, methods
+// with arguments, an optional result and a list.
+
+pub type Book = {
+    id: Int
+    title: String
+    pages: Int
+    tags: Array[String]
+}
+
+pub type Library = {
+    books: Array[Book]
+}
+
+/// The books whose title has the text, at most `limit`.
+pub fn Library.search(self, text: String, limit: Int = 10): Array[Book] {
+    self.books.filter(book => book.title.contains(text)).slice(0, limit.max(0)) ?? []
+}
+
+/// The book of an id.
+pub fn Library.book(self, id: Int): Book? {
+    self.books.find(book => book.id == id)
+}

@@ -1,0 +1,174 @@
+import std.http
+import std.testing
+
+/// A form read from any body: what it reads, sent again as a form, reads
+/// back the same.
+test formReadsAnyBody {
+    var app = http.App()
+    app.post("/form", request => http.Reply.json(request.form()?))
+    let client = app.client()
+    let seeds = ["a=1&b=2", "a=%20&a=x+y", "=&&=", "%zz=%", "%C3%A9=%E2%82%AC&b", ""]
+    testing.fuzz(
+        "form",
+        seeds,
+        (body: String) {
+            let sent = http.Body.text(body, contentType: "application/x-www-form-urlencoded")
+            match client.post("/form", body: sent) {
+                ok(response) if response.status() == 200 => {
+                    let fields = response.json[Map[String, String]]() ?? [:]
+                    let again = client.post("/form", body: http.Body.form(fields))
+                    let read = match again {
+                        ok(answer) => answer.json[Map[String, String]]() ?? [:]
+                        err(_) => [:]
+                    }
+                    assert(read == fields, "{body}")
+                }
+                _ => {}
+            }
+        },
+    )?
+}
+
+/// The parts of any multipart body. The seeds carry the boundary the
+/// header names, or almost every change the search made would stop at it.
+test uploadsReadAnyBody {
+    var app = http.App()
+    app.post(
+        "/upload",
+        (request) {
+            var read = 0
+            for upload in request.uploads() {
+                let part = upload?
+                read += part.bytes()?.length() + part.name().length() + part.fileName().length()
+            }
+            http.Reply.text("{read}")
+        },
+    )
+    let client = app.client()
+    let seeds = [
+        "--b\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--b--\r\n",
+        "--b\r\nContent-Disposition: form-data; name=\"f\"; filename=\"x.txt\"\r\nContent-Type: text/plain\r\n\r\nhi\r\n--b\r\nContent-Disposition: form-data; name=\"g\"\r\n\r\n\r\n--b--\r\n",
+        "--b--\r\n",
+        "",
+    ]
+    testing.fuzz(
+        "multipart",
+        seeds,
+        (body: String) {
+            let sent = http.Body.text(body, contentType: "multipart/form-data; boundary=b")
+            _ = client.post("/upload", body: sent)
+        },
+    )?
+}
+
+/// Any `Cookie` header a client sends, read by the server.
+test cookiesReadAnyHeader {
+    var app = http.App()
+    app.get("/cookies", request => http.Reply.json(request.cookies()))
+    let client = app.client()
+    let seeds = ["a=1; b=2", "a=%20x; a=y", "=; ;=;", "a=\"q\"; b", ""]
+    testing.fuzz(
+        "cookie",
+        seeds,
+        (header: String) {
+            _ = client.get("/cookies", headers: ["Cookie": visible(header)])
+        },
+    )?
+}
+
+/// Any `Set-Cookie` header a server sends, read by the client.
+test setCookiesReadAnyHeader {
+    var app = http.App()
+    app.get("/set", request => http.Reply.text("").header("Set-Cookie", request.query("c") ?? ""))
+    let client = app.client()
+    let seeds = [
+        "a=1; Path=/; HttpOnly",
+        "a=%20; Max-Age=0",
+        "a",
+        "=b; Expires=Wed, 21 Oct 2015 07:28:00 GMT",
+        "",
+    ]
+    testing.fuzz(
+        "setCookie",
+        seeds,
+        (header: String) {
+            match client.get("/set", query: ["c": visible(header)]) {
+                ok(response) => {
+                    _ = response.cookies()
+                }
+                err(_) => {}
+            }
+        },
+    )?
+}
+
+/// A cookie the server writes with any value, read back by the client as
+/// the same text.
+test cookiesWriteBackAnyValue {
+    var app = http.App()
+    app.get("/write", request => http.Reply.text("").cookie("c", request.query("v") ?? ""))
+    let client = app.client()
+    testing.fuzz(
+        "value",
+        ["", "plain", "a b;c=d,\"e\"", "é€\u{1F600}", "%41"],
+        (value: String) {
+            match client.get("/write", query: ["v": value]) {
+                ok(response) => assert(response.cookie("c") == value, "{value}")
+                err(_) => {}
+            }
+        },
+    )?
+}
+
+/// A query of any text, read as parameters: what it reads, sent again as a
+/// query, reads back the same.
+test queryReadsAnyText {
+    var app = http.App()
+    app.get(
+        "/query",
+        request => http.Reply.json(request.queryValues("a").concat(request.queryValues("b"))),
+    )
+    let client = app.client()
+    let seeds = ["a=1&b=2", "a=%20&a=x+y&b", "=&&=", "%zz=%&a=%", "a=%C3%A9&b=%E2%82%AC", ""]
+    testing.fuzz(
+        "query",
+        seeds,
+        (query: String) {
+            match client.get("/query?{asUrl(query)}") {
+                ok(response) if response.status() == 200 => {
+                    _ = response.json[Array[String]]()
+                }
+                _ => {}
+            }
+        },
+    )?
+}
+
+/// The text with what no client can send in a header written as a space:
+/// a request with it fails at the client, before the server reads it.
+fn visible(text: String): String {
+    text
+        .chars()
+        .map(c => if c.code() < 0x20 or c.code() == 0x7f { ' ' } else { c })
+        .collect()
+        .join("")
+}
+
+/// The text as a URL's query may carry it: a space, a `#` and what is not
+/// visible percent-encoded, the rest as it is, `%` included, so that the
+/// server meets bad escapes too.
+fn asUrl(text: String): String {
+    var out = ""
+    for c in text.chars() {
+        out = if c == ' ' {
+            "{out}%20"
+        } else if c == '#' {
+            "{out}%23"
+        } else if c.code() < 0x20 or c.code() == 0x7f {
+            "{out}%{c.code():02X}"
+        } else {
+            "{out}{c}"
+        }
+    }
+    out
+}
