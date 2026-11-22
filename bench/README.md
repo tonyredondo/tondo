@@ -10,6 +10,10 @@ the other is. `compare.to`, a Tondo program, runs both and writes the table:
 tondo run bench/compare.to -- --time 1 --output bench/results.md
 ```
 
+It says first which `go` it runs, and refuses one that cannot build
+`go/`, as a system's `go` ahead of the one its `GOROOT` holds on `PATH`,
+saying how to put the right one first.
+
 Each side measures a run as the median of its samples; Go's `-benchmem`
 and Tondo's `--bench` count allocations the same way, each in its own
 allocator. The goal is every row at or under 1.0×.

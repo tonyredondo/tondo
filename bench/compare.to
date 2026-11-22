@@ -122,6 +122,24 @@ fn goCommand(level: String, arguments: Array[String]): Command {
     if level.isEmpty() { command } else { command.env("GOAMD64", level) }
 }
 
+/// Says which `go` the table runs, and refuses one that cannot build the
+/// benchmarks before anything is measured: a `go` whose tool is not the one
+/// its `GOROOT` holds, as a system's before mise's on `PATH`, failed in the
+/// middle of a table with "version … does not match go tool version …".
+fn goReady(level: String): !String {
+    let found = process.which("go") ?? "no go on PATH"
+    let version = (process.command("go", "version").text() ?? "no version").trim()
+    console.eprintln("go: {found}, {version}")
+    let built =
+        goCommand(level, ["test", "-c", "-o", "/dev/null"])
+            .output()
+            .mapErr(e => "cannot run go: {e}")?
+    if built.statuses.isEmpty() or not built.statuses[0].success {
+        let said = String.fromBytes(built.stderr) ?? ""
+        fail "the go at {found} cannot build bench/go: {said.trim()}\nput the go of its GOROOT first on PATH, as `PATH=\"$(go env GOROOT)/bin:$PATH\" tondo run bench/compare.to`, and run it again"
+    }
+}
+
 /// What `go test -bench` measured, by the same names: `BenchmarkCalls/fib_25`
 /// is `calls/fib 25`.
 fn goSide(seconds: String, level: String): Map[String, Measure] ! String {
@@ -486,6 +504,7 @@ fn main(): !String {
         againstOld(old, tondo, seconds, cpu, rounds, max, output)?
         return
     }
+    goReady(goLevel(cpu))?
     let ours = tondoSide(tondo, seconds, cpu, [])?
     let level = goLevel(cpu)
     let theirs = match goCounts(goSide(seconds, level)?, level) {
