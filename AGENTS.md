@@ -381,6 +381,11 @@ The scheduler itself is held to its word by four things:
   wait of the runtime, fails there and says when it stood still. A case red
   with a seed and green without holds a duration to find: the seed gives the
   same stops again, and a run without one only hides it.
+- A window between two steps, where one thread changes in two what another
+  reads as one, is found by a stop put inside it, not by rounds: a stall
+  point (`stalls::here`) in the gap, which every seed of the stops opens,
+  where a loop of hundreds of plain rounds may never meet it. The case that
+  fails with the stop and passes with the fix is the test that stays.
 - A model says at its top what it assumes of the code, and whoever changes
   that code reads the list: a model whose monitor looks at every step cannot
   see a monitor that sleeps.
