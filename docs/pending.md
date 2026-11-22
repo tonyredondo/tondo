@@ -29,9 +29,11 @@ What is done next, and after it, with the reason for each place. A step's
 detail is in the tables below. The inliner's weighing of step 2 comes
 before the chain's rest because the chain's adapters wait for it too.
 
-1. **What is owed**: what the whole measuring rule found over main, the
-   clock read at each spawn and join and the compare of a short needle, and
-   the Nightly's first run with the stops and the heap's checks. First
+1. **What is owed**: the debugger's end test that fails on x86-64 macOS
+   and the object a live build leaks, which come before anything else; what
+   the whole measuring rule found over main, the clock read at each spawn
+   and join and the compare of a short needle; and the Nightly's first run
+   with the stops and the heap's checks. First
    because both say whether what is on main is sound, and anything they
    find is fixed before more is built on it.
 2. **`trim`**: the inliner weighing a call by what inlining buys and a
@@ -69,6 +71,7 @@ manual's unheld quotes and listings.
 | What | Since | Detail |
 | --- | --- | --- |
 | The clock read two or three times more at each spawn and join since the scheduler's pieces of 2026-11-20 and 21: 60 of the 94 instructions that `runtime/join 1` gained (2752 to 2846, +3.4% over the table's baseline), with `tasks/spawn 1000` +2.3% and `ffi/waits from a C thread 100` +3.2%, each piece within the bar alone. A worker is to count the tasks it starts and the monitor to read that count at its own looks, as the instant is needed only for the rare task that holds its worker. The rest is the wakes added for a task woken next to a busy worker, the work of a join over eight threads where it was five: each wake keeps the stall it fixed as its reason, or goes | 2026-11-22 | AGENTS.md, "A change to the optimizer…"; the whole rule's run over main at 0b08d90b, by commit and by function |
+| A live build of `tests/cases/run/tasks_array_edges.to` leaks one object in about 14 runs of a thousand when 32 run at once, and in none of 300 alone: the case cancels a waiter of an array of tasks whose tasks hold `defer`s. The compilers of 5dd3268a and 86390858 leak at the same rate; a release and a debug build gave none in 800 each. To bisect back to the commit that brought the case, to have the leak's report name the object, and to say why the other builds differ before taking them as free of it | 2026-11-22 | The gate of 2026-11-22 over cfaea6ce, its LIVE step |
 | `strings/contains 1000` takes 335 or 343 instructions in the same executable, and 325 in a project of its own, so its row passes the bar of 2% by chance: `find` hands the needle's compare to libc, whose way for a short size is longer when either address may be within 32 bytes of a page's end. A needle of up to 8 bytes, a short text's whole range, is to be compared in `find` itself; and the other places that compare a short text through libc found, as their rows move the same way | 2026-11-22 | The same run; no commit moved the row |
 | The Nightly's first run with the cases stopped by a seed and with the heap's checks, to read. GitHub starts the scheduled run at about 11:00 to 11:50 UTC, not at its hour. Its job under emulation of arm64 was red every day from 2026-11-16 to 2026-11-21 on observe's `a_cpu_profile_of_a_program_that_waits_says_it_waited`, where the profile sampled the threads that serve the tools; the fix of 2026-11-21 for musl came after that day's run, so this run also says whether it holds under emulation | 2026-11-22 | `.github/workflows/nightly.yml`; Nightly run 44896932412 |
 
