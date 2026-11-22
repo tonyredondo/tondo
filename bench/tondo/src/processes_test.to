@@ -1,0 +1,10 @@
+import std.process
+import std.testing
+
+/// A program started and waited for, by its name, looked up on `PATH`,
+/// and by its path: what a start costs, which a copy of the program's
+/// memory, as a fork makes, would multiply.
+test processes {
+    testing.bench("true by name", () => process.command("true").status())?
+    testing.bench("true by path", () => process.command("/usr/bin/true").status())?
+}

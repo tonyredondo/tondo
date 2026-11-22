@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os/exec"
 	"regexp"
 	"slices"
 	"sort"
@@ -617,6 +618,25 @@ func BenchmarkRuntime(b *testing.B) {
 	b.Run("select 1000", func(b *testing.B) {
 		for b.Loop() {
 			sinkInt = selected(1000)
+		}
+	})
+}
+
+// A program started and waited for, by its name, looked up on PATH, and by
+// its path.
+func BenchmarkProcesses(b *testing.B) {
+	b.Run("true by name", func(b *testing.B) {
+		for b.Loop() {
+			if err := exec.Command("true").Run(); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("true by path", func(b *testing.B) {
+		for b.Loop() {
+			if err := exec.Command("/usr/bin/true").Run(); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 }
