@@ -126,7 +126,7 @@ pub(crate) fn deadline_entered() {
 /// Nanoseconds of the system's monotonic clock, exactly or as of its last
 /// tick: the coarse reading costs a fourth of the exact one and is never
 /// ahead of it.
-fn monotonic(coarse: bool) -> u64 {
+pub(super) fn monotonic(coarse: bool) -> u64 {
     #[cfg(target_os = "macos")]
     let clock = if coarse { libc::CLOCK_UPTIME_RAW_APPROX } else { libc::CLOCK_UPTIME_RAW };
     #[cfg(not(target_os = "macos"))]

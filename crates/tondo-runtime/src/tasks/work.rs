@@ -628,8 +628,17 @@ pub(super) unsafe fn waiting_at(task: *mut Task) -> String {
 }
 
 /// Starts the other workers, one per core, the first time a task spawns or
-/// a call from C waits.
+/// a call from C waits; every spawn and wait asks, and after the first
+/// asking is a load.
+#[inline]
 pub(super) fn start_workers() {
+    if !STARTED.load(Ordering::Acquire) {
+        start_workers_now();
+    }
+}
+
+#[cold]
+fn start_workers_now() {
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
     }

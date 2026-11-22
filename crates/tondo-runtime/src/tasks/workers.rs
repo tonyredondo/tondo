@@ -219,9 +219,11 @@ fn domain_asleep(queue: &Queue, here: usize) -> Option<usize> {
     (0..super::domains::count()).find(|&domain| queue.idle_in[domain] > 0)
 }
 
+/// Nanoseconds of the system's monotonic clock, read straight: through
+/// `Instant` a stamp cost a check of its epoch and a subtraction of two
+/// readings besides the reading.
 pub(super) fn nanos() -> u64 {
-    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-    EPOCH.get_or_init(Instant::now).elapsed().as_nanos() as u64
+    super::cancel::monotonic(false)
 }
 
 pub(super) fn nexts() -> impl Iterator<Item = &'static Next> {
