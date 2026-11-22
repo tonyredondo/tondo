@@ -114,6 +114,8 @@ fn main(): !template.TemplateError {
   parts, `{{ link.host }}`.
 - Its errors, `template:line:column: message`, come when it writes; a
   template whose text is a literal or embedded is read when compiling too.
+  A division by zero and a number that does not fit in `Int` are such
+  errors, not panics of the program that renders it.
 
 ## From Go's templates
 
