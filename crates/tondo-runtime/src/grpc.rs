@@ -761,20 +761,22 @@ fn framed(message: &[u8], compressed: bool) -> Bytes {
     framed.freeze()
 }
 
-/// The most a compressed message may grow to, so that a small one cannot
-/// take all the memory.
-const MOST_DECOMPRESSED: u64 = 16 << 20;
+/// The most a message may be, as it comes or once decompressed, so that a
+/// small one cannot take all the memory: the server reads a call's
+/// messages one by one, and holds each to it rather than the call's whole
+/// body to `Limits.body`.
+const MOST_MESSAGE: u64 = 16 << 20;
 
 /// A message compressed with gzip, or the code and why it is not one.
 fn gunzip(message: &[u8]) -> Result<Vec<u8>, (i64, &'static str)> {
     use std::io::Read;
     let mut out = Vec::new();
-    let mut decoder = flate2::read::MultiGzDecoder::new(message).take(MOST_DECOMPRESSED + 1);
+    let mut decoder = flate2::read::MultiGzDecoder::new(message).take(MOST_MESSAGE + 1);
     if decoder.read_to_end(&mut out).is_err() {
         return Err((INTERNAL, "does not decompress"));
     }
-    if out.len() as u64 > MOST_DECOMPRESSED {
-        return Err((RESOURCE_EXHAUSTED, "is over 16 MiB once decompressed"));
+    if out.len() as u64 > MOST_MESSAGE {
+        return Err((RESOURCE_EXHAUSTED, "is larger than 16 MiB once decompressed, the most a message may be"));
     }
     Ok(out)
 }
@@ -1109,8 +1111,8 @@ fn decoded(text: &mut Vec<u8>) -> Result<Vec<u8>, usize> {
 
 /// Reads the next message: 1 when there is one, which `frame` gives, 0 at
 /// the end of the body, -1 when it is not gRPC's, -2 when it is compressed
-/// as this server does not read, or -3 when it decompresses to too much,
-/// which `frameError` says.
+/// as this server does not read, or -3 when it is larger than a message may
+/// be, as it comes or decompressed, which `frameError` says.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_grpc_read_frame(object: *mut NativeObject) -> i64 {
     let Some(frames) = native::get::<Mutex<Frames>>(object) else { return -1 };
@@ -1119,6 +1121,13 @@ pub extern "C" fn tondo_rt_grpc_read_frame(object: *mut NativeObject) -> i64 {
         if frames.buffer.len() >= 5 {
             let length =
                 u32::from_be_bytes([frames.buffer[1], frames.buffer[2], frames.buffer[3], frames.buffer[4]]) as usize;
+            // Refused before its bytes are gathered.
+            if length as u64 > MOST_MESSAGE {
+                frames.error = format!(
+                    "a message of the client of {length} bytes is larger than 16 MiB, the most a message may be"
+                );
+                return -3;
+            }
             if frames.buffer.len() >= 5 + length {
                 let compressed = frames.buffer[0] != 0;
                 frames.buffer.advance(5);

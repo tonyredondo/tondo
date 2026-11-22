@@ -1,0 +1,59 @@
+// A client stream longer than the server's body limit of 10 MiB in all,
+// made of messages far under any message's limit, completes: the server
+// holds each message to 16 MiB as it reads it, where it held the call's
+// whole body to `Limits.body` and cut such a stream at 10 MiB with
+// `InvalidArgument`. A message past 16 MiB is refused with
+// `ResourceExhausted`, before its bytes are gathered.
+
+import longstream.api.greeter
+import std.console
+import std.grpc
+import std.http
+
+type Counter = {}
+
+impl greeter.Greeter for Counter {
+    fn sayHello(self, request: greeter.HelloRequest): greeter.HelloReply ! grpc.Status {
+        greeter.HelloReply { message: request.name }
+    }
+
+    fn repeat(self, _: greeter.HelloRequest, _: Sender[greeter.HelloReply]): !grpc.Status {}
+
+    fn collect(self, input: grpc.Stream[greeter.HelloRequest]): greeter.HelloReply ! grpc.Status {
+        var (count, bytes) = (0, 0)
+        for each in input {
+            bytes += each?.name.length()
+            count += 1
+        }
+        greeter.HelloReply { message: "{count} messages, {bytes} bytes" }
+    }
+
+    fn chat(self, _: grpc.Stream[greeter.HelloRequest], _: Sender[greeter.HelloReply]): !grpc.Status {}
+}
+
+fn main(): !(http.HttpError | grpc.Status) {
+    var app = http.App()
+    app.grpc(greeter.greeter(Counter {}))
+    let server = app.start()?
+    let client = greeter.GreeterClient.connect("http://{server.address()}")?
+    // 12 MiB in messages of 10 KiB.
+    let upload = client.collect()
+    let name = "x".repeat(10 * 1024)
+    for _ in 0..1229 {
+        upload.send(greeter.HelloRequest { name })?
+    }
+    console.println("a long stream: {upload.finish()?.message}")
+    // One message of 17 MiB.
+    let big = client.collect()
+    _ = big.send(greeter.HelloRequest { name: "x".repeat(17 * 1024 * 1024) })
+    match big.finish() {
+        ok(reply) => console.println("a message past 16 MiB: read, {reply.message}")
+        err(status) => console.println(
+            "a message past 16 MiB: {status.code}, says 16 MiB {status.message.contains("16 MiB")}",
+        )
+    }
+    server.stop()
+}
+
+// expect-stdout: a long stream: 1229 messages, 12584960 bytes
+// expect-stdout: a message past 16 MiB: ResourceExhausted, says 16 MiB true

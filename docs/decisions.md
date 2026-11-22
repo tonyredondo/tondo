@@ -9728,3 +9728,19 @@ pipe, and on Linux, which has no such flag for a pipe, the write blocks
 SIGPIPE on its thread and takes back the one it raised, unless one was
 pending before. The standard output keeps the default, so a program whose
 output goes to `head` still ends quietly.
+
+## A gRPC call's messages are bounded one by one, not its whole body
+
+A client stream was cut at 10 MiB in all, whatever its messages: the
+server read a call's messages from the request's body, which it holds to
+`Limits.body` like any other, so 1229 messages of 10 KiB failed after the
+1084th with `InvalidArgument: cannot read the request: length limit
+exceeded`, a code that blames the client and no word of the limit. A
+stream's total is not a body: it lasts as long as the call. Now the
+server lifts the body's limit for a streamed call and holds each message
+to 16 MiB as its frame's length says, before gathering its bytes, which
+is the bound a compressed message already had once decompressed; past it
+the call ends with `ResourceExhausted` and the limit in its message. Go,
+Java and .NET receive 4 MiB a message by default; 16 MiB is four times
+that. A unary call of Connect, whose body is its one message, is still a
+body read whole and keeps the server's limit.

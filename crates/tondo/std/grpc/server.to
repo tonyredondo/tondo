@@ -399,7 +399,10 @@ fn serve(
         let flags: Byte = if encoding == "identity" { 0 } else { 1 }
         grpcNative.framesOf(enveloped(flags, body), encoding)
     } else {
-        grpcNative.frames(request.body(), encoding, wire == Wire.WebText)
+        // Each message is held to the most a message may be as it is read,
+        // not the call's whole body to the server's `Limits.body`: a client
+        // streams for as long as its call lasts.
+        grpcNative.frames(request.limitBody(Int.Max).body(), encoding, wire == Wire.WebText)
     }
     let server = ServerCall { frames, output, ready, watchers, compressed, wire, json }
     let (done, outcome) = channel[Status](capacity: 1, discardWhenAbandoned: true)
