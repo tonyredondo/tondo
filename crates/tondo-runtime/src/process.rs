@@ -715,8 +715,8 @@ pub(crate) fn running() -> usize {
 }
 
 /// Ends the processes: at once, or with `grace`, `SIGTERM` first and then
-/// `SIGKILL` to what has not been waited for when it passes, as `docker
-/// stop` does. The stages get them only while they are not reaped: a
+/// `SIGKILL` when it passes, as `docker stop` does. The group gets them
+/// whenever there is one, and the stages only while they are not reaped: a
 /// reaped stage's id may name another process by then.
 fn stop_all(pids: &[u32], group: Option<u32>, grace: Option<std::time::Duration>, reaped: &Arc<Reaped>) {
     let pids = if reaped.done.load(Ordering::Acquire) { &[] } else { pids };
@@ -730,10 +730,10 @@ fn stop_all(pids: &[u32], group: Option<u32>, grace: Option<std::time::Duration>
         }),
     }
     let (pids, reaped) = (pids.to_vec(), reaped.clone());
+    // Its id names no other group while a member lives.
     let late = move || {
-        if !reaped.done.load(Ordering::Acquire) {
-            kill_all(&pids, group);
-        }
+        let pids: &[u32] = if reaped.done.load(Ordering::Acquire) { &[] } else { &pids };
+        kill_all(pids, group);
     };
     match recorded() {
         Some(runtime) => drop(runtime.spawn(async move {

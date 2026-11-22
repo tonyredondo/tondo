@@ -1,0 +1,27 @@
+// With `group()` and `grace`, the kill after the grace goes to the whole
+// group whenever there is one, as 19.2 of the library says "Kill a lo que
+// sigue". It went to the stages alone, and only while they were not
+// reaped: a member of the group that ignores the request to end, beside a
+// stage that ended at it, was left running and wrote its file.
+import std.console
+import std.fs
+import std.process
+import std.time
+
+fn main() {
+    let marker = "survived"
+    _ = fs.remove(marker)
+    let script = "(trap '' TERM; sleep 2; echo alive > {marker}) & exec sleep 5"
+    let outcome =
+        within time.milliseconds(50) {
+            _ = process.command("sh", "-c", script).group().grace(time.milliseconds(200)).output()
+        }
+    console.println("timed out {not outcome.isOk()}")
+    time.sleep(time.milliseconds(2400))
+    console.println("the member outlived the grace {fs.exists(marker)}")
+}
+
+// expect-stdout: timed out true
+// expect-stdout: the member outlived the grace false
+// expect-no-replay: a recorded run has one worker, and runs a process's wait on it, where no deadline ends it
+// expect-no-schedule: the virtual clock of an order stands still while a task waits on the host, so no deadline passes
