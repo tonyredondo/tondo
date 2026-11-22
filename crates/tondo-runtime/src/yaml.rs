@@ -35,6 +35,10 @@ const ERROR: i64 = -1;
 
 /// The most values a document may hold once its aliases are expanded.
 const LIMIT: usize = 1_000_000;
+/// The most lists and maps a document may nest, its aliases expanded: a
+/// value's decoder recurses once a level, and a line of `- - - …` used all
+/// of a task's stack.
+const DEPTH: usize = 128;
 
 #[derive(Clone)]
 struct Event {
@@ -120,6 +124,10 @@ impl Builder {
 
     fn failure(&self, message: impl Into<String>, line: usize, column: usize) -> Failure {
         (message.into(), format!("${}", self.path()), line, column)
+    }
+
+    fn nests_too_deep(&self, line: usize, column: usize) -> Failure {
+        self.failure(format!("the document nests deeper than {DEPTH} lists and maps"), line, column)
     }
 
     /// Whether the next node of the innermost map is a key.
@@ -230,6 +238,9 @@ impl Builder {
                         column,
                     ));
                 }
+                if self.frames.len() + nesting(&recorded) > DEPTH {
+                    return Err(self.nests_too_deep(line, column));
+                }
                 self.events.extend(recorded);
                 self.done(line, column)?;
             }
@@ -282,6 +293,9 @@ impl Builder {
     ) -> Result<(), Failure> {
         if self.at_key() {
             return Err(self.failure("a key is text, not a list or a map", line, column));
+        }
+        if self.frames.len() >= DEPTH {
+            return Err(self.nests_too_deep(line, column));
         }
         if let Some(tag) = &tag
             && tag.is_yaml_core_schema()
@@ -366,6 +380,22 @@ impl Builder {
         }
         Ok(())
     }
+}
+
+/// How deep the lists and maps of a value's events nest.
+fn nesting(events: &[Event]) -> usize {
+    let (mut depth, mut deepest) = (0usize, 0);
+    for event in events {
+        match event.code {
+            BEGIN_MAP | BEGIN_LIST => {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+            END_MAP | END_LIST => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    deepest
 }
 
 /// The entries a merge key's value gives: those of its map, or of each map

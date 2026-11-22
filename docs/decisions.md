@@ -9744,3 +9744,15 @@ the call ends with `ResourceExhausted` and the limit in its message. Go,
 Java and .NET receive 4 MiB a message by default; 16 MiB is four times
 that. A unary call of Connect, whose body is its one message, is still a
 body read whole and keeps the server's limit.
+
+## YAML's and MessagePack's nesting stops at 128 levels
+
+A document nested 100,000 deep ended a program that decoded it: a line
+of `- - - … x` in YAML, whose parser reads block nesting to any depth,
+and arrays or maps of one in MessagePack, a few hundred kilobytes, which
+our reader took to any depth. The decoder of a value, and of any type
+that holds itself, recurses once a level, and used all of the main
+task's 64 MiB at 43,644 levels. Both readers now refuse a list or map
+past 128 levels, as JSON's does, with the depth in the error; in YAML an
+alias counts the depth its anchor adds where it is repeated. What the
+program builds deep and writes out is its own doing and is not bounded.

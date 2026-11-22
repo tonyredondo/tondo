@@ -12,6 +12,11 @@ use crate::native::{self, NativeObject};
 use crate::{ArrayHeader, Str, str_text};
 use std::sync::Mutex;
 
+/// The most arrays and maps the data may nest: a value's decoder recurses
+/// once a level, and a few hundred kilobytes of nested arrays used all of a
+/// task's stack.
+const DEPTH: usize = 128;
+
 const END: i64 = 0;
 const NULL: i64 = 1;
 const TRUE: i64 = 2;
@@ -125,7 +130,10 @@ impl Decoder<'_> {
         }
     }
 
-    fn open(&mut self, map: bool, count: u64) {
+    fn open(&mut self, map: bool, count: u64, at: usize) -> Result<(), (String, String)> {
+        if self.frames.len() >= DEPTH {
+            return self.fail(format!("the data nests deeper than {DEPTH} levels (byte {at})"));
+        }
         self.push(if map { BEGIN_MAP } else { BEGIN_LIST });
         if count == 0 {
             self.push(if map { END_MAP } else { END_LIST });
@@ -133,6 +141,7 @@ impl Decoder<'_> {
         } else {
             self.frames.push(Frame { map, left: count, key: map, index: 0, current: usize::MAX });
         }
+        Ok(())
     }
 
     fn string(&mut self, size: usize) -> Result<String, (String, String)> {
@@ -237,8 +246,7 @@ impl Decoder<'_> {
                     0xdd => self.uint(4)?,
                     _ => (marker & 0x0f) as u64,
                 };
-                self.open(false, count);
-                return Ok(());
+                return self.open(false, count, at);
             }
             0x80..=0x8f | 0xde | 0xdf => {
                 let count = match marker {
@@ -246,8 +254,7 @@ impl Decoder<'_> {
                     0xdf => self.uint(4)?,
                     _ => (marker & 0x0f) as u64,
                 };
-                self.open(true, count);
-                return Ok(());
+                return self.open(true, count, at);
             }
             0xd4..=0xd8 | 0xc7..=0xc9 => {
                 let size = match marker {

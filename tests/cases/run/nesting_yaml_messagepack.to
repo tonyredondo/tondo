@@ -1,0 +1,115 @@
+// A document nested 100,000 deep ended the program in two readers that a
+// server takes from clients: YAML's block sequences, `- - - … x`, which its
+// parser reads to any depth, and MessagePack's arrays and maps, which ours
+// did, and the decoder of a value recursed a level at a time until the
+// stack ran out. Both now stop at 128 levels, as JSON does: 128 is read and
+// 129 refused, an alias that would nest deeper than that too, and a
+// program's own type that holds itself is refused as `Value` is.
+import std.console
+import std.messagepack
+import std.yaml
+
+type Node = {
+    next: Array[Node]
+}
+
+/// An error's words, without the path of the place, 128 levels long.
+fn words(error: String): String {
+    match error.find(" at $") {
+        some(at) => error.slice(0, at) ?? error
+        none => error
+    }
+}
+
+fn said[T](outcome: T ! yaml.YamlError): String {
+    match outcome {
+        ok(_) => "read"
+        err(error) => words("{error}")
+    }
+}
+
+fn packed[T](outcome: T ! messagepack.MessagePackError): String {
+    match outcome {
+        ok(_) => "read"
+        err(error) => words("{error}")
+    }
+}
+
+/// `levels` arrays of one, around a nil.
+fn arrays(levels: Int): Array[Byte] {
+    var bytes: Array[Byte] = []
+    for _ in 0..levels {
+        bytes.push(Byte(0x91u8))
+    }
+    bytes.push(Byte(0xc0u8))
+    bytes
+}
+
+/// `levels` maps of one key, `a`, around a nil.
+fn maps(levels: Int): Array[Byte] {
+    var bytes: Array[Byte] = []
+    for _ in 0..levels {
+        bytes.push(Byte(0x81u8))
+        bytes.push(Byte(0xa1u8))
+        bytes.push(Byte(0x61u8))
+    }
+    bytes.push(Byte(0xc0u8))
+    bytes
+}
+
+/// A `Node` `levels` deep: a map whose `next` is a list of one node.
+fn nodes(levels: Int): Array[Byte] {
+    var bytes: Array[Byte] = []
+    for _ in 0..levels {
+        bytes.push(Byte(0x81u8))
+        bytes.push(Byte(0xa4u8))
+        for c in "next".bytes() {
+            bytes.push(c)
+        }
+        bytes.push(Byte(0x91u8))
+    }
+    bytes.push(Byte(0x81u8))
+    bytes.push(Byte(0xa4u8))
+    for c in "next".bytes() {
+        bytes.push(c)
+    }
+    bytes.push(Byte(0x90u8))
+    bytes
+}
+
+/// Block maps `levels` deep, each key `next`, indented a space a level.
+fn blockMaps(levels: Int): String {
+    var lines: Array[String] = []
+    for level in 0..levels {
+        lines.push("{" ".repeat(level)}next:")
+    }
+    "{lines.join("\n")} []"
+}
+
+fn main() {
+    console.println("yaml, 100,000 block sequences: {said(yaml.parse("{"- ".repeat(100000)}x"))}")
+    console.println("yaml, 128 block sequences: {said(yaml.parse("{"- ".repeat(128)}x"))}")
+    console.println("yaml, 129 block sequences: {said(yaml.parse("{"- ".repeat(129)}x"))}")
+    let deep = "{"- ".repeat(100)}x"
+    let anchored = "a: &deep\n  {deep}\nb:\n  {"- ".repeat(60)}*deep"
+    console.println("yaml, an alias 160 deep: {said(yaml.parse(anchored))}")
+    console.println("yaml, a Node of 200 block maps: {said(yaml.decode[Node](blockMaps(200)))}")
+    console.println("messagepack, 100,000 arrays: {packed(messagepack.parse(arrays(100000)))}")
+    console.println("messagepack, 100,000 maps: {packed(messagepack.parse(maps(100000)))}")
+    console.println("messagepack, 128 arrays: {packed(messagepack.parse(arrays(128)))}")
+    console.println("messagepack, 129 arrays: {packed(messagepack.parse(arrays(129)))}")
+    console.println(
+        "messagepack, a Node 100,000 deep: {packed(messagepack.decode[Node](nodes(100000)))}",
+    )
+}
+
+// expect-stdout: yaml, 100,000 block sequences: the document nests deeper than 128 lists and maps
+// expect-stdout: yaml, 128 block sequences: read
+// expect-stdout: yaml, 129 block sequences: the document nests deeper than 128 lists and maps
+// expect-stdout: yaml, an alias 160 deep: the document nests deeper than 128 lists and maps
+// expect-stdout: yaml, a Node of 200 block maps: the document nests deeper than 128 lists and maps
+// expect-stdout: messagepack, 100,000 arrays: the data nests deeper than 128 levels (byte 128)
+// expect-stdout: messagepack, 100,000 maps: the data nests deeper than 128 levels (byte 384)
+// expect-stdout: messagepack, 128 arrays: read
+// expect-stdout: messagepack, 129 arrays: the data nests deeper than 128 levels (byte 128)
+// expect-stdout: messagepack, a Node 100,000 deep: the data nests deeper than 128 levels (byte 448)
