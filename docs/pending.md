@@ -29,13 +29,12 @@ What is done next, and after it, with the reason for each place. A step's
 detail is in the tables below. The inliner's weighing of step 2 comes
 before the chain's rest because the chain's adapters wait for it too.
 
-1. **What is owed**: the debugger's end test that fails on x86-64 macOS and
-   the value a call returned that a panic drops, which come before anything
-   else; what the whole measuring rule found over main, the clock read at
-   each spawn and join and the compare of a short needle; and the Nightly's
-   first run with the stops and the heap's checks. First because both say
-   whether what is on main is sound, and anything they find is fixed before
-   more is built on it.
+1. **What is owed**: the value a call returned that a panic drops, which
+   comes before anything else; what the whole measuring rule found over
+   main, the clock read at each spawn and join and the compare of a short
+   needle; and the Nightly's first run with the stops and the heap's checks.
+   First because both say whether what is on main is sound, and anything
+   they find is fixed before more is built on it.
 2. **`trim`**: the inliner weighing a call by what inlining buys and a
    region for the copy, which the plain form in Tondo, measured again,
    waits for; then the list of what stays behind Go. Second because its rows
@@ -112,7 +111,7 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 | What | Since | Detail |
 | --- | --- | --- |
 | observe's `debugger_goes_back_in_a_replay` fails now and then under load. A copy says its probe since 2026-11-21: the line it prints at its next failure is the lead | 2026-11-16 | `crates/tondo/tests/observe.rs` |
-| `tondo dap` is ended by SIGPIPE, without a word, when it writes to a program that has ended: `tondo` puts that signal back to its default for every command, and only its MCP server ignores it again. Found by observe's `every_debugged_program_s_end_reaches_the_editor`, which failed on x86-64 macOS once up to 2026-11-20 and in four of the seven runs of main after the adapter began to ask the program more often; the test's own report named the signal: "the adapter had exited with signal: 13 (SIGPIPE)", 66 ms into a round. Every command that serves a client or a child for long is to ignore the signal and take the write's error as the other's end, the adapter to say `exited` and `terminated`, with a test that fails without it on Linux too | 2026-11-20 | `crates/tondo/src/main.rs`, `dap.rs`; CI run 44991205995, job 137112438117 |
+| Which pipe had closed when SIGPIPE ended `tondo dap` on x86-64 macOS, in four of the seven runs of main up to 2026-11-22 (observe's `every_debugged_program_s_end_reaches_the_editor`: "the adapter had exited with signal: 13 (SIGPIPE)", 66 ms into a round). The commands that serve a client or a child for long now ignore that signal and take the write's error, so the adapter no longer dies of it; but its socket to the program cannot raise the signal, so the write was to a pipe that is not yet named. The test's report says the write's error at its next failure, if that was not the end of it | 2026-11-20 | `crates/tondo/tests/observe.rs`; CI run 44991205995, job 137112438117 |
 | mcp's `runs_tests_and_debugs` failed once on x86-64 macOS, in a job that took twice its time: the search for the input that fails kept another as its finding, "an input ran longer than --fuzz-timeout, 1s", for a call that compares a number, because the runner held the process for that second. A search on a shared machine meets such a stall, so an input that runs past the limit is to be run again, alone, before it is kept, and one that then passes counted apart in the report; the same while a timeout is reduced | 2026-11-22 | `crates/tondo/tests/mcp.rs`; CI run 44977475458, job 137070490714; testing spec 10.6 |
 | The code a benchmark's row reaches that the other Tondo makes differently is named only when its count of instructions changed: a function whose machine code changed with the same count, as the workers' loop with another allocation of its registers, is not on the list, and it was what moved `ffi/waits from a C thread` | 2026-11-22 | `tondo test --bench --compiler` |
 | A leak's report that names what leaked: `TONDO_RT_CHECK_LEAKS` gives one number, and the hunt of 2026-11-22 needed a runtime built for it to learn that the object was a join. It is to keep each counted object's kind and the place that made it, and print the ones left at exit, at no cost when the check is off | 2026-11-22 | `crates/tondo-runtime/src` |
