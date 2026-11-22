@@ -84,7 +84,7 @@ emulated() {
   set -o pipefail
   . .github/scripts/across.sh aarch64
   mkdir -p target
-  CARGO_TARGET_DIR=$S/emu-target cargo test --workspace --target aarch64-unknown-linux-gnu --no-run --message-format=json |
+  CARGO_TARGET_DIR=$S/emu-target cargo test --workspace --target aarch64-unknown-linux-gnu --no-run --message-format=json-render-diagnostics |
     jq -r 'select(.profile.test == true and .executable != null)
       | (.manifest_path | rtrimstr("Cargo.toml")) + " " + .executable' > target/emulated || return 1
   image tondo-emu linux/arm64
@@ -136,7 +136,7 @@ heap() {
 emuloop() {
   set -o pipefail
   . .github/scripts/across.sh aarch64
-  CARGO_TARGET_DIR=$S/emu-target cargo test -p tondo --test observe --test mcp --target aarch64-unknown-linux-gnu --no-run --message-format=json |
+  CARGO_TARGET_DIR=$S/emu-target cargo test -p tondo --test observe --test mcp --target aarch64-unknown-linux-gnu --no-run --message-format=json-render-diagnostics |
     jq -r 'select(.profile.test == true and .executable != null) | .executable' > target/emuloop || return 1
   cat > "$S/tmp/emuloop.sh" <<EOF
 cd $PWD/crates/tondo

@@ -49,7 +49,7 @@ jobs:
           set -o pipefail
           . .github/scripts/across.sh ${{ matrix.arch }}
           mkdir -p target
-          cargo test --workspace --target ${{ matrix.arch }}-unknown-linux-gnu --no-run --message-format=json |
+          cargo test --workspace --target ${{ matrix.arch }}-unknown-linux-gnu --no-run --message-format=json-render-diagnostics |
             jq -r 'select(.profile.test == true and .executable != null)
               | (.manifest_path | rtrimstr("Cargo.toml")) + " " + .executable' > target/emulated
       - if: ${{ !cancelled() }}

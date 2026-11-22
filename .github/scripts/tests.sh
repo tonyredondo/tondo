@@ -8,7 +8,7 @@
 set -u
 at_once=${1:-2}
 work=$(mktemp -d)
-cargo test --workspace --no-run --message-format=json > "$work/built" || exit 1
+cargo test --workspace --no-run --message-format=json-render-diagnostics > "$work/built" || exit 1
 jq -r 'select(.profile.test == true and .executable != null)
     | (.manifest_path | rtrimstr("Cargo.toml")) + " " + .executable' "$work/built" > "$work/all" || exit 1
 # The longest of x86's: the cases, then the tests of `tondo test` and of
