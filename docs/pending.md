@@ -58,8 +58,8 @@ before the chain's rest because the chain's adapters wait for it too.
    bytes, Phase K, and what the speed plan left of the network and of the
    runtime's text conversions.
 
-Beside the order, wherever a piece leaves a wait: the two tests that fail
-now and then, when they show; the heap's checks on musl and macOS after
+Beside the order, wherever a piece leaves a wait: the tests that fail now
+and then, when they show; the heap's checks on musl and macOS after
 their first clean runs; the scheduler's open mutant; what each worker runs
 in the text of `tondo blocked`; the examples of `tondo explain`; and the
 manual's unheld quotes and listings.
@@ -110,6 +110,7 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 | --- | --- | --- |
 | observe's `debugger_goes_back_in_a_replay` fails now and then under load. A copy says its probe since 2026-11-21: the line it prints at its next failure is the lead | 2026-11-16 | `crates/tondo/tests/observe.rs` |
 | `every_debugged_program_s_end_reaches_the_editor` fails now and then on x86-64 macOS: once on 2026-11-20, not reproduced in 57,000 rounds here, and again on 2026-11-22, where the test said what it saw: round 26, the session answered `initialize`, `launch` and `configurationDone` and gave one `output`, then neither `exited` nor `terminated`. Next: at its limit the test says whether the program still runs and where, and what the adapter last read | 2026-11-20 | `crates/tondo/tests/observe.rs`; CI run 44964356533 |
+| mcp's `runs_tests_and_debugs` failed once on x86-64 macOS, in a job that took twice its time: the search for the input that fails kept another as its finding, "an input ran longer than --fuzz-timeout, 1s", for a call that compares a number, because the runner held the process for that second. A search on a shared machine meets such a stall, so an input that runs past the limit is to be run again, alone, before it is kept, and one that then passes counted apart in the report; the same while a timeout is reduced | 2026-11-22 | `crates/tondo/tests/mcp.rs`; CI run 44977475458, job 137070490714; testing spec 10.6 |
 | The time a task has been ready in the queue every worker takes from, only if a stamp at each enqueue measures clean | 2026-11-21 | [decisions](decisions.md): "The scheduler's state where people look" |
 | What each worker runs, in the text of `tondo blocked` and of a dump: today only in their JSON | 2026-11-21 | The same |
 | An example in `tondo explain` for the codes that have none: 17 of 180 have one, from the guide's blocks. The others get a program that gives the code alone, a case of `tests/cases` named beside the code, shown with what the checker says of it when asked, or with its panic's line: 94 codes have such a case today, and the rest get one written, but those that take a project, a command or the test runner, listed with why | 2026-11-21 | `crates/tondo/src/explain.rs` |
