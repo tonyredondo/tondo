@@ -146,8 +146,9 @@ left-right
   and [`Command.stdin`](#commandstdin) say where it runs, with what
   environment and what input, for what a line cannot say.
 - Cancelling the task that waits for a command, as a `within` does, ends
-  the command. [`Command.grace`](#commandgrace) asks it to end first and
-  stops it only after a while, as `docker stop` does, and
+  the command, and the call gives nothing back: what the command had
+  written until then is not seen. [`Command.grace`](#commandgrace) asks it
+  to end first and stops it only after a while, as `docker stop` does, and
   [`Command.group`](#commandgroup) makes that reach everything it started.
 - [`shell`](#shell) runs a line through the system's shell, for when a real
   shell is what is wanted.
