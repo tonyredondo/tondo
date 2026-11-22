@@ -9523,3 +9523,19 @@ found that a checkpoint asked for the first time long after the deadline
 compared the clock's coarse reading with the exact one read at that ask,
 and missed it by up to a tick: a deadline already past at the first ask
 is now past without reading the coarse clock.
+
+## Short texts are compared in registers, not by the C library
+
+`strings/contains 1000` took 335 or 343 instructions from one executable,
+and so passed the bar of 2% by chance. `find` handed each candidate's
+compare to libc, and glibc's `__memcmp_avx2_movbe`, for fewer than 32
+bytes, takes a longer way whenever either address may lie within 32 bytes
+of a page's end, a guess with false positives: where the needle and the
+haystack's match happened to lie decided the count. Text equality,
+ordering, `startsWith` and `endsWith` handed their compares to libc the
+same way. They now compare up to 32 bytes themselves, by the first and the
+last word of a size that covers the length, words that overlap where the
+length is not twice the size, read with the first byte highest to order;
+longer texts still go to libc, whose way past 32 bytes has no such guess.
+The pending list named needles of up to 8 bytes; 32 is where libc's short
+way ends, so every compare that took that way is covered.

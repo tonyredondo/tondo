@@ -817,9 +817,9 @@ pub unsafe extern "C" fn tondo_rt_str_eq(a: *const Str, b: *const Str) -> u8 {
     }
     unsafe {
         match (short(a), short(b)) {
-            (false, false) => (long_bytes(a) == long_bytes(b)) as u8,
+            (false, false) => same(long_bytes(a), long_bytes(b)) as u8,
             (true, true) => 0,
-            _ => (str_bytes(&a) == str_bytes(&b)) as u8,
+            _ => same(str_bytes(&a), str_bytes(&b)) as u8,
         }
     }
 }
@@ -833,13 +833,72 @@ pub unsafe extern "C" fn tondo_rt_str_cmp(a: *const Str, b: *const Str) -> i32 {
     unsafe {
         // Neither short, in one test of both signs.
         if !short((a as usize | b as usize) as *const Str) {
-            return long_bytes(a).cmp(long_bytes(b)) as i32;
+            return order(long_bytes(a), long_bytes(b)) as i32;
         }
         match short(a) && short(b) {
             true => (bytes(a), short_len(a)).cmp(&(bytes(b), short_len(b))) as i32,
-            false => str_bytes(&a).cmp(str_bytes(&b)) as i32,
+            false => order(str_bytes(&a), str_bytes(&b)) as i32,
         }
     }
+}
+
+/// The most bytes `same` and `order` compare in registers. The C library's
+/// compare of fewer than 32 bytes takes a longer way when either address
+/// may lie near the end of a page, and so a program's count of
+/// instructions depended on where its texts happened to lie (glibc's
+/// `__memcmp_avx2_movbe`); compared here, it does not.
+const IN_REGISTERS: usize = 32;
+
+/// `N` bytes of `bytes` from `at`.
+#[inline(always)]
+fn chunk<const N: usize>(bytes: &[u8], at: usize) -> [u8; N] {
+    bytes[at..at + N].try_into().expect("a chunk inside the bytes")
+}
+
+/// Whether two byte strings are the same: up to `IN_REGISTERS` bytes by
+/// the first and the last word of a size that covers them together, which
+/// overlap where the length is not twice the size.
+#[inline]
+pub(crate) fn same(a: &[u8], b: &[u8]) -> bool {
+    let n = a.len();
+    if n != b.len() {
+        return false;
+    }
+    match n {
+        0 => true,
+        1..=3 => a[0] == b[0] && a[n / 2] == b[n / 2] && a[n - 1] == b[n - 1],
+        4..=7 => chunk::<4>(a, 0) == chunk::<4>(b, 0) && chunk::<4>(a, n - 4) == chunk::<4>(b, n - 4),
+        8..=16 => chunk::<8>(a, 0) == chunk::<8>(b, 0) && chunk::<8>(a, n - 8) == chunk::<8>(b, n - 8),
+        17..=IN_REGISTERS => chunk::<16>(a, 0) == chunk::<16>(b, 0) && chunk::<16>(a, n - 16) == chunk::<16>(b, n - 16),
+        _ => a == b,
+    }
+}
+
+/// How two byte strings order, byte by byte and then by length: the bytes
+/// both have up to `IN_REGISTERS` as `same` reads them, each word read
+/// with its first byte highest. Where the first words are equal, the bytes
+/// the last one shares with them are too, so the last one orders the rest.
+#[inline]
+pub(crate) fn order(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
+    let n = a.len().min(b.len());
+    let words = match n {
+        0 => std::cmp::Ordering::Equal,
+        1..=3 => (a[0], a[n / 2], a[n - 1]).cmp(&(b[0], b[n / 2], b[n - 1])),
+        4..=7 => {
+            let word = |s: &[u8], at| u32::from_be_bytes(chunk(s, at));
+            (word(a, 0), word(a, n - 4)).cmp(&(word(b, 0), word(b, n - 4)))
+        }
+        8..=16 => {
+            let word = |s: &[u8], at| u64::from_be_bytes(chunk(s, at));
+            (word(a, 0), word(a, n - 8)).cmp(&(word(b, 0), word(b, n - 8)))
+        }
+        17..=IN_REGISTERS => {
+            let word = |s: &[u8], at| u128::from_be_bytes(chunk(s, at));
+            (word(a, 0), word(a, n - 16)).cmp(&(word(b, 0), word(b, n - 16)))
+        }
+        _ => return a.cmp(b),
+    };
+    words.then(a.len().cmp(&b.len()))
 }
 
 /// The text of a string; strings always hold valid UTF-8.
@@ -935,8 +994,8 @@ pub unsafe extern "C" fn tondo_rt_str_test(s: *const Str, other: *const Str, tes
     let (text, other) = unsafe { (str_bytes(&s), str_bytes(&other)) };
     (match test {
         0 => find(text, other).is_some(),
-        1 => text.starts_with(other),
-        _ => text.ends_with(other),
+        1 => text.len() >= other.len() && same(&text[..other.len()], other),
+        _ => text.len() >= other.len() && same(&text[text.len() - other.len()..], other),
     }) as u8
 }
 
@@ -954,7 +1013,8 @@ pub(crate) fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     let mut at = 0;
     for _ in 0..16 {
         let start = at + memchr::memchr(first, &haystack[at..])?;
-        if haystack[start..].starts_with(needle) {
+        let rest = &haystack[start..];
+        if rest.len() >= needle.len() && same(&rest[..needle.len()], needle) {
             return Some(start);
         }
         at = start + 1;
@@ -1092,6 +1152,33 @@ pub unsafe extern "C" fn tondo_rt_str_decode(s: *const Str, offset: i64) -> u32 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `same` and `order` answer as the slices' own compares do, at every
+    /// length to past the ones compared in registers, with one byte higher
+    /// or lower at each place, and with lengths that differ.
+    #[test]
+    fn compares_in_registers_as_the_slices_do() {
+        let check = |a: &[u8], b: &[u8]| {
+            assert_eq!(same(a, b), a == b, "same {a:?} {b:?}");
+            assert_eq!(order(a, b), a.cmp(b), "order {a:?} {b:?}");
+        };
+        for n in 0..=IN_REGISTERS + 8 {
+            let a: Vec<u8> = (0..n).map(|i| (i * 37 + 11) as u8).collect();
+            check(&a, &a);
+            for at in 0..n {
+                for step in [1u8, 255, 128] {
+                    let mut b = a.clone();
+                    b[at] = b[at].wrapping_add(step);
+                    check(&a, &b);
+                    check(&b, &a);
+                }
+            }
+            for m in 0..=n {
+                check(&a[..m], &a);
+                check(&a, &a[..m]);
+            }
+        }
+    }
 
     /// A text's count of scalars and where each starts, short or not, ASCII
     /// or not, below and past where positions are kept, are Rust's.
