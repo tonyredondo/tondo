@@ -1,5 +1,6 @@
 // C's allocator that finds a block freed twice ends the program inside
-// `free`, with its own lock held: glibc aborts, musl faults, macOS traps.
+// `free`, with its own lock held: glibc aborts, musl faults, and macOS
+// aborts or traps, as its allocator's state has it.
 // The report comes all the same, and the program ends, where the copy that
 // reads the values once waited for that lock forever.
 import std.console
@@ -16,6 +17,7 @@ fn main() {
 }
 
 // expect-crash
+// expect-no-replay: the system's allocator chooses the signal by its own state, which a replay does not hold: macOS ended a recording by SIGABRT and its replay by SIGTRAP
 // expect-stdout: allocated
 // expect-stderr: stack:
-// expect-stderr:   main      fault_double_free_in_c.to:13:9
+// expect-stderr:   main      fault_double_free_in_c.to:14:9
