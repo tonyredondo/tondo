@@ -75,6 +75,7 @@ follows them. They are written in Spanish.
 | Read | For |
 | --- | --- |
 | [Roadmap](roadmap.md) | What each milestone covers, and what is left |
+| [What is pending](pending.md) | The one list of what is open: decided and not done, measured and not fixed, or waiting for a decision |
 | [Design decisions](decisions.md) | Why things are as they are, a short record for each decision |
 | [Benchmarks against Go](../bench/README.md) | The same work in Tondo and in Go, with the numbers and how to run them |
 | [Speed plan](speed.md) | The plan for the compiler's and the runtime's speed, phase by phase |

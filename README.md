@@ -479,7 +479,8 @@ and keeps its lock beside it.
 ## Status
 
 Nothing is released yet, and the language can still change. What each
-milestone covers is in [`docs/roadmap.md`](docs/roadmap.md).
+milestone covers is in [`docs/roadmap.md`](docs/roadmap.md), and everything
+that is open, with where it stands, in [`docs/pending.md`](docs/pending.md).
 
 | Area | State |
 | --- | --- |
