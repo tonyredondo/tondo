@@ -1,12 +1,13 @@
 # What is pending
 
 One list of the work that is open: decided and not done, measured and not
-fixed, or waiting for a decision. The other lists say what Tondo is and
-why: [the roadmap](roadmap.md) what each milestone covers, [the speed
-plan](speed.md) its phases, [the decisions](decisions.md) why things are as
-they are, and [the benchmarks' page](../bench/README.md) each row against
-Go. This one says only what is left, so that nothing agreed is lost between
-them.
+fixed, or waiting for a decision. It is the plan: the work follows [its
+order](#the-order), and what is not here is not being done. The other lists
+say what Tondo is and why: [the roadmap](roadmap.md) what each milestone
+covers, [the speed plan](speed.md) its phases, [the decisions](decisions.md)
+why things are as they are, and [the benchmarks' page](../bench/README.md)
+each row against Go. This one says only what is left, so that nothing
+agreed is lost between them.
 
 How it is kept:
 
@@ -17,8 +18,48 @@ How it is kept:
   of what was left to do outlives the doing.
 - A row behind Go leaves this list when a measure puts it at or under Go's,
   or when the maintainer accepts its reason, not before.
+- The order is changed here, with its reason, when a measure or the
+  maintainer says so. Work that is not next in it waits or is said why not.
 
 Last gone through on 2026-11-22, against main at 6e8a08a1.
+
+## The order
+
+What is done next, and after it, with the reason for each place. A step's
+detail is in the tables below.
+
+1. **What is owed**: the whole measuring rule over main, and the Nightly's
+   first run with the stops and the heap's checks. First because both say
+   whether what is on main is sound, and anything they find is fixed before
+   more is built on it.
+2. **`trim`**: the plain form in Tondo measured on today's main, with a
+   text's byte read by its offset made public, since it is the same native;
+   then the inliner weighing a call by what inlining buys and a region for
+   the copy; then the list of what stays behind Go. Second because its rows
+   are the furthest behind, and the inliner's weighing is a piece many other
+   calls wait for.
+3. **The chain's rest**: the loop's fast arm after its branch, which is
+   also what the chars rows lack, and the reads of the task's attention.
+   Then a new table against Go, at the baseline and at x86-64-v3. Third
+   because the diagnosis is done and fresh, and the table is what orders
+   the steps after it.
+4. **What the examples pay**, by their profiles taken again: the library
+   functions, `url.encoded` first, and the map copied in a loop over it.
+   They are a larger share of real programs than any row left.
+5. **The views of texts**: their two numbers, which steps 2 and 4 give,
+   then the maintainer's decision.
+6. **programs/sum lines and queries/countBy**, by their profiles.
+7. **An array of tasks waited for as one wait, then `parallel for` and
+   `.parallel()`**: the largest piece, after what it stands on.
+8. **The tightening**: texts' counts at direct sites, the header at 16
+   bytes, Phase K, and what the speed plan left of the network and of the
+   runtime's text conversions.
+
+Beside the order, wherever a piece leaves a wait: the two tests that fail
+now and then, when they show; the heap's checks on musl and macOS after
+their first clean runs; the scheduler's open mutant; what each worker runs
+in the text of `tondo blocked`; the examples of `tondo explain`; and the
+manual's unheld quotes and listings.
 
 ## Owed now
 
@@ -53,6 +94,7 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 | A part stored into a value that leaves its function, copied out where it leaves (logstat) | 2026-11-19 | With the views |
 | Texts' counts at direct sites, first of the tightening; a text's header at 16 bytes | 2026-11-19 | [speed plan](speed.md), Phase K |
 | The inliner weighing a call by what inlining buys | 2026-11-20 | Reopens `trim` |
+| `String.byteAt(offset)`, public: the byte at an offset of a text, with no copy, where a program has only `bytes()`, which copies them into an array. The library's own code reads it already. Approved by the maintainer if it costs little; with `trim` | 2026-11-22 | `textNative.byteAt` |
 | An array of tasks waited for as one wait | 2026-11-20 | |
 | `parallel for` and `.parallel()` in a chain, after the three above | 2026-11-20 | README, Status |
 | Phase K: regions tightened, the alignment of loops' heads, and the rows whose time moves by a fifth with where their code lies | 2026-11-18 | [speed plan](speed.md), Phase K |
@@ -83,7 +125,6 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 
 | What | Since |
 | --- | --- |
-| Whether a program may read a byte of a text by its offset. The library's own code can; a program has `bytes()`, which copies them into an array | 2026-11-22 |
 | The views of texts, once their two numbers are in | 2026-11-22 |
 
 ## Parked

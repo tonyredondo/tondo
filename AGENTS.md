@@ -188,6 +188,11 @@ its own, with `gh workflow run CI --ref <branch>`.
   `crates/tondo/src/mcp.rs` and with its command in `editors/vscode`, in
   the same change. `cargo test -p tondo --test guide` holds every command
   and option to both.
+- `docs/pending.md` is the one list of what is open and the order it is
+  done in: the work follows it. A piece that lands takes its line out in the
+  same push; what is found on the way, or agreed in a conversation, gets its
+  line that day, checked against the code first; and the order changes
+  there, with its reason, never only in a session's notes.
 - Errors say how to fix them, with the code to write when there is one.
   The toolchain does what it can by itself rather than ask for
   annotations.
