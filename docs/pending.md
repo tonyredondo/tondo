@@ -29,12 +29,13 @@ What is done next, and after it, with the reason for each place. A step's
 detail is in the tables below. The inliner's weighing of step 2 comes
 before the chain's rest because the chain's adapters wait for it too.
 
-1. **What is owed**: the reads that no deadline ends; the bounds on what the
-   library reads from outside, once the maintainer has their numbers; what
-   is left of the cost the scheduler's pieces added to a spawn and a join;
-   and the next Nightly's jobs under emulation. First because they say
-   whether what is on main is sound, and anything they find is fixed before
-   more is built on it.
+1. **What is owed**: the bounds on what the library reads whole from
+   outside, with the maintainer's numbers; what is left of the cost the
+   scheduler's pieces added to a spawn and a join; and the next Nightly's
+   jobs under emulation. First because they say whether what is on main is
+   sound, and anything they find is fixed before more is built on it. The
+   archive read on demand, the larger half of the same answer, comes after
+   the inliner's weighing by the maintainer's word.
 2. **`trim`**: the inliner weighing a call by what inlining buys and a
    region for the copy, which the plain form in Tondo, measured again,
    waits for; then the list of what stays behind Go. Second because its rows
@@ -70,9 +71,9 @@ manual's unheld quotes and listings.
 | What | Since | Detail |
 | --- | --- | --- |
 | What is left of the cost the scheduler's pieces of 2026-11-20 and 21 added to a spawn and a join, each within the bar alone. Reading the clock straight and asking for the workers with a load took 6.2% of the instructions of `runtime/join 1`, now under the table's count, and about 1% of `tasks/spawn 1000`, `select 1000` and `channel 10000`. Left: `ffi/waits from a C thread 100`, still 3.5% over the table, whose count moves with the turns of the waits' spin locks and which is to be told from them first; the readings of the clock that remain at each spawn and join, some seven, for which the processor's own counter is to be weighed before any stamp becomes a count, so that every wait keeps its meaning; and the wakes added for a task woken next to a busy worker, each to keep the stall it fixed as its reason or to go | 2026-11-22 | AGENTS.md, "A change to the optimizer…"; [decisions](decisions.md) |
-| A read that can wait without end is not ended by a deadline or a cancel when it goes through a thread of the system: a file that is a pipe, a FIFO, a terminal or a device, and the pipes of a process that was started. A `fs.readText` of a pipe written after a second gave its text at a second under a deadline of 50 ms, and a read of a started process's output gave its line at 300 ms. They are to wait on the poller, opened so they do not block, as the network does. `Process.cancel()` waits for the pipes too, so one that something else keeps open holds it: the same piece | 2026-11-22 | Spec 11.15 and 11.17; `Mode::Host`, `Mode::Long` |
+| A read that can wait without end is not ended by a deadline or a cancel when it goes through a thread of the system: a file opened by its path that is a pipe, a FIFO, a terminal or a device. A `fs.readText` of a pipe written after a second gave its text at a second under a deadline of 50 ms. The pipes of a process that was started wait on the poller since 2026-11-22. For those files, a thread of the stream that reads only when the program asks, as the console's input has, and their open as work a deadline abandons; writes to them with it. `Process.cancel()` still waits for the pipes it captures | 2026-11-22 | Spec 11.15 and 11.17; `Mode::Host` |
 | Whether the Nightly's jobs under emulation build and pass. In the run of 2026-11-22 they did not build: the build for the other architecture linked for a C library older than the one published, which lacks a function the path of a crash calls. It links for the published one now and its step prints the compiler's words; the next run says whether it builds, and whether observe's `a_cpu_profile_of_a_program_that_waits_says_it_waited`, red there every day from 2026-11-16 to 21, holds under emulation. That run's steps with the seeded stops and with the heap's checks were clean | 2026-11-22 | Nightly run 45017098543 |
-| `archive.read` inflates a whole `tar.gz` or `tar.zst`, and every deflated entry of a zip, before the program sees an entry, so a few kilobytes made for it fill the memory. It asks for a bound on what a read may inflate, or for entries read as they are asked for: the maintainer's to see, with the numbers | 2026-11-22 | `crates/tondo/std/archive.to` |
+| The bounds on what the library reads whole from outside, with the numbers the maintainer chose on 2026-11-22: a response of the HTTP client read by `text()`, `bytes()` or `json()` 2 GiB, `gzip.decompress` and `zstd.decompress` 128 MiB, a message of gRPC that comes uncompressed 16 MiB as the compressed one has, and a line of `readLine` 1 MiB; an image's 512 MiB is in. Each takes its `limits`, as a regex does, and its error says the number and the code that raises it; GraphQL's depth of 256 gets the same. None today: a small response or stream made for it fills the memory | 2026-11-22 | [decisions](decisions.md) |
 | The readers of bytes or text from outside that have no search in the Nightly, two lots left of three. The first is in: a GraphQL document, the forms of a request, its cookies and a query's parts, and it found three ways for a document of GraphQL to end a server, mended with it. Left: the images' decoders and their EXIF, certificates and keys in PEM and DER, and CSV; then the decoders of `std.encoding`, a UUID, the parsers of dates and durations, the streams of gzip and zstd, and gRPC's frames; MySQL's packets last, as no public call reaches their reader. Each search runs some minutes before it lands, and what it finds is mended with it | 2026-11-22 | `testing/fuzz` |
 | Eight of the Nightly's searches change their input blind: what they try is the runtime's own code, of which the search's coverage sees nothing. They are the ones of JSON, YAML, TOML, MessagePack, CBOR, protobuf, the regex and a request's form in parts; the images' decoders and the inflaters, which have none yet, would be the same. A runtime built for `--fuzz` with the sanitizer's counters over its Rust, read by the search beside its own, gives all of them eyes at once: a piece of days, after the bounds on what the library reads and the inliner's weighing. Until then each such search says in its own comment that it is blind | 2026-11-22 | `testing/fuzz`; `crates/tondo/build.rs` |
 | The reader of a request's form in parts written in Tondo, on its own merits: measured against the runtime's at a megabyte first | 2026-11-22 | `httpNative.requestForm` |
@@ -103,6 +104,8 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 | A part stored into a value that leaves its function, copied out where it leaves (logstat) | 2026-11-19 | With the views |
 | Texts' counts at direct sites, first of the tightening; a text's header at 16 bytes | 2026-11-19 | [speed plan](speed.md), Phase K |
 | The inliner weighing a call by what inlining buys | 2026-11-20 | Reopens `trim` |
+| An archive read on demand. Today `archive.open` reads the whole file, inflates every entry of a zip and the whole stream of a `tar.gz` or `tar.zst`, and holds twice what it inflates: 2 GiB for a megabyte made for it. It is to take the index alone, a zip's and a plain tar's by reads at an offset and a compressed tar's by one pass that keeps the headers; inflate an entry when it is read, up to 128 MiB when read whole; write each entry as it inflates it in `extract`, up to 8 GiB and a million entries; and give an entry as a stream with `Archive.reader(name)`. With few allocations, as every reading on demand: an entry's stream fills the caller's buffer, and its cases and a row against Go count them | 2026-11-22 | After the inliner's weighing; `crates/tondo/std/archive.to` |
+| A process's `output()` and `wait()` wholly on the poller, its pipes and the child's end, which takes out the reader that outlives its call and what keeps it safe | 2026-11-22 | `crates/tondo-runtime/src/process.rs` |
 | An array of tasks waited for as one wait | 2026-11-20 | |
 | `parallel for` and `.parallel()` in a chain, after the three above | 2026-11-20 | README, Status |
 | Phase K: regions tightened, the alignment of loops' heads, and the rows whose time moves by a fifth with where their code lies | 2026-11-18 | [speed plan](speed.md), Phase K |
@@ -139,7 +142,6 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 | What | Since |
 | --- | --- |
 | The views of texts, once their two numbers are in | 2026-11-22 |
-| What bounds an archive that inflates to more than the program can hold, once its numbers are in | 2026-11-22 |
 
 ## Parked
 
