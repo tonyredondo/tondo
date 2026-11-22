@@ -107,7 +107,7 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 | What | Since | Detail |
 | --- | --- | --- |
 | observe's `debugger_goes_back_in_a_replay` fails now and then under load. A copy says its probe since 2026-11-21: the line it prints at its next failure is the lead | 2026-11-16 | `crates/tondo/tests/observe.rs` |
-| `every_debugged_program_s_end_reaches_the_editor` failed once on x86-64 macOS, not reproduced in 57,000 rounds | 2026-11-20 | |
+| `every_debugged_program_s_end_reaches_the_editor` fails now and then on x86-64 macOS: once on 2026-11-20, not reproduced in 57,000 rounds here, and again on 2026-11-22, where the test said what it saw: round 26, the session answered `initialize`, `launch` and `configurationDone` and gave one `output`, then neither `exited` nor `terminated`. Next: at its limit the test says whether the program still runs and where, and what the adapter last read | 2026-11-20 | `crates/tondo/tests/observe.rs`; CI run 44964356533 |
 | The time a task has been ready in the queue every worker takes from, only if a stamp at each enqueue measures clean | 2026-11-21 | [decisions](decisions.md): "The scheduler's state where people look" |
 | What each worker runs, in the text of `tondo blocked` and of a dump: today only in their JSON | 2026-11-21 | The same |
 | An example in `tondo explain` for the codes that have none: 17 of 180 have one, from the guide's blocks | 2026-11-21 | |
