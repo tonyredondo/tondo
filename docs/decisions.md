@@ -9630,3 +9630,70 @@ implies: what a process wrote before its wait ended, a line half read.
 A process's pipe and a file are read on threads of the host that no
 deadline ends yet; reading them through the poller is the piece that
 follows.
+
+## A call that a deadline ends waits for its stages, not their pipes
+
+A call that waits for a process gave back nothing at a deadline, but it
+still waited for the job of the host that waited for the process: the task
+ended the stages and waited until the job saw them end and read their
+pipes to the end, and the job wrote the output into the call's frame. A
+grandchild that kept the captured pipe open held the call until it ended:
+`sh -c "sleep 3 & exec sleep 5"`, read with `output()` under `within 50 ms`,
+gave its `TimedOut` after 3002 ms, though the stage was dead at once. A
+cancelled task that dropped a `Process` whose grandchild kept its pipe
+ended 1981 ms later.
+
+Now a cancel, a deadline or a `recover`'s alarm ends the stages and waits
+until they have ended, which is at once after a kill and the grace at most
+with one, and the call comes back then, without waiting for the pipes: 50
+ms for that grandchild, and 250 ms for a stage that ignores `Terminate`
+under `grace(200 ms)`. The job alone reaps the stages, as each ends,
+before it reads what the pipes still hold; it then marks them reaped
+(`process::Reaped`), and wakes the tasks waiting for that. The mark and
+the list of waits change under one lock, so a task that finds the stages
+not reaped is in the list before the job takes it.
+
+The job and what ends the wait race for the task's `Wait`, whose word
+changes only by a compare-and-exchange from none (`Wait::claim`): the job
+claims it once its result is in the slot, a deadline, a cancel or an alarm
+with their own. The first decides. The task reads the slot only when the
+job claimed it; a job that lost takes its result back, drops it on its
+thread and goes on alone to the end of the pipes. So the job writes
+nothing into the program's memory: it gives the statuses and the captured
+output, and the task makes the arrays of a `ProcessOutput` from them. A
+`Process` holds a count for each job that waits for it, so a task that a
+deadline or a cancel ended lets go of its own while the job reads, and the
+last count, the job's or the program's, waits for the processes and frees
+it. A cancelled task that drops a `Process` ends its stages and waits for
+them, not for the pipes. `id()` and `signal()` read the ids beside the lock
+that a job holds while it waits.
+
+A handle that a panic's unwinding drops is the same: the unwinding
+cancels what else the block owns (15.9), and a `recover` around a block
+that started a command of an hour waited the hour for it as a `Join`
+before it gave its `err`; a `sleep 1` dropped so took 1001 ms. Now a
+release in the cleanups of an unwinding, a panic's or a passed deadline's,
+ends the stages and waits for them, as a cancelled task's does: the task
+claims its own wait at once, or takes the notification of a job that
+claimed it first. A stage already reaped gets no signal any more, at a
+release or at a cancel, since its id may name another process by then.
+`Process.wait`, `output`, `check` and `cancel` still wait for the pipes
+too, as they give what the pipes carried; a pipe that a grandchild keeps
+open holds them until the pipes are read through the poller.
+
+Both races have their stop. With the checker's stops (`TONDO_RT_STALLS`), a
+job may stop between its end and its claim (`stalls::Point::Give`), and a
+task between ending the stages and its look at the mark
+(`stalls::Point::Kill`). Twelve rounds of a started process's output under
+a deadline its job beats gave their value every time in eight runs without
+the stops; with them six seeds of eight ended some rounds at the deadline.
+Twelve rounds of a deadline that ends a stage found it reaped before the
+look in none of four runs without the stops, and in seven seeds of eight
+with them. Every round came back at once, and the leak check counted
+nothing (tests/scheduler.rs). Taking the job's count out makes that test
+fault in mimalloc, and deadline_leaves_the_job.to leak two processes.
+
+Without `group()`, what the stages started goes on, unwaited: a grandchild
+that keeps a pipe keeps the job reading until it ends, on its thread. With
+`group()` the deadline ends the group, as `cancel` does, and that is how a
+program ends what its processes leave.

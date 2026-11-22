@@ -8442,7 +8442,8 @@ Ejecución:
   ninguna sin salida.
 - `start` inicia el proceso sin esperarlo; sus streams son los del programa
   salvo los redirigidos. `Process.wait`, `output`, `check` y `cancel` lo
-  esperan; `cancel` termina antes todas sus etapas.
+  esperan, a sus etapas y a que se cierren sus tuberías; `cancel` termina
+  antes todas sus etapas.
 - Las redirecciones explícitas prevalecen sobre los valores por defecto de
   cada operación.
 - Un código de salida distinto de cero es un dato: solo `check` lo convierte en
@@ -8461,10 +8462,15 @@ Ejecución:
 Vida de un `Process` (20.9 del lenguaje):
 
 - Abandonar el handle cierra la entrada de sus procesos y espera a que
-  terminen, como un `Join`; durante un pánico los cancela. `detach()` los suelta
-  para que sigan sin esperarlos, también después de terminar el programa.
-- Cancelar la tarea que espera un proceso termina sus etapas, espera a que
-  acaben y no deja zombies.
+  terminen, como un `Join`; durante un pánico, o en una tarea cancelada o
+  cuyo plazo venció, los termina y espera a sus etapas, no a sus tuberías.
+  `detach()` los suelta para que sigan sin esperarlos, también después de
+  terminar el programa.
+- Cancelar la tarea que espera un proceso, o el plazo de un `within` o la
+  alarma de un `recover` que acaba su espera, termina sus etapas y espera a
+  que acaben: la llamada no da nada (11.15 del lenguaje) y no deja zombies.
+  No espera a que se cierren sus tuberías, que puede retener lo que ellas
+  lanzaron: eso sigue, salvo con `group()`.
 - `exit(code)` entrega la salida pendiente de la consola y termina el programa
   con ese código, sin ejecutar los `defer` ni esperar a otras tareas.
 
@@ -8491,9 +8497,11 @@ Señales:
   procesos propio, del que la primera etapa es líder: `cancel` y `signal`
   llegan al grupo entero, también a lo que lanzaron sus procesos, como los
   binarios de test que lanza `go test`. Sin `group()` llegan solo a las
-  etapas, y lo que lanzaron sigue. El Ctrl-C de la terminal llega entonces
-  solo al programa, que decide con `signals`, así que un programa interactivo
-  arranca sin `group()`.
+  etapas, y lo que lanzaron sigue. Lo mismo hace el plazo o la cancelación
+  que acaba la espera de una llamada: con `group()` termina el grupo
+  entero, y así es como un programa termina lo que dejan sus procesos. El
+  Ctrl-C de la terminal llega entonces solo al programa, que decide con
+  `signals`, así que un programa interactivo arranca sin `group()`.
 - `grace(time)` da un margen para terminar: `cancel()`, y la cancelación de la
   tarea que espera al proceso, envían `Terminate` y solo pasado el margen
   `Kill` a lo que sigue, como `docker stop`; sin él, `Kill` al instante.

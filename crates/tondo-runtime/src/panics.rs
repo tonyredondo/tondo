@@ -574,6 +574,14 @@ pub(crate) fn unwinds() -> bool {
     task().is_some_and(|task| task.unwinding.is_some())
 }
 
+/// Whether the running task is in the cleanups of a panic's unwinding, or
+/// of a passed deadline's, which hold its record: what they let go of is
+/// dropped by the unwinding, as a `Process` whose stages its release then
+/// ends (19.2 of the library).
+pub(crate) fn cleaning_up() -> bool {
+    task().is_some_and(|task| matches!(task.paused.last(), Some(Some(_))))
+}
+
 /// Whether the running task already unwinds, asked by the check after a
 /// statement that gave a counted value the unwinding's way does not
 /// release: a panic of a task of its `recover`, or a passed deadline, waits

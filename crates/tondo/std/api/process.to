@@ -203,7 +203,10 @@ pub fn Command.mergeStderr(self): Command
 /// The command started in a process group of its own, which `cancel` and
 /// `signal` reach whole: also what it starts, as the test programs that
 /// `go test` builds. The terminal's Ctrl-C then reaches the program alone,
-/// which decides, with `signals`.
+/// which decides, with `signals`. A deadline, or a cancel of the task, that
+/// ends a wait for the command ends the group too; without one, what the
+/// command started goes on, and the call that waited comes back once its
+/// own stages have ended.
 pub fn Command.group(self): Command
 
 /// The command with time to finish: `cancel`, and cancelling the task that

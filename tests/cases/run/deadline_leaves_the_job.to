@@ -1,0 +1,102 @@
+// A call that waits for a process comes back when a deadline has ended its
+// wait and its stages, without waiting for what they left: the job that
+// waited for it on a thread of the host reaps it and drops what it read. A grandchild that
+// keeps the pipe of a plan's output held the call until it ended, without
+// the plan's group; with the group, the deadline ends it too. A started
+// process dropped by the unwinding while its job still reads the pipe a
+// grandchild keeps, and one a cancelled task lets go of: the job holds the
+// process until the grandchild ends and lets go of it then, which the leak
+// check counts. A stage that ignores the request to end, with a grace,
+// ends at the grace's kill, and the call comes back then.
+import std.console
+import std.fs
+import std.process
+import std.sync
+import std.time
+
+fn timed(name: String, work: fn()) {
+    let since = time.now()
+    let outcome = within time.milliseconds(50) { work() }
+    let ended = if outcome.isOk() { "ok" } else { "timed out" }
+    console.println("{name}: {ended}, at once {since.elapsed().seconds() < 2}")
+}
+
+fn holding(started: sync.Atomic[Int]) {
+    match process
+        .command("sh", "-c", "sleep 0.3 & exec sleep 5")
+        .stdout(process.Output.Capture)
+        .start() {
+        ok(running) => {
+            started.store(1)
+            _ = running.wait()
+        }
+        err(_) => {}
+    }
+}
+
+fn main() {
+    timed(
+        "a started process dropped while its job reads",
+        () => match process
+            .command("sh", "-c", "sleep 0.3 & exec sleep 5")
+            .stdout(process.Output.Capture)
+            .start() {
+            ok(running) => {
+                _ = running.output()
+            }
+            err(_) => {}
+        },
+    )
+    timed(
+        "a grandchild that keeps the pipe",
+        () {
+            _ = process.command("sh", "-c", "sleep 3 & exec sleep 5").output()
+        },
+    )
+    timed(
+        "a grandchild in the plan's group",
+        () {
+            _ = process.command("sh", "-c", "sleep 3 & exec sleep 5").group().output()
+        },
+    )
+    // A stage that ignores the request to end gets its grace, and then the
+    // kill: the call comes back once it has ended, not at the deadline. The
+    // deadline starts once the stage ignores the request.
+    let ready = "ready"
+    _ = fs.remove(ready)
+    let script = "trap '' TERM; : > {ready}; exec sleep 5"
+    match process.command("sh", "-c", script).grace(time.milliseconds(200)).start() {
+        ok(running) => {
+            for not fs.exists(ready) {
+                time.sleep(time.milliseconds(1))
+            }
+            let since = time.now()
+            let graced =
+                within time.milliseconds(50) {
+                    _ = running.output()
+                }
+            let ms = since.elapsed().milliseconds()
+            let ended = if graced.isOk() { "ok" } else { "timed out" }
+            console.println(
+                "a stage given a grace: {ended}, after its grace {ms >= 250 and ms < 2000}",
+            )
+        }
+        err(error) => panic("{error}")
+    }
+    let started = sync.Atomic(0)
+    let job = spawn holding(started)
+    for started.load() == 0 {
+        time.sleep(time.milliseconds(1))
+    }
+    time.sleep(time.milliseconds(20))
+    job.cancel()
+    console.println("a cancelled task let go of its process")
+}
+
+// expect-stdout: a started process dropped while its job reads: timed out, at once true
+// expect-stdout: a grandchild that keeps the pipe: timed out, at once true
+// expect-stdout: a grandchild in the plan's group: timed out, at once true
+// expect-stdout: a stage given a grace: timed out, after its grace true
+// expect-stdout: a cancelled task let go of its process
+// expect-no-replay: a recorded run has one worker, and runs a process's wait on it, where no deadline ends it
+// expect-no-schedule: the virtual clock of an order stands still while a task waits on the host, so no deadline passes

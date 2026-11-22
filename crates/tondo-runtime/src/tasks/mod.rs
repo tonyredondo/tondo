@@ -61,7 +61,7 @@ mod foreign;
 pub(crate) use foreign::*;
 
 mod checker;
-mod stalls;
+pub(crate) mod stalls;
 pub(crate) mod views;
 
 mod inspect;

@@ -68,19 +68,31 @@ pub(crate) fn host<R: Send + 'static>(long: bool, job: impl FnOnce() -> R + Send
     result.lock().unwrap_or_else(|e| e.into_inner()).take().expect("the host operation finished")
 }
 
-/// Like `host` for long work, but a cancelled task stops waiting:
-/// `on_cancel` makes the work end soon, and the task waits for that. It
-/// gives the work's result and whether the wait was cancelled, a deadline
-/// or a `recover`'s alarm too, after which a native gives back nothing and
-/// calls `panics::start_noted` (11.15).
+/// Like `host` for long work, but a cancelled task stops waiting: it calls
+/// `on_cancel`, which makes the work end soon, and goes on at once. It
+/// gives the work's result, or `None` when the wait was cancelled, a
+/// deadline or a `recover`'s alarm too, after which a native gives back
+/// nothing and calls `panics::start_noted` (11.15). With `give_up`, the
+/// task does not wait at all, as if it were cancelled at once.
+///
+/// The work and what ends the wait race for the task's `Wait`, whose word
+/// `fired` changes only by a compare-and-exchange from none
+/// (`Wait::claim`): the work claims it with 0 once its result is in the
+/// slot, a cancel, a deadline or an alarm with their own. The first
+/// decides. The task reads the slot only when the work claimed it; when
+/// the work lost, it takes its result back and drops it on its own thread,
+/// and goes on to its end, unwaited. So the work owns all it uses, and
+/// holds a count of any object of the program it reads, which it lets go
+/// of there: it writes nothing the task may have gone past.
 pub(crate) fn host_cancellable<R: Send + 'static>(
     job: impl FnOnce() -> R + Send + 'static,
     on_cancel: impl FnOnce(),
-) -> (R, bool) {
+    give_up: bool,
+) -> Option<R> {
     if current().is_null() || super::replay::on() {
-        return (job(), false);
+        return Some(job());
     }
-    let result = Arc::new((Mutex::new(None), Condvar::new()));
+    let result = Arc::new(Mutex::new(None));
     let wait = Wait::new();
     let (slot, waiting) = (result.clone(), wait.clone());
     HOST_WORK.fetch_add(1, Ordering::SeqCst);
@@ -89,10 +101,12 @@ pub(crate) fn host_cancellable<R: Send + 'static>(
     submit(
         Box::new(move || {
             let value = job();
-            *slot.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(value);
-            slot.1.notify_all();
+            *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(value);
+            super::tasks::stalls::here(super::tasks::stalls::Point::Give);
             if waiting.claim(0) {
                 notify(waiting.task);
+            } else {
+                drop(slot.lock().unwrap_or_else(|e| e.into_inner()).take());
             }
             if virtual_clock {
                 super::clock::external(false);
@@ -101,17 +115,15 @@ pub(crate) fn host_cancellable<R: Send + 'static>(
         }),
         true,
     );
-    let cancelled = wait.block() == super::tasks::CANCELLED;
+    // Giving up, the task claims its wait itself, or, when the work claimed
+    // it first, takes the notification the work gave, as any wait does.
+    let cancelled =
+        if give_up && wait.claim(super::tasks::CANCELLED) { true } else { wait.block() == super::tasks::CANCELLED };
     if cancelled {
         on_cancel();
+        return None;
     }
-    let mut value = result.0.lock().unwrap_or_else(|e| e.into_inner());
-    loop {
-        if let Some(value) = value.take() {
-            return (value, cancelled);
-        }
-        value = result.1.wait(value).unwrap_or_else(|e| e.into_inner());
-    }
+    Some(result.lock().unwrap_or_else(|e| e.into_inner()).take().expect("the host operation finished"))
 }
 
 /// What `future` gives, polled on the current task, which parks between

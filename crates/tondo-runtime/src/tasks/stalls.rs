@@ -1,20 +1,22 @@
 //! `TONDO_RT_STALLS`, a seed, with `TONDO_CHECK_SCHEDULER` (toolchain 7.17):
 //! one thread at a time stops where the seed says, as a busy machine
 //! deschedules one thread while the others run, where the cases' runner
-//! stops every thread at once (`TONDO_CASES_STALLS`). Four places, none on
+//! stops every thread at once (`TONDO_CASES_STALLS`). Six places, none on
 //! the path a task's wake takes: the monitor before it looks, the monitor
 //! between reading a held worker's count and marking it, a worker that
 //! took a task from the queue every worker takes from, or from another
-//! worker, before it runs it, and a worker another stood in for, back from
-//! its call of C before it gives that one back. Each thread stops three
-//! times at most.
+//! worker, before it runs it, a worker another stood in for, back from its
+//! call of C before it gives that one back, a job of the host that ended,
+//! before it gives its result to the task that waits for it, and a task
+//! that ended a process's stages, before it looks whether they were
+//! reaped. Each thread stops three times at most.
 
 use super::*;
 use std::cell::Cell;
 
 /// Where a thread may stop.
 #[derive(Clone, Copy)]
-pub(super) enum Point {
+pub(crate) enum Point {
     /// The monitor, before a look.
     Look,
     /// The monitor, between reading a held worker's count and marking it:
@@ -26,19 +28,31 @@ pub(super) enum Point {
     /// A worker back from a call of C in which another stood in for it,
     /// before it gives that one back: as many as return together stop there.
     Leave,
+    /// A job of the host that ended, before it claims the wait of the task
+    /// that waits for it: a deadline or a cancel may end the wait meanwhile,
+    /// and the job then drops its result (`io::host_cancellable`).
+    Give,
+    /// A task that ended the stages of a process at a cancel, a deadline or
+    /// an alarm, before it looks whether the job that waits for them reaped
+    /// them: they may end meanwhile, and it then goes on without a wait
+    /// (`process::Reaped`).
+    Kill,
 }
 
 impl Point {
     /// The passes over which a thread makes its stops at this point, about
     /// three: the monitor looks once a millisecond, marks a worker seldom,
-    /// a worker takes from the shared queue now and then, and one comes back
-    /// from a call another stood in for seldom.
+    /// a worker takes from the shared queue now and then, one comes back
+    /// from a call another stood in for seldom, a job of the host ends now
+    /// and then, and a task ends a process's stages seldom.
     fn passes(self) -> u64 {
         match self {
             Point::Look => 1000,
             Point::Mark => 4,
             Point::Take => 32,
             Point::Leave => 4,
+            Point::Give => 8,
+            Point::Kill => 8,
         }
     }
 }
@@ -66,7 +80,7 @@ pub(super) fn start() {
 
 /// Stops this thread here, if the seed says so.
 #[inline]
-pub(super) fn here(point: Point) {
+pub(crate) fn here(point: Point) {
     if ON.load(Ordering::Relaxed) {
         stop(point);
     }
@@ -74,7 +88,7 @@ pub(super) fn here(point: Point) {
 
 thread_local! {
     /// This thread's passes at each point, and the stops it has made.
-    static PASSES: Cell<[u64; 4]> = const { Cell::new([0; 4]) };
+    static PASSES: Cell<[u64; 6]> = const { Cell::new([0; 6]) };
     static STOPPED: Cell<u32> = const { Cell::new(0) };
 }
 
@@ -119,7 +133,7 @@ mod tests {
     /// lasts from 5 to 50 ms.
     #[test]
     fn a_seed_gives_a_few_stops_of_a_bounded_length() {
-        for point in [Point::Look, Point::Mark, Point::Take] {
+        for point in [Point::Look, Point::Mark, Point::Take, Point::Give, Point::Kill] {
             let at = point as usize;
             let mut total = 0;
             for seed in 0..100u64 {

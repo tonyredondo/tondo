@@ -3,6 +3,7 @@
 //! immutable shared object, so `Command` and `Pipeline` copy by reference.
 
 use super::io::{Mode, StreamObject, host_cancellable, replaced_console, retain, run, stream};
+use super::tasks::{Wait, notify};
 use super::{ArrayHeader, LIVE_OBJECTS, Str, element, str_bytes, tondo_rt_array_new};
 use crate::array_items;
 use crate::byte_array;
@@ -268,7 +269,80 @@ struct Running {
     /// The plan's `grace`, and whether every stage was waited for, after
     /// which a late `SIGKILL` reaches nothing.
     grace: Option<std::time::Duration>,
-    reaped: Arc<AtomicBool>,
+    reaped: Arc<Reaped>,
+}
+
+/// Whether every stage of a run was reaped, which the job that waits for
+/// them does as each ends, before it reads what their pipes still hold, and
+/// the tasks that wait for that: a task that ended the stages at a cancel,
+/// a deadline or an alarm waits until they have ended, not for their pipes,
+/// which what they started may keep open. The job alone reaps a stage, and
+/// `done` and the waits change under `waiting`'s lock: a task that finds
+/// the stages not reaped is in the list before the job takes it.
+#[derive(Default)]
+struct Reaped {
+    done: AtomicBool,
+    waiting: Mutex<Vec<Arc<Wait>>>,
+}
+
+impl Reaped {
+    /// The job's, once it reaped every stage.
+    fn set(&self) {
+        let waiting = {
+            let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+            self.done.store(true, Ordering::Release);
+            std::mem::take(&mut *waiting)
+        };
+        for wait in waiting {
+            if wait.claim(0) {
+                notify(wait.task);
+            }
+        }
+    }
+
+    /// The task's, after it ended the stages: waits until the job reaped
+    /// them, also in a task that is cancelled.
+    fn wait(&self) {
+        super::tasks::stalls::here(super::tasks::stalls::Point::Kill);
+        let wait = Wait::new();
+        {
+            let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+            if self.done.load(Ordering::Acquire) {
+                return;
+            }
+            waiting.push(wait.clone());
+        }
+        wait.block_fully();
+    }
+}
+
+/// What ends the processes of a run: their ids, their group, the plan's
+/// grace and whether every stage was reaped. It is fixed once they started,
+/// so a `Process` keeps it beside its lock, which a wait holds.
+#[derive(Clone)]
+struct Stop {
+    pids: Vec<u32>,
+    group: Option<u32>,
+    grace: Option<std::time::Duration>,
+    reaped: Arc<Reaped>,
+}
+
+impl Stop {
+    fn of(running: &Running) -> Stop {
+        Stop { pids: running.pids.clone(), group: running.group, grace: running.grace, reaped: running.reaped.clone() }
+    }
+
+    fn now(&self) {
+        stop_all(&self.pids, self.group, self.grace, &self.reaped);
+    }
+
+    /// What a cancel, a deadline or an alarm does to a wait for the run: it
+    /// ends the stages and waits until they have ended, at once after a
+    /// kill and after the grace at most, but not for their pipes.
+    fn ended(&self) {
+        self.now();
+        self.reaped.wait();
+    }
 }
 
 /// Where a child's output goes.
@@ -642,8 +716,10 @@ pub(crate) fn running() -> usize {
 
 /// Ends the processes: at once, or with `grace`, `SIGTERM` first and then
 /// `SIGKILL` to what has not been waited for when it passes, as `docker
-/// stop` does.
-fn stop_all(pids: &[u32], group: Option<u32>, grace: Option<std::time::Duration>, reaped: &Arc<AtomicBool>) {
+/// stop` does. The stages get them only while they are not reaped: a
+/// reaped stage's id may name another process by then.
+fn stop_all(pids: &[u32], group: Option<u32>, grace: Option<std::time::Duration>, reaped: &Arc<Reaped>) {
+    let pids = if reaped.done.load(Ordering::Acquire) { &[] } else { pids };
     let Some(grace) = grace else { return kill_all(pids, group) };
     match group {
         Some(group) => unsafe {
@@ -655,7 +731,7 @@ fn stop_all(pids: &[u32], group: Option<u32>, grace: Option<std::time::Duration>
     }
     let (pids, reaped) = (pids.to_vec(), reaped.clone());
     let late = move || {
-        if !reaped.load(Ordering::Acquire) {
+        if !reaped.done.load(Ordering::Acquire) {
             kill_all(&pids, group);
         }
     };
@@ -698,8 +774,8 @@ fn finish(running: &mut Running) -> Vec<(i64, bool)> {
     }
     // The program's side of a piped input closes, so the child sees its end.
     running.streams[0] = None;
-    let (pids, group, grace, reaped) = (running.pids.clone(), running.group, running.grace, running.reaped.clone());
-    let stop = || stop_all(&pids, group, grace, &reaped);
+    let ends = Stop::of(running);
+    let stop = || ends.now();
     let statuses: Vec<(i64, bool)> = running
         .children
         .iter_mut()
@@ -712,7 +788,7 @@ fn finish(running: &mut Running) -> Vec<(i64, bool)> {
             Err(_) => (1, false),
         })
         .collect();
-    running.reaped.store(true, Ordering::Release);
+    running.reaped.set();
     // With `grace`, descendants that keep the captured output open get
     // that long to finish it.
     let until = running.grace.map(|grace| std::time::Instant::now() + grace);
@@ -813,15 +889,30 @@ struct StatusLayout {
     success: usize,
 }
 
-/// Writes a `ProcessOutput` as four words, then the overall status as two:
-/// stdout, stderr, combined, statuses, code and success.
-unsafe fn write_output(running: &mut Running, layout: StatusLayout, out: *mut i64, failed_only: bool) -> (i64, bool) {
+/// What a run that ended gave: the status of each stage, and what was
+/// captured, which no thread writes any more.
+type Ended = (Vec<(i64, bool)>, Option<Arc<Mutex<Captured>>>);
+
+/// What a run gave, on the thread of the host that waited for it to end:
+/// nothing captured when `failed_only` and every stage succeeded.
+fn ended(running: &mut Running, failed_only: bool) -> Ended {
     let statuses = finish(running);
-    let (code, success) = overall(&statuses);
-    if failed_only && success {
-        return (code, success);
-    }
-    let captured = running.captured.lock().unwrap_or_else(|e| e.into_inner());
+    let captured = (!failed_only || !overall(&statuses).1).then(|| running.captured.clone());
+    (statuses, captured)
+}
+
+/// Writes a `ProcessOutput` as four words, then the overall status as two:
+/// stdout, stderr, combined, statuses, code and success; nothing without
+/// `captured`. The task makes its arrays, not the thread that waited.
+unsafe fn write_output(
+    statuses: &[(i64, bool)],
+    captured: Option<Arc<Mutex<Captured>>>,
+    layout: StatusLayout,
+    out: *mut i64,
+) {
+    let Some(captured) = captured else { return };
+    let captured = captured.lock().unwrap_or_else(|e| e.into_inner());
+    let (code, success) = overall(statuses);
     let array = tondo_rt_array_new(layout.size, statuses.len());
     for (index, &(code, success)) in statuses.iter().enumerate() {
         unsafe {
@@ -839,21 +930,6 @@ unsafe fn write_output(running: &mut Running, layout: StatusLayout, out: *mut i6
         success as i64,
     ];
     unsafe { std::ptr::copy_nonoverlapping(words.as_ptr(), out, words.len()) };
-    (code, success)
-}
-
-/// What `write_output` wrote into `out`, let go and made zeros again: a
-/// call whose wait a deadline or a `recover`'s alarm ended gives back
-/// nothing (11.15), and its arrays, which nothing else holds, would leak.
-unsafe fn given_back_nothing(layout: StatusLayout, out: *mut i64) {
-    for index in 0..4 {
-        let array = unsafe { *out.add(index) } as *mut ArrayHeader;
-        if !array.is_null() {
-            let size = if index == 3 { layout.size } else { 1 };
-            unsafe { super::arrays::tondo_rt_array_release(array, size, None) };
-        }
-    }
-    unsafe { std::ptr::write_bytes(out, 0, 6) };
 }
 
 fn plan_ref<'a>(plan: *mut PlanObject) -> &'a PlanObject {
@@ -869,14 +945,12 @@ pub unsafe extern "C" fn tondo_rt_process_run(plan: *mut PlanObject, quiet: u8, 
         Ok(running) => running,
         Err(error) => return error_status(&error),
     };
-    let (pids, group, grace, reaped) = (running.pids.clone(), running.group, running.grace, running.reaped.clone());
-    let (statuses, cancelled) =
-        host_cancellable(move || finish(&mut running), || stop_all(&pids, group, grace, &reaped));
-    if cancelled {
+    let stop = Stop::of(&running);
+    let Some(statuses) = host_cancellable(move || finish(&mut running), || stop.ended(), false) else {
         unsafe { std::ptr::write_bytes(out, 0, 2) };
         super::panics::start_noted();
         return 0;
-    }
+    };
     let (code, success) = overall(&statuses);
     unsafe { std::ptr::copy_nonoverlapping([code, success as i64].as_ptr(), out, 2) };
     0
@@ -904,36 +978,24 @@ pub unsafe extern "C" fn tondo_rt_process_output(
         Ok(running) => running,
         Err(error) => return error_status(&error),
     };
-    let (pids, group, grace, reaped) = (running.pids.clone(), running.group, running.grace, running.reaped.clone());
+    let stop = Stop::of(&running);
     unsafe { std::ptr::write_bytes(out, 0, 6) };
-    let out = out as usize;
-    let ((_, success), cancelled) = host_cancellable(
-        move || unsafe { write_output(&mut running, layout, out as *mut i64, run) },
-        || stop_all(&pids, group, grace, &reaped),
-    );
-    if cancelled {
-        unsafe { given_back_nothing(layout, out as *mut i64) };
+    let Some((statuses, captured)) = host_cancellable(move || ended(&mut running, run), || stop.ended(), false) else {
         super::panics::start_noted();
         return 0;
+    };
+    let success = overall(&statuses).1;
+    if check < 3 || !success {
+        unsafe { write_output(&statuses, captured, layout, out) };
+        return if check != 0 && !success { FAILED } else { 0 };
     }
-    if check != 0 && !success {
-        return FAILED;
-    }
-    if check < 3 {
-        return 0;
-    }
-    // The text of standard output, and the arrays of the output let go.
-    let words = out as *mut i64;
-    let arrays: Vec<*mut ArrayHeader> = (0..4).map(|index| unsafe { *words.add(index) } as *mut ArrayHeader).collect();
-    let text = std::str::from_utf8(unsafe { array_items::<u8>(arrays[0]) })
-        .map(|text| text.trim_end_matches(['\n', '\r']).to_string());
-    for (index, &array) in arrays.iter().enumerate() {
-        let size = if index == 3 { layout.size } else { 1 };
-        unsafe { super::arrays::tondo_rt_array_release(array, size, None) };
-    }
-    let Ok(text) = text else { return INVALID_DATA };
+    // The text of standard output, and no arrays of the output.
+    let Some(captured) = captured else { return INVALID_DATA };
+    let captured = captured.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(text) = std::str::from_utf8(&captured.stdout) else { return INVALID_DATA };
+    let text = text.trim_end_matches(['\n', '\r']);
     unsafe {
-        *words = if check == 3 {
+        *out = if check == 3 {
             crate::strings::str_in(region, text.as_bytes()) as i64
         } else {
             crate::arrays::texts_array_in(region, || text.lines().map(str::as_bytes)) as i64
@@ -942,10 +1004,11 @@ pub unsafe extern "C" fn tondo_rt_process_output(
     0
 }
 
-/// A started process.
+/// A started process. The job of each wait for it holds a count of it.
 #[repr(C)]
 pub struct ProcessObject {
     rc: AtomicUsize,
+    stop: Stop,
     running: Mutex<Running>,
 }
 
@@ -967,7 +1030,8 @@ pub unsafe extern "C" fn tondo_rt_process_start(plan: *mut PlanObject, out: *mut
         |error| error_status(&error),
         |running| {
             LIVE_OBJECTS.made();
-            let process = ProcessObject { rc: AtomicUsize::new(1), running: Mutex::new(running) };
+            let process =
+                ProcessObject { rc: AtomicUsize::new(1), stop: Stop::of(&running), running: Mutex::new(running) };
             unsafe { *out = Box::into_raw(Box::new(process)) };
         },
     )
@@ -994,7 +1058,7 @@ pub unsafe extern "C" fn tondo_rt_process_stream(process: *mut ProcessObject, wh
 /// `id()`: the system's id of the last stage.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_process_id(process: *mut ProcessObject) -> i64 {
-    Process(process).running().pids.last().map_or(0, |&pid| pid as i64)
+    unsafe { (*process).stop.pids.last() }.map_or(0, |&pid| pid as i64)
 }
 
 /// `Process.signal`: sends the signal of `process.Signal`'s variant `tag`
@@ -1002,12 +1066,11 @@ pub unsafe extern "C" fn tondo_rt_process_id(process: *mut ProcessObject) -> i64
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_process_signal(process: *mut ProcessObject, tag: i64) {
     let Some(&signal) = super::signals::SIGNALS.get(tag as usize) else { return };
-    let running = Process(process);
-    let running = running.running();
-    if let Some(group) = running.group {
+    let stop = unsafe { &(*process).stop };
+    if let Some(group) = stop.group {
         unsafe { libc::kill(-(group as i32), signal) };
     }
-    for &pid in &running.pids {
+    for &pid in &stop.pids {
         unsafe { libc::kill(pid as i32, signal) };
     }
 }
@@ -1056,33 +1119,40 @@ pub extern "C" fn tondo_rt_process_kill(pid: i64, tag: i64) -> i64 {
 }
 
 /// Waits for the process, with `cancel` killing it first; a cancelled task
-/// kills it too.
+/// ends it too and goes on once its stages have ended, and `give_up` does
+/// so at once. The job holds a count of the process until it ends, so a
+/// cancelled task may let go of its own.
 fn settle<R: Send + 'static>(
     process: *mut ProcessObject,
     cancel: bool,
+    give_up: bool,
     then: impl FnOnce(&mut Running) -> R + Send + 'static,
-) -> (R, bool) {
-    let (pids, group, grace, reaped) = {
-        let running = Process(process);
-        let running = running.running();
-        (running.pids.clone(), running.group, running.grace, running.reaped.clone())
-    };
+) -> Option<R> {
+    let stop = unsafe { (*process).stop.clone() };
     if cancel {
-        stop_all(&pids, group, grace, &reaped);
+        stop.now();
     }
-    let shared = Process(process);
-    host_cancellable(move || then(&mut shared.running()), move || stop_all(&pids, group, grace, &reaped))
+    unsafe { (*process).rc.fetch_add(1, Ordering::Relaxed) };
+    let held = Process(process);
+    host_cancellable(
+        move || {
+            let value = then(&mut held.running());
+            unsafe { let_go(held.0) };
+            value
+        },
+        move || stop.ended(),
+        give_up,
+    )
 }
 
 /// `wait()` and `cancel()` (`cancel` 1): the overall status into `out`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_process_wait(process: *mut ProcessObject, cancel: u8, out: *mut i64) -> i64 {
-    let (statuses, cancelled) = settle(process, cancel != 0, finish);
-    if cancelled {
+    let Some(statuses) = settle(process, cancel != 0, false, finish) else {
         unsafe { std::ptr::write_bytes(out, 0, 2) };
         super::panics::start_noted();
         return 0;
-    }
+    };
     let (code, success) = overall(&statuses);
     unsafe { std::ptr::copy_nonoverlapping([code, success as i64].as_ptr(), out, 2) };
     0
@@ -1099,15 +1169,12 @@ pub unsafe extern "C" fn tondo_rt_process_collect(
 ) -> i64 {
     let layout = StatusLayout { size: size as usize, success: success_offset as usize };
     unsafe { std::ptr::write_bytes(out, 0, 6) };
-    let out = out as usize;
-    let ((_, success), cancelled) =
-        settle(process, false, move |running| unsafe { write_output(running, layout, out as *mut i64, false) });
-    if cancelled {
-        unsafe { given_back_nothing(layout, out as *mut i64) };
+    let Some((statuses, captured)) = settle(process, false, false, |running| ended(running, false)) else {
         super::panics::start_noted();
         return 0;
-    }
-    if check != 0 && !success { FAILED } else { 0 }
+    };
+    unsafe { write_output(&statuses, captured, layout, out) };
+    if check != 0 && !overall(&statuses).1 { FAILED } else { 0 }
 }
 
 /// `detach()`: the processes run on; a thread of their own reaps them.
@@ -1164,7 +1231,10 @@ pub unsafe extern "C" fn tondo_rt_process_detach(process: *mut ProcessObject) {
 }
 
 /// Releases a `Process`: the last reference closes its input and waits for
-/// it, unless it was detached.
+/// it, unless it was detached. A release gives nothing back and starts no
+/// unwinding. Dropped by a panic's unwinding, or in a cancelled task, it
+/// ends the stages and waits for them, not for their pipes, and the job
+/// lets go of the process (19.2 of the library).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_process_release(process: *mut ProcessObject) {
     if process.is_null() {
@@ -1175,12 +1245,30 @@ pub unsafe extern "C" fn tondo_rt_process_release(process: *mut ProcessObject) {
             return;
         }
         std::sync::atomic::fence(Ordering::Acquire);
-        // A release gives nothing back and starts no unwinding.
-        if !Process(process).running().detached {
-            let _ = settle(process, false, |running| {
-                finish(running);
-            });
+        if Process(process).running().detached {
+            drop(Box::from_raw(process));
+            LIVE_OBJECTS.gone();
+            return;
         }
+        // No count is left, and no job runs: `settle` gives its job the
+        // only one, whose end lets go of the process.
+        let _ = settle(process, false, super::panics::cleaning_up(), finish);
+    }
+}
+
+/// Lets go of a count of a `Process` that a job held: the last waits for
+/// it, unless it was detached, and frees it.
+unsafe fn let_go(process: *mut ProcessObject) {
+    unsafe {
+        if (*process).rc.fetch_sub(1, Ordering::Release) != 1 {
+            return;
+        }
+        std::sync::atomic::fence(Ordering::Acquire);
+        let mut running = (*process).running.lock().unwrap_or_else(|e| e.into_inner());
+        if !running.detached {
+            finish(&mut running);
+        }
+        drop(running);
         drop(Box::from_raw(process));
         LIVE_OBJECTS.gone();
     }
