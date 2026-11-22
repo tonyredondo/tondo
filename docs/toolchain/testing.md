@@ -416,7 +416,7 @@ when they ended, in `bench.load`.
 | `--max-regression <percent>` | fails the run when a benchmark got worse by more |
 | `--regression-by instructions` | judges by instructions instead of time |
 | `--bench-time <seconds>` | how long to measure each |
-| `--layouts <n>` | measures in `n` orders of the code's functions, and gives the range: how much of a difference is only where the code lies |
+| `--layouts <n>` | measures in `n` orders of the program's functions and of the runtime's functions and data, and gives the range: how much of a difference is only where code and data lie |
 | `--profile cpu`, `--profile memory` | writes a profile of the benchmark, for `tondo profile show` |
 | `--profile instructions` | the same by the instructions it ran, which a busy machine does not move; on Linux |
 | `--exec <command>` | runs the tests' executable under a command, as `perf stat` |

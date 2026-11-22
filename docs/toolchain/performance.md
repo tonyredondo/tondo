@@ -1608,8 +1608,9 @@ A row that moved with no such code changed says so: what moved is where
 its code lies, or what it reads. `tondo asm --runtime --all --compiler
 <tondo|rev>` lists every function of the runtime that the two make
 differently. With `--layouts <n>`, each Tondo measures the benchmarks in
-`n` orders of the code's functions, and a row is slower or faster only if
-it is past every order of the other.
+`n` orders of the code's functions, the program's and the runtime's with
+its data, and a row is slower or faster only if it is past every order of
+the other.
 
 `tondo asm --all`, with `--against` or `--compiler`, compares all [the code
 the program reaches](#the-code-a-program-reaches), in three groups: the
@@ -2117,9 +2118,11 @@ allocated is in the benchmark's row and in `testing.allocations`.
 - **Where the code lies.** The same machine code at another address can
   run a few percent faster or slower, from how it meets the processor's
   caches and predictors. A change that moves code can look like a speed-up
-  it did not cause. `tondo test --bench --layouts 5` measures each
-  benchmark in five orders of the program's functions and gives the range,
-  and only a difference beyond that range is real.
+  it did not cause, in a benchmark that never runs what changed too: a
+  change to the runtime moves the runtime's other functions and its data.
+  `tondo test --bench --layouts 5` measures each benchmark in five orders
+  of the program's functions and of the runtime's functions and data, and
+  gives the range, and only a difference beyond that range is real.
 - **A benchmark that the compiler deletes.** A result that is not used may
   not be computed. `testing.bench` keeps what its closure gives, so the
   work that made it is not optimized away, and `testing.keep(value)` keeps
