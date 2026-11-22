@@ -753,8 +753,9 @@ error[E1303]: a value of type `Array[Int ! String]` is not used, and it holds re
 
 A panic in a task is a bug and ends the program, with a report that shows
 the task's stack and where it was spawned. Inside a `recover { ... }`, a
-panic in a task the block started stops that block instead, and its other
-tasks are cancelled ([Errors](07-errors.md)).
+panic in a task the block started stops that block instead, as soon as the
+block's own task can be stopped and at the latest at its next wait, and its
+other tasks are cancelled ([Errors](07-errors.md#recover)).
 
 ## Cancelling
 

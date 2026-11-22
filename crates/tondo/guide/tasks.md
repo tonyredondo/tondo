@@ -80,7 +80,10 @@ fn main() {
   and a loop that shows there wants a checkpoint.
 - A panic in a task ends the program, unless the task was started in a
   `recover { ... }`, without `detached`: its panic stops that block, which
-  cancels its other tasks (see `tondo guide errors`).
+  cancels its other tasks (see `tondo guide errors`). The block's own task
+  goes on until it can be stopped: at the latest its next wait or
+  `tasks.checkpoint()`, sooner after a call the compiler kept as a call.
+  Count on the wait and the checkpoint alone.
 
 A task that can fail is not dropped where it is made: nothing would read
 its failure. Keep its `Join` and wait for it, `job.wait()?`, or handle the

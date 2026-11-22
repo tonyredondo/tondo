@@ -649,6 +649,15 @@ rebuilding: broken
 - On the way out the `defer`s run, locks of `std.sync` are let go, and the
   block's other tasks are cancelled. A lock a panic went through is free
   afterwards, never poisoned.
+- A panic stops the task it happens in at once. When that task is one the
+  block started, the block's own task is running beside it, and is stopped
+  as soon as it can be: at the latest at its next wait, at a
+  `tasks.checkpoint()` or at the end of the block, and often sooner, after
+  a call. Which call is the compiler's choice, as one it put in place of
+  the call stops nothing, so count on the wait and the checkpoint alone.
+  What the block did until then stays done: one that must do nothing more
+  once a task of its has failed waits for them first, or asks at a
+  checkpoint ([Tasks](13-tasks.md#a-task-that-only-computes)).
 - Recover at the edge of a unit of work: a request, a job, a message. A
   panic is still a bug to fix, and `recover` around each call would only hide
   it. `std.http` already answers 500 for a handler that panics and goes on.
