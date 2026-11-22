@@ -7092,7 +7092,13 @@ pub fn Schema.handler(self): fn(http.Request): http.Reply ! http.Problem
   o de un argumento deja el campo en null y escribe su mensaje, sus
   `locations` y su `path`; si el campo no admite null, el null sube al
   primero que lo admite. Un documento que no se lee, una operación que no
-  está o una variable obligatoria que falta dan solo `errors`. Hay
+  está o una variable obligatoria que falta dan solo `errors`. También los
+  dan un fragmento que se extiende a sí mismo, directamente, por otro o
+  dentro de un campo, que GraphQL no admite, y un documento que anida más de
+  256 conjuntos de selección, fragmentos en línea, listas u objetos. Un
+  fragmento se recoge una vez por conjunto de selección, como en el
+  `CollectFields` de GraphQL: extenderlo otra vez no añade campos ni
+  trabajo. Hay
   fragmentos, fragmentos en línea, alias, `@skip`, `@include`, variables con
   valores por defecto y `__typename`; no hay suscripciones.
 - La introspección (`__schema`, `__type`) describe el esquema, y `sdl` lo
