@@ -157,7 +157,9 @@ pub fn writeText(path: String, text: String): Unit ! FsError
 
 Writes through a temporary file and a rename: readers see the old or the
 new content, never half of it. It keeps the permissions of the file it
-replaces, and writes the file a link names.
+replaces, and writes the file a link names. It replaces a named pipe with
+a file and never writes into the pipe: to write into one, `fs.open` it
+with `OpenMode.Write` or `OpenMode.Append`.
 
 #### writeBytes
 
