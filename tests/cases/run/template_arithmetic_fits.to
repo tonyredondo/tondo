@@ -1,0 +1,56 @@
+// A template's arithmetic on integers that does not fit fails its render,
+// as a division by zero does, instead of panicking the program that
+// renders it: a template, or its data, may come from outside. Each
+// operator at its edge, the minus of the smallest Int, a range that would
+// end past the largest, an integer of another type too large for Int, and
+// the input the fuzz search of `templateReadsAnySource` found. The
+// remainder of the smallest Int by -1 is 0, as it is in Tondo.
+import std.console
+import std.template
+
+pub type Numbers = {
+    big: Int
+    max: Int
+    min: Int
+    huge: UInt
+}
+
+fn rendered(source: String): String ! template.TemplateError {
+    var set = template.Set.text()
+    set.add("t", source)?
+    set.render(
+        "t",
+        Numbers { big: 4982948303222656250, max: Int.Max, min: Int.Min, huge: UInt.Max },
+    )
+}
+
+fn main() {
+    for source in [
+        r"{{ big * 5 }}",
+        r"{{ max + 1 }}",
+        r"{{ min - 1 }}",
+        r"{{ min / -1 }}",
+        r"{{ min % -1 }}",
+        r"{{ -min }}",
+        r"{{ for i in 0..=max }}{{ i }}{{ end }}",
+        r"{{ huge + 1 }}",
+        r"{{5*525555*555555*552555*55}}",
+        r"{{ max - 1 }} {{ min + 1 }} {{ -max }} {{ max / -1 }}",
+    ] {
+        match rendered(source) {
+            ok(text) => console.println("rendered {text}")
+            err(error) => console.println(error.message)
+        }
+    }
+}
+
+// expect-stdout: 4982948303222656250 * 5 does not fit in Int
+// expect-stdout: 9223372036854775807 + 1 does not fit in Int
+// expect-stdout: -9223372036854775808 - 1 does not fit in Int
+// expect-stdout: -9223372036854775808 / -1 does not fit in Int
+// expect-stdout: rendered 0
+// expect-stdout: -(-9223372036854775808) does not fit in Int
+// expect-stdout: 0..=9223372036854775807 ends past Int's largest value
+// expect-stdout: 18446744073709551615 does not fit in Int, which a template computes with
+// expect-stdout: 806660423963769375 * 55 does not fit in Int
+// expect-stdout: rendered 9223372036854775806 -9223372036854775807 -9223372036854775807 -9223372036854775807

@@ -856,8 +856,16 @@ fn Run.evaluate(self, scope: Scope, code: Code): __reflect.Value ! TemplateError
             }
             Op.Negate => {
                 let value = popped(var stack)
-                let zero = __reflect.valueOf(0)
-                stack.push(self.binary(scope, "-", zero, value, at)?)
+                if isInteger(value.typeName()) {
+                    let x = self.integer(scope, value, at)?
+                    match x.checkedNeg() {
+                        some(negated) => stack.push(__reflect.valueOf(negated))
+                        none => fail self.error(scope, at, "-({x}) does not fit in Int")
+                    }
+                } else {
+                    let zero = __reflect.valueOf(0)
+                    stack.push(self.binary(scope, "-", zero, value, at)?)
+                }
             }
             Op.Binary(operator) => {
                 let right = popped(var stack)
@@ -867,8 +875,18 @@ fn Run.evaluate(self, scope: Scope, code: Code): __reflect.Value ! TemplateError
             Op.Range(inclusive) => {
                 let end = self.integer(scope, popped(var stack), at)?
                 let start = self.integer(scope, popped(var stack), at)?
+                let past = match inclusive {
+                    true =>
+                        end.checkedAdd(1) ??
+                            fail self.error(
+                                scope,
+                                at,
+                                "{start}..={end} ends past Int's largest value",
+                            )
+                    false => end
+                }
                 var values: Array[Int] = []
-                for value in start..(if inclusive { end + 1 } else { end }) {
+                for value in start..past {
                     values.push(value)
                 }
                 stack.push(__reflect.valueOf(values))
@@ -1081,6 +1099,11 @@ fn isInteger(kind: String): Bool {
 fn Run.integer(self, scope: Scope, value: __reflect.Value, at: Int): Int ! TemplateError {
     match (isInteger(value.typeName()), Int.parse("{value}")) {
         (true, ok(found)) => found
+        (true, err(_)) => fail self.error(
+            scope,
+            at,
+            "{value} does not fit in Int, which a template computes with",
+        )
         _ => fail self.error(scope, at, "expected an integer, found `{value.typeName()}`")
     }
 }
@@ -1227,20 +1250,24 @@ fn Run.binary(
     }
     let integers = isInteger(left.typeName()) and isInteger(right.typeName())
     if integers {
-        let x = Int.parse("{left}") ?? 0
-        let y = Int.parse("{right}") ?? 0
+        let x = self.integer(scope, left, at)?
+        let y = self.integer(scope, right, at)?
         if (operator == "/" or operator == "%") and y == 0 {
             fail self.error(scope, at, "division by zero")
         }
-        return __reflect.valueOf(
-            match operator {
-                "+" => x + y
-                "-" => x - y
-                "*" => x * y
-                "/" => x / y
-                _ => x % y
-            },
-        )
+        // A template's numbers can come from outside: what does not fit
+        // fails the render, as division by zero does, instead of the program.
+        let computed = match operator {
+            "+" => x.checkedAdd(y)
+            "-" => x.checkedSub(y)
+            "*" => x.checkedMul(y)
+            "/" => x.checkedDiv(y)
+            _ => x.checkedRem(y)
+        }
+        return match computed {
+            some(value) => __reflect.valueOf(value)
+            none => fail self.error(scope, at, "{x} {operator} {y} does not fit in Int")
+        }
     }
     if operator == "%" {
         fail self.error(scope, at, "`%` takes integers: floats have no remainder")

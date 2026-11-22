@@ -6073,9 +6073,11 @@ pub type TemplateError = { message: String, template: String, line: Int, column:
   con sus valores por defecto y sus argumentos variádicos. Una que da `T ! E`
   escribe su valor, y su fallo es el `TemplateError`, con el texto del error.
 - Un campo, un método o una función que no existe, una condición que no es un
-  `Bool`, un índice fuera de rango o el fallo de una función es un
-  `TemplateError` al escribir, con la plantilla, la línea y la columna; `write`
-  también lo da cuando falla el stream.
+  `Bool`, un índice fuera de rango, una división por cero, una operación de
+  enteros cuyo resultado no cabe en `Int`, un entero de los datos que no cabe
+  en `Int` o el fallo de una función es un `TemplateError` al escribir, con la
+  plantilla, la línea y la columna; `write` también lo da cuando falla el
+  stream.
 
 **HTML**
 
