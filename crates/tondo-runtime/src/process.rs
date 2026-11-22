@@ -842,6 +842,20 @@ unsafe fn write_output(running: &mut Running, layout: StatusLayout, out: *mut i6
     (code, success)
 }
 
+/// What `write_output` wrote into `out`, let go and made zeros again: a
+/// call whose wait a deadline or a `recover`'s alarm ended gives back
+/// nothing (11.15), and its arrays, which nothing else holds, would leak.
+unsafe fn given_back_nothing(layout: StatusLayout, out: *mut i64) {
+    for index in 0..4 {
+        let array = unsafe { *out.add(index) } as *mut ArrayHeader;
+        if !array.is_null() {
+            let size = if index == 3 { layout.size } else { 1 };
+            unsafe { super::arrays::tondo_rt_array_release(array, size, None) };
+        }
+    }
+    unsafe { std::ptr::write_bytes(out, 0, 6) };
+}
+
 fn plan_ref<'a>(plan: *mut PlanObject) -> &'a PlanObject {
     unsafe { &*plan }
 }
@@ -856,7 +870,13 @@ pub unsafe extern "C" fn tondo_rt_process_run(plan: *mut PlanObject, quiet: u8, 
         Err(error) => return error_status(&error),
     };
     let (pids, group, grace, reaped) = (running.pids.clone(), running.group, running.grace, running.reaped.clone());
-    let statuses = host_cancellable(move || finish(&mut running), || stop_all(&pids, group, grace, &reaped));
+    let (statuses, cancelled) =
+        host_cancellable(move || finish(&mut running), || stop_all(&pids, group, grace, &reaped));
+    if cancelled {
+        unsafe { std::ptr::write_bytes(out, 0, 2) };
+        super::panics::start_noted();
+        return 0;
+    }
     let (code, success) = overall(&statuses);
     unsafe { std::ptr::copy_nonoverlapping([code, success as i64].as_ptr(), out, 2) };
     0
@@ -885,11 +905,17 @@ pub unsafe extern "C" fn tondo_rt_process_output(
         Err(error) => return error_status(&error),
     };
     let (pids, group, grace, reaped) = (running.pids.clone(), running.group, running.grace, running.reaped.clone());
+    unsafe { std::ptr::write_bytes(out, 0, 6) };
     let out = out as usize;
-    let (_, success) = host_cancellable(
+    let ((_, success), cancelled) = host_cancellable(
         move || unsafe { write_output(&mut running, layout, out as *mut i64, run) },
         || stop_all(&pids, group, grace, &reaped),
     );
+    if cancelled {
+        unsafe { given_back_nothing(layout, out as *mut i64) };
+        super::panics::start_noted();
+        return 0;
+    }
     if check != 0 && !success {
         return FAILED;
     }
@@ -1035,7 +1061,7 @@ fn settle<R: Send + 'static>(
     process: *mut ProcessObject,
     cancel: bool,
     then: impl FnOnce(&mut Running) -> R + Send + 'static,
-) -> R {
+) -> (R, bool) {
     let (pids, group, grace, reaped) = {
         let running = Process(process);
         let running = running.running();
@@ -1051,7 +1077,12 @@ fn settle<R: Send + 'static>(
 /// `wait()` and `cancel()` (`cancel` 1): the overall status into `out`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_process_wait(process: *mut ProcessObject, cancel: u8, out: *mut i64) -> i64 {
-    let statuses = settle(process, cancel != 0, finish);
+    let (statuses, cancelled) = settle(process, cancel != 0, finish);
+    if cancelled {
+        unsafe { std::ptr::write_bytes(out, 0, 2) };
+        super::panics::start_noted();
+        return 0;
+    }
     let (code, success) = overall(&statuses);
     unsafe { std::ptr::copy_nonoverlapping([code, success as i64].as_ptr(), out, 2) };
     0
@@ -1067,9 +1098,15 @@ pub unsafe extern "C" fn tondo_rt_process_collect(
     out: *mut i64,
 ) -> i64 {
     let layout = StatusLayout { size: size as usize, success: success_offset as usize };
+    unsafe { std::ptr::write_bytes(out, 0, 6) };
     let out = out as usize;
-    let (_, success) =
+    let ((_, success), cancelled) =
         settle(process, false, move |running| unsafe { write_output(running, layout, out as *mut i64, false) });
+    if cancelled {
+        unsafe { given_back_nothing(layout, out as *mut i64) };
+        super::panics::start_noted();
+        return 0;
+    }
     if check != 0 && !success { FAILED } else { 0 }
 }
 
@@ -1138,8 +1175,9 @@ pub unsafe extern "C" fn tondo_rt_process_release(process: *mut ProcessObject) {
             return;
         }
         std::sync::atomic::fence(Ordering::Acquire);
+        // A release gives nothing back and starts no unwinding.
         if !Process(process).running().detached {
-            settle(process, false, |running| {
+            let _ = settle(process, false, |running| {
                 finish(running);
             });
         }

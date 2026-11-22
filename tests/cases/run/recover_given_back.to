@@ -69,7 +69,7 @@ fn main() {
         err(stopped) => console.println("recovered {stopped.message}")
     }
     // A call that waits for its process stops waiting when the panic
-    // comes, and gives back, today, what it has.
+    // comes, and gives back nothing: the panic is delivered right after it.
     let output = madePipe("given-back-output")
     match recover {
         let inside = sync.Atomic(0)

@@ -9,6 +9,12 @@ pub(crate) fn cancelled() -> bool {
     unsafe { current().as_ref() }.is_some_and(halted)
 }
 
+/// Whether the current task itself is cancelled, not only past a deadline
+/// or alarmed by a `recover`.
+pub(crate) fn cancelled_itself() -> bool {
+    unsafe { current().as_ref() }.is_some_and(|task| task.cancelled.load(Ordering::Acquire))
+}
+
 /// Whether a task's waits end at once: it is cancelled, but for those of a
 /// `within` its cleanup entered, or a deadline of its passed (11.15).
 pub(super) fn halted(task: &Task) -> bool {

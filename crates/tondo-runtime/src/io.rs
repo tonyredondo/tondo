@@ -69,13 +69,16 @@ pub(crate) fn host<R: Send + 'static>(long: bool, job: impl FnOnce() -> R + Send
 }
 
 /// Like `host` for long work, but a cancelled task stops waiting:
-/// `on_cancel` makes the work end soon, and the task waits for that.
+/// `on_cancel` makes the work end soon, and the task waits for that. It
+/// gives the work's result and whether the wait was cancelled, a deadline
+/// or a `recover`'s alarm too, after which a native gives back nothing and
+/// calls `panics::start_noted` (11.15).
 pub(crate) fn host_cancellable<R: Send + 'static>(
     job: impl FnOnce() -> R + Send + 'static,
     on_cancel: impl FnOnce(),
-) -> R {
+) -> (R, bool) {
     if current().is_null() || super::replay::on() {
-        return job();
+        return (job(), false);
     }
     let result = Arc::new((Mutex::new(None), Condvar::new()));
     let wait = Wait::new();
@@ -98,13 +101,14 @@ pub(crate) fn host_cancellable<R: Send + 'static>(
         }),
         true,
     );
-    if wait.block() == super::tasks::CANCELLED {
+    let cancelled = wait.block() == super::tasks::CANCELLED;
+    if cancelled {
         on_cancel();
     }
     let mut value = result.0.lock().unwrap_or_else(|e| e.into_inner());
     loop {
         if let Some(value) = value.take() {
-            return value;
+            return (value, cancelled);
         }
         value = result.1.wait(value).unwrap_or_else(|e| e.into_inner());
     }
@@ -145,6 +149,9 @@ fn wait_in<T>(context: bool, future: impl std::future::Future<Output = T>) -> Op
         }
         HOST_WORK.fetch_sub(1, Ordering::SeqCst);
         if woken == super::tasks::CANCELLED {
+            // What called gives back nothing, and the check after it stops
+            // the code, whatever the call gives (11.15).
+            super::panics::start_noted();
             return None;
         }
     }

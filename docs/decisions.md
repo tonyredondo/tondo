@@ -9609,3 +9609,24 @@ the document. And fragments that each spread the next one twice doubled
 the work at each level, some 900 bytes holding 312 MiB: fields are now
 collected as GraphQL's CollectFields collects them, each fragment once
 per selection set, which gives the same answer in linear time.
+
+## A wait that a deadline ends gives back nothing
+
+11.15 says that an operation that waited gives back nothing when its task
+is cancelled, and 11.17 that a passed deadline cancels its block so. The
+natives that wait on a host thread, a process's `output`, `run`, `wait`
+and the rest, and the console's reads, ended their wait at the deadline
+but then gave back what they had, and since a check after a call that
+gives a counted value no longer delivers (the decision above on values in
+hand), the statement after the call ran with it. Now every way a native
+waits, the host thread's, the poller's and the runtime's futures', starts
+the unwinding to the `within` or the `recover` when a deadline or a
+recover's alarm ends the wait, as the check after the call would, and the
+native gives back null or zeros, which nothing counts; the check after the
+call then delivers at once. A task's own cancellation is left to the check
+after a call that waits, which the process's calls now are, and a wait in
+the cleanups of an unwinding starts nothing. What is lost is what 11.15
+implies: what a process wrote before its wait ended, a line half read.
+A process's pipe and a file are read on threads of the host that no
+deadline ends yet; reading them through the poller is the piece that
+follows.

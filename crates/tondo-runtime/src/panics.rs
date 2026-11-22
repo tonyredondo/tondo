@@ -551,6 +551,29 @@ pub extern "C" fn tondo_rt_unwinding() -> u8 {
     u8::from(task.unwinding.is_some())
 }
 
+/// A wait that a passed deadline or a `recover`'s alarm ended, in a native
+/// that then gives back nothing: the unwinding to the `within` or the
+/// `recover` starts here, as the check after the call would start it, so
+/// that check delivers it at once and the code after the call does not run
+/// (language 11.15). A task's own cancellation needs nothing, as the check
+/// after a call that waits ends it; nor a wait in the cleanups of an
+/// unwinding, which nothing interrupts, as no check is made there.
+pub(crate) fn start_noted() {
+    let Some(task) = task() else { return };
+    let cleaning = !task.paused.is_empty();
+    if cleaning || crate::tasks::cancelled_itself() {
+        return;
+    }
+    tondo_rt_unwinding();
+}
+
+/// Whether the running task unwinds: a native whose wait ended so gives
+/// back null rather than an object, which the check after the call would
+/// unwind past with nothing to let it go.
+pub(crate) fn unwinds() -> bool {
+    task().is_some_and(|task| task.unwinding.is_some())
+}
+
 /// Whether the running task already unwinds, asked by the check after a
 /// statement that gave a counted value the unwinding's way does not
 /// release: a panic of a task of its `recover`, or a passed deadline, waits

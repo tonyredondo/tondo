@@ -1,12 +1,10 @@
-// A value a call gives back whole after the deadline of its `within`
-// passed: the check after the call leaves the unwinding to the next one,
-// with nothing in hand, and the caller lets the value go as it unwinds. The
-// call runs `cat` on a pipe that nothing writes, so only the deadline ends
-// its wait, which stops the process; the call then gives back, today, what
-// it has, `ok` with no output, always past the deadline. Whether a call
-// whose inner wait a deadline ended should give back a value is an open
-// question, which this case changes with. The leak check counts what is
-// not let go.
+// A call whose wait the deadline of its `within` ends gives back nothing,
+// as 11.15 says of any operation that waited: the unwinding to the block
+// starts in the call, and the check after it delivers it at once, with
+// nothing in hand to let go. The call runs `cat` on a pipe that nothing
+// writes, so only the deadline ends its wait, which stops the process.
+// Before, the call gave back what it had, `ok` with no output, and the
+// statement after it ran; the leak check counts what is not let go.
 import std.console
 import std.fs
 import std.process

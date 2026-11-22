@@ -704,6 +704,7 @@ pub unsafe extern "C" fn tondo_rt_http_listen(
     let listener = match wait(async move { blocking(false, move || bind(&address)).await }) {
         Some(Ok(Ok(listener))) => listener,
         Some(Ok(Err(error)) | Err(error)) => return failed(error.to_string()),
+        None if super::panics::unwinds() => return std::ptr::null_mut(),
         None => return failed("the task was cancelled".into()),
     };
     let address = listener.local_addr().map(|a| a.to_string()).unwrap_or_default();
@@ -1053,6 +1054,9 @@ pub extern "C" fn tondo_rt_http_accept(server: *mut NativeObject) -> *mut Native
             return Some(exchange);
         }
     });
+    if accepted.is_none() && super::panics::unwinds() {
+        return std::ptr::null_mut();
+    }
     native::new(Connection(accepted.flatten().unwrap_or_else(Exchange::new)))
 }
 
@@ -1073,6 +1077,9 @@ pub extern "C" fn tondo_rt_http_connection_next(connection: *mut NativeObject) -
         return native::new(Request::closed());
     };
     let next = super::io::wait_for(std::future::poll_fn(|context| exchange.poll_next(context)));
+    if next.is_none() && super::panics::unwinds() {
+        return std::ptr::null_mut();
+    }
     let Some(mut request) = next.flatten() else { return native::new(Request::closed()) };
     request.in_turn = request.version < hyper::Version::HTTP_2;
     if let Some(flight) = &request.flight {
@@ -1529,6 +1536,7 @@ pub extern "C" fn tondo_rt_http_request_read(
     let Some(body) = r.take_body() else { return crate::arrays::byte_array_in(region, &[]) };
     match wait(async move { body.collect().await }) {
         Some(Ok(collected)) => crate::arrays::byte_array_in(region, &collected.to_bytes()),
+        None if super::panics::unwinds() => std::ptr::null_mut(),
         outcome => {
             let message = match outcome {
                 Some(Err(error)) => r.body_failed(error.as_ref()),
@@ -1724,6 +1732,7 @@ pub unsafe extern "C" fn tondo_rt_http_respond_file(
     let (file, metadata) = match opened {
         Some(Ok(opened)) => opened,
         Some(Err(error)) => return crate::strings::str_in(region, error.to_string().as_bytes()),
+        None if super::panics::unwinds() => return std::ptr::null_mut(),
         None => return crate::strings::str_in(region, b"the task was cancelled"),
     };
     let length = metadata.len();
@@ -2028,6 +2037,7 @@ pub extern "C" fn tondo_rt_http_form_next(form: *mut NativeObject) -> *mut Nativ
     match wait(async move { reader.lock().await.next_field().await }) {
         Some(Ok(field)) => upload(None, field),
         Some(Err(error)) => upload(Some(("body", error.to_string())), None),
+        None if super::panics::unwinds() => std::ptr::null_mut(),
         None => upload(Some(("protocol", "the task was cancelled".into())), None),
     }
 }
@@ -2056,6 +2066,7 @@ pub extern "C" fn tondo_rt_http_upload_read(
     let Some(field) = lock(&u.field).take() else { return crate::arrays::byte_array_in(region, &[]) };
     match wait(async move { field.bytes().await }) {
         Some(Ok(bytes)) => crate::arrays::byte_array_in(region, &bytes),
+        None if super::panics::unwinds() => std::ptr::null_mut(),
         outcome => {
             let message = match outcome {
                 Some(Err(error)) => error.to_string(),
@@ -2143,6 +2154,7 @@ pub extern "C" fn tondo_rt_http_accept_websocket(object: *mut NativeObject) -> *
     match upgraded {
         Some(Ok(connection)) => native::new(socket(connection)),
         Some(Err(error)) => failed(&error.to_string()),
+        None if super::panics::unwinds() => std::ptr::null_mut(),
         None => failed("the task was cancelled"),
     }
 }

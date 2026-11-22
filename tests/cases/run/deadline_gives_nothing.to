@@ -1,0 +1,196 @@
+// A call that waits gives back nothing when a deadline, its task's cancel
+// or a recover's alarm ends its wait, as 11.15 says of any operation that
+// waited: the statement after it does not run, and what it would have given
+// is not made, which the leak check counts. Each kind of native that waits:
+// a process's run, status, output, check, text and lines, a started
+// process's wait and output, the network and the HTTP client; a task
+// cancelled in one of them; a process whose grandchild keeps its pipe,
+// which ends timed out, not with a value; and a `defer` of a cancelled
+// task, whose wait ends at once and ends the `defer` with it.
+// A process's pipe, like a file, is read on a thread of the host that no
+// deadline ends yet; reading pipes through the poller, as the network is
+// read, is the piece that brings them here.
+import std.console
+import std.http
+import std.net
+import std.process
+import std.sync
+import std.time
+
+fn timed(name: String, work: fn(sync.Atomic[Int])) {
+    let after = sync.Atomic(0)
+    let outcome = within time.milliseconds(50) { work(after) }
+    let ended = if outcome.isOk() { "ok" } else { "timed out" }
+    let ran = if after.load() == 1 { "ran" } else { "did not run" }
+    console.println("{name}: {ended}, the next statement {ran}")
+}
+
+fn late(listener: net.Listener) {
+    match listener.accept() {
+        ok(stream) => {
+            time.sleep(time.milliseconds(500))
+            _ = stream.write("late\n")
+        }
+        err(_) => {}
+    }
+}
+
+fn cancelled(started: sync.Atomic[Int], after: sync.Atomic[Int]) {
+    started.store(1)
+    _ = process.command("sleep", "5").output()
+    after.store(1)
+}
+
+fn deferring(started: sync.Atomic[Int], before: sync.Atomic[Int], after: sync.Atomic[Int]) {
+    defer {
+        before.store(1)
+        _ = process.command("sleep", "5").output()
+        after.store(1)
+    }
+    started.store(1)
+    time.sleep(time.seconds(10))
+}
+
+fn main() {
+    timed(
+        "run",
+        (after) {
+            _ = process.command("sleep", "5").run()
+            after.store(1)
+        },
+    )
+    timed(
+        "status",
+        (after) {
+            _ = process.command("sleep", "5").status()
+            after.store(1)
+        },
+    )
+    timed(
+        "output",
+        (after) {
+            _ = process.command("sleep", "5").output()
+            after.store(1)
+        },
+    )
+    timed(
+        "check",
+        (after) {
+            _ = process.command("sleep", "5").check()
+            after.store(1)
+        },
+    )
+    timed(
+        "text",
+        (after) {
+            _ = process.command("sleep", "5").text()
+            after.store(1)
+        },
+    )
+    timed(
+        "lines",
+        (after) {
+            _ = process.command("sleep", "5").lines()
+            after.store(1)
+        },
+    )
+    timed(
+        "a started process's wait",
+        after => match process.command("sleep", "5").start() {
+            ok(started) => {
+                _ = started.wait()
+                after.store(1)
+            }
+            err(_) => {}
+        },
+    )
+    timed(
+        "a started process's output",
+        after => match process.command("sleep", "5").start() {
+            ok(started) => {
+                _ = started.output()
+                after.store(1)
+            }
+            err(_) => {}
+        },
+    )
+    let listener = net.listen("127.0.0.1", 0) ?? panic("no listener")
+    let port = listener.address().port
+    let peer = spawn late(listener)
+    timed(
+        "the network",
+        after => match net.connect("127.0.0.1", port) {
+            ok(stream) => {
+                _ = stream.readLine()
+                after.store(1)
+            }
+            err(_) => {}
+        },
+    )
+    peer.wait()
+    var app = http.App()
+    app.get(
+        "/late",
+        (_) {
+            time.sleep(time.milliseconds(500))
+            http.Reply.text("late")
+        },
+    )
+    let server = app.start() ?? panic("no server")
+    let url = "{server.url()}/late"
+    timed(
+        "the HTTP client",
+        (after) {
+            _ = http.get(url)
+            after.store(1)
+        },
+    )
+    server.stop(grace: time.milliseconds(10))
+    timed(
+        "a grandchild that keeps the pipe",
+        (after) {
+            _ = process.command("sh", "-c", "sleep 2 & sleep 5").output()
+            after.store(1)
+        },
+    )
+    // A task cancelled while it waits for a process.
+    let (started, after) = (sync.Atomic(0), sync.Atomic(0))
+    let job = spawn cancelled(started, after)
+    for started.load() == 0 {
+        time.sleep(time.milliseconds(1))
+    }
+    time.sleep(time.milliseconds(20))
+    job.cancel()
+    console.println(
+        "a cancelled task: the next statement {if after.load() == 1 { "ran" } else { "did not run" }}",
+    )
+    // A `defer` of a cancelled task, whose wait ends at once.
+    let (began, before, done) = (sync.Atomic(0), sync.Atomic(0), sync.Atomic(0))
+    let since = time.now()
+    let deferred = spawn deferring(began, before, done)
+    for began.load() == 0 {
+        time.sleep(time.milliseconds(1))
+    }
+    deferred.cancel()
+    let quick = since.elapsed().seconds() < 4
+    let ran = if done.load() == 1 { "ran" } else { "did not run" }
+    console.println(
+        "a defer of a cancelled task: began {before.load() == 1}, the next statement {ran}, at once {quick}",
+    )
+}
+
+// expect-stdout: run: timed out, the next statement did not run
+// expect-stdout: status: timed out, the next statement did not run
+// expect-stdout: output: timed out, the next statement did not run
+// expect-stdout: check: timed out, the next statement did not run
+// expect-stdout: text: timed out, the next statement did not run
+// expect-stdout: lines: timed out, the next statement did not run
+// expect-stdout: a started process's wait: timed out, the next statement did not run
+// expect-stdout: a started process's output: timed out, the next statement did not run
+// expect-stdout: the network: timed out, the next statement did not run
+// expect-stdout: the HTTP client: timed out, the next statement did not run
+// expect-stdout: a grandchild that keeps the pipe: timed out, the next statement did not run
+// expect-stdout: a cancelled task: the next statement did not run
+// expect-stdout: a defer of a cancelled task: began true, the next statement did not run, at once true
+// expect-no-replay: a recorded run has one worker, and runs a process's wait on it, where no deadline ends it
+// expect-no-schedule: the virtual clock of an order stands still while a task waits on the host, so no deadline passes

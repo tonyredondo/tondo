@@ -247,6 +247,8 @@ pub(crate) fn wait<T: Send + 'static>(future: impl Future<Output = T> + Send + '
     }
     drop(over);
     if cancelled {
+        // As `io::wait_in`: what called gives back nothing (11.15).
+        super::panics::start_noted();
         return None;
     }
     slot.lock().unwrap_or_else(|e| e.into_inner()).take()
@@ -484,6 +486,7 @@ pub unsafe extern "C" fn tondo_rt_http_form_file(
             crate::strings::str_in(region, b"")
         }
         Some(Err(error)) => crate::strings::str_in(region, error.to_string().as_bytes()),
+        None if super::panics::unwinds() => std::ptr::null_mut(),
         None => crate::strings::str_in(region, b"the task was cancelled"),
     }
 }
@@ -603,6 +606,7 @@ pub unsafe extern "C" fn tondo_rt_http_send(
     // Polled by the task in place, as the server's futures are; only the
     // futures of the connections run at the workers' turns.
     let response = match super::io::wait_for(async move { client.send(request).await }) {
+        None if super::panics::unwinds() => return std::ptr::null_mut(),
         None => Response::failed("protocol", "the task was cancelled".into()),
         Some(Err((kind, message))) => Response::failed(kind, message),
         Some(Ok(answer)) => Response {
@@ -696,6 +700,7 @@ pub extern "C" fn tondo_rt_http_read_all(
     };
     match super::io::wait_for(async move { body.all().await }) {
         Some(Ok(bytes)) => crate::arrays::byte_array_in(region, &bytes),
+        None if super::panics::unwinds() => std::ptr::null_mut(),
         outcome => {
             let failure = match outcome {
                 Some(Err(failure)) => failure,
@@ -915,6 +920,7 @@ pub unsafe extern "C" fn tondo_rt_http_ws_connect(
         }
     });
     match outcome {
+        None if super::panics::unwinds() => std::ptr::null_mut(),
         None => failed("protocol", "the task was cancelled".into()),
         Some(Err((kind, message))) => failed(kind, message),
         Some(Ok((connection, _))) => native::new(socket(connection)),
@@ -943,6 +949,7 @@ pub unsafe extern "C" fn tondo_rt_http_ws_send(
     match wait(async move { sink.lock().await.send(frame).await }) {
         Some(Ok(())) => crate::strings::str_in(region, b""),
         Some(Err(error)) => crate::strings::str_in(region, error.to_string().as_bytes()),
+        None if super::panics::unwinds() => std::ptr::null_mut(),
         None => crate::strings::str_in(region, b"the task was cancelled"),
     }
 }
@@ -971,6 +978,9 @@ pub extern "C" fn tondo_rt_http_ws_receive(socket: *mut NativeObject) -> *mut Na
             }
         }
     });
+    if outcome.is_none() && super::panics::unwinds() {
+        return std::ptr::null_mut();
+    }
     match outcome {
         Some(Ok((kind, text, data))) => received(kind, text, data),
         failed => {
@@ -1013,6 +1023,7 @@ pub extern "C" fn tondo_rt_http_ws_close(socket: *mut NativeObject, region: *mut
             crate::strings::str_in(region, b"")
         }
         Some(Err(error)) => crate::strings::str_in(region, error.to_string().as_bytes()),
+        None if super::panics::unwinds() => std::ptr::null_mut(),
         None => crate::strings::str_in(region, b"the task was cancelled"),
     }
 }

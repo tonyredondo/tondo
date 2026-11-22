@@ -1277,6 +1277,17 @@ impl StdFn {
                 | StdFn::ClockAdvance
                 | StdFn::ConsoleReadLine
                 | StdFn::Io(IoFn::ReadLine | IoFn::Read | IoFn::ReadText | IoFn::ReadBytes)
+                | StdFn::Process(
+                    ProcessFn::Status
+                        | ProcessFn::Run
+                        | ProcessFn::Output
+                        | ProcessFn::Check
+                        | ProcessFn::ReadText
+                        | ProcessFn::ReadLines
+                        | ProcessFn::Wait
+                        | ProcessFn::Cancel
+                        | ProcessFn::Collect(_)
+                )
         )
     }
 

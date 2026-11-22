@@ -958,6 +958,9 @@ pub extern "C" fn tondo_rt_grpc_ended(
             notified.await;
         }
     });
+    if status.is_none() && super::panics::unwinds() {
+        return std::ptr::null_mut();
+    }
     let (code, message, trailers) = status.unwrap_or((CANCELLED, "the call was cancelled".into(), Vec::new()));
     let mut list = vec![code.to_string(), message];
     list.extend(trailers);
@@ -983,6 +986,9 @@ pub extern "C" fn tondo_rt_grpc_take(object: *mut NativeObject) -> *mut NativeOb
             notified.await;
         }
     });
+    if taken.is_none() && super::panics::unwinds() {
+        return std::ptr::null_mut();
+    }
     native::new(taken.unwrap_or_else(|| finished(CANCELLED, "the call was cancelled".into())))
 }
 

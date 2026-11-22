@@ -796,6 +796,9 @@ pub extern "C" fn tondo_rt_files_watch_next(
             let changes = batch(&mut receiver, settle).await?;
             Some((changes, receiver))
         });
+        if batch.is_none() && super::panics::unwinds() {
+            return std::ptr::null_mut();
+        }
         let Some(Some((changes, receiver))) = batch else { return crate::arrays::string_array_in(region, &[]) };
         let mut watch = lock();
         watch.changes = Some(receiver);
