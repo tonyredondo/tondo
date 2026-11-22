@@ -29,12 +29,13 @@ What is done next, and after it, with the reason for each place. A step's
 detail is in the tables below. The inliner's weighing of step 2 comes
 before the chain's rest because the chain's adapters wait for it too.
 
-1. **What is owed**: what is left of the cost the scheduler's pieces added
-   to a spawn and a join; what a native that waits inside gives back when a
-   deadline ends its wait; the bounds on what the library reads from
-   outside, once the maintainer has their numbers; and the next Nightly's
-   jobs under emulation. First because they say whether what is on main is
-   sound, and anything they find is fixed before more is built on it.
+1. **What is owed**: a process's call that outlasts its deadline while
+   something holds its pipes, and the reads that no deadline ends; the
+   bounds on what the library reads from outside, once the maintainer has
+   their numbers; what is left of the cost the scheduler's pieces added to a
+   spawn and a join; and the next Nightly's jobs under emulation. First
+   because they say whether what is on main is sound, and anything they find
+   is fixed before more is built on it.
 2. **`trim`**: the inliner weighing a call by what inlining buys and a
    region for the copy, which the plain form in Tondo, measured again,
    waits for; then the list of what stays behind Go. Second because its rows
@@ -70,7 +71,8 @@ manual's unheld quotes and listings.
 | What | Since | Detail |
 | --- | --- | --- |
 | What is left of the cost the scheduler's pieces of 2026-11-20 and 21 added to a spawn and a join, each within the bar alone. Reading the clock straight and asking for the workers with a load took 6.2% of the instructions of `runtime/join 1`, now under the table's count, and about 1% of `tasks/spawn 1000`, `select 1000` and `channel 10000`. Left: `ffi/waits from a C thread 100`, still 3.5% over the table, whose count moves with the turns of the waits' spin locks and which is to be told from them first; the readings of the clock that remain at each spawn and join, some seven, for which the processor's own counter is to be weighed before any stamp becomes a count, so that every wait keeps its meaning; and the wakes added for a task woken next to a busy worker, each to keep the stall it fixed as its reason or to go | 2026-11-22 | AGENTS.md, "A change to the optimizer…"; [decisions](decisions.md) |
-| What a native that waits inside gives back when a deadline ends its wait. The one that runs a process and reads what it wrote returned its whole value with the deadline noted as well, where 11.17 says that the operation that waited gives nothing back; found as the deadline's form of the leak, which no longer leaks. And a `fs.readText` of a named pipe under a `within` of 10 ms was still waiting after two seconds, seen once and to confirm. To say which waits a deadline ends, and what each native that waits inside does when it ends one | 2026-11-22 | Spec 11.15 and 11.17; `tests/cases/run/within_given_back.to` |
+| A call that runs a process does not come back at its deadline when something else still holds the process's pipes: `within` of 50 ms around `sh -c "sleep 30 & echo started; sleep 30"` gave its answer after thirty seconds, as the call waits for its reader to reach the pipes' end, which the grandchild keeps open. Since 2026-11-22 the answer is `err(TimedOut)` and no longer the value, but as late. The call is to come back at the deadline and let its reader end by itself: what the reader gives late is dropped, it writes nothing into the program's memory, and the process's object lives until it ends | 2026-11-22 | `crates/tondo-runtime/src/io.rs`, `host_cancellable`; `tests/cases/run/deadline_gives_nothing.to` |
+| A read that can wait without end is not ended by a deadline or a cancel when it goes through a thread of the system: a file that is a pipe, a FIFO, a terminal or a device, and the pipes of a process that was started. A `fs.readText` of a pipe written after a second gave its text at a second under a deadline of 50 ms, and a read of a started process's output gave its line at 300 ms. They are to wait on the poller, opened so they do not block, as the network does | 2026-11-22 | Spec 11.15 and 11.17; `Mode::Host`, `Mode::Long` |
 | Whether the Nightly's jobs under emulation build and pass. In the run of 2026-11-22 they did not build: the build for the other architecture linked for a C library older than the one published, which lacks a function the path of a crash calls. It links for the published one now and its step prints the compiler's words; the next run says whether it builds, and whether observe's `a_cpu_profile_of_a_program_that_waits_says_it_waited`, red there every day from 2026-11-16 to 21, holds under emulation. That run's steps with the seeded stops and with the heap's checks were clean | 2026-11-22 | Nightly run 45017098543 |
 | `archive.read` inflates a whole `tar.gz` or `tar.zst`, and every deflated entry of a zip, before the program sees an entry, so a few kilobytes made for it fill the memory. It asks for a bound on what a read may inflate, or for entries read as they are asked for: the maintainer's to see, with the numbers | 2026-11-22 | `crates/tondo/std/archive.to` |
 | The readers of bytes or text from outside that have no search in the Nightly, two lots left of three. The first is in: a GraphQL document, the forms of a request, its cookies and a query's parts, and it found three ways for a document of GraphQL to end a server, mended with it. Left: the images' decoders and their EXIF, certificates and keys in PEM and DER, and CSV; then the decoders of `std.encoding`, a UUID, the parsers of dates and durations, the streams of gzip and zstd, and gRPC's frames; MySQL's packets last, as no public call reaches their reader. Each search runs some minutes before it lands, and what it finds is mended with it | 2026-11-22 | `testing/fuzz` |
