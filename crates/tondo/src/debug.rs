@@ -2603,6 +2603,7 @@ fn lines_back(count: u64) -> String {
 mod tests {
     use super::*;
     use std::io::{BufRead, Write};
+    use std::os::unix::fs::DirBuilderExt;
     use std::os::unix::process::ExitStatusExt;
 
     /// A copy that says it is at another probe than the one it was taken at
@@ -2612,7 +2613,9 @@ mod tests {
         for (answered, refused) in [(7, true), (5, false)] {
             let mut copy = std::process::Command::new("sleep").arg("30").spawn().unwrap();
             let mut forked = std::process::Command::new("sleep").arg("30").spawn().unwrap();
-            std::fs::create_dir_all(observe::directory()).unwrap();
+            // For its user alone, as a program makes it: made open to others
+            // first, it would keep every later program from the tools.
+            std::fs::DirBuilder::new().recursive(true).mode(0o700).create(observe::directory()).unwrap();
             let path = observe::directory().join(format!("{}.checkpoint", copy.id()));
             let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
             let pid = forked.id();
