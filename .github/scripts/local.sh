@@ -33,6 +33,16 @@ git fetch -q "$R" HEAD && git checkout -q --detach FETCH_HEAD || exit 1
 git log --oneline -1
 export TMPDIR=$S/tmp RUNNER_TEMP=$S/tmp
 me="$(id -u):$(id -g)"
+# A stage's output goes to its file; the summary keeps this descriptor, on
+# which each part of a stage says its own status, so that a part that fails
+# hides none of the others, which run whatever it gave.
+exec 3>&1
+part() {
+  local name=$1; shift
+  "$@"; local code=$?
+  echo "  $stage $name: $code" >&3
+  return $code
+}
 
 # The images the stages run in, with what the tests use.
 image() {
@@ -58,12 +68,14 @@ services() {
 }
 
 nocc() {
-  TONDO_CC=cc cargo test --workspace --test cases cases || return 1
-  TONDO_CASES_STATIC=1 cargo test --workspace --test cases cases || return 1
+  local status=0
+  part system-cc env TONDO_CC=cc cargo test --workspace --test cases cases || status=1
+  part static env TONDO_CASES_STATIC=1 cargo test --workspace --test cases cases || status=1
   cases=$(cargo test --workspace --test cases --no-run 2>&1 | grep -o 'target/debug/deps/cases-[0-9a-f]*')
   run="docker run --rm -u $me -e HOME=/tmp -v $PWD:$PWD -w $PWD"
-  $run debian:stable-slim sh -c "! command -v cc && $cases cases projects" || return 1
-  $run -e TONDO_CASES_STATIC=1 debian:stable-slim sh -c "! command -v cc && $cases cases"
+  part slim $run debian:stable-slim sh -c "! command -v cc && $cases cases projects" || status=1
+  part slim-static $run -e TONDO_CASES_STATIC=1 debian:stable-slim sh -c "! command -v cc && $cases cases" || status=1
+  return $status
 }
 
 musl() {
@@ -75,9 +87,16 @@ musl() {
      (rustup show active-toolchain || rustup toolchain install) &&
      # What the tests left, which the last run gave this machine's user: as
      # root's again, a directory of dumps is private to who runs them.
-     (chown -R 0:0 /alpine-target/tmp 2>/dev/null; true) &&
-     cargo test --workspace && TONDO_CASES_STATIC=1 cargo test --workspace --test cases cases;
-     status=\$?; chown -R $me /alpine-target /usr/local/cargo/registry /usr/local/cargo/git; exit \$status"
+     (chown -R 0:0 /alpine-target/tmp 2>/dev/null; true) || exit 1
+     # The workspace's tests and the static cases, each whatever the other gave.
+     cargo test --workspace; workspace=\$?
+     TONDO_CASES_STATIC=1 cargo test --workspace --test cases cases; static=\$?
+     echo \"part workspace: \$workspace\"; echo \"part static: \$static\"
+     chown -R $me /alpine-target /usr/local/cargo/registry /usr/local/cargo/git
+     [ \$workspace = 0 ] && [ \$static = 0 ]"
+  local code=$?
+  grep '^part ' "$out/musl.txt" | sed "s/^part /  musl /" >&3
+  return $code
 }
 
 emulated() {
