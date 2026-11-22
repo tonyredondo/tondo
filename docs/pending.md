@@ -29,14 +29,13 @@ What is done next, and after it, with the reason for each place. A step's
 detail is in the tables below. The inliner's weighing of step 2 comes
 before the chain's rest because the chain's adapters wait for it too.
 
-1. **What is owed**: the debugger's end test that fails on x86-64 macOS
-   and the value a call returned that a panic drops, which come before
-   anything else; what
-   the whole measuring rule found over main, the clock read at each spawn
-   and join and the compare of a short needle; and the Nightly's first run
-   with the stops and the heap's checks. First
-   because both say whether what is on main is sound, and anything they
-   find is fixed before more is built on it.
+1. **What is owed**: the debugger's end test that fails on x86-64 macOS and
+   the value a call returned that a panic drops, which come before anything
+   else; what the whole measuring rule found over main, the clock read at
+   each spawn and join and the compare of a short needle; and the Nightly's
+   first run with the stops and the heap's checks. First because both say
+   whether what is on main is sound, and anything they find is fixed before
+   more is built on it.
 2. **`trim`**: the inliner weighing a call by what inlining buys and a
    region for the copy, which the plain form in Tondo, measured again,
    waits for; then the list of what stays behind Go. Second because its rows
