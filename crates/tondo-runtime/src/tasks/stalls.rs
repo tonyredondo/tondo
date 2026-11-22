@@ -1,11 +1,13 @@
 //! `TONDO_RT_STALLS`, a seed, with `TONDO_CHECK_SCHEDULER` (toolchain 7.17):
 //! one thread at a time stops where the seed says, as a busy machine
 //! deschedules one thread while the others run, where the cases' runner
-//! stops every thread at once (`TONDO_CASES_STALLS`). Three places, none on
+//! stops every thread at once (`TONDO_CASES_STALLS`). Four places, none on
 //! the path a task's wake takes: the monitor before it looks, the monitor
-//! between reading a held worker's count and marking it, and a worker that
+//! between reading a held worker's count and marking it, a worker that
 //! took a task from the queue every worker takes from, or from another
-//! worker, before it runs it. Each thread stops three times at most.
+//! worker, before it runs it, and a worker another stood in for, back from
+//! its call of C before it gives that one back. Each thread stops three
+//! times at most.
 
 use super::*;
 use std::cell::Cell;
@@ -21,17 +23,22 @@ pub(super) enum Point {
     /// A worker that took a task from the shared queue or another's, before
     /// it runs it.
     Take,
+    /// A worker back from a call of C in which another stood in for it,
+    /// before it gives that one back: as many as return together stop there.
+    Leave,
 }
 
 impl Point {
     /// The passes over which a thread makes its stops at this point, about
     /// three: the monitor looks once a millisecond, marks a worker seldom,
-    /// and a worker takes from the shared queue now and then.
+    /// a worker takes from the shared queue now and then, and one comes back
+    /// from a call another stood in for seldom.
     fn passes(self) -> u64 {
         match self {
             Point::Look => 1000,
             Point::Mark => 4,
             Point::Take => 32,
+            Point::Leave => 4,
         }
     }
 }
@@ -67,7 +74,7 @@ pub(super) fn here(point: Point) {
 
 thread_local! {
     /// This thread's passes at each point, and the stops it has made.
-    static PASSES: Cell<[u64; 3]> = const { Cell::new([0; 3]) };
+    static PASSES: Cell<[u64; 4]> = const { Cell::new([0; 4]) };
     static STOPPED: Cell<u32> = const { Cell::new(0) };
 }
 

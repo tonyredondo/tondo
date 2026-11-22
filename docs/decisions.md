@@ -9433,3 +9433,26 @@ follows is wrong on one of the two. The case of the shape holds the first
 fact at every push: it makes new arrays after each call, and with a code
 generator made to stop zeroing a moved place it failed in every mode on the
 runtime as it ships, where without them only mimalloc's own checks saw it.
+
+## A stand-in is given back in one step with its mark
+
+The scheduler's checker stopped `ffi_blocking.to` once on arm64 macOS CI
+with `P0020`, more workers than twice those given. The runtime had none
+too many: a worker back from a call of C that another stood in for took
+its mark off, which the checker counts as standing in, and only then,
+under the queue's lock, counted the surplus that retires the stand-in;
+the checker read the queue's counts under that lock and the marks after
+it. Every worker between its two steps counted as one past the bound,
+and when many calls of C return together on few cores, many wait for the
+lock at once. Now the mark and the surplus change in one step under the
+queue's lock, the checker counts both under it, and the monitor, which
+marks under it too, reads again after marking whether the call is still
+in C, as the leave loads the mark only after its return: each side
+writes, then reads what the other writes. A compare-and-swap of one word
+holding "in C" and "replaced" would have done it without the lock on the
+monitor's side, but the leave takes the lock anyway when it gives a
+stand-in back, and a call nobody stood in for now pays a load where it
+paid a swap. The window was shown by a stall point in it, which broke
+the old code at all twelve seeds tried where five hundred plain rounds
+never did: a window between two steps is found by stopping a thread in
+it, not by running more rounds.

@@ -354,12 +354,14 @@ pub(super) fn looked() -> Look {
         look.told = queue.waking.iter().any(|&waking| waking);
         look.workers = queue.workers;
         look.surplus = queue.surplus;
+        // Under the same lock, as a stand-in's mark and the surplus that
+        // gives it back change together under it (`foreign`).
+        look.standing_in = super::foreign::standing_in();
     }
     look.told |= SEEKING.iter().any(|seeking| seeking.load(Ordering::SeqCst));
     look.monitor_asleep = MONITOR_ASLEEP.load(Ordering::SeqCst);
     look.monitor_looks = super::foreign::MONITOR_LOOKS.load(Ordering::Relaxed);
     look.sought = (0..super::domains::count()).filter(|&domain| SEEKING[domain].load(Ordering::SeqCst)).collect();
-    look.standing_in = super::foreign::standing_in();
     for (slot, next) in nexts().enumerate() {
         let task = next.task.load(Ordering::SeqCst);
         if !task.is_null() {

@@ -156,10 +156,19 @@ pub extern "C" fn tondo_rt_foreign_leave() {
         }
     }
     state.calls.fetch_add(1, Ordering::SeqCst);
-    if state.depth.fetch_sub(1, Ordering::SeqCst) == 1 && state.replaced.swap(false, Ordering::SeqCst) {
+    // Back from its outermost call, a worker another stood in for gives that
+    // one back: its mark comes off and the surplus goes up in one step under
+    // the queue's lock, where the monitor marks and the checker counts both
+    // (`checker::looked`). A call nobody stood in for pays a load. A mark
+    // this load misses is one the monitor takes back itself, as it looks
+    // again, after marking, whether the call is still in C (`monitor`).
+    if state.depth.fetch_sub(1, Ordering::SeqCst) == 1 && state.replaced.load(Ordering::SeqCst) {
+        super::stalls::here(super::stalls::Point::Leave);
         let mut queue = queue();
-        queue.surplus += 1;
-        wake_one(queue);
+        if state.replaced.swap(false, Ordering::SeqCst) {
+            queue.surplus += 1;
+            wake_one(queue);
+        }
     }
 }
 
@@ -168,8 +177,11 @@ pub extern "C" fn tondo_rt_foreign_leave() {
 /// exploring orders, starts no other.
 pub(crate) fn step_aside() {
     if exploring().is_none() {
+        // One step under the queue's lock, as the checker counts both there.
+        let mut queue = queue();
         ASIDE.fetch_add(1, Ordering::SeqCst);
-        queue().workers += 1;
+        queue.workers += 1;
+        drop(queue);
         start_worker(false, None);
     }
 }
@@ -179,21 +191,20 @@ pub(crate) fn step_aside() {
 static ASIDE: AtomicUsize = AtomicUsize::new(0);
 
 /// How many workers stand in for one in a call of C or one whose task a
-/// tool holds: none of them counts against twice the workers (16.14).
+/// tool holds: none of them counts against twice the workers (16.14). A
+/// mark stays on from the monitor's mark to its call's return, both made
+/// under the queue's lock, which the caller holds to count with the rest.
 pub(super) fn standing_in() -> usize {
     let callers = CALLERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let in_c = callers
-        .iter()
-        .filter(|state| state.replaced.load(Ordering::SeqCst) && state.depth.load(Ordering::SeqCst) > 0)
-        .count();
+    let in_c = callers.iter().filter(|state| state.replaced.load(Ordering::SeqCst)).count();
     in_c + ASIDE.load(Ordering::SeqCst)
 }
 
 /// The task goes on: one worker retires.
 pub(crate) fn step_back() {
     if exploring().is_none() {
-        ASIDE.fetch_sub(1, Ordering::SeqCst);
         let mut queue = queue();
+        ASIDE.fetch_sub(1, Ordering::SeqCst);
         queue.surplus += 1;
         wake_one(queue);
     }
@@ -254,6 +265,14 @@ pub(super) fn monitor() {
                     continue;
                 }
                 state.replaced.store(true, Ordering::SeqCst);
+                // The call may have returned since it was looked at, and its
+                // leave not seen the mark: then nobody stands in, and the mark
+                // comes off. A leave that saw it waits for this lock and finds
+                // it gone. Each side writes, then reads what the other writes.
+                if state.depth.load(Ordering::SeqCst) == 0 || state.calls.load(Ordering::SeqCst) != calls {
+                    state.replaced.store(false, Ordering::SeqCst);
+                    continue;
+                }
                 crate::diagnostics::WORKERS_REPLACED.add(1);
                 add_worker(queue, false);
             }
