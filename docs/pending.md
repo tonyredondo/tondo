@@ -21,7 +21,7 @@ How it is kept:
 - The order is changed here, with its reason, when a measure or the
   maintainer says so. Work that is not next in it waits or is said why not.
 
-Last gone through on 2026-11-22, against main at 6e8a08a1.
+Last gone through on 2026-11-22, against main at 0b08d90b.
 
 ## The order
 
@@ -29,10 +29,10 @@ What is done next, and after it, with the reason for each place. A step's
 detail is in the tables below. The inliner's weighing of step 2 comes
 before the chain's rest because the chain's adapters wait for it too.
 
-1. **What is owed**: the whole measuring rule over main, and the Nightly's
-   first run with the stops and the heap's checks. First because both say
-   whether what is on main is sound, and anything they find is fixed before
-   more is built on it. With it, the check of the MIR that stops a debug
+1. **What is owed**: the reason of each row the whole measuring rule found
+   past its bar over main, and the Nightly's first run with the stops and
+   the heap's checks. First because both say whether what is on main is
+   sound, and anything they find is fixed before more is built on it. With it, the check of the MIR that stops a debug
    `tondo` on valid code, which a program of twelve lines reaches today.
 2. **`trim`**: the inliner weighing a call by what inlining buys and a
    region for the copy, which the plain form in Tondo, measured again,
@@ -68,7 +68,7 @@ manual's unheld quotes and listings.
 
 | What | Since | Detail |
 | --- | --- | --- |
-| One run of the whole measuring rule over main: every benchmark and the examples' against the commit before the optimizer's pieces of 2026-11-21 and against the last table's baseline. Those pieces were measured with the benchmarks alone | 2026-11-21 | AGENTS.md, "A change to the optimizer…"; `bench/baselines/table.json` |
+| The reason, or the fix, of each row the whole measuring rule found past its bar of 2% in instructions over main at 0b08d90b; the examples are all within it, and their sizes equal to the byte. `strings/contains 1000`: +2.4% since 5dd3268a, back at the table's count, which one of the optimizer's pieces of 2026-11-21 took. Three rows over the table's baseline, added between them by the pieces of the scheduler and the tasks of 2026-11-20 and 21, each within the bar alone: `ffi/waits from a C thread 100` +3.1%, `runtime/join 1` +3.4%, `tasks/spawn 1000` +2.4% | 2026-11-22 | AGENTS.md, "A change to the optimizer…". Measured: `bench/tondo` and, of `examples/`, chat, kvstore, linkcheck, logstat, notes, profiler, sitegen, tabulate/markdown, textkit, todo-api and warehouse, against the Tondo of 5dd3268a and `bench/baselines/table.json` |
 | The Nightly's first run with the cases stopped by a seed and with the heap's checks, to read | 2026-11-22 | `.github/workflows/nightly.yml` |
 
 ## Rows behind Go
@@ -83,7 +83,7 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 | texts/chars ascii, texts/chars other | 2.24×, 1.54× | Two taken jumps a byte against Go's one, which the fast arm after its branch lifts; and the loop's count checked for overflow each turn, which is Tondo's to keep unless it is proven | 2026-11-21 |
 | programs/sum lines | 2.40×, 5 allocations against 2 | Its profile first: the reader and `readLine`'s path. Its lines are short texts, which nothing copies | 2026-11-21 |
 | net/tls echo | 1.03–1.05× | rustls's buffers, an allocation a record each way, which its API without buffers would not make | 2026-11-12, [speed plan](speed.md), H2 |
-| ffi from a C thread, texts/toUpper other, tasks/spawn, runtime/mutex 4x1000, programs/count words | under 1.10× | No piece yet | 2026-11-21 |
+| ffi from a C thread, texts/toUpper other, tasks/spawn, runtime/mutex 4x1000, programs/count words | under 1.10× | No piece yet. The first and the third do 3.1% and 2.4% more work than at the table: [owed](#owed-now) | 2026-11-21 |
 | The table at x86-64-v3 | of 2026-11-15, before a week of the optimizer's work | Taken again with the next table | 2026-11-14 |
 | A new table against Go | | After the chain's two pieces, the fast arm and the attention's reads | 2026-11-21 |
 
