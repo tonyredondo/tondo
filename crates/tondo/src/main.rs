@@ -1432,6 +1432,8 @@ fn counters_command(args: &[OsString]) -> Result<ExitCode, String> {
 
 /// Debugs a program it builds or starts, or a running debug build.
 fn debug_command(args: &[OsString]) -> Result<ExitCode, String> {
+    // The program it debugs may end while a command is written to it.
+    tondo::serving();
     let usage = |message: &str| format!("{message}\n{USAGE}");
     let (mut json, mut target, mut program_args, mut live) = (false, None, Vec::new(), false);
     let (mut test, mut via, mut schedule, mut replay, mut compare) = (None, None, None, None, None);
@@ -3381,6 +3383,8 @@ fn pass_endings_on(child: &std::process::Child) {
 /// the files do not compile. Ended by SIGTERM or SIGHUP, it ends the
 /// program first.
 fn watch(path: &Path, program_args: &[OsString], options: &BuildOptions) -> Result<ExitCode, String> {
+    // The program it runs again may end while a change is written to it.
+    tondo::serving();
     let stamps = || -> Vec<(PathBuf, Option<std::time::SystemTime>)> {
         let inputs = driver::inputs(path).unwrap_or_default();
         inputs.into_iter().map(|p| (p.clone(), std::fs::metadata(&p).and_then(|m| m.modified()).ok())).collect()

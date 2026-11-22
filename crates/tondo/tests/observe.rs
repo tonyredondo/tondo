@@ -1514,6 +1514,38 @@ fn every_debugged_program_s_end_reaches_the_editor() {
     }
 }
 
+/// A server whose peer stopped reading writes into a closed pipe: it ends
+/// as its input ends, not by SIGPIPE, which `tondo` leaves at its default
+/// for a command whose output goes to `head`. The debug adapter met it on
+/// macOS, where a short program's end took it down without a word.
+#[test]
+fn a_closed_pipe_ends_no_server() {
+    use std::io::Write;
+    use std::os::unix::process::ExitStatusExt;
+    let framed = |text: &str| format!("Content-Length: {}\r\n\r\n{text}", text.len());
+    let dap = framed(r#"{"seq":1,"type":"request","command":"initialize","arguments":{"adapterID":"tondo"}}"#);
+    let lsp = framed(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
+    let mcp = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}\n".to_string();
+    for (command, request) in [("dap", dap), ("lsp", lsp), ("mcp", mcp)] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .arg(command)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut input = child.stdin.take().unwrap();
+        // The peer reads no more.
+        drop(child.stdout.take());
+        for _ in 0..3 {
+            let _ = input.write_all(request.as_bytes());
+        }
+        drop(input);
+        let status = child.wait().unwrap();
+        assert_eq!(status.signal(), None, "`tondo {command}` ended by a signal: {status}");
+    }
+}
+
 /// The debugger runs one test of a project, stopping in it, and says how
 /// it ended.
 #[test]

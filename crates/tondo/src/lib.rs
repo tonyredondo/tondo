@@ -100,3 +100,15 @@ pub mod times;
 pub mod toml;
 pub mod types;
 pub mod unroll;
+
+/// A command that serves a peer for long, an editor, an agent, a program or
+/// a relay, ignores SIGPIPE and handles the error of a write to an end that
+/// closed: `tondo` puts the signal back to its default for every command,
+/// as one whose output goes to `head` should end quietly, and a server so
+/// ended would leave its peer a session that died without a word.
+pub fn serving() {
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
+}

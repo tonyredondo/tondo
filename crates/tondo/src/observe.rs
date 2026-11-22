@@ -299,6 +299,8 @@ pub(crate) fn via(command: &str, name: &str) -> Result<Program, String> {
 /// reaches this one with `--via`; its first line is the program's process
 /// ID.
 pub fn relay(name: &str) -> Result<(), String> {
+    // A side that closes fails the copy toward it, which ends the relay.
+    crate::serving();
     let program = connect(name)?;
     let mut stdout = std::io::stdout();
     writeln!(stdout, "{}", json!({ "relay": program.pid })).map_err(|e| e.to_string())?;

@@ -125,6 +125,10 @@ fn read_message(input: &mut impl BufRead) -> Option<Value> {
     serde_json::from_slice(&body).ok()
 }
 
+/// What a command to the program fails with once it ended: its end of the
+/// connection closed, or its answers stopped.
+const ENDED: &str = "the program ended";
+
 /// How long the adapter waits for the program to answer a command.
 const ANSWER_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -299,7 +303,7 @@ impl Debuggee {
     /// `ANSWER_WAIT` leaves the editor an error rather than a session that
     /// answers nothing more; its answer, when it comes, is let go.
     fn answer(&mut self, command: &str) -> Result<Value, String> {
-        writeln!(self.writer, "{command}").map_err(|_| "the program ended".to_string())?;
+        writeln!(self.writer, "{command}").map_err(|_| ENDED.to_string())?;
         loop {
             match self.answers.recv_timeout(self.wait) {
                 Ok(_) if self.late > 0 => self.late -= 1,
@@ -311,7 +315,7 @@ impl Debuggee {
                         self.wait.as_secs()
                     ));
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => return Err("the program ended".to_string()),
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Err(ENDED.to_string()),
             }
         }
     }
@@ -350,6 +354,9 @@ pub(crate) fn test_frame(header: &str, stream: &mut impl BufRead, tested: Option
 
 /// Serves an editor until it disconnects.
 pub fn serve(builds: Builds) -> Result<(), String> {
+    // A program that ended, or an editor that went away, fails a write,
+    // which the session answers, instead of ending the adapter.
+    crate::serving();
     // An editor that ends the adapter by a signal ends what it debugs too.
     crate::debug::end_owned_on_signals();
     let editor = Editor { out: Arc::new(Mutex::new((Box::new(std::io::stdout()), 0))) };
@@ -1120,7 +1127,7 @@ fn start(command: &str, arguments: &Value, builds: &Builds, editor: &Editor) -> 
     };
     let attached = debuggee.answers.recv_timeout(ANSWER_WAIT).map_err(|error| match error {
         mpsc::RecvTimeoutError::Timeout => "the program does not answer the debugger".to_string(),
-        mpsc::RecvTimeoutError::Disconnected => "the program ended".to_string(),
+        mpsc::RecvTimeoutError::Disconnected => ENDED.to_string(),
     })?;
     if let Some(error) = attached["error"].as_str() {
         return Err(format!("{error}: a program is debugged in a build with --debug"));
@@ -1781,7 +1788,12 @@ fn handle(
             Some(_) => Err("only the frame where the task stopped restarts".into()),
         },
         "threads" => {
-            let tasks = program.ask("tasks")?;
+            // A program that ended has no task left; the editor hears of its
+            // end from what reads the program.
+            let tasks = match program.ask("tasks") {
+                Err(error) if error == ENDED => return Ok(json!({ "threads": [] })),
+                asked => asked?,
+            };
             let mut threads: Vec<Value> = tasks["tasks"]
                 .as_array()
                 .into_iter()

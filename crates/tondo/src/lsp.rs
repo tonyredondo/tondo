@@ -15,6 +15,9 @@ use std::time::{Duration, Instant};
 
 /// Serves one editor until it says `exit`.
 pub fn serve() -> Result<(), String> {
+    // An editor that went away fails a write, and the server ends as its
+    // input ends, instead of by a signal.
+    crate::serving();
     let (send, messages) = mpsc::channel();
     let inbox = Arc::new(Mutex::new(Inbox::default()));
     let reading = inbox.clone();

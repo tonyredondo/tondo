@@ -59,7 +59,7 @@ const RUNBOOK: &str = "runbook";
 pub fn serve() -> Result<(), String> {
     // A session whose debugger ended fails to write, instead of ending the
     // server.
-    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
+    crate::serving();
     let mut server = Server::default();
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else { break };
