@@ -29,12 +29,12 @@ What is done next, and after it, with the reason for each place. A step's
 detail is in the tables below. The inliner's weighing of step 2 comes
 before the chain's rest because the chain's adapters wait for it too.
 
-1. **What is owed**: the searches the library's readers lack, those a client
-   of the network reaches first; what is left of the cost the scheduler's
-   pieces added to a spawn and a join; what a native that waits inside gives
-   back when a deadline ends its wait; and the next Nightly's jobs under
-   emulation. First because they say whether what is on main is sound, and
-   anything they find is fixed before more is built on it.
+1. **What is owed**: what is left of the cost the scheduler's pieces added
+   to a spawn and a join; what a native that waits inside gives back when a
+   deadline ends its wait; the bounds on what the library reads from
+   outside, once the maintainer has their numbers; and the next Nightly's
+   jobs under emulation. First because they say whether what is on main is
+   sound, and anything they find is fixed before more is built on it.
 2. **`trim`**: the inliner weighing a call by what inlining buys and a
    region for the copy, which the plain form in Tondo, measured again,
    waits for; then the list of what stays behind Go. Second because its rows
@@ -73,7 +73,8 @@ manual's unheld quotes and listings.
 | What a native that waits inside gives back when a deadline ends its wait. The one that runs a process and reads what it wrote returned its whole value with the deadline noted as well, where 11.17 says that the operation that waited gives nothing back; found as the deadline's form of the leak, which no longer leaks. And a `fs.readText` of a named pipe under a `within` of 10 ms was still waiting after two seconds, seen once and to confirm. To say which waits a deadline ends, and what each native that waits inside does when it ends one | 2026-11-22 | Spec 11.15 and 11.17; `tests/cases/run/within_given_back.to` |
 | Whether the Nightly's jobs under emulation build and pass. In the run of 2026-11-22 they did not build: the build for the other architecture linked for a C library older than the one published, which lacks a function the path of a crash calls. It links for the published one now and its step prints the compiler's words; the next run says whether it builds, and whether observe's `a_cpu_profile_of_a_program_that_waits_says_it_waited`, red there every day from 2026-11-16 to 21, holds under emulation. That run's steps with the seeded stops and with the heap's checks were clean | 2026-11-22 | Nightly run 45017098543 |
 | `archive.read` inflates a whole `tar.gz` or `tar.zst`, and every deflated entry of a zip, before the program sees an entry, so a few kilobytes made for it fill the memory. It asks for a bound on what a read may inflate, or for entries read as they are asked for: the maintainer's to see, with the numbers | 2026-11-22 | `crates/tondo/std/archive.to` |
-| The readers of bytes or text from outside that have no search in the Nightly, in three lots. First, what a client of the network reaches by itself: a GraphQL document, the forms of a request, URL-encoded and in parts, the cookies both ways, and a query's parts as a form. Then the images' decoders and their EXIF, certificates and keys in PEM and DER, and CSV. Then the decoders of `std.encoding`, a UUID, the parsers of dates and durations, the streams of gzip and zstd, and gRPC's frames; MySQL's packets last, as no public call reaches their reader. Each search runs some minutes before it lands, and what it finds is mended with it. The ones of templates and of archives each found a panic the day they were read | 2026-11-22 | `testing/fuzz` |
+| The readers of bytes or text from outside that have no search in the Nightly, two lots left of three. The first is in: a GraphQL document, the forms of a request, its cookies and a query's parts, and it found three ways for a document of GraphQL to end a server, mended with it. Left: the images' decoders and their EXIF, certificates and keys in PEM and DER, and CSV; then the decoders of `std.encoding`, a UUID, the parsers of dates and durations, the streams of gzip and zstd, and gRPC's frames; MySQL's packets last, as no public call reaches their reader. Each search runs some minutes before it lands, and what it finds is mended with it | 2026-11-22 | `testing/fuzz` |
+| The search over a request's form in parts changes its input blind: the reader of those parts is the runtime's own code, which the search's coverage does not see, so it keeps eight inputs where the others keep hundreds. Either the coverage reaches the runtime's readers or that reader is written in Tondo | 2026-11-22 | `testing/fuzz/tests/http.to`; `httpNative.requestForm` |
 
 ## Rows behind Go
 
