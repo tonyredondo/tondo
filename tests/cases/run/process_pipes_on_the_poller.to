@@ -1,10 +1,10 @@
 // A started process's pipes wait on the workers' poller, as the network
 // does: a read or a write that would wait leaves its task there, so that a
-// deadline ends the wait and nothing is lost. A line the child writes at
-// 300 ms is the next read's, where the read under a deadline of 50 ms came
-// back at 50 ms, and a stdin the child never reads fills and a write under
-// a deadline comes back at it: both waited for the pipe on a thread no
-// deadline ended. A write to a child that is gone fails with `Closed`
+// deadline ends the wait and nothing is lost. A child that writes its line
+// only when told to: the read under a deadline times out with nothing, and
+// once told, the next read gives the line. A stdin the child never reads
+// fills, and a write under a deadline times out. Both waited for the pipe
+// on a thread no deadline ended, the read until the child wrote. A write to a child that is gone fails with `Closed`
 // instead of ending the program by SIGPIPE. A process let go of while a
 // read of its output waits, and a child that ends while a write to it
 // waits: the read ends at the pipe's end, the write fails, nothing leaks.
@@ -35,7 +35,14 @@ fn lines(out: io.Reader): Int {
 /// Starts a reader of a process's output, and lets go of the process while
 /// the reader waits.
 fn reading(): Int {
-    let reader = match process.command("sh", "-c", "sleep 0.2").stdout(process.Output.Pipe).start() {
+    // The child ends when its input closes, as the process let go of
+    // closes it.
+    let started = process
+        .command("sh", "-c", "read word")
+        .stdin(process.Input.Pipe)
+        .stdout(process.Output.Pipe)
+        .start()
+    let reader = match started {
         ok(running) => {
             let reader = spawn lines(running.stdout())
             time.sleep(time.milliseconds(20))
@@ -47,31 +54,36 @@ fn reading(): Int {
 }
 
 fn main() {
-    match process.command("sh", "-c", "sleep 0.3; echo late").stdout(process.Output.Pipe).start() {
+    let told = process
+        .command("sh", "-c", "read word; echo late")
+        .stdin(process.Input.Pipe)
+        .stdout(process.Output.Pipe)
+        .start()
+    match told {
         ok(running) => {
             let out = running.stdout()
-            let since = time.now()
             let first = within time.milliseconds(50) { out.readLine() }
-            let quick = since.elapsed().milliseconds() < 250
+            let input = running.stdin()
+            _ = input.writeLine("go")
+            _ = input.flush()
             let next = out.readLine() ?? none
             console.println(
-                "a read under a deadline: timed out {first.isErr()} at once {quick}; the next read {next}",
+                "a read under a deadline: timed out {first.isErr()}; told, the next read {next}",
             )
             _ = running.wait()
         }
         err(error) => panic("{error}")
     }
-    match process.command("sleep", "2").stdin(process.Input.Pipe).start() {
+    // A child that never reads, and lives until it is cancelled.
+    match process.command("sleep", "3600").stdin(process.Input.Pipe).start() {
         ok(running) => {
             let input = running.stdin()
-            let since = time.now()
             let wrote =
                 within time.milliseconds(50) {
                     input.write("x".repeat(1000000))?
                     input.flush()
                 }
-            let quick = since.elapsed().milliseconds() < 1000
-            console.println("a full stdin: timed out {wrote.isErr()} at once {quick}")
+            console.println("a full stdin: timed out {wrote.isErr()}")
             _ = running.cancel()
         }
         err(error) => panic("{error}")
@@ -99,8 +111,8 @@ fn main() {
     }
 }
 
-// expect-stdout: a read under a deadline: timed out true at once true; the next read some(late)
-// expect-stdout: a full stdin: timed out true at once true
+// expect-stdout: a read under a deadline: timed out true; told, the next read some(late)
+// expect-stdout: a full stdin: timed out true
 // expect-stdout: a write to a child that is gone: err closed
 // expect-stdout: a process let go of while a read waits: 0 lines
 // expect-stdout: a child that ends while a write waits: err closed
