@@ -29,9 +29,10 @@ What is done next, and after it, with the reason for each place. A step's
 detail is in the tables below. The inliner's weighing of step 2 comes
 before the chain's rest because the chain's adapters wait for it too.
 
-1. **What is owed**: what the whole measuring rule found over main, the
-   clock read at each spawn and join and the compare of a short needle, and
-   the Nightly's first run with the stops and the heap's checks. First
+1. **What is owed**: the scheduler's rule that broke once in CI; what the
+   whole measuring rule found over main, the clock read at each spawn and
+   join and the compare of a short needle; and the Nightly's first run with
+   the stops and the heap's checks. First
    because both say whether what is on main is sound, and anything they
    find is fixed before more is built on it.
 2. **`trim`**: the inliner weighing a call by what inlining buys and a
@@ -69,6 +70,7 @@ manual's unheld quotes and listings.
 | What | Since | Detail |
 | --- | --- | --- |
 | The clock read two or three times more at each spawn and join since the scheduler's pieces of 2026-11-20 and 21: 60 of the 94 instructions that `runtime/join 1` gained (2752 to 2846, +3.4% over the table's baseline), with `tasks/spawn 1000` +2.3% and `ffi/waits from a C thread 100` +3.2%, each piece within the bar alone. A worker is to count the tasks it starts and the monitor to read that count at its own looks, as the instant is needed only for the rare task that holds its worker. The rest is the wakes added for a task woken next to a busy worker, the work of a join over eight threads where it was five: each wake keeps the stall it fixed as its reason, or goes | 2026-11-22 | AGENTS.md, "A change to the optimizer…"; the whole rule's run over main at 0b08d90b, by commit and by function |
+| The scheduler's checker stopped `tests/cases/run/ffi_blocking.to` once on arm64 macOS, in the cases' debug mode: `P0020`, "the program has 9 workers, besides those standing in for a call of C or a task a tool holds, where twice its number is 6", with 256 tasks each in a call of C of two seconds on a runner of three cores. The same job passed in the two runs before with the same runtime. Either the rule counts a worker put in another's place before the monitor's next look marks its own call, or a call that holds its worker gets a worker beside it and one in its place: to reproduce first, on arm64 macOS with three workers, and it comes before the rest of the scheduler's piece | 2026-11-22 | CI run 44977475458, job 137070490768; spec 16.14 |
 | `strings/contains 1000` takes 335 or 343 instructions in the same executable, and 325 in a project of its own, so its row passes the bar of 2% by chance: `find` hands the needle's compare to libc, whose way for a short size is longer when either address may be within 32 bytes of a page's end. A needle of up to 8 bytes, a short text's whole range, is to be compared in `find` itself; and the other places that compare a short text through libc found, as their rows move the same way | 2026-11-22 | The same run; no commit moved the row |
 | The Nightly's first run with the cases stopped by a seed and with the heap's checks, to read | 2026-11-22 | `.github/workflows/nightly.yml` |
 
