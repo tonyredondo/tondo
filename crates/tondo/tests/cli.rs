@@ -1523,7 +1523,13 @@ fn a_layout_seed_moves_the_code_and_nothing_else() {
     assert_eq!((&said_one, &said_two), (&said, &said));
     assert_eq!(one, again);
     assert!(one != plain && two != one);
-    // The runtime's symbols, functions and data apart, by where they lie.
+    // The runtime's functions, by their names, and the data, by where they
+    // lie. Each system shows the functions by name. Its data it shows as
+    // each names it: ELF keeps the runtime's statics named, while Mach-O,
+    // with the runtime as it ships, names two of them and leaves the rest
+    // as LLVM's anonymous constants (`anon.<hash>.<n>.llvm.<hash>`), so the
+    // data is held by every data symbol the executable has, most of them
+    // the runtime's on both.
     let runtime = |bytes: &[u8]| {
         use object::{Object, ObjectSymbol, SymbolKind};
         let file = object::File::parse(bytes).unwrap();
@@ -1532,14 +1538,15 @@ fn a_layout_seed_moves_the_code_and_nothing_else() {
             let Ok(name) = symbol.name() else { continue };
             let name = name.trim_start_matches('_');
             let ours = name.starts_with("tondo_rt_") || name.contains("13tondo_runtime");
-            if ours && matches!(symbol.kind(), SymbolKind::Text | SymbolKind::Data) {
-                found.insert(name.to_string(), (symbol.kind() == SymbolKind::Data, symbol.address()));
+            let data = symbol.kind() == SymbolKind::Data;
+            if (ours && symbol.kind() == SymbolKind::Text) || data {
+                found.insert(name.to_string(), (data, symbol.address()));
             }
         }
         found
     };
     let (plain, one, two) = (runtime(&plain), runtime(&one), runtime(&two));
-    assert_eq!(one.keys().collect::<Vec<_>>(), two.keys().collect::<Vec<_>>());
+    // Of those both executables have, the ones at another place.
     let moved = |data: bool, from: &std::collections::BTreeMap<String, (bool, u64)>| {
         one.iter().filter(|(name, (is, at))| *is == data && from.get(*name).is_some_and(|(_, was)| was != at)).count()
     };
