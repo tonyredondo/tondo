@@ -1,33 +1,74 @@
-// A call that waits for a process comes back when a deadline has ended its
-// wait and its stages, without waiting for what they left: the job that
-// waited for it on a thread of the host reaps it and drops what it read. A grandchild that
-// keeps the pipe of a plan's output held the call until it ended, without
-// the plan's group; with the group, the deadline ends it too. A started
-// process dropped by the unwinding while its job still reads the pipe a
-// grandchild keeps, and one a cancelled task lets go of: the job holds the
-// process until the grandchild ends and lets go of it then, which the leak
-// check counts. A stage that ignores the request to end, with a grace,
-// ends at the grace's kill, and the call comes back then.
+// A call that waits for a process comes back when a deadline or a cancel
+// has ended its wait and its stages, without waiting for what they left:
+// the job that waited for it on a thread of the host reaps them and drops
+// what it read. Each grandchild here says it has started, by a file, and
+// then keeps the output's pipe until the program tells it to go, through a
+// FIFO, which the program does only once the call came back: a call that
+// waited for the pipe would never come back, and the runner's timeout would
+// say so. The deadline, or the cancel, comes only once the grandchild has
+// started: a start may take a third of a second, as on macOS with the
+// regions' checks, and a stage ended before it forked leaves no grandchild.
+// A plan's `output()` starts its process inside the call, so those two are
+// cancelled, which ends a wait as a deadline does. Without the plan's group
+// the grandchild goes on; with it the cancel ends it too. A started process
+// dropped by the unwinding while its job still reads, and one a cancelled
+// task lets go of: the job holds the process until its grandchild goes and
+// lets go of it then, which the leak check counts. A stage that ignores
+// the request to end, with a grace, ends at the grace's kill, and the call
+// comes back no sooner. Every stage lives an hour unless it is ended.
 import std.console
 import std.fs
 import std.process
 import std.sync
 import std.time
 
-fn timed(name: String, work: fn()) {
-    let since = time.now()
-    let outcome = within time.milliseconds(50) { work() }
-    let ended = if outcome.isOk() { "ok" } else { "timed out" }
-    console.println("{name}: {ended}, at once {since.elapsed().seconds() < 2}")
+/// A new FIFO at `name`.
+fn fifo(name: String): String {
+    _ = fs.remove(name)
+    _ = process.command("mkfifo", name).status()
+    name
 }
 
-fn holding(started: sync.Atomic[Int]) {
-    match process
-        .command("sh", "-c", "sleep 0.3 & exec sleep 5")
-        .stdout(process.Output.Capture)
-        .start() {
+/// Tells the grandchild that reads the FIFO at `name` to go.
+fn tell(name: String) {
+    match fs.open(name, fs.OpenMode.Append) {
+        ok(file) => {
+            var told = file
+            _ = told.write("go\n")
+            _ = told.close()
+        }
+        err(_) => {}
+    }
+}
+
+/// Waits until the file at `name` is there.
+fn started(name: String) {
+    for not fs.exists(name) {
+        time.sleep(time.milliseconds(1))
+    }
+}
+
+/// A grandchild that says it started by the file `ready` and keeps the
+/// output until told through `name`, beside a stage of an hour.
+fn keeping(ready: String, name: String): String {
+    _ = fs.remove(ready)
+    "(: > {ready}; read word < {name}) & exec sleep 3600"
+}
+
+/// Runs `work` in a task, cancels it once the file `ready` is there, and
+/// says whether the statement after the call ran.
+fn cancelled(name: String, ready: String, work: fn(sync.Atomic[Int])) {
+    let after = sync.Atomic(0)
+    let job = spawn work(after)
+    started(ready)
+    job.cancel()
+    let ran = if after.load() == 1 { "ran" } else { "did not run" }
+    console.println("{name}: cancelled, the next statement {ran}")
+}
+
+fn holding(script: String) {
+    match process.command("sh", "-c", script).stdout(process.Output.Capture).start() {
         ok(running) => {
-            started.store(1)
             _ = running.wait()
         }
         err(_) => {}
@@ -35,28 +76,43 @@ fn holding(started: sync.Atomic[Int]) {
 }
 
 fn main() {
-    timed(
-        "a started process dropped while its job reads",
-        () => match process
-            .command("sh", "-c", "sleep 0.3 & exec sleep 5")
-            .stdout(process.Output.Capture)
-            .start() {
-            ok(running) => {
-                _ = running.output()
-            }
-            err(_) => {}
-        },
-    )
-    timed(
+    let dropped = fifo("leaves-dropped.fifo")
+    match process
+        .command("sh", "-c", keeping("leaves-dropped.ready", dropped))
+        .stdout(process.Output.Capture)
+        .start() {
+        ok(running) => {
+            started("leaves-dropped.ready")
+            let outcome =
+                within time.milliseconds(50) {
+                    _ = running.output()
+                }
+            let ended = if outcome.isOk() { "ok" } else { "timed out" }
+            console.println("a started process dropped while its job reads: {ended}")
+        }
+        err(error) => panic("{error}")
+    }
+    tell(dropped)
+    let kept = fifo("leaves-kept.fifo")
+    let keptScript = keeping("leaves-kept.ready", kept)
+    cancelled(
         "a grandchild that keeps the pipe",
-        () {
-            _ = process.command("sh", "-c", "sleep 3 & exec sleep 5").output()
+        "leaves-kept.ready",
+        (after) {
+            _ = process.command("sh", "-c", keptScript).output()
+            after.store(1)
         },
     )
-    timed(
+    tell(kept)
+    // The group's end ends the grandchild, which nothing tells.
+    let grouped = fifo("leaves-grouped.fifo")
+    let groupedScript = keeping("leaves-grouped.ready", grouped)
+    cancelled(
         "a grandchild in the plan's group",
-        () {
-            _ = process.command("sh", "-c", "sleep 3 & exec sleep 5").group().output()
+        "leaves-grouped.ready",
+        (after) {
+            _ = process.command("sh", "-c", groupedScript).group().output()
+            after.store(1)
         },
     )
     // A stage that ignores the request to end gets its grace, and then the
@@ -64,12 +120,10 @@ fn main() {
     // deadline starts once the stage ignores the request.
     let ready = "ready"
     _ = fs.remove(ready)
-    let script = "trap '' TERM; : > {ready}; exec sleep 5"
+    let script = "trap '' TERM; : > {ready}; exec sleep 3600"
     match process.command("sh", "-c", script).grace(time.milliseconds(200)).start() {
         ok(running) => {
-            for not fs.exists(ready) {
-                time.sleep(time.milliseconds(1))
-            }
+            started(ready)
             let since = time.now()
             let graced =
                 within time.milliseconds(50) {
@@ -77,25 +131,21 @@ fn main() {
                 }
             let ms = since.elapsed().milliseconds()
             let ended = if graced.isOk() { "ok" } else { "timed out" }
-            console.println(
-                "a stage given a grace: {ended}, after its grace {ms >= 250 and ms < 2000}",
-            )
+            console.println("a stage given a grace: {ended}, after its grace {ms >= 250}")
         }
         err(error) => panic("{error}")
     }
-    let started = sync.Atomic(0)
-    let job = spawn holding(started)
-    for started.load() == 0 {
-        time.sleep(time.milliseconds(1))
-    }
-    time.sleep(time.milliseconds(20))
+    let lettingGo = fifo("leaves-cancelled.fifo")
+    let job = spawn holding(keeping("leaves-cancelled.ready", lettingGo))
+    started("leaves-cancelled.ready")
     job.cancel()
+    tell(lettingGo)
     console.println("a cancelled task let go of its process")
 }
 
-// expect-stdout: a started process dropped while its job reads: timed out, at once true
-// expect-stdout: a grandchild that keeps the pipe: timed out, at once true
-// expect-stdout: a grandchild in the plan's group: timed out, at once true
+// expect-stdout: a started process dropped while its job reads: timed out
+// expect-stdout: a grandchild that keeps the pipe: cancelled, the next statement did not run
+// expect-stdout: a grandchild in the plan's group: cancelled, the next statement did not run
 // expect-stdout: a stage given a grace: timed out, after its grace true
 // expect-stdout: a cancelled task let go of its process
 // expect-no-replay: a recorded run has one worker, and runs a process's wait on it, where no deadline ends it

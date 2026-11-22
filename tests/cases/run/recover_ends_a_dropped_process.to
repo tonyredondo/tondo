@@ -1,8 +1,8 @@
 // A started process whose handle a panic's unwinding drops is ended, as
 // the unwinding cancels what else the block owns (19.2 of the library):
 // its stages end and are waited for, not its pipes, and the `recover` gives
-// its `err` at once, where it waited for the process as a `Join`, half a
-// minute here. Nothing is left: the process is gone and nothing leaks. A
+// its `err` at once, where it waited for the process as a `Join`, an hour
+// here. Nothing is left: the process is gone and nothing leaks. A
 // handle the block lets go of as it ends, with no panic, is still waited
 // for.
 import std.console
@@ -11,7 +11,7 @@ import std.sync
 import std.time
 
 fn holding(id: sync.Atomic[Int]) {
-    match process.command("sleep", "30").stdout(process.Output.Capture).start() {
+    match process.command("sleep", "3600").stdout(process.Output.Capture).start() {
         ok(running) => {
             id.store(running.id())
             panic("on purpose")
@@ -32,12 +32,10 @@ fn gone(id: Int): String {
 
 fn main() {
     let id = sync.Atomic(0)
-    let since = time.now()
+    // A child of an hour: a recover that waited for it would not come back,
+    // and the runner's timeout would say so.
     let caught = recover { holding(id) }
-    let quick = since.elapsed().seconds() < 10
-    console.println(
-        "a recovered panic: err {caught.isErr()}, at once {quick}, the process gone {gone(id.load())}",
-    )
+    console.println("a recovered panic: err {caught.isErr()}, the process gone {gone(id.load())}")
     let waited = time.now()
     match process.command("sleep", "0.2").start() {
         ok(running) => { id.store(running.id()) }
@@ -49,6 +47,6 @@ fn main() {
     )
 }
 
-// expect-stdout: a recovered panic: err true, at once true, the process gone true
+// expect-stdout: a recovered panic: err true, the process gone true
 // expect-stdout: a handle let go with no panic: waited for true, the process gone true
 // expect-no-replay: a recorded run has one worker, and runs a process's wait on it, where nothing ends it

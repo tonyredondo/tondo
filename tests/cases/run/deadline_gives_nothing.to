@@ -6,10 +6,10 @@
 // process's wait and output, the network and the HTTP client; a task
 // cancelled in one of them; a process whose grandchild keeps its pipe,
 // which ends timed out, not with a value; and a `defer` of a cancelled
-// task, whose wait ends at once and ends the `defer` with it.
-// A process's pipe, like a file, is read on a thread of the host that no
-// deadline ends yet; reading pipes through the poller, as the network is
-// read, is the piece that brings them here.
+// task, whose wait ends at once and ends the `defer` with it. Every child
+// lives an hour unless it is ended, and the network's peer and the HTTP
+// handler answer only when told, once the call came back: no margin of
+// time holds the case, and a wait that a deadline did not end hangs it.
 import std.console
 import std.http
 import std.net
@@ -25,10 +25,11 @@ fn timed(name: String, work: fn(sync.Atomic[Int])) {
     console.println("{name}: {ended}, the next statement {ran}")
 }
 
-fn late(listener: net.Listener) {
+/// A peer that answers when told, once the read under a deadline came back.
+fn late(listener: net.Listener, told: Receiver[Unit]) {
     match listener.accept() {
         ok(stream) => {
-            time.sleep(time.milliseconds(500))
+            _ = told.receive()
             _ = stream.write("late\n")
         }
         err(_) => {}
@@ -37,66 +38,66 @@ fn late(listener: net.Listener) {
 
 fn cancelled(started: sync.Atomic[Int], after: sync.Atomic[Int]) {
     started.store(1)
-    _ = process.command("sleep", "5").output()
+    _ = process.command("sleep", "3600").output()
     after.store(1)
 }
 
 fn deferring(started: sync.Atomic[Int], before: sync.Atomic[Int], after: sync.Atomic[Int]) {
     defer {
         before.store(1)
-        _ = process.command("sleep", "5").output()
+        _ = process.command("sleep", "3600").output()
         after.store(1)
     }
     started.store(1)
-    time.sleep(time.seconds(10))
+    time.sleep(time.seconds(3600))
 }
 
 fn main() {
     timed(
         "run",
         (after) {
-            _ = process.command("sleep", "5").run()
+            _ = process.command("sleep", "3600").run()
             after.store(1)
         },
     )
     timed(
         "status",
         (after) {
-            _ = process.command("sleep", "5").status()
+            _ = process.command("sleep", "3600").status()
             after.store(1)
         },
     )
     timed(
         "output",
         (after) {
-            _ = process.command("sleep", "5").output()
+            _ = process.command("sleep", "3600").output()
             after.store(1)
         },
     )
     timed(
         "check",
         (after) {
-            _ = process.command("sleep", "5").check()
+            _ = process.command("sleep", "3600").check()
             after.store(1)
         },
     )
     timed(
         "text",
         (after) {
-            _ = process.command("sleep", "5").text()
+            _ = process.command("sleep", "3600").text()
             after.store(1)
         },
     )
     timed(
         "lines",
         (after) {
-            _ = process.command("sleep", "5").lines()
+            _ = process.command("sleep", "3600").lines()
             after.store(1)
         },
     )
     timed(
         "a started process's wait",
-        after => match process.command("sleep", "5").start() {
+        after => match process.command("sleep", "3600").start() {
             ok(started) => {
                 _ = started.wait()
                 after.store(1)
@@ -106,7 +107,7 @@ fn main() {
     )
     timed(
         "a started process's output",
-        after => match process.command("sleep", "5").start() {
+        after => match process.command("sleep", "3600").start() {
             ok(started) => {
                 _ = started.output()
                 after.store(1)
@@ -116,7 +117,8 @@ fn main() {
     )
     let listener = net.listen("127.0.0.1", 0) ?? panic("no listener")
     let port = listener.address().port
-    let peer = spawn late(listener)
+    let (tell, told) = channel[Unit]()
+    let peer = spawn late(listener, told)
     timed(
         "the network",
         after => match net.connect("127.0.0.1", port) {
@@ -127,12 +129,14 @@ fn main() {
             err(_) => {}
         },
     )
+    tell.send(())
     peer.wait()
     var app = http.App()
+    let (answer, answering) = channel[Unit]()
     app.get(
         "/late",
         (_) {
-            time.sleep(time.milliseconds(500))
+            _ = answering.receive()
             http.Reply.text("late")
         },
     )
@@ -145,11 +149,12 @@ fn main() {
             after.store(1)
         },
     )
+    answer.send(())
     server.stop(grace: time.milliseconds(10))
     timed(
         "a grandchild that keeps the pipe",
         (after) {
-            _ = process.command("sh", "-c", "sleep 2 & sleep 5").output()
+            _ = process.command("sh", "-c", "sleep 2 & exec sleep 3600").output()
             after.store(1)
         },
     )
@@ -166,16 +171,14 @@ fn main() {
     )
     // A `defer` of a cancelled task, whose wait ends at once.
     let (began, before, done) = (sync.Atomic(0), sync.Atomic(0), sync.Atomic(0))
-    let since = time.now()
     let deferred = spawn deferring(began, before, done)
     for began.load() == 0 {
         time.sleep(time.milliseconds(1))
     }
     deferred.cancel()
-    let quick = since.elapsed().seconds() < 4
     let ran = if done.load() == 1 { "ran" } else { "did not run" }
     console.println(
-        "a defer of a cancelled task: began {before.load() == 1}, the next statement {ran}, at once {quick}",
+        "a defer of a cancelled task: began {before.load() == 1}, the next statement {ran}",
     )
 }
 
@@ -191,6 +194,6 @@ fn main() {
 // expect-stdout: the HTTP client: timed out, the next statement did not run
 // expect-stdout: a grandchild that keeps the pipe: timed out, the next statement did not run
 // expect-stdout: a cancelled task: the next statement did not run
-// expect-stdout: a defer of a cancelled task: began true, the next statement did not run, at once true
+// expect-stdout: a defer of a cancelled task: began true, the next statement did not run
 // expect-no-replay: a recorded run has one worker, and runs a process's wait on it, where no deadline ends it
 // expect-no-schedule: the virtual clock of an order stands still while a task waits on the host, so no deadline passes

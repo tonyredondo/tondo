@@ -2,26 +2,65 @@
 // group whenever there is one, as 19.2 of the library says "Kill a lo que
 // sigue". It went to the stages alone, and only while they were not
 // reaped: a member of the group that ignores the request to end, beside a
-// stage that ended at it, was left running and wrote its file.
+// stage that ended at it, was left running, for the hour it sleeps here.
+// The member says it has started, by a file, before the deadline begins:
+// a stage ended before it forked would leave no member, and the group's
+// end would hold nothing. The program then asks the system whether any
+// process of the group is left, pausing a few milliseconds between asks,
+// until none is: a group that never goes hangs the case on purpose, and
+// the runner's timeout says so.
 import std.console
 import std.fs
 import std.process
 import std.time
 
-fn main() {
-    let marker = "survived"
-    _ = fs.remove(marker)
-    let script = "(trap '' TERM; sleep 2; echo alive > {marker}) & exec sleep 5"
-    let outcome =
-        within time.milliseconds(50) {
-            _ = process.command("sh", "-c", script).group().grace(time.milliseconds(200)).output()
+/// Whether a process of the group `group` is left.
+/// Whether a process of the group `group` is left, asked through the
+/// shell's own `kill`, which takes a group as `-<id>` (dash's refuses `--`,
+/// and an image as small as `debian:stable-slim` has no `kill` program):
+/// `yes`, `no` when the shell says there is no such process, and otherwise
+/// why it could not ask, never an answer.
+fn left(group: Int): String {
+    match process.command("sh", "-c", "kill -0 -{group}").output() {
+        ok(done) if done.statuses.all(stage => stage.success) => "yes"
+        ok(done) => {
+            let said = String.fromBytes(done.stderr) ?? ""
+            if said.contains("No such process") { "no" } else { "could not ask: {said.trim()}" }
         }
-    console.println("timed out {not outcome.isOk()}")
-    time.sleep(time.milliseconds(2400))
-    console.println("the member outlived the grace {fs.exists(marker)}")
+        err(error) => "could not ask: {error}"
+    }
+}
+
+fn main() {
+    let ready = "group-member.ready"
+    _ = fs.remove(ready)
+    let script = "(trap '' TERM; : > {ready}; exec sleep 3600) & exec sleep 3600"
+    let started = process
+        .command("sh", "-c", script)
+        .group()
+        .grace(time.milliseconds(200))
+        .stdout(process.Output.Capture)
+        .start()
+    match started {
+        ok(running) => {
+            let group = running.id()
+            for not fs.exists(ready) {
+                time.sleep(time.milliseconds(1))
+            }
+            let outcome = within time.milliseconds(50) { running.output() }
+            console.println("timed out {outcome.isErr()}")
+            var answer = left(group)
+            for answer == "yes" {
+                time.sleep(time.milliseconds(5))
+                answer = left(group)
+            }
+            console.println("a process of the group left: {answer}")
+        }
+        err(error) => panic("{error}")
+    }
 }
 
 // expect-stdout: timed out true
-// expect-stdout: the member outlived the grace false
+// expect-stdout: a process of the group left: no
 // expect-no-replay: a recorded run has one worker, and runs a process's wait on it, where no deadline ends it
 // expect-no-schedule: the virtual clock of an order stands still while a task waits on the host, so no deadline passes
