@@ -33,10 +33,9 @@ before the chain's rest because the chain's adapters wait for it too.
    first run with the stops and the heap's checks. First because both say
    whether what is on main is sound, and anything they find is fixed before
    more is built on it.
-2. **`trim`**: the plain form in Tondo measured on today's main, with a
-   text's byte read by its offset made public, since it is the same native;
-   then the inliner weighing a call by what inlining buys and a region for
-   the copy; then the list of what stays behind Go. Second because its rows
+2. **`trim`**: the inliner weighing a call by what inlining buys and a
+   region for the copy, which the plain form in Tondo, measured again,
+   waits for; then the list of what stays behind Go. Second because its rows
    are the furthest behind, and the inliner's weighing is a piece many other
    calls wait for.
 3. **The chain's rest**: the loop's fast arm after its branch, which is
@@ -77,7 +76,7 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 
 | Row | Behind by | What is left | Since |
 | --- | --- | --- | --- |
-| texts/trim, texts/trim read | 3.4×, 3.25× | `trim` in Tondo measured again on today's main; then the inliner weighing a call by what inlining buys, and a region for the copy of a function over its budget that returns its parameter or what it made; then what still stays behind Go, by function and with its machine code, as a list for the optimizer. The two forms of 2026-11-20 lost by 12.9% for those two causes | 2026-11-20, [decisions](decisions.md): "Trim stays a native until a call is weighed by what inlining buys" |
+| texts/trim, texts/trim read | 3.4×, 3.25× | The inliner weighing a call by what inlining buys, and a region for the copy of a function over its budget that returns its parameter or what it made; then what still stays behind Go, by function and with its machine code, as a list for the optimizer. `trim` in Tondo, measured again on 2026-11-22, takes 558 instructions against the native's 325, with a heap allocation, for those two causes and no other; its form waits for them | 2026-11-20, [decisions](decisions.md): "Trim stays a native until a call is weighed by what inlining buys" |
 | queries/numbers iter map filter sum | 275.0k instructions against 142.8k, with no count for a parameter's parts (285.1k without) | The loop's fast arm placed after its branch; the two reads of the task's attention an element, once it is said which check they are; the address of that flag held in a register through the loop; and where the total lives, to read again in the machine code | 2026-11-21 |
 | queries/iter filter sumBy, queries/countBy | 1.71×, 1.18× | The same loop's rest; `countBy` by its own profile | 2026-11-21 |
 | texts/chars ascii, texts/chars other | 2.24×, 1.54× | Two taken jumps a byte against Go's one, which the fast arm after its branch lifts; and the loop's count checked for overflow each turn, which is Tondo's to keep unless it is proven | 2026-11-21 |
@@ -97,7 +96,6 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 | A part stored into a value that leaves its function, copied out where it leaves (logstat) | 2026-11-19 | With the views |
 | Texts' counts at direct sites, first of the tightening; a text's header at 16 bytes | 2026-11-19 | [speed plan](speed.md), Phase K |
 | The inliner weighing a call by what inlining buys | 2026-11-20 | Reopens `trim` |
-| `String.byteAt(offset)`, public: the byte at an offset of a text, with no copy, where a program has only `bytes()`, which copies them into an array. The library's own code reads it already. Approved by the maintainer if it costs little; with `trim` | 2026-11-22 | `textNative.byteAt` |
 | An array of tasks waited for as one wait | 2026-11-20 | |
 | `parallel for` and `.parallel()` in a chain, after the three above | 2026-11-20 | README, Status |
 | Phase K: regions tightened, the alignment of loops' heads, and the rows whose time moves by a fifth with where their code lies | 2026-11-18 | [speed plan](speed.md), Phase K |

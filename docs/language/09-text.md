@@ -380,6 +380,46 @@ iVBORw== true
   compare. `std.encoding` writes them as Base64 and hexadecimal, and
   `std.hash` and `std.crypto` work on them.
 
+One byte of a string is read where it is, with no array made of the
+others. A comma is one byte in UTF-8 and never a part of another character,
+so a line's fields can be counted by its bytes:
+
+```tondo
+import std.console
+
+/// How many fields a line has, by the commas among its bytes.
+fn fields(line: String): Int {
+    var count = 1
+    for at in 0..line.byteLength() {
+        if line.byteAt(at) == 0x2C {
+            count += 1
+        }
+    }
+    count
+}
+
+fn main() {
+    let line = "año,2026,añil"
+    console.println("{fields(line)} {line.byteLength()} {line.byteAt(0)} {line.byteAt(1)}")
+}
+```
+
+```text output
+3 15 97 195
+```
+
+- `text.byteAt(offset)` gives the byte at an offset of the string's UTF-8
+  bytes, counted from 0. It is an offset and not an index: it does not
+  count from the end, and it is of bytes, so the second byte of `año` is
+  the first of the two that make `ñ`.
+- An offset outside the string, a negative one too, is a panic, `P0001`:
+  `offset 5 is out of bounds for a text of 5 bytes: valid offsets are 0 to
+  4`. A loop over `0..text.byteLength()` cannot be outside, and pays no
+  check for the read.
+- It is for marks that are ASCII, as a comma, a quote or a line's end. For
+  characters there is `chars()`, and `bytes()` when the bytes are wanted
+  as an array of their own.
+
 ## Text and numbers
 
 Nothing converts between a number and its text by itself:

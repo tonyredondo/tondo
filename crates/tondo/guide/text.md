@@ -43,7 +43,11 @@ fn main() {
   gives a `Char?`, and `slice(start, end)` a `String ! TextError`. In an
   ASCII string an index is a byte; in another, a loop over the indices takes
   a step each, so walking a long text by index is linear, as Go's is.
-- `String.fromBytes(bytes)` checks UTF-8; `text.bytes()` gives them.
+- `String.fromBytes(bytes)` checks UTF-8; `text.bytes()` gives them, and
+  `text.byteAt(offset)` one of them where it is, by its offset from 0: a
+  panic outside the text (`P0001`), no check in a loop over
+  `0..text.byteLength()`. It is for ASCII marks, as a comma; characters
+  are `chars()`.
 - `std.format.Builder` builds long text piece by piece; `std.regex` matches
   patterns; `std.encoding` turns bytes into Base64, hexadecimal or URL text.
 - `c.isLetter()`, `isDigit`, `isWhitespace`, `isPunctuation`, `isSymbol`
