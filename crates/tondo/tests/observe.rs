@@ -1351,6 +1351,47 @@ fn run_states(pids: &[String]) -> String {
     shown.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
 }
 
+/// What the rounds have left behind: processes whose command holds the
+/// project's name, `dapends`, which the debuggees' does, and adapters this
+/// test started that are still there, as `ps` lists them.
+fn left_behind() -> Vec<String> {
+    let me = std::process::id().to_string();
+    let shown = Command::new("ps").args(["-A", "-o", "pid=,ppid=,state=,command="]).output();
+    let shown = shown.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    shown
+        .lines()
+        .filter(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let ours = fields.get(1) == Some(&me.as_str()) && line.contains(" dap");
+            (line.contains("dapends") || ours) && !line.contains(" ps ")
+        })
+        .map(|line| line.trim().to_string())
+        .collect()
+}
+
+/// How many shared segments, semaphores and queues of messages the system
+/// holds, as `ipcs -a` lists them: what a killed process can leave behind,
+/// of which macOS allows few.
+fn ipc_counts() -> String {
+    let shown = Command::new("ipcs").arg("-a").output();
+    let shown = shown.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    let count = |kind: &str| shown.lines().filter(|line| line.trim_start().starts_with(kind)).count();
+    format!("{} shared segments, {} semaphores, {} queues", count("m "), count("s "), count("q "))
+}
+
+/// Which way a round of `every_debugged_program_s_end_reaches_the_editor`
+/// ended.
+#[derive(Debug)]
+enum RoundEnd {
+    Terminated,
+    Deadline,
+    /// A request could not be written: the adapter's input is closed.
+    SendFailed(String),
+    /// The thread that reads the adapter ended without `terminated`: its
+    /// output closed.
+    ReaderEnded,
+}
+
 #[test]
 fn every_debugged_program_s_end_reaches_the_editor() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dapends");
@@ -1368,12 +1409,16 @@ fn every_debugged_program_s_end_reaches_the_editor() {
         libc::CPU_SET(0, &mut one);
         libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &one);
     }
+    let ipc_first = ipc_counts();
+    let mut left_before = 0;
+    let errors = dir.join("adapter.err");
     for round in 1..=300 {
         let mut child = Command::new(tondo)
             .arg("dap")
             .current_dir(&dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
+            .stderr(std::fs::File::create(&errors).unwrap())
             .spawn()
             .unwrap();
         let mut input = child.stdin.take().unwrap();
@@ -1408,21 +1453,37 @@ fn every_debugged_program_s_end_reaches_the_editor() {
             if looked.is_none() && begun.elapsed() > std::time::Duration::from_secs(10) {
                 looked = Some(stuck_processes(tondo, child.id()));
             }
-            if let Ok(message) = ends.recv_timeout(std::time::Duration::from_millis(1)) {
-                let ended = message["event"] == "terminated";
-                said.push(message);
-                if ended {
-                    break true;
+            match ends.recv_timeout(std::time::Duration::from_millis(1)) {
+                Ok(message) => {
+                    let ended = message["event"] == "terminated";
+                    said.push(message);
+                    if ended {
+                        break RoundEnd::Terminated;
+                    }
+                    continue;
                 }
-                continue;
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break RoundEnd::ReaderEnded,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             }
-            if std::time::Instant::now() > deadline || send("threads", json!({})).is_err() {
-                break false;
+            if std::time::Instant::now() > deadline {
+                break RoundEnd::Deadline;
+            }
+            if let Err(error) = send("threads", json!({})) {
+                break RoundEnd::SendFailed(error.to_string());
             }
         };
+        let after = begun.elapsed();
+        // Whether the adapter had ended by itself before it is killed.
+        let exited = child.try_wait().ok().flatten();
         let _ = send("disconnect", json!({ "terminateDebuggee": true }));
         let _ = child.kill();
-        let _ = child.wait();
+        let status = child.wait();
+        // What this round left, said as it changes.
+        let left = left_behind();
+        if left.len() != left_before {
+            eprintln!("round {round}: {} left behind\n{}", left.len(), left.join("\n"));
+            left_before = left.len();
+        }
         let shown: Vec<String> = said
             .iter()
             .filter(|m| m["command"] != "threads")
@@ -1432,7 +1493,22 @@ fn every_debugged_program_s_end_reaches_the_editor() {
             Some((pids, first)) => format!("\n{first}\nat the deadline:\n{}", run_states(pids)),
             None => String::new(),
         };
-        assert!(ended, "round {round}: the session did not end: {shown:?}{stood}");
+        if !matches!(ended, RoundEnd::Terminated) {
+            let errors = std::fs::read_to_string(&errors).unwrap_or_default();
+            let ended = match &ended {
+                RoundEnd::SendFailed(error) => format!("a request it could not write: {error}"),
+                other => format!("{other:?}"),
+            };
+            panic!(
+                "round {round}: the session did not end: {shown:?}{stood}\nended by {ended} after {after:?}; \
+                 the adapter had {} before it was killed, and {status:?} after\nits standard error:\n{}\n\
+                 left behind:\n{}\nat the first round {ipc_first}, now {}",
+                exited.map_or("not exited".to_string(), |status| format!("exited with {status}")),
+                errors.chars().take(4000).collect::<String>(),
+                left.join("\n"),
+                ipc_counts(),
+            );
+        }
         let unread = said.iter().find(|m| m["body"]["output"].as_str().is_some_and(|o| o.contains("could not read")));
         assert!(unread.is_none(), "round {round}: {unread:?}");
     }
