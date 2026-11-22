@@ -1517,7 +1517,8 @@ fn every_debugged_program_s_end_reaches_the_editor() {
 /// A server whose peer stopped reading writes into a closed pipe: it ends
 /// as its input ends, not by SIGPIPE, which `tondo` leaves at its default
 /// for a command whose output goes to `head`. The debug adapter met it on
-/// macOS, where a short program's end took it down without a word.
+/// macOS, where a short program's end took it down without a word; now it
+/// says, once, which end it could not write to.
 #[test]
 fn a_closed_pipe_ends_no_server() {
     use std::io::Write;
@@ -1531,7 +1532,7 @@ fn a_closed_pipe_ends_no_server() {
             .arg(command)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .unwrap();
         let mut input = child.stdin.take().unwrap();
@@ -1541,8 +1542,13 @@ fn a_closed_pipe_ends_no_server() {
             let _ = input.write_all(request.as_bytes());
         }
         drop(input);
-        let status = child.wait().unwrap();
-        assert_eq!(status.signal(), None, "`tondo {command}` ended by a signal: {status}");
+        let ended = child.wait_with_output().unwrap();
+        assert_eq!(ended.status.signal(), None, "`tondo {command}` ended by a signal: {}", ended.status);
+        // The adapter says, once, which end closed.
+        if command == "dap" {
+            let said = String::from_utf8_lossy(&ended.stderr);
+            assert_eq!(said.matches("tondo dap: could not write to the editor: ").count(), 1, "{said}");
+        }
     }
 }
 

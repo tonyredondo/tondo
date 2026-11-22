@@ -43,8 +43,10 @@ impl Editor {
         out.1 += 1;
         message["seq"] = json!(out.1);
         let text = message.to_string();
-        let _ = write!(out.0, "Content-Length: {}\r\n\r\n{text}", text.len());
-        let _ = out.0.flush();
+        let written = write!(out.0, "Content-Length: {}\r\n\r\n{text}", text.len()).and_then(|()| out.0.flush());
+        if let Err(error) = written {
+            failed_write("the editor", &error);
+        }
     }
 
     fn event(&self, event: &str, body: Value) {
@@ -128,6 +130,17 @@ fn read_message(input: &mut impl BufRead) -> Option<Value> {
 /// What a command to the program fails with once it ended: its end of the
 /// connection closed, or its answers stopped.
 const ENDED: &str = "the program ended";
+
+/// Says on standard error, once for each side, a write the adapter could not
+/// make: which end closed, as a session that ends tells no more.
+fn failed_write(to: &'static str, error: &std::io::Error) {
+    static SAID: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    let mut said = SAID.lock().unwrap_or_else(|e| e.into_inner());
+    if !said.contains(&to) {
+        said.push(to);
+        eprintln!("tondo dap: could not write to {to}: {error}");
+    }
+}
 
 /// How long the adapter waits for the program to answer a command.
 const ANSWER_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -303,7 +316,10 @@ impl Debuggee {
     /// `ANSWER_WAIT` leaves the editor an error rather than a session that
     /// answers nothing more; its answer, when it comes, is let go.
     fn answer(&mut self, command: &str) -> Result<Value, String> {
-        writeln!(self.writer, "{command}").map_err(|_| ENDED.to_string())?;
+        writeln!(self.writer, "{command}").map_err(|error| {
+            failed_write("the program", &error);
+            ENDED.to_string()
+        })?;
         loop {
             match self.answers.recv_timeout(self.wait) {
                 Ok(_) if self.late > 0 => self.late -= 1,
