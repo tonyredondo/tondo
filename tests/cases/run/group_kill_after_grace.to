@@ -6,28 +6,42 @@
 // The member says it has started, by a file, before the deadline begins:
 // a stage ended before it forked would leave no member, and the group's
 // end would hold nothing. The program then asks the system whether any
-// process of the group is left, pausing a few milliseconds between asks,
-// until none is: a group that never goes hangs the case on purpose, and
-// the runner's timeout says so.
+// process of the group is left that has not ended, pausing a few
+// milliseconds between asks, until none is: a group that never goes hangs
+// the case on purpose, and the runner's timeout says so.
 import std.console
 import std.fs
 import std.process
 import std.time
 
-/// Whether a process of the group `group` is left.
-/// Whether a process of the group `group` is left, asked through the
-/// shell's own `kill`, which takes a group as `-<id>` (dash's refuses `--`,
-/// and an image as small as `debian:stable-slim` has no `kill` program):
-/// `yes`, `no` when the shell says there is no such process, and otherwise
-/// why it could not ask, never an answer.
+/// Whether a process of the group `group` is left that has not ended:
+/// `yes`, `no`, and otherwise why it could not ask, never an answer. A
+/// member that ended and that no one reaped is a zombie, which `kill -0`
+/// still finds in the group: under a first process that reaps nothing, as
+/// a container's whose first process is the tests' runner, it stays one for
+/// good. Where `/proc` is, its states tell the two apart; elsewhere, as on
+/// macOS, whose `launchd` reaps what is left to it, the shell's own `kill`
+/// asks, which takes a group as `-<id>` (dash's refuses `--`, and an image
+/// as small as `debian:stable-slim` has no `kill` program).
 fn left(group: Int): String {
-    match process.command("sh", "-c", "kill -0 -{group}").output() {
-        ok(done) if done.statuses.all(stage => stage.success) => "yes"
-        ok(done) => {
-            let said = String.fromBytes(done.stderr) ?? ""
-            if said.contains("No such process") { "no" } else { "could not ask: {said.trim()}" }
+    if fs.exists("/proc/self/stat") {
+        // A process's state, parent and group follow its name, in parentheses.
+        let each = "for f in /proc/[0-9]*/stat; do read -r line 2>/dev/null < \"$f\" || continue"
+        let living =
+            "set -- ${{line##*) }}; [ \"$3\" = {group} ] && [ \"$1\" != Z ] && echo yes && exit"
+        match process.command("sh", "-c", "{each}; {living}; done; echo no").text() {
+            ok(said) => said.trim()
+            err(error) => "could not ask: {error}"
         }
-        err(error) => "could not ask: {error}"
+    } else {
+        match process.command("sh", "-c", "kill -0 -{group}").output() {
+            ok(done) if done.statuses.all(stage => stage.success) => "yes"
+            ok(done) => {
+                let said = String.fromBytes(done.stderr) ?? ""
+                if said.contains("No such process") { "no" } else { "could not ask: {said.trim()}" }
+            }
+            err(error) => "could not ask: {error}"
+        }
     }
 }
 
