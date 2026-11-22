@@ -138,6 +138,17 @@ moved the benchmarks' report names the code that changed, the runtime's
 too, and beside a row the regions its runs set up and how many of them were
 used.
 
+A change to the passes that decide who holds a count of a value, `borrowed`,
+`moves`, `takes`, `split`, `lends`, `elide` and the regions, runs with the
+heap's own checks on before it lands: `.github/scripts/local.sh <out> heap`
+builds the runtime with `TONDO_RUNTIME_HEAP_CHECKS=1`, the allocator
+checking its own lists, and runs every case, the examples' tests and the
+models' ten times. A count dropped where it was needed is a block freed
+twice, or read after it was freed, in a program made from safe code, and no
+case, order or gate shows it until something walks the heap; a round of the
+models catches such a block about once in two, which is why they run ten.
+The Nightly runs the same job, and a released `tondo` never has the checks.
+
 `.github/scripts/local.sh` runs what CI and the Nightly add, in containers
 on this machine: the servers, no C compiler, musl, emulation, and the tests that
 race with little CPU, which is where a failure otherwise shows hours later.
