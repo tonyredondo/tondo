@@ -26,7 +26,8 @@ Last gone through on 2026-11-22, against main at 6e8a08a1.
 ## The order
 
 What is done next, and after it, with the reason for each place. A step's
-detail is in the tables below.
+detail is in the tables below. The inliner's weighing of step 2 comes
+before the chain's rest because the chain's adapters wait for it too.
 
 1. **What is owed**: the whole measuring rule over main, and the Nightly's
    first run with the stops and the heap's checks. First because both say
@@ -43,15 +44,17 @@ detail is in the tables below.
    Then a new table against Go, at the baseline and at x86-64-v3. Third
    because the diagnosis is done and fresh, and the table is what orders
    the steps after it.
-4. **What the examples pay**, by their profiles taken again: the library
-   functions, `url.encoded` first, and the map copied in a loop over it.
-   They are a larger share of real programs than any row left.
+4. **What the examples and the rows left pay**, by one round of profiles
+   taken again: the library functions, `url.encoded` first, the map copied
+   in a loop over it, and programs/sum lines and queries/countBy in the
+   same hour, which is the same work with the same tools. The examples'
+   are a larger share of real programs than any row left, and the round
+   says which rows texts reach.
 5. **The views of texts**: their two numbers, which steps 2 and 4 give,
    then the maintainer's decision.
-6. **programs/sum lines and queries/countBy**, by their profiles.
-7. **An array of tasks waited for as one wait, then `parallel for` and
+6. **An array of tasks waited for as one wait, then `parallel for` and
    `.parallel()`**: the largest piece, after what it stands on.
-8. **The tightening**: texts' counts at direct sites, the header at 16
+7. **The tightening**: texts' counts at direct sites, the header at 16
    bytes, Phase K, and what the speed plan left of the network and of the
    runtime's text conversions.
 
