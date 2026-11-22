@@ -6581,7 +6581,9 @@ pub fn Certificate.fromDer(der: Array[Byte]): Certificate ! CryptoError
   escribe una cadena: el sujeto y el emisor como los escribe RFC 4514
   (`CN=example.com,O=Acme`), los nombres DNS y las direcciones IP de su
   extensión de nombres alternativos, el número de serie en hexadecimal, sus
-  fechas de validez y su DER. `Certificate.fromDer` lee uno de DER.
+  fechas de validez y su DER. `Certificate.fromDer` lee uno de DER. La fecha de
+  un certificado cuyos campos no caben en el calendario no se lee: es el mismo
+  `CryptoError` que el de una fecha incompleta.
 
 ### 14.35 `std.validate`
 
@@ -6694,7 +6696,10 @@ pub fn Writer.finish(self): Unit ! ArchiveError
   hora en UTC y sus permisos de Unix; se leen también los de ZIP64 y los
   métodos guardado y deflate, comprobando el CRC-32. Un tar es POSIX ustar,
   con PAX para los nombres de más de 100 bytes, y se leen también los nombres
-  largos de GNU; cada cabecera se comprueba con su suma.
+  largos de GNU; cada cabecera se comprueba con su suma. Un número del archivo
+  que no cabe en `Int`, un tamaño negativo o mayor que los bytes que quedan, o
+  un desplazamiento fuera del archivo es un `ArchiveError`, nunca un pánico ni
+  una lectura que no acaba.
 - `extract` escribe las entradas bajo `into` con sus permisos y sus enlaces,
   y se detiene ante una entrada cuyo path, o un enlace cuyo destino, saldría
   de `into`, como la de un archivo hecho para ello.
