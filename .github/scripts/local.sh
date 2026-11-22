@@ -80,6 +80,8 @@ nocc() {
 
 musl() {
   mkdir -p ~/.cargo/registry ~/.cargo/git
+  # The cases' binary of this run, which the steps below read, or none.
+  rm -f "$S/alpine-target/cases"
   docker run --rm -u 0 -v "$PWD:/work" -w /work -e CARGO_INCREMENTAL=0 -e CARGO_TARGET_DIR=/alpine-target \
     -v "$S/alpine-target:/alpine-target" \
     -v "$HOME/.cargo/registry:/usr/local/cargo/registry" -v "$HOME/.cargo/git:/usr/local/cargo/git" rust:alpine sh -c \
