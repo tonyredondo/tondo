@@ -632,9 +632,14 @@ func BenchmarkProcesses(b *testing.B) {
 			}
 		}
 	})
+	// Its path as this system has it: /usr/bin/true, or /bin/true on Alpine.
+	path, err := exec.LookPath("true")
+	if err != nil {
+		b.Fatal(err)
+	}
 	b.Run("true by path", func(b *testing.B) {
 		for b.Loop() {
-			if err := exec.Command("/usr/bin/true").Run(); err != nil {
+			if err := exec.Command(path).Run(); err != nil {
 				b.Fatal(err)
 			}
 		}

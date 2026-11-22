@@ -6,5 +6,7 @@ import std.testing
 /// memory, as a fork makes, would multiply.
 test processes {
     testing.bench("true by name", () => process.command("true").status())?
-    testing.bench("true by path", () => process.command("/usr/bin/true").status())?
+    // Its path as this system has it: `/usr/bin/true`, or `/bin/true` on Alpine.
+    let program = process.which("true") ?? testing.failNow("no `true` on PATH")
+    testing.bench("true by path", () => process.command(program).status())?
 }
