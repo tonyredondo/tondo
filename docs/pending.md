@@ -149,6 +149,7 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 | --- | --- |
 | The views of texts, once their two numbers are in | 2026-11-22 |
 | QUIC, HTTP/3 and WebTransport, beside the HTTP/1, HTTP/2 and WebSockets the library has: asked for by the maintainer on 2026-11-22, to be weighed first. Owed to him: how hard each is on the runtime's own poller and its rustls, with the choices for the protocol's code, what the API would be beside `WebSocket`, how it is tested against browsers and other servers, and its rows against Go's | 2026-11-22 |
+| A program that is a container's first process and the orphans left to it. A command's own children go to the first process when that command ends, and a Tondo program reaps only what it started: seen on 2026-11-22 with a case's static build as the first process of a plain `alpine` container, where a `sleep` the runtime had killed stayed in state Z under pid 1 for as long as the program ran. An init in the container, as `docker run --init` gives, takes them. His choice: the runtime reaps them by itself when it is the first process, or when the program asks, or never and the manual says to use an init. Owed to him with it: what Go, .NET, Java, Node and Rust do there, and what reaping would cost a C library that waits for its own children | 2026-11-23 |
 
 ## Parked
 
