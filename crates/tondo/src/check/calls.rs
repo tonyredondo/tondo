@@ -981,6 +981,7 @@ impl<'a> Checker<'a> {
         }
         let (op, params, result) = match method.name.as_str() {
             "length" | "byteLength" | "isEmpty" => (S::ByteLength, vec![], Ty::INT),
+            "byteAt" => (S::ByteAt, vec![Ty::INT], Ty::BYTE),
             "get" => (S::Get, vec![Ty::INT], char_option),
             "contains" => (S::Contains, vec![Ty::STRING], Ty::BOOL),
             "startsWith" => (S::StartsWith, vec![Ty::STRING], Ty::BOOL),

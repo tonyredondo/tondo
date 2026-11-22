@@ -985,6 +985,12 @@ let text = String.fromBytes(data)?      // String ! text.TextError
 ni insertar caracteres de reemplazo. Otros encodings pertenecen a
 `std.encoding`.
 
+Un byte se lee sin copiar los demás: `text.byteAt(offset)` da el `Byte` que
+está en la posición `offset` de sus bytes UTF-8, contada desde 0 al principio.
+Es una posición y no un índice: no cuenta desde el final, y una fuera de `0` a
+`byteLength() - 1`, también negativa, es un pánico `P0001`. Un bucle sobre
+`0..text.byteLength()` no paga esa comprobación.
+
 ### 10.3 Protocolos de I/O
 
 `std.io` reúne los streams que comparten la consola, los archivos, los procesos

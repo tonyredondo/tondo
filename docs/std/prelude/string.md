@@ -8,7 +8,7 @@ Text: a sequence of Unicode characters, a value like any other.
 
 `tondo api String` shows the same in a terminal.
 
-- [String](#string): [`String.compare`](#stringcompare), [`String.split`](#stringsplit), [`String.splitOnce`](#stringsplitonce), [`String.equalsIgnoringCase`](#stringequalsignoringcase), [`String.lines`](#stringlines), [`String.words`](#stringwords), [`String.repeat`](#stringrepeat), [`String.padStart`](#stringpadstart), [`String.padEnd`](#stringpadend), [`String.trim`](#stringtrim), [`String.trimStart`](#stringtrimstart), [`String.trimEnd`](#stringtrimend), [`String.removePrefix`](#stringremoveprefix), [`String.removeSuffix`](#stringremovesuffix), [`String.findLast`](#stringfindlast), [`String.count`](#stringcount), [`String.toLower`](#stringtolower), [`String.toUpper`](#stringtoupper), [`String.chars`](#stringchars), [`String.length`](#stringlength), [`String.byteLength`](#stringbytelength), [`String.isEmpty`](#stringisempty), [`String.get`](#stringget), [`String.slice`](#stringslice), [`String.concat`](#stringconcat), [`String.contains`](#stringcontains), [`String.startsWith`](#stringstartswith), [`String.endsWith`](#stringendswith), [`String.find`](#stringfind), [`String.replace`](#stringreplace), [`String.toLowerAscii`](#stringtolowerascii), [`String.toUpperAscii`](#stringtoupperascii), [`String.bytes`](#stringbytes), [`String.fromBytes`](#stringfrombytes)
+- [String](#string): [`String.compare`](#stringcompare), [`String.split`](#stringsplit), [`String.splitOnce`](#stringsplitonce), [`String.equalsIgnoringCase`](#stringequalsignoringcase), [`String.lines`](#stringlines), [`String.words`](#stringwords), [`String.repeat`](#stringrepeat), [`String.padStart`](#stringpadstart), [`String.padEnd`](#stringpadend), [`String.trim`](#stringtrim), [`String.trimStart`](#stringtrimstart), [`String.trimEnd`](#stringtrimend), [`String.removePrefix`](#stringremoveprefix), [`String.removeSuffix`](#stringremovesuffix), [`String.findLast`](#stringfindlast), [`String.count`](#stringcount), [`String.toLower`](#stringtolower), [`String.toUpper`](#stringtoupper), [`String.chars`](#stringchars), [`String.length`](#stringlength), [`String.byteLength`](#stringbytelength), [`String.byteAt`](#stringbyteat), [`String.isEmpty`](#stringisempty), [`String.get`](#stringget), [`String.slice`](#stringslice), [`String.concat`](#stringconcat), [`String.contains`](#stringcontains), [`String.startsWith`](#stringstartswith), [`String.endsWith`](#stringendswith), [`String.find`](#stringfind), [`String.replace`](#stringreplace), [`String.toLowerAscii`](#stringtolowerascii), [`String.toUpperAscii`](#stringtoupperascii), [`String.bytes`](#stringbytes), [`String.fromBytes`](#stringfrombytes)
 
 ### String
 
@@ -190,6 +190,32 @@ pub fn String.byteLength(self): Int
 ```
 
 The number of UTF-8 bytes, which `length` counts as characters.
+
+#### String.byteAt
+
+```tondo
+pub fn String.byteAt(self, offset: Int): Byte
+```
+
+The byte at `offset` of the UTF-8 bytes, counted from 0 at the start,
+read in place without copying the others. It is an offset and not an
+index: there is no counting from the end, and one outside `0` to
+`byteLength() - 1`, a negative one too, panics with `P0001`. A loop over
+`0..text.byteLength()` pays no check for it.
+
+```tondo
+import std.console
+
+let text = "Año 1"
+var digits = 0
+for at in 0..text.byteLength() {
+    let byte = text.byteAt(at)
+    if byte >= 0x30 and byte <= 0x39 {
+        digits += 1
+    }
+}
+console.println("{text.byteAt(0)} {text.byteLength()} bytes, {digits} digit")
+```
 
 #### String.isEmpty
 

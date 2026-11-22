@@ -118,8 +118,11 @@ pub(crate) fn may_panic(statement: &Statement) -> bool {
                         operands.iter().any(read)
                     }
                     Rvalue::Discriminant(place) => checked(place),
-                    // A text's length in bytes is read where it is kept.
-                    Rvalue::StrOp(hir::StrOp::ByteLength, operands, _) => operands.iter().any(read),
+                    // A text's length in bytes is read where it is kept, and
+                    // a byte at an offset shown within it as well.
+                    Rvalue::StrOp(hir::StrOp::ByteLength | hir::StrOp::ByteWithin, operands, _) => {
+                        operands.iter().any(read)
+                    }
                     // What only adds or takes an element: an index or a key
                     // of the program's own type may panic.
                     Rvalue::Mutate(mutation, place, operands, ..) => {

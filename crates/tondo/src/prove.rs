@@ -165,8 +165,15 @@ fn relevant(body: &mut Body, types: &Types) -> Option<Vec<bool>> {
             // A text read at a byte offset, whose length in bytes the
             // offset may be shown below.
             if let Statement::Assign(_, rvalue, _) = statement
-                && let Rvalue::Call(Callee::Std(StdFn::Native(index)), args) = &**rvalue
-                && matches!(crate::hir::NATIVES[*index as usize].name, "scalarAt" | "byteAt")
+                && let Some(args) = match &**rvalue {
+                    Rvalue::Call(Callee::Std(StdFn::Native(index)), args)
+                        if matches!(crate::hir::NATIVES[*index as usize].name, "scalarAt" | "byteAt") =>
+                    {
+                        Some(args)
+                    }
+                    Rvalue::StrOp(crate::hir::StrOp::ByteAt, args, _) => Some(args),
+                    _ => None,
+                }
                 && let [text, at] = &args[..]
                 && let (Some(text), Some(at)) = (local(text), local(at))
             {
@@ -1013,6 +1020,20 @@ impl Prover<'_> {
             Statement::Assign(_, _, span) => *span,
             _ => Span::default(),
         };
+        // A program's byte read at an offset within the text: without the
+        // check of the offset, as the library's below.
+        if let Statement::Assign(_, rvalue, _) = statement
+            && let Rvalue::StrOp(op @ crate::hir::StrOp::ByteAt, args, _) = &mut **rvalue
+            && let [Operand::Copy(Place { local: text, path }), at] = &args[..]
+            && path.is_empty()
+            && self.text(*text)
+            && let Some((node, offset)) = self.value(at)
+            && facts.bound(Node::Zero, node).is_some_and(|k| k <= offset)
+            && facts.bound(node, Node::Len(*text)).is_some_and(|k| k <= -1 - offset)
+        {
+            *op = crate::hir::StrOp::ByteWithin;
+            remarks.push((span, "unchecked", "stays within its text: no bounds check"));
+        }
         // A character read at an offset within the text: without the
         // check of the offset.
         if let Statement::Assign(_, rvalue, _) = statement

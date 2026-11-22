@@ -519,6 +519,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                         let in_place = self.held_in_place(&operands[0]);
                         Val::Scalar(self.text_length(values[0], in_place))
                     }
+                    StrOp::ByteAt | StrOp::ByteWithin => {
+                        let in_place = self.held_in_place(&operands[0]);
+                        let location = (*op == StrOp::ByteAt).then(|| self.location(*span));
+                        Val::Scalar(self.byte_at(values[0], values[1], in_place, location))
+                    }
                     StrOp::Decode => {
                         let in_place = self.held_in_place(&operands[0]);
                         Val::Scalar(self.decoded(values[0], values[1], Rt::StrDecode, false, in_place))
@@ -909,6 +914,55 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let short = |this: &mut Self| vec![this.short_length(text)];
         let long = |this: &mut Self| vec![this.e.fb.ins().load(types::I64, flags(), text, STRING_LENGTH)];
         self.by_form(text, in_place, &[types::I64], short, long)[0]
+    }
+
+    /// The byte at an offset of a text, read where it is, as a `Byte`. With
+    /// the location of `text.byteAt(offset)`, an offset outside the text
+    /// panics with `P0001` there, in a cold block; without it, `prove`
+    /// showed it within.
+    fn byte_at(
+        &mut self,
+        text: ir::Value,
+        offset: ir::Value,
+        in_place: bool,
+        location: Option<ir::Value>,
+    ) -> ir::Value {
+        let outside = location.map(|_| self.e.fb.create_block());
+        let short = |this: &mut Self| {
+            if let Some(outside) = outside {
+                let length = this.short_length(text);
+                let inside = this.e.fb.ins().icmp(IntCC::UnsignedLessThan, offset, length);
+                let read = this.e.fb.create_block();
+                this.e.fb.ins().brif(inside, read, &[], outside, &[]);
+                this.e.fb.switch_to_block(read);
+            }
+            vec![this.short_byte(text, offset, types::I8)]
+        };
+        let long = |this: &mut Self| {
+            if let Some(outside) = outside {
+                let length = this.e.fb.ins().load(types::I64, flags(), text, STRING_LENGTH);
+                let inside = this.e.fb.ins().icmp(IntCC::UnsignedLessThan, offset, length);
+                let read = this.e.fb.create_block();
+                this.e.fb.ins().brif(inside, read, &[], outside, &[]);
+                this.e.fb.switch_to_block(read);
+            }
+            let address = this.e.fb.ins().iadd(text, offset);
+            vec![this.e.fb.ins().load(types::I8, flags(), address, STRING_BYTES as i32)]
+        };
+        let byte = self.by_form(text, in_place, &[types::I8], short, long)[0];
+        let (Some(outside), Some(location)) = (outside, location) else { return byte };
+        // The panic, which returns when a `recover` stops it: the check
+        // after this statement goes on from there, with a byte of 0.
+        let merged = self.e.fb.create_block();
+        self.e.fb.append_block_param(merged, types::I8);
+        self.e.fb.ins().jump(merged, &[byte.into()]);
+        self.e.fb.set_cold_block(outside);
+        self.e.fb.switch_to_block(outside);
+        self.e.call_rt(Rt::StrByteOutside, &[text, offset, location]);
+        let zero = self.e.fb.ins().iconst(types::I8, 0);
+        self.e.fb.ins().jump(merged, &[zero.into()]);
+        self.e.fb.switch_to_block(merged);
+        self.e.fb.block_params(merged)[0]
     }
 
     /// Whether an operand is a local that holds a text in place.

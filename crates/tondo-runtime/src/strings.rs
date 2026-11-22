@@ -871,6 +871,22 @@ pub unsafe extern "C" fn tondo_rt_str_get(s: *const Str, index: i64) -> i64 {
     }
 }
 
+/// `text.byteAt(offset)` outside the text: the panic `P0001`, which returns
+/// when a `recover` stops it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tondo_rt_str_byte_outside(s: *const Str, offset: i64, location: *const Str) {
+    let length = unsafe { str_text(&s) }.len();
+    panics::language_data(vec![("index", panics::Datum::Int(offset)), ("length", panics::Datum::Int(length as i64))]);
+    let message = match length {
+        0 => format!("offset {offset} is out of bounds: the text is empty"),
+        _ => format!(
+            "offset {offset} is out of bounds for a text of {length} bytes: valid offsets are 0 to {}",
+            length - 1
+        ),
+    };
+    raise(1, &message, location);
+}
+
 /// `text[index]`: the scalar at `index`, panicking with `P0001` outside.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_str_at(s: *const Str, index: i64, location: *const Str) -> u32 {

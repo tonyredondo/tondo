@@ -209,7 +209,11 @@ fn in_place(
 /// inside this one put in place.
 fn read_in_place(rvalue: &Rvalue) -> Option<Local> {
     let operands = match rvalue {
-        Rvalue::StrOp(StrOp::ByteLength | StrOp::Decode | StrOp::Next | StrOp::InPlace, operands, _) => operands,
+        Rvalue::StrOp(
+            StrOp::ByteLength | StrOp::ByteAt | StrOp::ByteWithin | StrOp::Decode | StrOp::Next | StrOp::InPlace,
+            operands,
+            _,
+        ) => operands,
         Rvalue::Call(Callee::Std(crate::hir::StdFn::Native(index)), operands)
             if matches!(
                 crate::hir::NATIVES[*index as usize].symbol,

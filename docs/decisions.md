@@ -9394,3 +9394,18 @@ or value it goes into, no return, no call that takes it, no capture, no
 lending. A count that leaves through a part, marked or not, ends in one of
 those places, and there the source keeps its count. Where it keeps it, a
 part of a parameter tells `tondo optimizations` why.
+
+## A program reads a text's byte by its offset
+
+Only the library could read a byte of a text where it is; a program had
+`bytes()`, which copies them all into an array. Tony asked for it ("Si no
+nos cuesta mucho byteAt suena bien, la agregaría"). `text.byteAt(offset)`
+is a method of `String` the compiler gives, beside `byteLength`, rather
+than a function of the prelude: a prelude function would test the native's
+answer for an offset outside the text, and that test would stay in a loop
+where `prove` has already shown every offset within. As an intrinsic, the
+read is checked against the text's length, with the panic in a cold block,
+and a loop over `0..text.byteLength()` reads in place with no check at all,
+which `tondo optimizations` says. It is an offset, not an index: it does
+not count from the end, so a negative one panics with `P0001` as one past
+the end does, with the index and the length as its data.

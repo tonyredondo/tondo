@@ -821,6 +821,12 @@ pub enum StrOp {
     /// `text.get(index)`: `Char?`
     Get,
     ByteLength,
+    /// `text.byteAt(offset)`: the `Byte` at a byte offset, panicking with
+    /// `P0001` outside the text.
+    ByteAt,
+    /// The same at an offset `prove` showed is within the text: read
+    /// without the check.
+    ByteWithin,
     Contains,
     StartsWith,
     EndsWith,

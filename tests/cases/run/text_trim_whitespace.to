@@ -1,0 +1,67 @@
+// Trimming takes off Unicode's whitespace, every character of it, at the
+// ends it is asked to and nowhere else: ASCII's a byte at a time and the
+// others a character at a time, and no character that is not whitespace,
+// ASCII or not, at either end.
+import std.console
+
+fn shown(text: String): String {
+    var codes: Array[String] = []
+    for c in text.chars() {
+        codes.push("{c.code()}")
+    }
+    "[{codes.join(" ")}]"
+}
+
+fn main() {
+    let spaces = [
+        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20, 0x85, 0xA0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004,
+        0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200A, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000,
+    ]
+    for code in spaces {
+        let space = "{Char.from(code) ?? ' '}"
+        let text = "{space}{space}x é{space}{space}"
+        console.println("{code}: {shown(text.trim())} {shown(text.trimStart())} {shown(text.trimEnd())}")
+    }
+    // Not whitespace, at either end: kept.
+    for kept in ["é", "€", "😀", "\u{200B}", "\u{FEFF}", "a"] {
+        let text = "{kept} x {kept}"
+        console.println("{shown(text.trim())} {shown(text.trimStart())} {shown(text.trimEnd())}")
+    }
+    console.println("{shown("".trim())} {shown(" \t\n ".trim())} {shown(" \u{3000} ".trimStart())} {shown("\u{2029}  ".trimEnd())}")
+    let untouched = "nothing to cut"
+    console.println("{untouched.trim() == untouched} {shown(untouched.trim())}")
+}
+
+// expect-stdout: 9: [120 32 233] [120 32 233 9 9] [9 9 120 32 233]
+// expect-stdout: 10: [120 32 233] [120 32 233 10 10] [10 10 120 32 233]
+// expect-stdout: 11: [120 32 233] [120 32 233 11 11] [11 11 120 32 233]
+// expect-stdout: 12: [120 32 233] [120 32 233 12 12] [12 12 120 32 233]
+// expect-stdout: 13: [120 32 233] [120 32 233 13 13] [13 13 120 32 233]
+// expect-stdout: 32: [120 32 233] [120 32 233 32 32] [32 32 120 32 233]
+// expect-stdout: 133: [120 32 233] [120 32 233 133 133] [133 133 120 32 233]
+// expect-stdout: 160: [120 32 233] [120 32 233 160 160] [160 160 120 32 233]
+// expect-stdout: 5760: [120 32 233] [120 32 233 5760 5760] [5760 5760 120 32 233]
+// expect-stdout: 8192: [120 32 233] [120 32 233 8192 8192] [8192 8192 120 32 233]
+// expect-stdout: 8193: [120 32 233] [120 32 233 8193 8193] [8193 8193 120 32 233]
+// expect-stdout: 8194: [120 32 233] [120 32 233 8194 8194] [8194 8194 120 32 233]
+// expect-stdout: 8195: [120 32 233] [120 32 233 8195 8195] [8195 8195 120 32 233]
+// expect-stdout: 8196: [120 32 233] [120 32 233 8196 8196] [8196 8196 120 32 233]
+// expect-stdout: 8197: [120 32 233] [120 32 233 8197 8197] [8197 8197 120 32 233]
+// expect-stdout: 8198: [120 32 233] [120 32 233 8198 8198] [8198 8198 120 32 233]
+// expect-stdout: 8199: [120 32 233] [120 32 233 8199 8199] [8199 8199 120 32 233]
+// expect-stdout: 8200: [120 32 233] [120 32 233 8200 8200] [8200 8200 120 32 233]
+// expect-stdout: 8201: [120 32 233] [120 32 233 8201 8201] [8201 8201 120 32 233]
+// expect-stdout: 8202: [120 32 233] [120 32 233 8202 8202] [8202 8202 120 32 233]
+// expect-stdout: 8232: [120 32 233] [120 32 233 8232 8232] [8232 8232 120 32 233]
+// expect-stdout: 8233: [120 32 233] [120 32 233 8233 8233] [8233 8233 120 32 233]
+// expect-stdout: 8239: [120 32 233] [120 32 233 8239 8239] [8239 8239 120 32 233]
+// expect-stdout: 8287: [120 32 233] [120 32 233 8287 8287] [8287 8287 120 32 233]
+// expect-stdout: 12288: [120 32 233] [120 32 233 12288 12288] [12288 12288 120 32 233]
+// expect-stdout: [233 32 120 32 233] [233 32 120 32 233] [233 32 120 32 233]
+// expect-stdout: [8364 32 120 32 8364] [8364 32 120 32 8364] [8364 32 120 32 8364]
+// expect-stdout: [128512 32 120 32 128512] [128512 32 120 32 128512] [128512 32 120 32 128512]
+// expect-stdout: [8203 32 120 32 8203] [8203 32 120 32 8203] [8203 32 120 32 8203]
+// expect-stdout: [65279 32 120 32 65279] [65279 32 120 32 65279] [65279 32 120 32 65279]
+// expect-stdout: [97 32 120 32 97] [97 32 120 32 97] [97 32 120 32 97]
+// expect-stdout: [] [] [] []
+// expect-stdout: true [110 111 116 104 105 110 103 32 116 111 32 99 117 116]

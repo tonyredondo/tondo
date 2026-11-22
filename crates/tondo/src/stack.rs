@@ -373,6 +373,8 @@ fn framed(body: &Body, index: usize, types: &Types, borrows: &[Vec<bool>]) -> Fo
                         StrOp::At
                         | StrOp::Get
                         | StrOp::ByteLength
+                        | StrOp::ByteAt
+                        | StrOp::ByteWithin
                         | StrOp::Contains
                         | StrOp::StartsWith
                         | StrOp::EndsWith

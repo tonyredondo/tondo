@@ -1,0 +1,32 @@
+// A text's byte at an offset, read in place: from 0 at its start to the
+// last of its UTF-8 bytes, a character outside ASCII a byte at a time. An
+// offset outside, past the end or negative, panics with P0001, and a loop
+// over the text's bytes keeps no check for it.
+import std.console
+
+fn main() {
+    let text = "Año 1"
+    var bytes: Array[String] = []
+    for at in 0..text.byteLength() {
+        bytes.push("{text.byteAt(at)}")
+    }
+    console.println("{text.byteLength()}: {bytes.join(" ")}")
+    console.println("{"x".byteAt(0)} {"😀".byteAt(3)}")
+    for offset in [6, -1] {
+        match recover { text.byteAt(offset) } {
+            ok(byte) => console.println("{byte}")
+            err(stopped) => console.println("{stopped.code}: {stopped.message}")
+        }
+    }
+    match recover { "".byteAt(0) } {
+        ok(byte) => console.println("{byte}")
+        err(stopped) => console.println("{stopped.code}: {stopped.message}")
+    }
+}
+
+// expect-stdout: 6: 65 195 177 111 32 49
+// expect-stdout: 120 128
+// expect-stdout: P0001: offset 6 is out of bounds for a text of 6 bytes: valid offsets are 0 to 5
+// expect-stdout: P0001: offset -1 is out of bounds for a text of 6 bytes: valid offsets are 0 to 5
+// expect-stdout: P0001: offset 0 is out of bounds: the text is empty
+// expect-optimization: 11:22 unchecked stays within its text: no bounds check

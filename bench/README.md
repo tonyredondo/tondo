@@ -203,9 +203,9 @@ The rows still behind Go, and why:
   of under 64 bytes in a region and emptying the turn's region save no
   registers, and the copy of 17 to 64 bytes takes no call of `memcpy`: the
   two rows take 325 and 332 instructions. Of the 325, the copy and its
-  region are 156, and the two rows stay behind Go for them, by the
-  decision of 2026-11-21 not to share a text's bytes: a third kind of text
-  would cost every operation on texts a branch, in code that never trims.
+  region are 156. What is left to try is in docs/pending.md: `trim` in
+  Tondo measured again, the inliner weighing a call by what inlining buys,
+  and a region for the copy of a function over its budget.
 - `texts/chars ascii` and `other`: the loop reads an ASCII character in
   place and the text's length once, before it, but checks its count for
   overflow each turn and jumps twice for each ASCII character, out of the
