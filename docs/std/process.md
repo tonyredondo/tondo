@@ -147,9 +147,12 @@ left-right
   environment and what input, for what a line cannot say.
 - Cancelling the task that waits for a command, as a `within` does, ends
   the command, and the call gives nothing back: what the command had
-  written until then is not seen. [`Command.grace`](#commandgrace) asks it
-  to end first and stops it only after a while, as `docker stop` does, and
+  written until then is not seen. The call comes back once the command
+  itself has ended, and does not wait for what the command started, which
+  goes on. [`Command.grace`](#commandgrace) asks it to end first and stops
+  it only after a while, as `docker stop` does, and
   [`Command.group`](#commandgroup) makes that reach everything it started.
+  A panic that leaves the block does the same to a command it had started.
 - [`shell`](#shell) runs a line through the system's shell, for when a real
   shell is what is wanted.
 
