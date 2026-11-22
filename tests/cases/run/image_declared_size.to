@@ -1,0 +1,64 @@
+// An image whose header declares more pixels than a read may hold is
+// refused before anything is allocated: a PNG of 76 bytes declaring 65535
+// by 65535 made the program hold 16 GiB before it found its data short.
+// Just over the bound the read is refused for its size; just under it, it
+// goes on and fails for its short data. Without the bound, the first image
+// needs 16 GiB: a small machine fails the case by memory or by the
+// runner's timeout. The third image allocates its 512 MiB for a moment,
+// which no stage caps; once a read takes its limits as a parameter, it is
+// read with a bound of a mebibyte instead, and that allocation leaves the
+// tests.
+import std.console
+import std.image
+
+fn crc(data: Array[Byte]): Int {
+    var value = 0xffffffff
+    for byte in data {
+        value ^= Int(byte)
+        for _ in 0..8 {
+            value = if value & 1 == 1 { (value >> 1) ^ 0xedb88320 } else { value >> 1 }
+        }
+    }
+    value ^ 0xffffffff
+}
+
+fn bytes(values: Array[Int]): Array[Byte] {
+    values.map(value => Byte(UInt8.wrapping(value)))
+}
+
+/// Four bytes, the highest first.
+fn word(value: Int): Array[Byte] {
+    bytes([value >> 24, value >> 16, value >> 8, value])
+}
+
+fn chunk(kind: String, data: Array[Byte]): Array[Byte] {
+    let typed = kind.bytes().concat(data)
+    word(data.length()).concat(typed).concat(word(crc(typed)))
+}
+
+/// A PNG of RGBA pixels whose header declares `width` by `height`, and
+/// whose data is a zlib stream that stores eight zero bytes as they are.
+fn declared(width: Int, height: Int): Array[Byte] {
+    let signature = bytes([137, 80, 78, 71, 13, 10, 26, 10])
+    let header = word(width).concat(word(height)).concat(bytes([8, 6, 0, 0, 0]))
+    let data = bytes(
+        [0x78, 0x01, 0x01, 0x08, 0x00, 0xf7, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x08, 0, 0x01],
+    )
+    signature.concat(chunk("IHDR", header)).concat(chunk("IDAT", data)).concat(chunk("IEND", []))
+}
+
+fn main() {
+    console.println("{declared(65535, 65535).length()} bytes")
+    for (width, height) in [(65535, 65535), (11586, 11586), (11585, 11585)] {
+        match image.read(declared(width, height)) {
+            ok(read) => console.println("read {read.width()} by {read.height()}")
+            err(error) if error.message.contains("declares") => console.println(error.message)
+            err(_) => console.println("{width} by {height}: not refused for its size")
+        }
+    }
+}
+
+// expect-stdout: 76 bytes
+// expect-stdout: the image does not read: the image declares 65535 by 65535, which takes 16 GiB: more than the 512 MiB a read may hold
+// expect-stdout: the image does not read: the image declares 11586 by 11586, which takes 512.1 MiB: more than the 512 MiB a read may hold
+// expect-stdout: 11585 by 11585: not refused for its size

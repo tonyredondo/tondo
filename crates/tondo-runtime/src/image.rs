@@ -55,23 +55,48 @@ pub unsafe extern "C" fn tondo_rt_image_read(
     data: *mut ArrayHeader,
     region: *mut crate::regions::Region,
 ) -> *mut NativeObject {
+    use image::ImageDecoder;
     let data = unsafe { array_items::<u8>(data) }.to_vec();
     let read = crate::io::host(true, move || {
-        let reader = ImageReader::new(Cursor::new(data)).with_guessed_format()?;
+        let failed = |error: image::ImageError| error.to_string();
+        let reader = ImageReader::new(Cursor::new(data)).with_guessed_format().map_err(|e| e.to_string())?;
         let format = code(reader.format());
-        let mut decoder = reader.into_decoder()?;
-        let orientation = image::ImageDecoder::orientation(&mut decoder)?;
-        let mut image = DynamicImage::from_decoder(decoder)?;
+        let mut decoder = reader.into_decoder().map_err(failed)?;
+        // The crate's `decode` holds the pixels to its limit before it
+        // allocates them; taken apart to read the orientation first, the
+        // decoder allocated whatever its header declared: 16 GiB for a PNG of
+        // 69 bytes. So the same bound, the crate's default, before anything.
+        let most = image::Limits::default().max_alloc.unwrap_or(u64::MAX);
+        if decoder.total_bytes() > most {
+            let (width, height) = decoder.dimensions();
+            let takes = size(decoder.total_bytes());
+            return Err(format!(
+                "the image declares {width} by {height}, which takes {takes}: more than the {} a read may hold",
+                size(most)
+            ));
+        }
+        let orientation = decoder.orientation().map_err(failed)?;
+        let mut image = DynamicImage::from_decoder(decoder).map_err(failed)?;
         image.apply_orientation(orientation);
-        Ok::<_, image::ImageError>((image, format))
+        Ok::<_, String>((image, format))
     });
     native::new_in(
         region,
         match read {
             Ok((image, format)) => Picture::Ready(image, format),
-            Err(error) => Picture::Failed(error.to_string()),
+            Err(why) => Picture::Failed(why),
         },
     )
+}
+
+/// Bytes as a person reads them: `16 GiB`, `512 MiB`, `512.1 MiB`.
+fn size(bytes: u64) -> String {
+    let (value, unit) = match bytes >= 1 << 30 {
+        true => (bytes as f64 / (1u64 << 30) as f64, "GiB"),
+        false => (bytes as f64 / (1u64 << 20) as f64, "MiB"),
+    };
+    let text = format!("{value:.1}");
+    format!("{} {unit}", text.strip_suffix(".0").unwrap_or(&text))
 }
 
 /// Why an image could not be read, or nothing.

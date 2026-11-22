@@ -9581,3 +9581,16 @@ workers have ended, so with several calls and no `--fuzz-time` a call
 whose only worker so stopped waits for the others' end; the search says
 so on a line of its own, rather than restart a worker within the round,
 which would change how workers are planned.
+
+## An image's pixels are held to the image crate's bound
+
+The image crate's `decode` holds the pixels an image declares to its
+limits, 512 MiB by default, before it allocates them. The runtime took
+the decoder apart to read the orientation first, and `from_decoder` then
+allocated whatever the header declared: a PNG of 69 bytes declaring 65535
+by 65535 held 16 GiB for seven seconds before its short data was found.
+A read now applies the same bound, the crate's own default, before
+anything is allocated, and says what the image declares and what a read
+may hold. An image of more than 512 MiB of pixels, some 134 megapixels in
+RGBA, is no longer read; whether, and how, a program may raise that, and
+what bounds an archive's inflating, are the maintainer's to decide.
