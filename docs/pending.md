@@ -29,12 +29,12 @@ What is done next, and after it, with the reason for each place. A step's
 detail is in the tables below. The inliner's weighing of step 2 comes
 before the chain's rest because the chain's adapters wait for it too.
 
-1. **What is owed**: the value a call returned that a panic drops, which
-   comes before anything else; what the whole measuring rule found over
-   main, the clock read at each spawn and join and the compare of a short
-   needle; and the Nightly's first run with the stops and the heap's checks.
-   First because both say whether what is on main is sound, and anything
-   they find is fixed before more is built on it.
+1. **What is owed**: what the whole measuring rule found over main, the
+   clock read at each spawn and join and the compare of a short needle; what
+   a native that waits inside gives back when a deadline ends its wait; and
+   the Nightly's first run with the stops and the heap's checks. First
+   because they say whether what is on main is sound, and anything they find
+   is fixed before more is built on it.
 2. **`trim`**: the inliner weighing a call by what inlining buys and a
    region for the copy, which the plain form in Tondo, measured again,
    waits for; then the list of what stays behind Go. Second because its rows
@@ -70,7 +70,7 @@ manual's unheld quotes and listings.
 | What | Since | Detail |
 | --- | --- | --- |
 | The clock read two or three times more at each spawn and join since the scheduler's pieces of 2026-11-20 and 21: 60 of the 94 instructions that `runtime/join 1` gained (2752 to 2846, +3.4% over the table's baseline), with `tasks/spawn 1000` +2.3% and `ffi/waits from a C thread 100` +3.2%, each piece within the bar alone. A worker is to count the tasks it starts and the monitor to read that count at its own looks, as the instant is needed only for the rare task that holds its worker. The rest is the wakes added for a task woken next to a busy worker, the work of a join over eight threads where it was five: each wake keeps the stall it fixed as its reason, or goes | 2026-11-22 | AGENTS.md, "A change to the optimizer…"; the whole rule's run over main at 0b08d90b, by commit and by function |
-| A value that a call returned is dropped, never released, when the check after the call delivers a panic of another task of the same `recover`: the way to the unwinding releases the frame's values and not the result just given, which is nothing only when the callee itself panicked. Found as a join leaked by a live build of `tests/cases/run/tasks_array_edges.to`, in about 14 runs of a thousand under load and in none with one worker, since the case's own commit of 2026-11-20; a live build shows it because none of the optimizer's passes take the call away, and a release build has the same way after any call it keeps. The way to the unwinding is to release the result, once every way a result comes back is known to leave nothing when the callee panics, with a case that fails without the fix on any run in release, debug and live | 2026-11-22 | The gate of 2026-11-22 over cfaea6ce, its LIVE step; `crates/tondo/src/lower.rs`, `unwind_check` |
+| What a native that waits inside gives back when a deadline ends its wait. The one that runs a process and reads what it wrote returned its whole value with the deadline noted as well, where 11.17 says that the operation that waited gives nothing back; found as the deadline's form of the leak, which no longer leaks. And a `fs.readText` of a named pipe under a `within` of 10 ms was still waiting after two seconds, seen once and to confirm. To say which waits a deadline ends, and what each native that waits inside does when it ends one | 2026-11-22 | Spec 11.15 and 11.17; `tests/cases/run/within_given_back.to` |
 | `strings/contains 1000` takes 335 or 343 instructions in the same executable, and 325 in a project of its own, so its row passes the bar of 2% by chance: `find` hands the needle's compare to libc, whose way for a short size is longer when either address may be within 32 bytes of a page's end. A needle of up to 8 bytes, a short text's whole range, is to be compared in `find` itself; and the other places that compare a short text through libc found, as their rows move the same way | 2026-11-22 | The same run; no commit moved the row |
 | The Nightly's first run with the cases stopped by a seed and with the heap's checks, to read. GitHub starts the scheduled run at about 11:00 to 11:50 UTC, not at its hour. Its job under emulation of arm64 was red every day from 2026-11-16 to 2026-11-21 on observe's `a_cpu_profile_of_a_program_that_waits_says_it_waited`, where the profile sampled the threads that serve the tools; the fix of 2026-11-21 for musl came after that day's run, so this run also says whether it holds under emulation | 2026-11-22 | `.github/workflows/nightly.yml`; Nightly run 44896932412 |
 
