@@ -480,9 +480,14 @@ test, and prints it.
 | | |
 | --- | --- |
 | `--fuzz-time <seconds>` | how long to search |
-| `--fuzz-timeout <seconds>` | an input that takes longer is a failure; one second by default |
+| `--fuzz-timeout <seconds>` | an input that takes longer, and longer again when run alone, is a failure; one second by default |
 | `--fuzz-memory <MiB>` | and so is one that holds more memory; 2048 by default |
 | `--fuzz-corpus <dir>` | where the inputs worth keeping are kept, for the next search to start from; `target/fuzz/` by default |
+
+A busy machine can hold a process for a second, so an input past the time
+limit is run again alone before it counts. One that then ends in time is no
+failure: the search goes on with the time it has left, and the report counts
+such inputs apart.
 
 ## Reports, for people and for CI
 
