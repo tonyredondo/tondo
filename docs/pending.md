@@ -121,7 +121,7 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 
 | What | Since | Detail |
 | --- | --- | --- |
-| Diagnostics the pages quote that no test holds: those of a project of several modules, of a provider, and of another system than the one that runs the tests | 2026-11-21 | [decisions](decisions.md): "A listing is held to what it shows" |
+| Diagnostics the pages quote that no test holds, nine: those of a project of several modules (chapters 5 and 15, and the three of `tondo check` in a project the daily page builds up), of a provider (chapter 17), and of another system than the one that runs the tests (chapters 15 and 18, and the processor's feature of the performance page). A project's would take a fence that gives a file its path and a listing run in it | 2026-11-21 | [decisions](decisions.md): "A listing is held to what it shows" |
 | Listings with times, sizes, dumps or machine code, and those of a project built up by commands, held by nothing: run again by hand after a change to the tool that prints them | 2026-11-21 | The same |
 
 ## Waiting for the maintainer

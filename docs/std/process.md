@@ -66,6 +66,17 @@ What the text between `$(` and `)` holds:
 It is not a shell, and says so where a shell's habits are written, with what
 to write instead:
 
+```tondo error E0008
+import std.console
+import std.process
+
+fn main(): !process.ProcessError {
+    console.println($(echo $HOME).text()?)
+    console.println($(ls *.md).text()?)
+    console.println($(make && make install).text()?)
+}
+```
+
 ```text
 error[E0008]: `$HOME` reads a variable of the shell, which runs none: write `{env.get("HOME") ?? ""}`, or quote the `$`
 error[E0008]: `*` matches files in a shell, which runs none: write `{...fs.glob("*.md")?}`, or quote it when the character is meant: `'*'`

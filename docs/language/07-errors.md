@@ -222,8 +222,17 @@ some(LONDON) none
 that function declares: a `?` on a result needs a function that can fail
 with that error. When it cannot, the error says what to declare:
 
+```tondo error E1301
+import std.fs
+
+fn lineCount(path: String): Int {
+    let text = fs.readText(path)?
+    text.lines().length()
+}
+```
+
 ```text
-error[E1301]: `load` cannot fail, but this propagates `ParseError | fs.FsError`: declare its result as `Int ! (ParseError | fs.FsError)`
+error[E1301]: `lineCount` cannot fail, but this propagates `fs.FsError`: declare its result as `Int ! fs.FsError`
 ```
 
 `tondo fix` writes that signature.
