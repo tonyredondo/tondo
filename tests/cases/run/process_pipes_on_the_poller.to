@@ -1,0 +1,108 @@
+// A started process's pipes wait on the workers' poller, as the network
+// does: a read or a write that would wait leaves its task there, so that a
+// deadline ends the wait and nothing is lost. A line the child writes at
+// 300 ms is the next read's, where the read under a deadline of 50 ms came
+// back at 50 ms, and a stdin the child never reads fills and a write under
+// a deadline comes back at it: both waited for the pipe on a thread no
+// deadline ended. A write to a child that is gone fails with `Closed`
+// instead of ending the program by SIGPIPE. A process let go of while a
+// read of its output waits, and a child that ends while a write to it
+// waits: the read ends at the pipe's end, the write fails, nothing leaks.
+import std.console
+import std.io
+import std.process
+import std.time
+
+fn said(outcome: !io.IoError): String {
+    match outcome {
+        ok(_) => "ok"
+        err(error) => "err {error}"
+    }
+}
+
+fn lines(out: io.Reader): Int {
+    var count = 0
+    var going = true
+    for going {
+        match out.readLine() {
+            ok(some(_)) => count += 1
+            _ => going = false
+        }
+    }
+    count
+}
+
+/// Starts a reader of a process's output, and lets go of the process while
+/// the reader waits.
+fn reading(): Int {
+    let reader = match process.command("sh", "-c", "sleep 0.2").stdout(process.Output.Pipe).start() {
+        ok(running) => {
+            let reader = spawn lines(running.stdout())
+            time.sleep(time.milliseconds(20))
+            reader
+        }
+        err(error) => panic("{error}")
+    }
+    reader.wait()
+}
+
+fn main() {
+    match process.command("sh", "-c", "sleep 0.3; echo late").stdout(process.Output.Pipe).start() {
+        ok(running) => {
+            let out = running.stdout()
+            let since = time.now()
+            let first = within time.milliseconds(50) { out.readLine() }
+            let quick = since.elapsed().milliseconds() < 250
+            let next = out.readLine() ?? none
+            console.println(
+                "a read under a deadline: timed out {first.isErr()} at once {quick}; the next read {next}",
+            )
+            _ = running.wait()
+        }
+        err(error) => panic("{error}")
+    }
+    match process.command("sleep", "2").stdin(process.Input.Pipe).start() {
+        ok(running) => {
+            let input = running.stdin()
+            let since = time.now()
+            let wrote =
+                within time.milliseconds(50) {
+                    input.write("x".repeat(1000000))?
+                    input.flush()
+                }
+            let quick = since.elapsed().milliseconds() < 1000
+            console.println("a full stdin: timed out {wrote.isErr()} at once {quick}")
+            _ = running.cancel()
+        }
+        err(error) => panic("{error}")
+    }
+    match process.command("true").stdin(process.Input.Pipe).start() {
+        ok(running) => {
+            let input = running.stdin()
+            _ = running.wait()
+            console.println("a write to a child that is gone: {said(input.write("hello\n"))}")
+        }
+        err(error) => panic("{error}")
+    }
+    console.println("a process let go of while a read waits: {reading()} lines")
+    match process.command("sh", "-c", "sleep 0.2").stdin(process.Input.Pipe).start() {
+        ok(running) => {
+            let input = running.stdin()
+            let written = match input.write("x".repeat(1000000)) {
+                ok(_) => said(input.flush())
+                err(error) => "err {error}"
+            }
+            console.println("a child that ends while a write waits: {written}")
+            _ = running.wait()
+        }
+        err(error) => panic("{error}")
+    }
+}
+
+// expect-stdout: a read under a deadline: timed out true at once true; the next read some(late)
+// expect-stdout: a full stdin: timed out true at once true
+// expect-stdout: a write to a child that is gone: err closed
+// expect-stdout: a process let go of while a read waits: 0 lines
+// expect-stdout: a child that ends while a write waits: err closed
+// expect-no-replay: a recorded run has one worker, and runs a process's wait on it, where no deadline ends it
+// expect-no-schedule: the virtual clock of an order stands still while a task waits on the host, so no deadline passes

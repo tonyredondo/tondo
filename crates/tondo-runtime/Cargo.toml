@@ -42,7 +42,7 @@ md-5 = "0.11"
 memchr = "2.8.3"
 mimalloc = { version = "0.1", default-features = false }
 mime_guess = "2.0.5"
-mio = { version = "1.2.4", features = ["os-poll", "net"] }
+mio = { version = "1.2.4", features = ["os-poll", "net", "os-ext"] }
 multer = "3.1.0"
 regex = "1"
 regex-syntax = "0.8"

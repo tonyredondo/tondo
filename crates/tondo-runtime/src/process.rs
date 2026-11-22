@@ -2,7 +2,8 @@
 //! the processes they start, and how their streams connect. A plan is an
 //! immutable shared object, so `Command` and `Pipeline` copy by reference.
 
-use super::io::{Mode, StreamObject, host_cancellable, replaced_console, retain, run, stream};
+use super::io::{Mode, Ready, StreamObject, host_cancellable, replaced_console, retain, run, stream};
+use super::poll::{Direction, Registered};
 use super::tasks::{Wait, notify};
 use super::{ArrayHeader, LIVE_OBJECTS, Str, element, str_bytes, tondo_rt_array_new};
 use crate::array_items;
@@ -566,7 +567,7 @@ fn sink(out: Output, stage: Option<usize>, running: &mut Running, standard: usiz
         }
         Output::Pipe => {
             let (reader, writer) = std::io::pipe()?;
-            running.streams[standard] = Some(Held(stream(Box::new(reader), Mode::Long, false)));
+            running.streams[standard] = Some(Held(reading_end(reader)?));
             Sink::Fd(writer.into())
         }
         Output::Stdout => unreachable!("merged by the caller"),
@@ -634,7 +635,7 @@ fn spawn(plan: &PlanObject, defaults: Defaults) -> std::io::Result<Running> {
                         Input::File(path) => Stdio::from(std::fs::File::open(path)?),
                         Input::Pipe => {
                             let (reader, writer) = std::io::pipe()?;
-                            running.streams[0] = Some(Held(stream(Box::new(writer), Mode::Long, false)));
+                            running.streams[0] = Some(Held(writing_end(writer)?));
                             Stdio::from(reader)
                         }
                         fed => {
@@ -1371,4 +1372,235 @@ pub unsafe extern "C" fn tondo_rt_sb_process_error(b: *mut super::Builder, tag: 
         _ => "host".to_string(),
     };
     unsafe { (*b).extend(text.as_bytes()) }
+}
+
+// ---------------------------------------------------------------------------
+// The program's ends of a started process's pipes
+// ---------------------------------------------------------------------------
+
+/// The stream of the end of an output pipe the program reads: on the
+/// workers' poller, where a read that would wait leaves its task, so that a
+/// deadline or a cancel ends the wait and what the child writes stays in the
+/// pipe for the next read; on a thread of the pool where nothing polls.
+fn reading_end(reader: std::io::PipeReader) -> std::io::Result<*mut StreamObject> {
+    if super::poll::started().is_none() {
+        return Ok(stream(Box::new(reader), Mode::Long, false));
+    }
+    // Ours alone: the child's end is another open file description, which
+    // stays as it was.
+    let pipe = mio::unix::pipe::Receiver::from(OwnedFd::from(reader));
+    pipe.set_nonblocking(true)?;
+    let pipe = Registered::with(pipe, mio::Interest::READABLE)?;
+    Ok(stream(Box::new(PipeIn { pipe, waiting: false, gave_up: None }), Mode::Ready, false))
+}
+
+/// The stream of the end of an input pipe the program writes, as
+/// `reading_end`; see `PipeOut`.
+fn writing_end(writer: std::io::PipeWriter) -> std::io::Result<*mut StreamObject> {
+    if super::poll::started().is_none() {
+        return Ok(stream(Box::new(writer), Mode::Long, false));
+    }
+    let pipe = mio::unix::pipe::Sender::from(OwnedFd::from(writer));
+    pipe.set_nonblocking(true)?;
+    quiet(&pipe)?;
+    let pipe = Registered::with(pipe, mio::Interest::WRITABLE)?;
+    let outgoing = Arc::new(Outgoing { pipe, unsent: Mutex::new(Unsent::default()) });
+    let weak = Arc::downgrade(&outgoing);
+    outgoing.pipe.on_writable(Arc::new(move || {
+        if let Some(outgoing) = weak.upgrade() {
+            outgoing.writable();
+        }
+    }));
+    Ok(stream(Box::new(PipeOut { outgoing, waiting: false, gave_up: None }), Mode::Ready, false))
+}
+
+/// The end of a child's output pipe that the program reads.
+struct PipeIn {
+    pipe: Registered<mio::unix::pipe::Receiver>,
+    waiting: bool,
+    gave_up: Option<ErrorKind>,
+}
+
+impl super::io::Host for PipeIn {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        match self.pipe.attempt(Direction::Read, |pipe| (&*pipe).read(buffer)) {
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                Err(super::net::would_block(&mut self.waiting, self.gave_up))
+            }
+            read => read,
+        }
+    }
+
+    fn blocked(&mut self) -> Option<Ready> {
+        std::mem::take(&mut self.waiting).then(|| Ready::Socket(self.pipe.ready(Direction::Read)))
+    }
+
+    fn give_up(&mut self, kind: Option<ErrorKind>) {
+        self.gave_up = kind;
+    }
+}
+
+/// The end of a child's input pipe that the program writes. What the pipe
+/// does not take at once waits here, as a socket's bytes do, and goes when
+/// the pipe takes more: at the next write or flush, or at the poller's
+/// event, also once the stream is gone, after which the pipe closes. A
+/// write that finds bytes still waiting waits for the pipe itself.
+struct PipeOut {
+    outgoing: Arc<Outgoing>,
+    waiting: bool,
+    gave_up: Option<ErrorKind>,
+}
+
+struct Outgoing {
+    pipe: Registered<mio::unix::pipe::Sender>,
+    unsent: Mutex<Unsent>,
+}
+
+#[derive(Default)]
+struct Unsent {
+    bytes: Vec<u8>,
+    /// Sending failed, as to a child that is gone: every write after says
+    /// so.
+    failed: Option<ErrorKind>,
+    /// The stream let go of the pipe with bytes to send: the pipe closes
+    /// after them, and is held until then.
+    keep: Option<Arc<Outgoing>>,
+}
+
+impl Outgoing {
+    /// How much of `data` the pipe takes now.
+    fn send(&self, data: &[u8]) -> std::io::Result<usize> {
+        let mut sent = 0;
+        while sent < data.len() {
+            match self.pipe.attempt(Direction::Write, |pipe| quietly(pipe, &data[sent..])) {
+                Ok(count) => sent += count,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(sent)
+    }
+
+    /// Sends what waits while the pipe takes it.
+    fn push(&self, unsent: &mut Unsent) -> std::io::Result<()> {
+        if let Some(kind) = unsent.failed {
+            return Err(kind.into());
+        }
+        match self.send(&unsent.bytes) {
+            Ok(sent) => {
+                unsent.bytes.drain(..sent);
+                Ok(())
+            }
+            Err(error) => {
+                unsent.bytes.clear();
+                unsent.failed = Some(error.kind());
+                Err(error)
+            }
+        }
+    }
+
+    /// When the pipe can take more: sends what waits, and closes a pipe
+    /// whose stream went once nothing does.
+    fn writable(&self) {
+        let mut unsent = self.unsent.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = self.push(&mut unsent);
+        if unsent.keep.is_some() && (unsent.bytes.is_empty() || unsent.failed.is_some()) {
+            let keep = unsent.keep.take();
+            drop(unsent);
+            drop(keep);
+        }
+    }
+}
+
+impl super::io::Host for PipeOut {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<()> {
+        let mut unsent = self.outgoing.unsent.lock().unwrap_or_else(|e| e.into_inner());
+        self.outgoing.push(&mut unsent)?;
+        if !unsent.bytes.is_empty() {
+            return Err(super::net::would_block(&mut self.waiting, self.gave_up));
+        }
+        match self.outgoing.send(data) {
+            Ok(sent) => {
+                unsent.bytes.extend_from_slice(&data[sent..]);
+                Ok(())
+            }
+            Err(error) => {
+                unsent.failed = Some(error.kind());
+                Err(error)
+            }
+        }
+    }
+
+    /// Waits until the pipe took everything.
+    fn flush(&mut self) -> std::io::Result<()> {
+        let mut unsent = self.outgoing.unsent.lock().unwrap_or_else(|e| e.into_inner());
+        self.outgoing.push(&mut unsent)?;
+        if unsent.bytes.is_empty() {
+            return Ok(());
+        }
+        Err(super::net::would_block(&mut self.waiting, self.gave_up))
+    }
+
+    fn blocked(&mut self) -> Option<Ready> {
+        std::mem::take(&mut self.waiting).then(|| Ready::Socket(self.outgoing.pipe.ready(Direction::Write)))
+    }
+
+    fn give_up(&mut self, kind: Option<ErrorKind>) {
+        self.gave_up = kind;
+    }
+}
+
+impl Drop for PipeOut {
+    fn drop(&mut self) {
+        let mut unsent = self.outgoing.unsent.lock().unwrap_or_else(|e| e.into_inner());
+        if !unsent.bytes.is_empty() && unsent.failed.is_none() {
+            unsent.keep = Some(self.outgoing.clone());
+        }
+    }
+}
+
+/// A write to a pipe whose child may be gone fails with `BrokenPipe` and
+/// raises no `SIGPIPE`, which would end the program, as Go's writes to any
+/// file but the standard output and error do. macOS lets a pipe say so
+/// once; Linux has no such flag for a pipe, so the thread blocks the signal
+/// for the write and takes back the one the write raised.
+#[cfg(target_os = "macos")]
+fn quiet(pipe: &mio::unix::pipe::Sender) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    match unsafe { libc::fcntl(pipe.as_raw_fd(), libc::F_SETNOSIGPIPE, 1) } {
+        -1 => Err(std::io::Error::last_os_error()),
+        _ => Ok(()),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn quiet(_pipe: &mio::unix::pipe::Sender) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn quietly(pipe: &mio::unix::pipe::Sender, data: &[u8]) -> std::io::Result<usize> {
+    (&*pipe).write(data)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn quietly(pipe: &mio::unix::pipe::Sender, data: &[u8]) -> std::io::Result<usize> {
+    unsafe {
+        let mut only: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut only);
+        libc::sigaddset(&mut only, libc::SIGPIPE);
+        // One already pending is the program's, and stays.
+        let mut pending: libc::sigset_t = std::mem::zeroed();
+        libc::sigpending(&mut pending);
+        let was_pending = libc::sigismember(&pending, libc::SIGPIPE) == 1;
+        let mut before: libc::sigset_t = std::mem::zeroed();
+        libc::pthread_sigmask(libc::SIG_BLOCK, &only, &mut before);
+        let written = (&*pipe).write(data);
+        if !was_pending && written.as_ref().is_err_and(|error| error.kind() == ErrorKind::BrokenPipe) {
+            let now = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            libc::sigtimedwait(&only, std::ptr::null_mut(), &now);
+        }
+        libc::pthread_sigmask(libc::SIG_SETMASK, &before, std::ptr::null_mut());
+        written
+    }
 }

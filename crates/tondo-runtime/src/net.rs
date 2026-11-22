@@ -538,7 +538,7 @@ struct SecureOut {
 
 /// The error of a host that would block: what it gave up with, or
 /// `WouldBlock` after noting that it waits.
-fn would_block(waiting: &mut bool, gave_up: Option<ErrorKind>) -> std::io::Error {
+pub(crate) fn would_block(waiting: &mut bool, gave_up: Option<ErrorKind>) -> std::io::Error {
     gave_up
         .unwrap_or_else(|| {
             *waiting = true;

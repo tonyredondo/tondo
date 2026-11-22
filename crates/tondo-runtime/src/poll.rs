@@ -198,11 +198,15 @@ pub(crate) struct Registered<S: mio::event::Source> {
 }
 
 impl<S: mio::event::Source> Registered<S> {
-    pub(crate) fn new(mut io: S) -> std::io::Result<Registered<S>> {
+    pub(crate) fn new(io: S) -> std::io::Result<Registered<S>> {
+        Registered::with(io, mio::Interest::READABLE | mio::Interest::WRITABLE)
+    }
+
+    /// Registered for one direction, as an end of a pipe is.
+    pub(crate) fn with(mut io: S, interest: mio::Interest) -> std::io::Result<Registered<S>> {
         let poller = start().ok_or_else(|| std::io::Error::other("the network cannot be polled"))?;
         let source = Arc::new(Source { state: Mutex::new(Readiness::default()) });
         let token = poller.add(source.clone());
-        let interest = mio::Interest::READABLE | mio::Interest::WRITABLE;
         if let Err(error) = poller.registry.register(&mut io, mio::Token(token), interest) {
             poller.remove(token);
             return Err(error);

@@ -9697,3 +9697,34 @@ Without `group()`, what the stages started goes on, unwaited: a grandchild
 that keeps a pipe keeps the job reading until it ends, on its thread. With
 `group()` the deadline ends the group, as `cancel` does, and that is how a
 program ends what its processes leave.
+
+## A started process's pipes wait on the workers' poller
+
+A read of a started process's output, or a write to its input, waited on
+a thread of the pool, where no deadline or cancel ended it: a `readLine`
+under `within 50 ms` of a child that wrote its line at 300 ms gave the
+line at 302 ms, and a write of a megabyte to a child that never read
+waited until the child ended. Now the program's end of each pipe is
+non-blocking and registered with the workers' poller, as a socket is: a
+read or a write that would wait leaves its task there, a deadline or a
+cancel ends the wait at once, and nothing is lost, as what the child
+writes stays in the pipe for the next read. The child's end is another
+open file description and stays as it was. What the pipe does not take of
+a write waits in the stream, as a socket's bytes do, and goes at the next
+write or flush or at the poller's event, also once the stream is let go,
+after which the pipe closes; a write that finds bytes still waiting waits
+for the pipe. Where the poller cannot start, the pipes are read on threads
+of the pool as before. Go registers os/exec's pipes with its poller on
+Linux and macOS alike; its exception on macOS is the named FIFO, whose
+reader kqueue does not wake when the last writer closes (Go issue 24164),
+while an anonymous pipe gives `EV_EOF` there, as the M2 showed.
+
+A write to a child that is gone fails with `Closed`. It ended the program
+by SIGPIPE, since a console program keeps the signal's default: `true`
+with a piped stdin, written after it ended, ended the program with 141
+before its next line. As Go does for every file but the standard output
+and error, the pipe raises no signal: macOS has `F_SETNOSIGPIPE` for the
+pipe, and on Linux, which has no such flag for a pipe, the write blocks
+SIGPIPE on its thread and takes back the one it raised, unless one was
+pending before. The standard output keeps the default, so a program whose
+output goes to `head` still ends quietly.
