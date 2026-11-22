@@ -759,7 +759,14 @@ impl Session<'_> {
                     });
                     let (name, inputs, search) =
                         (name.to_string(), inputs.parse().unwrap_or(0), Searched::read(searched));
-                    entry.0.fuzz.push(Fuzzed { name, inputs, input, search });
+                    entry.0.fuzz.push(Fuzzed {
+                        name,
+                        inputs,
+                        input,
+                        search,
+                        timeouts_not_repeated: 0,
+                        searched_again: 0,
+                    });
                 }
             }
             // An input of the search ran past its limit: the worker ends.

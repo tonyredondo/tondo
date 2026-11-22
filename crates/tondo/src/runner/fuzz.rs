@@ -64,39 +64,108 @@ pub(super) fn campaign(run: &worker::Run, plan: &[u32], printer: &mut human::Pri
     printer.fuzzing_begins(targets.len(), workers, fuzz.time);
     interrupt::soften(targets.iter().map(|t| t.stop.clone()).collect());
     let searching = worker::Run { stores: worker::Stores { ..run.stores }, targets: &targets, until, ..*run };
-    let units: Vec<(Vec<u32>, Context)> = (0..workers)
-        .map(|n| {
-            let index = n % targets.len();
-            (vec![targets[index].test], Context { target: Some(index as u32), ..context })
-        })
-        .collect();
-    let searched = worker::execute(&searching, units, |note| match note {
-        Note::Fuzzing(node, call, progress) => printer.fuzzing(*node, call, progress),
-        // A call that failed stops its other workers.
-        Note::Ended(attempt) => {
-            for fuzzed in attempt.fuzz.iter().filter(|f| f.input.is_some()) {
-                if let Some(target) = targets.iter().find(|t| t.test == attempt.node && t.call == fuzzed.name) {
-                    let _ = std::fs::write(&target.stop, "");
+    // Each round's attempts merged by test; a round searches again the calls
+    // a worker left at an input past --fuzz-timeout that ran in time alone,
+    // with the time that is left.
+    let mut rounds: Vec<BTreeMap<u32, Attempt>> = Vec::new();
+    let mut searched_again = vec![0u32; targets.len()];
+    let mut active: Vec<usize> = (0..targets.len()).collect();
+    loop {
+        // Each call's workers, as at the beginning.
+        let units: Vec<(Vec<u32>, Context)> = (0..workers)
+            .map(|n| n % targets.len())
+            .filter(|index| active.contains(index))
+            .map(|index| (vec![targets[index].test], Context { target: Some(index as u32), ..context }))
+            .collect();
+        let mut judged = Vec::new();
+        // The workers that search, in all and of each call.
+        let mut running = units.len();
+        let mut live = vec![0usize; targets.len()];
+        for (_, context) in &units {
+            live[context.target.unwrap_or_default() as usize] += 1;
+        }
+        let searched = worker::execute(&searching, units, |note| match note {
+            Note::Fuzzing(node, call, progress) => printer.fuzzing(*node, call, progress),
+            // A call that failed stops its other workers. One past the
+            // timeout runs again alone first, and stops them only if it
+            // fails then too.
+            Note::Ended(attempt) => {
+                running = running.saturating_sub(1);
+                let call = attempt.fuzz.iter().find(|f| f.search.is_some()).and_then(|searched| {
+                    targets.iter().position(|t| t.test == attempt.node && t.call == searched.name)
+                });
+                if let Some(call) = call {
+                    live[call] = live[call].saturating_sub(1);
+                }
+                let verdict = timed_out(&attempt.status).then(|| judge(&searching, attempt)).flatten();
+                if let Some(passed) = verdict.as_ref().filter(|v| !v.status.failed()) {
+                    // Its call is searched no more until the round ends.
+                    if live[passed.target] == 0 && running > 0 {
+                        printer.fuzz_waits(tree.id(attempt.node), &targets[passed.target].call);
+                    }
+                    judged.extend(verdict);
+                    return;
+                }
+                judged.extend(verdict);
+                for fuzzed in attempt.fuzz.iter().filter(|f| f.input.is_some()) {
+                    if let Some(target) = targets.iter().find(|t| t.test == attempt.node && t.call == fuzzed.name) {
+                        let _ = std::fs::write(&target.stop, "");
+                    }
                 }
             }
+            _ => {}
+        });
+        let mut again = Vec::new();
+        let mut by_test: BTreeMap<u32, Vec<Attempt>> = BTreeMap::new();
+        for mut attempt in searched.into_iter().filter(|a| !tree.suite(a.node)) {
+            if timed_out(&attempt.status) {
+                apply(&judged, &mut attempt, &mut again);
+            }
+            by_test.entry(attempt.node).or_default().push(attempt);
         }
-        _ => {}
-    });
+        rounds.push(by_test.into_iter().map(|(node, list)| (node, merged(list))).collect());
+        // A call that also failed in this round, or whose time is up, is done.
+        let failed = |index: &usize| {
+            let target = &targets[*index];
+            rounds.last().and_then(|round| round.get(&target.test)).is_some_and(|attempt| {
+                attempt.status.failed() && attempt.fuzz.iter().any(|f| f.name == target.call && f.input.is_some())
+            })
+        };
+        again.retain(|index| !failed(index));
+        again.sort_unstable();
+        again.dedup();
+        let left = until == 0 || now_ms() < until;
+        if again.is_empty() || !left || interrupt::requested() {
+            break;
+        }
+        for &index in &again {
+            searched_again[index] += 1;
+            let _ = std::fs::remove_file(&targets[index].stop);
+        }
+        active = again;
+    }
     interrupt::soften(Vec::new());
     let _ = std::fs::remove_dir_all(&stops);
     printer.fuzzing_ends();
-    // Each test's attempts become one, with what failed kept.
-    let mut by_test: BTreeMap<u32, Vec<Attempt>> = BTreeMap::new();
-    for attempt in searched.into_iter().filter(|a| !tree.suite(a.node)) {
-        by_test.entry(attempt.node).or_default().push(attempt);
+    // Each test's rounds become one, one after the other, with what failed kept.
+    let mut by_test: BTreeMap<u32, Attempt> = BTreeMap::new();
+    for round in rounds {
+        for (node, attempt) in round {
+            match by_test.get_mut(&node) {
+                Some(earlier) => after(earlier, attempt),
+                None => {
+                    by_test.insert(node, attempt);
+                }
+            }
+        }
     }
     let mut attempts: Vec<Attempt> =
         first.into_iter().filter(|a| tree.suite(a.node) || !by_test.contains_key(&a.node)).collect();
-    for (_, mut list) in by_test {
-        list.sort_by_key(|a| !a.status.failed());
-        let mut merged = list[0].clone();
-        merged.fuzz = merge(&list);
+    for (_, mut merged) in by_test {
         for fuzzed in &mut merged.fuzz {
+            if let Some(index) = targets.iter().position(|t| t.test == merged.node && t.call == fuzzed.name) {
+                fuzzed.searched_again = searched_again[index];
+            }
             // What the search found, as small as it fails the same way.
             if let Some(input) = fuzzed.input.as_mut().filter(|i| i.file.is_none() && i.seed.is_none())
                 && let Some(index) = targets.iter().position(|t| t.test == merged.node && t.call == fuzzed.name)
@@ -104,7 +173,7 @@ pub(super) fn campaign(run: &worker::Run, plan: &[u32], printer: &mut human::Pri
             {
                 printer.reducing(tree.id(merged.node), &fuzzed.name, input.json.len());
                 let reducing = worker::Run { stores: worker::Stores { ..run.stores }, ..searching };
-                reduce(&reducing, index, input, &merged.status);
+                fuzzed.timeouts_not_repeated += reduce(&reducing, index, input, &merged.status);
             }
             store(run.dir, tree, merged.node, fuzzed);
         }
@@ -130,6 +199,7 @@ fn merge(attempts: &[Attempt]) -> Vec<Fuzzed> {
             continue;
         };
         kept.inputs += fuzzed.inputs;
+        kept.timeouts_not_repeated += fuzzed.timeouts_not_repeated;
         if kept.input.is_none() {
             kept.input = fuzzed.input.clone();
         }
@@ -146,6 +216,118 @@ fn merge(attempts: &[Attempt]) -> Vec<Fuzzed> {
         };
     }
     merged
+}
+
+/// A test's attempts in the workers of one round as one, with the one
+/// that failed first.
+fn merged(mut list: Vec<Attempt>) -> Attempt {
+    list.sort_by_key(|a| !a.status.failed());
+    let mut merged = list[0].clone();
+    merged.fuzz = merge(&list);
+    merged
+}
+
+/// A test's attempt of a later round after the earlier ones: what the
+/// searches did added up, as they ran one after the other, and what failed
+/// kept.
+fn after(earlier: &mut Attempt, later: Attempt) {
+    let mut fuzz = std::mem::take(&mut earlier.fuzz);
+    for fuzzed in &later.fuzz {
+        let Some(kept) = fuzz.iter_mut().find(|f| f.name == fuzzed.name) else {
+            fuzz.push(fuzzed.clone());
+            continue;
+        };
+        kept.inputs += fuzzed.inputs;
+        kept.timeouts_not_repeated += fuzzed.timeouts_not_repeated;
+        if kept.input.is_none() {
+            kept.input = fuzzed.input.clone();
+        }
+        kept.search = match (kept.search, fuzzed.search) {
+            (Some(a), Some(b)) => Some(Searched {
+                inputs: a.inputs + b.inputs,
+                elapsed_ms: a.elapsed_ms + b.elapsed_ms,
+                corpus: a.corpus.max(b.corpus),
+                reached: a.reached.max(b.reached),
+                total: a.total.max(b.total),
+                new_ms: b.new_ms,
+            }),
+            (a, b) => a.or(b),
+        };
+    }
+    if !earlier.status.failed() && later.status.failed() {
+        *earlier = Attempt { fuzz, ..later };
+    } else {
+        earlier.fuzz = fuzz;
+    }
+}
+
+/// Whether a worker ended at an input that ran past `--fuzz-timeout`.
+fn timed_out(status: &Status) -> bool {
+    matches!(status, Status::Limit { timeout: true, .. })
+}
+
+/// What an input that ran past `--fuzz-timeout` did when it ran again
+/// alone: its test, its call's target, the input, and how it ended.
+struct Judged {
+    test: u32,
+    target: usize,
+    json: String,
+    status: Status,
+}
+
+/// Runs again, alone, in a worker of its own, the input an attempt ended
+/// past `--fuzz-timeout` with (testing 10.6).
+fn judge(run: &worker::Run, attempt: &Attempt) -> Option<Judged> {
+    if interrupt::requested() {
+        return None;
+    }
+    let (target, input) = attempt.fuzz.iter().find_map(|fuzzed| {
+        let input = fuzzed.input.as_ref()?;
+        let target = run.targets.iter().position(|t| t.test == attempt.node && t.call == fuzzed.name)?;
+        Some((target, input))
+    })?;
+    let status = alone(run, target, &input.json)?;
+    Some(Judged { test: attempt.node, target, json: input.json.clone(), status })
+}
+
+/// An attempt that ended past `--fuzz-timeout` takes what its input did
+/// alone: one that ended in time is no failure, as a busy machine can stop
+/// a process that long; the attempt passes, counts it, and its call goes
+/// in `again`, to search on with the time left.
+fn apply(judged: &[Judged], attempt: &mut Attempt, again: &mut Vec<usize>) {
+    for fuzzed in &mut attempt.fuzz {
+        let Some(input) = fuzzed.input.as_ref() else { continue };
+        let Some(verdict) = judged.iter().find(|j| j.test == attempt.node && j.json == input.json) else { continue };
+        if verdict.status.failed() {
+            // The timeout again, or what it does when nothing stops it.
+            attempt.status = verdict.status.clone();
+        } else {
+            fuzzed.input = None;
+            fuzzed.timeouts_not_repeated += 1;
+            again.push(verdict.target);
+            attempt.status = Status::Passed;
+        }
+        return;
+    }
+}
+
+/// What `json`, an input of a target's call, does when it runs alone in a
+/// new worker: how its attempt ended, if it ran.
+fn alone(run: &worker::Run, target: usize, json: &str) -> Option<Status> {
+    let file = std::env::temp_dir().join(format!("tondo-fuzz-again-{}", std::process::id()));
+    std::fs::write(&file, json).ok()?;
+    let test = run.targets[target].test;
+    let replay = Replay { test, call: run.targets[target].call.clone(), file: file.clone() };
+    let trying = worker::Run { replay: Some(&replay), stores: worker::Stores { ..run.stores }, ..*run };
+    let context = Context { round: 0, iteration: 1, unit: None, target: Some(target as u32) };
+    let attempts = worker::execute(&trying, vec![(vec![test], context)], |_| {});
+    let _ = std::fs::remove_file(&file);
+    attempts.into_iter().find(|a| a.node == test).map(|a| a.status)
+}
+
+/// Milliseconds since the Unix epoch, as `until` counts them.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 
 /// Writes an input the search found failing to the fuzz store, named by
@@ -305,10 +487,13 @@ fn at_mut<'a>(value: &'a mut Value, path: &[usize]) -> Option<&'a mut Value> {
 /// Reduces an input that failed (testing 10.6): tries simpler ones in a
 /// worker that runs only them, keeping each that fails the same way, for
 /// at most 30 seconds; the input becomes the last kept, as `json.encode`
-/// writes it, saying how many bytes it had.
-fn reduce(run: &worker::Run, target: usize, input: &mut FuzzInput, failure: &Status) {
-    let Some(wanted) = signature(failure) else { return };
-    let Ok(mut current) = serde_json::from_str::<Value>(&input.json) else { return };
+/// writes it, saying how many bytes it had. One that ran past
+/// `--fuzz-timeout` is kept only if it does again alone; it gives how many
+/// ran in time then.
+fn reduce(run: &worker::Run, target: usize, input: &mut FuzzInput, failure: &Status) -> u32 {
+    let Some(wanted) = signature(failure) else { return 0 };
+    let Ok(mut current) = serde_json::from_str::<Value>(&input.json) else { return 0 };
+    let mut in_time = 0;
     let original = input.json.len();
     let deadline = Instant::now() + Duration::from_secs(30);
     let file = std::env::temp_dir().join(format!("tondo-fuzz-tried-{}", std::process::id()));
@@ -334,8 +519,12 @@ fn reduce(run: &worker::Run, target: usize, input: &mut FuzzInput, failure: &Sta
                 attempt.fuzz.iter().filter(|f| f.name == run.targets[target].call).find_map(|f| f.input.clone());
             let Some(tried) = failed.as_ref().and_then(|f| f.tried) else { break };
             if signature(&attempt.status).as_deref() == Some(wanted.as_str()) {
-                kept = Some((offset + tried, failed.map(|f| f.json).unwrap_or_default()));
-                break;
+                let json = failed.map(|f| f.json).unwrap_or_default();
+                if !timed_out(&attempt.status) || alone(run, target, &json).is_none_or(|status| status.failed()) {
+                    kept = Some((offset + tried, json));
+                    break;
+                }
+                in_time += 1;
             }
             offset += tried + 1;
         }
@@ -355,4 +544,5 @@ fn reduce(run: &worker::Run, target: usize, input: &mut FuzzInput, failure: &Sta
     if reduced && input.json.len() < original {
         input.reduced_from = Some(original);
     }
+    in_time
 }

@@ -833,6 +833,8 @@ fn fuzzed(fuzzed: &super::Fuzzed) -> Value {
     let search = fuzzed.search.as_ref().map_or(Value::Null, |searched| {
         let mut fields = searched_fields(searched);
         fields.retain(|(key, _)| !matches!(*key, "inputs" | "new_ms"));
+        fields.push(("timeouts_not_repeated", int(fuzzed.timeouts_not_repeated as usize)));
+        fields.push(("searched_again", int(fuzzed.searched_again as usize)));
         obj(fields)
     });
     obj(vec![

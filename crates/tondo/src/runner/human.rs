@@ -145,6 +145,27 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// A call's search stops until the others end: its last worker ended
+    /// at an input past `--fuzz-timeout` that ran in time alone (10.6). On
+    /// a terminal the line goes above the calls' lines, which follow it.
+    pub(super) fn fuzz_waits(&mut self, test: &str, call: &str) {
+        let Some(fuzzing) = self.fuzz.as_mut().filter(|_| !self.quiet) else { return };
+        let test = test.rsplit("::").next().unwrap_or(test);
+        let line = format!(
+            "  {test} \u{203a} {call}: an input past --fuzz-timeout ran in time alone; its search starts again when the others end"
+        );
+        if fuzzing.terminal && fuzzing.drawn > 0 {
+            let mut out = format!("\x1b[{}A\x1b[J{line}\n", fuzzing.drawn);
+            for ((test, call), searched) in &fuzzing.calls {
+                out.push_str(&format!("\x1b[2K{}\n", search_line(test, call, searched)));
+            }
+            print!("{out}");
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+        } else {
+            say!("{line}");
+        }
+    }
+
     /// The input a call failed with is being reduced.
     pub(super) fn reducing(&mut self, test: &str, call: &str, bytes: usize) {
         if !self.quiet {
@@ -233,8 +254,19 @@ impl<'a> Printer<'a> {
                         0 => String::new(),
                         total => format!(", coverage {}%", searched.reached * 100 / total),
                     };
+                    // A search a busy machine stopped is not taken for a whole one.
+                    let stalled = match fuzzed.timeouts_not_repeated {
+                        0 => String::new(),
+                        1 => ", 1 input past --fuzz-timeout ran in time alone".to_string(),
+                        n => format!(", {n} inputs past --fuzz-timeout ran in time alone"),
+                    };
+                    let again = match fuzzed.searched_again {
+                        0 => String::new(),
+                        1 => ", searched again once".to_string(),
+                        n => format!(", searched again {n} times"),
+                    };
                     say!(
-                        "  {}  {} inputs in {}, corpus {}{coverage}",
+                        "  {}  {} inputs in {}, corpus {}{coverage}{stalled}{again}",
                         fuzzed.name,
                         count(searched.inputs),
                         clock(searched.elapsed_ms),

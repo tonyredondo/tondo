@@ -664,6 +664,142 @@ test deepens {
     }
 }
 
+/// An input of the search that runs past `--fuzz-timeout` runs again alone
+/// before it fails: one that then ends in time, as after a stop of a busy
+/// machine, is counted apart and the search goes on with the time left,
+/// where it still finds what fails; the same while a timeout is reduced
+/// (testing 10.6). The stops are held by files, not by the clock.
+#[test]
+fn fuzz_search_runs_an_input_past_its_timeout_again_alone() {
+    let code = "\
+import std.fs
+import std.time
+
+// Fails at 4242 only once the stop has happened, so the search can only
+// find it after.
+pub fn check(n: Int): Int {
+    if n == 4242 and fs.exists(\"stalled\") {
+        let empty: Array[Int] = []
+        return empty[0]
+    }
+    n
+}
+
+// The first input past the seed waits past the limit, once.
+pub fn stallOnce(n: Int) {
+    if n != 1 and n != 4242 and not fs.exists(\"stalled\") {
+        _ = fs.writeText(\"stalled\", \"\")
+        time.sleep(time.seconds(3))
+    }
+}
+
+// Past 100 it hangs; then, while it is reduced, an input under it waits
+// past the limit, once.
+pub fn hangs(n: Int): Int {
+    if n > 100 {
+        _ = fs.writeText(\"found\", \"\")
+        var i = 0
+        for {
+            i = (i + 1) % 1000
+        }
+    }
+    if fs.exists(\"found\") and not fs.exists(\"stalled\") {
+        _ = fs.writeText(\"stalled\", \"\")
+        time.sleep(time.seconds(3))
+    }
+    n
+}
+
+fn main() {}
+";
+    let tests = "\
+import std.testing
+
+test stalls {
+    testing.fuzz(\"stall\", [1], (n: Int) {
+        stallOnce(n)
+        _ = check(n)
+    })
+}
+
+test quiet {
+    testing.fuzz(\"quiet\", [1], (n: Int) { stallOnce(n) })
+}
+
+test hangsPastHundred {
+    testing.fuzz(\"hang\", [1], (n: Int) { _ = hangs(n) })
+}
+
+test steady {
+    testing.fuzz(\"steady\", [1], (n: Int) {})
+}
+";
+    let dir = project("fuzz-again", tests);
+    std::fs::write(dir.join("src/main.to"), code).unwrap();
+    let run = |test: &str, time: &str| {
+        for marker in ["stalled", "found"] {
+            let _ = std::fs::remove_file(dir.join(marker));
+        }
+        let exact = format!("app::unit::app::{test}");
+        let args = ["test", "--fuzz", "--fuzz-time", time, "--fuzz-timeout", "1", "--jobs", "1", "--exact", &exact];
+        let (stdout, _, status) = tondo(&dir, &[&args[..], &["--test-format", "json"]].concat());
+        let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|_| panic!("{stdout}"));
+        (report["tests"][0]["attempts"][0].clone(), status)
+    };
+    // One worker stopped past the limit: the search starts again and still
+    // finds the input that fails.
+    let (attempt, status) = run("stalls", "120");
+    assert_eq!(status, 1, "{attempt}");
+    let call = &attempt["fuzz"][0];
+    assert_eq!(call["input"]["json"], "4242", "{attempt}");
+    assert!(call["search"]["timeouts_not_repeated"].as_u64().unwrap() >= 1, "{attempt}");
+    assert!(call["search"]["searched_again"].as_u64().unwrap() >= 1, "{attempt}");
+    // With nothing to find, the search goes on until its time is up.
+    let (attempt, status) = run("quiet", "4");
+    assert_eq!(status, 0, "{attempt}");
+    let call = &attempt["fuzz"][0];
+    assert_eq!(call["input"], serde_json::Value::Null, "{attempt}");
+    assert!(call["search"]["timeouts_not_repeated"].as_u64().unwrap() >= 1, "{attempt}");
+    assert!(call["search"]["searched_again"].as_u64().unwrap() >= 1, "{attempt}");
+    assert!(call["search"]["elapsed_ms"].as_u64().unwrap() >= 2000, "{attempt}");
+    // An input that hangs fails with the timeout; while it is reduced, the
+    // one that stopped once is run again and left out.
+    let (attempt, status) = run("hangsPastHundred", "120");
+    assert_eq!(status, 1, "{attempt}");
+    assert_eq!(attempt["status"], "timeout", "{attempt}");
+    let call = &attempt["fuzz"][0];
+    assert!(call["input"]["json"].as_str().unwrap().parse::<i64>().unwrap() > 100, "{attempt}");
+    assert!(call["search"]["timeouts_not_repeated"].as_u64().unwrap() >= 1, "{attempt}");
+    // The human report says both.
+    for marker in ["stalled", "found"] {
+        let _ = std::fs::remove_file(dir.join(marker));
+    }
+    let args = [
+        "test",
+        "--fuzz",
+        "--fuzz-time",
+        "4",
+        "--fuzz-timeout",
+        "1",
+        "--jobs",
+        "1",
+        "--exact",
+        "app::unit::app::quiet",
+    ];
+    let (stdout, _, status) = tondo(&dir, &args);
+    assert_eq!(status, 0, "{stdout}");
+    assert!(stdout.contains("past --fuzz-timeout ran in time alone, searched again "), "{stdout}");
+    // Beside a call that searches on, the one whose only worker ended at
+    // the stop waits for the round's end, and the search says so.
+    let _ = std::fs::remove_file(dir.join("stalled"));
+    let both = ["test", "--fuzz", "--fuzz-time", "4", "--fuzz-timeout", "1", "--jobs", "2"];
+    let (stdout, _, status) =
+        tondo(&dir, &[&both[..], &["--exact", "app::unit::app::quiet", "--exact", "app::unit::app::steady"]].concat());
+    assert_eq!(status, 0, "{stdout}");
+    let waits = "quiet \u{203a} quiet: an input past --fuzz-timeout ran in time alone; its search starts again when the others end\n";
+    assert!(stdout.contains(waits), "{stdout}");
+}
+
 /// A project in the target directory, a repository of its own, with the
 /// given test file.
 /// The workers of `--jobs` run at once: each of two tests waits for the

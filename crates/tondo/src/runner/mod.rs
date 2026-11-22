@@ -362,6 +362,12 @@ pub struct Fuzzed {
     pub inputs: u64,
     pub input: Option<FuzzInput>,
     pub search: Option<Searched>,
+    /// Under `--fuzz`, the inputs that ran past `--fuzz-timeout` and then
+    /// in time when run again alone (testing 10.6).
+    pub timeouts_not_repeated: u32,
+    /// How many times its search started again, after a worker ended at
+    /// such an input with time left.
+    pub searched_again: u32,
 }
 
 /// What a search did: the inputs it tried, for how long, how many it kept

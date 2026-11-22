@@ -2733,9 +2733,13 @@ que fallen:
    reducida va al store, y el test falla con ella.
 
 Una entrada falla también si tarda más de `--fuzz-timeout` segundos, 1 por
-defecto (`timeout`), o si la memoria viva del trabajador pasa de
-`--fuzz-memory` MiB, 2048 por defecto (`resource-limit`); un trabajador que
-muere en una entrada falla con ella (`crashed`). Un trabajador ejecuta las
+defecto (`timeout`), cuando vuelve a tardarlo ejecutada sola en un trabajador
+nuevo: una máquina ocupada puede detener un proceso ese tiempo, y una entrada
+que entonces termina a tiempo no falla, el informe la cuenta aparte y la
+búsqueda sigue con el tiempo que le queda; lo mismo al reducirla. Falla
+también si la memoria viva del trabajador pasa de `--fuzz-memory` MiB, 2048
+por defecto (`resource-limit`); un trabajador que muere en una entrada falla
+con ella (`crashed`). Un trabajador ejecuta las
 entradas una tras otra, sin empezar otro proceso.
 
 La búsqueda sigue hasta Ctrl-C, hasta que pasan `--fuzz-time` segundos o hasta
@@ -4557,7 +4561,9 @@ tiene esta forma:
   "search": {
     "elapsed_ms": 12034,
     "corpus": 312,
-    "coverage": {"reached": 186, "total": 214}
+    "coverage": {"reached": 186, "total": 214},
+    "timeouts_not_repeated": 0,
+    "searched_again": 0
   },
   "input": {
     "json": "\"[[\\u0000\"",
@@ -4570,10 +4576,14 @@ tiene esta forma:
 
 `inputs` cuenta las entradas que ejecutó el cuerpo. `search` es `null` sin
 `--fuzz`; `coverage` cuenta los contadores (10.3) que alguna entrada alcanzó y
-los que hay. `input` es `null` si ninguna entrada falló, y si no la entrada con
-la que falló el intento: su JSON; el archivo del store, desde la raíz del
-paquete, o `null` para una semilla, cuyo índice da `seed`; y con `--fuzz`, en
-`reduced_from`, los bytes de la entrada antes de reducirla.
+los que hay. `timeouts_not_repeated` cuenta las entradas que pasaron de
+`--fuzz-timeout` y terminaron a tiempo cuando se ejecutaron solas, en la
+búsqueda o al reducir (10.6), y `searched_again` las veces que la búsqueda de
+la llamada volvió a empezar por ellas. `input` es `null` si ninguna entrada
+falló, y si no la entrada con la que falló el intento: su JSON; el archivo del
+store, desde la raíz del paquete, o `null` para una semilla, cuyo índice da
+`seed`; y con `--fuzz`, en `reduced_from`, los bytes de la entrada antes de
+reducirla.
 
 ## 16. Conformidad
 

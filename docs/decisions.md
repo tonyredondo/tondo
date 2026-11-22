@@ -9558,3 +9558,26 @@ record or fails. A certificate's time whose fields a calendar does not
 hold was read as another date without a word; it is now not read, as a
 short one was not. A search in testing/fuzz reads any bytes as an
 archive, so that the Nightly keeps looking.
+
+## An input past the fuzz timeout runs again alone before it fails
+
+On a shared machine a process can stand still for a second: mcp's test
+of the search, on CI's x86-64 macOS, kept "an input ran longer than
+--fuzz-timeout, 1s" as its finding for a call that only compares a
+number, and the input it wanted was never found. An input that runs past
+`--fuzz-timeout` now runs again, alone, in a new worker, through the
+replay the reduction already used, and the attempt takes what it does
+then: the timeout again, another failure, or an end in time, which is no
+failure. Such an input is counted apart in the report, and the call
+searches again, as at its beginning and from its corpus, with the time
+left of `--fuzz-time`, since a search that ended at the stop and passed
+would hide that it did not search. A
+worker that ends at a timeout no longer stops its call's other workers,
+which search on until the verdict. While a timeout is reduced, a
+candidate that times out is kept only if it does again alone. Only the
+timeout: a busy machine does not make an input hold more memory, and a
+crash is the input's. A round searches again only once every call's
+workers have ended, so with several calls and no `--fuzz-time` a call
+whose only worker so stopped waits for the others' end; the search says
+so on a line of its own, rather than restart a worker within the round,
+which would change how workers are planned.
