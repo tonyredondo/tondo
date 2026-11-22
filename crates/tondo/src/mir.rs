@@ -428,6 +428,11 @@ pub enum Rvalue {
     /// Whether the statement before panicked, and the code unwinds to the
     /// nearest `recover` (15.9).
     Unwinding,
+    /// The same, after a statement that gave a counted value the unwinding
+    /// way does not release: whether the task already unwinds, leaving a
+    /// panic of a task of its `recover`, or a passed deadline, to the next
+    /// check, by when the value is the frame's.
+    UnwindingOwn,
     /// In a live build, what the probe of the line that starts at the
     /// point said: go on (0), restart the frame (1), or move it to the new
     /// code (2) (toolchain 7.10).
@@ -961,6 +966,7 @@ pub(crate) fn rvalue_places(rvalue: &Rvalue, visit: &mut impl FnMut(&Place)) {
         | Rvalue::Layout(..)
         | Rvalue::Cancelled
         | Rvalue::Unwinding
+        | Rvalue::UnwindingOwn
         | Rvalue::Restart(_)
         | Rvalue::Transfer(_)
         | Rvalue::OsrPoint => {}

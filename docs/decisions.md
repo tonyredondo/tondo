@@ -9480,3 +9480,46 @@ same seed gives the same bytes; a build without one is what it was. The
 program's object moves as one block, which its seed orders inside, and
 thread-local data, constructors and sections bounded by a symbol keep
 their places.
+
+## A check with a value in hand delivers no other task's panic
+
+The check after a statement that may panic asks whether the task unwinds,
+and the way of an unwinding releases what the frame holds. It did not
+release what the statement had just given, which is in no scope yet: a
+callee that panicked leaves its result zeros, so there was nothing to
+release. But the check also delivered a panic of a task of the same
+`recover`, which reaches the block's task at its next check, and a passed
+deadline of a `within`; then the call before it had returned normally,
+and its value was dropped with its count. Every build leaked so since
+`recover` and deadlines exist; it was found through a live build of
+tasks_array_edges, where a closure stays a call, in one run of seventy
+under load. Releasing that value on the way out of the check closed it,
+but the passes took the new release for a use of the value, and the
+whole measuring rule showed rows a third slower, with values leaving
+their regions for the heap. So the check after such a statement, one
+that gave a counted value its unwinding does not release, decided from
+the same scopes and frames that way is made from, asks only whether the
+task already unwinds (`UnwindingOwn`), and leaves the other task's panic
+to the next check, by when the value is the frame's: the same check as
+before or the one after it, inside 15.9's "a más tardar". The maintainer
+wanted a task of the block that broke an invariant to be heard as soon as
+it can be, so a delivery only at waits was not taken. The inliner's check
+of an argument read by an index is of that kind too, and a debug `tondo`
+refuses, after every pass, a delivering check with such a value in hand.
+
+## A deadline stops a block only where a cancellation would
+
+Asked on 2026-11-22 whether a passed deadline of a `within` should stop a
+computation at its next call or only where 11.15 stops a cancelled task,
+the maintainer chose the spec's words: at a wait and at
+`tasks.checkpoint()`, and "un cálculo que no espera no se interrumpe: si
+termina, aunque sea tarde, vale su valor" (11.17). That is what the runtime
+does: only a wait that starts past the deadline, a wait whose timer for it
+fires, and a checkpoint note a deadline, and the check after a call
+delivers what one of those noted, never reading the clock. A case now
+holds the three: a block that only calls gives its value late, one that
+reaches a checkpoint past its deadline, or a wait, gives `TimedOut`. It
+found that a checkpoint asked for the first time long after the deadline
+compared the clock's coarse reading with the exact one read at that ask,
+and missed it by up to a tick: a deadline already past at the first ask
+is now past without reading the coarse clock.

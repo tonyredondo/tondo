@@ -551,6 +551,16 @@ pub extern "C" fn tondo_rt_unwinding() -> u8 {
     u8::from(task.unwinding.is_some())
 }
 
+/// Whether the running task already unwinds, asked by the check after a
+/// statement that gave a counted value the unwinding's way does not
+/// release: a panic of a task of its `recover`, or a passed deadline, waits
+/// for the next check, by when the value is the frame's (language 15.9).
+/// The reason to ask stays up until then.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_unwinding_own() -> u8 {
+    task().map_or(0, |task| u8::from(task.unwinding.is_some()))
+}
+
 /// At the start of a frame's cleanups on the way of a panic: the panic
 /// waits, so that the cleanups run as code does.
 #[unsafe(no_mangle)]

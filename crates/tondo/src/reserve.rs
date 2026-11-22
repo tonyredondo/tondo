@@ -215,7 +215,7 @@ fn abnormal(block: &BlockData) -> Option<usize> {
         })
     };
     let asked = match defined(condition.local)? {
-        Rvalue::Unwinding => true,
+        Rvalue::Unwinding | Rvalue::UnwindingOwn => true,
         Rvalue::Binary(BinOp::Eq, Operand::Copy(flag), Operand::Const(_)) => {
             matches!(defined(flag.local), Some(Rvalue::Cancelled))
         }

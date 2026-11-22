@@ -2538,6 +2538,7 @@ impl Flow {
                         | Rvalue::Select(..)
                         | Rvalue::Cancelled
                         | Rvalue::Unwinding
+                        | Rvalue::UnwindingOwn
                         | Rvalue::Restart(_)
                         | Rvalue::Transfer(_)
                         | Rvalue::CallOsr(..)
@@ -3072,6 +3073,7 @@ fn fate_of(
                     | Rvalue::Reflect(..)
                     | Rvalue::Cancelled
                     | Rvalue::Unwinding
+                    | Rvalue::UnwindingOwn
                     | Rvalue::Restart(_)
                     | Rvalue::Transfer(_)
                     | Rvalue::OsrPoint

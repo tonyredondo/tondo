@@ -60,7 +60,7 @@ fn kept(body: &mut Body, types: &Types, reasons: &HashMap<Span, String>) {
             // panic after what may raise one: a turn of a benchmark of it
             // pays what a program without one does not.
             if let Statement::Assign(_, rvalue, _) = statement
-                && matches!(**rvalue, Rvalue::Unwinding)
+                && matches!(**rvalue, Rvalue::Unwinding | Rvalue::UnwindingOwn)
             {
                 if let (true, Some(span)) = (looping, last) {
                     remarks.push((

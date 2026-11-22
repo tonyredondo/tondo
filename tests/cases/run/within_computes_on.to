@@ -1,0 +1,52 @@
+// A deadline stops a block where a cancellation would (11.15, 11.17): at a
+// wait, as it starts or while it waits, and at `tasks.checkpoint()`. A
+// block that computes with calls and never waits is not cut, and `within`
+// gives its value though it ends late. Each block runs on until its own
+// reading of the clock is past the deadline by more than a tick of the
+// clock the runtime compares with, so a fast machine cannot end it early.
+import std.console
+import std.tasks
+import std.time
+
+fn step(n: Int): Int {
+    (n * 7 + 3) % 1000003
+}
+
+// Calls `step` until the deadline of `within` is surely past.
+fn computed(since: time.Instant): Int {
+    var total = 0
+    for since.elapsed().milliseconds() < 30 {
+        total = step(total + 1)
+    }
+    total
+}
+
+fn main() {
+    var since = time.now()
+    match within time.milliseconds(1) { computed(since) >= 0 } {
+        ok(_) => console.println("computed: its value")
+        err(_) => console.println("computed: timed out")
+    }
+    since = time.now()
+    match within time.milliseconds(1) {
+        let total = computed(since)
+        tasks.checkpoint()
+        total
+    } {
+        ok(_) => console.println("checkpointed: its value")
+        err(_) => console.println("checkpointed: timed out")
+    }
+    since = time.now()
+    match within time.milliseconds(1) {
+        let total = computed(since)
+        time.sleep(time.milliseconds(1))
+        total
+    } {
+        ok(_) => console.println("waited: its value")
+        err(_) => console.println("waited: timed out")
+    }
+}
+
+// expect-stdout: computed: its value
+// expect-stdout: checkpointed: timed out
+// expect-stdout: waited: timed out

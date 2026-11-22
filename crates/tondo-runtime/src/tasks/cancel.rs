@@ -152,6 +152,11 @@ fn past_deadline(task: &mut Task) -> bool {
     }
     if entry.2 == 0 {
         let now = Instant::now();
+        // Asked first past it: past, without the coarse clock, which may
+        // lag the exact one by a tick and so see it a tick after the ask.
+        if entry.0 <= now {
+            return true;
+        }
         entry.2 = monotonic(false) + entry.0.saturating_duration_since(now).as_nanos() as u64;
     }
     monotonic(true) >= entry.2

@@ -1,0 +1,139 @@
+// A value a call gives back whole, when the check after the call starts an
+// unwinding because a task of the same `recover` ended with a panic, and
+// the value already went where the caller owns it: into a variable that held
+// another, a field of a record, an element of an array, a variable a closure
+// changes, or an argument of the next call. The caller lets each go once:
+// the heap's checks fault on a second release, and the leak check counts
+// what is kept. Each call reads a pipe that another task opens once the
+// call has, and closes only once the task that panics has ended.
+import std.console
+import std.fs
+import std.process
+import std.sync
+import std.tasks
+import std.time
+
+type Holder = {
+    text: String
+}
+
+// Panics once the call of main is inside its read.
+fn crash(inside: sync.Atomic[Int], n: Int): Int {
+    for inside.load() == 0 {
+        time.sleep(time.milliseconds(1))
+    }
+    panic("task {n} panicked")
+}
+
+fn written(inside: sync.Atomic[Int], first: Join[Int], pipe: String) {
+    _ = wrote(inside, first, pipe)
+}
+
+// The open waits for the call of main to open the pipe too; the close,
+// which ends the call, comes once `first` has ended.
+fn wrote(inside: sync.Atomic[Int], first: Join[Int], pipe: String): !fs.FsError {
+    var file = fs.open(pipe, fs.OpenMode.Append)?
+    file.write("written before the other task panicked\n")?
+    file.flush()?
+    inside.store(1)
+    _ = recover { first.wait() }
+    file.close()?
+}
+
+fn madePipe(name: String): String {
+    _ = fs.remove(name)
+    _ = process.command("mkfifo", name).output()
+    name
+}
+
+fn said(text: String): Int {
+    text.length()
+}
+
+fn main() {
+    let plain = "given-back-plain"
+    _ = fs.writeText(plain, "a file read before any panic\n")
+    let again = madePipe("given-back-again")
+    match recover {
+        let inside = sync.Atomic(0)
+        let first = spawn crash(inside, 1)
+        let writer = spawn written(inside, first, again)
+        var text = fs.readText(plain) ?? ""
+        text = fs.readText(again) ?? ""
+        tasks.checkpoint()
+        console.println(text)
+        writer.wait()
+    } {
+        ok(_) => console.println("ended")
+        err(stopped) => console.println("recovered {stopped.message}")
+    }
+    let field = madePipe("given-back-field")
+    match recover {
+        let inside = sync.Atomic(0)
+        let first = spawn crash(inside, 2)
+        let writer = spawn written(inside, first, field)
+        var holder = Holder { text: "" }
+        holder.text = fs.readText(field) ?? ""
+        tasks.checkpoint()
+        console.println(holder.text)
+        writer.wait()
+    } {
+        ok(_) => console.println("ended")
+        err(stopped) => console.println("recovered {stopped.message}")
+    }
+    let element = madePipe("given-back-element")
+    match recover {
+        let inside = sync.Atomic(0)
+        let first = spawn crash(inside, 3)
+        let writer = spawn written(inside, first, element)
+        var items = ["", ""]
+        items[0] = fs.readText(element) ?? ""
+        tasks.checkpoint()
+        console.println(items[0])
+        writer.wait()
+    } {
+        ok(_) => console.println("ended")
+        err(stopped) => console.println("recovered {stopped.message}")
+    }
+    let captured = madePipe("given-back-captured")
+    match recover {
+        let inside = sync.Atomic(0)
+        let first = spawn crash(inside, 4)
+        let writer = spawn written(inside, first, captured)
+        var kept = ""
+        let read = () {
+            kept = fs.readText(captured) ?? ""
+        }
+        read()
+        tasks.checkpoint()
+        console.println(kept)
+        writer.wait()
+    } {
+        ok(_) => console.println("ended")
+        err(stopped) => console.println("recovered {stopped.message}")
+    }
+    let argument = madePipe("given-back-argument")
+    match recover {
+        let inside = sync.Atomic(0)
+        let first = spawn crash(inside, 5)
+        let writer = spawn written(inside, first, argument)
+        let count = said(fs.readText(argument) ?? "")
+        tasks.checkpoint()
+        console.println("{count}")
+        writer.wait()
+    } {
+        ok(_) => console.println("ended")
+        err(stopped) => console.println("recovered {stopped.message}")
+    }
+    for name in [plain, again, field, element, captured, argument] {
+        _ = fs.remove(name)
+    }
+}
+
+// expect-stdout: recovered task 1 panicked
+// expect-stdout: recovered task 2 panicked
+// expect-stdout: recovered task 3 panicked
+// expect-stdout: recovered task 4 panicked
+// expect-stdout: recovered task 5 panicked
+// expect-no-replay: a recorded run has one worker, which the call blocked in C keeps from the task that writes the pipe
+// expect-no-schedule: one worker runs the tasks, which the call blocked in C keeps from the task that writes the pipe

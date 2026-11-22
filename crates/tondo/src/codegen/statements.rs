@@ -780,11 +780,13 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
             Rvalue::Cancelled if self.e.cg.live() => Val::Scalar(self.e.call_rt(Rt::Cancelled, &[]).unwrap()),
             // After a statement whose panics jumped to the unwinding
             // themselves, nothing to ask.
-            Rvalue::Unwinding if self.e.cg.live() && !self.quiet_check => {
-                Val::Scalar(self.e.call_rt(Rt::Unwinding, &[]).unwrap())
+            Rvalue::Unwinding | Rvalue::UnwindingOwn if self.e.cg.live() && !self.quiet_check => {
+                Val::Scalar(self.e.call_rt(unwinding_rt(rvalue), &[]).unwrap())
             }
-            Rvalue::Unwinding if self.quiet_check => Val::Scalar(self.e.fb.ins().iconst(types::I8, 0)),
-            Rvalue::Unwinding => {
+            Rvalue::Unwinding | Rvalue::UnwindingOwn if self.quiet_check => {
+                Val::Scalar(self.e.fb.ins().iconst(types::I8, 0))
+            }
+            Rvalue::Unwinding | Rvalue::UnwindingOwn => {
                 let reasons = self.attention();
                 let (ask, done) = (self.e.fb.create_block(), self.e.fb.create_block());
                 let answer = self.e.fb.append_block_param(done, types::I8);
@@ -792,7 +794,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 self.e.fb.ins().brif(reasons, ask, &[], done, &[none.into()]);
                 self.e.fb.set_cold_block(ask);
                 self.e.fb.switch_to_block(ask);
-                let asked = self.e.call_rt(Rt::Unwinding, &[]).unwrap();
+                let asked = self.e.call_rt(unwinding_rt(rvalue), &[]).unwrap();
                 self.e.fb.ins().jump(done, &[asked.into()]);
                 self.e.fb.switch_to_block(done);
                 Val::Scalar(answer)
@@ -1115,5 +1117,16 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         }
         let product = self.e.fb.ins().imul_imm_u(quotient, divisor as i64);
         self.e.fb.ins().isub(a, product)
+    }
+}
+
+/// The runtime's answer for a check: whether the task unwinds, delivering a
+/// panic of a task of its `recover` or a passed deadline, or, after a
+/// statement that gave a value the unwinding does not release, whether it
+/// already unwinds.
+pub(super) fn unwinding_rt(rvalue: &Rvalue) -> Rt {
+    match rvalue {
+        Rvalue::UnwindingOwn => Rt::UnwindingOwn,
+        _ => Rt::Unwinding,
     }
 }

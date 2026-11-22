@@ -82,7 +82,10 @@ pub fn drop_dead_checks(bodies: &mut [Body]) {
         for block in &mut body.blocks {
             let [.., statement, Statement::Assign(asked, rvalue, _)] = &block.stmts[..] else { continue };
             let Terminator::Branch(Operand::Copy(condition), _, next) = &block.terminator else { continue };
-            if !matches!(**rvalue, Rvalue::Unwinding) || condition != asked || may_panic(statement) {
+            if !matches!(**rvalue, Rvalue::Unwinding | Rvalue::UnwindingOwn)
+                || condition != asked
+                || may_panic(statement)
+            {
                 continue;
             }
             block.terminator = Terminator::Goto(*next);
@@ -141,6 +144,7 @@ pub(crate) fn may_panic(statement: &Statement) -> bool {
                     | Rvalue::Spawn(..)
                     | Rvalue::Cancelled
                     | Rvalue::Unwinding
+                    | Rvalue::UnwindingOwn
                     | Rvalue::Restart(_)
                     | Rvalue::Transfer(_)
                     | Rvalue::OsrPoint => false,
@@ -629,14 +633,48 @@ impl Builder<'_> {
     /// After a statement that may panic: whether it did, and if so, the
     /// way to the nearest `recover` (15.9).
     fn unwind_check(&mut self) {
+        // Asked before the unwinding's way is made, from the scopes and
+        // frames it releases.
+        let unowned = self.gives_unowned();
         let unwind = self.unwind_target();
         let unwind = self.held_panic(unwind);
         let asked = self.new_local(Ty::BOOL);
-        let check = Statement::Assign(Place::local(asked), Box::new(Rvalue::Unwinding), Span::default());
+        let check = match unowned {
+            true => Rvalue::UnwindingOwn,
+            false => Rvalue::Unwinding,
+        };
+        let check = Statement::Assign(Place::local(asked), Box::new(check), Span::default());
         self.blocks[self.current.0 as usize].0.push(check);
         let next = self.new_block();
         self.terminate(Terminator::Branch(Operand::local(asked), unwind, next));
         self.switch_to(next);
+    }
+
+    /// Whether the statement just made gave a counted value to a local that
+    /// the unwinding's way from here does not release, being in none of the
+    /// scopes and frames it releases: a callee that panicked leaves it zeros,
+    /// but a panic of a task of the `recover`, or a passed deadline, that
+    /// the check delivered would drop it whole with its count. The check
+    /// then answers only for the task's own unwinding (`UnwindingOwn`), and
+    /// leaves the other to the next check, by when the value is the frame's.
+    fn gives_unowned(&self) -> bool {
+        let Some(Statement::Assign(place, rvalue, _)) = self.blocks[self.current.0 as usize].0.last() else {
+            return false;
+        };
+        if !place.path.is_empty() || matches!(**rvalue, Rvalue::Use(_)) {
+            return false;
+        }
+        let result = place.local;
+        if !self.needs_drop(self.locals[result.0 as usize]) {
+            return false;
+        }
+        let (scope_depth, frame_depth) = self.recovers.last().map_or((0, 0), |&(scopes, frames, _)| (scopes, frames));
+        let released = self.frames[frame_depth..].iter().any(|frame| frame.contains(&result))
+            || self.scopes[scope_depth..]
+                .iter()
+                .flatten()
+                .any(|exit| matches!(exit, Exit::Release(local) if *local == result));
+        !released
     }
 
     /// In a live build, the way of a panic through this statement: it may

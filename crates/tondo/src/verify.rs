@@ -28,7 +28,11 @@ pub fn verify(stage: &str, bodies: &[Body], types: &Types, sources: &crate::sour
         return;
     }
     for body in bodies {
-        if let Some(problem) = unassigned(body, types).or_else(|| moved_read(body)).or_else(|| taken_once(body)) {
+        let problem = unassigned(body, types)
+            .or_else(|| moved_read(body))
+            .or_else(|| taken_once(body))
+            .or_else(|| delivered_in_hand(body, types));
+        if let Some(problem) = problem {
             let text = crate::mir_text::text(body, types, sources);
             panic!("the MIR of `{}` after {stage} {problem}\n{text}", body.name);
         }
@@ -298,6 +302,70 @@ fn read_besides_target(statement: &Statement, place: &Place) -> bool {
         read |= overlap(seen_place, place);
     });
     read
+}
+
+/// Where a check that may deliver a panic of a task of the `recover`, or a
+/// passed deadline (`Unwinding`), follows a statement that gave a counted
+/// value to a local its unwinding's way does not release: delivered there,
+/// the value would go with its count. Such a check answers only for the
+/// task's own unwinding (`UnwindingOwn`), which the lowering chooses and
+/// every pass after it must keep.
+pub fn delivered_in_hand(body: &Body, types: &Types) -> Option<String> {
+    for (block, data) in body.blocks.iter().enumerate() {
+        let count = data.stmts.len();
+        let Some(Statement::Assign(asked, rvalue, _)) = data.stmts.last() else { continue };
+        if !matches!(**rvalue, Rvalue::Unwinding) || count < 2 {
+            continue;
+        }
+        let Terminator::Branch(Operand::Copy(condition), unwind, _) = &data.terminator else { continue };
+        if condition != asked {
+            continue;
+        }
+        let Statement::Assign(place, given, _) = &data.stmts[count - 2] else { continue };
+        if !place.path.is_empty()
+            || matches!(**given, Rvalue::Use(_))
+            || !types.needs_drop(body.locals[place.local.0 as usize])
+        {
+            continue;
+        }
+        if !released_on_the_way(body, unwind.0 as usize, place.local) {
+            return Some(format!(
+                "delivers a panic at the check of b{block} with `l{}` in hand, which its unwinding does not release",
+                place.local.0
+            ));
+        }
+    }
+    None
+}
+
+/// Whether the way of an unwinding from `from`, through the blocks it goes
+/// to, releases `local`: past the cleanup of a call inlined there, which
+/// goes on to the caller's, up to the function's return or the `recover`
+/// or `within` that stops it.
+fn released_on_the_way(body: &Body, from: usize, local: Local) -> bool {
+    use crate::hir::{Callee, StdFn};
+    let mut seen = vec![false; body.blocks.len()];
+    let mut ways = vec![from];
+    while let Some(block) = ways.pop() {
+        if std::mem::replace(&mut seen[block], true) {
+            continue;
+        }
+        let data = &body.blocks[block];
+        if data.stmts.iter().any(|s| matches!(s, Statement::Release(place) if place.local == local)) {
+            return true;
+        }
+        match (data.stmts.last(), &data.terminator) {
+            // The block that stops the panic ends its way; the other goes on.
+            (Some(Statement::Assign(mine, rvalue, _)), Terminator::Branch(Operand::Copy(asked), _, passes))
+                if asked == mine
+                    && matches!(**rvalue, Rvalue::Call(Callee::Std(StdFn::RecoverCatch | StdFn::WithinCatch), _)) =>
+            {
+                ways.push(passes.0 as usize);
+            }
+            (_, terminator) => ways.extend(successors(terminator)),
+        }
+    }
+    false
 }
 
 /// What a taken parameter holds at a point: the reference its caller gave,
@@ -595,6 +663,81 @@ mod tests {
         assert_eq!(moved(|_| vec![]), None);
         let twice = moved(|p| vec![Statement::Release(Place::local(p))]);
         assert!(twice.as_ref().is_some_and(|found| found.contains("twice")), "{twice:?}");
+    }
+
+    /// A check that may deliver another task's panic, right after a call
+    /// gave a counted value its unwinding does not release, is refused: the
+    /// value would go with its count. The check of the task's own unwinding
+    /// there, or an unwinding that releases the value, passes.
+    #[test]
+    fn a_delivering_check_with_a_value_in_hand_is_refused() {
+        let dir = std::env::temp_dir().join(format!("tondo-verify-delivered-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("main.to");
+        let source =
+            "fn given(values: Array[Int]): Int {\n    values.length()\n}\n\nfn main() {\n    let _ = given([1])\n}\n";
+        std::fs::write(&path, source).unwrap();
+        let analysis = crate::driver::analyze(&path).unwrap();
+        let program = analysis.program.as_ref().unwrap();
+        let lowered = crate::lower::lower(program, false, false, None);
+        let _ = std::fs::remove_dir_all(&dir);
+        let given = lowered.into_iter().find(|body| body.name.ends_with("given")).unwrap();
+        let std = |f: crate::hir::StdFn| Box::new(Rvalue::Call(crate::hir::Callee::Std(f), Vec::new()));
+        // The check, then the unwinding's way from block 1, which `way`
+        // gives the value made, a flag and a local to assign.
+        let check = |own: bool, way: &dyn Fn(Local, Local, Local) -> Vec<BlockData>| {
+            let mut body = given.clone();
+            let p = body.params[0];
+            let other = Local(body.locals.len() as u32);
+            body.locals.push(body.locals[p.0 as usize]);
+            let asked = Local(body.locals.len() as u32);
+            body.locals.push(Ty::BOOL);
+            let flag = Local(body.locals.len() as u32);
+            body.locals.push(Ty::BOOL);
+            let spare = Local(body.locals.len() as u32);
+            body.locals.push(Ty::BOOL);
+            let made = Statement::Assign(Place::local(other), std(crate::hir::StdFn::UnwindHold), Default::default());
+            let check = if own { Rvalue::UnwindingOwn } else { Rvalue::Unwinding };
+            body.blocks = vec![
+                block(
+                    vec![made, Statement::Assign(Place::local(asked), Box::new(check), Default::default())],
+                    Terminator::Branch(Operand::local(asked), BlockId(1), BlockId(2)),
+                ),
+                block(vec![], goto(3)),
+                block(vec![Statement::Release(Place::local(other))], back()),
+            ];
+            body.blocks.extend(way(other, flag, spare));
+            delivered_in_hand(&body, &program.types)
+        };
+        let release = |local: Local| Statement::Release(Place::local(local));
+        let refused = check(false, &|_, _, _| vec![block(vec![], back())]);
+        assert!(refused.as_ref().is_some_and(|found| found.contains("in hand")), "{refused:?}");
+        assert_eq!(check(true, &|_, _, _| vec![block(vec![], back())]), None);
+        assert_eq!(check(false, &|other, _, _| vec![block(vec![release(other)], back())]), None);
+        // A call inlined there resumes the panic into its caller's cleanup.
+        let resumed = |other, _, spare| {
+            let resume =
+                Statement::Assign(Place::local(spare), std(crate::hir::StdFn::UnwindResume), Default::default());
+            vec![block(vec![resume], goto(4)), block(vec![release(other)], back())]
+        };
+        assert_eq!(check(false, &resumed), None);
+        // A `recover` that stops the panic ends its way; one that lets it
+        // pass does not.
+        let caught = |released_where_it_stops: bool| {
+            move |other, flag, _| {
+                let mine =
+                    Statement::Assign(Place::local(flag), std(crate::hir::StdFn::RecoverCatch), Default::default());
+                let (stops, passes) = if released_where_it_stops {
+                    (vec![release(other)], vec![])
+                } else {
+                    (vec![], vec![release(other)])
+                };
+                vec![block(vec![mine], branch(flag, 4, 5)), block(stops, back()), block(passes, back())]
+            }
+        };
+        let stopped = check(false, &caught(true));
+        assert!(stopped.as_ref().is_some_and(|found| found.contains("in hand")), "{stopped:?}");
+        assert_eq!(check(false, &caught(false)), None);
     }
 
     /// A loop's head is a join: held on the way in and moved on the way

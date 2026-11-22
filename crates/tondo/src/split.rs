@@ -515,7 +515,7 @@ fn disqualified(
                     // it, so it stays one statement: what it writes or
                     // copies whole is not split.
                     let unwinds = block.stmts.get(at + 1).is_some_and(|next| {
-                        matches!(next, Statement::Assign(_, rvalue, _) if matches!(&**rvalue, Rvalue::Unwinding))
+                        matches!(next, Statement::Assign(_, rvalue, _) if matches!(&**rvalue, Rvalue::Unwinding | Rvalue::UnwindingOwn))
                     });
                     let whole = |place: &Place| {
                         shapes[place.local.0 as usize]

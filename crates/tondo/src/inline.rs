@@ -678,7 +678,10 @@ fn inline_into(caller: &Body, index: usize, small: &[Option<Body>]) -> Option<Bo
                     body.locals.push(crate::types::Ty::BOOL);
                     body.names.push(None);
                     body.origins.push(Origin::Made(Vec::new(), 0));
-                    current.push(Statement::Assign(Place::local(asked), Box::new(Rvalue::Unwinding), Span::default()));
+                    // The index's own panic, with the parameter's value in hand,
+                    // which the call's unwinding does not release.
+                    let own = Box::new(Rvalue::UnwindingOwn);
+                    current.push(Statement::Assign(Place::local(asked), own, Span::default()));
                     checks.push(blocks.len());
                     let next = BlockId(blocks.len() as u32 + 1);
                     let terminator = Terminator::Branch(Operand::local(asked), unwind, next);
@@ -1253,6 +1256,7 @@ pub(crate) fn visit_rvalue(rvalue: &mut Rvalue, f: &mut impl FnMut(&mut Place)) 
         | Rvalue::Layout(..)
         | Rvalue::Cancelled
         | Rvalue::Unwinding
+        | Rvalue::UnwindingOwn
         | Rvalue::Restart(_)
         | Rvalue::Transfer(_)
         | Rvalue::OsrPoint => {}
@@ -1264,7 +1268,7 @@ pub(crate) fn visit_rvalue(rvalue: &mut Rvalue, f: &mut impl FnMut(&mut Place)) 
 /// (15.9).
 fn unwinds(block: &BlockData, at: usize) -> Option<BlockId> {
     let Some(Statement::Assign(asked, rvalue, _)) = block.stmts.get(at + 1) else { return None };
-    if !matches!(**rvalue, Rvalue::Unwinding) || at + 2 != block.stmts.len() {
+    if !matches!(**rvalue, Rvalue::Unwinding | Rvalue::UnwindingOwn) || at + 2 != block.stmts.len() {
         return None;
     }
     match &block.terminator {

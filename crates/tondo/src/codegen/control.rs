@@ -62,8 +62,9 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         if !last.path.is_empty() || last.local != condition.local {
             return None;
         }
-        if matches!(**rvalue, Rvalue::Unwinding) {
-            return Some(Fused { statements: 1, asked: last, cancelled: None, span: *span, then, otherwise });
+        if matches!(**rvalue, Rvalue::Unwinding | Rvalue::UnwindingOwn) {
+            let own = matches!(**rvalue, Rvalue::UnwindingOwn);
+            return Some(Fused { statements: 1, asked: last, cancelled: None, own, span: *span, then, otherwise });
         }
         let Rvalue::Binary(BinOp::Eq, Operand::Copy(read), Operand::Const(Const::Int(1, _))) = &**rvalue else {
             return None;
@@ -73,6 +74,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         };
         (matches!(**rvalue, Rvalue::Cancelled) && asked.path.is_empty() && *read == *asked).then_some(Fused {
             statements: 2,
+            own: false,
             asked,
             cancelled: Some(last),
             span: *span,
@@ -100,7 +102,7 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
     }
 
     pub(super) fn fused_branch(&mut self, fused: Fused, quiet: bool) {
-        let Fused { asked, cancelled, span, then, otherwise, .. } = fused;
+        let Fused { asked, cancelled, own, span, then, otherwise, .. } = fused;
         self.probed = None;
         self.at_typed(span, Some(self.body.place_ty(self.e.cg.types(), asked)));
         self.probe(span);
@@ -119,7 +121,11 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.fb.ins().brif(reasons, ask, &[], otherwise, &[]);
         self.e.fb.set_cold_block(ask);
         self.e.fb.switch_to_block(ask);
-        let rt = if cancelled.is_some() { Rt::Cancelled } else { Rt::Unwinding };
+        let rt = match (cancelled.is_some(), own) {
+            (true, _) => Rt::Cancelled,
+            (false, true) => Rt::UnwindingOwn,
+            (false, false) => Rt::Unwinding,
+        };
         let answer = self.e.call_rt(rt, &[]).unwrap();
         self.write(asked, Val::Scalar(answer));
         let condition = match cancelled {
@@ -390,6 +396,9 @@ pub(super) struct Fused<'a> {
     asked: &'a Place,
     /// For a cancellation, the comparison of its answer with 1.
     cancelled: Option<&'a Place>,
+    /// A check after a statement that gave a value its unwinding does not
+    /// release (`Rvalue::UnwindingOwn`).
+    own: bool,
     span: Span,
     then: crate::mir::BlockId,
     otherwise: crate::mir::BlockId,

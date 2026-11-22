@@ -1,0 +1,33 @@
+// A value a call gives back whole after the deadline of its `within`
+// passed: the check after the call leaves the unwinding to the next one,
+// with nothing in hand, and the caller lets the value go as it unwinds. The
+// call runs `cat` on a pipe that nothing writes, so only the deadline ends
+// its wait, which stops the process; the call then gives back, today, what
+// it has, `ok` with no output, always past the deadline. Whether a call
+// whose inner wait a deadline ended should give back a value is an open
+// question, which this case changes with. The leak check counts what is
+// not let go.
+import std.console
+import std.fs
+import std.process
+import std.tasks
+import std.time
+
+fn main() {
+    let name = "within-given-back"
+    _ = fs.remove(name)
+    _ = process.command("mkfifo", name).output()
+    match within time.milliseconds(10) {
+        let read = process.command("cat", name).output()
+        tasks.checkpoint()
+        console.println("read {read.isOk()}")
+    } {
+        ok(_) => console.println("in time")
+        err(_) => console.println("past its deadline")
+    }
+    _ = fs.remove(name)
+}
+
+// expect-stdout: past its deadline
+// expect-no-replay: a recorded run calls the process on its one thread, where no deadline ends the wait
+// expect-no-schedule: the virtual clock of an order stands still while a task waits on the host, so the deadline never passes

@@ -48,6 +48,7 @@ Rvalue::TaskOp                cases/run/regions/tasks.to cases/run/regions/texts
 Rvalue::Select                cases/run/regions/tasks.to
 Rvalue::Cancelled             - gives a Bool
 Rvalue::Unwinding             - gives a Bool
+Rvalue::UnwindingOwn          - gives a Bool
 Rvalue::Restart               - live builds only, which have no regions
 Rvalue::Transfer              - live builds only, which have no regions
 Rvalue::CallOsr               - live builds only, which have no regions

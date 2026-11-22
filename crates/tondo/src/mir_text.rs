@@ -254,6 +254,7 @@ fn rvalue_text(rvalue: &Rvalue, types: &Types) -> String {
                 Rvalue::Select(..) => "select",
                 Rvalue::Cancelled => "cancelled",
                 Rvalue::Unwinding => "unwinding",
+                Rvalue::UnwindingOwn => "unwinding of its own",
                 Rvalue::Restart(_) => "restart",
                 Rvalue::Transfer(_) => "transfer",
                 Rvalue::CallOsr(..) => "call for a live frame",

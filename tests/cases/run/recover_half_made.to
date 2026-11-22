@@ -1,0 +1,119 @@
+// A call that panics after making part of what it would give: its own
+// unwinding lets that go, and its caller, unwinding from the same panic,
+// lets go of nothing of it again. Text, a record of two counted fields, an
+// option of an array, a tuple, a result whose error is a text, and an array
+// of texts its caller may keep in a region; and a `defer` whose body calls
+// for a text while the panic unwinds, where the checks are held and say no.
+// The heap's checks fault on a second release, and the leak check counts
+// what is kept.
+import std.console
+
+type Pair = {
+    name: String
+    items: Array[Int]
+}
+
+fn text(n: Int): String {
+    let made = "a text of {n} made before the panic"
+    if n > 0 {
+        panic("text {n}")
+    }
+    made
+}
+
+fn pair(n: Int): Pair {
+    let made = Pair { name: "pair {n}", items: [n, n + 1] }
+    if n > 0 {
+        panic("pair {n}")
+    }
+    made
+}
+
+fn maybe(n: Int): Array[Int]? {
+    let made = [n, n + 1, n + 2]
+    if n > 0 {
+        panic("option {n}")
+    }
+    made
+}
+
+fn both(n: Int): (String, Array[Int]) {
+    let made = ("both {n}", [n])
+    if n > 0 {
+        panic("tuple {n}")
+    }
+    made
+}
+
+fn checked(n: Int): Int ! String {
+    let message = "error {n}, a text made before the panic"
+    if n > 0 {
+        panic("result {n}")
+    }
+    fail message
+}
+
+fn texts(n: Int): Array[String] {
+    var all: Array[String] = []
+    for i in 0..n {
+        all.push("text number {i}")
+    }
+    if n > 0 {
+        panic("texts {n}")
+    }
+    all
+}
+
+fn named(n: Int): String {
+    "deferred {n}"
+}
+
+fn deferred(n: Int): Int {
+    defer {
+        console.println(named(n))
+    }
+    if n > 0 {
+        panic("defer {n}")
+    }
+    n
+}
+
+fn main() {
+    match recover { text(1) } {
+        ok(made) => console.println(made)
+        err(stopped) => console.println(stopped.message)
+    }
+    match recover { pair(1).name } {
+        ok(name) => console.println(name)
+        err(stopped) => console.println(stopped.message)
+    }
+    match recover { maybe(1)?.length() ?? 0 } {
+        ok(count) => console.println("{count}")
+        err(stopped) => console.println(stopped.message)
+    }
+    match recover { both(1).0 } {
+        ok(made) => console.println(made)
+        err(stopped) => console.println(stopped.message)
+    }
+    match recover { checked(1) } {
+        ok(_) => console.println("checked")
+        err(stopped) => console.println(stopped.message)
+    }
+    match recover { texts(3).length() } {
+        ok(count) => console.println("{count}")
+        err(stopped) => console.println(stopped.message)
+    }
+    match recover { deferred(1) } {
+        ok(n) => console.println("{n}")
+        err(stopped) => console.println(stopped.message)
+    }
+}
+
+// expect-stdout: text 1
+// expect-stdout: pair 1
+// expect-stdout: option 1
+// expect-stdout: tuple 1
+// expect-stdout: result 1
+// expect-stdout: texts 3
+// expect-stdout: deferred 1
+// expect-stdout: defer 1

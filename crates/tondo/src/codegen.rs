@@ -4694,7 +4694,10 @@ fn resumes(statement: &Statement) -> bool {
 /// check that follows it, `asked = Unwinding` and a branch on it (15.9).
 fn unwind_target(block: &crate::mir::BlockData, at: usize) -> Option<crate::mir::BlockId> {
     let Some(Statement::Assign(asked, rvalue, _)) = block.stmts.get(at + 1) else { return None };
-    if !matches!(**rvalue, Rvalue::Unwinding) || !asked.path.is_empty() || at + 2 != block.stmts.len() {
+    if !matches!(**rvalue, Rvalue::Unwinding | Rvalue::UnwindingOwn)
+        || !asked.path.is_empty()
+        || at + 2 != block.stmts.len()
+    {
         return None;
     }
     match &block.terminator {
