@@ -20,10 +20,13 @@ fn holding(id: sync.Atomic[Int]) {
     }
 }
 
-fn gone(id: Int): Bool {
-    match process.command("kill", "-0", "{id}").stderr(process.Output.Null).status() {
-        ok(status) => not status.success
-        err(_) => false
+/// Whether the process `id` is gone, asked through the shell's own `kill`:
+/// an image as small as `debian:stable-slim` has no `kill` program, and a
+/// question that could not be asked says so, never "still there".
+fn gone(id: Int): String {
+    match process.command("sh", "-c", "kill -0 {id} 2>/dev/null").status() {
+        ok(status) => "{not status.success}"
+        err(error) => "could not ask: {error}"
     }
 }
 
