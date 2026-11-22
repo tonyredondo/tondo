@@ -91,11 +91,25 @@ musl() {
      # The workspace's tests and the static cases, each whatever the other gave.
      cargo test --workspace; workspace=\$?
      TONDO_CASES_STATIC=1 cargo test --workspace --test cases cases; static=\$?
+     cargo test --workspace --test cases --no-run 2>&1 | grep -o '/alpine-target/debug/deps/cases-[0-9a-f]*' > /alpine-target/cases
      echo \"part workspace: \$workspace\"; echo \"part static: \$static\"
      chown -R $me /alpine-target /usr/local/cargo/registry /usr/local/cargo/git
      [ \$workspace = 0 ] && [ \$static = 0 ]"
   local code=$?
   grep '^part ' "$out/musl.txt" | sed "s/^part /  musl /" >&3
+  # CI's step with no C compiler, as CI runs it: the cases' binary, root's,
+  # the last command of `sh -c` in plain alpine, which busybox runs in its
+  # place, so that it is the container's first process and reaps nothing.
+  # The host's own platform, whichever one the tag `alpine` was pulled for.
+  local cases plat run
+  cases=$(cat "$S/alpine-target/cases")
+  plat=linux/$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+  run="docker run --rm --platform $plat -v $PWD:/work -w /work -v $S/alpine-target:/alpine-target"
+  run="$run -e TONDO_CI_DUMPS=/alpine-target/ci-dumps"
+  part no-cc $run alpine sh -c "! command -v cc && $cases cases projects" || code=1
+  part no-cc-static $run -e TONDO_CASES_STATIC=1 alpine sh -c "! command -v cc && $cases cases" || code=1
+  # What they wrote as root, this machine's user's again.
+  docker run --rm --platform "$plat" -v "$S/alpine-target:/alpine-target" alpine chown -R "$me" /alpine-target
   return $code
 }
 
