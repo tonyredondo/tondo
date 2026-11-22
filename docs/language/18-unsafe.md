@@ -344,7 +344,11 @@ fn main() {
 C may call the function from any thread, and inside it the function is
 ordinary Tondo: it may wait, spawn tasks and use channels. Called from a
 thread that C made, it runs on that thread, as a task of its own, and
-returns to C when it ends; if it waits, the thread waits with it. State goes to a
+returns to C when it ends; if it waits, the thread waits with it. Its stack
+there is that thread's, of the size C or the system gave it, which is half
+a megabyte for a thread of macOS where a task has eight: work that goes
+deep, as reading a document nested many levels, belongs in a task that the
+callback starts and waits for. State goes to a
 callback the way C libraries expect, through a `void *`: `ffi.context(value)`
 makes one of any Tondo value, and `ffi.fromContext[T](pointer)` reads it
 back in the callback.
