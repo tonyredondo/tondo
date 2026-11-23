@@ -165,8 +165,8 @@ kept in [decisions](decisions.md) whether it stays or not.
 | Checks of bounds and of overflow | Dropped where the ranges `prove` holds show they cannot fail; the flags of an overflow that only a branch reads are not made into a value | What a loop still keeps, by the rows; prove's widening at a loop behind code that has not settled, found on 2026-11-23 | Now, then step 8 |
 | Tests decided by the way in | A short block whose test each way into it already decides is copied into each way, and the test becomes a jump (`thread.rs`) | Following a copy to what it was made of, measured on 2026-11-23 | Now |
 | Copies passed on | `a = value` then `b = a`, with `a` read nowhere after, is `b = value` (`elide.rs`) | Nothing known | |
-| Room before a loop | An array that a counted loop pushes to once a turn takes its room before the loop (`reserve.rs`) | Loops that push more than once, or under a test | Step 8 |
-| A copy of generic code for each type | One of each generic function for each type it is used with (`mono.rs`) | Copies that end the same merged, for size | Step 8 |
+| Room before a loop | An array that a counted loop pushes to once a turn takes its room before the loop (`reserve.rs`) | A fixed number of pushes a turn, which takes that many times the turns; a push under a test only with a bound on the room it may take beyond what it fills, as the pass declines it today so that no array takes much more room than its elements | Step 8 |
+| A copy of generic code for each type | One of each generic function for each type it is used with (`mono.rs`) | Copies that end the same merged, which saves size and not time | Step 8, last |
 | Pairs of counts removed | An owner's reference taken, lent or borrowed where it was counted (`moves.rs`, `lends.rs`, `borrowed.rs`, `takes.rs`) | Texts' counts at direct sites | Step 7 |
 | A value with one owner changed in place | A parameter the function takes (`takes.rs`) | A map copied whole at each write in a loop over it | Step 4 |
 | Short texts without the heap | Up to seven bytes | Texts that share another's bytes | Step 5 |
