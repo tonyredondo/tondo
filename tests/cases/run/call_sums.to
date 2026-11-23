@@ -37,5 +37,5 @@ fn main() {
 }
 
 // expect-stdout: 32 6
-// expect-optimization: 18:13 call stays a call of `shout`: its body costs 32, more than the 30 inlining takes; 2 places in it make values in regions of its own
-// expect-optimization: 36:23 call stays a call of `tally`: its body costs 43, more than the 30 inlining takes; 4 places in it make values on the heap and 2 in regions of its own
+// expect-optimization: 18:13 call stays a call of `shout`: its body costs 32, more than the 31 inlining takes; 2 places in it make values in regions of its own
+// expect-optimization: 36:23 call stays a call of `tally`: its body costs 43, more than the 31 inlining takes; 4 places in it make values on the heap and 2 in regions of its own

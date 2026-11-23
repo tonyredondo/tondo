@@ -18,8 +18,11 @@ use crate::source::Span;
 use std::collections::{HashMap, HashSet};
 
 /// The most a function may cost, in statements and branches, to be
-/// inlined.
-const SMALL: usize = 30;
+/// inlined. It was 30; at 31 it takes `json.numeral` and a few others,
+/// whose rows gain for bytes not worth naming (docs/decisions.md). A
+/// constant, not a design: the weighing of a call by what it buys is to
+/// take its place.
+const SMALL: usize = 31;
 /// How many times calls in code just inlined are inlined in turn.
 const ROUNDS: usize = 3;
 /// The most statements a function's guard may have, its test and its way

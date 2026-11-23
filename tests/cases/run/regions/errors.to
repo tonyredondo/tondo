@@ -102,10 +102,16 @@ fn loudest(file: String): String ! Problem {
     best.toUpper()
 }
 
-/// The error of `loudest`, passed on out of a turn.
+/// The error of `loudest`, passed on out of a turn. It stays a call, too
+/// large for the inliner, so that `loudest` is called from a loop whose
+/// function passes its error on: opened into `main`, which handles it, the
+/// region of a turn would take what each turn makes.
 fn shouted(files: Array[String]): Int ! Problem {
     var total = 0
     for file in files {
+        if file.isEmpty() {
+            continue
+        }
         let loud = loudest(file)?
         total += loud.length()
     }
@@ -198,5 +204,5 @@ fn main(): !fs.FsError {
 // expect-optimization: 78:5 region goes in a region that the caller of `longest` gives
 // expect-optimization: 100:30 region stays on the heap: `loudest` returns it, and `shouted` calls it in every turn of a loop, where the region its caller gives would keep each turn's
 // expect-optimization: 102:5 region stays on the heap: `loudest` returns it, and `shouted` calls it in every turn of a loop, where the region its caller gives would keep each turn's
-// expect-optimization: 126:30 region stays on the heap: `quietest` returns it, and `shoutedOr` passes on the error of `quietest`, which `quietest` may make in the region of what it returns
-// expect-optimization: 128:5 region stays on the heap: `quietest` returns it, and `shoutedOr` passes on the error of `quietest`, which `quietest` may make in the region of what it returns
+// expect-optimization: 132:30 region stays on the heap: `quietest` returns it, and `shoutedOr` passes on the error of `quietest`, which `quietest` may make in the region of what it returns
+// expect-optimization: 134:5 region stays on the heap: `quietest` returns it, and `shoutedOr` passes on the error of `quietest`, which `quietest` may make in the region of what it returns
