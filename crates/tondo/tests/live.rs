@@ -922,6 +922,66 @@ fn a_fix_that_panics_again_waits_again() {
     server.stop();
 }
 
+const HELD_ASSERT: &str = r##"import std.console
+
+fn label(n: Int): String {
+    "the line of number {n}"
+}
+
+fn shown(n: Int): String {
+    if n == 3 {
+        panic("cannot show {n}")
+    }
+    "#{n}"
+}
+
+fn valid(n: Int): Bool {
+    n != 3
+}
+
+fn main() {
+    var seen = 0
+    for {
+        match console.readLine() {
+            some(line) => {
+                let n = Int.parse(line) ?? 0
+                assert(valid(n), "{label(n)}: {shown(n)}")
+                seen += 1
+                console.println("{seen} ok {n}")
+            }
+            none => break
+        }
+    }
+}
+"##;
+
+/// A panic held while an `assert`'s message is made lets go of what the
+/// statement made, and zeroes it: the statement started again by the fix
+/// passes, and its way that passes releases the message's values, which
+/// must hold nothing by then.
+#[test]
+fn a_panic_held_in_an_assert_s_message_releases_it_once() {
+    let dir = dir("live_held_assert");
+    let file = dir.join("asserts.to");
+    std::fs::write(&file, HELD_ASSERT).unwrap();
+    let mut server = Running::start(&dir, &["run", "asserts.to", "--watch"]);
+    assert_eq!(server.answer("1"), "1 ok 1");
+    writeln!(server.input, "3").unwrap();
+    server.input.flush().unwrap();
+    let waits = (0..600)
+        .find_map(|_| server.errors.recv_timeout(Duration::from_secs(1)).ok().filter(|l| l.contains("waits here")));
+    assert!(waits.is_some(), "the task did not wait");
+    let fixed = HELD_ASSERT
+        .replace("    if n == 3 {\n        panic(\"cannot show {n}\")\n    }\n", "")
+        .replace("    n != 3\n", "    true\n");
+    save(&file, &fixed);
+    assert_eq!(server.lines.recv_timeout(BUILDING).unwrap(), "2 ok 3");
+    assert_eq!(server.answer("4"), "3 ok 4");
+    let errors: Vec<String> = server.errors.try_iter().collect();
+    assert!(!errors.iter().any(|l| l.contains("fatal")), "{errors:#?}");
+    server.stop();
+}
+
 /// An expression in a running program: on the code as it is, with nothing
 /// stopped; a panic there is the expression's.
 #[test]

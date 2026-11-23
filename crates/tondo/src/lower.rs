@@ -708,11 +708,15 @@ impl Builder<'_> {
     }
 
     /// What the statement made since it started goes, and it starts again.
+    /// Each value it made is let go and zeroed: the statement run again may
+    /// take a way that makes it no more, and releases it all the same, as an
+    /// `assert` that passes releases the message it made when it failed.
     fn start_again(&mut self, again: Again) {
         let mut temps: Vec<Local> = self.frames[again.frames][again.temps..].to_vec();
         temps.extend(self.frames[again.frames + 1..].iter().flatten());
         for local in temps.into_iter().rev() {
             self.push(Statement::Release(Place::local(local)));
+            self.push(Statement::Clear(local));
         }
         let exits: Vec<Exit> = self.scopes[again.scopes..].iter().rev().flat_map(|s| s.iter().rev().cloned()).collect();
         for exit in exits {
