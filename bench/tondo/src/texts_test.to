@@ -1,3 +1,4 @@
+import std.hash
 import std.testing
 
 /// Words of ASCII alone.
@@ -27,9 +28,11 @@ fn counted(text: String): Int {
 test texts {
     let (ascii, other) = (Ascii.repeat(25), Other.repeat(25))
     let replaced = testing.bench("replace ascii", () => ascii.replace("the", "a"))
+    assert(hash.fnv64a(replaced.bytes()) == 5736149670972329104)
     assert(replaced.byteLength() == 1000 and not replaced.contains("the"))
     assert(replaced.startsWith("a quick brown fox jumps over a lazy dog"))
     let replacedOther = testing.bench("replace other", () => other.replace("más", "menos"))
+    assert(hash.fnv64a(replacedOther.bytes()) == 4493831165883743631)
     assert(replacedOther.byteLength() == 1750 and not replacedOther.contains("más"))
     assert(replacedOther.startsWith("el ñandú comió menos piñones"))
     let padded = "   {Ascii}\t\n"
@@ -38,15 +41,18 @@ test texts {
     )
     assert(testing.bench("trim read", () => padded.trim().byteLength()) == 43)
     let upper = testing.bench("toUpper ascii", () => ascii.toUpper())
+    assert(hash.fnv64a(upper.bytes()) == 4380632396578631616)
     assert(upper.byteLength() == 1100 and upper.startsWith("THE QUICK BROWN FOX"))
     assert(upper.endsWith("OVER THE LAZY DOG "))
     let upperOther = testing.bench("toUpper other", () => other.toUpper())
+    assert(hash.fnv64a(upperOther.bytes()) == 7735282680022484963)
     assert(
         upperOther.byteLength() == 1725 and
             upperOther.startsWith("EL ÑANDÚ COMIÓ MÁS PIÑONES ΑΒΓ ΔΈΛΤΑ"),
     )
     let words = Ascii.split(" ").repeat(10)
     let commaJoined = testing.bench("join 100", () => words.join(", "))
+    assert(hash.fnv64a(commaJoined.bytes()) == 1243310430644686103)
     assert(commaJoined.byteLength() == 548 and commaJoined.startsWith("the, quick, brown"))
     assert(commaJoined.endsWith("over, the, lazy, dog, "))
     assert(testing.bench("split other", () => other.split(" ").length()) == 201)

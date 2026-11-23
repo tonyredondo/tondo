@@ -1,4 +1,5 @@
 import std.format
+import std.hash
 import std.testing
 
 fn joined(count: Int): String {
@@ -26,6 +27,7 @@ test strings {
             "ada lives in london, age 36",
     )
     let text = testing.bench("builder 100", () => joined(100))
+    assert(hash.fnv64a(text.bytes()) == 3592899213242786019)
     assert(text.byteLength() == 590 and text.startsWith("part0part1part2"))
     assert(text.endsWith("part97part98part99"))
     let csv = ["alpha", "beta", "gamma", "delta"].repeat(25).join(",")

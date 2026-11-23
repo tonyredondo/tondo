@@ -1,4 +1,5 @@
 import std.fs
+import std.hash
 import std.testing
 
 /// A site that lives in memory: two pages, a draft and a theme.
@@ -89,6 +90,7 @@ fn blog(): fs.FileSystem ! fs.FsError {
 test aSiteOfFiftyPostsIsBuilt {
     let site = blog()?
     let built = testing.bench("site of 50 posts", () => build(site, fs.memory(), "Bench"))?
+    assert(hash.fnv64a("{built.files.sorted()}".bytes()) == 3847397097699977159)
     assert(built.pages == 50 and built.drafts == 0)
     assert(built.files.length() == 57 and "index.html" in built.files)
 }

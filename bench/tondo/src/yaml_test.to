@@ -1,3 +1,4 @@
+import std.hash
 import std.testing
 import std.yaml
 
@@ -23,10 +24,12 @@ test yaml {
     let text = yaml.encode(servers)
     // bench/go gives the same.
     let encoded = testing.bench("encode 100 structs", () => yaml.encode(servers))
+    assert(hash.fnv64a(encoded.bytes()) == 3041380097821569501)
     assert(encoded.byteLength() == 8740)
     assert(encoded.startsWith("- name: server 0\n  port: 8000\n"))
     assert(encoded.endsWith("    - b.example\n  secure: false\n"))
     let decoded = testing.bench("decode 100 structs", () => yaml.decode[Array[Server]](text))?
+    assert(hash.fnv64a("{decoded}".bytes()) == 9834223571939918737)
     assert(decoded.length() == 100)
     assert(decoded[0].name == "server 0" and decoded[0].port == 8000 and decoded[0].secure)
     assert(decoded[99].name == "server 99" and decoded[99].port == 8099 and not decoded[99].secure)

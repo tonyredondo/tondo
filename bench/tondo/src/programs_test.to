@@ -1,6 +1,7 @@
 // Small programs, each a shape programs have, that combine what the other
 // rows measure alone: a change is judged by how they go together too.
 
+import std.hash
 import std.io
 import std.json
 import std.testing
@@ -103,6 +104,7 @@ test programs {
     }
     // bench/go gives the same.
     let adults = testing.bench("sort adults", () => adultLine(people))
+    assert(hash.fnv64a(adults.bytes()) == 8092124183903495056)
     assert(adults.byteLength() == 9639)
     assert(adults.startsWith("person 1:19,person 101:39,"))
     assert(adults.endsWith(",person 998:42,person 999:21"))

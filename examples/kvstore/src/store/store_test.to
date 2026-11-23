@@ -1,4 +1,5 @@
 import kvstore.protocol
+import std.hash
 import std.model
 import std.testing
 
@@ -79,8 +80,10 @@ test theCountOfNumbersIsAlwaysRight {
 
 /// A thousand lines a client sends: it sets, counts, reads and deletes over
 /// fifty keys.
+/// A thousand commands, the last asking for the keys, whose answer every
+/// command before it decides.
 fn session(): Array[String] {
-    (0..1000)
+    var lines = (0..999)
         .map(
             (n) {
                 let key = "key{n % 50}"
@@ -93,9 +96,13 @@ fn session(): Array[String] {
             },
         )
         .collect()
+    lines.push("KEYS")
+    lines
 }
 
 test aThousandCommandsAreApplied {
     let lines = session()
-    assert(testing.bench("1000 commands", () => protocol.format(run(lines).reply)) == "NONE")
+    let reply = testing.bench("1000 commands", () => protocol.format(run(lines).reply))
+    assert(hash.fnv64a(reply.bytes()) == 9074268675206976132)
+    assert(reply.startsWith("KEYS "))
 }

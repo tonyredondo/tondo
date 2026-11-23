@@ -1,4 +1,5 @@
 import std.fs
+import std.hash
 import std.testing
 
 /// A few notes, in memory.
@@ -112,6 +113,7 @@ fn archive(): fs.FileSystem ! NoteError {
 test anArchiveIsSearched {
     let files = archive()?
     let found = testing.bench("search of 200 notes", () => search(files, "tea boiling degrees"))?
+    assert(hash.fnv64a("{found}".bytes()) == 2800024254669252887)
     assert(found.length() == 5 and found[0].name == "note-0" and found[0].score == 4)
     assert(found[4].name == "note-111")
 }

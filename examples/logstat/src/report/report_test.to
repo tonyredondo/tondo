@@ -69,4 +69,8 @@ test aThousandLinesAreAReport {
     )
     assert(rows.length() == 1 and rows[0].route == "/users/:id")
     assert(rows[0].requests == 1000 and rows[0].errors == 50)
+    assert(
+        "{rows}" ==
+            "[RouteRow {{ route: /users/:id, requests: 1000, errors: 50, slowest: 89 ms, mean: 44 ms }}]",
+    )
 }

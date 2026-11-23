@@ -1,3 +1,4 @@
+import std.hash
 import std.testing
 
 type Order = {
@@ -75,6 +76,7 @@ test queries {
         testing.bench("groupBy 10000", () => all.groupBy(order => order.customer).length()) == 1000,
     )
     let sorted = testing.bench("sortedBy 10000", () => all.sortedBy(order => order.cents))
+    assert(hash.fnv64a("{sorted}".bytes()) == 13415804458253859892)
     assert(sorted.length() == 10_000)
     assert(sorted[0] == Order { id: 8458, customer: 9, cents: 9, region: "south" })
     assert(sorted[9_999] == Order { id: 7541, customer: 988, cents: 99988, region: "north" })
@@ -88,10 +90,12 @@ test queries {
             Order { id: 7541, customer: 988, cents: 99988, region: "north" },
     )
     let keyed = testing.bench("keyedBy 10000", () => all.keyedBy(order => order.id))
+    assert(hash.fnv64a("{keyed}".bytes()) == 9301519335736999038)
     assert(keyed.length() == 10_000)
     assert(keyed[0] == Order { id: 0, customer: 27, cents: 96027, region: "west" })
     assert(keyed[9_999] == Order { id: 9999, customer: 10, cents: 46010, region: "east" })
     let unique = testing.bench("uniqueBy 10000", () => all.uniqueBy(order => order.customer))
+    assert(hash.fnv64a("{unique}".bytes()) == 8194219150338034222)
     assert(unique.length() == 1000)
     assert(unique[0] == Order { id: 0, customer: 27, cents: 96027, region: "west" })
     assert(unique[999] == Order { id: 6255, customer: 42, cents: 34042, region: "east" })
@@ -101,6 +105,7 @@ test queries {
             49747.8728,
     )
     let set = testing.bench("toSet 10000", () => amounts.toSet())
+    assert(hash.fnv64a("{set}".bytes()) == 15522927589274396240)
     assert(set.length() == 9540 and 96_027 in set)
     let people = customers(1000)
     // bench/go gives the same.

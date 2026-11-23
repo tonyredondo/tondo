@@ -1,4 +1,5 @@
 import renderer.api
+import std.hash
 import std.testing
 
 test aTableAsMarkdown {
@@ -25,6 +26,7 @@ fn sales(): api.Table {
 test aTableOfTwoHundredRowsIsRendered {
     let table = sales()
     let rendered = testing.bench("table of 200 rows", () => Markdown {}.render(table))?
+    assert(hash.fnv64a(rendered.bytes()) == 10885326214580991626)
     assert(rendered.byteLength() == 7523)
     assert(rendered.startsWith("## Sales\n\n| region | month | units | amount |\n"))
 }

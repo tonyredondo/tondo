@@ -1,3 +1,4 @@
+import std.hash
 import std.json
 import std.testing
 
@@ -27,6 +28,7 @@ test json {
     )
     let array = numbers(1000)
     let parsedNumbers = testing.bench("parse 1000 numbers", () => json.parse(array))?
+    assert(hash.fnv64a("{parsedNumbers}".bytes()) == 13024206030383795523)
     let shown = "{parsedNumbers}"
     assert(
         shown.byteLength() == 3891 and shown.startsWith("[0,1,2,") and shown.endsWith(",998,999]"),
@@ -49,6 +51,7 @@ test json {
     }
     // bench/go gives the same.
     let text = testing.bench("encode 100 structs", () => json.encode(items))
+    assert(hash.fnv64a(text.bytes()) == 4178917000893075233)
     assert(text.byteLength() == 7357)
     assert(text.startsWith("[{{\"id\":0,\"name\":\"item 0\","))
     assert(text.endsWith("\"tags\":[\"a\",\"b\"],\"available\":false}}]"))
