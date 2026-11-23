@@ -942,6 +942,40 @@ fn compares_benchmarks_with_another_compiler() {
     assert!(status == 2 && stderr.contains("it goes with --bench"), "{stderr}");
 }
 
+/// The two sides of a `--compiler` comparison run their tests in one
+/// environment, which the programs a benchmark starts copy: what a wrapper
+/// given by `--exec` finds is the same set of names under each `tondo`.
+#[test]
+fn both_sides_of_a_comparison_run_in_one_environment() {
+    let tests = "import std.testing\n\ntest counting {\n    testing.bench(\"sum\", () { 1 + 2 })\n}\n";
+    let dir = project("compiler-environment", tests);
+    let names = dir.join("names");
+    std::fs::create_dir(&names).unwrap();
+    let wrapper = dir.join("wrapper");
+    let script = format!("#!/bin/sh\nenv | cut -d= -f1 | sort > {}/$PPID-$$\nexec \"$@\"\n", names.display());
+    std::fs::write(&wrapper, script).unwrap();
+    std::fs::set_permissions(&wrapper, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let other = env!("CARGO_BIN_EXE_tondo");
+    let wrapper = wrapper.to_str().unwrap();
+    let args = ["test", "--bench", "--bench-time", "0.05", "--compiler", other, "--exec", wrapper];
+    let (stdout, stderr, status) = tondo(&dir, &args);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    // Each run of the tests, by the `tondo` that started it.
+    let mut sides = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for entry in std::fs::read_dir(&names).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let parent = name.split('-').next().unwrap().to_string();
+        sides.entry(parent).or_default().push(std::fs::read_to_string(&path).unwrap());
+    }
+    assert_eq!(sides.len(), 2, "{sides:#?}");
+    let mut seen: Vec<&String> = sides.values().flatten().collect();
+    assert!(seen.iter().all(|names| names.contains("TONDO_TEST_BENCH\n")), "{seen:#?}");
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen.len(), 1, "{seen:#?}");
+}
+
 /// Under a row whose instructions moved, `--compiler` names the functions
 /// its test reaches whose code the other tondo makes otherwise: here the
 /// same tondo without regions, where the arrays `split` gives go on the heap.

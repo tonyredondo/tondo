@@ -240,6 +240,9 @@ fn worker(
     if let Some(time) = run.bench {
         command.env("TONDO_TEST_BENCH", time.as_secs_f64().to_string());
     }
+    if matches!(run.options.baseline, Some(super::Baseline::Compiler { .. })) {
+        command.env(super::REGIONS_UNCOUNTED, "1");
+    }
     // A worker that searches runs its test until the search ends.
     if let Some(target) = context.target.and_then(|t| run.targets.get(t as usize)) {
         let call = super::fuzz::directory(&target.call);

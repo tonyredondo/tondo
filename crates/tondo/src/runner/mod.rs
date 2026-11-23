@@ -140,6 +140,13 @@ pub struct Fuzz {
     pub corpus: Option<PathBuf>,
 }
 
+/// What a `tondo test --bench` finds in its environment when it is not to
+/// build the tests again to count their regions: given by `--compiler` to
+/// the other tondo, which says nothing of them. Its own tests then run with
+/// it too, so that the programs a benchmark starts copy the same
+/// environment on both sides.
+pub const REGIONS_UNCOUNTED: &str = "TONDO_REGIONS_UNCOUNTED";
+
 /// What `--bench` compares with: a baseline saved before, or the tests of
 /// another revision, run on this machine one after another with these.
 pub enum Baseline {

@@ -913,7 +913,8 @@ fn test_command(args: &[OsString]) -> Result<ExitCode, String> {
     // The same tests counting the regions their functions set up, which
     // the build that measures does not pay for; not for another tondo's
     // baseline, which says nothing of them.
-    if options.bench.is_some() && !driver::regions_off() && std::env::var_os("TONDO_REGIONS_UNCOUNTED").is_none() {
+    if options.bench.is_some() && !driver::regions_off() && std::env::var_os(tondo::runner::REGIONS_UNCOUNTED).is_none()
+    {
         driver::set_count_regions(true);
         let built = build_tests(&path, &build);
         driver::set_count_regions(false);
@@ -1041,7 +1042,7 @@ fn compiler_baseline(reference: &str, path: &Path, args: &[OsString]) -> Result<
         .args(&forwarded)
         .arg("--save-baseline")
         .arg(&saved)
-        .env("TONDO_REGIONS_UNCOUNTED", "1")
+        .env(tondo::runner::REGIONS_UNCOUNTED, "1")
         .stdout(std::process::Stdio::null())
         .status()
         .map_err(|e| format!("cannot run {}: {e}", executable.display()))?;
