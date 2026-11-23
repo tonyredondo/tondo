@@ -29,6 +29,10 @@ jobs:
     # with room for the second try of `emulated.sh`.
     timeout-minutes: 270
     steps:
+      # Its tests end, saying what runs, 25 minutes before the job's limit
+      # would cut them with nothing said.
+      - name: Note when the job's time ends
+        run: echo "EMULATED_DEADLINE=$(( $(date +%s) + 245 * 60 ))" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
@@ -60,7 +64,7 @@ jobs:
       - name: Test under emulation
         run: >
           docker run --rm --platform ${{ matrix.platform }} -v "$PWD:$PWD" -w "$PWD"
-          -e OWNER="$(id -u):$(id -g)" -e TONDO_CI_DUMPS="$PWD/target/dumps"
+          -e OWNER="$(id -u):$(id -g)" -e TONDO_CI_DUMPS="$PWD/target/dumps" -e EMULATED_DEADLINE
           debian:stable-slim .github/scripts/emulated.sh
       # What hung said of itself, to open with `tondo dump serve`.
       - if: failure()
