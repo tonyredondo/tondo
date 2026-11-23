@@ -7312,7 +7312,10 @@ fn a_failure_in_a_dump_becomes_a_test() {
     );
     let written = std::fs::read_to_string(dir.join("src/main_test.to")).unwrap();
     assert!(written.starts_with("import std.testing\n\n// From a dump:"), "{written}");
-    assert!(written.contains("    testing.bench(\"charge\", () => charge(item, rate, mode))\n"), "{written}");
+    // Its answer is not checked, and it says so (testing 10.4).
+    let unchecked = "    // What `charge` gives is not checked: hold it with `assert(testing.bench(...) == ...)`\n    \
+        _ = testing.bench(\"charge\", () => charge(item, rate, mode))\n";
+    assert!(written.contains(unchecked), "{written}");
 }
 
 /// A dump of a debug build stops a task that computes, without calling
@@ -7379,7 +7382,10 @@ fn a_dump_stops_a_task_that_computes_at_its_next_line() {
     let written = std::fs::read_to_string(dir.join("src/main_test.to")).unwrap();
     assert!(written.contains("// From a dump of the program as it ran\ntest benchSpin {\n"), "{written}");
     assert!(
-        written.contains("    let rounds = 200000\n    testing.bench(\"spin\", () => spin(seed, rounds))\n"),
+        written.contains(
+            "    let rounds = 200000\n    // What `spin` gives is not checked: hold it with `assert(testing.bench(...) == ...)`\n    \
+             _ = testing.bench(\"spin\", () => spin(seed, rounds))\n"
+        ),
         "{written}"
     );
 }
