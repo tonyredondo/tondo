@@ -43,6 +43,7 @@ what each thing of C# becomes.
 | `namespace Shop.Orders` | the directory `src/orders`, the module `shop.orders` |
 | `[Fact] public void X()` | `test x { assert(...) }`, in `orders_test.to` |
 | what a container injects | a parameter; a `context` for what is ambient, as the request |
+| `KestrelServerLimits.MaxRequestBodySize`, `HttpClient.MaxResponseContentBufferSize`, `JsonSerializerOptions.MaxDepth` | `limits:` where the data is read: `http.ServerLimits`, `http.ClientLimits`, `json.JsonLimits`, each a record with a `Default` (`tondo guide stdlib`) |
 
 ## The story: a till, ported
 

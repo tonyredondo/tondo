@@ -530,6 +530,58 @@ fn main(): !net.NetError {
 - Every call that waits takes its own `timeout:`; there is none otherwise.
   `reader()` and `writer()` give the connection as `std.io` streams.
 
+## Limits on data from outside
+
+What reads data from outside the program stops at a bound, and fails with
+an error that says how to raise it. The bound is always `limits:`, a record
+of the module named for it, changed from its `Default` with `with`:
+
+```tondo
+import std.console
+import std.gzip
+import std.json
+
+fn main() {
+    let deep = "[".repeat(200).concat("]".repeat(200))
+    let deeper = json.JsonLimits.Default with { maxNestingDepth: 256 }
+    console.println("{json.parse(deep).isErr()} {json.parse(deep, limits: deeper).isOk()}")   // true true
+
+    let packed = gzip.compress("a".repeat(1000).bytes())
+    match gzip.decompress(packed, limits: gzip.GzipLimits.Default with { maxOutputBytes: 100 }) {
+        ok(data) => console.println("{data.length()} bytes")
+        err(gzip.GzipError.TooLarge(most)) => console.println("more than {most} bytes")   // more than 100 bytes
+        err(error) => console.println("{error}")
+    }
+}
+```
+
+- The error is its module's, holds the number (`TooLarge(Int)`, or the
+  format's own error), and its text gives the code to write: "a line is
+  longer than 1 MiB, the most `IoLimits.maxLineBytes` allows: raise it with
+  `limits: io.IoLimits.Default with { maxLineBytes: … }`".
+- A server, `app.listen(limits: http.ServerLimits.Default with { ... })`: a
+  body of 10 MiB, a head of 64 KiB, 30 seconds for each to arrive. A
+  client, `http.Client(limits: http.ClientLimits.Default with { ... })`: 2
+  GiB of a response read whole. `request.limitBody(bytes)` and
+  `response.limitBody(bytes)` change one.
+- `readLine(limits: io.IoLimits...)` of a reader, a file and a stream: a
+  line of 1 MiB. The line stays to be read: the same call with a larger
+  bound gives it whole.
+- `gzip.decompress` and `zstd.decompress`: 128 MiB decompressed.
+  `archive.open` and `read`: 1 GiB inflated. `image.open` and `read`: 512
+  MiB of pixels. A message of gRPC: 16 MiB, by `grpc.connect(limits:)` and
+  by a service's `.limits(grpc.GrpcLimits.Default with { ... })`.
+- `maxNestingDepth`, 128 levels, in `json.JsonLimits`, `cbor.CborLimits`,
+  `messagepack.MessagePackLimits`, `xml.XmlLimits`, `yaml.YamlLimits`,
+  `protobuf.ProtobufLimits` and `graphql.GraphqlLimits`, and 64 in
+  `toml.TomlLimits`. Each has a ceiling, what a task's stack holds, from
+  2300 for JSON to 700 for XML; a value above it is refused with an error
+  that gives the ceiling.
+- No bound where the program reads as it asks: a response's `body()`,
+  `lines()` and `events()`, `gzip.reader`, `zstd.reader`, `json.values`.
+  Read what may be large that way, and raise a limit only for what must be
+  held whole.
+
 ## Rules of a type
 
 ```tondo

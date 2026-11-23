@@ -300,6 +300,12 @@ What went, line by line of the original:
 - **`go generate`, cgo.** `derive` and generators (`tondo guide meta`); C is
   called with `extern fn`, and `bind` writes the declarations (`tondo guide
   ffi`).
+- **Reading without a bound.** `io.ReadAll` and `bufio.Reader.ReadString`
+  take whatever comes. Here a line, a body read whole, a decompression and
+  how deep a document nests stop at a default, and the error gives the
+  `limits:` that raises it; `http.MaxBytesReader` is the server's
+  `ServerLimits.maxBodyBytes`, or `request.limitBody(bytes)` for a route.
+  What may be large is read as it comes: `tondo guide stdlib`.
 
 The original's tests become the port's first (`runbook-port`), its benchmarks
 tests that call `testing.bench`, and `go test -fuzz` a test with

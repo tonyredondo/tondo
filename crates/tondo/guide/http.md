@@ -45,6 +45,13 @@ fn main(): !http.HttpError {
 
 - A response's body is read once: keep what `text()` gives to read it
   again, as `text.lines()`.
+- A body read whole, by `bytes()`, `text()` or `json()`, may be of up to
+  2 GiB once its compression is undone, and past that is
+  `HttpError.TooLarge`: `http.Client(limits: http.ClientLimits.Default with
+  { maxBodyBytes: 64 * 1024 * 1024 })` changes it for a client and
+  `response.limitBody(bytes)` for one response, before it is read. `body()`,
+  `lines()` and `events()` read as the program asks and have no bound: use
+  them for what may be large.
 - `client.use((request, next) { ... next(request)? })` wraps each request
   of the client, as middleware wraps routes: change its `headers` with
   `request with { headers: ... }`, time it, see the response or error of

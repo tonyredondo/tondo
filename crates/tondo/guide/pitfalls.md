@@ -28,6 +28,7 @@ each thing becomes.
 | a method guessed from another library | `tondo api String`, `tondo api std.http.Client`: its methods and an example |
 | `if x not in seen: seen.append(x)`, `if (!list.includes(x)) list.push(x)` in a loop | a `Set` beside the array: `if seen.insert(x) { kept.push(x) }` (`check --performance`: W1023) |
 | `queue.pop(0)`, `queue.shift()` in a loop | a `Deque` and `popFront()` (`check --performance`: W1024) |
+| a line, a body, a decompression or a document read whole at any size or depth | bounded by default, and the error gives the `limits:` to raise (`tondo guide stdlib`, "Limits on data from outside"); what may be large is read as it comes: `body()`, `lines()`, `gzip.reader` |
 | `re.compile(...)`, `new RegExp(...)` in a function | a context's field: `context Patterns = { words: regex.Regex = regex.Regex.compile(r"\w+")? }` (W1025) |
 
 No semicolons; a newline ends a statement.

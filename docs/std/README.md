@@ -23,6 +23,7 @@ and `tondo api --search <words>` finds a declaration by what it does.
 - [Programs and their terminal](#programs-and-their-terminal)
 - [Testing and looking inside](#testing-and-looking-inside)
 - [The language's own machinery](#the-languages-own-machinery)
+- [Limits on data from outside](#limits-on-data-from-outside)
 
 ## The prelude
 
@@ -161,3 +162,75 @@ uses them: the same record is read from JSON and written as YAML.
 | [std.reflect](reflect.md) | values and types by name, as the program runs |
 | [std.meta](meta.md) | what a `derive` provider or a generator receives and writes |
 | [std.ffi](ffi.md) | C's types, memory and strings, for calling C |
+
+## Limits on data from outside
+
+What reads data that comes from outside the program stops at a bound, so
+that a few bytes cannot make the program hold gigabytes, nor nest until a
+stack ends. The bound is passed the same way everywhere: a parameter
+`limits:`, a record of the module named for it, whose `Default` is changed
+with `with`.
+
+```tondo
+import std.console
+import std.gzip
+import std.json
+
+fn main() {
+    let packed = gzip.compress("a".repeat(1000).bytes())
+    let small = gzip.GzipLimits.Default with { maxOutputBytes: 100 }
+    match gzip.decompress(packed, limits: small) {
+        ok(data) => console.println("{data.length()} bytes")
+        err(error) => console.println("{error}")
+    }
+    match gzip.decompress(packed, limits: small) {
+        ok(data) => console.println("{data.length()} bytes")
+        err(gzip.GzipError.TooLarge(most)) => console.println("more than {most} bytes")
+        err(error) => console.println("{error}")
+    }
+
+    let deep = "[".repeat(200).concat("]".repeat(200))
+    let deeper = json.JsonLimits.Default with { maxNestingDepth: 256 }
+    console.println("{json.parse(deep).isErr()} {json.parse(deep, limits: deeper).isOk()}")
+}
+```
+
+```text output
+the decompressed data is larger than 100 bytes, the most `GzipLimits.maxOutputBytes` allows: raise it with `limits: gzip.GzipLimits.Default with { maxOutputBytes: … }`, or read it a part at a time with `gzip.reader`
+more than 100 bytes
+true true
+```
+
+Past a bound the call fails with an error of its module that holds the
+number, as `gzip.GzipError.TooLarge(100)` above, and whose text always
+says the same four things: what was too much, the bound in a unit a person
+reads, the field that sets it, and the code that raises it. Where there is
+a way to read with no bound, as `gzip.reader` here, the text ends with it.
+
+| What is read | Its limits, and where they are passed | By default |
+| --- | --- | --- |
+| A server's requests | `http.ServerLimits`, to `app.listen` and `app.start` | `maxBodyBytes` 10 MiB, `maxHeadBytes` 64 KiB, and 30 seconds each for `headTimeout`, `bodyTimeout` and `replyTimeout`; `request.limitBody(bytes)` changes the body's for one route |
+| A response a client reads whole, with `bytes()`, `text()` or `json()` | `http.ClientLimits`, to `http.Client` | `maxBodyBytes` 2 GiB, counted once its compression is undone; `response.limitBody(bytes)` changes it for one response |
+| A line, by `readLine` | `io.IoLimits`, to the `readLine` of an `io.Reader`, an `fs.File` and a `net.Stream` | `maxLineBytes` 1 MiB; the line stays to be read, and the same call with a larger bound gives it whole |
+| `gzip.decompress` and `zstd.decompress` | `gzip.GzipLimits`, `zstd.ZstdLimits` | `maxOutputBytes` 128 MiB |
+| An archive | `archive.ArchiveLimits`, to `archive.open` and `archive.read` | `maxInflatedBytes` 1 GiB, all its entries together |
+| An image | `image.ImageLimits`, to `image.open` and `image.read` | `maxDecodedBytes` 512 MiB of pixels |
+| A message of gRPC | `grpc.GrpcLimits`, to `grpc.connect` and to a service's `.limits(...)` | `maxMessageBytes` 16 MiB, each message on its own |
+| A document of JSON, CBOR, MessagePack, XML, YAML, TOML or Protocol Buffers | `json.JsonLimits`, `cbor.CborLimits`, `messagepack.MessagePackLimits`, `xml.XmlLimits`, `yaml.YamlLimits`, `toml.TomlLimits`, `protobuf.ProtobufLimits`, to the functions that read: `decode`, `parse` and those beside them | `maxNestingDepth` 128 levels; TOML 64 |
+| A query a client sends to a GraphQL schema | `graphql.GraphqlLimits`, to `graphql.schema` | `maxNestingDepth` 128 levels |
+| A regular expression and its inputs | `regex.RegexLimits`, to `regex.Regex.compile` | a pattern of 64 KiB nested 128 levels deep, inputs of 16 MiB, a million matches |
+
+How deep a document may nest has a ceiling too, since each level takes
+some of a task's stack: 2300 levels for JSON, 1500 for CBOR, 1400 for
+MessagePack, 1300 for Protocol Buffers, 1200 for YAML (255 inside its
+flow style, `[[…]]`), 1000 for GraphQL, 700 for XML and 80 for TOML. A `maxNestingDepth` above its ceiling is
+refused where it is used, with an error that gives the ceiling; it is
+never lowered in silence. A regular expression's nesting takes none of the
+stack and has no ceiling.
+
+What may be large is better read as it comes, which needs no bound, since
+the program takes only what it asks for: a response's `body()`, `lines()`
+and `events()`, `gzip.reader` and `zstd.reader`, `json.values` and
+`json.reader` for a stream of documents, `csv` a record at a time, and
+`readLine` a line at a time. And what is the program's own has none: the
+console's `readLine`, and a file read whole with `fs.readText`.
