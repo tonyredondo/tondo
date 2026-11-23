@@ -47,17 +47,20 @@ test removes {
 }
 
 test aHundredTasksAreKeptAndListed {
-    testing.bench(
-        "100 tasks added, changed and listed",
-        () {
-            let db = fresh()?
-            for n in 0..100 {
-                let task = add(db, NewTask { title: "task {n}" })?
-                if n % 2 == 0 {
-                    change(db, task.id, TaskChange { done: true })?
+    assert(
+        testing.bench(
+            "100 tasks added, changed and listed",
+            () {
+                let db = fresh()?
+                for n in 0..100 {
+                    let task = add(db, NewTask { title: "task {n}" })?
+                    if n % 2 == 0 {
+                        change(db, task.id, TaskChange { done: true })?
+                    }
                 }
-            }
-            list(db, done: true)?.length()
-        },
-    )?
+                list(db, done: true)?.length()
+            },
+        )? ==
+            50,
+    )
 }

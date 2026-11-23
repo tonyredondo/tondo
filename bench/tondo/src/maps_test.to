@@ -24,12 +24,13 @@ fn named(count: Int): Int {
     ages.length()
 }
 
+// Each answer asserted here is also what bench/go gives.
 test maps {
-    testing.bench("insert 10000 ints", () => inserted(10_000))
+    assert(testing.bench("insert 10000 ints", () => inserted(10_000)) == 10_000)
     var squares: Map[Int, Int] = [:]
     for i in 0..10_000 {
         squares[i] = i * 2
     }
-    testing.bench("lookup 10000 ints", () => looked(squares, 10_000))
-    testing.bench("insert 1000 strings", () => named(1000))
+    assert(testing.bench("lookup 10000 ints", () => looked(squares, 10_000)) == 99_990_000)
+    assert(testing.bench("insert 1000 strings", () => named(1000)) == 1000)
 }

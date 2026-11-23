@@ -58,8 +58,9 @@ fn selected(count: Int): Int {
     total
 }
 
+// Each answer asserted here is also what bench/go gives.
 test runtime {
-    testing.bench("join 1", () => (spawn nine()).wait())
-    testing.bench("mutex 4x1000", () => contended(4, 1000))
-    testing.bench("select 1000", () => selected(1000))
+    assert(testing.bench("join 1", () => (spawn nine()).wait()) == 9)
+    assert(testing.bench("mutex 4x1000", () => contended(4, 1000)) == 4000)
+    assert(testing.bench("select 1000", () => selected(1000)) == 999_000)
 }

@@ -60,11 +60,13 @@ fn written(): Array[String] {
 
 test aThousandLinesAreAReport {
     let lines = written()
-    testing.bench(
+    let rows = testing.bench(
         "report of 1000 lines",
         () {
             let found = lines.map(line => entries.parse(line).expect("a line of the log"))
             byRoute(found)
         },
-    )?
+    )
+    assert(rows.length() == 1 and rows[0].route == "/users/:id")
+    assert(rows[0].requests == 1000 and rows[0].errors == 50)
 }

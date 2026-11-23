@@ -60,11 +60,13 @@ test aProgramOfAHundredModulesIsProfiled {
         id += 1
     }
     let host = Host { modules }
-    testing.bench(
-        "100 modules through the interfaces",
-        () {
-            let heard = recorder.Recorder()
-            host.run(ffi.object(heard)).isOk() and heard.events().length() == 102
-        },
-    )?
+    assert(
+        testing.bench(
+            "100 modules through the interfaces",
+            () {
+                let heard = recorder.Recorder()
+                host.run(ffi.object(heard)).isOk() and heard.events().length() == 102
+            },
+        ),
+    )
 }

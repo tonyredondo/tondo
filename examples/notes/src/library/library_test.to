@@ -111,5 +111,7 @@ fn archive(): fs.FileSystem ! NoteError {
 
 test anArchiveIsSearched {
     let files = archive()?
-    testing.bench("search of 200 notes", () => search(files, "tea boiling degrees"))?
+    let found = testing.bench("search of 200 notes", () => search(files, "tea boiling degrees"))?
+    assert(found.length() == 5 and found[0].name == "note-0" and found[0].score == 4)
+    assert(found[4].name == "note-111")
 }

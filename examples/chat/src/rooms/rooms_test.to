@@ -186,22 +186,25 @@ test aSlowReaderMissesLinesAndIsToldHowMany {
 }
 
 test aRoomOfTwoHearsTwoHundredLines {
-    testing.bench(
-        "200 lines said in a room of two",
-        () {
-            let hub = start(sync.Map[String, Int]())?
-            let ada = guest(capacity: 512)?
-            let leo = guest(capacity: 512)?
-            let to = hub.reference()
-            to.send(Told.Enter(1, "tea", "ada", ada.mailbox.reference()))?
-            to.send(Told.Enter(2, "tea", "leo", leo.mailbox.reference()))?
-            for n in 0..200 {
-                to.send(Told.Say(1 + n % 2, "line {n}"))?
-            }
-            hub.stop()?
-            ada.mailbox.stop()?
-            leo.mailbox.stop()?
-            ada.seen.get().length() + leo.seen.get().length()
-        },
-    )?
+    assert(
+        testing.bench(
+            "200 lines said in a room of two",
+            () {
+                let hub = start(sync.Map[String, Int]())?
+                let ada = guest(capacity: 512)?
+                let leo = guest(capacity: 512)?
+                let to = hub.reference()
+                to.send(Told.Enter(1, "tea", "ada", ada.mailbox.reference()))?
+                to.send(Told.Enter(2, "tea", "leo", leo.mailbox.reference()))?
+                for n in 0..200 {
+                    to.send(Told.Say(1 + n % 2, "line {n}"))?
+                }
+                hub.stop()?
+                ada.mailbox.stop()?
+                leo.mailbox.stop()?
+                ada.seen.get().length() + leo.seen.get().length()
+            },
+        )? ==
+            403,
+    )
 }

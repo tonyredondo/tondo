@@ -30,7 +30,8 @@ fn users(count: Int): Int {
     all.length()
 }
 
+// Each answer asserted here is also what bench/go gives.
 test structs {
-    testing.bench("points 1000", () => points(1000))
-    testing.bench("users 1000", () => users(1000))
+    assert(testing.bench("points 1000", () => points(1000)) == 1_498_500)
+    assert(testing.bench("users 1000", () => users(1000)) == 1000)
 }

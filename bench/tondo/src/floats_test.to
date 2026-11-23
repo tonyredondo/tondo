@@ -40,20 +40,31 @@ fn floatsOf(count: Int): Array[Float] {
 }
 
 test floats {
-    testing.bench("mandelbrot 64", () => mandelbrot(64))
-    testing.bench("sqrt 100000", () => roots(100_000))
+    // bench/go gives the same.
+    assert(testing.bench("mandelbrot 64", () => mandelbrot(64)) == 1107)
+    // bench/go gives the same.
+    assert(testing.bench("sqrt 100000", () => roots(100_000)) == 21081692.74615191)
     let values = floatsOf(100_000)
     let others = floatsOf(100_000).reversed()
-    testing.bench("sum 100000", () => values.sum())
-    testing.bench("dot 100000", () => math.dot(values, others))
-    testing.bench("add 100000", () => values + others)
+    // bench/go gives the same.
+    assert(testing.bench("sum 100000", () => values.sum()) == 2399842.5)
+    // bench/go gives the same.
+    assert(testing.bench("dot 100000", () => math.dot(values, others)) == 45863082.5)
+    let added = testing.bench("add 100000", () => values + others)
+    assert(added.length() == 100_000)
+    assert(added[0] == 44.5 and added[99_999] == 44.5)
+    assert(added.sum() == 4_799_685.0)
 }
 
 test tensors {
     let left = math.Tensor(floatsOf(64 * 64), [64, 64])
     let other = math.Tensor(floatsOf(64 * 64).reversed(), [64, 64])
-    testing.bench("matmul 64", () => left.matmul(other))
+    let product = testing.bench("matmul 64", () => left.matmul(other))
+    assert(product.shape() == [64, 64])
+    assert(product.at(0, 0) == 25608.25 and product.at(63, 63) == 40317.75)
     let wide = math.Tensor(floatsOf(256 * 256), [256, 256])
     let row = math.Tensor(floatsOf(256), [256])
-    testing.bench("broadcast 256", () => wide + row)
+    let grid = testing.bench("broadcast 256", () => wide + row)
+    assert(grid.shape() == [256, 256])
+    assert(grid.at(0, 0) == 0.0 and grid.at(255, 255) == 60.5)
 }

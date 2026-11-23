@@ -29,12 +29,21 @@ fn indexed(values: Array[Int]): Int {
 }
 
 test arrays {
-    testing.bench("push 1000", () => pushed(1000))
+    // bench/go gives the same.
+    assert(testing.bench("push 1000", () => pushed(1000)) == 1000)
     let values = shuffled(10_000)
-    testing.bench("sort 10000", () => values.sorted())
-    testing.bench(
-        "map filter sum 10000",
-        () => values.map(x => x * 2).filter(x => x % 3 == 0).sum(),
+    let sorted = testing.bench("sort 10000", () => values.sorted())
+    assert(sorted.length() == 10_000)
+    assert(sorted[0] == 9 and sorted[5_000] == 49_845 and sorted[9_999] == 99_988)
+    assert(sorted.sum() == 497_478_728)
+    // bench/go gives the same.
+    assert(
+        testing.bench(
+            "map filter sum 10000",
+            () => values.map(x => x * 2).filter(x => x % 3 == 0).sum(),
+        ) ==
+            313_036_794,
     )
-    testing.bench("index sum 10000", () => indexed(values))
+    // bench/go gives the same.
+    assert(testing.bench("index sum 10000", () => indexed(values)) == 497_478_728)
 }

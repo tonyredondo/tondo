@@ -33,7 +33,8 @@ fn piped(count: Int): Int {
     total
 }
 
+// Each answer asserted here is also what bench/go gives.
 test tasks {
-    testing.bench("spawn 1000", () => spawned(1000))
-    testing.bench("channel 10000", () => piped(10_000))
+    assert(testing.bench("spawn 1000", () => spawned(1000)) == 332_833_500)
+    assert(testing.bench("channel 10000", () => piped(10_000)) == 49_995_000)
 }

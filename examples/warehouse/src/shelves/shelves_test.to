@@ -117,16 +117,19 @@ test aThousandOrdersAreTaken {
     let items = (0..100)
         .map(n => stock.Item { sku: "SKU-{n}", name: "Item {n}", available: 1000 })
         .collect()
-    testing.bench(
-        "1000 reservations",
-        () {
-            let shelves = Shelves(items)
-            var left = 0
-            for n in 0..1000 {
-                left +=
-                    shelves.reserve(stock.Units { sku: "SKU-{n % 100}", quantity: 1 })?.available
-            }
-            left
-        },
-    )?
+    assert(
+        testing.bench(
+            "1000 reservations",
+            () {
+                let shelves = Shelves(items)
+                var left = 0
+                for n in 0..1000 {
+                    left +=
+                        shelves.reserve(stock.Units { sku: "SKU-{n % 100}", quantity: 1 })?.available
+                }
+                left
+            },
+        )? ==
+            994_500,
+    )
 }

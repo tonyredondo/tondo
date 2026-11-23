@@ -15,8 +15,9 @@ fn apply(f: fn(Int): Int, times: Int): Int {
     total
 }
 
+// Each answer asserted here is also what bench/go gives.
 test calls {
-    testing.bench("fib 25", () => fib(25))
+    assert(testing.bench("fib 25", () => fib(25)) == 75_025)
     let step = 3
-    testing.bench("closure 1000", () => apply((x: Int): Int { x + step }, 1000))
+    assert(testing.bench("closure 1000", () => apply((x: Int): Int { x + step }, 1000)) == 502_500)
 }

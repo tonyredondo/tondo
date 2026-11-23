@@ -43,6 +43,7 @@ fn callers(): ffi.Library ! String {
     loaded
 }
 
+// Each answer asserted here is also what bench/go gives.
 test ffi {
     let library = match callers() {
         ok(library) => library
@@ -55,8 +56,12 @@ test ffi {
                 "calls_from_threads",
             )?
         }
-    testing.bench("callback 1000", () => unsafe { calls(add, 1000) })
-    testing.bench("from a C thread 1000", () => unsafe { threads(add, 1, 1000) })
-    testing.bench("from C threads 8x1000", () => unsafe { threads(add, 8, 1000) })
-    testing.bench("waits from a C thread 100", () => unsafe { threads(waits, 1, 100) })
+    assert(testing.bench("callback 1000", () => unsafe { calls(add, 1000) }) == 499_500)
+    assert(testing.bench("from a C thread 1000", () => unsafe { threads(add, 1, 1000) }) == 499_500)
+    assert(
+        testing.bench("from C threads 8x1000", () => unsafe { threads(add, 8, 1000) }) == 3_996_000,
+    )
+    assert(
+        testing.bench("waits from a C thread 100", () => unsafe { threads(waits, 1, 100) }) == 5050,
+    )
 }

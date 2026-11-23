@@ -24,5 +24,7 @@ fn sales(): api.Table {
 
 test aTableOfTwoHundredRowsIsRendered {
     let table = sales()
-    testing.bench("table of 200 rows", () => Markdown {}.render(table))?
+    let rendered = testing.bench("table of 200 rows", () => Markdown {}.render(table))?
+    assert(rendered.byteLength() == 7523)
+    assert(rendered.startsWith("## Sales\n\n| region | month | units | amount |\n"))
 }

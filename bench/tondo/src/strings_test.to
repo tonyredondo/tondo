@@ -18,13 +18,19 @@ fn ints(count: Int): Int {
     total
 }
 
+// Each answer asserted here is also what bench/go gives.
 test strings {
     let (name, place) = ("ada", "london")
-    testing.bench("interpolate", () => "{name} lives in {place}, age {36}")
-    testing.bench("builder 100", () => joined(100))
+    assert(
+        testing.bench("interpolate", () => "{name} lives in {place}, age {36}") ==
+            "ada lives in london, age 36",
+    )
+    let text = testing.bench("builder 100", () => joined(100))
+    assert(text.byteLength() == 590 and text.startsWith("part0part1part2"))
+    assert(text.endsWith("part97part98part99"))
     let csv = ["alpha", "beta", "gamma", "delta"].repeat(25).join(",")
-    testing.bench("split 100", () => csv.split(",").length())
-    testing.bench("int to text 1000", () => ints(1000))
+    assert(testing.bench("split 100", () => csv.split(",").length()) == 100)
+    assert(testing.bench("int to text 1000", () => ints(1000)) == 2890)
     let haystack = "{"abcdefghij".repeat(100)}needle"
-    testing.bench("contains 1000", () => haystack.contains("needle"))
+    assert(testing.bench("contains 1000", () => haystack.contains("needle")))
 }

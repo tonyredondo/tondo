@@ -5,8 +5,10 @@ import std.testing
 /// and by its path: what a start costs, which a copy of the program's
 /// memory, as a fork makes, would multiply.
 test processes {
-    testing.bench("true by name", () => process.command("true").status())?
+    let byName = testing.bench("true by name", () => process.command("true").status())?
+    assert(byName.success and byName.code == 0)
     // Its path as this system has it: `/usr/bin/true`, or `/bin/true` on Alpine.
     let program = process.which("true") ?? testing.failNow("no `true` on PATH")
-    testing.bench("true by path", () => process.command(program).status())?
+    let byPath = testing.bench("true by path", () => process.command(program).status())?
+    assert(byPath.success and byPath.code == 0)
 }

@@ -61,5 +61,8 @@ fn linked(): String {
 test aPageOfTwoHundredLinksIsRead {
     let html = linked()
     let home = url.parse("https://example.com/blog/2026/post.html")?
-    testing.bench("links of a page", () => targets(home, html))?
+    let links = testing.bench("links of a page", () => targets(home, html))?
+    assert(links.length() == 150)
+    assert(links[0] == "https://example.com/docs/page0.html")
+    assert(links[149] == "https://example.com/blog/2026/img/198.png")
 }

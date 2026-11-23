@@ -23,21 +23,36 @@ fn counted(text: String): Int {
     count
 }
 
+// Each answer asserted here is also what bench/go gives.
 test texts {
     let (ascii, other) = (Ascii.repeat(25), Other.repeat(25))
-    testing.bench("replace ascii", () => ascii.replace("the", "a"))
-    testing.bench("replace other", () => other.replace("más", "menos"))
+    let replaced = testing.bench("replace ascii", () => ascii.replace("the", "a"))
+    assert(replaced.byteLength() == 1000 and not replaced.contains("the"))
+    assert(replaced.startsWith("a quick brown fox jumps over a lazy dog"))
+    let replacedOther = testing.bench("replace other", () => other.replace("más", "menos"))
+    assert(replacedOther.byteLength() == 1750 and not replacedOther.contains("más"))
+    assert(replacedOther.startsWith("el ñandú comió menos piñones"))
     let padded = "   {Ascii}\t\n"
-    testing.bench("trim", () => padded.trim())
-    testing.bench("trim read", () => padded.trim().byteLength())
-    testing.bench("toUpper ascii", () => ascii.toUpper())
-    testing.bench("toUpper other", () => other.toUpper())
+    assert(
+        testing.bench("trim", () => padded.trim()) == "the quick brown fox jumps over the lazy dog",
+    )
+    assert(testing.bench("trim read", () => padded.trim().byteLength()) == 43)
+    let upper = testing.bench("toUpper ascii", () => ascii.toUpper())
+    assert(upper.byteLength() == 1100 and upper.startsWith("THE QUICK BROWN FOX"))
+    assert(upper.endsWith("OVER THE LAZY DOG "))
+    let upperOther = testing.bench("toUpper other", () => other.toUpper())
+    assert(
+        upperOther.byteLength() == 1725 and
+            upperOther.startsWith("EL ÑANDÚ COMIÓ MÁS PIÑONES ΑΒΓ ΔΈΛΤΑ"),
+    )
     let words = Ascii.split(" ").repeat(10)
-    testing.bench("join 100", () => words.join(", "))
-    testing.bench("split other", () => other.split(" ").length())
-    testing.bench("contains other", () => other.contains("文章 x"))
+    let commaJoined = testing.bench("join 100", () => words.join(", "))
+    assert(commaJoined.byteLength() == 548 and commaJoined.startsWith("the, quick, brown"))
+    assert(commaJoined.endsWith("over, the, lazy, dog, "))
+    assert(testing.bench("split other", () => other.split(" ").length()) == 201)
+    assert(not testing.bench("contains other", () => other.contains("文章 x")))
     let written = (0..1000).map(n => "{n * 7919}").collect()
-    testing.bench("parse ints 1000", () => parsed(written))
-    testing.bench("chars ascii", () => counted(ascii))
-    testing.bench("chars other", () => counted(other))
+    assert(testing.bench("parse ints 1000", () => parsed(written)) == 3_955_540_500)
+    assert(testing.bench("chars ascii", () => counted(ascii)) == 1100)
+    assert(testing.bench("chars other", () => counted(other)) == 1100)
 }

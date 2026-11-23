@@ -97,5 +97,5 @@ fn session(): Array[String] {
 
 test aThousandCommandsAreApplied {
     let lines = session()
-    testing.bench("1000 commands", () => protocol.format(run(lines).reply))?
+    assert(testing.bench("1000 commands", () => protocol.format(run(lines).reply)) == "NONE")
 }

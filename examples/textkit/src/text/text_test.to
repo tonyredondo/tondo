@@ -71,5 +71,19 @@ fn essay(): String {
 
 test anEssayIsCounted {
     let written = essay()
-    testing.bench("frequencies of 2000 words", () => frequencies(written))?
+    assert(
+        testing.bench("frequencies of 2000 words", () => frequencies(written)) ==
+            [
+                ("creme", 200),
+                ("brulee", 200),
+                ("is", 200),
+                ("a", 200),
+                ("dessert", 200),
+                ("of", 200),
+                ("cream", 200),
+                ("and", 200),
+                ("sugar", 200),
+                ("burnt", 200),
+            ],
+    )
 }

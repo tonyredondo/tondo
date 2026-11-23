@@ -88,5 +88,7 @@ fn blog(): fs.FileSystem ! fs.FsError {
 
 test aSiteOfFiftyPostsIsBuilt {
     let site = blog()?
-    testing.bench("site of 50 posts", () => build(site, fs.memory(), "Bench"))?
+    let built = testing.bench("site of 50 posts", () => build(site, fs.memory(), "Bench"))?
+    assert(built.pages == 50 and built.drafts == 0)
+    assert(built.files.length() == 57 and "index.html" in built.files)
 }

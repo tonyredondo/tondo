@@ -38,33 +38,77 @@ fn customers(count: Int): Array[Customer] {
 test queries {
     let all = orders(10_000)
     let amounts = all.map(order => order.cents)
-    testing.bench(
-        "numbers map filter sum 10000",
-        () => amounts.map(n => n * 2).filter(n => n % 3 == 0).sum(),
+    // bench/go gives the same.
+    assert(
+        testing.bench(
+            "numbers map filter sum 10000",
+            () => amounts.map(n => n * 2).filter(n => n % 3 == 0).sum(),
+        ) ==
+            313_036_794,
     )
-    testing.bench(
-        "numbers iter map filter sum 10000",
-        () => amounts.iter().map(n => n * 2).filter(n => n % 3 == 0).sumBy(n => n),
+    // bench/go gives the same.
+    assert(
+        testing.bench(
+            "numbers iter map filter sum 10000",
+            () => amounts.iter().map(n => n * 2).filter(n => n % 3 == 0).sumBy(n => n),
+        ) ==
+            313_036_794,
     )
-    testing.bench(
-        "filter sumBy 10000",
-        () => all.filter(order => order.cents > 50_000).sumBy(order => order.cents),
+    // bench/go gives the same.
+    assert(
+        testing.bench(
+            "filter sumBy 10000",
+            () => all.filter(order => order.cents > 50_000).sumBy(order => order.cents),
+        ) ==
+            371_854_294,
     )
-    testing.bench(
-        "iter filter sumBy 10000",
-        () => all.iter().filter(order => order.cents > 50_000).sumBy(order => order.cents),
+    // bench/go gives the same.
+    assert(
+        testing.bench(
+            "iter filter sumBy 10000",
+            () => all.iter().filter(order => order.cents > 50_000).sumBy(order => order.cents),
+        ) ==
+            371_854_294,
     )
-    testing.bench("groupBy 10000", () => all.groupBy(order => order.customer).length())
-    testing.bench("sortedBy 10000", () => all.sortedBy(order => order.cents))
-    testing.bench("countBy 10000", () => all.countBy(order => order.region))
-    testing.bench("maxBy 10000", () => all.maxBy(order => order.cents))
-    testing.bench("keyedBy 10000", () => all.keyedBy(order => order.id))
-    testing.bench("uniqueBy 10000", () => all.uniqueBy(order => order.customer))
-    testing.bench("averageBy 10000", () => all.averageBy(order => Float(order.cents)))
-    testing.bench("toSet 10000", () => amounts.toSet())
+    // bench/go gives the same.
+    assert(
+        testing.bench("groupBy 10000", () => all.groupBy(order => order.customer).length()) == 1000,
+    )
+    let sorted = testing.bench("sortedBy 10000", () => all.sortedBy(order => order.cents))
+    assert(sorted.length() == 10_000)
+    assert(sorted[0] == Order { id: 8458, customer: 9, cents: 9, region: "south" })
+    assert(sorted[9_999] == Order { id: 7541, customer: 988, cents: 99988, region: "north" })
+    assert(
+        testing.bench("countBy 10000", () => all.countBy(order => order.region)) ==
+            ["west": 2500, "north": 2500, "south": 2500, "east": 2500],
+    )
+    // bench/go gives the same.
+    assert(
+        testing.bench("maxBy 10000", () => all.maxBy(order => order.cents)) ==
+            Order { id: 7541, customer: 988, cents: 99988, region: "north" },
+    )
+    let keyed = testing.bench("keyedBy 10000", () => all.keyedBy(order => order.id))
+    assert(keyed.length() == 10_000)
+    assert(keyed[0] == Order { id: 0, customer: 27, cents: 96027, region: "west" })
+    assert(keyed[9_999] == Order { id: 9999, customer: 10, cents: 46010, region: "east" })
+    let unique = testing.bench("uniqueBy 10000", () => all.uniqueBy(order => order.customer))
+    assert(unique.length() == 1000)
+    assert(unique[0] == Order { id: 0, customer: 27, cents: 96027, region: "west" })
+    assert(unique[999] == Order { id: 6255, customer: 42, cents: 34042, region: "east" })
+    // bench/go gives the same.
+    assert(
+        testing.bench("averageBy 10000", () => all.averageBy(order => Float(order.cents))) ==
+            49747.8728,
+    )
+    let set = testing.bench("toSet 10000", () => amounts.toSet())
+    assert(set.length() == 9540 and 96_027 in set)
     let people = customers(1000)
-    testing.bench(
-        "joinBy 10000x1000",
-        () => all.joinBy(people, order => order.customer, person => person.id).length(),
+    // bench/go gives the same.
+    assert(
+        testing.bench(
+            "joinBy 10000x1000",
+            () => all.joinBy(people, order => order.customer, person => person.id).length(),
+        ) ==
+            10_000,
     )
 }
