@@ -9965,3 +9965,53 @@ thread already reads its payload as `l25`, but nothing releases `l25`
 before. Nothing keeps those two apart but how lowering writes each, so
 this is what makes main sound. `tests/cases/run/released_payload.to`
 holds both shapes with their answers.
+
+## The MIR is checked for a read after a release, and a restarted frame is done with
+
+A debug build of `tondo` now refuses MIR that reads a local, or releases
+it again, after a `release` of it on a way that gives it no value of its
+own between (`verify.rs`, after lowering and after each pass). On
+2026-11-23 a change to `thread` that read a released local ran to its end
+in a debug build and passed its benchmark as 74% fewer instructions while
+it printed 0; this check stops that change at the pass that writes the
+read, naming the function. A release of a local no path to it may have
+assigned is no such read: a failing `assert`'s message is made only on
+the way that panics and released, holding zeros, on the way that passes.
+
+Its first run over the cases, the benchmarks, the examples and the
+workspace's tests found 26 places, every one in a live build, and they
+were a defect; a second run found two more of a smaller kind. A frame restarted on new code (`restart` under the
+debugger) ran its cleanups, its releases and its `defer`s, and then called
+its function again; that call's unwinding was made from the scopes the
+frame still had, so a panic in the restarted code released the frame's
+values and ran its `defer`s a second time, and a held panic went back
+and released them again. A frame moved to its new code had the same flaw
+where no `release` showed it: the new frame releases what it was given,
+then the old frame's unwinding released it again. On main a restart whose
+new code panics ran the `defer` twice and ended in SIGSEGV. Reachable only
+in a live build, when the restarted or moved function panics; under a
+`recover`, memory freed twice.
+
+The calls that take over a frame are now made with nothing of it: a panic
+there goes on to the frame's caller, past a frame that is done with, as
+toolchain 7.10 says of `restart` ("vuelva ahí como con `return`"). The
+restarted code holds its own panics, as any frame of a live build does.
+
+The smaller kind: a panic held while a statement runs lets go of what the
+statement made and starts it again, and an `assert` that then passes
+releases its message's values on its way that passes, which held what was
+just let go. A statement started again now zeroes each value it lets go.
+
+Tests in live.rs hold the restart and the move that panic, a `recover` in
+the restarted function, a fix that panics again waiting again, and a
+panic held in an `assert`'s message. A release build makes the same code
+as before (`tondo asm --all --compiler HEAD` over two examples and the
+benchmarks' tests): both mends are in paths only a live build has.
+
+The check had to learn three things the MIR cannot say by itself, each
+held by a test in verify.rs: a release of a local no way to it may have
+given a value releases zeros, as a failing `assert`'s message on the way
+that passes; a cleared local holds zeros again, as does what a callee
+that panicked was to give (`UnwindingOwn`); and a frame that comes from
+the old code at a point brings, of the locals live there, those the
+function itself may have there.
