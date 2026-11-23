@@ -643,6 +643,105 @@ fn a_stopped_frame_restarts() {
     debugger.stop();
 }
 
+const RESTARTED: &str = r#"import std.console
+
+fn work(n: Int): Int {
+    let label = "work {n} of the list"
+    defer console.println("defer of {label}")
+    console.println("start {n}")
+    n * 2
+}
+
+fn main() {
+    let result = recover { work(1) }
+    console.println("done {result.isErr()}")
+}
+"#;
+
+/// `work.to`, stopped at its line 6 under `debug --live`, changed from `old`
+/// to `new` and reloaded, then restarted or let go on, as `restart` says:
+/// what the program and the debugger wrote, and its error stream.
+fn changed_while_stopped(name: &str, old: &str, new: &str, restart: bool) -> (Vec<String>, Vec<String>) {
+    let dir = dir(name);
+    let file = dir.join("work.to");
+    std::fs::write(&file, RESTARTED).unwrap();
+    let mut debugger = Running::start(&dir, &["debug", "--live", "--json", "work.to"]);
+    let said = |debugger: &mut Running, until: &str| -> Vec<String> {
+        let mut lines = Vec::new();
+        loop {
+            let line = debugger.lines.recv_timeout(BUILDING).expect("the debugger's answer");
+            let done = line.contains(until);
+            lines.push(line);
+            if done {
+                return lines;
+            }
+        }
+    };
+    let send = |debugger: &mut Running, command: &str| {
+        writeln!(debugger.input, "{command}").unwrap();
+        debugger.input.flush().unwrap();
+    };
+    said(&mut debugger, "\"start\"");
+    send(&mut debugger, "break work.to:6");
+    said(&mut debugger, "breakpoint");
+    send(&mut debugger, "continue");
+    let mut lines = said(&mut debugger, "\"stopped\"");
+    edit(&file, old, new);
+    send(&mut debugger, "reload");
+    lines.extend(said(&mut debugger, "reloaded"));
+    if restart {
+        send(&mut debugger, "restart");
+        lines.extend(said(&mut debugger, "\"stopped\""));
+    }
+    send(&mut debugger, "delete 1");
+    lines.extend(said(&mut debugger, "deleted"));
+    send(&mut debugger, "continue");
+    lines.extend(said(&mut debugger, "exited"));
+    let errors: Vec<String> = debugger.errors.try_iter().collect();
+    debugger.stop();
+    (lines, errors)
+}
+
+/// A frame that ran its cleanups and gave itself to the call of its new code
+/// is done with: a panic of that call goes on to its caller, past the frame,
+/// whose `defer` and releases do not run again. Restarted, the old frame runs
+/// its `defer` before the new one runs its own.
+#[test]
+fn a_restarted_frame_that_panics_cleans_up_once() {
+    let panics = "    panic(\"the new code panics\")\n";
+    let (lines, errors) = changed_while_stopped("live_restart_panics", "    n * 2\n", panics, true);
+    let defers = lines.iter().filter(|l| *l == "defer of work 1 of the list").count();
+    assert_eq!(defers, 2, "{lines:#?}{errors:#?}");
+    // The caller's `recover` stops the new code's panic.
+    assert!(lines.iter().any(|l| l == "done true"), "{lines:#?}{errors:#?}");
+    assert!(!errors.iter().any(|l| l.contains("fatal")), "{errors:#?}");
+}
+
+/// A frame moved to its new code gives the new frame what it owns: a panic
+/// there runs the `defer` once, in the new frame, and releases once.
+#[test]
+fn a_moved_frame_that_panics_cleans_up_once() {
+    let panics = "    panic(\"the new code panics\")\n";
+    let (lines, errors) = changed_while_stopped("live_move_panics", "    n * 2\n", panics, false);
+    let defers = lines.iter().filter(|l| *l == "defer of work 1 of the list").count();
+    assert_eq!(defers, 1, "{lines:#?}{errors:#?}");
+    assert!(lines.iter().any(|l| l == "done true"), "{lines:#?}{errors:#?}");
+    assert!(!errors.iter().any(|l| l.contains("fatal")), "{errors:#?}");
+}
+
+/// A `recover` in the restarted function is its own call's: it stops the
+/// panic of the new code, and the function returns.
+#[test]
+fn a_recover_in_a_restarted_function_is_its_own() {
+    let caught =
+        "    let inner = recover { panic(\"inside\") }\n    console.println(\"inner {inner.isErr()}\")\n    n * 2\n";
+    let (lines, errors) = changed_while_stopped("live_restart_recovers", "    n * 2\n", caught, true);
+    assert!(lines.iter().any(|l| l == "inner true"), "{lines:#?}{errors:#?}");
+    assert!(lines.iter().any(|l| l == "done false"), "{lines:#?}{errors:#?}");
+    let defers = lines.iter().filter(|l| *l == "defer of work 1 of the list").count();
+    assert_eq!(defers, 2, "{lines:#?}{errors:#?}");
+}
+
 /// A running frame moves to the new code at its next line, with the values
 /// it has; one that needs a value the old code does not have there stays
 /// until it reaches a line where it has all it needs.
@@ -794,6 +893,32 @@ fn a_panic_waits_for_a_fix() {
     edit(&file, "    total / by\n", "    if by == 0 {\n        return 0\n    }\n    total / by\n");
     assert_eq!(server.lines.recv_timeout(BUILDING).unwrap(), "3 0");
     assert_eq!(server.answer("2"), "4 50");
+    server.stop();
+}
+
+/// A fix that panics again waits for a fix again: the call that starts the
+/// function anew holds its own panic, as the first did, and a good fix then
+/// goes on with the state the program had.
+#[test]
+fn a_fix_that_panics_again_waits_again() {
+    let dir = dir("live_panic_again");
+    let file = dir.join("panics.to");
+    std::fs::write(&file, PANICS).unwrap();
+    let mut server = Running::start(&dir, &["run", "panics.to", "--watch"]);
+    assert_eq!(server.answer("5"), "1 20");
+    writeln!(server.input, "0").unwrap();
+    server.input.flush().unwrap();
+    let waits = |server: &Running| {
+        (0..600)
+            .find_map(|_| server.errors.recv_timeout(Duration::from_secs(1)).ok().filter(|l| l.contains("waits here")))
+    };
+    assert!(waits(&server).is_some(), "the task did not wait");
+    // A fix that still panics, for another reason.
+    edit(&file, "    total / by\n", "    if by == 0 {\n        panic(\"still zero\")\n    }\n    total / by\n");
+    assert!(waits(&server).is_some(), "the task did not wait again");
+    edit(&file, "        panic(\"still zero\")\n", "        return 0\n");
+    assert_eq!(server.lines.recv_timeout(BUILDING).unwrap(), "2 0");
+    assert_eq!(server.answer("4"), "3 25");
     server.stop();
 }
 

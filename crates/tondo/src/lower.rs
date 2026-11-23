@@ -1417,11 +1417,23 @@ impl Builder<'_> {
             };
             b.terminate(Terminator::Return(result));
         };
+        // The call that takes over is made with nothing of this frame: what
+        // it held is released by then, or the new frame's, so a panic of the
+        // call goes on to this frame's caller with nothing more to release
+        // or run, and no `recover` or held panic of this frame stops it.
+        let alone = |b: &mut Self, call: Rvalue| {
+            let scopes = std::mem::take(&mut b.scopes);
+            let frames = std::mem::take(&mut b.frames);
+            let recovers = std::mem::take(&mut b.recovers);
+            let again = b.again.take();
+            finish(b, call);
+            (b.scopes, b.frames, b.recovers, b.again) = (scopes, frames, recovers, again);
+        };
         self.switch_to(again);
         self.cleaning += 1;
         self.cleanup_to(0, 0);
         self.cleaning -= 1;
-        finish(self, Rvalue::Call(hir::Callee::Fn(function), arguments.clone()));
+        alone(self, Rvalue::Call(hir::Callee::Fn(function), arguments.clone()));
         // What the frame owns goes to the new one, which releases it.
         self.switch_to(transfer);
         let state = self.new_local(Ty::INT);
@@ -1431,7 +1443,7 @@ impl Builder<'_> {
         self.assign(Place::local(given), compare, span);
         self.terminate(Terminator::Branch(Operand::local(given), moving, next));
         self.switch_to(moving);
-        finish(self, Rvalue::CallOsr(function, arguments, Operand::local(state)));
+        alone(self, Rvalue::CallOsr(function, arguments, Operand::local(state)));
         let defers = self.scopes.iter().flatten().filter(|exit| matches!(exit, Exit::Defer(_))).count() as u32;
         let loops = self.loops.len() as u32;
         let (binds, reads, entry_of, runs, path) = (Vec::new(), Vec::new(), None, Vec::new(), self.path.clone());
