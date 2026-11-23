@@ -1190,7 +1190,8 @@ fn build_tests(path: &Path, build: &TestBuild) -> Result<Option<(PathBuf, tondo:
     let dir = tondo::runner::build_dir(path, build.statically, build.debug, coverage, fuzz, build.live, build.target)?;
     let (executable, tree_file) = (dir.join("tests"), dir.join("tree"));
     drop(finding);
-    if let Some(tree) = tondo::runner::Tree::load(&tree_file).filter(|_| build.list || executable.is_file()) {
+    let kept = |_: &tondo::runner::Tree| build.list || executable.is_file() && !driver::asks_what_compiling_writes();
+    if let Some(tree) = tondo::runner::Tree::load(&tree_file).filter(kept) {
         tondo::times::cached();
         say_again(&dir, build.diagnostics_json);
         return Ok(Some((executable, tree)));
@@ -3526,7 +3527,7 @@ fn cached_executable(path: &Path, options: &BuildOptions) -> Result<Option<PathB
     let dir = driver::build_entry("run", &[program.as_os_str().as_encoded_bytes(), parts[2].as_slice()], &key);
     let executable = dir.join(program_name(path)?);
     drop(finding);
-    if executable.exists() {
+    if executable.exists() && !driver::asks_what_compiling_writes() {
         tondo::times::cached();
         say_again(&dir, options.shown == Shown::Json);
     } else {

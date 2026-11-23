@@ -1697,7 +1697,11 @@ pub fn build_dir(
         if statically { "static" } else { "" },
         if debug { "debug" } else { "" },
         if live { "live" } else { "" },
-        if counting { "coverage" } else { "" },
+        match (counting, crate::codegen::std_counted()) {
+            (true, true) => "coverage of std",
+            (true, false) => "coverage",
+            (false, _) => "",
+        },
         if fuzz { "fuzz" } else { "" },
         target.map_or("", crate::target::Target::name),
         crate::driver::asked_cpu(),

@@ -3380,6 +3380,13 @@ pub fn fingerprint(parts: &[&[u8]]) -> String {
 }
 
 /// Identity of this compiler build, for cache keys.
+/// Whether the environment asks for what only a compilation writes, the
+/// MIR of `TONDO_DUMP_MIR` or the regions' verdicts of `TONDO_REGIONS`: a
+/// kept build is then built again, so that what was asked for is written.
+pub fn asks_what_compiling_writes() -> bool {
+    ["TONDO_DUMP_MIR", "TONDO_REGIONS"].iter().any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+}
+
 pub fn compiler_identity() -> String {
     let exe = std::env::current_exe().ok().and_then(|p| std::fs::metadata(p).ok());
     let stamp = exe.map(|m| format!("{}:{:?}", m.len(), m.modified().ok())).unwrap_or_default();

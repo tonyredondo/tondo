@@ -4722,7 +4722,7 @@ fn unwind_target(block: &crate::mir::BlockData, at: usize) -> Option<crate::mir:
 /// `TONDO_COVERAGE_STD`, internal: coverage counts the lines of the
 /// standard library too, to measure what of it the toolchain's tests run
 /// (docs/refactor.md, 0.1).
-fn std_counted() -> bool {
+pub(crate) fn std_counted() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("TONDO_COVERAGE_STD").is_some())
 }

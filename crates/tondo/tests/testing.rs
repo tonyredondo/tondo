@@ -2118,6 +2118,28 @@ fn main() {
 }
 ";
 
+/// `TONDO_COVERAGE_STD`, internal, counts the standard library's lines too:
+/// a coverage build kept without it is not the one a run with it uses.
+#[test]
+fn coverage_of_the_library_is_a_build_of_its_own() {
+    let dir = project("coverage-std", "test sums {\n    assert([1, 2, 3].sumBy(n => n) == 6)\n}\n");
+    let json = dir.join("coverage.json");
+    let report = format!("coverage={}", json.display());
+    let files = |library: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+        command.args(["test", "--coverage", "--report", &report]).current_dir(&dir);
+        if library {
+            command.env("TONDO_COVERAGE_STD", "1");
+        }
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let covered: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
+        covered["files"].as_array().unwrap().len()
+    };
+    assert_eq!(files(false), 1);
+    assert!(files(true) > 1);
+}
+
 /// Coverage: the lines, functions and ways of branches of the project's
 /// code that the tests ran, as JSON, LCOV and a summary; what no test
 /// calls counts as not run, and the tests themselves do not count.

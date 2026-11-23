@@ -1383,6 +1383,18 @@ fn the_mir_of_a_function_and_what_the_passes_decided() {
     assert!(calls.contains("note inline: the call of `fib` stays: it is this one"), "{calls}");
     let (_, quiet, _) = tondo(&dir, &["build", "main.to", "--output", "main"]);
     assert!(!quiet.contains("== measured"), "{quiet}");
+    // A build `tondo run` kept is built again when its MIR is asked for, so
+    // that what was asked for is written.
+    let (_, kept, status) = tondo(&dir, &["run", "main.to"]);
+    assert!(status == 0 && !kept.contains("== measured"), "{kept}");
+    let again = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "main.to"])
+        .env("TONDO_DUMP_MIR", "measured@lower")
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let again = String::from_utf8_lossy(&again.stderr);
+    assert!(again.contains("== measured after lower\n"), "{again}");
 }
 
 /// A test the facts decide is a jump: `math.checkedSqrt`'s test of a negative
