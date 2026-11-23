@@ -6,10 +6,9 @@ mod common;
 
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn tondo(dir: &Path, args: &[&str]) -> (String, String, i32) {
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap();
+    let output = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap();
     let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
     (text(&output.stdout), text(&output.stderr), output.status.code().unwrap_or(-1))
 }
@@ -254,7 +253,7 @@ fn manages_projects() {
     std::fs::write(cache.join("tondo/run/entry/program"), [0u8; 1000]).unwrap();
     std::fs::create_dir_all(cache.join("tondo/deps/kept")).unwrap();
     // What it holds, emptying nothing: each part, and the builds' limit.
-    let listed = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let listed = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["clean", "--list", "--json"])
         .env("XDG_CACHE_HOME", &cache)
         .env("TONDO_CACHE_LIMIT", "1m")
@@ -265,7 +264,7 @@ fn manages_projects() {
     assert_eq!((&run["bytes"], &run["counted"], &run["cleaned"]), (&json!(1000), &json!(true), &json!(true)));
     assert_eq!((&listed["builds"], &listed["limit"]), (&json!(1000), &json!(1 << 20)), "{listed}");
     assert!(cache.join("tondo/run/entry/program").exists());
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["clean", "--json"])
         .env("XDG_CACHE_HOME", &cache)
         .output()
@@ -358,7 +357,7 @@ fn the_cache_keeps_a_programs_last_builds() {
     let cache = dir.join("cache");
     let run = |text: &str| {
         std::fs::write(dir.join("main.to"), format!("import std.console\n\nconsole.println(\"{text}\")\n")).unwrap();
-        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let output = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(["run", "main.to"])
             .current_dir(&dir)
             .env("XDG_CACHE_HOME", &cache)
@@ -403,7 +402,7 @@ fn a_cached_build_says_its_warnings_again() {
     .unwrap();
     std::fs::write(dir.join("src/main_test.to"), "test shouts {\n    assert(Shout() == \"hi\")\n}\n").unwrap();
     let tondo = |args: &[&str]| {
-        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let output = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(args)
             .current_dir(&dir)
             .env("XDG_CACHE_HOME", &cache)
@@ -437,13 +436,13 @@ fn a_program_built_again_while_it_runs() {
         assert_eq!(status, 0, "{stderr}");
     };
     build("import std.console\n\nconsole.println(\"first {console.readLine() ?? \"\"}\")\n");
-    let mut first = Command::new(dir.join("main"))
+    let mut first = common::command(dir.join("main"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
         .unwrap();
     build("import std.console\n\nconsole.println(\"second\")\n");
-    let second = Command::new(dir.join("main")).output().unwrap();
+    let second = common::command(dir.join("main")).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&second.stdout), "second\n", "{:?}", second.status);
     writeln!(first.stdin.take().unwrap(), "done").unwrap();
     let first = first.wait_with_output().unwrap();
@@ -480,7 +479,7 @@ fn which_passes_over_a_directory_that_is_not_a_text() {
     let mut path = foreign.clone().into_os_string().into_vec();
     path.push(b':');
     path.extend(named.as_os_str().as_bytes());
-    let run = Command::new(dir.join("main")).env("PATH", OsString::from_vec(path)).output().unwrap();
+    let run = common::command(dir.join("main")).env("PATH", OsString::from_vec(path)).output().unwrap();
     let said = String::from_utf8(run.stdout).expect("a text");
     assert_eq!(said, format!("some({})\n", named.join("found-here").display()), "{:?}", run.status);
 }
@@ -890,7 +889,7 @@ fn a_lost_update_has_a_repair() {
         let seen = cell.get()\n    cell.update((n) { n = seen + 1 })\n    cell.set(cell.get() * 2)\n    \
         let kept = cell.get()\n    cell.set(kept + 1)\n    console.println(\"{kept}\")\n}\n";
     std::fs::write(dir.join("fix.to"), program).unwrap();
-    let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let ran = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["check", "fix.to", "--json"])
         .current_dir(&dir)
         .output()
@@ -916,7 +915,7 @@ fn an_unused_string_has_a_repair() {
     std::fs::create_dir_all(&dir).unwrap();
     let program = "import std.cli\n\nfn main() {\n    cli.markup(\"[red]no[/]\")\n}\n";
     std::fs::write(dir.join("fix.to"), program).unwrap();
-    let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let ran = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["check", "fix.to", "--json"])
         .current_dir(&dir)
         .output()
@@ -937,7 +936,7 @@ fn a_lock_in_a_defer_has_a_repair() {
     let program = "import std.console\nimport std.sync\n\nfn main() {\n    let count = sync.Mutex(0)\n    count.set(1)\n    defer {\n        \
         count.update((n) { n += 2 })\n    }\n    console.println(\"{count.get()}\")\n}\n";
     std::fs::write(dir.join("fix.to"), program).unwrap();
-    let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let ran = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["check", "fix.to", "--json"])
         .current_dir(&dir)
         .output()
@@ -968,7 +967,7 @@ fn an_internal_module_stays_in_its_package() {
     )
     .unwrap();
     let tondo =
-        |args: &[&str]| Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&app).output().unwrap();
+        |args: &[&str]| common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&app).output().unwrap();
     let outside = "import units.internal.convert\n\nfn main() {\n    _ = convert.twice(1)\n}\n";
     std::fs::write(app.join("src/main.to"), outside).unwrap();
     let said = tondo(&["check"]);
@@ -992,8 +991,11 @@ fn a_test_that_times_out_says_where_it_was() {
     let code = "import std.time\n\nfn slow() {\n    time.sleep(time.seconds(60))\n}\n\nfn main() {}\n";
     std::fs::write(dir.join("src/main.to"), code).unwrap();
     std::fs::write(dir.join("src/main_test.to"), "test hangs {\n    slow()\n}\n").unwrap();
-    let ran =
-        Command::new(env!("CARGO_BIN_EXE_tondo")).args(["test", "--timeout", "2"]).current_dir(&dir).output().unwrap();
+    let ran = common::command(env!("CARGO_BIN_EXE_tondo"))
+        .args(["test", "--timeout", "2"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
     let said = String::from_utf8_lossy(&ran.stdout);
     assert!(said.contains("timed out after 2s") && said.contains("main.to:4 in slow"), "{said}");
 }
@@ -1011,7 +1013,7 @@ fn a_server_says_why_it_cannot_listen() {
         "import std.http\n\nfn main(): !http.HttpError {{\n    var app = http.App()\n    app.listen({port})?\n}}\n"
     );
     std::fs::write(dir.join("server.to"), program).unwrap();
-    let server = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let server = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "server.to"])
         .current_dir(&dir)
         .stderr(std::process::Stdio::piped())
@@ -1036,9 +1038,10 @@ fn output_goes_out_when_a_program_has_nothing_to_do() {
         _ = group.wait()\n    console.println(\"waiting\")\n    time.sleep(time.seconds(30))\n}\n";
     std::fs::write(dir.join("idle.to"), program).unwrap();
     let tondo = env!("CARGO_BIN_EXE_tondo");
-    let built = Command::new(tondo).args(["build", "idle.to", "--output", "idle"]).current_dir(&dir).output().unwrap();
+    let built =
+        common::command(tondo).args(["build", "idle.to", "--output", "idle"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let mut child = Command::new(dir.join("idle")).stdout(std::process::Stdio::piped()).spawn().unwrap();
+    let mut child = common::command(dir.join("idle")).stdout(std::process::Stdio::piped()).spawn().unwrap();
     // While it sleeps: it lets everything out as it ends, after 30 seconds.
     let stdout = child.stdout.take().unwrap();
     let (said, heard) = std::sync::mpsc::channel();
@@ -1105,7 +1108,7 @@ fn a_thread_stands_in_while_a_callback_waits_for_the_host() {
     let case = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/cases/run/ffi_callback_waits_for_a_process.to");
     let (_, stderr, status) = tondo(&dir, &["build", case.to_str().unwrap(), "--output", "callback"]);
     assert_eq!(status, 0, "{stderr}");
-    let child = Command::new(dir.join("callback"))
+    let child = common::command(dir.join("callback"))
         .env("TONDO_RT_SCHEDULE", "1")
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -1148,8 +1151,11 @@ fn the_compiler_outlives_broken_programs() {
         }
         let file = dir.join("broken.to");
         std::fs::write(&file, words.concat()).unwrap();
-        let ran =
-            Command::new(env!("CARGO_BIN_EXE_tondo")).args(["check", "broken.to"]).current_dir(&dir).output().unwrap();
+        let ran = common::command(env!("CARGO_BIN_EXE_tondo"))
+            .args(["check", "broken.to"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
         let said = String::from_utf8_lossy(&ran.stderr);
         assert!(!said.contains("is a bug of tondo"), "round {round}: {said}\n{}", words.concat());
     }
@@ -1158,7 +1164,7 @@ fn the_compiler_outlives_broken_programs() {
 /// `tondo dap` takes what a program needs to be built, and only that.
 #[test]
 fn the_debug_adapter_says_what_it_takes() {
-    let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dap", "--strip"]).output().unwrap();
+    let ran = common::command(env!("CARGO_BIN_EXE_tondo")).args(["dap", "--strip"]).output().unwrap();
     let said = String::from_utf8_lossy(&ran.stderr);
     assert!(!ran.status.success() && said.contains("dap takes --link <library> and --static"), "{said}");
 }
@@ -1175,7 +1181,7 @@ fn project_at(name: &str, files: &[(&str, &[u8])]) -> std::path::PathBuf {
 }
 
 fn said_by(dir: &Path, args: &[&str]) -> String {
-    let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap();
+    let ran = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap();
     format!("{}{}", String::from_utf8_lossy(&ran.stdout), String::from_utf8_lossy(&ran.stderr))
 }
 
@@ -1335,12 +1341,12 @@ fn a_long_call_of_c_holds_up_no_other_task() {
     std::fs::write(dir.join("calls.to"), program).unwrap();
     let tondo = env!("CARGO_BIN_EXE_tondo");
     let built =
-        Command::new(tondo).args(["build", "calls.to", "--output", "calls"]).current_dir(&dir).output().unwrap();
+        common::command(tondo).args(["build", "calls.to", "--output", "calls"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let alone = cfg!(target_os = "linux")
-        .then(|| Command::new("taskset").args(["-c", "0", "./calls"]).current_dir(&dir).output());
+        .then(|| common::command("taskset").args(["-c", "0", "./calls"]).current_dir(&dir).output());
     for ran in
-        [alone.and_then(Result::ok), Some(Command::new(dir.join("calls")).output().unwrap())].into_iter().flatten()
+        [alone.and_then(Result::ok), Some(common::command(dir.join("calls")).output().unwrap())].into_iter().flatten()
     {
         let said = String::from_utf8_lossy(&ran.stdout);
         assert_eq!(said.lines().count(), 12, "{said}");
@@ -1348,6 +1354,23 @@ fn a_long_call_of_c_holds_up_no_other_task() {
             assert!(line.parse::<u64>().unwrap() < 500, "a task waited for the call: {said}");
         }
     }
+}
+
+/// A program the tests run keeps its files in the tests' cache: a crash's
+/// dump goes there, and not where the user's own are kept, as the program
+/// itself says.
+#[test]
+fn a_program_the_tests_run_dumps_into_their_cache() {
+    let dir = project_at(
+        "dumps-there",
+        &[("falls.to", b"fn main() {\n    let empty: Array[Int] = []\n    _ = empty[0]\n}\n")],
+    );
+    let ran =
+        common::command(env!("CARGO_BIN_EXE_tondo")).args(["run", "falls.to"]).current_dir(&dir).output().unwrap();
+    let said = String::from_utf8_lossy(&ran.stderr);
+    let at = said.lines().find_map(|line| line.strip_prefix("tondo runtime: a dump of the program is in "));
+    let at = at.unwrap_or_else(|| panic!("no dump said: {said}"));
+    assert!(Path::new(at.trim()).starts_with(common::cache()), "{at}");
 }
 
 /// `TONDO_DUMP_MIR` writes the MIR of the functions it names after each
@@ -1361,7 +1384,7 @@ fn the_mir_of_a_function_and_what_the_passes_decided() {
         fn main() {\n    for round in 0..3 {\n        console.println(\"{measured(round)} {fib(round)}\")\n    }\n}\n";
     let dir = project_at("dump-mir", &[("main.to", source)]);
     let dumped = |asked: &str| {
-        let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let ran = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(["build", "main.to", "--output", "main"])
             .env("TONDO_DUMP_MIR", asked)
             .current_dir(&dir)
@@ -1387,7 +1410,7 @@ fn the_mir_of_a_function_and_what_the_passes_decided() {
     // that what was asked for is written.
     let (_, kept, status) = tondo(&dir, &["run", "main.to"]);
     assert!(status == 0 && !kept.contains("== measured"), "{kept}");
-    let again = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let again = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "main.to"])
         .env("TONDO_DUMP_MIR", "measured@lower")
         .current_dir(&dir)
@@ -1409,7 +1432,7 @@ fn a_test_the_facts_decide_is_a_jump() {
         fn main() {\n    console.println(\"{roots(10)} {any(-4)} {any(4)}\")\n}\n";
     let dir = project_at("decided-tests", &[("main.to", source)]);
     let dumped = |asked: &str| {
-        let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let ran = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(["build", "main.to", "--output", "main"])
             .env("TONDO_DUMP_MIR", asked)
             .current_dir(&dir)
@@ -1422,7 +1445,7 @@ fn a_test_the_facts_decide_is_a_jump() {
     assert!(roots.contains("test always goes to"), "{roots}");
     let any = dumped("any@prove");
     assert!(any.contains("< 0") && !any.contains("test always goes to"), "{any}");
-    let ran = Command::new(dir.join("main")).output().unwrap();
+    let ran = common::command(dir.join("main")).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&ran.stdout), "19.30600052603572 -1.0 2.0\n");
 }
 
@@ -1443,7 +1466,7 @@ fn a_test_each_way_decided_is_threaded_through_the_join() {
         console.println(\"{doubled(xs)} {picked(xs, 2)} {picked(xs, -1)} {picked([], -1)}\")\n    \
         console.println(\"{both(xs, 2)} {both([5], -1)} {both([], -1)}\")\n}\n";
     let dir = project_at("threaded-joins", &[("main.to", source)]);
-    let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let ran = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "main.to", "--output", "main"])
         .env("TONDO_DUMP_MIR", "sumBy@thread")
         .current_dir(&dir)
@@ -1454,7 +1477,7 @@ fn a_test_each_way_decided_is_threaded_through_the_join() {
     // The chain's copy of `sumBy`: a test copied into a branch's edge, and
     // folded where every way into it knows the tag.
     assert!(dumped.contains("of them a branch's edge") && dumped.contains("every way into it knows it"), "{dumped}");
-    let ran = Command::new(dir.join("main")).output().unwrap();
+    let ran = common::command(dir.join("main")).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&ran.stdout), "18 2 1 -1\n4 10 6\n");
 }
 
@@ -1468,7 +1491,7 @@ fn a_part_of_a_parameter_only_read_needs_no_count() {
     let source = "import std.console\n\ntype Box = {\n    items: Array[Int]\n    name: String\n}\n\nfn sizes(box: Box): Int {\n    let items = box.items\n    items.length() + items[0]\n}\n\nfn walked(box: Box): Int {\n    var cursor = box\n    var total = 0\n    for item in cursor.items {\n        total += item\n    }\n    cursor.name = \"walked\"\n    total + cursor.name.length() + box.name.length()\n}\n\nfn kept(box: Box): Array[Int] {\n    let items = box.items\n    items\n}\n\nfn stored(box: Box): Box {\n    let items = box.items\n    Box { items: items, name: \"copy\" }\n}\n\nfn grown(box: var Box): Int {\n    let items = box.items\n    box = Box { items: [], name: \"\" }\n    items.length()\n}\n\nfn main() {\n    var box = Box { items: [1, 2, 3], name: \"b\" }\n    console.println(\"{sizes(box)} {walked(box)} {kept(box).length()} {stored(box).items.length()} {grown(var box)} {box.items.length()}\")\n    console.println(\"{[1, 2, 3, 4, 5, 6].iter().map(n => n * 2).filter(n => n % 3 == 0).sumBy(n => n)}\")\n}\n";
     let dir = project_at("borrowed-parts", &[("main.to", source.as_bytes())]);
     let notes = |function: &str| {
-        let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let ran = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(["build", "main.to", "--output", "main"])
             .env("TONDO_DUMP_MIR", format!("{function}@borrowed"))
             .current_dir(&dir)
@@ -1495,7 +1518,7 @@ fn a_part_of_a_parameter_only_read_needs_no_count() {
     assert!(stored.len() == 1 && stored[0].contains("keeps its count: something keeps it"), "{stored:?}");
     // A `var` parameter is lent: no part of it is looked at.
     assert!(notes("grown").is_empty());
-    let ran = Command::new(dir.join("main")).output().unwrap();
+    let ran = common::command(dir.join("main")).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&ran.stdout), "4 13 3 3 3 0\n18\n");
 }
 
@@ -1510,7 +1533,7 @@ fn a_layout_seed_moves_the_code_and_nothing_else() {
         deep(total % 3)\n}\n";
     let dir = project_at("layout-seed", &[("main.to", source)]);
     let built = |seed: Option<&str>, output: &str| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+        let mut command = common::command(env!("CARGO_BIN_EXE_tondo"));
         command.args(["build", "main.to", "--output", output]).current_dir(&dir);
         match seed {
             Some(seed) => command.env("TONDO_LAYOUT_SEED", seed),
@@ -1518,7 +1541,7 @@ fn a_layout_seed_moves_the_code_and_nothing_else() {
         };
         let ran = command.output().unwrap();
         assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
-        let run = Command::new(dir.join(output)).env("TONDO_DUMP", "off").output().unwrap();
+        let run = common::command(dir.join(output)).env("TONDO_DUMP", "off").output().unwrap();
         let said = String::from_utf8_lossy(&run.stderr)
             .lines()
             .filter(|l| !l.contains("dump of"))
@@ -1580,7 +1603,7 @@ fn a_build_without_logpoint_sites() {
     let dir =
         project_at("no-logpoint-sites", &[("src/main.to", source), ("tondo.toml", b"[package]\nname = \"fib\"\n")]);
     let tondo_in = |args: &[&str]| {
-        let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+        let ran = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
         assert!(ran.status.success(), "{args:?}: {}", String::from_utf8_lossy(&ran.stderr));
         String::from_utf8_lossy(&ran.stdout).into_owned()
     };
@@ -1614,7 +1637,7 @@ fn a_build_without_regions() {
         }\n    total\n}\n\nfn main() {\n    console.println(\"{turns(1000)}\")\n}\n";
     let dir = project_at("no-lifetimes", &[("src/main.to", source), ("tondo.toml", b"[package]\nname = \"turns\"\n")]);
     let tondo_in = |args: &[&str]| {
-        let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+        let ran = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
         assert!(ran.status.success(), "{args:?}: {}", String::from_utf8_lossy(&ran.stderr));
         String::from_utf8_lossy(&ran.stdout).into_owned()
     };
@@ -1835,7 +1858,7 @@ fn size_says_what_an_executable_weighs() {
     assert!(stripped["size"].as_u64() < data["size"].as_u64(), "{stripped}");
     assert_eq!((part(&stripped, "the names of symbols"), part(&stripped, "the program's code")), (0, own));
     // Since a revision: a function more.
-    let git = |args: &[&str]| assert!(Command::new("git").args(args).current_dir(&dir).status().unwrap().success());
+    let git = |args: &[&str]| assert!(common::command("git").args(args).current_dir(&dir).status().unwrap().success());
     git(&["init", "-q"]);
     git(&["add", "main.to"]);
     git(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "one"]);
@@ -1975,7 +1998,7 @@ fn the_machine_code_of_a_function() {
     assert_eq!(status, 3, "{stderr}");
     assert!(stderr.contains("no code of a function named `nobody`"), "{stderr}");
     // Since a revision: the same code, then the calls the other way round.
-    let git = |args: &[&str]| assert!(Command::new("git").args(args).current_dir(&dir).status().unwrap().success());
+    let git = |args: &[&str]| assert!(common::command("git").args(args).current_dir(&dir).status().unwrap().success());
     git(&["init", "-q"]);
     git(&["add", "main.to"]);
     git(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "one"]);
@@ -1999,7 +2022,7 @@ fn the_machine_code_of_a_function() {
     );
     let other = dir.join("other-tondo");
     std::fs::write(&other, format!("#!/bin/sh\n'{this}' \"$@\" | sed 's/\"ret\"/\"nop\"/'\n")).unwrap();
-    Command::new("chmod").arg("+x").arg(&other).status().unwrap();
+    common::command("chmod").arg("+x").arg(&other).status().unwrap();
     let (found, status) = json(&dir, &["asm", "main.to", "--all", "--compiler", other.to_str().unwrap(), "--json"]);
     assert_eq!(status, 0, "{found}");
     // The first `ret` of its listing, which has what the program reaches too.
@@ -2075,7 +2098,7 @@ fn what_a_release_build_makes_differently_since_a_revision() {
         fn main() {\n    let values = [1, 2, 3]\n    for i in 0..3 {\n        _ = quarter(values[i])\n    }\n}\n";
     let dir = project_at("optimizations-against", &[("main.to", fast)]);
     let git = |args: &[&str]| {
-        let status = Command::new("git").args(args).current_dir(&dir).status().unwrap();
+        let status = common::command("git").args(args).current_dir(&dir).status().unwrap();
         assert!(status.success(), "git {args:?}");
     };
     git(&["init", "-q"]);

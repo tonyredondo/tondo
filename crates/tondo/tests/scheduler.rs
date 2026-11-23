@@ -10,8 +10,9 @@
 //! deadline ended and the task's look at it, and none leaves anything
 //! behind.
 
+mod common;
+
 use std::path::Path;
-use std::process::Command;
 
 const PROGRAM: &str = "import std.console
 import std.sync
@@ -70,11 +71,11 @@ fn a_program_breaks_none_of_the_schedulers_rules() {
     std::fs::write(dir.join("rules.to"), PROGRAM).unwrap();
     let tondo = env!("CARGO_BIN_EXE_tondo");
     let built =
-        Command::new(tondo).args(["build", "rules.to", "--output", "rules"]).current_dir(&dir).output().unwrap();
+        common::command(tondo).args(["build", "rules.to", "--output", "rules"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let expected = "handed: 199990000\nslept: 115\nwoken beside a computation\n";
     for workers in ["1", "2", "4"] {
-        let run = Command::new(dir.join("rules"))
+        let run = common::command(dir.join("rules"))
             .env("TONDO_CHECK_SCHEDULER", "1")
             .env("TONDO_WORKERS", workers)
             .output()
@@ -144,11 +145,12 @@ fn a_host_job_and_a_deadline_race_in_both_orders_and_leave_nothing() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("race.to"), RACE).unwrap();
     let tondo = env!("CARGO_BIN_EXE_tondo");
-    let built = Command::new(tondo).args(["build", "race.to", "--output", "race"]).current_dir(&dir).output().unwrap();
+    let built =
+        common::command(tondo).args(["build", "race.to", "--output", "race"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let (mut gave, mut dropped) = (0, 0);
     for seed in 1..=8 {
-        let run = Command::new(dir.join("race"))
+        let run = common::command(dir.join("race"))
             .env("TONDO_CHECK_SCHEDULER", "1")
             .env("TONDO_RT_STALLS", seed.to_string())
             .env("TONDO_RT_CHECK_LEAKS", "1")

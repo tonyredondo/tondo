@@ -1,10 +1,12 @@
 //! `tondo mcp` (toolchain 7.9) as an agent uses it: JSON-RPC a line, over
 //! standard input and output, in both eras of the protocol.
 
+mod common;
+
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 
 struct Agent {
     child: Child,
@@ -20,7 +22,7 @@ impl Agent {
 
     /// With these variables, as a machine set up otherwise.
     fn start_with(dir: &Path, variables: &[(&str, &Path)]) -> Agent {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
             .arg("mcp")
             .current_dir(dir)
             .envs(variables.iter().map(|(name, value)| (*name, *value)))
@@ -550,7 +552,7 @@ fn setup_readies_the_agents() {
     }
     let path = commands.clone();
     let setup = || {
-        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let output = common::command(env!("CARGO_BIN_EXE_tondo"))
             .arg("setup")
             .env("HOME", &home)
             .env("PATH", &path)
@@ -579,7 +581,7 @@ fn setup_readies_the_agents() {
     // A .vsix given is the one installed.
     let vsix = dir.join("tondo.vsix");
     std::fs::write(&vsix, "").unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["setup", "--json", "--vsix"])
         .arg(&vsix)
         .env("HOME", &home)
@@ -722,11 +724,12 @@ fn reads_dumps_sources_and_a_running_program() {
     let tondo = env!("CARGO_BIN_EXE_tondo");
     std::fs::create_dir_all(dir.join("dumps")).unwrap();
     for (file, output) in [("falls.to", "falls"), ("runs.to", "runs")] {
-        let built = Command::new(tondo).args(["build", file, "--output", output]).current_dir(&dir).output().unwrap();
+        let built =
+            common::command(tondo).args(["build", file, "--output", output]).current_dir(&dir).output().unwrap();
         assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     }
     for _ in 0..3 {
-        Command::new(dir.join("falls")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+        common::command(dir.join("falls")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
     }
     let mut agent = Agent::start(&dir);
     let dumps = dir.join("dumps");
@@ -759,7 +762,7 @@ fn reads_dumps_sources_and_a_running_program() {
     assert!(text.contains("\"state\":\"same\""), "{text}");
 
     // A logpoint needs Linux, and says so elsewhere.
-    let mut child = Command::new(dir.join("runs"))
+    let mut child = common::command(dir.join("runs"))
         .env("TONDO_DIAGNOSTICS", "1")
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -814,7 +817,7 @@ fn tests_by_what_changed_and_by_commit() {
         &[("tondo.toml", "[package]\nname = \"changes\"\nversion = \"0.1.0\"\n"), ("src/main.to", main)],
     );
     let git = |args: &[&str]| {
-        let run = Command::new("git")
+        let run = common::command("git")
             .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
             .args(args)
             .current_dir(&dir)
@@ -895,7 +898,7 @@ fn reaches_what_the_command_line_does() {
         fn main() {\n    console.println(\"{total(Order { lines: [10, 20] })}\")\n}\n";
     std::fs::write(shop.join("src/main.to"), code).unwrap();
     client.call("build", json!({ "path": shop, "output": shop.join("shop") }));
-    Command::new(shop.join("shop")).current_dir(&shop).env("TONDO_DUMP", "dumps").output().unwrap();
+    common::command(shop.join("shop")).current_dir(&shop).env("TONDO_DUMP", "dumps").output().unwrap();
     let dump = std::fs::read_dir(shop.join("dumps")).unwrap().flatten().next().unwrap().path();
     let (data, _) = client.call("dump_test", json!({ "file": dump, "project": shop }));
     assert_eq!(data["report"]["reproduces"], true, "{data}");
@@ -943,7 +946,7 @@ fn says_what_a_release_build_makes_of_the_code() {
     assert_eq!(wrong["compiles"], false, "{wrong}");
     assert!(text.contains("nothing"), "{text}");
     // What changed since a commit.
-    let git = |args: &[&str]| assert!(Command::new("git").args(args).current_dir(&dir).status().unwrap().success());
+    let git = |args: &[&str]| assert!(common::command("git").args(args).current_dir(&dir).status().unwrap().success());
     git(&["init", "-q"]);
     git(&["add", "main.to"]);
     git(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "one"]);

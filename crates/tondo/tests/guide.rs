@@ -2,8 +2,9 @@
 //! string says `library`, and every example of a mistake fails with the error
 //! it names. The test `docs` holds those of the manual and of the README.
 
+mod common;
+
 use std::path::Path;
-use std::process::Command;
 
 /// The examples of a topic: their info string and their code.
 fn examples(text: &str) -> Vec<(String, String)> {
@@ -59,7 +60,7 @@ fn examples_compile_and_the_guides_tests_pass() {
                         // Run with the memory of each region that ends made
                         // unreadable, so that a value put in a region it
                         // outlives faults.
-                        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+                        let output = common::command(env!("CARGO_BIN_EXE_tondo"))
                             .args(checks)
                             .args(info.ends_with(" library").then_some("--library"))
                             .current_dir(case)

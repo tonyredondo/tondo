@@ -2,14 +2,15 @@
 //! the provider of its trait, and a program that depends on it derives the
 //! trait for its types.
 
+mod common;
+
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// `tondo`, with the memory of each region that ends made unreadable in
 /// the programs it runs, so that a value put in a region it outlives
 /// faults: the tests, providers and generators the cases cannot run.
 fn tondo(dir: &Path, args: &[&str]) -> (String, String, i32) {
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(args)
         .current_dir(dir)
         .env("TONDO_CHECK_LIFETIMES", "1")

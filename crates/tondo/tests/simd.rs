@@ -3,9 +3,10 @@
 //! time, on random inputs. A program prints each result, a float as its
 //! bits, and this test works out the same from the definitions.
 
+mod common;
+
 use std::fmt::Write as _;
 use std::path::Path;
-use std::process::Command;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum Kind {
@@ -514,7 +515,7 @@ fn every_operation_of_every_lane_is_its_definition() {
         // where the processor has AVX2, then x86-64-v3 itself.
         let (level, wide) = wide_level();
         for (cpu, versions, wide) in [("baseline", "0", false), ("baseline", "1", wide), (level, "1", wide)] {
-            let run = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            let run = common::command(env!("CARGO_BIN_EXE_tondo"))
                 .args(["run", &file.to_string_lossy(), "--cpu", cpu])
                 .env("TONDO_VERSIONS", versions)
                 .output()
@@ -564,7 +565,7 @@ fn wide_vectors_spill_and_cross_calls() {
     std::fs::write(&file, WIDE).unwrap();
     for (cpu, versions) in [("baseline", "0"), ("baseline", "1"), (wide_level().0, "1")] {
         for build in [None, Some("--debug"), Some("--live")] {
-            let run = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            let run = common::command(env!("CARGO_BIN_EXE_tondo"))
                 .args(["run", &file.to_string_lossy(), "--cpu", cpu])
                 .args(build)
                 .env("TONDO_VERSIONS", versions)
@@ -680,7 +681,7 @@ fn the_widest_vector_widens_in_each_version() {
         vec![("baseline", "0", None, 4), ("baseline", "1", None, lanes(wide)), (level, "1", None, lanes(wide))];
     runs.extend([("baseline", "1", Some("--debug"), 4), ("baseline", "1", Some("--live"), 4)]);
     for (cpu, versions, build, lanes) in runs {
-        let run = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let run = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(["run", &file.to_string_lossy(), "--cpu", cpu])
             .args(build)
             .env("TONDO_VERSIONS", versions)
@@ -792,7 +793,7 @@ fn sums_of_floats_add_in_the_fixed_order() {
     std::fs::write(&file, &code).unwrap();
     let mut outputs = Vec::new();
     for cpu in ["baseline", wide_level().0] {
-        let run = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let run = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(["run", &file.to_string_lossy(), "--cpu", cpu])
             .output()
             .unwrap();
@@ -866,7 +867,7 @@ fn arithmetic_of_float_arrays_is_the_scalar_operator() {
     code.push_str("}\n");
     let file = dir.join("arrays.to");
     std::fs::write(&file, &code).unwrap();
-    let run = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["run", &file.to_string_lossy()]).output().unwrap();
+    let run = common::command(env!("CARGO_BIN_EXE_tondo")).args(["run", &file.to_string_lossy()]).output().unwrap();
     assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
     let printed = String::from_utf8_lossy(&run.stdout);
     let mut failures = Vec::new();

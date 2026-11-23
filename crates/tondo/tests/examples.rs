@@ -3,11 +3,12 @@
 //! each region that ends made unreadable, so that a value put in a region it
 //! outlives faults.
 
+mod common;
+
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn tondo(dir: &Path, args: &[&str]) -> (String, bool) {
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(args)
         .current_dir(dir)
         .env("TONDO_DUMP", "off")

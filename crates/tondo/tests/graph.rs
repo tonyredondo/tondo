@@ -1,12 +1,13 @@
 //! `tondo graph` (toolchain 7.11): the packages, modules and files of a
 //! program and what each imports, from a project, a directory or a file.
 
+mod common;
+
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn tondo(dir: &Path, args: &[&str]) -> (String, String, i32) {
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap();
+    let output = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap();
     let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
     (text(&output.stdout), text(&output.stderr), output.status.code().unwrap_or(-1))
 }

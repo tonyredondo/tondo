@@ -4,12 +4,13 @@
 //! release build and in a debug one; its one instruction in `tondo asm`;
 //! and where a function may not need a feature (toolchain 7.8).
 
+mod common;
+
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn tondo(dir: &Path, args: &[&str]) -> (String, String, i32) {
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap();
+    let output = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap();
     let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
     (text(&output.stdout), text(&output.stderr), output.status.code().unwrap_or(-1))
 }

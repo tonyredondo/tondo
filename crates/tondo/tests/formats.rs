@@ -5,10 +5,11 @@
 //! the kind of its value (docs/refactor.md, phase 0.4). `TONDO_UPDATE_FORMATS=1`
 //! records them again, on purpose.
 
+mod common;
+
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const FALLS: &str = "import std.console
 
@@ -43,7 +44,7 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 fn tondo(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> (String, String) {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+    let mut command = common::command(env!("CARGO_BIN_EXE_tondo"));
     command.args(args).current_dir(dir).env_remove("TONDO_DUMP").env_remove("TONDO_PANIC_FORMAT");
     command.envs(env.iter().copied());
     let output = command.output().unwrap();

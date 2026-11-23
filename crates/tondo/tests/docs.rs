@@ -23,8 +23,9 @@
 //! the outputs and the listings again, after a change to the standard
 //! library's API or documentation, or to what a program or a command prints.
 
+mod common;
+
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// The repository's root.
 fn root() -> PathBuf {
@@ -190,7 +191,7 @@ fn listings(page: &str, steps: &[Step], dir: &Path) -> (Vec<String>, Vec<Rewrite
                 std::fs::write(path, text).unwrap();
             }
             Step::Command { words, says, said } => {
-                let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+                let mut command = common::command(env!("CARGO_BIN_EXE_tondo"));
                 command.args(&words[1..]).current_dir(dir).env("XDG_CACHE_HOME", &cache);
                 let shown = printed(&command.stdin(std::process::Stdio::null()).output().unwrap());
                 let written: String = said.lines().map(|line| format!("{}\n", line.trim_end())).collect();
@@ -287,7 +288,7 @@ fn check(tondo: &str, job: &Job) -> Outcome {
     // With the memory of each region that ends made unreadable, so that a
     // value put in a region it outlives faults.
     let run = |args: &[&str]| {
-        let mut command = Command::new(tondo);
+        let mut command = common::command(tondo);
         command.args(args).current_dir(&job.case).env("TONDO_DUMP", "off").env("TONDO_CHECK_LIFETIMES", "1");
         command.output().unwrap()
     };
@@ -361,7 +362,7 @@ fn check(tondo: &str, job: &Job) -> Outcome {
 
 #[test]
 fn the_reference_of_the_standard_library_is_current() {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+    let mut command = common::command(env!("CARGO_BIN_EXE_tondo"));
     command.args(["run", "docs/std/generate.to"]);
     if !update() {
         command.args(["--", "--check"]);
@@ -384,7 +385,7 @@ const COMMANDS: &str = "<!-- From here on, this page is what `tondo help --all` 
 fn the_reference_of_the_commands_is_current() {
     let path = root().join("docs/toolchain/commands.md");
     let page = std::fs::read_to_string(&path).unwrap();
-    let help = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["help", "--all"]).output().unwrap();
+    let help = common::command(env!("CARGO_BIN_EXE_tondo")).args(["help", "--all"]).output().unwrap();
     assert!(help.status.success(), "{}", String::from_utf8_lossy(&help.stderr));
     let (top, rest) =
         page.split_once(COMMANDS).expect("docs/toolchain/commands.md has the line that starts its listing");

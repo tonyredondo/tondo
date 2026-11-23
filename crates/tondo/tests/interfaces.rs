@@ -1,11 +1,12 @@
 //! Interfaces of C (language 16.16): a program calls an object C made
 //! through the table of functions its first word points to, as COM's do.
 
+mod common;
+
 use std::path::Path;
-use std::process::Command;
 
 fn tondo(dir: &Path, args: &[&str]) -> (String, String, i32) {
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap();
+    let output = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap();
     let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
     (text(&output.stdout), text(&output.stderr), output.status.code().unwrap_or(-1))
 }
@@ -123,7 +124,8 @@ fn main() {
 /// pointer, and `queryInterface` answers by identity.
 #[test]
 fn a_program_calls_an_object_c_made() {
-    if !cfg!(any(target_os = "linux", target_os = "macos")) || Command::new("cc").arg("--version").output().is_err() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) || common::command("cc").arg("--version").output().is_err()
+    {
         return;
     }
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("interfaces");
@@ -131,9 +133,9 @@ fn a_program_calls_an_object_c_made() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("counter.c"), COUNTER).unwrap();
     let compiled =
-        Command::new("cc").args(["-c", "-O1", "counter.c", "-o", "counter.o"]).current_dir(&dir).output().unwrap();
+        common::command("cc").args(["-c", "-O1", "counter.c", "-o", "counter.o"]).current_dir(&dir).output().unwrap();
     assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
-    let archived = Command::new("ar").args(["rcs", "libcounter.a", "counter.o"]).current_dir(&dir).output().unwrap();
+    let archived = common::command("ar").args(["rcs", "libcounter.a", "counter.o"]).current_dir(&dir).output().unwrap();
     assert!(archived.status.success(), "{}", String::from_utf8_lossy(&archived.stderr));
     std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\n\n[native]\nlibraries = [\"libcounter.a\"]\n")
         .unwrap();
@@ -276,7 +278,8 @@ fn main() {
 /// sees.
 #[test]
 fn c_calls_a_tondo_value_through_its_interface() {
-    if !cfg!(any(target_os = "linux", target_os = "macos")) || Command::new("cc").arg("--version").output().is_err() {
+    if !cfg!(any(target_os = "linux", target_os = "macos")) || common::command("cc").arg("--version").output().is_err()
+    {
         return;
     }
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("interfaces-implemented");
@@ -284,14 +287,14 @@ fn c_calls_a_tondo_value_through_its_interface() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("driver.c"), DRIVER).unwrap();
     let compiled =
-        Command::new("cc").args(["-c", "-O1", "driver.c", "-o", "driver.o"]).current_dir(&dir).output().unwrap();
+        common::command("cc").args(["-c", "-O1", "driver.c", "-o", "driver.o"]).current_dir(&dir).output().unwrap();
     assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
-    let archived = Command::new("ar").args(["rcs", "libdriver.a", "driver.o"]).current_dir(&dir).output().unwrap();
+    let archived = common::command("ar").args(["rcs", "libdriver.a", "driver.o"]).current_dir(&dir).output().unwrap();
     assert!(archived.status.success(), "{}", String::from_utf8_lossy(&archived.stderr));
     std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\n\n[native]\nlibraries = [\"libdriver.a\"]\n")
         .unwrap();
     std::fs::write(dir.join("src/main.to"), IMPLEMENTED).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "--debug", "."])
         .env("TONDO_RT_CHECK_LEAKS", "1")
         .current_dir(&dir)

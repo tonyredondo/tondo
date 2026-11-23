@@ -3,20 +3,21 @@
 
 #![cfg(target_os = "linux")]
 
+mod common;
+
 use object::{Object, ObjectSymbol};
 use std::path::Path;
-use std::process::Command;
 
 fn build(dir: &Path, name: &str, strip: bool) -> Vec<u8> {
     let output = dir.join(name);
-    let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+    let mut command = common::command(env!("CARGO_BIN_EXE_tondo"));
     command.args(["build", "main.to", "--output"]).arg(&output).current_dir(dir);
     if strip {
         command.arg("--strip");
     }
     let status = command.status().unwrap();
     assert!(status.success());
-    let run = Command::new(&output).output().unwrap();
+    let run = common::command(&output).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&run.stdout), "linked\n");
     std::fs::read(&output).unwrap()
 }
@@ -61,7 +62,7 @@ fn debug_builds_have_their_lines_in_dwarf() {
                    console.println(\"total {total}\")\n}\n";
     std::fs::write(dir.join("app.to"), program).unwrap();
     let output = dir.join("app");
-    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let status = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "app.to", "--debug", "--output"])
         .arg(&output)
         .current_dir(&dir)
@@ -112,7 +113,7 @@ fn debug_builds_have_their_lines_in_dwarf() {
 /// a dump the program writes when gdb asks it to.
 #[test]
 fn gdb_stops_at_a_line_and_shows_the_tasks() {
-    if Command::new("gdb").arg("--version").output().is_err() {
+    if common::command("gdb").arg("--version").output().is_err() {
         return;
     }
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("link-gdb");
@@ -121,12 +122,13 @@ fn gdb_stops_at_a_line_and_shows_the_tasks() {
                    _ = square(3)\n}\n";
     std::fs::write(dir.join("app.to"), program).unwrap();
     let tondo = env!("CARGO_BIN_EXE_tondo");
-    let status = Command::new(tondo).args(["build", "app.to", "--debug", "--output", "app"]).current_dir(&dir).status();
+    let status =
+        common::command(tondo).args(["build", "app.to", "--debug", "--output", "app"]).current_dir(&dir).status();
     assert!(status.unwrap().success());
-    let plugin = Command::new(tondo).args(["dump", "plugin", "gdb"]).env("XDG_CACHE_HOME", &dir).output().unwrap();
+    let plugin = common::command(tondo).args(["dump", "plugin", "gdb"]).env("XDG_CACHE_HOME", &dir).output().unwrap();
     let load = String::from_utf8_lossy(&plugin.stdout).trim().to_string();
     assert!(load.starts_with("source "), "{load}");
-    let ran = Command::new("gdb")
+    let ran = common::command("gdb")
         .args(["-q", "-batch", "-nx", "-ex", "set debuginfod enabled off", "-ex", &load])
         .args(["-ex", "break app.to:2", "-ex", "run", "-ex", "bt", "-ex", "tondo task 1", "-ex", "tondo locals"])
         .args(["-ex", "up", "-ex", "tondo print 3 * 2", "app"])
@@ -172,14 +174,15 @@ fn sections_are_bounded_by_start_and_stop() {
     );
     for (name, source) in [("first", first), ("second", second)] {
         std::fs::write(dir.join(format!("{name}.c")), source).unwrap();
-        let compiled = Command::new("cc")
+        let compiled = common::command("cc")
             .args(["-c", "-fPIC", &format!("{name}.c"), "-o", &format!("{name}.o")])
             .current_dir(&dir)
             .output()
             .unwrap();
         assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
     }
-    let archived = Command::new("ar").args(["rcs", "libentries.a", "first.o", "second.o"]).current_dir(&dir).status();
+    let archived =
+        common::command("ar").args(["rcs", "libentries.a", "first.o", "second.o"]).current_dir(&dir).status();
     assert!(archived.unwrap().success());
     let library = dir.join("libentries.a");
     let manifest = format!("[package]\nname = \"entries\"\n\n[native]\nlibraries = [\"{}\"]\n", library.display());
@@ -187,13 +190,13 @@ fn sections_are_bounded_by_start_and_stop() {
     let program = "import std.console\nimport std.ffi\n\nextern fn entries_count(): ffi.CInt\nextern fn entries_sum(): ffi.CInt\n\n\
                    fn main() {\n    let (count, sum) = unsafe { (entries_count(), entries_sum()) }\n    console.println(\"{count} {sum}\")\n}\n";
     std::fs::write(dir.join("src/main.to"), program).unwrap();
-    let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let built = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", ".", "--output", "entries"])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let run = Command::new(dir.join("entries")).output().unwrap();
+    let run = common::command(dir.join("entries")).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&run.stdout), "2 42\n");
 }
 
@@ -206,10 +209,13 @@ fn a_c_library_may_call_atexit() {
     let source = "#include <stdio.h>\n#include <stdlib.h>\n\nstatic void bye(void) { puts(\"bye\"); }\n\n\
                   int farewell(void) { return atexit(bye); }\n";
     std::fs::write(dir.join("farewell.c"), source).unwrap();
-    let compiled =
-        Command::new("cc").args(["-c", "-fPIC", "farewell.c", "-o", "farewell.o"]).current_dir(&dir).output().unwrap();
+    let compiled = common::command("cc")
+        .args(["-c", "-fPIC", "farewell.c", "-o", "farewell.o"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
     assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
-    let archived = Command::new("ar").args(["rcs", "libfarewell.a", "farewell.o"]).current_dir(&dir).status();
+    let archived = common::command("ar").args(["rcs", "libfarewell.a", "farewell.o"]).current_dir(&dir).status();
     assert!(archived.unwrap().success());
     let library = dir.join("libfarewell.a");
     let manifest = format!("[package]\nname = \"farewell\"\n\n[native]\nlibraries = [\"{}\"]\n", library.display());
@@ -217,13 +223,13 @@ fn a_c_library_may_call_atexit() {
     let program = "import std.console\nimport std.ffi\n\nextern fn farewell(): ffi.CInt\n\n\
                    fn main() {\n    let registered = unsafe { farewell() }\n    console.println(\"registered {registered}\")\n}\n";
     std::fs::write(dir.join("src/main.to"), program).unwrap();
-    let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let built = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", ".", "--output", "farewell"])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let run = Command::new(dir.join("farewell")).output().unwrap();
+    let run = common::command(dir.join("farewell")).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&run.stdout), "registered 0\nbye\n");
 }
 
@@ -237,9 +243,9 @@ fn a_c_library_may_read_libc_variables() {
     let source = "#include <stdio.h>\n\nvoid greet(void) {\n    printf(\"to stdout\\n\");\n    fflush(stdout);\n    \
                   fputs(\"to stderr\\n\", stderr);\n}\n";
     std::fs::write(dir.join("greet.c"), source).unwrap();
-    let compiled = Command::new("cc").args(["-c", "greet.c", "-o", "greet.o"]).current_dir(&dir).output().unwrap();
+    let compiled = common::command("cc").args(["-c", "greet.c", "-o", "greet.o"]).current_dir(&dir).output().unwrap();
     assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
-    let archived = Command::new("ar").args(["rcs", "libgreet.a", "greet.o"]).current_dir(&dir).status();
+    let archived = common::command("ar").args(["rcs", "libgreet.a", "greet.o"]).current_dir(&dir).status();
     assert!(archived.unwrap().success());
     let library = dir.join("libgreet.a");
     let manifest = format!("[package]\nname = \"greet\"\n\n[native]\nlibraries = [\"{}\"]\n", library.display());
@@ -247,13 +253,13 @@ fn a_c_library_may_read_libc_variables() {
     let program = "import std.console\n\nextern fn greet()\n\n\
                    fn main() {\n    unsafe { greet() }\n    console.println(\"from Tondo\")\n}\n";
     std::fs::write(dir.join("src/main.to"), program).unwrap();
-    let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let built = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", ".", "--output", "greet"])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let run = Command::new(dir.join("greet")).output().unwrap();
+    let run = common::command(dir.join("greet")).output().unwrap();
     assert!(run.status.success(), "{:?}: {}", run.status, String::from_utf8_lossy(&run.stderr));
     assert_eq!(String::from_utf8_lossy(&run.stdout), "to stdout\nfrom Tondo\n");
     assert_eq!(String::from_utf8_lossy(&run.stderr), "to stderr\n");

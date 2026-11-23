@@ -1,7 +1,8 @@
 //! `tondo doc-test` (21.6) on documents with an example of each kind.
 
+mod common;
+
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn document(name: &str, text: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("doc-test");
@@ -14,7 +15,7 @@ fn document(name: &str, text: &str) -> PathBuf {
 /// Runs `tondo doc-test`: stdout, stderr and the exit status.
 fn doc_test(path: &Path) -> (String, String, i32) {
     let output =
-        Command::new(env!("CARGO_BIN_EXE_tondo")).args(["doc-test", "--edition", "0.1"]).arg(path).output().unwrap();
+        common::command(env!("CARGO_BIN_EXE_tondo")).args(["doc-test", "--edition", "0.1"]).arg(path).output().unwrap();
     let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
     (text(&output.stdout), text(&output.stderr), output.status.code().unwrap_or(-1))
 }
@@ -161,7 +162,7 @@ fn the_register_ties_every_fragment_to_a_case() {
     for name in
         ["TONDO_LANGUAGE_SPEC.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "TONDO_TESTING_SPEC.md", "TONDO_TOOLCHAIN_SPEC.md"]
     {
-        let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let ran = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(["doc-test", &format!("spec/{name}")])
             .current_dir(&root)
             .output()

@@ -6,13 +6,14 @@
 
 #![cfg(target_os = "linux")]
 
+mod common;
+
 use std::path::Path;
-use std::process::Command;
 
 const PROGRAM: &str = "import std.console\n\nfn main() {\n    console.println(\"built for {6 * 7}\")\n}\n";
 
 fn tondo(dir: &Path, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap()
+    common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap()
 }
 
 #[test]
@@ -30,7 +31,7 @@ fn programs_build_and_run_for_targets() {
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let bytes = std::fs::read(dir.join("built")).unwrap();
     assert!(!bytes.windows(9).any(|w| w == b"ld-linux-"), "a static executable names no loader");
-    let run = Command::new(dir.join("built")).output().unwrap();
+    let run = common::command(dir.join("built")).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&run.stdout), "built for 42\n");
 
     // Its pack.
@@ -41,7 +42,7 @@ fn programs_build_and_run_for_targets() {
     }
 
     // The other architecture, without its pack and with it.
-    let missing = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let missing = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "built.to", "--target", other, "--output", "other"])
         .current_dir(&dir)
         .env("TONDO_TARGETS", dir.join("packs"))
@@ -72,7 +73,7 @@ fn a_program_checks_its_processor() {
     if qemu.is_none() && !emulated {
         return;
     }
-    let mut built = Command::new(env!("CARGO_BIN_EXE_tondo"));
+    let mut built = common::command(env!("CARGO_BIN_EXE_tondo"));
     built.args(["build", "built.to", "--cpu", "x86-64-v3", "--output", "v3"]).current_dir(&dir);
     if emulated {
         built.args(["--target", "x86_64-linux"]);
@@ -80,8 +81,8 @@ fn a_program_checks_its_processor() {
     let built = built.output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let mut run = match &qemu {
-        Some(qemu) if !emulated => Command::new(qemu),
-        _ => Command::new(dir.join("v3")),
+        Some(qemu) if !emulated => common::command(qemu),
+        _ => common::command(dir.join("v3")),
     };
     if !emulated {
         run.arg(dir.join("v3"));

@@ -122,7 +122,7 @@ fn program() -> PathBuf {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("terminal.to"), PROGRAM).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "terminal.to", "--output", "terminal"])
         .current_dir(&dir)
         .output()
@@ -159,11 +159,11 @@ impl Terminal {
         let mut command = if shell {
             // Interactive, as `set -m` alone does not bring a job back on
             // macOS; with no file of the environment's to read.
-            let mut command = Command::new("/bin/sh");
+            let mut command = common::command("/bin/sh");
             command.args(["-i", "-c", &format!("'{}' {argument}; sleep 1; fg", program.display())]).env_remove("ENV");
             command
         } else {
-            let mut command = Command::new(&program);
+            let mut command = common::command(&program);
             command.arg(argument);
             command
         };
@@ -400,13 +400,14 @@ fn is_terminal_asks_of_the_output() {
     // The input a terminal and the output a pipe: what it writes goes to a
     // file or another program, with no codes.
     let (_master, slave) = open();
-    let output = Command::new(program()).arg("is").stdin(Stdio::from(slave)).stdout(Stdio::piped()).output().unwrap();
+    let output =
+        common::command(program()).arg("is").stdin(Stdio::from(slave)).stdout(Stdio::piped()).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout), "output is a terminal: false\n");
     // The output a terminal, whatever the input is. Its other end stays
     // open here until it is read, as macOS drops what the terminal holds
     // once the last one closes.
     let (master, slave) = open();
-    let mut child = Command::new(program())
+    let mut child = common::command(program())
         .arg("is")
         .stdin(Stdio::null())
         .stdout(Stdio::from(slave.try_clone().unwrap()))

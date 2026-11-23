@@ -1,11 +1,12 @@
 //! `tondo api` (toolchain 7.2) and `tondo fmt --compact` (7).
 
+mod common;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn tondo(dir: &Path, args: &[&str]) -> (String, String, i32) {
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap();
+    let output = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap();
     let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
     (text(&output.stdout), text(&output.stderr), output.status.code().unwrap_or(-1))
 }
@@ -332,7 +333,7 @@ fn the_standard_library_has_no_warnings() {
         };
         std::fs::write(dir.join(file), format!("{imports}{main}")).unwrap();
     }
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["check", "--json"])
         .env("TONDO_STD_WARNINGS", "1")
         .current_dir(&dir)

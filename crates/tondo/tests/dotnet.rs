@@ -25,7 +25,7 @@ fn run(command: &mut Command, what: &str) -> String {
 /// `dotnet`, without its banner, its telemetry or the servers that a build
 /// leaves running.
 fn dotnet() -> Command {
-    let mut command = Command::new("dotnet");
+    let mut command = common::command("dotnet");
     command.env("DOTNET_NOLOGO", "1").env("DOTNET_CLI_TELEMETRY_OPTOUT", "1");
     command
 }
@@ -47,7 +47,7 @@ fn a_profiler_of_dotnet_in_tondo() {
     let compiler = env!("CARGO_BIN_EXE_tondo");
     let include = fixtures.join("include");
     run(
-        Command::new(compiler)
+        common::command(compiler)
             .arg("bind")
             .arg(include.join("corprof.h"))
             .arg("-I")
@@ -57,7 +57,10 @@ fn a_profiler_of_dotnet_in_tondo() {
         "tondo bind",
     );
     let built = dir.join("built");
-    run(Command::new(compiler).args(["build", "--library"]).arg(&project).arg("--output").arg(&built), "tondo build");
+    run(
+        common::command(compiler).args(["build", "--library"]).arg(&project).arg("--output").arg(&built),
+        "tondo build",
+    );
 
     let app = dir.join("app");
     run(dotnet().args(["new", "console", "--no-restore", "--output"]).arg(&app), "dotnet new");

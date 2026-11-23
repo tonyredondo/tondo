@@ -3,7 +3,27 @@
 
 #![allow(dead_code)]
 
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+
+/// The cache every program the tests run keeps its files in: kept builds,
+/// the runtime's archives, the compilers `--compiler` builds and a crash's
+/// dump. One for every test binary of the checkout, under the target's
+/// scratch, never the user's own, where the newest dumps alone are kept and
+/// a test's would prune theirs.
+pub fn cache() -> PathBuf {
+    Path::new(env!("CARGO_TARGET_TMPDIR")).join("tondo-cache")
+}
+
+/// A command the tests run, `tondo`, a program they built or a tool of the
+/// system, that keeps its files in `cache()`: every one goes through here
+/// (`the_tests_start_programs_only_through_common`). One that sets its own
+/// `XDG_CACHE_HOME` after this keeps doing so.
+pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    let mut command = std::process::Command::new(program);
+    command.env("XDG_CACHE_HOME", cache());
+    command
+}
 
 /// How long `until` asks before it gives up: it only bounds a hang, as a run
 /// that passes never comes near it.

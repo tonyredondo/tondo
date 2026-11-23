@@ -3,8 +3,9 @@
 //! compiles and links with the system's C compiler, or loads as it runs,
 //! and calls from its threads.
 
+mod common;
+
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const LIBRARY: &str = r#"import std.console
 import std.ffi
@@ -118,7 +119,7 @@ int main(void) {
 "#;
 
 fn tondo(dir: &Path, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap()
+    common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap()
 }
 
 fn project(name: &str, source: &str) -> PathBuf {
@@ -152,14 +153,14 @@ fn a_c_program_calls_a_library() {
         [("Link the shared library: cc app.c ", "shared"), ("or the static one: cc app.c ", "static")]
     {
         let line = said.lines().find_map(|l| l.strip_prefix(prefix)).unwrap();
-        let compiled = Command::new("cc")
+        let compiled = common::command("cc")
             .args(["app.c", "-Iout", "-Werror=incompatible-pointer-types", "-o", program])
             .args(line.split(' '))
             .current_dir(&dir)
             .output()
             .unwrap();
         assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
-        let run = Command::new(dir.join(program)).output().unwrap();
+        let run = common::command(dir.join(program)).output().unwrap();
         assert_eq!(
             String::from_utf8_lossy(&run.stdout),
             "count 3\ndistance 5\nvisit 1\nvisit 2\nhello, C\ndashed 5 a-b-c\nword x\nword y\nthreads 4\n",
@@ -171,9 +172,9 @@ fn a_c_program_calls_a_library() {
     // nothing else.
     let shared = dir.join(if cfg!(target_os = "macos") { "out/libwords.dylib" } else { "out/libwords.so" });
     std::fs::write(dir.join("load.c"), LOADER).unwrap();
-    let compiled = Command::new("cc").args(["load.c", "-o", "load"]).current_dir(&dir).output().unwrap();
+    let compiled = common::command("cc").args(["load.c", "-o", "load"]).current_dir(&dir).output().unwrap();
     assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
-    let run = Command::new(dir.join("load")).arg(&shared).output().unwrap();
+    let run = common::command(dir.join("load")).arg(&shared).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&run.stdout), "5050 2 hidden\n", "{}", String::from_utf8_lossy(&run.stderr));
 }
 
@@ -211,13 +212,13 @@ fn a_project_of_modules_publishes_its_types_by_their_names() {
     )
     .unwrap();
     let rpath = format!("-Wl,-rpath,{}", dir.join("out").display());
-    let compiled = Command::new("cc")
+    let compiled = common::command("cc")
         .args(["app.c", "-Iout", "-Lout", "-ltextkit", &rpath, "-o", "app"])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
-    let run = Command::new(dir.join("app")).output().unwrap();
+    let run = common::command(dir.join("app")).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&run.stdout), "3\n", "{}", String::from_utf8_lossy(&run.stderr));
 }
 
@@ -352,10 +353,10 @@ fn a_library_that_tondo_built_ends_and_unloads() {
     assert!(header.contains("\nvoid ends_stop(void);\n"), "{header}");
     std::fs::write(dir.join("unload.c"), UNLOADER).unwrap();
     let compiled =
-        Command::new("cc").args(["unload.c", "-o", "unload", "-lpthread"]).current_dir(&dir).output().unwrap();
+        common::command("cc").args(["unload.c", "-o", "unload", "-lpthread"]).current_dir(&dir).output().unwrap();
     assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
     let shared = dir.join(if cfg!(target_os = "macos") { "out/libends.dylib" } else { "out/libends.so" });
-    let run = Command::new(dir.join("unload")).arg(&shared).output().unwrap();
+    let run = common::command(dir.join("unload")).arg(&shared).output().unwrap();
     // macOS keeps an image with thread-local variables loaded, which the
     // runtime has, and musl never unloads one: there the library ends,
     // stays, and starts again.
@@ -379,7 +380,7 @@ fn a_library_that_tondo_built_ends_and_unloads() {
     let built = tondo(&host, &["build", "--output", "host"]);
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let no_load = if cfg!(target_os = "macos") { "16" } else { "4" };
-    let run = Command::new(host.join("host")).arg(&shared).arg(no_load).output().unwrap();
+    let run = common::command(host.join("host")).arg(&shared).arg(no_load).output().unwrap();
     assert_eq!(
         String::from_utf8_lossy(&run.stdout),
         format!(
@@ -491,7 +492,7 @@ fn main(): !ffi.LibraryError {{
     let built = tondo(&host, &["build", "--output", "host"]);
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let search = if cfg!(target_os = "macos") { "DYLD_LIBRARY_PATH" } else { "LD_LIBRARY_PATH" };
-    let run = Command::new(host.join("host")).current_dir(&host).env(search, plugin.join("out")).output().unwrap();
+    let run = common::command(host.join("host")).current_dir(&host).env(search, plugin.join("out")).output().unwrap();
     assert_eq!(
         String::from_utf8_lossy(&run.stdout),
         "42 true false\ntrue 4\n8\nthe library publishes no `plugin_thrice`\nnot loaded: true\nnot loaded: true\ntrue\nerr(os error 2: No such file or directory) ok(0)\nerr(os error 2: No such file or directory)\ntrue\nfalse\nthe library was closed\nthe library was closed\nthe library was not unloaded: the program itself is never unloaded\n",

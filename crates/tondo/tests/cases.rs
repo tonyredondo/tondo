@@ -70,6 +70,8 @@
 //! Each directory under `tests/projects` is a project built as a whole,
 //! with the expectations written in any of its files.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -177,7 +179,7 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
     let binary = scratch.join(own(path)).join(path.file_stem().unwrap());
     std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
     // From its directory, so that locations read `case.to:4:5`.
-    let mut build = Command::new(compiler);
+    let mut build = common::command(compiler);
     build
         .current_dir(path.parent().unwrap())
         .arg("build")
@@ -249,9 +251,9 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
 
     // A crash writes no core file, which takes the system a while.
     let program = || {
-        let mut command = Command::new(&binary);
+        let mut command = common::command(&binary);
         if expect.crash {
-            command = Command::new("sh");
+            command = common::command("sh");
             command.args(["-c", "ulimit -c 0; exec \"$0\""]).arg(&binary);
         }
         // A case that panics on purpose leaves no dump in the user's cache.
@@ -448,7 +450,7 @@ fn optimized(path: &Path, scratch: &Path, expected: &[(String, bool)]) -> Result
         if let Some(kind) = kind {
             args.extend([std::ffi::OsStr::new("--kind"), std::ffi::OsStr::new(kind)]);
         }
-        let told = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let told = common::command(env!("CARGO_BIN_EXE_tondo"))
             .current_dir(path.parent().unwrap())
             .args(args)
             .env("XDG_CACHE_HOME", scratch.join("cache"))
@@ -511,7 +513,7 @@ fn why_it_hangs(pid: u32) -> String {
     let _ = std::fs::create_dir_all(&dir);
     let dump = dir.join(format!("hung-{pid}.dump.json"));
     let tondo = env!("CARGO_BIN_EXE_tondo");
-    let dumped = Command::new(tondo).args(["dump", &pid.to_string(), "--output"]).arg(&dump).output();
+    let dumped = common::command(tondo).args(["dump", &pid.to_string(), "--output"]).arg(&dump).output();
     match &dumped {
         Ok(output) if output.status.success() => {}
         // What kept the dump from coming, said rather than left out.
@@ -519,7 +521,7 @@ fn why_it_hangs(pid: u32) -> String {
         Err(error) => return format!("\n--- no dump: tondo dump did not start: {error}"),
     }
     let read = |view: &str| {
-        let shown = Command::new(tondo).args(["dump", "read"]).arg(&dump).arg(view).output();
+        let shown = common::command(tondo).args(["dump", "read"]).arg(&dump).arg(view).output();
         shown.map_or(String::new(), |output| String::from_utf8_lossy(&output.stdout).trim().to_string())
     };
     format!("\n--- why\n{}\n--- tasks\n{}\n--- dump: {}", read("why"), read("tasks"), dump.display())
@@ -540,9 +542,9 @@ fn a_case_that_hangs_says_why() {
     std::fs::write(dir.join("hangs.to"), source).unwrap();
     let compiler = env!("CARGO_BIN_EXE_tondo");
     let built =
-        Command::new(compiler).args(["build", "hangs.to", "--output", "hangs"]).current_dir(&dir).output().unwrap();
+        common::command(compiler).args(["build", "hangs.to", "--output", "hangs"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let mut program = Command::new(dir.join("hangs"))
+    let mut program = common::command(dir.join("hangs"))
         .env("TONDO_DIAGNOSTICS", "1")
         .env("TONDO_CI_DUMPS", &dir)
         .stderr(std::process::Stdio::piped())
@@ -811,7 +813,7 @@ fn json_diagnostics() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("unknown.to");
     std::fs::write(&path, "fn main() {\n    missing()\n}\n").unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo")).arg("check").arg(&path).arg("--json").output().unwrap();
+    let output = common::command(env!("CARGO_BIN_EXE_tondo")).arg("check").arg(&path).arg("--json").output().unwrap();
     assert!(!output.status.success());
     let mut json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!((&json["format"], &json["ok"]), (&"tondo-check-0.1/1".into(), &false.into()), "{json}");
@@ -829,7 +831,7 @@ fn json_diagnostics() {
 
 /// Runs git in `dir`, with an identity and no signing of its own.
 fn git_in(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = common::command("git")
         .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false"])
         .args(args)
         .current_dir(dir)
@@ -861,7 +863,7 @@ fn packages_to_fetch(root: &Path) -> (String, String) {
     git_in(&greet, &["commit", "-qam", "v2"]);
     write_under(root, "math-1.0/tondo.toml", "[package]\nname = \"math\"\n");
     write_under(root, "math-1.0/src/math.to", "pub fn twice(value: Int): Int {\n    value * 2\n}\n");
-    let tar = Command::new("tar").args(["-czf", "math-1.0.tar.gz", "math-1.0"]).current_dir(root).status().unwrap();
+    let tar = common::command("tar").args(["-czf", "math-1.0.tar.gz", "math-1.0"]).current_dir(root).status().unwrap();
     assert!(tar.success());
     let url = format!("file://{}/math-1.0.tar.gz", root.display());
     write_under(
@@ -896,7 +898,7 @@ fn dependencies() {
         "import std.console\nimport greet\nimport units\n\nconsole.println(\"{greet.hello(\"ada\")} {units.meters(3)}\")\n",
     );
     let tondo = |args: &[&str]| {
-        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let output = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(args)
             .arg(root.join("app"))
             .env("XDG_CACHE_HOME", root.join("cache"))
@@ -934,7 +936,7 @@ fn script_dependencies() {
     );
     // From the root, as a shebang runs it from wherever its user is.
     let tondo = |args: &[&str]| {
-        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let output = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(args)
             .current_dir(&root)
             .env("XDG_CACHE_HOME", root.join("cache"))

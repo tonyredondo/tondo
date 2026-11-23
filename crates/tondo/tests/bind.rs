@@ -3,6 +3,8 @@
 //! built as a static archive and as a shared library, and against a module
 //! read from the library's debug information.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -33,13 +35,13 @@ fn module() {
     let dir = scratch("bind-module");
     std::fs::copy(fixtures().join("sample.h"), dir.join("sample.h")).unwrap();
     let compiler = env!("CARGO_BIN_EXE_tondo");
-    run(Command::new(compiler).args(["bind", "sample.h", "--output", "sample.to"]).current_dir(&dir));
+    run(common::command(compiler).args(["bind", "sample.h", "--output", "sample.to"]).current_dir(&dir));
     let written = std::fs::read_to_string(dir.join("sample.to")).unwrap();
     let expected = std::fs::read_to_string(fixtures().join("sample.to")).unwrap();
     assert_eq!(written, expected, "the module differs from tests/bind/sample.to");
     // As data: what it wrote, and the libraries; outside a project, none
     // is added to a manifest.
-    let said = run(Command::new(compiler)
+    let said = run(common::command(compiler)
         .args(["bind", "sample.h", "--output", "again.to", "--library", "m", "--json"])
         .current_dir(&dir));
     let said: serde_json::Value = serde_json::from_str(&said).unwrap();
@@ -64,31 +66,31 @@ fn program(dir: &Path, library: &str, main: &str, header: bool) -> String {
     let project = dir.join("app");
     std::fs::create_dir_all(project.join("src")).unwrap();
     std::fs::copy(fixtures().join(main), project.join("src/main.to")).unwrap();
-    let mut bind = Command::new(compiler);
+    let mut bind = common::command(compiler);
     bind.arg("bind");
     if header {
         bind.arg(fixtures().join("sample.h"));
     }
     run(bind.arg("--library").arg(dir.join(library)).arg("--project").arg(&project));
     let executable = dir.join("program");
-    run(Command::new(compiler).arg("build").arg(&project).arg("--output").arg(&executable));
+    run(common::command(compiler).arg("build").arg(&project).arg("--output").arg(&executable));
     // From elsewhere, so a shared library is found through the run-time path.
-    run(Command::new(&executable).current_dir(std::env::temp_dir()))
+    run(common::command(&executable).current_dir(std::env::temp_dir()))
 }
 
 #[test]
 fn static_and_shared() {
     let dir = scratch("bind-libraries");
     let source = fixtures().join("sample.c");
-    run(Command::new("cc")
+    run(common::command("cc")
         .args(["-c", "-g", "-fPIC", "-o"])
         .arg(dir.join("sample.o"))
         .arg(&source)
         .arg("-I")
         .arg(fixtures()));
-    run(Command::new("ar").arg("rcs").arg(dir.join("libsample.a")).arg(dir.join("sample.o")));
+    run(common::command("ar").arg("rcs").arg(dir.join("libsample.a")).arg(dir.join("sample.o")));
     let shared = if cfg!(target_os = "macos") { "libsample.dylib" } else { "libsample.so" };
-    let mut link = Command::new("cc");
+    let mut link = common::command("cc");
     if cfg!(target_os = "macos") {
         link.args(["-dynamiclib", "-install_name", "@rpath/libsample.dylib"]);
     } else {
@@ -119,8 +121,8 @@ fn included_headers() {
     let top = "#include \"bits/inner.h\"\n__inner_size_t measure(const char *text);\nenum bits { BIT_LOW = 1, BIT_HIGH = 2147483648u };\n";
     std::fs::write(dir.join("top.h"), top).unwrap();
     let compiler = env!("CARGO_BIN_EXE_tondo");
-    run(Command::new(compiler).args(["bind", "top.h", "--output", "plain.to"]).current_dir(&dir));
-    run(Command::new(compiler).args(["bind", "top.h", "--included", "--output", "deep.to"]).current_dir(&dir));
+    run(common::command(compiler).args(["bind", "top.h", "--output", "plain.to"]).current_dir(&dir));
+    run(common::command(compiler).args(["bind", "top.h", "--included", "--output", "deep.to"]).current_dir(&dir));
     let plain = std::fs::read_to_string(dir.join("plain.to")).unwrap();
     let deep = std::fs::read_to_string(dir.join("deep.to")).unwrap();
     assert!(!plain.contains("INNER_LIMIT") && deep.contains("pub const INNER_LIMIT: ffi.CInt = 7"), "{deep}");
@@ -133,7 +135,7 @@ fn included_headers() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"deep\"\n").unwrap();
     std::fs::write(dir.join("src/main.to"), format!("{deep}\nfn main() {{}}\n")).unwrap();
-    run(Command::new(compiler).args(["check"]).current_dir(&dir));
+    run(common::command(compiler).args(["check"]).current_dir(&dir));
 }
 
 /// `--fails` names the functions that fail with the system's error number,
@@ -146,7 +148,7 @@ fn functions_that_fail_with_the_error_number() {
     std::fs::write(dir.join("things.h"), header).unwrap();
     std::fs::write(dir.join("fails.txt"), "# What gives -1 or null with errno.\nopen_thing\nname_of\ncount\n").unwrap();
     let compiler = env!("CARGO_BIN_EXE_tondo");
-    run(Command::new(compiler)
+    run(common::command(compiler)
         .args(["bind", "things.h", "--fails", "fails.txt", "--output", "things.to"])
         .current_dir(&dir));
     let module = std::fs::read_to_string(dir.join("things.to")).unwrap();
@@ -162,7 +164,7 @@ fn functions_that_fail_with_the_error_number() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"things\"\n").unwrap();
     std::fs::write(dir.join("src/main.to"), format!("{module}\nfn main() {{}}\n")).unwrap();
-    run(Command::new(compiler).args(["check"]).current_dir(&dir));
+    run(common::command(compiler).args(["check"]).current_dir(&dir));
 }
 
 /// An interface of C, as MIDL writes one for C, is a trait with
@@ -175,22 +177,22 @@ fn interfaces_of_c() {
     let dir = scratch("bind-interfaces");
     std::fs::copy(fixtures().join("counter.h"), dir.join("counter.h")).unwrap();
     let compiler = env!("CARGO_BIN_EXE_tondo");
-    run(Command::new(compiler).args(["bind", "counter.h", "--output", "counter.to"]).current_dir(&dir));
+    run(common::command(compiler).args(["bind", "counter.h", "--output", "counter.to"]).current_dir(&dir));
     let written = std::fs::read_to_string(dir.join("counter.to")).unwrap();
     let expected = std::fs::read_to_string(fixtures().join("counter.to")).unwrap();
     assert_eq!(written, expected, "the module differs from tests/bind/counter.to");
-    run(Command::new("cc")
+    run(common::command("cc")
         .args(["-c", "-fPIC", "-o"])
         .arg(dir.join("counter.o"))
         .arg(fixtures().join("counter.c"))
         .arg("-I")
         .arg(fixtures()));
-    run(Command::new("ar").arg("rcs").arg(dir.join("libcounter.a")).arg(dir.join("counter.o")));
+    run(common::command("ar").arg("rcs").arg(dir.join("libcounter.a")).arg(dir.join("counter.o")));
     let project = dir.join("app");
     std::fs::create_dir_all(project.join("src")).unwrap();
     std::fs::write(project.join("tondo.toml"), "[package]\nname = \"app\"\n").unwrap();
     std::fs::copy(fixtures().join("interfaces.to"), project.join("src/main.to")).unwrap();
-    run(Command::new(compiler)
+    run(common::command(compiler)
         .arg("bind")
         .arg(dir.join("counter.h"))
         .arg("--library")
@@ -198,9 +200,9 @@ fn interfaces_of_c() {
         .arg("--project")
         .arg(&project));
     let executable = dir.join("program");
-    run(Command::new(compiler).arg("build").arg(&project).arg("--output").arg(&executable));
+    run(common::command(compiler).arg("build").arg(&project).arg("--output").arg(&executable));
     assert_eq!(
-        run(&mut Command::new(&executable)),
+        run(&mut common::command(&executable)),
         "true true 0x80070057: The parameter is incorrect true 40\ntrue true true 5 tally\n1 0\nadds 2\ntrue 0x80004001: Not implemented 0\n"
     );
     // An interface whose IID the header does not give is left out, and
@@ -210,19 +212,19 @@ fn interfaces_of_c() {
                   uint32_t (*AddRef)(IThing *This);\n    uint32_t (*Release)(IThing *This);\n    \
                   HRESULT (*Touch)(IThing *This);\n} IThingVtbl;\nstruct IThing { const IThingVtbl *lpVtbl; };\n";
     std::fs::write(dir.join("thing.h"), header).unwrap();
-    run(Command::new(compiler).args(["bind", "thing.h", "--output", "thing.to"]).current_dir(&dir));
+    run(common::command(compiler).args(["bind", "thing.h", "--output", "thing.to"]).current_dir(&dir));
     let left = std::fs::read_to_string(dir.join("thing.to")).unwrap();
     assert!(!left.contains("trait IThing"), "{left}");
     assert!(left.contains("// - IThing: no IID found for it: give it with `--id IThing=<GUID>`"), "{left}");
     let id = ["--id", "IThing={8D3C4F2A-1B6E-4A7C-9E05-3F2B1D0C6A94}"];
-    run(Command::new(compiler).args(["bind", "thing.h", "--output", "thing.to"]).args(id).current_dir(&dir));
+    run(common::command(compiler).args(["bind", "thing.h", "--output", "thing.to"]).args(id).current_dir(&dir));
     let bound = std::fs::read_to_string(dir.join("thing.to")).unwrap();
     assert!(
         bound.contains("@ffi.Interface(id: \"8d3c4f2a-1b6e-4a7c-9e05-3f2b1d0c6a94\")\npub trait IThing: ffi.Unknown {"),
         "{bound}"
     );
     let wrong =
-        Command::new(compiler).args(["bind", "thing.h", "--id", "IThing=8d3c"]).current_dir(&dir).output().unwrap();
+        common::command(compiler).args(["bind", "thing.h", "--id", "IThing=8d3c"]).current_dir(&dir).output().unwrap();
     assert!(String::from_utf8_lossy(&wrong.stderr).contains("--id takes an interface and its IID"), "{wrong:?}");
 }
 
@@ -260,7 +262,7 @@ fn what_a_header_of_com_needs() {
         struct Broken { Mystery field; };\n";
     std::fs::write(dir.join("com.h"), header).unwrap();
     let compiler = env!("CARGO_BIN_EXE_tondo");
-    run(Command::new(compiler).args(["bind", "com.h", "--output", "com.to"]).current_dir(&dir));
+    run(common::command(compiler).args(["bind", "com.h", "--output", "com.to"]).current_dir(&dir));
     let written = std::fs::read_to_string(dir.join("com.to")).unwrap();
     assert!(!written.contains("trait IUnknown"), "{written}");
     assert!(written.contains("pub trait IWalker: ffi.Unknown {"), "{written}");
@@ -284,6 +286,6 @@ fn what_a_header_of_com_needs() {
     std::fs::copy(dir.join("com.to"), project.join("src/com/com.to")).unwrap();
     let main = "import std.console\nimport app.com\n\nfn main() {\n    console.println(\"{com.IWalkerObject.Id} {com.Both}\")\n}\n";
     std::fs::write(project.join("src/main.to"), main).unwrap();
-    let ran = run(Command::new(compiler).arg("run").arg(&project));
+    let ran = run(common::command(compiler).arg("run").arg(&project));
     assert_eq!(ran, "11112222-3333-4444-5566-778899aabbcc 2147483649\n");
 }

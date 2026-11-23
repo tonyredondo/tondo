@@ -1,8 +1,9 @@
 //! `std.net` over TLS (14.4.6 of the standard library), with certificates
 //! the test makes.
 
+mod common;
+
 use std::path::Path;
-use std::process::Command;
 
 fn run(name: &str, program: &str, files: &[(&str, String)]) -> (String, String, bool) {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
@@ -12,7 +13,7 @@ fn run(name: &str, program: &str, files: &[(&str, String)]) -> (String, String, 
         std::fs::write(dir.join(path), text).unwrap();
     }
     std::fs::write(dir.join("main.to"), program).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "main.to"])
         .current_dir(&dir)
         .env("TONDO_RT_CHECK_LEAKS", "1")

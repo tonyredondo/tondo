@@ -90,3 +90,27 @@ fn the_tests_sleep_only_where_time_is_under_test() {
          sleep starts with {UNDER_TEST:?}"
     );
 }
+
+/// Every program a test starts, `tondo`, a program it built or a tool of
+/// the system, starts through `common::command`, which keeps its files in
+/// the tests' own cache: a crash's dump in the user's would prune the
+/// newest of theirs, which the runtime keeps.
+#[test]
+fn the_tests_start_programs_only_through_common() {
+    // Spelled in two, so that this line is not one of them.
+    let started = concat!("Command::", "new(");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(&root).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|extension| extension != "rs") {
+            continue;
+        }
+        for (number, line) in std::fs::read_to_string(&path).unwrap().lines().enumerate() {
+            if line.contains(started) {
+                found.push(format!("{}:{}", path.display(), number + 1));
+            }
+        }
+    }
+    assert!(found.is_empty(), "start these through `common::command`: {found:#?}");
+}

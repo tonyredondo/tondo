@@ -5,7 +5,6 @@
 mod common;
 
 use std::path::Path;
-use std::process::Command;
 
 const PROGRAM: &str = r#"
 import std.console
@@ -160,7 +159,7 @@ fn check(name: &str, variable: &str) {
     std::fs::write(dir.join("main.to"), PROGRAM).unwrap();
     // A server that just started may still refuse its first connections.
     let output = common::until("a run the database does not refuse", || {
-        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let output = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(["run", "main.to"])
             .current_dir(&dir)
             .env("DATABASE_URL", &url)

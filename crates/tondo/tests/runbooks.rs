@@ -2,10 +2,12 @@
 //! tools of `tondo mcp`: its files are written, its commands run, and each
 //! call gives what the runbook says it gives.
 
+mod common;
+
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 use std::time::{Duration, Instant};
 
 struct Agent {
@@ -19,7 +21,7 @@ struct Agent {
 
 impl Agent {
     fn start(dir: &Path) -> Agent {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
             .arg("mcp")
             .current_dir(dir)
             // What a crash leaves stays with the tests, not in the user's cache.
@@ -156,7 +158,7 @@ fn replay(topic: &str, text: &str) {
             "sh" => {
                 let script = lines.join("\n");
                 let ran =
-                    Command::new("sh").args(["-c", &script]).current_dir(&dir).env("PATH", &path).output().unwrap();
+                    common::command("sh").args(["-c", &script]).current_dir(&dir).env("PATH", &path).output().unwrap();
                 let said = String::from_utf8_lossy(&ran.stderr);
                 assert!(!said.contains("not found") && !said.contains("error["), "{topic}: {script}: {said}");
             }

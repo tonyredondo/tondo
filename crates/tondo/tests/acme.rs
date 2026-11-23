@@ -7,7 +7,6 @@
 mod common;
 
 use std::path::Path;
-use std::process::Command;
 
 const PROGRAM: &str = r#"
 import std.acme
@@ -49,7 +48,7 @@ fn obtains_and_keeps_a_certificate() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("main.to"), PROGRAM).unwrap();
     let run = || {
-        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let output = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(["run", "main.to"])
             .current_dir(&dir)
             .env("ACME_DIRECTORY", &directory)

@@ -1,10 +1,12 @@
 //! `tondo lsp` (toolchain 7.4) as an editor uses it, over standard input
 //! and output.
 
+mod common;
+
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 
 /// What an editor as VS Code says it takes, of what changes the answers.
 fn everything() -> Value {
@@ -56,7 +58,7 @@ impl Editor {
     }
 
     fn launch_with(mut capabilities: Value, options: Value, folders: Value, trace: &str) -> Editor {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
             .arg("lsp")
             .env("TONDO_TEST_LSP_PANIC", "1")
             .stderr(Stdio::null())
@@ -1883,13 +1885,13 @@ fn a_hover_says_what_an_open_dump_held() {
     let source = "fn work(limit: Int): Int {\n    let doubled = limit * 2\n    if doubled > 0 {\n        panic(\"look\")\n    }\n    doubled\n}\n\nfn main() {\n    _ = work(21)\n}\n";
     let dir = project("lsp-dump", &[("late.to", source), ("dumps/.keep", "")]);
     let tondo = env!("CARGO_BIN_EXE_tondo");
-    let built = std::process::Command::new(tondo)
+    let built = common::command(tondo)
         .args(["build", "late.to", "--debug", "--output", "late"])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    std::process::Command::new(dir.join("late")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+    common::command(dir.join("late")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
     let dump = std::fs::read_dir(dir.join("dumps"))
         .unwrap()
         .flatten()
@@ -2251,7 +2253,7 @@ fn an_accepted_warning_is_a_hint() {
 /// with no `shutdown` before it says so in its status.
 #[test]
 fn it_keeps_to_the_start_and_the_end_of_a_session() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .arg("lsp")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

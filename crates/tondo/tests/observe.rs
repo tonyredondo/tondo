@@ -7,7 +7,7 @@ use common::{Started, until};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 const PROGRAM: &str = r#"import std.console
 import std.diagnostics
@@ -27,7 +27,7 @@ fn main(): Unit ! net.NetError {
 "#;
 
 fn tondo(args: &[&str]) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).output().unwrap();
+    let output = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).output().unwrap();
     let said = || format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     assert!(output.status.success(), "{}", said());
     serde_json::from_slice(&output.stdout).unwrap()
@@ -39,7 +39,7 @@ fn tondo(args: &[&str]) -> Value {
 fn until_waiting(pid: u32, count: usize, file: &Path) -> Value {
     let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
     loop {
-        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let output = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(["dump", &pid.to_string(), "--output"])
             .arg(file)
             .output()
@@ -85,7 +85,7 @@ fn ps_and_counters() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("watched.to"), PROGRAM).unwrap();
     let executable = dir.join("watched");
-    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let status = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "watched.to", "--output"])
         .arg(&executable)
         .current_dir(&dir)
@@ -93,7 +93,7 @@ fn ps_and_counters() {
         .unwrap();
     assert!(status.success());
 
-    let mut child = Command::new(&executable)
+    let mut child = common::command(&executable)
         .env("TONDO_DIAGNOSTICS", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -122,7 +122,7 @@ fn ps_and_counters() {
     assert!(!listed(child.id()));
 
     // Off unless asked for.
-    let mut child = Command::new(&executable).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut child = common::command(&executable).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
     let mut line = String::new();
     BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
     assert!(!listed(child.id()));
@@ -179,7 +179,7 @@ fn a_tasks_profile_without_a_duration() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("waiting.to"), WAITING).unwrap();
     let executable = dir.join("waiting");
-    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let status = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "waiting.to", "--output"])
         .arg(&executable)
         .current_dir(&dir)
@@ -187,7 +187,7 @@ fn a_tasks_profile_without_a_duration() {
         .unwrap();
     assert!(status.success());
     let mut child = Started::new(
-        Command::new(&executable)
+        common::command(&executable)
             .env("TONDO_DIAGNOSTICS", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -204,7 +204,7 @@ fn a_tasks_profile_without_a_duration() {
     assert_eq!(tasks["total"], 2, "{tasks}");
     drop(child.stdin.take());
     assert!(child.wait().unwrap().success());
-    let started = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let started = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["profile", "--tasks", "--", "waiting.to"])
         .current_dir(&dir)
         .stdin(Stdio::null())
@@ -249,7 +249,7 @@ fn a_dump_shows_the_schedulers_state() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("computing.to"), COMPUTING).unwrap();
     let executable = dir.join("computing");
-    let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let built = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "computing.to", "--output"])
         .arg(&executable)
         .current_dir(&dir)
@@ -257,7 +257,7 @@ fn a_dump_shows_the_schedulers_state() {
         .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let mut child = Started::new(
-        Command::new(&executable)
+        common::command(&executable)
             .env("TONDO_DIAGNOSTICS", "1")
             .env("TONDO_WORKERS", "1")
             .stdout(Stdio::piped())
@@ -295,7 +295,7 @@ fn a_dump_shows_the_schedulers_state() {
     // on a line of its own; a task has its line once it has been still a
     // second.
     let said = until("a ready task's line in `blocked`", || {
-        let blocked = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["blocked", &pid]).output().unwrap();
+        let blocked = common::command(env!("CARGO_BIN_EXE_tondo")).args(["blocked", &pid]).output().unwrap();
         let said = String::from_utf8_lossy(&blocked.stdout).into_owned();
         said.contains(" is ready ").then_some(said)
     });
@@ -308,7 +308,7 @@ fn a_dump_shows_the_schedulers_state() {
     }
     // Under a task's own line, the place alone.
     let read =
-        Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", "read"]).arg(&file).arg("tasks").output().unwrap();
+        common::command(env!("CARGO_BIN_EXE_tondo")).args(["dump", "read"]).arg(&file).arg("tasks").output().unwrap();
     let read = String::from_utf8_lossy(&read.stdout);
     assert!(read.contains("\n  in worker ") || read.contains("\n  beside worker "), "{read}");
     assert!(!read.contains("\n  task "), "{read}");
@@ -322,8 +322,12 @@ fn a_dump_shows_the_schedulers_state() {
         let why = tondo(&["dump", "read", marked.to_str().unwrap(), "why", "--json"]);
         let named: Vec<&Value> = why["why"]["lost"].as_array().unwrap().iter().map(|l| &l["task"]).collect();
         assert_eq!(named == [&id], lost, "{looks} looks: {}", why["why"]["lost"]);
-        let text =
-            Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", "read"]).arg(&marked).arg("why").output().unwrap();
+        let text = common::command(env!("CARGO_BIN_EXE_tondo"))
+            .args(["dump", "read"])
+            .arg(&marked)
+            .arg("why")
+            .output()
+            .unwrap();
         let text = String::from_utf8_lossy(&text.stdout);
         let sentence = format!("task {id} stayed ready ");
         assert_eq!(
@@ -356,7 +360,7 @@ fn counters_and_dumps_show_what_regions_hold() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("in_regions.to"), IN_REGIONS).unwrap();
     let executable = dir.join("in_regions");
-    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let status = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "in_regions.to", "--output"])
         .arg(&executable)
         .current_dir(&dir)
@@ -366,7 +370,7 @@ fn counters_and_dumps_show_what_regions_hold() {
     // A sample every 4 KiB: at the default 512 KiB, the one value of 1.6 MB
     // is sampled in 96 runs of 100.
     let mut child = Started::new(
-        Command::new(&executable)
+        common::command(&executable)
             .env("TONDO_DIAGNOSTICS", "1")
             .env("TONDO_HEAP_RATE", "4096")
             .stdin(Stdio::piped())
@@ -438,7 +442,7 @@ fn trace_of_a_started_program() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("trace");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("traced.to"), TRACED).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["trace", "--output", "out", "--", "traced.to"])
         .current_dir(&dir)
         .output()
@@ -458,7 +462,7 @@ fn trace_of_a_started_program() {
     // A program that does not end well says how it ended; the name of one
     // of the files names both, its dots kept.
     std::fs::write(dir.join("fails.to"), "fn main() {\n    panic(\"no\")\n}\n").unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["trace", "--output", "fails.trace.json", "--", "fails.to"])
         .current_dir(&dir)
         .output()
@@ -523,7 +527,7 @@ fn main() {
 ";
     std::fs::write(dir.join("clocked.to"), program).unwrap();
     let tondo = |args: &[&str]| {
-        let output = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+        let output = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
         assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
         String::from_utf8_lossy(&output.stdout).into_owned()
     };
@@ -563,7 +567,7 @@ fn a_cpu_profile_of_a_program_that_waits_says_it_waited() {
                    let _ = console.flush()\n    time.sleep(time.seconds(30))\n}\n";
     std::fs::write(dir.join("sleeping.to"), program).unwrap();
     let executable = dir.join("sleeping");
-    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let status = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "sleeping.to", "--output"])
         .arg(&executable)
         .current_dir(&dir)
@@ -577,8 +581,9 @@ fn a_cpu_profile_of_a_program_that_waits_says_it_waited() {
             "{profile}"
         );
     };
-    let mut child =
-        Started::new(Command::new(&executable).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap());
+    let mut child = Started::new(
+        common::command(&executable).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap(),
+    );
     let mut line = String::new();
     BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut line).unwrap();
     assert_eq!(line, "waiting\n");
@@ -586,7 +591,7 @@ fn a_cpu_profile_of_a_program_that_waits_says_it_waited() {
     let pid = child.id().to_string();
     waited(&tondo(&["profile", &pid, "--cpu", "--duration", "1", "--output", file.to_str().unwrap(), "--json"]));
     drop(child);
-    let started = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let started = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["profile", "--cpu", "--duration", "1", "--output", "started.pprof", "--json", "--", "./sleeping"])
         .current_dir(&dir)
         .stdin(Stdio::null())
@@ -608,7 +613,7 @@ fn profiles_time_memory_and_tasks() {
     std::fs::write(dir.join("busy.to"), TRACED).unwrap();
     std::fs::write(dir.join("allocating.to"), ALLOCATING).unwrap();
     let run = |args: &[&str]| {
-        let output = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+        let output = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
         assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
         String::from_utf8_lossy(&output.stdout).into_owned()
     };
@@ -642,7 +647,7 @@ fn profiles_time_memory_and_tasks() {
     // move: Linux's, where the system lets a program count them; and as
     // where it does not, which the profile says and refuses.
     for uncounted in [false, true] {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+        let mut command = common::command(env!("CARGO_BIN_EXE_tondo"));
         command
             .args(["profile", "--instructions", "--output", "instructions.pprof", "--", "busy.to"])
             .current_dir(&dir);
@@ -664,7 +669,7 @@ fn profiles_time_memory_and_tasks() {
     // Memory, as the program left it: what it holds and what it allocated.
     // A sample every 64 KiB: at the default 512 KiB, the 11 MB it holds are
     // about 21 samples, and one run in a few thousand passed the bounds.
-    let sampled = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let sampled = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["profile", "--memory", "--duration", "2", "--output", "memory.pprof", "--", "allocating.to"])
         .env("TONDO_HEAP_RATE", "65536")
         .current_dir(&dir)
@@ -687,7 +692,7 @@ fn profiles_time_memory_and_tasks() {
     let sleeping = tasks["lines"].as_array().unwrap().iter().find(|l| l["line"] == 9).expect("the sleepers' line");
     assert_eq!(sleeping["flat"], 2, "{tasks}");
     // Whether the program stood still for its tasks to be seen, as data.
-    let told = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let told = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["profile", "--tasks", "--duration", "1", "--output", "still.pprof", "--json", "--", "allocating.to"])
         .current_dir(&dir)
         .output()
@@ -697,13 +702,13 @@ fn profiles_time_memory_and_tasks() {
     let told: Value = serde_json::from_str(said.lines().last().unwrap_or_default()).unwrap_or_default();
     assert_eq!(told["stopped"], true, "{said}");
     // What goes with what.
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["profile", "--cpu", "--memory", "--", "busy.to"])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(String::from_utf8_lossy(&output.stderr).contains("a profile is of one thing"));
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["profile", "show", "cpu.pprof", "--sample", "space"])
         .current_dir(&dir)
         .output()
@@ -744,7 +749,7 @@ fn profiles_carry_labels() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("labeled.to"), LABELED).unwrap();
     let run = |args: &[&str]| {
-        let output = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+        let output = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
         assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
         String::from_utf8_lossy(&output.stdout).into_owned()
     };
@@ -799,14 +804,14 @@ fn dumps_of_a_running_program_and_at_a_panic() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("dumped.to"), DUMPED).unwrap();
     let executable = dir.join("dumped");
-    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let status = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "dumped.to", "--output"])
         .arg(&executable)
         .current_dir(&dir)
         .status()
         .unwrap();
     assert!(status.success());
-    let mut child = Command::new(&executable)
+    let mut child = common::command(&executable)
         .env("TONDO_DIAGNOSTICS", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -845,7 +850,7 @@ fn dumps_of_a_running_program_and_at_a_panic() {
     std::fs::write(dir.join("panics.to"), "fn main() {\n    let values = [1]\n    let _ = values[3]\n}\n").unwrap();
     let crashes = dir.join("crashes");
     std::fs::create_dir_all(&crashes).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "panics.to"])
         .env("TONDO_DUMP", &crashes)
         .current_dir(&dir)
@@ -868,7 +873,7 @@ fn a_dump_keeps_the_bindings_of_a_task_that_waits() {
     std::fs::create_dir_all(&dir).unwrap();
     let program = "import std.console\n\nfn total(items: Array[String]): Int {\n    let prices = [3, 4]\n    prices[items.length()]\n}\n\nfn main() {\n    let items = [\"a\", \"b\", \"c\"]\n    let job = spawn total(items)\n    console.println(\"{items.length()} {job.wait()}\")\n}\n";
     std::fs::write(dir.join("waits.to"), program).unwrap();
-    let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let ran = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "waits.to"])
         .env("TONDO_DUMP", &dir)
         .current_dir(&dir)
@@ -904,7 +909,7 @@ fn a_dump_keeps_the_bindings_of_a_task_that_waits() {
 #[cfg(target_os = "linux")]
 fn the_tools_reach_a_program_in_another_file_system() {
     let isolated = |command: &str| {
-        let mut unshare = Command::new("unshare");
+        let mut unshare = common::command("unshare");
         unshare.args(["--user", "--map-root-user", "--mount", "sh", "-c"]);
         unshare.arg(format!("mount -t tmpfs none /tmp && {command}"));
         unshare
@@ -916,7 +921,7 @@ fn the_tools_reach_a_program_in_another_file_system() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("elsewhere");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("isolated.to"), PROGRAM).unwrap();
-    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let status = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "isolated.to", "--output", "isolated"])
         .current_dir(&dir)
         .status()
@@ -954,7 +959,7 @@ fn a_crash_leaves_a_dump_by_itself() {
     let cache = dir.join("cache");
     let dumps = cache.join("tondo/dumps");
     let run = |dump: Option<&str>| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+        let mut command = common::command(env!("CARGO_BIN_EXE_tondo"));
         command.args(["run", "falls.to"]).env("XDG_CACHE_HOME", &cache).env_remove("TONDO_DUMP").current_dir(&dir);
         command.envs(dump.map(|value| ("TONDO_DUMP", value)));
         String::from_utf8_lossy(&command.output().unwrap().stderr).into_owned()
@@ -994,21 +999,21 @@ fn a_crash_leaves_a_dump_by_itself() {
     std::fs::write(dir.join("not-a-directory"), "").unwrap();
     let said = run(dir.join("not-a-directory/dumps").to_str());
     assert!(said.contains("cannot write a dump to") && !said.contains("chmod"), "{said}");
-    let built = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["build", "falls.to"]).current_dir(&dir).status();
+    let built = common::command(env!("CARGO_BIN_EXE_tondo")).args(["build", "falls.to"]).current_dir(&dir).status();
     assert!(built.unwrap().success());
-    let mut command = Command::new(dir.join("falls"));
+    let mut command = common::command(dir.join("falls"));
     command.env("XDG_CACHE_HOME", dir.join("not-a-directory")).env_remove("TONDO_DUMP");
     let said = String::from_utf8_lossy(&command.output().unwrap().stderr).into_owned();
     assert!(said.contains("cannot be made") && said.contains("give TONDO_DUMP `stderr`"), "{said}");
     // In a container, how the dump leaves it.
-    let mut command = Command::new(dir.join("falls"));
+    let mut command = common::command(dir.join("falls"));
     command.env("TONDO_DUMP", dir.join("contained")).env("KUBERNETES_SERVICE_HOST", "10.0.0.1");
     let said = String::from_utf8_lossy(&command.output().unwrap().stderr).into_owned();
     assert!(said.contains("it leaves the container with `docker cp <container>:"), "{said}");
     // Which does not reach a tmpfs, as Linux's /dev/shm is.
     if cfg!(target_os = "linux") && Path::new("/dev/shm").is_dir() {
         let shm = Path::new("/dev/shm").join(format!("tondo-observe-{}", std::process::id()));
-        let mut command = Command::new(dir.join("falls"));
+        let mut command = common::command(dir.join("falls"));
         command.env("TONDO_DUMP", &shm).env("KUBERNETES_SERVICE_HOST", "10.0.0.1");
         let said = String::from_utf8_lossy(&command.output().unwrap().stderr).into_owned();
         let _ = std::fs::remove_dir_all(&shm);
@@ -1023,24 +1028,25 @@ fn a_crash_leaves_a_dump_by_itself() {
 /// its exit's signal, its output and its error output.
 fn with_c(name: &str, code: &str, program: &str) -> Option<(Option<i32>, String, String)> {
     use std::os::unix::process::ExitStatusExt;
-    if Command::new("cc").arg("--version").output().is_err() {
+    if common::command("cc").arg("--version").output().is_err() {
         return None;
     }
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("part.c"), code).unwrap();
-    let compiled = Command::new("cc").args(["-c", "-O1", "part.c", "-o", "part.o"]).current_dir(&dir).output().unwrap();
+    let compiled =
+        common::command("cc").args(["-c", "-O1", "part.c", "-o", "part.o"]).current_dir(&dir).output().unwrap();
     assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
-    let archived = Command::new("ar").args(["rcs", "libpart.a", "part.o"]).current_dir(&dir).output().unwrap();
+    let archived = common::command("ar").args(["rcs", "libpart.a", "part.o"]).current_dir(&dir).output().unwrap();
     assert!(archived.status.success(), "{}", String::from_utf8_lossy(&archived.stderr));
     std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\n\n[native]\nlibraries = [\"libpart.a\"]\n")
         .unwrap();
     std::fs::write(dir.join("src/main.to"), program).unwrap();
-    let mut build = Command::new(env!("CARGO_BIN_EXE_tondo"));
+    let mut build = common::command(env!("CARGO_BIN_EXE_tondo"));
     let built = build.args(["build", ".", "--output", "app"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let child = Command::new(dir.join("app"))
+    let child = common::command(dir.join("app"))
         .env("TONDO_DUMP", dir.join("dumps"))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1097,7 +1103,7 @@ fn a_dump_names_an_error_nobody_read() {
     std::fs::create_dir_all(&dir).unwrap();
     let program = "import std.fs\n\nfn main() {\n    let slow = spawn fs.readText(\"/nonexistent/file\")\n    let (kept, never) = channel[Int](1)\n    _ = never.receive()\n    kept.send(1)\n    _ = slow.wait()\n}\n";
     std::fs::write(dir.join("waits.to"), program).unwrap();
-    let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+    let mut command = common::command(env!("CARGO_BIN_EXE_tondo"));
     command.args(["run", "waits.to"]).env("TONDO_DUMP", &dir).current_dir(&dir);
     let said = String::from_utf8_lossy(&command.output().unwrap().stderr).into_owned();
     assert!(said.contains("task 2 ended with an error nobody read: err(fs.FsError.NotFound)"), "{said}");
@@ -1106,7 +1112,7 @@ fn a_dump_names_an_error_nobody_read() {
     let unread = &why["why"]["unread"][0];
     assert_eq!((unread["task"].as_u64(), unread["spawned"].as_str()), (Some(2), Some("waits.to:4 in main")), "{why}");
     assert_eq!(unread["result"], "err(fs.FsError.NotFound)", "{why}");
-    let tasks = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", "read"]).arg(&dump).arg("tasks").output();
+    let tasks = common::command(env!("CARGO_BIN_EXE_tondo")).args(["dump", "read"]).arg(&dump).arg("tasks").output();
     let tasks = String::from_utf8_lossy(&tasks.unwrap().stdout).into_owned();
     let named = "task 2, spawned at waits.to:4 in main, ended with an error nobody read: err(fs.FsError.NotFound)";
     assert!(tasks.contains(named), "{tasks}");
@@ -1120,14 +1126,14 @@ fn a_program_the_tools_cannot_reach_says_why() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("ends.to"), "import std.console\n\nfn main() {\n    console.println(\"ran\")\n}\n")
         .unwrap();
-    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let status = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "ends.to", "--output", "ends"])
         .current_dir(&dir)
         .status()
         .unwrap();
     assert!(status.success());
     std::fs::write(dir.join("not-a-directory"), "").unwrap();
-    let output = Command::new(dir.join("ends"))
+    let output = common::command(dir.join("ends"))
         .env("TONDO_DIAGNOSTICS", "1")
         .env("TMPDIR", dir.join("not-a-directory"))
         .output()
@@ -1166,7 +1172,7 @@ fn debugger_session() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("debugged.to"), DEBUGGED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "debugged.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -1242,7 +1248,7 @@ fn debugger_shows_what_a_block_can_use() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-closure");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("closed.to"), CLOSED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "closed.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -1272,7 +1278,7 @@ fn debugger_shows_what_a_block_can_use() {
     let label = lines.iter().find(|l| l["name"] == "label").unwrap();
     assert_eq!(label["value"], "\"total\"");
     // A breakpoint's condition and message read them too.
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "closed.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -1319,15 +1325,15 @@ fn dap_read(reader: &mut impl BufRead) -> Value {
 /// and processor time, its threads' stacks (`sample` on macOS, the kernel's
 /// view on Linux), and a dump of the program, as `tondo dump` takes it.
 fn stuck_processes(tondo: &str, adapter: u32) -> (Vec<String>, String) {
-    let children = Command::new("pgrep").arg("-P").arg(adapter.to_string()).output();
+    let children = common::command("pgrep").arg("-P").arg(adapter.to_string()).output();
     let children = children.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
     let pids: Vec<String> =
         std::iter::once(adapter.to_string()).chain(children.split_whitespace().map(String::from)).collect();
     let mut told = format!("10 s in:\n{}", run_states(&pids));
     for pid in &pids {
         let stacks = match cfg!(target_os = "macos") {
-            true => Command::new("sample").args([pid.as_str(), "1"]).output(),
-            false => Command::new("sh")
+            true => common::command("sample").args([pid.as_str(), "1"]).output(),
+            false => common::command("sh")
                 .arg("-c")
                 .arg(format!("for t in /proc/{pid}/task/*; do echo \"$t $(cut -d' ' -f3 $t/stat) $(cat $t/wchan 2>/dev/null)\"; done"))
                 .output(),
@@ -1337,7 +1343,7 @@ fn stuck_processes(tondo: &str, adapter: u32) -> (Vec<String>, String) {
         told.push_str(&format!("\nthreads of {pid}:\n{}", lines.join("\n")));
     }
     if let Some(program) = pids.get(1) {
-        let dump = Command::new(tondo).args(["dump", program.as_str(), "--json"]).output();
+        let dump = common::command(tondo).args(["dump", program.as_str(), "--json"]).output();
         let dump = dump.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
         told.push_str(&format!("\ndump of {program}:\n{}", dump.chars().take(4000).collect::<String>()));
     }
@@ -1347,7 +1353,7 @@ fn stuck_processes(tondo: &str, adapter: u32) -> (Vec<String>, String) {
 /// Each process's state and the processor time it has used: one that did
 /// not run is told from one that waits by its state, R or S.
 fn run_states(pids: &[String]) -> String {
-    let shown = Command::new("ps").args(["-o", "pid=,state=,time=", "-p", &pids.join(",")]).output();
+    let shown = common::command("ps").args(["-o", "pid=,state=,time=", "-p", &pids.join(",")]).output();
     shown.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
 }
 
@@ -1356,7 +1362,7 @@ fn run_states(pids: &[String]) -> String {
 /// test started that are still there, as `ps` lists them.
 fn left_behind() -> Vec<String> {
     let me = std::process::id().to_string();
-    let shown = Command::new("ps").args(["-A", "-o", "pid=,ppid=,state=,command="]).output();
+    let shown = common::command("ps").args(["-A", "-o", "pid=,ppid=,state=,command="]).output();
     let shown = shown.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
     shown
         .lines()
@@ -1373,7 +1379,7 @@ fn left_behind() -> Vec<String> {
 /// holds, as `ipcs -a` lists them: what a killed process can leave behind,
 /// of which macOS allows few.
 fn ipc_counts() -> String {
-    let shown = Command::new("ipcs").arg("-a").output();
+    let shown = common::command("ipcs").arg("-a").output();
     let shown = shown.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
     let count = |kind: &str| shown.lines().filter(|line| line.trim_start().starts_with(kind)).count();
     format!("{} shared segments, {} semaphores, {} queues", count("m "), count("s "), count("q "))
@@ -1413,7 +1419,7 @@ fn every_debugged_program_s_end_reaches_the_editor() {
     let mut left_before = 0;
     let errors = dir.join("adapter.err");
     for round in 1..=300 {
-        let mut child = Command::new(tondo)
+        let mut child = common::command(tondo)
             .arg("dap")
             .current_dir(&dir)
             .stdin(Stdio::piped())
@@ -1528,7 +1534,7 @@ fn a_closed_pipe_ends_no_server() {
     let lsp = framed(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
     let mcp = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}\n".to_string();
     for (command, request) in [("dap", dap), ("lsp", lsp), ("mcp", mcp)] {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
             .arg(command)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1562,7 +1568,7 @@ fn debug_adapter_runs_a_test() {
         .unwrap();
     let tests = "test adds {\n    assert(add(1, 2) == 3)\n}\n\nsuite sums {\n    let base = 1\n    let unused = 5\n    test fails {\n        let sum = add(base, 2)\n        assert(sum == 4, \"wrong sum\")\n    }\n}\n";
     std::fs::write(dir.join("src/main_test.to"), tests).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .arg("dap")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1661,7 +1667,7 @@ fn debug_adapter() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dap");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("debugged.to"), DEBUGGED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .arg("dap")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1837,7 +1843,7 @@ fn debugger_evaluates_watches_and_catches_errors() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-watch");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("summed.to"), WATCHED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "summed.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -1898,7 +1904,7 @@ fn a_watch_names_the_line_that_changed_it() {
         var counts: Map[String, Int] = [:]\n    for word in [\"a\", \"b\"] {\n        \
         counts[word] = plus(counts.get(word) ?? 0, 1)\n    }\n}\n";
     std::fs::write(dir.join("counted.to"), program).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "counted.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -1932,7 +1938,7 @@ fn debug_adapter_watches_and_pages() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dap-watch");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("summed.to"), WATCHED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .arg("dap")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -2093,7 +2099,7 @@ fn debugger_shows_waiting_tasks_and_returned_values() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-wait");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("waited.to"), WAITED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "waited.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -2166,7 +2172,7 @@ fn debugger_shows_tasks_inside_calls_of_c() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-c");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("napped.to"), NAPPED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "napped.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -2215,7 +2221,7 @@ fn debugger_changes_parts_of_values() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-set");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("changed.to"), CHANGED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "changed.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -2296,7 +2302,7 @@ fn debugger_watches_shared_values() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-shared");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("shared.to"), SHARED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "shared.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -2367,7 +2373,7 @@ fn debugger_catches_chosen_errors_and_panics() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-caught");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("caught.to"), CAUGHT).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "caught.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -2425,7 +2431,7 @@ fn debugger_stops_at_a_deadlock() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-deadlock");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("deadlocked.to"), DEADLOCKED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "deadlocked.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -2474,7 +2480,7 @@ fn debugger_steps_into_a_chosen_call() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-into");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("into.to"), INTO).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "into.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -2504,22 +2510,23 @@ fn debugger_reaches_a_program_through_a_relay() {
                   time.sleep(time.milliseconds(10))\n    }\n}\n";
     std::fs::write(dir.join("looped.to"), looped).unwrap();
     let executable = dir.join("looped");
-    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let status = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "looped.to", "--debug", "--output"])
         .arg(&executable)
         .current_dir(&dir)
         .status()
         .unwrap();
     assert!(status.success());
-    let mut program =
-        Started::new(Command::new(&executable).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap());
+    let mut program = Started::new(
+        common::command(&executable).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap(),
+    );
     // It serves the tools from before `main`, which says it is ready.
     let mut line = String::new();
     BufReader::new(program.stdout.take().unwrap()).read_line(&mut line).unwrap();
     assert!(listed(program.id()));
     let tools = Path::new(env!("CARGO_BIN_EXE_tondo")).parent().unwrap();
     let via = format!("env PATH={}", tools.display());
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "--via", &via, &program.id().to_string()])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -2535,7 +2542,7 @@ fn debugger_reaches_a_program_through_a_relay() {
     // What a tool gives, or what it said when it gave nothing.
     let observed = |args: &[&str]| -> Value {
         let output =
-            Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).args(["--via", &via, "--json"]).output().unwrap();
+            common::command(env!("CARGO_BIN_EXE_tondo")).args(args).args(["--via", &via, "--json"]).output().unwrap();
         serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
             let said = [output.stdout, output.stderr].concat();
             Value::String(format!("{}: {}", output.status, String::from_utf8_lossy(&said)))
@@ -2546,7 +2553,7 @@ fn debugger_reaches_a_program_through_a_relay() {
     let listed = observed(&["ps"]);
     let blocked = observed(&["blocked", &pid]);
     // A command that reaches no `tondo` says so, and how to put one there.
-    let unreached = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let unreached = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["counters", &pid, "--via", "env PATH=/nonexistent"])
         .output()
         .unwrap();
@@ -2577,7 +2584,7 @@ fn debugger_goes_back_in_history() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-history");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("summed.to"), WATCHED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "summed.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -2632,7 +2639,7 @@ fn debugger_moves_a_frame_to_another_line() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-goto");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("jumped.to"), JUMPED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "--live", "jumped.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -2712,7 +2719,7 @@ fn debugger_calls_the_programs_code() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-call");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("calling.to"), CALLING).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "--live", "calling.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -2785,7 +2792,7 @@ fn debugger_compiles_conditions() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-condition");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("conditioned.to"), CONDITIONED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "--live", "conditioned.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -2939,7 +2946,7 @@ fn debugger_replays_a_recorded_run() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("recorded.to"), RECORDED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "--record", "run", "recorded.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -2952,7 +2959,7 @@ fn debugger_replays_a_recorded_run() {
     let printed = String::from_utf8_lossy(&output.stdout).into_owned();
     assert!(printed.starts_with("ada "), "{printed}");
     for _ in 0..2 {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(["debug", "--json", "--replay", "run"])
             .current_dir(&dir)
             .stdin(Stdio::piped())
@@ -3040,13 +3047,13 @@ fn a_replay_follows_values_through_channels() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("sent.to"), SENT).unwrap();
-    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let recorded = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "--record", "run", "sent.to"])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(recorded.status.success());
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "--replay", "run"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -3084,7 +3091,7 @@ fn a_recording_replays_elsewhere() {
     std::fs::create_dir_all(&here).unwrap();
     std::fs::create_dir_all(&elsewhere).unwrap();
     std::fs::write(here.join("rolled.to"), ROLLED).unwrap();
-    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let recorded = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "--record", "run", "rolled.to"])
         .current_dir(&here)
         .output()
@@ -3092,7 +3099,7 @@ fn a_recording_replays_elsewhere() {
     assert!(recorded.status.success());
     std::fs::rename(here.join("run"), elsewhere.join("run")).unwrap();
     std::fs::remove_dir_all(&here).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--replay", "run"])
         .current_dir(&elsewhere)
         .stdin(Stdio::piped())
@@ -3163,7 +3170,7 @@ fn a_replay_holds_the_threads_of_c_to_their_order() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("racing.to"), RACING).unwrap();
-    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let recorded = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "--record", "run", "racing.to"])
         .current_dir(&dir)
         .output()
@@ -3174,7 +3181,7 @@ fn a_replay_holds_the_threads_of_c_to_their_order() {
     let run: Value = serde_json::from_slice(&std::fs::read(dir.join("run/run.json")).unwrap()).unwrap();
     for _ in 0..3 {
         // A replay that hung would hold the tests for hours.
-        let replayed = Command::new(dir.join("run/program"))
+        let replayed = common::command(dir.join("run/program"))
             .env("TONDO_RT_REPLAY", dir.join("run/calls"))
             .env("TONDO_RT_SCHEDULE", run["seed"].as_str().unwrap())
             .current_dir(&dir)
@@ -3187,7 +3194,7 @@ fn a_replay_holds_the_threads_of_c_to_their_order() {
         assert_eq!(String::from_utf8_lossy(&replayed.stdout), stdout, "{said}");
         assert!(replayed.status.success(), "{said}");
     }
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--replay", "run"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -3227,7 +3234,8 @@ fn debugger_compares_two_recorded_runs() {
     let (mut good, mut bad) = (None, None);
     for run in 0..200 {
         let name = format!("run{run}");
-        let ran = Command::new(tondo).args(["run", "--record", &name, "flaky.to"]).current_dir(&dir).output().unwrap();
+        let ran =
+            common::command(tondo).args(["run", "--record", &name, "flaky.to"]).current_dir(&dir).output().unwrap();
         match ran.status.success() {
             true => good = good.or(Some(name)),
             false => bad = bad.or(Some(name)),
@@ -3239,7 +3247,7 @@ fn debugger_compares_two_recorded_runs() {
     let (good, bad) = (good.unwrap(), bad.unwrap());
     let compared = |first: &str, second: &str| {
         let args = ["debug", "--compare", first, second, "--json"];
-        let output = Command::new(tondo).args(args).current_dir(&dir).output().unwrap();
+        let output = common::command(tondo).args(args).current_dir(&dir).output().unwrap();
         assert!(output.status.success(), "{output:?}");
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
@@ -3247,7 +3255,7 @@ fn debugger_compares_two_recorded_runs() {
     if parted["parted"] != true {
         // What each replay does, when they seem the same.
         for run in [&good, &bad] {
-            let mut debugger = Command::new(tondo)
+            let mut debugger = common::command(tondo)
                 .args(["debug", "--replay", run])
                 .current_dir(&dir)
                 .stdin(Stdio::piped())
@@ -3273,7 +3281,7 @@ fn debugger_compares_two_recorded_runs() {
     assert_eq!(parted["origins"][0]["causes"][0]["name"], "rate", "{parted}");
     assert_eq!(parted["origins"][0]["causes"][0]["at"], "flaky.to:7 in total", "{parted}");
     // The recordings keep what it reads, wherever it runs.
-    let elsewhere = Command::new(tondo)
+    let elsewhere = common::command(tondo)
         .args(["debug", "--compare", &good, &bad].map(|arg| match arg.starts_with('-') || arg == "debug" {
             true => arg.to_string(),
             false => dir.join(arg).display().to_string(),
@@ -3290,7 +3298,8 @@ fn debugger_compares_two_recorded_runs() {
     other.push(0);
     std::fs::create_dir_all(dir.join("other")).unwrap();
     std::fs::write(dir.join("other/program"), other).unwrap();
-    let refused = Command::new(tondo).args(["debug", "--compare", &good, "other"]).current_dir(&dir).output().unwrap();
+    let refused =
+        common::command(tondo).args(["debug", "--compare", &good, "other"]).current_dir(&dir).output().unwrap();
     assert!(String::from_utf8_lossy(&refused.stderr).contains("different builds"));
 }
 
@@ -3310,7 +3319,7 @@ fn a_replay_searches_the_recording_of_a_crash() {
                    nowhere.toPointer[Int]().write(total)\n    }\n}\n";
     std::fs::write(dir.join("crash.to"), program).unwrap();
     let run = |command: &str| {
-        Command::new("sh").args(["-c", &format!("ulimit -c 0; {command}")]).current_dir(&dir).output().unwrap()
+        common::command("sh").args(["-c", &format!("ulimit -c 0; {command}")]).current_dir(&dir).output().unwrap()
     };
     let tondo = env!("CARGO_BIN_EXE_tondo");
     let recorded = run(&format!("{tondo} run --record rec crash.to"));
@@ -3328,7 +3337,7 @@ fn a_replay_searches_the_recording_of_a_crash() {
 /// bindings of the frame it shows.
 #[test]
 fn lldb_stops_at_a_line_and_shows_the_bindings() {
-    if Command::new("lldb").arg("--version").output().is_err() {
+    if common::command("lldb").arg("--version").output().is_err() {
         return;
     }
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-lldb");
@@ -3338,11 +3347,12 @@ fn lldb_stops_at_a_line_and_shows_the_bindings() {
         "fn square(n: Int): Int {\n    let result = n * n\n    result\n}\n\nfn main() {\n    _ = square(3)\n}\n";
     std::fs::write(dir.join("app.to"), program).unwrap();
     let tondo = env!("CARGO_BIN_EXE_tondo");
-    let status = Command::new(tondo).args(["build", "app.to", "--debug", "--output", "app"]).current_dir(&dir).status();
+    let status =
+        common::command(tondo).args(["build", "app.to", "--debug", "--output", "app"]).current_dir(&dir).status();
     assert!(status.unwrap().success());
-    let plugin = Command::new(tondo).args(["dump", "plugin", "lldb"]).env("XDG_CACHE_HOME", &dir).output().unwrap();
+    let plugin = common::command(tondo).args(["dump", "plugin", "lldb"]).env("XDG_CACHE_HOME", &dir).output().unwrap();
     let load = String::from_utf8_lossy(&plugin.stdout).trim().to_string();
-    let ran = Command::new("lldb")
+    let ran = common::command("lldb")
         .args(["--batch", "-o", &load, "-o", "breakpoint set --file app.to --line 2", "-o", "run", "-o", "bt"])
         .args(["-o", "tondo locals", "-o", "up", "-o", "tondo print 3 * 2", "--", "./app"])
         .current_dir(&dir)
@@ -3404,7 +3414,7 @@ fn a_replay_gives_watches_and_profiles_back() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("watched.to"), OBSERVED).unwrap();
-    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let recorded = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "--record", "run", "watched.to"])
         .current_dir(&dir)
         .output()
@@ -3413,7 +3423,7 @@ fn a_replay_gives_watches_and_profiles_back() {
     assert!(recorded.status.success(), "{stdout}{}", String::from_utf8_lossy(&recorded.stderr));
     assert!(stdout.contains("/a.txt Created") && stdout.contains(" true "), "{stdout}");
     let run: Value = serde_json::from_slice(&std::fs::read(dir.join("run/run.json")).unwrap()).unwrap();
-    let replayed = Command::new(dir.join("run/program"))
+    let replayed = common::command(dir.join("run/program"))
         .env("TONDO_RT_REPLAY", dir.join("run/calls"))
         .env("TONDO_RT_SCHEDULE", run["seed"].as_str().unwrap())
         .current_dir(&dir)
@@ -3438,20 +3448,20 @@ fn a_replay_names_the_recordings_of_children() {
     std::fs::write(dir.join("child.to"), child).unwrap();
     let parent = "import std.console\nimport std.process\n\nfn main() {\n    let out = process.command(\"./child\", \"hi\").output()?\n    console.println(\"parent read {out.text()?}\")\n}\n";
     std::fs::write(dir.join("parent.to"), parent).unwrap();
-    let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let built = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "child.to", "--output", "child", "--debug"])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let recorded = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "--record", "run", "parent.to"])
         .current_dir(&dir)
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&recorded.stdout).into_owned();
     assert!(stdout.contains("parent read child got [hi]"), "{stdout}");
-    let mut replay = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut replay = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--replay", "run"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -3464,7 +3474,7 @@ fn a_replay_names_the_recordings_of_children() {
     let recording = output.split("`tondo debug --replay ").nth(1).and_then(|r| r.split('`').next());
     let recording = recording.unwrap_or_else(|| panic!("{output}"));
     assert!(Path::new(recording).join("sources").is_dir(), "{recording}");
-    let mut replay = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut replay = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--replay", recording])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -3490,13 +3500,13 @@ fn debugger_goes_back_in_a_replay() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("rolled.to"), ROLLED).unwrap();
-    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let recorded = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "--record", "run", "rolled.to"])
         .current_dir(&dir)
         .output();
     let recorded = String::from_utf8_lossy(&recorded.unwrap().stdout).into_owned();
     let rolls: Vec<i64> = recorded.lines().take(6).map(|l| l.split(": ").nth(1).unwrap().parse().unwrap()).collect();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "--replay", "run"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -3668,13 +3678,13 @@ fn debugger_finds_who_changed_a_value_in_a_replay() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("changed.to"), CHANGED_ELSEWHERE).unwrap();
-    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let recorded = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "--record", "run", "changed.to"])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&recorded.stdout).lines().next(), Some("10 [1, 2, 7] 3"));
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "--replay", "run"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -3781,7 +3791,7 @@ fn debug_adapter_follows_children() {
     let parent =
         "import std.process\n\nfn main(): !process.ProcessError {\n    process.command(\"./child\").run()?\n}\n";
     std::fs::write(dir.join("parent.to"), parent).unwrap();
-    let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let built = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "child.to", "--debug", "--output", "child"])
         .current_dir(&dir)
         .status()
@@ -3827,7 +3837,7 @@ fn debug_adapter_opens_the_recordings_of_children() {
         "import std.process\n\nfn main(): !process.ProcessError {\n    process.command(\"./child\").run()?\n}\n";
     std::fs::write(dir.join("parent.to"), parent).unwrap();
     for args in [&["build", "child.to", "--debug", "--output", "child"][..], &["run", "--record", "run", "parent.to"]] {
-        let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+        let ran = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
         assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
     }
     let mut adapter = Adapter::start();
@@ -3864,13 +3874,13 @@ fn a_dump_keeps_the_bindings_of_its_frames() {
     let program = "type User = {\n    name: String\n    tags: Array[String]\n}\n\nfn check(user: User, limit: Int) {\n    let over = user.tags.length() - limit\n    if over > 0 {\n        panic(\"too many by {over}\")\n    }\n}\n\nfn main() {\n    let list = [User { name: \"ana\", tags: [\"a\", \"b\", \"c\"] }]\n    var checked = 0\n    for user in list {\n        check(user, 1)\n        checked = checked + 1\n    }\n}\n";
     std::fs::write(dir.join("told.to"), program).unwrap();
     let tondo = env!("CARGO_BIN_EXE_tondo");
-    let built = Command::new(tondo)
+    let built = common::command(tondo)
         .args(["build", "told.to", "--debug", "--output", "told"])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let ran = Command::new(dir.join("told")).env("TONDO_DUMP", &dir).current_dir(&dir).output().unwrap();
+    let ran = common::command(dir.join("told")).env("TONDO_DUMP", &dir).current_dir(&dir).output().unwrap();
     assert!(!ran.status.success());
     let dump = std::fs::read_dir(&dir)
         .unwrap()
@@ -3880,7 +3890,7 @@ fn a_dump_keeps_the_bindings_of_its_frames() {
         .unwrap();
     let read = |view: &[&str]| {
         let args = [&["dump", "read", dump.to_str().unwrap()], view].concat();
-        let output = Command::new(tondo).args(args).output().unwrap();
+        let output = common::command(tondo).args(args).output().unwrap();
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
         String::from_utf8(output.stdout).unwrap()
     };
@@ -3928,9 +3938,9 @@ fn a_dump_of_a_build_without_probes_has_its_bindings() {
     std::fs::write(dir.join("panics.to"), panics).unwrap();
     let tondo = env!("CARGO_BIN_EXE_tondo");
     let built =
-        Command::new(tondo).args(["build", "panics.to", "--output", "panics"]).current_dir(&dir).output().unwrap();
+        common::command(tondo).args(["build", "panics.to", "--output", "panics"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let ran = Command::new(dir.join("panics")).env("TONDO_DUMP", &dir).current_dir(&dir).output().unwrap();
+    let ran = common::command(dir.join("panics")).env("TONDO_DUMP", &dir).current_dir(&dir).output().unwrap();
     assert!(!ran.status.success());
     let dump = std::fs::read_dir(&dir)
         .unwrap()
@@ -3940,7 +3950,7 @@ fn a_dump_of_a_build_without_probes_has_its_bindings() {
         .unwrap();
     let read = |view: &[&str]| {
         let args = [&["dump", "read", dump.to_str().unwrap()], view].concat();
-        let output = Command::new(tondo).args(args).output().unwrap();
+        let output = common::command(tondo).args(args).output().unwrap();
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
         String::from_utf8(output.stdout).unwrap()
     };
@@ -3956,10 +3966,10 @@ fn a_dump_of_a_build_without_probes_has_its_bindings() {
     let faults = "import std.ffi\n\nextern fn strlen(text: Pointer[UInt8]?): ffi.CSize\n\nfn measure(text: Pointer[UInt8]?, tries: Int): Int {\n    var total = tries\n    for i in 0..3 {\n        total = total + i\n    }\n    _ = unsafe { strlen(text) }\n    total\n}\n\nfn main() {\n    let text: Pointer[UInt8]? = none\n    let first = 40\n    let got = measure(text, first)\n    panic(\"{got} {first}\")\n}\n";
     std::fs::write(dir.join("faults.to"), faults).unwrap();
     let built =
-        Command::new(tondo).args(["build", "faults.to", "--output", "faults"]).current_dir(&dir).output().unwrap();
+        common::command(tondo).args(["build", "faults.to", "--output", "faults"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     std::fs::remove_file(&dump).unwrap();
-    let ran = Command::new(dir.join("faults")).env("TONDO_DUMP", &dir).current_dir(&dir).output().unwrap();
+    let ran = common::command(dir.join("faults")).env("TONDO_DUMP", &dir).current_dir(&dir).output().unwrap();
     assert!(!ran.status.success());
     let dump = std::fs::read_dir(&dir)
         .unwrap()
@@ -3968,7 +3978,7 @@ fn a_dump_of_a_build_without_probes_has_its_bindings() {
         .find(|p| p.to_string_lossy().ends_with(".dump.json"))
         .unwrap();
     let args = ["dump", "read", dump.to_str().unwrap(), "tasks"];
-    let tasks = Command::new(tondo).args(args).output().unwrap();
+    let tasks = common::command(tondo).args(args).output().unwrap();
     assert!(String::from_utf8_lossy(&tasks.stdout).contains("in measure"), "{tasks:?}");
     // A dump of such a build whose task kept no value where it stopped, as
     // at a check that fails: why there are none.
@@ -3979,7 +3989,7 @@ fn a_dump_of_a_build_without_probes_has_its_bindings() {
     kept["values"] = json!([]);
     assert_eq!(kept["info"]["probes"], false);
     std::fs::write(dir.join("none.dump.json"), kept.to_string()).unwrap();
-    let locals = Command::new(tondo).args(["dump", "read", "none.dump.json", "locals"]).current_dir(&dir).output();
+    let locals = common::command(tondo).args(["dump", "read", "none.dump.json", "locals"]).current_dir(&dir).output();
     let said = String::from_utf8_lossy(&locals.unwrap().stderr).into_owned();
     assert!(said.contains("a build with `--debug` keeps them all"), "{said}");
 }
@@ -3998,9 +4008,9 @@ fn a_release_dump_keeps_what_a_failed_check_held() {
     std::fs::write(dir.join("picks.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
     let built =
-        Command::new(tondo_bin).args(["build", "picks.to", "--output", "picks"]).current_dir(&dir).output().unwrap();
+        common::command(tondo_bin).args(["build", "picks.to", "--output", "picks"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let ran = Command::new(dir.join("picks")).env("TONDO_DUMP", &dir).current_dir(&dir).output().unwrap();
+    let ran = common::command(dir.join("picks")).env("TONDO_DUMP", &dir).current_dir(&dir).output().unwrap();
     assert!(!ran.status.success());
     let dump = dumps_in(&dir).pop().expect("a dump");
     let locals = tondo(&["dump", "read", dump.to_str().unwrap(), "locals", "--json"]);
@@ -4011,7 +4021,7 @@ fn a_release_dump_keeps_what_a_failed_check_held() {
 
 /// Runs git in `dir`, which must work.
 fn git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git")
+    let output = common::command("git")
         .args(["-c", "user.email=a@example.com", "-c", "user.name=a", "-c", "commit.gpgsign=false"])
         .args(args)
         .current_dir(dir)
@@ -4037,10 +4047,10 @@ fn a_server_that_goes_wrong_dumps_itself_and_a_dump_can_be_shared() {
     std::fs::write(dir.join("hangs.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
     let built =
-        Command::new(tondo_bin).args(["build", "hangs.to", "--output", "hangs"]).current_dir(&dir).output().unwrap();
+        common::command(tondo_bin).args(["build", "hangs.to", "--output", "hangs"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let mut server = Started::new(
-        Command::new(dir.join("hangs"))
+        common::command(dir.join("hangs"))
             .env("TONDO_DUMP", dir.join("dumps"))
             .env("TONDO_DUMP_WHEN", "request=1s,stall=2s,keep=10")
             .spawn()
@@ -4052,7 +4062,7 @@ fn a_server_that_goes_wrong_dumps_itself_and_a_dump_can_be_shared() {
     let messages = until("the dumps of a slow request and of a stall", || {
         let mut messages: Vec<String> = Vec::new();
         for file in dumps_in(&dir.join("dumps")) {
-            let read = Command::new(tondo_bin).args(["dump", "read"]).arg(file).arg("--json").output().unwrap();
+            let read = common::command(tondo_bin).args(["dump", "read"]).arg(file).arg("--json").output().unwrap();
             messages.push(String::from_utf8_lossy(&read.stdout).into_owned());
         }
         let seen = |text: &str| messages.iter().any(|message| message.contains(text));
@@ -4065,11 +4075,11 @@ fn a_server_that_goes_wrong_dumps_itself_and_a_dump_can_be_shared() {
     // What can be shared has where it was, and nothing it held.
     let dump = dumps_in(&dir.join("dumps")).remove(0);
     let shared = dir.join("shared.dump.json");
-    let redacted = Command::new(tondo_bin).args(["dump", "redact"]).arg(&dump).arg(&shared).output().unwrap();
+    let redacted = common::command(tondo_bin).args(["dump", "redact"]).arg(&dump).arg(&shared).output().unwrap();
     assert!(redacted.status.success(), "{redacted:?}");
     let text = std::fs::read_to_string(&shared).unwrap();
     assert!(!text.contains("hidden7") && !text.contains("/slow/7"), "{text}");
-    let tasks = Command::new(tondo_bin).args(["dump", "read"]).arg(&shared).arg("tasks").output().unwrap();
+    let tasks = common::command(tondo_bin).args(["dump", "read"]).arg(&shared).arg("tasks").output().unwrap();
     assert!(String::from_utf8_lossy(&tasks.stdout).contains("hangs.to:6 in slow"), "{tasks:?}");
 }
 
@@ -4096,16 +4106,17 @@ fn locks_taken_in_both_orders_are_found_before_they_deadlock() {
     std::fs::write(dir.join("src/main_test.to"), test).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
     // Without asking, the test passes; asked, it fails, saying where.
-    let plain = Command::new(tondo_bin).arg("test").current_dir(&dir).output().unwrap();
+    let plain = common::command(tondo_bin).arg("test").current_dir(&dir).output().unwrap();
     assert!(plain.status.success(), "{plain:?}");
-    let asked = Command::new(tondo_bin).args(["test", "--lock-order"]).current_dir(&dir).output().unwrap();
+    let asked = common::command(tondo_bin).args(["test", "--lock-order"]).current_dir(&dir).output().unwrap();
     let said = String::from_utf8_lossy(&asked.stdout);
     assert!(!asked.status.success() && said.contains("orders that can deadlock"), "{said}");
     assert!(said.contains("src/main.to:4") && said.contains("src/main.to:11"), "{said}");
     // A program that dumps keeps it, and `why` says it.
-    let built = Command::new(tondo_bin).args(["build", ".", "--output", "built"]).current_dir(&dir).output().unwrap();
+    let built =
+        common::command(tondo_bin).args(["build", ".", "--output", "built"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    Command::new(dir.join("built")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+    common::command(dir.join("built")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
     let dump = std::fs::read_dir(dir.join("dumps")).unwrap().next().unwrap().unwrap().path();
     let why = tondo(&["dump", "read", dump.to_str().unwrap(), "why", "--json"]);
     assert!(why["why"]["lock_order"][0].as_str().unwrap_or_default().contains("can deadlock"), "{why}");
@@ -4128,14 +4139,14 @@ fn a_dump_says_what_keeps_memory_alive() {
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
     for (name, flags) in [("debug", &["--debug"][..]), ("release", &[][..])] {
         let output = format!("keeps-{name}");
-        let built = Command::new(tondo_bin)
+        let built = common::command(tondo_bin)
             .args(["build", "keeps.to", "--output", &output])
             .args(flags)
             .current_dir(&dir)
             .output()
             .unwrap();
         assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-        let ran = Command::new(dir.join(&output))
+        let ran = common::command(dir.join(&output))
             .env("TONDO_DUMP", dir.join(name))
             .env("TONDO_HEAP_RATE", "4096")
             .output()
@@ -4178,7 +4189,7 @@ fn the_debugger_stops_at_locks_and_recovered_panics_and_cancels_tasks() {
         let long = \"x\".repeat(10000)\n    console.println(\"{long.length()}\")\n    _ = job.wait()\n    \
         console.println(\"ended\")\n}\n";
     std::fs::write(dir.join("events.to"), program).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "events.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -4269,8 +4280,11 @@ fn a_request_is_followed_through_its_tasks() {
     let source = dir.join("server.to");
     std::fs::write(&source, program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
-    let built =
-        Command::new(tondo_bin).args(["build", "server.to", "--output", "server"]).current_dir(&dir).output().unwrap();
+    let built = common::command(tondo_bin)
+        .args(["build", "server.to", "--output", "server"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let get = || {
         use std::io::{Read, Write};
@@ -4281,7 +4295,7 @@ fn a_request_is_followed_through_its_tasks() {
         assert!(answer.ends_with('2'), "{answer}");
     };
     let mut server = Started::new(
-        Command::new(dir.join("server"))
+        common::command(dir.join("server"))
             .env("TONDO_DIAGNOSTICS", "1")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -4290,7 +4304,7 @@ fn a_request_is_followed_through_its_tasks() {
     );
     get();
     let pid = server.id().to_string();
-    let asked = Command::new(tondo_bin).args(["requests", &pid, "--json"]).output().unwrap();
+    let asked = common::command(tondo_bin).args(["requests", &pid, "--json"]).output().unwrap();
     let found: Value = serde_json::from_slice(&asked.stdout).unwrap();
     let served = &found["served"][0];
     assert_eq!((served["method"].as_str(), served["path"].as_str()), (Some("GET"), Some("/slow")), "{found}");
@@ -4311,7 +4325,7 @@ fn a_request_is_followed_through_its_tasks() {
         assert!(on.contains(&what), "{what} in {found}");
     }
     assert!(steps.iter().any(|step| step["what"] == "ended" && step["task"] == *started), "{found}");
-    let text = Command::new(tondo_bin).args(["requests", &pid]).output().unwrap();
+    let text = common::command(tondo_bin).args(["requests", &pid]).output().unwrap();
     let text = String::from_utf8_lossy(&text.stdout);
     assert!(text.contains("no request in flight") && text.contains("GET /slow took"), "{text}");
     assert!(text.contains(&format!("task {answers} starts task {started}, at server.to:12")), "{text}");
@@ -4320,7 +4334,7 @@ fn a_request_is_followed_through_its_tasks() {
         let logged = |request: &str, seconds: &str| {
             let args =
                 ["logpoint", &pid, "server.to:5", "--request", request, "--max", "1", "--for", seconds, "--json"];
-            Command::new(tondo_bin).args(args).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap()
+            common::command(tondo_bin).args(args).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap()
         };
         let hits = |output: std::process::Output| {
             let found: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -4338,21 +4352,23 @@ fn a_request_is_followed_through_its_tasks() {
     }
     // A dump keeps them.
     let dump = dir.join("server.dump.json");
-    let dumped = Command::new(tondo_bin).args(["dump", &pid, "--output"]).arg(&dump).output().unwrap();
+    let dumped = common::command(tondo_bin).args(["dump", &pid, "--output"]).arg(&dump).output().unwrap();
     assert!(dumped.status.success(), "{}", String::from_utf8_lossy(&dumped.stderr));
-    let read = Command::new(tondo_bin).args(["dump", "read"]).arg(&dump).arg("requests").output().unwrap();
+    let read = common::command(tondo_bin).args(["dump", "read"]).arg(&dump).arg("requests").output().unwrap();
     assert!(String::from_utf8_lossy(&read.stdout).contains("GET /slow took"), "{read:?}");
     // Two dumps say how long a request took in each.
     get();
     let later = dir.join("later.dump.json");
-    let dumped = Command::new(tondo_bin).args(["dump", &pid, "--output"]).arg(&later).output().unwrap();
+    let dumped = common::command(tondo_bin).args(["dump", &pid, "--output"]).arg(&later).output().unwrap();
     assert!(dumped.status.success());
-    let differ = Command::new(tondo_bin).args(["dump", "diff"]).arg(&dump).arg(&later).arg("--json").output().unwrap();
+    let differ =
+        common::command(tondo_bin).args(["dump", "diff"]).arg(&dump).arg(&later).arg("--json").output().unwrap();
     let differ: Value = serde_json::from_slice(&differ.stdout).unwrap();
     assert_eq!(differ["in_flight"]["after"], 0, "{differ}");
     // A page of the directory says where requests wait.
     let page = dir.join("page.html");
-    let served = Command::new(tondo_bin).args(["dump", "serve"]).arg(&dir).arg("--output").arg(&page).output().unwrap();
+    let served =
+        common::command(tondo_bin).args(["dump", "serve"]).arg(&dir).arg("--output").arg(&page).output().unwrap();
     assert!(served.status.success(), "{}", String::from_utf8_lossy(&served.stderr));
     let page = std::fs::read_to_string(page).unwrap();
     assert!(page.contains("Where requests wait") && page.contains("server.to:5 in fetch"), "{page}");
@@ -4429,12 +4445,15 @@ fn a_breakpoint_stops_one_task_of_a_release_build() {
     let source = dir.join("orders.to");
     std::fs::write(&source, program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
-    let built =
-        Command::new(tondo_bin).args(["build", "orders.to", "--output", "orders"]).current_dir(&dir).output().unwrap();
+    let built = common::command(tondo_bin)
+        .args(["build", "orders.to", "--output", "orders"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let printed = dir.join("printed");
     let mut child = Started::new(
-        Command::new(dir.join("orders"))
+        common::command(dir.join("orders"))
             .env("TONDO_DIAGNOSTICS", "1")
             .stdout(std::fs::File::create(&printed).unwrap())
             .stderr(std::fs::File::create(dir.join("errors")).unwrap())
@@ -4590,16 +4609,19 @@ fn a_logpoint_reads_a_running_release_build() {
         round += tight([1])\n        time.sleep(time.milliseconds(5))\n    }\n    console.println(\"{sum}\")\n}\n";
     std::fs::write(dir.join("orders.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
-    let built =
-        Command::new(tondo_bin).args(["build", "orders.to", "--output", "orders"]).current_dir(&dir).output().unwrap();
+    let built = common::command(tondo_bin)
+        .args(["build", "orders.to", "--output", "orders"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let mut child =
-        Command::new(dir.join("orders")).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap();
+        common::command(dir.join("orders")).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap();
     let mut output = BufReader::new(child.stdout.take().unwrap());
     let mut line = String::new();
     output.read_line(&mut line).unwrap();
     let pid = child.id().to_string();
-    let logpoint = |args: &[&str]| Command::new(tondo_bin).arg("logpoint").arg(&pid).args(args).output().unwrap();
+    let logpoint = |args: &[&str]| common::command(tondo_bin).arg("logpoint").arg(&pid).args(args).output().unwrap();
     // It serves the tools from before `main`, which printed its line.
     let found = logpoint(&["orders.to:8", "order {order.id} total {order.total}", "--max", "2", "--json"]);
     assert!(found.status.success(), "{found:?}");
@@ -4647,7 +4669,7 @@ fn a_logpoint_reads_a_running_release_build() {
     assert!(read.contains("orders.to:8 in charge"), "{read}");
     // A breakpoint of one task, in a build that has none: where it is, and it
     // waits for Enter while the program answers.
-    let mut stopping = Command::new(tondo_bin)
+    let mut stopping = common::command(tondo_bin)
         .arg("logpoint")
         .arg(&pid)
         .args(["orders.to:8", "{order.id}", "--stop", "60"])
@@ -4683,7 +4705,7 @@ fn a_logpoint_reads_a_running_release_build() {
     let gone = logpoint(&["orders.to:8", "--max", "1000000", "--for", "1", "--json"]);
     assert!(gone.status.success(), "{gone:?}");
     // And all that changes nothing of what the program does.
-    let _ = Command::new("kill").args(["-TERM", &pid]).status();
+    let _ = common::command("kill").args(["-TERM", &pid]).status();
     let status = child.wait().unwrap();
     assert!(status.code() == Some(143) || status.success(), "{status:?}");
 }
@@ -4710,10 +4732,10 @@ fn a_logpoint_shows_no_value_from_before() {
     for (output, how) in [("counts", None), ("debugged", Some("--debug")), ("bare", Some("--no-logpoints"))] {
         let mut args = vec!["build", "counts.to", "--output", output];
         args.extend(how);
-        let built = Command::new(tondo_bin).args(&args).current_dir(&dir).output().unwrap();
+        let built = common::command(tondo_bin).args(&args).current_dir(&dir).output().unwrap();
         assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
         let mut child =
-            Command::new(dir.join(output)).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap();
+            common::command(dir.join(output)).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap();
         // It serves the tools from before `main`, which says it is ready;
         // what it prints after is read, so that it never waits to write.
         let stdout = BufReader::new(child.stdout.take().unwrap());
@@ -4727,7 +4749,7 @@ fn a_logpoint_shows_no_value_from_before() {
         let pid = child.id().to_string();
         let logpoint = |place: &str, text: &str, max: &str| {
             let args = ["logpoint", &pid, place, text, "--max", max, "--for", "60", "--json"];
-            Command::new(tondo_bin).args(args).current_dir(&dir).output().unwrap()
+            common::command(tondo_bin).args(args).current_dir(&dir).output().unwrap()
         };
         if how == Some("--debug") {
             let refused = logpoint("counts.to:12", "{round}", "1");
@@ -4761,7 +4783,7 @@ fn a_logpoint_shows_no_value_from_before() {
             assert!(later.iter().all(|value| value["from"].as_str().unwrap().starts_with("counts.to:")), "{hits}");
             // For people: a part read as `?` says once why.
             let args = ["logpoint", &pid, "counts.to:12", "{before} {round}", "--max", "1", "--for", "60"];
-            let said = Command::new(tondo_bin).args(args).current_dir(&dir).output().unwrap();
+            let said = common::command(tondo_bin).args(args).current_dir(&dir).output().unwrap();
             let (out, err) = (String::from_utf8_lossy(&said.stdout), String::from_utf8_lossy(&said.stderr));
             assert!(err.contains("it ends after 1 time\n"), "{err}");
             if out.contains('?') {
@@ -4799,10 +4821,10 @@ fn dumps_leave_by_a_command_and_group_by_their_failure() {
     std::fs::write(dir.join("falls.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
     let built =
-        Command::new(tondo_bin).args(["build", "falls.to", "--output", "falls"]).current_dir(&dir).output().unwrap();
+        common::command(tondo_bin).args(["build", "falls.to", "--output", "falls"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     for which in ["a", "b", "other"] {
-        let ran = Command::new(dir.join("falls"))
+        let ran = common::command(dir.join("falls"))
             .arg(which)
             .env("TONDO_DUMP", dir.join("dumps"))
             .env("TONDO_DUMP_COMMAND", "cp \"$TONDO_DUMP_FILE\" away/")
@@ -4820,7 +4842,7 @@ fn dumps_leave_by_a_command_and_group_by_their_failure() {
     // The page says the same, with what can be followed.
     let dump = list[0]["file"].as_str().unwrap();
     let page = dir.join("page.html");
-    let report = Command::new(tondo_bin).args(["dump", "report", dump, "--output"]).arg(&page).output().unwrap();
+    let report = common::command(tondo_bin).args(["dump", "report", dump, "--output"]).arg(&page).output().unwrap();
     assert!(report.status.success(), "{report:?}");
     let html = std::fs::read_to_string(&page).unwrap();
     assert!(html.contains("data-file=\"falls.to\" data-line=\"5\""), "{html}");
@@ -4829,7 +4851,7 @@ fn dumps_leave_by_a_command_and_group_by_their_failure() {
     assert!(html.contains("signature: "), "{html}");
     // What it is not told to run does not stop a dump, and a percentage is
     // a limit it can read.
-    let bad = Command::new(dir.join("falls"))
+    let bad = common::command(dir.join("falls"))
         .arg("a")
         .env("TONDO_DUMP", dir.join("dumps"))
         .env("TONDO_DUMP_WHEN", "memory=95%")
@@ -4862,7 +4884,7 @@ fn a_build_says_where_its_files_came_from_and_brings_them_back() {
     git(&lib, &["add", "-A"]);
     git(&lib, &["commit", "--quiet", "-m", "one"]);
     git(&lib, &["push", "--quiet", "origin", "HEAD"]);
-    let head = Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&lib).output().unwrap();
+    let head = common::command("git").args(["rev-parse", "HEAD"]).current_dir(&lib).output().unwrap();
     let commit = String::from_utf8_lossy(&head.stdout).trim().to_string();
     git(&dir, &["clone", "--quiet", "app.git", "app"]);
     let app = dir.join("app/services/api");
@@ -4877,7 +4899,7 @@ fn a_build_says_where_its_files_came_from_and_brings_them_back() {
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
     let cache = dir.join("cache");
     let tondo_in = |args: &[&str]| {
-        let mut command = Command::new(tondo_bin);
+        let mut command = common::command(tondo_bin);
         command.args(args).current_dir(&app).env("XDG_CACHE_HOME", &cache);
         command.output().unwrap()
     };
@@ -4887,7 +4909,7 @@ fn a_build_says_where_its_files_came_from_and_brings_them_back() {
     git(&app, &["push", "--quiet", "origin", "HEAD"]);
     let built = tondo_in(&["build", ".", "--output", "api"]);
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    Command::new(app.join("api")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+    common::command(app.join("api")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
     let dump = std::fs::read_dir(dir.join("dumps")).unwrap().next().unwrap().unwrap().path();
     let dump = dump.to_str().unwrap();
     let summary = tondo_in(&["dump", "read", dump]);
@@ -4978,10 +5000,13 @@ fn a_call_in_a_replay_changes_nothing() {
         console.println(\"{order.id}\")\n    console.println(\"end {cell.load()}\")\n}\n";
     std::fs::write(dir.join("late.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
-    let ran =
-        Command::new(tondo_bin).args(["run", "--record", "recording", "late.to"]).current_dir(&dir).output().unwrap();
+    let ran = common::command(tondo_bin)
+        .args(["run", "--record", "recording", "late.to"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
     assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
-    let mut child = Command::new(tondo_bin)
+    let mut child = common::command(tondo_bin)
         .args(["debug", "--json", "--replay", "recording"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -5022,10 +5047,10 @@ fn a_call_in_the_replay_of_a_test_changes_nothing() {
     let test = "test failing {\n    let value = 21\n    let result = doubled(value)\n    assert(result == 41, \"not it\")\n}\n";
     std::fs::write(dir.join("src/main_test.to"), test).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
-    let ran = Command::new(tondo_bin).args(["test", "--record", "recordings"]).current_dir(&dir).output().unwrap();
+    let ran = common::command(tondo_bin).args(["test", "--record", "recordings"]).current_dir(&dir).output().unwrap();
     assert!(!ran.status.success());
     let recording = std::fs::read_dir(dir.join("recordings")).unwrap().next().unwrap().unwrap().path();
-    let mut child = Command::new(tondo_bin)
+    let mut child = common::command(tondo_bin)
         .arg("debug")
         .arg("--json")
         .arg("--replay")
@@ -5068,11 +5093,11 @@ fn a_task_that_waits_shows_what_its_registers_held() {
     std::fs::write(dir.join("waits.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
     let built =
-        Command::new(tondo_bin).args(["build", "waits.to", "--output", "waits"]).current_dir(&dir).output().unwrap();
+        common::command(tondo_bin).args(["build", "waits.to", "--output", "waits"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    Command::new(dir.join("waits")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+    common::command(dir.join("waits")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
     let dump = std::fs::read_dir(dir.join("dumps")).unwrap().next().unwrap().unwrap().path();
-    let read = Command::new(tondo_bin).args(["dump", "read"]).arg(&dump).args(["locals", "2"]).output().unwrap();
+    let read = common::command(tondo_bin).args(["dump", "read"]).arg(&dump).args(["locals", "2"]).output().unwrap();
     let locals = String::from_utf8_lossy(&read.stdout);
     assert!(locals.contains("seen: Int = 32"), "{locals}");
     assert!(locals.contains("count: Int = 47"), "{locals}");
@@ -5103,14 +5128,14 @@ fn what_is_secret_stays_out_of_dumps_and_the_debugger() {
     std::fs::write(dir.join("secret.to"), program).unwrap();
     let tondo = env!("CARGO_BIN_EXE_tondo");
     // The program itself sees its values.
-    let ran = Command::new(tondo).args(["run", "secret.to"]).current_dir(&dir).output().unwrap();
+    let ran = common::command(tondo).args(["run", "secret.to"]).current_dir(&dir).output().unwrap();
     assert!(String::from_utf8_lossy(&ran.stdout).contains("hunter2\n1\n"), "{ran:?}");
     let leaks = |text: &str| {
         ["hunter2", "s3cr3t", "987654321", "xyzter2", "abcter2", "k1ter2"].iter().any(|s| text.contains(s))
     };
     // In every build, and in the texts of a debug build's objects.
     for (name, flags) in [("release", &[][..]), ("debug", &["--debug"][..])] {
-        let built = Command::new(tondo)
+        let built = common::command(tondo)
             .args(["build", "secret.to", "--output", name])
             .args(flags)
             .current_dir(&dir)
@@ -5119,27 +5144,27 @@ fn what_is_secret_stays_out_of_dumps_and_the_debugger() {
         assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
         let dumps = dir.join(format!("{name}-dumps"));
         std::fs::create_dir_all(&dumps).unwrap();
-        let ran = Command::new(dir.join(name)).env("TONDO_DUMP", &dumps).output().unwrap();
+        let ran = common::command(dir.join(name)).env("TONDO_DUMP", &dumps).output().unwrap();
         assert!(!ran.status.success());
         let dump = std::fs::read_dir(&dumps).unwrap().next().unwrap().unwrap().path();
         let text = std::fs::read_to_string(&dump).unwrap();
         assert!(!leaks(&text), "{text}");
-        let read = Command::new(tondo).args(["dump", "read"]).arg(&dump).arg("locals").output().unwrap();
+        let read = common::command(tondo).args(["dump", "read"]).arg(&dump).arg("locals").output().unwrap();
         let locals = String::from_utf8_lossy(&read.stdout);
         assert!(locals.contains("password: <secret>, token: <secret>, tokens: [<secret>]"), "{locals}");
         assert!(locals.contains("login: Login = Login.Named(\"ximena\", <secret>)"), "{locals}");
         // Nothing of it at all when the service says so.
         let dumps = dir.join(format!("{name}-off"));
         std::fs::create_dir_all(&dumps).unwrap();
-        Command::new(dir.join(name)).env("TONDO_DUMP", &dumps).env("TONDO_DUMP_VALUES", "off").output().unwrap();
+        common::command(dir.join(name)).env("TONDO_DUMP", &dumps).env("TONDO_DUMP_VALUES", "off").output().unwrap();
         let dump = std::fs::read_dir(&dumps).unwrap().next().unwrap().unwrap().path();
         let text = std::fs::read_to_string(&dump).unwrap();
         assert!(!text.contains("ximena") && !text.contains("<secret>"), "{text}");
-        let read = Command::new(tondo).args(["dump", "read"]).arg(&dump).arg("locals").output().unwrap();
+        let read = common::command(tondo).args(["dump", "read"]).arg(&dump).arg("locals").output().unwrap();
         assert!(String::from_utf8_lossy(&read.stderr).contains("TONDO_DUMP_VALUES=off"), "{read:?}");
     }
     // The debugger shows the same, and a part cannot be opened.
-    let mut child = Command::new(tondo)
+    let mut child = common::command(tondo)
         .args(["debug", "secret.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -5185,7 +5210,7 @@ fn a_dump_keeps_each_task_s_waits_and_wakes() {
         time.sleep(time.seconds(60))\n    sender.send(3)\n    taker.wait()\n}\n";
     std::fs::write(dir.join("waits.to"), waits).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
-    let built = Command::new(tondo_bin)
+    let built = common::command(tondo_bin)
         .args(["build", "waits.to", "--debug", "--output", "waits"])
         .current_dir(&dir)
         .output()
@@ -5193,7 +5218,7 @@ fn a_dump_keeps_each_task_s_waits_and_wakes() {
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let blocked = |wakes: bool| {
         let mut child = Started::new(
-            Command::new(dir.join("waits"))
+            common::command(dir.join("waits"))
                 .env("TONDO_DIAGNOSTICS", "1")
                 .env("TONDO_WAKES", if wakes { "1" } else { "0" })
                 .stdout(Stdio::null())
@@ -5203,7 +5228,7 @@ fn a_dump_keeps_each_task_s_waits_and_wakes() {
         let pid = child.id().to_string();
         // Until the task waits for its third value, which only asking sees.
         let graph = until("the task's wait for its third value", || {
-            let asked = Command::new(tondo_bin).args(["blocked", &pid, "--json"]).output().unwrap();
+            let asked = common::command(tondo_bin).args(["blocked", &pid, "--json"]).output().unwrap();
             let graph: Value = serde_json::from_slice(&asked.stdout).ok().filter(|_| asked.status.success())?;
             let waits = graph["waits"].as_array().map_or(&[][..], Vec::as_slice);
             let taker = waits.iter().find(|t| t["id"] == 2);
@@ -5213,7 +5238,7 @@ fn a_dump_keeps_each_task_s_waits_and_wakes() {
             });
             waits.then_some(graph)
         });
-        let text = Command::new(tondo_bin).args(["blocked", &pid]).output().unwrap();
+        let text = common::command(tondo_bin).args(["blocked", &pid]).output().unwrap();
         child.kill().unwrap();
         child.wait().unwrap();
         (graph["waits"].clone(), String::from_utf8_lossy(&text.stdout).into_owned())
@@ -5257,13 +5282,13 @@ fn a_dump_says_who_waits_for_whom() {
         sender.close()\n    holder.wait()\n    group.wait()\n}\n";
     std::fs::write(dir.join("waits.to"), waits).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
-    let built = Command::new(tondo_bin)
+    let built = common::command(tondo_bin)
         .args(["build", "waits.to", "--debug", "--output", "waits"])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    Command::new(dir.join("waits")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+    common::command(dir.join("waits")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
     let dump = std::fs::read_dir(dir.join("dumps")).unwrap().next().unwrap().unwrap().path();
     let read = |view: &[&str]| tondo(&[&["dump", "read", dump.to_str().unwrap()], view, &["--json"]].concat());
     let why = &read(&["why"])["why"];
@@ -5284,15 +5309,15 @@ fn a_dump_says_who_waits_for_whom() {
     // Two tasks that wait for each other are a cycle.
     std::fs::create_dir_all(dir.join("deadlock")).unwrap();
     let cases = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/cases/run/panic_deadlock_locks.to");
-    let built = Command::new(tondo_bin).args(["build", cases, "--output"]).arg(dir.join("cycle")).output().unwrap();
+    let built = common::command(tondo_bin).args(["build", cases, "--output"]).arg(dir.join("cycle")).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    Command::new(dir.join("cycle")).env("TONDO_DUMP", dir.join("deadlock")).output().unwrap();
+    common::command(dir.join("cycle")).env("TONDO_DUMP", dir.join("deadlock")).output().unwrap();
     let dump = std::fs::read_dir(dir.join("deadlock")).unwrap().next().unwrap().unwrap().path();
     let why = tondo(&["dump", "read", dump.to_str().unwrap(), "why", "--json"]);
     let cycle = why["why"]["cycles"][0].as_array().unwrap();
     assert_eq!((cycle.len(), &cycle[0]["task"], &cycle[1]["task"]), (2, &json!(1), &json!(2)), "{why}");
     // The debugger shows the same of a program that stands still.
-    let mut child = Command::new(tondo_bin)
+    let mut child = common::command(tondo_bin)
         .args(["debug", "waits.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -5320,13 +5345,13 @@ fn dumps_come_on_a_schedule_and_differ() {
     let program = "import std.time\n\nfn main() {\n    var items: Array[String] = []\n    var round = 0\n    for round < 45 {\n        for i in 0..500 {\n            items.push(\"item {round} {i}\")\n        }\n        round = round + 1\n        time.sleep(time.milliseconds(100))\n    }\n}\n";
     std::fs::write(dir.join("grows.to"), program).unwrap();
     let tondo = env!("CARGO_BIN_EXE_tondo");
-    let built = Command::new(tondo)
+    let built = common::command(tondo)
         .args(["build", "grows.to", "--debug", "--output", "grows"])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let ran = Command::new(dir.join("grows"))
+    let ran = common::command(dir.join("grows"))
         .env("TONDO_DUMP", dir.join("dumps"))
         .env("TONDO_DUMP_WHEN", "every=1s,keep=2")
         .output()
@@ -5336,12 +5361,12 @@ fn dumps_come_on_a_schedule_and_differ() {
     dumps.sort_by_key(|dump| dump.metadata().unwrap().modified().unwrap());
     // One more, if the program ended as the oldest was about to go.
     assert!((2..=3).contains(&dumps.len()), "{dumps:?}");
-    let diff = Command::new(tondo).arg("dump").arg("diff").args(&dumps[dumps.len() - 2..]).output().unwrap();
+    let diff = common::command(tondo).arg("dump").arg("diff").args(&dumps[dumps.len() - 2..]).output().unwrap();
     let text = String::from_utf8_lossy(&diff.stdout);
     assert!(diff.status.success(), "{}", String::from_utf8_lossy(&diff.stderr));
     // What it says depends on where each dump found the task.
     assert!(text.contains(" later:"), "{text}");
-    let wrong = Command::new(dir.join("grows"))
+    let wrong = common::command(dir.join("grows"))
         .env("TONDO_DUMP", dir.join("dumps"))
         .env("TONDO_DUMP_WHEN", "sometimes")
         .output()
@@ -5365,9 +5390,9 @@ fn a_signal_asks_for_a_dump_and_dumps_show_what_grows() {
     std::fs::write(dir.join("leaks.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
     let built =
-        Command::new(tondo_bin).args(["build", "leaks.to", "--output", "leaks"]).current_dir(&dir).output().unwrap();
+        common::command(tondo_bin).args(["build", "leaks.to", "--output", "leaks"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let child = Command::new(dir.join("leaks"))
+    let child = common::command(dir.join("leaks"))
         .env("TONDO_DUMP", dir.join("dumps"))
         .env("TONDO_DUMP_WHEN", "every=200ms,keep=100")
         .stdout(Stdio::piped())
@@ -5377,7 +5402,7 @@ fn a_signal_asks_for_a_dump_and_dumps_show_what_grows() {
     // The first dump says it is well under way.
     until("the first dump", || (!dumps_in(&dir.join("dumps")).is_empty()).then_some(()));
     let pid = child.id().to_string();
-    assert!(Command::new("kill").args(["-QUIT", &pid]).status().unwrap().success());
+    assert!(common::command("kill").args(["-QUIT", &pid]).status().unwrap().success());
     let output = child.wait_with_output().unwrap();
     // It went on to its end.
     assert!(output.status.success(), "{output:?}");
@@ -5398,10 +5423,10 @@ fn a_signal_asks_for_a_dump_and_dumps_show_what_grows() {
         time.sleep(time.milliseconds(20))\n    }\n    console.println(\"end\")\n}\n";
     std::fs::write(dir.join("piles.to"), piling).unwrap();
     let built =
-        Command::new(tondo_bin).args(["build", "piles.to", "--output", "piles"]).current_dir(&dir).output().unwrap();
+        common::command(tondo_bin).args(["build", "piles.to", "--output", "piles"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     std::fs::create_dir_all(dir.join("piled")).unwrap();
-    Command::new(dir.join("piles"))
+    common::command(dir.join("piles"))
         .env("TONDO_DUMP", dir.join("piled"))
         .env("TONDO_DUMP_WHEN", "every=300ms,keep=100")
         .output()
@@ -5427,7 +5452,7 @@ fn a_signal_asks_for_a_dump_and_dumps_show_what_grows() {
     assert_eq!(trend["slowing"][0]["request"], "GET /users/*", "{trend}");
     assert_eq!(trend["slowing"][0]["last_ms"], 90.0, "{trend}");
     // Fewer dumps than `keep` fit in the room they are given.
-    let ran = Command::new(dir.join("leaks"))
+    let ran = common::command(dir.join("leaks"))
         .env("TONDO_DUMP", dir.join("small"))
         .env("TONDO_DUMP_WHEN", "every=200ms,size=1k")
         .output()
@@ -5453,11 +5478,14 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     );
     std::fs::write(dir.join("server.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
-    let built =
-        Command::new(tondo_bin).args(["build", "server.to", "--output", "server"]).current_dir(&dir).output().unwrap();
+    let built = common::command(tondo_bin)
+        .args(["build", "server.to", "--output", "server"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let mut server = Started::new(
-        Command::new(dir.join("server"))
+        common::command(dir.join("server"))
             .env("TONDO_DUMP", dir.join("dumps"))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -5474,12 +5502,12 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
     handling.read_line(&mut line).unwrap();
     assert_eq!(line, "handling 77\n");
     let pid = server.id().to_string();
-    assert!(Command::new("kill").args(["-QUIT", &pid]).status().unwrap().success());
+    assert!(common::command("kill").args(["-QUIT", &pid]).status().unwrap().success());
     let dump = until("the dump of SIGQUIT", || dumps_in(&dir.join("dumps")).into_iter().next());
     // A file is there before all of it; a dump that reads is all of it.
     let requests: Value = until("the whole dump", || {
         let read =
-            Command::new(tondo_bin).args(["dump", "read"]).arg(&dump).args(["requests", "--json"]).output().unwrap();
+            common::command(tondo_bin).args(["dump", "read"]).arg(&dump).args(["requests", "--json"]).output().unwrap();
         read.status.success().then(|| serde_json::from_slice(&read.stdout).unwrap())
     });
     let _ = server.kill();
@@ -5499,7 +5527,7 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
          app.get(\"/one\", () {{ \"done\" }})\n    app.listen({debug_port})?\n}}\n"
     );
     std::fs::write(debugged.join("server.to"), program).unwrap();
-    let mut debugger = Command::new(tondo_bin)
+    let mut debugger = common::command(tondo_bin)
         .args(["debug", "--json", "server.to"])
         .current_dir(&debugged)
         .stdin(Stdio::piped())
@@ -5541,7 +5569,7 @@ fn a_dump_of_a_server_has_its_requests_in_flight() {
 /// A replay of the till: the input given, then the commands' output.
 fn replayed(dir: &Path, name: &str, program: &str, commands: &str) -> String {
     std::fs::write(dir.join(format!("{name}.to")), program).unwrap();
-    let mut run = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut run = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "--record", &format!("{name}.rec"), &format!("{name}.to")])
         .current_dir(dir)
         .stdin(Stdio::piped())
@@ -5552,7 +5580,7 @@ fn replayed(dir: &Path, name: &str, program: &str, commands: &str) -> String {
     std::io::Write::write_all(&mut run.stdin.take().unwrap(), b"tea,250\ncake,4.00\nwater,100\n").unwrap();
     let recorded = run.wait_with_output().unwrap();
     assert!(recorded.status.success(), "{}", String::from_utf8_lossy(&recorded.stderr));
-    let mut replay = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut replay = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--replay", &format!("{name}.rec")])
         .current_dir(dir)
         .stdin(Stdio::piped())
@@ -5591,7 +5619,7 @@ fn a_replay_gives_a_change_to_the_line_and_the_call_that_made_it() {
 "
     );
     std::fs::write(dir.join("listed.to"), program).unwrap();
-    let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut debugger = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "listed.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -5631,7 +5659,7 @@ fn a_line_stops_once_however_many_blocks_it_takes() {
     std::fs::create_dir_all(&dir).unwrap();
     let program = "import std.console\nimport std.http\n\nfn main(): !http.HttpError {\n    var app = http.App()\n    app.get(\n        \"/hit\",\n        (_) {\n            let s = 1\n            http.Reply.text(\"hit {s}\")\n        },\n    )\n    let reply = app.client().get(\"/hit\")?\n    console.println(\"{reply.status()}\")\n}\n";
     std::fs::write(dir.join("once.to"), program).unwrap();
-    let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut debugger = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "once.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -5644,7 +5672,7 @@ fn a_line_stops_once_however_many_blocks_it_takes() {
     assert_eq!(text.matches("stopped at once.to:10").count(), 1, "{text}");
     assert!(text.contains("200"), "{text}");
     // Nor does a step from it stay on it.
-    let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut debugger = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "once.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -5660,7 +5688,7 @@ fn a_line_stops_once_however_many_blocks_it_takes() {
     let program = "import std.console\n\nfn main() {\n    var counts: Map[String, Int] = [:]\n    var other: Map[String, Int] = [:]\n    for word in [\"to\", \"be\"] {\n        counts[word] = (counts[word] ?? 0) + 1\n        other[word, default: 0] += 1\n    }\n    console.println(\"{counts} {other}\")\n}\n";
     std::fs::write(dir.join("joined.to"), program).unwrap();
     let debug = |commands: &str| {
-        let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let mut debugger = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(["debug", "joined.to"])
             .current_dir(&dir)
             .stdin(Stdio::piped())
@@ -5686,13 +5714,13 @@ fn a_line_stops_once_however_many_blocks_it_takes() {
     assert!(text.contains("`other` became [\"to\": 1, \"be\": 1] on this line"), "{text}");
     assert!(!text.contains("\"be\": 0"), "{text}");
     // And so in a replay of the run.
-    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let recorded = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "--record", "joined.rec", "joined.to"])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(recorded.status.success(), "{}", String::from_utf8_lossy(&recorded.stderr));
-    let mut replay = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut replay = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--replay", "joined.rec"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -5708,7 +5736,7 @@ fn a_line_stops_once_however_many_blocks_it_takes() {
     // it, which its causes go on from.
     let program = "import std.console\n\nfn shout(text: String): String {\n    text.toUpper()\n}\n\nfn main() {\n    var counts: Map[String, Int] = [:]\n    for each in [\"to\", \"be\"] {\n        let word = shout(each)\n        counts[word, default: 0] += 1\n    }\n    console.println(\"{counts}\")\n}\n";
     std::fs::write(dir.join("shouted.to"), program).unwrap();
-    let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut debugger = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "shouted.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -5720,13 +5748,13 @@ fn a_line_stops_once_however_many_blocks_it_takes() {
     let text = String::from_utf8(debugger.wait_with_output().unwrap().stdout).unwrap();
     assert!(text.contains("`word` was \"BE\", from shouted.to:4 in shout"), "{text}");
     // And so in a replay.
-    let recorded = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let recorded = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "--record", "shouted.rec", "shouted.to"])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(recorded.status.success(), "{}", String::from_utf8_lossy(&recorded.stderr));
-    let mut replay = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut replay = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--replay", "shouted.rec"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -5762,7 +5790,7 @@ fn soon(what: &str, holds: impl Fn() -> bool) {
 
 /// The processes `pid` started, as `pgrep -P` lists them.
 fn children(pid: u32) -> Vec<i32> {
-    let listed = Command::new("pgrep").args(["-P", &pid.to_string()]).output().unwrap();
+    let listed = common::command("pgrep").args(["-P", &pid.to_string()]).output().unwrap();
     String::from_utf8_lossy(&listed.stdout).lines().filter_map(|line| line.trim().parse().ok()).collect()
 }
 
@@ -5772,7 +5800,7 @@ fn ended(pid: i32) -> bool {
     if unsafe { libc::kill(pid, 0) } != 0 {
         return true;
     }
-    let state = Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().unwrap();
+    let state = common::command("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().unwrap();
     String::from_utf8_lossy(&state.stdout).trim_start().starts_with('Z')
 }
 
@@ -5788,7 +5816,7 @@ fn a_debugger_ended_by_a_signal_ends_its_program() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("endless.to"), ENDLESS).unwrap();
-    let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let built = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "endless.to", "--debug", "--output", "endless"])
         .current_dir(&dir)
         .output()
@@ -5796,7 +5824,7 @@ fn a_debugger_ended_by_a_signal_ends_its_program() {
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     // By its bare name, which is in this directory and not on PATH.
     for signal in [libc::SIGTERM, libc::SIGHUP] {
-        let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let mut debugger = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(["debug", "endless"])
             .current_dir(&dir)
             .stdin(Stdio::piped())
@@ -5822,7 +5850,7 @@ fn a_debugger_ended_by_a_signal_ends_its_program() {
     // A program it attached to, stopped at a breakpoint, goes on.
     let printed = dir.join("printed");
     let mut running = Started::new(
-        Command::new(dir.join("endless"))
+        common::command(dir.join("endless"))
             .env("TONDO_DIAGNOSTICS", "1")
             .stdout(std::fs::File::create(&printed).unwrap())
             .spawn()
@@ -5868,11 +5896,11 @@ fn a_held_task_goes_on_when_its_tool_ends() {
     std::fs::write(dir.join("endless.to"), ENDLESS).unwrap();
     let tondo = env!("CARGO_BIN_EXE_tondo");
     let built =
-        Command::new(tondo).args(["build", "endless.to", "--output", "endless"]).current_dir(&dir).output().unwrap();
+        common::command(tondo).args(["build", "endless.to", "--output", "endless"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let printed = dir.join("printed");
     let mut running = Started::new(
-        Command::new(dir.join("endless"))
+        common::command(dir.join("endless"))
             .env("TONDO_DIAGNOSTICS", "1")
             .stdout(std::fs::File::create(&printed).unwrap())
             .spawn()
@@ -5882,7 +5910,7 @@ fn a_held_task_goes_on_when_its_tool_ends() {
     soon("a line of the program", || lines() > 0);
     let pid = running.id().to_string();
     // It serves the tools from before `main`, which printed its line.
-    let mut tool = Command::new(tondo)
+    let mut tool = common::command(tondo)
         .args(["logpoint", &pid, "endless.to:9", "{round}", "--stop", "60"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -5923,7 +5951,7 @@ fn a_replay_ended_by_a_signal_ends_its_copies() {
     let args = ["run", "--record", "crash", "--last", "200ms", "--hold", "2m", "crashes.to"];
     // On a busy machine a run may not get as far as dropping its start.
     let kept = (0..5)
-        .map(|_| Command::new(tondo).args(args).current_dir(&dir).output().unwrap())
+        .map(|_| common::command(tondo).args(args).current_dir(&dir).output().unwrap())
         .find(|_| !dir.join("crash/calls").exists());
     assert!(kept.is_some(), "a run that kept only its end");
     let held: Vec<i32> = std::fs::read_to_string(dir.join("crash/held"))
@@ -5932,7 +5960,7 @@ fn a_replay_ended_by_a_signal_ends_its_copies() {
         .filter_map(|line| line.split_once(' ')?.1.parse().ok())
         .filter(|&pid| pid != 0)
         .collect();
-    let mut debugger = Command::new(tondo)
+    let mut debugger = common::command(tondo)
         .args(["debug", "--replay", "crash"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -5970,7 +5998,7 @@ fn a_recording_keeps_the_end_of_a_run() {
     let tondo = env!("CARGO_BIN_EXE_tondo");
     let run = |name: &str, file: &str| {
         let args = ["run", "--record", name, "--last", "200ms", "--hold", "2m", file];
-        Command::new(tondo).args(args).current_dir(&dir).output().unwrap()
+        common::command(tondo).args(args).current_dir(&dir).output().unwrap()
     };
     // On a busy machine a run may not get as far as dropping its start.
     let ran = (0..5)
@@ -5991,7 +6019,7 @@ fn a_recording_keeps_the_end_of_a_run() {
     assert!(first > 0, "{held}");
     // Twice: a copy stays for the next one.
     for _ in 0..2 {
-        let mut debugger = Command::new(tondo)
+        let mut debugger = common::command(tondo)
             .args(["debug", "--replay", "crash"])
             .current_dir(&dir)
             .stdin(Stdio::piped())
@@ -6031,7 +6059,7 @@ fn a_recording_keeps_the_end_of_a_run() {
     let said = String::from_utf8_lossy(&ran.stderr);
     assert!(said.contains("the run went well"), "{said}");
     assert_eq!(std::fs::read_to_string(dir.join("end/held")).unwrap(), "");
-    let debugger = Command::new(tondo).args(["debug", "--replay", "end"]).current_dir(&dir).output().unwrap();
+    let debugger = common::command(tondo).args(["debug", "--replay", "end"]).current_dir(&dir).output().unwrap();
     assert!(String::from_utf8_lossy(&debugger.stderr).contains("are gone"), "{debugger:?}");
 }
 
@@ -6046,7 +6074,7 @@ fn debug_adapter_cancels_a_long_search() {
     let program = "import std.console\n\nfn main() {\n    var total = 0\n    for i in 0..3000000 {\n        total = total + i\n    }\n    console.println(\"{total}\")\n}\n";
     std::fs::write(dir.join("long.to"), program).unwrap();
     let args = ["run", "--record", "run", "long.to"];
-    let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+    let ran = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
     assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
     let mut adapter = Adapter::start();
     adapter.ask("initialize", json!({ "adapterID": "tondo", "supportsProgressReporting": true }));
@@ -6198,7 +6226,7 @@ fn debugger_follows_tasks_and_searches_history() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-spawn");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("spawning.to"), SPAWNING).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "spawning.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -6295,7 +6323,7 @@ fn debugger_stops_at_events_and_freezes_tasks() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-events");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("counted.to"), COUNTED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "counted.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -6374,7 +6402,7 @@ fn debugger_tells_what_holds_memory() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-memory");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("retained.to"), RETAINED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "retained.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -6430,7 +6458,7 @@ fn debugger_shows_views() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-views");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("viewed.to"), VIEWED).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "viewed.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -6468,7 +6496,7 @@ fn debugger_captures_without_stopping() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-capture");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("spawning.to"), SPAWNING).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "spawning.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -6497,14 +6525,14 @@ fn every_object_of_a_debug_build() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("dumped.to"), DUMPED).unwrap();
     let executable = dir.join("dumped");
-    let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let status = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "dumped.to", "--debug", "--output"])
         .arg(&executable)
         .current_dir(&dir)
         .status()
         .unwrap();
     assert!(status.success());
-    let mut child = Command::new(&executable)
+    let mut child = common::command(&executable)
         .env("TONDO_DIAGNOSTICS", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -6515,7 +6543,7 @@ fn every_object_of_a_debug_build() {
     let file = dir.join("objects.dump.json");
     let pid = child.id().to_string();
     let output =
-        Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", &pid, "--output"]).arg(&file).output().unwrap();
+        common::command(env!("CARGO_BIN_EXE_tondo")).args(["dump", &pid, "--output"]).arg(&file).output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     drop(child.stdin.take());
     child.wait().unwrap();
@@ -6553,7 +6581,7 @@ fn a_debug_build_dumps_the_contexts_it_computes() {
                    fn main() {\n    console.println(\"ready\")\n    let _ = console.flush()\n    let _ = console.readLine()\n    console.println(Settings.name)\n}\n";
     std::fs::write(dir.join("computed.to"), program).unwrap();
     let executable = dir.join("computed");
-    let built = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let built = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["build", "computed.to", "--debug", "--output"])
         .arg(&executable)
         .current_dir(&dir)
@@ -6561,7 +6589,7 @@ fn a_debug_build_dumps_the_contexts_it_computes() {
         .unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let mut child = Started::new(
-        Command::new(&executable)
+        common::command(&executable)
             .env("TONDO_DIAGNOSTICS", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -6575,7 +6603,7 @@ fn a_debug_build_dumps_the_contexts_it_computes() {
     for n in 0..2 {
         let file = dir.join(format!("computed-{n}.dump.json"));
         let mut dumping =
-            Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", &pid, "--output"]).arg(&file).spawn().unwrap();
+            common::command(env!("CARGO_BIN_EXE_tondo")).args(["dump", &pid, "--output"]).arg(&file).spawn().unwrap();
         let (done, ended) = std::sync::mpsc::channel();
         std::thread::spawn(move || done.send(dumping.wait().unwrap()));
         // The cap bounds a hang: a dump that works ends in milliseconds.
@@ -6595,12 +6623,16 @@ fn a_debug_build_dumps_the_contexts_it_computes() {
     dump["objects_missing"] = json!("the program did not stop for the dump within 2 s");
     let missing = dir.join("missing.dump.json");
     std::fs::write(&missing, dump.to_string()).unwrap();
-    let read =
-        Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", "read"]).arg(&missing).arg("objects").output().unwrap();
+    let read = common::command(env!("CARGO_BIN_EXE_tondo"))
+        .args(["dump", "read"])
+        .arg(&missing)
+        .arg("objects")
+        .output()
+        .unwrap();
     assert!(!read.status.success());
     let said = String::from_utf8_lossy(&read.stderr);
     assert!(said.contains("this dump has no objects: the program did not stop for the dump within 2 s"), "{said}");
-    let summary = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", "read"]).arg(&missing).output().unwrap();
+    let summary = common::command(env!("CARGO_BIN_EXE_tondo")).args(["dump", "read"]).arg(&missing).output().unwrap();
     let said = String::from_utf8_lossy(&summary.stdout);
     assert!(said.contains("no objects: the program did not stop for the dump within 2 s"), "{said}");
     drop(child.stdin.take());
@@ -6634,7 +6666,7 @@ fn debugger_logs_counts_changes_and_stops_at_panics() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("debug-stops");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("stopping.to"), STOPPING).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "stopping.to"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -6695,7 +6727,7 @@ impl Adapter {
     /// With options of `tondo dap`.
     fn taking(args: &[&str], variables: &[(&str, &std::ffi::OsStr)]) -> Adapter {
         let mut child = Started::new(
-            Command::new(env!("CARGO_BIN_EXE_tondo"))
+            common::command(env!("CARGO_BIN_EXE_tondo"))
                 .arg("dap")
                 .args(args)
                 .envs(variables.iter().copied())
@@ -6886,7 +6918,7 @@ fn debug_adapter_stops_at_panics_and_opens_dumps() {
     let crashes = dir.join("crashes");
     let _ = std::fs::remove_dir_all(&crashes);
     std::fs::create_dir_all(&crashes).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "stopping.to"])
         .env("TONDO_DUMP", &crashes)
         .current_dir(&dir)
@@ -7028,7 +7060,7 @@ fn reads_a_core_with_the_tasks_that_waited() {
     std::fs::write(dir.join("waits.to"), program).unwrap();
     let executable = dir.join("waits");
     let build = |output: &Path, flags: &[&str]| {
-        let status = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let status = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(["build", "waits.to", "--output"])
             .arg(output)
             .args(flags)
@@ -7039,8 +7071,12 @@ fn reads_a_core_with_the_tasks_that_waited() {
     };
     // Without its symbols: the table of lines stays.
     build(&executable, &["--strip"]);
-    let mut child =
-        Command::new(&executable).env("TONDO_DUMP", &dir).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut child = common::command(&executable)
+        .env("TONDO_DUMP", &dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
     let mut said = BufReader::new(child.stdout.take().unwrap());
     let mut line = String::new();
     said.read_line(&mut line).unwrap();
@@ -7090,7 +7126,7 @@ fn reads_a_core_with_the_tasks_that_waited() {
     // As a file, for a program that moved, for all that reads a dump.
     let moved = dir.join("elsewhere");
     std::fs::rename(&executable, &moved).unwrap();
-    let refused = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["dump", "read", core]).output().unwrap();
+    let refused = common::command(env!("CARGO_BIN_EXE_tondo")).args(["dump", "read", core]).output().unwrap();
     assert!(String::from_utf8_lossy(&refused.stderr).contains("--executable"));
     let dumps = dir.join("dumps");
     std::fs::create_dir_all(&dumps).unwrap();
@@ -7102,7 +7138,7 @@ fn reads_a_core_with_the_tasks_that_waited() {
     // From a pipe, as `core_pattern` gives it, leaving only the dump.
     let piped = dumps.join("piped.dump.json");
     let args = ["dump", "core", "-", "--executable", moved.to_str().unwrap(), "--output", piped.to_str().unwrap()];
-    let ran = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let ran = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(args)
         .stdin(std::fs::File::open(core).unwrap())
         .output()
@@ -7113,7 +7149,7 @@ fn reads_a_core_with_the_tasks_that_waited() {
     // A failure as an issue, by the start of its signature.
     let group = tondo(&["dump", "group", dumps.to_str().unwrap(), "--json"]);
     let signature = group["groups"][0]["signature"].as_str().unwrap();
-    let issue = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let issue = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["dump", "issue", dumps.to_str().unwrap(), &signature[..6]])
         .output()
         .unwrap();
@@ -7123,7 +7159,7 @@ fn reads_a_core_with_the_tasks_that_waited() {
     // Another build is not this one.
     build(&dir.join("other"), &["--debug"]);
     let args = ["dump", "core", core, "--executable", "other"];
-    let refused = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+    let refused = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
     assert!(!refused.status.success());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("--executable"), "{refused:?}");
 }
@@ -7143,9 +7179,9 @@ fn a_call_answers_at_a_checkpoint_a_replay_kept() {
     std::fs::write(dir.join("kept.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
     let recorded =
-        Command::new(tondo_bin).args(["run", "--record", "run", "kept.to"]).current_dir(&dir).output().unwrap();
+        common::command(tondo_bin).args(["run", "--record", "run", "kept.to"]).current_dir(&dir).output().unwrap();
     assert!(recorded.status.success());
-    let mut child = Command::new(tondo_bin)
+    let mut child = common::command(tondo_bin)
         .args(["debug", "--json", "--replay", "run"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -7161,7 +7197,7 @@ fn a_call_answers_at_a_checkpoint_a_replay_kept() {
     let (ended, ending) = std::sync::mpsc::channel::<()>();
     let limit = std::thread::spawn(move || {
         if ending.recv_timeout(std::time::Duration::from_secs(300)).is_err() {
-            let _ = Command::new("kill").args(["-KILL", &pid]).status();
+            let _ = common::command("kill").args(["-KILL", &pid]).status();
         }
     });
     let mut read = || {
@@ -7208,9 +7244,10 @@ fn a_dump_does_not_make_values_up() {
         console.println(\"{check(20, Mode.Slow(3))}\")\n}\n";
     std::fs::write(dir.join("up.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
-    let built = Command::new(tondo_bin).args(["build", "up.to", "--output", "up"]).current_dir(&dir).output().unwrap();
+    let built =
+        common::command(tondo_bin).args(["build", "up.to", "--output", "up"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let ran = Command::new(dir.join("up")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+    let ran = common::command(dir.join("up")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
     assert!(!ran.status.success());
     let file = std::fs::read_dir(dir.join("dumps")).unwrap().flatten().next().unwrap().path();
     let dump: Value = serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();
@@ -7240,14 +7277,15 @@ fn a_failure_in_a_dump_becomes_a_test() {
     std::fs::write(dir.join("src/main.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
     let built =
-        Command::new(tondo_bin).args(["build", "--debug", "--output", "shop"]).current_dir(&dir).output().unwrap();
+        common::command(tondo_bin).args(["build", "--debug", "--output", "shop"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let ran = Command::new(dir.join("shop")).env("TONDO_DUMP", dir.join("dumps")).current_dir(&dir).output().unwrap();
+    let ran =
+        common::command(dir.join("shop")).env("TONDO_DUMP", dir.join("dumps")).current_dir(&dir).output().unwrap();
     assert!(!ran.status.success());
     let dump = std::fs::read_dir(dir.join("dumps")).unwrap().flatten().next().unwrap().path();
     let test = |args: &[&str]| {
         let run =
-            Command::new(tondo_bin).args(["dump", "test"]).arg(&dump).args(args).current_dir(&dir).output().unwrap();
+            common::command(tondo_bin).args(["dump", "test"]).arg(&dump).args(args).current_dir(&dir).output().unwrap();
         assert!(run.status.success(), "{run:?}");
         serde_json::from_slice::<Value>(&run.stdout).unwrap()
     };
@@ -7301,10 +7339,10 @@ fn a_dump_stops_a_task_that_computes_at_its_next_line() {
     std::fs::write(dir.join("src/main.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
     let built =
-        Command::new(tondo_bin).args(["build", "--debug", "--output", "spins"]).current_dir(&dir).output().unwrap();
+        common::command(tondo_bin).args(["build", "--debug", "--output", "spins"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let mut child = Started::new(
-        Command::new(dir.join("spins"))
+        common::command(dir.join("spins"))
             .env("TONDO_DIAGNOSTICS", "1")
             .stdout(Stdio::piped())
             .current_dir(&dir)
@@ -7316,7 +7354,7 @@ fn a_dump_stops_a_task_that_computes_at_its_next_line() {
     assert_eq!(line, "ready\n");
     let dump = dir.join("spins.dump.json");
     let taken =
-        Command::new(tondo_bin).args(["dump", &child.id().to_string(), "--output"]).arg(&dump).output().unwrap();
+        common::command(tondo_bin).args(["dump", &child.id().to_string(), "--output"]).arg(&dump).output().unwrap();
     assert!(taken.status.success(), "{}", String::from_utf8_lossy(&taken.stderr));
     child.kill().unwrap();
     child.wait().unwrap();
@@ -7328,7 +7366,7 @@ fn a_dump_stops_a_task_that_computes_at_its_next_line() {
         .iter()
         .find(|v| v["name"] == "rounds" && v["at"].as_str().is_some_and(|at| at.ends_with("in spin")));
     assert_eq!(rounds.map(|rounds| &rounds["value"]), Some(&json!("200000")), "{read}");
-    let made = Command::new(tondo_bin)
+    let made = common::command(tondo_bin)
         .args(["dump", "test"])
         .arg(&dump)
         .args(["--bench", "--json"])
@@ -7362,7 +7400,7 @@ fn a_recorded_call_becomes_a_benchmark() {
         for rounds in [10, 500, 40] {\n        console.println(\"{work(rounds, \"r{rounds}\")}\")\n    }\n}\n";
     std::fs::write(dir.join("src/main.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
-    let run = |args: &[&str]| Command::new(tondo_bin).args(args).current_dir(&dir).output().unwrap();
+    let run = |args: &[&str]| common::command(tondo_bin).args(args).current_dir(&dir).output().unwrap();
     let recorded = run(&["run", "--record", "run.rec"]);
     assert!(recorded.status.success(), "{}", String::from_utf8_lossy(&recorded.stderr));
     let made = run(&["dump", "test", "run.rec", "--bench", "--function", "work", "--json"]);
@@ -7399,31 +7437,34 @@ fn reads_a_core_of_macos() {
     std::fs::write(dir.join("stays.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
     let built =
-        Command::new(tondo_bin).args(["build", "stays.to", "--output", "stays"]).current_dir(&dir).output().unwrap();
+        common::command(tondo_bin).args(["build", "stays.to", "--output", "stays"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let allow = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\
         <key>com.apple.security.get-task-allow</key><true/></dict></plist>\n";
     std::fs::write(dir.join("allow.plist"), allow).unwrap();
-    let signed = Command::new("codesign")
+    let signed = common::command("codesign")
         .args(["-s", "-", "-f", "--entitlements", "allow.plist", "stays"])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(signed.status.success(), "{signed:?}");
     let mut child =
-        Command::new(dir.join("stays")).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap();
+        common::command(dir.join("stays")).env("TONDO_DIAGNOSTICS", "1").stdout(Stdio::piped()).spawn().unwrap();
     let mut said = BufReader::new(child.stdout.take().unwrap());
     let mut line = String::new();
     said.read_line(&mut line).unwrap();
     until_waiting(child.id(), 2, &dir.join("before.json"));
-    let taken =
-        Command::new("gcore").args(["-o", "stays.core", &child.id().to_string()]).current_dir(&dir).output().unwrap();
+    let taken = common::command("gcore")
+        .args(["-o", "stays.core", &child.id().to_string()])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
     child.kill().unwrap();
     child.wait().unwrap();
     assert!(taken.status.success(), "{taken:?}");
     let dump = dir.join("stays.dump.json");
     let args = ["dump", "core", "stays.core", "--executable", "stays", "--output", "stays.dump.json"];
-    let ran = Command::new(tondo_bin).args(args).current_dir(&dir).output().unwrap();
+    let ran = common::command(tondo_bin).args(args).current_dir(&dir).output().unwrap();
     let _ = std::fs::remove_file(dir.join("stays.core"));
     assert!(ran.status.success(), "{ran:?}");
     let dump = dump.to_str().unwrap();
@@ -7444,14 +7485,14 @@ fn a_directory_of_dumps_is_a_page_that_stays_up_to_date() {
     std::fs::write(dir.join("falls.to"), "fn main() {\n    panic(\"it <fell>\")\n}\n").unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
     let built =
-        Command::new(tondo_bin).args(["build", "falls.to", "--output", "falls"]).current_dir(&dir).output().unwrap();
+        common::command(tondo_bin).args(["build", "falls.to", "--output", "falls"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{built:?}");
     let fall = || {
-        let ran = Command::new(dir.join("falls")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+        let ran = common::command(dir.join("falls")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
         assert!(!ran.status.success());
     };
     let mut server = Started::new(
-        Command::new(tondo_bin)
+        common::command(tondo_bin)
             .args(["dump", "serve"])
             .arg(dir.join("dumps"))
             .stdout(Stdio::piped())
@@ -7486,7 +7527,7 @@ fn a_directory_of_dumps_is_a_page_that_stays_up_to_date() {
     // And once, to a file.
     let page = dir.join("page.html");
     let args = ["dump", "serve", "dumps", "--output", "page.html"];
-    assert!(Command::new(tondo_bin).args(args).current_dir(&dir).status().unwrap().success());
+    assert!(common::command(tondo_bin).args(args).current_dir(&dir).status().unwrap().success());
     assert!(std::fs::read_to_string(page).unwrap().contains("it &lt;fell&gt;"));
 }
 
@@ -7504,9 +7545,9 @@ fn a_damaged_dump_does_not_end_the_viewer() {
         .unwrap();
     let compiler = env!("CARGO_BIN_EXE_tondo");
     let built =
-        Command::new(compiler).args(["build", "ends.to", "--output", "ends"]).current_dir(&dir).output().unwrap();
+        common::command(compiler).args(["build", "ends.to", "--output", "ends"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    Command::new(dir.join("ends")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
+    common::command(dir.join("ends")).env("TONDO_DUMP", dir.join("dumps")).output().unwrap();
     let first = std::fs::read_dir(dir.join("dumps")).unwrap().flatten().next().unwrap().path();
     let whole: Value = serde_json::from_slice(&std::fs::read(first).unwrap()).unwrap();
     fn paths(value: &Value, at: String, found: &mut Vec<String>) {
@@ -7547,7 +7588,7 @@ fn a_damaged_dump_does_not_end_the_viewer() {
             *dump.pointer_mut(path).unwrap() = value.clone();
             std::fs::write(&damaged, dump.to_string()).unwrap();
             for view in views {
-                let ran = Command::new(compiler).arg("dump").args(view).output().unwrap();
+                let ran = common::command(compiler).arg("dump").args(view).output().unwrap();
                 let said = String::from_utf8_lossy(&ran.stderr);
                 assert!(!said.contains("is a bug of tondo"), "{path} as {value}, {view:?}: {said}");
             }
@@ -7566,14 +7607,14 @@ fn sigquit_says_where_the_tasks_are() {
     std::fs::write(dir.join("quit.to"), program).unwrap();
     let tondo_bin = env!("CARGO_BIN_EXE_tondo");
     let built =
-        Command::new(tondo_bin).args(["build", "quit.to", "--output", "quit"]).current_dir(&dir).output().unwrap();
+        common::command(tondo_bin).args(["build", "quit.to", "--output", "quit"]).current_dir(&dir).output().unwrap();
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let mut child = Command::new(dir.join("quit")).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    let mut child = common::command(dir.join("quit")).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
     // The program says when it is in `stuck`, where the signal finds it.
     let mut line = String::new();
     BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
     assert_eq!(line, "in stuck\n");
-    Command::new("kill").args(["-QUIT", &child.id().to_string()]).status().unwrap();
+    common::command("kill").args(["-QUIT", &child.id().to_string()]).status().unwrap();
     let ended = child.wait_with_output().unwrap();
     let said = String::from_utf8_lossy(&ended.stderr);
     assert!(said.contains("SIGQUIT") && said.contains("stuck  quit.to:"), "{said}");
@@ -7616,7 +7657,7 @@ fn debug_adapter_takes_an_order_of_tasks() {
     std::fs::write(dir.join("src/main_test.to"), "test holds {\n    assert(1 == 1)\n}\n").unwrap();
     for (order, takes) in [("at:0.1", true), ("2a", true), ("at:x", false), ("not an order", false)] {
         let mut child = Started::new(
-            Command::new(env!("CARGO_BIN_EXE_tondo"))
+            common::command(env!("CARGO_BIN_EXE_tondo"))
                 .arg("dap")
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())

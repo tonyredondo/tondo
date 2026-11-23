@@ -4,7 +4,7 @@
 mod common;
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 fn sample() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/testing/sample")
@@ -24,7 +24,7 @@ fn tondo(dir: &Path, args: &[&str]) -> (String, String, i32) {
 /// As `tondo`, and, when `uncounted`, as on a system that refuses the
 /// processor's counters (`common::uncounted`).
 fn tondo_on(dir: &Path, args: &[&str], uncounted: bool) -> (String, String, i32) {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+    let mut command = common::command(env!("CARGO_BIN_EXE_tondo"));
     command.args(args).current_dir(dir);
     if uncounted {
         common::uncounted(&mut command);
@@ -512,7 +512,7 @@ fn fuzz_search_finds_inputs_that_fail() {
     assert!(dir.join("target/fuzz/unit/app/measuresDepth/depth").is_dir(), "{stdout}");
     // The debugger runs the test alone, with the input, and stops where it
     // panics.
-    let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut debugger = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--test", "app::unit::app::measuresDepth"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -1167,7 +1167,7 @@ fn holds_rows_to_a_second_baseline() {
     let dir = project("second-baseline", tests);
     let base = dir.join("table.json");
     let run = |rounds: &str, args: &[&str]| {
-        let out = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let out = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(args)
             .env("ROUNDS", rounds)
             .current_dir(&dir)
@@ -1353,7 +1353,7 @@ fn a_lost_update_warns_in_its_test() {
         _ = wait.receive()\n    cell.set(5)\n    go.send(())\n    job.wait()\n    assert(cell.get() == 6)\n}\n";
     let dir = project("lost-update", tests);
     let ran =
-        Command::new(env!("CARGO_BIN_EXE_tondo")).args(["test", ".", "--json"]).current_dir(&dir).output().unwrap();
+        common::command(env!("CARGO_BIN_EXE_tondo")).args(["test", ".", "--json"]).current_dir(&dir).output().unwrap();
     assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
     let report: serde_json::Value = serde_json::from_slice(&ran.stdout).unwrap();
     let warnings = |name: &str| {
@@ -1365,7 +1365,7 @@ fn a_lost_update_warns_in_its_test() {
     let lost = warnings("loses");
     let text = lost[0].as_str().unwrap_or_else(|| panic!("{report}"));
     assert!(text.contains("src/main_test.to:4 in bump") && text.contains("wrote it at src/main_test.to:7"), "{text}");
-    let human = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["test", "."]).current_dir(&dir).output().unwrap();
+    let human = common::command(env!("CARGO_BIN_EXE_tondo")).args(["test", "."]).current_dir(&dir).output().unwrap();
     let human = String::from_utf8_lossy(&human.stdout);
     assert!(human.contains("warning: task "), "{human}");
 }
@@ -1380,7 +1380,7 @@ fn exploring_orders_finds_a_lost_update() {
         let two = spawn bump(cell)\n    one.wait()\n    two.wait()\n}\n";
     let dir = project("lost-update-orders", tests);
     let args = ["test", ".", "--schedules", "20", "--seed", "1"];
-    let ran = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+    let ran = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
     let said = String::from_utf8_lossy(&ran.stdout);
     assert!(ran.status.success() && said.contains("warning: task "), "{said}");
 }
@@ -1715,7 +1715,7 @@ test firstArrivesFirst {
     let debug = stdout.lines().find_map(|line| line.strip_prefix("debug it in that order: tondo ")).expect(&stdout);
     let mut args: Vec<&str> = debug.split(' ').collect();
     args.insert(1, "--json");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(&args)
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -1768,7 +1768,7 @@ test fails {
     let summary = std::fs::read_to_string(dir.join("target/summary.md")).unwrap();
     assert!(summary.contains(&format!("rolled {rolled}")) && summary.contains(replay), "{summary}");
     assert!(!dir.join("target/recordings/app.unit.app.passes").exists());
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["debug", "--json", "--replay", "target/recordings/app.unit.app.fails"])
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -1898,7 +1898,7 @@ test waits {
 }
 ";
     let dir = project("interrupted", tests);
-    let child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["test", "--jobs", "1", "--report", "json=report.json"])
         .current_dir(&dir)
         .stdout(std::process::Stdio::piped())
@@ -1906,7 +1906,7 @@ test waits {
         .spawn()
         .unwrap();
     common::until("the test's start", || dir.join("started").exists().then_some(()));
-    Command::new("kill").args(["-INT", &child.id().to_string()]).status().unwrap();
+    common::command("kill").args(["-INT", &child.id().to_string()]).status().unwrap();
     let output = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(output.status.code(), Some(4), "{stdout}{}", String::from_utf8_lossy(&output.stderr));
@@ -2027,7 +2027,7 @@ fn watches_and_runs_what_a_change_affects() {
         "import app.shapes\n\ntest usesShapes {\n    assert(shapes.sides() == 3)\n}\n",
     )
     .unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["test", "--watch", "--test-format", "events"])
         .current_dir(&dir)
         .stdout(std::process::Stdio::piped())
@@ -2126,7 +2126,7 @@ fn coverage_of_the_library_is_a_build_of_its_own() {
     let json = dir.join("coverage.json");
     let report = format!("coverage={}", json.display());
     let files = |library: bool| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+        let mut command = common::command(env!("CARGO_BIN_EXE_tondo"));
         command.args(["test", "--coverage", "--report", &report]).current_dir(&dir);
         if library {
             command.env("TONDO_COVERAGE_STD", "1");
@@ -2558,7 +2558,7 @@ test fibonacci {
     assert!(compared["regressed"].as_str().unwrap().ends_with("% slower"), "{compared}");
     // Against a revision: the committed one, built and run alongside.
     let git = |args: &[&str]| {
-        let status = Command::new("git").args(args).current_dir(&dir).status().unwrap();
+        let status = common::command("git").args(args).current_dir(&dir).status().unwrap();
         assert!(status.success(), "git {args:?}");
     };
     std::fs::remove_dir_all(dir.join(".git")).unwrap();
@@ -3634,7 +3634,7 @@ fn a_profile_of_a_project_without_a_manifest_says_what_was_made() {
 #[test]
 fn the_comparison_with_go_builds() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["test", "bench/tondo"])
         .current_dir(&root)
         .env("TONDO_CHECK_LIFETIMES", "1")
@@ -3663,7 +3663,7 @@ fn runs_the_tests_a_change_reaches() {
     let tests = "test viaOuter {\n    assert(outer(1) == 4)\n}\n\ntest onAlone {\n    assert(alone(1) == 0)\n}\n";
     std::fs::write(dir.join("src/main_test.to"), tests).unwrap();
     let git = |args: &[&str]| {
-        let status = Command::new("git")
+        let status = common::command("git")
             .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
             .args(args)
             .current_dir(&dir)
@@ -3694,7 +3694,7 @@ fn finds_the_commit_that_broke_a_test() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"found\"\nversion = \"0.1.0\"\n").unwrap();
     let git = |args: &[&str]| {
-        let status = Command::new("git")
+        let status = common::command("git")
             .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
             .args(args)
             .current_dir(&dir)
@@ -3716,7 +3716,7 @@ fn finds_the_commit_that_broke_a_test() {
         write(body);
         git(&["add", "-A"]);
         git(&["commit", "--quiet", "-m", &format!("step {index}")]);
-        let head = Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&dir).output().unwrap();
+        let head = common::command("git").args(["rev-parse", "HEAD"]).current_dir(&dir).output().unwrap();
         commits.push(String::from_utf8_lossy(&head.stdout).trim().to_string());
     }
     // A test no commit has, and a change being made.
@@ -3727,7 +3727,7 @@ fn finds_the_commit_that_broke_a_test() {
     assert_eq!(found["commit"], commits[3].as_str(), "{found}");
     assert_eq!(found["title"], "step 3", "{found}");
     assert!(dir.join("src/main_test.to").exists());
-    let worktrees = Command::new("git").args(["worktree", "list"]).current_dir(&dir).output().unwrap();
+    let worktrees = common::command("git").args(["worktree", "list"]).current_dir(&dir).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&worktrees.stdout).lines().count(), 1);
 }
 
@@ -3741,7 +3741,7 @@ fn finds_the_commit_that_slowed_a_benchmark() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"slowed\"\nversion = \"0.1.0\"\n").unwrap();
     let git = |args: &[&str]| {
-        let status = Command::new("git")
+        let status = common::command("git")
             .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
             .args(args)
             .current_dir(&dir)
@@ -3763,7 +3763,7 @@ fn finds_the_commit_that_slowed_a_benchmark() {
         write(extra);
         git(&["add", "-A"]);
         git(&["commit", "--quiet", "-m", &format!("step {index}")]);
-        let head = Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&dir).output().unwrap();
+        let head = common::command("git").args(["rev-parse", "HEAD"]).current_dir(&dir).output().unwrap();
         commits.push(String::from_utf8_lossy(&head.stdout).trim().to_string());
     }
     std::fs::write(
@@ -3811,7 +3811,7 @@ fn says_what_nothing_reaches_and_what_breaks_the_api() {
     assert_eq!(names, ["lost", "deeper"], "{out}");
 
     let git = |args: &[&str]| {
-        let status = Command::new("git")
+        let status = common::command("git")
             .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
             .args(args)
             .current_dir(&dir)
@@ -3854,7 +3854,7 @@ fn a_change_runs_the_tests_it_reaches() {
     std::fs::write(dir.join("src/main.to"), main).unwrap();
     std::fs::write(dir.join("src/main_test.to"), "test doubles {\n    assert(twice(2) == 4)\n}\n").unwrap();
     let git = |args: &[&str]| {
-        let status = Command::new("git")
+        let status = common::command("git")
             .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
             .args(args)
             .current_dir(&dir)
@@ -3866,7 +3866,7 @@ fn a_change_runs_the_tests_it_reaches() {
     git(&["init", "--quiet"]);
     git(&["add", "-A"]);
     git(&["commit", "--quiet", "-m", "one"]);
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", ".", "--watch", "--tests"])
         .current_dir(&dir)
         .stdout(Stdio::piped())
@@ -4105,7 +4105,7 @@ test loses {
     }
     // The debugger goes the same way, and stops at what failed.
     let debug = stdout.lines().find_map(|line| line.strip_prefix("debug it in that order: tondo ")).expect(&stdout);
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(debug.split(' ').chain(["--json"]))
         .current_dir(&dir)
         .stdin(Stdio::piped())
@@ -4273,7 +4273,7 @@ test aFileIsShared {
     let outcomes = |every: bool| {
         let seen = dir.join("seen.txt");
         let _ = std::fs::remove_file(&seen);
-        let mut command = Command::new(env!("CARGO_BIN_EXE_tondo"));
+        let mut command = common::command(env!("CARGO_BIN_EXE_tondo"));
         command.args(["test", "--filter", "seenThroughAFile", "--schedules", "all:3000"]).current_dir(&dir);
         if every {
             command.env("TONDO_ORDERS_EVERY", "1");

@@ -4,11 +4,12 @@
 //! panics, one that ends in the middle of a call, one that ends with the
 //! last copy of its value, and one built against another contract.
 
+mod common;
+
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn tondo(dir: &Path, args: &[&str]) -> (String, String, i32) {
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap();
+    let output = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(dir).output().unwrap();
     let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
     (text(&output.stdout), text(&output.stderr), output.status.code().unwrap_or(-1))
 }
@@ -151,7 +152,7 @@ fn built(dir: &Path, api: &str) -> (PathBuf, PathBuf) {
 }
 
 fn run(program: &Path, args: &[&str]) -> String {
-    let output = Command::new(program).args(args).output().unwrap();
+    let output = common::command(program).args(args).output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     String::from_utf8_lossy(&output.stdout).into_owned()
 }

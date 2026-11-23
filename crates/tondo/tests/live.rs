@@ -2,9 +2,11 @@
 //! `tondo reload`, under the debugger with `reload`, and by itself with
 //! `tondo run --watch`.
 
+mod common;
+
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -55,7 +57,7 @@ struct Running {
 
 impl Running {
     fn start(dir: &Path, args: &[&str]) -> Running {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
             .args(args)
             .current_dir(dir)
             .stdin(Stdio::piped())
@@ -115,7 +117,7 @@ impl Running {
 }
 
 fn reload(dir: &Path, pid: &str) -> (bool, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo")).args(["reload", pid]).current_dir(dir).output().unwrap();
+    let output = common::command(env!("CARGO_BIN_EXE_tondo")).args(["reload", pid]).current_dir(dir).output().unwrap();
     let text = String::from_utf8_lossy(&output.stdout).into_owned() + &String::from_utf8_lossy(&output.stderr);
     (output.status.success(), text)
 }
@@ -778,10 +780,10 @@ fn a_panic_waits_for_a_fix() {
     assert!(waits.is_some(), "the task did not wait");
     // What it was doing can be asked before fixing it. `tondo run --watch`
     // runs the program as a child.
-    let program = Command::new("pgrep").args(["-P", &server.pid()]).output().unwrap();
+    let program = common::command("pgrep").args(["-P", &server.pid()]).output().unwrap();
     let program = String::from_utf8_lossy(&program.stdout).trim().to_string();
     let tondo = env!("CARGO_BIN_EXE_tondo");
-    let asked = |args: &[&str]| Command::new(tondo).args(args).current_dir(&dir).output().unwrap();
+    let asked = |args: &[&str]| common::command(tondo).args(args).current_dir(&dir).output().unwrap();
     let told = asked(&["eval", &program, "total + by"]);
     assert_eq!(String::from_utf8_lossy(&told.stdout), "100\n", "{told:?}");
     let told = asked(&["values", &program, "panics.to", "--for", "0", "--json"]);
@@ -806,7 +808,7 @@ fn an_expression_runs_in_a_running_program() {
     assert_eq!(server.answer("5"), "1 20");
     let eval = |expression: &str| {
         let args = ["eval", &server.pid(), expression];
-        Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap()
+        common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap()
     };
     let told = eval("share(100, 4) + 1");
     assert_eq!(String::from_utf8_lossy(&told.stdout), "26\n", "{}", String::from_utf8_lossy(&told.stderr));
@@ -833,7 +835,7 @@ fn the_lines_of_a_running_program_say_what_they_left() {
     let server = Running::start(&dir, &["run", "counts.to", "--live"]);
     assert!(server.lines.recv_timeout(BUILDING).is_ok());
     let args = ["values", &server.pid(), "counts.to", "--json"];
-    let told = Command::new(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
+    let told = common::command(env!("CARGO_BIN_EXE_tondo")).args(args).current_dir(&dir).output().unwrap();
     let found: serde_json::Value = serde_json::from_slice(&told.stdout).unwrap();
     let line = &found["values"]["8"];
     let value = |name: &str| {
@@ -845,7 +847,7 @@ fn the_lines_of_a_running_program_say_what_they_left() {
     // The last line of a function has no next: what it started with.
     assert!(found["values"]["10"].is_array(), "{found}");
     // An expression that goes on says so each time, compiled once.
-    let mut each = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut each = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["eval", &server.pid(), "1 + 1", "--every", "0.05"])
         .current_dir(&dir)
         .stdout(Stdio::piped())
@@ -857,7 +859,7 @@ fn the_lines_of_a_running_program_say_what_they_left() {
     let _ = each.kill();
     let _ = each.wait();
     // So many times, and it ends.
-    let counted = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let counted = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["eval", &server.pid(), "1 + 1", "--every", "0.01", "--count", "3"])
         .current_dir(&dir)
         .output()

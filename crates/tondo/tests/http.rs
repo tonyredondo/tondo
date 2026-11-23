@@ -1,10 +1,12 @@
 //! `std.http` (14.24 of the standard library) against a small HTTP/1.1
 //! server of the test's own, which answers by path.
 
+mod common;
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 /// A request as the server read it: method, target, headers (lowercase
@@ -252,7 +254,7 @@ fn main(): !(http.HttpError | fs.FsError) {
 }
 "#;
     std::fs::write(dir.join("main.to"), program).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "main.to"])
         .current_dir(&dir)
         .env("BASE", &base)
@@ -363,7 +365,7 @@ fn main(): !http.HttpError {
 }
 "#;
     std::fs::write(dir.join("main.to"), program).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "main.to"])
         .current_dir(&dir)
         .env("WS", &url)
@@ -387,7 +389,7 @@ fn run(name: &str, program: &str, files: &[(&str, String)]) -> (String, String, 
         std::fs::write(path, text).unwrap();
     }
     std::fs::write(dir.join("main.to"), program).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "main.to"])
         .current_dir(&dir)
         .env("TONDO_RT_CHECK_LEAKS", "1")
@@ -602,7 +604,7 @@ fn main(): !http.HttpError {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("main.to"), program).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let mut child = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "main.to"])
         .current_dir(&dir)
         .env("TONDO_RT_CHECK_LEAKS", "1")
@@ -752,7 +754,7 @@ fn main(): !http.HttpError {
         std::fs::write(dir.join(name), text).unwrap();
     }
     std::fs::write(dir.join("main.to"), program).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+    let output = common::command(env!("CARGO_BIN_EXE_tondo"))
         .args(["run", "main.to"])
         .current_dir(&dir)
         .env("BASE", &base)
