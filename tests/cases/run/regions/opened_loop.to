@@ -1,0 +1,55 @@
+// A function whose loop passes on the error of a call, opened into a caller
+// that handles the error: what each turn makes in the function it calls
+// goes in the region of the turn of the loop, now the caller's, and not in
+// the caller's own region, which would keep every turn's. Run over a
+// thousand turns with the memory of each region that ends made unreadable.
+
+import std.console
+
+type Problem = {
+    word: String
+}
+
+fn loudest(text: String): String ! Problem {
+    var best = ""
+    for word in text.split(" ") {
+        if word.length() > best.length() {
+            best = word
+        }
+    }
+    if best.length() > 4 {
+        fail Problem { word: "{best}!" }
+    }
+    best.toUpper()
+}
+
+fn shouted(texts: Array[String]): Int ! Problem {
+    var total = 0
+    for text in texts {
+        let loud = loudest(text)?
+        total += loud.length()
+    }
+    total
+}
+
+fn main() {
+    var texts: Array[String] = []
+    for i in 0..1000 {
+        texts.push("one two {i % 10}")
+    }
+    match shouted(texts) {
+        ok(total) => console.println("{total}")
+        err(problem) => console.println(problem.word)
+    }
+    texts.push("a longer word")
+    match shouted(texts) {
+        ok(total) => console.println("{total}")
+        err(problem) => console.println(problem.word)
+    }
+}
+
+// expect-stdout: 3000
+// expect-stdout: longer!
+// expect-optimization: 40:11 inlined is inlined: the body of `shouted` is copied here
+// expect-optimization: 21:30 region goes in a region that the caller of `loudest` gives
+// expect-optimization: 23:5 region in `String.toUpper`, `textNative.upper(self)` goes in a region that the caller of `loudest` gives
