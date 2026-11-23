@@ -29,34 +29,37 @@ What is done next, and after it, with the reason for each place. A step's
 detail is in the tables below. The inliner's weighing of step 2 comes
 before the chain's rest because the chain's adapters wait for it too.
 
-1. **What is owed**: what is left of the cost the scheduler's pieces added
-   to a spawn and a join, and what the next Nightly's jobs under emulation
-   show. First because they say whether what is on main is sound, and
-   anything they find is fixed before more is built on it. The archive read
-   on demand, the larger half of the answer to an input made to inflate,
-   whose bounds are in, comes after the inliner's weighing by the
-   maintainer's word.
+1. **What is owed**: the limits of a gRPC service taken as everywhere
+   else, by the maintainer's word; what is left of the cost the scheduler's
+   pieces added to a spawn and a join; and what the next Nightly's jobs
+   under emulation show. First because they say whether what is on main is
+   sound, and anything they find is fixed before more is built on it.
 2. **`trim`**: the inliner weighing a call by what inlining buys and a
    region for the copy, which the plain form in Tondo, measured again,
    waits for; then the list of what stays behind Go. Second because its rows
    are the furthest behind, and the inliner's weighing is a piece many other
    calls wait for.
-3. **The chain's rest**: the loop's fast arm after its branch, which is
+3. **What the maintainer said yes to on 2026-11-23**, after the inliner by
+   his word: the orphans of a program that is a container's first process,
+   a small piece; then `std.quic`'s first piece, measured, which says what
+   HTTP/3 and WebTransport cost after it. The archive read on demand comes
+   here too, as it waited for the inliner alone.
+4. **The chain's rest**: the loop's fast arm after its branch, which is
    also what the chars rows lack, and the reads of the task's attention.
-   Then a new table against Go, at the baseline and at x86-64-v3. Third
+   Then a new table against Go, at the baseline and at x86-64-v3. Here
    because the diagnosis is done and fresh, and the table is what orders
    the steps after it.
-4. **What the examples and the rows left pay**, by one round of profiles
+5. **What the examples and the rows left pay**, by one round of profiles
    taken again: the library functions, `url.encoded` first, the map copied
    in a loop over it, and programs/sum lines and queries/countBy in the
    same hour, which is the same work with the same tools. The examples'
    are a larger share of real programs than any row left, and the round
    says which rows texts reach.
-5. **The views of texts**: their two numbers, which steps 2 and 4 give,
+6. **The views of texts**: their two numbers, which steps 2 and 5 give,
    then the maintainer's decision.
-6. **An array of tasks waited for as one wait, then `parallel for` and
+7. **An array of tasks waited for as one wait, then `parallel for` and
    `.parallel()`**: the largest piece, after what it stands on.
-7. **The tightening**: texts' counts at direct sites, the header at 16
+8. **The tightening**: texts' counts at direct sites, the header at 16
    bytes, Phase K, and what the speed plan left of the network and of the
    runtime's text conversions.
 
@@ -70,6 +73,7 @@ manual's unheld quotes and listings.
 
 | What | Since | Detail |
 | --- | --- | --- |
+| The limits of a gRPC service as a parameter, as everywhere else. The maintainer's word of 2026-11-23, on being shown the one place that departed from the form: the same behaviour in every part of the library. A service takes them today by a method, `Service.limits(...)`, since `app.grpc` is `std.http`'s and cannot name `grpc.GrpcLimits`. To become `limits:` on what builds a service, the generated constructor, `Health.service` and `grpc.reflection`, with the method gone, one sentence for the message on both sides, and the clause for methods out of the spec's rule; the manual's and the guide's lines with it | 2026-11-23 | Spec 6.3; `crates/tondo/std/grpc/server.to` |
 | What is left of the cost the scheduler's pieces of 2026-11-20 and 21 added to a spawn and a join, each within the bar alone. Reading the clock straight and asking for the workers with a load took 6.2% of the instructions of `runtime/join 1`, now under the table's count, and about 1% of `tasks/spawn 1000`, `select 1000` and `channel 10000`. Left: `ffi/waits from a C thread 100`, still 3.5% over the table, whose count moves with the turns of the waits' spin locks and which is to be told from them first; the readings of the clock that remain at each spawn and join, some seven, for which the processor's own counter is to be weighed before any stamp becomes a count, so that every wait keeps its meaning; and the wakes added for a task woken next to a busy worker, each to keep the stall it fixed as its reason or to go | 2026-11-22 | AGENTS.md, "A change to the optimizer…"; [decisions](decisions.md) |
 | A read that can wait without end is not ended by a deadline or a cancel when it goes through a thread of the system: a file opened by its path that is a pipe, a FIFO, a terminal or a device. A `fs.readText` of a pipe written after a second gave its text at a second under a deadline of 50 ms. The pipes of a process that was started wait on the poller since 2026-11-22. For those files, a thread of the stream that reads only when the program asks, as the console's input has, and their open as work a deadline abandons; writes to them with it. `Process.cancel()` still waits for the pipes it captures | 2026-11-22 | Spec 11.15 and 11.17; `Mode::Host` |
 | What the Nightly's jobs under emulation show once they run whole. In the run of 2026-11-22 they built again and then 106 tests failed on the two architectures, those of the debugger, dumps, profiles and the rest, and their binary did not end: a unit test of 2026-11-21 made the tools' directory open to others before any program had made it private, in the fresh container each binary runs in, and every program then refused the tools, as it should. The test is mended; the next run says whether that was all of it. Older there, and each to read when a run shows its words: `vectors_at_the_level_of_avx2` on x86-64 under qemu, whose words no log has; the cases' binary running past its hour and a half there, slow and not hung; `a_library_that_tondo_built_ends_and_unloads` and `cpu_has_answers_from_the_level_or_the_processor`, which failed on 2026-11-21 and not on the 22nd; and observe's `a_cpu_profile_of_a_program_that_waits_says_it_waited` on arm64, red from 2026-11-16 to 21 and hidden since | 2026-11-22 | Nightly runs 45051265708 and 44896932412 |
@@ -114,6 +118,13 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 | gRPC's client on the workers' poller; what still uses tokio: hyper's timer, the server's timeouts, the WebSocket client | 2026-11-10 | [speed plan](speed.md), H2, steps 10 and 11 |
 | One debugger session for `tondo dap` and `tondo debug`; text conversions on the runtime's hot paths; YAML's scanner | 2026-11-09 | [speed plan](speed.md), I1, I2, I3 |
 
+## The library, decided and not done
+
+| What | Since | Detail |
+| --- | --- | --- |
+| The orphans of a program that is a container's first process. A command's own children go to the first process when that command ends, and a Tondo program reaps only what it started, so they stay in state Z for as long as it runs. By the maintainer's word of 2026-11-23 the runtime reaps them by itself when it is pid 1, as .NET does: it looks first and takes only a child that none of its tables holds, and a program that is not the first pays nothing. What no shape can tell from an orphan is the child of a C library reached through a foreign call, whose own wait would then fail: the manual says so. Its case runs as a container's first process; the design before the code | 2026-11-23 | Seen with a case's static build as pid 1 of a plain `alpine` container; the runtime waits for each child by its pid today |
+| QUIC, HTTP/3 and WebTransport, beside the HTTP/1, HTTP/2 and WebSockets the library has, in three pieces by the maintainer's word of 2026-11-23. `std.quic` first, a measured piece on the workers' poller with `quinn-proto` over the rustls the runtime has, whose numbers say what the other two cost. Then HTTP/3 in the server and the client, where the choice is between the young `h3` and the protocol's framing written here. Then WebTransport beside `WebSocket`, which follows a draft that still moves. Each with its tests against other implementations and its rows against quic-go, as Go's own library has none ready; the design of each before its code | 2026-11-22 | Read on 2026-11-23: `quinn-proto` 0.11.19, `h3` 0.0.8 and `h3-webtransport` 0.1.2 of May 2025, the draft's seventeenth of November 2026, in Chrome, Firefox and Safari 26.4 |
+
 ## Tools and tests
 
 | What | Since | Detail |
@@ -151,8 +162,6 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 | What | Since |
 | --- | --- |
 | The views of texts, once their two numbers are in | 2026-11-22 |
-| QUIC, HTTP/3 and WebTransport, beside the HTTP/1, HTTP/2 and WebSockets the library has: asked for by the maintainer on 2026-11-22, to be weighed first. Weighed on 2026-11-23 from reading, with no code run, and put to him. The runtime has what QUIC stands on: UDP sockets on the workers' poller and rustls 0.23 with ring, which `quinn-proto` 0.11 takes as they are, a QUIC with no network nor clock of its own. What is young is above it: hyper has no HTTP/3, the crates for it and for WebTransport (`h3` 0.0.8, `h3-webtransport` 0.1.2, both of May 2025) call themselves experimental, and WebTransport is still a draft, its seventeenth in November 2026, that Chrome, Firefox and Safari 26.4 follow. Three pieces in this order, each with its tests against other implementations and its rows against quic-go, as Go's own library has none ready: `std.quic`; HTTP/3 in the server and the client; WebTransport beside `WebSocket`. Owed still: his word on whether and where in the order, and then the design of the API with the protocol's code chosen by a measured first piece | 2026-11-22 |
-| A program that is a container's first process and the orphans left to it. A command's own children go to the first process when that command ends, and a Tondo program reaps only what it started: seen on 2026-11-22 with a case's static build as the first process of a plain `alpine` container, where a `sleep` the runtime had killed stayed in state Z under pid 1 for as long as the program ran. An init in the container, as `docker run --init` gives, takes them. Put to him on 2026-11-23 with what the others do: .NET reaps every child when it is pid 1, and says in its code that it may so take a child that is not its own; Go, Rust and Node wait for their own children alone and leave the rest to an init, and Java's reaper threads, as far as its `ProcessHandleImpl` shows, wait each for one pid. His choice: the runtime reaps them by itself when it is the first process, looking first and taking only a child that none of its tables holds; or when the program asks; or never, and the manual says to use an init. What no shape can tell from an orphan is the child of a C library reached through a foreign call, whose own wait would then fail | 2026-11-23 |
 
 ## Parked
 
