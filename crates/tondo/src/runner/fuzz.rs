@@ -406,15 +406,7 @@ fn replacements(node: &Value) -> Vec<Value> {
     match node {
         Value::Array(items) if !items.is_empty() => {
             out.push(Value::Array(Vec::new()));
-            if items.len() > 1 {
-                out.push(Value::Array(items[items.len() / 2..].to_vec()));
-                out.push(Value::Array(items[..items.len() / 2].to_vec()));
-            }
-            for index in 0..items.len().min(32) {
-                let mut fewer = items.clone();
-                fewer.remove(index);
-                out.push(Value::Array(fewer));
-            }
+            out.extend(without_runs(items).into_iter().map(Value::Array));
         }
         Value::Object(members) => {
             for key in members.keys().take(32) {
@@ -426,15 +418,7 @@ fn replacements(node: &Value) -> Vec<Value> {
         Value::String(text) if !text.is_empty() => {
             let chars: Vec<char> = text.chars().collect();
             out.push(Value::String(String::new()));
-            if chars.len() > 1 {
-                out.push(Value::String(chars[chars.len() / 2..].iter().collect()));
-                out.push(Value::String(chars[..chars.len() / 2].iter().collect()));
-            }
-            for index in 0..chars.len().min(32) {
-                let mut fewer = chars.clone();
-                fewer.remove(index);
-                out.push(Value::String(fewer.into_iter().collect()));
-            }
+            out.extend(without_runs(&chars).into_iter().map(|fewer| Value::String(fewer.into_iter().collect())));
         }
         Value::Number(n) => {
             if let Some(i) = n.as_i64().filter(|&i| i != 0) {
@@ -448,6 +432,25 @@ fn replacements(node: &Value) -> Vec<Value> {
     }
     if !node.is_null() {
         out.push(Value::Null);
+    }
+    out
+}
+
+/// `items` without one run of them: of half of them, a quarter and so on
+/// down to one, at each offset that is a multiple of the run's length. A
+/// reduction takes out a long stretch in one round where it still fails
+/// without it, and reaches every element, so that its rounds, each a
+/// worker started, grow with the length's logarithm and not the length.
+fn without_runs<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
+    let mut out = Vec::new();
+    let mut run = items.len() / 2;
+    while run > 0 {
+        for start in (0..items.len()).step_by(run) {
+            let mut fewer = items[..start].to_vec();
+            fewer.extend_from_slice(&items[(start + run).min(items.len())..]);
+            out.push(fewer);
+        }
+        run /= 2;
     }
     out
 }
@@ -487,7 +490,8 @@ fn at_mut<'a>(value: &'a mut Value, path: &[usize]) -> Option<&'a mut Value> {
 /// Reduces an input that failed (testing 10.6): tries simpler ones in a
 /// worker that runs only them, keeping each that fails the same way, for
 /// at most 30 seconds; the input becomes the last kept, as `json.encode`
-/// writes it, saying how many bytes it had. One that ran past
+/// writes it, saying how many bytes it had and whether the 30 seconds
+/// ended before no simpler one failed. One that ran past
 /// `--fuzz-timeout` is kept only if it does again alone; it gives how many
 /// ran in time then.
 fn reduce(run: &worker::Run, target: usize, input: &mut FuzzInput, failure: &Status) -> u32 {
@@ -501,11 +505,16 @@ fn reduce(run: &worker::Run, target: usize, input: &mut FuzzInput, failure: &Sta
     let mut candidates = vec![current.clone()];
     candidates.extend(smaller(&current));
     let mut reduced = false;
+    let mut ended = false;
     let test = run.targets[target].test;
-    'rounds: while Instant::now() < deadline && !interrupt::requested() {
+    'rounds: while !candidates.is_empty() && !interrupt::requested() {
         let mut offset = 0;
         let mut kept = None;
-        while offset < candidates.len() && Instant::now() < deadline && !interrupt::requested() {
+        while offset < candidates.len() && !interrupt::requested() {
+            if Instant::now() >= deadline {
+                ended = true;
+                break 'rounds;
+            }
             let lines: Vec<String> = candidates[offset..].iter().map(Value::to_string).collect();
             if std::fs::write(&file, lines.join("\n")).is_err() {
                 break 'rounds;
@@ -544,5 +553,38 @@ fn reduce(run: &worker::Run, target: usize, input: &mut FuzzInput, failure: &Sta
     if reduced && input.json.len() < original {
         input.reduced_from = Some(original);
     }
+    input.reduction_timed_out = ended;
     in_time
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn runs_of(text: &str) -> Vec<String> {
+        let chars: Vec<char> = text.chars().collect();
+        without_runs(&chars).into_iter().map(|fewer| fewer.into_iter().collect()).collect()
+    }
+
+    #[test]
+    fn a_text_loses_runs_of_every_length_down_to_one() {
+        let runs = runs_of("abcdefgh");
+        let halves = ["efgh", "abcd"];
+        let quarters = ["cdefgh", "abefgh", "abcdgh", "abcdef"];
+        let ones = ["bcdefgh", "acdefgh", "abdefgh", "abcefgh", "abcdfgh", "abcdegh", "abcdefh", "abcdefg"];
+        assert_eq!(runs, [&halves[..], &quarters, &ones].concat());
+        // The last run of an odd length is shorter.
+        assert_eq!(runs_of("abcde")[..3], ["cde", "abe", "abcd"]);
+        assert!(runs_of("a").is_empty());
+    }
+
+    #[test]
+    fn every_element_of_a_long_list_can_go() {
+        let items: Vec<Value> = (0..40).map(Value::from).collect();
+        let candidates = replacements(&Value::Array(items.clone()));
+        let mut fewer = items.clone();
+        fewer.remove(39);
+        assert!(candidates.contains(&Value::Array(fewer)));
+        assert!(candidates.contains(&Value::Array(items[20..].to_vec())));
+    }
 }

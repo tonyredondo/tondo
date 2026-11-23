@@ -31,7 +31,7 @@ export interface Listed {
 export interface Fuzzed {
   name: string;
   inputs: number;
-  input?: { json: string; file?: string; seed?: number; reducedFrom?: number };
+  input?: { json: string; file?: string; seed?: number; reducedFrom?: number; reductionTimedOut: boolean };
   search?: Searched;
 }
 
@@ -119,7 +119,13 @@ interface Entry {
 interface FuzzJson {
   name: string;
   inputs?: number;
-  input?: { json: string; file?: string | null; seed?: number | null; reduced_from?: number | null } | null;
+  input?: {
+    json: string;
+    file?: string | null;
+    seed?: number | null;
+    reduced_from?: number | null;
+    reduction_timed_out?: boolean;
+  } | null;
   search?: SearchJson | null;
 }
 
@@ -149,6 +155,7 @@ function fuzzed(call: FuzzJson): Fuzzed {
         file: call.input.file ?? undefined,
         seed: call.input.seed ?? undefined,
         reducedFrom: call.input.reduced_from ?? undefined,
+        reductionTimedOut: call.input.reduction_timed_out === true,
       }
     : undefined;
   const inputs = call.inputs ?? 0;

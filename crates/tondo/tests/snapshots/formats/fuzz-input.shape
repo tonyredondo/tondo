@@ -1,0 +1,9 @@
+[]
+[].input.file: null
+[].input.json: string
+[].input.reduced_from: null
+[].input.reduction_timed_out: bool
+[].input.seed: number
+[].inputs: number
+[].name: string
+[].search: null

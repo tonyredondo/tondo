@@ -449,10 +449,9 @@ test grows {
     assert!(!dir.join("fuzz-elsewhere").exists(), "the corpus went to fuzz-elsewhere/fuzz-elsewhere: {stdout}");
 }
 
-#[test]
-fn fuzz_search_finds_inputs_that_fail() {
-    // The code it tries is the project's, whose runs count.
-    let code = "\
+/// A function that fails on a text with more than three `[`, and the test
+/// that searches it from two seeds that do not.
+const DEPTH: &str = "\
 pub fn depth(text: String): Int {
     var open = 0
     for c in text.chars() {
@@ -469,7 +468,8 @@ pub fn depth(text: String): Int {
 
 fn main() {}
 ";
-    let tests = "\
+
+const DEPTH_TESTS: &str = "\
 import std.testing
 
 test measuresDepth {
@@ -480,6 +480,11 @@ test measuresDepth {
 
 test plain {}
 ";
+
+#[test]
+fn fuzz_search_finds_inputs_that_fail() {
+    // The code it tries is the project's, whose runs count.
+    let (code, tests) = (DEPTH, DEPTH_TESTS);
     let dir = project("fuzz-search", tests);
     std::fs::write(dir.join("src/main.to"), code).unwrap();
     let (stdout, _, status) = tondo(&dir, &["test", "--fuzz", "--fuzz-time", "60"]);
@@ -492,10 +497,16 @@ test plain {}
     let saved: Vec<_> = std::fs::read_dir(&store).unwrap().flatten().map(|e| e.path()).collect();
     assert_eq!(saved.len(), 1, "{saved:?}\n{stdout}");
     // Reduced, as json.encode writes it, with how to run it again; the
-    // report says how far the reduction went.
+    // report says how far the reduction went. Where workers start slowly,
+    // its 30 seconds may end first, and the report says so: what it saved
+    // then still fails, and is shorter than what the search found.
     let input = std::fs::read_to_string(&saved[0]).unwrap();
-    assert_eq!(input, "\"[[[[\"", "{stdout}");
-    assert!(stdout.contains(":\n  \"[[[[\"\nsaved in fuzz/unit/app/measuresDepth/depth/"), "{stdout}");
+    if stdout.contains(" bytes before its 30 seconds ended:\n") {
+        assert!(input.matches('[').count() > 3 && stdout.contains(", reduced from "), "{stdout}");
+    } else {
+        assert_eq!(input, "\"[[[[\"", "{stdout}");
+    }
+    assert!(stdout.contains(&format!(":\n  {input}\nsaved in fuzz/unit/app/measuresDepth/depth/")), "{stdout}");
     assert!(stdout.contains("reproduce: tondo test --exact app::unit::app::measuresDepth\n"), "{stdout}");
     assert!(stdout.contains("debug:     tondo debug --test app::unit::app::measuresDepth\n"), "{stdout}");
     assert!(dir.join("target/fuzz/unit/app/measuresDepth/depth").is_dir(), "{stdout}");
@@ -533,6 +544,37 @@ test plain {}
     assert!(stderr.contains("--fuzz-time is about the search of fuzz tests: it goes with --fuzz"), "{stderr}");
     let (_, stderr, _) = tondo(&dir, &["test", "--fuzz", "--bench"]);
     assert!(stderr.contains("--fuzz searches for inputs that fail; it does not go with --bench"), "{stderr}");
+}
+
+/// A reduction takes out runs of a text, halves before single characters,
+/// so that its rounds, each a worker started, grow with the logarithm of
+/// the text's length (testing 10.6). The input of 31 characters that
+/// failed on a runner whose workers start slowly, three brackets at its
+/// start and one near its end, took 27 rounds one character at a time,
+/// and the 30 seconds ended first. Put in the corpus, the search fails at
+/// once with a variant of it; the case counts the workers that replay
+/// candidates, which `TONDO_FUZZ_REPLAY` marks, and no clock.
+#[test]
+fn a_reduction_takes_out_runs_in_few_rounds() {
+    let dir = project("fuzz-runs", DEPTH_TESTS);
+    std::fs::write(dir.join("src/main.to"), DEPTH).unwrap();
+    let corpus = dir.join("target/fuzz/unit/app/measuresDepth/depth");
+    std::fs::create_dir_all(&corpus).unwrap();
+    std::fs::write(corpus.join("found.json"), "\"[[[askrnd of the ar asray&e[B1 \"").unwrap();
+    let starts = dir.join("starts");
+    let wrapper = dir.join("wrapper");
+    let script = format!("#!/bin/sh\n[ -n \"$TONDO_FUZZ_REPLAY\" ] && echo >> {}\nexec \"$@\"\n", starts.display());
+    std::fs::write(&wrapper, script).unwrap();
+    std::fs::set_permissions(&wrapper, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let args = ["test", "--fuzz", "--fuzz-time", "60", "--exec", wrapper.to_str().unwrap()];
+    let (stdout, _, status) = tondo(&dir, &args);
+    assert_eq!(status, 1, "{stdout}");
+    assert!(stdout.contains(" to 6 bytes:\n  \"[[[[\"\n"), "{stdout}");
+    // The search finds a variant of it, never the same twice; by runs, each
+    // takes at most 11 rounds with the first, which replays it as found,
+    // where one character a round took 28 for most of them.
+    let rounds = std::fs::read_to_string(&starts).unwrap().lines().count();
+    assert!(rounds < 16, "{rounds} rounds\n{stdout}");
 }
 
 /// The search takes values from the code: its literals, and what its

@@ -445,14 +445,26 @@ test('a call of testing.fuzz says what it searched and the input it failed with'
           name: 'parse',
           inputs: 480122,
           search: { elapsed_ms: 12034, corpus: 312, coverage: { reached: 186, total: 214 } },
-          input: { json: '"[[[["', file: 'fuzz/unit/p/parses/parse/3f2a9c4e81d07b55.json', seed: null, reduced_from: 214 },
+          input: {
+            json: '"[[[["',
+            file: 'fuzz/unit/p/parses/parse/3f2a9c4e81d07b55.json',
+            seed: null,
+            reduced_from: 214,
+            reduction_timed_out: true,
+          },
         },
       ],
     }),
   );
   assert.ok(end?.event === 'end');
   const [call] = end.outcome.fuzz;
-  assert.deepEqual(call.input, { json: '"[[[["', file: 'fuzz/unit/p/parses/parse/3f2a9c4e81d07b55.json', seed: undefined, reducedFrom: 214 });
+  assert.deepEqual(call.input, {
+    json: '"[[[["',
+    file: 'fuzz/unit/p/parses/parse/3f2a9c4e81d07b55.json',
+    seed: undefined,
+    reducedFrom: 214,
+    reductionTimedOut: true,
+  });
   assert.equal(call.search?.corpus, 312);
   const progress = testEvent('{"event":"fuzz","id":"p::unit::p::parses","name":"parse","inputs":1700000,"elapsed_ms":42000,"corpus":312,"coverage":{"reached":87,"total":100},"new_ms":3000}');
   assert.ok(progress?.event === 'fuzz');

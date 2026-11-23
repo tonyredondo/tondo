@@ -255,7 +255,12 @@ export function registerTesting(
       // The input a call of `testing.fuzz` failed with, and where it is.
       const fuzzed = outcome.fuzz.find((call) => call.input);
       if (fuzzed?.input) {
-        const reduced = fuzzed.input.reducedFrom ? `, reduced from ${fuzzed.input.reducedFrom} bytes` : '';
+        const ended = fuzzed.input.reductionTimedOut ? ' before its 30 seconds ended' : '';
+        const reduced = fuzzed.input.reducedFrom
+          ? `, reduced from ${fuzzed.input.reducedFrom} bytes${ended}`
+          : fuzzed.input.reductionTimedOut
+            ? `, not reduced${ended}`
+            : '';
         text += `\n\nfuzz \`${fuzzed.name}\` failed with this input${reduced}:\n  ${fuzzed.input.json}`;
         if (fuzzed.input.file) {
           text += `\nsaved in ${fuzzed.input.file}, which every run tries from now on`;

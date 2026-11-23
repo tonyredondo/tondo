@@ -2730,7 +2730,9 @@ que fallen:
 4. Una entrada que falla termina la búsqueda de esa llamada. El runner la
    reduce mientras siga fallando igual, con el mismo estado, código y lugar:
    quita elementos y campos opcionales, acorta textos y acerca números a 0. La
-   reducida va al store, y el test falla con ella.
+   reducida va al store, y el test falla con ella. La reducción dura como
+   mucho 30 segundos; si terminan antes de llegar a la entrada más simple, el
+   informe lo dice y guarda la más simple alcanzada.
 
 Una entrada falla también si tarda más de `--fuzz-timeout` segundos, 1 por
 defecto (`timeout`), cuando vuelve a tardarlo ejecutada sola en un trabajador
@@ -4569,7 +4571,8 @@ tiene esta forma:
     "json": "\"[[\\u0000\"",
     "file": "fuzz/unit/app/parsesAnyDocument/parse/3f2a9c4e81d07b55.json",
     "seed": null,
-    "reduced_from": 214
+    "reduced_from": 214,
+    "reduction_timed_out": false
   }
 }
 ~~~
@@ -4583,7 +4586,8 @@ la llamada volvió a empezar por ellas. `input` es `null` si ninguna entrada
 falló, y si no la entrada con la que falló el intento: su JSON; el archivo del
 store, desde la raíz del paquete, o `null` para una semilla, cuyo índice da
 `seed`; y con `--fuzz`, en `reduced_from`, los bytes de la entrada antes de
-reducirla.
+reducirla, y `reduction_timed_out`, `true` si los 30 segundos de la reducción
+terminaron antes de llegar a la más simple y `false` si no.
 
 ## 16. Conformidad
 

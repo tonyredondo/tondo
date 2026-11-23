@@ -152,3 +152,23 @@ fn the_report_of_a_test_run_keeps_its_format() {
     let report: Value = serde_json::from_str(&report).unwrap_or_else(|_| panic!("{report}{said}"));
     recorded("test-report.shape", &shape(&report, &[]));
 }
+
+/// What a call of `testing.fuzz` that failed gives in the report, which the
+/// editor and the MCP tool read: here with a seed that fails, which is
+/// reported as it is, so that the object is the same every time.
+#[test]
+fn a_fuzz_call_that_failed_keeps_its_format() {
+    let dir = scratch("fuzz-format");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+    std::fs::write(dir.join("tondo.toml"), "[package]\nname = \"app\"\n").unwrap();
+    std::fs::write(dir.join("src/main.to"), "fn main() {}\n").unwrap();
+    let tests = "import std.testing\n\ntest short {\n    testing.fuzz(\"length\", [\"ab\"], (text: String) {\n        \
+        assert(text.length() < 2)\n    })\n}\n";
+    std::fs::write(dir.join("src/main_test.to"), tests).unwrap();
+    let (report, said) = tondo(&dir, &["test", "--test-format", "json"], &[("TONDO_DUMP", "off")]);
+    let report: Value = serde_json::from_str(&report).unwrap_or_else(|_| panic!("{report}{said}"));
+    let fuzz = &report["tests"][0]["attempts"][0]["fuzz"];
+    assert_eq!(fuzz[0]["input"]["json"], "\"ab\"", "{report}");
+    recorded("fuzz-input.shape", &shape(fuzz, &[]));
+}

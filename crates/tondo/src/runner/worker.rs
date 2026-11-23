@@ -759,6 +759,7 @@ impl Session<'_> {
                         seed: seed.parse().ok(),
                         tried: tried.parse().ok(),
                         reduced_from: None,
+                        reduction_timed_out: false,
                     });
                     let (name, inputs, search) =
                         (name.to_string(), inputs.parse().unwrap_or(0), Searched::read(searched));

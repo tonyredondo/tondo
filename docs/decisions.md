@@ -9825,3 +9825,29 @@ at its ceiling inside a spawned task, so a frame that grows ends it. The
 regex's nesting takes no stack, so it has none. A function that a
 thread of C calls runs on that thread's stack, which may hold less; its
 documentation says so, and a switch to a task's stack is measured later.
+
+## A reduction takes out runs, and says when its time ended
+
+The search's own test failed on an x86_64 macOS runner with an input of
+31 characters saved where four brackets were expected. A reduction tried
+for a text its two halves and the text without one of its first 32
+characters, a round each, and every round starts a worker; that input,
+three brackets at its start and one near its end, needed 27 rounds, and
+its 30 seconds ended first, saving what it had reached. A wrapper that
+made each worker start two seconds late made the same failure here at
+will: 17 starts, 35 seconds, `"[[[ar a["` saved.
+
+A text or a list now loses runs of its elements, of half of them, a
+quarter and so on down to one, at each offset that is a multiple of the
+run's length. Put in the corpus, where the search fails at once with a
+variant of it, that input took 26 to 29 workers to reduce and now takes
+10 or 11, and under the wrapper of two seconds it reaches the four
+brackets in 22 to 27 seconds, every start of the search counted; every
+element can go, where those past the 32nd could not. A reduction that its 30 seconds end says
+so, in the report's text and in the JSON's `reduction_timed_out`, and
+what it saves is the simplest it reached. The search's test holds the
+smallest input unless the report says the time ended; a case reduces
+that input, put in the corpus where the search finds it at once, and
+holds how many workers replayed candidates, a count no clock decides.
+A worker kept across the rounds would take the start out of each, a
+larger change listed for the day rounds cost too much again.

@@ -410,6 +410,9 @@ pub struct FuzzInput {
     pub tried: Option<usize>,
     /// Once reduced, how many bytes it had before.
     pub reduced_from: Option<usize>,
+    /// Whether the reduction's 30 seconds ended before it reached an input
+    /// no simpler one of which fails the same way.
+    pub reduction_timed_out: bool,
 }
 
 /// What a benchmark measured: the runs of each sample, the nanoseconds a

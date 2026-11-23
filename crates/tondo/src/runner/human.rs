@@ -366,8 +366,10 @@ fn written(tree: &Tree, attempt: &Attempt) -> String {
             text.push_str(&format!("fuzz `{}` failed with {from}:\n  {}\n", fuzzed.name, input.json));
             continue;
         };
+        let ended = if input.reduction_timed_out { " before its 30 seconds ended" } else { "" };
         let reduced = match input.reduced_from {
-            Some(bytes) => format!(", reduced from {bytes} to {} bytes", input.json.len()),
+            Some(bytes) => format!(", reduced from {bytes} to {} bytes{ended}", input.json.len()),
+            None if input.reduction_timed_out => format!(", not reduced{ended}"),
             None => String::new(),
         };
         text.push_str(&format!(
