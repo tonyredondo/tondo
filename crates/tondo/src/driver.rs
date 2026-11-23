@@ -1629,6 +1629,7 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, program: &crate::hir::Program, s
     crate::captured::captured(bodies, types);
     after("captured", bodies, types, sources);
     crate::inline::inline(bodies);
+    lower::drop_dead_cancellations(bodies);
     after("inline", bodies, types, sources);
     crate::elide::elide(bodies, types);
     after("elide", bodies, types, sources);
