@@ -47,32 +47,35 @@ before the chain's rest because the chain's adapters wait for it too.
    do not wait for step 1's jobs under emulation, whose work is done on
    the runners beside them; a fault found there in code a release program
    runs goes ahead of them.
-3. **What the maintainer said yes to on 2026-11-23**, after the inliner by
-   his word: the orphans of a program that is a container's first process,
-   a small piece; then `std.quic`'s first piece, measured, which says what
-   HTTP/3 and WebTransport cost after it. The archive read on demand comes
-   here too, as it waited for the inliner alone.
-4. **The chain's rest**: the loop's fast arm after its branch, which is
+3. **The chain's rest**: the loop's fast arm after its branch, which is
    also what the chars rows lack, and the reads of the task's attention.
    Then a new table against Go, at the baseline and at x86-64-v3. Here
    because the diagnosis is done and fresh, and the table is what orders
    the steps after it.
-5. **What the examples and the rows left pay**, by one round of profiles
+4. **What the examples and the rows left pay**, by one round of profiles
    taken again: the library functions, `url.encoded` first, the map copied
    in a loop over it, and programs/sum lines and queries/countBy in the
    same hour, which is the same work with the same tools. The examples'
    are a larger share of real programs than any row left, and the round
    says which rows texts reach.
-6. **The views of texts**: their two numbers, which steps 2 and 5 give,
+5. **The views of texts**: their two numbers, which steps 2 and 4 give,
    then the maintainer's decision.
-7. **An array of tasks waited for as one wait, then `parallel for` and
+6. **An array of tasks waited for as one wait, then `parallel for` and
    `.parallel()`**: the largest piece, after what it stands on.
-8. **The tightening**: texts' counts at direct sites, the header at 16
+7. **The tightening**: texts' counts at direct sites, the header at 16
    bytes, Phase K, and what the speed plan left of the network and of the
    runtime's text conversions.
-9. **A service shown end to end**, after all of the speed work above and
-   not before, by the maintainer's word of 2026-11-23: every row at or
-   under Go's is the promise kept first.
+8. **What is left of the maintainer's list of 2026-11-14**, in the table
+   of the optimizer's program below: each technique the steps above did
+   not carry is tried on the rows and measured, and its numbers are kept
+   whether it stays or not. His word of 2026-11-23: every kind of
+   optimization, not the inliner alone.
+9. **What the maintainer said yes to on 2026-11-23**, after all of the
+   speed work by his word of the same day, where it had been after the
+   inliner: the orphans of a program that is a container's first process,
+   `std.quic`'s first piece, measured, and the archive read on demand.
+10. **A service shown end to end**, last, by the maintainer's word of
+    2026-11-23: every row at or under Go's is the promise kept first.
 
 Beside the order, wherever a piece leaves a wait: the tests that fail now
 and then, when they show; the heap's checks on musl and macOS after
@@ -121,13 +124,48 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 | A part stored into a value that leaves its function, copied out where it leaves (logstat) | 2026-11-19 | With the views |
 | Texts' counts at direct sites, first of the tightening; a text's header at 16 bytes | 2026-11-19 | [speed plan](speed.md), Phase K |
 | The inliner weighing a call by what inlining buys | 2026-11-20 | Reopens `trim` |
-| An archive read on demand. Today `archive.open` reads the whole file, inflates every entry of a zip and the whole stream of a `tar.gz` or `tar.zst`, and holds twice what it inflates: 2 GiB for a megabyte made for it. It is to take the index alone, a zip's and a plain tar's by reads at an offset and a compressed tar's by one pass that keeps the headers; inflate an entry when it is read, up to 128 MiB when read whole; write each entry as it inflates it in `extract`, up to 8 GiB and a million entries; and give an entry as a stream with `Archive.reader(name)`. With few allocations, as every reading on demand: an entry's stream fills the caller's buffer, and its cases and a row against Go count them | 2026-11-22 | After the inliner's weighing; `crates/tondo/std/archive.to` |
+| An archive read on demand. Today `archive.open` reads the whole file, inflates every entry of a zip and the whole stream of a `tar.gz` or `tar.zst`, and holds twice what it inflates: 2 GiB for a megabyte made for it. It is to take the index alone, a zip's and a plain tar's by reads at an offset and a compressed tar's by one pass that keeps the headers; inflate an entry when it is read, up to 128 MiB when read whole; write each entry as it inflates it in `extract`, up to 8 GiB and a million entries; and give an entry as a stream with `Archive.reader(name)`. With few allocations, as every reading on demand: an entry's stream fills the caller's buffer, and its cases and a row against Go count them | 2026-11-22 | After all of the speed work, by the maintainer's word of 2026-11-23 (step 9); `crates/tondo/std/archive.to` |
 | A process's `output()` and `wait()` wholly on the poller, its pipes and the child's end, which takes out the reader that outlives its call and what keeps it safe | 2026-11-22 | `crates/tondo-runtime/src/process.rs` |
 | An array of tasks waited for as one wait | 2026-11-20 | |
 | `parallel for` and `.parallel()` in a chain, after the three above | 2026-11-20 | README, Status |
 | Phase K: regions tightened, the alignment of loops' heads, and the rows whose time moves by a fifth with where their code lies | 2026-11-18 | [speed plan](speed.md), Phase K |
 | gRPC's client on the workers' poller; what still uses tokio: hyper's timer, the server's timeouts, the WebSocket client | 2026-11-10 | [speed plan](speed.md), H2, steps 10 and 11 |
 | One debugger session for `tondo dap` and `tondo debug`; text conversions on the runtime's hot paths; YAML's scanner | 2026-11-09 | [speed plan](speed.md), I1, I2, I3 |
+
+## The optimizer's program
+
+The maintainer's list of 2026-11-14, with what the compiler does of each
+today, read on 2026-11-23 from the passes' own headers, the generator's
+rules marked `Tondo:` and the rows, and what is left to try. A technique
+is tried on the rows, measured by the whole rule, and its numbers are
+kept in [decisions](decisions.md) whether it stays or not.
+
+| Technique | Today | Left to try | With |
+| --- | --- | --- | --- |
+| Inlining | Small functions, by a cost of 31 and three rounds, and a copy of a function for the `fn` value it is given (`inline.rs`) | The weighing by trial; a profile deciding | Step 2, PGO |
+| Escape analysis, the frame | Texts and closures in the frame (`stack.rs`); what a function makes and lets go, in a region (`regions.rs`); records, tuples and enums as a local for each field (`split.rs`) | Collections that start in the frame and move out when they grow; what a region cannot take, by the rows | Steps 3 to 7 |
+| Tail calls | None | The maintainer's decision first: whether a call in tail position reuses its frame always, on request or never, and what a stack and a `defer` show then | A question for him |
+| Constants folded and passed on | The generator's; a closure's captures that are one constant wherever it is made (`captured.rs`); the ranges of integers (`prove.rs`) | A parameter that every call gives the same value, in a function that is not opened | Step 8 |
+| Dead code | The generator's; a value read only by tests already decided is not made (`thread.rs`); checks proven never to fail (`prove.rs`) | Nothing known: a row decides | |
+| Common subexpressions | The generator's | A length or a field read twice across a call the MIR can see through | Step 8 |
+| Strength reduction | A division or a remainder by a power of two as a shift or a mask where the dividend is proven not negative; a product by 3, 5 or 9 as one `lea` | An index times a size as a sum that grows with the loop; more divisors | Step 8 |
+| SIMD | `Vector[T]` at each processor's width up to 256 bits; the arithmetic of float arrays | A plain loop over an array made of vectors by the compiler; 512 bits | Step 8 |
+| Instruction scheduling | None | Not proposed, as processors reorder: only if a row shows it | |
+| Loop unrolling | A counted loop with a short body, four turns at a time (`unroll.rs`) | When and by how much, by the rows; a loop of a small constant count opened whole | Step 8 |
+| Invariants out of loops | The generator's; the length a loop reads each turn (`hoist.rs`) | The checks and the reads of fields a loop keeps | Steps 3, 8 |
+| Loop fusion | A lazy chain, opened, is one loop with no array between | The eager chain, which still builds its arrays, in regions | Step 3 |
+| Loop interchange | None | Inside `Tensor`'s own code, by its rows | Step 8 |
+| Loop unswitching | The checks `prove` drops from a loop | A test that does not change in a loop, taken out with a loop for each side | Step 8 |
+| If-conversion | None of its own in the MIR; what the generator makes of a branch has not been read | Measured first on the rows whose branches miss: the chars rows, the chain's arm | Step 3 |
+| Alignment and layout | Measured, with `--layouts` and `TONDO_LAYOUT_SEED`; nothing decided | The alignment of loops' heads; the functions' order by what calls what | Step 7 |
+| Profile-guided optimization | None | A profile deciding what is opened, where code lies and which side is cold, when the others stop paying | Step 8, last |
+| Link-time optimization | A program and the standard library compile as one; the runtime is linked as it was built | The runtime's small functions opened in the program's code, texts' counts first | Step 7 |
+| Block placement | The calls of a panic and of an error are cold blocks, after the others | By a profile | PGO |
+| Pairs of counts removed | An owner's reference taken, lent or borrowed where it was counted (`moves.rs`, `lends.rs`, `borrowed.rs`, `takes.rs`) | Texts' counts at direct sites | Step 7 |
+| A value with one owner changed in place | A parameter the function takes (`takes.rs`) | A map copied whole at each write in a loop over it | Step 4 |
+| Short texts without the heap | Up to seven bytes | Texts that share another's bytes | Step 5 |
+| Texts searched with vectors | The runtime's searches, through `memchr` | Validating UTF-8, `split`, a letter's case: by the texts' rows | Step 4 |
+| A `match` on texts as a table | Not read in the code yet | Read first, then a row | Step 8 |
 
 ## The library, decided and not done
 
