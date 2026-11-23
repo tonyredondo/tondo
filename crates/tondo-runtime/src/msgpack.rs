@@ -322,7 +322,7 @@ pub extern "C" fn tondo_rt_msgpack_parse(
     let mut error = None;
     if deepest > CEILING {
         let ceiling = crate::limits::above_ceiling("MessagePackLimits", deepest as u64, CEILING as u64);
-        error = Some((ceiling, "$".to_string()));
+        error = Some((ceiling, String::new()));
     } else if input.is_empty() {
         error = Some(("the input is empty".to_string(), "$".to_string()));
     }

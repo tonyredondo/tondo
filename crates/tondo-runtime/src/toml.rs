@@ -59,7 +59,7 @@ pub unsafe extern "C" fn tondo_rt_toml_parse(
     let mut error = None;
     if deepest > CEILING {
         let ceiling = crate::limits::above_parser("TomlLimits", deepest as u64, CEILING as u64);
-        error = Some((ceiling, 0, "$".to_string()));
+        error = Some((ceiling, usize::MAX, String::new()));
     } else {
         match toml_edit::Document::parse(source) {
             Ok(document) => {
@@ -286,8 +286,10 @@ pub extern "C" fn tondo_rt_toml_where(
     let reader = reader.lock().unwrap_or_else(|e| e.into_inner());
     let Some((message, at, path)) = &reader.error else { return crate::strings::str_in(region, b"") };
     let before = &reader.source[..(*at).min(reader.source.len())];
-    let line = before.matches('\n').count() + 1;
-    let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+    // A refusal before anything was read has no place.
+    let nowhere = *at == usize::MAX;
+    let line = if nowhere { 0 } else { before.matches('\n').count() + 1 };
+    let column = if nowhere { 0 } else { before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1 };
     let shown = match part {
         0 => message.clone(),
         1 => path.clone(),

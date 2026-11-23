@@ -372,7 +372,9 @@ pub unsafe extern "C" fn tondo_rt_pb_reader(
     let (input, deepest) = (unsafe { array_items::<u8>(bytes) }.to_vec(), deepest.max(0) as usize);
     let error =
         (deepest > CEILING).then(|| crate::limits::above_ceiling("ProtobufLimits", deepest as u64, CEILING as u64));
-    let reader = Reader { input, position: 0, bounds: Vec::new(), number: 0, wire: 0, start: 0, error, deepest };
+    // A refusal before anything was read has no place: `offset` gives -1.
+    let start = if error.is_some() { usize::MAX } else { 0 };
+    let reader = Reader { input, position: 0, bounds: Vec::new(), number: 0, wire: 0, start, error, deepest };
     native::new_in(region, Mutex::new(reader))
 }
 

@@ -600,12 +600,15 @@ pub fn Reader.jsonList(self, name: String): __json.Value ! ProtobufError {
 }
 
 fn Reader.error(self, name: String): ProtobufError {
+    // A refusal before anything was read, as a bound above its ceiling,
+    // has no place.
+    let at = pbNative.offset(self.native)
     serialization.Error {
         kind: serialization.ErrorKind.Syntax
         message: pbNative.error(self.native)
-        path: if name.isEmpty() { "$" } else { "$.{name}" }
+        path: if at < 0 { "" } else if name.isEmpty() { "$" } else { "$.{name}" }
         line: 0
-        column: pbNative.offset(self.native)
+        column: if at < 0 { 0 } else { at }
         violations: []
     }
 }

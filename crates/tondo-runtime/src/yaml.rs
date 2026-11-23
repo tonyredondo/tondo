@@ -531,7 +531,7 @@ pub unsafe extern "C" fn tondo_rt_yaml_parse(
         true => {
             let mut ceiling = crate::limits::above_ceiling("YamlLimits", deepest as u64, CEILING as u64);
             ceiling.push_str(", and 255 in flow style");
-            (Vec::new(), Some((ceiling, "$".to_string(), 0, 0)))
+            (Vec::new(), Some((ceiling, String::new(), 0, 0)))
         }
         false => documents(&text(source), deepest),
     };

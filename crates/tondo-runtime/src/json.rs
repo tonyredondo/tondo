@@ -14,6 +14,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// measure of 2026-11-22, more than a release build's 1312, rounded down.
 const CEILING: usize = 2300;
 
+/// Where an error is that nothing read gave, as a bound above its ceiling:
+/// no path, line or column.
+const NOWHERE: usize = usize::MAX;
+
 /// Events, as `next()` returns them.
 const END: i64 = 0;
 const NULL: i64 = 1;
@@ -235,7 +239,7 @@ impl Reader {
         (frames, text, keys, key_ends): (Vec<Frame>, String, String, Vec<usize>),
     ) -> Reader {
         let error = (deepest > CEILING)
-            .then(|| (crate::limits::above_ceiling("JsonLimits", deepest as u64, CEILING as u64), 0));
+            .then(|| (crate::limits::above_ceiling("JsonLimits", deepest as u64, CEILING as u64), NOWHERE));
         Reader {
             input,
             offset: 0,
@@ -902,9 +906,10 @@ pub unsafe extern "C" fn tondo_rt_json_where(
 ) -> *mut Str {
     let r = reader(object);
     let offset = r.error.as_ref().map_or(r.offset + r.position, |(_, at)| *at);
-    let (line, column) = r.line_column(offset);
+    let (line, column) = if offset == NOWHERE { (0, 0) } else { r.line_column(offset) };
     let text = match which {
         0 => r.error.as_ref().map_or(String::new(), |(message, _)| message.clone()),
+        1 if offset == NOWHERE => String::new(),
         1 => r.path(),
         2 => line.to_string(),
         _ => column.to_string(),

@@ -375,7 +375,7 @@ pub extern "C" fn tondo_rt_cbor_parse(
     let (frames, events) = (Vec::with_capacity(8), Vec::with_capacity(16));
     let mut decoder = Decoder { input, at: 0, frames, events, deepest };
     let mut error = if deepest > CEILING {
-        Some((crate::limits::above_ceiling("CborLimits", deepest as u64, CEILING as u64), "$".to_string()))
+        Some((crate::limits::above_ceiling("CborLimits", deepest as u64, CEILING as u64), String::new()))
     } else if input.is_empty() {
         Some(("the input is empty".to_string(), "$".to_string()))
     } else {

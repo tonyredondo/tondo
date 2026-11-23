@@ -277,11 +277,26 @@ impl Display for Violation {
 /// is none, as for what could not be written.
 impl Display for Error {
     fn display(self): String {
-        if self.line == 0 {
-            return "{self.message} at {self.path}"
+        // A refusal before anything was read, as a bound above its ceiling.
+        if self.path.isEmpty() {
+            return self.message
         }
-        "{self.message} at {self.path} (line {self.line}, column {self.column})"
+        let path = shortened(self.path)
+        if self.line == 0 {
+            return "{self.message} at {path}"
+        }
+        "{self.message} at {path} (line {self.line}, column {self.column})"
     }
+}
+
+/// A path as a line of a log shows it: one past 64 characters, as a
+/// document nested deep gives, cut in its middle.
+fn shortened(path: String): String {
+    let count = path.length()
+    if count <= 64 {
+        return path
+    }
+    "{path.slice(0, 32) ?? ""}…{path.slice(count - 24, count) ?? ""}"
 }
 
 // ---------------------------------------------------------------------------
