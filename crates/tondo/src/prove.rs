@@ -548,12 +548,30 @@ impl Prover<'_> {
         entry[0] = Some(Facts::default());
         let mut turns = vec![0u32; count];
         let mut reaching: Vec<HashMap<usize, Option<Facts>>> = vec![HashMap::new(); count];
+        // A way into a loop's head from a block before it in the order
+        // comes from outside the loop. What came that way last, with which a
+        // head counts its turns again: code before a loop that has not
+        // settled would otherwise have the loop widen its facts before they
+        // had, and lose what holds of them (a counter that starts at one is
+        // never negative) for every round after. It still ends: what reaches
+        // a head from before its loop changes only when the blocks before it
+        // do, the code before the outermost loop first, then the heads of the
+        // loops around it, each of which, past its own last count, only loses
+        // facts; so a head counts again a bounded number of times, and
+        // widens as before past the last.
+        let mut position = vec![usize::MAX; count];
+        order.iter().enumerate().for_each(|(at, &block)| position[block] = at);
+        let mut outside: Vec<Option<Option<Facts>>> = vec![None; count];
         let mut changed = true;
         let mut rounds = 0;
         while changed {
             changed = false;
             rounds += 1;
             if rounds > 40 {
+                crate::mir_text::note(self.body, "prove", || {
+                    let lost = if pins.is_empty() { "nothing is proven" } else { "the bounds of sums are left out" };
+                    format!("the facts at the heads of loops did not settle in 40 rounds: {lost}")
+                });
                 return None;
             }
             for &block in order {
@@ -564,6 +582,21 @@ impl Prover<'_> {
                             None => facts.clone(),
                             Some(joined) => joined.join(facts),
                         });
+                    }
+                    if heads[block] {
+                        let mut before: Option<Facts> = None;
+                        for (from, facts) in &reaching[block] {
+                            if let Some(facts) = facts.as_ref().filter(|_| position[*from] < position[block]) {
+                                before = Some(match before {
+                                    None => facts.clone(),
+                                    Some(before) => before.join(facts),
+                                });
+                            }
+                        }
+                        if outside[block].as_ref() != Some(&before) {
+                            outside[block] = Some(before);
+                            turns[block] = 0;
+                        }
                     }
                     let mut joined = match (&entry[block], joined) {
                         (Some(old), Some(new)) if heads[block] && turns[block] >= 2 => Some(old.widen(&new)),

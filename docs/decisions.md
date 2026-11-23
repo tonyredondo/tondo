@@ -10015,3 +10015,64 @@ that passes; a cleared local holds zeros again, as does what a callee
 that panicked was to give (`UnwindingOwn`); and a frame that comes from
 the old code at a point brings, of the locals live there, those the
 function itself may have there.
+
+## A loop's head widens on what reaches it from before the loop, settled
+
+prove learns the bounds of a function's integers by going over its blocks
+until what it knows at each one settles. At the head of a loop it widens
+from the third turn on: it keeps only the facts the last turn did not
+weaken, so that a counter that goes up does not take a round for each of
+its values. The turns were counted from the first, whatever had come into
+the loop from before it then. When the code before the loop had not
+settled yet, as another loop whose sum is still read after it, the head
+counted its turns on what it had been given early, widened, and lost for
+every round after what the settled code gives it: a counter that starts
+at one is never negative.
+
+A head now counts its turns again when what reaches it from before its
+loop changes. A way into a head from a block before it in the order of
+the blocks comes from outside its loop. It still ends: what reaches a head
+from before its loop changes only when the blocks before it do, the code
+before the outermost loop first, then the heads of the loops around it,
+each of which, past its own last count, only loses facts; so a head counts
+again a bounded number of times, and widens as before past the last. The
+limit of 40 rounds is unchanged: past it a function proves nothing, and
+the second pass, with the bounds of sums, keeps the first's facts. The
+dump of the MIR says so (`TONDO_DUMP_MIR`), and `prove_unsettled.to`, fifty
+loops one inside the other, holds that such a function is still right and
+proves nothing.
+
+How it was found: decision 229 asked which commit moved `collatz 10000`,
+15,373,496 instructions at 8044d9ff to 16,233,133. It was 662246a4, which has a benchmark
+give its answer and its test assert it: `sum 1000000`'s total, before it
+in the same test, is now read after its loop, which settles later, and
+collatz's loops in the test lost that their `n` is never negative, so `n %
+2` and `n / 2` kept their signed forms. `prove_loop_behind_loop.to` has
+that shape in a program: a sum read at the end, then collatz's loops, with
+the mask and the shift that the compiler of 03c77299 does not make.
+
+Over the benchmarks' tests and the examples' tests the change only adds
+proofs, and no remark is lost: collatz's mask and shift now also in
+`test loops`, and `shuffled`'s two divisions now also in `test arrays`.
+The most rounds a function takes go from 12 to 19, and the mean from 3.41
+to 3.67. prove has no way to keep a check it drops as an assertion, so the
+proofs it adds are held by the answers of the cases, the benchmarks and
+the examples' tests, in every mode of the cases.
+
+Measured against the release compiler of 03c77299, with the whole rule
+and four orders of the functions: `collatz 10000` makes 14.53M
+instructions where it made 16.23M, 10.5% fewer, and 5.5% fewer than the
+table's 15.37M; its time, 784.5 to 887.8 µs over the four orders, is 3%
+faster past every order, and Go's row is 981 µs and 8.86M instructions.
+No other row moved by more than 0.4% in instructions, and every test
+passed on both sides. `sortedBy 10000` reads 5.8% slower in time past
+every order, at 0.3% fewer instructions and 5.2% more cycles: its
+`mergeSort[(Int, Order)]` is the change's, 64 to 67 instructions shorter
+in each of its three copies, so not where the code lies, and why fewer
+instructions take more cycles there is still to find. At 1.39 ms the row
+stays far under Go's 3.89 ms. prove's remarks over every case of
+`tests/cases/run` on both sides were not compared, nor this row on each
+side alone. Six of the twelve programs are smaller, by up to 0.21%,
+and none is larger. Compiling is the same: no row of `bench/compile.to
+--old` moved by more than 5%, the most being `server`'s build, 1.4% more
+instructions, and `--guard` passes.

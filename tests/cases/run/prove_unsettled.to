@@ -1,0 +1,116 @@
+import std.console
+
+// Loops nested deeper than the prover follows within its rounds: it
+// gives up on the function, proves nothing there, and the program is
+// still right. `x / 2` keeps its sign, as it would not under fewer loops.
+
+fn main() {
+    var count = 0
+    for _ in 0..1 {
+        for _ in 0..1 {
+            for _ in 0..1 {
+                for _ in 0..1 {
+                    for _ in 0..1 {
+                        for _ in 0..1 {
+                            for _ in 0..1 {
+                                for _ in 0..1 {
+                                    for _ in 0..1 {
+                                        for _ in 0..1 {
+                                            for _ in 0..1 {
+                                                for _ in 0..1 {
+                                                    for _ in 0..1 {
+                                                        for _ in 0..1 {
+                                                            for _ in 0..1 {
+                                                                for _ in 0..1 {
+                                                                    for _ in 0..1 {
+                                                                        for _ in 0..1 {
+                                                                            for _ in 0..1 {
+                                                                                for _ in 0..1 {
+                                                                                    for _ in 0..1 {
+                                                                                        for _ in 0..1 {
+                                                                                            for _ in 0..1 {
+                                                                                                for _ in 0..1 {
+                                                                                                    for _ in 0..1 {
+                                                                                                        for _ in 0..1 {
+                                                                                                            for _ in 0..1 {
+                                                                                                                for _ in 0..1 {
+                                                                                                                    for _ in 0..1 {
+                                                                                                                        for _ in 0..1 {
+                                                                                                                            for _ in 0..1 {
+                                                                                                                                for _ in 0..1 {
+                                                                                                                                    for _ in 0..1 {
+                                                                                                                                        for _ in 0..1 {
+                                                                                                                                            for _ in 0..1 {
+                                                                                                                                                for _ in 0..1 {
+                                                                                                                                                    for _ in 0..1 {
+                                                                                                                                                        for _ in 0..1 {
+                                                                                                                                                            for _ in 0..1 {
+                                                                                                                                                                for _ in 0..1 {
+                                                                                                                                                                    for _ in 0..1 {
+                                                                                                                                                                        for _ in 0..1 {
+                                                                                                                                                                            for _ in 0..1 {
+                                                                                                                                                                                for _ in 0..1 {
+                                                                                                                                                                                    for _ in 0..1 {
+                                                                                                                                                                                        for _ in 0..1 {
+                                                                                                                                                                                            for _ in 0..1 {
+                                                                                                                                                                                                for _ in 0..1 {
+                                                                                                                                                                                                    for _ in 0..1 {
+                                                                                                                                                                                                        for _ in 0..1 {
+                                                                                                                                                                                                            for x in 0..5 {
+                                                                                                                                                                                                                count += x / 2
+                                                                                                                                                                                                            }
+                                                                                                                                                                                                        }
+                                                                                                                                                                                                    }
+                                                                                                                                                                                                }
+                                                                                                                                                                                            }
+                                                                                                                                                                                        }
+                                                                                                                                                                                    }
+                                                                                                                                                                                }
+                                                                                                                                                                            }
+                                                                                                                                                                        }
+                                                                                                                                                                    }
+                                                                                                                                                                }
+                                                                                                                                                            }
+                                                                                                                                                        }
+                                                                                                                                                    }
+                                                                                                                                                }
+                                                                                                                                            }
+                                                                                                                                        }
+                                                                                                                                    }
+                                                                                                                                }
+                                                                                                                            }
+                                                                                                                        }
+                                                                                                                    }
+                                                                                                                }
+                                                                                                            }
+                                                                                                        }
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    console.println("{count}")
+}
+
+// expect-stdout: 4
+// expect-no-optimization: 60:218 arithmetic is a shift or a mask

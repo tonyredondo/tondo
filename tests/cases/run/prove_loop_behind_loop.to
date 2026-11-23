@@ -1,0 +1,26 @@
+import std.console
+
+// A counter that starts at one is never negative, and a loop behind
+// another still knows it: the head of a loop does not widen what it knows
+// while what reaches it from before the loop changes, so `n % 2` and
+// `n / 2` are a mask and a shift even after a loop that settles late.
+
+fn main() {
+    var total = 0
+    for i in 0..1_000 {
+        total += i
+    }
+    var steps = 0
+    for start in 1..1_000 {
+        var n = start
+        for n != 1 {
+            n = if n % 2 == 0 { n / 2 } else { 3 * n + 1 }
+            steps += 1
+        }
+    }
+    console.println("{total} {steps}")
+}
+
+// expect-stdout: 499500 59431
+// expect-optimization: 17:20 arithmetic is a shift or a mask
+// expect-optimization: 17:33 arithmetic is a shift or a mask
