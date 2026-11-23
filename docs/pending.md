@@ -41,10 +41,10 @@ before the chain's rest because the chain's adapters wait for it too.
    calls wait for. The weighing is by trial, as the maintainer asked on
    2026-11-23: the budget is a ceiling, a call past today's 31 is opened
    and kept only where the passes after it make something of it, and left
-   as it was where they do not. Before it is measured, in this order: the
-   MIR's check of a read after a release, run over everything (Owed now);
-   then `thread` following copies, measured again from nothing, as one of
-   the trial's rules reads what `thread` decides.
+   as it was where they do not. Before it is measured, `thread` following
+   copies is measured again from nothing, as one of the trial's rules reads
+   what `thread` decides; and before either, what the Nightly's jobs under
+   emulation showed (step 1).
 3. **What the maintainer said yes to on 2026-11-23**, after the inliner by
    his word: the orphans of a program that is a container's first process,
    a small piece; then `std.quic`'s first piece, measured, which says what
@@ -85,7 +85,6 @@ manual's unheld quotes and listings.
 | The readers of bytes or text from outside that have no search in the Nightly, two lots left of three. The first is in: a GraphQL document, the forms of a request, its cookies and a query's parts, and it found three ways for a document of GraphQL to end a server, mended with it. Left: the images' decoders and their EXIF, certificates and keys in PEM and DER, and CSV; then the decoders of `std.encoding`, a UUID, the parsers of dates and durations, the streams of gzip and zstd, and gRPC's frames; MySQL's packets last, as no public call reaches their reader. Each search runs some minutes before it lands, and what it finds is mended with it | 2026-11-22 | `testing/fuzz` |
 | Eight of the Nightly's searches change their input blind: what they try is the runtime's own code, of which the search's coverage sees nothing. They are the ones of JSON, YAML, TOML, MessagePack, CBOR, protobuf, the regex and a request's form in parts; the images' decoders and the inflaters, which have none yet, would be the same. A runtime built for `--fuzz` with the sanitizer's counters over its Rust, read by the search beside its own, gives all of them eyes at once: a piece of days, after the inliner's weighing. Until then each such search says in its own comment that it is blind | 2026-11-22 | `testing/fuzz`; `crates/tondo/build.rs` |
 | The reader of a request's form in parts written in Tondo, on its own merits: measured against the runtime's at a megabyte first | 2026-11-22 | `httpNative.requestForm` |
-| The check of the MIR for a read of a counted local after its release, after every pass. On 2026-11-23 a debug build ran to its end a change to `thread` that read a released local, and the row of that code passed as 74% fewer instructions while it printed 0 for 12. What `thread` knew of a local that a release should have ended is mended, with its case; before the mend no program made main's own build go wrong, in nine shapes tried, and nothing but how lowering writes each of them today kept it so. The check is written and stops that change at the pass that writes the read: it is to land and run over the cases, the benchmarks and the examples, and what it finds is mended before `thread` follows copies again | 2026-11-23 | `crates/tondo/src/verify.rs`; the case `tests/cases/run/released_payload.to` |
 
 ## Rows behind Go
 
