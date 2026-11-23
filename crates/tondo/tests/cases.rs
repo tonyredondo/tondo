@@ -199,8 +199,17 @@ fn run_case(path: &Path, scratch: &Path, extra: &[String]) -> Result<(), String>
     }
     // Long enough for a debug build of `tondo` under an emulator, where a
     // case that uses much of the standard library takes minutes: a build
-    // that hangs names its case.
-    let build = run_with_timeout(&mut build, 1200, &[]).map_err(|e| format!("its build: {e}"))?;
+    // that hangs names its case. An emulator's job sets its own limit from
+    // what it measured, and is told each build that took minutes.
+    let limit = std::env::var("TONDO_CASES_BUILD_LIMIT").ok().and_then(|limit| limit.parse().ok()).unwrap_or(1200);
+    let started = std::time::Instant::now();
+    let build = run_with_timeout(&mut build, limit, &[]).map_err(|e| format!("its build: {e}"))?;
+    let took = started.elapsed().as_secs();
+    if took >= 120 {
+        use std::io::Write;
+        let mode = scratch.file_name().map_or(String::new(), |mode| mode.to_string_lossy().into_owned());
+        let _ = writeln!(std::io::stderr(), "{mode}: the build of {} took {took} s", path.display());
+    }
     let diagnostics = String::from_utf8_lossy(&build.stderr);
     let matches = |line: &str, severity: &str, expected: &str| {
         let (code, text) = expected.split_once(' ').unwrap_or((expected, ""));
@@ -750,16 +759,33 @@ fn run_all(mut paths: Vec<PathBuf>, name: &str, extra: &[String]) {
 
     let workers = std::thread::available_parallelism().map_or(4, |n| n.get());
     let chunks: Vec<&[PathBuf]> = paths.chunks(paths.len().div_ceil(workers)).collect();
+    // Where a run that takes minutes is, as under an emulator, for whoever
+    // reads its log: every 50 cases or five minutes, once five have passed.
+    let (started, done) = (std::time::Instant::now(), std::sync::atomic::AtomicUsize::new(0));
+    let said = std::sync::Mutex::new(std::time::Duration::ZERO);
+    let progress = || {
+        let done = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let elapsed = started.elapsed();
+        let mut said = said.lock().unwrap_or_else(|e| e.into_inner());
+        let due = done % 50 == 0 || elapsed - *said >= std::time::Duration::from_secs(300);
+        if elapsed >= std::time::Duration::from_secs(300) && due {
+            *said = elapsed;
+            let _ = writeln!(std::io::stderr(), "{name}: {done} of {}, {} min", paths.len(), elapsed.as_secs() / 60);
+        }
+    };
     let failures: Vec<String> = std::thread::scope(|scope| {
         let handles: Vec<_> = chunks
             .iter()
             .map(|chunk| {
-                let scratch = &scratch;
+                let (scratch, progress) = (&scratch, &progress);
                 scope.spawn(move || {
                     chunk
                         .iter()
                         .filter_map(|path| {
-                            run_case(path, scratch, extra).err().map(|e| format!("{}: {e}", path.display()))
+                            let failed =
+                                run_case(path, scratch, extra).err().map(|e| format!("{}: {e}", path.display()));
+                            progress();
+                            failed
                         })
                         .collect::<Vec<_>>()
                 })
