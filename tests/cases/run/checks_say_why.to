@@ -4,6 +4,16 @@ import std.console
 // bounds, and from which side; a difference grows as what it takes away
 // falls.
 
+fn steps(start: Int): Int {
+    var count = 0
+    var x = start
+    for x > 1 {
+        x = if x % 2 == 0 { x / 2 } else { x * 3 + 1 }
+        count += 1
+    }
+    count
+}
+
 fn letters(text: String): Int {
     var count = 0
     for c in text.chars() {
@@ -31,10 +41,11 @@ fn widest(words: Array[Int]): Int {
 }
 
 fn main() {
-    console.println("{letters("ab1")} {total(["1", "2"])} {widest([5, 300])}")
+    console.println("{steps(6)} {letters("ab1")} {total(["1", "2"])} {widest([5, 300])}")
 }
 
-// expect-stdout: 2 3 9
-// expect-optimization: 11:13 checked keeps its overflow check, in a loop: nothing bounds `count` from above
-// expect-optimization: 20:9 checked nothing bounds `sum` from above, nor what is added from above
-// expect-optimization: 28:25 checked nothing bounds what is taken away from below
+// expect-stdout: 8 2 3 9
+// expect-optimization: 12:9 checked keeps its overflow check, in a loop: nothing bounds `count` from above
+// expect-optimization: 21:13 unchecked cannot overflow: no check
+// expect-optimization: 30:9 checked nothing bounds `sum` from above, nor what is added from above
+// expect-optimization: 38:25 checked nothing bounds what is taken away from below
