@@ -458,7 +458,7 @@ suite edges {
     }
 
     test isMeasured {
-        testing.bench("double", () => double(21))?
+        assert(testing.bench("double", () => double(21)) == 42)
     }
 
     test holdsForAnyInput {

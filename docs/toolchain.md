@@ -133,7 +133,8 @@ test countsEachWord {
 
 test counting {
     let text = "to be or not to be ".repeat(100)
-    testing.bench("count 600 words", () => count(text))?
+    let counts = testing.bench("count 600 words", () => count(text))
+    assert(counts["to"] == 200)
 }
 ```
 
@@ -268,8 +269,10 @@ models` goes through them.
 
 ## Benchmarks
 
-A test that calls `testing.bench` is a benchmark. A plain `tondo test` runs
-it once, so it cannot rot, and `--bench` measures it:
+A test that calls `testing.bench` is a benchmark. `bench` gives what its
+closure gave, for the test to check: code that gets faster because it
+stopped doing its work fails, where it would have read as a gain. A plain
+`tondo test` runs it once, so it cannot rot, and `--bench` measures it:
 
 ```text
 tondo test --bench                       time, spread, allocations, bytes and instructions

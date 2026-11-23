@@ -34,7 +34,7 @@ test everyThingIsCounted {
     var seen: Map[String, Int] = [:]
     tally(var seen, lines)
     assert(seen["thing 3 at 15"] == 10)
-    testing.bench("tally", () => tally(var seen, lines))?
+    testing.bench("tally", () => tally(var seen, lines))
 }
 ```
 

@@ -112,7 +112,8 @@ test anyTextIsAnEventOrSaysWhy {
 }
 
 test applying {
-    testing.bench("apply", () => apply(fresh(), Event.Pay))?
+    let order = testing.bench("apply", () => apply(fresh(), Event.Pay))?
+    assert(order.paid)
 }
 
 test payAndCancelAtOnce {
@@ -279,7 +280,9 @@ test {"bench": true, "bench_time": 1}
   error path, a branch. A line no test runs is a question, not a target:
   test it, or ask why it is there.
 - **Benchmarks** beside the tests of the code they measure; `test` runs each
-  once, so they cannot rot. `bench` with `save_baseline` keeps a measure, and
+  once, so they cannot rot. Each asserts what `testing.bench` gives, its
+  closure's value, so that code a change broke does not measure as faster.
+  `bench` with `save_baseline` keeps a measure, and
   `against` with `max_regression` fails a change that slows it.
   `tondo guide runbook-performance`.
 

@@ -69,12 +69,18 @@ It wrote, in the project's tests:
 // From a dump of the program as it ran
 test benchIsPrime {
     let number = 2147483647
-    testing.bench("isPrime", () => isPrime(number))
+    // What `isPrime` gives is not checked: hold it with `assert(testing.bench(...) == ...)`
+    _ = testing.bench("isPrime", () => isPrime(number))
 }
 ```
 
 That benchmark is the slow call, to measure before and after a change,
-without the program around it.
+without the program around it. It discards what the call gives, as the
+tool cannot know that the call gives the same the next time. Write the
+check its comment names before trusting a row of it: `testing.bench` gives
+what its closure gave, and a benchmark that asserts it fails when a change
+makes the code faster by no longer doing its work
+([Testing](../language/16-testing.md#benchmarks)).
 
 A [recording](debugging.md#backwards-a-recorded-run) gives it too, of a
 run that has ended. `--function` names whose call to take: the one that
@@ -91,7 +97,8 @@ src/main_test.to: `benchSquares` measures `squares` with the recording's values:
 // From a recording: the call of squares at probe 44, which ran 15003 lines
 test benchSquares {
     let upTo = 5000
-    testing.bench("squares", () => squares(upTo))
+    // What `squares` gives is not checked: hold it with `assert(testing.bench(...) == ...)`
+    _ = testing.bench("squares", () => squares(upTo))
 }
 ```
 
@@ -2129,9 +2136,17 @@ allocated is in the benchmark's row and in `testing.allocations`.
   of the program's functions and of the runtime's functions and data, and
   gives the range, and only a difference beyond that range is real.
 - **A benchmark that the compiler deletes.** A result that is not used may
-  not be computed. `testing.bench` keeps what its closure gives, so the
-  work that made it is not optimized away, and `testing.keep(value)` keeps
-  a value the closure does not give.
+  not be computed. `testing.bench` keeps what each measured run of its
+  closure gives, so the work that made it is not optimized away, and
+  `testing.keep(value)` keeps a value the closure does not give.
+- **A benchmark that stopped doing its work.** Code that a change broke
+  can run faster than code that works, and its row reads as a gain.
+  `testing.bench` gives what its closure gave in a run of its own, before
+  the measured ones. Assert it, and that change fails the test:
+  `assert(testing.bench("sum", () => numbers.sum()) == 499_500)`.
+  A comparison reads no row of a test that failed. With `--compiler`, a
+  row whose test failed under the other Tondo is listed as one it has no
+  measure of, and the run fails.
 - **The first run.** `tondo test --bench` warms up before it measures, and
   `--bench-time` says for how long it then does.
 

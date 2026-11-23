@@ -325,6 +325,13 @@ test words::unit::words::countingAPage ... ok
   count     696.2 µs/op  ±34.2%  9622 allocs/op  527160 B/op  6.67M ins/op
 ```
 
+`testing.bench` gives the test what its closure gave, in a run made before
+the measured ones, and the test asserts it: a benchmark that checks its
+answer fails when a change makes the code faster by breaking it, and one
+that checks nothing gives that change a better row
+([Testing](../language/16-testing.md#benchmarks)). A comparison reads no
+row of a test that failed, on either of its sides.
+
 Time for each operation with its spread, allocations and bytes, and on
 Linux the instructions the processor ran. The time is measured with nothing
 counting: the instructions are counted in a round of their own after the

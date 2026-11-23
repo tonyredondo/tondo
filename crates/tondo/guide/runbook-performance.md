@@ -93,6 +93,9 @@ the slow call's values matter, a dump of the slow moment has them, and
 `dump_test` with `bench` writes the benchmark of that call with them. A
 recording of the run, `tondo run --record`, has them too: `dump_test` on it with
 `bench` and `function` takes the call of that function that ran the most lines.
+A benchmark asserts what `testing.bench` gives, which is what its closure gave,
+so that a change that breaks the code fails instead of measuring faster. The one
+`dump_test` writes discards it and says so: only you know what the call must give.
 
 ```sh
 tondo init
@@ -115,7 +118,7 @@ fn main() {}
 import std.testing
 
 test primes {
-    testing.bench("isPrime", () => isPrime(10007))?
+    assert(testing.bench("isPrime", () => isPrime(10007)))
 }
 ```
 

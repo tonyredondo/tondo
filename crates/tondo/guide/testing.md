@@ -125,14 +125,23 @@ import std.testing
 test parsing {
     for size in [10, 1_000] {
         let text = document(size)
-        testing.bench("parse {size}", () => json.parse(text))?
+        let parsed = testing.bench("parse {size}", () => json.parse(text))?
+        assert(json.encode(parsed) == text)
     }
 }
 ```
 
 - A test that calls `testing.bench(name, closure)` in its own body is a
   benchmark; anywhere else, in a function, a closure or a suite's setup,
-  the call is `E2006`. The call fails as the closure does: `?` passes it on.
+  the call is `E2006`.
+- It gives what the closure gave, in a run made before the measured ones.
+  Assert it: code that a change makes faster by no longer doing its work
+  then fails, where an unchecked benchmark gives it a better row. A
+  `String` that nothing checks is `W1018`.
+- A closure that cannot fail gives its value as it is,
+  `assert(testing.bench("sum", () => numbers.sum()) == 499_500)`, and a `?`
+  after it is `E1301`. One that can fail gives `T ! E`: `?` passes its
+  error on.
 - `tondo test` runs each closure once, so a benchmark that breaks fails like
   any test.
 - `tondo test --bench` runs only the benchmarks, one at a time and

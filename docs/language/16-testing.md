@@ -212,7 +212,7 @@ suite arithmetic {
 | `testing.attach(name, mediaType, bytes)` | adds a file to the report, as a screenshot or a response |
 | `testing.snapshot(name, value)` | compares a value with a recorded one |
 | `testing.withVirtualTime(...)` | runs code that sleeps, without waiting |
-| `testing.bench(name, closure)` | makes the test a benchmark |
+| `testing.bench(name, closure)` | makes the test a benchmark, and gives what the closure gave |
 | `testing.allocations(closure)` | how many times the closure allocates, on the heap and in regions, to hold a function to its count |
 | `testing.heapAllocations(closure)` | how many of those are on the heap, to hold a function off it |
 | `testing.fuzz(name, seeds, closure)` | tries the code with inputs |
@@ -350,10 +350,17 @@ type Point = { x: Int, y: Int }
 test encoding {
     for size in [10, 1_000] {
         let points = (0..size).map(n => Point { x: n, y: n * 2 }).collect()
-        testing.bench("encode {size} points", () => json.encode(points))?
+        let text = testing.bench("encode {size} points", () => json.encode(points))
+        assert(json.decode[Array[Point]](text) == ok(points))
     }
 }
 ```
+
+`bench` gives what its closure gave, and the test checks it. A benchmark
+that checks nothing passes when a change makes its code stop doing the
+work, and the row then reads as a gain. The value is the closure's own
+when the closure cannot fail, as here, and a `T ! E` when it can, for a `?`
+to pass the error on.
 
 A plain `tondo test` runs each closure once, so a benchmark that breaks
 fails like any test. `tondo test --bench` measures them, optimized: the
@@ -366,9 +373,10 @@ Linux the instructions it executes:
   count 600 words     11.86 µs/op  ±0.1%  0 allocs/op +7 in regions  0 B/op +25680 in regions  217.2k ins/op
 ```
 
-What the closure returns is kept, so the work that made it is not optimized
-away. Set up the input outside the closure, so that only what is being
-measured is inside it.
+The run whose value `bench` gives is made before the measured ones and is
+not in the row. What each measured run returns is kept, so the work that
+made it is not optimized away. Set up the input outside the closure, so
+that only what is being measured is inside it.
 
 ## Fuzzing
 

@@ -33,7 +33,7 @@ test retriesWithoutWaiting {
 }
 
 test isMeasured {
-    testing.bench("sum", () => [1, 2, 3].sum())?
+    assert(testing.bench("sum", () => [1, 2, 3].sum()) == 6)
 }
 ```
 
