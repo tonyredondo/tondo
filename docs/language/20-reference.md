@@ -420,7 +420,7 @@ fn main() {
     counter.add(1)
     state.update(values => values.push(1))
 
-    let hurried = within time.milliseconds(50) { work(4) }
+    let hurried = within time.seconds(1) { work(4) }
     let first = select {
         let value = receiver.receive() => "received {value}"
         time.sleep(time.milliseconds(1)) => "nothing"

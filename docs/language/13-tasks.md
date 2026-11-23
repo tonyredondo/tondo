@@ -511,7 +511,7 @@ fn check(host: String, delay: Int): String {
 
 fn main() {
     var group = Group[String]()
-    group.add(spawn check("slow.example", 300))
+    group.add(spawn check("slow.example", 2000))
     group.add(spawn check("fast.example", 1))
     let first = group.next()
     console.println("{first} answered first, {group.length()} still running")
@@ -538,9 +538,9 @@ fn check(host: String, delay: Int): String {
 
 fn main() {
     var group = Group[String]()
-    group.add(spawn check("slow.example", 300))
+    group.add(spawn check("slow.example", 2000))
     group.add(spawn check("fast.example", 1))
-    group.add(spawn check("mid.example", 50))
+    group.add(spawn check("mid.example", 250))
     for host in group {
         console.println("{host} answered")
         if host == "mid.example" {
@@ -933,8 +933,8 @@ import std.time
 /// Counts until it is told to stop, and never waits.
 fn count(turns: sync.Atomic[Int]) {
     for {
-        tasks.checkpoint()  // where the cancel stops it
         _ = turns.add(1)
+        tasks.checkpoint()  // where the cancel stops it
     }
 }
 
@@ -1522,7 +1522,7 @@ fn spin(done: sync.Atomic[Bool]): Int {
 fn main() {
     let done = sync.Atomic(false)
     let spinning = spawn spin(done)
-    time.sleep(time.milliseconds(20))
+    time.sleep(time.milliseconds(200))
     done.store(true)  // runs on the worker put beside the one `spin` holds
     console.println("it ended after some turns: {spinning.wait() > 0}")
 }
