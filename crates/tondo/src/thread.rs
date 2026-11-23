@@ -5,7 +5,9 @@
 //! into each way that reaches it, and there what the way knows of the
 //! tested value folds the test into a jump: the variant an enum local was
 //! given and its payload, a constant, or the local a value was copied
-//! from. A value read only by the tests it decided is then not made.
+//! from. A value made in one local and copied into the one tested, as
+//! `return some(x)` leaves it when inlined, is known through the copy. A
+//! value read only by the tests it decided is then not made.
 //!
 //! Copies keep their block's scope of inlining, so traces still name
 //! the function each line is in; a block is merged into the way before it
@@ -63,6 +65,26 @@ fn thread_one(body: &mut Body, types: &Types) {
         }
         if !wanted.iter().any(|&w| w) {
             return;
+        }
+        // What is copied whole into a local a fact is wanted about is
+        // wanted too, so that the variant it was made with is known where
+        // the copy is tested.
+        loop {
+            let mut grew = false;
+            for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
+                let Statement::Assign(place, value, _) = statement else { continue };
+                let (Some(local), Rvalue::Use(Operand::Copy(source))) = (whole(place), &**value) else { continue };
+                if let Some(source) = whole(source)
+                    && wanted[local.0 as usize]
+                    && !wanted[source.0 as usize]
+                {
+                    wanted[source.0 as usize] = true;
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
         }
         // What may change with no statement that names it, and what facts
         // are kept about.
@@ -402,8 +424,14 @@ fn learn(statement: &Statement, known: &mut HashMap<Local, Known>, changing: &[b
     let fact = match &**value {
         Rvalue::Variant(variant, components) => Some(Known::Variant(*variant, components.as_slice().into())),
         Rvalue::Use(Operand::Const(constant)) => Some(Known::Const(constant.clone())),
+        // A copy is known as what its source is known to be, or else as
+        // the copy of it.
         Rvalue::Use(Operand::Copy(source)) => {
-            whole(source).filter(|&s| s != local && !changing[s.0 as usize]).map(Known::Copy)
+            let source = whole(source).filter(|&s| s != local && !changing[s.0 as usize]);
+            match source.and_then(|s| known.get(&s)) {
+                Some(fact @ (Known::Variant(..) | Known::Const(_))) => Some(fact.clone()),
+                _ => source.map(Known::Copy),
+            }
         }
         _ => None,
     };
