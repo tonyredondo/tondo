@@ -240,10 +240,10 @@ pub(crate) trait Host: Send {
     /// From now on a `Mode::Ready` host fails with `kind` where it would
     /// block; `None` lets it block again.
     fn give_up(&mut self, _kind: Option<ErrorKind>) {}
-    /// The bound a read passed, for a host that bounds what it gives, as a
-    /// response's body: what failed it.
-    fn passed(&self) -> Option<usize> {
-        None
+    /// Whether a read went past the bound of a host that bounds what it
+    /// gives, as a response's body: what failed it.
+    fn passed(&self) -> bool {
+        false
     }
     /// Takes the file's lock, shared or not, waiting for it or not: whether
     /// it took it.
@@ -741,12 +741,12 @@ impl Shared {
     }
 }
 
-/// Runs an operation on a stream where its mode says.
-/// The bound a read of the stream passed, if its host has one.
-pub(crate) fn passed(stream: *mut StreamObject) -> Option<usize> {
-    run(stream, |s| s.host.as_ref().and_then(|host| host.passed()))
+/// Whether a read of the stream went past the bound of its host.
+pub(crate) fn passed(stream: *mut StreamObject) -> bool {
+    run(stream, |s| s.host.as_ref().is_some_and(|host| host.passed()))
 }
 
+/// Runs an operation on a stream where its mode says.
 pub(crate) fn run<R: Send + 'static>(stream: *mut StreamObject, op: impl FnMut(&mut StreamState) -> R + Send) -> R {
     run_until(stream, None, op)
 }

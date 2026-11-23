@@ -113,7 +113,7 @@ pub fn Response.json[T: __serialization.Decode](self): T ! HttpError {
     match __json.decodeFrom[T](body) {
         ok(value) => value
         err(error) => {
-            if httpNative.bodyPassed(body) >= 0 {
+            if httpNative.bodyPassed(body) {
                 fail HttpError.TooLarge(self.most)
             }
             failed(self.native)?

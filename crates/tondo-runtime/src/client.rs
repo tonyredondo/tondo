@@ -624,7 +624,7 @@ impl Client {
             version: parts.version,
             url: url.to_string(),
             headers: parts.headers,
-            body: Received { incoming: Some(incoming), decoder, deadline, connection, most: u64::MAX, read: 0 },
+            body: Received { incoming: Some(incoming), decoder, deadline, connection, room: PASSED - 1 },
         })
     }
 }
@@ -636,31 +636,54 @@ pub(crate) struct Received {
     decoder: Option<Decoder>,
     deadline: Option<Instant>,
     connection: Arc<crate::server::Turning>,
-    /// The most bytes the body may have once decoded, past which a chunk is
-    /// `too large`: `ClientLimits.maxBodyBytes`, or `Response.limitBody`'s.
-    most: u64,
-    /// How many it gave so far.
-    read: u64,
+    /// How many more bytes the body may give once decoded, of the bound its
+    /// reader gives (`ClientLimits.maxBodyBytes`, or `Response.limitBody`'s),
+    /// or `PASSED`. The reader, which knows the bound, words its failure.
+    room: u64,
 }
+
+/// `Received.room` once the body went past its bound.
+const PASSED: u64 = u64::MAX;
 
 impl Received {
     /// The body bounded to `most` bytes once decoded.
     pub(crate) fn bounded(mut self, most: u64) -> Received {
-        self.most = most;
+        self.room = most.min(PASSED - 1);
         self
+    }
+
+    /// Whether the body went past its bound.
+    pub(crate) fn passed(&self) -> bool {
+        self.room == PASSED
     }
 
     /// `bytes` given, unless they pass the bound.
     fn counted(&mut self, bytes: Bytes) -> Result<Bytes, Failure> {
-        self.read += bytes.len() as u64;
-        if self.read > self.most {
-            return Err(failed("too large", self.most.to_string()));
+        match self.room.checked_sub(bytes.len() as u64) {
+            Some(room) => {
+                self.room = room;
+                Ok(bytes)
+            }
+            None => Err(self.past()),
         }
-        Ok(bytes)
+    }
+
+    /// The failure of a body past its bound, which stays so.
+    fn past(&mut self) -> Failure {
+        self.room = PASSED;
+        failed("too large", "")
+    }
+
+    /// A failure of the decoder, which a bomb that passes the bound is.
+    fn refused(&mut self, failure: Failure) -> Failure {
+        if failure.0 == "too large" { self.past() } else { failure }
     }
 
     /// The next chunk, or none once it ended.
     pub(crate) async fn chunk(&mut self) -> Result<Option<Bytes>, Failure> {
+        if self.passed() {
+            return Err(failed("too large", ""));
+        }
         loop {
             let Some(incoming) = self.incoming.as_mut() else { return Ok(None) };
             let next = driven(&self.connection, incoming.frame());
@@ -679,22 +702,19 @@ impl Received {
                 Some(Err(error)) => return Err(failed("body", with_causes(&error))),
                 None => {
                     self.incoming = None;
-                    let rest = match self.decoder.take() {
-                        Some(decoder) => decoder.finish(self.most - self.read).map_err(|f| self.passed(f))?,
-                        None => return Ok(None),
-                    };
+                    let Some(decoder) = self.decoder.take() else { return Ok(None) };
+                    let rest = decoder.finish(self.room).map_err(|f| self.refused(f))?;
                     return Ok(Some(self.counted(rest)?).filter(|rest| !rest.is_empty()));
                 }
             };
-            let room = self.most - self.read;
-            match &mut self.decoder {
+            let room = self.room;
+            let decoded = match &mut self.decoder {
                 None => return self.counted(data).map(Some),
-                Some(decoder) => {
-                    let decoded = decoder.feed(&data, room).map_err(|f| self.passed(f))?;
-                    if !decoded.is_empty() {
-                        return self.counted(decoded).map(Some);
-                    }
-                }
+                Some(decoder) => decoder.feed(&data, room),
+            };
+            let decoded = decoded.map_err(|f| self.refused(f))?;
+            if !decoded.is_empty() {
+                return self.counted(decoded).map(Some);
             }
         }
     }
@@ -707,11 +727,6 @@ impl Received {
             (Some(incoming), None) => usize::try_from(hyper::body::Body::size_hint(incoming).exact()?).ok(),
             (None, None) => Some(0),
         }
-    }
-
-    /// A failure of the decoder, which a bomb that passes the bound is.
-    fn passed(&self, failure: Failure) -> Failure {
-        if failure.0 == "too large" { failed("too large", self.most.to_string()) } else { failure }
     }
 
     /// The whole body.

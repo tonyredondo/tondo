@@ -705,6 +705,7 @@ pub extern "C" fn tondo_rt_http_read_all(
         None if super::panics::unwinds() => std::ptr::null_mut(),
         outcome => {
             let failure = match outcome {
+                Some(Err(("too large", _))) => ("too large", most.max(0).to_string()),
                 Some(Err(failure)) => failure,
                 _ => ("protocol", "the task was cancelled".into()),
             };
@@ -717,8 +718,6 @@ pub extern "C" fn tondo_rt_http_read_all(
 /// A response's body as the host of a stream: chunks as they arrive.
 struct Chunks {
     body: Option<super::client::Received>,
-    /// The bound the body passed, which `json()` asks of the stream.
-    passed: Option<usize>,
     chunk: Bytes,
     /// Whether another read took the body before this one.
     taken: bool,
@@ -737,10 +736,9 @@ impl Host for Chunks {
                 Ok(Some(chunk)) if self.windows_1252 => self.chunk = windows_1252(&chunk).into_bytes().into(),
                 Ok(Some(chunk)) => self.chunk = chunk,
                 Ok(None) => self.body = None,
+                // `json()`, which gave the bound, asks `passed` and says it.
                 Err(failure) if failure.0 == "too large" => {
-                    let limit = failure.1.parse().unwrap_or(0);
-                    self.passed = Some(limit);
-                    return Err(crate::too_large(limit));
+                    return Err(std::io::Error::other("the body is larger than its bound"));
                 }
                 Err((_, message)) => return Err(std::io::Error::other(message)),
             }
@@ -751,8 +749,8 @@ impl Host for Chunks {
         Ok(count)
     }
 
-    fn passed(&self) -> Option<usize> {
-        self.passed
+    fn passed(&self) -> bool {
+        self.body.as_ref().is_some_and(super::client::Received::passed)
     }
 
     fn left(&self) -> Option<usize> {
@@ -767,11 +765,11 @@ impl Host for Chunks {
     }
 }
 
-/// The bound a stream of a response's body passed, as `json()` asks after a
-/// decoding that failed; -1 for none.
+/// Whether a stream of a response's body went past its bound, as `json()`
+/// asks after a decoding that failed.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_body_passed(stream: *mut StreamObject) -> i64 {
-    crate::io::passed(stream).map_or(-1, |limit| limit as i64)
+pub extern "C" fn tondo_rt_http_body_passed(stream: *mut StreamObject) -> u8 {
+    u8::from(crate::io::passed(stream))
 }
 
 /// The body as a stream of `std.io`, read as the program asks, in UTF-8
@@ -787,7 +785,7 @@ pub extern "C" fn tondo_rt_http_body(object: *mut NativeObject, windows_1252: u8
         *response.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(("body", ALREADY_READ.into()));
     }
     crate::io::stream(
-        Box::new(Chunks { body, passed: None, chunk: Bytes::new(), taken, windows_1252: windows_1252 != 0 }),
+        Box::new(Chunks { body, chunk: Bytes::new(), taken, windows_1252: windows_1252 != 0 }),
         Mode::Long,
         false,
     )

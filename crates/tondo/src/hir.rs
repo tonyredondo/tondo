@@ -2067,7 +2067,7 @@ pub const NATIVES: &[Native] = {
         http("headers", &[Object], Strings, "tondo_rt_http_headers"),
         http("readAll", &[Object, Int], Bytes, "tondo_rt_http_read_all"),
         http("body", &[Object, Bool, Int], IoReader, "tondo_rt_http_body"),
-        http("bodyPassed", &[IoReader], Int, "tondo_rt_http_body_passed"),
+        http("bodyPassed", &[IoReader], Bool, "tondo_rt_http_body_passed"),
         http("windows1252", &[Bytes], String, "tondo_rt_http_windows_1252"),
         http("wsConnect", &[String, Strings, Int], Object, "tondo_rt_http_ws_connect"),
         http("wsSend", &[Object, Bool, String, Bytes], String, "tondo_rt_http_ws_send"),
