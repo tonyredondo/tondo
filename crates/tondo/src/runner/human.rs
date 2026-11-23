@@ -244,6 +244,7 @@ impl<'a> Printer<'a> {
                     &self.baselines,
                     self.max_regression,
                     self.by_instructions,
+                    attempt.status == super::Status::Passed,
                 );
                 say!("{}", lines.trim_end());
             }
@@ -474,11 +475,23 @@ pub(super) fn report(
     if !sections.is_empty() {
         say!("\n{}", sections.join("\n"));
     }
-    if !printer.regressions.is_empty() {
+    // A row the other `tondo` has no measure of is not a regression: its
+    // test failed there, so the two did not compute the same (10.4).
+    let unmeasured = super::bench::NOT_MEASURED.trim_start();
+    let (missing, regressed): (Vec<&String>, Vec<&String>) =
+        printer.regressions.iter().partition(|regression| regression.ends_with(unmeasured));
+    if !regressed.is_empty() {
         let max = options.max_regression.unwrap_or_default() * 100.0;
         say!("\nbenchmarks that regressed beyond {max}%:");
-        for regression in &printer.regressions {
+        for regression in regressed {
             say!("  {regression}");
+        }
+    }
+    if !missing.is_empty() {
+        say!("\nbenchmarks the other tondo has no measure of, as their tests failed there:");
+        for row in missing {
+            let row = row.strip_suffix(unmeasured).unwrap_or(row).trim_end_matches([' ', ':']);
+            say!("  {row}");
         }
     }
     let tests: Vec<&Aggregate> = aggregates.iter().filter(|a| !tree.suite(a.node)).collect();

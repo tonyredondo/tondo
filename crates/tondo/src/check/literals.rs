@@ -90,6 +90,16 @@ impl<'a> Checker<'a> {
                 Self::mk(hir::ExprKind::Try(Box::new(value)), ok, span)
             }
             TyKind::Error => Self::error_expr(span),
+            // A benchmark of a body that cannot fail gives its value itself.
+            _ if Self::benchmark(&value) => {
+                let message = format!(
+                    "`testing.bench` of a body that cannot fail gives its value, {}, not `T ! E`: write it without `?`",
+                    self.display(value.ty)
+                );
+                self.diags.error("E1301", span, message);
+                self.diags.fix("write it without `?`", true, vec![(Span::new(span.end - 1, span.end), String::new())]);
+                value
+            }
             _ => {
                 let message = format!("`?` applies to `T?` or `T ! E`, not {}", self.display(value.ty));
                 self.diags.error("E1301", span, message);

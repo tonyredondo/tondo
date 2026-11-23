@@ -141,6 +141,10 @@ pub(super) fn json(
     obj(fields)
 }
 
+/// What a row compared with another `tondo` says when that one has no
+/// measure of it (10.4).
+pub(super) const NOT_MEASURED: &str = "  not compared: the other tondo has no measure of it, as its test failed there";
+
 /// The measures a run compares with, by test and benchmark, and where
 /// they come from.
 #[derive(Default)]
@@ -160,6 +164,9 @@ pub(super) struct Baselines {
     pub counted: HashMap<(String, String), (f64, f64)>,
     /// A second baseline beside `--against` or `--compiler` (10.4).
     pub since: Option<Since>,
+    /// Whether they are another `tondo`'s, which ran the same tests: a
+    /// benchmark it has no measure of is one whose test failed there.
+    pub compiler: bool,
 }
 
 /// A saved baseline each benchmark is held to beside another comparison,
@@ -492,7 +499,15 @@ pub(super) fn read_baseline(path: &Path) -> Result<Baselines, String> {
         ("cpu", str(machine("cpu"))),
         ("load", busy.map_or(Value::Null, |(load, _)| decimal(load))),
     ]);
-    Ok(Baselines { measures, source: Some(source), busy, code: Vec::new(), counted: HashMap::new(), since: None })
+    Ok(Baselines {
+        measures,
+        source: Some(source),
+        busy,
+        code: Vec::new(),
+        counted: HashMap::new(),
+        since: None,
+        compiler: false,
+    })
 }
 
 /// Where benchmarks ran, as people read it.
@@ -574,6 +589,7 @@ pub(super) fn lines(
     baselines: &Baselines,
     max: Option<f64>,
     by_instructions: bool,
+    passed: bool,
 ) -> String {
     let width = benchmarks.iter().map(|b| b.name.chars().count()).max().unwrap_or(0);
     let mut text = String::new();
@@ -581,6 +597,8 @@ pub(super) fn lines(
         let stats = stats(&benchmark.samples);
         let spread = if stats.median > 0.0 { stats.deviation / stats.median * 100.0 } else { 0.0 };
         let compared = match baselines.measures.get(&(test.to_string(), benchmark.name.clone())) {
+            // A test that failed may not have done the work it measured.
+            _ if !passed && baselines.source.is_some() => "  not compared: its test failed".to_string(),
             Some(base) => {
                 let compared = compare(benchmark, base, max, by_instructions);
                 let regressed = if compared.regressed.is_some() { ", REGRESSED" } else { "" };
@@ -618,6 +636,7 @@ pub(super) fn lines(
                     compared.verdict
                 )
             }
+            None if baselines.compiler => NOT_MEASURED.to_string(),
             None if baselines.source.is_some() => "  new".to_string(),
             None => String::new(),
         };

@@ -1265,7 +1265,11 @@ fn reproduction(dump: &Value, frame: Option<u64>, bench: bool) -> Result<Reprodu
             _ => format!("{function}({})", arguments.join(", ")),
         };
         body.push_str(&match (bench, gives) {
-            (true, _) => format!("    testing.bench(\"{function}\", () => {called})\n"),
+            // What the call gives is its answer, which the dump does not know.
+            (true, true) => format!(
+                "    // What `{function}` gives is not checked: hold it with `assert(testing.bench(...) == ...)`\n    _ = testing.bench(\"{function}\", () => {called})\n"
+            ),
+            (true, false) => format!("    testing.bench(\"{function}\", () => {called})\n"),
             (false, true) => format!("    _ = {called}{question}\n"),
             (false, false) => format!("    {called}{question}\n"),
         });

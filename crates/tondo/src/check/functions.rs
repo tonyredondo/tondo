@@ -400,6 +400,14 @@ impl<'a> Checker<'a> {
             }
             return false;
         }
+        if Self::benchmark(value) {
+            let message = "nothing checks the `String` this benchmark's body gives: hold it with \
+                           `assert(testing.bench(...) == ...)`, or discard it with `_ = ...`";
+            self.diags.warning("W1018", value.span, message);
+            let start = Span::new(value.span.start, value.span.start);
+            self.diags.fix("discard it with `_ = ...`", false, vec![(start, "_ = ".into())]);
+            return false;
+        }
         let message = format!(
             "nothing uses the `String` of this call, and making it has a cost: write it with \
             `console.println(...)`, or discard it with `_ = ...`{}",
@@ -415,6 +423,19 @@ impl<'a> Checker<'a> {
         self.diags.fix("write it with `console.println`", false, edits);
         self.diags.fix("discard it with `_ = ...`", false, vec![(start, "_ = ".into())]);
         false
+    }
+
+    /// Whether a value is what `testing.bench` gives (testing 10.4), with
+    /// its `?` or not.
+    pub(super) fn benchmark(value: &hir::Expr) -> bool {
+        match &value.kind {
+            hir::ExprKind::Try(inner) => Self::benchmark(inner),
+            hir::ExprKind::Block(block) => matches!(
+                block.stmts.first(),
+                Some(hir::Stmt::Expr(hir::Expr { kind: hir::ExprKind::Call(Callee::Std(StdFn::BenchStart), ..), .. }))
+            ),
+            _ => false,
+        }
     }
 
     /// W1018 of a result that is not a text, when the call has no other effect:

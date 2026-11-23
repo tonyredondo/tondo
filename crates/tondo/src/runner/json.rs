@@ -484,7 +484,11 @@ impl Context<'_> {
         let (max, by) = (self.options.max_regression, self.options.by_instructions);
         let id = self.tree.id(attempt.node);
         let benchmarks = attempt.benchmarks.iter().map(|b| {
-            let base = self.baselines.measures.get(&(id.to_string(), b.name.clone()));
+            // A test that failed is not compared: it may not have done the work.
+            let base = match attempt.status == super::Status::Passed {
+                true => self.baselines.measures.get(&(id.to_string(), b.name.clone())),
+                false => None,
+            };
             let changed = super::bench::changed_for(id, b, self.baselines);
             let mut b = b.clone();
             if let Some(&(set_up, used)) = self.baselines.counted.get(&(id.to_string(), b.name.clone())) {

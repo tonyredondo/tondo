@@ -121,13 +121,25 @@ Runs the body with a virtual clock that only moves when told.
 #### bench
 
 ```tondo
-pub fn bench[T, E, F: CallMut[fn(): T ! E]](name: String, body: F): !E
+pub fn bench[T, E, F: CallMut[fn(): T ! E]](name: String, body: F): T ! E
 ```
 
 Makes the test a benchmark, called in its body (testing 10.4): runs the
-closure once, or with `tondo test --bench` measures how long a run
-takes and what it allocates; keeps what the closure gives. The call
+closure once and gives what it gave, and with `tondo test --bench` then
+measures how long a run takes and what it allocates, keeping what each
+run gives. The run whose value it gives is not measured, and in a plain
+run it is the only one: a benchmark checks its answer with it, so that a
+body that stops doing its work fails rather than looks faster. The call
 fails as the closure does.
+
+```tondo
+import std.testing
+
+test sums {
+    let numbers = (0..1_000).collect()
+    assert(testing.bench("sum 1000", () => numbers.sum()) == 499_500)
+}
+```
 
 #### keep
 

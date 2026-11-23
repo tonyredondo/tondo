@@ -2463,20 +2463,35 @@ es, por lo que dice su cuerpo.
 test parsing {
     for size in [10, 1_000] {
         let text = document(size)
-        testing.bench("parse {size}", () => json.parse(text))?
+        let parsed = testing.bench("parse {size}", () => json.parse(text))?
+        assert(json.encode(parsed) == text)
     }
 }
 ~~~
 
 Sin `--bench`, un benchmark es un test más: cada `bench` ejecuta su cuerpo una
-vez, así que un benchmark que se rompe falla como cualquier test.
+vez, así que un benchmark que se rompe falla como cualquier test. `bench` da lo
+que dio esa ejecución: el valor del cuerpo, como `T` si el cuerpo no puede
+fallar y como `T ! E` si puede, o su error. El benchmark comprueba con él su
+respuesta, para que un cambio que hace el cuerpo más rápido porque deja de
+hacer su trabajo falle en vez de medirse como una mejora; al comparar dos
+compiladores con `--compiler`, el lado que da otra respuesta falla su test y no
+da fila:
+
+~~~tondo
+test sums {
+    let numbers = (0..1_000).collect()
+    assert(testing.bench("sum 1000", () => numbers.sum()) == 499_500)
+}
+~~~
 
 `--bench` ejecuta solo los benchmarks de la selección, uno a uno, en el build
 optimizado que no cuenta nada y sin lo que `tondo test` mira por su cuenta, las
 actualizaciones perdidas y el orden de los locks (8 del toolchain): mide el
 programa como corre fuera de los tests. No admite `--debug`, `--coverage` ni un
 reporte de cobertura, `--jobs`, `--retry`, `--repeat`, `--allow-flaky`,
-`--schedules` ni `--update-snapshots`. Cada `bench` mide así:
+`--schedules` ni `--update-snapshots`. Con `--bench`, la ejecución cuyo valor da
+`bench` es la primera y no se mide; después, cada `bench` mide así:
 
 1. Calienta durante una décima parte de su tiempo, entre 50 ms y 1 s,
    ejecutando el cuerpo en tandas que doblan las de la anterior.
@@ -2502,8 +2517,8 @@ reporte de cobertura, `--jobs`, `--retry`, `--repeat`, `--allow-flaky`,
    que la región de un bucle, que guarda su trozo de una tanda a otra, cuente
    desde su vuelta siguiente.
 
-Lo que da el cuerpo se conserva, como con `testing.keep`, para que el
-optimizador no elimine su cálculo. El timeout de la entrada (7.8) cuenta de
+Lo que da cada ejecución medida se conserva, como con `testing.keep`, para que
+el optimizador no elimine su cálculo. El timeout de la entrada (7.8) cuenta de
 nuevo desde que termina cada benchmark. Un cuerpo que falla termina su
 benchmark sin medidas, y `bench` devuelve ese error; un pánico termina el test,
 como siempre.

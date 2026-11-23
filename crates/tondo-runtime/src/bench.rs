@@ -1,6 +1,7 @@
 //! `testing.bench(name, body)` (testing 10.4). The compiler turns the call
-//! into a loop that asks `tondo_rt_bench_next` how many times to run the
-//! body next, until it says none. In a plain test run that is once. Under
+//! into a run of the body, whose value the call gives, and a loop that asks
+//! `tondo_rt_bench_next` how many times to run the body next, until it says
+//! none. In a plain test run that is none: the first run was the one. Under
 //! `tondo test --bench`, which sets `TONDO_TEST_BENCH` to the seconds each
 //! benchmark measures for, it warms up, finds how many runs make a sample,
 //! takes the samples, then runs as many as five samples counting the
@@ -218,6 +219,12 @@ pub extern "C" fn tondo_rt_bench_next() -> i64 {
     let now = Instant::now();
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
     let Some(bench) = state.bench.as_mut() else { return 0 };
+    // In a plain run the body ran once already, before the loop: the run
+    // whose value `bench` gives.
+    if bench.batch == 0 && matches!(bench.phase, Phase::Once) {
+        bench.phase = Phase::Done;
+        return 0;
+    }
     if bench.batch == 0 {
         bench.batch = 1;
         bench.started = Instant::now();

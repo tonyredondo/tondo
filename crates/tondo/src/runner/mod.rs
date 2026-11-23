@@ -645,6 +645,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         Some(Baseline::Compiler { name, commit, saved, code }) => {
             let mut read = bench::read_baseline(saved).map_err(Failure::Input)?;
             read.code = code.clone();
+            read.compiler = true;
             let _ = std::fs::remove_file(saved);
             read.source = Some(json::obj(vec![
                 ("kind", json::str("compiler")),
@@ -659,6 +660,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
             code: Vec::new(),
             counted: Default::default(),
             measures: Default::default(),
+            compiler: false,
             source: Some(json::obj(vec![
                 ("kind", json::str("revision")),
                 ("ref", json::str(revision.name.clone())),
@@ -793,11 +795,19 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         .iter()
         .flat_map(|a| a.attempts[a.decisive].benchmarks.iter().map(move |b| (tree.id(a.node).to_string(), b)))
         .collect();
-    // A benchmark slower or allocating more than allowed fails the run.
+    // The tests that passed: a benchmark of one that failed, which may not
+    // have done its work, is neither compared nor saved (10.4).
+    let passed: std::collections::HashSet<String> =
+        aggregates.iter().filter(|a| a.status == Status::Passed).map(|a| tree.id(a.node).to_string()).collect();
+    // A benchmark slower or allocating more than allowed fails the run, and
+    // with another `tondo`, one it has no measure of, as its test failed there.
     let regressions: Vec<String> = measured
         .iter()
+        .filter(|(test, _)| passed.contains(test))
         .filter_map(|(test, b)| {
-            let base = baselines.measures.get(&(test.clone(), b.name.clone()))?;
+            let Some(base) = baselines.measures.get(&(test.clone(), b.name.clone())) else {
+                return baselines.compiler.then(|| format!("{test} {}: {}", b.name, bench::NOT_MEASURED.trim_start()));
+            };
             let why = bench::compare(b, base, options.max_regression, options.by_instructions).regressed?;
             // Judged by time on a busy machine: given, and said so.
             let busy = !options.by_instructions && (bench::busy().is_some() || baselines.busy.is_some());
@@ -816,7 +826,9 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
             std::fs::create_dir_all(parent)
                 .map_err(|e| Failure::Output(format!("cannot create {}: {e}", parent.display())))?;
         }
-        publish(path, &(bench::baseline(bench::environment(time), &measured).text() + "\n"))?;
+        let kept: Vec<(String, &Benchmark)> =
+            measured.iter().filter(|(test, _)| passed.contains(test)).map(|(test, b)| (test.clone(), *b)).collect();
+        publish(path, &(bench::baseline(bench::environment(time), &kept).text() + "\n"))?;
     }
     // Updated snapshots are published only after a run without failures,
     // skips or blocks (9.7); otherwise, the tests that made them.
@@ -959,7 +971,7 @@ pub fn test(dir: &Path, executable: &Path, tree: &Tree, options: &Options) -> Re
         benchmarks: measured
             .iter()
             .map(|(test, b)| {
-                let base = baselines.measures.get(&(test.clone(), b.name.clone()));
+                let base = baselines.measures.get(&(test.clone(), b.name.clone())).filter(|_| passed.contains(test));
                 (
                     test.clone(),
                     *b,

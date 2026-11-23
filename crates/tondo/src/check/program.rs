@@ -932,9 +932,10 @@ impl<'a> Checker<'a> {
     }
 
     /// `testing.bench(name, () { ... })` (testing 10.4), in a test's own
-    /// body, which makes the test a benchmark: runs the body as many times
-    /// as the runtime asks, keeping what it gives, until it asks for none
-    /// or the body fails; the call fails as the body does.
+    /// body, which makes the test a benchmark: runs the body once and gives
+    /// what that run gives, then as many times as the runtime asks, keeping
+    /// what each gives, until it asks for none or the body fails; the call
+    /// fails as the body does.
     pub(super) fn bench(&mut self, cx: &mut FnCx, args: &[ast::Arg], span: Span) -> hir::Expr {
         let [name, body] = args else {
             return self.arity_error(span, 2, args.len());
@@ -980,11 +981,14 @@ impl<'a> Checker<'a> {
             span,
         };
         let int = |n: i128| mk(hir::ExprKind::Int(n), Ty::INT);
-        let ty = self.types.intern(TyKind::Result(Ty::UNIT, error.unwrap_or(Ty::NEVER)));
+        // What the call gives: the value of a run made before the timed
+        // ones, or the error of a run.
+        let ty = match error {
+            Some(error) => self.types.intern(TyKind::Result(success, error)),
+            None => success,
+        };
         let (body, left, completed, outcome) =
             (local(self, cx, value.ty), local(self, cx, Ty::INT), local(self, cx, Ty::BOOL), local(self, cx, ty));
-        let unit = || mk(hir::ExprKind::Unit, Ty::UNIT);
-        let ok = mk(hir::ExprKind::Variant(OK, vec![(0, unit())]), ty);
         // What a run gives is kept, so that its work is not optimized away.
         let keep = |value: hir::Expr| match success {
             Ty::UNIT | Ty::NEVER => hir::Stmt::Expr(value),
@@ -1047,15 +1051,34 @@ impl<'a> Checker<'a> {
         let refill = hir::Stmt::Expr(mk(hir::ExprKind::If(Box::new(none_left()), next, None), Ty::UNIT));
         let turn =
             hir::Block { stmts: vec![refill, set(left, Some(BinOp::Sub), int(1)), run], tail: None, ty: Ty::UNIT };
-        let stmts = vec![
+        // The run whose value the call gives, before the timed ones, which a
+        // failure of it leaves out.
+        let first = mk(hir::ExprKind::CallValue(Box::new(read(body, value.ty)), Vec::new()), info.result);
+        let mut stmts = vec![
             hir::Stmt::Expr(std(StdFn::BenchStart, vec![name], Ty::UNIT)),
             hir::Stmt::Let(body, value),
             hir::Stmt::Let(left, int(0)),
             hir::Stmt::Let(completed, mk(hir::ExprKind::Bool(true), Ty::BOOL)),
-            hir::Stmt::Let(outcome, ok),
-            hir::Stmt::Loop { condition: None, body: turn, span: Span::default() },
-            hir::Stmt::Expr(std(StdFn::BenchEnd, vec![read(completed, Ty::BOOL)], Ty::UNIT)),
+            hir::Stmt::Let(outcome, first),
         ];
+        if let Some(error) = error {
+            // `match outcome { err(_) => completed = false, _ => {} }`
+            let wildcard = |ty| hir::Pattern { kind: hir::PatKind::Wildcard, ty, span };
+            let failed = hir::Pattern { kind: hir::PatKind::Variant(ERR, vec![wildcard(error)]), ty, span };
+            let stop = hir::Block {
+                stmts: vec![set(completed, None, mk(hir::ExprKind::Bool(false), Ty::BOOL))],
+                tail: None,
+                ty: Ty::UNIT,
+            };
+            let nothing = hir::Block { stmts: Vec::new(), tail: None, ty: Ty::UNIT };
+            let arms = vec![
+                hir::Arm { pattern: failed, guard: None, body: mk(hir::ExprKind::Block(stop), Ty::UNIT) },
+                hir::Arm { pattern: wildcard(ty), guard: None, body: mk(hir::ExprKind::Block(nothing), Ty::UNIT) },
+            ];
+            stmts.push(hir::Stmt::Expr(mk(hir::ExprKind::Match(Box::new(read(outcome, ty)), arms), Ty::UNIT)));
+        }
+        stmts.push(hir::Stmt::Loop { condition: Some(read(completed, Ty::BOOL)), body: turn, span: Span::default() });
+        stmts.push(hir::Stmt::Expr(std(StdFn::BenchEnd, vec![read(completed, Ty::BOOL)], Ty::UNIT)));
         let block = hir::Block { stmts, tail: Some(Box::new(read(outcome, ty))), ty };
         Self::mk(hir::ExprKind::Block(block), ty, span)
     }

@@ -985,6 +985,52 @@ fn compares_benchmarks_with_another_compiler() {
     assert!(status == 2 && stderr.contains("it goes with --bench"), "{stderr}");
 }
 
+/// A benchmark checks its answer with what `testing.bench` gives, from a run
+/// before the timed ones (testing 10.4): a plain run runs the body once, a
+/// wrong answer fails with both sides, plain and under `--bench`, and with
+/// another `tondo` whose side gives another answer the row is not compared
+/// and the run fails, so no comparison is read from work that differs.
+#[test]
+fn a_benchmark_checks_its_answer() {
+    let tests = "import std.env\nimport std.sync\nimport std.testing\n\nfn answer(): Int {\n    \
+        let shift = Int.parse(env.get(\"TONDO_TEST_SHIFT\") ?? \"0\") ?? 0\n    (0..1_000).collect().sum() + shift\n}\n\n\
+        test once {\n    let runs = sync.Atomic(0)\n    assert(testing.bench(\"counted\", () => runs.add(1)) == 1)\n    \
+        assert(runs.load() == 1)\n}\n\ntest summed {\n    assert(testing.bench(\"sum\", () => answer()) == 499_500)\n}\n\n\
+        test doubled {\n    assert(testing.bench(\"doubled\", () => answer() * 0 + 42) == 42)\n}\n";
+    let dir = project("checked-answer", tests);
+    let (stdout, stderr, status) = tondo(&dir, &["test"]);
+    assert_eq!(status, 0, "{stdout}{stderr}");
+    // Another answer fails the test with both sides, plain and measured;
+    // `once` counts the runs of a plain run, which `--bench` makes many.
+    let measured = ["--exact", "app::unit::app::summed", "--exact", "app::unit::app::doubled"];
+    for bench in [&[][..], &["--bench", "--bench-time", "0.05"]] {
+        let mut command = common::command(env!("CARGO_BIN_EXE_tondo"));
+        let args = [&["test"], &measured[..], bench].concat();
+        let output = command.args(args).current_dir(&dir).env("TONDO_TEST_SHIFT", "1").output();
+        let output = output.unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(output.status.code(), Some(1), "{stdout}");
+        assert!(stdout.contains("left:  499501") && stdout.contains("right: 499500"), "{stdout}");
+    }
+    // The same `tondo`, whose tests see another answer: the comparison reads
+    // no row of the test that failed there, and the run fails.
+    let other = dir.join("other");
+    let script = format!("#!/bin/sh\nTONDO_TEST_SHIFT=1 exec {} \"$@\"\n", env!("CARGO_BIN_EXE_tondo"));
+    std::fs::write(&other, script).unwrap();
+    std::fs::set_permissions(&other, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let args = [&["test", "--bench", "--bench-time", "0.05", "--compiler", other.to_str().unwrap()], &measured[..]];
+    let (stdout, stderr, status) = tondo(&dir, &args.concat());
+    assert_eq!(status, 1, "{stdout}{stderr}");
+    let row = stdout.lines().find(|line| line.trim_start().starts_with("sum ")).unwrap_or_default();
+    assert!(row.ends_with("not compared: the other tondo has no measure of it, as its test failed there"), "{stdout}");
+    assert!(
+        stdout.contains("benchmarks the other tondo has no measure of, as their tests failed there:\n  app::unit::"),
+        "{stdout}"
+    );
+    let doubled = stdout.lines().find(|line| line.trim_start().starts_with("doubled ")).unwrap_or_default();
+    assert!(doubled.contains("% same") || doubled.contains("% faster") || doubled.contains("% slower"), "{stdout}");
+}
+
 /// The two sides of a `--compiler` comparison run their tests in one
 /// environment, which the programs a benchmark starts copy: what a wrapper
 /// given by `--exec` finds is the same set of names under each `tondo`.
@@ -2769,7 +2815,7 @@ fn receipt(lines: Array[Int]): String {
 test counted {
     let lines = (0..100).collect()
     console.println(\"allocations: {testing.allocations(() { receipt(lines) })}\")
-    testing.bench(\"receipt\", () { receipt(lines) })?
+    testing.bench(\"receipt\", () { receipt(lines) })
 }
 ";
     let dir = project("same_allocations", tests);

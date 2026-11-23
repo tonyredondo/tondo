@@ -1085,8 +1085,11 @@ Se ejecuta donde están las fuentes del programa. Con `--bench` escribe en su lu
 benchmark de esa llamada, para el volcado de un momento lento: un test que llama a
 `testing.bench` con el nombre de la función y un closure que la llama con esos
 valores (10.4 de la especificación de tests), e importa `std.testing` si el archivo
-no lo hace. Lo ejecuta una vez y dice si la llamada falla, en cuyo caso el benchmark
-mide el fallo. `tondo mcp` lo ofrece en `dump_test` con `bench`, y el editor, al
+no lo hace. Ese benchmark no comprueba su respuesta, porque la herramienta no sabe
+si lo que da la llamada es igual en la ejecución siguiente: lo descarta con `_ =` y
+lo dice en un comentario con el código que la comprobaría,
+`assert(testing.bench(...) == ...)`. Lo ejecuta una vez y dice si la llamada falla,
+en cuyo caso el benchmark mide el fallo. `tondo mcp` lo ofrece en `dump_test` con `bench`, y el editor, al
 escribir un test de un volcado, deja elegir el benchmark.
 
 En lugar de un volcado toma una grabación (`tondo run --record`), con
