@@ -4,6 +4,12 @@
 //! zeros. A local starts as zeros, so releasing one that no path assigned
 //! releases nothing, and reading one whose only value is zeros, as `Unit`
 //! or `!Never`, reads that value: those are not reads here.
+//!
+//! Nor is a local read, or released again, after a `release` of it on a way
+//! that gives it no value of its own between: what it held may be gone. A
+//! release of a local no path to it may have assigned is not one: the
+//! message of a failing `assert` is made only on the way that panics, and
+//! released on the way that passes, where it holds zeros.
 
 use crate::mir::*;
 use crate::types::{Ty, TyKind, Types};
@@ -30,6 +36,7 @@ pub fn verify(stage: &str, bodies: &[Body], types: &Types, sources: &crate::sour
     for body in bodies {
         let problem = unassigned(body, types)
             .or_else(|| moved_read(body))
+            .or_else(|| released_read(body))
             .or_else(|| taken_once(body))
             .or_else(|| delivered_in_hand(body, types));
         if let Some(problem) = problem {
@@ -59,6 +66,92 @@ impl Set {
     fn meet(&mut self, other: &Set) {
         self.0.iter_mut().zip(&other.0).for_each(|(a, b)| *a &= b);
     }
+
+    fn join(&mut self, other: &Set) {
+        self.0.iter_mut().zip(&other.0).for_each(|(a, b)| *a |= b);
+    }
+
+    fn remove(&mut self, local: Local) {
+        self.0[local.0 as usize / 64] &= !(1 << (local.0 % 64));
+    }
+}
+
+/// What some path to the start of each block may have assigned; a block no
+/// path reaches has none.
+fn maybe_assigned(body: &Body) -> Vec<Option<Set>> {
+    let (count, blocks) = (body.locals.len(), body.blocks.len());
+    let mut entry: Vec<Option<Set>> = vec![None; blocks];
+    if blocks == 0 {
+        return entry;
+    }
+    let mut start = Set::new(count, false);
+    body.params.iter().chain(&body.osr).for_each(|&local| start.add(local));
+    entry[0] = Some(start);
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for block in 0..blocks {
+            let Some(mut set) = entry[block].clone() else { continue };
+            body.blocks[block].stmts.iter().for_each(|statement| assigning(statement, &mut set, &body.points, &entry));
+            let unwound = unwound_by_its_own(&body.blocks[block]);
+            for to in successors(&body.blocks[block].terminator) {
+                // On the way of a callee's own panic, what it was to give is
+                // zeros (`UnwindingOwn`).
+                let mut set = set.clone();
+                if let Some((way, local)) = unwound
+                    && way == to
+                {
+                    set.remove(local);
+                }
+                let joined = match &entry[to] {
+                    None => set.clone(),
+                    Some(old) => {
+                        let mut joined = old.clone();
+                        joined.join(&set);
+                        joined
+                    }
+                };
+                if entry[to].as_ref() != Some(&joined) {
+                    entry[to] = Some(joined);
+                    changed = true;
+                }
+            }
+        }
+    }
+    entry
+}
+
+/// The way a block takes when the callee of its last statement but one
+/// panicked, as `UnwindingOwn` asks, and the local that call was to give:
+/// a callee that panicked leaves it zeros.
+fn unwound_by_its_own(block: &BlockData) -> Option<(usize, Local)> {
+    let Terminator::Branch(Operand::Copy(asked), unwind, _) = &block.terminator else { return None };
+    let [.., Statement::Assign(given, value, _), Statement::Assign(check, own, _)] = &block.stmts[..] else {
+        return None;
+    };
+    let own = matches!(**own, Rvalue::UnwindingOwn) && check.local == asked.local && check.path.is_empty();
+    (own && given.path.is_empty() && !matches!(**value, Rvalue::UnwindingOwn))
+        .then_some((unwind.0 as usize, given.local))
+}
+
+/// What a statement may give a value of its own, into `set`: a live build's
+/// frame that comes from the old code takes, of the locals live at its point
+/// (`Point::state`), those the function may have there itself, as `entry`
+/// says so far; a cleared local holds zeros again.
+fn assigning(statement: &Statement, set: &mut Set, points: &[Point], entry: &[Option<Set>]) {
+    if let Statement::OsrLoad(point) = statement {
+        if let Some(point) = points.get(*point as usize)
+            && let Some(Some(there)) = entry.get(point.continues.0 as usize)
+        {
+            point.state.iter().filter(|&&local| there.has(local)).for_each(|&local| set.add(local));
+        }
+        return;
+    }
+    if let Statement::Clear(local) = statement {
+        set.remove(*local);
+        return;
+    }
+    effects(statement).1.into_iter().for_each(|local| set.add(local));
 }
 
 /// What a statement reads and assigns, for this check.
@@ -157,6 +250,87 @@ pub fn moved_read(body: &Body) -> Option<String> {
             let Statement::Moved(moved) = statement else { continue };
             if let Some(problem) = read_after_move(body, block, at + 1, moved) {
                 return Some(format!("{problem} after `moved` in b{block} zeroed it"));
+            }
+        }
+    }
+    None
+}
+
+/// Where a body reads a local after a `release` of it, on a way that
+/// gives it no value of its own between: what it held may be gone, and a
+/// read of it reads freed memory, or what a pass made of it. A second
+/// release on that way is such a read too.
+pub fn released_read(body: &Body) -> Option<String> {
+    let maybe = maybe_assigned(body);
+    for (block, data) in body.blocks.iter().enumerate() {
+        let Some(mut assigned) = maybe[block].clone() else { continue };
+        for (at, statement) in data.stmts.iter().enumerate() {
+            let releasing = match statement {
+                Statement::Release(released) if released.path.is_empty() => Some(released.local),
+                _ => None,
+            };
+            assigning(statement, &mut assigned, &body.points, &maybe);
+            let Some(local) = releasing else { continue };
+            // A local no path gave a value holds zeros, whose release
+            // releases nothing: as a failing `assert`'s message, made only
+            // on the way that panics, is released on the way that passes.
+            if !assigned.has(local) {
+                continue;
+            }
+            let released = Place::local(local);
+            if let Some(problem) = read_after_release(body, block, at + 1, released.local) {
+                return Some(format!("{problem} after `release` in b{block} let it go"));
+            }
+        }
+    }
+    None
+}
+
+fn read_after_release(body: &Body, block: usize, from: usize, local: Local) -> Option<String> {
+    let whole = Place::local(local);
+    let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut ways = vec![(block, from)];
+    while let Some((block, from)) = ways.pop() {
+        let data = &body.blocks[block];
+        let mut done = false;
+        for statement in data.stmts.iter().skip(from) {
+            match statement {
+                // Written whole, which gives it a value of its own again.
+                Statement::Assign(target, _, _)
+                    if target.local == local && target.path.is_empty() && !read_besides_target(statement, &whole) =>
+                {
+                    done = true;
+                    break;
+                }
+                Statement::Clear(cleared) if *cleared == local => {
+                    done = true;
+                    break;
+                }
+                // Zeroing a part is no read of it.
+                Statement::Moved(place) if place.local == local => continue,
+                _ => {}
+            }
+            let mut read = false;
+            crate::inline::visit_statement(&mut statement.clone(), &mut |place: &mut Place| {
+                read |= place.local == local;
+            });
+            if read {
+                return Some(format!("b{block} reads `l{}`", local.0));
+            }
+        }
+        if done {
+            continue;
+        }
+        let mut read = false;
+        crate::inline::visit_terminator(&mut data.terminator.clone(), &mut |place: &mut Place| {
+            read |= place.local == local;
+        });
+        if read {
+            return Some(format!("b{block}'s end reads `l{}`", local.0));
+        }
+        for next in successors(&data.terminator) {
+            if seen.insert(next) {
+                ways.push((next, 0));
             }
         }
     }
@@ -663,6 +837,82 @@ mod tests {
         assert_eq!(moved(|_| vec![]), None);
         let twice = moved(|p| vec![Statement::Release(Place::local(p))]);
         assert!(twice.as_ref().is_some_and(|found| found.contains("twice")), "{twice:?}");
+    }
+
+    /// A local read, or released again, after its release on a way that
+    /// gives it no value between is refused (`released_read`).
+    #[test]
+    fn a_read_after_a_release_is_refused() {
+        let release = |l: Local| Statement::Release(Place::local(l));
+        let twice = released_read(&taking(|p, _, other| {
+            vec![block(vec![read(other, p), release(other), release(other)], back())]
+        }));
+        assert!(twice.as_ref().is_some_and(|found| found.contains("after `release`")), "{twice:?}");
+        let read_after = released_read(&taking(|p, _, other| {
+            vec![block(vec![read(other, p), release(other), read(p, other)], back())]
+        }));
+        assert!(read_after.as_ref().is_some_and(|found| found.contains("after `release`")), "{read_after:?}");
+    }
+
+    /// What the check learned, which must stay learned: a local no way to
+    /// its release may have given a value holds zeros, as a failing
+    /// `assert`'s message on the way that passes; a cleared local holds
+    /// zeros again; and a frame that comes from the old code at a point
+    /// brings what the function itself may have there, not every local.
+    #[test]
+    fn a_release_of_zeros_is_no_read() {
+        let release = |l: Local| Statement::Release(Place::local(l));
+        // The message is made only on the way that panics; the way that
+        // passes releases it in a loop.
+        let message = released_read(&taking(|p, flag, other| {
+            vec![
+                block(vec![], branch(flag, 1, 2)),
+                block(vec![read(other, p)], Terminator::Unreachable),
+                block(vec![release(other)], goto(0)),
+            ]
+        }));
+        assert_eq!(message, None);
+        let cleared = released_read(&taking(|p, _, other| {
+            vec![block(vec![read(other, p), release(other), Statement::Clear(other), release(other)], back())]
+        }));
+        assert_eq!(cleared, None);
+        // A frame from the old code at point 0, whose state names the local,
+        // which the function never has at that point: no read. Had the
+        // function the local there, the loop's second release is one.
+        let loaded = |assigned_there: bool| {
+            let mut body = taking(|p, flag, other| {
+                let made = match assigned_there {
+                    true => block(vec![read(other, p)], goto(1)),
+                    false => block(vec![read(other, p)], Terminator::Unreachable),
+                };
+                vec![
+                    block(vec![Statement::OsrLoad(0)], goto(1)),
+                    block(vec![], branch(flag, 2, 3)),
+                    made,
+                    block(vec![release(other)], goto(1)),
+                ]
+            });
+            let other = Local(body.locals.len() as u32 - 1);
+            body.points = vec![Point {
+                path: Vec::new(),
+                span: Default::default(),
+                begins: BlockId(1),
+                continues: BlockId(1),
+                state: vec![other],
+                kind: "test",
+                defers: 0,
+                binds: Vec::new(),
+                changes: false,
+                reads: Vec::new(),
+                loops: 0,
+                entry_of: None,
+                runs: Vec::new(),
+            }];
+            released_read(&body)
+        };
+        assert_eq!(loaded(false), None);
+        let real = loaded(true);
+        assert!(real.as_ref().is_some_and(|found| found.contains("after `release`")), "{real:?}");
     }
 
     /// A check that may deliver another task's panic, right after a call
