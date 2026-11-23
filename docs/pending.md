@@ -136,7 +136,8 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 
 The maintainer's list of 2026-11-14, with what the compiler does of each
 today, read on 2026-11-23 from the passes' own headers, the generator's
-rules marked `Tondo:` and the rows, and what is left to try. A technique
+rules marked `Tondo:` and the rows, and corrected by the compiler's
+session against the code, and what is left to try. A technique
 is tried on the rows, measured by the whole rule, and its numbers are
 kept in [decisions](decisions.md) whether it stays or not.
 
@@ -144,28 +145,33 @@ kept in [decisions](decisions.md) whether it stays or not.
 | --- | --- | --- | --- |
 | Inlining | Small functions, by a cost of 31 and three rounds, and a copy of a function for the `fn` value it is given (`inline.rs`) | The weighing by trial; a profile deciding | Step 2, PGO |
 | Escape analysis, the frame | Texts and closures in the frame (`stack.rs`); what a function makes and lets go, in a region (`regions.rs`); records, tuples and enums as a local for each field (`split.rs`) | Collections that start in the frame and move out when they grow; what a region cannot take, by the rows | Steps 3 to 7 |
-| Tail calls | None | The maintainer's decision first: whether a call in tail position reuses its frame always, on request or never, and what a stack and a `defer` show then | A question for him |
+| Tail calls | None: no call returns for its caller | The maintainer's decision first: whether a call in tail position reuses its frame always, on request or never, and what a stack and a `defer` show then | A question for him |
 | Constants folded and passed on | The generator's; a closure's captures that are one constant wherever it is made (`captured.rs`); the ranges of integers (`prove.rs`) | A parameter that every call gives the same value, in a function that is not opened | Step 8 |
 | Dead code | The generator's; a value read only by tests already decided is not made (`thread.rs`); checks proven never to fail (`prove.rs`) | Nothing known: a row decides | |
-| Common subexpressions | The generator's | A length or a field read twice across a call the MIR can see through | Step 8 |
-| Strength reduction | A division or a remainder by a power of two as a shift or a mask where the dividend is proven not negative; a product by 3, 5 or 9 as one `lea` | An index times a size as a sum that grows with the loop; more divisors | Step 8 |
+| Common subexpressions | The generator merges values with no effect, and its reading of what a store can change takes out a load repeated with no store or call between | A length or a field read twice across a call the MIR can see through; checked arithmetic, which the generator takes for an effect and does not merge | Step 8 |
+| Strength reduction | A division or a remainder by a power of two as a shift or a mask where the dividend is proven not negative, and by any other constant as a product by its inverse; a product by 3, 5 or 9 as one `lea`, and a value plus a sum with a constant as one; `x * 2.0` as `x + x` | An index times a size as a sum that grows with the loop | Step 8 |
 | SIMD | `Vector[T]` at each processor's width up to 256 bits; the arithmetic of float arrays | A plain loop over an array made of vectors by the compiler; 512 bits | Step 8 |
 | Instruction scheduling | None | Not proposed, as processors reorder: only if a row shows it | |
 | Loop unrolling | A counted loop with a short body, four turns at a time (`unroll.rs`) | When and by how much, by the rows; a loop of a small constant count opened whole | Step 8 |
-| Invariants out of loops | The generator's; the length a loop reads each turn (`hoist.rs`) | The checks and the reads of fields a loop keeps | Steps 3, 8 |
+| Invariants out of loops | The length a loop reads each turn (`hoist.rs`); the generator takes out only values with no effect: no load leaves a loop by it, as a load is not marked as one nothing writes, and checked arithmetic counts as an effect | Loads the MIR knows nothing in the loop writes, marked so; checked operations whose inputs do not change; the checks a loop keeps | Steps 3, 8 |
 | Loop fusion | A lazy chain, opened, is one loop with no array between | The eager chain, which still builds its arrays, in regions | Step 3 |
 | Loop interchange | None | Inside `Tensor`'s own code, by its rows | Step 8 |
-| Loop unswitching | The checks `prove` drops from a loop | A test that does not change in a loop, taken out with a loop for each side | Step 8 |
-| If-conversion | None of its own in the MIR; what the generator makes of a branch has not been read | Measured first on the rows whose branches miss: the chars rows, the chain's arm | Step 3 |
+| Loop unswitching | None of a test. What there is, is two copies of a loop run four turns at a time, chosen by a test before it: one for a counter and a bound within 2³¹ of zero, whose overflow checks `prove` drops, and one that keeps them (`unroll.rs`) | A test that does not change in a loop, taken out with a loop for each side | Step 8 |
+| If-conversion | In the generator, a pass of Tondo's own (`tondo_select.rs`): a branch whose two ways compute a few integers, with no memory and no call, chooses with a `select`, at most 6 instructions a way and 10 for both; and a `select` for `min`, `max`, `clamp`, saturating arithmetic, an index from the end and a division's guard | Ways that read memory, floats, and the limits by the rows whose branches miss: the chars rows, the chain's arm | Step 3 |
 | Alignment and layout | Measured, with `--layouts` and `TONDO_LAYOUT_SEED`; nothing decided | The alignment of loops' heads; the functions' order by what calls what | Step 7 |
 | Profile-guided optimization | None | A profile deciding what is opened, where code lies and which side is cold, when the others stop paying | Step 8, last |
 | Link-time optimization | A program and the standard library compile as one; the runtime is linked as it was built | The runtime's small functions opened in the program's code, texts' counts first | Step 7 |
 | Block placement | The calls of a panic and of an error are cold blocks, after the others | By a profile | PGO |
+| Checks of bounds and of overflow | Dropped where the ranges `prove` holds show they cannot fail; the flags of an overflow that only a branch reads are not made into a value | What a loop still keeps, by the rows; prove's widening at a loop behind code that has not settled, found on 2026-11-23 | Now, then step 8 |
+| Tests decided by the way in | A short block whose test each way into it already decides is copied into each way, and the test becomes a jump (`thread.rs`) | Following a copy to what it was made of, measured on 2026-11-23 | Now |
+| Copies passed on | `a = value` then `b = a`, with `a` read nowhere after, is `b = value` (`elide.rs`) | Nothing known | |
+| Room before a loop | An array that a counted loop pushes to once a turn takes its room before the loop (`reserve.rs`) | Loops that push more than once, or under a test | Step 8 |
+| A copy of generic code for each type | One of each generic function for each type it is used with (`mono.rs`) | Copies that end the same merged, for size | Step 8 |
 | Pairs of counts removed | An owner's reference taken, lent or borrowed where it was counted (`moves.rs`, `lends.rs`, `borrowed.rs`, `takes.rs`) | Texts' counts at direct sites | Step 7 |
 | A value with one owner changed in place | A parameter the function takes (`takes.rs`) | A map copied whole at each write in a loop over it | Step 4 |
 | Short texts without the heap | Up to seven bytes | Texts that share another's bytes | Step 5 |
 | Texts searched with vectors | The runtime's searches, through `memchr` | Validating UTF-8, `split`, a letter's case: by the texts' rows | Step 4 |
-| A `match` on texts as a table | Not read in the code yet | Read first, then a row | Step 8 |
+| A `match` as a table | A chain: each arm in turn, a text's by a call that compares it, an integer's or a character's by a comparison; the MIR has no switch, so no table of jumps is made | A switch in the MIR: a table of jumps for integers close together, and for texts a test of the length or of the first word before the bytes | Step 8 |
 
 ## The library, decided and not done
 
