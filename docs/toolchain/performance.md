@@ -213,12 +213,13 @@ stats.to:19:5: `"{sensor}: {value:.1}"` is not made in the frame: it is copied (
 stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in label)
 stats.to:19:5: `"{sensor}: {value:.1}"` goes in a region of `main` (in main)
 stats.to:19:5: `"{sensor}: {value:.1}"` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
-stats.to:19:17: `value` in `formats.formatFloat`, `formatNumber(` stays a call of `formats.formatNumber`: its body costs 31, more than the 30 inlining takes; 3 places in it make values on the heap, 2 in regions of its own and 4 in the region its caller gives (in label)
-stats.to:19:17: `value` stays a call of `formats.formatFloat`: its body costs 80, more than the 30 inlining takes; 6 places in it make values in regions of its own and 6 in the region its caller gives (in main)
+stats.to:19:17: `value` in `formats.formatNumber`, `formatText("{sign}{prefix}{digits}", -1, width, f…` stays a call of `formats.formatText`: its body costs 73, more than the 31 inlining takes; 2 places in it make values in regions of its own and 4 in the region its caller gives (in label)
+stats.to:19:17: `value` stays a call of `formats.formatFloat`: its body costs 80, more than the 31 inlining takes; 6 places in it make values in regions of its own and 6 in the region its caller gives (in main)
+stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{digits}"` is made on the heap: it is passed to a call that may keep it (in label)
+stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{zeros}{digits}"` is made on the heap: something else is assigned to it (in label)
 stats.to:19:17: `value` is inlined: the body of `formats.formatFloat` is copied here (in label)
-stats.to:19:17: `value` in `String.removePrefix`, `self.slice(prefix.length(), self.length())` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
-stats.to:19:17: `value` in `formats.formatFloat`, `textNative.float(value, precision, exponent, sing…` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
-stats.to:19:17: `value` in `formats.formatFloat`, `written.replace("e", "E")` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
+stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{digits}"` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
+stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{zeros}{digits}"` stays on the heap: `label` returns it, and no call of it is left in the program's code: each was inlined (in label)
 stats.to:24:14: `0..1000` runs four turns at a time (in main)
 stats.to:25:9: `readings.push(Reading { sensor: if n % 2 == 0 { "a" } else …` grows an array that goes in a region of `main` (in main)
 stats.to:25:9: `readings.push(Reading { sensor: if n % 2 == 0 { "a" } else …` takes room for every turn before the loop (in main)
@@ -256,10 +257,10 @@ from the bottom:
   code, named at its end. In the `label` that stays a function the text
   stays on the heap, and its line says what decided it: `label` returns
   it, so only who calls `label` could give it a region, and nothing calls
-  that copy, as its one call was inlined. The last three lines at 19:17
-  are of the library's code that writes the number, copied into `label`:
-  the text it makes may be the one that `label` returns, so it is told
-  with the program's own.
+  that copy, as its one call was inlined. The lines at 19:17 that name
+  `formats.formatNumber` are of the library's code that writes the number,
+  copied into `label`: the text it makes may be the one that `label`
+  returns, so it is told with the program's own.
 - **Checks.** The compiler proved that `count += 1` cannot overflow in one
   copy of the loop, which has no check; the copy it could not prove it for
   keeps it. A check that stays says so too.
@@ -330,10 +331,14 @@ was inlined in `main`, which lets go of it, it goes in a region of `main`.
 ```text listing
 $ tondo optimizations stats.to --kind heap
 stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in label)
+stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{digits}"` is made on the heap: it is passed to a call that may keep it (in label)
+stats.to:19:17: `value` in `formats.formatNumber`, `"{sign}{prefix}{zeros}{digits}"` is made on the heap: something else is assigned to it (in label)
 ```
 
-Only the `label` that stays a function allocates on the heap, and its one
-call was inlined: the copy in `main` has the label in a region.
+Only the `label` that stays a function allocates on the heap, its own text
+and two that the library's code makes there on the way to writing the
+number, and its one call was inlined: the copy in `main` has the label in
+a region.
 
 `tondo check --performance` warns, while writing, of costs that the
 compiler cannot take away, because doing so would change what the program
@@ -588,7 +593,7 @@ fn main() {
 
 ```text listing
 $ tondo optimizations squares.to --function byChain --kind call
-squares.to:10:5: `numbers.iter().filter(n => n % 2 == 0).map(n => n * n).sum()` in `Iterator.sum[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int]`, `self.sumBy(item => item)` stays a call of `Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int]`: its body costs 48, more than the 30 inlining takes (in byChain, main)
+squares.to:10:5: `numbers.iter().filter(n => n % 2 == 0).map(n => n * n).sum()` in `Iterator.sum[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int]`, `self.sumBy(item => item)` stays a call of `Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int]`: its body costs 48, more than the 31 inlining takes (in byChain, main)
 squares.to:10:27: `n => n % 2 == 0` is called by its body where a record holds it, as an iterator's adapter does (in prelude.FilterIterator.next[prelude.ArrayIterator[Int], Int])
 squares.to:10:48: `n => n * n` is called by its body where a record holds it, as an iterator's adapter does (in Iterator.sumBy[prelude.MapIterator[prelude.FilterIterator[prelude.ArrayIterator[Int], Int], Int, Int], Int, Int])
 ```
