@@ -215,7 +215,7 @@ a: 499.0
 $ tondo optimizations stats.to
 stats.to:9:9: `reading` is lent, with no count of its own: its array holds it (in main, mean)
 stats.to:9:20: `readings` runs four turns at a time (in main, mean)
-stats.to:12:13: `count += 1` cannot overflow: no check, in one copy of the code; another keeps the check (in main, mean)
+stats.to:12:13: `count += 1` cannot overflow: no check (in main, mean)
 stats.to:19:5: `"{sensor}: {value:.1}"` is not made in the frame: it is copied (in main)
 stats.to:19:5: `"{sensor}: {value:.1}"` is made on the heap: it is returned (in label)
 stats.to:19:5: `"{sensor}: {value:.1}"` goes in a region of `main` (in main)
@@ -268,9 +268,9 @@ from the bottom:
   `formats.formatNumber` are of the library's code that writes the number,
   copied into `label`: the text it makes may be the one that `label`
   returns, so it is told with the program's own.
-- **Checks.** The compiler proved that `count += 1` cannot overflow in one
-  copy of the loop, which has no check; the copy it could not prove it for
-  keeps it. A check that stays says so too.
+- **Checks.** The compiler proved that `count += 1` cannot overflow, in
+  every copy of the loop, so it has no check. A check that stays says so
+  too.
 - **Counts.** Each `reading` is a record with a string in it. The loop
   only reads it, so it is lent from the array, with no reference counted
   for the turn.
