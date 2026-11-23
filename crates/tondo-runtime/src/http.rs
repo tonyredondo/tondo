@@ -539,8 +539,7 @@ pub extern "C" fn tondo_rt_http_body_form(form: *mut NativeObject) -> *mut Nativ
 /// A response, or why there is none: its head, and its body until a
 /// reader takes it.
 struct Response {
-    /// Shared with a stream of its body, which records a body too large.
-    failure: Arc<Failure>,
+    failure: Failure,
     status: u16,
     url: String,
     version: hyper::Version,
@@ -552,7 +551,7 @@ struct Response {
 impl Response {
     fn failed(kind: &'static str, message: String) -> Response {
         Response {
-            failure: Arc::new(Mutex::new(Some((kind, message)))),
+            failure: Mutex::new(Some((kind, message))),
             status: 0,
             url: String::new(),
             version: hyper::Version::default(),
@@ -611,7 +610,7 @@ pub unsafe extern "C" fn tondo_rt_http_send(
         None => Response::failed("protocol", "the task was cancelled".into()),
         Some(Err((kind, message))) => Response::failed(kind, message),
         Some(Ok(answer)) => Response {
-            failure: Arc::new(Mutex::new(None)),
+            failure: Mutex::new(None),
             status: answer.status.as_u16(),
             url: answer.url,
             version: answer.version,
@@ -718,9 +717,8 @@ pub extern "C" fn tondo_rt_http_read_all(
 /// A response's body as the host of a stream: chunks as they arrive.
 struct Chunks {
     body: Option<super::client::Received>,
-    /// The response's, where a body too large is recorded for the program
-    /// to read as it reads the others.
-    failure: Option<Arc<Failure>>,
+    /// The bound the body passed, which `json()` asks of the stream.
+    passed: Option<usize>,
     chunk: Bytes,
     /// Whether another read took the body before this one.
     taken: bool,
@@ -741,9 +739,7 @@ impl Host for Chunks {
                 Ok(None) => self.body = None,
                 Err(failure) if failure.0 == "too large" => {
                     let limit = failure.1.parse().unwrap_or(0);
-                    if let Some(slot) = &self.failure {
-                        *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(failure);
-                    }
+                    self.passed = Some(limit);
                     return Err(crate::too_large(limit));
                 }
                 Err((_, message)) => return Err(std::io::Error::other(message)),
@@ -753,6 +749,10 @@ impl Host for Chunks {
         buffer[..count].copy_from_slice(&self.chunk[..count]);
         self.chunk.advance(count);
         Ok(count)
+    }
+
+    fn passed(&self) -> Option<usize> {
+        self.passed
     }
 
     fn left(&self) -> Option<usize> {
@@ -765,6 +765,13 @@ impl Host for Chunks {
         };
         Some(self.chunk.len() + rest)
     }
+}
+
+/// The bound a stream of a response's body passed, as `json()` asks after a
+/// decoding that failed; -1 for none.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_body_passed(stream: *mut StreamObject) -> i64 {
+    crate::io::passed(stream).map_or(-1, |limit| limit as i64)
 }
 
 /// The body as a stream of `std.io`, read as the program asks, in UTF-8
@@ -780,13 +787,7 @@ pub extern "C" fn tondo_rt_http_body(object: *mut NativeObject, windows_1252: u8
         *response.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(("body", ALREADY_READ.into()));
     }
     crate::io::stream(
-        Box::new(Chunks {
-            body,
-            failure: Some(response.failure.clone()),
-            chunk: Bytes::new(),
-            taken,
-            windows_1252: windows_1252 != 0,
-        }),
+        Box::new(Chunks { body, passed: None, chunk: Bytes::new(), taken, windows_1252: windows_1252 != 0 }),
         Mode::Long,
         false,
     )
@@ -861,7 +862,7 @@ struct Received {
 /// Where an object of this module keeps its failure.
 fn failure_of<'a>(object: *mut NativeObject) -> Option<&'a Failure> {
     native::get::<Response>(object)
-        .map(|r| &*r.failure)
+        .map(|r| &r.failure)
         .or_else(|| native::get::<Socket>(object).map(|s| &s.failure))
         .or_else(|| native::get::<Received>(object).map(|r| &r.failure))
         .or_else(|| super::server::failure_of(object))

@@ -109,9 +109,13 @@ pub fn Response.text(self): String ! HttpError {
 /// The body as the JSON of a `T` (`std.json`), decoded as it arrives, of
 /// no more bytes than `bytes()` takes.
 pub fn Response.json[T: __serialization.Decode](self): T ! HttpError {
-    match __json.decodeFrom[T](httpNative.body(self.native, false, self.most)) {
+    let body = httpNative.body(self.native, false, self.most)
+    match __json.decodeFrom[T](body) {
         ok(value) => value
         err(error) => {
+            if httpNative.bodyPassed(body) >= 0 {
+                fail HttpError.TooLarge(self.most)
+            }
             failed(self.native)?
             fail HttpError.Body("{error}")
         }
