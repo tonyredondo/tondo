@@ -612,7 +612,7 @@ impl StreamState {
             if let Some(end) = ahead.iter().position(|&b| b == b'\n') {
                 let line = &ahead[..end];
                 let line = line.strip_suffix(b"\r").unwrap_or(line);
-                if line.len() > most {
+                if end > most && line.len() > most {
                     return Err(crate::too_large(most));
                 }
                 let line = make(line);
@@ -620,7 +620,9 @@ impl StreamState {
                 return Ok(Some(line));
             }
             // A `\r` may still end it; past that, no line that fits can come.
-            if ahead.len() > most.saturating_add(1) {
+            // Written so that nothing of it is worked out ahead of the search,
+            // which finds the line in the usual turn.
+            if ahead.len().saturating_sub(1) > most {
                 return Err(crate::too_large(most));
             }
             if !self.fill()? {
@@ -833,11 +835,10 @@ impl StreamState {
         }
     }
 
-    /// Whether `read_line` answers without reading: a whole line was read
-    /// ahead, or more than `most` bytes of one.
-    pub(crate) fn has_line(&self, most: usize) -> bool {
-        let ahead = &self.ahead[self.position..self.filled];
-        ahead.contains(&b'\n') || ahead.len() > most.saturating_add(1)
+    /// Whether a whole line was read ahead. A line longer than its bound is
+    /// not, and `read_line` refuses it where it waits.
+    pub(crate) fn has_line(&self) -> bool {
+        self.ahead[self.position..self.filled].contains(&b'\n')
     }
 
     /// Whether bytes were read ahead.
@@ -1072,15 +1073,11 @@ pub unsafe extern "C" fn tondo_rt_io_read_line(
     region: *mut crate::regions::Region,
 ) -> i64 {
     let (region, most) = (WaitingRegion(region), most.max(0) as usize);
-    let line = run_ready(
-        stream,
-        |s| s.has_line(most),
-        move |s| {
-            s.read_line(most, move |bytes| region.made_text(bytes))?
-                .map(|line| line.ok_or_else(|| ErrorKind::InvalidData.into()))
-                .transpose()
-        },
-    );
+    let line = run_ready(stream, StreamState::has_line, move |s| {
+        s.read_line(most, move |bytes| region.made_text(bytes))?
+            .map(|line| line.ok_or_else(|| ErrorKind::InvalidData.into()))
+            .transpose()
+    });
     status(line, |line| unsafe { *out = line.map_or(std::ptr::null_mut(), |l| l.0) })
 }
 
@@ -1304,13 +1301,9 @@ pub extern "C" fn tondo_rt_console_read_line(region: *mut crate::regions::Region
     let stream = console_stream(2);
     let region = WaitingRegion(region);
     // The program's own input, as a file read whole is: no bound.
-    let line = run_ready(
-        stream,
-        |s| s.has_line(usize::MAX),
-        move |s| {
-            s.read_line(usize::MAX, move |line| region.made(String::from_utf8_lossy(line).as_bytes())).ok().flatten()
-        },
-    );
+    let line = run_ready(stream, StreamState::has_line, move |s| {
+        s.read_line(usize::MAX, move |line| region.made(String::from_utf8_lossy(line).as_bytes())).ok().flatten()
+    });
     unsafe { tondo_rt_stream_release(stream) };
     // The line typed ended the prompt's: the live region comes back.
     super::console::region_read();

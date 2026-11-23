@@ -301,15 +301,11 @@ pub unsafe extern "C" fn tondo_rt_fs_read_line(
     region: *mut crate::regions::Region,
 ) -> i64 {
     let (region, most) = (crate::io::WaitingRegion(region), most.max(0) as usize);
-    let line = run_ready(
-        file,
-        |s| s.has_line(most),
-        move |s| {
-            io(s.read_line(most, move |bytes| region.made_text(bytes)))?
-                .map(|line| line.ok_or(FsError::InvalidData))
-                .transpose()
-        },
-    );
+    let line = run_ready(file, StreamState::has_line, move |s| {
+        io(s.read_line(most, move |bytes| region.made_text(bytes)))?
+            .map(|line| line.ok_or(FsError::InvalidData))
+            .transpose()
+    });
     finish(line, |line| unsafe { *out = line.map_or(std::ptr::null_mut(), |l| l.0) })
 }
 
