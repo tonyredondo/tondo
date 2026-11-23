@@ -255,6 +255,10 @@ native tondo_rt_files_walk                cases/run/regions/natives_files.to
 native tondo_rt_library_file_name         cases/run/regions/natives_files.to
 native tondo_rt_library_open              cases/run/regions/natives_files.to
 native tondo_rt_library_symbol            cases/run/regions/natives_files.to
+native tondo_rt_limit_ceiling             cases/run/regions/natives_limits.to
+native tondo_rt_limit_counted             cases/run/regions/natives_limits.to
+native tondo_rt_limit_deeper              cases/run/regions/natives_limits.to
+native tondo_rt_limit_passed              cases/run/regions/natives_limits.to
 native tondo_rt_memory_c_string           cases/run/regions/natives_files.to
 native tondo_rt_process_which             cases/run/regions/natives_files.to
 native tondo_rt_sqlite_open               cases/run/regions/natives_files.to

@@ -1,0 +1,89 @@
+// The sentences of a bound passed, which the runtime makes in the region of
+// the code that shows the error (`limitPassed`, `limitCounted`,
+// `limitDeeper` and `limitCeiling` of `std.internal.text`): each turn of a
+// loop makes the data its read refuses in the turn's region, shows the
+// error there, and the lines are read again after the loop, once the
+// regions ended.
+
+import std.console
+import std.gzip
+import std.regex
+import std.xml
+
+fn noise(): Int {
+    var total = 0
+    for i in 0..200 {
+        let junk = "junk {i} {i} {i} {i}"
+        total += junk.length()
+    }
+    total
+}
+
+fn passed(): Array[String] {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        let data = gzip.compress("z{i}".repeat(100).bytes())
+        let small = gzip.GzipLimits.Default with { maxOutputBytes: 10 + i }
+        match gzip.decompress(data, limits: small) {
+            ok(_) => lines.push("read")
+            err(error) => lines.push("{error}")
+        }
+    }
+    lines
+}
+
+fn counted(): Array[String] {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        let input = "a".repeat(5 + i)
+        let few = regex.RegexLimits.Default with { maxMatches: 2 + i }
+        match regex.Regex.compile("a", limits: few) {
+            ok(pattern) => match pattern.replaceAll(input, "b") {
+                ok(text) => lines.push(text)
+                err(error) => lines.push("{error}")
+            }
+            err(error) => lines.push("{error}")
+        }
+    }
+    lines
+}
+
+fn deeper(): Array[String] {
+    var lines: Array[String] = []
+    for i in 0..3 {
+        let text = "<a>".repeat(4 + i).concat("</a>".repeat(4 + i))
+        let shallow = xml.XmlLimits.Default with { maxNestingDepth: 3 + i }
+        match xml.parse(text, limits: shallow) {
+            ok(_) => lines.push("read")
+            err(error) => lines.push(error.message)
+        }
+        let above = xml.XmlLimits.Default with { maxNestingDepth: 701 + i }
+        match xml.parse(text, limits: above) {
+            ok(_) => lines.push("read")
+            err(error) => lines.push(error.message)
+        }
+    }
+    lines
+}
+
+fn main() {
+    let lines = passed().concat(counted()).concat(deeper())
+    console.println("{noise() > 0}")
+    for line in lines {
+        console.println(line)
+    }
+}
+
+// expect-stdout: true
+// expect-stdout: the decompressed data is larger than 10 bytes, the most `GzipLimits.maxOutputBytes` allows: raise it with `limits: gzip.GzipLimits.Default with { maxOutputBytes: … }`, or read it a part at a time with `gzip.reader`
+// expect-stdout: the decompressed data is larger than 11 bytes, the most `GzipLimits.maxOutputBytes` allows: raise it with `limits: gzip.GzipLimits.Default with { maxOutputBytes: … }`, or read it a part at a time with `gzip.reader`
+// expect-stdout: the decompressed data is larger than 12 bytes, the most `GzipLimits.maxOutputBytes` allows: raise it with `limits: gzip.GzipLimits.Default with { maxOutputBytes: … }`, or read it a part at a time with `gzip.reader`
+// expect-stdout: the input has more than 2 matches, the most `RegexLimits.maxMatches` allows: raise it with `limits: regex.RegexLimits.Default with { maxMatches: … }`
+// expect-stdout: the input has more than 3 matches, the most `RegexLimits.maxMatches` allows: raise it with `limits: regex.RegexLimits.Default with { maxMatches: … }`
+// expect-stdout: the input has more than 4 matches, the most `RegexLimits.maxMatches` allows: raise it with `limits: regex.RegexLimits.Default with { maxMatches: … }`
+// expect-stdout: the document nests deeper than 3 levels, the most `XmlLimits.maxNestingDepth` allows: raise it with `limits: xml.XmlLimits.Default with { maxNestingDepth: … }`, up to 700
+// expect-stdout: `XmlLimits.maxNestingDepth` 701 is more than a task's stack holds: 700 at most
+// expect-stdout: the document nests deeper than 4 levels, the most `XmlLimits.maxNestingDepth` allows: raise it with `limits: xml.XmlLimits.Default with { maxNestingDepth: … }`, up to 700
+// expect-stdout: `XmlLimits.maxNestingDepth` 702 is more than a task's stack holds: 700 at most
+// expect-stdout: the document nests deeper than 5 levels, the most `XmlLimits.maxNestingDepth` allows: raise it with `limits: xml.XmlLimits.Default with { maxNestingDepth: … }`, up to 700
+// expect-stdout: `XmlLimits.maxNestingDepth` 703 is more than a task's stack holds: 700 at most
