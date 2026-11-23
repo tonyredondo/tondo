@@ -1,0 +1,134 @@
+// The nesting a reader takes from outside the program, by its `limits`:
+// 128 levels by default in each format, 64 in TOML, a level more refused in
+// the one sentence every bound has, with the field that sets it and the
+// most it may be raised to; a bound raised reads deeper; and a bound above
+// what a task's stack holds, or above what TOML's parser reads, refused
+// where it is used.
+import std.cbor
+import std.console
+import std.json
+import std.messagepack
+import std.protobuf
+import std.regex
+import std.serialization
+import std.toml
+import std.xml
+import std.yaml
+
+fn bytes(values: Array[Int]): Array[Byte] {
+    values.map(value => Byte(UInt8.wrapping(value)))
+}
+
+fn nested(header: Int, count: Int): Array[Byte] {
+    var data: Array[Byte] = []
+    for _ in 0..count {
+        data.extend(bytes([header]))
+    }
+    data.extend(bytes([1]))
+    data
+}
+
+/// `count` groups of field 2 nested, which `protobuf.Empty` skips.
+fn groups(count: Int): Array[Byte] {
+    var data: Array[Byte] = []
+    for _ in 0..count {
+        data.extend(bytes([0x13]))
+    }
+    for _ in 0..count {
+        data.extend(bytes([0x14]))
+    }
+    data
+}
+
+fn said[T](outcome: T ! serialization.Error): String {
+    match outcome {
+        ok(_) => "read"
+        err(error) => error.message
+    }
+}
+
+fn main() {
+    let array = (depth: Int): String { "[".repeat(depth).concat("]".repeat(depth)) }
+    console.println("json 128: {said(json.parse(array(128)))}")
+    console.println("json 129: {said(json.parse(array(129)))}")
+    console.println(
+        "json 129 raised: {said(json.parse(array(129), limits: json.JsonLimits.Default with { maxNestingDepth: 129 }))}",
+    )
+    console.println(
+        "json above: {said(json.parse("1", limits: json.JsonLimits.Default with { maxNestingDepth: 2301 }))}",
+    )
+    console.println("cbor 129: {said(cbor.parse(nested(0x81, 129)))}")
+    console.println(
+        "cbor above: {said(cbor.parse(nested(0x81, 1), limits: cbor.CborLimits.Default with { maxNestingDepth: 1501 }))}",
+    )
+    console.println("messagepack 129: {said(messagepack.parse(nested(0x91, 129)))}")
+    console.println(
+        "messagepack above: {said(messagepack.parse(nested(0x91, 1), limits: messagepack.MessagePackLimits.Default with { maxNestingDepth: 1401 }))}",
+    )
+    let elements = (depth: Int): String { "<a>".repeat(depth).concat("</a>".repeat(depth)) }
+    for depth in [128, 129] {
+        let outcome = match xml.parse(elements(depth)) {
+            ok(_) => "read"
+            err(error) => error.message
+        }
+        console.println("xml {depth}: {outcome}")
+    }
+    match xml.parse("<a/>", limits: xml.XmlLimits.Default with { maxNestingDepth: 701 }) {
+        ok(_) => console.println("xml above: read")
+        err(error) => console.println("xml above: {error.message}")
+    }
+    let lists = (depth: Int): String { "- ".repeat(depth).concat("leaf") }
+    console.println("yaml 128: {said(yaml.parse(lists(128)))}")
+    console.println("yaml 129: {said(yaml.parse(lists(129)))}")
+    console.println(
+        "yaml above: {said(yaml.parse("leaf", limits: yaml.YamlLimits.Default with { maxNestingDepth: 1201 }))}",
+    )
+    console.println(
+        "yaml flow: {said(yaml.parse(array(300), limits: yaml.YamlLimits.Default with { maxNestingDepth: 1000 }))}",
+    )
+    let inline = (depth: Int): String { "a = ".concat(array(depth)) }
+    console.println("toml 64: {said(toml.parse(inline(64)))}")
+    console.println("toml 65: {said(toml.parse(inline(65)))}")
+    console.println("toml past its parser: {said(toml.parse(inline(200)))}")
+    console.println(
+        "toml above: {said(toml.parse("a = 1", limits: toml.TomlLimits.Default with { maxNestingDepth: 81 }))}",
+    )
+    console.println("protobuf 128: {said(protobuf.decode[protobuf.Empty](groups(128)))}")
+    console.println("protobuf 129: {said(protobuf.decode[protobuf.Empty](groups(129)))}")
+    console.println(
+        "protobuf above: {said(protobuf.decode[protobuf.Empty]([], limits: protobuf.ProtobufLimits.Default with { maxNestingDepth: 1301 }))}",
+    )
+    let pattern = (depth: Int): String { "(".repeat(depth).concat("a").concat(")".repeat(depth)) }
+    for depth in [128, 129] {
+        let outcome = match regex.Regex.compile(pattern(depth)) {
+            ok(_) => "compiled"
+            err(error) => "{error.kind}: {error}"
+        }
+        console.println("regex {depth}: {outcome}")
+    }
+}
+
+// expect-stdout: json 128: read
+// expect-stdout: json 129: the document nests deeper than 128 levels, the most `JsonLimits.maxNestingDepth` allows: raise it with `limits: json.JsonLimits.Default with { maxNestingDepth: … }`, up to 2300
+// expect-stdout: json 129 raised: read
+// expect-stdout: json above: `JsonLimits.maxNestingDepth` 2301 is more than a task's stack holds: 2300 at most
+// expect-stdout: cbor 129: the data at byte 128 nests deeper than 128 levels, the most `CborLimits.maxNestingDepth` allows: raise it with `limits: cbor.CborLimits.Default with { maxNestingDepth: … }`, up to 1500
+// expect-stdout: cbor above: `CborLimits.maxNestingDepth` 1501 is more than a task's stack holds: 1500 at most
+// expect-stdout: messagepack 129: the data at byte 128 nests deeper than 128 levels, the most `MessagePackLimits.maxNestingDepth` allows: raise it with `limits: messagepack.MessagePackLimits.Default with { maxNestingDepth: … }`, up to 1400
+// expect-stdout: messagepack above: `MessagePackLimits.maxNestingDepth` 1401 is more than a task's stack holds: 1400 at most
+// expect-stdout: xml 128: read
+// expect-stdout: xml 129: the document nests deeper than 128 levels, the most `XmlLimits.maxNestingDepth` allows: raise it with `limits: xml.XmlLimits.Default with { maxNestingDepth: … }`, up to 700
+// expect-stdout: xml above: `XmlLimits.maxNestingDepth` 701 is more than a task's stack holds: 700 at most
+// expect-stdout: yaml 128: read
+// expect-stdout: yaml 129: the document nests deeper than 128 levels, the most `YamlLimits.maxNestingDepth` allows: raise it with `limits: yaml.YamlLimits.Default with { maxNestingDepth: … }`, up to 1200, and 255 in flow style
+// expect-stdout: yaml above: `YamlLimits.maxNestingDepth` 1201 is more than a task's stack holds: 1200 at most, and 255 in flow style
+// expect-stdout: yaml flow: the document nests deeper than 255 levels in flow style, `[[…]]`, the most the parser reads whatever `YamlLimits.maxNestingDepth` says: write the deepest of it in block style, `- - …`
+// expect-stdout: toml 64: read
+// expect-stdout: toml 65: the document nests deeper than 64 levels, the most `TomlLimits.maxNestingDepth` allows: raise it with `limits: toml.TomlLimits.Default with { maxNestingDepth: … }`, up to 80
+// expect-stdout: toml past its parser: the document nests deeper than 64 levels, the most `TomlLimits.maxNestingDepth` allows: raise it with `limits: toml.TomlLimits.Default with { maxNestingDepth: … }`, up to 80
+// expect-stdout: toml above: `TomlLimits.maxNestingDepth` 81 is more than its parser reads: 80 at most
+// expect-stdout: protobuf 128: read
+// expect-stdout: protobuf 129: the message nests deeper than 128 levels, the most `ProtobufLimits.maxNestingDepth` allows: raise it with `limits: protobuf.ProtobufLimits.Default with { maxNestingDepth: … }`, up to 1300
+// expect-stdout: protobuf above: `ProtobufLimits.maxNestingDepth` 1301 is more than a task's stack holds: 1300 at most
+// expect-stdout: regex 128: compiled
+// expect-stdout: regex 129: NestingLimitExceeded: the pattern nests deeper than 128 levels, the most `RegexLimits.maxNestingDepth` allows: raise it with `limits: regex.RegexLimits.Default with { maxNestingDepth: … }`

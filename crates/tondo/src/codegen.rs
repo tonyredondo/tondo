@@ -2841,25 +2841,34 @@ impl<'t, G: Gen<'t> + ?Sized> Emit<'_, G> {
         if let TyKind::Adt(id) = *types.kind(types.repr(ty))
             && let AdtKind::Enum(variants) = &types.adt(id).kind
         {
-            // A standard library error: its variant name in words, or the
-            // system's text of the error a variant holds the number of;
+            // A standard library error: its variant name in words, or what a
+            // variant that holds a number says of it, the system's text of
+            // `Host`'s and the sentence of the bound `TooLarge` holds;
             // another enum of plain variants, its variant's name.
             let in_words = types.shown.get(&ty) == Some(&Shown::Words);
             let label = |name: &str| if in_words { words(name) } else { name.to_string() };
             let tag = self.tag(ty, value);
-            let host = variants.iter().position(
-                |v| matches!(&v.payload, crate::types::Payload::Tuple(items) if items.as_slice() == [Ty::INT]),
-            );
-            if let (Some(host), Val::Memory(address)) = (host, value) {
-                let (is_host, other, done) = (self.fb.create_block(), self.fb.create_block(), self.fb.create_block());
-                let matched = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, host as i64);
-                self.fb.ins().brif(matched, is_host, &[], other, &[]);
-                self.fb.switch_to_block(is_host);
-                let slot = self.cg.slot(ty, Proj::Variant(host as u32, 0));
-                let number = self.fb.ins().load(types::I64, flags(), address, slot.offset as i32);
-                self.call_rt(Rt::SbOsError, &[builder, number]);
-                self.fb.ins().jump(done, &[]);
-                self.fb.switch_to_block(other);
+            let numbered: Vec<(usize, Rt)> = variants
+                .iter()
+                .enumerate()
+                .filter(
+                    |(_, v)| matches!(&v.payload, crate::types::Payload::Tuple(items) if items.as_slice() == [Ty::INT]),
+                )
+                .map(|(index, v)| (index, if v.name == "TooLarge" { Rt::SbLineTooLarge } else { Rt::SbOsError }))
+                .collect();
+            if let (false, Val::Memory(address)) = (numbered.is_empty(), value) {
+                let done = self.fb.create_block();
+                for (index, shows) in numbered {
+                    let (holds, other) = (self.fb.create_block(), self.fb.create_block());
+                    let matched = self.fb.ins().icmp_imm_s(IntCC::Equal, tag, index as i64);
+                    self.fb.ins().brif(matched, holds, &[], other, &[]);
+                    self.fb.switch_to_block(holds);
+                    let slot = self.cg.slot(ty, Proj::Variant(index as u32, 0));
+                    let number = self.fb.ins().load(types::I64, flags(), address, slot.offset as i32);
+                    self.call_rt(shows, &[builder, number]);
+                    self.fb.ins().jump(done, &[]);
+                    self.fb.switch_to_block(other);
+                }
                 let mut text = self.string_ptr(&label(&variants[0].name));
                 for (index, variant) in variants.iter().enumerate().skip(1) {
                     let this = self.string_ptr(&label(&variant.name));

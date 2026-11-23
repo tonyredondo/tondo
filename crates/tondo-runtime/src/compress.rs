@@ -21,16 +21,37 @@ fn level(level: i64) -> Compression {
 }
 
 /// The data of a Zstandard frame, or of several one after another.
-fn zstd_frames(mut data: &[u8]) -> std::io::Result<Vec<u8>> {
+/// The frames of `data` one after another, up to a byte past `most`.
+fn zstd_frames(mut data: &[u8], most: u64) -> std::io::Result<Vec<u8>> {
     if data.is_empty() {
         return Err(ErrorKind::InvalidData.into());
     }
     let mut out = Vec::new();
-    while !data.is_empty() {
+    while !data.is_empty() && out.len() as u64 <= most {
         let mut decoder = ruzstd::decoding::StreamingDecoder::new(&mut data).map_err(invalid)?;
-        decoder.read_to_end(&mut out).map_err(invalid)?;
+        let room = most + 1 - out.len() as u64;
+        (&mut decoder).take(room).read_to_end(&mut out).map_err(invalid)?;
     }
     Ok(out)
+}
+
+/// What a decompression in memory made: its data, none when the input is
+/// not of its format, and whether it passed its bound, which is no data
+/// either.
+struct Unpacked {
+    data: Option<Vec<u8>>,
+    too_large: bool,
+}
+
+impl Unpacked {
+    /// What a decompression that read up to a byte past `most` gives.
+    fn of(read: std::io::Result<Vec<u8>>, most: u64) -> Unpacked {
+        match read {
+            Ok(out) if out.len() as u64 > most => Unpacked { data: None, too_large: true },
+            Ok(out) => Unpacked { data: Some(out), too_large: false },
+            Err(_) => Unpacked { data: None, too_large: false },
+        }
+    }
 }
 
 /// `gzip.compress`.
@@ -55,21 +76,23 @@ pub extern "C" fn tondo_rt_zstd(data: *mut ArrayHeader, region: *mut crate::regi
 }
 
 /// `gzip.decompress` (`zstd` 0) or `zstd.decompress` (1): the data, or
-/// nothing when it is not of the format.
+/// nothing when it is not of the format or decompresses to more than
+/// `most` bytes.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_unpack(
     data: *mut ArrayHeader,
     zstd: u8,
+    most: i64,
     region: *mut crate::regions::Region,
 ) -> *mut NativeObject {
-    let data = unsafe { array_items::<u8>(data) };
-    let unpacked = if zstd != 0 {
-        zstd_frames(data).ok()
+    let (data, most) = (unsafe { array_items::<u8>(data) }, most.max(0) as u64);
+    let read = if zstd != 0 {
+        zstd_frames(data, most)
     } else {
         let mut out = Vec::new();
-        MultiGzDecoder::new(data).read_to_end(&mut out).ok().map(|_| out)
+        MultiGzDecoder::new(data).take(most.saturating_add(1)).read_to_end(&mut out).map(|_| out)
     };
-    native::new_in(region, unpacked)
+    native::new_in(region, Unpacked::of(read, most))
 }
 
 /// The data deflated without a header, as zip keeps it.
@@ -84,13 +107,18 @@ pub extern "C" fn tondo_rt_deflate(
     crate::arrays::byte_array_in(region, &encoder.finish().unwrap_or_default())
 }
 
-/// The data that `deflate` deflated, or nothing when it is not.
+/// The data that `deflate` deflated, or nothing when it is not or inflates
+/// to more than `most` bytes.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_inflate(data: *mut ArrayHeader, region: *mut crate::regions::Region) -> *mut NativeObject {
+pub extern "C" fn tondo_rt_inflate(
+    data: *mut ArrayHeader,
+    most: i64,
+    region: *mut crate::regions::Region,
+) -> *mut NativeObject {
+    let (data, most) = (unsafe { array_items::<u8>(data) }, most.max(0) as u64);
     let mut out = Vec::new();
-    let inflated =
-        flate2::read::DeflateDecoder::new(unsafe { array_items::<u8>(data) }).read_to_end(&mut out).ok().map(|_| out);
-    native::new_in(region, inflated)
+    let read = flate2::read::DeflateDecoder::new(data).take(most.saturating_add(1)).read_to_end(&mut out).map(|_| out);
+    native::new_in(region, Unpacked::of(read, most))
 }
 
 /// The CRC-32 of the data, as zip and gzip check it.
@@ -108,13 +136,19 @@ pub extern "C" fn tondo_rt_unpacked(
 ) -> *mut ArrayHeader {
     crate::arrays::byte_array_in(
         region,
-        native::get::<Option<Vec<u8>>>(unpacked).and_then(Option::as_ref).map_or(&[][..], |d| &d[..]),
+        native::get::<Unpacked>(unpacked).and_then(|u| u.data.as_ref()).map_or(&[][..], |d| &d[..]),
     )
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_unpack_failed(unpacked: *mut NativeObject) -> u8 {
-    native::get::<Option<Vec<u8>>>(unpacked).is_none_or(Option::is_none) as u8
+    native::get::<Unpacked>(unpacked).is_none_or(|u| u.data.is_none()) as u8
+}
+
+/// Whether a decompression passed its bound.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_unpack_too_large(unpacked: *mut NativeObject) -> u8 {
+    native::get::<Unpacked>(unpacked).is_some_and(|u| u.too_large) as u8
 }
 
 // ---------------------------------------------------------------------------

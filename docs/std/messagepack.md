@@ -19,10 +19,11 @@ console.println("{bytes.length()} bytes: {point.x}, {point.y}")
 
 `tondo api std.messagepack` shows the same in a terminal.
 
-- [Functions](#functions): [`decode`](#decode), [`encode`](#encode), [`parse`](#parse), [`writer`](#writer), [`writerTo`](#writerto)
+- [Functions](#functions): [`decode`](#decode), [`encode`](#encode), [`parse`](#parse), [`MessagePackLimits.Default`](#messagepacklimitsdefault), [`writer`](#writer), [`writerTo`](#writerto)
 - [Value](#value): [`Value.isNil`](#valueisnil), [`Value.get`](#valueget), [`Value.at`](#valueat), [`Value.find`](#valuefind), [`Value.asText`](#valueastext), [`Value.asInt`](#valueasint), [`Value.asFloat`](#valueasfloat), [`Value.asBool`](#valueasbool), [`Value.asBytes`](#valueasbytes), [`Value.asTimestamp`](#valueastimestamp), [`Value.asArray`](#valueasarray), [`Value.asMap`](#valueasmap)
 - [MessagePackError](#messagepackerror)
 - [UnknownFields](#unknownfields)
+- [MessagePackLimits](#messagepacklimits)
 - [Writer](#writer-1): [`Writer.nil`](#writernil), [`Writer.bool`](#writerbool), [`Writer.int`](#writerint), [`Writer.float`](#writerfloat), [`Writer.string`](#writerstring), [`Writer.bytes`](#writerbytes), [`Writer.beginArray`](#writerbeginarray), [`Writer.beginMap`](#writerbeginmap), [`Writer.value`](#writervalue), [`Writer.finish`](#writerfinish), [`Writer.flush`](#writerflush)
 
 ### Functions
@@ -33,6 +34,7 @@ console.println("{bytes.length()} bytes: {point.x}, {point.y}")
 pub fn decode[T: serialization.Decode](
     input: Array[Byte],
     unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: MessagePackLimits = MessagePackLimits.Default,
 ): T ! MessagePackError
 ```
 
@@ -51,10 +53,21 @@ of items than it writes panics.
 #### parse
 
 ```tondo
-pub fn parse(input: Array[Byte]): Value ! MessagePackError
+pub fn parse(
+    input: Array[Byte],
+    limits: MessagePackLimits = MessagePackLimits.Default,
+): Value ! MessagePackError
 ```
 
 A value of unknown shape.
+
+#### MessagePackLimits.Default
+
+```tondo
+pub const MessagePackLimits.Default: MessagePackLimits = MessagePackLimits { maxNestingDepth: 128 }
+```
+
+Arrays and maps nested up to 128 levels deep.
 
 #### writer
 
@@ -246,6 +259,33 @@ let bytes = messagepack.encode(Point3 { x: 1, y: 2, z: 3 })
 match messagepack.decode[Point](bytes, unknownFields: messagepack.UnknownFields.Reject) {
     ok(point) => console.println("{point.x}, {point.y}")
     err(error) => console.println("rejected: {error.message}")
+}
+```
+
+### MessagePackLimits
+
+```tondo
+pub type MessagePackLimits = {
+    maxNestingDepth: Int
+}
+```
+
+How deep data from outside the program may nest: `maxNestingDepth`
+arrays and maps, each of which takes up to about 3 KB of a task's 8 MiB
+stack. Up to 1400, what half of that stack holds, may be given, and
+more is refused; a function that a thread of C calls runs on that
+thread's stack, which may hold less. `encode` writes the program's own
+values without recursing, at any depth, and what it writes past the
+reader's bound cannot be read back with it.
+
+```tondo
+import std.console
+import std.messagepack
+
+let limits = messagepack.MessagePackLimits.Default with { maxNestingDepth: 256 }
+match messagepack.parse(messagepack.encode([[[1]]]), limits: limits) {
+    ok(value) => console.println("{value}")
+    err(error) => console.println("{error}")
 }
 ```
 

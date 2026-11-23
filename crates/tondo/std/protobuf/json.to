@@ -294,14 +294,18 @@ fn specialJson(name: String): Bool {
 fn asField(bytes: Array[Byte]): Reader {
     let out = Writer { native: pbNative.writer(false) }
     out.bytes(1, bytes)
-    let reader = Reader { native: pbNative.reader(pbNative.finish(out.native)) }
+    let reader = Reader {
+        native: pbNative.reader(pbNative.finish(out.native), ProtobufLimits.Default.maxNestingDepth)
+    }
     _ = reader.next()
     reader
 }
 
 /// The bytes of field 1 of a message, which `Writer` wrote.
 fn fieldBytes(out: Writer): Array[Byte] ! ProtobufError {
-    let reader = Reader { native: pbNative.reader(pbNative.finish(out.native)) }
+    let reader = Reader {
+        native: pbNative.reader(pbNative.finish(out.native), ProtobufLimits.Default.maxNestingDepth)
+    }
     match reader.next()? {
         1 => reader.bytes("value")?
         _ => []
@@ -326,7 +330,7 @@ fn wellKnownToJson(name: String, bytes: Array[Byte], out: JsonWriter): Bool ! Pr
 /// Writes the JSON of a wrapper of `google.protobuf` from its bytes: the
 /// value it holds. Whether it was one.
 fn wrappedToJson(name: String, bytes: Array[Byte], out: JsonWriter): Bool ! ProtobufError {
-    let input = Reader { native: pbNative.reader(bytes) }
+    let input = Reader { native: pbNative.reader(bytes, ProtobufLimits.Default.maxNestingDepth) }
     // The value's field, absent when it is its zero.
     let present = input.next()? == 1
     match name {

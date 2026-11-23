@@ -19,10 +19,11 @@ console.println("{bytes.length()} bytes: {point.x}, {point.y}")
 
 `tondo api std.cbor` shows the same in a terminal.
 
-- [Functions](#functions): [`decode`](#decode), [`encode`](#encode), [`parse`](#parse)
+- [Functions](#functions): [`decode`](#decode), [`encode`](#encode), [`parse`](#parse), [`CborLimits.Default`](#cborlimitsdefault)
 - [Value](#value): [`Value.isNull`](#valueisnull), [`Value.get`](#valueget), [`Value.at`](#valueat), [`Value.find`](#valuefind), [`Value.asText`](#valueastext), [`Value.asInt`](#valueasint), [`Value.asFloat`](#valueasfloat), [`Value.asBool`](#valueasbool), [`Value.asBytes`](#valueasbytes), [`Value.asDateTime`](#valueasdatetime), [`Value.asArray`](#valueasarray), [`Value.asMap`](#valueasmap)
 - [CborError](#cborerror)
 - [UnknownFields](#unknownfields)
+- [CborLimits](#cborlimits)
 
 ### Functions
 
@@ -32,6 +33,7 @@ console.println("{bytes.length()} bytes: {point.x}, {point.y}")
 pub fn decode[T: serialization.Decode](
     input: Array[Byte],
     unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: CborLimits = CborLimits.Default,
 ): T ! CborError
 ```
 
@@ -51,10 +53,18 @@ hand that declares another count of items than it writes panics.
 #### parse
 
 ```tondo
-pub fn parse(input: Array[Byte]): Value ! CborError
+pub fn parse(input: Array[Byte], limits: CborLimits = CborLimits.Default): Value ! CborError
 ```
 
 A value of unknown shape.
+
+#### CborLimits.Default
+
+```tondo
+pub const CborLimits.Default: CborLimits = CborLimits { maxNestingDepth: 128 }
+```
+
+Arrays and maps nested up to 128 levels deep.
 
 ### Value
 
@@ -227,4 +237,29 @@ type Point = { x: Int }
 let bytes = cbor.encode(["x": 1, "z": 3])
 console.println("{cbor.decode[Point](bytes).isOk()}")
 console.println("{cbor.decode[Point](bytes, unknownFields: cbor.UnknownFields.Reject).isOk()}")
+```
+
+### CborLimits
+
+```tondo
+pub type CborLimits = {
+    maxNestingDepth: Int
+}
+```
+
+How deep data from outside the program may nest: `maxNestingDepth`
+arrays and maps, each of which takes up to about 2.7 KB of a task's 8 MiB
+stack. Up to 1500, what half of that stack holds, may be given, and
+more is refused; a function that a thread of C calls runs on that
+thread's stack, which may hold less.
+
+```tondo
+import std.console
+import std.cbor
+
+let limits = cbor.CborLimits.Default with { maxNestingDepth: 256 }
+match cbor.parse(cbor.encode([[[1]]]), limits: limits) {
+    ok(value) => console.println("{value}")
+    err(error) => console.println("{error}")
+}
 ```

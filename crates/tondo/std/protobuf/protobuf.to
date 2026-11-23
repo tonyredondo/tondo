@@ -293,9 +293,31 @@ pub fn encode[T: Message](value: T, deterministic: Bool = false): Array[Byte] {
 }
 
 /// The message the bytes hold.
-pub fn decode[T: Message](bytes: Array[Byte]): T ! ProtobufError {
-    Message.readFrom[T](Reader { native: pbNative.reader(bytes) })
+pub fn decode[T: Message](
+    bytes: Array[Byte],
+    limits: ProtobufLimits = ProtobufLimits.Default,
+): T ! ProtobufError {
+    Message.readFrom[T](Reader { native: pbNative.reader(bytes, limits.maxNestingDepth) })
 }
+
+/// How deep a message from outside the program may nest:
+/// `maxNestingDepth` messages and groups, each of which takes up to about
+/// 3 KB of a task's 8 MiB stack. Up to 1300, what half of that stack holds,
+/// may be given, and more is refused; a function that a thread of C calls
+/// runs on that thread's stack, which may hold less.
+///
+/// ```tondo
+/// import std.protobuf
+///
+/// let deep = protobuf.ProtobufLimits.Default with { maxNestingDepth: 256 }
+/// let empty = protobuf.decode[protobuf.Empty]([], limits: deep)?
+/// ```
+pub type ProtobufLimits = {
+    maxNestingDepth: Int
+}
+
+/// Messages nested up to 128 levels deep.
+pub const ProtobufLimits.Default: ProtobufLimits = ProtobufLimits { maxNestingDepth: 128 }
 
 /// Writes the bytes of a message to a stream.
 pub fn encodeTo[T: Message](value: T, out: __io.Writer, deterministic: Bool = false): !__io.IoError {
@@ -303,9 +325,12 @@ pub fn encodeTo[T: Message](value: T, out: __io.Writer, deterministic: Bool = fa
 }
 
 /// The message a stream holds, read to its end.
-pub fn decodeFrom[T: Message](input: __io.Reader): T ! ProtobufError {
+pub fn decodeFrom[T: Message](
+    input: __io.Reader,
+    limits: ProtobufLimits = ProtobufLimits.Default,
+): T ! ProtobufError {
     match input.readBytes() {
-        ok(bytes) => decode[T](bytes)?
+        ok(bytes) => decode[T](bytes, limits: limits)?
         err(error) => fail serialization.Error {
             kind: serialization.ErrorKind.Io
             message: "{error}"
@@ -329,7 +354,7 @@ pub fn entries[K: Key + Ordered, V](map: Map[K, V], sorted: Bool): Array[(K, V)]
 
 /// A reader of no fields, for a message every field of which has its zero.
 pub fn emptyReader(): Reader {
-    Reader { native: pbNative.reader([]) }
+    Reader { native: pbNative.reader([], ProtobufLimits.Default.maxNestingDepth) }
 }
 
 /// The zero of a `Timestamp`, for a map entry without its value.

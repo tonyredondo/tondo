@@ -1,13 +1,11 @@
-// An image whose header declares more pixels than a read may hold is
+// An image whose header declares more pixels than its `limits` allow is
 // refused before anything is allocated: a PNG of 76 bytes declaring 65535
 // by 65535 made the program hold 16 GiB before it found its data short.
-// Just over the bound the read is refused for its size; just under it, it
+// Just over the bound the read is refused for its size; at the bound, it
 // goes on and fails for its short data. Without the bound, the first image
 // needs 16 GiB: a small machine fails the case by memory or by the
-// runner's timeout. The third image allocates its 512 MiB for a moment,
-// which no stage caps; once a read takes its limits as a parameter, it is
-// read with a bound of a mebibyte instead, and that allocation leaves the
-// tests.
+// runner's timeout. The default's 512 MiB holds the first two, and a bound
+// of a mebibyte the last two, so that no read allocates more than that.
 import std.console
 import std.image
 
@@ -49,16 +47,24 @@ fn declared(width: Int, height: Int): Array[Byte] {
 
 fn main() {
     console.println("{declared(65535, 65535).length()} bytes")
-    for (width, height) in [(65535, 65535), (11586, 11586), (11585, 11585)] {
-        match image.read(declared(width, height)) {
+    let standard = image.ImageLimits.Default
+    let small = image.ImageLimits.Default with { maxDecodedBytes: 1024 * 1024 }
+    for (width, height, limits) in [
+        (65535, 65535, standard),
+        (11586, 11586, standard),
+        (513, 512, small),
+        (512, 512, small),
+    ] {
+        match image.read(declared(width, height), limits: limits) {
             ok(read) => console.println("read {read.width()} by {read.height()}")
-            err(error) if error.message.contains("declares") => console.println(error.message)
+            err(error) if error.message.contains("once decoded") => console.println(error.message)
             err(_) => console.println("{width} by {height}: not refused for its size")
         }
     }
 }
 
 // expect-stdout: 76 bytes
-// expect-stdout: the image does not read: the image declares 65535 by 65535, which takes 16 GiB: more than the 512 MiB a read may hold
-// expect-stdout: the image does not read: the image declares 11586 by 11586, which takes 512.1 MiB: more than the 512 MiB a read may hold
-// expect-stdout: 11585 by 11585: not refused for its size
+// expect-stdout: the image of 65535 by 65535 pixels once decoded is larger than 512 MiB, the most `ImageLimits.maxDecodedBytes` allows: raise it with `limits: image.ImageLimits.Default with { maxDecodedBytes: … }`
+// expect-stdout: the image of 11586 by 11586 pixels once decoded is larger than 512 MiB, the most `ImageLimits.maxDecodedBytes` allows: raise it with `limits: image.ImageLimits.Default with { maxDecodedBytes: … }`
+// expect-stdout: the image of 513 by 512 pixels once decoded is larger than 1 MiB, the most `ImageLimits.maxDecodedBytes` allows: raise it with `limits: image.ImageLimits.Default with { maxDecodedBytes: … }`
+// expect-stdout: 512 by 512: not refused for its size

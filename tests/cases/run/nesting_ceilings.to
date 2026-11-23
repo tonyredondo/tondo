@@ -1,0 +1,108 @@
+// Each reader of a nesting format reads a document nested as deep as its
+// ceiling, the most `maxNestingDepth` may be raised to, inside a spawned
+// task, whose stack is 8 MiB: the ceiling is half of that stack at what a
+// level took in the worse of release and debug. If a change to the
+// compiler or to a reader makes its frames larger, this case ends in a
+// stack overflow and the ceiling is measured again. Protobuf's reader is
+// held by groups it skips, nested in a message that does not know them.
+import std.cbor
+import std.console
+import std.graphql
+import std.json
+import std.messagepack
+import std.protobuf
+import std.toml
+import std.xml
+import std.yaml
+
+pub type Book = {
+    id: Int
+}
+
+pub type Library = {
+    books: Array[Book]
+}
+
+fn bytes(values: Array[Int]): Array[Byte] {
+    values.map(value => Byte(UInt8.wrapping(value)))
+}
+
+/// `count` arrays of one element each around a 1, in CBOR or MessagePack.
+fn nested(header: Int, count: Int): Array[Byte] {
+    var data: Array[Byte] = []
+    for _ in 0..count {
+        data.extend(bytes([header]))
+    }
+    data.extend(bytes([1]))
+    data
+}
+
+fn read(format: String): String {
+    match format {
+        "json" => {
+            let depth = 2300
+            let text = "[".repeat(depth).concat("]".repeat(depth))
+            "{json.parse(text, limits: json.JsonLimits.Default with { maxNestingDepth: depth }).isOk()}"
+        }
+        "cbor" => {
+            let limits = cbor.CborLimits.Default with { maxNestingDepth: 1500 }
+            "{cbor.parse(nested(0x81, 1500), limits: limits).isOk()}"
+        }
+        "messagepack" => {
+            let limits = messagepack.MessagePackLimits.Default with { maxNestingDepth: 1400 }
+            "{messagepack.parse(nested(0x91, 1400), limits: limits).isOk()}"
+        }
+        "xml" => {
+            let text = "<a>".repeat(700).concat("</a>".repeat(700))
+            "{xml.parse(text, limits: xml.XmlLimits.Default with { maxNestingDepth: 700 }).isOk()}"
+        }
+        "yaml" => {
+            let text = "- ".repeat(1200).concat("leaf")
+            "{yaml.parse(text, limits: yaml.YamlLimits.Default with { maxNestingDepth: 1200 }).isOk()}"
+        }
+        "toml" => {
+            let text = "a = ".concat("[".repeat(80)).concat("]".repeat(80))
+            "{toml.parse(text, limits: toml.TomlLimits.Default with { maxNestingDepth: 80 }).isOk()}"
+        }
+        "protobuf" => {
+            // Field 2 as groups: a start, 0x13, and an end, 0x14, each.
+            var data: Array[Byte] = []
+            for _ in 0..1300 {
+                data.extend(bytes([0x13]))
+            }
+            for _ in 0..1300 {
+                data.extend(bytes([0x14]))
+            }
+            let limits = protobuf.ProtobufLimits.Default with { maxNestingDepth: 1300 }
+            "{protobuf.decode[protobuf.Empty](data, limits: limits).isOk()}"
+        }
+        "graphql" => {
+            let limits = graphql.GraphqlLimits.Default with { maxNestingDepth: 1000 }
+            let schema = graphql.schema(Library { books: [Book { id: 1 }] }, limits: limits)
+            // The document's own selection set is one of the levels.
+            let lists =
+                "{{ books(x: "
+                    .concat("[".repeat(999))
+                    .concat("]".repeat(999))
+                    .concat(") {{ id }} }}")
+            "{schema.execute(lists)}"
+        }
+        _ => "?"
+    }
+}
+
+fn main() {
+    for format in ["json", "cbor", "messagepack", "xml", "yaml", "toml", "protobuf", "graphql"] {
+        let task = spawn read(format)
+        console.println("{format}: {task.wait()}")
+    }
+}
+
+// expect-stdout: json: true
+// expect-stdout: cbor: true
+// expect-stdout: messagepack: true
+// expect-stdout: xml: true
+// expect-stdout: yaml: true
+// expect-stdout: toml: true
+// expect-stdout: protobuf: true
+// expect-stdout: graphql: {"data":{"books":[{"id":1}]}}

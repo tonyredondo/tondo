@@ -6,6 +6,32 @@ import std.internal.codec as codecNative
 import std.io as __io
 import std.reflect as __reflect
 
+/// How much a read of `readLine` may take from outside the program, on an
+/// `io.Reader`, an `fs.File` or a `net.Stream`: a line of more than
+/// `maxLineBytes` bytes, without its `\n`, fails as the module's
+/// `TooLarge`, and stays to be read, so the same call with a larger bound
+/// gives it from its first byte, and a program that wants to drop it reads
+/// on to the newline with `read`. The console's `readLine` takes none: it
+/// is the program's own input, as a file read whole is.
+///
+/// ```tondo
+/// import std.console
+/// import std.io
+///
+/// let input = io.reader("x".repeat(100))
+/// match input.readLine(limits: io.IoLimits.Default with { maxLineBytes: 10 }) {
+///     ok(line) => console.println("{line ?? ""}")
+///     err(error) => console.println("{error}")
+/// }
+/// console.println(input.readLine()? ?? "")
+/// ```
+pub type IoLimits = {
+    maxLineBytes: Int
+}
+
+/// A line of up to 1 MiB.
+pub const IoLimits.Default: IoLimits = IoLimits { maxLineBytes: 1024 * 1024 }
+
 /// A writer and a reader joined: what a task writes to one, another reads
 /// from the other, in order and as soon as it is written. A write waits
 /// while `capacity` bytes are unread; a read waits for bytes, and ends once

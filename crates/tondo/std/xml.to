@@ -194,18 +194,46 @@ impl Display for Element {
 // Reading
 // ---------------------------------------------------------------------------
 
-/// How deep elements nest at most, as arrays and objects in JSON.
-const Deepest: Int = 128
+/// How deep elements may nest in a document from outside the program:
+/// `maxNestingDepth` levels, each of which takes up to about 5.3 KB of a
+/// task's 8 MiB stack. Up to 700, what half of that stack holds, may be
+/// given, and more is refused; a function that a thread of C calls runs on
+/// that thread's stack, which may hold less.
+///
+/// ```tondo
+/// import std.console
+/// import std.xml
+///
+/// let deep = "<a>".repeat(200).concat("</a>".repeat(200))
+/// match xml.parse(deep, limits: xml.XmlLimits.Default with { maxNestingDepth: 300 }) {
+///     ok(root) => console.println(root.name)
+///     err(error) => console.println(error.message)
+/// }
+/// ```
+pub type XmlLimits = {
+    maxNestingDepth: Int
+}
+
+/// Elements nested up to 128 levels deep.
+pub const XmlLimits.Default: XmlLimits = XmlLimits { maxNestingDepth: 128 }
+
+/// The deepest `XmlLimits.maxNestingDepth` a task's stack holds: half of
+/// its 8 MiB at the 5340 bytes a level that a release build took in the
+/// measure of 2026-11-22, more than a debug build's 4273, rounded down.
+const Ceiling: Int = 700
 
 /// The tree of an XML document of unknown shape: its root element.
-pub fn parse(text: String): Element ! XmlError {
-    treeOf(readDocument(text)?)
+pub fn parse(text: String, limits: XmlLimits = XmlLimits.Default): Element ! XmlError {
+    treeOf(readDocument(text, limits)?)
 }
 
 /// A value of `T` from XML: the root element, whatever its name, read as
 /// `T`. Elements and attributes that `T` does not have are skipped.
-pub fn decode[T: serialization.Decode](text: String): T ! XmlError {
-    let root = readDocument(text)?
+pub fn decode[T: serialization.Decode](
+    text: String,
+    limits: XmlLimits = XmlLimits.Default,
+): T ! XmlError {
+    let root = readDocument(text, limits)?
     let reading = Reading {
         source: text
         root
@@ -261,10 +289,19 @@ type Scanner = {
     source: String
     at: Int
     end: Int
+    deepest: Int
 }
 
-fn readDocument(source: String): Item ! XmlError {
-    var scanner = Scanner { source, at: 0, end: source.byteLength() }
+fn readDocument(source: String, limits: XmlLimits): Item ! XmlError {
+    let deepest = limits.maxNestingDepth
+    if deepest > Ceiling {
+        fail XmlError {
+            message: textNative.limitCeiling("XmlLimits", deepest, Ceiling)
+            line: 1
+            column: 1
+        }
+    }
+    var scanner = Scanner { source, at: 0, end: source.byteLength(), deepest }
     if scanner.sees("\u{FEFF}") {
         scanner.at = 3
     }
@@ -330,8 +367,10 @@ fn Scanner.misc(mut self, prolog: Bool): !XmlError {
 /// The element that starts here, at `<`, inside `depth` others.
 fn Scanner.item(mut self, depth: Int): Item ! XmlError {
     let start = self.at
-    if depth == Deepest {
-        fail self.error("the elements nest deeper than {Deepest} levels")
+    if depth == self.deepest {
+        fail self.error(
+            textNative.limitDeeper("the document", self.deepest, "xml", "XmlLimits", Ceiling),
+        )
     }
     self.at += 1
     let name = self.name()?

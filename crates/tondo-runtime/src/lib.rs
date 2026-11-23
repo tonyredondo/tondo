@@ -46,6 +46,7 @@ mod io;
 mod json;
 mod labels;
 mod library;
+mod limits;
 mod live;
 mod locales;
 mod lockorder;
@@ -124,6 +125,51 @@ pub(crate) fn status<T, E>(result: Result<T, E>, code: impl FnOnce(E) -> i64, st
         }
         Err(error) => code(error),
     }
+}
+
+std::thread_local! {
+    /// The number the error of a failed call holds, `FsError.Host`'s
+    /// system number or a `TooLarge`'s limit, which the compiled code reads
+    /// right after the call, on the same thread.
+    static ERROR_NUMBER: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
+}
+
+/// Notes the number the error of a failed call holds: never inlined, since
+/// the call may have waited for the system and resumed on another thread,
+/// whose number the compiled code reads.
+#[inline(never)]
+pub(crate) fn note_error_number(number: i64) {
+    ERROR_NUMBER.set(number);
+}
+
+/// The number the error of this thread's last failed call holds.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_error_number() -> i64 {
+    ERROR_NUMBER.get()
+}
+
+/// A bound of a call's `limits` that the data passed, with the bound: the
+/// variant `TooLarge` of its module's error, whose `Display` says the rest
+/// (standard library 7.4.1).
+#[derive(Debug)]
+pub(crate) struct TooLarge(pub(crate) usize);
+
+impl std::fmt::Display for TooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "larger than its limit of {} bytes", self.0)
+    }
+}
+
+impl std::error::Error for TooLarge {}
+
+/// The error of a read that passed `limit`.
+pub(crate) fn too_large(limit: usize) -> std::io::Error {
+    std::io::Error::other(TooLarge(limit))
+}
+
+/// The bound an error says the data passed, if it is one.
+pub(crate) fn limit_passed(error: &std::io::Error) -> Option<usize> {
+    error.get_ref().and_then(|inner| inner.downcast_ref::<TooLarge>()).map(|passed| passed.0)
 }
 
 // ---------------------------------------------------------------------------

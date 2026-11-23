@@ -1,0 +1,97 @@
+// What an HTTP client reads whole of a response, and a server of a
+// request, is bounded by its `limits`. The client counts a body once its
+// `Content-Encoding` is undone, so a body of a few kilobytes that inflates
+// to megabytes stops at its bound, as `HttpError.TooLarge` with the bound;
+// `Response.limitBody` raises it for one response, and `body()` reads as
+// it is asked, unbounded. A server's 413 says its bound and the route's
+// way around it. And a document nested as deep as JSON's default bound is
+// read inside a handler, whose stack is a task's.
+import std.console
+import std.gzip
+import std.http
+import std.json
+
+pub type Big = {
+    a: String
+}
+
+fn deep(depth: Int): String {
+    "[".repeat(depth).concat("]".repeat(depth))
+}
+
+fn main(): !http.HttpError {
+    var app = http.App()
+    let zeros = gzip.compress("a".repeat(5 * 1024 * 1024).bytes())
+    app.get("/bomb", _ => http.Reply.bytes(zeros).header("Content-Encoding", "gzip"))
+    app.get("/plain", _ => http.Reply.text("b".repeat(3000)))
+    app.get("/json", _ => http.Reply.text("{{\"a\": \"{"c".repeat(3000)}\"}}"))
+    app.post("/upload", request => http.Reply.text("{request.bytes()?.length()}"))
+    app.post("/large", request => http.Reply.text("{request.limitBody(6000).bytes()?.length()}"))
+    app.post(
+        "/nested",
+        (request) {
+            let parsed = json.parse(request.text()?)
+            http.Reply.text(if parsed.isOk() { "read" } else { "refused" })
+        },
+    )
+    let limits = http.ServerLimits.Default with { maxBodyBytes: 2000 }
+    let server = app.start(limits: limits)?
+    let mebibyte = http.ClientLimits.Default with { maxBodyBytes: 1024 * 1024 }
+    let small = http.Client(baseUrl: server.url(), limits: mebibyte)
+    console.println("on the wire: {zeros.length()} bytes")
+    match small.get("/bomb")?.bytes() {
+        ok(data) => console.println("bomb: {data.length()}")
+        err(http.HttpError.TooLarge(limit)) => console.println(
+            "bomb {limit}: {http.HttpError.TooLarge(limit)}",
+        )
+        err(error) => console.println("bomb: {error}")
+    }
+    console.println(
+        "raised for one: {small.get("/bomb")?.limitBody(8 * 1024 * 1024).bytes()?.length()}",
+    )
+    console.println("by default: {http.ClientLimits.Default.maxBodyBytes}")
+    let tiny = http.Client(
+        baseUrl: server.url(),
+        limits: http.ClientLimits.Default with { maxBodyBytes: 2000 },
+    )
+    match tiny.get("/plain")?.text() {
+        ok(text) => console.println("text: {text.length()}")
+        err(error) => console.println("text: {error}")
+    }
+    match tiny.get("/json")?.json[Big]() {
+        ok(big) => console.println("json: {big.a.length()}")
+        err(error) => console.println("json: {error}")
+    }
+    let streamed = tiny.get("/plain")?.body().readText() ?? ""
+    console.println("a stream: {streamed.length()}")
+    let client = http.Client(baseUrl: server.url())
+    for (path, size) in [("/upload", 2000), ("/upload", 2001), ("/large", 6000), ("/large", 6001)] {
+        match client.post(path, body: http.Body.text("u".repeat(size))) {
+            ok(reply) => console.println("{path} {size}: {reply.text()?}")
+            err(http.HttpError.Status(reply)) => console.println(
+                "{path} {size}: {reply.status()} {reply.text()?}",
+            )
+            err(error) => console.println("{path} {size}: {error}")
+        }
+    }
+    let nested = http.Client(baseUrl: server.url())
+    for depth in [128, 129] {
+        let body = http.Body.text(deep(depth))
+        console.println("nested {depth}: {nested.post("/nested", body: body)?.text()?}")
+    }
+    server.stop()
+}
+
+// expect-stdout: on the wire: 5116 bytes
+// expect-stdout: bomb 1048576: the body of the response is larger than 1 MiB, the most `ClientLimits.maxBodyBytes` allows: raise it with `limits: http.ClientLimits.Default with { maxBodyBytes: … }`, or for one response with `response.limitBody(bytes)`
+// expect-stdout: raised for one: 5242880
+// expect-stdout: by default: 2147483648
+// expect-stdout: text: the body of the response is larger than 2000 bytes, the most `ClientLimits.maxBodyBytes` allows: raise it with `limits: http.ClientLimits.Default with { maxBodyBytes: … }`, or for one response with `response.limitBody(bytes)`
+// expect-stdout: json: the body of the response is larger than 2000 bytes, the most `ClientLimits.maxBodyBytes` allows: raise it with `limits: http.ClientLimits.Default with { maxBodyBytes: … }`, or for one response with `response.limitBody(bytes)`
+// expect-stdout: a stream: 3000
+// expect-stdout: /upload 2000: 2000
+// expect-stdout: /upload 2001: 413 {"status":413,"detail":"the body is larger than 2000 bytes, the most `ServerLimits.maxBodyBytes` allows: raise it with `limits: http.ServerLimits.Default with { maxBodyBytes: … }`, or for one route with `request.limitBody(bytes)`"}
+// expect-stdout: /large 6000: 6000
+// expect-stdout: /large 6001: 413 {"status":413,"detail":"the body is larger than 6000 bytes, the most `ServerLimits.maxBodyBytes` allows: raise it with `limits: http.ServerLimits.Default with { maxBodyBytes: … }`, or for one route with `request.limitBody(bytes)`"}
+// expect-stdout: nested 128: read
+// expect-stdout: nested 129: refused

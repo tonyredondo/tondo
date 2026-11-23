@@ -26,6 +26,10 @@ pub(crate) enum Kind {
     InvalidReplacement,
     OutputLimitExceeded,
     InvalidBoundary,
+    /// Groups and repetitions nested deeper than `maxNestingDepth`.
+    NestingLimitExceeded,
+    /// More capture groups than `maxCaptureGroups`.
+    CaptureLimitExceeded,
 }
 
 /// Whether embedded flags are those the dialect has: `i`, `m`, `s` and `U`,
@@ -67,7 +71,7 @@ fn outside(ast: &Ast, max_captures: i64) -> Option<(Kind, usize)> {
                     ast::GroupKind::NonCapturing(_) => 0,
                 };
                 if i64::from(index) > max_captures {
-                    return Some((Kind::PatternLimitExceeded, offset));
+                    return Some((Kind::CaptureLimitExceeded, offset));
                 }
                 stack.push(&group.ast);
             }
@@ -102,7 +106,8 @@ fn syntax_kind(kind: &Syntax) -> Kind {
         Syntax::GroupNameDuplicate { .. } => Kind::DuplicateCaptureName,
         Syntax::GroupNameEmpty | Syntax::GroupNameInvalid | Syntax::GroupNameUnexpectedEof => Kind::InvalidCaptureName,
         Syntax::GroupUnclosed => Kind::UnexpectedEnd,
-        Syntax::NestLimitExceeded(_) | Syntax::CaptureLimitExceeded => Kind::PatternLimitExceeded,
+        Syntax::NestLimitExceeded(_) => Kind::NestingLimitExceeded,
+        Syntax::CaptureLimitExceeded => Kind::CaptureLimitExceeded,
         Syntax::UnicodeClassInvalid => Kind::InvalidUnicodeProperty,
         _ => Kind::InvalidSyntax,
     }

@@ -2,6 +2,11 @@
 
 use super::*;
 
+/// The bytes a line of `readLine` may have unless its `limits` say
+/// otherwise: `io.IoLimits.Default.maxLineBytes`, which a case holds to
+/// this.
+const DEFAULT_LINE_BYTES: i64 = 1024 * 1024;
+
 impl<'a> Checker<'a> {
     /// A `std.sync` type (14.4.4) with its type arguments.
     pub(super) fn sync_type(&mut self, name: &ast::Ident, args: &[Ty], span: Span) -> Ty {
@@ -541,7 +546,13 @@ impl<'a> Checker<'a> {
             (Handle::Writer | Handle::Reader, "close") => (I::Close, vec![], failing(self, Ty::UNIT)),
             (Handle::Reader, "readLine") => {
                 let line = self.types.intern(TyKind::Option(Ty::STRING));
-                (I::ReadLine, vec![], failing(self, line))
+                let Some(bound) = self.line_bound(cx, args, method) else { return Self::error_expr(span) };
+                let result = failing(self, line);
+                return Self::mk(
+                    hir::ExprKind::Call(Callee::Std(StdFn::Io(I::ReadLine)), Vec::new(), vec![receiver, bound]),
+                    result,
+                    span,
+                );
             }
             (Handle::Reader, "read") => {
                 let chunk = self.types.intern(TyKind::Option(bytes));
@@ -603,7 +614,14 @@ impl<'a> Checker<'a> {
             }
             "readLine" => {
                 let line = self.types.intern(TyKind::Option(Ty::STRING));
-                (F::ReadLine, vec![], failing(self, line))
+                let Some(bound) = self.line_bound(cx, args, method) else { return Self::error_expr(span) };
+                let result = failing(self, line);
+                let Some(receiver) = self.file_loan(cx, receiver, method) else { return Self::error_expr(span) };
+                return Self::mk(
+                    hir::ExprKind::Call(Callee::Std(StdFn::Fs(F::ReadLine)), Vec::new(), vec![receiver, bound]),
+                    result,
+                    span,
+                );
             }
             "read" => {
                 let chunk = self.types.intern(TyKind::Option(bytes));
@@ -650,6 +668,31 @@ impl<'a> Checker<'a> {
             values.push(self.coerce(value, ty));
         }
         Self::mk(hir::ExprKind::Call(Callee::Std(StdFn::Fs(function)), Vec::new(), values), result, span)
+    }
+
+    /// The most bytes a line of `readLine` may have: the `maxLineBytes` of
+    /// the `limits` given, or else `io.IoLimits.Default`'s, which
+    /// `DEFAULT_LINE_BYTES` is (standard library 10.3).
+    fn line_bound(&mut self, cx: &mut FnCx, args: &[ast::Arg], method: &ast::Ident) -> Option<hir::Expr> {
+        let arg = match args {
+            [] => return Some(Self::mk(hir::ExprKind::Int(DEFAULT_LINE_BYTES.into()), Ty::INT, method.span)),
+            [arg] if arg.name.as_ref().is_none_or(|name| name.name == "limits") => arg,
+            _ => {
+                let message = format!("`{}` takes `limits: io.IoLimits`, and nothing else", method.name);
+                self.diags.error("E1102", args[0].value.span, message);
+                return None;
+            }
+        };
+        let Some(&TypeName::Nominal(limits)) = self.type_names.get("streams.IoLimits") else {
+            let message = "`limits` is an `io.IoLimits`: `import std.io` to write one, as `io.IoLimits.Default with { maxLineBytes: 4 * 1024 * 1024 }`";
+            self.diags.error("E1102", arg.value.span, message);
+            return None;
+        };
+        let value = self.expr(cx, &arg.value, Some(limits));
+        let value = self.coerce(value, limits);
+        let fields = self.record_fields(limits, arg.value.span)?;
+        let index = fields.iter().position(|(name, _)| name == "maxLineBytes")?;
+        Some(Self::mk(hir::ExprKind::Field(Box::new(value), index as u32), Ty::INT, arg.value.span))
     }
 
     /// The file a method works on, lent to it.

@@ -128,10 +128,12 @@ impl<'a> Checker<'a> {
         self.types.define_adt(id, AdtKind::Enum(variants));
         self.types.shown.insert(ty, Shown::Words);
         self.text_error = ty;
+        // `TooLarge` holds the bound a line passed.
         let (id, ty) = self.types.declare_adt("io.IoError".into());
-        let variants = ["Closed", "InvalidData", "Host"]
+        let mut variants = ["Closed", "InvalidData", "Host"]
             .map(|name| Variant { name: name.into(), payload: Payload::Unit })
             .to_vec();
+        variants.push(Variant { name: "TooLarge".into(), payload: Payload::Tuple(vec![Ty::INT]) });
         self.types.define_adt(id, AdtKind::Enum(variants));
         self.types.shown.insert(ty, Shown::Words);
         self.io_error = ty;
@@ -293,13 +295,15 @@ impl<'a> Checker<'a> {
                 "InvalidData",
                 "InvalidName",
                 "Host",
+                "TooLarge",
             ];
-            // `Host` holds the system's number of the error.
+            // `Host` holds the system's number of the error, and `TooLarge`
+            // the bound a line passed.
             let (id, error) = self.types.declare_adt(format!("{}.FsError", name.name));
             let variants = errors
                 .iter()
                 .map(|&v| match v {
-                    "Host" => Variant { name: v.into(), payload: Payload::Tuple(vec![Ty::INT]) },
+                    "Host" | "TooLarge" => Variant { name: v.into(), payload: Payload::Tuple(vec![Ty::INT]) },
                     _ => unit(v),
                 })
                 .collect();

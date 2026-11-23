@@ -18,11 +18,12 @@ console.println(reader.readText()?)
 
 `tondo api std.io` shows the same in a terminal.
 
-- [Functions](#functions): [`reader`](#reader), [`discard`](#discard), [`pipe`](#pipe), [`copy`](#copy), [`multiWriter`](#multiwriter)
+- [Functions](#functions): [`reader`](#reader), [`discard`](#discard), [`IoLimits.Default`](#iolimitsdefault), [`pipe`](#pipe), [`copy`](#copy), [`multiWriter`](#multiwriter)
 - [IoError](#ioerror)
 - [Writer](#writer): [`Writer.write`](#writerwrite), [`Writer.writeLine`](#writerwriteline), [`Writer.writeBytes`](#writerwritebytes), [`Writer.flush`](#writerflush), [`Writer.close`](#writerclose)
 - [Reader](#reader-1): [`Reader.readLine`](#readerreadline), [`Reader.read`](#readerread), [`Reader.readText`](#readerreadtext), [`Reader.readBytes`](#readerreadbytes), [`Reader.close`](#readerclose)
 - [Buffer](#buffer): [`Buffer`](#buffer-1), [`Buffer.writer`](#bufferwriter), [`Buffer.reader`](#bufferreader), [`Buffer.text`](#buffertext), [`Buffer.bytes`](#bufferbytes), [`Buffer.length`](#bufferlength), [`Buffer.clear`](#bufferclear)
+- [IoLimits](#iolimits)
 
 ### Functions
 
@@ -41,6 +42,14 @@ pub fn discard(): Writer
 ```
 
 A writer that keeps nothing.
+
+#### IoLimits.Default
+
+```tondo
+pub const IoLimits.Default: IoLimits = IoLimits { maxLineBytes: 1024 * 1024 }
+```
+
+A line of up to 1 MiB.
 
 #### pipe
 
@@ -79,6 +88,9 @@ pub enum IoError {
     Closed
     InvalidData
     Host
+    /// A line longer than the most its `limits` allow, which it holds:
+    /// `IoLimits.maxLineBytes`.
+    TooLarge(Int)
 }
 ```
 
@@ -189,10 +201,12 @@ for {
 #### Reader.readLine
 
 ```tondo
-pub fn Reader.readLine(self): String? ! IoError
+pub fn Reader.readLine(self, limits: IoLimits = IoLimits.Default): String? ! IoError
 ```
 
-The next line without its `\n` or `\r\n`, or `none` at the end.
+The next line without its `\n` or `\r\n`, or `none` at the end. A line
+longer than `limits.maxLineBytes` is `IoError.TooLarge` and stays to be
+read: the same call with a larger bound gives it from its first byte.
 
 #### Reader.read
 
@@ -300,3 +314,31 @@ pub fn Buffer.clear(self)
 ```
 
 Empties the buffer.
+
+### IoLimits
+
+```tondo
+pub type IoLimits = {
+    maxLineBytes: Int
+}
+```
+
+How much a read of `readLine` may take from outside the program, on an
+`io.Reader`, an `fs.File` or a `net.Stream`: a line of more than
+`maxLineBytes` bytes, without its `\n`, fails as the module's
+`TooLarge`, and stays to be read, so the same call with a larger bound
+gives it from its first byte, and a program that wants to drop it reads
+on to the newline with `read`. The console's `readLine` takes none: it
+is the program's own input, as a file read whole is.
+
+```tondo
+import std.console
+import std.io
+
+let input = io.reader("x".repeat(100))
+match input.readLine(limits: io.IoLimits.Default with { maxLineBytes: 10 }) {
+    ok(line) => console.println("{line ?? ""}")
+    err(error) => console.println("{error}")
+}
+console.println(input.readLine()? ?? "")
+```

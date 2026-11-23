@@ -5,6 +5,7 @@ import std.crypto as __crypto
 import std.encoding as __encoding
 import std.fs as __fs
 import std.internal.http as httpNative
+import std.internal.text as textNative
 import std.io as __io
 import std.json as __json
 import std.net as __net
@@ -719,7 +720,7 @@ pub fn Request.headers(self): Map[String, String] {
 }
 
 /// The request with a body of up to `bytes`, more or fewer than the
-/// server's `Limits.body`, as a route of uploads needs: before the body is
+/// server's `ServerLimits.maxBodyBytes`, as a route of uploads needs: before the body is
 /// read, by the handler or a middleware.
 pub fn Request.limitBody(self, bytes: Int): Request {
     httpNative.requestLimit(self.native, bytes)
@@ -732,13 +733,21 @@ fn bodyProblem(request: httpNative.Native, what: String, failure: String): Probl
     if httpNative.requestStalled(request) {
         return Problem(
             408,
-            "{what} stopped arriving for longer than this server waits, `Limits.bodyTimeout`",
+            "{what} stopped arriving for longer than this server waits, `ServerLimits.bodyTimeout`",
         )
     }
     if httpNative.requestExceeded(request) {
         return Problem(
             413,
-            "{what} is larger than this server takes: raise the limit of the route with `request.limitBody(bytes)`, or the server's with `Limits.body`",
+            textNative.limitPassed(
+                what,
+                "is larger than",
+                httpNative.requestLimitOf(request),
+                "http",
+                "ServerLimits",
+                "maxBodyBytes",
+                "for one route with `request.limitBody(bytes)`",
+            ),
         )
     }
     Problem.badRequest("{what}: {failure.removePrefix("body\t")}")

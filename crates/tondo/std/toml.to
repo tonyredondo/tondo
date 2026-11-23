@@ -262,9 +262,10 @@ pub alias UnknownFields = serialization.UnknownFields
 pub fn decode[T: serialization.Decode](
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: TomlLimits = TomlLimits.Default,
 ): T ! TomlError {
     let input = Reader {
-        native: tomlnative.parse(text)
+        native: tomlnative.parse(text, limits.maxNestingDepth)
         rejectUnknown: unknownFields == UnknownFields.Reject
     }
     let first = input.value()?
@@ -292,9 +293,35 @@ pub fn encode[T: serialization.Encode](value: T): String ! TomlError {
 }
 
 /// A document of unknown shape.
-pub fn parse(text: String): Value ! TomlError {
-    decode[Value](text)
+pub fn parse(text: String, limits: TomlLimits = TomlLimits.Default): Value ! TomlError {
+    decode[Value](text, limits: limits)
 }
+
+/// How deep a document from outside the program may nest:
+/// `maxNestingDepth` arrays and tables inside the document's own, each of
+/// which takes up to about 2.7 KB of a task's 8 MiB stack. The parser stops
+/// at 80 by itself, under the about 1500 that half of that stack holds, so
+/// up to 80 may be given, and more is refused: 64 by default, under the
+/// parser's bound, so that these limits say why a document is refused. A
+/// function that a thread of C calls runs on that thread's stack, which
+/// may hold less.
+///
+/// ```tondo
+/// import std.console
+/// import std.toml
+///
+/// let deep = "a = ".concat("[".repeat(70)).concat("]".repeat(70))
+/// match toml.parse(deep, limits: toml.TomlLimits.Default with { maxNestingDepth: 80 }) {
+///     ok(_) => console.println("read")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
+pub type TomlLimits = {
+    maxNestingDepth: Int
+}
+
+/// Arrays and tables nested up to 64 levels deep.
+pub const TomlLimits.Default: TomlLimits = TomlLimits { maxNestingDepth: 64 }
 
 // ---------------------------------------------------------------------------
 // Formats

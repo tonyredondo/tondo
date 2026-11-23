@@ -103,13 +103,13 @@ fn main() {
     )
 }
 
-// expect-stdout: yaml, 100,000 block sequences: the document nests deeper than 128 lists and maps
+// expect-stdout: yaml, 100,000 block sequences: the document nests deeper than 128 levels, the most `YamlLimits.maxNestingDepth` allows: raise it with `limits: yaml.YamlLimits.Default with { maxNestingDepth: … }`, up to 1200, and 255 in flow style
 // expect-stdout: yaml, 128 block sequences: read
-// expect-stdout: yaml, 129 block sequences: the document nests deeper than 128 lists and maps
-// expect-stdout: yaml, an alias 160 deep: the document nests deeper than 128 lists and maps
-// expect-stdout: yaml, a Node of 200 block maps: the document nests deeper than 128 lists and maps
-// expect-stdout: messagepack, 100,000 arrays: the data nests deeper than 128 levels (byte 128)
-// expect-stdout: messagepack, 100,000 maps: the data nests deeper than 128 levels (byte 384)
+// expect-stdout: yaml, 129 block sequences: the document nests deeper than 128 levels, the most `YamlLimits.maxNestingDepth` allows: raise it with `limits: yaml.YamlLimits.Default with { maxNestingDepth: … }`, up to 1200, and 255 in flow style
+// expect-stdout: yaml, an alias 160 deep: the document nests deeper than 128 levels, the most `YamlLimits.maxNestingDepth` allows: raise it with `limits: yaml.YamlLimits.Default with { maxNestingDepth: … }`, up to 1200, and 255 in flow style
+// expect-stdout: yaml, a Node of 200 block maps: the document nests deeper than 128 levels, the most `YamlLimits.maxNestingDepth` allows: raise it with `limits: yaml.YamlLimits.Default with { maxNestingDepth: … }`, up to 1200, and 255 in flow style
+// expect-stdout: messagepack, 100,000 arrays: the data at byte 128 nests deeper than 128 levels, the most `MessagePackLimits.maxNestingDepth` allows: raise it with `limits: messagepack.MessagePackLimits.Default with { maxNestingDepth: … }`, up to 1400
+// expect-stdout: messagepack, 100,000 maps: the data at byte 384 nests deeper than 128 levels, the most `MessagePackLimits.maxNestingDepth` allows: raise it with `limits: messagepack.MessagePackLimits.Default with { maxNestingDepth: … }`, up to 1400
 // expect-stdout: messagepack, 128 arrays: read
-// expect-stdout: messagepack, 129 arrays: the data nests deeper than 128 levels (byte 128)
-// expect-stdout: messagepack, a Node 100,000 deep: the data nests deeper than 128 levels (byte 448)
+// expect-stdout: messagepack, 129 arrays: the data at byte 128 nests deeper than 128 levels, the most `MessagePackLimits.maxNestingDepth` allows: raise it with `limits: messagepack.MessagePackLimits.Default with { maxNestingDepth: … }`, up to 1400
+// expect-stdout: messagepack, a Node 100,000 deep: the data at byte 448 nests deeper than 128 levels, the most `MessagePackLimits.maxNestingDepth` allows: raise it with `limits: messagepack.MessagePackLimits.Default with { maxNestingDepth: … }`, up to 1400

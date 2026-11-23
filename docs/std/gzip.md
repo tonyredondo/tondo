@@ -17,7 +17,9 @@ console.println("{packed.length()} bytes for {unpacked.length()}")
 
 `tondo api std.gzip` shows the same in a terminal.
 
-- [Functions](#functions): [`compress`](#compress), [`decompress`](#decompress), [`writer`](#writer), [`reader`](#reader)
+- [Functions](#functions): [`compress`](#compress), [`decompress`](#decompress), [`GzipLimits.Default`](#gziplimitsdefault), [`writer`](#writer), [`reader`](#reader)
+- [GzipLimits](#gziplimits)
+- [GzipError](#gziperror)
 
 ### Functions
 
@@ -33,12 +35,25 @@ the smallest and slowest; 6 is the one of the `gzip` tool and of Go.
 #### decompress
 
 ```tondo
-pub fn decompress(data: Array[Byte]): Array[Byte] ! io.IoError
+pub fn decompress(
+    data: Array[Byte],
+    limits: GzipLimits = GzipLimits.Default,
+): Array[Byte] ! GzipError
 ```
 
 The data of one gzip member or several after one another;
-`IoError.InvalidData` when it is not gzip, is cut short or its checksum
-does not match.
+`GzipError.InvalidData` when it is not gzip, is cut short or its
+checksum does not match, and `GzipError.TooLarge` once it decompresses
+to more than `limits.maxOutputBytes`, which `gzip.reader` does not
+bound: it gives the data a part at a time.
+
+#### GzipLimits.Default
+
+```tondo
+pub const GzipLimits.Default: GzipLimits = GzipLimits { maxOutputBytes: 128 * 1024 * 1024 }
+```
+
+Up to 128 MiB of data decompressed.
 
 #### writer
 
@@ -61,3 +76,53 @@ pub fn reader(from: io.Reader): io.Reader
 A stream of what `from` holds, decompressed as it is read; closing it
 lets go of `from`, which closes with its last copy. Data that is
 not gzip fails as `IoError.InvalidData` in the read that reaches it.
+
+### GzipLimits
+
+```tondo
+pub type GzipLimits = {
+    maxOutputBytes: Int
+}
+```
+
+How much `decompress` may make of data from outside the program, which a
+few kilobytes can make gigabytes of: `maxOutputBytes` of the data
+decompressed.
+
+```tondo
+import std.console
+import std.gzip
+
+let packed = gzip.compress("a".repeat(1000).bytes())
+match gzip.decompress(packed, limits: gzip.GzipLimits.Default with { maxOutputBytes: 100 }) {
+    ok(data) => console.println("{data.length()} bytes")
+    err(error) => console.println("{error}")
+}
+```
+
+### GzipError
+
+```tondo
+pub enum GzipError {
+    /// Not gzip, cut short, or with a checksum that does not match.
+    InvalidData
+    /// More data decompressed than its `limits` allow, the bound it holds:
+    /// `GzipLimits.maxOutputBytes`.
+    TooLarge(Int)
+}
+```
+
+Why `decompress` gave no data.
+
+```tondo
+import std.console
+import std.gzip
+
+match gzip.decompress("not gzip".bytes()) {
+    ok(_) => console.println("decompressed")
+    err(gzip.GzipError.InvalidData) => console.println("not gzip")
+    err(error) => console.println("{error}")
+}
+```
+
+Implements `reflect.Reflect`, `Display`.

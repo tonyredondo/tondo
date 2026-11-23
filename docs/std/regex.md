@@ -52,19 +52,19 @@ Every option off: case-sensitive, `^` and `$` at the ends of the text,
 
 ```tondo
 pub const RegexLimits.Default: RegexLimits = RegexLimits {
-    maxPatternBytes: 65536
-    maxSyntaxDepth: 256
+    maxPatternBytes: 64 * 1024
+    maxNestingDepth: 128
     maxCaptureGroups: 256
-    maxProgramStates: 1000000
-    maxInputBytes: 16777216
-    maxMatches: 1000000
-    maxOutputBytes: 67108864
-    maxReplacementBytes: 65536
+    maxProgramStates: 1_000_000
+    maxInputBytes: 16 * 1024 * 1024
+    maxMatches: 1_000_000
+    maxOutputBytes: 64 * 1024 * 1024
+    maxReplacementBytes: 64 * 1024
 }
 ```
 
-The default limits: patterns of up to 64 KiB, inputs of up to 16 MiB and
-a million matches.
+The default limits: patterns of up to 64 KiB, nested 128 levels deep,
+inputs of up to 16 MiB and a million matches.
 
 ### RegexOptions
 
@@ -98,7 +98,7 @@ for found in heading.findAll("# Intro\ntext\n# USAGE\n")? {
 ```tondo
 pub type RegexLimits = {
     maxPatternBytes: Int
-    maxSyntaxDepth: Int
+    maxNestingDepth: Int
     maxCaptureGroups: Int
     maxProgramStates: Int
     maxInputBytes: Int
@@ -108,7 +108,13 @@ pub type RegexLimits = {
 }
 ```
 
-How much a pattern and its inputs may take.
+How much a pattern and its inputs may take: a pattern of up to
+`maxPatternBytes`, its groups and repetitions nested `maxNestingDepth`
+levels deep, which take none of a task's stack, so it has no ceiling,
+up to `maxCaptureGroups` groups and `maxProgramStates` states once
+compiled; inputs of up to `maxInputBytes`, `maxMatches` matches, and a
+replacement and what it writes of up to `maxReplacementBytes` and
+`maxOutputBytes`. Past one, the error is the kind of that bound.
 
 ```tondo
 import std.console
@@ -146,6 +152,8 @@ pub enum RegexErrorKind {
     InvalidReplacement
     OutputLimitExceeded
     InvalidBoundary
+    NestingLimitExceeded
+    CaptureLimitExceeded
 }
 ```
 
@@ -208,6 +216,8 @@ pub type RegexError = {
     kind: RegexErrorKind
     phase: RegexPhase
     offset: Int
+    /// The bound of `RegexLimits` passed, for the kinds of a limit, else 0.
+    limit: Int = 0
 }
 ```
 

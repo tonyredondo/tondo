@@ -35,10 +35,21 @@ const ERROR: i64 = -1;
 
 /// The most values a document may hold once its aliases are expanded.
 const LIMIT: usize = 1_000_000;
-/// The most lists and maps a document may nest, its aliases expanded: a
-/// value's decoder recurses once a level, and a line of `- - - …` used all
-/// of a task's stack.
-const DEPTH: usize = 128;
+/// The deepest `YamlLimits.maxNestingDepth` a task's stack holds, its
+/// aliases expanded: half of its 8 MiB at the 3418 bytes a level that a
+/// debug build took in the measure of 2026-11-22, more than a release
+/// build's 2136, rounded down. A value's decoder recurses once a level, and
+/// a line of `- - - …` used all of a task's stack. The parser's own bound
+/// on flow style, `[[…]]`, is lower: a document nested past it in that
+/// style fails with the parser's words, whatever the limits say.
+const CEILING: usize = 1200;
+
+/// How far the limits may raise it, in the words the sentences give.
+const UP_TO: &str = "1200, and 255 in flow style";
+
+/// Why a document nested past the parser's bound on flow style is refused.
+const FLOW: &str = "the document nests deeper than 255 levels in flow style, `[[…]]`, the most the parser reads \
+    whatever `YamlLimits.maxNestingDepth` says: write the deepest of it in block style, `- - …`";
 
 #[derive(Clone)]
 struct Event {
@@ -93,6 +104,8 @@ struct Builder {
     documents: Vec<Vec<Event>>,
     events: Vec<Event>,
     frames: Vec<Frame>,
+    /// How deep lists and maps may nest: `YamlLimits.maxNestingDepth`.
+    deepest: usize,
     /// The events of each anchored node, and the anchored collections still
     /// open: their anchor, first event and depth.
     anchors: HashMap<usize, Vec<Event>>,
@@ -127,7 +140,8 @@ impl Builder {
     }
 
     fn nests_too_deep(&self, line: usize, column: usize) -> Failure {
-        self.failure(format!("the document nests deeper than {DEPTH} lists and maps"), line, column)
+        let sentence = crate::limits::deeper_up_to("the document", self.deepest as u64, "yaml", "YamlLimits", UP_TO);
+        self.failure(sentence, line, column)
     }
 
     /// Whether the next node of the innermost map is a key.
@@ -238,7 +252,7 @@ impl Builder {
                         column,
                     ));
                 }
-                if self.frames.len() + nesting(&recorded) > DEPTH {
+                if self.frames.len() + nesting(&recorded) > self.deepest {
                     return Err(self.nests_too_deep(line, column));
                 }
                 self.events.extend(recorded);
@@ -294,7 +308,7 @@ impl Builder {
         if self.at_key() {
             return Err(self.failure("a key is text, not a list or a map", line, column));
         }
-        if self.frames.len() >= DEPTH {
+        if self.frames.len() >= self.deepest {
             return Err(self.nests_too_deep(line, column));
         }
         if let Some(tag) = &tag
@@ -509,20 +523,30 @@ fn is_number(text: &str) -> bool {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_yaml_parse(
     source: *const Str,
+    deepest: i64,
     region: *mut crate::regions::Region,
 ) -> *mut NativeObject {
-    let (documents, error) = documents(&text(source));
+    let deepest = deepest.max(0) as usize;
+    let (documents, error) = match deepest > CEILING {
+        true => {
+            let mut ceiling = crate::limits::above_ceiling("YamlLimits", deepest as u64, CEILING as u64);
+            ceiling.push_str(", and 255 in flow style");
+            (Vec::new(), Some((ceiling, "$".to_string(), 0, 0)))
+        }
+        false => documents(&text(source), deepest),
+    };
     let reader = Reader { documents, document: 0, read: 0, error };
     native::new_in(region, Mutex::new(reader))
 }
 
 /// The events of each document of `source`, as far as it reads, and the
 /// failure that stopped it.
-fn documents(source: &str) -> (Vec<Vec<Event>>, Option<Failure>) {
+fn documents(source: &str, deepest: usize) -> (Vec<Vec<Event>>, Option<Failure>) {
     let mut builder = Builder {
         documents: Vec::new(),
         events: Vec::new(),
         frames: Vec::new(),
+        deepest,
         anchors: HashMap::new(),
         open: Vec::new(),
     };
@@ -532,7 +556,12 @@ fn documents(source: &str) -> (Vec<Vec<Event>>, Option<Failure>) {
             Ok((parsed, span)) => builder.event(parsed, span.start.line(), span.start.col() + 1),
             Err(failure) => {
                 let at = failure.marker();
-                Err((failure.info().to_string(), format!("${}", builder.path()), at.line(), at.col() + 1))
+                // The parser's own bound on flow style, which no limits raise.
+                let message = match failure.info() {
+                    "recursion limit exceeded" => FLOW.to_string(),
+                    info => info.to_string(),
+                };
+                Err((message, format!("${}", builder.path()), at.line(), at.col() + 1))
             }
         };
         if let Err(failure) = outcome {
@@ -1294,7 +1323,7 @@ mod tests {
             ),
         ];
         for (source, paths) in expected {
-            let (documents, _) = documents(source);
+            let (documents, _) = documents(source, 128);
             let events = &documents[0];
             let found: Vec<String> =
                 (0..events.len()).map(|i| crate::msgpack::path_of(events, |e| e.code, |e| &e.text, i, false)).collect();

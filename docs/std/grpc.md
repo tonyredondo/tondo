@@ -21,12 +21,13 @@ app.listen(port: 50051)?
 
 `tondo api std.grpc` shows the same in a terminal.
 
-- [Functions](#functions): [`call`](#call), [`setHeader`](#setheader), [`setTrailer`](#settrailer), [`unary`](#unary), [`serverStream`](#serverstream), [`clientStream`](#clientstream), [`bidiStream`](#bidistream), [`connect`](#connect), [`reflection`](#reflection)
+- [Functions](#functions): [`GrpcLimits.Default`](#grpclimitsdefault), [`call`](#call), [`setHeader`](#setheader), [`setTrailer`](#settrailer), [`unary`](#unary), [`serverStream`](#serverstream), [`clientStream`](#clientstream), [`bidiStream`](#bidistream), [`connect`](#connect), [`reflection`](#reflection)
 - [Code](#code): [`Code.number`](#codenumber), [`Code.of`](#codeof)
+- [GrpcLimits](#grpclimits)
 - [Status](#status): [`Status.from`](#statusfrom)
 - [Call](#call-1)
 - [Stream](#stream)
-- [Service](#service): [`Service.onCall`](#serviceoncall), [`Service.onMessage`](#serviceonmessage), [`Service.compress`](#servicecompress)
+- [Service](#service): [`Service.onCall`](#serviceoncall), [`Service.onMessage`](#serviceonmessage), [`Service.compress`](#servicecompress), [`Service.limits`](#servicelimits)
 - [Method](#method)
 - [Direction](#direction)
 - [ServerCall](#servercall): [`ServerCall.receive`](#servercallreceive), [`ServerCall.send`](#servercallsend)
@@ -39,6 +40,15 @@ app.listen(port: 50051)?
 - [Health](#health): [`Health`](#health-1), [`Health.set`](#healthset), [`Health.service`](#healthservice)
 
 ### Functions
+
+#### GrpcLimits.Default
+
+```tondo
+pub const GrpcLimits.Default: GrpcLimits = GrpcLimits { maxMessageBytes: 16 * 1024 * 1024 }
+```
+
+Messages of up to 16 MiB, four times what Go, Java and .NET take by
+default.
 
 #### call
 
@@ -118,6 +128,7 @@ pub fn connect(
     key: String = "",
     compression: Compression = Compression.None,
     balancing: Balancing = Balancing.PickFirst,
+    limits: GrpcLimits = GrpcLimits.Default,
 ): Channel ! Status
 ```
 
@@ -231,6 +242,27 @@ pub fn Code.of(number: Int): Code
 ```
 
 The code of a number, `Unknown` for one gRPC does not have.
+
+### GrpcLimits
+
+```tondo
+pub type GrpcLimits = {
+    maxMessageBytes: Int
+}
+```
+
+How much a message from outside the program may be, as it comes or
+once decompressed: `maxMessageBytes`, each message on its own, so that a
+stream of many is not bounded as a whole. A client's are `connect`'s
+`limits:`; a server's, each service's `.limits(...)`. A message past it
+ends the call as `Code.ResourceExhausted`.
+
+```tondo
+import std.grpc
+
+let large = grpc.GrpcLimits.Default with { maxMessageBytes: 64 * 1024 * 1024 }
+let client = grpc.connect("http://localhost:50051", limits: large)?
+```
 
 ### Status
 
@@ -488,6 +520,27 @@ pub fn Service.compress(self): Service
 
 Compresses the messages the service sends with gzip, to each client
 that says it reads gzip. Every server reads compressed messages.
+
+#### Service.limits
+
+```tondo
+pub fn Service.limits(self, limits: GrpcLimits): Service
+```
+
+The service with `limits` for the messages its clients send:
+`maxMessageBytes` of each, as it comes or once decompressed, past which
+the call ends as `RESOURCE_EXHAUSTED`. `app.grpc` takes them with the
+service: a call's stream is bounded a message at a time, never by the
+server's `ServerLimits.maxBodyBytes`.
+
+```tondo
+import std.grpc
+import std.http
+
+let health = grpc.Health()
+var app = http.App()
+app.grpc(health.service().limits(grpc.GrpcLimits.Default with { maxMessageBytes: 64 * 1024 * 1024 }))
+```
 
 ### Method
 

@@ -15,6 +15,7 @@
 import std.fs as __fs
 import std.gzip as __gzip
 import std.internal.codec as codecNative
+import std.internal.text as textNative
 import std.io as __io
 import std.path as __path
 import std.reflect as __reflect
@@ -114,6 +115,46 @@ fn problem(message: String): ArchiveError {
     ArchiveError { message: message }
 }
 
+/// How much a read of an archive from outside the program may inflate,
+/// which a few kilobytes of it can make gigabytes of: `maxInflatedBytes`,
+/// all that one `read` or `open` inflates, a compressed tar's whole or the
+/// deflated entries of a zip together. The archive holds what it inflates,
+/// for now: it reads whole.
+///
+/// ```tondo
+/// import std.archive
+/// import std.console
+///
+/// let limits = archive.ArchiveLimits.Default with { maxInflatedBytes: 4 * 1024 * 1024 * 1024 }
+/// match archive.open("site.zip", limits: limits) {
+///     ok(site) => console.println("{site.entries().length()} entries")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
+pub type ArchiveLimits = {
+    maxInflatedBytes: Int
+}
+
+/// Up to 1 GiB inflated in all.
+pub const ArchiveLimits.Default: ArchiveLimits = ArchiveLimits {
+    maxInflatedBytes: 1024 * 1024 * 1024
+}
+
+/// The error of an archive that inflates to more than `limit`.
+fn tooLarge(limit: Int): ArchiveError {
+    problem(
+        textNative.limitPassed(
+            "what the archive inflates",
+            "is larger than",
+            limit,
+            "archive",
+            "ArchiveLimits",
+            "maxInflatedBytes",
+            "",
+        ),
+    )
+}
+
 /// An archive read whole, its entries and their contents.
 ///
 /// ```tondo
@@ -130,38 +171,57 @@ pub type Archive = {
     priv bodies: Array[Array[Byte]]
 }
 
-/// The archive in the file at `path`, of the format its contents say.
-pub fn open(path: String): Archive ! ArchiveError {
+/// The archive in the file at `path`, of the format its contents say;
+/// one that inflates to more than `limits.maxInflatedBytes` fails.
+pub fn open(path: String, limits: ArchiveLimits = ArchiveLimits.Default): Archive ! ArchiveError {
     match __fs.readBytes(path) {
-        ok(bytes) => read(bytes)?
+        ok(bytes) => read(bytes, limits: limits)?
         err(error) => fail problem("{path}: {error}")
     }
 }
 
 /// The archive these bytes are, of the format their first bytes say: zip,
-/// tar, or tar in gzip or Zstandard.
-pub fn read(bytes: Array[Byte]): Archive ! ArchiveError {
+/// tar, or tar in gzip or Zstandard; one that inflates to more than
+/// `limits.maxInflatedBytes` fails.
+pub fn read(
+    bytes: Array[Byte],
+    limits: ArchiveLimits = ArchiveLimits.Default,
+): Archive ! ArchiveError {
     let starts = (signature: Array[Int]): Bool {
         bytes.length() >= signature.length() and
             (0..signature.length()).all(at => Int(bytes[at]) == signature[at])
     }
     if starts([0x50, 0x4b, 0x03, 0x04]) or starts([0x50, 0x4b, 0x05, 0x06]) {
-        return readZip(bytes)
+        return readZip(bytes, limits.maxInflatedBytes)
     }
+    let most = limits.maxInflatedBytes
     if starts([0x1f, 0x8b]) {
-        return readTar(unpacked(__gzip.decompress(bytes))?, Format.TarGzip)
+        let packed = match __gzip.decompress(
+            bytes,
+            limits: __gzip.GzipLimits { maxOutputBytes: most },
+        ) {
+            ok(unpacked) => unpacked
+            err(__gzip.GzipError.TooLarge(_)) => fail tooLarge(most)
+            err(error) => fail problem(
+                "the archive is not compressed as its first bytes say: {error}",
+            )
+        }
+        return readTar(packed, Format.TarGzip)
     }
     if starts([0x28, 0xb5, 0x2f, 0xfd]) {
-        return readTar(unpacked(__zstd.decompress(bytes))?, Format.TarZstd)
+        let packed = match __zstd.decompress(
+            bytes,
+            limits: __zstd.ZstdLimits { maxOutputBytes: most },
+        ) {
+            ok(unpacked) => unpacked
+            err(__zstd.ZstdError.TooLarge(_)) => fail tooLarge(most)
+            err(error) => fail problem(
+                "the archive is not compressed as its first bytes say: {error}",
+            )
+        }
+        return readTar(packed, Format.TarZstd)
     }
     readTar(bytes, Format.Tar)
-}
-
-fn unpacked(result: Array[Byte] ! __io.IoError): Array[Byte] ! ArchiveError {
-    match result {
-        ok(bytes) => bytes
-        err(error) => fail problem("the archive is not compressed as its first bytes say: {error}")
-    }
 }
 
 /// Its format.
@@ -747,7 +807,7 @@ fn padField(text: String, width: Int): Array[Byte] {
 // zip
 // ---------------------------------------------------------------------------
 
-fn readZip(bytes: Array[Byte]): Archive ! ArchiveError {
+fn readZip(bytes: Array[Byte], most: Int): Archive ! ArchiveError {
     // The end of the central directory, its signature found from the end.
     var end = bytes.length() - 22
     for end >= 0 and little(bytes, end, 4) != 0x06054b50 {
@@ -772,6 +832,8 @@ fn readZip(bytes: Array[Byte]): Archive ! ArchiveError {
     }
     var entries: Array[Entry] = []
     var contents: Array[Array[Byte]] = []
+    // What its deflated entries inflate to, together.
+    var total = 0
     // Each record moves past at least its 46 bytes, and one that would
     // start past them fails: the walk ends on any count.
     for _ in 0..count {
@@ -838,11 +900,16 @@ fn readZip(bytes: Array[Byte]): Archive ! ArchiveError {
         let data = match method {
             0 => packed
             8 => {
-                let inflated = codecNative.inflate(packed)
+                let inflated = codecNative.inflate(packed, most - total)
+                if codecNative.unpackTooLarge(inflated) {
+                    fail tooLarge(most)
+                }
                 if codecNative.unpackFailed(inflated) {
                     fail problem("`{name}` of the zip is damaged")
                 }
-                codecNative.unpacked(inflated)
+                let data = codecNative.unpacked(inflated)
+                total += data.length()
+                data
             }
             _ => fail problem(
                 "`{name}` of the zip is compressed with method {method}: only stored and deflated entries are read",

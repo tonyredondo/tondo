@@ -22,7 +22,11 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("debugger/stopping.rs", "PANIC_NUMBERS", "written and read in one panic's report, which never waits"),
     ("debugger/bindings.rs", "SHOWING", "a view the debugger shows runs to its end"),
     ("diagnostics.rs", "BLOCK", "the threads that serve the tools, which run no task"),
-    ("fs.rs", "HOST_ERROR", "the threads that do a task's blocking work, which run no task"),
+    (
+        "lib.rs",
+        "ERROR_NUMBER",
+        "written by the call that failed once it resumed, never inlined, and read by the compiled code right after it, with no wait between",
+    ),
     ("io.rs", "HELD", "set while a future is polled, which never waits: what it lets go waits for the poll's end"),
     ("json.rs", "SPARE", "readers and writers let go, taken and given back by calls that never wait, on any thread"),
     (

@@ -53,6 +53,9 @@ pub enum NetError {
     Tls(String)
     /// Anything else the system reports: what it said.
     Io(String)
+    /// A line longer than the most its `limits` allow, which it holds:
+    /// `io.IoLimits.maxLineBytes`.
+    TooLarge(Int)
 }
 
 impl Display for NetError {
@@ -68,6 +71,7 @@ impl Display for NetError {
             NetError.InvalidAddress(why) => "invalid address: {why}"
             NetError.Tls(why) => "TLS: {why}"
             NetError.Io(why) => why
+            NetError.TooLarge(limit) => "{__io.IoError.TooLarge(limit)}"
         }
     }
 }
@@ -83,6 +87,7 @@ fn problem(code: Int, detail: String): NetError {
         8 => NetError.Unreachable
         9 => NetError.InvalidAddress(detail)
         10 => NetError.Tls(detail)
+        12 => NetError.TooLarge(Int.parse(detail) ?? 0)
         _ => NetError.Io(detail)
     }
 }
@@ -404,9 +409,15 @@ pub fn Stream.read(
     bytes
 }
 
-/// The next line without its `\n` or `\r\n`, or `none` at the end.
-pub fn Stream.readLine(self, timeout: __time.Duration? = none): String? ! NetError {
-    let line = netNative.readLine(self.native, millis(timeout))
+/// The next line without its `\n` or `\r\n`, or `none` at the end. A line
+/// longer than `limits.maxLineBytes` is `NetError.TooLarge` and stays to be
+/// read: the same call with a larger bound gives it from its first byte.
+pub fn Stream.readLine(
+    self,
+    timeout: __time.Duration? = none,
+    limits: __io.IoLimits = __io.IoLimits.Default,
+): String? ! NetError {
+    let line = netNative.readLine(self.native, millis(timeout), limits.maxLineBytes)
     if self.ended(0)? {
         return none
     }

@@ -31,9 +31,10 @@ const BYTES: i64 = 13;
 const DATETIME: i64 = 14;
 const ERROR: i64 = -1;
 
-/// The deepest nesting read, so that a crafted input cannot exhaust memory
-/// with open containers.
-const DEPTH: usize = 512;
+/// The deepest `CborLimits.maxNestingDepth` a task's stack holds: half of
+/// its 8 MiB at the 2697 bytes a level that a debug build took in the
+/// measure of 2026-11-22, more than a release build's 1488, rounded down.
+const CEILING: usize = 1500;
 
 #[derive(Clone)]
 struct Event {
@@ -68,6 +69,8 @@ struct Decoder<'a> {
     at: usize,
     frames: Vec<Frame>,
     events: Vec<Event>,
+    /// How deep arrays and maps may nest: `CborLimits.maxNestingDepth`.
+    deepest: usize,
 }
 
 /// A scalar of a data item.
@@ -215,8 +218,10 @@ impl Decoder<'_> {
                 if self.at_key() {
                     return self.fail(format!("a map key is not text or an integer (byte {at})"));
                 }
-                if self.frames.len() >= DEPTH {
-                    return self.fail(format!("the data nests deeper than {DEPTH} levels (byte {at})"));
+                if self.frames.len() >= self.deepest {
+                    let what = format!("the data at byte {at}");
+                    let ceiling = Some(CEILING as u64);
+                    return self.fail(crate::limits::deeper(&what, self.deepest as u64, "cbor", "CborLimits", ceiling));
                 }
                 let map = major == 5;
                 self.push(if map { BEGIN_MAP } else { BEGIN_LIST });
@@ -363,11 +368,19 @@ fn reader(object: *mut NativeObject) -> Option<std::sync::MutexGuard<'static, Re
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_cbor_parse(
     input: *mut ArrayHeader,
+    deepest: i64,
     region: *mut crate::regions::Region,
 ) -> *mut NativeObject {
-    let input = unsafe { array_items::<u8>(input) };
-    let mut decoder = Decoder { input, at: 0, frames: Vec::with_capacity(8), events: Vec::with_capacity(16) };
-    let mut error = if input.is_empty() { Some(("the input is empty".to_string(), "$".to_string())) } else { None };
+    let (input, deepest) = (unsafe { array_items::<u8>(input) }, deepest.max(0) as usize);
+    let (frames, events) = (Vec::with_capacity(8), Vec::with_capacity(16));
+    let mut decoder = Decoder { input, at: 0, frames, events, deepest };
+    let mut error = if deepest > CEILING {
+        Some((crate::limits::above_ceiling("CborLimits", deepest as u64, CEILING as u64), "$".to_string()))
+    } else if input.is_empty() {
+        Some(("the input is empty".to_string(), "$".to_string()))
+    } else {
+        None
+    };
     if error.is_none()
         && let Err(failure) = decoder.value()
     {

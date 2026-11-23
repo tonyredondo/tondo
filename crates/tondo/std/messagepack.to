@@ -211,9 +211,10 @@ pub alias UnknownFields = serialization.UnknownFields
 pub fn decode[T: serialization.Decode](
     input: Array[Byte],
     unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: MessagePackLimits = MessagePackLimits.Default,
 ): T ! MessagePackError {
     let reader = Reader {
-        native: packnative.parse(input)
+        native: packnative.parse(input, limits.maxNestingDepth)
         rejectUnknown: unknownFields == UnknownFields.Reject
     }
     let first = reader.value()?
@@ -234,9 +235,37 @@ pub fn encode[T: serialization.Encode](value: T): Array[Byte] {
 }
 
 /// A value of unknown shape.
-pub fn parse(input: Array[Byte]): Value ! MessagePackError {
-    decode[Value](input)
+pub fn parse(
+    input: Array[Byte],
+    limits: MessagePackLimits = MessagePackLimits.Default,
+): Value ! MessagePackError {
+    decode[Value](input, limits: limits)
 }
+
+/// How deep data from outside the program may nest: `maxNestingDepth`
+/// arrays and maps, each of which takes up to about 3 KB of a task's 8 MiB
+/// stack. Up to 1400, what half of that stack holds, may be given, and
+/// more is refused; a function that a thread of C calls runs on that
+/// thread's stack, which may hold less. `encode` writes the program's own
+/// values without recursing, at any depth, and what it writes past the
+/// reader's bound cannot be read back with it.
+///
+/// ```tondo
+/// import std.console
+/// import std.messagepack
+///
+/// let limits = messagepack.MessagePackLimits.Default with { maxNestingDepth: 256 }
+/// match messagepack.parse(messagepack.encode([[[1]]]), limits: limits) {
+///     ok(value) => console.println("{value}")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
+pub type MessagePackLimits = {
+    maxNestingDepth: Int
+}
+
+/// Arrays and maps nested up to 128 levels deep.
+pub const MessagePackLimits.Default: MessagePackLimits = MessagePackLimits { maxNestingDepth: 128 }
 
 // ---------------------------------------------------------------------------
 // Formats

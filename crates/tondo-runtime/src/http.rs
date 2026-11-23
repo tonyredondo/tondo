@@ -539,7 +539,8 @@ pub extern "C" fn tondo_rt_http_body_form(form: *mut NativeObject) -> *mut Nativ
 /// A response, or why there is none: its head, and its body until a
 /// reader takes it.
 struct Response {
-    failure: Failure,
+    /// Shared with a stream of its body, which records a body too large.
+    failure: Arc<Failure>,
     status: u16,
     url: String,
     version: hyper::Version,
@@ -551,7 +552,7 @@ struct Response {
 impl Response {
     fn failed(kind: &'static str, message: String) -> Response {
         Response {
-            failure: Mutex::new(Some((kind, message))),
+            failure: Arc::new(Mutex::new(Some((kind, message)))),
             status: 0,
             url: String::new(),
             version: hyper::Version::default(),
@@ -610,7 +611,7 @@ pub unsafe extern "C" fn tondo_rt_http_send(
         None => Response::failed("protocol", "the task was cancelled".into()),
         Some(Err((kind, message))) => Response::failed(kind, message),
         Some(Ok(answer)) => Response {
-            failure: Mutex::new(None),
+            failure: Arc::new(Mutex::new(None)),
             status: answer.status.as_u16(),
             url: answer.url,
             version: answer.version,
@@ -691,10 +692,12 @@ const ALREADY_READ: &str = "it was already read, and a response's body is read o
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_read_all(
     object: *mut NativeObject,
+    most: i64,
     region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
     let response = response(object);
-    let Some(body) = response.body.lock().unwrap_or_else(|e| e.into_inner()).take() else {
+    let taken = response.body.lock().unwrap_or_else(|e| e.into_inner()).take();
+    let Some(body) = taken.map(|body| body.bounded(most.max(0) as u64)) else {
         *response.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(("body", ALREADY_READ.into()));
         return crate::arrays::byte_array_in(region, &[]);
     };
@@ -715,6 +718,9 @@ pub extern "C" fn tondo_rt_http_read_all(
 /// A response's body as the host of a stream: chunks as they arrive.
 struct Chunks {
     body: Option<super::client::Received>,
+    /// The response's, where a body too large is recorded for the program
+    /// to read as it reads the others.
+    failure: Option<Arc<Failure>>,
     chunk: Bytes,
     /// Whether another read took the body before this one.
     taken: bool,
@@ -733,6 +739,13 @@ impl Host for Chunks {
                 Ok(Some(chunk)) if self.windows_1252 => self.chunk = windows_1252(&chunk).into_bytes().into(),
                 Ok(Some(chunk)) => self.chunk = chunk,
                 Ok(None) => self.body = None,
+                Err(failure) if failure.0 == "too large" => {
+                    let limit = failure.1.parse().unwrap_or(0);
+                    if let Some(slot) = &self.failure {
+                        *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(failure);
+                    }
+                    return Err(crate::too_large(limit));
+                }
                 Err((_, message)) => return Err(std::io::Error::other(message)),
             }
         }
@@ -758,15 +771,22 @@ impl Host for Chunks {
 /// when it is Windows-1252; one that fails when another read already took
 /// it.
 #[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_http_body(object: *mut NativeObject, windows_1252: u8) -> *mut StreamObject {
+pub extern "C" fn tondo_rt_http_body(object: *mut NativeObject, windows_1252: u8, most: i64) -> *mut StreamObject {
     let response = response(object);
-    let body = response.body.lock().unwrap_or_else(|e| e.into_inner()).take();
+    let taken = response.body.lock().unwrap_or_else(|e| e.into_inner()).take();
+    let body = taken.map(|body| body.bounded(most.max(0) as u64));
     let taken = body.is_none();
     if taken {
         *response.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(("body", ALREADY_READ.into()));
     }
     crate::io::stream(
-        Box::new(Chunks { body, chunk: Bytes::new(), taken, windows_1252: windows_1252 != 0 }),
+        Box::new(Chunks {
+            body,
+            failure: Some(response.failure.clone()),
+            chunk: Bytes::new(),
+            taken,
+            windows_1252: windows_1252 != 0,
+        }),
         Mode::Long,
         false,
     )
@@ -841,7 +861,7 @@ struct Received {
 /// Where an object of this module keeps its failure.
 fn failure_of<'a>(object: *mut NativeObject) -> Option<&'a Failure> {
     native::get::<Response>(object)
-        .map(|r| &r.failure)
+        .map(|r| &*r.failure)
         .or_else(|| native::get::<Socket>(object).map(|s| &s.failure))
         .or_else(|| native::get::<Received>(object).map(|r| &r.failure))
         .or_else(|| super::server::failure_of(object))

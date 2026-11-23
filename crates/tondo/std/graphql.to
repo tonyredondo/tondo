@@ -27,6 +27,7 @@
 // ```
 
 import std.http as __http
+import std.internal.text as textNative
 import std.json as __json
 import std.reflect as __reflect
 import std.shapes as __shapes
@@ -59,7 +60,33 @@ pub type Schema = {
     priv query: __reflect.Value
     priv mutations: __reflect.Value?
     priv types: Array[Named]
+    priv bounds: GraphqlLimits
 }
+
+/// How deep a document of a client may nest: `maxNestingDepth` selection
+/// sets, lists, objects and list types, each of which takes up to about
+/// 4 KB of a task's 8 MiB stack. Up to 1000, what half of that stack
+/// holds, may be given, and more is refused; a function that a thread of C
+/// calls runs on that thread's stack, which may hold less.
+///
+/// ```tondo
+/// import std.graphql
+///
+/// type Query = { greeting: String }
+///
+/// let schema = graphql.schema(Query { greeting: "hello" }, limits: graphql.GraphqlLimits.Default with { maxNestingDepth: 64 })
+/// ```
+pub type GraphqlLimits = {
+    maxNestingDepth: Int
+}
+
+/// Documents nested up to 128 levels deep.
+pub const GraphqlLimits.Default: GraphqlLimits = GraphqlLimits { maxNestingDepth: 128 }
+
+/// The deepest `GraphqlLimits.maxNestingDepth` a task's stack holds: half
+/// of its 8 MiB at the 4013 bytes a level that a release build took in the
+/// measure of 2026-11-22, more than a debug build's 1709, rounded down.
+const Ceiling: Int = 1000
 
 /// A named type of the schema: an object, an input, an enum or a scalar,
 /// with the Tondo type it comes from.
@@ -94,11 +121,12 @@ type Member = {
     method: Bool
 }
 
-/// The schema of `query`, whose fields and methods answer queries.
-pub fn schema[Q: __reflect.Reflect](query: Q): Schema {
+/// The schema of `query`, whose fields and methods answer queries, the
+/// documents of its clients read within `limits`.
+pub fn schema[Q: __reflect.Reflect](query: Q, limits: GraphqlLimits = GraphqlLimits.Default): Schema {
     var types: Array[Named] = []
     _ = described(__reflect.typeInfo[Q](), false, var types, "Query")
-    Schema { query: __reflect.valueOf(query), mutations: none, types }
+    Schema { query: __reflect.valueOf(query), mutations: none, types, bounds: limits }
 }
 
 /// The schema with the methods of `root` as its mutations.
@@ -550,15 +578,14 @@ type Reader = {
     at: __sync.Mutex[Int]
     /// How many selection sets, lists, objects and list types it is inside.
     depth: __sync.Mutex[Int]
+    /// The most it may be inside: the recursion that reads a document
+    /// ended the program's stack for one of some 800 KB nested 100,000
+    /// deep, which a client can send.
+    deepest: Int
 }
 
-/// The deepest a document may nest, as a regex's syntax may by default:
-/// the recursion that reads a document ended the program's stack for one
-/// of some 800 KB nested 100,000 deep, which a client can send.
-const MostNested: Int = 256
-
-/// Enters a nesting, refused past `MostNested`. Its `leave` comes when it
-/// is read; a document that fails meanwhile is not read further.
+/// Enters a nesting, refused past `deepest`. Its `leave` comes when it is
+/// read; a document that fails meanwhile is not read further.
 fn Reader.enter(self): !Unreadable {
     let depth = self.depth.update(
         (inside) {
@@ -566,10 +593,16 @@ fn Reader.enter(self): !Unreadable {
             inside
         },
     )
-    if depth > MostNested {
+    if depth > self.deepest {
         let token = self.peek()
         fail Unreadable {
-            message: "the document nests deeper than {MostNested} selections, lists or objects"
+            message: textNative.limitDeeper(
+                "the document",
+                self.deepest,
+                "graphql",
+                "GraphqlLimits",
+                Ceiling,
+            )
             line: token.line
             column: token.column
         }
@@ -619,8 +652,20 @@ fn Reader.name(self): String ! Unreadable {
     self.expect("name")?.text
 }
 
-fn parsed(source: String): Document ! Unreadable {
-    let reader = Reader { tokens: tokens(source)?, at: __sync.Mutex(0), depth: __sync.Mutex(0) }
+fn parsed(source: String, deepest: Int): Document ! Unreadable {
+    if deepest > Ceiling {
+        fail Unreadable {
+            message: textNative.limitCeiling("GraphqlLimits", deepest, Ceiling)
+            line: 1
+            column: 1
+        }
+    }
+    let reader = Reader {
+        tokens: tokens(source)?
+        at: __sync.Mutex(0)
+        depth: __sync.Mutex(0)
+        deepest
+    }
     var operations: Array[Operation] = []
     var fragments: Map[String, Fragment] = [:]
     for not reader.is("end") {
@@ -890,7 +935,7 @@ fn Schema.executed(
     variables: Map[String, __json.Value],
     operation: String?,
 ): String {
-    let read = match parsed(document) {
+    let read = match parsed(document, self.bounds.maxNestingDepth) {
         ok(found) => found
         err(problem) => return failedWith(problem.message, problem.line, problem.column)
     }

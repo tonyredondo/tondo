@@ -16,7 +16,7 @@ photo.fill(200, 200).save("avatar.jpg", quality: 80)?
 
 `tondo api std.image` shows the same in a terminal.
 
-- [Functions](#functions): [`read`](#read), [`open`](#open), [`info`](#info), [`exif`](#exif), [`blank`](#blank), [`fromPixels`](#frompixels)
+- [Functions](#functions): [`read`](#read), [`ImageLimits.Default`](#imagelimitsdefault), [`open`](#open), [`info`](#info), [`exif`](#exif), [`blank`](#blank), [`fromPixels`](#frompixels)
 - [Format](#format): [`Format.of`](#formatof)
 - [ImageError](#imageerror)
 - [Info](#info-1)
@@ -24,6 +24,7 @@ photo.fill(200, 200).save("avatar.jpg", quality: 80)?
 - [Filter](#filter)
 - [Anchor](#anchor)
 - [Image](#image): [`Image.width`](#imagewidth), [`Image.height`](#imageheight), [`Image.format`](#imageformat), [`Image.resize`](#imageresize), [`Image.fit`](#imagefit), [`Image.fill`](#imagefill), [`Image.crop`](#imagecrop), [`Image.rotate`](#imagerotate), [`Image.flipHorizontal`](#imagefliphorizontal), [`Image.flipVertical`](#imageflipvertical), [`Image.grayscale`](#imagegrayscale), [`Image.blur`](#imageblur), [`Image.overlay`](#imageoverlay), [`Image.pixels`](#imagepixels), [`Image.adjust`](#imageadjust), [`Image.invert`](#imageinvert), [`Image.sepia`](#imagesepia), [`Image.sharpen`](#imagesharpen), [`Image.pixelate`](#imagepixelate), [`Image.opacity`](#imageopacity), [`Image.colors`](#imagecolors), [`Image.pixel`](#imagepixel), [`Image.encode`](#imageencode), [`Image.save`](#imagesave)
+- [ImageLimits](#imagelimits)
 - [Exif](#exif-1)
 
 ### Functions
@@ -31,16 +32,26 @@ photo.fill(200, 200).save("avatar.jpg", quality: 80)?
 #### read
 
 ```tondo
-pub fn read(bytes: Array[Byte]): Image ! ImageError
+pub fn read(bytes: Array[Byte], limits: ImageLimits = ImageLimits.Default): Image ! ImageError
 ```
 
 The image of the bytes of a PNG, JPEG, GIF or WebP, turned as its EXIF
-orientation says; the first frame of an animation.
+orientation says; the first frame of an animation. One that takes more
+than `limits.maxDecodedBytes` once decoded fails before its pixels are
+held.
+
+#### ImageLimits.Default
+
+```tondo
+pub const ImageLimits.Default: ImageLimits = ImageLimits { maxDecodedBytes: 512 * 1024 * 1024 }
+```
+
+Up to 512 MiB of pixels.
 
 #### open
 
 ```tondo
-pub fn open(path: String): Image ! ImageError
+pub fn open(path: String, limits: ImageLimits = ImageLimits.Default): Image ! ImageError
 ```
 
 The image in the file at `path`.
@@ -495,6 +506,29 @@ pub fn Image.save(self, path: String, quality: Int = 85): !ImageError
 ```
 
 Writes the image to `path`, in the format its extension names.
+
+### ImageLimits
+
+```tondo
+pub type ImageLimits = {
+    maxDecodedBytes: Int
+}
+```
+
+How much an image from outside the program may take once decoded, which
+a header of a few bytes can declare as gigabytes: `maxDecodedBytes` of
+its pixels.
+
+```tondo
+import std.console
+import std.image
+
+let large = image.ImageLimits.Default with { maxDecodedBytes: 2 * 1024 * 1024 * 1024 }
+match image.open("scan.png", limits: large) {
+    ok(scan) => console.println("{scan.width()} by {scan.height()}")
+    err(error) => console.println("{error}")
+}
+```
 
 ### Exif
 

@@ -255,8 +255,9 @@ pub alias UnknownFields = serialization.UnknownFields
 pub fn decode[T: serialization.Decode](
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: YamlLimits = YamlLimits.Default,
 ): T ! YamlError {
-    let input = reader(text, unknownFields)
+    let input = reader(text, unknownFields, limits)
     let count = yamlnative.documents(input.native)
     if count != 1 {
         // A failure to parse comes first.
@@ -274,8 +275,9 @@ pub fn decode[T: serialization.Decode](
 pub fn decodeAll[T: serialization.Decode](
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: YamlLimits = YamlLimits.Default,
 ): Array[T] ! YamlError {
-    let input = reader(text, unknownFields)
+    let input = reader(text, unknownFields, limits)
     var values: Array[T] = []
     if yamlnative.documents(input.native) == 0 {
         _ = input.next()?
@@ -307,17 +309,47 @@ pub fn encodeAll[T: serialization.Encode](values: Array[T]): String {
 }
 
 /// A document of unknown shape.
-pub fn parse(text: String): Value ! YamlError {
-    decode[Value](text)
+pub fn parse(text: String, limits: YamlLimits = YamlLimits.Default): Value ! YamlError {
+    decode[Value](text, limits: limits)
 }
 
 /// Every document of the text.
-pub fn parseAll(text: String): Array[Value] ! YamlError {
-    decodeAll[Value](text)
+pub fn parseAll(text: String, limits: YamlLimits = YamlLimits.Default): Array[Value] ! YamlError {
+    decodeAll[Value](text, limits: limits)
 }
 
-fn reader(text: String, unknownFields: UnknownFields): Reader {
-    Reader { native: yamlnative.parse(text), rejectUnknown: unknownFields == UnknownFields.Reject }
+/// How deep a document from outside the program may nest, its aliases
+/// expanded: `maxNestingDepth` lists and maps, each of which takes up to
+/// about 3.4 KB of a task's 8 MiB stack. Up to 1200, what half of that
+/// stack holds, may be given, and more is refused; in flow style, `[[…]]`,
+/// the parser stops at 255 by itself, so a bound raised past it is not
+/// reached there. A function that a thread of C calls runs on that
+/// thread's stack, which may hold less. `encode` writes the program's own
+/// values without recursing, at any depth, and what it writes past the
+/// reader's bound cannot be read back with it.
+///
+/// ```tondo
+/// import std.console
+/// import std.yaml
+///
+/// let deep = "- ".repeat(200).concat("leaf")
+/// match yaml.parse(deep, limits: yaml.YamlLimits.Default with { maxNestingDepth: 256 }) {
+///     ok(_) => console.println("read")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
+pub type YamlLimits = {
+    maxNestingDepth: Int
+}
+
+/// Lists and maps nested up to 128 levels deep.
+pub const YamlLimits.Default: YamlLimits = YamlLimits { maxNestingDepth: 128 }
+
+fn reader(text: String, unknownFields: UnknownFields, limits: YamlLimits): Reader {
+    Reader {
+        native: yamlnative.parse(text, limits.maxNestingDepth)
+        rejectUnknown: unknownFields == UnknownFields.Reject
+    }
 }
 
 /// The value of the document the reader is at.
@@ -687,9 +719,9 @@ impl Display for NodeStyle {
 
 /// The first document of YAML text, which `set` changes; the documents
 /// after it stay as they are.
-pub fn load(text: String): Document ! YamlError {
+pub fn load(text: String, limits: YamlLimits = YamlLimits.Default): Document ! YamlError {
     // The first document, which the outline is of; the rest stay as text.
-    let root = parseAll(text)?.first() ?? Value.Null
+    let root = parseAll(text, limits: limits)?.first() ?? Value.Null
     let outlined = yamlnative.outline(text)
     let failure = yamlnative.outlineError(outlined)
     if not failure.isEmpty() {

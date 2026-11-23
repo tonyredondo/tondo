@@ -598,20 +598,35 @@ impl StreamState {
     }
 
     /// What `make` makes of the next line without its `\n` or `\r\n`, or
-    /// `None` at the end.
-    pub(crate) fn read_line<T>(&mut self, make: impl FnOnce(&[u8]) -> T) -> std::io::Result<Option<T>> {
+    /// `None` at the end. A line of more than `most` bytes is `TooLarge`,
+    /// and stays to be read: the same call with a larger bound gives it from
+    /// its first byte (standard library 10.3).
+    pub(crate) fn read_line<T>(&mut self, most: usize, make: impl FnOnce(&[u8]) -> T) -> std::io::Result<Option<T>> {
         loop {
-            if let Some(end) = self.ahead[self.position..self.filled].iter().position(|&b| b == b'\n') {
-                let line = &self.ahead[self.position..self.position + end];
-                let line = make(line.strip_suffix(b"\r").unwrap_or(line));
+            let ahead = &self.ahead[self.position..self.filled];
+            if let Some(end) = ahead.iter().position(|&b| b == b'\n') {
+                let line = &ahead[..end];
+                let line = line.strip_suffix(b"\r").unwrap_or(line);
+                if line.len() > most {
+                    return Err(crate::too_large(most));
+                }
+                let line = make(line);
                 self.position += end + 1;
                 return Ok(Some(line));
+            }
+            // A `\r` may still end it; past that, no line that fits can come.
+            if ahead.len() > most.saturating_add(1) {
+                return Err(crate::too_large(most));
             }
             if !self.fill()? {
                 if self.position == self.filled {
                     return Ok(None);
                 }
-                let line = make(&self.ahead[self.position..self.filled]);
+                let rest = &self.ahead[self.position..self.filled];
+                if rest.len() > most {
+                    return Err(crate::too_large(most));
+                }
+                let line = make(rest);
                 self.position = self.filled;
                 return Ok(Some(line));
             }
@@ -808,9 +823,11 @@ impl StreamState {
         }
     }
 
-    /// Whether a whole line was read ahead.
-    pub(crate) fn has_line(&self) -> bool {
-        self.ahead[self.position..self.filled].contains(&b'\n')
+    /// Whether `read_line` answers without reading: a whole line was read
+    /// ahead, or more than `most` bytes of one.
+    pub(crate) fn has_line(&self, most: usize) -> bool {
+        let ahead = &self.ahead[self.position..self.filled];
+        ahead.contains(&b'\n') || ahead.len() > most.saturating_add(1)
     }
 
     /// Whether bytes were read ahead.
@@ -961,6 +978,10 @@ pub(crate) fn retain(stream: *mut StreamObject) -> *mut StreamObject {
 /// The status of an `IoError`: 1 plus its variant, `Closed`, `InvalidData`
 /// or `Host`.
 fn io_status(error: &std::io::Error) -> i64 {
+    if let Some(limit) = crate::limit_passed(error) {
+        crate::note_error_number(limit as i64);
+        return 4;
+    }
     match error.kind() {
         ErrorKind::NotConnected | ErrorKind::BrokenPipe | ErrorKind::WriteZero | ErrorKind::Unsupported => 1,
         ErrorKind::InvalidData => 2,
@@ -1036,15 +1057,20 @@ pub unsafe extern "C" fn tondo_rt_io_close(stream: *mut StreamObject) -> i64 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_io_read_line(
     stream: *mut StreamObject,
+    most: i64,
     out: *mut *mut Str,
     region: *mut crate::regions::Region,
 ) -> i64 {
-    let region = WaitingRegion(region);
-    let line = run_ready(stream, StreamState::has_line, move |s| {
-        s.read_line(move |bytes| region.made_text(bytes))?
-            .map(|line| line.ok_or_else(|| ErrorKind::InvalidData.into()))
-            .transpose()
-    });
+    let (region, most) = (WaitingRegion(region), most.max(0) as usize);
+    let line = run_ready(
+        stream,
+        |s| s.has_line(most),
+        move |s| {
+            s.read_line(most, move |bytes| region.made_text(bytes))?
+                .map(|line| line.ok_or_else(|| ErrorKind::InvalidData.into()))
+                .transpose()
+        },
+    );
     status(line, |line| unsafe { *out = line.map_or(std::ptr::null_mut(), |l| l.0) })
 }
 
@@ -1267,9 +1293,14 @@ pub extern "C" fn tondo_rt_console_flush() -> i64 {
 pub extern "C" fn tondo_rt_console_read_line(region: *mut crate::regions::Region) -> *mut Str {
     let stream = console_stream(2);
     let region = WaitingRegion(region);
-    let line = run_ready(stream, StreamState::has_line, move |s| {
-        s.read_line(move |line| region.made(String::from_utf8_lossy(line).as_bytes())).ok().flatten()
-    });
+    // The program's own input, as a file read whole is: no bound.
+    let line = run_ready(
+        stream,
+        |s| s.has_line(usize::MAX),
+        move |s| {
+            s.read_line(usize::MAX, move |line| region.made(String::from_utf8_lossy(line).as_bytes())).ok().flatten()
+        },
+    );
     unsafe { tondo_rt_stream_release(stream) };
     // The line typed ended the prompt's: the live region comes back.
     super::console::region_read();

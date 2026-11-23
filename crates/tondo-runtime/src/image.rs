@@ -13,6 +13,8 @@ use std::io::Cursor;
 enum Picture {
     Ready(DynamicImage, i64),
     Failed(String),
+    /// Larger once decoded than its bound: why, in the common sentence.
+    TooLarge(String),
 }
 
 /// The formats of `std.image`'s `Format`, in order.
@@ -53,59 +55,59 @@ fn made(image: Option<DynamicImage>, format: i64, region: *mut crate::regions::R
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_image_read(
     data: *mut ArrayHeader,
+    most: i64,
     region: *mut crate::regions::Region,
 ) -> *mut NativeObject {
     use image::ImageDecoder;
-    let data = unsafe { array_items::<u8>(data) }.to_vec();
+    let (data, most) = (unsafe { array_items::<u8>(data) }.to_vec(), most.max(0) as u64);
     let read = crate::io::host(true, move || {
-        let failed = |error: image::ImageError| error.to_string();
-        let reader = ImageReader::new(Cursor::new(data)).with_guessed_format().map_err(|e| e.to_string())?;
+        let failed = |error: image::ImageError| Picture::Failed(error.to_string());
+        let mut reader =
+            ImageReader::new(Cursor::new(data)).with_guessed_format().map_err(|e| Picture::Failed(e.to_string()))?;
+        // The crate's own bound, the same: past its default of 512 MiB too.
+        let mut limits = image::Limits::default();
+        limits.max_alloc = Some(most);
+        reader.limits(limits);
         let format = code(reader.format());
         let mut decoder = reader.into_decoder().map_err(failed)?;
-        // The crate's `decode` holds the pixels to its limit before it
+        // The crate's `decode` holds the pixels to its bound before it
         // allocates them; taken apart to read the orientation first, the
         // decoder allocated whatever its header declared: 16 GiB for a PNG of
-        // 69 bytes. So the same bound, the crate's default, before anything.
-        let most = image::Limits::default().max_alloc.unwrap_or(u64::MAX);
+        // 69 bytes. So the bound before anything.
         if decoder.total_bytes() > most {
             let (width, height) = decoder.dimensions();
-            let takes = size(decoder.total_bytes());
-            return Err(format!(
-                "the image declares {width} by {height}, which takes {takes}: more than the {} a read may hold",
-                size(most)
-            ));
+            let what = format!("the image of {width} by {height} pixels once decoded");
+            let why =
+                crate::limits::passed(&what, "is larger than", most, "image", "ImageLimits", "maxDecodedBytes", "");
+            return Err(Picture::TooLarge(why));
         }
         let orientation = decoder.orientation().map_err(failed)?;
         let mut image = DynamicImage::from_decoder(decoder).map_err(failed)?;
         image.apply_orientation(orientation);
-        Ok::<_, String>((image, format))
+        Ok::<_, Picture>((image, format))
     });
     native::new_in(
         region,
         match read {
             Ok((image, format)) => Picture::Ready(image, format),
-            Err(why) => Picture::Failed(why),
+            Err(picture) => picture,
         },
     )
-}
-
-/// Bytes as a person reads them: `16 GiB`, `512 MiB`, `512.1 MiB`.
-fn size(bytes: u64) -> String {
-    let (value, unit) = match bytes >= 1 << 30 {
-        true => (bytes as f64 / (1u64 << 30) as f64, "GiB"),
-        false => (bytes as f64 / (1u64 << 20) as f64, "MiB"),
-    };
-    let text = format!("{value:.1}");
-    format!("{} {unit}", text.strip_suffix(".0").unwrap_or(&text))
 }
 
 /// Why an image could not be read, or nothing.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_image_failure(object: *mut NativeObject, region: *mut crate::regions::Region) -> *mut Str {
     match native::get::<Picture>(object) {
-        Some(Picture::Failed(why)) => crate::strings::str_in(region, why.as_bytes()),
+        Some(Picture::Failed(why) | Picture::TooLarge(why)) => crate::strings::str_in(region, why.as_bytes()),
         _ => crate::strings::str_in(region, b""),
     }
+}
+
+/// Whether an image was larger once decoded than its bound.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_image_too_large(object: *mut NativeObject) -> u8 {
+    matches!(native::get::<Picture>(object), Some(Picture::TooLarge(_))) as u8
 }
 
 /// `info`: the format, width and height its header gives, as its EXIF

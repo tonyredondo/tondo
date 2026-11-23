@@ -267,6 +267,8 @@ fn failed(sent: httpNative.Native): !HttpError {
         fail HttpError.Listen(why)
     } else if kind == "body" {
         fail HttpError.Body(why)
+    } else if kind == "too large" {
+        fail HttpError.TooLarge(Int.parse(why) ?? 0)
     }
     fail HttpError.Protocol(why)
 }

@@ -591,7 +591,7 @@ fn main(): !http.HttpError {
         time.sleep(time.hours(1))
         http.Reply.text("late")
     })
-    let limits = http.Limits.Standard with { head: 8192, headTimeout: time.milliseconds(100) }
+    let limits = http.ServerLimits.Default with { maxHeadBytes: 8192, headTimeout: time.milliseconds(100) }
     let server = app.start(limits: limits)?
     console.eprintln(server.address())
     _ = console.readLine()

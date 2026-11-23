@@ -31,6 +31,9 @@ pub enum IoError {
     Closed
     InvalidData
     Host
+    /// A line longer than the most its `limits` allow, which it holds:
+    /// `IoLimits.maxLineBytes`.
+    TooLarge(Int)
 }
 
 /// Where data goes.
@@ -96,8 +99,10 @@ pub fn Writer.flush(self): Unit ! IoError
 /// another is kept, as `console.stdout()`.
 pub fn Writer.close(self): Unit ! IoError
 
-/// The next line without its `\n` or `\r\n`, or `none` at the end.
-pub fn Reader.readLine(self): String? ! IoError
+/// The next line without its `\n` or `\r\n`, or `none` at the end. A line
+/// longer than `limits.maxLineBytes` is `IoError.TooLarge` and stays to be
+/// read: the same call with a larger bound gives it from its first byte.
+pub fn Reader.readLine(self, limits: IoLimits = IoLimits.Default): String? ! IoError
 
 /// Up to `max` bytes, or `none` at the end.
 pub fn Reader.read(self, max: Int): Array[Byte]? ! IoError

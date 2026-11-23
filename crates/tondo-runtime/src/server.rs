@@ -123,7 +123,7 @@ fn on_poller<S: Wire + Unpin>(stream: S, remote: String) -> std::io::Result<Acce
     Ok((Box::new(Polled::new(stream)?), remote))
 }
 
-/// What a server allows each client (`http.Limits`): the bytes of a
+/// What a server allows each client (`http.ServerLimits`): the bytes of a
 /// request's body and of its head, the time to send a head, which also
 /// ends a connection kept open without a request, and the longest a body
 /// may stop arriving, and a client stop taking a reply.
@@ -151,7 +151,7 @@ impl Limits {
 }
 
 /// A request's body that fails when none of it arrives for `idle`
-/// (`http.Limits.bodyTimeout`), and marks `stalled`.
+/// (`http.ServerLimits.bodyTimeout`), and marks `stalled`.
 struct Idle {
     inner: Incoming,
     idle: std::time::Duration,
@@ -201,7 +201,7 @@ impl hyper::body::Body for Idle {
 }
 
 /// A connection whose writes fail when the client takes none of the reply
-/// for `idle` (`http.Limits.replyTimeout`): hyper then closes it, and the
+/// for `idle` (`http.ServerLimits.replyTimeout`): hyper then closes it, and the
 /// handler's task is cancelled as for a client gone.
 struct Unhurried<S> {
     inner: S,
@@ -1497,6 +1497,12 @@ pub extern "C" fn tondo_rt_http_request_answering(object: *mut NativeObject) {
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_request_limit(object: *mut NativeObject, bytes: i64) {
     request(object).limit.store(bytes.max(0) as usize, std::sync::atomic::Ordering::Release);
+}
+
+/// The most bytes the body may have: the server's, or the route's.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_http_request_limit_of(object: *mut NativeObject) -> i64 {
+    request(object).limit.load(std::sync::atomic::Ordering::Acquire).min(i64::MAX as usize) as i64
 }
 
 /// Whether a reading of the body went past its limit.

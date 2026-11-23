@@ -1,0 +1,54 @@
+// A regex's `limits` bound a pattern and what it reads: each bound passed
+// is a kind of its own, with the bound it holds and the one sentence every
+// bound has, naming its field of `RegexLimits` and the code that raises it.
+// A pattern's nesting costs no stack, so it has no ceiling.
+import std.console
+import std.regex
+
+fn compiled(pattern: String, limits: regex.RegexLimits): String {
+    match regex.Regex.compile(pattern, limits: limits) {
+        ok(_) => "compiled"
+        err(error) => "{error.kind} {error.limit}: {error}"
+    }
+}
+
+fn main(): !regex.RegexError {
+    let standard = regex.RegexLimits.Default
+    console.println(
+        "by default: {standard.maxNestingDepth} {standard.maxPatternBytes} {standard.maxInputBytes}",
+    )
+    console.println(compiled("abcdef", standard with { maxPatternBytes: 4 }))
+    console.println(compiled("((a))", standard with { maxNestingDepth: 1 }))
+    console.println(compiled("((a))", standard with { maxNestingDepth: 300 }))
+    console.println(compiled("(a)(b)(c)", standard with { maxCaptureGroups: 2 }))
+    let input = regex.Regex.compile("a", limits: standard with { maxInputBytes: 10 })?
+    match input.isMatch("a".repeat(20)) {
+        ok(found) => console.println("{found}")
+        err(error) => console.println("{error.kind} {error.limit}: {error}")
+    }
+    let few = regex.Regex.compile("a", limits: standard with { maxMatches: 3 })?
+    match few.replaceAll("aaaaa", "b") {
+        ok(text) => console.println(text)
+        err(error) => console.println("{error.kind} {error.limit}: {error}")
+    }
+    let short = regex.Regex.compile("a", limits: standard with { maxOutputBytes: 8 })?
+    match short.replaceAll("aaaaa", "bb") {
+        ok(text) => console.println(text)
+        err(error) => console.println("{error.kind} {error.limit}: {error}")
+    }
+    let broken = "[a".concat("-")
+    match regex.Regex.compile(broken) {
+        ok(_) => console.println("compiled")
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: by default: 128 65536 16777216
+// expect-stdout: PatternLimitExceeded 4: the pattern is larger than 4 bytes, the most `RegexLimits.maxPatternBytes` allows: raise it with `limits: regex.RegexLimits.Default with { maxPatternBytes: … }`
+// expect-stdout: NestingLimitExceeded 1: the pattern nests deeper than 1 level, the most `RegexLimits.maxNestingDepth` allows: raise it with `limits: regex.RegexLimits.Default with { maxNestingDepth: … }`
+// expect-stdout: compiled
+// expect-stdout: CaptureLimitExceeded 2: the pattern has more than 2 capture groups, the most `RegexLimits.maxCaptureGroups` allows: raise it with `limits: regex.RegexLimits.Default with { maxCaptureGroups: … }`
+// expect-stdout: InputLimitExceeded 10: the input is larger than 10 bytes, the most `RegexLimits.maxInputBytes` allows: raise it with `limits: regex.RegexLimits.Default with { maxInputBytes: … }`
+// expect-stdout: MatchLimitExceeded 3: the input has more than 3 matches, the most `RegexLimits.maxMatches` allows: raise it with `limits: regex.RegexLimits.Default with { maxMatches: … }`
+// expect-stdout: OutputLimitExceeded 8: the output is larger than 8 bytes, the most `RegexLimits.maxOutputBytes` allows: raise it with `limits: regex.RegexLimits.Default with { maxOutputBytes: … }`
+// expect-stdout: regex.InvalidClass at byte 0 (Compile)

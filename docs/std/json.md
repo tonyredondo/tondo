@@ -114,7 +114,7 @@ some(7) 2 true
 
 `tondo api std.json` shows the same in a terminal.
 
-- [Functions](#functions): [`number`](#number), [`reader`](#reader), [`readerFrom`](#readerfrom), [`writer`](#writer), [`writerTo`](#writerto), [`encode`](#encode), [`decode`](#decode), [`parse`](#parse), [`parseAll`](#parseall), [`decodeAll`](#decodeall), [`values`](#values), [`toValue`](#tovalue), [`fromValue`](#fromvalue), [`decodeFrom`](#decodefrom), [`encodeTo`](#encodeto), [`raw`](#raw)
+- [Functions](#functions): [`number`](#number), [`JsonLimits.Default`](#jsonlimitsdefault), [`reader`](#reader), [`readerFrom`](#readerfrom), [`writer`](#writer), [`writerTo`](#writerto), [`encode`](#encode), [`decode`](#decode), [`parse`](#parse), [`parseAll`](#parseall), [`decodeAll`](#decodeall), [`values`](#values), [`toValue`](#tovalue), [`fromValue`](#fromvalue), [`decodeFrom`](#decodefrom), [`encodeTo`](#encodeto), [`raw`](#raw)
 - [Value](#value): [`Value.isNull`](#valueisnull), [`Value.get`](#valueget), [`Value.at`](#valueat), [`Value.find`](#valuefind), [`Value.field`](#valuefield), [`Value.item`](#valueitem), [`Value.asText`](#valueastext), [`Value.asInt`](#valueasint), [`Value.asFloat`](#valueasfloat), [`Value.asBool`](#valueasbool), [`Value.asArray`](#valueasarray), [`Value.asObject`](#valueasobject)
 - [Number](#number-1): [`Number.text`](#numbertext), [`Number.toInt`](#numbertoint), [`Number.toFloat`](#numbertofloat)
 - [ErrorKind](#errorkind)
@@ -122,6 +122,7 @@ some(7) 2 true
 - [Event](#event)
 - [UnknownFields](#unknownfields)
 - [Reader](#reader-1): [`Reader.next`](#readernext), [`Reader.value`](#readervalue), [`Reader.nextKey`](#readernextkey), [`Reader.skip`](#readerskip), [`Reader.unknownField`](#readerunknownfield), [`Reader.beginObject`](#readerbeginobject), [`Reader.beginArray`](#readerbeginarray), [`Reader.endArray`](#readerendarray), [`Reader.required`](#readerrequired), [`Reader.mismatch`](#readermismatch), [`Reader.failure`](#readerfailure)
+- [JsonLimits](#jsonlimits)
 - [Writer](#writer-1): [`Writer.null`](#writernull), [`Writer.bool`](#writerbool), [`Writer.int`](#writerint), [`Writer.float`](#writerfloat), [`Writer.number`](#writernumber), [`Writer.string`](#writerstring), [`Writer.key`](#writerkey), [`Writer.beginArray`](#writerbeginarray), [`Writer.endArray`](#writerendarray), [`Writer.beginObject`](#writerbeginobject), [`Writer.endObject`](#writerendobject), [`Writer.finish`](#writerfinish), [`Writer.flush`](#writerflush)
 - [Values](#values-1)
 - [Raw](#raw-1): [`Raw.text`](#rawtext)
@@ -136,6 +137,14 @@ pub fn number(text: String): Number ! JsonError
 
 A number from its JSON text.
 
+#### JsonLimits.Default
+
+```tondo
+pub const JsonLimits.Default: JsonLimits = JsonLimits { maxNestingDepth: 128 }
+```
+
+Arrays and objects nested up to 128 levels deep.
+
 #### reader
 
 ```tondo
@@ -143,6 +152,7 @@ pub fn reader(
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): Reader
 ```
 
@@ -157,6 +167,7 @@ pub fn readerFrom(
     stream: io.Reader,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): Reader
 ```
 
@@ -209,6 +220,7 @@ pub fn decode[T: serialization.Decode](
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): T ! JsonError
 ```
 
@@ -217,7 +229,7 @@ A value of `T` from JSON text, which must hold exactly one value.
 #### parse
 
 ```tondo
-pub fn parse(text: String): Value ! JsonError
+pub fn parse(text: String, limits: JsonLimits = JsonLimits.Default): Value ! JsonError
 ```
 
 A document of unknown shape.
@@ -225,7 +237,7 @@ A document of unknown shape.
 #### parseAll
 
 ```tondo
-pub fn parseAll(text: String): Array[Value] ! JsonError
+pub fn parseAll(text: String, limits: JsonLimits = JsonLimits.Default): Array[Value] ! JsonError
 ```
 
 The values of JSON text that holds several, one after another with or
@@ -238,6 +250,7 @@ pub fn decodeAll[T: serialization.Decode](
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): Array[T] ! JsonError
 ```
 
@@ -250,6 +263,7 @@ pub fn values[T: serialization.Decode](
     stream: io.Reader,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): Values[T]
 ```
 
@@ -279,6 +293,7 @@ pub fn decodeFrom[T: serialization.Decode](
     stream: io.Reader,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): T ! JsonError
 ```
 
@@ -693,6 +708,31 @@ pub fn Reader.failure(self, kind: ErrorKind, message: String): JsonError
 ```
 
 An error at the current position.
+
+### JsonLimits
+
+```tondo
+pub type JsonLimits = {
+    maxNestingDepth: Int
+}
+```
+
+How deep a document from outside the program may nest:
+`maxNestingDepth` arrays and objects, each of which takes up to about
+1.8 KB of a task's 8 MiB stack. Up to 2300, what half of that stack
+holds, may be given, and more is refused; a function that a thread of C
+calls runs on that thread's stack, which may hold less.
+
+```tondo
+import std.console
+import std.json
+
+let deep = "[".repeat(200).concat("]".repeat(200))
+match json.parse(deep, limits: json.JsonLimits.Default with { maxNestingDepth: 256 }) {
+    ok(_) => console.println("read")
+    err(error) => console.println("{error}")
+}
+```
 
 ### Writer
 

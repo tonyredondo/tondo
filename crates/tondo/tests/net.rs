@@ -33,11 +33,15 @@ fn connections_over_tls() {
         CertificateParams::new(vec!["localhost".to_string()]).unwrap().signed_by(&key, &authority).unwrap();
     let program = r#"
 import std.console
+import std.io
 import std.net
+
+/// Lines of up to 16 MiB, past the 1 MiB a line may have by default.
+const Long: io.IoLimits = io.IoLimits { maxLineBytes: 16 * 1024 * 1024 }
 
 fn echo(listener: net.Listener) {
     for connection in listener {
-        match connection.readLine() {
+        match connection.readLine(limits: Long) {
             ok(some(line)) => _ = connection.write("secure {line}\n")
             ok(none) => {}
             err(error) => console.println("server: {error}")
@@ -59,7 +63,7 @@ fn main(): !net.NetError {
     // take more.
     let long = net.connectTls("localhost", port, trust: "authority.pem")?
     long.write("{"x".repeat(8000000)}\n")?
-    console.println("long {(long.readLine()? ?? "").length()}")
+    console.println("long {(long.readLine(limits: Long)? ?? "").length()}")
 
     // The system does not trust the authority, and the name must match.
     let attempts: Array[(String, String?)] = [("localhost", none), ("127.0.0.1", some("authority.pem"))]

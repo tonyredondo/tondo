@@ -39,6 +39,7 @@ const UNREACHABLE: i64 = 8;
 const INVALID_ADDRESS: i64 = 9;
 const TLS: i64 = 10;
 const IO: i64 = 11;
+const TOO_LARGE: i64 = 12;
 
 /// Why an operation failed: a code and the text some variants carry.
 #[derive(Clone, Debug, Default)]
@@ -1066,6 +1067,8 @@ fn on<R: Send + 'static>(
     op: impl FnMut(&mut crate::io::StreamState) -> std::io::Result<R> + Send,
 ) -> Result<R, Failure> {
     run_until(stream.0, deadline, op).map_err(|error| match error.kind() {
+        // The bound passed, as its number, which `NetError.TooLarge` holds.
+        _ if let Some(limit) = crate::limit_passed(&error) => failure(TOO_LARGE, limit.to_string()),
         ErrorKind::NotConnected => failure(CLOSED, "closed"),
         _ => Failure::from(error),
     })
@@ -1095,12 +1098,13 @@ pub unsafe extern "C" fn tondo_rt_net_read(
 pub unsafe extern "C" fn tondo_rt_net_read_line(
     object: *mut NativeObject,
     timeout_ms: i64,
+    most: i64,
     region: *mut crate::regions::Region,
 ) -> *mut Str {
     let Some(connection) = connection_of(object) else { return str_new(b"") };
-    let region = crate::io::WaitingRegion(region);
+    let (region, most) = (crate::io::WaitingRegion(region), most.max(0) as usize);
     let (line, read) = match on(&connection.reader, deadline(timeout_ms), move |s| {
-        s.read_line(move |bytes| region.made_text(bytes))
+        s.read_line(most, move |bytes| region.made_text(bytes))
     }) {
         Ok(Some(Some(line))) => (line.0, Ok(true)),
         Ok(Some(None)) => (str_new(b""), Err(failure(IO, "a line that is not UTF-8"))),

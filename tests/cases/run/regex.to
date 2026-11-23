@@ -133,10 +133,10 @@ fn main(): Unit ! regex.RegexError {
 // expect-stdout: regex.UnsupportedFeature at byte 0 (Compile)
 // expect-stdout: regex.UnsupportedFeature at byte 3 (Compile)
 // expect-stdout: regex.InvalidUnicodeProperty at byte 0 (Compile)
-// expect-stdout: regex.InputLimitExceeded at byte 4 (Match)
-// expect-stdout: [0, 1, regex.MatchLimitExceeded at byte 2 (Match)]
-// expect-stdout: regex.MatchLimitExceeded at byte 2 (Replace)
+// expect-stdout: the input is larger than 4 bytes, the most `RegexLimits.maxInputBytes` allows: raise it with `limits: regex.RegexLimits.Default with { maxInputBytes: … }`
+// expect-stdout: [0, 1, the input has more than 2 matches, the most `RegexLimits.maxMatches` allows: raise it with `limits: regex.RegexLimits.Default with { maxMatches: … }`]
+// expect-stdout: the input has more than 2 matches, the most `RegexLimits.maxMatches` allows: raise it with `limits: regex.RegexLimits.Default with { maxMatches: … }`
 // expect-stdout: regex.InvalidReplacement at byte 0 (Replace)
-// expect-stdout: regex.OutputLimitExceeded at byte 3 (Replace)
-// expect-stdout: regex.PatternLimitExceeded at byte 3 (Compile)
+// expect-stdout: the output is larger than 6 bytes, the most `RegexLimits.maxOutputBytes` allows: raise it with `limits: regex.RegexLimits.Default with { maxOutputBytes: … }`
+// expect-stdout: the pattern is larger than 3 bytes, the most `RegexLimits.maxPatternBytes` allows: raise it with `limits: regex.RegexLimits.Default with { maxPatternBytes: … }`
 // expect-stdout: regex.InvalidBoundary at byte 1 (Match)

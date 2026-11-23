@@ -58,6 +58,7 @@ pub type Service = {
     priv compressing: Bool = false
     priv layers: Array[fn(Call, fn(): !Status): !Status] = []
     priv watchers: Array[fn(Call, Direction, __reflect.Value)] = []
+    priv bounds: GrpcLimits = GrpcLimits.Default
 }
 
 /// A method of a service: its name, what serves it, and whether it has no
@@ -190,6 +191,24 @@ pub fn Service.compress(self): Service {
     self with { compressing: true }
 }
 
+/// The service with `limits` for the messages its clients send:
+/// `maxMessageBytes` of each, as it comes or once decompressed, past which
+/// the call ends as `RESOURCE_EXHAUSTED`. `app.grpc` takes them with the
+/// service: a call's stream is bounded a message at a time, never by the
+/// server's `ServerLimits.maxBodyBytes`.
+///
+/// ```tondo
+/// import std.grpc
+/// import std.http
+///
+/// let health = grpc.Health()
+/// var app = http.App()
+/// app.grpc(health.service().limits(grpc.GrpcLimits.Default with { maxMessageBytes: 64 * 1024 * 1024 }))
+/// ```
+pub fn Service.limits(self, limits: GrpcLimits): Service {
+    self with { bounds: limits }
+}
+
 impl __http.GrpcService for Service {
     fn serveOn(self, app: mut __http.App) {
         for name in [self.name].concat(self.also) {
@@ -199,14 +218,16 @@ impl __http.GrpcService for Service {
                 let layers = self.layers
                 let watchers = self.watchers
                 let compressing = self.compressing
+                let most = self.bounds.maxMessageBytes
                 app.post(
                     path,
-                    request => serve(request, path, handler, layers, watchers, compressing)?,
+                    request => serve(request, path, handler, layers, watchers, compressing, most)?,
                 )
                 if method.noSideEffects {
                     app.get(
                         path,
-                        request => serve(request, path, handler, layers, watchers, compressing)?,
+                        request =>
+                            serve(request, path, handler, layers, watchers, compressing, most)?,
                     )
                 }
             }
@@ -338,6 +359,7 @@ fn serve(
     layers: Array[fn(Call, fn(): !Status): !Status],
     watchers: Array[fn(Call, Direction, __reflect.Value)],
     compressing: Bool,
+    most: Int,
 ): __http.Reply ! __http.Problem {
     let (output, reader) = __io.pipe()
     let headers = __http.Trailers()
@@ -397,12 +419,13 @@ fn serve(
         // Connect's unary request is the message alone.
         let body = if asked { connectQuery(request)? } else { request.bytes()? }
         let flags: Byte = if encoding == "identity" { 0 } else { 1 }
-        grpcNative.framesOf(enveloped(flags, body), encoding)
+        grpcNative.framesOf(enveloped(flags, body), encoding, most)
     } else {
-        // Each message is held to the most a message may be as it is read,
-        // not the call's whole body to the server's `Limits.body`: a client
-        // streams for as long as its call lasts.
-        grpcNative.frames(request.limitBody(Int.Max).body(), encoding, wire == Wire.WebText)
+        // Each message is held to `GrpcLimits.maxMessageBytes` as it is
+        // read, not the call's whole body to the server's
+        // `ServerLimits.maxBodyBytes`: a client streams for as long as its
+        // call lasts.
+        grpcNative.frames(request.limitBody(Int.Max).body(), encoding, wire == Wire.WebText, most)
     }
     let server = ServerCall { frames, output, ready, watchers, compressed, wire, json }
     let (done, outcome) = channel[Status](capacity: 1, discardWhenAbandoned: true)

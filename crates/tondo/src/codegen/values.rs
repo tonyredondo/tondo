@@ -327,21 +327,24 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         let variant = self.e.fb.ins().iadd_imm_s(status, -1);
         let variant = self.e.fb.ins().ireduce(types::I8, variant);
         self.e.fb.ins().store(flags(), variant, base, error.offset as i32);
-        // `FsError.Host` holds the system's number of the error, which the
-        // runtime kept for this thread.
-        let host = self
+        // A variant that holds a number, `FsError.Host`'s system number or a
+        // `TooLarge`'s limit, takes the one the runtime kept for this thread.
+        let numbered: Vec<usize> = self
             .e
             .cg
             .types()
             .variants(error.ty)
-            .and_then(|variants| variants.iter().position(|payload| payload.as_slice() == [Ty::INT]));
-        if let Some(host) = host {
-            let (is_host, other) = (self.e.fb.create_block(), self.e.fb.create_block());
-            let matched = self.e.fb.ins().icmp_imm_s(IntCC::Equal, status, host as i64 + 1);
-            self.e.fb.ins().brif(matched, is_host, &[], other, &[]);
-            self.e.fb.switch_to_block(is_host);
-            let number = self.e.call_rt(Rt::FsHostError, &[]).unwrap();
-            let payload = self.e.cg.slot(error.ty, Proj::Variant(host as u32, 0));
+            .map(|variants| {
+                variants.iter().enumerate().filter(|(_, p)| p.as_slice() == [Ty::INT]).map(|(i, _)| i).collect()
+            })
+            .unwrap_or_default();
+        for variant in numbered {
+            let (holds, other) = (self.e.fb.create_block(), self.e.fb.create_block());
+            let matched = self.e.fb.ins().icmp_imm_s(IntCC::Equal, status, variant as i64 + 1);
+            self.e.fb.ins().brif(matched, holds, &[], other, &[]);
+            self.e.fb.switch_to_block(holds);
+            let number = self.e.call_rt(Rt::ErrorNumber, &[]).unwrap();
+            let payload = self.e.cg.slot(error.ty, Proj::Variant(variant as u32, 0));
             self.e.fb.ins().store(flags(), number, base, (error.offset + payload.offset) as i32);
             self.e.fb.ins().jump(other, &[]);
             self.e.fb.switch_to_block(other);

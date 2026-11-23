@@ -14,6 +14,7 @@
 // ```
 
 import std.internal.regex as regexNative
+import std.internal.text as textNative
 import std.reflect as __reflect
 
 /// How a pattern matches.
@@ -48,7 +49,13 @@ pub const RegexOptions.Default: RegexOptions = RegexOptions {
     ungreedy: false
 }
 
-/// How much a pattern and its inputs may take.
+/// How much a pattern and its inputs may take: a pattern of up to
+/// `maxPatternBytes`, its groups and repetitions nested `maxNestingDepth`
+/// levels deep, which take none of a task's stack, so it has no ceiling,
+/// up to `maxCaptureGroups` groups and `maxProgramStates` states once
+/// compiled; inputs of up to `maxInputBytes`, `maxMatches` matches, and a
+/// replacement and what it writes of up to `maxReplacementBytes` and
+/// `maxOutputBytes`. Past one, the error is the kind of that bound.
 ///
 /// ```tondo
 /// import std.console
@@ -64,7 +71,7 @@ pub const RegexOptions.Default: RegexOptions = RegexOptions {
 /// ```
 pub type RegexLimits = {
     maxPatternBytes: Int
-    maxSyntaxDepth: Int
+    maxNestingDepth: Int
     maxCaptureGroups: Int
     maxProgramStates: Int
     maxInputBytes: Int
@@ -73,17 +80,17 @@ pub type RegexLimits = {
     maxReplacementBytes: Int
 }
 
-/// The default limits: patterns of up to 64 KiB, inputs of up to 16 MiB and
-/// a million matches.
+/// The default limits: patterns of up to 64 KiB, nested 128 levels deep,
+/// inputs of up to 16 MiB and a million matches.
 pub const RegexLimits.Default: RegexLimits = RegexLimits {
-    maxPatternBytes: 65536
-    maxSyntaxDepth: 256
+    maxPatternBytes: 64 * 1024
+    maxNestingDepth: 128
     maxCaptureGroups: 256
-    maxProgramStates: 1000000
-    maxInputBytes: 16777216
-    maxMatches: 1000000
-    maxOutputBytes: 67108864
-    maxReplacementBytes: 65536
+    maxProgramStates: 1_000_000
+    maxInputBytes: 16 * 1024 * 1024
+    maxMatches: 1_000_000
+    maxOutputBytes: 64 * 1024 * 1024
+    maxReplacementBytes: 64 * 1024
 }
 
 /// What went wrong with a pattern, an input or a replacement.
@@ -123,6 +130,8 @@ pub enum RegexErrorKind {
     InvalidReplacement
     OutputLimitExceeded
     InvalidBoundary
+    NestingLimitExceeded
+    CaptureLimitExceeded
 }
 
 /// When an error happened: compiling the pattern, matching or replacing.
@@ -170,6 +179,8 @@ pub type RegexError = {
     kind: RegexErrorKind
     phase: RegexPhase
     offset: Int
+    /// The bound of `RegexLimits` passed, for the kinds of a limit, else 0.
+    limit: Int = 0
 }
 
 impl Display for RegexErrorKind {
@@ -194,6 +205,8 @@ impl Display for RegexErrorKind {
             RegexErrorKind.InvalidReplacement => "InvalidReplacement"
             RegexErrorKind.OutputLimitExceeded => "OutputLimitExceeded"
             RegexErrorKind.InvalidBoundary => "InvalidBoundary"
+            RegexErrorKind.NestingLimitExceeded => "NestingLimitExceeded"
+            RegexErrorKind.CaptureLimitExceeded => "CaptureLimitExceeded"
         }
     }
 }
@@ -210,7 +223,49 @@ impl Display for RegexPhase {
 
 impl Display for RegexError {
     fn display(self): String {
-        "regex.{self.kind} at byte {self.offset} ({self.phase})"
+        let limit = self.limit
+        let passed = (what: String, field: String): String {
+            textNative.limitPassed(what, "is larger than", limit, "regex", "RegexLimits", field, "")
+        }
+        let counted = (what: String, unit: String, field: String): String {
+            textNative.limitCounted(
+                what,
+                "has more than",
+                limit,
+                unit,
+                "regex",
+                "RegexLimits",
+                field,
+            )
+        }
+        match self.kind {
+            RegexErrorKind.PatternLimitExceeded => passed("the pattern", "maxPatternBytes")
+            RegexErrorKind.NestingLimitExceeded => textNative.limitDeeper(
+                "the pattern",
+                limit,
+                "regex",
+                "RegexLimits",
+                0,
+            )
+            RegexErrorKind.CaptureLimitExceeded => counted(
+                "the pattern",
+                "capture groups",
+                "maxCaptureGroups",
+            )
+            RegexErrorKind.ProgramLimitExceeded => counted(
+                "the compiled pattern",
+                "states",
+                "maxProgramStates",
+            )
+            RegexErrorKind.InputLimitExceeded => passed("the input", "maxInputBytes")
+            RegexErrorKind.MatchLimitExceeded => counted("the input", "matches", "maxMatches")
+            RegexErrorKind.ReplacementLimitExceeded => passed(
+                "the replacement",
+                "maxReplacementBytes",
+            )
+            RegexErrorKind.OutputLimitExceeded => passed("the output", "maxOutputBytes")
+            _ => "regex.{self.kind} at byte {self.offset} ({self.phase})"
+        }
     }
 }
 
@@ -334,12 +389,19 @@ fn check(phase: RegexPhase): !RegexError {
         RegexErrorKind.InvalidReplacement,
         RegexErrorKind.OutputLimitExceeded,
         RegexErrorKind.InvalidBoundary,
+        RegexErrorKind.NestingLimitExceeded,
+        RegexErrorKind.CaptureLimitExceeded,
     ]
     let kind = match kinds.get(code - 1) {
         some(kind) => kind
         none => RegexErrorKind.InvalidSyntax
     }
-    fail RegexError { kind, phase, offset: regexNative.errorOffset() }
+    fail RegexError {
+        kind
+        phase
+        offset: regexNative.errorOffset()
+        limit: regexNative.errorLimit()
+    }
 }
 
 /// Compiles a pattern; an error says what and where in it.
@@ -382,7 +444,7 @@ pub fn Regex.compile(
         pattern,
         flags,
         limits.maxPatternBytes,
-        limits.maxSyntaxDepth,
+        limits.maxNestingDepth,
         limits.maxCaptureGroups,
         limits.maxProgramStates,
         limits.maxInputBytes,

@@ -17,10 +17,11 @@ console.print(doc.text())
 
 `tondo api std.yaml` shows the same in a terminal.
 
-- [Functions](#functions): [`decode`](#decode), [`decodeAll`](#decodeall), [`encode`](#encode), [`encodeAll`](#encodeall), [`parse`](#parse), [`parseAll`](#parseall), [`load`](#load)
+- [Functions](#functions): [`decode`](#decode), [`decodeAll`](#decodeall), [`encode`](#encode), [`encodeAll`](#encodeall), [`parse`](#parse), [`parseAll`](#parseall), [`YamlLimits.Default`](#yamllimitsdefault), [`load`](#load)
 - [Value](#value): [`Value.isNull`](#valueisnull), [`Value.get`](#valueget), [`Value.at`](#valueat), [`Value.find`](#valuefind), [`Value.asText`](#valueastext), [`Value.asInt`](#valueasint), [`Value.asFloat`](#valueasfloat), [`Value.asBool`](#valueasbool), [`Value.asArray`](#valueasarray), [`Value.asMap`](#valueasmap)
 - [YamlError](#yamlerror)
 - [UnknownFields](#unknownfields)
+- [YamlLimits](#yamllimits)
 - [Document](#document): [`Document.value`](#documentvalue), [`Document.find`](#documentfind), [`Document.text`](#documenttext), [`Document.writeTo`](#documentwriteto), [`Document.set`](#documentset), [`Document.insert`](#documentinsert), [`Document.remove`](#documentremove)
 - [Node](#node)
 - [NodeKind](#nodekind)
@@ -34,6 +35,7 @@ console.print(doc.text())
 pub fn decode[T: serialization.Decode](
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: YamlLimits = YamlLimits.Default,
 ): T ! YamlError
 ```
 
@@ -45,6 +47,7 @@ A value of `T` from YAML text, which must hold one document.
 pub fn decodeAll[T: serialization.Decode](
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: YamlLimits = YamlLimits.Default,
 ): Array[T] ! YamlError
 ```
 
@@ -69,7 +72,7 @@ The YAML documents of values, each after `---`.
 #### parse
 
 ```tondo
-pub fn parse(text: String): Value ! YamlError
+pub fn parse(text: String, limits: YamlLimits = YamlLimits.Default): Value ! YamlError
 ```
 
 A document of unknown shape.
@@ -77,15 +80,23 @@ A document of unknown shape.
 #### parseAll
 
 ```tondo
-pub fn parseAll(text: String): Array[Value] ! YamlError
+pub fn parseAll(text: String, limits: YamlLimits = YamlLimits.Default): Array[Value] ! YamlError
 ```
 
 Every document of the text.
 
+#### YamlLimits.Default
+
+```tondo
+pub const YamlLimits.Default: YamlLimits = YamlLimits { maxNestingDepth: 128 }
+```
+
+Lists and maps nested up to 128 levels deep.
+
 #### load
 
 ```tondo
-pub fn load(text: String): Document ! YamlError
+pub fn load(text: String, limits: YamlLimits = YamlLimits.Default): Document ! YamlError
 ```
 
 The first document of YAML text, which `set` changes; the documents
@@ -243,6 +254,35 @@ type Server = { port: Int }
 match yaml.decode[Server]("port: 8080\nprot: 8081\n", unknownFields: yaml.UnknownFields.Reject) {
     ok(server) => console.println("port {server.port}")
     err(error) => console.println("rejected: {error.message}")
+}
+```
+
+### YamlLimits
+
+```tondo
+pub type YamlLimits = {
+    maxNestingDepth: Int
+}
+```
+
+How deep a document from outside the program may nest, its aliases
+expanded: `maxNestingDepth` lists and maps, each of which takes up to
+about 3.4 KB of a task's 8 MiB stack. Up to 1200, what half of that
+stack holds, may be given, and more is refused; in flow style, `[[…]]`,
+the parser stops at 255 by itself, so a bound raised past it is not
+reached there. A function that a thread of C calls runs on that
+thread's stack, which may hold less. `encode` writes the program's own
+values without recursing, at any depth, and what it writes past the
+reader's bound cannot be read back with it.
+
+```tondo
+import std.console
+import std.yaml
+
+let deep = "- ".repeat(200).concat("leaf")
+match yaml.parse(deep, limits: yaml.YamlLimits.Default with { maxNestingDepth: 256 }) {
+    ok(_) => console.println("read")
+    err(error) => console.println("{error}")
 }
 ```
 

@@ -25,20 +25,29 @@ console.println("{text} {item.title} {xml.parse(text)?.attribute("id")}")
 
 `tondo api std.xml` shows the same in a terminal.
 
-- [Functions](#functions): [`parse`](#parse), [`decode`](#decode), [`encode`](#encode)
+- [Functions](#functions): [`XmlLimits.Default`](#xmllimitsdefault), [`parse`](#parse), [`decode`](#decode), [`encode`](#encode)
 - [Name](#name)
 - [Attribute](#attribute)
 - [Text](#text)
 - [XmlError](#xmlerror)
 - [Element](#element): [`Element.child`](#elementchild), [`Element.children`](#elementchildren), [`Element.attribute`](#elementattribute), [`Element.text`](#elementtext)
 - [Node](#node)
+- [XmlLimits](#xmllimits)
 
 ### Functions
+
+#### XmlLimits.Default
+
+```tondo
+pub const XmlLimits.Default: XmlLimits = XmlLimits { maxNestingDepth: 128 }
+```
+
+Elements nested up to 128 levels deep.
 
 #### parse
 
 ```tondo
-pub fn parse(text: String): Element ! XmlError
+pub fn parse(text: String, limits: XmlLimits = XmlLimits.Default): Element ! XmlError
 ```
 
 The tree of an XML document of unknown shape: its root element.
@@ -46,7 +55,10 @@ The tree of an XML document of unknown shape: its root element.
 #### decode
 
 ```tondo
-pub fn decode[T: serialization.Decode](text: String): T ! XmlError
+pub fn decode[T: serialization.Decode](
+    text: String,
+    limits: XmlLimits = XmlLimits.Default,
+): T ! XmlError
 ```
 
 A value of `T` from XML: the root element, whatever its name, read as
@@ -201,5 +213,30 @@ for node in paragraph.nodes {
         xml.Node.Element(element) => console.println("element {element.name}")
         xml.Node.Text(text) => console.println("text \"{text}\"")
     }
+}
+```
+
+### XmlLimits
+
+```tondo
+pub type XmlLimits = {
+    maxNestingDepth: Int
+}
+```
+
+How deep elements may nest in a document from outside the program:
+`maxNestingDepth` levels, each of which takes up to about 5.3 KB of a
+task's 8 MiB stack. Up to 700, what half of that stack holds, may be
+given, and more is refused; a function that a thread of C calls runs on
+that thread's stack, which may hold less.
+
+```tondo
+import std.console
+import std.xml
+
+let deep = "<a>".repeat(200).concat("</a>".repeat(200))
+match xml.parse(deep, limits: xml.XmlLimits.Default with { maxNestingDepth: 300 }) {
+    ok(root) => console.println(root.name)
+    err(error) => console.println(error.message)
 }
 ```

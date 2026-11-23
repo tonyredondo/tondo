@@ -169,6 +169,9 @@ pub enum NetError {
     Tls(String)
     /// Anything else the system reports: what it said.
     Io(String)
+    /// A line longer than the most its `limits` allow, which it holds:
+    /// `io.IoLimits.maxLineBytes`.
+    TooLarge(Int)
 }
 ```
 
@@ -392,10 +395,16 @@ Up to `max` bytes, as soon as some arrive, or `none` at the end.
 #### Stream.readLine
 
 ```tondo
-pub fn Stream.readLine(self, timeout: time.Duration? = none): String? ! NetError
+pub fn Stream.readLine(
+    self,
+    timeout: time.Duration? = none,
+    limits: io.IoLimits = io.IoLimits.Default,
+): String? ! NetError
 ```
 
-The next line without its `\n` or `\r\n`, or `none` at the end.
+The next line without its `\n` or `\r\n`, or `none` at the end. A line
+longer than `limits.maxLineBytes` is `NetError.TooLarge` and stays to be
+read: the same call with a larger bound gives it from its first byte.
 
 #### Stream.readAll
 

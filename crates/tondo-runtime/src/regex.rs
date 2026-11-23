@@ -15,15 +15,23 @@ use std::sync::OnceLock;
 use std::sync::atomic::AtomicUsize;
 
 thread_local! {
-    static ERROR: Cell<(i64, i64)> = const { Cell::new((0, 0)) };
+    /// The last operation's error: its kind, where, and the bound of
+    /// `RegexLimits` it passed, 0 for none.
+    static ERROR: Cell<(i64, i64, i64)> = const { Cell::new((0, 0, 0)) };
 }
 
-fn fail(kind: Kind, offset: usize) {
-    ERROR.with(|e| e.set((kind as i64, offset as i64)));
+fn fail(kind: Kind, offset: usize, limit: usize) {
+    ERROR.with(|e| e.set((kind as i64, offset as i64, limit.min(i64::MAX as usize) as i64)));
 }
 
 fn clear() {
-    ERROR.with(|e| e.set((0, 0)));
+    ERROR.with(|e| e.set((0, 0, 0)));
+}
+
+/// The bound of `RegexLimits` the last operation's error passed.
+#[unsafe(no_mangle)]
+pub extern "C" fn tondo_rt_regex_error_limit() -> i64 {
+    ERROR.with(|e| e.get().2)
 }
 
 /// The kind of the last operation's error, `0` for none.
@@ -120,7 +128,7 @@ pub unsafe extern "C" fn tondo_rt_regex_compile(
     clear();
     let pattern = utf8(&pattern);
     if pattern.len() as i64 > max_pattern {
-        fail(Kind::PatternLimitExceeded, max_pattern as usize);
+        fail(Kind::PatternLimitExceeded, max_pattern as usize, max_pattern as usize);
         return std::ptr::null_mut();
     }
     let depth = u32::try_from(max_depth).unwrap_or(u32::MAX);
@@ -128,7 +136,13 @@ pub unsafe extern "C" fn tondo_rt_regex_compile(
     let regex = match compile(pattern, flags, depth, max_captures, size) {
         Ok(regex) => regex,
         Err((kind, offset)) => {
-            fail(kind, offset);
+            let limit = match kind {
+                Kind::NestingLimitExceeded => max_depth,
+                Kind::CaptureLimitExceeded => max_captures,
+                Kind::ProgramLimitExceeded => max_states,
+                _ => 0,
+            };
+            fail(kind, offset, limit.max(0) as usize);
             return std::ptr::null_mut();
         }
     };
@@ -174,7 +188,7 @@ fn object<'a>(object: *mut RegexObject) -> &'a RegexObject {
 fn input<'a>(r: &RegexObject, input: &'a *const Str) -> Option<&'a str> {
     let input = utf8(input);
     if input.len() > r.max_input {
-        fail(Kind::InputLimitExceeded, r.max_input);
+        fail(Kind::InputLimitExceeded, r.max_input, r.max_input);
         return None;
     }
     Some(input)
@@ -222,7 +236,7 @@ pub unsafe extern "C" fn tondo_rt_regex_is_match(r: *mut RegexObject, text: *con
     match r.full.get_or_init(|| builder(&anchored(), r.flags, r.size, r.depth.saturating_add(1)).build().ok()) {
         Some(full) => full.is_match(text) as u8,
         None => {
-            fail(Kind::ProgramLimitExceeded, 0);
+            fail(Kind::ProgramLimitExceeded, 0, r.size / 16);
             0
         }
     }
@@ -264,7 +278,7 @@ pub unsafe extern "C" fn tondo_rt_regex_find(
     };
     let start = captures.get(0).expect("a match has its whole").start();
     if found as usize >= r.max_matches {
-        fail(Kind::MatchLimitExceeded, start);
+        fail(Kind::MatchLimitExceeded, start, r.max_matches);
         return crate::arrays::int_array_in(region, &[]);
     }
     let spans: Vec<i64> =
@@ -285,7 +299,7 @@ pub unsafe extern "C" fn tondo_rt_regex_slice(
     match text.get(start.max(0) as usize..end.max(0) as usize) {
         Some(slice) if start >= 0 && end >= start => crate::strings::str_in(region, slice.as_bytes()),
         _ => {
-            fail(Kind::InvalidBoundary, start.max(0) as usize);
+            fail(Kind::InvalidBoundary, start.max(0) as usize, 0);
             str_new(b"")
         }
     }
@@ -351,7 +365,7 @@ pub unsafe extern "C" fn tondo_rt_regex_replace(
     let Some(text) = input(r, &text) else { return str_new(b"") };
     let replacement = utf8(&replacement);
     if replacement.len() > r.max_replacement {
-        fail(Kind::ReplacementLimitExceeded, r.max_replacement);
+        fail(Kind::ReplacementLimitExceeded, r.max_replacement, r.max_replacement);
         return str_new(b"");
     }
     // A replacement without `$` is its text alone: its matches need no
@@ -361,7 +375,7 @@ pub unsafe extern "C" fn tondo_rt_regex_replace(
         true => match template(r, replacement) {
             Ok(parts) => Some(parts),
             Err(offset) => {
-                fail(Kind::InvalidReplacement, offset);
+                fail(Kind::InvalidReplacement, offset, 0);
                 return str_new(b"");
             }
         },
@@ -376,7 +390,12 @@ pub unsafe extern "C" fn tondo_rt_regex_replace(
         made
     });
     made.unwrap_or_else(|(kind, offset)| {
-        fail(kind, offset);
+        let limit = match kind {
+            Kind::MatchLimitExceeded => r.max_matches,
+            Kind::OutputLimitExceeded => r.max_output,
+            _ => 0,
+        };
+        fail(kind, offset, limit);
         str_new(b"")
     })
 }

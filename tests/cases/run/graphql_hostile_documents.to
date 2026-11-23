@@ -53,7 +53,7 @@ fn main() {
     let start = r"{ books { "
     let spread = r"... on Book { "
     let end = r" } }"
-    for depth in [256, 257] {
+    for depth in [128, 129] {
         let fields = "{books.repeat(depth - 1)}{innermost}{close.repeat(depth)}"
         console.println("{depth} fields: {shown("{schema.execute(fields)}")}")
         // The document's own selection set is one of the levels.
@@ -77,10 +77,10 @@ fn main() {
 // expect-stdout: the fragment `F` spreads itself, which GraphQL does not allow
 // expect-stdout: the fragment `F` spreads itself, which GraphQL does not allow
 // expect-stdout: the fragment `F` spreads itself, which GraphQL does not allow
-// expect-stdout: 256 fields: `Book` has no field `books`; its fields: id, title, related
-// expect-stdout: 256 lists: {"data":{"books":[{"id":1}]}}
-// expect-stdout: 257 fields: the document nests deeper than 256 selections, lists or objects
-// expect-stdout: 257 lists: the document nests deeper than 256 selections, lists or objects
-// expect-stdout: objects: the document nests deeper than 256 selections, lists or objects
-// expect-stdout: inline: the document nests deeper than 256 selections, lists or objects
+// expect-stdout: 128 fields: `Book` has no field `books`; its fields: id, title, related
+// expect-stdout: 128 lists: {"data":{"books":[{"id":1}]}}
+// expect-stdout: 129 fields: the document nests deeper than 128 levels, the most `GraphqlLimits.maxNestingDepth` allows: raise it with `limits: graphql.GraphqlLimits.Default with { maxNestingDepth: … }`, up to 1000
+// expect-stdout: 129 lists: the document nests deeper than 128 levels, the most `GraphqlLimits.maxNestingDepth` allows: raise it with `limits: graphql.GraphqlLimits.Default with { maxNestingDepth: … }`, up to 1000
+// expect-stdout: objects: the document nests deeper than 128 levels, the most `GraphqlLimits.maxNestingDepth` allows: raise it with `limits: graphql.GraphqlLimits.Default with { maxNestingDepth: … }`, up to 1000
+// expect-stdout: inline: the document nests deeper than 128 levels, the most `GraphqlLimits.maxNestingDepth` allows: raise it with `limits: graphql.GraphqlLimits.Default with { maxNestingDepth: … }`, up to 1000
 // expect-stdout: doubled: {"data":{"books":[{"id":1}]}}

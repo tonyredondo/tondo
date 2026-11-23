@@ -69,6 +69,9 @@ struct Channel {
     tls: Option<Arc<rustls::ClientConfig>>,
     balancing: Balancing,
     pool: tokio::sync::Mutex<Pool>,
+    /// The most bytes a message of a server may have, as it comes or once
+    /// decompressed: `GrpcLimits.maxMessageBytes`.
+    most: u64,
 }
 
 /// The addresses of a channel, and how many calls round robin gave out.
@@ -346,8 +349,9 @@ pub unsafe extern "C" fn tondo_rt_grpc_channel(
     cert: *const Str,
     key: *const Str,
     balancing: i64,
+    most: i64,
 ) -> *mut NativeObject {
-    let target = text(target);
+    let (target, most) = (text(target), most.max(0) as u64);
     let made = (|| {
         let (secure, rest) = match (target.strip_prefix("https://"), target.strip_prefix("http://")) {
             (Some(rest), _) => (true, rest),
@@ -383,7 +387,7 @@ pub unsafe extern "C" fn tondo_rt_grpc_channel(
         let balancing = if balancing == 1 { Balancing::RoundRobin } else { Balancing::PickFirst };
         let pool = Pool { backends: Vec::new(), stale: true, given: 0, resolved: None, refreshing: false };
         let target = rest.to_string();
-        Ok(Arc::new(Channel { secure, hosts, target, tls, balancing, pool: tokio::sync::Mutex::new(pool) }))
+        Ok(Arc::new(Channel { secure, hosts, target, tls, balancing, pool: tokio::sync::Mutex::new(pool), most }))
     })();
     native::new(made)
 }
@@ -619,6 +623,11 @@ async fn exchange(channel: Arc<Channel>, mut prepared: Prepared, events: Events)
                 buffer.extend_from_slice(&data);
                 while buffer.len() >= 5 {
                     let length = u32::from_be_bytes([buffer[1], buffer[2], buffer[3], buffer[4]]) as usize;
+                    // Refused before its bytes are gathered.
+                    if length as u64 > channel.most {
+                        let what = format!("a message of the server of {length} bytes");
+                        return end(RESOURCE_EXHAUSTED, too_large(&what, channel.most, false));
+                    }
                     if buffer.len() < 5 + length {
                         break;
                     }
@@ -627,9 +636,9 @@ async fn exchange(channel: Arc<Channel>, mut prepared: Prepared, events: Events)
                     let message = buffer.split_to(length).freeze();
                     let message = match (compressed, encoding.as_str()) {
                         (false, _) => message,
-                        (true, "gzip") => match gunzip(&message) {
+                        (true, "gzip") => match gunzip(&message, channel.most, false) {
                             Ok(message) => Bytes::from(message),
-                            Err((code, problem)) => return end(code, format!("a message of the server {problem}")),
+                            Err((code, problem)) => return end(code, problem),
                         },
                         (true, other) => {
                             let problem = format!(
@@ -761,22 +770,33 @@ fn framed(message: &[u8], compressed: bool) -> Bytes {
     framed.freeze()
 }
 
-/// The most a message may be, as it comes or once decompressed, so that a
-/// small one cannot take all the memory: the server reads a call's
-/// messages one by one, and holds each to it rather than the call's whole
-/// body to `Limits.body`.
-const MOST_MESSAGE: u64 = 16 << 20;
+/// That `what` passed `most`, the bound of `GrpcLimits.maxMessageBytes`
+/// that holds a message as it comes or once decompressed, so that a small
+/// one cannot take all the memory: a server reads a call's messages one by
+/// one and holds each to it, not the call's whole body to the server's.
+/// The code that raises it is where the bound was given: a service's
+/// `.limits(...)` when it `served` the message, else `connect`'s `limits:`.
+fn too_large(what: &str, most: u64, served: bool) -> String {
+    let raise = match served {
+        true => "`.limits(grpc.GrpcLimits.Default with { maxMessageBytes: … })` on the service",
+        false => "`limits: grpc.GrpcLimits.Default with { maxMessageBytes: … }`",
+    };
+    crate::limits::sentence(what, "is larger than", most, "GrpcLimits", "maxMessageBytes", raise, "")
+}
 
-/// A message compressed with gzip, or the code and why it is not one.
-fn gunzip(message: &[u8]) -> Result<Vec<u8>, (i64, &'static str)> {
+/// A message compressed with gzip, of the client when a server `served`
+/// it, up to `most` bytes once decompressed, or the code and why it is not
+/// one.
+fn gunzip(message: &[u8], most: u64, served: bool) -> Result<Vec<u8>, (i64, String)> {
+    let whose = if served { "a message of the client" } else { "a message of the server" };
     use std::io::Read;
     let mut out = Vec::new();
-    let mut decoder = flate2::read::MultiGzDecoder::new(message).take(MOST_MESSAGE + 1);
+    let mut decoder = flate2::read::MultiGzDecoder::new(message).take(most.saturating_add(1));
     if decoder.read_to_end(&mut out).is_err() {
-        return Err((INTERNAL, "does not decompress"));
+        return Err((INTERNAL, format!("{whose} does not decompress")));
     }
-    if out.len() as u64 > MOST_MESSAGE {
-        return Err((RESOURCE_EXHAUSTED, "is larger than 16 MiB once decompressed, the most a message may be"));
+    if out.len() as u64 > most {
+        return Err((RESOURCE_EXHAUSTED, too_large(&format!("{whose} once decompressed"), most, served)));
     }
     Ok(out)
 }
@@ -1026,6 +1046,8 @@ struct Frames {
     /// The Base64 text of a gRPC-Web body sent as text not yet decoded, or
     /// `None` for a body of bytes.
     text: Option<Vec<u8>>,
+    /// The most bytes a message may have: `GrpcLimits.maxMessageBytes`.
+    most: u64,
     /// Whether the call it serves ended with its status; one let go of
     /// before, as its client went, failed.
     served: bool,
@@ -1035,7 +1057,13 @@ struct Frames {
 
 impl Frames {
     /// The frames of a call a server serves, which it counts.
-    fn new(source: Option<crate::http::Source>, buffer: BytesMut, encoding: String, text: Option<Vec<u8>>) -> Frames {
+    fn new(
+        source: Option<crate::http::Source>,
+        buffer: BytesMut,
+        encoding: String,
+        text: Option<Vec<u8>>,
+        most: i64,
+    ) -> Frames {
         crate::diagnostics::GRPC_SERVER_CALLS.add(1);
         let active = crate::diagnostics::Open::new(&crate::diagnostics::GRPC_SERVER_ACTIVE);
         Frames {
@@ -1045,6 +1073,7 @@ impl Frames {
             error: String::new(),
             encoding,
             text,
+            most: most.max(0) as u64,
             served: false,
             _active: active,
         }
@@ -1077,18 +1106,23 @@ pub unsafe extern "C" fn tondo_rt_grpc_frames(
     input: *mut crate::io::StreamObject,
     encoding: *const Str,
     text_body: u8,
+    most: i64,
 ) -> *mut NativeObject {
     unsafe { crate::tasks::tondo_rt_handle_retain(input as *mut u8) };
-    let frames =
-        Frames::new(Some(crate::http::Source(input)), BytesMut::new(), text(encoding), (text_body != 0).then(Vec::new));
+    let source = Some(crate::http::Source(input));
+    let frames = Frames::new(source, BytesMut::new(), text(encoding), (text_body != 0).then(Vec::new), most);
     native::new(Mutex::new(frames))
 }
 
 /// Frames given whole, compressed with `encoding`, as the message of a
 /// unary call of Connect.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_grpc_frames_of(bytes: *mut ArrayHeader, encoding: *const Str) -> *mut NativeObject {
-    let frames = Frames::new(None, BytesMut::from(unsafe { array_items::<u8>(bytes) }), text(encoding), None);
+pub unsafe extern "C" fn tondo_rt_grpc_frames_of(
+    bytes: *mut ArrayHeader,
+    encoding: *const Str,
+    most: i64,
+) -> *mut NativeObject {
+    let frames = Frames::new(None, BytesMut::from(unsafe { array_items::<u8>(bytes) }), text(encoding), None, most);
     native::new(Mutex::new(frames))
 }
 
@@ -1122,10 +1156,8 @@ pub extern "C" fn tondo_rt_grpc_read_frame(object: *mut NativeObject) -> i64 {
             let length =
                 u32::from_be_bytes([frames.buffer[1], frames.buffer[2], frames.buffer[3], frames.buffer[4]]) as usize;
             // Refused before its bytes are gathered.
-            if length as u64 > MOST_MESSAGE {
-                frames.error = format!(
-                    "a message of the client of {length} bytes is larger than 16 MiB, the most a message may be"
-                );
+            if length as u64 > frames.most {
+                frames.error = too_large(&format!("a message of the client of {length} bytes"), frames.most, true);
                 return -3;
             }
             if frames.buffer.len() >= 5 + length {
@@ -1143,13 +1175,13 @@ pub extern "C" fn tondo_rt_grpc_read_frame(object: *mut NativeObject) -> i64 {
                     );
                     return -2;
                 }
-                match gunzip(&message) {
+                match gunzip(&message, frames.most, true) {
                     Ok(message) => {
                         frames.message = Bytes::from(message);
                         return 1;
                     }
                     Err((code, problem)) => {
-                        frames.error = format!("a message of the client {problem}");
+                        frames.error = problem;
                         return if code == RESOURCE_EXHAUSTED { -3 } else { -1 };
                     }
                 }
@@ -1312,6 +1344,7 @@ mod tests {
             tls: None,
             balancing,
             pool: tokio::sync::Mutex::new(pool),
+            most: 16 << 20,
         })
     }
 

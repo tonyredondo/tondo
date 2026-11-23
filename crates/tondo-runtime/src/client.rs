@@ -624,7 +624,7 @@ impl Client {
             version: parts.version,
             url: url.to_string(),
             headers: parts.headers,
-            body: Received { incoming: Some(incoming), decoder, deadline, connection },
+            body: Received { incoming: Some(incoming), decoder, deadline, connection, most: u64::MAX, read: 0 },
         })
     }
 }
@@ -636,9 +636,29 @@ pub(crate) struct Received {
     decoder: Option<Decoder>,
     deadline: Option<Instant>,
     connection: Arc<crate::server::Turning>,
+    /// The most bytes the body may have once decoded, past which a chunk is
+    /// `too large`: `ClientLimits.maxBodyBytes`, or `Response.limitBody`'s.
+    most: u64,
+    /// How many it gave so far.
+    read: u64,
 }
 
 impl Received {
+    /// The body bounded to `most` bytes once decoded.
+    pub(crate) fn bounded(mut self, most: u64) -> Received {
+        self.most = most;
+        self
+    }
+
+    /// `bytes` given, unless they pass the bound.
+    fn counted(&mut self, bytes: Bytes) -> Result<Bytes, Failure> {
+        self.read += bytes.len() as u64;
+        if self.read > self.most {
+            return Err(failed("too large", self.most.to_string()));
+        }
+        Ok(bytes)
+    }
+
     /// The next chunk, or none once it ended.
     pub(crate) async fn chunk(&mut self) -> Result<Option<Bytes>, Failure> {
         loop {
@@ -659,18 +679,20 @@ impl Received {
                 Some(Err(error)) => return Err(failed("body", with_causes(&error))),
                 None => {
                     self.incoming = None;
-                    return match self.decoder.take() {
-                        Some(decoder) => decoder.finish().map(|rest| Some(rest).filter(|rest| !rest.is_empty())),
-                        None => Ok(None),
+                    let rest = match self.decoder.take() {
+                        Some(decoder) => decoder.finish(self.most - self.read).map_err(|f| self.passed(f))?,
+                        None => return Ok(None),
                     };
+                    return Ok(Some(self.counted(rest)?).filter(|rest| !rest.is_empty()));
                 }
             };
+            let room = self.most - self.read;
             match &mut self.decoder {
-                None => return Ok(Some(data)),
+                None => return self.counted(data).map(Some),
                 Some(decoder) => {
-                    let decoded = decoder.feed(&data)?;
+                    let decoded = decoder.feed(&data, room).map_err(|f| self.passed(f))?;
                     if !decoded.is_empty() {
-                        return Ok(Some(decoded));
+                        return self.counted(decoded).map(Some);
                     }
                 }
             }
@@ -687,6 +709,11 @@ impl Received {
         }
     }
 
+    /// A failure of the decoder, which a bomb that passes the bound is.
+    fn passed(&self, failure: Failure) -> Failure {
+        if failure.0 == "too large" { failed("too large", self.most.to_string()) } else { failure }
+    }
+
     /// The whole body.
     pub(crate) async fn all(mut self) -> Result<Bytes, Failure> {
         let mut whole = bytes::BytesMut::new();
@@ -700,53 +727,91 @@ impl Received {
 /// What decodes a body of `Content-Encoding` gzip, deflate (zlib's, as
 /// HTTP means it) or br, as the bytes come.
 enum Decoder {
-    Gzip(flate2::write::GzDecoder<Vec<u8>>),
-    Zlib(flate2::write::ZlibDecoder<Vec<u8>>),
-    Brotli(Box<brotli_decompressor::DecompressorWriter<Vec<u8>>>),
+    Gzip(flate2::write::GzDecoder<Bounded>),
+    Zlib(flate2::write::ZlibDecoder<Bounded>),
+    Brotli(Box<brotli_decompressor::DecompressorWriter<Bounded>>),
+}
+
+/// What a decoder writes to: no more than `room` bytes, so that a few
+/// bytes that decode to gigabytes stop at the bound inside the decoding.
+#[derive(Default)]
+struct Bounded {
+    out: Vec<u8>,
+    room: u64,
+}
+
+impl std::io::Write for Bounded {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        if (self.out.len() + data.len()) as u64 > self.room {
+            return Err(crate::too_large(self.room as usize));
+        }
+        self.out.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A decoder's error: `too large` past its room, else the body's.
+fn undecoded(error: std::io::Error) -> Failure {
+    match crate::limit_passed(&error) {
+        Some(_) => failed("too large", String::new()),
+        None => failed("body", format!("the body does not decode: {error}")),
+    }
 }
 
 impl Decoder {
     fn of(encoding: &str) -> Option<Decoder> {
+        let sink = Bounded::default;
         match encoding.trim().to_ascii_lowercase().as_str() {
-            "gzip" | "x-gzip" => Some(Decoder::Gzip(flate2::write::GzDecoder::new(Vec::new()))),
-            "deflate" => Some(Decoder::Zlib(flate2::write::ZlibDecoder::new(Vec::new()))),
-            "br" => Some(Decoder::Brotli(Box::new(brotli_decompressor::DecompressorWriter::new(Vec::new(), 4096)))),
+            "gzip" | "x-gzip" => Some(Decoder::Gzip(flate2::write::GzDecoder::new(sink()))),
+            "deflate" => Some(Decoder::Zlib(flate2::write::ZlibDecoder::new(sink()))),
+            "br" => Some(Decoder::Brotli(Box::new(brotli_decompressor::DecompressorWriter::new(sink(), 4096)))),
             _ => None,
         }
     }
 
-    /// What the bytes so far decode to.
-    fn feed(&mut self, data: &[u8]) -> Result<Bytes, Failure> {
+    /// What the bytes so far decode to, up to `room` bytes.
+    fn feed(&mut self, data: &[u8], room: u64) -> Result<Bytes, Failure> {
         use std::io::Write;
-        let wrong = |error: std::io::Error| failed("body", format!("the body does not decode: {error}"));
         let output = match self {
             Decoder::Gzip(decoder) => {
-                decoder.write_all(data).and_then(|()| decoder.flush()).map_err(wrong)?;
+                decoder.get_mut().room = room;
+                decoder.write_all(data).and_then(|()| decoder.flush()).map_err(undecoded)?;
                 decoder.get_mut()
             }
             Decoder::Zlib(decoder) => {
-                decoder.write_all(data).and_then(|()| decoder.flush()).map_err(wrong)?;
+                decoder.get_mut().room = room;
+                decoder.write_all(data).and_then(|()| decoder.flush()).map_err(undecoded)?;
                 decoder.get_mut()
             }
             Decoder::Brotli(decoder) => {
-                decoder.write_all(data).and_then(|()| decoder.flush()).map_err(wrong)?;
+                decoder.get_mut().room = room;
+                decoder.write_all(data).and_then(|()| decoder.flush()).map_err(undecoded)?;
                 decoder.get_mut()
             }
         };
-        Ok(Bytes::from(std::mem::take(output)))
+        Ok(Bytes::from(std::mem::take(&mut output.out)))
     }
 
-    /// What is left once the body ended, which must end the encoding too.
-    fn finish(self) -> Result<Bytes, Failure> {
-        let wrong = |error: std::io::Error| failed("body", format!("the body does not decode: {error}"));
+    /// What is left once the body ended, up to `room` bytes, which must end
+    /// the encoding too.
+    fn finish(mut self, room: u64) -> Result<Bytes, Failure> {
+        match &mut self {
+            Decoder::Gzip(decoder) => decoder.get_mut().room = room,
+            Decoder::Zlib(decoder) => decoder.get_mut().room = room,
+            Decoder::Brotli(decoder) => decoder.get_mut().room = room,
+        }
         let rest = match self {
-            Decoder::Gzip(decoder) => decoder.finish().map_err(wrong)?,
-            Decoder::Zlib(decoder) => decoder.finish().map_err(wrong)?,
+            Decoder::Gzip(decoder) => decoder.finish().map_err(undecoded)?,
+            Decoder::Zlib(decoder) => decoder.finish().map_err(undecoded)?,
             Decoder::Brotli(decoder) => {
                 decoder.into_inner().map_err(|_| failed("body", "the body ends before its brotli does"))?
             }
         };
-        Ok(Bytes::from(rest))
+        Ok(Bytes::from(rest.out))
     }
 }
 

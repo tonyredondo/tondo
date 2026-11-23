@@ -187,6 +187,26 @@ impl Display for Code {
     }
 }
 
+/// How much a message from outside the program may be, as it comes or
+/// once decompressed: `maxMessageBytes`, each message on its own, so that a
+/// stream of many is not bounded as a whole. A client's are `connect`'s
+/// `limits:`; a server's, each service's `.limits(...)`. A message past it
+/// ends the call as `Code.ResourceExhausted`.
+///
+/// ```tondo
+/// import std.grpc
+///
+/// let large = grpc.GrpcLimits.Default with { maxMessageBytes: 64 * 1024 * 1024 }
+/// let client = grpc.connect("http://localhost:50051", limits: large)?
+/// ```
+pub type GrpcLimits = {
+    maxMessageBytes: Int
+}
+
+/// Messages of up to 16 MiB, four times what Go, Java and .NET take by
+/// default.
+pub const GrpcLimits.Default: GrpcLimits = GrpcLimits { maxMessageBytes: 16 * 1024 * 1024 }
+
 /// How a call failed: its code, a message for people and details for
 /// programs, as `google.rpc.Status` carries them.
 ///

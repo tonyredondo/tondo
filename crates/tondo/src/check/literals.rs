@@ -1107,6 +1107,25 @@ impl<'a> Checker<'a> {
             }
             return value;
         }
+        // `io.IoLimits.Default`: a constant of a type of a module's
+        // companion, which is the module's own.
+        if let [module, owner, name, rest @ ..] = segments
+            && self.lookup(cx, &module.name).is_none()
+            && let Some(&ModuleName::Module(hosted)) = self.names.get(&module.name)
+            && let Some(id) = Self::companions(hosted).iter().find_map(|companion| {
+                match self.names.get(&format!("{companion}.{}.{}", owner.name, name.name)) {
+                    Some(&ModuleName::Const(id)) if self.consts[id].decl.public => Some(id),
+                    _ => None,
+                }
+            })
+        {
+            let mut value = self.const_value(id, name.span);
+            for segment in rest {
+                let span = value.span.to(segment.span);
+                value = self.field_access(value, FieldRef::Name(&segment.name), segment.span, span);
+            }
+            return value;
+        }
         // `time.Duration.Zero`, the duration of no time.
         if let [module, ty, constant] = segments
             && (ty.name.as_str(), constant.name.as_str()) == ("Duration", "Zero")

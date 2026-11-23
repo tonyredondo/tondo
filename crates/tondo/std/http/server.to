@@ -11,7 +11,7 @@ import std.time as __time
 /// Serves until the task is cancelled or the server stops; `port` 0 takes
 /// any free port. With `socket`, it serves on that Unix socket instead,
 /// which it makes and removes when it stops. `limits` bounds what each
-/// client sends, `Limits.Standard` without it. A client that goes away
+/// client sends. A client that goes away
 /// before its reply cancels the task that answers it: the handler stops at
 /// its next wait and runs its `defer`s. `Interrupt` (Ctrl-C) or `Terminate`
 /// first drains the server, as `Server.stop(grace)` does, and then ends
@@ -24,7 +24,7 @@ pub fn App.listen(
     host: String = "0.0.0.0",
     tls: Tls? = none,
     socket: String? = none,
-    limits: Limits? = none,
+    limits: ServerLimits = ServerLimits.Default,
     grace: __time.Duration = __time.seconds(30),
 ): !HttpError {
     self.start(port: port, host: host, tls: tls, socket: socket, limits: limits)?.wait(grace: grace)
@@ -38,7 +38,7 @@ pub fn App.start(
     host: String = "127.0.0.1",
     tls: Tls? = none,
     socket: String? = none,
-    limits: Limits? = none,
+    limits: ServerLimits = ServerLimits.Default,
 ): Server ! HttpError {
     let listening = bound(host, port, tls, socket, limits)?
     let (finished, ended) = channel[Unit](1)
@@ -53,7 +53,7 @@ pub fn App.start(
 /// kept open without a request; the longest a body may stop arriving,
 /// after which it is `408`; and the longest a client may stop taking a
 /// reply, after which the connection closes and the handler is cancelled.
-/// `Limits.Standard with { body: 100_000_000 }` changes one;
+/// `ServerLimits.Default with { maxBodyBytes: 100_000_000 }` changes one;
 /// `Request.limitBody` changes the body's for a route.
 ///
 /// ```tondo
@@ -63,12 +63,12 @@ pub fn App.start(
 /// var app = http.App()
 /// // Videos up to 1 GB on this route; 10 MiB on the others.
 /// app.post("/videos", request => http.Reply.text("{request.limitBody(1_000_000_000).saveTo("video.mp4")?} bytes"))
-/// let limits = http.Limits.Standard with { headTimeout: time.seconds(10) }
-/// app.listen(port: 8080, limits: some(limits))?
+/// let limits = http.ServerLimits.Default with { headTimeout: time.seconds(10) }
+/// app.listen(port: 8080, limits: limits)?
 /// ```
-pub type Limits = {
-    body: Int
-    head: Int
+pub type ServerLimits = {
+    maxBodyBytes: Int
+    maxHeadBytes: Int
     headTimeout: __time.Duration
     bodyTimeout: __time.Duration
     replyTimeout: __time.Duration
@@ -76,9 +76,9 @@ pub type Limits = {
 
 /// 10 MiB of body, 64 KiB of head, 30 seconds to send a head, and 30
 /// seconds that a body may stop arriving or a reply stop being taken.
-pub const Limits.Standard: Limits = Limits {
-    body: 10 * 1024 * 1024
-    head: 64 * 1024
+pub const ServerLimits.Default: ServerLimits = ServerLimits {
+    maxBodyBytes: 10 * 1024 * 1024
+    maxHeadBytes: 64 * 1024
     headTimeout: __time.seconds(30)
     bodyTimeout: __time.seconds(30)
     replyTimeout: __time.seconds(30)
@@ -326,10 +326,9 @@ fn bound(
     port: Int,
     tls: Tls?,
     socket: String?,
-    limits: Limits?,
+    allowed: ServerLimits,
 ): httpNative.Native ! HttpError {
     let (certificate, key, clients, minimum) = tlsParts(tls)
-    let allowed = limits ?? Limits.Standard
     let (heads, bodies, replies) = (
         allowed.headTimeout.milliseconds(),
         allowed.bodyTimeout.milliseconds(),
@@ -338,8 +337,8 @@ fn bound(
     let listening = match socket {
         some(path) => httpNative.listenUnix(
             path,
-            allowed.body,
-            allowed.head,
+            allowed.maxBodyBytes,
+            allowed.maxHeadBytes,
             heads,
             bodies,
             replies,
@@ -351,8 +350,8 @@ fn bound(
             key,
             clients,
             minimum,
-            allowed.body,
-            allowed.head,
+            allowed.maxBodyBytes,
+            allowed.maxHeadBytes,
             heads,
             bodies,
             replies,

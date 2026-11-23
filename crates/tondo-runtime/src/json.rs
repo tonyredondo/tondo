@@ -9,7 +9,10 @@ use std::fmt::Write as _;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-const MAX_DEPTH: usize = 128;
+/// The deepest `JsonLimits.maxNestingDepth` a task's stack holds: half of
+/// its 8 MiB at the 1816 bytes a level that a debug build took in the
+/// measure of 2026-11-22, more than a release build's 1312, rounded down.
+const CEILING: usize = 2300;
 
 /// Events, as `next()` returns them.
 const END: i64 = 0;
@@ -147,6 +150,8 @@ struct Reader {
     error: Option<(String, usize)>,
     /// Whether a later key that repeats an earlier one is an error.
     duplicates: bool,
+    /// How deep arrays and objects may nest: `JsonLimits.maxNestingDepth`.
+    deepest: usize,
     /// Whether values may follow the first, as `go list -json` writes them.
     several: bool,
     /// Where the value of the last event started.
@@ -213,20 +218,24 @@ const SPARES: usize = 4;
 const KEPT_ROOM: usize = 64 * 1024;
 
 impl Reader {
-    fn new(input: Input, source: Option<Source>, duplicates: bool) -> Reader {
+    fn new(input: Input, source: Option<Source>, duplicates: bool, deepest: usize) -> Reader {
         // Room for a usual document's text and keys from the start, rather
         // than a few allocations to grow into it.
         let buffers =
             (Vec::with_capacity(8), String::with_capacity(64), String::with_capacity(128), Vec::with_capacity(16));
-        Reader::with(input, source, duplicates, buffers)
+        Reader::with(input, source, (duplicates, deepest), buffers)
     }
 
+    /// A reader of `input`; one whose bound of nesting is more than a
+    /// task's stack holds fails at its first event, saying so.
     fn with(
         input: Input,
         source: Option<Source>,
-        duplicates: bool,
+        (duplicates, deepest): (bool, usize),
         (frames, text, keys, key_ends): (Vec<Frame>, String, String, Vec<usize>),
     ) -> Reader {
+        let error = (deepest > CEILING)
+            .then(|| (crate::limits::above_ceiling("JsonLimits", deepest as u64, CEILING as u64), 0));
         Reader {
             input,
             offset: 0,
@@ -243,8 +252,9 @@ impl Reader {
             integer: None,
             done: false,
             root_seen: false,
-            error: None,
+            error,
             duplicates,
+            deepest,
             several: false,
             start: 0,
             pieces: None,
@@ -254,7 +264,7 @@ impl Reader {
     /// As `new`, in a reader let go before, whose buffers keep their room:
     /// of a text, `held`; of a stream, the bytes its last stream left room
     /// for.
-    fn renew(&mut self, held: Option<*mut Str>, source: Option<Source>, duplicates: bool) {
+    fn renew(&mut self, held: Option<*mut Str>, source: Option<Source>, duplicates: bool, deepest: usize) {
         let input = match held {
             Some(text) => Input::held(text),
             None => {
@@ -273,7 +283,7 @@ impl Reader {
         text.clear();
         keys.clear();
         key_ends.clear();
-        *self = Reader::with(input, source, duplicates, (frames, text, keys, key_ends));
+        *self = Reader::with(input, source, (duplicates, deepest), (frames, text, keys, key_ends));
     }
 
     /// What a reader let go of keeps: its buffers, if they did not grow
@@ -525,8 +535,9 @@ impl Reader {
         };
         match byte {
             b'{' | b'[' => {
-                if self.frames.len() >= MAX_DEPTH {
-                    return self.fail(format!("nested deeper than {MAX_DEPTH} levels"));
+                if self.frames.len() >= self.deepest {
+                    let (deepest, ceiling) = (self.deepest as u64, Some(CEILING as u64));
+                    return self.fail(crate::limits::deeper("the document", deepest, "json", "JsonLimits", ceiling));
                 }
                 self.position += 1;
                 if byte == b'{' {
@@ -716,29 +727,33 @@ fn reader<'a>(object: *mut ReaderObject) -> std::sync::MutexGuard<'a, Reader> {
     unsafe { (*object).reader.lock().unwrap_or_else(|e| e.into_inner()) }
 }
 
-/// `jsonnative.reader(text, duplicates)`
+/// `jsonnative.reader(text, duplicates, deepest)`
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_json_reader(text: *const Str, duplicates: u8) -> *mut ReaderObject {
-    made(Some(text as *mut Str), None, duplicates != 0)
+pub unsafe extern "C" fn tondo_rt_json_reader(text: *const Str, duplicates: u8, deepest: i64) -> *mut ReaderObject {
+    made(Some(text as *mut Str), None, duplicates != 0, deepest.max(0) as usize)
 }
 
 /// `jsonnative.streamReader(stream, duplicates)`: reads the stream as the
 /// document needs it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tondo_rt_json_stream_reader(stream: *mut StreamObject, duplicates: u8) -> *mut ReaderObject {
-    made(None, Some(Source(retain(stream))), duplicates != 0)
+pub unsafe extern "C" fn tondo_rt_json_stream_reader(
+    stream: *mut StreamObject,
+    duplicates: u8,
+    deepest: i64,
+) -> *mut ReaderObject {
+    made(None, Some(Source(retain(stream))), duplicates != 0, deepest.max(0) as usize)
 }
 
 /// A reader of a text or a stream, one of this thread's spares if it has one.
-fn made(held: Option<*mut Str>, source: Option<Source>, duplicates: bool) -> *mut ReaderObject {
+fn made(held: Option<*mut Str>, source: Option<Source>, duplicates: bool, deepest: usize) -> *mut ReaderObject {
     if let Some(mut spare) = spare(|spare| spare.readers.pop()) {
-        spare.reader.get_mut().unwrap_or_else(|e| e.into_inner()).renew(held, source, duplicates);
+        spare.reader.get_mut().unwrap_or_else(|e| e.into_inner()).renew(held, source, duplicates, deepest);
         *spare.rc.get_mut() = 1;
         LIVE_OBJECTS.made();
         return Box::into_raw(spare);
     }
     let input = held.map_or_else(|| Input::owned(Vec::new()), Input::held);
-    reader_object(Reader::new(input, source, duplicates))
+    reader_object(Reader::new(input, source, duplicates, deepest))
 }
 
 /// Lets values follow the first one, with or without space between them.
@@ -1441,7 +1456,7 @@ pub unsafe extern "C" fn tondo_rt_json_write_raw(object: *mut WriterObject, text
         return w.leaf_text(unsafe { str_text(&text) });
     }
     // Replayed event by event, so that keys sort and numbers normalize.
-    let mut r = Reader::new(Input::held(text as *mut Str), None, true);
+    let mut r = Reader::new(Input::held(text as *mut Str), None, true, CEILING);
     loop {
         match r.next() {
             NULL => w.leaf("null".into()),

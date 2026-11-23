@@ -19,10 +19,11 @@ console.print(toml.encode(server with { port: 9090 })?)
 
 `tondo api std.toml` shows the same in a terminal.
 
-- [Functions](#functions): [`decode`](#decode), [`encode`](#encode), [`parse`](#parse)
+- [Functions](#functions): [`decode`](#decode), [`encode`](#encode), [`parse`](#parse), [`TomlLimits.Default`](#tomllimitsdefault)
 - [Value](#value): [`Value.get`](#valueget), [`Value.at`](#valueat), [`Value.find`](#valuefind), [`Value.asText`](#valueastext), [`Value.asInt`](#valueasint), [`Value.asFloat`](#valueasfloat), [`Value.asBool`](#valueasbool), [`Value.asDateTime`](#valueasdatetime), [`Value.asArray`](#valueasarray), [`Value.asTable`](#valueastable)
 - [TomlError](#tomlerror)
 - [UnknownFields](#unknownfields)
+- [TomlLimits](#tomllimits)
 
 ### Functions
 
@@ -32,6 +33,7 @@ console.print(toml.encode(server with { port: 9090 })?)
 pub fn decode[T: serialization.Decode](
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: TomlLimits = TomlLimits.Default,
 ): T ! TomlError
 ```
 
@@ -50,10 +52,18 @@ cannot be written.
 #### parse
 
 ```tondo
-pub fn parse(text: String): Value ! TomlError
+pub fn parse(text: String, limits: TomlLimits = TomlLimits.Default): Value ! TomlError
 ```
 
 A document of unknown shape.
+
+#### TomlLimits.Default
+
+```tondo
+pub const TomlLimits.Default: TomlLimits = TomlLimits { maxNestingDepth: 64 }
+```
+
+Arrays and tables nested up to 64 levels deep.
 
 ### Value
 
@@ -206,5 +216,33 @@ let text = "port = 8080\nprot = 8081\n"
 match toml.decode[Server](text, unknownFields: toml.UnknownFields.Reject) {
     ok(server) => console.println("port {server.port}")
     err(error) => console.println("rejected: {error.message}")
+}
+```
+
+### TomlLimits
+
+```tondo
+pub type TomlLimits = {
+    maxNestingDepth: Int
+}
+```
+
+How deep a document from outside the program may nest:
+`maxNestingDepth` arrays and tables inside the document's own, each of
+which takes up to about 2.7 KB of a task's 8 MiB stack. The parser stops
+at 80 by itself, under the about 1500 that half of that stack holds, so
+up to 80 may be given, and more is refused: 64 by default, under the
+parser's bound, so that these limits say why a document is refused. A
+function that a thread of C calls runs on that thread's stack, which
+may hold less.
+
+```tondo
+import std.console
+import std.toml
+
+let deep = "a = ".concat("[".repeat(70)).concat("]".repeat(70))
+match toml.parse(deep, limits: toml.TomlLimits.Default with { maxNestingDepth: 80 }) {
+    ok(_) => console.println("read")
+    err(error) => console.println("{error}")
 }
 ```

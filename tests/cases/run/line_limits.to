@@ -1,0 +1,87 @@
+// A line `readLine` reads from outside the program is bounded by its
+// `limits`, 1 MiB by default, on an `io.Reader`, an `fs.File` and a
+// `net.Stream` alike: a longer one is the module's `TooLarge`, with the
+// bound it holds and the sentence that says how to raise it, and it stays to
+// be read, so the same call with a larger bound gives it from its first
+// byte. A line of exactly the bound, `\r\n` and all, is read.
+import std.console
+import std.fs
+import std.io
+import std.net
+
+fn serve(listener: net.Listener): !net.NetError {
+    let peer = listener.accept()?
+    peer.write("z".repeat(100).concat("\nafter\n"))?
+    peer.close()?
+}
+
+fn main(): !io.IoError {
+    let tight = io.IoLimits.Default with { maxLineBytes: 10 }
+    let input = io.reader("x".repeat(100).concat("\nshort\n"))
+    match input.readLine(limits: tight) {
+        ok(line) => console.println("reader: {line ?? ""}")
+        err(io.IoError.TooLarge(limit)) => console.println(
+            "reader: {limit}: {io.IoError.TooLarge(limit)}",
+        )
+        err(error) => console.println("reader: {error}")
+    }
+    let again = input.readLine()? ?? ""
+    console.println("again, from its first byte: {again.length()} {again.slice(0, 3) ?? ""}")
+    console.println("then: {input.readLine()? ?? ""}")
+    console.println("default: {io.IoLimits.Default.maxLineBytes}")
+    _ = fs.writeText("long.txt", "y".repeat(1024 * 1024 + 1).concat("\n"))
+    _ = fs.writeText("fits.txt", "y".repeat(1024 * 1024).concat("\r\n"))
+    match fs.open("long.txt", fs.OpenMode.Read) {
+        ok(long) => {
+            var file = long
+            match file.readLine() {
+                ok(_) => console.println("file: read")
+                err(fs.FsError.TooLarge(limit)) => console.println(
+                    "file: {limit}: {fs.FsError.TooLarge(limit)}",
+                )
+                err(error) => console.println("file: {error}")
+            }
+        }
+        err(error) => console.println("{error}")
+    }
+    match fs.open("fits.txt", fs.OpenMode.Read) {
+        ok(fits) => {
+            var file = fits
+            let line = file.readLine() ?? none
+            console.println("a line of the bound: {(line ?? "").length()}")
+        }
+        err(error) => console.println("{error}")
+    }
+    match net.listen("127.0.0.1", 0) {
+        ok(listener) => {
+            let server = spawn serve(listener)
+            match net.connect("127.0.0.1", listener.address().port) {
+                ok(stream) => {
+                    match stream.readLine(limits: tight) {
+                        ok(line) => console.println("stream: {line ?? ""}")
+                        err(net.NetError.TooLarge(limit)) => console.println(
+                            "stream: {limit}: {net.NetError.TooLarge(limit)}",
+                        )
+                        err(error) => console.println("stream: {error}")
+                    }
+                    let whole = stream.readLine() ?? none
+                    console.println(
+                        "stream again: {(whole ?? "").length()}, then {(stream.readLine() ?? none) ?? ""}",
+                    )
+                }
+                err(error) => console.println("{error}")
+            }
+            _ = server.wait()
+        }
+        err(error) => console.println("{error}")
+    }
+}
+
+// expect-stdout: reader: 10: a line is longer than 10 bytes, the most `IoLimits.maxLineBytes` allows: raise it with `limits: io.IoLimits.Default with { maxLineBytes: … }`
+// expect-stdout: again, from its first byte: 100 xxx
+// expect-stdout: then: short
+// expect-stdout: default: 1048576
+// expect-stdout: file: 1048576: a line is longer than 1 MiB, the most `IoLimits.maxLineBytes` allows: raise it with `limits: io.IoLimits.Default with { maxLineBytes: … }`
+// expect-stdout: a line of the bound: 1048576
+// expect-stdout: stream: 10: a line is longer than 10 bytes, the most `IoLimits.maxLineBytes` allows: raise it with `limits: io.IoLimits.Default with { maxLineBytes: … }`
+// expect-stdout: stream again: 100, then after

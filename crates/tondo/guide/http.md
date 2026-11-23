@@ -126,7 +126,7 @@ fn find(id: Int): User? {
   64 KiB is 431, a head has 30 seconds to arrive, a body that stops arriving
   for 30 seconds is 408, and a client that takes none of its reply for 30
   seconds loses the connection.
-  `app.listen(limits: http.Limits.Standard with { body: 100_000_000 })`
+  `app.listen(limits: http.ServerLimits.Default with { maxBodyBytes: 100_000_000 })`
   changes them, and `request.limitBody(bytes)` the body's for one route,
   before it is read.
 - A client that goes away cancels its handler: it stops at its next wait

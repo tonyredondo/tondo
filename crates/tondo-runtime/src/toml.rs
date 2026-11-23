@@ -50,19 +50,64 @@ fn reader(object: *mut NativeObject) -> Option<&'static Mutex<Reader>> {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_toml_parse(
     source: *const Str,
+    deepest: i64,
     region: *mut crate::regions::Region,
 ) -> *mut NativeObject {
-    let source = unsafe { str_text(&source) };
+    let (source, deepest) = (unsafe { str_text(&source) }, deepest.max(0) as usize);
     let mut events = Vec::new();
+    let deeper = || crate::limits::deeper("the document", deepest as u64, "toml", "TomlLimits", Some(CEILING as u64));
     let mut error = None;
-    match toml_edit::Document::parse(source) {
-        Ok(document) => table(document.as_table(), 0, &mut events),
-        Err(failure) => {
-            let at = failure.span().map_or(0, |span| span.start);
-            error = Some((failure.message().trim_end().to_string(), at, "$".to_string()));
+    if deepest > CEILING {
+        let ceiling = crate::limits::above_parser("TomlLimits", deepest as u64, CEILING as u64);
+        error = Some((ceiling, 0, "$".to_string()));
+    } else {
+        match toml_edit::Document::parse(source) {
+            Ok(document) => {
+                table(document.as_table(), 0, &mut events);
+                if let Some(at) = past(&events, deepest) {
+                    error = Some((deeper(), at, "$".to_string()));
+                    events.clear();
+                }
+            }
+            Err(failure) => {
+                let at = failure.span().map_or(0, |span| span.start);
+                // Past the parser's own bound, which is the ceiling, the
+                // document nests deeper than the limits too: they speak.
+                let message = match failure.message().contains("max recursion depth") {
+                    true => deeper(),
+                    false => failure.message().trim_end().to_string(),
+                };
+                error = Some((message, at, "$".to_string()));
+            }
         }
     }
     native::new_in(region, Mutex::new(Reader { source: source.to_owned(), events, read: 0, error }))
+}
+
+/// The deepest `TomlLimits.maxNestingDepth`: the parser's own bound, 80
+/// lists and tables inside the document's own, past which it stops by
+/// itself; far under what a task's stack holds, about 1500 at the 2735
+/// bytes a level that a debug build took in the measure of 2026-11-22.
+const CEILING: usize = 80;
+
+/// Where the events first nest more than `deepest` lists and tables inside
+/// the document's own table, if they do.
+fn past(events: &[Event], deepest: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for event in events {
+        match event.code {
+            BEGIN_LIST | BEGIN_MAP => {
+                depth += 1;
+                // The document's own table is not one of them.
+                if depth > deepest + 1 {
+                    return Some(event.at);
+                }
+            }
+            END_LIST | END_MAP => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn push(events: &mut Vec<Event>, code: i64, at: usize) -> &mut Event {

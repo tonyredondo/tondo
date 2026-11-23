@@ -584,6 +584,18 @@ Un record de opciones:
 - No lee defaults del entorno.
 - No utiliza combinaciones de fields inválidas sin validarlas.
 
+Lo que lee datos de fuera del programa y los acota toma
+`limits: <Nombre>Limits = <Nombre>Limits.Default`, con ese nombre de parámetro
+en todas las APIs, en la llamada que lee o en la que construye lo que leerá
+después (un cliente, un servidor); donde lo que leerá se configura con
+métodos, como un servicio de gRPC, es su método `limits`. Es un record de su
+módulo, llamado por él (`RegexLimits`, `IoLimits`, `GzipLimits`; `http` tiene
+dos lados, `ClientLimits` y `ServerLimits`). Sus campos de tamaño o de
+profundidad empiezan por `max` y dicen su unidad (`maxBodyBytes`,
+`maxNestingDepth`). Su constante `Default` escribe cada valor como lo que es
+(`16 * 1024 * 1024`), y se cambia con `with`. Un plazo en el mismo record
+conserva su nombre (`headTimeout`).
+
 ### 6.4 Resultado y shape
 
 Una API devuelve:
@@ -689,6 +701,16 @@ Salvo que un módulo lo declare expresamente:
 - Una versión `PATCH` puede mejorar el texto sin cambiar la clasificación.
 
 Los formatos machine-readable tienen su propia versión y schema.
+
+#### 7.4.1 Límites superados
+
+Un límite superado es un error recuperable que lleva el número, en una variante
+(`io.IoError.TooLarge(Int)`) o en el error del formato. Su `Display` tiene
+siempre la misma forma: qué lo superó, el límite en la unidad que lee una
+persona, el campo que lo fija y el código que lo sube. Un límite con techo, como
+la profundidad, que la pila de una tarea acota, rechaza un valor por encima del
+techo donde se usan los límites, con un error de la misma forma que dice el
+techo y por qué; nunca lo recorta en silencio.
 
 ### 7.5 Pánicos documentados
 
@@ -1026,7 +1048,9 @@ let copied = io.copy(source, io.multiWriter(file.writer(), console.stdout()))?
 La superficie es:
 
 ~~~tondo pseudocode
-pub enum IoError { Closed, InvalidData, Host }
+pub enum IoError { Closed, InvalidData, Host, TooLarge(Int) }
+pub type IoLimits = { maxLineBytes: Int }
+pub const IoLimits.Default: IoLimits                        // 1 MiB
 pub type Writer
 pub type Reader
 pub type Buffer
@@ -1037,7 +1061,7 @@ pub fn Writer.writeBytes(self, data: Array[Byte]): Unit ! IoError
 pub fn Writer.flush(self): Unit ! IoError
 pub fn Writer.close(self): Unit ! IoError
 
-pub fn Reader.readLine(self): String? ! IoError
+pub fn Reader.readLine(self, limits: IoLimits = IoLimits.Default): String? ! IoError
 pub fn Reader.read(self, max: Int): Array[Byte]? ! IoError
 pub fn Reader.readText(self): String ! IoError
 pub fn Reader.readBytes(self): Array[Byte] ! IoError
@@ -1059,7 +1083,13 @@ pub fn multiWriter(writers: ...Writer): Writer
 ~~~
 
 - `readLine` devuelve la siguiente línea sin su `\n` ni `\r\n`, o `none` al
-  final; `read(max)` devuelve hasta `max` bytes, o `none` al final; `readText`
+  final. Una línea de más de `limits.maxLineBytes` bytes es
+  `TooLarge(maxLineBytes)` y queda por leer: la misma llamada con un límite
+  mayor la da desde su primer byte, y un programa que quiere descartarla lee
+  hasta el salto de línea con `read`. `IoLimits` es el de los `readLine` de
+  `io.Reader`, `fs.File` y `net.Stream`; el de la consola no tiene, porque es
+  la entrada del propio programa. `read(max)` devuelve hasta `max` bytes, o
+  `none` al final; `readText`
   lee el resto como texto y `readBytes` como bytes. Las operaciones de texto validan UTF-8 y devuelven
   `InvalidData`, como un stream comprimido (14.29) cuyos datos no son de su
   formato.
@@ -1204,6 +1234,7 @@ pub enum FsError {
     InvalidData
     InvalidName
     Host(Int)
+    TooLarge(Int)                // la línea pasó `io.IoLimits.maxLineBytes`
 }
 pub enum FileKind { File, Directory, Symlink, Other }
 pub type Metadata = {
@@ -1250,7 +1281,7 @@ pub fn copy(from: String, to: String): Unit ! FsError
 pub fn remove(path: String, recursive: Bool = false): Unit ! FsError
 pub fn open(path: String, mode: OpenMode): File ! FsError
 
-pub fn File.readLine(var self): String? ! FsError
+pub fn File.readLine(var self, limits: io.IoLimits = io.IoLimits.Default): String? ! FsError
 pub fn File.read(var self, max: Int): Array[Byte]? ! FsError
 pub fn File.readText(var self): String ! FsError
 pub fn File.write(var self, text: String): Unit ! FsError
@@ -1337,8 +1368,9 @@ pub fn File.reader(self): io.Reader
   `Append` lo crea si falta y escribe al final; `CreateNew` falla con
   `AlreadyExists` si ya existe; `ReadWrite` lee y escribe uno existente.
 - `readLine` devuelve la siguiente línea sin su `\n` ni `\r\n`, o `none` al
-  final; `read(max)` devuelve hasta `max` bytes, o `none` al final;
-  `File.readText` lee el resto del archivo.
+  final, y una de más de `limits.maxLineBytes` es `TooLarge`, como en 10.3;
+  `read(max)` devuelve hasta `max` bytes, o `none` al final; `File.readText`
+  lee el resto del archivo.
 - Un `File` tiene un único dueño y no es `Copy`. Se cierra solo al abandonarse
   y sus escrituras pendientes se vuelcan entonces; los errores de ese cierre
   implícito se pierden. `close()` cierra en el momento y devuelve sus errores;
@@ -2700,6 +2732,7 @@ pub enum NetError {
     InvalidAddress(String)
     Tls(String)
     Io(String)
+    TooLarge(Int)             // la línea pasó `io.IoLimits.maxLineBytes`
 }
 
 pub type Address = { ip: String, port: Int, path: String }
@@ -2714,7 +2747,8 @@ pub fn connectTls(host: String, port: Int, trust: String? = none, identity: Tls?
 pub fn Stream.startTls(self, host: String, trust: String? = none, identity: Tls? = none,
     timeout: time.Duration? = none): Stream ! NetError
 pub fn Stream.read(self, max: Int = 65536, timeout: time.Duration? = none): Array[Byte]? ! NetError
-pub fn Stream.readLine(self, timeout: time.Duration? = none): String? ! NetError
+pub fn Stream.readLine(self, timeout: time.Duration? = none,
+    limits: io.IoLimits = io.IoLimits.Default): String? ! NetError
 pub fn Stream.readAll(self, timeout: time.Duration? = none): Array[Byte] ! NetError
 pub fn Stream.readText(self, timeout: time.Duration? = none): String ! NetError
 pub fn Stream.write(self, text: String, timeout: time.Duration? = none): Unit ! NetError
@@ -3806,8 +3840,8 @@ petición.
 `std.json` implementa JSON UTF-8 según
 [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html), en modo estricto: un
 único valor, sin datos detrás, sin claves duplicadas salvo que se permitan y
-con una profundidad máxima de 128. Está escrito en Tondo sobre un tokenizador y
-un emisor del runtime.
+con la profundidad que dan sus `limits`, 128 por defecto (7.4.1). Está escrito
+en Tondo sobre un tokenizador y un emisor del runtime.
 
 ~~~tondo
 import std.json
@@ -3844,13 +3878,15 @@ pub alias JsonError = serialization.Error
 pub enum UnknownFields { Ignore, Reject }
 
 pub fn encode[T: Encode](value: T, pretty: Bool = false, canonical: Bool = false, htmlSafe: Bool = false): String
-pub fn decode[T: Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): T ! JsonError
+pub type JsonLimits = { maxNestingDepth: Int }
+pub const JsonLimits.Default: JsonLimits                    // 128
+pub fn decode[T: Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false, limits: JsonLimits = JsonLimits.Default): T ! JsonError
 pub fn encodeTo[T: Encode](value: T, stream: io.Writer, pretty: Bool = false, canonical: Bool = false, htmlSafe: Bool = false): Unit ! JsonError
-pub fn decodeFrom[T: Decode](stream: io.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): T ! JsonError
-pub fn parse(text: String): Value ! JsonError
-pub fn parseAll(text: String): Array[Value] ! JsonError
-pub fn decodeAll[T: Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): Array[T] ! JsonError
-pub fn values[T: Decode](stream: io.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): Values[T]
+pub fn decodeFrom[T: Decode](stream: io.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false, limits: JsonLimits = JsonLimits.Default): T ! JsonError
+pub fn parse(text: String, limits: JsonLimits = JsonLimits.Default): Value ! JsonError
+pub fn parseAll(text: String, limits: JsonLimits = JsonLimits.Default): Array[Value] ! JsonError
+pub fn decodeAll[T: Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false, limits: JsonLimits = JsonLimits.Default): Array[T] ! JsonError
+pub fn values[T: Decode](stream: io.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false, limits: JsonLimits = JsonLimits.Default): Values[T]
 pub type Values[T]                         // Iterator[T ! JsonError]
 pub fn toValue[T: Encode](value: T): Value
 pub fn fromValue[T: Decode](value: Value): T ! JsonError
@@ -3877,8 +3913,8 @@ pub fn Raw.text(self): String
 pub enum Event { Null, Bool(Bool), Number(Number), Text(String), BeginArray, EndArray, BeginObject, EndObject, Key(String) }
 pub type Reader
 pub type Writer
-pub fn reader(text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): Reader
-pub fn readerFrom(stream: io.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false): Reader
+pub fn reader(text: String, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false, limits: JsonLimits = JsonLimits.Default): Reader
+pub fn readerFrom(stream: io.Reader, unknownFields: UnknownFields = UnknownFields.Ignore, allowDuplicateKeys: Bool = false, limits: JsonLimits = JsonLimits.Default): Reader
 pub fn writer(pretty: Bool = false, canonical: Bool = false, htmlSafe: Bool = false): Writer
 pub fn writerTo(stream: io.Writer, pretty: Bool = false, canonical: Bool = false, htmlSafe: Bool = false): Writer
 pub fn Reader.next(self): Event? ! JsonError
@@ -3979,9 +4015,12 @@ pub enum Value {
 pub alias MessagePackError = serialization.Error
 pub alias UnknownFields = serialization.UnknownFields
 
-pub fn decode[T: serialization.Decode](input: Array[Byte], unknownFields: UnknownFields = UnknownFields.Ignore): T ! MessagePackError
+pub type MessagePackLimits = { maxNestingDepth: Int }
+pub const MessagePackLimits.Default: MessagePackLimits      // 128
+pub fn decode[T: serialization.Decode](input: Array[Byte], unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: MessagePackLimits = MessagePackLimits.Default): T ! MessagePackError
 pub fn encode[T: serialization.Encode](value: T): Array[Byte]
-pub fn parse(input: Array[Byte]): Value ! MessagePackError
+pub fn parse(input: Array[Byte], limits: MessagePackLimits = MessagePackLimits.Default): Value ! MessagePackError
 
 pub type Writer                                   // un serialization.Sink
 pub fn writer(): Writer
@@ -4089,9 +4128,11 @@ pub trait Enum {
 pub alias ProtobufError = serialization.Error
 
 pub fn encode[T: Message](value: T, deterministic: Bool = false): Array[Byte]
-pub fn decode[T: Message](bytes: Array[Byte]): T ! ProtobufError
+pub type ProtobufLimits = { maxNestingDepth: Int }
+pub const ProtobufLimits.Default: ProtobufLimits            // 128
+pub fn decode[T: Message](bytes: Array[Byte], limits: ProtobufLimits = ProtobufLimits.Default): T ! ProtobufError
 pub fn encodeTo[T: Message](value: T, out: io.Writer, deterministic: Bool = false): Unit ! io.IoError
-pub fn decodeFrom[T: Message](input: io.Reader): T ! ProtobufError
+pub fn decodeFrom[T: Message](input: io.Reader, limits: ProtobufLimits = ProtobufLimits.Default): T ! ProtobufError
 pub fn toJson[T: Message](message: T, protoNames: Bool = false): String ! ProtobufError
 pub fn fromJson[T: Message](text: String, ignoreUnknown: Bool = false): T ! ProtobufError
 
@@ -4147,9 +4188,9 @@ pub type JsonReader
   536870911 (o en 19000 a 19999, que protobuf reserva), un tipo o una
   codificación que protobuf no tiene, o una variante de un enum sin número
   son `E1910`, que dice qué escribir. Leer falla con `Syntax` ante un varint,
-  una longitud, un tipo de cable o un UTF-8 que no valen, o mensajes anidados
-  más de 100 niveles; el error lleva la ruta del campo y, como `column`, el
-  byte donde empieza.
+  una longitud, un tipo de cable o un UTF-8 que no valen, o mensajes y grupos
+  anidados más de `limits.maxNestingDepth` niveles, 128 por defecto; el error
+  lleva la ruta del campo y, como `column`, el byte donde empieza.
 - Un tipo de mensaje se escribe también en los demás formatos con su
   `Encode` y su `Decode`, como cualquier record.
 
@@ -4255,13 +4296,17 @@ pub enum Value {
 pub alias YamlError = serialization.Error
 pub alias UnknownFields = serialization.UnknownFields
 
-pub fn decode[T: serialization.Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore): T ! YamlError
-pub fn decodeAll[T: serialization.Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore): Array[T] ! YamlError
+pub type YamlLimits = { maxNestingDepth: Int }
+pub const YamlLimits.Default: YamlLimits                    // 128
+pub fn decode[T: serialization.Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: YamlLimits = YamlLimits.Default): T ! YamlError
+pub fn decodeAll[T: serialization.Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: YamlLimits = YamlLimits.Default): Array[T] ! YamlError
 pub fn encode[T: serialization.Encode](value: T): String
 pub fn encodeAll[T: serialization.Encode](values: Array[T]): String
-pub fn parse(text: String): Value ! YamlError
-pub fn parseAll(text: String): Array[Value] ! YamlError
-pub fn load(text: String): Document ! YamlError
+pub fn parse(text: String, limits: YamlLimits = YamlLimits.Default): Value ! YamlError
+pub fn parseAll(text: String, limits: YamlLimits = YamlLimits.Default): Array[Value] ! YamlError
+pub fn load(text: String, limits: YamlLimits = YamlLimits.Default): Document ! YamlError
 
 pub fn Value.isNull(self): Bool
 pub fn Value.get(self, key: String): Value?
@@ -4382,9 +4427,12 @@ pub enum Value {
 pub alias TomlError = serialization.Error
 pub alias UnknownFields = serialization.UnknownFields
 
-pub fn decode[T: serialization.Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore): T ! TomlError
+pub type TomlLimits = { maxNestingDepth: Int }
+pub const TomlLimits.Default: TomlLimits                    // 64
+pub fn decode[T: serialization.Decode](text: String, unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: TomlLimits = TomlLimits.Default): T ! TomlError
 pub fn encode[T: serialization.Encode](value: T): String ! TomlError
-pub fn parse(text: String): Value ! TomlError
+pub fn parse(text: String, limits: TomlLimits = TomlLimits.Default): Value ! TomlError
 
 pub fn Value.get(self, key: String): Value?
 pub fn Value.at(self, index: Int): Value?
@@ -4444,9 +4492,12 @@ pub enum Value {
 pub alias CborError = serialization.Error
 pub alias UnknownFields = serialization.UnknownFields
 
-pub fn decode[T: serialization.Decode](input: Array[Byte], unknownFields: UnknownFields = UnknownFields.Ignore): T ! CborError
+pub type CborLimits = { maxNestingDepth: Int }
+pub const CborLimits.Default: CborLimits                    // 128
+pub fn decode[T: serialization.Decode](input: Array[Byte], unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: CborLimits = CborLimits.Default): T ! CborError
 pub fn encode[T: serialization.Encode](value: T, deterministic: Bool = false): Array[Byte]
-pub fn parse(input: Array[Byte]): Value ! CborError
+pub fn parse(input: Array[Byte], limits: CborLimits = CborLimits.Default): Value ! CborError
 // Value.isNull, get, at, find, asText, asInt, asFloat, asBool, asBytes,
 // asDateTime, asArray y asMap, y `Display` como JSON
 ~~~
@@ -4455,8 +4506,8 @@ pub fn parse(input: Array[Byte]): Value ! CborError
   debe ser UTF-8. Los tags 0 (texto RFC 3339) y 1 (segundos desde la época) son
   un `DateTime`; 2 y 3 son enteros, un `Number` cuando no caben en `Int`; cualquier otro tag se
   lee como el item que contiene. Los floats de 16, 32 y 64 bits se leen; un
-  simple no asignado es un error. Un contenedor no puede anidarse más de 512
-  niveles.
+  simple no asignado es un error. Un contenedor no puede anidarse más de
+  `limits.maxNestingDepth` niveles, 128 por defecto.
 - Las claves de un mapa son texto, o enteros leídos como sus dígitos. Un entero
   que no cabe en `Int` es un `Number`. Un entero escrito con `number` es un
   entero del formato si cabe en 64 bits, con o sin signo, y uno mayor lleva el
@@ -4541,26 +4592,30 @@ pub fn RegexSpan.slice(self, input: String): String ! RegexError
 
 | Límite | Default | Se comprueba |
 |---|---:|---|
-| `maxPatternBytes` | 65536 | antes de parsear |
-| `maxSyntaxDepth` | 256 | al parsear |
-| `maxCaptureGroups` | 256 | al parsear |
-| `maxProgramStates` | 1000000 | al compilar: el programa ocupa hasta 16 bytes por estado |
-| `maxInputBytes` | 16777216 | antes de buscar |
-| `maxMatches` | 1000000 | antes de emitir cada coincidencia |
-| `maxOutputBytes` | 67108864 | al construir el reemplazo |
-| `maxReplacementBytes` | 65536 | antes de leer la plantilla |
+| Límite | Default | Se comprueba | Si se supera |
+|---|---:|---|---|
+| `maxPatternBytes` | 64 KiB | antes de parsear | `PatternLimitExceeded` |
+| `maxNestingDepth` | 128 | al parsear, sin gastar pila | `NestingLimitExceeded` |
+| `maxCaptureGroups` | 256 | al parsear | `CaptureLimitExceeded` |
+| `maxProgramStates` | 1 000 000 | al compilar: el programa ocupa hasta 16 bytes por estado | `ProgramLimitExceeded` |
+| `maxInputBytes` | 16 MiB | antes de buscar | `InputLimitExceeded` |
+| `maxMatches` | 1 000 000 | antes de emitir cada coincidencia | `MatchLimitExceeded` |
+| `maxOutputBytes` | 64 MiB | al construir el reemplazo | `OutputLimitExceeded` |
+| `maxReplacementBytes` | 64 KiB | antes de leer la plantilla | `ReplacementLimitExceeded` |
 
 Si se alcanza un límite no se publica un valor parcial. `RegexError` tiene
-`kind`, `phase` (`Compile`, `Match` o `Replace`) y `offset`: el byte del patrón,
-input o plantilla donde está el error, o donde se superó el límite. Se muestra
-como `regex.<kind> at byte <offset> (<phase>)`. `RegexErrorKind` es
+`kind`, `phase` (`Compile`, `Match` o `Replace`), `offset`, el byte del patrón,
+input o plantilla donde está el error o donde se superó el límite, y `limit`,
+el límite superado, o 0. Un error de un límite se muestra con la frase de 7.4.1,
+que nombra su campo de `RegexLimits`; los demás, como
+`regex.<kind> at byte <offset> (<phase>)`. `RegexErrorKind` es
 `InvalidSyntax`, `UnexpectedEnd`, `InvalidEscape`, `InvalidUnicodeScalar`,
 `InvalidUnicodeProperty`, `InvalidClass`, `InvalidRange`, `InvalidQuantifier`,
 `InvalidCaptureName`, `DuplicateCaptureName`, `UnsupportedFeature`,
 `PatternLimitExceeded`, `ProgramLimitExceeded`, `InputLimitExceeded`,
 `MatchLimitExceeded`, `ReplacementLimitExceeded`, `InvalidReplacement`,
-`OutputLimitExceeded` o `InvalidBoundary`. La API no hace panic por input del
-usuario.
+`OutputLimitExceeded`, `InvalidBoundary`, `NestingLimitExceeded` o
+`CaptureLimitExceeded`. La API no hace panic por input del usuario.
 
 El motor es el crate `regex` de Rust, enlazado en el runtime: autómatas finitos
 (PikeVM, DFA perezoso y un backtracker acotado con memoria de estados
@@ -4937,13 +4992,16 @@ pub enum HttpError {
     Status(Response)
     Body(String)
     Protocol(String)
+    TooLarge(Int)             // el cuerpo pasó `ClientLimits.maxBodyBytes`
 }
 
 pub type Client
+pub type ClientLimits = { maxBodyBytes: Int }
+pub const ClientLimits.Default: ClientLimits                // 2 GiB
 pub fn Client(baseUrl: String = "", headers: Map[String, String] = [:],
     timeout: time.Duration? = none, connectTimeout: time.Duration? = none,
     redirects: Int = 10, trust: String? = none, socket: String? = none, cookies: Bool = false,
-    identity: Tls? = none): Client
+    identity: Tls? = none, limits: ClientLimits = ClientLimits.Default): Client
 pub fn Client.get(self, url: String, query: Map[String, String] = [:],
     headers: Map[String, String] = [:], timeout: time.Duration? = none): Response ! HttpError
 pub fn Client.head(...)                       // como get
@@ -4992,6 +5050,7 @@ pub fn Response.text(self): String ! HttpError
 pub fn Response.bytes(self): Array[Byte] ! HttpError
 pub fn Response.json[T: serialization.Decode](self): T ! HttpError
 pub fn Response.body(self): io.Reader
+pub fn Response.limitBody(self, bytes: Int): Response
 pub fn Response.lines(self): Lines            // Iterator[String ! HttpError]
 pub fn Response.events(self): Events          // Iterator[Event ! HttpError]
 pub fn Response.copyTo(self, output: io.Writer): Int ! HttpError
@@ -5067,6 +5126,13 @@ pub fn WebSocket.close(self): Unit ! HttpError
   sistema no tiene ninguno, en los de Mozilla.
 - `timeout` limita la petición entera, incluido el cuerpo; `connectTimeout`,
   solo la conexión. Una tarea cancelada abandona su petición.
+- `limits` acota lo que `text()`, `bytes()` y `json()` leen entero de una
+  respuesta: más de `maxBodyBytes` bytes, contados una vez deshecho su
+  `Content-Encoding`, es `TooLarge(maxBodyBytes)`, también cuando unos pocos
+  bytes comprimidos crecen al descomprimirse, que se cortan al llegar al
+  límite y no después. `Response.limitBody(bytes)` lo cambia para una
+  respuesta, antes de leerla, como `Request.limitBody` en un servidor;
+  `body()`, `lines()` y `events()` leen según pide el programa, sin límite.
 - `WebSocket.connect` abre una conexión de RFC 6455, con TLS para `wss://`, y
   `timeout` limita su handshake. Una tarea puede enviar mientras otra recibe;
   los pings se contestan solos. `receive` da el siguiente mensaje de texto o
@@ -5221,11 +5287,13 @@ pub fn App.cors(mut self, origins: Array[String], headers: Array[String] = [],
     exposed: Array[String] = [], credentials: Bool = false, maxAge: time.Duration = time.seconds(600))
 pub fn App.openApi(mut self, path: String = "/openapi.json", title: String = "API", version: String = "1.0")
 pub fn App.listen(self, port: Int = 8080, host: String = "0.0.0.0", tls: Tls? = none,
-    socket: String? = none, limits: Limits? = none, grace: time.Duration = time.seconds(30)): Unit ! HttpError
+    socket: String? = none, limits: ServerLimits = ServerLimits.Default,
+    grace: time.Duration = time.seconds(30)): Unit ! HttpError
 pub fn App.start(self, port: Int = 0, host: String = "127.0.0.1", tls: Tls? = none,
-    socket: String? = none, limits: Limits? = none): Server ! HttpError
-pub type Limits = { body: Int, head: Int, headTimeout: time.Duration, bodyTimeout: time.Duration, replyTimeout: time.Duration }
-pub const Limits.Standard: Limits                           // 10 MiB, 64 KiB, 30 s
+    socket: String? = none, limits: ServerLimits = ServerLimits.Default): Server ! HttpError
+pub type ServerLimits = { maxBodyBytes: Int, maxHeadBytes: Int, headTimeout: time.Duration,
+    bodyTimeout: time.Duration, replyTimeout: time.Duration }
+pub const ServerLimits.Default: ServerLimits                // 10 MiB, 64 KiB, 30 s
 pub fn App.client(self): Client
 pub fn mediaType(path: String): String
 pub fn proxy(target: String, strip: String = "", client: Client? = none): fn(Request): Reply ! Problem
@@ -5428,16 +5496,17 @@ pub alias TlsVersion = net.TlsVersion
   espera, para el servidor. Una señal que llega entre `start` y `wait` hace lo
   que hace sin ellos: cancela el programa sin drenar.
 - `limits` acota lo que envía cada cliente, para que uno grande o lento no
-  agote el servidor; sin él, `Limits.Standard`. Un cuerpo de más de `body`
-  bytes es `413`, con un `Problem` que dice cómo subir el límite; una cabecera
-  (la línea de la petición y sus cabeceras) de más de `head` bytes, `431`; y
+  agote el servidor; por defecto, `ServerLimits.Default`. Un cuerpo de más de
+  `maxBodyBytes` bytes es `413`, con un `Problem` que dice cómo subir el límite;
+  una cabecera (la línea de la petición y sus cabeceras) de más de
+  `maxHeadBytes` bytes, `431`; y
   una conexión que tarda más de `headTimeout` en enviar una cabecera o en
   terminar el handshake de TLS se cierra, también la que sigue abierta sin
   pedir nada. Un cuerpo del que no llega nada en `bodyTimeout` es `408`; un
   cliente que no toma nada de su respuesta en `replyTimeout` pierde la
   conexión, y su handler se cancela como si se hubiera ido. Los dos cuentan
   desde el último byte, no en total, así que una subida grande y lenta
-  termina; `Limits.Standard` da 30 segundos a cada uno.
+  termina; `ServerLimits.Default` da 30 segundos a cada uno.
   `Request.limitBody(bytes)` cambia el límite del cuerpo para una petición,
   antes de leerlo, como hace una ruta de subidas.
 - Un cliente que se va antes de su respuesta cancela la tarea que la atiende
@@ -5773,14 +5842,20 @@ Los dos módulos tienen la misma superficie; `std.gzip` añade el nivel:
 
 ~~~tondo pseudocode
 // std.gzip
+pub enum GzipError { InvalidData, TooLarge(Int) }
+pub type GzipLimits = { maxOutputBytes: Int }
+pub const GzipLimits.Default: GzipLimits                    // 128 MiB
 pub fn compress(data: Array[Byte], level: Int = 6): Array[Byte]
-pub fn decompress(data: Array[Byte]): Array[Byte] ! io.IoError
+pub fn decompress(data: Array[Byte], limits: GzipLimits = GzipLimits.Default): Array[Byte] ! GzipError
 pub fn writer(to: io.Writer, level: Int = 6): io.Writer
 pub fn reader(from: io.Reader): io.Reader
 
 // std.zstd
+pub enum ZstdError { InvalidData, TooLarge(Int) }
+pub type ZstdLimits = { maxOutputBytes: Int }
+pub const ZstdLimits.Default: ZstdLimits                    // 128 MiB
 pub fn compress(data: Array[Byte]): Array[Byte]
-pub fn decompress(data: Array[Byte]): Array[Byte] ! io.IoError
+pub fn decompress(data: Array[Byte], limits: ZstdLimits = ZstdLimits.Default): Array[Byte] ! ZstdError
 pub fn writer(to: io.Writer): io.Writer
 pub fn reader(from: io.Reader): io.Reader
 ~~~
@@ -5791,8 +5866,12 @@ pub fn reader(from: io.Reader): io.Reader
   sus niveles.
 - `decompress` y `reader` leen varios miembros o frames seguidos, como
   `gunzip` y `zstd -d`. Unos datos que no son del formato, que se cortan o cuyo
-  checksum no cuadra dan `IoError.InvalidData`; el `reader`, en la lectura que
-  llega a ellos.
+  checksum no cuadra dan `InvalidData` del error del módulo en `decompress`, e
+  `IoError.InvalidData` en el `reader`, en la lectura que llega a ellos.
+- `decompress` tiene en memoria lo que descomprime, que unos pocos kilobytes
+  pueden hacer gigabytes: más de `limits.maxOutputBytes` bytes es
+  `TooLarge(maxOutputBytes)`, cortado al llegar al límite. El `reader` no
+  tiene límite: da los datos por partes, y quien los lee decide cuántos.
 - Un `writer` comprime lo que recibe y lo escribe en `to` por bloques. `flush()`
   escribe lo comprimido hasta entonces, para quien lo lee mientras llega.
   `close()` cierra el writer: escribe el final del formato y suelta `to`, que
@@ -5855,11 +5934,13 @@ pub annotation Text = {}
 pub type XmlError = { message: String, line: Int, column: Int }
 
 pub fn encode[T: serialization.Encode](value: T, pretty: Bool = false): String
-pub fn decode[T: serialization.Decode](text: String): T ! XmlError
+pub type XmlLimits = { maxNestingDepth: Int }
+pub const XmlLimits.Default: XmlLimits                      // 128
+pub fn decode[T: serialization.Decode](text: String, limits: XmlLimits = XmlLimits.Default): T ! XmlError
 
 pub type Element = { name: String, attributes: Map[String, String], nodes: Array[Node] }
 pub enum Node { Element(Element), Text(String) }
-pub fn parse(text: String): Element ! XmlError
+pub fn parse(text: String, limits: XmlLimits = XmlLimits.Default): Element ! XmlError
 pub fn Element.child(self, name: String): Element?
 pub fn Element.children(self, name: String): Array[Element]
 pub fn Element.attribute(self, name: String): String?
@@ -5893,7 +5974,8 @@ impl Display for Element
   no se resuelven los namespaces.
 - No se leen DTDs ni entidades externas: solo las cinco predefinidas y las
   numéricas, así que un documento no puede pedir archivos ni crecer sin fin.
-  Los elementos anidan hasta 128 niveles, como los valores de `std.json`.
+  Los elementos anidan hasta `limits.maxNestingDepth` niveles, 128 por
+  defecto, como los valores de `std.json`.
 - `parse` da el árbol de un XML de forma desconocida: el elemento raíz, con
   sus atributos y sus nodos, elementos y texto, sin comentarios ni
   instrucciones de proceso. `child` da el primer hijo de ese nombre,
@@ -6672,8 +6754,10 @@ pub type Entry = { name: String, kind: EntryKind, size: Int, modified: time.Date
     permissions: Int, target: String? }
 pub type ArchiveError = { message: String }
 pub type Archive
-pub fn open(path: String): Archive ! ArchiveError
-pub fn read(bytes: Array[Byte]): Archive ! ArchiveError
+pub type ArchiveLimits = { maxInflatedBytes: Int }
+pub const ArchiveLimits.Default: ArchiveLimits              // 1 GiB
+pub fn open(path: String, limits: ArchiveLimits = ArchiveLimits.Default): Archive ! ArchiveError
+pub fn read(bytes: Array[Byte], limits: ArchiveLimits = ArchiveLimits.Default): Archive ! ArchiveError
 pub fn Archive.format(self): Format
 pub fn Archive.entries(self): Array[Entry]
 pub fn Archive.readBytes(self, name: String): Array[Byte] ! ArchiveError
@@ -6692,6 +6776,10 @@ pub fn Writer.finish(self): Unit ! ArchiveError
 - `open` y `read` reconocen el formato por sus primeros bytes, y `create` por
   la extensión del nombre (`.zip`, `.tar`, `.tar.gz` o `.tgz`, `.tar.zst` o
   `.tzst`) salvo que `format` diga otro.
+- Un archivo se lee entero, y tiene lo que infla: lo que una lectura infla en
+  total, un tar comprimido entero o las entradas deflactadas de un zip juntas,
+  no pasa de `limits.maxInflatedBytes`; más es un `ArchiveError` que lo dice
+  (7.4.1), cortado al llegar al límite.
 - Un zip guarda cada archivo deflactado, o tal cual si así ocupa menos, con su
   hora en UTC y sus permisos de Unix; se leen también los de ZIP64 y los
   métodos guardado y deflate, comprobando el CRC-32. Un tar es POSIX ustar,
@@ -6900,8 +6988,10 @@ pub enum Filter { Nearest, Linear, CatmullRom, Lanczos }
 pub enum Anchor { Center, Top, Bottom, Left, Right, TopLeft, TopRight, BottomLeft, BottomRight }
 
 pub type Image
-pub fn read(bytes: Array[Byte]): Image ! ImageError
-pub fn open(path: String): Image ! ImageError
+pub type ImageLimits = { maxDecodedBytes: Int }
+pub const ImageLimits.Default: ImageLimits                  // 512 MiB
+pub fn read(bytes: Array[Byte], limits: ImageLimits = ImageLimits.Default): Image ! ImageError
+pub fn open(path: String, limits: ImageLimits = ImageLimits.Default): Image ! ImageError
 pub fn info(bytes: Array[Byte]): Info ! ImageError
 pub type Exif = { date: time.DateTime?, latitude: Float?, longitude: Float?, camera: String?,
     orientation: Int, tags: Map[String, String] }
@@ -6943,6 +7033,10 @@ pub fn Image.save(self, path: String, quality: Int = 85): Unit ! ImageError
   lee el primer cuadro. `info` da el formato y el tamaño, ya orientado, sin
   decodificar los píxeles. `format` es el formato del que se leyó, y `none`
   para una que hizo el programa.
+- Una imagen cuya cabecera declara más píxeles de los que caben en
+  `limits.maxDecodedBytes`, cuatro bytes cada uno, se rechaza antes de
+  reservarlos, con un `ImageError` que lo dice (7.4.1): unos pocos bytes
+  pueden declarar gigabytes.
 - `resize` con un lado calcula el otro conservando la proporción; con los
   dos, estira. `fit` la reduce, si hace falta, para que quepa en el
   rectángulo conservando la proporción, y nunca la agranda. `fill` la
@@ -7062,7 +7156,9 @@ fn main(): !http.HttpError {
 
 ~~~tondo pseudocode
 pub type Schema
-pub fn schema[Q: reflect.Reflect](query: Q): Schema
+pub type GraphqlLimits = { maxNestingDepth: Int }
+pub const GraphqlLimits.Default: GraphqlLimits              // 128
+pub fn schema[Q: reflect.Reflect](query: Q, limits: GraphqlLimits = GraphqlLimits.Default): Schema
 pub fn Schema.mutation[M: reflect.Reflect](self, root: M): Schema
 pub fn Schema.sdl(self): String
 pub fn Schema.execute(self, document: String, variables: Map[String, json.Value] = [:],
@@ -7095,7 +7191,8 @@ pub fn Schema.handler(self): fn(http.Request): http.Reply ! http.Problem
   está o una variable obligatoria que falta dan solo `errors`. También los
   dan un fragmento que se extiende a sí mismo, directamente, por otro o
   dentro de un campo, que GraphQL no admite, y un documento que anida más de
-  256 conjuntos de selección, fragmentos en línea, listas u objetos. Un
+  `limits.maxNestingDepth` conjuntos de selección, fragmentos en línea, listas
+  u objetos, 128 por defecto, los `limits` que tomó `schema`. Un
   fragmento se recoge una vez por conjunto de selección, como en el
   `CollectFields` de GraphQL: extenderlo otra vez no añade campos ni
   trabajo. Hay
@@ -7192,13 +7289,17 @@ pub enum Direction { Received, Sent }
 pub fn Service.onCall(self, interceptor: fn(Call, fn(): !Status): !Status): Service
 pub fn Service.onMessage(self, observer: fn(Call, Direction, reflect.Value)): Service
 pub fn Service.compress(self): Service
+pub fn Service.limits(self, limits: GrpcLimits): Service
+pub type GrpcLimits = { maxMessageBytes: Int }
+pub const GrpcLimits.Default: GrpcLimits                    // 16 MiB
 
 pub type Stream[T]                                          // Iterator[T ! Status]
 pub type Channel
 pub enum Compression { None, Gzip }
 pub enum Balancing { PickFirst, RoundRobin }
 pub fn connect(target: String, trust: String = "", certificate: String = "", key: String = "",
-    compression: Compression = Compression.None, balancing: Balancing = Balancing.PickFirst): Channel ! Status
+    compression: Compression = Compression.None, balancing: Balancing = Balancing.PickFirst,
+    limits: GrpcLimits = GrpcLimits.Default): Channel ! Status
 pub fn Channel.unary[In, Out](self, path: String, request: In, metadata: Map[String, String] = [:]): Out ! Status
 pub fn Channel.serverStream[In, Out](self, path: String, request: In, metadata: Map[String, String] = [:]): Stream[Out]
 pub fn Channel.clientStream[In, Out](self, path: String, metadata: Map[String, String] = [:]): Upload[In, Out]
@@ -7294,11 +7395,19 @@ pub fn Duplex.trailers(self): Map[String, String]
   van en base64, como viajan.
 - **Compresión.** Clientes y servidores leen siempre los mensajes
   comprimidos con gzip y lo anuncian en `grpc-accept-encoding`; otra
-  codificación es `Unimplemented`, y un mensaje que pasaría de 16 MiB al
-  descomprimirse, `ResourceExhausted`. Solo comprime quien lo pide, como en
+  codificación es `Unimplemented`. Solo comprime quien lo pide, como en
   grpc-go: un canal con `compression: Compression.Gzip` comprime lo que
   envía, y un servicio con `compress()` sus respuestas a un cliente que lee
   gzip.
+- **Límites.** Cada mensaje que llega de fuera, tal como llega o una vez
+  descomprimido, no pasa de `GrpcLimits.maxMessageBytes`, 16 MiB por defecto:
+  los de un cliente, los `limits` de su `connect`; los de un servidor, los del
+  servicio, que da su método `limits` y que `app.grpc` toma con el servicio.
+  El límite es de cada mensaje y no de la llamada: `ServerLimits.maxBodyBytes`
+  no corta el stream de un cliente, que dura lo que dura su llamada. Un
+  mensaje que lo pasa termina la llamada como `ResourceExhausted`, con la
+  frase de 7.4.1 y el código que lo sube en el lado que lo dio: `limits:` en
+  `connect` o `.limits(...)` en el servicio.
 - **Plazos.** Una llamada dentro de un `within` (lenguaje 11.17) envía el
   tiempo que le queda como `grpc-timeout`, redondeado hacia arriba, y el
   método corre dentro de un `within` de ese tiempo: si se acaba, la llamada

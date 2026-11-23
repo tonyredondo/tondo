@@ -112,12 +112,13 @@ pub fn connect(
     key: String = "",
     compression: Compression = Compression.None,
     balancing: Balancing = Balancing.PickFirst,
+    limits: GrpcLimits = GrpcLimits.Default,
 ): Channel ! Status {
     let spread = match balancing {
         Balancing.PickFirst => 0
         Balancing.RoundRobin => 1
     }
-    let native = grpcNative.channel(target, trust, certificate, key, spread)
+    let native = grpcNative.channel(target, trust, certificate, key, spread, limits.maxMessageBytes)
     let problem = grpcNative.channelError(native)
     if not problem.isEmpty() {
         fail Status { code: Code.InvalidArgument, message: problem }

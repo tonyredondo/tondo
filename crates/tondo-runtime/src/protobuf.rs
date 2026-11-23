@@ -16,8 +16,11 @@ const START_GROUP: u8 = 3;
 const END_GROUP: u8 = 4;
 const FIXED32: u8 = 5;
 
-/// How deep messages may nest, as other implementations bound it.
-const DEPTH: usize = 100;
+/// The deepest `ProtobufLimits.maxNestingDepth` a task's stack holds: half
+/// of its 8 MiB at the about 3010 bytes a level that a release build took
+/// in the measure of 2026-11-22, more than a debug build's 1366, rounded
+/// down.
+const CEILING: usize = 1300;
 
 // ---------------------------------------------------------------------------
 // Writing
@@ -198,6 +201,9 @@ struct Reader {
     wire: u8,
     start: usize,
     error: Option<String>,
+    /// How deep messages and groups may nest:
+    /// `ProtobufLimits.maxNestingDepth`.
+    deepest: usize,
 }
 
 fn reader<'a>(object: *mut NativeObject) -> Option<std::sync::MutexGuard<'a, Reader>> {
@@ -332,8 +338,15 @@ impl Reader {
             }
             START_GROUP => {
                 let number = self.number;
-                if self.bounds.len() >= DEPTH {
-                    self.fail(format!("messages nest deeper than {DEPTH}"));
+                if self.bounds.len() >= self.deepest {
+                    let deepest = self.deepest as u64;
+                    self.fail(crate::limits::deeper(
+                        "the message",
+                        deepest,
+                        "protobuf",
+                        "ProtobufLimits",
+                        Some(CEILING as u64),
+                    ));
                     return;
                 }
                 self.bounds.push(Bound::Group(number));
@@ -353,13 +366,14 @@ impl Reader {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_pb_reader(
     bytes: *mut ArrayHeader,
+    deepest: i64,
     region: *mut crate::regions::Region,
 ) -> *mut NativeObject {
-    let input = unsafe { array_items::<u8>(bytes) }.to_vec();
-    native::new_in(
-        region,
-        Mutex::new(Reader { input, position: 0, bounds: Vec::new(), number: 0, wire: 0, start: 0, error: None }),
-    )
+    let (input, deepest) = (unsafe { array_items::<u8>(bytes) }.to_vec(), deepest.max(0) as usize);
+    let error =
+        (deepest > CEILING).then(|| crate::limits::above_ceiling("ProtobufLimits", deepest as u64, CEILING as u64));
+    let reader = Reader { input, position: 0, bounds: Vec::new(), number: 0, wire: 0, start: 0, error, deepest };
+    native::new_in(region, Mutex::new(reader))
 }
 
 /// The number of the next field, 0 at the end of the message or group
@@ -439,8 +453,9 @@ pub extern "C" fn tondo_rt_pb_read_text(object: *mut NativeObject, region: *mut 
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_pb_enter(object: *mut NativeObject, packed: u8) {
     let Some(mut r) = reader(object) else { return };
-    if r.bounds.len() >= DEPTH {
-        r.fail(format!("messages nest deeper than {DEPTH}"));
+    if r.bounds.len() >= r.deepest {
+        let deepest = r.deepest as u64;
+        r.fail(crate::limits::deeper("the message", deepest, "protobuf", "ProtobufLimits", Some(CEILING as u64)));
         return;
     }
     if r.wire == START_GROUP && packed == 0 {

@@ -26,7 +26,7 @@ console.println("{bytes.length()} bytes: {point.x}, {point.y} {protobuf.toJson(p
 
 `tondo api std.protobuf` shows the same in a terminal.
 
-- [Functions](#functions): [`encode`](#encode), [`decode`](#decode), [`encodeTo`](#encodeto), [`decodeFrom`](#decodefrom), [`entries`](#entries), [`emptyReader`](#emptyreader), [`epoch`](#epoch), [`nullValue`](#nullvalue), [`pack`](#pack), [`toJson`](#tojson), [`fromJson`](#fromjson)
+- [Functions](#functions): [`encode`](#encode), [`decode`](#decode), [`ProtobufLimits.Default`](#protobuflimitsdefault), [`encodeTo`](#encodeto), [`decodeFrom`](#decodefrom), [`entries`](#entries), [`emptyReader`](#emptyreader), [`epoch`](#epoch), [`nullValue`](#nullvalue), [`pack`](#pack), [`toJson`](#tojson), [`fromJson`](#fromjson)
 - [Field](#field)
 - [Encoding](#encoding)
 - [Value](#value)
@@ -37,6 +37,7 @@ console.println("{bytes.length()} bytes: {point.x}, {point.y} {protobuf.toJson(p
 - [Message](#message)
 - [Enum](#enum)
 - [ProtobufError](#protobuferror)
+- [ProtobufLimits](#protobuflimits)
 - [Writer](#writer): [`Writer.deterministic`](#writerdeterministic), [`Writer.int32`](#writerint32), [`Writer.int64`](#writerint64), [`Writer.uint32`](#writeruint32), [`Writer.uint64`](#writeruint64), [`Writer.sint32`](#writersint32), [`Writer.sint64`](#writersint64), [`Writer.fixed32`](#writerfixed32), [`Writer.sfixed32`](#writersfixed32), [`Writer.fixed64`](#writerfixed64), [`Writer.sfixed64`](#writersfixed64), [`Writer.bool`](#writerbool), [`Writer.float`](#writerfloat), [`Writer.double`](#writerdouble), [`Writer.string`](#writerstring), [`Writer.bytes`](#writerbytes), [`Writer.message`](#writermessage), [`Writer.group`](#writergroup), [`Writer.enumValue`](#writerenumvalue), [`Writer.begin`](#writerbegin), [`Writer.end`](#writerend), [`Writer.timestamp`](#writertimestamp), [`Writer.duration`](#writerduration), [`Writer.jsonValue`](#writerjsonvalue), [`Writer.jsonStruct`](#writerjsonstruct), [`Writer.jsonList`](#writerjsonlist), [`Writer.unknown`](#writerunknown)
 - [Reader](#reader): [`Reader.next`](#readernext), [`Reader.int32`](#readerint32), [`Reader.int64`](#readerint64), [`Reader.uint32`](#readeruint32), [`Reader.uint64`](#readeruint64), [`Reader.sint32`](#readersint32), [`Reader.sint64`](#readersint64), [`Reader.fixed32`](#readerfixed32), [`Reader.sfixed32`](#readersfixed32), [`Reader.fixed64`](#readerfixed64), [`Reader.sfixed64`](#readersfixed64), [`Reader.bool`](#readerbool), [`Reader.float`](#readerfloat), [`Reader.double`](#readerdouble), [`Reader.string`](#readerstring), [`Reader.bytes`](#readerbytes), [`Reader.message`](#readermessage), [`Reader.group`](#readergroup), [`Reader.enumValue`](#readerenumvalue), [`Reader.enter`](#readerenter), [`Reader.isPacked`](#readerispacked), [`Reader.enterPacked`](#readerenterpacked), [`Reader.more`](#readermore), [`Reader.skip`](#readerskip), [`Reader.keep`](#readerkeep), [`Reader.missing`](#readermissing), [`Reader.timestamp`](#readertimestamp), [`Reader.duration`](#readerduration), [`Reader.jsonValue`](#readerjsonvalue), [`Reader.jsonStruct`](#readerjsonstruct), [`Reader.jsonList`](#readerjsonlist)
 - [Empty](#empty)
@@ -61,10 +62,21 @@ equal messages give equal bytes.
 #### decode
 
 ```tondo
-pub fn decode[T: Message](bytes: Array[Byte]): T ! ProtobufError
+pub fn decode[T: Message](
+    bytes: Array[Byte],
+    limits: ProtobufLimits = ProtobufLimits.Default,
+): T ! ProtobufError
 ```
 
 The message the bytes hold.
+
+#### ProtobufLimits.Default
+
+```tondo
+pub const ProtobufLimits.Default: ProtobufLimits = ProtobufLimits { maxNestingDepth: 128 }
+```
+
+Messages nested up to 128 levels deep.
 
 #### encodeTo
 
@@ -77,7 +89,10 @@ Writes the bytes of a message to a stream.
 #### decodeFrom
 
 ```tondo
-pub fn decodeFrom[T: Message](input: io.Reader): T ! ProtobufError
+pub fn decodeFrom[T: Message](
+    input: io.Reader,
+    limits: ProtobufLimits = ProtobufLimits.Default,
+): T ! ProtobufError
 ```
 
 The message a stream holds, read to its end.
@@ -453,6 +468,27 @@ match protobuf.decode[User]([0x0a, 0x0a, 0x41, 0x64]) {
     ok(user) => console.println(user.name)
     err(error) => console.println("{error.kind} at {error.path}: {error.message}")
 }
+```
+
+### ProtobufLimits
+
+```tondo
+pub type ProtobufLimits = {
+    maxNestingDepth: Int
+}
+```
+
+How deep a message from outside the program may nest:
+`maxNestingDepth` messages and groups, each of which takes up to about
+3 KB of a task's 8 MiB stack. Up to 1300, what half of that stack holds,
+may be given, and more is refused; a function that a thread of C calls
+runs on that thread's stack, which may hold less.
+
+```tondo
+import std.protobuf
+
+let deep = protobuf.ProtobufLimits.Default with { maxNestingDepth: 256 }
+let empty = protobuf.decode[protobuf.Empty]([], limits: deep)?
 ```
 
 ### Writer

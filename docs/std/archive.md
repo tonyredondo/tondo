@@ -18,32 +18,48 @@ for entry in site.entries() {
 
 `tondo api std.archive` shows the same in a terminal.
 
-- [Functions](#functions): [`open`](#open), [`read`](#read), [`create`](#create), [`writer`](#writer)
+- [Functions](#functions): [`ArchiveLimits.Default`](#archivelimitsdefault), [`open`](#open), [`read`](#read), [`create`](#create), [`writer`](#writer)
 - [Format](#format)
 - [EntryKind](#entrykind)
 - [Entry](#entry)
 - [ArchiveError](#archiveerror)
+- [ArchiveLimits](#archivelimits)
 - [Archive](#archive): [`Archive.format`](#archiveformat), [`Archive.entries`](#archiveentries), [`Archive.readBytes`](#archivereadbytes), [`Archive.readText`](#archivereadtext), [`Archive.extract`](#archiveextract), [`Archive.files`](#archivefiles)
 - [Writer](#writer-1): [`Writer.add`](#writeradd), [`Writer.addFile`](#writeraddfile), [`Writer.addDirectory`](#writeradddirectory), [`Writer.finish`](#writerfinish)
 
 ### Functions
 
+#### ArchiveLimits.Default
+
+```tondo
+pub const ArchiveLimits.Default: ArchiveLimits = ArchiveLimits {
+    maxInflatedBytes: 1024 * 1024 * 1024
+}
+```
+
+Up to 1 GiB inflated in all.
+
 #### open
 
 ```tondo
-pub fn open(path: String): Archive ! ArchiveError
+pub fn open(path: String, limits: ArchiveLimits = ArchiveLimits.Default): Archive ! ArchiveError
 ```
 
-The archive in the file at `path`, of the format its contents say.
+The archive in the file at `path`, of the format its contents say;
+one that inflates to more than `limits.maxInflatedBytes` fails.
 
 #### read
 
 ```tondo
-pub fn read(bytes: Array[Byte]): Archive ! ArchiveError
+pub fn read(
+    bytes: Array[Byte],
+    limits: ArchiveLimits = ArchiveLimits.Default,
+): Archive ! ArchiveError
 ```
 
 The archive these bytes are, of the format their first bytes say: zip,
-tar, or tar in gzip or Zstandard.
+tar, or tar in gzip or Zstandard; one that inflates to more than
+`limits.maxInflatedBytes` fails.
 
 #### create
 
@@ -156,6 +172,31 @@ match archive.open("missing.zip") {
 ```
 
 Implements `Display`, `reflect.Reflect`.
+
+### ArchiveLimits
+
+```tondo
+pub type ArchiveLimits = {
+    maxInflatedBytes: Int
+}
+```
+
+How much a read of an archive from outside the program may inflate,
+which a few kilobytes of it can make gigabytes of: `maxInflatedBytes`,
+all that one `read` or `open` inflates, a compressed tar's whole or the
+deflated entries of a zip together. The archive holds what it inflates,
+for now: it reads whole.
+
+```tondo
+import std.archive
+import std.console
+
+let limits = archive.ArchiveLimits.Default with { maxInflatedBytes: 4 * 1024 * 1024 * 1024 }
+match archive.open("site.zip", limits: limits) {
+    ok(site) => console.println("{site.entries().length()} entries")
+    err(error) => console.println("{error}")
+}
+```
 
 ### Archive
 

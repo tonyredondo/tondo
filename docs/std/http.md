@@ -181,15 +181,16 @@ The [`todo-api`](../../examples/todo-api) example is a whole service, the
 
 `tondo api std.http` shows the same in a terminal.
 
-- [Functions](#functions): [`get`](#get), [`head`](#head), [`delete`](#delete), [`post`](#post), [`put`](#put), [`patch`](#patch), [`Limits.Standard`](#limitsstandard), [`mediaType`](#mediatype), [`proxy`](#proxy)
+- [Functions](#functions): [`ClientLimits.Default`](#clientlimitsdefault), [`get`](#get), [`head`](#head), [`delete`](#delete), [`post`](#post), [`put`](#put), [`patch`](#patch), [`ServerLimits.Default`](#serverlimitsdefault), [`mediaType`](#mediatype), [`proxy`](#proxy)
 - [HttpError](#httperror)
 - [Body](#body): [`Body.text`](#bodytext), [`Body.bytes`](#bodybytes), [`Body.json`](#bodyjson), [`Body.form`](#bodyform), [`Body.multipart`](#bodymultipart), [`Body.stream`](#bodystream)
 - [Part](#part): [`Part.field`](#partfield), [`Part.bytes`](#partbytes), [`Part.file`](#partfile), [`Part.stream`](#partstream)
-- [Response](#response): [`Response.status`](#responsestatus), [`Response.reason`](#responsereason), [`Response.url`](#responseurl), [`Response.version`](#responseversion), [`Response.header`](#responseheader), [`Response.headerValues`](#responseheadervalues), [`Response.headers`](#responseheaders), [`Response.bytes`](#responsebytes), [`Response.text`](#responsetext), [`Response.json`](#responsejson), [`Response.body`](#responsebody), [`Response.lines`](#responselines), [`Response.events`](#responseevents), [`Response.copyTo`](#responsecopyto), [`Response.cookie`](#responsecookie), [`Response.cookies`](#responsecookies)
+- [Response](#response): [`Response.status`](#responsestatus), [`Response.reason`](#responsereason), [`Response.url`](#responseurl), [`Response.version`](#responseversion), [`Response.header`](#responseheader), [`Response.headerValues`](#responseheadervalues), [`Response.headers`](#responseheaders), [`Response.bytes`](#responsebytes), [`Response.text`](#responsetext), [`Response.json`](#responsejson), [`Response.body`](#responsebody), [`Response.limitBody`](#responselimitbody), [`Response.lines`](#responselines), [`Response.events`](#responseevents), [`Response.copyTo`](#responsecopyto), [`Response.cookie`](#responsecookie), [`Response.cookies`](#responsecookies)
 - [Lines](#lines)
 - [Event](#event)
 - [Events](#events)
 - [Client](#client): [`Client`](#client-1), [`Client.get`](#clientget), [`Client.head`](#clienthead), [`Client.delete`](#clientdelete), [`Client.post`](#clientpost), [`Client.put`](#clientput), [`Client.patch`](#clientpatch), [`Client.request`](#clientrequest), [`Client.use`](#clientuse)
+- [ClientLimits](#clientlimits)
 - [ClientRequest](#clientrequest-1)
 - [Message](#message)
 - [WebSocket](#websocket): [`WebSocket.connect`](#websocketconnect), [`WebSocket.send`](#websocketsend), [`WebSocket.sendText`](#websocketsendtext), [`WebSocket.sendBytes`](#websocketsendbytes), [`WebSocket.receive`](#websocketreceive), [`WebSocket.close`](#websocketclose)
@@ -204,12 +205,20 @@ The [`todo-api`](../../examples/todo-api) example is a whole service, the
 - [App](#app): [`App.websocket`](#appwebsocket), [`App`](#app-1), [`App.get`](#appget), [`App.post`](#apppost), [`App.put`](#appput), [`App.patch`](#apppatch), [`App.delete`](#appdelete), [`App.route`](#approute), [`App.use`](#appuse), [`App.cors`](#appcors), [`App.mount`](#appmount), [`App.grpc`](#appgrpc), [`App.files`](#appfiles), [`App.uploads`](#appuploads), [`App.compress`](#appcompress), [`App.client`](#appclient), [`App.trustProxies`](#apptrustproxies), [`App.openApi`](#appopenapi), [`App.listen`](#applisten), [`App.start`](#appstart)
 - [GrpcService](#grpcservice)
 - [Saved](#saved)
-- [Limits](#limits)
+- [ServerLimits](#serverlimits)
 - [Server](#server): [`Server.address`](#serveraddress), [`Server.url`](#serverurl), [`Server.wait`](#serverwait), [`Server.stop`](#serverstop)
 - [Tls](#tls)
 - [TlsVersion](#tlsversion)
 
 ### Functions
+
+#### ClientLimits.Default
+
+```tondo
+pub const ClientLimits.Default: ClientLimits = ClientLimits { maxBodyBytes: 2 * 1024 * 1024 * 1024 }
+```
+
+Up to 2 GiB of body read whole.
 
 #### get
 
@@ -293,12 +302,12 @@ pub fn patch(
 
 Sends a `PATCH` with the body, on a connection of its own.
 
-#### Limits.Standard
+#### ServerLimits.Default
 
 ```tondo
-pub const Limits.Standard: Limits = Limits {
-    body: 10 * 1024 * 1024
-    head: 64 * 1024
+pub const ServerLimits.Default: ServerLimits = ServerLimits {
+    maxBodyBytes: 10 * 1024 * 1024
+    maxHeadBytes: 64 * 1024
     headTimeout: time.seconds(30)
     bodyTimeout: time.seconds(30)
     replyTimeout: time.seconds(30)
@@ -356,6 +365,9 @@ pub enum HttpError {
     Body(String)
     /// Anything else of HTTP: too many redirects, a broken connection.
     Protocol(String)
+    /// A response's body larger, once decoded, than the most the client's
+    /// `limits` allow, the bound it holds: `ClientLimits.maxBodyBytes`.
+    TooLarge(Int)
 }
 ```
 
@@ -615,7 +627,9 @@ The headers, lowercase, with the values of a repeated one joined by
 pub fn Response.bytes(self): Array[Byte] ! HttpError
 ```
 
-The whole body, read as it arrives.
+The whole body, read as it arrives; one of more bytes, once its
+`Content-Encoding` is undone, than the client's
+`ClientLimits.maxBodyBytes`, or `limitBody`'s, is `HttpError.TooLarge`.
 
 #### Response.text
 
@@ -631,7 +645,8 @@ The body as text, in the charset its content type names (`windows1252`).
 pub fn Response.json[T: serialization.Decode](self): T ! HttpError
 ```
 
-The body as the JSON of a `T` (`std.json`), decoded as it arrives.
+The body as the JSON of a `T` (`std.json`), decoded as it arrives, of
+no more bytes than `bytes()` takes.
 
 #### Response.body
 
@@ -640,6 +655,16 @@ pub fn Response.body(self): io.Reader
 ```
 
 The body as a stream, read as the program asks for it.
+
+#### Response.limitBody
+
+```tondo
+pub fn Response.limitBody(self, bytes: Int): Response
+```
+
+The response with a body of up to `bytes` for `bytes()`, `text()` and
+`json()`, more or fewer than its client's `ClientLimits.maxBodyBytes`,
+as one known to be large needs: before the body is read.
 
 #### Response.lines
 
@@ -804,6 +829,7 @@ pub fn Client(
     socket: String? = none,
     cookies: Bool = false,
     identity: Tls? = none,
+    limits: ClientLimits = ClientLimits.Default,
 ): Client
 ```
 
@@ -938,6 +964,31 @@ a server's routes: it gets the request and `next`, which sends it, and
 may change it, time it, see its response or error, or answer without
 sending it. The first added is the outermost; redirects happen inside
 `next`.
+
+### ClientLimits
+
+```tondo
+pub type ClientLimits = {
+    maxBodyBytes: Int
+}
+```
+
+What a client may read whole of a response from outside the program:
+`maxBodyBytes` of a body read by `bytes()`, `text()` or `json()`, once
+its `Content-Encoding` is undone, so that a few bytes that decode to
+gigabytes stop at it. `body()` and `lines()` read as the program asks,
+with no bound; `Response.limitBody` changes it for one response.
+
+```tondo
+import std.console
+import std.http
+
+let web = http.Client(limits: http.ClientLimits.Default with { maxBodyBytes: 64 * 1024 * 1024 })
+match web.get("https://example.com/") {
+    ok(page) => console.println("{page.text()?.length()} characters")
+    err(error) => console.println("{error}")
+}
+```
 
 ### ClientRequest
 
@@ -1483,7 +1534,7 @@ pub fn Request.limitBody(self, bytes: Int): Request
 ```
 
 The request with a body of up to `bytes`, more or fewer than the
-server's `Limits.body`, as a route of uploads needs: before the body is
+server's `ServerLimits.maxBodyBytes`, as a route of uploads needs: before the body is
 read, by the handler or a middleware.
 
 #### Request.withBody
@@ -2291,7 +2342,7 @@ pub fn App.listen(
     host: String = "0.0.0.0",
     tls: Tls? = none,
     socket: String? = none,
-    limits: Limits? = none,
+    limits: ServerLimits = ServerLimits.Default,
     grace: time.Duration = time.seconds(30),
 ): !HttpError
 ```
@@ -2299,7 +2350,7 @@ pub fn App.listen(
 Serves until the task is cancelled or the server stops; `port` 0 takes
 any free port. With `socket`, it serves on that Unix socket instead,
 which it makes and removes when it stops. `limits` bounds what each
-client sends, `Limits.Standard` without it. A client that goes away
+client sends. A client that goes away
 before its reply cancels the task that answers it: the handler stops at
 its next wait and runs its `defer`s. `Interrupt` (Ctrl-C) or `Terminate`
 first drains the server, as `Server.stop(grace)` does, and then ends
@@ -2316,7 +2367,7 @@ pub fn App.start(
     host: String = "127.0.0.1",
     tls: Tls? = none,
     socket: String? = none,
-    limits: Limits? = none,
+    limits: ServerLimits = ServerLimits.Default,
 ): Server ! HttpError
 ```
 
@@ -2372,12 +2423,12 @@ for file in saved {
 
 Implements `serialization.Encode`, `serialization.Decode`.
 
-### Limits
+### ServerLimits
 
 ```tondo
-pub type Limits = {
-    body: Int
-    head: Int
+pub type ServerLimits = {
+    maxBodyBytes: Int
+    maxHeadBytes: Int
     headTimeout: time.Duration
     bodyTimeout: time.Duration
     replyTimeout: time.Duration
@@ -2391,7 +2442,7 @@ time to send a head, or a TLS handshake, which also ends a connection
 kept open without a request; the longest a body may stop arriving,
 after which it is `408`; and the longest a client may stop taking a
 reply, after which the connection closes and the handler is cancelled.
-`Limits.Standard with { body: 100_000_000 }` changes one;
+`ServerLimits.Default with { maxBodyBytes: 100_000_000 }` changes one;
 `Request.limitBody` changes the body's for a route.
 
 ```tondo
@@ -2401,8 +2452,8 @@ import std.time
 var app = http.App()
 // Videos up to 1 GB on this route; 10 MiB on the others.
 app.post("/videos", request => http.Reply.text("{request.limitBody(1_000_000_000).saveTo("video.mp4")?} bytes"))
-let limits = http.Limits.Standard with { headTimeout: time.seconds(10) }
-app.listen(port: 8080, limits: some(limits))?
+let limits = http.ServerLimits.Default with { headTimeout: time.seconds(10) }
+app.listen(port: 8080, limits: limits)?
 ```
 
 ### Server

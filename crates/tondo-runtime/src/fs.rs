@@ -19,7 +19,7 @@ fn host<R: Send + 'static>(job: impl FnOnce() -> R + Send) -> R {
 // ---------------------------------------------------------------------------
 
 /// The `FsError` variants, in declaration order; `Host` with the
-/// system's number of the error.
+/// system's number of the error, and `TooLarge` with the limit passed.
 #[derive(Copy, Clone)]
 enum FsError {
     NotFound,
@@ -30,20 +30,7 @@ enum FsError {
     InvalidData,
     InvalidName,
     Host(i32),
-}
-
-std::thread_local! {
-    /// The number of the last `Host` error, which the compiled code reads
-    /// right after the call that failed, on the same thread.
-    static HOST_ERROR: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
-}
-
-/// Notes the number of a `Host` error: never inlined, since the call that
-/// failed may have waited for the system and resumed on another thread,
-/// whose number the compiled code reads.
-#[inline(never)]
-fn note_host_error(number: i64) {
-    HOST_ERROR.set(number);
+    TooLarge(usize),
 }
 
 fn code(error: FsError) -> i64 {
@@ -56,8 +43,12 @@ fn code(error: FsError) -> i64 {
         FsError::InvalidData => 6,
         FsError::InvalidName => 7,
         FsError::Host(number) => {
-            note_host_error(number as i64);
+            crate::note_error_number(number as i64);
             8
+        }
+        FsError::TooLarge(limit) => {
+            crate::note_error_number(limit as i64);
+            9
         }
     }
 }
@@ -87,13 +78,10 @@ pub extern "C" fn tondo_rt_os_error_text(number: i64, region: *mut crate::region
     crate::strings::str_in(region, os_error(number).as_bytes())
 }
 
-/// The system's number of the last `FsError.Host` of this thread.
-#[unsafe(no_mangle)]
-pub extern "C" fn tondo_rt_fs_host_error() -> i64 {
-    HOST_ERROR.get()
-}
-
 fn classify(error: &std::io::Error) -> FsError {
+    if let Some(limit) = crate::limit_passed(error) {
+        return FsError::TooLarge(limit);
+    }
     match error.kind() {
         ErrorKind::NotFound => FsError::NotFound,
         ErrorKind::PermissionDenied => FsError::PermissionDenied,
@@ -308,13 +296,20 @@ pub unsafe extern "C" fn tondo_rt_fs_open(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_fs_read_line(
     file: *mut StreamObject,
+    most: i64,
     out: *mut *mut Str,
     region: *mut crate::regions::Region,
 ) -> i64 {
-    let region = crate::io::WaitingRegion(region);
-    let line = run_ready(file, StreamState::has_line, move |s| {
-        io(s.read_line(move |bytes| region.made_text(bytes)))?.map(|line| line.ok_or(FsError::InvalidData)).transpose()
-    });
+    let (region, most) = (crate::io::WaitingRegion(region), most.max(0) as usize);
+    let line = run_ready(
+        file,
+        |s| s.has_line(most),
+        move |s| {
+            io(s.read_line(most, move |bytes| region.made_text(bytes)))?
+                .map(|line| line.ok_or(FsError::InvalidData))
+                .transpose()
+        },
+    );
     finish(line, |line| unsafe { *out = line.map_or(std::ptr::null_mut(), |l| l.0) })
 }
 

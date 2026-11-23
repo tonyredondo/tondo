@@ -54,10 +54,10 @@ fn main() {
 // expect-stdout: zstd true true
 // expect-stdout: frames one two
 // expect-stdout: empty 0 0
-// expect-stdout: gzip: invalid data
-// expect-stdout: gzip: invalid data
-// expect-stdout: gzip: invalid data
-// expect-stdout: zstd: invalid data
+// expect-stdout: gzip: the data is not gzip, is cut short or its checksum does not match
+// expect-stdout: gzip: the data is not gzip, is cut short or its checksum does not match
+// expect-stdout: gzip: the data is not gzip, is cut short or its checksum does not match
+// expect-stdout: zstd: the data is not Zstandard, is cut short or its checksum does not match
 // expect-stdout: gzip stream [first, second]
 // expect-stdout: zstd stream zstd stream
 // expect-stdout: gzip stream: invalid data

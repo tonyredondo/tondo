@@ -12,10 +12,12 @@ use crate::native::{self, NativeObject};
 use crate::{ArrayHeader, Str, str_text};
 use std::sync::Mutex;
 
-/// The most arrays and maps the data may nest: a value's decoder recurses
-/// once a level, and a few hundred kilobytes of nested arrays used all of a
-/// task's stack.
-const DEPTH: usize = 128;
+/// The deepest `MessagePackLimits.maxNestingDepth` a task's stack holds:
+/// half of its 8 MiB at the 2991 bytes a level that a debug build took in
+/// the measure of 2026-11-22, more than a release build's 1556, rounded
+/// down. A value's decoder recurses once a level, and a few hundred
+/// kilobytes of nested arrays used all of a task's stack.
+const CEILING: usize = 1400;
 
 const END: i64 = 0;
 const NULL: i64 = 1;
@@ -69,6 +71,9 @@ struct Decoder<'a> {
     at: usize,
     frames: Vec<Frame>,
     events: Vec<Event>,
+    /// How deep arrays and maps may nest:
+    /// `MessagePackLimits.maxNestingDepth`.
+    deepest: usize,
 }
 
 impl Decoder<'_> {
@@ -131,8 +136,16 @@ impl Decoder<'_> {
     }
 
     fn open(&mut self, map: bool, count: u64, at: usize) -> Result<(), (String, String)> {
-        if self.frames.len() >= DEPTH {
-            return self.fail(format!("the data nests deeper than {DEPTH} levels (byte {at})"));
+        if self.frames.len() >= self.deepest {
+            let what = format!("the data at byte {at}");
+            let ceiling = Some(CEILING as u64);
+            return self.fail(crate::limits::deeper(
+                &what,
+                self.deepest as u64,
+                "messagepack",
+                "MessagePackLimits",
+                ceiling,
+            ));
         }
         self.push(if map { BEGIN_MAP } else { BEGIN_LIST });
         if count == 0 {
@@ -300,12 +313,17 @@ fn reader(object: *mut NativeObject) -> Option<std::sync::MutexGuard<'static, Re
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_msgpack_parse(
     input: *mut ArrayHeader,
+    deepest: i64,
     region: *mut crate::regions::Region,
 ) -> *mut NativeObject {
-    let input = unsafe { array_items::<u8>(input) };
-    let mut decoder = Decoder { input, at: 0, frames: Vec::with_capacity(8), events: Vec::with_capacity(16) };
+    let (input, deepest) = (unsafe { array_items::<u8>(input) }, deepest.max(0) as usize);
+    let (frames, events) = (Vec::with_capacity(8), Vec::with_capacity(16));
+    let mut decoder = Decoder { input, at: 0, frames, events, deepest };
     let mut error = None;
-    if input.is_empty() {
+    if deepest > CEILING {
+        let ceiling = crate::limits::above_ceiling("MessagePackLimits", deepest as u64, CEILING as u64);
+        error = Some((ceiling, "$".to_string()));
+    } else if input.is_empty() {
         error = Some(("the input is empty".to_string(), "$".to_string()));
     }
     while error.is_none() {

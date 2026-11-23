@@ -24,6 +24,7 @@ pub type Response = {
     priv native: httpNative.Native
     priv verb: String
     priv code: Int
+    priv most: Int
 }
 
 /// `200 OK`.
@@ -80,9 +81,11 @@ pub fn Response.headers(self): Map[String, String] {
     out
 }
 
-/// The whole body, read as it arrives.
+/// The whole body, read as it arrives; one of more bytes, once its
+/// `Content-Encoding` is undone, than the client's
+/// `ClientLimits.maxBodyBytes`, or `limitBody`'s, is `HttpError.TooLarge`.
 pub fn Response.bytes(self): Array[Byte] ! HttpError {
-    let bytes = httpNative.readAll(self.native)
+    let bytes = httpNative.readAll(self.native, self.most)
     failed(self.native)?
     bytes
 }
@@ -103,9 +106,10 @@ pub fn Response.text(self): String ! HttpError {
     }
 }
 
-/// The body as the JSON of a `T` (`std.json`), decoded as it arrives.
+/// The body as the JSON of a `T` (`std.json`), decoded as it arrives, of
+/// no more bytes than `bytes()` takes.
 pub fn Response.json[T: __serialization.Decode](self): T ! HttpError {
-    match __json.decodeFrom[T](self.body()) {
+    match __json.decodeFrom[T](httpNative.body(self.native, false, self.most)) {
         ok(value) => value
         err(error) => {
             failed(self.native)?
@@ -116,7 +120,14 @@ pub fn Response.json[T: __serialization.Decode](self): T ! HttpError {
 
 /// The body as a stream, read as the program asks for it.
 pub fn Response.body(self): __io.Reader {
-    httpNative.body(self.native, false)
+    httpNative.body(self.native, false, Int.Max)
+}
+
+/// The response with a body of up to `bytes` for `bytes()`, `text()` and
+/// `json()`, more or fewer than its client's `ClientLimits.maxBodyBytes`,
+/// as one known to be large needs: before the body is read.
+pub fn Response.limitBody(self, bytes: Int): Response {
+    self with { most: bytes }
 }
 
 /// The body's lines, as they arrive, in the charset `text()` reads:
@@ -124,7 +135,7 @@ pub fn Response.body(self): __io.Reader {
 pub fn Response.lines(self): Lines {
     match windows1252(self.header("content-type") ?? "") {
         ok(windows) => Lines {
-            input: httpNative.body(self.native, windows)
+            input: httpNative.body(self.native, windows, Int.Max)
             response: self.native
             failure: ""
             done: false
@@ -356,10 +367,34 @@ pub type Client = {
     priv base: String
     priv defaults: Map[String, String]
     priv limit: __time.Duration?
+    priv most: Int
     priv hooks: Array[
         fn(ClientRequest, fn(ClientRequest): Response ! HttpError): Response ! HttpError,
     ]
 }
+
+/// What a client may read whole of a response from outside the program:
+/// `maxBodyBytes` of a body read by `bytes()`, `text()` or `json()`, once
+/// its `Content-Encoding` is undone, so that a few bytes that decode to
+/// gigabytes stop at it. `body()` and `lines()` read as the program asks,
+/// with no bound; `Response.limitBody` changes it for one response.
+///
+/// ```tondo
+/// import std.console
+/// import std.http
+///
+/// let web = http.Client(limits: http.ClientLimits.Default with { maxBodyBytes: 64 * 1024 * 1024 })
+/// match web.get("https://example.com/") {
+///     ok(page) => console.println("{page.text()?.length()} characters")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
+pub type ClientLimits = {
+    maxBodyBytes: Int
+}
+
+/// Up to 2 GiB of body read whole.
+pub const ClientLimits.Default: ClientLimits = ClientLimits { maxBodyBytes: 2 * 1024 * 1024 * 1024 }
 
 /// A request a client sends, as its hooks see it (`Client.use`): its
 /// method, its final URL, with the client's base and the query, its
@@ -409,6 +444,7 @@ pub fn Client(
     socket: String? = none,
     cookies: Bool = false,
     identity: Tls? = none,
+    limits: ClientLimits = ClientLimits.Default,
 ): Client {
     let connect = match connectTimeout {
         some(limit) => limit.milliseconds()
@@ -425,7 +461,14 @@ pub fn Client(
         key,
         minimum,
     )
-    Client { native: connection, base: baseUrl, defaults: headers, limit: timeout, hooks: [] }
+    Client {
+        native: connection
+        base: baseUrl
+        defaults: headers
+        limit: timeout
+        most: limits.maxBodyBytes
+        hooks: []
+    }
 }
 
 /// Sends a `GET`; a status of 400 or more is `HttpError.Status`, with the
@@ -517,9 +560,9 @@ pub fn Client.request(
         some(limit) => limit.milliseconds()
         none => 0
     }
-    let connection = self.native
+    let (connection, most) = (self.native, self.most)
     var outgoing: fn(ClientRequest): Response ! HttpError = request =>
-        deliver(connection, request, limit)?
+        deliver(connection, request, limit, most)?
     for hook in self.hooks.reversed() {
         outgoing = hooked(hook, outgoing)
     }
@@ -553,7 +596,12 @@ fn hooked(
 }
 
 /// Sends a request, with a limit in milliseconds, or 0 for none.
-fn deliver(connection: httpNative.Native, request: ClientRequest, limit: Int): Response ! HttpError {
+fn deliver(
+    connection: httpNative.Native,
+    request: ClientRequest,
+    limit: Int,
+    most: Int,
+): Response ! HttpError {
     var pairs: Array[String] = []
     for (name, value) in request.headers {
         pairs.push(name)
@@ -568,7 +616,12 @@ fn deliver(connection: httpNative.Native, request: ClientRequest, limit: Int): R
         limit,
     )
     failed(sent)?
-    let response = Response { native: sent, verb: request.method, code: httpNative.status(sent) }
+    let response = Response {
+        native: sent
+        verb: request.method
+        code: httpNative.status(sent)
+        most: most
+    }
     if response.code >= 400 {
         fail HttpError.Status(response)
     }

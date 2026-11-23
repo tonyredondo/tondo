@@ -60,7 +60,7 @@ pub type Number = {
 
 /// A number from its JSON text.
 pub fn number(text: String): Number ! JsonError {
-    let input = Reader { native: jsonnative.reader(text, false), rejectUnknown: false }
+    let input = Reader { native: jsonnative.reader(text, false, 1), rejectUnknown: false }
     match input.value()? {
         Event.Number(value) => value
         _ => fail input.failure(ErrorKind.Type, "`{text}` is not a JSON number")
@@ -389,6 +389,29 @@ pub type Reader = {
     priv rejectUnknown: Bool
 }
 
+/// How deep a document from outside the program may nest:
+/// `maxNestingDepth` arrays and objects, each of which takes up to about
+/// 1.8 KB of a task's 8 MiB stack. Up to 2300, what half of that stack
+/// holds, may be given, and more is refused; a function that a thread of C
+/// calls runs on that thread's stack, which may hold less.
+///
+/// ```tondo
+/// import std.console
+/// import std.json
+///
+/// let deep = "[".repeat(200).concat("]".repeat(200))
+/// match json.parse(deep, limits: json.JsonLimits.Default with { maxNestingDepth: 256 }) {
+///     ok(_) => console.println("read")
+///     err(error) => console.println("{error}")
+/// }
+/// ```
+pub type JsonLimits = {
+    maxNestingDepth: Int
+}
+
+/// Arrays and objects nested up to 128 levels deep.
+pub const JsonLimits.Default: JsonLimits = JsonLimits { maxNestingDepth: 128 }
+
 /// A reader of a JSON document, event by event: members a type does not
 /// have are ignored or rejected as `unknownFields` says, and a key repeated
 /// in an object is an error unless `allowDuplicateKeys`.
@@ -396,9 +419,10 @@ pub fn reader(
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): Reader {
     Reader {
-        native: jsonnative.reader(text, allowDuplicateKeys)
+        native: jsonnative.reader(text, allowDuplicateKeys, limits.maxNestingDepth)
         rejectUnknown: unknownFields == UnknownFields.Reject
     }
 }
@@ -409,9 +433,10 @@ pub fn readerFrom(
     stream: jsonio.Reader,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): Reader {
     Reader {
-        native: jsonnative.streamReader(stream, allowDuplicateKeys)
+        native: jsonnative.streamReader(stream, allowDuplicateKeys, limits.maxNestingDepth)
         rejectUnknown: unknownFields == UnknownFields.Reject
     }
 }
@@ -833,8 +858,9 @@ pub fn decode[T: serialization.Decode](
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): T ! JsonError {
-    whole[T](reader(text, unknownFields, allowDuplicateKeys))
+    whole[T](reader(text, unknownFields, allowDuplicateKeys, limits))
 }
 
 /// The one value a reader holds.
@@ -848,14 +874,14 @@ fn whole[T: serialization.Decode](input: Reader): T ! JsonError {
 }
 
 /// A document of unknown shape.
-pub fn parse(text: String): Value ! JsonError {
-    decode[Value](text)
+pub fn parse(text: String, limits: JsonLimits = JsonLimits.Default): Value ! JsonError {
+    decode[Value](text, limits: limits)
 }
 
 /// The values of JSON text that holds several, one after another with or
 /// without space between them, as `go list -json` writes them.
-pub fn parseAll(text: String): Array[Value] ! JsonError {
-    decodeAll[Value](text)
+pub fn parseAll(text: String, limits: JsonLimits = JsonLimits.Default): Array[Value] ! JsonError {
+    decodeAll[Value](text, limits: limits)
 }
 
 /// Values of `T` from JSON text that holds several, one after another.
@@ -863,8 +889,9 @@ pub fn decodeAll[T: serialization.Decode](
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): Array[T] ! JsonError {
-    let input = reader(text, unknownFields, allowDuplicateKeys)
+    let input = reader(text, unknownFields, allowDuplicateKeys, limits)
     input.native.several()
     var found: Array[T] = []
     for {
@@ -904,8 +931,9 @@ pub fn values[T: serialization.Decode](
     stream: jsonio.Reader,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): Values[T] {
-    let input = readerFrom(stream, unknownFields, allowDuplicateKeys)
+    let input = readerFrom(stream, unknownFields, allowDuplicateKeys, limits)
     input.native.several()
     Values { input, done: false }
 }
@@ -948,8 +976,9 @@ pub fn decodeFrom[T: serialization.Decode](
     stream: jsonio.Reader,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): T ! JsonError {
-    whole[T](readerFrom(stream, unknownFields, allowDuplicateKeys))
+    whole[T](readerFrom(stream, unknownFields, allowDuplicateKeys, limits))
 }
 
 /// Writes the JSON text of a value to a stream as it is produced.

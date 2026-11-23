@@ -1,0 +1,87 @@
+// What a decompression in memory, or an archive read whole, makes of data
+// from outside the program is bounded by its `limits`, which a few
+// kilobytes could make gigabytes of: gzip's and zstd's `decompress` at
+// `maxOutputBytes`, 128 MiB by default, as the module's `TooLarge`, whose
+// sentence names the stream that needs no bound; and an archive at
+// `maxInflatedBytes`, 1 GiB by default, all it inflates together: the
+// deflated entries of a zip, a compressed tar whole, a plain tar nothing.
+// Data of exactly the bound is read.
+import std.archive
+import std.console
+import std.gzip
+import std.io
+import std.zstd
+
+fn packed(format: archive.Format): Array[Byte] ! archive.ArchiveError {
+    let buffer = io.Buffer()
+    let out = archive.writer(buffer.writer(), format)
+    out.add("a.txt", "a".repeat(600 * 1024).bytes())?
+    out.add("b.txt", "b".repeat(600 * 1024).bytes())?
+    out.finish()?
+    buffer.bytes()
+}
+
+fn main() {
+    console.println(
+        "by default: {gzip.GzipLimits.Default.maxOutputBytes} {zstd.ZstdLimits.Default.maxOutputBytes}",
+    )
+    let bomb = gzip.compress("a".repeat(2 * 1024 * 1024).bytes())
+    console.println("gzip: {bomb.length()} bytes")
+    let mebibyte = gzip.GzipLimits.Default with { maxOutputBytes: 1024 * 1024 }
+    match gzip.decompress(bomb, limits: mebibyte) {
+        ok(data) => console.println("gzip read {data.length()}")
+        err(gzip.GzipError.TooLarge(limit)) => console.println(
+            "gzip {limit}: {gzip.GzipError.TooLarge(limit)}",
+        )
+        err(error) => console.println("gzip: {error}")
+    }
+    let thousand = zstd.compress("b".repeat(1000).bytes())
+    let below = zstd.ZstdLimits.Default with { maxOutputBytes: 999 }
+    match zstd.decompress(thousand, limits: below) {
+        ok(data) => console.println("zstd read {data.length()}")
+        err(error) => console.println("zstd: {error}")
+    }
+    let exact = zstd.ZstdLimits.Default with { maxOutputBytes: 1000 }
+    console.println(
+        "zstd at its bound: {(zstd.decompress(thousand, limits: exact) ?? []).length()}",
+    )
+    match gzip.decompress("not gzip".bytes()) {
+        ok(_) => console.println("read")
+        err(error) => console.println("gzip: {error}")
+    }
+    let small = archive.ArchiveLimits.Default with { maxInflatedBytes: 1024 * 1024 }
+    for format in [
+        archive.Format.Zip,
+        archive.Format.TarGzip,
+        archive.Format.TarZstd,
+        archive.Format.Tar,
+    ] {
+        match packed(format) {
+            ok(bytes) => {
+                match archive.read(bytes, limits: small) {
+                    ok(read) => console.println("{format}: {read.entries().length()} entries")
+                    err(error) => console.println("{format}: {error}")
+                }
+                console.println(
+                    "{format} by default: {archive.read(bytes).ok().map(read => read.entries().length())}",
+                )
+            }
+            err(error) => console.println("{error}")
+        }
+    }
+}
+
+// expect-stdout: by default: 134217728 134217728
+// expect-stdout: gzip: 2068 bytes
+// expect-stdout: gzip 1048576: the decompressed data is larger than 1 MiB, the most `GzipLimits.maxOutputBytes` allows: raise it with `limits: gzip.GzipLimits.Default with { maxOutputBytes: … }`, or read it a part at a time with `gzip.reader`
+// expect-stdout: zstd: the decompressed data is larger than 999 bytes, the most `ZstdLimits.maxOutputBytes` allows: raise it with `limits: zstd.ZstdLimits.Default with { maxOutputBytes: … }`, or read it a part at a time with `zstd.reader`
+// expect-stdout: zstd at its bound: 1000
+// expect-stdout: gzip: the data is not gzip, is cut short or its checksum does not match
+// expect-stdout: zip: what the archive inflates is larger than 1 MiB, the most `ArchiveLimits.maxInflatedBytes` allows: raise it with `limits: archive.ArchiveLimits.Default with { maxInflatedBytes: … }`
+// expect-stdout: zip by default: some(2)
+// expect-stdout: tar.gz: what the archive inflates is larger than 1 MiB, the most `ArchiveLimits.maxInflatedBytes` allows: raise it with `limits: archive.ArchiveLimits.Default with { maxInflatedBytes: … }`
+// expect-stdout: tar.gz by default: some(2)
+// expect-stdout: tar.zst: what the archive inflates is larger than 1 MiB, the most `ArchiveLimits.maxInflatedBytes` allows: raise it with `limits: archive.ArchiveLimits.Default with { maxInflatedBytes: … }`
+// expect-stdout: tar.zst by default: some(2)
+// expect-stdout: tar: 2 entries
+// expect-stdout: tar by default: some(2)

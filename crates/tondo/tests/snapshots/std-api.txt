@@ -340,6 +340,9 @@ pub type AcmeError = {
 impl Display for ArchiveError
 impl Display for Format
 impl reflect.Reflect for ArchiveError
+pub const ArchiveLimits.Default: ArchiveLimits = ArchiveLimits {
+    maxInflatedBytes: 1024 * 1024 * 1024
+}
 pub enum EntryKind {
     File
     Directory
@@ -362,14 +365,20 @@ pub fn Writer.addDirectory(self, name: String): !ArchiveError
 pub fn Writer.addFile(self, name: String, path: String): !ArchiveError
 pub fn Writer.finish(self): !ArchiveError
 pub fn create(path: String, from: fs.FileSystem, format: Format? = none): !ArchiveError
-pub fn open(path: String): Archive ! ArchiveError
-pub fn read(bytes: Array[Byte]): Archive ! ArchiveError
+pub fn open(path: String, limits: ArchiveLimits = ArchiveLimits.Default): Archive ! ArchiveError
+pub fn read(
+    bytes: Array[Byte],
+    limits: ArchiveLimits = ArchiveLimits.Default,
+): Archive ! ArchiveError
 pub fn writer(out: io.Writer, format: Format): Writer
 pub type Archive = {
     // private fields
 }
 pub type ArchiveError = {
     message: String
+}
+pub type ArchiveLimits = {
+    maxInflatedBytes: Int
 }
 pub type Entry = {
     name: String
@@ -388,6 +397,7 @@ impl serialization.Decode for Value
 impl serialization.Encode for Value
 pub alias CborError = serialization.Error
 pub alias UnknownFields = serialization.UnknownFields
+pub const CborLimits.Default: CborLimits = CborLimits { maxNestingDepth: 128 }
 pub enum Value {
     Null
     Bool(Bool)
@@ -415,9 +425,13 @@ pub fn Value.isNull(self): Bool
 pub fn decode[T: serialization.Decode](
     input: Array[Byte],
     unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: CborLimits = CborLimits.Default,
 ): T ! CborError
 pub fn encode[T: serialization.Encode](value: T, deterministic: Bool = false): Array[Byte]
-pub fn parse(input: Array[Byte]): Value ! CborError
+pub fn parse(input: Array[Byte], limits: CborLimits = CborLimits.Default): Value ! CborError
+pub type CborLimits = {
+    maxNestingDepth: Int
+}
 == std.cli
 impl Display for CliError
 impl Display for TerminalError
@@ -1109,6 +1123,9 @@ pub enum FsError {
     /// `errno`: it shows with the system's text of it, `os error 28: No
     /// space left on device`, and `Host(0)` as `host`.
     Host(Int)
+    /// A line longer than the most its `limits` allow, which it holds:
+    /// `io.IoLimits.maxLineBytes`.
+    TooLarge(Int)
 }
 pub enum OpenMode {
     Read
@@ -1121,7 +1138,7 @@ pub fn File.close(self): Unit ! FsError
 pub fn File.flush(var self): Unit ! FsError
 pub fn File.lock(var self, shared: Bool = false): Unit ! FsError
 pub fn File.read(var self, max: Int): Array[Byte]? ! FsError
-pub fn File.readLine(var self): String? ! FsError
+pub fn File.readLine(var self, limits: io.IoLimits = io.IoLimits.Default): String? ! FsError
 pub fn File.readText(var self): String ! FsError
 pub fn File.reader(self): io.Reader
 pub fn File.tryLock(var self, shared: Bool = false): Bool ! FsError
@@ -1206,6 +1223,7 @@ pub type Space = {
     available: Int
 }
 == std.graphql
+pub const GraphqlLimits.Default: GraphqlLimits = GraphqlLimits { maxNestingDepth: 128 }
 pub fn Schema.execute(
     self,
     document: String,
@@ -1215,7 +1233,10 @@ pub fn Schema.execute(
 pub fn Schema.handler(self): fn(http.Request): http.Reply ! http.Problem
 pub fn Schema.mutation[M: reflect.Reflect](self, root: M): Schema
 pub fn Schema.sdl(self): String
-pub fn schema[Q: reflect.Reflect](query: Q): Schema
+pub fn schema[Q: reflect.Reflect](query: Q, limits: GraphqlLimits = GraphqlLimits.Default): Schema
+pub type GraphqlLimits = {
+    maxNestingDepth: Int
+}
 pub type Schema = {
     // private fields
 }
@@ -1226,6 +1247,7 @@ impl Display for ServingStatus
 impl Display for Status
 impl http.GrpcService for Service
 impl[T: protobuf.Message + reflect.Reflect] Iterator[T ! Status] for Stream[T]
+pub const GrpcLimits.Default: GrpcLimits = GrpcLimits { maxMessageBytes: 16 * 1024 * 1024 }
 pub enum Balancing {
     /// All on the first address that answers, in order, until it drops.
     PickFirst
@@ -1303,6 +1325,7 @@ pub fn Health.set(self, service: String, status: ServingStatus)
 pub fn ServerCall.receive[T: protobuf.Message + reflect.Reflect](self): T? ! Status
 pub fn ServerCall.send[T: protobuf.Message + reflect.Reflect](self, message: T): !Status
 pub fn Service.compress(self): Service
+pub fn Service.limits(self, limits: GrpcLimits): Service
 pub fn Service.onCall(self, interceptor: fn(Call, fn(): !Status): !Status): Service
 pub fn Service.onMessage(self, observer: fn(Call, Direction, reflect.Value)): Service
 pub fn Status.from[E: Display](error: E): Status
@@ -1330,6 +1353,7 @@ pub fn connect(
     key: String = "",
     compression: Compression = Compression.None,
     balancing: Balancing = Balancing.PickFirst,
+    limits: GrpcLimits = GrpcLimits.Default,
 ): Channel ! Status
 pub fn reflection(services: Array[Service]): Service
 pub fn serverStream[
@@ -1353,6 +1377,9 @@ pub type Channel = {
 }
 pub type Duplex[In, Out] = {
     // private fields
+}
+pub type GrpcLimits = {
+    maxMessageBytes: Int
 }
 pub type Health = {
     // private fields
@@ -1384,10 +1411,26 @@ pub type Upload[In, Out] = {
     // private fields
 }
 == std.gzip
+impl Display for GzipError
+impl reflect.Reflect for GzipError
+pub const GzipLimits.Default: GzipLimits = GzipLimits { maxOutputBytes: 128 * 1024 * 1024 }
+pub enum GzipError {
+    /// Not gzip, cut short, or with a checksum that does not match.
+    InvalidData
+    /// More data decompressed than its `limits` allow, the bound it holds:
+    /// `GzipLimits.maxOutputBytes`.
+    TooLarge(Int)
+}
 pub fn compress(data: Array[Byte], level: Int = 6): Array[Byte]
-pub fn decompress(data: Array[Byte]): Array[Byte] ! io.IoError
+pub fn decompress(
+    data: Array[Byte],
+    limits: GzipLimits = GzipLimits.Default,
+): Array[Byte] ! GzipError
 pub fn reader(from: io.Reader): io.Reader
 pub fn writer(to: io.Writer, level: Int = 6): io.Writer
+pub type GzipLimits = {
+    maxOutputBytes: Int
+}
 == std.hash
 impl Display for Digest
 pub enum Algorithm {
@@ -1438,9 +1481,10 @@ impl serialization.Encode for Saved
 impl serialization.Encode for UploadedFile
 pub alias Tls = net.Tls
 pub alias TlsVersion = net.TlsVersion
-pub const Limits.Standard: Limits = Limits {
-    body: 10 * 1024 * 1024
-    head: 64 * 1024
+pub const ClientLimits.Default: ClientLimits = ClientLimits { maxBodyBytes: 2 * 1024 * 1024 * 1024 }
+pub const ServerLimits.Default: ServerLimits = ServerLimits {
+    maxBodyBytes: 10 * 1024 * 1024
+    maxHeadBytes: 64 * 1024
     headTimeout: time.seconds(30)
     bodyTimeout: time.seconds(30)
     replyTimeout: time.seconds(30)
@@ -1462,6 +1506,9 @@ pub enum HttpError {
     Body(String)
     /// Anything else of HTTP: too many redirects, a broken connection.
     Protocol(String)
+    /// A response's body larger, once decoded, than the most the client's
+    /// `limits` allow, the bound it holds: `ClientLimits.maxBodyBytes`.
+    TooLarge(Int)
 }
 pub enum Message {
     Text(String)
@@ -1493,7 +1540,7 @@ pub fn App.listen(
     host: String = "0.0.0.0",
     tls: Tls? = none,
     socket: String? = none,
-    limits: Limits? = none,
+    limits: ServerLimits = ServerLimits.Default,
     grace: time.Duration = time.seconds(30),
 ): !HttpError
 pub fn App.mount(mut self, prefix: String, other: App)
@@ -1520,7 +1567,7 @@ pub fn App.start(
     host: String = "127.0.0.1",
     tls: Tls? = none,
     socket: String? = none,
-    limits: Limits? = none,
+    limits: ServerLimits = ServerLimits.Default,
 ): Server ! HttpError
 pub fn App.trustProxies(mut self, networks: ...net.Network)
 pub fn App.uploads(mut self, prefix: String, directory: String)
@@ -1546,6 +1593,7 @@ pub fn Client(
     socket: String? = none,
     cookies: Bool = false,
     identity: Tls? = none,
+    limits: ClientLimits = ClientLimits.Default,
 ): Client
 pub fn Client.delete(
     self,
@@ -1714,6 +1762,7 @@ pub fn Response.header(self, name: String): String?
 pub fn Response.headerValues(self, name: String): Array[String]
 pub fn Response.headers(self): Map[String, String]
 pub fn Response.json[T: serialization.Decode](self): T ! HttpError
+pub fn Response.limitBody(self, bytes: Int): Response
 pub fn Response.lines(self): Lines
 pub fn Response.reason(self): String
 pub fn Response.status(self): Int
@@ -1800,6 +1849,9 @@ pub type Body = {
 pub type Client = {
     // private fields
 }
+pub type ClientLimits = {
+    maxBodyBytes: Int
+}
 pub type ClientRequest = {
     method: String
     url: String
@@ -1813,13 +1865,6 @@ pub type Event = {
 }
 pub type Events = {
     // private fields
-}
-pub type Limits = {
-    body: Int
-    head: Int
-    headTimeout: time.Duration
-    bodyTimeout: time.Duration
-    replyTimeout: time.Duration
 }
 pub type Lines = {
     // private fields
@@ -1850,6 +1895,13 @@ pub type Saved = {
 pub type Server = {
     // private fields
 }
+pub type ServerLimits = {
+    maxBodyBytes: Int
+    maxHeadBytes: Int
+    headTimeout: time.Duration
+    bodyTimeout: time.Duration
+    replyTimeout: time.Duration
+}
 pub type Trailers = {
     // private fields
 }
@@ -1873,6 +1925,7 @@ impl Display for Color
 impl Display for Format
 impl Display for ImageError
 impl reflect.Reflect for ImageError
+pub const ImageLimits.Default: ImageLimits = ImageLimits { maxDecodedBytes: 512 * 1024 * 1024 }
 pub enum Anchor {
     Center
     Top
@@ -1945,8 +1998,8 @@ pub fn blank(width: Int, height: Int, color: Color): Image
 pub fn exif(bytes: Array[Byte]): Exif?
 pub fn fromPixels(width: Int, height: Int, pixels: Array[Byte]): Image ! ImageError
 pub fn info(bytes: Array[Byte]): Info ! ImageError
-pub fn open(path: String): Image ! ImageError
-pub fn read(bytes: Array[Byte]): Image ! ImageError
+pub fn open(path: String, limits: ImageLimits = ImageLimits.Default): Image ! ImageError
+pub fn read(bytes: Array[Byte], limits: ImageLimits = ImageLimits.Default): Image ! ImageError
 pub type Color = {
     red: Int
     green: Int
@@ -1967,6 +2020,9 @@ pub type Image = {
 pub type ImageError = {
     message: String
 }
+pub type ImageLimits = {
+    maxDecodedBytes: Int
+}
 pub type Info = {
     format: Format
     width: Int
@@ -1974,10 +2030,14 @@ pub type Info = {
 }
 == std.io
 impl reflect.Reflect for IoError
+pub const IoLimits.Default: IoLimits = IoLimits { maxLineBytes: 1024 * 1024 }
 pub enum IoError {
     Closed
     InvalidData
     Host
+    /// A line longer than the most its `limits` allow, which it holds:
+    /// `IoLimits.maxLineBytes`.
+    TooLarge(Int)
 }
 pub fn Buffer(): Buffer
 pub fn Buffer.bytes(self): Array[Byte]
@@ -1989,7 +2049,7 @@ pub fn Buffer.writer(self): Writer
 pub fn Reader.close(self): Unit ! IoError
 pub fn Reader.read(self, max: Int): Array[Byte]? ! IoError
 pub fn Reader.readBytes(self): Array[Byte] ! IoError
-pub fn Reader.readLine(self): String? ! IoError
+pub fn Reader.readLine(self, limits: IoLimits = IoLimits.Default): String? ! IoError
 pub fn Reader.readText(self): String ! IoError
 pub fn Writer.close(self): Unit ! IoError
 pub fn Writer.flush(self): Unit ! IoError
@@ -2002,6 +2062,9 @@ pub fn multiWriter(writers: ...Writer): Writer
 pub fn pipe(capacity: Int = 65536): (Writer, Reader)
 pub fn reader(text: String): Reader
 pub type Buffer
+pub type IoLimits = {
+    maxLineBytes: Int
+}
 pub type Reader
 pub type Writer
 == std.json
@@ -2021,6 +2084,7 @@ impl[T: serialization.Decode] Iterator[T ! JsonError] for Values[T]
 pub alias ErrorKind = serialization.ErrorKind
 pub alias JsonError = serialization.Error
 pub alias UnknownFields = serialization.UnknownFields
+pub const JsonLimits.Default: JsonLimits = JsonLimits { maxNestingDepth: 128 }
 pub enum Event {
     Null
     Bool(Bool)
@@ -2084,16 +2148,19 @@ pub fn decodeAll[T: serialization.Decode](
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): Array[T] ! JsonError
 pub fn decodeFrom[T: serialization.Decode](
     stream: io.Reader,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): T ! JsonError
 pub fn decode[T: serialization.Decode](
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): T ! JsonError
 pub fn encodeTo[T: serialization.Encode](
     value: T,
@@ -2110,24 +2177,27 @@ pub fn encode[T: serialization.Encode](
 ): String
 pub fn fromValue[T: serialization.Decode](value: Value): T ! JsonError
 pub fn number(text: String): Number ! JsonError
-pub fn parse(text: String): Value ! JsonError
-pub fn parseAll(text: String): Array[Value] ! JsonError
+pub fn parse(text: String, limits: JsonLimits = JsonLimits.Default): Value ! JsonError
+pub fn parseAll(text: String, limits: JsonLimits = JsonLimits.Default): Array[Value] ! JsonError
 pub fn raw(text: String): Raw ! JsonError
 pub fn reader(
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): Reader
 pub fn readerFrom(
     stream: io.Reader,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): Reader
 pub fn toValue[T: serialization.Encode](value: T): Value
 pub fn values[T: serialization.Decode](
     stream: io.Reader,
     unknownFields: UnknownFields = UnknownFields.Ignore,
     allowDuplicateKeys: Bool = false,
+    limits: JsonLimits = JsonLimits.Default,
 ): Values[T]
 pub fn writer(pretty: Bool = false, canonical: Bool = false, htmlSafe: Bool = false): Writer
 pub fn writerTo(
@@ -2136,6 +2206,9 @@ pub fn writerTo(
     canonical: Bool = false,
     htmlSafe: Bool = false,
 ): Writer
+pub type JsonLimits = {
+    maxNestingDepth: Int
+}
 pub type Number = {
     // private fields
 }
@@ -2334,6 +2407,7 @@ impl serialization.Encode for Value
 impl serialization.Sink for Writer
 pub alias MessagePackError = serialization.Error
 pub alias UnknownFields = serialization.UnknownFields
+pub const MessagePackLimits.Default: MessagePackLimits = MessagePackLimits { maxNestingDepth: 128 }
 pub enum Value {
     Nil
     Bool(Bool)
@@ -2374,11 +2448,18 @@ pub fn Writer.value[T: serialization.Encode](self, value: T)
 pub fn decode[T: serialization.Decode](
     input: Array[Byte],
     unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: MessagePackLimits = MessagePackLimits.Default,
 ): T ! MessagePackError
 pub fn encode[T: serialization.Encode](value: T): Array[Byte]
-pub fn parse(input: Array[Byte]): Value ! MessagePackError
+pub fn parse(
+    input: Array[Byte],
+    limits: MessagePackLimits = MessagePackLimits.Default,
+): Value ! MessagePackError
 pub fn writer(): Writer
 pub fn writerTo(stream: io.Writer): Writer
+pub type MessagePackLimits = {
+    maxNestingDepth: Int
+}
 pub type Writer = {
     // private fields
 }
@@ -2648,6 +2729,9 @@ pub enum NetError {
     Tls(String)
     /// Anything else the system reports: what it said.
     Io(String)
+    /// A line longer than the most its `limits` allow, which it holds:
+    /// `io.IoLimits.maxLineBytes`.
+    TooLarge(Int)
 }
 pub enum TlsVersion {
     Tls12
@@ -2688,7 +2772,11 @@ pub fn Stream.read(
     timeout: time.Duration? = none,
 ): Array[Byte]? ! NetError
 pub fn Stream.readAll(self, timeout: time.Duration? = none): Array[Byte] ! NetError
-pub fn Stream.readLine(self, timeout: time.Duration? = none): String? ! NetError
+pub fn Stream.readLine(
+    self,
+    timeout: time.Duration? = none,
+    limits: io.IoLimits = io.IoLimits.Default,
+): String? ! NetError
 pub fn Stream.readText(self, timeout: time.Duration? = none): String ! NetError
 pub fn Stream.reader(self): io.Reader
 pub fn Stream.remoteAddress(self): Address
@@ -3045,6 +3133,7 @@ pub annotation Unknown = {}
 pub annotation Value = {
     number: Int
 }
+pub const ProtobufLimits.Default: ProtobufLimits = ProtobufLimits { maxNestingDepth: 128 }
 pub enum Encoding {
     /// As its type says: an integer as a varint, int32 to uint64.
     Default
@@ -3178,8 +3267,14 @@ pub fn Writer.timestamp(self, number: Int, value: time.DateTime)
 pub fn Writer.uint32(self, number: Int, value: UInt32)
 pub fn Writer.uint64(self, number: Int, value: UInt)
 pub fn Writer.unknown(self, fields: UnknownFields)
-pub fn decodeFrom[T: Message](input: io.Reader): T ! ProtobufError
-pub fn decode[T: Message](bytes: Array[Byte]): T ! ProtobufError
+pub fn decodeFrom[T: Message](
+    input: io.Reader,
+    limits: ProtobufLimits = ProtobufLimits.Default,
+): T ! ProtobufError
+pub fn decode[T: Message](
+    bytes: Array[Byte],
+    limits: ProtobufLimits = ProtobufLimits.Default,
+): T ! ProtobufError
 pub fn emptyReader(): Reader
 pub fn encodeTo[T: Message](value: T, out: io.Writer, deterministic: Bool = false): !io.IoError
 pub fn encode[T: Message](value: T, deterministic: Bool = false): Array[Byte]
@@ -3235,6 +3330,9 @@ pub type JsonReader = {
 }
 pub type JsonWriter = {
     // private fields
+}
+pub type ProtobufLimits = {
+    maxNestingDepth: Int
 }
 pub type Reader = {
     // private fields
@@ -3582,14 +3680,14 @@ impl Display for RegexPhase
 impl Iterator[RegexMatch ! RegexError] for RegexFindIterator
 impl reflect.Reflect for RegexError
 pub const RegexLimits.Default: RegexLimits = RegexLimits {
-    maxPatternBytes: 65536
-    maxSyntaxDepth: 256
+    maxPatternBytes: 64 * 1024
+    maxNestingDepth: 128
     maxCaptureGroups: 256
-    maxProgramStates: 1000000
-    maxInputBytes: 16777216
-    maxMatches: 1000000
-    maxOutputBytes: 67108864
-    maxReplacementBytes: 65536
+    maxProgramStates: 1_000_000
+    maxInputBytes: 16 * 1024 * 1024
+    maxMatches: 1_000_000
+    maxOutputBytes: 64 * 1024 * 1024
+    maxReplacementBytes: 64 * 1024
 }
 pub const RegexOptions.Default: RegexOptions = RegexOptions {
     caseInsensitive: false
@@ -3618,6 +3716,8 @@ pub enum RegexErrorKind {
     InvalidReplacement
     OutputLimitExceeded
     InvalidBoundary
+    NestingLimitExceeded
+    CaptureLimitExceeded
 }
 pub enum RegexPhase {
     Compile
@@ -3663,13 +3763,15 @@ pub type RegexError = {
     kind: RegexErrorKind
     phase: RegexPhase
     offset: Int
+    /// The bound of `RegexLimits` passed, for the kinds of a limit, else 0.
+    limit: Int = 0
 }
 pub type RegexFindIterator = {
     // private fields
 }
 pub type RegexLimits = {
     maxPatternBytes: Int
-    maxSyntaxDepth: Int
+    maxNestingDepth: Int
     maxCaptureGroups: Int
     maxProgramStates: Int
     maxInputBytes: Int
@@ -4699,6 +4801,7 @@ impl serialization.Decode for Value
 impl serialization.Encode for Value
 pub alias TomlError = serialization.Error
 pub alias UnknownFields = serialization.UnknownFields
+pub const TomlLimits.Default: TomlLimits = TomlLimits { maxNestingDepth: 64 }
 pub enum Value {
     Text(String)
     Int(Int)
@@ -4722,9 +4825,13 @@ pub fn Value.get(self, key: String): Value?
 pub fn decode[T: serialization.Decode](
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: TomlLimits = TomlLimits.Default,
 ): T ! TomlError
 pub fn encode[T: serialization.Encode](value: T): String ! TomlError
-pub fn parse(text: String): Value ! TomlError
+pub fn parse(text: String, limits: TomlLimits = TomlLimits.Default): Value ! TomlError
+pub type TomlLimits = {
+    maxNestingDepth: Int
+}
 == std.url
 impl Display for Url
 impl Display for UrlError
@@ -4830,6 +4937,7 @@ pub annotation Name = {
     value: String
 }
 pub annotation Text = {}
+pub const XmlLimits.Default: XmlLimits = XmlLimits { maxNestingDepth: 128 }
 pub enum Node {
     Element(Element)
     Text(String)
@@ -4838,9 +4946,12 @@ pub fn Element.attribute(self, name: String): String?
 pub fn Element.child(self, name: String): Element?
 pub fn Element.children(self, name: String): Array[Element]
 pub fn Element.text(self): String
-pub fn decode[T: serialization.Decode](text: String): T ! XmlError
+pub fn decode[T: serialization.Decode](
+    text: String,
+    limits: XmlLimits = XmlLimits.Default,
+): T ! XmlError
 pub fn encode[T: serialization.Encode](value: T, pretty: Bool = false): String
-pub fn parse(text: String): Element ! XmlError
+pub fn parse(text: String, limits: XmlLimits = XmlLimits.Default): Element ! XmlError
 pub type Element = {
     name: String
     attributes: Map[String, String]
@@ -4851,6 +4962,9 @@ pub type XmlError = {
     line: Int
     column: Int
 }
+pub type XmlLimits = {
+    maxNestingDepth: Int
+}
 == std.yaml
 impl Display for NodeKind
 impl Display for NodeStyle
@@ -4860,6 +4974,7 @@ impl serialization.Decode for Value
 impl serialization.Encode for Value
 pub alias UnknownFields = serialization.UnknownFields
 pub alias YamlError = serialization.Error
+pub const YamlLimits.Default: YamlLimits = YamlLimits { maxNestingDepth: 128 }
 pub enum NodeKind {
     Scalar
     Sequence
@@ -4913,16 +5028,18 @@ pub fn Value.isNull(self): Bool
 pub fn decodeAll[T: serialization.Decode](
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: YamlLimits = YamlLimits.Default,
 ): Array[T] ! YamlError
 pub fn decode[T: serialization.Decode](
     text: String,
     unknownFields: UnknownFields = UnknownFields.Ignore,
+    limits: YamlLimits = YamlLimits.Default,
 ): T ! YamlError
 pub fn encodeAll[T: serialization.Encode](values: Array[T]): String
 pub fn encode[T: serialization.Encode](value: T): String
-pub fn load(text: String): Document ! YamlError
-pub fn parse(text: String): Value ! YamlError
-pub fn parseAll(text: String): Array[Value] ! YamlError
+pub fn load(text: String, limits: YamlLimits = YamlLimits.Default): Document ! YamlError
+pub fn parse(text: String, limits: YamlLimits = YamlLimits.Default): Value ! YamlError
+pub fn parseAll(text: String, limits: YamlLimits = YamlLimits.Default): Array[Value] ! YamlError
 pub type Document = {
     // private fields
 }
@@ -4936,8 +5053,27 @@ pub type Node = {
     tag: String?
     anchor: String?
 }
+pub type YamlLimits = {
+    maxNestingDepth: Int
+}
 == std.zstd
+impl Display for ZstdError
+impl reflect.Reflect for ZstdError
+pub const ZstdLimits.Default: ZstdLimits = ZstdLimits { maxOutputBytes: 128 * 1024 * 1024 }
+pub enum ZstdError {
+    /// Not Zstandard, cut short, or with a checksum that does not match.
+    InvalidData
+    /// More data decompressed than its `limits` allow, the bound it holds:
+    /// `ZstdLimits.maxOutputBytes`.
+    TooLarge(Int)
+}
 pub fn compress(data: Array[Byte]): Array[Byte]
-pub fn decompress(data: Array[Byte]): Array[Byte] ! io.IoError
+pub fn decompress(
+    data: Array[Byte],
+    limits: ZstdLimits = ZstdLimits.Default,
+): Array[Byte] ! ZstdError
 pub fn reader(from: io.Reader): io.Reader
 pub fn writer(to: io.Writer): io.Writer
+pub type ZstdLimits = {
+    maxOutputBytes: Int
+}

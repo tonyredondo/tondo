@@ -12,6 +12,7 @@
 // ```
 
 import std.encoding as __encoding
+import std.internal.text as textNative
 import std.io as __io
 import std.json as __json
 import std.reflect as __reflect
@@ -49,6 +50,9 @@ pub enum HttpError {
     Body(String)
     /// Anything else of HTTP: too many redirects, a broken connection.
     Protocol(String)
+    /// A response's body larger, once decoded, than the most the client's
+    /// `limits` allow, the bound it holds: `ClientLimits.maxBodyBytes`.
+    TooLarge(Int)
 }
 
 impl Display for HttpError {
@@ -62,6 +66,15 @@ impl Display for HttpError {
                 "{response.verb} {response.url()} answered {response.code} {response.reason()}"
             HttpError.Body(why) => "the body: {why}"
             HttpError.Protocol(why) => "HTTP: {why}"
+            HttpError.TooLarge(limit) => textNative.limitPassed(
+                "the body of the response",
+                "is larger than",
+                limit,
+                "http",
+                "ClientLimits",
+                "maxBodyBytes",
+                "for one response with `response.limitBody(bytes)`",
+            )
         }
     }
 }

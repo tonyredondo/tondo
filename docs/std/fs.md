@@ -418,6 +418,9 @@ pub enum FsError {
     /// `errno`: it shows with the system's text of it, `os error 28: No
     /// space left on device`, and `Host(0)` as `host`.
     Host(Int)
+    /// A line longer than the most its `limits` allow, which it holds:
+    /// `io.IoLimits.maxLineBytes`.
+    TooLarge(Int)
 }
 ```
 
@@ -510,10 +513,12 @@ file.close()?
 #### File.readLine
 
 ```tondo
-pub fn File.readLine(var self): String? ! FsError
+pub fn File.readLine(var self, limits: io.IoLimits = io.IoLimits.Default): String? ! FsError
 ```
 
-The next line without its `\n` or `\r\n`, or `none` at the end.
+The next line without its `\n` or `\r\n`, or `none` at the end. A line
+longer than `limits.maxLineBytes` is `FsError.TooLarge` and stays to be
+read: the same call with a larger bound gives it from its first byte.
 
 #### File.read
 

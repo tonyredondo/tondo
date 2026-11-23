@@ -9781,3 +9781,47 @@ What still forks, by std's rule: a start on glibc before 2.24, and on
 macOS one with a directory and a relative path, which the plan's name
 with a `/` can give. A process group goes through `posix_spawn`'s own
 attribute.
+
+## What the library reads from outside is bounded in one form
+
+A few bytes from outside could take a program's memory or its stack: a
+line with no end, a gzip of a few kilobytes that inflates to gigabytes,
+an archive, a response or an image whose header declares 16 GiB of
+pixels, a document nested a hundred thousand deep. Each now has a bound,
+and every bound has one form, by the maintainer's word: the call that
+reads, or the one that builds what reads later, takes
+`limits: <Name>Limits = <Name>Limits.Default`, a record of its module
+whose fields begin with `max` and say their unit, with a `Default` that
+writes each number as what it is and is changed with `with`. Where what
+reads is configured by methods, as a gRPC service, its method `limits`
+takes them: `App.grpc` belongs to `std.http`, which `std.grpc` imports,
+so it cannot name `GrpcLimits`. A bound passed is an error that holds
+the number, a variant `TooLarge(Int)` or the format's error, and shows
+in one sentence everywhere: what passed it, the bound in a person's unit,
+the field that sets it and the code that raises it, written by one
+builder in the runtime that the library's Tondo reaches too.
+
+The numbers: the HTTP client's whole reads, 2 GiB as .NET's, and
+decompression in memory, 128 MiB, are the maintainer's, who took a line
+of `readLine` at 1 MiB as proposed. The others were set under his
+delegation: a gRPC message 16 MiB, four times what Go, Java and .NET take
+by default, an image 512 MiB, an archive read whole 1 GiB in all until it
+reads on demand; a server's body stays at its 10 MiB. The client counts a body once its `Content-Encoding` is undone, inside the
+decoder, so a bomb stops at its bound and not after it filled memory.
+`console.readLine` takes none: the console is the program's own input.
+A line past its bound stays to be read, so a larger bound reads it from
+its first byte. gzip and zstd fail with errors of their own, since
+`io.IoError.TooLarge` could not say which of three bounds it was; the
+regex splits `PatternLimitExceeded` into the three bounds it covered.
+
+Nesting is `maxNestingDepth`, 128 in every format and the regex, 64 in
+TOML under its parser's 80. A raised bound has a ceiling, what half of a
+task's 8 MiB stack holds at what a level took in the worse of release
+and debug, rounded down to a hundred: JSON 2300, CBOR 1500, MessagePack
+1400, protobuf 1300, YAML 1200 (255 in flow style, its parser's),
+GraphQL 1000, XML 700; TOML's is its parser's 80. A bound above it is
+refused where it is used, never cut in silence. A case reads each format
+at its ceiling inside a spawned task, so a frame that grows ends it. The
+regex's nesting takes no stack, so it has none. A function that a
+thread of C calls runs on that thread's stack, which may hold less; its
+documentation says so, and a switch to a task's stack is measured later.
