@@ -474,8 +474,12 @@ ok. 2 passed; 0 failed; 0 skipped; 0 blocked; 15.02s
 
 The inputs are of the test's own type: a `String`, a record, a tuple of
 two strings. When one fails, the runner reduces it while it still fails
-the same way, saves it so that every later run tries it as a regression
-test, and prints it.
+the same way, taking out runs of its characters or its elements and then
+single ones, for at most 30 seconds; saves it so that every later run
+tries it as a regression test; and prints it. A reduction that its 30
+seconds ended says so, `reduced from 33 to 8 bytes before its 30 seconds
+ended`, and saves the simplest input it reached; the report as data has
+`reduction_timed_out` for it.
 
 | | |
 | --- | --- |

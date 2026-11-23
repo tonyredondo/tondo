@@ -208,9 +208,11 @@ test parsesAnyDocument {
   with values from the code's literals and from what its comparisons
   meet, keeps those that run code of the project or its dependencies no
   input ran before, and stops at Ctrl-C, after `--fuzz-time` seconds, or
-  when an input fails, which it reduces while it fails the same way and
-  saves to the store. Put the code it tries in the project's sources, not
-  in the test file: only theirs is counted. An input that runs longer than
+  when an input fails, which it reduces while it fails the same way, for
+  at most 30 seconds, and saves to the store; the report says when the
+  time ended before the simplest input (`reduction_timed_out`). Put the
+  code it tries in the project's sources, not in the test file: only
+  theirs is counted. An input that runs longer than
   `--fuzz-timeout` (1 s) and again when run alone, holds more than
   `--fuzz-memory` MiB (2048) or crashes fails too. `tondo debug --test <id>`
   stops the test where it fails. Through `tondo mcp`, the `test` tool searches with `fuzz: seconds`. `--jobs` workers share the
