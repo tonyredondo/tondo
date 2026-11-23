@@ -318,13 +318,14 @@ const OWN_REFLECTION: &[&str] = &[
     "archive",
     "crypto",
     "csv",
-    "ffi",
     "datetime",
     "encoding",
     "environment",
     "executor",
+    "ffi",
     "files",
     "format",
+    "gzip",
     "http",
     "image",
     "json",
@@ -343,6 +344,7 @@ const OWN_REFLECTION: &[&str] = &[
     "uuid",
     "xml",
     "yaml",
+    "zstd",
 ];
 
 /// Whether the standard module `name` is `target` or imports it, directly
