@@ -490,14 +490,15 @@ test plain {}
     assert!(!stdout.contains("app::plain"), "only the tests that fuzz search: {stdout}");
     let store = dir.join("fuzz/unit/app/measuresDepth/depth");
     let saved: Vec<_> = std::fs::read_dir(&store).unwrap().flatten().map(|e| e.path()).collect();
-    assert_eq!(saved.len(), 1, "{saved:?}");
-    // Reduced, as json.encode writes it, with how to run it again.
+    assert_eq!(saved.len(), 1, "{saved:?}\n{stdout}");
+    // Reduced, as json.encode writes it, with how to run it again; the
+    // report says how far the reduction went.
     let input = std::fs::read_to_string(&saved[0]).unwrap();
-    assert_eq!(input, "\"[[[[\"");
+    assert_eq!(input, "\"[[[[\"", "{stdout}");
     assert!(stdout.contains(":\n  \"[[[[\"\nsaved in fuzz/unit/app/measuresDepth/depth/"), "{stdout}");
     assert!(stdout.contains("reproduce: tondo test --exact app::unit::app::measuresDepth\n"), "{stdout}");
     assert!(stdout.contains("debug:     tondo debug --test app::unit::app::measuresDepth\n"), "{stdout}");
-    assert!(dir.join("target/fuzz/unit/app/measuresDepth/depth").is_dir());
+    assert!(dir.join("target/fuzz/unit/app/measuresDepth/depth").is_dir(), "{stdout}");
     // The debugger runs the test alone, with the input, and stops where it
     // panics.
     let mut debugger = Command::new(env!("CARGO_BIN_EXE_tondo"))
