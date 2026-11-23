@@ -20,14 +20,7 @@ pub(crate) fn size(bytes: u64) -> String {
 /// `besides`, another way that needs no limit, after it.
 pub(crate) fn passed(what: &str, is: &str, limit: u64, module: &str, ty: &str, field: &str, besides: &str) -> String {
     let raise = format!("`limits: {module}.{ty}.Default with {{ {field}: … }}`");
-    sentence(what, is, limit, ty, field, &raise, besides)
-}
-
-/// The sentence of a size bound passed, with `raise`, the code that raises
-/// it where the bound was given: `passed`'s, or a method's, as a gRPC
-/// service's `.limits(...)`.
-pub(crate) fn sentence(what: &str, is: &str, limit: u64, ty: &str, field: &str, raise: &str, besides: &str) -> String {
-    let mut sentence = shaped(what, is, &size(limit), ty, field, raise);
+    let mut sentence = shaped(what, is, &size(limit), ty, field, &raise);
     if !besides.is_empty() {
         sentence.push_str(", or ");
         sentence.push_str(besides);

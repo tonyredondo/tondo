@@ -27,7 +27,7 @@ app.listen(port: 50051)?
 - [Status](#status): [`Status.from`](#statusfrom)
 - [Call](#call-1)
 - [Stream](#stream)
-- [Service](#service): [`Service.onCall`](#serviceoncall), [`Service.onMessage`](#serviceonmessage), [`Service.compress`](#servicecompress), [`Service.limits`](#servicelimits)
+- [Service](#service): [`Service.onCall`](#serviceoncall), [`Service.onMessage`](#serviceonmessage), [`Service.compress`](#servicecompress)
 - [Method](#method)
 - [Direction](#direction)
 - [ServerCall](#servercall): [`ServerCall.receive`](#servercallreceive), [`ServerCall.send`](#servercallsend)
@@ -155,13 +155,14 @@ fn servers(): grpc.Channel ! grpc.Status {
 #### reflection
 
 ```tondo
-pub fn reflection(services: Array[Service]): Service
+pub fn reflection(services: Array[Service], limits: GrpcLimits = GrpcLimits.Default): Service
 ```
 
 Server reflection, as `grpc.reflection.v1` and `v1alpha` give it, which
 tools as grpcurl read to call a server without its `.proto` files:
 `app.grpc(grpc.reflection([users, health.service()]))`. It lists these
-services and gives the files that declare them.
+services and gives the files that declare them; `limits` bounds the
+messages its clients send, as a `Service`'s.
 
 ### Code
 
@@ -254,8 +255,9 @@ pub type GrpcLimits = {
 How much a message from outside the program may be, as it comes or
 once decompressed: `maxMessageBytes`, each message on its own, so that a
 stream of many is not bounded as a whole. A client's are `connect`'s
-`limits:`; a server's, each service's `.limits(...)`. A message past it
-ends the call as `Code.ResourceExhausted`.
+`limits:`; a server's, each service's `limits:`, which what builds the
+service takes. A message past it ends the call as
+`Code.ResourceExhausted`.
 
 ```tondo
 import std.grpc
@@ -426,12 +428,18 @@ pub type Service = {
     methods: Array[Method]
     /// The `.proto` file that declares it, which reflection gives.
     files: Array[protobuf.FileDescriptor]
+    /// How large a message of its clients may be, as it comes or once
+    /// decompressed; past `maxMessageBytes` the call ends as
+    /// `RESOURCE_EXHAUSTED`. A call's stream is bounded a message at a
+    /// time, never by the server's `ServerLimits.maxBodyBytes`.
+    limits: GrpcLimits
     // private fields
 }
 ```
 
 A service a server serves: its full name and its methods, which a
-`.proto` file's service gives as `users.userService(value)`.
+`.proto` file's service gives as `users.userService(value)`, and the
+`limits` of the messages its clients send.
 
 ```tondo
 import std.console
@@ -520,27 +528,6 @@ pub fn Service.compress(self): Service
 
 Compresses the messages the service sends with gzip, to each client
 that says it reads gzip. Every server reads compressed messages.
-
-#### Service.limits
-
-```tondo
-pub fn Service.limits(self, limits: GrpcLimits): Service
-```
-
-The service with `limits` for the messages its clients send:
-`maxMessageBytes` of each, as it comes or once decompressed, past which
-the call ends as `RESOURCE_EXHAUSTED`. `app.grpc` takes them with the
-service: a call's stream is bounded a message at a time, never by the
-server's `ServerLimits.maxBodyBytes`.
-
-```tondo
-import std.grpc
-import std.http
-
-let health = grpc.Health()
-var app = http.App()
-app.grpc(health.service().limits(grpc.GrpcLimits.Default with { maxMessageBytes: 64 * 1024 * 1024 }))
-```
 
 ### Method
 
@@ -1097,9 +1084,19 @@ those who watch it get the new one.
 #### Health.service
 
 ```tondo
-pub fn Health.service(self): Service
+pub fn Health.service(self, limits: GrpcLimits = GrpcLimits.Default): Service
 ```
 
 The service `grpc.health.v1.Health`: `Check` gives a status, or
 `NotFound` for a service it does not know, `List` gives them all, and
-`Watch` gives one, then each change.
+`Watch` gives one, then each change. `limits` bounds the messages its
+clients send, as a `Service`'s.
+
+```tondo
+import std.grpc
+import std.http
+
+let health = grpc.Health()
+var app = http.App()
+app.grpc(health.service(limits: grpc.GrpcLimits.Default with { maxMessageBytes: 64 * 1024 * 1024 }))
+```

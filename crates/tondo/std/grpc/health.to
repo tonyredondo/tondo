@@ -84,8 +84,18 @@ pub fn Health.set(self, service: String, status: ServingStatus) {
 
 /// The service `grpc.health.v1.Health`: `Check` gives a status, or
 /// `NotFound` for a service it does not know, `List` gives them all, and
-/// `Watch` gives one, then each change.
-pub fn Health.service(self): Service {
+/// `Watch` gives one, then each change. `limits` bounds the messages its
+/// clients send, as a `Service`'s.
+///
+/// ```tondo
+/// import std.grpc
+/// import std.http
+///
+/// let health = grpc.Health()
+/// var app = http.App()
+/// app.grpc(health.service(limits: grpc.GrpcLimits.Default with { maxMessageBytes: 64 * 1024 * 1024 }))
+/// ```
+pub fn Health.service(self, limits: GrpcLimits = GrpcLimits.Default): Service {
     let statuses = self.statuses
     Service {
         name: "grpc.health.v1.Health"
@@ -116,6 +126,7 @@ pub fn Health.service(self): Service {
             },
         ]
         files: [healthFile()]
+        limits: limits
     }
 }
 

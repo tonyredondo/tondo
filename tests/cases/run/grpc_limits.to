@@ -1,8 +1,8 @@
 // A gRPC message from outside the program is bounded one by one by
-// `GrpcLimits.maxMessageBytes`, 16 MiB by default: a server's by its
-// service's `.limits(...)`, a client's by `connect`'s `limits:`. Past it
-// the call ends as `ResourceExhausted`, with the sentence that names the
-// code to write where the bound was given, which differs by side.
+// `GrpcLimits.maxMessageBytes`, 16 MiB by default: a server's by the
+// `limits:` of its service, a client's by `connect`'s. Past it the call
+// ends as `ResourceExhausted`, with the one sentence that names the code
+// that raises it.
 import std.console
 import std.grpc
 import std.http
@@ -21,7 +21,7 @@ fn main(): !grpc.Status {
     let method = grpc.Method { name: "Echo", handler: call => grpc.unary(call, echo)? }
     let small = grpc.GrpcLimits.Default with { maxMessageBytes: 1000 }
     var app = http.App()
-    app.grpc(grpc.Service { name: "demo.Echo", methods: [method] }.limits(small))
+    app.grpc(grpc.Service { name: "demo.Echo", methods: [method], limits: small })
     let server = match app.start() {
         ok(started) => started
         err(error) => fail grpc.Status { code: grpc.Code.Unavailable, message: "{error}" }
@@ -46,7 +46,7 @@ fn main(): !grpc.Status {
 }
 
 // expect-stdout: server 900: 1800
-// expect-stdout: server 1100: ResourceExhausted: a message of the client of 1103 bytes is larger than 1000 bytes, the most `GrpcLimits.maxMessageBytes` allows: raise it with `.limits(grpc.GrpcLimits.Default with { maxMessageBytes: … })` on the service
+// expect-stdout: server 1100: ResourceExhausted: a message of the client of 1103 bytes is larger than 1000 bytes, the most `GrpcLimits.maxMessageBytes` allows: raise it with `limits: grpc.GrpcLimits.Default with { maxMessageBytes: … }`
 // expect-stdout: client 400: 800
 // expect-stdout: client 600: ResourceExhausted: a message of the server of 1203 bytes is larger than 1000 bytes, the most `GrpcLimits.maxMessageBytes` allows: raise it with `limits: grpc.GrpcLimits.Default with { maxMessageBytes: … }`
 // expect-stdout: by default: 16777216

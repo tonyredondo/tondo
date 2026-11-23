@@ -190,8 +190,9 @@ impl Display for Code {
 /// How much a message from outside the program may be, as it comes or
 /// once decompressed: `maxMessageBytes`, each message on its own, so that a
 /// stream of many is not bounded as a whole. A client's are `connect`'s
-/// `limits:`; a server's, each service's `.limits(...)`. A message past it
-/// ends the call as `Code.ResourceExhausted`.
+/// `limits:`; a server's, each service's `limits:`, which what builds the
+/// service takes. A message past it ends the call as
+/// `Code.ResourceExhausted`.
 ///
 /// ```tondo
 /// import std.grpc

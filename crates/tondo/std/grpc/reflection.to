@@ -7,8 +7,9 @@ import std.reflect as __reflect
 /// Server reflection, as `grpc.reflection.v1` and `v1alpha` give it, which
 /// tools as grpcurl read to call a server without its `.proto` files:
 /// `app.grpc(grpc.reflection([users, health.service()]))`. It lists these
-/// services and gives the files that declare them.
-pub fn reflection(services: Array[Service]): Service {
+/// services and gives the files that declare them; `limits` bounds the
+/// messages its clients send, as a `Service`'s.
+pub fn reflection(services: Array[Service], limits: GrpcLimits = GrpcLimits.Default): Service {
     let names = services.map(service => service.name)
     var files: Array[__protobuf.FileDescriptor] = []
     for service in services {
@@ -32,6 +33,7 @@ pub fn reflection(services: Array[Service]): Service {
             },
         ]
         also: ["grpc.reflection.v1alpha.ServerReflection"]
+        limits: limits
     }
 }
 

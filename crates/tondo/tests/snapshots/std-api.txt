@@ -1320,12 +1320,11 @@ pub fn Duplex[In, Out].closeSend(self)
 pub fn Duplex[In, Out].headers(self): Map[String, String]
 pub fn Duplex[In, Out].trailers(self): Map[String, String]
 pub fn Health(): Health
-pub fn Health.service(self): Service
+pub fn Health.service(self, limits: GrpcLimits = GrpcLimits.Default): Service
 pub fn Health.set(self, service: String, status: ServingStatus)
 pub fn ServerCall.receive[T: protobuf.Message + reflect.Reflect](self): T? ! Status
 pub fn ServerCall.send[T: protobuf.Message + reflect.Reflect](self, message: T): !Status
 pub fn Service.compress(self): Service
-pub fn Service.limits(self, limits: GrpcLimits): Service
 pub fn Service.onCall(self, interceptor: fn(Call, fn(): !Status): !Status): Service
 pub fn Service.onMessage(self, observer: fn(Call, Direction, reflect.Value)): Service
 pub fn Status.from[E: Display](error: E): Status
@@ -1355,7 +1354,7 @@ pub fn connect(
     balancing: Balancing = Balancing.PickFirst,
     limits: GrpcLimits = GrpcLimits.Default,
 ): Channel ! Status
-pub fn reflection(services: Array[Service]): Service
+pub fn reflection(services: Array[Service], limits: GrpcLimits = GrpcLimits.Default): Service
 pub fn serverStream[
     In: protobuf.Message + reflect.Reflect,
     Out: protobuf.Message + reflect.Reflect,
@@ -1397,6 +1396,11 @@ pub type Service = {
     methods: Array[Method]
     /// The `.proto` file that declares it, which reflection gives.
     files: Array[protobuf.FileDescriptor]
+    /// How large a message of its clients may be, as it comes or once
+    /// decompressed; past `maxMessageBytes` the call ends as
+    /// `RESOURCE_EXHAUSTED`. A call's stream is bounded a message at a
+    /// time, never by the server's `ServerLimits.maxBodyBytes`.
+    limits: GrpcLimits
     // private fields
 }
 pub type Status = {

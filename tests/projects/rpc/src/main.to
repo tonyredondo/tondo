@@ -1,8 +1,9 @@
 // A gRPC server and its client in one program: each kind of call, the
 // metadata and the deadline a method sees, a failure with details, another
 // error as `Internal`, a method that panics, a stream that fails, the
-// server's headers and trailers, a deadline that passes and a server that
-// is not there.
+// server's headers and trailers, a deadline that passes, a server that
+// is not there, and a service built with the bound of its clients'
+// messages.
 
 import rpc.api.greeter
 import std.console
@@ -128,6 +129,17 @@ fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
         err(status) => console.println("{status.code}")
     }
     server.stop()
+    let (_, idle) = channel[Unit]()
+    let small = grpc.GrpcLimits.Default with { maxMessageBytes: 100 }
+    var bounded = http.App()
+    bounded.grpc(greeter.greeter(Greetings { prefix: "hello", gate: idle }, limits: small))
+    let strict = bounded.start()?
+    let long = greeter.HelloRequest { name: "a".repeat(200) }
+    match greeter.GreeterClient.connect("http://{strict.address()}")?.sayHello(long) {
+        ok(reply) => console.println(reply.message)
+        err(status) => console.println("{status}")
+    }
+    strict.stop()
 }
 
 // expect-stdout: hello Ada from test, deadline false
@@ -146,3 +158,4 @@ fn main(): !(http.HttpError | grpc.Status | time.TimedOut) {
 // expect-stdout: some(on) [x-said: goodbye]
 // expect-stdout: timed out after 50ms
 // expect-stdout: Unavailable
+// expect-stdout: ResourceExhausted: a message of the client of 203 bytes is larger than 100 bytes, the most `GrpcLimits.maxMessageBytes` allows: raise it with `limits: grpc.GrpcLimits.Default with { maxMessageBytes: … }`

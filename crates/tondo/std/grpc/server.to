@@ -12,7 +12,8 @@ import std.reflect as __reflect
 import std.time as __time
 
 /// A service a server serves: its full name and its methods, which a
-/// `.proto` file's service gives as `users.userService(value)`.
+/// `.proto` file's service gives as `users.userService(value)`, and the
+/// `limits` of the messages its clients send.
 ///
 /// ```tondo
 /// import std.console
@@ -58,7 +59,11 @@ pub type Service = {
     priv compressing: Bool = false
     priv layers: Array[fn(Call, fn(): !Status): !Status] = []
     priv watchers: Array[fn(Call, Direction, __reflect.Value)] = []
-    priv bounds: GrpcLimits = GrpcLimits.Default
+    /// How large a message of its clients may be, as it comes or once
+    /// decompressed; past `maxMessageBytes` the call ends as
+    /// `RESOURCE_EXHAUSTED`. A call's stream is bounded a message at a
+    /// time, never by the server's `ServerLimits.maxBodyBytes`.
+    limits: GrpcLimits = GrpcLimits.Default
 }
 
 /// A method of a service: its name, what serves it, and whether it has no
@@ -191,24 +196,6 @@ pub fn Service.compress(self): Service {
     self with { compressing: true }
 }
 
-/// The service with `limits` for the messages its clients send:
-/// `maxMessageBytes` of each, as it comes or once decompressed, past which
-/// the call ends as `RESOURCE_EXHAUSTED`. `app.grpc` takes them with the
-/// service: a call's stream is bounded a message at a time, never by the
-/// server's `ServerLimits.maxBodyBytes`.
-///
-/// ```tondo
-/// import std.grpc
-/// import std.http
-///
-/// let health = grpc.Health()
-/// var app = http.App()
-/// app.grpc(health.service().limits(grpc.GrpcLimits.Default with { maxMessageBytes: 64 * 1024 * 1024 }))
-/// ```
-pub fn Service.limits(self, limits: GrpcLimits): Service {
-    self with { bounds: limits }
-}
-
 impl __http.GrpcService for Service {
     fn serveOn(self, app: mut __http.App) {
         for name in [self.name].concat(self.also) {
@@ -218,7 +205,7 @@ impl __http.GrpcService for Service {
                 let layers = self.layers
                 let watchers = self.watchers
                 let compressing = self.compressing
-                let most = self.bounds.maxMessageBytes
+                let most = self.limits.maxMessageBytes
                 app.post(
                     path,
                     request => serve(request, path, handler, layers, watchers, compressing, most)?,

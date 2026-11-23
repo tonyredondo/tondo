@@ -70,6 +70,6 @@ fn main(): !(http.HttpError | grpc.Status) {
 // expect-stdout: 300000 abc
 // expect-stdout: echo x
 // expect-stdout: some(gzip)
-// expect-stdout: ResourceExhausted: a message of the client once decompressed is larger than 16 MiB, the most `GrpcLimits.maxMessageBytes` allows: raise it with `.limits(grpc.GrpcLimits.Default with { maxMessageBytes: … })` on the service
+// expect-stdout: ResourceExhausted: a message of the client once decompressed is larger than 16 MiB, the most `GrpcLimits.maxMessageBytes` allows: raise it with `limits: grpc.GrpcLimits.Default with { maxMessageBytes: … }`
 // expect-stdout: 300000 abc
 // expect-stdout: 300000 abc

@@ -626,7 +626,7 @@ async fn exchange(channel: Arc<Channel>, mut prepared: Prepared, events: Events)
                     // Refused before its bytes are gathered.
                     if length as u64 > channel.most {
                         let what = format!("a message of the server of {length} bytes");
-                        return end(RESOURCE_EXHAUSTED, too_large(&what, channel.most, false));
+                        return end(RESOURCE_EXHAUSTED, too_large(&what, channel.most));
                     }
                     if buffer.len() < 5 + length {
                         break;
@@ -774,14 +774,10 @@ fn framed(message: &[u8], compressed: bool) -> Bytes {
 /// that holds a message as it comes or once decompressed, so that a small
 /// one cannot take all the memory: a server reads a call's messages one by
 /// one and holds each to it, not the call's whole body to the server's.
-/// The code that raises it is where the bound was given: a service's
-/// `.limits(...)` when it `served` the message, else `connect`'s `limits:`.
-fn too_large(what: &str, most: u64, served: bool) -> String {
-    let raise = match served {
-        true => "`.limits(grpc.GrpcLimits.Default with { maxMessageBytes: … })` on the service",
-        false => "`limits: grpc.GrpcLimits.Default with { maxMessageBytes: … }`",
-    };
-    crate::limits::sentence(what, "is larger than", most, "GrpcLimits", "maxMessageBytes", raise, "")
+/// A client's bound is `connect`'s `limits:`, a service's what builds it
+/// takes: the same words raise either.
+fn too_large(what: &str, most: u64) -> String {
+    crate::limits::passed(what, "is larger than", most, "grpc", "GrpcLimits", "maxMessageBytes", "")
 }
 
 /// A message compressed with gzip, of the client when a server `served`
@@ -796,7 +792,7 @@ fn gunzip(message: &[u8], most: u64, served: bool) -> Result<Vec<u8>, (i64, Stri
         return Err((INTERNAL, format!("{whose} does not decompress")));
     }
     if out.len() as u64 > most {
-        return Err((RESOURCE_EXHAUSTED, too_large(&format!("{whose} once decompressed"), most, served)));
+        return Err((RESOURCE_EXHAUSTED, too_large(&format!("{whose} once decompressed"), most)));
     }
     Ok(out)
 }
@@ -1157,7 +1153,7 @@ pub extern "C" fn tondo_rt_grpc_read_frame(object: *mut NativeObject) -> i64 {
                 u32::from_be_bytes([frames.buffer[1], frames.buffer[2], frames.buffer[3], frames.buffer[4]]) as usize;
             // Refused before its bytes are gathered.
             if length as u64 > frames.most {
-                frames.error = too_large(&format!("a message of the client of {length} bytes"), frames.most, true);
+                frames.error = too_large(&format!("a message of the client of {length} bytes"), frames.most);
                 return -3;
             }
             if frames.buffer.len() >= 5 + length {

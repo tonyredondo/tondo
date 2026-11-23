@@ -587,8 +587,7 @@ Un record de opciones:
 Lo que lee datos de fuera del programa y los acota toma
 `limits: <Nombre>Limits = <Nombre>Limits.Default`, con ese nombre de parámetro
 en todas las APIs, en la llamada que lee o en la que construye lo que leerá
-después (un cliente, un servidor); donde lo que leerá se configura con
-métodos, como un servicio de gRPC, es su método `limits`. Es un record de su
+después (un cliente, un servidor). Es un record de su
 módulo, llamado por él (`RegexLimits`, `IoLimits`, `GzipLimits`; `http` tiene
 dos lados, `ClientLimits` y `ServerLimits`). Sus campos de tamaño o de
 profundidad empiezan por `max` y dicen su unidad (`maxBodyBytes`,
@@ -7276,7 +7275,8 @@ pub fn call(): Call
 pub fn setHeader(name: String, value: String)
 pub fn setTrailer(name: String, value: String)
 
-pub type Service = { name: String, methods: Array[Method], files: Array[protobuf.FileDescriptor] = [] }
+pub type Service = { name: String, methods: Array[Method], files: Array[protobuf.FileDescriptor] = [],
+                     limits: GrpcLimits = GrpcLimits.Default }
 pub type Method = { name: String, handler: fn(ServerCall): !Status, noSideEffects: Bool = false }
 pub type ServerCall
 pub fn ServerCall.receive[T: protobuf.Message](self): T? ! Status
@@ -7289,7 +7289,6 @@ pub enum Direction { Received, Sent }
 pub fn Service.onCall(self, interceptor: fn(Call, fn(): !Status): !Status): Service
 pub fn Service.onMessage(self, observer: fn(Call, Direction, reflect.Value)): Service
 pub fn Service.compress(self): Service
-pub fn Service.limits(self, limits: GrpcLimits): Service
 pub type GrpcLimits = { maxMessageBytes: Int }
 pub const GrpcLimits.Default: GrpcLimits                    // 16 MiB
 
@@ -7311,8 +7310,8 @@ pub enum ServingStatus { Unknown, Serving, NotServing, ServiceUnknown }
 pub type Health
 pub fn Health(): Health
 pub fn Health.set(self, service: String, status: ServingStatus)
-pub fn Health.service(self): Service
-pub fn reflection(services: Array[Service]): Service
+pub fn Health.service(self, limits: GrpcLimits = GrpcLimits.Default): Service
+pub fn reflection(services: Array[Service], limits: GrpcLimits = GrpcLimits.Default): Service
 pub type Upload[In, Out]
 pub fn Upload.send(self, message: In): !Status
 pub fn Upload.finish(self): Out ! Status
@@ -7330,8 +7329,9 @@ pub fn Duplex.trailers(self): Map[String, String]
   con stream del servidor, `fn watch(self, request: In, out: Sender[Out]):
   !grpc.Status`; con stream del cliente, `fn upload(self, input:
   grpc.Stream[In]): Out ! grpc.Status`; y con los dos, `fn chat(self, input:
-  grpc.Stream[In], out: Sender[Out]): !grpc.Status`. `userService(value)` da
-  el `grpc.Service` de un valor que lo implementa, y `UserServiceClient` es su
+  grpc.Stream[In], out: Sender[Out]): !grpc.Status`. `userService(value,
+  limits:)` da el `grpc.Service` de un valor que lo implementa, con los
+  `limits` de los mensajes de sus clientes, y `UserServiceClient` es su
   cliente: `connect(target, trust)`, u `on(channel)` sobre un canal que
   comparte con otros, con un método por llamada que admite además
   `metadata`. Una llamada unaria da `Out ! grpc.Status`; una con stream del
@@ -7401,13 +7401,14 @@ pub fn Duplex.trailers(self): Map[String, String]
   gzip.
 - **Límites.** Cada mensaje que llega de fuera, tal como llega o una vez
   descomprimido, no pasa de `GrpcLimits.maxMessageBytes`, 16 MiB por defecto:
-  los de un cliente, los `limits` de su `connect`; los de un servidor, los del
-  servicio, que da su método `limits` y que `app.grpc` toma con el servicio.
+  los de un cliente, los `limits` de su `connect`; los de un servidor, los
+  `limits` del servicio, un campo de `Service` y un parámetro de lo que lo
+  construye (`userService`, `Health.service`, `reflection`), que `app.grpc`
+  toma con el servicio.
   El límite es de cada mensaje y no de la llamada: `ServerLimits.maxBodyBytes`
   no corta el stream de un cliente, que dura lo que dura su llamada. Un
   mensaje que lo pasa termina la llamada como `ResourceExhausted`, con la
-  frase de 7.4.1 y el código que lo sube en el lado que lo dio: `limits:` en
-  `connect` o `.limits(...)` en el servicio.
+  frase de 7.4.1, que en los dos lados lo sube con `limits:`.
 - **Plazos.** Una llamada dentro de un `within` (lenguaje 11.17) envía el
   tiempo que le queda como `grpc-timeout`, redondeado hacia arriba, y el
   método corre dentro de un `within` de ese tiempo: si se acaba, la llamada
