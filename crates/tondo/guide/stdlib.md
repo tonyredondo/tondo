@@ -570,7 +570,8 @@ fn main() {
 - `gzip.decompress` and `zstd.decompress`: 128 MiB decompressed.
   `archive.open` and `read`: 1 GiB inflated. `image.open` and `read`: 512
   MiB of pixels. A message of gRPC: 16 MiB, by `grpc.connect(limits:)` and
-  by a service's `.limits(grpc.GrpcLimits.Default with { ... })`.
+  by the `limits:` of what builds a service, as
+  `greeter.greeter(impl, limits: grpc.GrpcLimits.Default with { ... })`.
 - `maxNestingDepth`, 128 levels, in `json.JsonLimits`, `cbor.CborLimits`,
   `messagepack.MessagePackLimits`, `xml.XmlLimits`, `yaml.YamlLimits`,
   `protobuf.ProtobufLimits` and `graphql.GraphqlLimits`, and 64 in

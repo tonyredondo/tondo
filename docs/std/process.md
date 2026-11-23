@@ -153,6 +153,10 @@ left-right
   it only after a while, as `docker stop` does, and
   [`Command.group`](#commandgroup) makes that reach everything it started.
   A panic that leaves the block does the same to a command it had started.
+- A program that is a container's first process is left the children of
+  the commands it started, once those commands have ended, and does not
+  take them: they stay there, ended, for as long as it runs. Give such a
+  container an init, as `docker run --init` does.
 - [`shell`](#shell) runs a line through the system's shell, for when a real
   shell is what is wanted.
 

@@ -215,7 +215,7 @@ a way to read with no bound, as `gzip.reader` here, the text ends with it.
 | `gzip.decompress` and `zstd.decompress` | `gzip.GzipLimits`, `zstd.ZstdLimits` | `maxOutputBytes` 128 MiB |
 | An archive | `archive.ArchiveLimits`, to `archive.open` and `archive.read` | `maxInflatedBytes` 1 GiB, all its entries together |
 | An image | `image.ImageLimits`, to `image.open` and `image.read` | `maxDecodedBytes` 512 MiB of pixels |
-| A message of gRPC | `grpc.GrpcLimits`, to `grpc.connect` and to a service's `.limits(...)` | `maxMessageBytes` 16 MiB, each message on its own |
+| A message of gRPC | `grpc.GrpcLimits`, to `grpc.connect` and to what builds a service: its generated constructor, `Health.service`, `grpc.reflection`, or the `limits` of a `grpc.Service` written by hand | `maxMessageBytes` 16 MiB, each message on its own |
 | A document of JSON, CBOR, MessagePack, XML, YAML, TOML or Protocol Buffers | `json.JsonLimits`, `cbor.CborLimits`, `messagepack.MessagePackLimits`, `xml.XmlLimits`, `yaml.YamlLimits`, `toml.TomlLimits`, `protobuf.ProtobufLimits`, to the functions that read: `decode`, `parse` and those beside them | `maxNestingDepth` 128 levels; TOML 64 |
 | A query a client sends to a GraphQL schema | `graphql.GraphqlLimits`, to `graphql.schema` | `maxNestingDepth` 128 levels |
 | A regular expression and its inputs | `regex.RegexLimits`, to `regex.Regex.compile` | a pattern of 64 KiB nested 128 levels deep, inputs of 16 MiB, a million matches |
