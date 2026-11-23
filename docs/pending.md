@@ -43,8 +43,10 @@ before the chain's rest because the chain's adapters wait for it too.
    and kept only where the passes after it make something of it, and left
    as it was where they do not. Before it is measured, `thread` following
    copies is measured again from nothing, as one of the trial's rules reads
-   what `thread` decides; and before either, what the Nightly's jobs under
-   emulation showed (step 1).
+   what `thread` decides. These measures hold this machine for hours and
+   do not wait for step 1's jobs under emulation, whose work is done on
+   the runners beside them; a fault found there in code a release program
+   runs goes ahead of them.
 3. **What the maintainer said yes to on 2026-11-23**, after the inliner by
    his word: the orphans of a program that is a container's first process,
    a small piece; then `std.quic`'s first piece, measured, which says what
