@@ -29,11 +29,10 @@ What is done next, and after it, with the reason for each place. A step's
 detail is in the tables below. The inliner's weighing of step 2 comes
 before the chain's rest because the chain's adapters wait for it too.
 
-1. **What is owed**: the limits of a gRPC service taken as everywhere
-   else, by the maintainer's word; what is left of the cost the scheduler's
-   pieces added to a spawn and a join; and what the next Nightly's jobs
-   under emulation show. First because they say whether what is on main is
-   sound, and anything they find is fixed before more is built on it.
+1. **What is owed**: what is left of the cost the scheduler's pieces added
+   to a spawn and a join, and what the next Nightly's jobs under emulation
+   show. First because they say whether what is on main is sound, and
+   anything they find is fixed before more is built on it.
 2. **`trim`**: the inliner weighing a call by what inlining buys and a
    region for the copy, which the plain form in Tondo, measured again,
    waits for; then the list of what stays behind Go. Second because its rows
@@ -73,7 +72,6 @@ manual's unheld quotes and listings.
 
 | What | Since | Detail |
 | --- | --- | --- |
-| The limits of a gRPC service as a parameter, as everywhere else. The maintainer's word of 2026-11-23, on being shown the one place that departed from the form: the same behaviour in every part of the library. A service takes them today by a method, `Service.limits(...)`, since `app.grpc` is `std.http`'s and cannot name `grpc.GrpcLimits`. To become `limits:` on what builds a service, the generated constructor, `Health.service` and `grpc.reflection`, with the method gone, one sentence for the message on both sides, and the clause for methods out of the spec's rule; the manual's and the guide's lines with it | 2026-11-23 | Spec 6.3; `crates/tondo/std/grpc/server.to` |
 | What is left of the cost the scheduler's pieces of 2026-11-20 and 21 added to a spawn and a join, each within the bar alone. Reading the clock straight and asking for the workers with a load took 6.2% of the instructions of `runtime/join 1`, now under the table's count, and about 1% of `tasks/spawn 1000`, `select 1000` and `channel 10000`. Left: `ffi/waits from a C thread 100`, still 3.5% over the table, whose count moves with the turns of the waits' spin locks and which is to be told from them first; the readings of the clock that remain at each spawn and join, some seven, for which the processor's own counter is to be weighed before any stamp becomes a count, so that every wait keeps its meaning; and the wakes added for a task woken next to a busy worker, each to keep the stall it fixed as its reason or to go | 2026-11-22 | AGENTS.md, "A change to the optimizer…"; [decisions](decisions.md) |
 | A read that can wait without end is not ended by a deadline or a cancel when it goes through a thread of the system: a file opened by its path that is a pipe, a FIFO, a terminal or a device. A `fs.readText` of a pipe written after a second gave its text at a second under a deadline of 50 ms. The pipes of a process that was started wait on the poller since 2026-11-22. For those files, a thread of the stream that reads only when the program asks, as the console's input has, and their open as work a deadline abandons; writes to them with it. `Process.cancel()` still waits for the pipes it captures | 2026-11-22 | Spec 11.15 and 11.17; `Mode::Host` |
 | What the Nightly's jobs under emulation show once they run whole. In the run of 2026-11-22 they built again and then 106 tests failed on the two architectures, those of the debugger, dumps, profiles and the rest, and their binary did not end: a unit test of 2026-11-21 made the tools' directory open to others before any program had made it private, in the fresh container each binary runs in, and every program then refused the tools, as it should. The test is mended; the next run says whether that was all of it. Older there, and each to read when a run shows its words: `vectors_at_the_level_of_avx2` on x86-64 under qemu, whose words no log has; the cases' binary running past its hour and a half there, slow and not hung; `a_library_that_tondo_built_ends_and_unloads` and `cpu_has_answers_from_the_level_or_the_processor`, which failed on 2026-11-21 and not on the 22nd; and observe's `a_cpu_profile_of_a_program_that_waits_says_it_waited` on arm64, red from 2026-11-16 to 21 and hidden since | 2026-11-22 | Nightly runs 45051265708 and 44896932412 |
