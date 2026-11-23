@@ -9909,3 +9909,37 @@ whose loop passes a call's error on is opened into a caller that handles
 it, the values each turn makes go in that turn's region. At a million
 turns under TONDO_CHECK_REGIONS the peak is 16,716 KB, against 16,368 KB
 at 30. The difference is the list of names, so no turn's text is kept.
+
+## A benchmark gives its answer, and its test checks it
+
+On 2026-11-23 a change to the optimizer made `iter filter sumBy 10000` do
+73.8% fewer instructions, and nothing failed: the loop gave 0, and no row
+of bench/tondo or of the examples checked what its body gave. 0 of the 90
+rows did. The change was wrong, found only because its row was run as a
+program and its answer printed.
+
+`testing.bench` now gives the value of a run of its body made before the
+timed ones (testing 10.4): `T` when the body cannot fail, `T ! E` when it
+can. In a plain run that run is the only one; under `--bench` it is not
+measured, so checking costs the measure nothing. A row reads
+`assert(testing.bench("sum 1000", () => numbers.sum()) == 499_500)`, and a
+wrong answer fails with both sides. `T ! Never` for a body that cannot fail
+was tried and set aside: `== 499_500` then fails as a comparison of
+`Int ! Never` with `Int`, and the warning on an unchecked text never fires.
+The `?` that benchmarks wrote after such a body is now E1301, which says to
+drop it and drops it as a safe fix; W1018 on an unchecked `String` says to
+hold it with an assert. The benchmark `tondo dump test --bench` writes
+discards its value and says so in a comment: the tool cannot know that a
+call it lifted from a dump gives the same twice, and only an author can say
+an answer is stable.
+
+Writing this showed that `--compiler` compared rows whose test failed on
+one side: the other `tondo` saved its rows whatever its tests did. A side
+now saves only rows of tests that passed, a row whose test failed is not
+compared, and with `--compiler` a row the other `tondo` has no measure of,
+as its test failed there, is listed apart and fails the run.
+
+Every row holds the value main's release compiler gave, and bench/go's
+where it computes the same thing: 61 of the 79 rows of bench/tondo give
+Go's answer, which a comment says. A large value is held by a summary, its
+length and some of its parts.
