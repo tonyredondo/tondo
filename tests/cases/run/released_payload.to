@@ -1,0 +1,58 @@
+// A variant whose payload names a local released before the payload is
+// read: `return some(item)` opened into a loop that tests what it gives.
+// Thread may know the variant through the copy, but not the payload once
+// its local is released; the answers below are what the loops add.
+// `parsed` is the shape one change of lowering away from that: elide makes
+// its result's variant the tested local's own, and thread reads the payload
+// as the local it was made of, right only while nothing releases that local
+// before the read.
+
+import std.console
+
+type Order = {
+    cents: Int
+    region: String
+}
+
+fn orders(count: Int): Array[Order] {
+    let regions = ["north", "south", "east", "west"]
+    var all: Array[Order] = []
+    var seed = 42
+    for _ in 0..count {
+        seed = (seed * 1_103_515_245 + 12345) % 2_147_483_648
+        all.push(Order { cents: seed % 100_000, region: regions[seed % 4] })
+    }
+    all
+}
+
+fn parsed(i: Int): String ! String {
+    let text = "even number {i} of the list"
+    if i % 2 == 0 {
+        text
+    } else {
+        fail "odd {i}"
+    }
+}
+
+fn main() {
+    let two = [Order { cents: 5, region: "a" }, Order { cents: 7, region: "b" }]
+    console.println("{two.iter().sumBy(order => order.cents)}")
+    let all = orders(10_000)
+    console.println(
+        "{all.iter().filter(order => order.cents > 50_000).sumBy(order => order.cents)}",
+    )
+    console.println("{all.iter().filter(order => order.cents > 50_000).count()}")
+    var total = 0
+    for i in 0..100 {
+        match parsed(i) {
+            ok(text) => total += text.length()
+            err(text) => total += text.length() * 2
+        }
+    }
+    console.println("{total}")
+}
+
+// expect-stdout: 12
+// expect-stdout: 371854294
+// expect-stdout: 4975
+// expect-stdout: 1885

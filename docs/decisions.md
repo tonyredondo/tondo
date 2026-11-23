@@ -9943,3 +9943,25 @@ Every row holds the value main's release compiler gave, and bench/go's
 where it computes the same thing: 61 of the 79 rows of bench/tondo give
 Go's answer, which a comment says. A large value is held by a summary, its
 length and some of its parts.
+
+## A release ends what thread knows of a payload
+
+Thread folds a read of a known variant's payload into the local the
+payload was made of. It counted a `release` of that local as a use, so
+the fact outlived it: a read after the release read a local whose value
+was gone. On 2026-11-23 a change that let thread follow copies made
+`Iterator.sumBy` over records with a text give 0, as `l6.v1.0` became
+`l25` after `release l25`. A release now forgets the payload of every fact
+that names the local, and keeps the variant, which is all a test needs;
+a copy of the local is no longer known as one.
+
+Main gave no wrong answer before this, and that was today's lowering,
+not a promise. Nine shapes were tried, written in `main` and as
+callees opened into it: `some(x)` is built in a temporary whose
+component is released after it and reaches the tested local through a
+copy, which thread did not follow; a `T ! E`'s variant is the tested
+local's own once elide removes the copy (`l5 = variant 0(l25)`), and
+thread already reads its payload as `l25`, but nothing releases `l25`
+before. Nothing keeps those two apart but how lowering writes each, so
+this is what makes main sound. `tests/cases/run/released_payload.to`
+holds both shapes with their answers.

@@ -380,6 +380,20 @@ fn learn(statement: &Statement, known: &mut HashMap<Local, Known>, changing: &[b
         known.remove(local);
         known.retain(|_, fact| !mentions(fact, *local));
     }
+    // What is released is no longer read: a variant's payload that names
+    // it is no longer known, though its variant still is, and a copy of it
+    // is no longer one.
+    if let Statement::Release(place) = statement {
+        let released = place.local;
+        known.retain(|_, fact| !matches!(fact, Known::Copy(other) if *other == released));
+        for fact in known.values_mut() {
+            if mentions(fact, released)
+                && let Known::Variant(variant, _) = fact
+            {
+                *fact = Known::Variant(*variant, std::rc::Rc::from([]));
+            }
+        }
+    }
     let Statement::Assign(place, value, _) = statement else { return };
     let Some(local) = whole(place) else { return };
     if !followed[local.0 as usize] {
