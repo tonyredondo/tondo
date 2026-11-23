@@ -1,10 +1,14 @@
 // With one worker and three computations that never ask, the watcher puts
 // one worker beside the one that is held (16.14), and none beside the worker
-// it put there: two of them run, and the third waits for one to end, as work
-// with no core to run on does. The workers never pass twice their number.
-// The computations turn until one of them, having seen the first worker put
+// it put there: at most two are alive at once, twice the workers given, and
+// the third computation waits for one to end, as work with no core to run
+// on does. The computations turn until one of them, having seen a worker put
 // beside, has given the watcher a few hundred milliseconds more, in which it
-// put a second before; then they all stop. A slow machine only takes longer.
+// would have put a third; then they all stop. On a slow machine a worker put
+// beside `main` while it spawns may be retired as `main` waits, before it
+// starts, and another put beside later: so the case holds the most workers
+// alive at once, which each computation reads at its looks, and not how many
+// were put beside. A slow machine only takes longer.
 
 import std.console
 import std.diagnostics
@@ -16,14 +20,16 @@ fn counted(name: String): Int {
 }
 
 /// Turns until `stop` is set, without waiting; every million turns it looks
-/// at how many workers were put beside, and 300 ms after the first it stops
-/// them all.
+/// at the workers alive, keeping the most it saw, and 300 ms after it first
+/// saw one put beside, it stops them all.
 fn turn(stop: sync.Atomic[Bool]): Int {
+    var most = 0
     var turns = 0
     var seen: time.Instant? = none
     for not stop.load() {
         turns += 1
         if turns % 1_000_000 == 0 {
+            most = most.max(counted("workers.total"))
             match seen {
                 none => if counted("workers.added") >= 1 {
                     seen = time.now()
@@ -34,16 +40,18 @@ fn turn(stop: sync.Atomic[Bool]): Int {
             }
         }
     }
-    turns
+    most
 }
 
 fn main() {
     let stop = sync.Atomic(false)
-    _ = [spawn turn(stop), spawn turn(stop), spawn turn(stop)].wait()
-    console.println("workers put beside: {counted("workers.added")}")
+    let most = [spawn turn(stop), spawn turn(stop), spawn turn(stop)].wait()
+    console.println("most workers at once: {most.max() ?? 0}")
+    console.println("workers put beside: {if counted("workers.added") >= 1 { "yes" } else { "no" }}")
 }
 
 // expect-env: TONDO_WORKERS=1
 // expect-no-schedule: the explorer runs one worker and adds none, so the first computation holds it, by design
 // expect-no-replay: a recorded run, too, runs its tasks on one worker that adds none
-// expect-stdout: workers put beside: 1
+// expect-stdout: most workers at once: 2
+// expect-stdout: workers put beside: yes
