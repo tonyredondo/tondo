@@ -9863,3 +9863,49 @@ that input, put in the corpus where the search finds it at once, and
 holds how many workers replayed candidates, a count no clock decides.
 A worker kept across the rounds would take the start out of each, a
 larger change listed for the day rounds cost too much again.
+
+## The inliner takes a function of cost 31
+
+A call is inlined when its function costs at most `SMALL`, counted in the
+statements and branches it runs unless it panics. That bound was 30, and
+it is 31 now. At 31 it takes `json.numeral`, which `json.Value.decode`
+calls and whose `Number?` it tests at once. Opened there, the test folds
+into the code that makes the value, and json's `parse 1000 numbers` does
+9.1% fewer instructions (time −15.7%, with the runs of four layouts from
+59.88 to 64.03 µs). `parse object` does 1.5% fewer. No row of the
+benchmarks or the examples does more past the bar. Programs grow by at
+most 0.41% (logstat), and four don't change. Compiling costs the same:
+bench/compile.to's 25 rows are within 5% of before, and the guard holds.
+Four rows took 6% to 11% more time or cycles with the same
+instructions: `mutex 4x1000`, `chars other`, `replace ascii` and
+logstat's report. Measured
+twice, each side alone in four layouts, every head's range overlaps its
+base's and starts within 2% of the base's lowest: that is where the code
+lies, not what it runs.
+
+The budget was stepped before choosing: 31, 32, 36, 40 and 50, each built
+and measured whole. From 32 the bytes grow faster than any row gains:
++1.7% for todo-api at 32, 2% or more in three projects at 36. At 40
+`maxBy 10000` does 15.5% more instructions, and at 50 the chars rows lose
+too, with sizes up to +14%. A wider budget for every call had already
+been ruled out by the band from 32 to 120 measured whole: rows gained up
+to 9% in instructions, three lost 22%, 72% and 95%, and the Tondo code
+grew by up to 227%.
+
+The number is a constant that happens to cross `json.numeral`'s cost, not
+a design. The losses at higher budgets come from where a call is opened,
+not from how big it is: `Iterator.sumBy` opened before its own calls of
+`next()` leaves a call through a `fn` value in each turn of its loop, and
+a loop opened into a test's body of 37 KB spills a pointer three times a
+turn. The weighing of each call by what opening it buys is to take this
+number's place. The maintainer approved this step alone: "vale esta bien
+subir a 31 nada más".
+
+regions/errors.to's `shouted` cost 31 and was opened into `main`, which
+handles the error itself, so the case no longer held the refusal it is
+there for. It now skips an empty name, which costs more. What it showed
+is held by a case of its own, regions/opened_loop.to. When a function
+whose loop passes a call's error on is opened into a caller that handles
+it, the values each turn makes go in that turn's region. At a million
+turns under TONDO_CHECK_REGIONS the peak is 16,716 KB, against 16,368 KB
+at 30. The difference is the list of names, so no turn's text is kept.
