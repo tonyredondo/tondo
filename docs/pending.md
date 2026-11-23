@@ -41,10 +41,9 @@ before the chain's rest because the chain's adapters wait for it too.
    2026-11-23: the budget is a ceiling, a call past today's 31 is opened
    and kept only where the passes after it make something of it, and left
    as it was where they do not. Before it is measured, in this order: the
-   two things the benchmarks' checks leave (Tools and tests); the MIR's
-   check of a read after a release, run over everything (Owed now); then
-   `thread` following copies, measured again from nothing, as one of the
-   trial's rules reads what `thread` decides.
+   MIR's check of a read after a release, run over everything (Owed now);
+   then `thread` following copies, measured again from nothing, as one of
+   the trial's rules reads what `thread` decides.
 3. **What the maintainer said yes to on 2026-11-23**, after the inliner by
    his word: the orphans of a program that is a container's first process,
    a small piece; then `std.quic`'s first piece, measured, which says what
@@ -158,7 +157,6 @@ The table of 2026-11-21 has 60 of 75 rows at or under Go's time.
 | The models' steps read against the code's locks: a model whose step is larger than what the code does at once says nothing of the window inside it. `wake.to` has a call's return from C and the giving back of its worker's place as one step, and the monitor's look and its mark as one, where the code takes two each, which is why it never showed the scheduler's checker stopping a case of blocking calls of C on 2026-11-22, a look between those two steps: split them, state that every worker past the first stands in for a marked call, is owed back or is retiring, and add the test that today's order breaks, in `Wake.tla` as well, which the maintainer keeps current with the model in Tondo. Then the other six, each in both forms | 2026-11-22 | `testing/models` |
 | The scheduler's one mutant left open: a worker that looks for tasks and finds one elsewhere wakes the next if the shared queue filled meanwhile, which neither a test nor the model shows. The model of waking needs a task woken outside any task, and its fairness made to follow the code | 2026-11-08 | [the refactor](refactor.md), status of phase 0 |
 | The heap's checks in the Nightly on musl and macOS: on Linux with glibc alone to begin with. Their first run there, on 2026-11-22, was clean; a few more, then the other two | 2026-11-22 | `.github/workflows/nightly.yml` |
-| Two things the benchmarks' checks of 2026-11-23 leave. The row of `examples/kvstore`, `1000 commands`, holds the reply to its session's last command, `NONE` for a `DEL` of a key the session never sets, which it would give if the other 999 commands did nothing: the session is to end with a command whose answer the run decides. And the rows whose value is large hold its length and some of its parts, which a middle gone wrong passes: `sort 10000`, `add 100000`, `parse 1000 numbers`, the encoding and the decoding of 100 structs, `sort adults`, `sortedBy`, `keyedBy` and `uniqueBy` of 10000, `toSet`, `builder 100`, `join 100`, `toUpper` and `replace`, and in the examples the links of a page, the report of 1000 lines, the search of 200 notes, the table of 200 rows and the site of 50 posts. Where the value's text is the same on every machine, the row is to hold the whole by a hash of it taken outside what is timed, with one part left readable; the two rows of tensors, whose cells are `Float`s, keep their parts | 2026-11-23 | `bench/tondo/src` and the examples' tests; after the mend of `thread`'s fact, before its copies are measured again |
 
 ## The manual
 
