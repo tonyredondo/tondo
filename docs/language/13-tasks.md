@@ -590,13 +590,18 @@ fn main() {
     let most = sync.Atomic(0)
     let ids = (1..=20).collect()
     let done = within tasks.limit(3) { ids.map(id => spawn fetch(id, open, most)).wait() }
-    console.println("{done.length()} done, {most.load()} at once at most")
+    assert(most.load() <= 3, "more than three at once")
+    console.println("{done.length()} done, never more than 3 at once")
 }
 ```
 
 ```text output
-20 done, 3 at once at most
+20 done, never more than 3 at once
 ```
+
+How many are open at a given moment depends on how the tasks happen to
+run; what the limit promises is the most, and that is what the program
+checks.
 
 Inside the block a `spawn` waits for a place before its task exists, and
 the task gives the place back when it ends. So it is the code that starts
@@ -650,12 +655,13 @@ fn main() {
     let most = sync.Atomic(0)
     let fetching = tasks.limit(4)  // the server's, shared by its requests
     [spawn handle(fetching, open, most), spawn handle(fetching, open, most)].wait()
-    console.println("{most.load()} at once at most, of 2 requests that want 3 each")
+    assert(most.load() <= 4, "more than the server allows")
+    console.println("never more than 4 at once, of 2 requests that want 3 each")
 }
 ```
 
 ```text output
-4 at once at most, of 2 requests that want 3 each
+never more than 4 at once, of 2 requests that want 3 each
 ```
 
 One `within` takes a deadline and a limit together, separated by a comma.
