@@ -41,24 +41,21 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
                 let map = match base {
                     Some(address) => {
                         if write {
-                            let glue = self.e.map_glue_address(ty);
-                            self.e.call_rt(Rt::MapUnique, &[address, glue]);
+                            self.make_map_unique(address, ty)
+                        } else {
+                            self.e.fb.ins().load(POINTER, flags(), address, 0)
                         }
-                        self.e.fb.ins().load(POINTER, flags(), address, 0)
                     }
                     None => {
                         let Storage::Var(var) = self.storage[place.local.0 as usize] else { unreachable!() };
-                        if write {
-                            let slot = self.spill(var);
-                            let glue = self.e.map_glue_address(ty);
-                            self.e.call_rt(Rt::MapUnique, &[slot, glue]);
-                            self.unspill(var, slot);
-                        }
-                        self.e.fb.use_var(var)
+                        if write { self.make_map_unique_var(var, ty) } else { self.e.fb.use_var(var) }
                     }
                 };
                 let position = self.scalar(&Operand::local(index));
-                base = Some(self.e.call_rt(Rt::MapEntry, &[map, position]).unwrap());
+                let (entry_size, _) = self.e.cg.entry_layout(ty);
+                let entries = self.e.fb.ins().load(POINTER, flags(), map, MAP_ENTRIES);
+                let offset = self.e.fb.ins().imul_imm_u(position, entry_size as i64);
+                base = Some(self.e.fb.ins().iadd(entries, offset));
                 ty = project(self.e.cg.types(), ty, proj);
                 continue;
             }
@@ -344,6 +341,62 @@ impl<'a, 'b> FnCodegen<'a, 'b> {
         self.e.call_rt(Rt::ArrayUnique, &[slot, size, extra, retain, release]);
         self.e.fb.ins().jump(done, &[]);
         self.e.fb.switch_to_block(done);
+    }
+
+    /// Makes the map stored at `slot` unique before an entry changes in
+    /// place, keeping the fast path inline as `make_unique` does for arrays.
+    fn make_map_unique(&mut self, slot: ir::Value, ty: Ty) -> ir::Value {
+        let map = self.e.fb.ins().load(POINTER, flags(), slot, 0);
+        let count = self.e.fb.ins().atomic_load(types::I64, flags(), map);
+        let (last, other) = match self.e.region {
+            Some(_) => ((REGION | 1) as i64, 1),
+            None => (1, (REGION | 1) as i64),
+        };
+        let unique = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, last);
+        let (elsewhere, copy, done) = (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
+        self.e.fb.append_block_param(done, POINTER);
+        self.e.fb.ins().brif(unique, done, &[map.into()], elsewhere, &[]);
+        self.e.fb.set_cold_block(elsewhere);
+        self.e.fb.switch_to_block(elsewhere);
+        let only = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, other);
+        self.e.fb.ins().brif(only, done, &[map.into()], copy, &[]);
+        self.e.fb.set_cold_block(copy);
+        self.e.fb.switch_to_block(copy);
+        let glue = self.e.map_glue_address(ty);
+        self.e.call_rt(Rt::MapUnique, &[slot, glue]);
+        let copied = self.e.fb.ins().load(POINTER, flags(), slot, 0);
+        self.e.fb.ins().jump(done, &[copied.into()]);
+        self.e.fb.switch_to_block(done);
+        self.e.fb.block_params(done)[0]
+    }
+
+    /// Makes the map held in `var` unique, spilling only on the cold shared
+    /// path.
+    fn make_map_unique_var(&mut self, var: Variable, ty: Ty) -> ir::Value {
+        let map = self.e.fb.use_var(var);
+        let count = self.e.fb.ins().atomic_load(types::I64, flags(), map);
+        let (last, other) = match self.e.region {
+            Some(_) => ((REGION | 1) as i64, 1),
+            None => (1, (REGION | 1) as i64),
+        };
+        let unique = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, last);
+        let (elsewhere, copy, done) = (self.e.fb.create_block(), self.e.fb.create_block(), self.e.fb.create_block());
+        self.e.fb.append_block_param(done, POINTER);
+        self.e.fb.ins().brif(unique, done, &[map.into()], elsewhere, &[]);
+        self.e.fb.set_cold_block(elsewhere);
+        self.e.fb.switch_to_block(elsewhere);
+        let only = self.e.fb.ins().icmp_imm_s(IntCC::Equal, count, other);
+        self.e.fb.ins().brif(only, done, &[map.into()], copy, &[]);
+        self.e.fb.set_cold_block(copy);
+        self.e.fb.switch_to_block(copy);
+        let slot = self.spill(var);
+        let glue = self.e.map_glue_address(ty);
+        self.e.call_rt(Rt::MapUnique, &[slot, glue]);
+        self.unspill(var, slot);
+        let copied = self.e.fb.use_var(var);
+        self.e.fb.ins().jump(done, &[copied.into()]);
+        self.e.fb.switch_to_block(done);
+        self.e.fb.block_params(done)[0]
     }
 
     /// Stores a variable into a fresh stack slot so the runtime can update it.
