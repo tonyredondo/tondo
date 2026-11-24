@@ -1265,9 +1265,14 @@ fn compile_one(
     let dumps = function.dfg.values_labels.is_some();
     let before = ir.then(|| function.display().to_string());
     context.func = function;
-    // What a latent site calls is the runtime, in the same image.
-    for (_, callee) in context.func.dfg.ext_funcs.iter_mut() {
-        callee.colocated |= callee.patchable;
+    // What a latent site or `tondo_rt_keep_registers` calls is the runtime, in
+    // the same image: keeping `keep_registers` colocated emits a direct `bl` on
+    // aarch64 rather than a GOT load through a scratch register that could
+    // overwrite a value kept for a dump.
+    let dfg = &mut context.func.dfg;
+    for (_, callee) in dfg.ext_funcs.iter_mut() {
+        callee.colocated |= callee.patchable
+            || dfg.signatures[callee.signature].call_conv == cranelift_codegen::isa::CallConv::PreserveAll;
     }
     context.compile(isa, &mut Default::default()).map_err(|e| format!("{:?}", e.inner))?;
     let ir = before.map(|before| (before, context.func.display().to_string()));
@@ -4794,4 +4799,90 @@ fn unwind_target(block: &crate::mir::BlockData, at: usize) -> Option<crate::mir:
 pub(crate) fn std_counted() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("TONDO_COVERAGE_STD").is_some())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn aarch64_keep_registers_preserves_failed_check_locals() {
+        use cranelift_object::object::{Object, ObjectSection, ObjectSymbol, RelocationTarget};
+        use std::io::Read;
+
+        let dir = std::env::temp_dir().join(format!("tondo-aarch64-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("picks.to");
+        std::fs::write(
+            &path,
+            "fn total(values: Array[Int], picks: Array[Int]): Int {\n    var sum = 0\n    var scale = 3\n    \
+             for pick in picks {\n        sum += values[pick] * scale\n        scale += 1\n    }\n    sum\n}\n\n\
+             fn main() {\n    let values = [4, 8, 15, 16, 23, 42]\n    let picks = [0, 2, 5, 9, 1]\n    \
+             _ = total(values, picks)\n}\n",
+        )
+        .unwrap();
+        let target = crate::target::Target::Aarch64;
+        let obj = crate::driver::for_target(target.project(), || {
+            let analysis = crate::driver::analyze(&path).unwrap();
+            crate::driver::compile(&analysis, false, Some(target), None)
+        })
+        .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // Parse bindings for F 0 (main with inlined total).
+        let mark = crate::cores::DEFLATED.as_bytes();
+        let pos = obj.windows(mark.len()).position(|w| w == mark).expect("bindings table");
+        let len = u64::from_le_bytes(obj[pos - 16..pos - 8].try_into().unwrap()) as usize;
+        let mut text = String::new();
+        flate2::read::DeflateDecoder::new(&obj[pos + mark.len()..pos + len]).read_to_string(&mut text).unwrap();
+        let mut func = usize::MAX;
+        let mut current = String::new();
+        let mut ranges: std::collections::HashMap<String, Vec<(u32, u32)>> = Default::default();
+        for line in text.lines() {
+            let fields: Vec<&str> = line.split('\t').collect();
+            match fields[..] {
+                ["F", index] => func = index.parse().unwrap(),
+                ["B", name, ..] if func == 0 => current = name.to_string(),
+                ["R", start, end, ..] if func == 0 => {
+                    ranges.entry(current.clone()).or_default().push((start.parse().unwrap(), end.parse().unwrap()));
+                }
+                _ => {}
+            }
+        }
+        let covers =
+            |name: &str, at: u32| ranges.get(name).is_some_and(|rs| rs.iter().any(|&(s, e)| s <= at && at < e));
+
+        // Every `tondo_rt_keep_registers` call in `tondo_f0_main` must be a
+        // direct CALL26 (no GOT scratch register), and every bounds-check
+        // panic site (followed by `sum` and `pick` still live) must cover them.
+        let file = cranelift_object::object::File::parse(&*obj).unwrap();
+        let main_sym = file.symbols().find(|s| s.name() == Ok("tondo_f0_main")).expect("tondo_f0_main");
+        let text_sec = file.section_by_index(main_sym.section_index().unwrap()).unwrap();
+        let main_start = main_sym.address();
+        let main_end = main_start + main_sym.size();
+        let mut keep_sites = Vec::new();
+        for (offset, reloc) in text_sec.relocations() {
+            if offset < main_start || offset >= main_end {
+                continue;
+            }
+            if let RelocationTarget::Symbol(sym_idx) = reloc.target()
+                && file.symbol_by_index(sym_idx).ok().and_then(|s| s.name().ok()) == Some("tondo_rt_keep_registers")
+            {
+                assert_eq!(
+                    reloc.flags(),
+                    cranelift_object::object::RelocationFlags::Elf {
+                        r_type: cranelift_object::object::elf::RelocationType(283),
+                    },
+                    "keep_registers must use direct CALL26 on aarch64"
+                );
+                keep_sites.push((offset - main_start) as u32);
+            }
+        }
+        assert!(keep_sites.len() >= 9, "expected bounds/overflow keep_registers sites, got {}", keep_sites.len());
+        let both_covered = keep_sites.iter().filter(|&&at| covers("sum", at) && covers("pick", at)).count();
+        assert!(
+            both_covered >= 9,
+            "expected all 9 bounds-check panic sites in main to cover both sum and pick, got {both_covered}/{}",
+            keep_sites.len()
+        );
+    }
 }
