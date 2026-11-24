@@ -366,6 +366,11 @@ pub fn compile(program: &Program, bodies: &[Body], sources: &SourceMap, options:
     let mut flags = settings::builder();
     // A debug build keeps the code as written, statement after statement.
     flags.set("opt_level", if debug { "none" } else { "speed" }).map_err(|e| e.to_string())?;
+    if !debug {
+        // Align compiled functions to 32 bytes so hot loop headers aligned
+        // inside VCode land on true hardware fetch/uop-cache boundaries.
+        flags.set("log2_min_function_alignment", "5").map_err(|e| e.to_string())?;
+    }
     flags.set("is_pic", "true").map_err(|e| e.to_string())?;
     // Integers of 128 bits pass as C passes them, in two registers.
     flags.set("enable_llvm_abi_extensions", "true").map_err(|e| e.to_string())?;
@@ -2074,6 +2079,66 @@ impl Codegen<'_> {
                 state ^= state << 17;
                 laid.swap(at, (state % (at as u64 + 1)) as usize);
             }
+        } else if self.debug.is_none() && laid.len() > 2 {
+            // Order functions by call-graph DFS from program roots so callers
+            // lie close to their direct callees in the code section.
+            let index_of: HashMap<u32, usize> =
+                laid.iter().enumerate().map(|(i, (job, _))| (job.id.as_u32(), i)).collect();
+            let mut callees: Vec<Vec<usize>> = Vec::with_capacity(laid.len());
+            for (i, (_, code)) in laid.iter().enumerate() {
+                let mut edges = Vec::new();
+                if let Ok(code) = code {
+                    for reloc in &code.relocs {
+                        if let cranelift_module::ModuleRelocTarget::User { namespace: 0, index } = reloc.name
+                            && let Some(&target) = index_of.get(&index)
+                            && target != i
+                            && !edges.contains(&target)
+                        {
+                            edges.push(target);
+                        }
+                    }
+                }
+                callees.push(edges);
+            }
+            let mut roots: Vec<usize> = Vec::with_capacity(laid.len());
+            for (i, (job, _)) in laid.iter().enumerate() {
+                if job.traced.as_deref() == Some("main") {
+                    roots.push(i);
+                }
+            }
+            for (i, (job, _)) in laid.iter().enumerate() {
+                if job.traced.is_some() && job.traced.as_deref() != Some("main") {
+                    roots.push(i);
+                }
+            }
+            for (i, (job, _)) in laid.iter().enumerate() {
+                if job.traced.is_none() {
+                    roots.push(i);
+                }
+            }
+            let mut visited = vec![false; laid.len()];
+            let mut order: Vec<usize> = Vec::with_capacity(laid.len());
+            let mut stack: Vec<usize> = Vec::new();
+            for root in roots {
+                if visited[root] {
+                    continue;
+                }
+                stack.push(root);
+                while let Some(node) = stack.pop() {
+                    if visited[node] {
+                        continue;
+                    }
+                    visited[node] = true;
+                    order.push(node);
+                    for &callee in callees[node].iter().rev() {
+                        if !visited[callee] {
+                            stack.push(callee);
+                        }
+                    }
+                }
+            }
+            let mut slots: Vec<_> = laid.into_iter().map(Some).collect();
+            laid = order.into_iter().map(|i| slots[i].take().expect("each function once")).collect();
         }
         for (job, code) in laid {
             let mut code = code?;

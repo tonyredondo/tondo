@@ -778,6 +778,7 @@ impl<I: VCodeInst> VCode<I> {
             }
         }
         let mut final_order: SmallVec<[BlockIndex; 16]> = smallvec![];
+        let mut sunk: SmallVec<[bool; 32]> = smallvec![false; self.num_blocks()];
         let mut sunk_any = false;
         if flags.opt_level() != settings::OptLevel::None && hot_blocks.len() > 2 {
             let mut hot_pos: SmallVec<[Option<usize>; 32]> = smallvec![None; self.num_blocks()];
@@ -789,7 +790,6 @@ impl<I: VCodeInst> VCode<I> {
                 let range = self.block_ranges.get(b.index());
                 has_call[b.index()] = (range.start..range.end).any(|i| self.insts[i].is_real_call());
             }
-            let mut sunk: SmallVec<[bool; 32]> = smallvec![false; self.num_blocks()];
             for i in 0..hot_blocks.len() {
                 let b = hot_blocks[i];
                 if sunk[b.index()] {
@@ -905,6 +905,29 @@ impl<I: VCodeInst> VCode<I> {
         }
         final_order.extend(cold_blocks.clone());
 
+        // Tondo: identify hot loop headers (non-cold, non-sunk blocks with a
+        // non-cold, non-sunk back-edge in `final_order`) so we align them to
+        // 32 bytes (matching x64's DSB/fetch window and function alignment).
+        let mut loop_header: SmallVec<[bool; 32]> = smallvec![false; self.num_blocks()];
+        if flags.opt_level() != settings::OptLevel::None && flags.bb_padding_log2_minus_one() == 0 {
+            let mut final_pos: SmallVec<[usize; 32]> = smallvec![0; self.num_blocks()];
+            for (pos, &b) in final_order.iter().enumerate() {
+                final_pos[b.index()] = pos;
+            }
+            for (pos, &b) in final_order.iter().enumerate() {
+                if self.block_order.is_cold(b) || sunk[b.index()] {
+                    continue;
+                }
+                if self
+                    .block_preds(b)
+                    .iter()
+                    .any(|&p| !self.block_order.is_cold(p) && !sunk[p.index()] && final_pos[p.index()] >= pos)
+                {
+                    loop_header[b.index()] = true;
+                }
+            }
+        }
+
         // Compute/save info we need for the prologue: clobbers and
         // number of spillslots.
         //
@@ -1014,6 +1037,12 @@ impl<I: VCodeInst> VCode<I> {
             // Now emit the regular block body.
 
             buffer.bind_label(MachLabel::from_block(block), state.ctrl_plane_mut());
+            if loop_header[block.index()] {
+                buffer.align_bound_label(MachLabel::from_block(block), 32, |buf, left| {
+                    let nop = I::gen_nop(left);
+                    nop.emit(buf, &self.emit_info, &mut Default::default());
+                });
+            }
 
             if want_disasm {
                 writeln!(&mut disasm, "block{}:", block.index()).unwrap();
