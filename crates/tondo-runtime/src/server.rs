@@ -665,17 +665,17 @@ pub(crate) fn private_key(given: &str) -> Result<rustls_pki_types::PrivateKeyDer
     PrivateKeyDer::from_pem_slice(&bytes).map_err(|error| format!("the private key{}: {error}", shown(given)))
 }
 
-/// The TLS of a server: its certificate chain and private key, the
-/// authorities whose client certificates it requires when `clients` is not
-/// empty, each a PEM's text or file, and the lowest version it accepts;
-/// ALPN offers HTTP/2 first when `http`.
-pub(crate) fn acceptor(
+/// The TLS configuration of a server: its certificate chain and private key,
+/// the authorities whose client certificates it requires when `clients` is not
+/// empty, each a PEM's text or file, and the lowest version it accepts; ALPN
+/// offers HTTP/2 first when `http`.
+pub(crate) fn tls_config(
     cert: &str,
     key: &str,
     clients: &str,
     minimum: i64,
     http: bool,
-) -> Result<tokio_rustls::TlsAcceptor, String> {
+) -> Result<rustls::ServerConfig, String> {
     let changing = store(cert);
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let builder = rustls::ServerConfig::builder_with_provider(provider.clone())
@@ -714,7 +714,18 @@ pub(crate) fn acceptor(
             }
         }
     }
-    Ok(tokio_rustls::TlsAcceptor::from(Arc::new(config)))
+    Ok(config)
+}
+
+/// The TLS acceptor of a server.
+pub(crate) fn acceptor(
+    cert: &str,
+    key: &str,
+    clients: &str,
+    minimum: i64,
+    http: bool,
+) -> Result<tokio_rustls::TlsAcceptor, String> {
+    tls_config(cert, key, clients, minimum, http).map(|config| tokio_rustls::TlsAcceptor::from(Arc::new(config)))
 }
 
 /// The certificates of `net.Certificates`, which change while a server

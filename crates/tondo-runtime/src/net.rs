@@ -155,7 +155,7 @@ struct Secure {
 }
 
 struct Session {
-    tls: rustls::Connection,
+    tls: super::tls13::TlsStream,
     /// Until the handshake is over: the wakers of the streams that wait for
     /// it.
     shaking: Option<Vec<Waker>>,
@@ -168,7 +168,7 @@ struct Session {
     keep: Option<Arc<Secure>>,
 }
 
-/// The socket, as rustls reads and writes it.
+/// The socket, as TLS reads and writes it.
 struct Raw<'a>(&'a Registered<mio::net::TcpStream>);
 
 impl Read for Raw<'_> {
@@ -192,12 +192,8 @@ impl Write for Raw<'_> {
 }
 
 impl Secure {
-    fn new(socket: Registered<mio::net::TcpStream>, mut tls: rustls::Connection) -> Arc<Secure> {
+    fn new(socket: Registered<mio::net::TcpStream>, tls: super::tls13::TlsStream) -> Arc<Secure> {
         let _ = socket.io().set_nodelay(true);
-        // A write takes all it is given, as TCP's does, which `HIGH` bounds:
-        // with rustls's own limit, a write the socket could not take at once
-        // would take less.
-        tls.set_buffer_limit(None);
         let session = Session { tls, shaking: Some(Vec::new()), failures: [None, None], unsent: 0, keep: None };
         let secure = Arc::new(Secure { socket, session: Mutex::new(session) });
         let weak = Arc::downgrade(&secure);
@@ -212,14 +208,12 @@ impl Secure {
     /// Sends what TLS holds while the socket takes it; the rest goes when it
     /// can take more.
     fn push(&self, session: &mut Session) -> std::io::Result<()> {
-        while session.tls.wants_write() {
-            match session.tls.write_tls(&mut Raw(&self.socket)) {
-                Ok(_) => {}
-                Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(()),
-                Err(error) => return Err(error),
-            }
+        if session.tls.wants_write() {
+            session.tls.push(&mut Raw(&self.socket))?;
         }
-        session.unsent = 0;
+        if !session.tls.wants_write() {
+            session.unsent = 0;
+        }
         Ok(())
     }
 
@@ -232,38 +226,10 @@ impl Secure {
         })
     }
 
-    /// Takes in the records read; the alert of a failure goes out first.
-    fn process(&self, session: &mut Session) -> std::io::Result<()> {
-        match session.tls.process_new_packets() {
-            Ok(_) => Ok(()),
-            Err(error) => {
-                let _ = self.push(session);
-                Err(std::io::Error::new(ErrorKind::InvalidData, error))
-            }
-        }
-    }
-
     /// One step of the handshake: `None` once it is over, or the direction
     /// of the socket it waits for.
     fn shake(&self, session: &mut Session) -> std::io::Result<Option<Direction>> {
-        loop {
-            self.push(session)?;
-            if session.tls.wants_write() {
-                return Ok(Some(Direction::Write));
-            }
-            if !session.tls.is_handshaking() {
-                return Ok(None);
-            }
-            match session.tls.read_tls(&mut Raw(&self.socket)) {
-                Ok(0) => {
-                    let why = "the other side ended the connection in the TLS handshake";
-                    return Err(std::io::Error::new(ErrorKind::UnexpectedEof, why));
-                }
-                Ok(_) => self.process(session)?,
-                Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(Some(Direction::Read)),
-                Err(error) => return Err(error),
-            }
-        }
+        session.tls.shake(&mut Raw(&self.socket))
     }
 
     /// The handshake is over, or failed: whoever waits for it goes on.
@@ -591,25 +557,15 @@ impl Host for SecureIn {
             return Err(would_wait(&mut self.waiting, self.gave_up, Awaited::Handshake));
         }
         failed(&session.failures[0])?;
-        loop {
-            match session.tls.reader().read(buffer) {
-                Ok(count) => {
-                    super::diagnostics::NET_READ.add(count as i64);
-                    return Ok(count);
-                }
-                Err(error) if error.kind() == ErrorKind::WouldBlock => {}
-                Err(error) => return Err(error),
+        match session.tls.read(&mut Raw(&secure.socket), buffer) {
+            Ok(count) => {
+                super::diagnostics::NET_READ.add(count as i64);
+                Ok(count)
             }
-            match session.tls.read_tls(&mut Raw(&secure.socket)) {
-                Ok(_) => {}
-                Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                    return Err(would_wait(&mut self.waiting, self.gave_up, Awaited::Socket(Direction::Read)));
-                }
-                Err(error) => return Err(error),
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                Err(would_wait(&mut self.waiting, self.gave_up, Awaited::Socket(Direction::Read)))
             }
-            secure.process(&mut session)?;
-            // What TLS answers, as to a key update, goes out.
-            let _ = secure.sent(&mut session);
+            Err(error) => Err(error),
         }
     }
 
@@ -684,14 +640,24 @@ impl Host for SecureOut {
             return Err(would_wait(&mut self.waiting, self.gave_up, Awaited::Handshake));
         }
         failed(&session.failures[1])?;
-        secure.sent(&mut session)?;
+        if session.tls.wants_write() {
+            secure.sent(&mut session)?;
+        }
         if session.unsent > 0 && session.unsent + data.len() > HIGH {
             return Err(would_wait(&mut self.waiting, self.gave_up, Awaited::Socket(Direction::Write)));
         }
-        session.tls.writer().write_all(data)?;
+        session.tls.write(&mut Raw(&secure.socket), data).map_err(|error| {
+            let failure = Failure::from(error);
+            session.failures[1] = Some(failure.clone());
+            std::io::Error::other(failure)
+        })?;
         super::diagnostics::NET_WRITTEN.add(data.len() as i64);
-        session.unsent += data.len();
-        secure.sent(&mut session)
+        if session.tls.wants_write() {
+            session.unsent += data.len();
+        } else {
+            session.unsent = 0;
+        }
+        Ok(())
     }
 
     /// Waits until the socket took everything.
@@ -723,8 +689,7 @@ impl Drop for SecureOut {
     fn drop(&mut self) {
         let mut session = lock(&self.secure.session);
         if session.shaking.is_none() {
-            session.tls.send_close_notify();
-            let _ = self.secure.sent(&mut session);
+            session.tls.send_close_notify(&mut Raw(&self.secure.socket));
         }
         if session.shaking.is_some() || !session.tls.wants_write() || session.failures[1].is_some() {
             let _ = self.secure.socket.io().end();
@@ -884,6 +849,7 @@ fn verifier(
 ) -> Result<(Arc<rustls::ClientConfig>, rustls_pki_types::ServerName<'static>), Failure> {
     let mut config = super::http::tls(trust, cert, key, minimum).map_err(|problem| failure(TLS, problem))?;
     config.alpn_protocols.clear();
+    config.enable_secret_extraction = true;
     let name = rustls_pki_types::ServerName::try_from(host.to_string())
         .map_err(|_| failure(INVALID_ADDRESS, format!("`{host}` is not a name TLS can verify")))?;
     Ok((Arc::new(config), name))
@@ -895,8 +861,8 @@ async fn client(
     config: Arc<rustls::ClientConfig>,
     name: rustls_pki_types::ServerName<'static>,
 ) -> Result<Connection, Failure> {
-    let tls = rustls::ClientConnection::new(config, name).map_err(|error| failure(TLS, error.to_string()))?;
-    let secure = Secure::new(socket, tls.into());
+    let tls = super::tls13::TlsStream::client(config, name).map_err(|error| failure(TLS, error.to_string()))?;
+    let secure = Secure::new(socket, tls);
     let shaken = handshake(&secure).await.map_err(|error| {
         let mut why = error.detail;
         if why.contains("UnknownIssuer") {
@@ -1275,12 +1241,12 @@ pub unsafe extern "C" fn tondo_rt_net_listen(
     let listening = port(port_number).and_then(|port| {
         let tls = match cert.is_empty() {
             true => None,
-            false => Some(
-                super::server::acceptor(&cert, &key, &clients, minimum, false)
-                    .map_err(|problem| failure(TLS, problem))?
-                    .config()
-                    .clone(),
-            ),
+            false => {
+                let mut config = super::server::tls_config(&cert, &key, &clients, minimum, false)
+                    .map_err(|problem| failure(TLS, problem))?;
+                config.enable_secret_extraction = true;
+                Some(Arc::new(config))
+            }
         };
         let listener = waited(async move {
             let mut last = failure(NOT_FOUND, host.as_str());
@@ -1354,8 +1320,8 @@ pub unsafe extern "C" fn tondo_rt_net_accept(
             Accepted::Tcp(stream) => stream,
         };
         let Some(config) = config else { return tcp(Registered::new(stream)?).map(Net::Connection) };
-        let tls = rustls::ServerConnection::new(config).map_err(|error| failure(TLS, error.to_string()))?;
-        let secure = Secure::new(Registered::new(stream)?, tls.into());
+        let tls = super::tls13::TlsStream::server(config).map_err(|error| failure(TLS, error.to_string()))?;
+        let secure = Secure::new(Registered::new(stream)?, tls);
         let connection = secured(secure.clone())?;
         // The handshake happens on its own, at the workers' turns, so a
         // slow client does not hold up the next one; its failure is the
