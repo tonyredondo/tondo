@@ -1634,9 +1634,8 @@ fn optimize(bodies: &mut Vec<crate::mir::Body>, program: &crate::hir::Program, s
     crate::elide::elide(bodies, types);
     after("elide", bodies, types, sources);
     crate::thread::thread(bodies, types);
-    after("thread", bodies, types, sources);
     crate::elide::fold_between_byte_length(bodies, types);
-    after("fold between", bodies, types, sources);
+    after("thread", bodies, types, sources);
     crate::takes::takes(bodies, types, program);
     after("takes", bodies, types, sources);
     crate::lends::lends(bodies, types);

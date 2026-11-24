@@ -565,6 +565,9 @@ fn inlinable_structure(body: &Body) -> Option<String> {
             }
         }
     }
+    if !body.loans.iter().any(|&lent| lent) {
+        return None;
+    }
     // A loan becomes the place lent, which cannot be an index or a local
     // a statement defines whole; a place can be assigned, as
     // `(count) { count += 1 }` does a cell's value.
