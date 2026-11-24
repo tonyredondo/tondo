@@ -72,11 +72,12 @@ pub unsafe extern "C" fn tondo_rt_text_split(
         return split_rarely(s, separator, limit, region);
     }
     let (s, separator) = (s.as_bytes(), separator.as_bytes());
-    let finder = memchr::memmem::Finder::new(separator);
+    let finder = (separator.len() > 1).then(|| memchr::memmem::Finder::new(separator));
     // Counted first, so that the array is made once at its length.
-    let count = match separator {
-        [byte] => memchr::memchr_iter(*byte, s).count(),
-        _ => finder.find_iter(s).count(),
+    let count = match (separator, &finder) {
+        ([byte], _) => memchr::memchr_iter(*byte, s).count(),
+        (_, Some(finder)) => finder.find_iter(s).count(),
+        _ => unreachable!(),
     };
     // The pieces and the array of them in one block, which holds the text
     // but its separators, or in one room of the region.
@@ -101,11 +102,12 @@ pub unsafe extern "C" fn tondo_rt_text_split(
         index += 1;
         start = end + separator.len();
     };
-    match separator {
+    match (separator, &finder) {
         // A byte, as a comma, is looked for with memchr, which sets up
         // nothing for each search, as the pieces it ends are short.
-        [byte] => memchr::memchr_iter(*byte, s).for_each(&mut piece),
-        _ => finder.find_iter(s).for_each(&mut piece),
+        ([byte], _) => memchr::memchr_iter(*byte, s).for_each(&mut piece),
+        (_, Some(finder)) => finder.find_iter(s).for_each(&mut piece),
+        _ => unreachable!(),
     }
     piece(s.len());
     if let Ok(pieces) = pieces {
@@ -156,7 +158,9 @@ pub unsafe extern "C" fn tondo_rt_text_between(s: *const Str, start: i64, end: i
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_find_in(s: *const Str, needle: *const Str, from: i64, to: i64) -> i64 {
     let from = from.max(0) as usize;
-    let found = text(&s).get(from..to.max(0) as usize).and_then(|part| part.find(text(&needle)));
+    let found = text(&s)
+        .get(from..to.max(0) as usize)
+        .and_then(|part| crate::strings::find(part.as_bytes(), text(&needle).as_bytes()));
     found.map_or(-1, |at| (from + at) as i64)
 }
 
@@ -270,18 +274,28 @@ fn without_whitespace(s: &str, ends: i64) -> &str {
 /// The scalar index of the last `needle`, or `-1`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_find_last(s: *const Str, needle: *const Str) -> i64 {
-    let s = text(&s);
-    s.rfind(text(&needle)).map_or(-1, |at| s[..at].chars().count() as i64)
+    let (s, needle) = (text(&s).as_bytes(), text(&needle).as_bytes());
+    if needle.is_empty() {
+        return crate::strings::scalars(s) as i64;
+    }
+    let found = match needle {
+        [byte] => memchr::memrchr(*byte, s),
+        bytes => memchr::memmem::rfind(s, bytes),
+    };
+    found.map_or(-1, |at| crate::strings::scalars(&s[..at]) as i64)
 }
 
 /// How many times `needle` appears, without overlapping.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tondo_rt_text_count(s: *const Str, needle: *const Str) -> i64 {
-    let needle = text(&needle);
+    let (s, needle) = (text(&s).as_bytes(), text(&needle).as_bytes());
     if needle.is_empty() {
-        return text(&s).chars().count() as i64 + 1;
+        return crate::strings::scalars(s) as i64 + 1;
     }
-    text(&s).matches(needle).count() as i64
+    (match needle {
+        [byte] => memchr::memchr_iter(*byte, s).count(),
+        bytes => memchr::memmem::find_iter(s, bytes).count(),
+    }) as i64
 }
 
 #[unsafe(no_mangle)]
@@ -289,7 +303,9 @@ pub unsafe extern "C" fn tondo_rt_text_lower(s: *const Str, region: *mut Region)
     let s = text(&s);
     match s.is_ascii() {
         true => cased(str_in(region, s.as_bytes()), <[u8]>::make_ascii_lowercase),
-        false => str_in(region, s.to_lowercase().as_bytes()),
+        // Greek final sigma depends on surrounding characters.
+        false if s.contains('Σ') => str_in(region, s.to_lowercase().as_bytes()),
+        false => case_in(s, region, false),
     }
 }
 
@@ -298,8 +314,51 @@ pub unsafe extern "C" fn tondo_rt_text_upper(s: *const Str, region: *mut Region)
     let s = text(&s);
     match s.is_ascii() {
         true => cased(str_in(region, s.as_bytes()), <[u8]>::make_ascii_uppercase),
-        false => str_in(region, s.to_uppercase().as_bytes()),
+        false => case_in(s, region, true),
     }
+}
+
+/// Changes a non-ASCII text's case directly into `region` (or a single heap
+/// string), handling ASCII spans in chunks without a temporary Rust `String`.
+fn case_in(s: &str, region: *mut Region, upper: bool) -> *mut Str {
+    let mut builder = std::mem::MaybeUninit::<crate::Builder>::uninit();
+    unsafe {
+        match region.is_null() {
+            true => {
+                builder.write(crate::Builder::new(s.len()));
+            }
+            false => super::builder::tondo_rt_sb_start_region(builder.as_mut_ptr(), s.len(), region),
+        }
+    }
+    let mut builder = unsafe { builder.assume_init() };
+    let bytes = s.as_bytes();
+    let mut at = 0;
+    let mut encoded = [0u8; 4];
+    while at < bytes.len() {
+        if bytes[at] < 0x80 {
+            let mut chunk = [0u8; 64];
+            let mut n = 0;
+            while at < bytes.len() && n < chunk.len() && bytes[at] < 0x80 {
+                chunk[n] = if upper { bytes[at].to_ascii_uppercase() } else { bytes[at].to_ascii_lowercase() };
+                at += 1;
+                n += 1;
+            }
+            builder.extend(&chunk[..n]);
+        } else {
+            let c = s[at..].chars().next().unwrap();
+            at += c.len_utf8();
+            if upper {
+                for u in c.to_uppercase() {
+                    builder.extend(u.encode_utf8(&mut encoded).as_bytes());
+                }
+            } else {
+                for l in c.to_lowercase() {
+                    builder.extend(l.encode_utf8(&mut encoded).as_bytes());
+                }
+            }
+        }
+    }
+    builder.finish()
 }
 
 /// An ASCII text just copied, its case changed in place: no text of Rust's
