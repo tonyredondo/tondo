@@ -308,8 +308,10 @@ fn work_loop(main: bool, until: Option<&dyn Fn() -> bool>, seeks: Option<usize>)
                 if polling.is_none() {
                     queue.idle_in[sleeps_in] += 1;
                 }
+                let mut now = None;
+                let mut current = || *now.get_or_insert_with(Instant::now);
                 if waited {
-                    let soon = Instant::now() + NEXT_WAIT;
+                    let soon = current() + NEXT_WAIT;
                     next = Some(next.map_or(soon, |at| at.min(soon)));
                 }
                 match stalled(&queue) {
@@ -318,7 +320,7 @@ fn work_loop(main: bool, until: Option<&dyn Fn() -> bool>, seeks: Option<usize>)
                         deadlock();
                     }
                     // Look again later: the threads of C may end.
-                    Stalled::MaybeC => next = Some(Instant::now() + RECHECK),
+                    Stalled::MaybeC => next = Some(current() + RECHECK),
                     Stalled::No => {}
                 }
                 if let Some((poller, polled)) = polling {
@@ -346,7 +348,7 @@ fn work_loop(main: bool, until: Option<&dyn Fn() -> bool>, seeks: Option<usize>)
                     looked = false;
                     continue;
                 }
-                let delay = next.map(|at| at.saturating_duration_since(Instant::now()));
+                let delay = next.map(|at| at.saturating_duration_since(current()));
                 queue = if crate::replay::replaying() {
                     // A replay waits for nothing: what woke the recorded
                     // run comes next in its recording.

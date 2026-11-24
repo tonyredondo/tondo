@@ -613,7 +613,7 @@ impl Client {
         }
         let (mut parts, incoming) = response.into_parts();
         let encoding = parts.headers.get(hyper::header::CONTENT_ENCODING).and_then(|value| value.to_str().ok());
-        let decoder = encoding.filter(|_| decodes).and_then(Decoder::of);
+        let decoder = encoding.filter(|_| decodes).and_then(Decoder::of).map(Box::new);
         if decoder.is_some() {
             // The program reads what was decoded, which has other lengths.
             parts.headers.remove(hyper::header::CONTENT_ENCODING);
@@ -633,7 +633,7 @@ impl Client {
 /// encoded them for this client, until the request's time is up.
 pub(crate) struct Received {
     incoming: Option<hyper::body::Incoming>,
-    decoder: Option<Decoder>,
+    decoder: Option<Box<Decoder>>,
     deadline: Option<Instant>,
     connection: Arc<crate::server::Turning>,
     /// How many more bytes the body may give once decoded, of the bound its
