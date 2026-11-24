@@ -439,7 +439,15 @@ fn drop_dead_pure_in(body: &mut Body) {
     }
     let count = body.locals.len();
     let mut pinned = vec![false; count];
-    for &local in body.params.iter().chain(&body.ret) {
+    for &local in body.params.iter().chain(&body.ret).chain(&body.arguments) {
+        pinned[local.0 as usize] = true;
+    }
+    for (index, name) in body.names.iter().enumerate() {
+        if name.is_some() {
+            pinned[index] = true;
+        }
+    }
+    for &(local, ..) in &body.scoped {
         pinned[local.0 as usize] = true;
     }
     for statement in body.blocks.iter().flat_map(|block| &block.stmts) {
