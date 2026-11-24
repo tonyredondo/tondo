@@ -311,6 +311,24 @@ const H1_INIT_READ_BUF: usize = 8192;
 const H1_MAX_HEAD_BYTES: usize = 409_600;
 const H1_MAX_HEADERS: usize = 100;
 const H1_INLINE_BODY_MAX: usize = 64 * 1024;
+const H1_COALESCE_MAX: usize = 16_384;
+
+fn is_peer_close(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::WriteZero
+    )
+}
+
+fn poll_frame_once(
+    stream: &mut http_body_util::combinators::UnsyncBoxBody<Bytes, std::io::Error>,
+) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, std::io::Error>>> {
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    hyper::body::Body::poll_frame(std::pin::Pin::new(stream), &mut cx)
+}
 
 impl Http1 {
     fn new(io: Box<dyn Duplex>) -> Http1 {
@@ -383,15 +401,32 @@ impl Http1 {
         std::future::poll_fn(|cx| self.poll_read_more(cx)).await
     }
 
-    async fn write_all_buf(io: &mut dyn Duplex, mut data: &[u8]) -> std::io::Result<()> {
+    async fn write_all_buf(io: &mut dyn Duplex, mut data: &[u8], wrote_any: &mut bool) -> std::io::Result<()> {
         while !data.is_empty() {
             let n = std::future::poll_fn(|cx| std::pin::Pin::new(&mut *io).poll_write(cx, data)).await?;
             if n == 0 {
                 return Err(std::io::ErrorKind::WriteZero.into());
             }
+            *wrote_any = true;
             data = &data[n..];
         }
         Ok(())
+    }
+
+    async fn write_slice(
+        io: &mut dyn Duplex,
+        data: &[u8],
+        wrote_any: &mut bool,
+        early_write_err: &mut Option<std::io::Error>,
+    ) -> Result<bool, H1Error> {
+        match Self::write_all_buf(io, data, wrote_any).await {
+            Ok(()) => Ok(true),
+            Err(e) if *wrote_any && is_peer_close(&e) => {
+                *early_write_err = Some(e);
+                Ok(false)
+            }
+            Err(e) => Err(H1Error::IoBeforeResponse(e)),
+        }
     }
 
     async fn flush_io(io: &mut dyn Duplex) -> std::io::Result<()> {
@@ -588,58 +623,109 @@ impl Http1 {
         }
         buf.extend_from_slice(b"\r\n");
 
+        let mut wrote_any = false;
+        let mut early_write_err: Option<std::io::Error> = None;
+
         match outgoing {
-            Outgoing::Empty => {
-                Self::write_all_buf(&mut *self.io, &self.write_buf).await.map_err(H1Error::IoBeforeResponse)?;
+            Outgoing::Empty | Outgoing::Full(None) => {
+                let _ = Self::write_slice(&mut *self.io, &self.write_buf, &mut wrote_any, &mut early_write_err).await?;
             }
             Outgoing::Full(Some(data)) => {
-                if data.len() <= 16_384 {
+                if data.len() <= H1_COALESCE_MAX {
                     self.write_buf.extend_from_slice(&data);
-                    Self::write_all_buf(&mut *self.io, &self.write_buf).await.map_err(H1Error::IoBeforeResponse)?;
-                } else {
-                    Self::write_all_buf(&mut *self.io, &self.write_buf).await.map_err(H1Error::IoBeforeResponse)?;
-                    Self::write_all_buf(&mut *self.io, &data).await.map_err(H1Error::IoBeforeResponse)?;
+                    let _ =
+                        Self::write_slice(&mut *self.io, &self.write_buf, &mut wrote_any, &mut early_write_err).await?;
+                } else if Self::write_slice(&mut *self.io, &self.write_buf, &mut wrote_any, &mut early_write_err)
+                    .await?
+                {
+                    let _ = Self::write_slice(&mut *self.io, &data, &mut wrote_any, &mut early_write_err).await?;
                 }
             }
-            Outgoing::Full(None) => {
-                Self::write_all_buf(&mut *self.io, &self.write_buf).await.map_err(H1Error::IoBeforeResponse)?;
-            }
-            Outgoing::Stream(mut stream) => {
-                Self::write_all_buf(&mut *self.io, &self.write_buf).await.map_err(H1Error::IoBeforeResponse)?;
-                while let Some(frame) =
-                    std::future::poll_fn(|cx| hyper::body::Body::poll_frame(std::pin::Pin::new(&mut stream), cx)).await
-                {
-                    let frame = frame.map_err(|e| H1Error::Protocol(with_causes(&e)))?;
-                    let Ok(data) = frame.into_data() else { continue };
-                    if data.is_empty() {
-                        continue;
-                    }
-                    if chunked_request {
-                        self.write_buf.clear();
-                        let _ = write!(&mut self.write_buf, "{:x}\r\n", data.len());
-                        if data.len() <= 16_384 {
-                            self.write_buf.extend_from_slice(&data);
-                            self.write_buf.extend_from_slice(b"\r\n");
-                            Self::write_all_buf(&mut *self.io, &self.write_buf)
-                                .await
-                                .map_err(H1Error::IoBeforeResponse)?;
-                        } else {
-                            Self::write_all_buf(&mut *self.io, &self.write_buf)
-                                .await
-                                .map_err(H1Error::IoBeforeResponse)?;
-                            Self::write_all_buf(&mut *self.io, &data).await.map_err(H1Error::IoBeforeResponse)?;
-                            Self::write_all_buf(&mut *self.io, b"\r\n").await.map_err(H1Error::IoBeforeResponse)?;
+            Outgoing::Stream(mut stream) => loop {
+                // Coalesce immediately available frames (such as small multipart
+                // forms) with the headers into `write_buf`, while flushing right
+                // away whenever the stream yields `Pending` so slow or
+                // interactive bodies are not delayed.
+                let next = if !self.write_buf.is_empty() {
+                    match poll_frame_once(&mut stream) {
+                        std::task::Poll::Ready(item) => item,
+                        std::task::Poll::Pending => {
+                            if !Self::write_slice(&mut *self.io, &self.write_buf, &mut wrote_any, &mut early_write_err)
+                                .await?
+                            {
+                                break;
+                            }
+                            self.write_buf.clear();
+                            std::future::poll_fn(|cx| {
+                                hyper::body::Body::poll_frame(std::pin::Pin::new(&mut stream), cx)
+                            })
+                            .await
                         }
-                    } else {
-                        Self::write_all_buf(&mut *self.io, &data).await.map_err(H1Error::IoBeforeResponse)?;
                     }
+                } else {
+                    std::future::poll_fn(|cx| hyper::body::Body::poll_frame(std::pin::Pin::new(&mut stream), cx)).await
+                };
+                let Some(frame) = next else {
+                    if chunked_request {
+                        self.write_buf.extend_from_slice(b"0\r\n\r\n");
+                    }
+                    if !self.write_buf.is_empty() {
+                        let _ = Self::write_slice(&mut *self.io, &self.write_buf, &mut wrote_any, &mut early_write_err)
+                            .await?;
+                    }
+                    break;
+                };
+                let frame = frame.map_err(|e| H1Error::Protocol(with_causes(&e)))?;
+                let Ok(data) = frame.into_data() else { continue };
+                if data.is_empty() {
+                    continue;
                 }
                 if chunked_request {
-                    Self::write_all_buf(&mut *self.io, b"0\r\n\r\n").await.map_err(H1Error::IoBeforeResponse)?;
+                    if self.write_buf.len() + data.len() + 24 <= H1_COALESCE_MAX {
+                        let _ = write!(&mut self.write_buf, "{:x}\r\n", data.len());
+                        self.write_buf.extend_from_slice(&data);
+                        self.write_buf.extend_from_slice(b"\r\n");
+                    } else {
+                        let _ = write!(&mut self.write_buf, "{:x}\r\n", data.len());
+                        if !Self::write_slice(&mut *self.io, &self.write_buf, &mut wrote_any, &mut early_write_err)
+                            .await?
+                        {
+                            break;
+                        }
+                        self.write_buf.clear();
+                        if !Self::write_slice(&mut *self.io, &data, &mut wrote_any, &mut early_write_err).await? {
+                            break;
+                        }
+                        if !Self::write_slice(&mut *self.io, b"\r\n", &mut wrote_any, &mut early_write_err).await? {
+                            break;
+                        }
+                    }
+                } else if self.write_buf.len() + data.len() <= H1_COALESCE_MAX {
+                    self.write_buf.extend_from_slice(&data);
+                } else {
+                    if !self.write_buf.is_empty() {
+                        if !Self::write_slice(&mut *self.io, &self.write_buf, &mut wrote_any, &mut early_write_err)
+                            .await?
+                        {
+                            break;
+                        }
+                        self.write_buf.clear();
+                    }
+                    if !Self::write_slice(&mut *self.io, &data, &mut wrote_any, &mut early_write_err).await? {
+                        break;
+                    }
                 }
+            },
+        }
+        if early_write_err.is_none()
+            && let Err(e) = Self::flush_io(&mut *self.io).await
+        {
+            if wrote_any && is_peer_close(&e) {
+                early_write_err = Some(e);
+            } else {
+                return Err(H1Error::IoBeforeResponse(e));
             }
         }
-        Self::flush_io(&mut *self.io).await.map_err(H1Error::IoBeforeResponse)?;
 
         let mut received_any = !self.unread().is_empty();
         loop {
@@ -652,15 +738,17 @@ impl Http1 {
                 }
                 let n = match self.read_more().await {
                     Ok(n) => n,
-                    Err(e) if !received_any => return Err(H1Error::IoBeforeResponse(e)),
+                    Err(e) if !received_any => return Err(H1Error::IoBeforeResponse(early_write_err.unwrap_or(e))),
                     Err(e) => return Err(H1Error::Protocol(e.to_string())),
                 };
                 if n == 0 {
                     if !received_any {
-                        return Err(H1Error::IoBeforeResponse(std::io::Error::new(
-                            std::io::ErrorKind::UnexpectedEof,
-                            "connection closed before message completed",
-                        )));
+                        return Err(H1Error::IoBeforeResponse(early_write_err.unwrap_or_else(|| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::UnexpectedEof,
+                                "connection closed before message completed",
+                            )
+                        })));
                     }
                     return Err(H1Error::Protocol("connection closed before message completed".into()));
                 }
@@ -774,7 +862,8 @@ impl Http1 {
                 H1Framing::UntilEof
             };
 
-            let keep_alive = !req_close
+            let keep_alive = early_write_err.is_none()
+                && !req_close
                 && !conn_close
                 && !matches!(framing, H1Framing::UntilEof)
                 && !(has_te && content_length.is_some())
@@ -2317,6 +2406,124 @@ mod tests {
                 })
                 .await;
             assert!(matches!(result, Err(H1Error::Protocol(_))));
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn h1_reads_early_response_when_peer_closes_during_streaming_upload() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            // Small buffer forces the streaming body write to suspend after the
+            // headers so the server can reject the request and drop its read
+            // half before the body finishes uploading.
+            let (client_io, server_io) = tokio::io::duplex(256);
+            let mut h1 = Http1::new(Box::new(client_io));
+            let url = url::Url::parse("http://example.test/form").unwrap();
+            let route = RouteRef { secure: false, host: "example.test", port: 80, via: ViaRef::Direct };
+
+            let server = tokio::spawn(async move {
+                let (mut reader, mut writer) = tokio::io::split(server_io);
+                let mut head = Vec::new();
+                let mut tmp = [0u8; 64];
+                while find_header_end(&head).is_none() {
+                    let n = reader.read(&mut tmp).await.unwrap();
+                    assert!(n > 0);
+                    head.extend_from_slice(&tmp[..n]);
+                }
+                // Drop the read half without reading the body so the client's
+                // remaining writes hit BrokenPipe, then send the early 415.
+                drop(reader);
+                writer
+                    .write_all(
+                        b"HTTP/1.1 415 Unsupported Media Type\r\nContent-Length: 9\r\nConnection: close\r\n\r\nnot a url",
+                    )
+                    .await
+                    .unwrap();
+                writer.shutdown().await.unwrap();
+            });
+
+            let chunks = futures_util::stream::iter((0..4).map(|_| Ok(Bytes::from(vec![b'x'; 1024]))));
+            let head = h1
+                .send_request_and_read_head(H1Request {
+                    method: &hyper::Method::POST,
+                    url: &url,
+                    route: &route,
+                    headers: &[],
+                    outgoing: streamed(chunks),
+                    length: Some(4096),
+                    kind: Some("multipart/form-data; boundary=abc".into()),
+                    cookies: &None,
+                    decodes: true,
+                })
+                .await
+                .ok()
+                .unwrap();
+            assert_eq!(head.status, hyper::StatusCode::UNSUPPORTED_MEDIA_TYPE);
+            assert!(!head.keep_alive);
+            assert!(matches!(head.framing, H1Framing::Length(9)));
+            let mut body = Http1Body { conn: Some(h1), state: H1BodyState::Length(9), return_to: None };
+            let mut received = Vec::new();
+            while let Some(chunk) = std::future::poll_fn(|cx| body.poll_chunk(cx)).await.unwrap() {
+                received.extend_from_slice(&chunk);
+            }
+            assert_eq!(received, b"not a url");
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn h1_coalesces_small_multipart_form_into_single_write() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let (client_io, mut server_io) = tokio::io::duplex(4096);
+            let mut h1 = Http1::new(Box::new(client_io));
+            let url = url::Url::parse("http://example.test/profile").unwrap();
+            let route = RouteRef { secure: false, host: "example.test", port: 80, via: ViaRef::Direct };
+
+            let mut form = Form::default();
+            form.add(Part {
+                name: "name".into(),
+                file_name: String::new(),
+                content_type: String::new(),
+                content: Content::Bytes(Bytes::from_static(b"Ada")),
+            });
+            form.add(Part {
+                name: "age".into(),
+                file_name: String::new(),
+                content_type: String::new(),
+                content: Content::Bytes(Bytes::from_static(b"36")),
+            });
+            let (outgoing, length, kind) = form.into_body();
+            let boundary = kind.strip_prefix("multipart/form-data; boundary=").unwrap().to_owned();
+            let closing = format!("--{boundary}--\r\n");
+
+            let server = tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let n = server_io.read(&mut buf).await.unwrap();
+                let wire = std::str::from_utf8(&buf[..n]).unwrap();
+                assert!(wire.contains("\r\n\r\n"), "missing header terminator: {wire}");
+                assert!(wire.ends_with(&closing), "multipart body not coalesced into one write: {wire}");
+                server_io.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").await.unwrap();
+            });
+
+            let head = h1
+                .send_request_and_read_head(H1Request {
+                    method: &hyper::Method::POST,
+                    url: &url,
+                    route: &route,
+                    headers: &[],
+                    outgoing,
+                    length,
+                    kind: Some(kind),
+                    cookies: &None,
+                    decodes: true,
+                })
+                .await
+                .ok()
+                .unwrap();
+            assert_eq!(head.status, hyper::StatusCode::OK);
+            assert!(head.keep_alive);
             server.await.unwrap();
         });
     }

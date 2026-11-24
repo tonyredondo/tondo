@@ -2349,6 +2349,54 @@ pub unsafe extern "C" fn tondo_rt_http_request_form_of(
     }
 }
 
+/// Defers stream EOF by one poll whenever data was just yielded since the last
+/// `Pending`: `multer` 3.1's `FindingFirstBoundary` polls the stream a second
+/// time inside the same `poll_next_field` call and immediately reports
+/// `Error::IncompleteStream` on `eof` without re-scanning buffered bytes.
+struct DeferEof<S> {
+    inner: Pin<Box<S>>,
+    yielded_data: bool,
+    eof_pending: bool,
+}
+
+impl<S> DeferEof<S> {
+    fn new(inner: S) -> Self {
+        DeferEof { inner: Box::pin(inner), yielded_data: false, eof_pending: false }
+    }
+}
+
+impl<S, T, E> futures_util::Stream for DeferEof<S>
+where
+    S: futures_util::Stream<Item = Result<T, E>>,
+{
+    type Item = Result<T, E>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.eof_pending {
+            self.eof_pending = false;
+            return Poll::Ready(None);
+        }
+        match self.inner.as_mut().poll_next(cx) {
+            Poll::Ready(Some(Ok(data))) => {
+                self.yielded_data = true;
+                Poll::Ready(Some(Ok(data)))
+            }
+            Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err))),
+            Poll::Ready(None) if self.yielded_data => {
+                self.yielded_data = false;
+                self.eof_pending = true;
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => {
+                self.yielded_data = false;
+                Poll::Pending
+            }
+        }
+    }
+}
+
 /// The parts of a `multipart/form-data` body, read as they arrive.
 #[unsafe(no_mangle)]
 pub extern "C" fn tondo_rt_http_request_form(object: *mut NativeObject) -> *mut NativeObject {
@@ -2362,7 +2410,7 @@ pub extern "C" fn tondo_rt_http_request_form(object: *mut NativeObject) -> *mut 
                 note_exceeded(error.as_ref(), &answering.exceeded);
                 error
             });
-            let stream = http_body_util::BodyDataStream::new(body);
+            let stream = DeferEof::new(http_body_util::BodyDataStream::new(body));
             let reader = multer::Multipart::new(stream, boundary);
             native::new(Form { failure: Mutex::new(None), reader: Some(Arc::new(tokio::sync::Mutex::new(reader))) })
         }
@@ -2521,5 +2569,75 @@ pub extern "C" fn tondo_rt_http_accept_websocket(object: *mut NativeObject) -> *
         Some(Err(error)) => failed(&error.to_string()),
         None if super::panics::unwinds() => std::ptr::null_mut(),
         None => failed("the task was cancelled"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Deterministic stream that yields `Pending` on its first poll and then
+    /// `Some(Ok(data))` followed immediately by `None`, matching the race in
+    /// `multer` 3.1's `FindingFirstBoundary` stage when headers and body arrive
+    /// in separate reads.
+    struct PendingThenOnce {
+        step: u8,
+        data: Option<Bytes>,
+    }
+
+    impl PendingThenOnce {
+        fn new(data: Option<Bytes>) -> Self {
+            PendingThenOnce { step: 0, data }
+        }
+    }
+
+    impl futures_util::Stream for PendingThenOnce {
+        type Item = Result<Bytes, std::convert::Infallible>;
+
+        fn poll_next(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            match self.step {
+                0 => {
+                    self.step = 1;
+                    Poll::Pending
+                }
+                1 => {
+                    self.step = 2;
+                    Poll::Ready(self.data.take().map(Ok))
+                }
+                _ => Poll::Ready(None),
+            }
+        }
+    }
+
+    #[test]
+    fn defer_eof_prevents_multer_incomplete_stream_on_pending_then_data_eof() {
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let boundary = "b52b17c9721c3e709a76f8fc53428cbf";
+        let body = Bytes::from(format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nBo\r\n--{boundary}--\r\n"
+        ));
+
+        rt.block_on(async {
+            // Confirm raw multer 3.1 fails on this exact sequence.
+            let mut raw = multer::Multipart::new(PendingThenOnce::new(Some(body.clone())), boundary);
+            assert!(matches!(raw.next_field().await, Err(multer::Error::IncompleteStream)));
+
+            // With DeferEof, multer scans the buffered body before seeing EOF.
+            let mut guarded = multer::Multipart::new(DeferEof::new(PendingThenOnce::new(Some(body))), boundary);
+            let field = guarded.next_field().await.unwrap().expect("expected field");
+            assert_eq!(field.name(), Some("name"));
+            assert_eq!(field.text().await.unwrap(), "Bo");
+            assert!(guarded.next_field().await.unwrap().is_none());
+
+            // Empty and truncated streams still fail as expected.
+            let mut empty = multer::Multipart::new(DeferEof::new(PendingThenOnce::new(None)), boundary);
+            assert!(empty.next_field().await.is_err());
+
+            let truncated =
+                Bytes::from(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nBo"));
+            let mut bad = multer::Multipart::new(DeferEof::new(PendingThenOnce::new(Some(truncated))), boundary);
+            let field = bad.next_field().await.unwrap().expect("expected field head");
+            assert!(field.bytes().await.is_err());
+        });
     }
 }
