@@ -545,7 +545,7 @@ struct Response {
     url: String,
     version: hyper::Version,
     /// As they came, until the program asks for one.
-    headers: hyper::HeaderMap,
+    headers: super::client::ResponseHeaders,
     body: Mutex<Option<super::client::Received>>,
 }
 
@@ -556,7 +556,7 @@ impl Response {
             status: 0,
             url: String::new(),
             version: hyper::Version::default(),
-            headers: hyper::HeaderMap::new(),
+            headers: Vec::new(),
             body: Mutex::new(None),
         }
     }
@@ -687,8 +687,11 @@ pub extern "C" fn tondo_rt_http_header(
     name: *const Str,
     region: *mut crate::regions::Region,
 ) -> *mut ArrayHeader {
-    let values = response(object).headers.get_all(unsafe { crate::str_text(&name) });
-    crate::arrays::texts_array_in(region, || values.iter().map(|value| value.as_bytes()))
+    let wanted = unsafe { crate::str_text(&name) };
+    let headers = &response(object).headers;
+    crate::arrays::texts_array_in(region, || {
+        headers.iter().filter(|(n, _)| n.as_str().eq_ignore_ascii_case(wanted)).map(|(_, v)| v.as_bytes())
+    })
 }
 
 /// The headers' names, lowercase, and values in turn.
@@ -715,10 +718,24 @@ pub extern "C" fn tondo_rt_http_read_all(
 ) -> *mut ArrayHeader {
     let response = response(object);
     let taken = response.body.lock().unwrap_or_else(|e| e.into_inner()).take();
-    let Some(body) = taken.map(|body| body.bounded(most.max(0) as u64)) else {
+    let Some(mut body) = taken.map(|body| body.bounded(most.max(0) as u64)) else {
         *response.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(("body", ALREADY_READ.into()));
         return crate::arrays::byte_array_in(region, &[]);
     };
+    if let Some(ready) = body.take_ready() {
+        return match ready {
+            Ok(ready) => crate::arrays::byte_array_in(region, ready.as_slice()),
+            Err(("too large", _)) => {
+                *response.failure.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(("too large", most.max(0).to_string()));
+                crate::arrays::byte_array_in(region, &[])
+            }
+            Err(failure) => {
+                *response.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(failure);
+                crate::arrays::byte_array_in(region, &[])
+            }
+        };
+    }
     match super::io::wait_for(async move { body.all().await }) {
         Some(Ok(bytes)) => crate::arrays::byte_array_in(region, &bytes),
         None if super::panics::unwinds() => std::ptr::null_mut(),

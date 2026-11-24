@@ -25,28 +25,72 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use tokio::sync::{oneshot, watch};
 
+/// A piece of a response body: inline for small replies so `"hello"` and
+/// similar texts avoid a heap allocation per request.
+enum Chunk {
+    Bytes(Bytes),
+    Inline { data: [u8; 24], pos: u8, len: u8 },
+}
+
+impl Chunk {
+    fn inline(bytes: &[u8]) -> Chunk {
+        debug_assert!(bytes.len() <= 24);
+        let mut data = [0u8; 24];
+        data[..bytes.len()].copy_from_slice(bytes);
+        Chunk::Inline { data, pos: 0, len: bytes.len() as u8 }
+    }
+}
+
+impl Buf for Chunk {
+    fn remaining(&self) -> usize {
+        match self {
+            Chunk::Bytes(bytes) => bytes.remaining(),
+            Chunk::Inline { pos, len, .. } => usize::from(*len - *pos),
+        }
+    }
+
+    fn chunk(&self) -> &[u8] {
+        match self {
+            Chunk::Bytes(bytes) => bytes.chunk(),
+            Chunk::Inline { data, pos, len } => &data[usize::from(*pos)..usize::from(*len)],
+        }
+    }
+
+    fn advance(&mut self, cnt: usize) {
+        match self {
+            Chunk::Bytes(bytes) => bytes.advance(cnt),
+            Chunk::Inline { pos, len, .. } => {
+                debug_assert!(usize::from(*pos) + cnt <= usize::from(*len));
+                *pos += cnt as u8;
+            }
+        }
+    }
+}
+
 enum Body {
     Empty,
-    Full(Option<Bytes>),
+    Full(Option<Chunk>),
     Stream(UnsyncBoxBody<Bytes, std::io::Error>),
 }
 
 impl hyper::body::Body for Body {
-    type Data = Bytes;
+    type Data = Chunk;
     type Error = std::io::Error;
 
-    fn poll_frame(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, std::io::Error>>> {
+    fn poll_frame(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Chunk>, std::io::Error>>> {
         match self.get_mut() {
             Body::Empty => Poll::Ready(None),
-            Body::Full(bytes) => Poll::Ready(bytes.take().filter(|b| !b.is_empty()).map(|b| Ok(Frame::data(b)))),
-            Body::Stream(stream) => Pin::new(stream).poll_frame(cx),
+            Body::Full(chunk) => Poll::Ready(chunk.take().filter(Buf::has_remaining).map(|c| Ok(Frame::data(c)))),
+            Body::Stream(stream) => {
+                Pin::new(stream).poll_frame(cx).map(|opt| opt.map(|res| res.map(|frame| frame.map_data(Chunk::Bytes))))
+            }
         }
     }
 
     fn is_end_stream(&self) -> bool {
         match self {
             Body::Empty => true,
-            Body::Full(bytes) => bytes.as_ref().is_none_or(Bytes::is_empty),
+            Body::Full(chunk) => chunk.as_ref().is_none_or(|c| !c.has_remaining()),
             Body::Stream(stream) => stream.is_end_stream(),
         }
     }
@@ -54,7 +98,7 @@ impl hyper::body::Body for Body {
     fn size_hint(&self) -> hyper::body::SizeHint {
         match self {
             Body::Empty => hyper::body::SizeHint::with_exact(0),
-            Body::Full(bytes) => hyper::body::SizeHint::with_exact(bytes.as_ref().map_or(0, Bytes::len) as u64),
+            Body::Full(chunk) => hyper::body::SizeHint::with_exact(chunk.as_ref().map_or(0, Buf::remaining) as u64),
             Body::Stream(stream) => stream.size_hint(),
         }
     }
@@ -464,9 +508,44 @@ fn request<'a>(object: *mut NativeObject) -> &'a Request {
     native::get::<Request>(object).expect("an HTTP request")
 }
 
+/// Cleared `HeaderMap`s returned by dropped requests and reused by responses
+/// so hyper's `cached_headers` circulates one allocation per connection instead
+/// of allocating a fresh `HeaderMap` on every request.
+static HEADER_MAPS: Mutex<Vec<hyper::HeaderMap>> = Mutex::new(Vec::new());
+
+fn take_header_map() -> hyper::HeaderMap {
+    lock(&HEADER_MAPS).pop().unwrap_or_default()
+}
+
+fn recycle_header_map(mut map: hyper::HeaderMap) {
+    if map.capacity() > 0 && map.capacity() <= 32 {
+        map.clear();
+        let mut pool = lock(&HEADER_MAPS);
+        if pool.len() < 64 {
+            pool.push(map);
+        }
+    }
+}
+
+impl Drop for Request {
+    fn drop(&mut self) {
+        recycle_header_map(std::mem::take(&mut self.headers));
+    }
+}
+
 fn full(bytes: impl Into<Bytes>) -> Body {
     let bytes = bytes.into();
-    if bytes.is_empty() { Body::Empty } else { Body::Full(Some(bytes)) }
+    if bytes.is_empty() { Body::Empty } else { Body::Full(Some(Chunk::Bytes(bytes))) }
+}
+
+fn full_slice(bytes: &[u8]) -> Body {
+    if bytes.is_empty() {
+        Body::Empty
+    } else if bytes.len() <= 24 {
+        Body::Full(Some(Chunk::inline(bytes)))
+    } else {
+        Body::Full(Some(Chunk::Bytes(Bytes::copy_from_slice(bytes))))
+    }
 }
 
 fn plain(status: u16, message: &str) -> hyper::Response<Body> {
@@ -475,38 +554,68 @@ fn plain(status: u16, message: &str) -> hyper::Response<Body> {
     response
 }
 
+fn status_code(status: i64) -> Result<hyper::StatusCode, hyper::http::status::InvalidStatusCode> {
+    hyper::StatusCode::from_u16(u16::try_from(status).unwrap_or(500))
+}
+
 /// A response with the status and headers, names and values in turn.
 fn response(status: i64, headers: &[String], body: Body) -> hyper::Response<Body> {
-    let mut builder = hyper::Response::builder().status(u16::try_from(status).unwrap_or(500));
+    let code = match status_code(status) {
+        Ok(code) => code,
+        Err(error) => return plain(500, &format!("a header is not valid: {error}")),
+    };
+    let mut out = hyper::Response::new(body);
+    *out.status_mut() = code;
+    let map = out.headers_mut();
+    *map = take_header_map();
     for pair in headers.chunks(2) {
         if let [name, value] = pair {
-            match (hyper::header::HeaderName::try_from(name.as_str()), super::client::header_value(value.as_str())) {
-                (Ok(name), Ok(value)) => builder = builder.header(name, value),
-                _ => builder = builder.header(name.as_str(), value.as_str()),
-            }
+            let name = match hyper::header::HeaderName::try_from(name.as_str()) {
+                Ok(name) => name,
+                Err(error) => return plain(500, &format!("a header is not valid: {error}")),
+            };
+            let value = match super::client::header_value(value.as_str()) {
+                Ok(value) => value,
+                Err(error) => return plain(500, &format!("a header is not valid: {error}")),
+            };
+            map.append(name, value);
         }
     }
-    builder.body(body).unwrap_or_else(|error| plain(500, &format!("a header is not valid: {error}")))
+    out
 }
 
 /// A response with the status and a Tondo header array, reading its strings in
 /// place without allocating intermediate `String`s.
 fn response_from_array(status: i64, headers: *mut ArrayHeader, body: Body) -> hyper::Response<Body> {
-    let mut builder = hyper::Response::builder().status(u16::try_from(status).unwrap_or(500));
+    let code = match status_code(status) {
+        Ok(code) => code,
+        Err(error) => return plain(500, &format!("a header is not valid: {error}")),
+    };
+    let mut out = hyper::Response::new(body);
+    *out.status_mut() = code;
     if !headers.is_null() {
         let count = unsafe { (*headers).len };
-        let mut i = 0;
-        while i + 1 < count {
-            let name = unsafe { crate::str_text(&*(super::element(headers, 8, i) as *const *const Str)) };
-            let value = unsafe { crate::str_text(&*(super::element(headers, 8, i + 1) as *const *const Str)) };
-            match (hyper::header::HeaderName::try_from(name), super::client::header_value(value)) {
-                (Ok(name), Ok(value)) => builder = builder.header(name, value),
-                _ => builder = builder.header(name, value),
+        if count >= 2 {
+            let map = out.headers_mut();
+            *map = take_header_map();
+            let mut i = 0;
+            while i + 1 < count {
+                let name = unsafe { crate::str_text(&*(super::element(headers, 8, i) as *const *const Str)) };
+                let value = unsafe { crate::str_text(&*(super::element(headers, 8, i + 1) as *const *const Str)) };
+                let name = match hyper::header::HeaderName::try_from(name) {
+                    Ok(name) => name,
+                    Err(error) => return plain(500, &format!("a header is not valid: {error}")),
+                };
+                let value = match super::client::header_value(value) {
+                    Ok(value) => value,
+                    Err(error) => return plain(500, &format!("a header is not valid: {error}")),
+                };
+                map.append(name, value);
+                i += 2;
             }
-            i += 2;
         }
     }
-    builder.body(body).unwrap_or_else(|error| plain(500, &format!("a header is not valid: {error}")))
+    out
 }
 
 /// The bytes of a PEM given as its text, which starts with `-----BEGIN`,
@@ -1180,11 +1289,12 @@ async fn serving(
     // Weak: the exchange holds this future, which would keep it alive.
     let exchange = Arc::downgrade(&exchange);
     let streams = Streams(exchange.clone());
+    let head_cache: Arc<Mutex<HeadCache>> = Arc::default();
     let serve = hyper::service::service_fn(move |mut request| {
         // Detach before returning the future so hyper's `poll_read_keep_alive`
         // (which runs before the future is polled) sees `ref_cnt == 1` and
         // reclaims its 8 KiB `read_buf` in place.
-        detach_head(&mut request);
+        detach_head(&mut request, &head_cache);
         handle(request, exchange.clone(), remote.clone(), secure, client.clone(), limits, answering.clone())
     });
     let mut builder = hyper_util::server::conn::auto::Builder::new(streams);
@@ -1213,45 +1323,105 @@ async fn serving(
     }
 }
 
+/// Per-connection cache of the last detached URI and `Host` header so repeated
+/// keep-alive requests detach without allocating.
+#[derive(Default)]
+struct HeadCache {
+    uri: Option<hyper::Uri>,
+    host: Option<hyper::header::HeaderValue>,
+}
+
 /// Copies a small bodyless HTTP/1 request head (`uri` and `headers`) out of
-/// hyper's 8 KiB `read_buf` into one compact buffer before `handle` is
-/// constructed, so hyper's `poll_read_keep_alive` reclaims the 8 KiB buffer in
-/// place instead of allocating a fresh 8 KiB buffer on every request.
-fn detach_head(request: &mut hyper::Request<Incoming>) {
+/// hyper's 8 KiB `read_buf` before `handle` is constructed, so hyper's
+/// `poll_read_keep_alive` reclaims the 8 KiB buffer in place instead of
+/// allocating a fresh 8 KiB buffer on every request.
+fn detach_head(request: &mut hyper::Request<Incoming>, cache: &Mutex<HeadCache>) {
     if request.version() >= hyper::Version::HTTP_2 || !hyper::body::Body::is_end_stream(request.body()) {
         return;
     }
     let uri = request.uri();
-    let uri_len = if uri.scheme().is_none() && uri.authority().is_none() {
+    let uri_str = if uri.scheme().is_none() && uri.authority().is_none() {
         match uri.path_and_query() {
-            Some(pq) => pq.as_str().len(),
+            Some(pq) => pq.as_str(),
             None => return,
         }
     } else {
         return;
     };
-    let mut total = uri_len;
-    for value in request.headers().values() {
-        if super::client::static_header_value(value.as_bytes()).is_none() {
-            total += value.len();
+    let mut cached = lock(cache);
+    let cached_uri = if uri_str == "/" {
+        Some(hyper::Uri::from_static("/"))
+    } else if cached.uri.as_ref().and_then(|u| u.path_and_query()).is_some_and(|pq| pq.as_str() == uri_str) {
+        cached.uri.clone()
+    } else {
+        None
+    };
+    let mut dynamic_count = usize::from(cached_uri.is_none());
+    let mut total = if cached_uri.is_none() { uri_str.len() } else { 0 };
+    for (name, value) in request.headers().iter() {
+        if super::client::static_header_value(value.as_bytes()).is_some() {
+            continue;
         }
+        if *name == hyper::header::HOST && cached.host.as_ref().is_some_and(|h| h.as_bytes() == value.as_bytes()) {
+            continue;
+        }
+        dynamic_count += 1;
+        total += value.len();
     }
     if total > 2048 {
         return;
     }
-    let mut raw = Vec::with_capacity(total);
-    raw.extend_from_slice(request.uri().path_and_query().unwrap().as_str().as_bytes());
-    for value in request.headers().values() {
-        if super::client::static_header_value(value.as_bytes()).is_none() {
-            raw.extend_from_slice(value.as_bytes());
+    // Common keep-alive fast path: URI and all headers hit static/cached values.
+    if dynamic_count == 0 {
+        if let Some(uri) = cached_uri {
+            *request.uri_mut() = uri;
         }
+        for (name, value) in request.headers_mut().iter_mut() {
+            let sensitive = value.is_sensitive();
+            if let Some(mut kept) = super::client::static_header_value(value.as_bytes()) {
+                if sensitive {
+                    kept.set_sensitive(true);
+                }
+                *value = kept;
+            } else if *name == hyper::header::HOST
+                && let Some(mut kept) = cached.host.clone()
+            {
+                if sensitive {
+                    kept.set_sensitive(true);
+                }
+                *value = kept;
+            }
+        }
+        return;
+    }
+    let uri_len = uri_str.len();
+    let mut raw = Vec::with_capacity(total);
+    if cached_uri.is_none() {
+        raw.extend_from_slice(uri_str.as_bytes());
+    }
+    for (name, value) in request.headers().iter() {
+        if super::client::static_header_value(value.as_bytes()).is_some() {
+            continue;
+        }
+        if *name == hyper::header::HOST && cached.host.as_ref().is_some_and(|h| h.as_bytes() == value.as_bytes()) {
+            continue;
+        }
+        raw.extend_from_slice(value.as_bytes());
     }
     let shared = Bytes::from(raw);
-    if let Ok(copied) = hyper::Uri::from_maybe_shared(shared.slice(0..uri_len)) {
-        *request.uri_mut() = copied;
+    let mut offset = 0;
+    if let Some(uri) = cached_uri {
+        *request.uri_mut() = uri;
+    } else {
+        if let Ok(copied) = hyper::Uri::from_maybe_shared(shared.slice(0..uri_len)) {
+            if uri_len <= 256 {
+                cached.uri = Some(copied.clone());
+            }
+            *request.uri_mut() = copied;
+        }
+        offset = uri_len;
     }
-    let mut offset = uri_len;
-    for value in request.headers_mut().values_mut() {
+    for (name, value) in request.headers_mut().iter_mut() {
         let sensitive = value.is_sensitive();
         if let Some(mut kept) = super::client::static_header_value(value.as_bytes()) {
             if sensitive {
@@ -1260,8 +1430,20 @@ fn detach_head(request: &mut hyper::Request<Incoming>) {
             *value = kept;
             continue;
         }
+        if *name == hyper::header::HOST
+            && let Some(mut kept) = cached.host.as_ref().filter(|h| h.as_bytes() == value.as_bytes()).cloned()
+        {
+            if sensitive {
+                kept.set_sensitive(true);
+            }
+            *value = kept;
+            continue;
+        }
         let end = offset + value.len();
         if let Ok(mut copied) = hyper::header::HeaderValue::from_maybe_shared(shared.slice(offset..end)) {
+            if *name == hyper::header::HOST && !sensitive && copied.len() <= 256 {
+                cached.host = Some(copied.clone());
+            }
             if sensitive {
                 copied.set_sensitive(true);
             }
@@ -1718,8 +1900,7 @@ pub extern "C" fn tondo_rt_http_respond(
     data: *mut ArrayHeader,
 ) {
     let bytes = unsafe { array_items::<u8>(data) };
-    let body = if bytes.is_empty() { Body::Empty } else { full(Bytes::copy_from_slice(bytes)) };
-    request(object).send(response_from_array(status, headers, body));
+    request(object).send(response_from_array(status, headers, full_slice(bytes)));
 }
 
 /// Responds with a text, which the body reads where it is, without a copy.
@@ -1731,8 +1912,7 @@ pub unsafe extern "C" fn tondo_rt_http_respond_text(
     text: *mut Str,
 ) {
     let body = if super::strings::short(text) {
-        let bytes = unsafe { super::strings::str_bytes(&text) };
-        if bytes.is_empty() { Body::Empty } else { full(Bytes::copy_from_slice(bytes)) }
+        full_slice(unsafe { super::strings::str_bytes(&text) })
     } else if unsafe { (*text).len == 0 } {
         Body::Empty
     } else {
